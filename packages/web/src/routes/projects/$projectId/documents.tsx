@@ -1,4 +1,11 @@
-import { type DocumentStatus, formatDocumentStatus, isMarkdownDocSlug } from '@hezo/shared';
+import {
+	ArchiveFilter,
+	type DocumentStatus,
+	formatDocumentStatus,
+	isArchiveFilter,
+	isMarkdownDocSlug,
+	matchesArchiveFilter,
+} from '@hezo/shared';
 import { createFileRoute } from '@tanstack/react-router';
 import { Loader2 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
@@ -7,8 +14,10 @@ import { RevisionHistoryDialog } from '../../../components/document-review/revis
 import { ViewingRevisionBanner } from '../../../components/document-review/viewing-revision-banner';
 import { MarkdownEditor } from '../../../components/markdown-editor';
 import { Button } from '../../../components/ui/button';
+import { FilterPills } from '../../../components/ui/filter-pills';
 import { Input } from '../../../components/ui/input';
 import {
+	useArchiveProjectDoc,
 	useDeleteProjectDoc,
 	useProjectAgentsMd,
 	useProjectDoc,
@@ -26,11 +35,13 @@ const AGENTS_MD_KEY = '__agents_md__';
 
 interface DocumentsSearch {
 	file?: string;
+	/** Archive filter — absent means the default Active view. */
+	filter?: ArchiveFilter;
 }
 
 function ProjectDocumentsPage() {
 	const { projectId } = Route.useParams();
-	const { file } = Route.useSearch();
+	const { file, filter = ArchiveFilter.Active } = Route.useSearch();
 	const navigate = Route.useNavigate();
 
 	const { data: docs, isLoading: isLoadingList } = useProjectDocs(projectId);
@@ -38,6 +49,7 @@ function ProjectDocumentsPage() {
 
 	const updateDoc = useUpdateProjectDoc(projectId);
 	const deleteDoc = useDeleteProjectDoc(projectId);
+	const archiveDoc = useArchiveProjectDoc(projectId);
 	const updateAgentsMd = useUpdateProjectAgentsMd(projectId);
 
 	const [isCreating, setIsCreating] = useState(false);
@@ -64,6 +76,8 @@ function ProjectDocumentsPage() {
 		[doc, revisions, isAgentsMd],
 	);
 
+	// AGENTS.md is a repo file, not a project doc — it is pinned into every
+	// filter view and can never be archived.
 	const items = useMemo<DocItem[]>(() => {
 		const list: DocItem[] = [];
 		if (agentsMd) {
@@ -76,19 +90,38 @@ function ProjectDocumentsPage() {
 			});
 		}
 		for (const d of docs ?? []) {
+			if (!matchesArchiveFilter(d.archived_at, filter)) continue;
 			list.push({
 				key: d.filename,
 				label: d.filename,
+				archived: d.archived_at != null,
 				meta: d.status
 					? `${formatDocumentStatus(d.status)} · Updated ${new Date(d.updated_at).toLocaleDateString()}`
 					: `Updated ${new Date(d.updated_at).toLocaleDateString()}`,
 			});
 		}
 		return list;
-	}, [agentsMd, docs]);
+	}, [agentsMd, docs, filter]);
+
+	const counts = useMemo(() => {
+		const all = docs?.length ?? 0;
+		const archived = docs?.filter((d) => d.archived_at != null).length ?? 0;
+		return { all, archived, active: all - archived };
+	}, [docs]);
+
+	function setFilter(next: ArchiveFilter) {
+		navigate({
+			search: (prev) => ({
+				...(prev as DocumentsSearch),
+				filter: next === ArchiveFilter.Active ? undefined : next,
+			}),
+			replace: true,
+		});
+	}
 
 	const docContent = isAgentsMd ? (agentsMd?.content ?? null) : (doc?.content ?? null);
 	const displayContent = viewingRevision ? viewingRevision.content : docContent;
+	const isArchivedDoc = !isAgentsMd && doc?.archived_at != null;
 	const docMeta = isAgentsMd
 		? undefined
 		: viewingRevision
@@ -105,9 +138,11 @@ function ProjectDocumentsPage() {
 					editorName: doc?.last_updated_by_name,
 					editorType: doc?.last_updated_by_type,
 					status: doc?.status,
-					onStatusChange: file
-						? (status: DocumentStatus) => updateStatus.mutate({ status })
-						: undefined,
+					// Archived docs are read-only — the server rejects status flips too.
+					onStatusChange:
+						file && !isArchivedDoc
+							? (status: DocumentStatus) => updateStatus.mutate({ status })
+							: undefined,
 				};
 
 	function selectFile(key: string | null) {
@@ -157,6 +192,35 @@ function ProjectDocumentsPage() {
 				onSave={handleSave}
 				isSaving={updateDoc.isPending || updateAgentsMd.isPending}
 				onDelete={handleDelete}
+				archivedInfo={
+					isArchivedDoc && doc?.archived_at
+						? { archivedAt: doc.archived_at, archivedByName: doc.archived_by_name }
+						: null
+				}
+				onArchive={
+					file && !isAgentsMd
+						? () => archiveDoc.mutate({ filename: file, archived: true })
+						: undefined
+				}
+				onRestore={
+					file && !isAgentsMd
+						? () => archiveDoc.mutate({ filename: file, archived: false })
+						: undefined
+				}
+				isArchiveToggling={archiveDoc.isPending}
+				listExtras={
+					<FilterPills
+						stretch
+						className=""
+						options={[
+							{ value: ArchiveFilter.Active, label: 'Active', count: counts.active },
+							{ value: ArchiveFilter.Archived, label: 'Archived', count: counts.archived },
+							{ value: ArchiveFilter.All, label: 'All', count: counts.all },
+						]}
+						value={filter}
+						onChange={setFilter}
+					/>
+				}
 				onNewDoc={() => {
 					setIsCreating(true);
 					navigate({
@@ -183,7 +247,7 @@ function ProjectDocumentsPage() {
 					/>
 				}
 				review={
-					file && !isAgentsMd && !viewingRevision
+					file && !isAgentsMd && !viewingRevision && !isArchivedDoc
 						? { filename: file, docUpdatedAt: doc?.updated_at }
 						: null
 				}
@@ -213,7 +277,8 @@ function ProjectDocumentsPage() {
 					projectSlug={projectId}
 					viewingRevision={viewingRevision?.revisionNumber ?? null}
 					onView={handleViewRevision}
-					onRestore={handleRestore}
+					// Archived docs are read-only — restore the doc itself first.
+					onRestore={isArchivedDoc ? undefined : handleRestore}
 					isRestoring={restore.isPending}
 				/>
 			)}
@@ -289,6 +354,10 @@ function NewProjectDocForm({
 export const Route = createFileRoute('/projects/$projectId/documents')({
 	validateSearch: (search: Record<string, unknown>): DocumentsSearch => ({
 		file: typeof search.file === 'string' ? search.file : undefined,
+		filter:
+			isArchiveFilter(search.filter) && search.filter !== ArchiveFilter.Active
+				? search.filter
+				: undefined,
 	}),
 	component: ProjectDocumentsPage,
 });

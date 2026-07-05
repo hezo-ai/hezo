@@ -212,6 +212,36 @@ export async function seedDocument(
 	return ((await res.json()) as { data: SeededDocument }).data;
 }
 
+/** Archive (or restore) an asset via the real API. */
+export async function archiveSeededAsset(
+	workspace: SeededWorkspace,
+	project: SeededProject,
+	assetId: string,
+	archived = true,
+): Promise<void> {
+	const { apiBase } = getTestContext();
+	await apiBase(`/api/projects/${project.slug}/assets/${assetId}`, {
+		method: 'PATCH',
+		headers: workspace.headers,
+		body: JSON.stringify({ archived }),
+	});
+}
+
+/** Archive (or restore) a project doc via the real API. */
+export async function archiveSeededDocument(
+	workspace: SeededWorkspace,
+	project: SeededProject,
+	filename: string,
+	archived = true,
+): Promise<void> {
+	const { apiBase } = getTestContext();
+	await apiBase(`/api/projects/${project.slug}/docs/${filename}`, {
+		method: 'PATCH',
+		headers: workspace.headers,
+		body: JSON.stringify({ archived }),
+	});
+}
+
 /** Leave a review comment on a project doc via the real API. */
 export async function seedReviewComment(
 	workspace: SeededWorkspace,

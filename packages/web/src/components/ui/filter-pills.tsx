@@ -4,13 +4,24 @@ interface FilterPillsProps<T extends string> {
 	options: { value: T; label: string; count?: number; badge?: ReactNode }[];
 	value: T;
 	onChange: (value: T) => void;
+	/** Fill the container width with equal segments (e.g. inside a narrow rail). */
+	stretch?: boolean;
+	className?: string;
 }
 
 // Wire's `.hz-seg` segmented control: a surface-2 track with an inverse
 // (near-black) active pill. Counts render in Geist Mono.
-export function FilterPills<T extends string>({ options, value, onChange }: FilterPillsProps<T>) {
+export function FilterPills<T extends string>({
+	options,
+	value,
+	onChange,
+	stretch,
+	className = 'mb-3.5',
+}: FilterPillsProps<T>) {
 	return (
-		<div className="mb-3.5 inline-flex flex-wrap gap-0.5 rounded-md border border-border bg-surface-2 p-0.5">
+		<div
+			className={`${stretch ? 'flex' : 'inline-flex flex-wrap'} gap-0.5 rounded-md border border-border bg-surface-2 p-0.5 ${className}`}
+		>
 			{options.map((opt) => {
 				const active = value === opt.value;
 				return (
@@ -19,8 +30,8 @@ export function FilterPills<T extends string>({ options, value, onChange }: Filt
 						type="button"
 						onClick={() => onChange(opt.value)}
 						className={`inline-flex cursor-pointer items-center gap-1.5 rounded-[5px] px-2.5 py-1 text-[12.5px] font-medium transition-colors ${
-							active ? 'bg-inverse text-inverse-fg' : 'text-text-2 hover:text-text-1'
-						}`}
+							stretch ? 'flex-1 justify-center px-1' : ''
+						} ${active ? 'bg-inverse text-inverse-fg' : 'text-text-2 hover:text-text-1'}`}
 					>
 						{opt.label}
 						{opt.count != null && (

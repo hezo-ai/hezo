@@ -1,7 +1,6 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
-import { CommentContentType } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
@@ -15,6 +14,13 @@ import {
 	mintAgentToken,
 } from './helpers/app';
 
+// The `request_asset_deletion` MCP tool was replaced by direct archival
+// (archive_project_asset) — agents archive instead of requesting deletion.
+// The resolve endpoint stays: instances upgraded mid-flight still hold
+// pending approval cards that an admin must be able to approve or deny.
+// These tests seed such legacy cards directly, exactly as the old tool
+// wrote them.
+
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
@@ -24,6 +30,7 @@ let teamId: string;
 let projectId: string;
 let taskId: string;
 let agentId: string;
+let adminUserId: string;
 
 function buildPng(seed = 0): Uint8Array {
 	const sig = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -51,40 +58,30 @@ async function uploadAsset(
 	return { id: body.data.id, path: body.data.original_filename };
 }
 
-async function callToolViaMcp(
-	authToken: string,
-	toolName: string,
-	args: Record<string, unknown>,
-): Promise<Record<string, unknown>> {
-	const res = await app.request('/mcp', {
-		method: 'POST',
-		headers: { ...authHeader(authToken), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			jsonrpc: '2.0',
-			method: 'tools/call',
-			params: { name: toolName, arguments: args },
-			id: 1,
-		}),
-	});
-	const body = (await res.json()) as { result: { content: Array<{ text: string }> } };
-	return JSON.parse(body.result.content[0].text);
-}
-
-async function agentToken(): Promise<string> {
-	const { token: t } = await mintAgentToken(db, masterKeyManager, agentId, teamId, taskId);
-	return t;
-}
-
-async function requestDeletion(
-	filenames: string[],
+/** Seed a pending deletion-request card the way the retired MCP tool wrote it. */
+async function seedDeletionRequest(
+	assets: Array<{ id: string; path: string }>,
 	reason = 'Superseded by newer versions',
-): Promise<Record<string, unknown>> {
-	return callToolViaMcp(await agentToken(), 'request_asset_deletion', {
-		project: projectId,
-		task_id: taskId,
-		filenames,
+): Promise<string> {
+	const refs = assets.map((a) => `assets/${a.path}`).join(', ');
+	const content = {
+		assets,
 		reason,
-	});
+		text: `Requested deletion of ${assets.length} asset${assets.length === 1 ? '' : 's'}: ${refs} — ${reason}`,
+	};
+	const inserted = await db.query<{ id: string }>(
+		`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+		 VALUES ($1, $2, 'asset_deletion_request'::comment_content_type, $3::jsonb)
+		 RETURNING id`,
+		[taskId, agentId, JSON.stringify(content)],
+	);
+	const commentId = inserted.rows[0].id;
+	await db.query(
+		`INSERT INTO admin_mentions (team_id, task_id, comment_id, user_id)
+		 VALUES ($1, $2, $3, $4)`,
+		[teamId, taskId, commentId, adminUserId],
+	);
+	return commentId;
 }
 
 async function resolveDeletion(
@@ -146,89 +143,16 @@ beforeAll(async () => {
 		body: JSON.stringify({ project_id: projectId, title: 'Tidy assets', assignee_id: agentId }),
 	});
 	taskId = (await taskRes.json()).data.id;
+
+	const admin = await db.query<{ id: string }>('SELECT id FROM users ORDER BY created_at LIMIT 1');
+	adminUserId = admin.rows[0].id;
 });
 
 afterAll(async () => {
 	await safeClose(db);
 });
 
-describe('request_asset_deletion', () => {
-	it('posts an approval card with an asset snapshot and raises the admin inbox', async () => {
-		const a = await uploadAsset('old-draft.png', 'drafts');
-		const b = await uploadAsset('old-logo.png');
-
-		const before = await app.request(`/api/projects/${projectId}/inbox/count`, {
-			headers: authHeader(token),
-		});
-		const beforeCount = (await before.json()).data.unread as number;
-
-		const res = await requestDeletion([a.path, b.path], 'Stale drafts from the old brand');
-		expect(res.status).toBe('pending');
-		expect(res.reused).toBe(false);
-		expect(res.assets).toEqual([`assets/${a.path}`, `assets/${b.path}`]);
-
-		const comment = await db.query<{
-			content_type: string;
-			content: {
-				assets: Array<{ id: string; path: string }>;
-				reason: string;
-				text: string;
-			};
-			chosen_option: unknown;
-		}>('SELECT content_type, content, chosen_option FROM task_comments WHERE id = $1', [
-			res.comment_id as string,
-		]);
-		expect(comment.rows).toHaveLength(1);
-		expect(comment.rows[0].content_type).toBe(CommentContentType.AssetDeletionRequest);
-		expect(comment.rows[0].chosen_option).toBeNull();
-		expect(comment.rows[0].content.reason).toBe('Stale drafts from the old brand');
-		expect(comment.rows[0].content.assets).toEqual([
-			{ id: a.id, path: a.path },
-			{ id: b.id, path: b.path },
-		]);
-		// The inbox snippet reads content.text.
-		expect(comment.rows[0].content.text).toContain('assets/drafts/old-draft.png');
-
-		// Admin mention rows exist for the comment and the badge rose.
-		const mentions = await db.query('SELECT id FROM admin_mentions WHERE comment_id = $1', [
-			res.comment_id as string,
-		]);
-		expect(mentions.rows.length).toBeGreaterThan(0);
-		const after = await app.request(`/api/projects/${projectId}/inbox/count`, {
-			headers: authHeader(token),
-		});
-		expect((await after.json()).data.unread).toBeGreaterThan(beforeCount);
-
-		// Cleanup: deny so later tests start with no pending request for these ids.
-		await resolveDeletion(res.comment_id as string, false);
-	});
-
-	it('is all-or-nothing: a missing path errors and posts nothing', async () => {
-		const a = await uploadAsset('kept.png');
-		const res = await requestDeletion([a.path, 'ghost/none.png']);
-		expect(String(res.error)).toContain('assets/ghost/none.png');
-		expect(String(res.error)).toContain('all-or-nothing');
-		const comments = await db.query(
-			`SELECT id FROM task_comments
-			 WHERE task_id = $1 AND content_type = 'asset_deletion_request'::comment_content_type
-			   AND chosen_option IS NULL`,
-			[taskId],
-		);
-		expect(comments.rows).toHaveLength(0);
-	});
-
-	it('reuses an identical pending request instead of stacking cards', async () => {
-		const a = await uploadAsset('dupe-me.png');
-		const first = await requestDeletion([a.path]);
-		expect(first.reused).toBe(false);
-		const second = await requestDeletion([a.path]);
-		expect(second.reused).toBe(true);
-		expect(second.comment_id).toBe(first.comment_id);
-		await resolveDeletion(first.comment_id as string, false);
-	});
-});
-
-describe('resolve-asset-deletion', () => {
+describe('resolve-asset-deletion (legacy pending cards)', () => {
 	it('approve deletes rows, attachments, and blobs; records outcome; wakes the agent', async () => {
 		const a = await uploadAsset('doomed.png', 'trash');
 		// Attach the asset to a comment so the cascade is exercised.
@@ -250,8 +174,10 @@ describe('resolve-asset-deletion', () => {
 			}),
 		});
 
-		const req = await requestDeletion([a.path, attached.original_filename]);
-		const commentId = req.comment_id as string;
+		const commentId = await seedDeletionRequest([
+			a,
+			{ id: attached.id, path: attached.original_filename },
+		]);
 		expect(existsSync(diskPath(a.id))).toBe(true);
 
 		const res = await resolveDeletion(commentId, true);
@@ -305,15 +231,14 @@ describe('resolve-asset-deletion', () => {
 		);
 		expect(unread.rows).toHaveLength(0);
 
-		// Audit rows landed for the request and the deletion (background writer).
-		expect(await waitForAuditRow('requested', a.id)).toBe(true);
+		// An audit row landed for the deletion (background writer).
 		expect(await waitForAuditRow('deleted', a.id)).toBe(true);
 	});
 
 	it('deny keeps everything and wakes the agent with the outcome', async () => {
 		const a = await uploadAsset('spared.png');
-		const req = await requestDeletion([a.path]);
-		const res = await resolveDeletion(req.comment_id as string, false);
+		const commentId = await seedDeletionRequest([a]);
+		const res = await resolveDeletion(commentId, false);
 		expect(res.status).toBe(200);
 		expect((await res.json()).data.status).toBe('denied');
 
@@ -323,7 +248,7 @@ describe('resolve-asset-deletion', () => {
 
 		const updated = await db.query<{ chosen_option: { status: string } }>(
 			'SELECT chosen_option FROM task_comments WHERE id = $1',
-			[req.comment_id as string],
+			[commentId],
 		);
 		expect(updated.rows[0].chosen_option.status).toBe('denied');
 
@@ -332,7 +257,7 @@ describe('resolve-asset-deletion', () => {
 			`SELECT payload FROM agent_wakeup_requests
 			 WHERE member_id = $1 AND payload->>'comment_id' = $2
 			 ORDER BY created_at DESC LIMIT 1`,
-			[agentId, req.comment_id as string],
+			[agentId, commentId],
 		);
 		expect(wakeup.rows).toHaveLength(1);
 		expect(wakeup.rows[0].payload.status).toBe('denied');
@@ -340,23 +265,24 @@ describe('resolve-asset-deletion', () => {
 
 	it('rejects agents resolving requests (even their own)', async () => {
 		const a = await uploadAsset('agent-hands-off.png');
-		const req = await requestDeletion([a.path]);
-		const res = await resolveDeletion(req.comment_id as string, true, await agentToken());
+		const commentId = await seedDeletionRequest([a]);
+		const { token: agentJwt } = await mintAgentToken(db, masterKeyManager, agentId, teamId, taskId);
+		const res = await resolveDeletion(commentId, true, agentJwt);
 		expect(res.status).toBe(403);
 		// Still pending — the admin can act later.
 		const row = await db.query<{ chosen_option: unknown }>(
 			'SELECT chosen_option FROM task_comments WHERE id = $1',
-			[req.comment_id as string],
+			[commentId],
 		);
 		expect(row.rows[0].chosen_option).toBeNull();
-		await resolveDeletion(req.comment_id as string, false);
+		await resolveDeletion(commentId, false);
 	});
 
 	it('400s on double-resolve and on non-deletion-request comments', async () => {
 		const a = await uploadAsset('once-only.png');
-		const req = await requestDeletion([a.path]);
-		await resolveDeletion(req.comment_id as string, false);
-		const again = await resolveDeletion(req.comment_id as string, true);
+		const commentId = await seedDeletionRequest([a]);
+		await resolveDeletion(commentId, false);
+		const again = await resolveDeletion(commentId, true);
 		expect(again.status).toBe(400);
 
 		const text = await app.request(`/api/projects/${projectId}/tasks/${taskId}/comments`, {
@@ -372,7 +298,7 @@ describe('resolve-asset-deletion', () => {
 	it('approve after an asset was separately deleted removes the rest and reports the miss', async () => {
 		const a = await uploadAsset('goes-first.png');
 		const b = await uploadAsset('goes-second.png');
-		const req = await requestDeletion([a.path, b.path]);
+		const commentId = await seedDeletionRequest([a, b]);
 
 		// The admin deletes one directly before approving the request.
 		await app.request(`/api/projects/${projectId}/assets/${a.id}`, {
@@ -380,7 +306,7 @@ describe('resolve-asset-deletion', () => {
 			headers: authHeader(token),
 		});
 
-		const res = await resolveDeletion(req.comment_id as string, true);
+		const res = await resolveDeletion(commentId, true);
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.data.deleted_asset_ids).toEqual([b.id]);

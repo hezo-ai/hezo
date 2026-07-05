@@ -150,6 +150,11 @@ const AUDIT_MAPPERS: AuditMappers = {
 			via: event.via,
 			task_id: event.taskId ?? null,
 		}),
+	'asset.archived': (event) =>
+		row(event, AuditAction.Updated, AuditEntityType.Asset, event.assetId, {
+			filename: event.filename,
+			archived: event.archived,
+		}),
 	'document.created': mapDocument,
 	'document.updated': mapDocument,
 	'document.deleted': mapDocument,

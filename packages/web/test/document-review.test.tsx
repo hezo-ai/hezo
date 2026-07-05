@@ -170,14 +170,16 @@ test('groups the review-comment controls in a bordered cluster, apart from the d
 	expect(toolbar.className).toContain('bg-surface-2');
 
 	// The document-level meta actions sit OUTSIDE the review cluster — that
-	// separation is the whole point. In particular the two trash icons (clear the
-	// review vs. delete the document) now live in different groups.
+	// separation is the whole point. In particular the trash inside the cluster
+	// (clear the review) and the archive action beside it live in different
+	// groups (active docs offer Archive; the hard delete only shows once
+	// archived).
 	const popout = getByTestId('doc-popout');
 	const editButton = getByRole('button', { name: 'Edit' });
-	const deleteDoc = getByRole('button', { name: 'Delete document' });
+	const archiveDoc = getByRole('button', { name: 'Archive document' });
 	expect(toolbar.contains(popout)).toBe(false);
 	expect(toolbar.contains(editButton)).toBe(false);
-	expect(toolbar.contains(deleteDoc)).toBe(false);
+	expect(toolbar.contains(archiveDoc)).toBe(false);
 	// The clear-review trash, by contrast, is inside the cluster.
 	expect(toolbar.contains(getByTestId('review-clear'))).toBe(true);
 });

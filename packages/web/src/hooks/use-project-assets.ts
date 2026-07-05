@@ -75,6 +75,20 @@ export function useDeleteProjectAsset(projectId: string) {
 	});
 }
 
+/** Archive or restore an asset (the soft delete). Response-driven: the server
+ * stamps archived_at and the list re-flows on refetch. */
+export function useArchiveProjectAsset(projectId: string) {
+	return useMutation<ProjectAsset, ApiError, { assetId: string; archived: boolean }>({
+		mutationFn: ({ assetId, archived }) =>
+			api.patch<ProjectAsset>(`/api/projects/${projectId}/assets/${assetId}`, { archived }),
+		onSuccess: () => {
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.projects.assets(projectId),
+			});
+		},
+	});
+}
+
 /** Move an asset to a library folder ('' = root). Response-driven: the server
  * owns the final path (409 on collision) and the list re-flows on refetch. */
 export function useMoveProjectAsset(projectId: string) {

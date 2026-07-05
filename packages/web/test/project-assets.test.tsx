@@ -61,7 +61,7 @@ test('a markdown asset renders in-app with a view-source toggle', async () => {
 	expect(source.textContent).toBe(md);
 });
 
-test('an asset can be deleted from the library', async () => {
+test('an asset is archived first, then deleted from the Archived view', async () => {
 	let ctx!: { projectSlug: string };
 	const { findByText, findByTestId, getByRole, queryByText, user, router } = await renderApp({
 		initialPath: '/',
@@ -78,9 +78,19 @@ test('an asset can be deleted from the library', async () => {
 		params: { projectId: ctx.projectSlug },
 	});
 
+	// Active cards offer the reversible Archive, not Delete — archiving drops
+	// the asset from the default Active view.
 	await findByText('remove-me.png');
+	await user.click(await findByTestId('asset-archive'));
+	await waitFor(() => expect(queryByText('remove-me.png')).toBeNull());
+
+	// Switch to the Archived view through the funnel popover.
+	await user.click(await findByTestId('asset-filter-button'));
+	await user.click(await findByTestId('asset-filter-option-archived'));
+	await findByText('remove-me.png');
+
+	// The hard delete lives on archived cards; ConfirmDialog is a portal.
 	await user.click(await findByTestId('asset-delete'));
-	// ConfirmDialog renders into a portal on document.body.
 	await user.click(getByRole('button', { name: 'Delete' }));
 
 	await waitFor(() => expect(queryByText('remove-me.png')).toBeNull());

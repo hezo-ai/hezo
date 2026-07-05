@@ -80,7 +80,8 @@ Agents don't carry every document's full text on every run. Instead each run inc
 **manifest** — a table of contents listing each document's filename, title, and when it
 last changed — and the agent opens the ones it needs with `read_project_doc`. So adding or
 updating a document immediately makes it discoverable to the whole team, without bloating
-anyone's prompt.
+anyone's prompt. (Archived documents are left out of the manifest — see
+[Archiving & deleting documents](#archiving--deleting-documents).)
 
 Every project document also carries a **status** — **Planning** (still being drafted and
 iterated) or **Approved** (signed off as the current source of truth) — shown in the
@@ -88,6 +89,28 @@ details banner at the top of the document and next to each entry in the Document
 New documents start in Planning. You change the status from the dropdown in the banner;
 agents set it with `set_project_doc_status`. The status is metadata only: changing it
 doesn't touch the document's content and records no version.
+
+## Archiving & deleting documents
+
+Documents are retired by **archiving** — a reversible soft delete. An archived document
+drops out of the default view, out of agents' listings and run manifests, and out of search
+and autocomplete, but it keeps its filename, content, and full version history; existing
+references to it keep resolving. Agents archive self-serve (it's the only way they can
+"delete" — asking an agent to delete a document means it archives it), and you archive one
+yourself from the **Archive** button in the document's toolbar. Archiving needs no
+confirmation because nothing is lost.
+
+The list in the rail shows **Active** documents by default; the **Active / Archived / All**
+pills under the filter box switch views, each with a live count, and archived entries carry
+an "Archived" chip. Opening an archived document shows a banner naming who archived it and
+when, with a one-click **Restore**. While archived, a document is **read-only** — no edits,
+status changes, or version restores until you restore it. (The repo-backed `AGENTS.md`
+entry is a file in your repository, not a project document — it's always visible and can't
+be archived.)
+
+**Deletion is permanent and admin-only.** Agents can never delete a document. The Delete
+action only appears on archived documents, so removing one for good is a deliberate
+two-step: archive it, then delete it (with a confirmation).
 
 ## Reviewing documents
 

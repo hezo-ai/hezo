@@ -495,6 +495,8 @@ export interface ProjectAsset {
 	byte_size: number;
 	original_filename: string;
 	created_at: string;
+	/** Set when the asset is archived (soft-deleted); null/absent = active. */
+	archived_at?: string | null;
 	url: string;
 	comment_attachment_count: number;
 }
@@ -943,6 +945,31 @@ export const DOCUMENT_STATUS_LABELS: Record<DocumentStatus, string> = {
 
 export function formatDocumentStatus(status: string): string {
 	return DOCUMENT_STATUS_LABELS[status as DocumentStatus] ?? status;
+}
+
+/**
+ * List-view filter for archivable resources (project docs and assets).
+ * Archiving is the soft-delete: agents archive via MCP, only admins
+ * hard-delete. Both library pages default to Active.
+ */
+export const ArchiveFilter = {
+	Active: 'active',
+	Archived: 'archived',
+	All: 'all',
+} as const;
+export type ArchiveFilter = (typeof ArchiveFilter)[keyof typeof ArchiveFilter];
+
+export function isArchiveFilter(value: unknown): value is ArchiveFilter {
+	return typeof value === 'string' && (Object.values(ArchiveFilter) as string[]).includes(value);
+}
+
+/** Whether a row with `archived_at` passes the given archive filter. */
+export function matchesArchiveFilter(
+	archivedAt: string | null | undefined,
+	filter: ArchiveFilter,
+): boolean {
+	if (filter === ArchiveFilter.All) return true;
+	return filter === ArchiveFilter.Archived ? archivedAt != null : archivedAt == null;
 }
 
 export const AuditActorType = {

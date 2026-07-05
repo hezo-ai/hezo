@@ -352,53 +352,69 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_project_docs: {
 		category: 'Project docs & assets',
 		returns:
-			"`{ files: [{ id, filename, title, status, updated_at }] }` — the markdown project docs. `status` is the doc's lifecycle status (`planning` or `approved`).",
+			"`{ files: [{ id, filename, title, status, updated_at }] }` — the markdown project docs. `status` is the doc's lifecycle status (`planning` or `approved`). The `filter` param defaults to `'active'` (archived docs excluded); with `'archived'` or `'all'` each entry also carries `archived: boolean`.",
 	},
 	read_project_doc: {
 		category: 'Project docs & assets',
 		returns:
-			"`{ filename, content, status }` (the full markdown body plus the doc's lifecycle status, `planning` or `approved`), plus `review_comments: [{ id, quote, occurrence, comment, created_at }]` when the admin has left pending review feedback on the doc (each comment anchors to an exact `quote` snippet; `occurrence` disambiguates repeats). Any write to the doc deletes all of its review comments, so capture them before writing. Returns `{ error }` if the file is not found.",
+			"`{ filename, content, status }` (the full markdown body plus the doc's lifecycle status, `planning` or `approved`), plus `review_comments: [{ id, quote, occurrence, comment, created_at }]` when the admin has left pending review feedback on the doc (each comment anchors to an exact `quote` snippet; `occurrence` disambiguates repeats). Any write to the doc deletes all of its review comments, so capture them before writing. Returns `{ error }` if the file is not found or its archive state doesn't match `filter` (default `'active'`, so archived docs need `filter: 'archived'` or `'all'`; an archived read carries `archived: true`).",
 	},
 	write_project_doc: {
 		category: 'Project docs & assets',
 		returns:
-			"`{ written: true, id, filename }`, or `{ error }` if the filename is not `.md`. Make all edits in one consolidated write: a content-changing write deletes ALL pending review comments on the doc (read them first) and records a document revision, so many partial writes lose review context and bury the revision history. The optional `changelog` is stored as that revision's changelog and shown in the document's history — put update/status notes there, not in the document body.",
+			"`{ written: true, id, filename }`, or `{ error }` if the filename is not `.md` or the doc is archived (unarchive first — archived docs are read-only). Make all edits in one consolidated write: a content-changing write deletes ALL pending review comments on the doc (read them first) and records a document revision, so many partial writes lose review context and bury the revision history. The optional `changelog` is stored as that revision's changelog and shown in the document's history — put update/status notes there, not in the document body.",
 	},
 	set_project_doc_status: {
 		category: 'Project docs & assets',
 		returns:
-			'`{ updated: true, filename, status }`, or `{ error }` if the file is not found. Status is metadata only — no content change, no revision recorded.',
+			'`{ updated: true, filename, status }`, or `{ error }` if the file is not found or archived. Status is metadata only — no content change, no revision recorded.',
+	},
+	archive_project_doc: {
+		category: 'Project docs & assets',
+		returns:
+			'`{ archived: true, filename, changed }` (`changed: false` when it was already archived — the call is idempotent), or `{ error }` if the file is not found. The archived doc leaves listings, search, and agent-run context but keeps its filename reserved and its revision history.',
+		auth: 'Archival is the agent-facing soft delete; hard deletion of docs is admin-only in the web app.',
+	},
+	unarchive_project_doc: {
+		category: 'Project docs & assets',
+		returns:
+			'`{ archived: false, filename, changed }` (`changed: false` when it was already active), or `{ error }` if the file is not found.',
 	},
 	list_project_assets: {
 		category: 'Project docs & assets',
 		returns:
-			'`{ files: [{ id, filename, content_type, created_at }] }` — the project asset files. `filename` is the full path and may carry a folder prefix up to 2 levels (e.g. `launch/images/hero.png`).',
+			"`{ files: [{ id, filename, content_type, created_at }] }` — the project asset files. `filename` is the full path and may carry a folder prefix up to 2 levels (e.g. `launch/images/hero.png`). The `filter` param defaults to `'active'` (archived assets excluded); with `'archived'` or `'all'` each entry also carries `archived: boolean`.",
 	},
 	read_project_asset: {
 		category: 'Project docs & assets',
 		returns:
-			'For a text asset, `{ filename, content_type, content }`. For a binary asset, `{ filename, content_type, byte_size, binary: true, path }` (a read-only container path). Returns `{ error }` if not found — match the full path, folder prefix included.',
+			"For a text asset, `{ filename, content_type, content }`. For a binary asset, `{ filename, content_type, byte_size, binary: true, path }` (a read-only container path). Returns `{ error }` if not found — match the full path, folder prefix included — or if the asset's archive state doesn't match `filter` (default `'active'`, so archived assets need `filter: 'archived'` or `'all'`; an archived read carries `archived: true`).",
 	},
 	write_project_asset: {
 		category: 'Project docs & assets',
 		returns:
-			'`{ written: true, id, reference: "assets/<path>" }`, or `{ error }` if the type is not text-based (`.html`, `.svg`, `.txt`, `.md`, or a script/text format: `.sh`, `.py`, `.js`, `.ts`, `.json`, `.csv`, `.yaml`, `.yml`), the path is invalid (max 2 folder levels), or the content exceeds 10 MB. Re-saving the same path overwrites it; matching is path-exact.',
+			'`{ written: true, id, reference: "assets/<path>" }`, or `{ error }` if the type is not text-based (`.html`, `.svg`, `.txt`, `.md`, or a script/text format: `.sh`, `.py`, `.js`, `.ts`, `.json`, `.csv`, `.yaml`, `.yml`), the path is invalid (max 2 folder levels), the content exceeds 10 MB, or an archived asset holds the path (unarchive it first or pick another path). Re-saving the same path overwrites it; matching is path-exact.',
 	},
 	move_project_asset: {
 		category: 'Project docs & assets',
 		returns:
-			'`{ moved: true, id, from, reference: "assets/<path>", note }`, or `{ error }` when the source is missing, the destination exists (moves never overwrite), the extension changes, or a path is invalid. Metadata-only — the stored bytes do not move. Existing text references to the old path are not rewritten.',
+			'`{ moved: true, id, from, reference: "assets/<path>", note }`, or `{ error }` when the source is missing or archived, the destination exists (moves never overwrite; an archived asset still holds its path), the extension changes, or a path is invalid. Metadata-only — the stored bytes do not move. Existing text references to the old path are not rewritten.',
 	},
 	copy_project_asset: {
 		category: 'Project docs & assets',
 		returns:
-			'`{ copied: true, id, reference: "assets/<path>" }` — a new asset with its own id, any type including binary. Returns `{ error }` when the source is missing, the destination exists (copies never overwrite), or a path is invalid.',
+			'`{ copied: true, id, reference: "assets/<path>" }` — a new asset with its own id, any type including binary. Returns `{ error }` when the source is missing or archived, the destination exists (copies never overwrite), or a path is invalid.',
 	},
-	request_asset_deletion: {
+	archive_project_asset: {
 		category: 'Project docs & assets',
 		returns:
-			'`{ comment_id, status: "pending", assets, note }`, or `{ ..., reused: true }` when an identical pending request already exists on the task, or `{ error }` when any path is missing or invalid (all-or-nothing). Posts an approval card on the named task and raises the admin inbox.',
-		auth: 'Resolution is admin-only: a human approves or denies the card in the web app; on approval the backend deletes the assets and the requesting agent is woken with the outcome.',
+			'`{ archived: true, reference: "assets/<path>", changed }` (`changed: false` when it was already archived — the call is idempotent), or `{ error }` if the asset is not found. The archived asset leaves listings and default reads but keeps its path reserved; existing `assets/<path>` references keep resolving.',
+		auth: 'Archival is the agent-facing soft delete; hard deletion of assets is admin-only in the web app.',
+	},
+	unarchive_project_asset: {
+		category: 'Project docs & assets',
+		returns:
+			'`{ archived: false, reference: "assets/<path>", changed }` (`changed: false` when it was already active), or `{ error }` if the asset is not found.',
 	},
 
 	// Costs

@@ -1,13 +1,19 @@
 import {
+	ArchiveFilter,
 	ASSET_MAX_FOLDER_DEPTH,
 	assetBasename,
 	assetFolder,
+	isArchiveFilter,
 	isMarkdownAssetMime,
+	matchesArchiveFilter,
 	normalizeAssetFolder,
 } from '@hezo/shared';
 import * as Dialog from '@radix-ui/react-dialog';
+import * as Popover from '@radix-ui/react-popover';
 import { createFileRoute } from '@tanstack/react-router';
 import {
+	Archive,
+	ArchiveRestore,
 	Check,
 	ChevronDown,
 	Code,
@@ -17,6 +23,7 @@ import {
 	File as FileIcon,
 	FileText,
 	FileVideo,
+	Filter,
 	Folder,
 	FolderInput,
 	FolderPlus,
@@ -28,6 +35,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { MarkdownAssetDialog } from '../../../components/markdown-asset-dialog';
+import { ArchivedBadge } from '../../../components/ui/archived-badge';
 import { Breadcrumb, type BreadcrumbSegment } from '../../../components/ui/breadcrumb';
 import { Button } from '../../../components/ui/button';
 import { ConfirmDialog } from '../../../components/ui/confirm-dialog';
@@ -37,6 +45,7 @@ import { Input } from '../../../components/ui/input';
 import { Tooltip } from '../../../components/ui/tooltip';
 import {
 	type ProjectAsset,
+	useArchiveProjectAsset,
 	useDeleteProjectAsset,
 	useMoveProjectAsset,
 	useProjectAssets,
@@ -56,6 +65,92 @@ import { copyToClipboard } from '../../../lib/clipboard';
 interface AssetsSearch {
 	file?: string;
 	folder?: string;
+	/** Archive filter — absent means the default Active view. */
+	filter?: ArchiveFilter;
+}
+
+const FILTER_TEXT: Record<ArchiveFilter, string> = {
+	[ArchiveFilter.Active]: 'Showing active items',
+	[ArchiveFilter.Archived]: 'Showing archived items',
+	[ArchiveFilter.All]: 'Showing all items',
+};
+
+/**
+ * "Showing … items" caption + funnel button; the button opens a small popover
+ * listing the three archive-filter views with live counts.
+ */
+function AssetFilterControl({
+	filter,
+	counts,
+	onChange,
+}: {
+	filter: ArchiveFilter;
+	counts: Record<ArchiveFilter, number>;
+	onChange: (next: ArchiveFilter) => void;
+}) {
+	const [open, setOpen] = useState(false);
+	const options = [
+		{ value: ArchiveFilter.Active, label: 'Active' },
+		{ value: ArchiveFilter.Archived, label: 'Archived' },
+		{ value: ArchiveFilter.All, label: 'All' },
+	];
+	return (
+		<div className="mb-3 flex items-center gap-1.5">
+			<span className="text-[12.5px] text-text-2" data-testid="asset-filter-text">
+				{FILTER_TEXT[filter]}
+			</span>
+			<Popover.Root open={open} onOpenChange={setOpen}>
+				<Popover.Trigger asChild>
+					<button
+						type="button"
+						aria-label="Filter assets"
+						data-testid="asset-filter-button"
+						className={`inline-flex items-center rounded-md border p-1.5 transition-colors cursor-pointer ${
+							filter === ArchiveFilter.Active
+								? 'border-border bg-surface text-text-2 hover:border-border-strong hover:text-text-1'
+								: 'border-border-strong bg-surface-2 text-text-1'
+						}`}
+					>
+						<Filter className="h-3.5 w-3.5" />
+					</button>
+				</Popover.Trigger>
+				<Popover.Portal>
+					<Popover.Content
+						align="start"
+						sideOffset={4}
+						className="z-50 min-w-[180px] rounded-md border border-border bg-surface p-1 shadow-md"
+						data-testid="asset-filter-popover"
+					>
+						{options.map((opt) => {
+							const selected = filter === opt.value;
+							return (
+								<button
+									key={opt.value}
+									type="button"
+									role="menuitemradio"
+									aria-checked={selected}
+									data-testid={`asset-filter-option-${opt.value}`}
+									onClick={() => {
+										onChange(opt.value);
+										setOpen(false);
+									}}
+									className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] transition-colors cursor-pointer text-left ${
+										selected
+											? 'bg-surface-2 text-text-1'
+											: 'text-text-2 hover:bg-surface-3 hover:text-text-1'
+									}`}
+								>
+									<span className="flex-1">{opt.label}</span>
+									<span className="font-mono text-[11px] text-text-3">{counts[opt.value]}</span>
+									{selected && <Check className="h-3.5 w-3.5 shrink-0 text-info" />}
+								</button>
+							);
+						})}
+					</Popover.Content>
+				</Popover.Portal>
+			</Popover.Root>
+		</div>
+	);
 }
 
 interface ErrorChip {
@@ -89,11 +184,12 @@ function formatBytes(bytes: number): string {
 
 function ProjectAssetsPage() {
 	const { projectId } = Route.useParams();
-	const { file: focusFile, folder: folderParam } = Route.useSearch();
+	const { file: focusFile, folder: folderParam, filter = ArchiveFilter.Active } = Route.useSearch();
 	const navigate = Route.useNavigate();
 	const { data: assets, isLoading } = useProjectAssets(projectId);
 	const upload = useUploadProjectAsset(projectId);
 	const del = useDeleteProjectAsset(projectId);
+	const archive = useArchiveProjectAsset(projectId);
 
 	// An explicit ?folder wins; otherwise a ?file deep-link opens its containing
 	// folder; otherwise the root. Navigation always sets ?folder (and drops
@@ -171,9 +267,37 @@ function ProjectAssetsPage() {
 	);
 
 	const deleteCount = pendingDelete?.comment_attachment_count ?? 0;
-	const grouped = groupAssets(assets ?? [], currentFolder);
-	const folderIsEmpty =
-		currentFolder !== '' && grouped.folders.length === 0 && grouped.items.length === 0;
+	// Filter before grouping so folder cards and their file counts reflect the
+	// current view (a folder with only archived files disappears from Active).
+	const visibleAssets = (assets ?? []).filter((a) => matchesArchiveFilter(a.archived_at, filter));
+	const grouped = groupAssets(visibleAssets, currentFolder);
+	const filterCounts: Record<ArchiveFilter, number> = {
+		[ArchiveFilter.All]: assets?.length ?? 0,
+		[ArchiveFilter.Archived]: (assets ?? []).filter((a) => a.archived_at != null).length,
+		[ArchiveFilter.Active]: (assets ?? []).filter((a) => a.archived_at == null).length,
+	};
+	const groupedIsEmpty = grouped.folders.length === 0 && grouped.items.length === 0;
+	// Inside a folder the "drop files here" empty state stays primary (it also
+	// backs the virtual new-folder flow); the Archived view gets its own message
+	// since dropping files there would land them as active and stay invisible.
+	const filterIsEmpty =
+		(assets?.length ?? 0) > 0 &&
+		groupedIsEmpty &&
+		(currentFolder === '' || filter === ArchiveFilter.Archived);
+	const folderIsEmpty = groupedIsEmpty && currentFolder !== '' && filter !== ArchiveFilter.Archived;
+
+	const setFilter = useCallback(
+		(next: ArchiveFilter) => {
+			navigate({
+				search: (prev) => ({
+					...(prev as AssetsSearch),
+					filter: next === ArchiveFilter.Active ? undefined : next,
+				}),
+				replace: true,
+			});
+		},
+		[navigate],
+	);
 
 	const crumbs: BreadcrumbSegment[] = [
 		{ key: '', label: 'Assets', onNavigate: () => openFolder('') },
@@ -257,6 +381,8 @@ function ProjectAssetsPage() {
 				</div>
 			)}
 
+			<AssetFilterControl filter={filter} counts={filterCounts} onChange={setFilter} />
+
 			{/* biome-ignore lint/a11y/noStaticElementInteractions: drag-and-drop upload zone; uploads also work via the Upload button */}
 			<div
 				className="relative min-h-[300px]"
@@ -273,6 +399,16 @@ function ProjectAssetsPage() {
 						icon={<ImageIcon className="w-10 h-10" />}
 						title="No assets yet"
 						description="Drag files here or use Upload to add mockups, wireframes, and other files."
+					/>
+				) : filterIsEmpty ? (
+					<EmptyState
+						icon={<Archive className="w-10 h-10" />}
+						title={filter === ArchiveFilter.Archived ? 'No archived assets' : 'No active assets'}
+						description={
+							filter === ArchiveFilter.Archived
+								? 'Assets that you or agents archive appear here.'
+								: 'Everything is archived — switch the filter to Archived to browse or restore items.'
+						}
 					/>
 				) : folderIsEmpty ? (
 					<EmptyState
@@ -334,6 +470,8 @@ function ProjectAssetsPage() {
 								onDelete={() => setPendingDelete(asset)}
 								onMove={() => setPendingMove(asset)}
 								onView={() => setViewMarkdown(asset)}
+								onArchive={() => archive.mutate({ assetId: asset.id, archived: true })}
+								onRestore={() => archive.mutate({ assetId: asset.id, archived: false })}
 							/>
 						))}
 					</ul>
@@ -816,12 +954,16 @@ function AssetCard({
 	onDelete,
 	onMove,
 	onView,
+	onArchive,
+	onRestore,
 }: {
 	asset: ProjectAsset;
 	highlighted: boolean;
 	onDelete: () => void;
 	onMove: () => void;
 	onView: () => void;
+	onArchive: () => void;
+	onRestore: () => void;
 }) {
 	const ref = useRef<HTMLLIElement>(null);
 	useEffect(() => {
@@ -831,6 +973,7 @@ function AssetCard({
 	const isImage = asset.content_type.startsWith('image/');
 	const isHtml = asset.content_type === 'text/html';
 	const isMarkdown = isMarkdownAssetMime(asset.content_type);
+	const isArchived = asset.archived_at != null;
 	const basename = assetBasename(asset.original_filename);
 	const thumbnail = isImage ? (
 		<img src={asset.url} alt={asset.original_filename} className="h-full w-full object-cover" />
@@ -844,12 +987,17 @@ function AssetCard({
 	) : (
 		<AssetIcon contentType={asset.content_type} />
 	);
+	// Archived media dims and desaturates; the corner badge names the state.
+	const mediaClass = `flex h-28 items-center justify-center bg-surface-3 ${
+		isArchived ? '[&>*]:opacity-55 [&>*]:grayscale-[0.75]' : ''
+	}`;
 	return (
 		<li
 			ref={ref}
 			data-testid="asset-card"
 			data-filename={asset.original_filename}
-			className={`flex flex-col overflow-hidden rounded-md border bg-surface ${
+			data-archived={isArchived || undefined}
+			className={`relative flex flex-col overflow-hidden rounded-md border bg-surface ${
 				highlighted ? 'border-info' : 'border-border'
 			}`}
 		>
@@ -859,7 +1007,7 @@ function AssetCard({
 				<button
 					type="button"
 					onClick={onView}
-					className="flex h-28 items-center justify-center bg-surface-3"
+					className={mediaClass}
 					data-testid="asset-open-markdown"
 					aria-label={`View ${asset.original_filename}`}
 				>
@@ -870,17 +1018,22 @@ function AssetCard({
 					href={asset.url}
 					target="_blank"
 					rel="noopener noreferrer"
-					className="flex h-28 items-center justify-center bg-surface-3"
+					className={mediaClass}
 					data-testid="asset-open-link"
 					aria-label={`Open ${asset.original_filename} in a new tab`}
 				>
 					{thumbnail}
 				</a>
 			)}
+			{isArchived && (
+				<span className="absolute right-1.5 top-1.5">
+					<ArchivedBadge overlay />
+				</span>
+			)}
 			<div className="flex items-start justify-between gap-1 p-2">
 				<div className="min-w-0">
 					<div
-						className="truncate text-[12px] font-medium text-text-1"
+						className={`truncate text-[12px] font-medium ${isArchived ? 'text-text-3' : 'text-text-1'}`}
 						title={asset.original_filename}
 					>
 						{basename}
@@ -900,29 +1053,60 @@ function AssetCard({
 							<ExternalLink className="h-3.5 w-3.5" />
 						</a>
 					</Tooltip>
-					<CopyReferenceButton reference={`assets/${asset.original_filename}`} />
-					<Tooltip content="Move to folder">
-						<button
-							type="button"
-							className="p-1 text-text-3 hover:text-text-1"
-							onClick={onMove}
-							aria-label="Move to folder"
-							data-testid="asset-move"
-						>
-							<FolderInput className="h-3.5 w-3.5" />
-						</button>
-					</Tooltip>
-					<Tooltip content="Delete asset">
-						<button
-							type="button"
-							className="p-1 text-text-3 hover:text-danger"
-							onClick={onDelete}
-							aria-label="Delete asset"
-							data-testid="asset-delete"
-						>
-							<Trash2 className="h-3.5 w-3.5" />
-						</button>
-					</Tooltip>
+					{isArchived ? (
+						<>
+							{/* Restore first; the hard delete only lives on archived cards —
+							    active cards offer the reversible Archive instead. */}
+							<Tooltip content="Restore asset">
+								<button
+									type="button"
+									className="p-1 text-text-3 hover:text-text-1"
+									onClick={onRestore}
+									aria-label="Restore asset"
+									data-testid="asset-restore"
+								>
+									<ArchiveRestore className="h-3.5 w-3.5" />
+								</button>
+							</Tooltip>
+							<Tooltip content="Delete permanently">
+								<button
+									type="button"
+									className="p-1 text-text-3 hover:text-danger"
+									onClick={onDelete}
+									aria-label="Delete asset"
+									data-testid="asset-delete"
+								>
+									<Trash2 className="h-3.5 w-3.5" />
+								</button>
+							</Tooltip>
+						</>
+					) : (
+						<>
+							<CopyReferenceButton reference={`assets/${asset.original_filename}`} />
+							<Tooltip content="Move to folder">
+								<button
+									type="button"
+									className="p-1 text-text-3 hover:text-text-1"
+									onClick={onMove}
+									aria-label="Move to folder"
+									data-testid="asset-move"
+								>
+									<FolderInput className="h-3.5 w-3.5" />
+								</button>
+							</Tooltip>
+							<Tooltip content="Archive asset">
+								<button
+									type="button"
+									className="p-1 text-text-3 hover:text-text-1"
+									onClick={onArchive}
+									aria-label="Archive asset"
+									data-testid="asset-archive"
+								>
+									<Archive className="h-3.5 w-3.5" />
+								</button>
+							</Tooltip>
+						</>
+					)}
 				</div>
 			</div>
 		</li>
@@ -933,6 +1117,10 @@ export const Route = createFileRoute('/projects/$projectId/assets')({
 	validateSearch: (search: Record<string, unknown>): AssetsSearch => ({
 		file: typeof search.file === 'string' ? search.file : undefined,
 		folder: typeof search.folder === 'string' ? search.folder : undefined,
+		filter:
+			isArchiveFilter(search.filter) && search.filter !== ArchiveFilter.Active
+				? search.filter
+				: undefined,
 	}),
 	// HQ (the internal coordination project) exposes Assets too: it's where the
 	// CEO saves files it produces for the operator in chat (write_project_asset),

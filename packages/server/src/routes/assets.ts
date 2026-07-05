@@ -220,15 +220,19 @@ assetsRoutes.get('/projects/:projectId/assets', async (c) => {
 	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
+	// Archived assets ride along: the web UI filters client-side (Active /
+	// Archived / All with counts) and `assets/<path>` references in comments
+	// and docs must keep resolving. Agent-facing listings (MCP) are active-only.
 	const rows = await db.query<{
 		id: string;
 		content_type: string;
 		byte_size: number;
 		original_filename: string;
 		created_at: string;
+		archived_at: string | null;
 		comment_attachment_count: number;
 	}>(
-		`SELECT a.id, a.content_type, a.byte_size, a.original_filename, a.created_at,
+		`SELECT a.id, a.content_type, a.byte_size, a.original_filename, a.created_at, a.archived_at,
 		        COUNT(ca.comment_id)::int AS comment_attachment_count
 		 FROM assets a
 		 LEFT JOIN comment_attachments ca ON ca.asset_id = a.id
@@ -288,56 +292,106 @@ assetsRoutes.delete('/projects/:projectId/assets/:assetId', async (c) => {
 	return c.json({ data: null }, 200);
 });
 
-// Move an asset to a library folder ('' = root). The folder is the only mutable
-// part of the path — the basename travels with the asset. Human-only: agents
-// use the `move_project_asset` MCP tool (which can also rename), keeping the
-// REST surface the admin UI's.
+// Mutate an asset's metadata: move it to a library folder ('' = root), or
+// archive/restore it. Exactly one of `folder` / `archived` per call. The folder
+// is the only mutable part of the path — the basename travels with the asset.
+// Human-only: agents use the `move_project_asset` / `archive_project_asset`
+// MCP tools, keeping the REST surface the admin UI's.
 assetsRoutes.patch('/projects/:projectId/assets/:assetId', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const auth = c.get('auth');
 	if (auth.type === AuthType.Agent) {
-		return err(c, 'FORBIDDEN', 'Agents move assets with the move_project_asset tool', 403);
+		return err(
+			c,
+			'FORBIDDEN',
+			'Agents manage assets with the move_project_asset / archive_project_asset tools',
+			403,
+		);
 	}
 	const db = c.get('db');
 	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 	const assetId = c.req.param('assetId');
 
-	let body: { folder?: unknown };
+	let body: { folder?: unknown; archived?: unknown };
 	try {
 		body = await c.req.json();
 	} catch {
 		return err(c, 'INVALID_REQUEST', 'Invalid JSON body', 400);
 	}
-	if (typeof body.folder !== 'string') {
-		return err(c, 'INVALID_REQUEST', 'folder is required (empty string = library root)', 400);
-	}
-	const folder = normalizeAssetFolder(body.folder);
-	if (folder === null) {
+	const hasFolder = body.folder !== undefined;
+	const hasArchived = body.archived !== undefined;
+	if (hasFolder === hasArchived) {
 		return err(
 			c,
-			'INVALID_FOLDER',
-			'Invalid folder: at most 2 levels, each segment starting with a letter or digit',
+			'INVALID_REQUEST',
+			'Provide exactly one of: folder (empty string = library root), archived',
 			400,
 		);
 	}
 
-	const found = await db.query<{ original_filename: string }>(
-		'SELECT original_filename FROM assets WHERE id = $1 AND team_id = $2 AND project_id = $3',
+	const found = await db.query<{ original_filename: string; archived_at: string | null }>(
+		'SELECT original_filename, archived_at FROM assets WHERE id = $1 AND team_id = $2 AND project_id = $3',
 		[assetId, teamId, projectId],
 	);
 	if (found.rows.length === 0) return err(c, 'NOT_FOUND', 'Asset not found', 404);
 
-	const basename = assetBasename(found.rows[0].original_filename);
-	const nextName = folder ? `${folder}/${basename}` : basename;
-	if (nextName !== found.rows[0].original_filename) {
-		try {
-			await db.query('UPDATE assets SET original_filename = $1 WHERE id = $2', [nextName, assetId]);
-		} catch (e) {
-			if (isUniqueViolation(e)) {
-				return err(c, 'CONFLICT', `An asset named '${nextName}' already exists`, 409);
+	let nextName = found.rows[0].original_filename;
+	if (hasArchived) {
+		if (typeof body.archived !== 'boolean') {
+			return err(c, 'INVALID_REQUEST', 'archived must be a boolean', 400);
+		}
+		// Idempotent: re-asserting the current state changes nothing (keeps the
+		// original archival stamp instead of refreshing it).
+		if ((found.rows[0].archived_at !== null) !== body.archived) {
+			const actorMemberId = await resolveActorMemberId(db, auth, teamId);
+			await db.query(
+				`UPDATE assets
+				 SET archived_at = CASE WHEN $2 THEN now() ELSE NULL END,
+				     archived_by_member_id = CASE WHEN $2 THEN $3::uuid ELSE NULL END
+				 WHERE id = $1`,
+				[assetId, body.archived, body.archived ? actorMemberId : null],
+			);
+			c.get('events').emit({
+				type: 'asset.archived',
+				teamId,
+				projectId,
+				actorType: actorTypeFromAuth(auth),
+				actorMemberId,
+				actorApiKeyId: apiKeyIdFromAuth(auth),
+				assetId,
+				filename: found.rows[0].original_filename,
+				archived: body.archived,
+			});
+		}
+	} else {
+		if (typeof body.folder !== 'string') {
+			return err(c, 'INVALID_REQUEST', 'folder is required (empty string = library root)', 400);
+		}
+		const folder = normalizeAssetFolder(body.folder);
+		if (folder === null) {
+			return err(
+				c,
+				'INVALID_FOLDER',
+				'Invalid folder: at most 2 levels, each segment starting with a letter or digit',
+				400,
+			);
+		}
+
+		const basename = assetBasename(found.rows[0].original_filename);
+		nextName = folder ? `${folder}/${basename}` : basename;
+		if (nextName !== found.rows[0].original_filename) {
+			try {
+				await db.query('UPDATE assets SET original_filename = $1 WHERE id = $2', [
+					nextName,
+					assetId,
+				]);
+			} catch (e) {
+				if (isUniqueViolation(e)) {
+					return err(c, 'CONFLICT', `An asset named '${nextName}' already exists`, 409);
+				}
+				throw e;
 			}
-			throw e;
 		}
 	}
 
@@ -347,9 +401,10 @@ assetsRoutes.patch('/projects/:projectId/assets/:assetId', async (c) => {
 		byte_size: number;
 		original_filename: string;
 		created_at: string;
+		archived_at: string | null;
 		comment_attachment_count: number;
 	}>(
-		`SELECT a.id, a.content_type, a.byte_size, a.original_filename, a.created_at,
+		`SELECT a.id, a.content_type, a.byte_size, a.original_filename, a.created_at, a.archived_at,
 		        COUNT(ca.comment_id)::int AS comment_attachment_count
 		 FROM assets a
 		 LEFT JOIN comment_attachments ca ON ca.asset_id = a.id

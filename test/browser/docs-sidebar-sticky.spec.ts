@@ -87,7 +87,7 @@ test('sidebar search header stays fixed while the doc list itself scrolls', asyn
 	await page.goto(`/projects/${projectSlug}/documents`);
 	await waitForPageLoad(page);
 
-	const searchInput = page.getByRole('searchbox', { name: 'Search documents' });
+	const searchInput = page.getByRole('searchbox', { name: 'Filter documents' });
 	await expect(searchInput).toBeVisible();
 	await expect(page.getByText('doc-00.md')).toBeVisible();
 
