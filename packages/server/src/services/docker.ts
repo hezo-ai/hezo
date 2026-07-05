@@ -1,3 +1,5 @@
+import { request as httpRequest } from 'node:http';
+import { Readable } from 'node:stream';
 import { stripNulBytes } from '../lib/sql';
 
 const SOCKET_PATH = '/var/run/docker.sock';
@@ -131,6 +133,76 @@ export class DockerClient {
 			signal,
 		} as RequestInit & { unix: string });
 		return res;
+	}
+
+	/**
+	 * Long-lived streaming requests (exec attach, log follow) go over node:http
+	 * instead of fetch. Bun's fetch enforces a hardcoded ~5-minute idle timeout
+	 * (oven-sh/bun#5930) that per-request options can't disable, so an exec
+	 * stream that stays quiet that long — an agent CLI deep in a tool call that
+	 * emits nothing — is torn down mid-run with "The operation timed out." and
+	 * the run fails. node:http over the same unix socket applies no idle
+	 * timeout. The node response is wrapped back into a web `Response` so
+	 * callers parse both transports identically.
+	 *
+	 * Aborting `signal` destroys the request; a pending or in-flight body read
+	 * then rejects with an `AbortError` DOMException (the same shape callers
+	 * already handle for an aborted fetch).
+	 */
+	private requestStream(
+		method: string,
+		path: string,
+		body?: unknown,
+		signal?: AbortSignal,
+	): Promise<Response> {
+		const abortError = () =>
+			signal?.reason instanceof Error
+				? signal.reason
+				: new DOMException('This operation was aborted', 'AbortError');
+		return new Promise<Response>((resolve, reject) => {
+			if (signal?.aborted) {
+				reject(abortError());
+				return;
+			}
+			const payload = body === undefined ? undefined : JSON.stringify(body);
+			const req = httpRequest(
+				{
+					socketPath: this.socketPath,
+					path: `/${API_VERSION}${path}`,
+					method,
+					headers:
+						payload === undefined
+							? undefined
+							: {
+									'Content-Type': 'application/json',
+									'Content-Length': Buffer.byteLength(payload),
+								},
+				},
+				(res) => {
+					const headers = new Headers();
+					for (const [key, value] of Object.entries(res.headers)) {
+						if (typeof value === 'string') headers.set(key, value);
+						else if (Array.isArray(value)) for (const v of value) headers.append(key, v);
+					}
+					resolve(
+						new Response(Readable.toWeb(res) as unknown as ReadableStream<Uint8Array>, {
+							status: res.statusCode ?? 500,
+							headers,
+						}),
+					);
+				},
+			);
+			// Pre-response failures (socket refused, daemon gone) reject here; once
+			// the Response has resolved, errors surface through its body stream.
+			req.on('error', (err) => reject(err));
+			if (signal) {
+				const onAbort = () => req.destroy(abortError());
+				signal.addEventListener('abort', onAbort, { once: true });
+				req.on('close', () => signal.removeEventListener('abort', onAbort));
+			}
+			if (payload !== undefined) req.write(payload);
+			req.end();
+		});
 	}
 
 	async ping(): Promise<boolean> {
@@ -340,11 +412,12 @@ export class DockerClient {
 			stderr: String(opts.stderr ?? true),
 			tail: String(opts.tail ?? 200),
 		});
-		const url = `http://localhost/${API_VERSION}/containers/${containerId}/logs?${params}`;
-		const res = await fetch(url, {
-			unix: this.socketPath,
+		const res = await this.requestStream(
+			'GET',
+			`/containers/${containerId}/logs?${params}`,
+			undefined,
 			signal,
-		} as RequestInit & { unix: string });
+		);
 		if (res.status === 404) {
 			await res.text();
 			return null;
@@ -370,7 +443,7 @@ export class DockerClient {
 		execId: string,
 		opts: ExecStartOpts = {},
 	): Promise<{ stdout: string; stderr: string }> {
-		const res = await this.request(
+		const res = await this.requestStream(
 			'POST',
 			`/exec/${execId}/start`,
 			{ Detach: false, Tty: false },

@@ -485,7 +485,12 @@ Instance agents (CEO/Coach) select work across *all* teams here.
 
 **Run.** `agent-runner.ts` builds the run context (provider/runtime resolution, MCP
 descriptors, egress proxy, ssh-agent socket, container env), starts a `heartbeat_runs`
-row, and drives a streaming `docker exec` of the runtime CLI. Before that exec it
+row, and drives a streaming `docker exec` of the runtime CLI. The long-lived Docker streams
+— the exec attach and the container log follow — run over `node:http` against the Docker
+unix socket rather than Bun's `fetch`: Bun's fetch enforces a hardcoded ~5-minute idle
+timeout (oven-sh/bun#5930) that severed any run whose CLI stayed quiet that long (e.g.
+inside a long tool call), failing it with "The operation timed out."; one-shot daemon calls
+stay on fetch. Before that exec it
 **live-verifies the container against Docker** (`syncContainerStatus`) instead of trusting
 the cached `container_status`: a container pruned externally or lost to a Docker restart is
 reconciled (status flipped, `container_id` nulled, project update broadcast) and the run
