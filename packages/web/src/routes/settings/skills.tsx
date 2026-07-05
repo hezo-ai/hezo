@@ -5,6 +5,7 @@ import { MarkdownEditor } from '../../components/markdown-editor';
 import { RevisionsPanel } from '../../components/revisions-panel';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
+import { InPlaceForm } from '../../components/ui/in-place-form';
 import { InfoTooltip } from '../../components/ui/info-tooltip';
 import { Input } from '../../components/ui/input';
 import {
@@ -149,10 +150,24 @@ function InstanceSkillsPage() {
 					</div>
 				</div>
 
-				{showSearch && <RegistrySearch />}
+				{showSearch && <RegistrySearch onClose={() => setShowSearch(false)} />}
 
 				{showForm && (
-					<form onSubmit={handleSubmit} className="flex flex-col gap-2 mb-4">
+					<InPlaceForm
+						title={editingSlug ? 'Edit skill' : 'Add skill'}
+						onClose={resetForm}
+						onSubmit={handleSubmit}
+						footer={
+							/* Outside the <form> so the panel's buttons never submit the editor. */
+							editingSlug ? (
+								<RevisionsPanel
+									revisions={revisions}
+									onRestore={(revisionNumber) => restoreSkill.mutateAsync(revisionNumber)}
+									isRestoring={restoreSkill.isPending}
+								/>
+							) : undefined
+						}
+					>
 						<div className="flex flex-col sm:flex-row gap-2">
 							<Input
 								placeholder="Name (e.g. Commit conventions)"
@@ -200,16 +215,7 @@ function InstanceSkillsPage() {
 								Cancel
 							</Button>
 						</div>
-					</form>
-				)}
-
-				{/* Outside the <form> so the panel's buttons never submit the editor. */}
-				{showForm && editingSlug && (
-					<RevisionsPanel
-						revisions={revisions}
-						onRestore={(revisionNumber) => restoreSkill.mutateAsync(revisionNumber)}
-						isRestoring={restoreSkill.isPending}
-					/>
+					</InPlaceForm>
 				)}
 
 				{!skills.length ? (
@@ -271,7 +277,7 @@ function InstanceSkillsPage() {
  * registry API needs a bearer token, so this panel is gated on a configured
  * token (agents don't need it — they use the `npx skills` CLI in the container).
  */
-function RegistrySearch() {
+function RegistrySearch({ onClose }: { onClose: () => void }) {
 	const { data: tokenStatus } = useRegistryTokenStatus();
 	const setToken = useSetRegistryToken();
 	const installSkill = useInstallRegistrySkill();
@@ -294,7 +300,7 @@ function RegistrySearch() {
 	}
 
 	return (
-		<div className="mb-4 rounded-md border border-border bg-surface-2 p-3">
+		<InPlaceForm title="Search skills.sh" onClose={onClose} data-testid="registry-search-panel">
 			{!configured ? (
 				<div className="flex flex-col gap-2">
 					<p className="text-[13px] text-text-2">
@@ -410,7 +416,7 @@ function RegistrySearch() {
 					)}
 				</div>
 			)}
-		</div>
+		</InPlaceForm>
 	);
 }
 

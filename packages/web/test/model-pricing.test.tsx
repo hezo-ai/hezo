@@ -49,6 +49,19 @@ test('model pricing lists the baked catalog plus overrides and creates an overri
 	await findByText('my-fine-tune');
 });
 
+test('the override form opens in a titled panel and closes via its close button', async () => {
+	const { findByRole, getByRole, getByTestId, queryByTestId, user } = await renderApp({
+		initialPath: '/settings/ai-providers',
+	});
+
+	await findByRole('heading', { name: 'Model pricing' });
+	await user.click(getByRole('button', { name: 'Override' }));
+	expect(getByTestId('in-place-form').textContent).toContain('Add price override');
+
+	await user.click(getByTestId('in-place-form-close'));
+	expect(queryByTestId('in-place-form')).toBeNull();
+});
+
 test('the Model pricing help dialog explains table-only pricing and the conservative estimate', async () => {
 	const { findByTestId, findByText, queryByText, user } = await renderApp({
 		initialPath: '/settings/ai-providers',

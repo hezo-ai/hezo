@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { type Column, DataTable } from '../../components/ui/data-table';
+import { InPlaceForm } from '../../components/ui/in-place-form';
 import { InfoTooltip } from '../../components/ui/info-tooltip';
 import { Input } from '../../components/ui/input';
 import { Tooltip } from '../../components/ui/tooltip';
@@ -209,18 +210,24 @@ function ApiKeysPage() {
 				)}
 
 				{showForm && (
-					<form onSubmit={handleCreate} className="flex flex-col sm:flex-row gap-2 mb-5">
-						<Input
-							placeholder="Key name"
-							value={name}
-							onChange={(e) => setName(e.target.value)}
-							required
-							className="flex-1"
-						/>
-						<Button type="submit" size="sm" disabled={create.isPending}>
-							Create
-						</Button>
-					</form>
+					<InPlaceForm
+						title="Create API key"
+						onClose={() => setShowForm(false)}
+						onSubmit={handleCreate}
+					>
+						<div className="flex flex-col sm:flex-row gap-2">
+							<Input
+								placeholder="Key name"
+								value={name}
+								onChange={(e) => setName(e.target.value)}
+								required
+								className="flex-1"
+							/>
+							<Button type="submit" size="sm" disabled={create.isPending}>
+								Create
+							</Button>
+						</div>
+					</InPlaceForm>
 				)}
 
 				{pending.length > 0 && (
