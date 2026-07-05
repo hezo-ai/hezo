@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { getTestContext, renderApp } from './helpers/render';
+import { renderApp } from './helpers/render';
 import { type SeededWorkspace, seedProject, seedWorkspace } from './helpers/seed';
 
 function uniqueName(base: string): string {
@@ -207,6 +207,56 @@ test('viewing an older revision shows the banner, hides Edit, and can return to 
 	await user.click(await findByTestId('view-latest'));
 	await findByText('Second draft', undefined, { timeout: 15_000 });
 	await findByRole('button', { name: 'Edit' });
+});
+
+test('search input filters the document list as you type', async () => {
+	let ws!: SeededWorkspace;
+	let projectSlug = '';
+
+	const { findByText, findByLabelText, queryByText, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async ({ apiBase, token }) => {
+			ws = await seedWorkspace();
+			const project = await seedProject(ws, {
+				name: uniqueName('Search Project'),
+				description: 'Tests filtering the doc list from the sidebar search input.',
+			});
+			projectSlug = project.slug;
+			await seedDoc(apiBase, token, projectSlug, 'analytics-workflow.md', [
+				{ content: 'Analytics' },
+			]);
+			await seedDoc(apiBase, token, projectSlug, 'brand-style-guide.md', [{ content: 'Brand' }]);
+			await seedDoc(apiBase, token, projectSlug, 'content-calendar.md', [{ content: 'Calendar' }]);
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/documents',
+		params: { projectId: projectSlug },
+	});
+
+	// All three docs are listed before any filtering.
+	await findByText('analytics-workflow.md', undefined, { timeout: 15_000 });
+	await findByText('brand-style-guide.md');
+	await findByText('content-calendar.md');
+
+	const search = await findByLabelText('Search documents');
+	await user.type(search, 'brand');
+
+	await findByText('brand-style-guide.md');
+	expect(queryByText('analytics-workflow.md')).toBeNull();
+	expect(queryByText('content-calendar.md')).toBeNull();
+
+	// A query matching nothing shows the empty-filter message…
+	await user.clear(search);
+	await user.type(search, 'zzz-no-match');
+	await findByText('No matching documents');
+
+	// …and clearing the query restores the full list.
+	await user.clear(search);
+	await findByText('analytics-workflow.md');
+	await findByText('brand-style-guide.md');
+	await findByText('content-calendar.md');
 });
 
 test('rejects invalid filename when creating a document', async () => {
