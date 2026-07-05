@@ -5,8 +5,8 @@ import { useCancelQueuedWakeup } from '../../hooks/use-cancel-queued-wakeup';
 import type { ExecutionLock } from '../../hooks/use-execution-locks';
 import type { QueuedDispatchState, QueuedWakeup } from '../../hooks/use-queued-wakeups';
 import { useRunQueuedWakeup } from '../../hooks/use-run-queued-wakeup';
-import { useTerminateRun } from '../../hooks/use-terminate-run';
 import { AgentLink } from '../agent-link';
+import { TerminateRunButton } from '../terminate-run-button';
 import { ConfirmDialog } from '../ui/confirm-dialog';
 import { Tooltip } from '../ui/tooltip';
 
@@ -112,18 +112,11 @@ function RunningAgentRow({
 	agentSlug: string | undefined;
 	run: { runId: string; commentId: string } | undefined;
 }) {
-	const [open, setOpen] = useState(false);
-	// Reuse the run page's terminate flow verbatim. The active run id comes from
-	// the lock (populated the moment the run is `running`) and falls back to the
-	// run comment; the terminate control isn't rendered while it's empty, so the
-	// mutation can never fire without it.
+	// Reuse the run page's terminate control verbatim. The active run id comes
+	// from the lock (populated the moment the run is `running`) and falls back
+	// to the run comment; the terminate control isn't rendered while it's empty,
+	// so the mutation can never fire without it.
 	const runId = lock.run_id ?? run?.runId ?? '';
-	const terminateMutation = useTerminateRun({
-		projectId,
-		agentId: lock.member_id,
-		runId,
-		taskId,
-	});
 
 	return (
 		<div
@@ -169,35 +162,16 @@ function RunningAgentRow({
 					<Loader2 className="w-3.5 h-3.5 animate-spin text-info" aria-label="Running" />
 				)}
 				{runId && (
-					<Tooltip content="Terminate run">
-						<button
-							type="button"
-							onClick={() => setOpen(true)}
-							aria-label="Terminate run"
-							data-testid={`terminate-running-agent-${lock.member_id}`}
-							disabled={terminateMutation.isPending}
-							className="inline-flex items-center justify-center h-6 w-6 text-danger hover:bg-danger/10 rounded-md transition-colors"
-						>
-							<Trash2 className="w-3.5 h-3.5" />
-						</button>
-					</Tooltip>
+					<TerminateRunButton
+						projectId={projectId}
+						agentId={lock.member_id}
+						runId={runId}
+						status="running"
+						taskId={taskId}
+						testId={`terminate-running-agent-${lock.member_id}`}
+					/>
 				)}
 			</div>
-			{runId && (
-				<ConfirmDialog
-					open={open}
-					onOpenChange={setOpen}
-					title="Terminate this run?"
-					description="The agent will be aborted immediately. Any in-progress work in this run will be lost."
-					confirmLabel="Terminate"
-					cancelLabel="Cancel"
-					variant="danger"
-					loading={terminateMutation.isPending}
-					onConfirm={async () => {
-						await terminateMutation.mutateAsync();
-					}}
-				/>
-			)}
 		</div>
 	);
 }
