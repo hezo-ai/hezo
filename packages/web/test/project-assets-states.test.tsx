@@ -19,6 +19,8 @@ interface FakeAsset {
 	byte_size: number;
 	original_filename: string;
 	comment_attachment_count?: number;
+	/** Archived assets carry a stamp; the hard-delete action only shows on these. */
+	archived_at?: string | null;
 }
 
 function asset(o: FakeAsset) {
@@ -28,13 +30,18 @@ function asset(o: FakeAsset) {
 		byte_size: o.byte_size,
 		original_filename: o.original_filename,
 		created_at: new Date().toISOString(),
+		archived_at: o.archived_at ?? null,
 		url: `/api/assets/${o.id}?exp=9999999999&sig=deadbeef`,
 		comment_attachment_count: o.comment_attachment_count ?? 0,
 	};
 }
 
 /** Render the assets page with a fetch-mocked asset list. */
-async function renderAssetsWith(assets: ReturnType<typeof asset>[], onDelete?: () => void) {
+async function renderAssetsWith(
+	assets: ReturnType<typeof asset>[],
+	onDelete?: () => void,
+	search?: { filter?: 'archived' | 'all' },
+) {
 	let ws!: SeededWorkspace;
 	const ref = { slug: '' };
 	const helpers = await renderApp({
@@ -67,9 +74,13 @@ async function renderAssetsWith(assets: ReturnType<typeof asset>[], onDelete?: (
 	await helpers.router.navigate({
 		to: '/projects/$projectId/assets',
 		params: { projectId: ref.slug },
+		search,
 	});
 	return { ...helpers, ref };
 }
+
+/** Delete only exists on archived cards — hard delete is a two-step flow. */
+const ARCHIVED_AT = new Date().toISOString();
 
 test('an HTML asset renders a sandboxed iframe preview; non-media types fall back to a file icon', async () => {
 	const r = await renderAssetsWith([
@@ -123,15 +134,20 @@ test('an HTML asset renders a sandboxed iframe preview; non-media types fall bac
 });
 
 test('deleting an asset attached to comments warns how many comments it will be removed from', async () => {
-	const r = await renderAssetsWith([
-		asset({
-			id: 'a-attached',
-			content_type: 'image/png',
-			byte_size: 512,
-			original_filename: 'shared.png',
-			comment_attachment_count: 3,
-		}),
-	]);
+	const r = await renderAssetsWith(
+		[
+			asset({
+				id: 'a-attached',
+				content_type: 'image/png',
+				byte_size: 512,
+				original_filename: 'shared.png',
+				comment_attachment_count: 3,
+				archived_at: ARCHIVED_AT,
+			}),
+		],
+		undefined,
+		{ filter: 'archived' },
+	);
 
 	await r.findByText('shared.png', undefined, { timeout: 20_000 });
 	await r.user.click(await r.findByTestId('asset-delete'));
@@ -140,15 +156,20 @@ test('deleting an asset attached to comments warns how many comments it will be 
 });
 
 test('a singular attachment count uses singular comment / it wording', async () => {
-	const r = await renderAssetsWith([
-		asset({
-			id: 'a-one',
-			content_type: 'image/png',
-			byte_size: 256,
-			original_filename: 'one.png',
-			comment_attachment_count: 1,
-		}),
-	]);
+	const r = await renderAssetsWith(
+		[
+			asset({
+				id: 'a-one',
+				content_type: 'image/png',
+				byte_size: 256,
+				original_filename: 'one.png',
+				comment_attachment_count: 1,
+				archived_at: ARCHIVED_AT,
+			}),
+		],
+		undefined,
+		{ filter: 'archived' },
+	);
 
 	await r.findByText('one.png', undefined, { timeout: 20_000 });
 	await r.user.click(await r.findByTestId('asset-delete'));
@@ -164,11 +185,13 @@ test('confirming delete posts to the delete endpoint', async () => {
 				content_type: 'image/png',
 				byte_size: 128,
 				original_filename: 'gone.png',
+				archived_at: ARCHIVED_AT,
 			}),
 		],
 		() => {
 			deleted = true;
 		},
+		{ filter: 'archived' },
 	);
 
 	await r.findByText('gone.png', undefined, { timeout: 20_000 });

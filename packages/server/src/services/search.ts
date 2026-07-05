@@ -62,7 +62,8 @@ export async function fullTextSearch(
 			 FROM documents d
 			 JOIN projects p ON p.id = d.project_id,
 			      to_tsquery('${TEXT_SEARCH_CONFIG}', $1) q
-			 WHERE d.team_id = ANY($2::uuid[]) AND d.type = 'project_doc' AND d.search_tsv @@ q
+			 WHERE d.team_id = ANY($2::uuid[]) AND d.type = 'project_doc'
+			   AND d.archived_at IS NULL AND d.search_tsv @@ q
 			 ORDER BY score DESC
 			 LIMIT $3`,
 			[tsQuery, teamIds, limit],

@@ -6,6 +6,7 @@ import {
 	AgentAdminStatus,
 	ApprovalStatus,
 	ApprovalType,
+	ArchiveFilter,
 	ASSET_MAX_FOLDER_DEPTH,
 	ATTACHMENT_EXTENSIONS,
 	ATTACHMENT_MAX_BYTES,
@@ -31,6 +32,7 @@ import {
 	INSTANCE_AGENT_SLUGS,
 	isAgentAuthorableAssetMime,
 	isMarkdownDocSlug,
+	matchesArchiveFilter,
 	normalizeAssetPath,
 	REQUIRED_SYSTEM_PROMPT_VARS,
 	ReactionKind,
@@ -88,7 +90,7 @@ import { broadcastApprovalChange } from '../services/approval-broadcast';
 import { resolveApproval } from '../services/approval-resolve';
 import { deleteAsset, readAsset, writeAsset } from '../services/asset-storage';
 import { upsertChatMemory } from '../services/chat-memory';
-import { fireAdminMention, fireCommentWakeups } from '../services/comment-wakeups';
+import { fireCommentWakeups } from '../services/comment-wakeups';
 import type { ContainerDeps } from '../services/containers';
 import { enqueueTeamCoherenceReviewTask } from '../services/description-tasks';
 import { listReviewComments } from '../services/document-review';
@@ -96,6 +98,7 @@ import {
 	getAgentSystemPrompt,
 	getDocument,
 	listDocuments,
+	setDocumentArchived,
 	setDocumentStatus,
 	upsertDocument,
 } from '../services/documents';
@@ -176,7 +179,6 @@ const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'create_comment',
 	'update_comment',
 	'request_credential',
-	'request_asset_deletion',
 	'register_connector',
 	'resolve_approval',
 	'update_agent_system_prompt',
@@ -188,8 +190,12 @@ const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'write_project_asset',
 	'move_project_asset',
 	'copy_project_asset',
+	'archive_project_asset',
+	'unarchive_project_asset',
 	'write_project_doc',
 	'set_project_doc_status',
+	'archive_project_doc',
+	'unarchive_project_doc',
 	'update_chat_memory',
 	'propose_skill',
 	'create_skill',
@@ -719,6 +725,22 @@ const projectArg = () =>
 		.describe(
 			'Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in.',
 		);
+
+/**
+ * Standard `filter` entry for doc/asset tools that can see archived items.
+ * Defaults to 'active' so archived (soft-deleted) items stay invisible unless
+ * a call explicitly asks for 'archived' or 'all'.
+ */
+const archiveFilterArg = () =>
+	z
+		.enum(Object.values(ArchiveFilter) as [string, ...string[]])
+		.optional()
+		.describe(
+			"Which archive states to consider: 'active' (default — archived items are excluded), 'archived' (only archived), or 'all'.",
+		);
+
+const toArchiveFilter = (value: unknown): ArchiveFilter =>
+	(value as ArchiveFilter | undefined) ?? ArchiveFilter.Active;
 
 export function registerTools(
 	server: McpServer,
@@ -3452,26 +3474,32 @@ export function registerTools(
 	tool(
 		server,
 		'list_project_docs',
-		'List project documentation files (PRD, spec, implementation plan, etc.)',
+		"List project documentation files (PRD, spec, implementation plan, etc.). Archived (soft-deleted) docs are excluded by default — set filter: 'archived' or 'all' to see them (entries then carry an `archived` flag).",
 		{
 			project: projectArg(),
+			filter: archiveFilterArg(),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
+			const filter = toArchiveFilter(args.filter);
 			const docs = await listDocuments(db, {
 				type: DocumentType.ProjectDoc,
 				teamId: scope.teamId,
 				projectId: scope.projectId,
+				includeArchived: filter !== ArchiveFilter.Active,
 			});
 			return {
-				files: docs.map((d) => ({
-					id: d.id,
-					filename: d.slug,
-					title: d.title,
-					status: d.status,
-					updated_at: d.updated_at,
-				})),
+				files: docs
+					.filter((d) => matchesArchiveFilter(d.archived_at, filter))
+					.map((d) => ({
+						id: d.id,
+						filename: d.slug,
+						title: d.title,
+						status: d.status,
+						updated_at: d.updated_at,
+						...(filter !== ArchiveFilter.Active ? { archived: d.archived_at !== null } : {}),
+					})),
 			};
 		},
 		db,
@@ -3484,21 +3512,31 @@ export function registerTools(
 	tool(
 		server,
 		'list_project_assets',
-		"List the project's assets — files in the assets library (UI mockups, wireframes, diagrams, PDFs, scripts, and generated markdown such as blog posts or reports). Filenames may carry a folder prefix up to 2 levels deep (e.g. `launch/images/hero.png`); reference one in a comment or doc as `assets/<path>` exactly as returned here (e.g. assets/launch/images/hero.png), no backticks. You can author text-based assets with write_project_asset and reorganize with move_project_asset / copy_project_asset; deletion is admin-gated via request_asset_deletion. Binary assets (images, PDFs, media) are human-uploaded.",
+		"List the project's assets — files in the assets library (UI mockups, wireframes, diagrams, PDFs, scripts, and generated markdown such as blog posts or reports). Filenames may carry a folder prefix up to 2 levels deep (e.g. `launch/images/hero.png`); reference one in a comment or doc as `assets/<path>` exactly as returned here (e.g. assets/launch/images/hero.png), no backticks. You can author text-based assets with write_project_asset and reorganize with move_project_asset / copy_project_asset; obsolete assets are archived with archive_project_asset (hard deletion is admin-only). Archived assets are excluded by default — set filter: 'archived' or 'all' to see them (entries then carry an `archived` flag). Binary assets (images, PDFs, media) are human-uploaded.",
 		{
 			project: projectArg(),
+			filter: archiveFilterArg(),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
+			const filter = toArchiveFilter(args.filter);
+			const where =
+				filter === ArchiveFilter.Active
+					? ' AND archived_at IS NULL'
+					: filter === ArchiveFilter.Archived
+						? ' AND archived_at IS NOT NULL'
+						: '';
 			const assets = await db.query<{
 				id: string;
 				original_filename: string;
 				content_type: string;
 				created_at: string;
+				archived_at: string | null;
 			}>(
-				`SELECT id, original_filename, content_type, created_at
-				 FROM assets WHERE project_id = $1 ORDER BY created_at DESC`,
+				`SELECT id, original_filename, content_type, created_at, archived_at
+				 FROM assets WHERE project_id = $1${where}
+				 ORDER BY created_at DESC`,
 				[scope.projectId],
 			);
 			return {
@@ -3507,6 +3545,7 @@ export function registerTools(
 					filename: a.original_filename,
 					content_type: a.content_type,
 					created_at: a.created_at,
+					...(filter !== ArchiveFilter.Active ? { archived: a.archived_at !== null } : {}),
 				})),
 			};
 		},
@@ -3549,6 +3588,18 @@ export function registerTools(
 				return { error: 'Asset exceeds 10 MB.' };
 			}
 
+			// An archived asset keeps its path reserved; overwriting it would
+			// silently resurrect (and clobber) soft-deleted content.
+			const archivedHolder = await db.query<{ id: string }>(
+				'SELECT id FROM assets WHERE project_id = $1 AND original_filename = $2 AND archived_at IS NOT NULL',
+				[projectId, filename],
+			);
+			if (archivedHolder.rows.length > 0) {
+				return {
+					error: `Asset 'assets/${filename}' exists but is archived — call unarchive_project_asset first to overwrite it, or write under a different path.`,
+				};
+			}
+
 			const assetId = crypto.randomUUID();
 			const { byteSize, sha256 } = await writeAsset(dataDir, teamId, projectId, assetId, blob);
 			const uploadedBy = auth.type === AuthType.Agent ? auth.memberId : null;
@@ -3585,12 +3636,13 @@ export function registerTools(
 	tool(
 		server,
 		'read_project_asset',
-		'Read a project asset\'s contents by path (e.g. "ui-mockups.html" or "scripts/check.sh") — the files that list_project_assets returns (UI mockups, wireframes, SVG diagrams, text exports, scripts, markdown deliverables). Use the full path exactly as listed, folder prefix included. Text-based assets (HTML, SVG, plain text, markdown) come back inline as `content`. Binary assets (images, PDFs, media) are not inlined; the response gives a read-only container path under /workspace/.hezo/assets/ to open directly. For markdown project docs use read_project_doc instead.',
+		"Read a project asset's contents by path (e.g. \"ui-mockups.html\" or \"scripts/check.sh\") — the files that list_project_assets returns (UI mockups, wireframes, SVG diagrams, text exports, scripts, markdown deliverables). Use the full path exactly as listed, folder prefix included. Text-based assets (HTML, SVG, plain text, markdown) come back inline as `content`. Binary assets (images, PDFs, media) are not inlined; the response gives a read-only container path under /workspace/.hezo/assets/ to open directly. Archived assets are not readable by default — set filter: 'archived' or 'all' to read one. For markdown project docs use read_project_doc instead.",
 		{
 			project: projectArg(),
 			filename: z
 				.string()
 				.describe('Asset path to read (e.g. "ui-mockups.html", "launch/images/hero.png")'),
+			filter: archiveFilterArg(),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -3605,13 +3657,23 @@ export function registerTools(
 				original_filename: string;
 				content_type: string;
 				byte_size: string;
+				archived_at: string | null;
 			}>(
-				`SELECT id, original_filename, content_type, byte_size
+				`SELECT id, original_filename, content_type, byte_size, archived_at
 				 FROM assets WHERE project_id = $1 AND original_filename = $2`,
 				[projectId, filename],
 			);
 			if (found.rows.length === 0) return { error: `Asset '${filename}' not found` };
 			const asset = found.rows[0];
+			const archived = asset.archived_at !== null;
+			const filter = toArchiveFilter(args.filter);
+			if (!matchesArchiveFilter(asset.archived_at, filter)) {
+				return {
+					error: archived
+						? `Asset 'assets/${filename}' is archived and the call's filter is 'active' (the default). Set filter: 'archived' or 'all' to read it, or unarchive_project_asset to restore it.`
+						: `Asset 'assets/${filename}' is active but the call's filter is '${filter}'. Use filter: 'active' or 'all'.`,
+				};
+			}
 
 			// Text-based assets are returned inline; binary assets are left on the
 			// read-only bind mount for the agent to open directly.
@@ -3624,6 +3686,7 @@ export function registerTools(
 					byte_size: Number(asset.byte_size),
 					binary: true,
 					path: `${AGENT_ATTACHMENT_DIR}/${asset.id}`,
+					...(archived ? { archived: true } : {}),
 				};
 			}
 
@@ -3632,6 +3695,7 @@ export function registerTools(
 				filename: asset.original_filename,
 				content_type: asset.content_type,
 				content: buf.toString('utf-8'),
+				...(archived ? { archived: true } : {}),
 			};
 		},
 		db,
@@ -3640,7 +3704,7 @@ export function registerTools(
 	tool(
 		server,
 		'move_project_asset',
-		'Move or rename a project asset within the assets library: change its folder (up to 2 levels deep), its filename, or both — folders spring into existence when the first asset lands in them and vanish with their last one. The stored file does not change, so the destination must keep the same extension. Moves never overwrite: if the destination path is taken the call fails. IMPORTANT: existing text references to the old `assets/<path>` in comments and docs are NOT rewritten — they degrade to plain text — so update the places that cite the old path, and prefer organizing assets early over moving them later. Agents cannot delete assets (deletion is admin-gated via request_asset_deletion); moving something obsolete into an archive folder is the self-serve alternative.',
+		'Move or rename a project asset within the assets library: change its folder (up to 2 levels deep), its filename, or both — folders spring into existence when the first asset lands in them and vanish with their last one. The stored file does not change, so the destination must keep the same extension. Moves never overwrite: if the destination path is taken the call fails. IMPORTANT: existing text references to the old `assets/<path>` in comments and docs are NOT rewritten — they degrade to plain text — so update the places that cite the old path, and prefer organizing assets early over moving them later. To retire an obsolete asset, use archive_project_asset instead of moving it aside (hard deletion is admin-only).',
 		{
 			project: projectArg(),
 			from: z.string().describe('Current asset path (e.g. "hero.png" or "launch/hero.png")'),
@@ -3660,18 +3724,23 @@ export function registerTools(
 					error: `Destination must keep the '.${fromExt ?? ''}' extension — the stored file type does not change on a move. Use copy_project_asset or a fresh write_project_asset for format changes.`,
 				};
 			}
-			const found = await db.query<{ id: string }>(
-				'SELECT id FROM assets WHERE project_id = $1 AND original_filename = $2',
+			const found = await db.query<{ id: string; archived_at: string | null }>(
+				'SELECT id, archived_at FROM assets WHERE project_id = $1 AND original_filename = $2',
 				[scope.projectId, from],
 			);
 			if (found.rows.length === 0) return { error: `Asset 'assets/${from}' not found` };
+			if (found.rows[0].archived_at !== null) {
+				return {
+					error: `Asset 'assets/${from}' is archived — unarchive_project_asset first if you need to move it.`,
+				};
+			}
 			const assetId = found.rows[0].id;
 			try {
 				await db.query('UPDATE assets SET original_filename = $1 WHERE id = $2', [to, assetId]);
 			} catch (e) {
 				if (isUniqueViolation(e)) {
 					return {
-						error: `Destination 'assets/${to}' already exists — moves never overwrite. Pick a different name, or request deletion of the existing asset first.`,
+						error: `Destination 'assets/${to}' already exists (it may be an archived asset holding the path) — moves never overwrite. Pick a different name.`,
 					};
 				}
 				throw e;
@@ -3710,11 +3779,20 @@ export function registerTools(
 			const to = normalizeAssetPath(args.to as string);
 			if (to === null) return { error: assetPathError(args.to as string) };
 			if (from === to) return { error: 'Source and destination are the same path.' };
-			const found = await db.query<{ id: string; content_type: string }>(
-				'SELECT id, content_type FROM assets WHERE project_id = $1 AND original_filename = $2',
+			const found = await db.query<{
+				id: string;
+				content_type: string;
+				archived_at: string | null;
+			}>(
+				'SELECT id, content_type, archived_at FROM assets WHERE project_id = $1 AND original_filename = $2',
 				[scope.projectId, from],
 			);
 			if (found.rows.length === 0) return { error: `Asset 'assets/${from}' not found` };
+			if (found.rows[0].archived_at !== null) {
+				return {
+					error: `Asset 'assets/${from}' is archived — unarchive_project_asset first if you need to copy it.`,
+				};
+			}
 			const source = found.rows[0];
 
 			const { teamId, projectId } = scope;
@@ -3769,149 +3847,96 @@ export function registerTools(
 		db,
 	);
 
+	// Archival is the agent-facing "delete" for assets: reversible, self-serve,
+	// and the archived asset keeps its path reserved so references stay
+	// unambiguous. Hard deletion remains a human/admin-only UI action.
+	const setAssetArchived = async (
+		args: Record<string, unknown>,
+		db: PGlite,
+		auth: AuthInfo,
+		archived: boolean,
+	) => {
+		const scope = await resolveScope(db, auth, args);
+		if ('error' in scope) return scope;
+		const filename = normalizeAssetPath(args.filename as string);
+		if (filename === null) return { error: assetPathError(args.filename as string) };
+		const found = await db.query<{ id: string; archived_at: string | null }>(
+			'SELECT id, archived_at FROM assets WHERE project_id = $1 AND original_filename = $2',
+			[scope.projectId, filename],
+		);
+		if (found.rows.length === 0) return { error: `Asset 'assets/${filename}' not found` };
+		const asset = found.rows[0];
+
+		// Idempotent: re-asserting the current state succeeds without stacking
+		// events, so a retried run never double-fires.
+		if ((asset.archived_at !== null) === archived) {
+			return { archived, reference: `assets/${filename}`, changed: false };
+		}
+
+		const actorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+		await db.query(
+			`UPDATE assets
+			 SET archived_at = CASE WHEN $2 THEN now() ELSE NULL END,
+			     archived_by_member_id = CASE WHEN $2 THEN $3::uuid ELSE NULL END
+			 WHERE id = $1`,
+			[asset.id, archived, archived ? actorMemberId : null],
+		);
+		events?.emit({
+			type: 'asset.archived',
+			teamId: scope.teamId,
+			projectId: scope.projectId,
+			actorType: actorTypeFromAuth(auth),
+			actorMemberId,
+			actorApiKeyId: apiKeyIdFromAuth(auth),
+			assetId: asset.id,
+			filename,
+			archived,
+		});
+		broadcastRowChange(wsManager, wsRoom.team(scope.teamId), 'assets', 'UPDATE', {
+			id: asset.id,
+			team_id: scope.teamId,
+			project_id: scope.projectId,
+			original_filename: filename,
+		});
+		return { archived, reference: `assets/${filename}`, changed: true };
+	};
+
 	tool(
 		server,
-		'request_asset_deletion',
-		'Ask a human admin to approve deleting one or more project assets. Deletion is destructive, so agents can never delete directly — this posts an approval card on the task; an admin approves or denies it, on approval the backend deletes the assets (rows, attachments, and stored bytes; no further agent action needed), and you are woken with the outcome. Stop any work that depends on the deletion and wait. Everything short of deletion — create, overwrite, read, list, copy, move — is self-serve; consider moving obsolete-but-maybe-valuable assets into an archive folder (move_project_asset) instead of requesting deletion.',
+		'archive_project_asset',
+		'Archive a project asset — the reversible soft delete, and the ONLY way an agent retires an asset (hard deletion is admin-only, so treat any "delete this asset" instruction as archive). The asset disappears from list_project_assets and default reads but keeps its path reserved; existing assets/<path> references in comments and docs keep resolving. Reverse with unarchive_project_asset. No approval needed.',
 		{
 			project: projectArg(),
-			task_id: z
+			filename: z
 				.string()
 				.describe(
-					'Task identifier or UUID — the approval card is posted here (usually your current task)',
+					'Asset path to archive — the full path exactly as list_project_assets returns it (e.g. "drafts/old-v1.md")',
 				),
-			filenames: z
-				.array(z.string())
-				.min(1)
-				.describe(
-					'Asset paths to delete — full paths exactly as list_project_assets returns them (e.g. ["drafts/old-v1.md", "old-logo.png"])',
-				),
-			reason: z
-				.string()
-				.describe('Why these assets should be deleted — shown to the approving admin'),
 		},
-		async (args, db, auth) => {
-			const scope = await resolveTaskScope(db, auth, args);
-			if ('error' in scope) return scope;
-			const { teamId, projectId, taskId } = scope;
+		async (args, db, auth) => setAssetArchived(args, db, auth, true),
+		db,
+	);
 
-			const raw = args.filenames as string[];
-			const paths: string[] = [];
-			for (const f of raw) {
-				const normalized = normalizeAssetPath(f);
-				if (normalized === null) return { error: assetPathError(f) };
-				if (!paths.includes(normalized)) paths.push(normalized);
-			}
-			const found = await db.query<{ id: string; original_filename: string }>(
-				'SELECT id, original_filename FROM assets WHERE project_id = $1 AND original_filename = ANY($2::text[])',
-				[projectId, paths],
-			);
-			const foundByPath = new Map(found.rows.map((r) => [r.original_filename, r.id]));
-			const missing = paths.filter((p) => !foundByPath.has(p));
-			if (missing.length > 0) {
-				return {
-					error: `Not found: ${missing.map((p) => `assets/${p}`).join(', ')} — nothing was requested (all-or-nothing). Check list_project_assets for the exact paths.`,
-				};
-			}
-			const assets = paths.map((p) => ({ id: foundByPath.get(p) as string, path: p }));
-			const idsKey = assets
-				.map((a) => a.id)
-				.sort()
-				.join(',');
-
-			// Idempotency: an identical pending request on this task is reused, so a
-			// retried run doesn't stack duplicate approval cards.
-			const pendingRows = await db.query<{
-				id: string;
-				content: { assets?: Array<{ id: string }> };
-			}>(
-				`SELECT id, content FROM task_comments
-				 WHERE task_id = $1
-				   AND content_type = 'asset_deletion_request'::comment_content_type
-				   AND chosen_option IS NULL
-				 ORDER BY created_at ASC`,
-				[taskId],
-			);
-			for (const row of pendingRows.rows) {
-				const existingIds = (row.content.assets ?? [])
-					.map((a) => a.id)
-					.sort()
-					.join(',');
-				if (existingIds === idsKey) {
-					return { comment_id: row.id, status: 'pending', reused: true };
-				}
-			}
-
-			const reason = args.reason as string;
-			const authorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
-			const refs = assets.map((a) => `assets/${a.path}`).join(', ');
-			const content = {
-				assets,
-				reason,
-				// The inbox snippet builder reads content.text; keep it human-readable.
-				text: `Requested deletion of ${assets.length} asset${assets.length === 1 ? '' : 's'}: ${refs} — ${reason}`,
-			};
-			const inserted = await db.query<{ id: string }>(
-				`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
-				 VALUES ($1, $2, 'asset_deletion_request'::comment_content_type, $3::jsonb)
-				 RETURNING *`,
-				[taskId, authorMemberId, JSON.stringify(content)],
-			);
-			broadcastCommentFamilyChange(
-				wsManager,
-				teamId,
-				projectId,
-				'task_comments',
-				'INSERT',
-				inserted.rows[0] as unknown as Record<string, unknown>,
-			);
-
-			// Deletion requests must reach a human who can act — raise the admin
-			// inbox badge even though the card carries no literal @admin text.
-			try {
-				await fireAdminMention({
-					db,
-					teamId,
-					taskId,
-					commentId: inserted.rows[0].id,
-					authorUserId: null,
-					wsManager,
-				});
-			} catch (e) {
-				log.error('Failed to fan out asset-deletion admin mention:', e);
-			}
-
-			events?.emit({
-				type: 'asset.deletion_requested',
-				teamId,
-				projectId,
-				actorType: actorTypeFromAuth(auth),
-				actorMemberId: authorMemberId,
-				actorApiKeyId: apiKeyIdFromAuth(auth),
-				commentId: inserted.rows[0].id,
-				taskId,
-				assetIds: assets.map((a) => a.id),
-				filenames: assets.map((a) => a.path),
-			});
-
-			return {
-				comment_id: inserted.rows[0].id,
-				status: 'pending',
-				reused: false,
-				assets: assets.map((a) => `assets/${a.path}`),
-				note: 'An admin must approve the deletion. Stop work that depends on it and wait — you will be woken with the outcome.',
-			};
+	tool(
+		server,
+		'unarchive_project_asset',
+		'Restore an archived project asset to active. It reappears in list_project_assets, becomes readable and writable again, and its assets/<path> reference links as before.',
+		{
+			project: projectArg(),
+			filename: z.string().describe('Asset path to restore (the same path it was archived under)'),
 		},
+		async (args, db, auth) => setAssetArchived(args, db, auth, false),
 		db,
 	);
 
 	tool(
 		server,
 		'read_project_doc',
-		'Read a markdown project doc by filename (e.g. "spec.md") — the high-level project context (PRDs, specs, architecture decisions, research) that list_project_docs returns; the full body comes back inline as `content`. These docs live in the project-doc store in the database, NOT on the filesystem: there is no /workspace/.hezo/project-docs path, so do not reach for the Read/cat file tools — always load a doc through this tool by its bare filename. When the admin has left review feedback on the doc, the result includes `review_comments` — each anchors a `comment` to a `quote` (an exact text snippet; `occurrence` disambiguates repeated snippets). Action them when asked to. IMPORTANT: any write to the doc deletes ALL of its review comments, so capture every comment from this result BEFORE your first write_project_doc call — after one write they are gone. For non-markdown assets (mockups, wireframes, diagrams) use read_project_asset instead.',
+		"Read a markdown project doc by filename (e.g. \"spec.md\") — the high-level project context (PRDs, specs, architecture decisions, research) that list_project_docs returns; the full body comes back inline as `content`. These docs live in the project-doc store in the database, NOT on the filesystem: there is no /workspace/.hezo/project-docs path, so do not reach for the Read/cat file tools — always load a doc through this tool by its bare filename. Archived docs are not readable by default — set filter: 'archived' or 'all' to read one. When the admin has left review feedback on the doc, the result includes `review_comments` — each anchors a `comment` to a `quote` (an exact text snippet; `occurrence` disambiguates repeated snippets). Action them when asked to. IMPORTANT: any write to the doc deletes ALL of its review comments, so capture every comment from this result BEFORE your first write_project_doc call — after one write they are gone. For non-markdown assets (mockups, wireframes, diagrams) use read_project_asset instead.",
 		{
 			project: projectArg(),
 			filename: z.string().describe('Filename to read (e.g. "spec.md")'),
+			filter: archiveFilterArg(),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -3923,13 +3948,24 @@ export function registerTools(
 				slug: args.filename as string,
 			});
 			if (!doc) return { error: `File '${args.filename}' not found` };
+			const archived = doc.archived_at !== null;
+			const filter = toArchiveFilter(args.filter);
+			if (!matchesArchiveFilter(doc.archived_at, filter)) {
+				return {
+					error: archived
+						? `Doc '${doc.slug}' is archived and the call's filter is 'active' (the default). Set filter: 'archived' or 'all' to read it, or unarchive_project_doc to restore it.`
+						: `Doc '${doc.slug}' is active but the call's filter is '${filter}'. Use filter: 'active' or 'all'.`,
+				};
+			}
+			const archivedField = archived ? { archived: true } : {};
 			const reviewComments = await listReviewComments(db, doc.id);
 			if (reviewComments.length === 0)
-				return { filename: doc.slug, content: doc.content, status: doc.status };
+				return { filename: doc.slug, content: doc.content, status: doc.status, ...archivedField };
 			return {
 				filename: doc.slug,
 				content: doc.content,
 				status: doc.status,
+				...archivedField,
 				review_comments: reviewComments.map((r) => ({
 					id: r.id,
 					quote: r.quote,
@@ -3964,6 +4000,18 @@ export function registerTools(
 				return {
 					error:
 						'Project docs must be markdown (.md). Non-markdown files belong in the assets library, referenced as assets/<filename>.',
+				};
+			}
+			// An archived doc is read-only; writing would silently resurrect it.
+			const prior = await getDocument(db, {
+				type: DocumentType.ProjectDoc,
+				teamId: scope.teamId,
+				projectId: scope.projectId,
+				slug: args.filename as string,
+			});
+			if (prior?.archived_at) {
+				return {
+					error: `Doc '${args.filename}' is archived — call unarchive_project_doc first, or write under a different filename.`,
 				};
 			}
 			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
@@ -4004,16 +4052,24 @@ export function registerTools(
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
+			const docScope = {
+				type: DocumentType.ProjectDoc,
+				teamId: scope.teamId,
+				projectId: scope.projectId,
+				slug: args.filename as string,
+			} as const;
+			const current = await getDocument(db, docScope);
+			if (!current) return { error: `File '${args.filename}' not found` };
+			if (current.archived_at) {
+				return {
+					error: `Doc '${current.slug}' is archived — unarchive_project_doc first to change its status.`,
+				};
+			}
 			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 			const row = await setDocumentStatus(
 				db,
 				wsManager,
-				{
-					type: DocumentType.ProjectDoc,
-					teamId: scope.teamId,
-					projectId: scope.projectId,
-					slug: args.filename as string,
-				},
+				docScope,
 				args.status as DocumentStatus,
 				callerMemberId,
 				{
@@ -4025,6 +4081,63 @@ export function registerTools(
 			if (!row) return { error: `File '${args.filename}' not found` };
 			return { updated: true, filename: row.slug, status: row.status };
 		},
+		db,
+	);
+
+	// Archival is the agent-facing "delete" for project docs too: reversible,
+	// self-serve, keeps the slug reserved and references resolving. Hard
+	// deletion remains a human/admin-only UI action.
+	const setDocArchivedTool = async (
+		args: Record<string, unknown>,
+		db: PGlite,
+		auth: AuthInfo,
+		archived: boolean,
+	) => {
+		const scope = await resolveScope(db, auth, args);
+		if ('error' in scope) return scope;
+		const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+		const result = await setDocumentArchived(
+			db,
+			wsManager,
+			{
+				type: DocumentType.ProjectDoc,
+				teamId: scope.teamId,
+				projectId: scope.projectId,
+				slug: args.filename as string,
+			},
+			archived,
+			callerMemberId,
+			{
+				events,
+				actorType: actorTypeFromAuth(auth),
+				actorApiKeyId: apiKeyIdFromAuth(auth),
+			},
+		);
+		if (!result) return { error: `File '${args.filename}' not found` };
+		return { archived, filename: result.row.slug, changed: result.changed };
+	};
+
+	tool(
+		server,
+		'archive_project_doc',
+		'Archive a project doc — the reversible soft delete, and the ONLY way an agent retires a doc (hard deletion is admin-only, so treat any "delete this doc" instruction as archive). The doc disappears from list_project_docs, default reads, and future runs\' context, but keeps its filename reserved and its revision history; existing references keep resolving. Reverse with unarchive_project_doc. No approval needed.',
+		{
+			project: projectArg(),
+			filename: z.string().describe('Doc filename to archive (e.g. "old-plan.md")'),
+		},
+		async (args, db, auth) => setDocArchivedTool(args, db, auth, true),
+		db,
+	);
+
+	tool(
+		server,
+		'unarchive_project_doc',
+		'Restore an archived project doc to active. It reappears in list_project_docs and agent-run context, and becomes readable and writable again with its content and revision history intact.',
+		{
+			project: projectArg(),
+			filename: z.string().describe('Doc filename to restore (e.g. "old-plan.md")'),
+		},
+		async (args, db, auth) => setDocArchivedTool(args, db, auth, false),
 		db,
 	);
 

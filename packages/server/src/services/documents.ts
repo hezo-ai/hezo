@@ -46,6 +46,9 @@ export interface DocumentRow {
 	content: string;
 	status: DocumentStatus;
 	last_updated_by_member_id: string | null;
+	/** Soft-delete stamp — null = active. Only project docs are ever archived. */
+	archived_at: string | null;
+	archived_by_member_id: string | null;
 	created_at: string;
 	updated_at: string;
 }
@@ -54,6 +57,8 @@ export interface DocumentRowWithAuthor extends DocumentRow {
 	last_updated_by_name: string | null;
 	/** 'agent' | 'admin' — drives the last-editor badge (docs carry no api_key attribution). */
 	last_updated_by_type: string;
+	/** Resolved display name of whoever archived the doc (null when active or unresolvable). */
+	archived_by_name: string | null;
 }
 
 export interface DocumentRevisionRow {
@@ -120,12 +125,16 @@ function scopeWhere(scope: DocumentScope, alias = ''): { sql: string; params: un
 // server-internal and never serialized to API responses.
 const SELECT_WITH_AUTHOR = `SELECT d.id, d.team_id, d.project_id, d.member_agent_id,
 	        d.type, d.slug, d.title, d.content, d.status,
-	        d.last_updated_by_member_id, d.created_at, d.updated_at,
+	        d.last_updated_by_member_id, d.archived_at, d.archived_by_member_id,
+	        d.created_at, d.updated_at,
 	        COALESCE(ma.title, m.display_name) AS last_updated_by_name,
-	        CASE WHEN ma.id IS NOT NULL THEN 'agent' ELSE 'admin' END AS last_updated_by_type
+	        CASE WHEN ma.id IS NOT NULL THEN 'agent' ELSE 'admin' END AS last_updated_by_type,
+	        COALESCE(maa.title, mb.display_name) AS archived_by_name
 	 FROM documents d
 	 LEFT JOIN members m ON m.id = d.last_updated_by_member_id
-	 LEFT JOIN member_agents ma ON ma.id = d.last_updated_by_member_id`;
+	 LEFT JOIN member_agents ma ON ma.id = d.last_updated_by_member_id
+	 LEFT JOIN members mb ON mb.id = d.archived_by_member_id
+	 LEFT JOIN member_agents maa ON maa.id = d.archived_by_member_id`;
 
 export async function getDocument(
 	db: PGlite,
@@ -143,6 +152,12 @@ export interface ListDocumentsOptions {
 	type: DocumentType;
 	teamId: string;
 	projectId?: string;
+	/**
+	 * Include archived (soft-deleted) docs. Defaults to false so every listing
+	 * surface — MCP, agent-run context, future callers — is active-only unless
+	 * it explicitly opts in. The admin UI opts in and filters client-side.
+	 */
+	includeArchived?: boolean;
 }
 
 export async function listDocuments(
@@ -154,6 +169,9 @@ export async function listDocuments(
 	if (options.projectId !== undefined) {
 		params.push(options.projectId);
 		where += ' AND d.project_id = $3';
+	}
+	if (!options.includeArchived) {
+		where += ' AND d.archived_at IS NULL';
 	}
 	const result = await db.query<DocumentRowWithAuthor>(
 		`${SELECT_WITH_AUTHOR} WHERE ${where} ORDER BY COALESCE(NULLIF(d.title, ''), d.slug) ASC`,
@@ -262,6 +280,54 @@ export async function setDocumentStatus(
 	);
 	emitDocumentEvent(audit, 'document.updated', row, actorMemberId);
 	return row;
+}
+
+/**
+ * Archives or restores a document (the soft-delete agents use instead of
+ * deletion). Idempotent: setting the state it is already in returns the row
+ * with `changed: false` and emits nothing, so retried agent runs never stack
+ * events. Like a status flip, archival is metadata — no revision is recorded
+ * and last_updated_by_member_id stays untouched.
+ */
+export async function setDocumentArchived(
+	db: PGlite,
+	wsManager: WebSocketManager | undefined,
+	scope: DocumentScope,
+	archived: boolean,
+	actorMemberId: string | null,
+	audit?: DocumentAuditContext,
+): Promise<{ row: DocumentRow; changed: boolean } | null> {
+	const where = scopeWhere(scope, '');
+	const prior = await db.query<{ id: string; archived_at: string | null }>(
+		`SELECT id, archived_at FROM documents WHERE ${where.sql}`,
+		where.params,
+	);
+	if (prior.rows.length === 0) return null;
+	const docId = prior.rows[0].id;
+
+	if ((prior.rows[0].archived_at !== null) === archived) {
+		const asIs = await db.query<DocumentRow>('SELECT * FROM documents WHERE id = $1', [docId]);
+		return { row: asIs.rows[0], changed: false };
+	}
+
+	const result = await db.query<DocumentRow>(
+		`UPDATE documents
+		 SET archived_at = CASE WHEN $2 THEN now() ELSE NULL END,
+		     archived_by_member_id = CASE WHEN $2 THEN $3::uuid ELSE NULL END
+		 WHERE id = $1
+		 RETURNING *`,
+		[docId, archived, archived ? actorMemberId : null],
+	);
+	const row = result.rows[0];
+	broadcastRowChange(
+		wsManager,
+		wsRoom.team(row.team_id),
+		'documents',
+		'UPDATE',
+		row as unknown as Record<string, unknown>,
+	);
+	emitDocumentEvent(audit, 'document.updated', row, actorMemberId);
+	return { row, changed: true };
 }
 
 /**

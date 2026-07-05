@@ -1,4 +1,6 @@
 import {
+	Archive,
+	ArchiveRestore,
 	ArrowLeft,
 	ExternalLink,
 	FileText,
@@ -17,6 +19,7 @@ import { DocumentBody } from './document-review/document-body';
 import type { DocMetadata } from './document-review/document-metadata-banner';
 import { ReviewToolbarActions } from './document-review/review-toolbar-actions';
 import { MentionTextarea } from './mention-textarea';
+import { ArchivedBadge } from './ui/archived-badge';
 import { Button } from './ui/button';
 import { ConfirmDialog } from './ui/confirm-dialog';
 import { EmptyState } from './ui/empty-state';
@@ -32,6 +35,8 @@ export interface DocItem {
 	meta?: ReactNode;
 	pinned?: boolean;
 	canDelete?: boolean;
+	/** Soft-deleted: the row renders muted with an "Archived" chip. */
+	archived?: boolean;
 }
 
 interface DocsLibraryProps {
@@ -49,9 +54,24 @@ interface DocsLibraryProps {
 	isSaving?: boolean;
 	onDelete?: () => Promise<void> | void;
 
+	/**
+	 * Archival (soft delete) for the selected doc. When `archivedInfo` is set the
+	 * doc is archived: the viewer shows a banner with Restore, hides Edit (an
+	 * archived doc is read-only), and exposes Delete (the hard delete) — the
+	 * two-step delete flow. When null/undefined and `onArchive` is set, the
+	 * toolbar offers Archive in place of Delete.
+	 */
+	archivedInfo?: { archivedAt: string; archivedByName?: string | null } | null;
+	onArchive?: () => void;
+	onRestore?: () => void;
+	isArchiveToggling?: boolean;
+
 	onNewDoc?: () => void;
 	isCreating?: boolean;
 	newForm?: ReactNode;
+
+	/** Rendered between the search row and the list — e.g. the archive FilterPills. */
+	listExtras?: ReactNode;
 
 	/** When it returns a URL for the selected doc, a button opens it in a new tab. */
 	getPopOutUrl?: (key: string) => string | null;
@@ -94,9 +114,14 @@ export function DocsLibrary({
 	onSave,
 	isSaving,
 	onDelete,
+	archivedInfo,
+	onArchive,
+	onRestore,
+	isArchiveToggling,
 	onNewDoc,
 	isCreating,
 	newForm,
+	listExtras,
 	getPopOutUrl,
 	viewerExtras,
 	viewerBanner,
@@ -207,28 +232,31 @@ export function DocsLibrary({
 					    the shell scroller; on md+ it's a non-scrolling flex row above
 					    the list's own scroller. bg-bg so list rows pass cleanly
 					    underneath on mobile. */}
-					<div className="sticky top-0 z-10 md:static flex items-center gap-2 bg-bg pb-3 md:shrink-0">
-						<Input
-							type="search"
-							aria-label="Search documents"
-							placeholder="Search documents"
-							icon={<Search className="w-3.5 h-3.5" />}
-							className="flex-1 min-w-0"
-							value={search}
-							onChange={(e) => setSearch(e.target.value)}
-						/>
-						{onNewDoc && (
-							<Button
-								variant="outline"
-								size="sm"
-								className="h-8 w-8 shrink-0 px-0 rounded-md"
-								onClick={onNewDoc}
-								aria-label="New document"
-								title="New document"
-							>
-								<Plus className="w-4 h-4" />
-							</Button>
-						)}
+					<div className="sticky top-0 z-10 md:static bg-bg pb-3 md:shrink-0">
+						<div className="flex items-center gap-2">
+							<Input
+								type="search"
+								aria-label="Filter documents"
+								placeholder="Filter..."
+								icon={<Search className="w-3.5 h-3.5" />}
+								className="flex-1 min-w-0"
+								value={search}
+								onChange={(e) => setSearch(e.target.value)}
+							/>
+							{onNewDoc && (
+								<Button
+									variant="accent"
+									size="sm"
+									className="h-8 w-8 shrink-0 px-0 rounded-md"
+									onClick={onNewDoc}
+									aria-label="New document"
+									title="New document"
+								>
+									<Plus className="w-4 h-4" />
+								</Button>
+							)}
+						</div>
+						{listExtras && <div className="mt-2">{listExtras}</div>}
 					</div>
 
 					<div className="md:overflow-y-auto md:min-h-0">
@@ -253,9 +281,16 @@ export function DocsLibrary({
 														: 'text-text-2 hover:bg-surface-2 hover:text-text-1'
 												}`}
 											>
-												<div className="text-[13px] font-medium truncate">{item.label}</div>
-												{item.meta && (
-													<div className="text-[11px] text-text-3 mt-0.5 truncate">{item.meta}</div>
+												<div
+													className={`text-[13px] font-medium truncate ${item.archived ? 'text-text-3' : ''}`}
+												>
+													{item.label}
+												</div>
+												{(item.meta || item.archived) && (
+													<div className="text-[11px] text-text-3 mt-0.5 flex items-center gap-1.5 min-w-0">
+														{item.archived && <ArchivedBadge />}
+														<span className="truncate">{item.meta}</span>
+													</div>
 												)}
 											</button>
 										</li>
@@ -330,7 +365,7 @@ export function DocsLibrary({
 										{review && projectId && (
 											<ReviewToolbarActions projectId={projectId} filename={review.filename} />
 										)}
-										{!readOnly && (
+										{!readOnly && !archivedInfo && (
 											<Button
 												variant="ghost"
 												size="sm"
@@ -364,16 +399,38 @@ export function DocsLibrary({
 												<ExternalLink className="w-3.5 h-3.5" />
 											</Button>
 										)}
-										{!readOnly && onDelete && selectedItem?.canDelete !== false && (
-											<Button
-												variant="ghost"
-												size="sm"
-												className="text-danger"
-												onClick={() => setDeleteOpen(true)}
-												aria-label="Delete document"
-											>
-												<Trash2 className="w-3.5 h-3.5" />
-											</Button>
+										{/* Active docs offer Archive (reversible, no confirm); the hard
+										    delete only appears on archived docs — a two-step flow that
+										    keeps the destructive action off the everyday toolbar. */}
+										{!readOnly &&
+											!archivedInfo &&
+											onArchive &&
+											selectedItem?.canDelete !== false && (
+												<Tooltip content="Archive document">
+													<Button
+														variant="ghost"
+														size="sm"
+														onClick={onArchive}
+														disabled={isArchiveToggling}
+														aria-label="Archive document"
+														data-testid="doc-archive"
+													>
+														<Archive className="w-3.5 h-3.5" />
+													</Button>
+												</Tooltip>
+											)}
+										{!readOnly && archivedInfo && onDelete && selectedItem?.canDelete !== false && (
+											<Tooltip content="Delete permanently">
+												<Button
+													variant="ghost"
+													size="sm"
+													className="text-danger"
+													onClick={() => setDeleteOpen(true)}
+													aria-label="Delete document"
+												>
+													<Trash2 className="w-3.5 h-3.5" />
+												</Button>
+											</Tooltip>
 										)}
 									</>
 								) : (
@@ -389,6 +446,41 @@ export function DocsLibrary({
 								)}
 							</div>
 						</div>
+
+						{mode === 'view' && archivedInfo && (
+							<div
+								className="flex items-center gap-2.5 rounded-md border border-border bg-surface-2 px-3 py-2.5 mb-4"
+								data-testid="doc-archived-banner"
+							>
+								<Archive className="w-4 h-4 shrink-0 text-text-3" />
+								<div className="flex-1 min-w-0 text-[12.5px]">
+									<span className="font-semibold text-text-1">This document is archived.</span>{' '}
+									<span className="text-text-2">
+										Hidden from the Active list and from agents
+										{archivedInfo.archivedByName
+											? ` — archived by ${archivedInfo.archivedByName}`
+											: ''}{' '}
+										on {new Date(archivedInfo.archivedAt).toLocaleDateString()}.
+									</span>
+								</div>
+								{onRestore && (
+									<Button
+										variant="secondary"
+										size="sm"
+										onClick={onRestore}
+										disabled={isArchiveToggling}
+										data-testid="doc-restore"
+									>
+										{isArchiveToggling ? (
+											<Loader2 className="w-3 h-3 animate-spin" />
+										) : (
+											<ArchiveRestore className="w-3 h-3" />
+										)}
+										Restore
+									</Button>
+								)}
+							</div>
+						)}
 
 						{mode === 'view' ? (
 							<DocumentBody
