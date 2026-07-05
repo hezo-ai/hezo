@@ -212,7 +212,13 @@ function TaskDetailPage() {
 			</div>
 			{/* Document preview: its own layer. Mobile: a full-screen overlay above
 				    the main content and the meta drawer. Desktop: the in-grid column 2. */}
-			{preview && <PreviewPanel item={preview} onClose={() => setPreview(null)} />}
+			{preview && (
+				<PreviewPanel
+					item={preview}
+					onClose={() => setPreview(null)}
+					task={{ projectId, taskId, identifier: task.identifier }}
+				/>
+			)}
 		</div>
 	);
 }

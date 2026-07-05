@@ -106,8 +106,10 @@ together into their own **review toolbar** above the document — set apart from
 own edit and delete actions so the two don't get mixed up. Both the toolbar and those edit and
 delete actions **stay pinned to the top while you scroll**, so they're always in reach in a long
 document. The toolbar shows a comment count — **click the count to jump to the first comment** —
-plus two actions: **action this review** (a clipboard button that copies a ready-made handoff you
-can paste into a task comment or a new task's description when assigning the work to an agent) and
+plus two actions: **action this review** (a clipboard button that opens a ready-made handoff you
+can copy and paste into a task comment or a new task's description when assigning the work to an
+agent — and, when you're reviewing a document from a task's preview panel, an **Add to \<task\>**
+button posts the handoff straight onto that task as a comment) and
 **clear review** (a trash button that deletes every comment after confirmation), alongside a
 **?** button that opens a short in-app guide to all of this.
 
@@ -118,8 +120,9 @@ document already take turns filling the screen.)
 
 Agents read pending review comments directly: `read_project_doc` returns them alongside the
 document content, each one anchored to the exact text you highlighted. So the flow is —
-leave your comments, hand the review to an agent (paste the copied handoff into a task and
-assign it), and the agent actions each comment against the document.
+leave your comments, hand the review to an agent (add the handoff to the task with one click
+from a task's document preview, or paste the copied handoff into any task and assign it), and
+the agent actions each comment against the document.
 
 **A review applies to the current version of the document only.** Any update to the
 document — whether you edit it or an agent does — automatically deletes all of its review

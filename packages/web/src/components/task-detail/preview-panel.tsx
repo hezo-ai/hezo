@@ -1,6 +1,7 @@
 import { ExternalLink, X } from 'lucide-react';
 import { type ProjectDoc, useProjectDoc } from '../../hooks/use-project-docs';
 import { docPreviewPath } from '../../lib/doc-preview';
+import type { ReviewTaskContext } from '../document-review/action-review-dialog';
 import { DocumentBody } from '../document-review/document-body';
 import { ReviewToolbarActions } from '../document-review/review-toolbar-actions';
 import { Tooltip } from '../ui/tooltip';
@@ -16,6 +17,8 @@ function formatBytes(bytes?: number): string {
 interface PreviewPanelProps {
 	item: PreviewItem;
 	onClose: () => void;
+	/** The hosting task (task-detail surface only) — threads through to the review dialog's "Add to <ID>". */
+	task?: ReviewTaskContext;
 }
 
 /**
@@ -25,7 +28,7 @@ interface PreviewPanelProps {
  * moves here. (Asset mentions no longer open here — they link straight to a new
  * tab.)
  */
-export function PreviewPanel({ item, onClose }: PreviewPanelProps) {
+export function PreviewPanel({ item, onClose, task }: PreviewPanelProps) {
 	const docQuery = useProjectDoc(item.projectId, item.filename);
 	const openUrl = docPreviewPath(item.projectSlug, item.filename);
 	const meta = formatBytes(item.size);
@@ -43,7 +46,7 @@ export function PreviewPanel({ item, onClose }: PreviewPanelProps) {
 				>
 					{item.filename}
 				</span>
-				<ReviewToolbarActions projectId={item.projectId} filename={item.filename} />
+				<ReviewToolbarActions projectId={item.projectId} filename={item.filename} task={task} />
 				<Tooltip content="Open in new tab">
 					<a
 						href={openUrl}
