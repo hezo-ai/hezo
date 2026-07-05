@@ -62,7 +62,9 @@ const TABLE_TO_QUERY_KEY: Record<
 	task_comments: (cid) => [queryKeys.projects.tasks(cid)],
 	comment_reactions: (cid) => [queryKeys.projects.tasks(cid)],
 	comment_attachments: (cid) => [queryKeys.projects.tasks(cid)],
-	member_agents: (cid) => [queryKeys.projects.agents(cid)],
+	// Agent rows carry the per-agent budget caps, so an update (e.g. a cap edit
+	// or a budget pause) must also refresh the Budget page's status query.
+	member_agents: (cid) => [queryKeys.projects.agents(cid), queryKeys.projects.budgetStatus(cid)],
 	projects: (cid) => [
 		queryKeys.projects.all(),
 		queryKeys.projectIntakes(),
@@ -107,7 +109,8 @@ const TABLE_TO_QUERY_KEY: Record<
 		}
 		return keys;
 	},
-	cost_entries: (cid) => [['projects', cid, 'costs']],
+	// New spend moves both the cost charts and the spend-vs-cap status.
+	cost_entries: (cid) => [['projects', cid, 'costs'], queryKeys.projects.budgetStatus(cid)],
 	execution_locks: (cid) => [['projects', cid, 'execution-locks']],
 	repos: (cid) => [queryKeys.projects.repos(cid), queryKeys.projects.all()],
 	// `goals(cid)` = ['projects', slug, 'goals'] is a prefix of goalsFiltered /
