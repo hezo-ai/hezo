@@ -6,6 +6,7 @@ import {
 	Loader2,
 	Pencil,
 	Plus,
+	Search,
 	Trash2,
 } from 'lucide-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
@@ -16,6 +17,7 @@ import { MentionTextarea } from './mention-textarea';
 import { Button } from './ui/button';
 import { ConfirmDialog } from './ui/confirm-dialog';
 import { EmptyState } from './ui/empty-state';
+import { Input } from './ui/input';
 
 export interface DocItem {
 	key: string;
@@ -105,6 +107,7 @@ export function DocsLibrary({
 	const [modeKey, setModeKey] = useState<string | null>(selectedKey);
 	const [draft, setDraft] = useState('');
 	const [deleteOpen, setDeleteOpen] = useState(false);
+	const [search, setSearch] = useState('');
 	const prevModeRef = useRef<'view' | 'edit'>('view');
 
 	if (modeKey !== selectedKey) {
@@ -123,6 +126,16 @@ export function DocsLibrary({
 	const selectedItem = selectedKey ? items.find((it) => it.key === selectedKey) : undefined;
 	const showRightPane = showNewForm || selectedKey;
 	const popOutUrl = selectedKey && getPopOutUrl ? getPopOutUrl(selectedKey) : null;
+
+	// Filter on the visible label when it's a plain string; fall back to the key
+	// (typically the filename) for rich labels.
+	const query = search.trim().toLowerCase();
+	const visibleItems = query
+		? items.filter((item) => {
+				const text = typeof item.label === 'string' ? item.label : item.key;
+				return text.toLowerCase().includes(query);
+			})
+		: items;
 
 	async function handleSave() {
 		await onSave(draft);
@@ -151,48 +164,71 @@ export function DocsLibrary({
 				    vertical padding (md:py-5 lg:py-6) so the pinned position
 				    preserves the breathing room visible when unscrolled. max-h
 				    subtracts the h-10 app header (2.5rem) plus the top offset so
-				    the list never overflows the bottom of <main>. */}
-				<div className="md:sticky md:top-5 lg:top-6 md:max-h-[calc(100vh-3.75rem)] lg:max-h-[calc(100vh-4rem)] md:overflow-y-auto">
-					{onNewDoc && (
-						<Button
-							variant="outline"
-							size="sm"
-							className="w-full mb-3 justify-start"
-							onClick={onNewDoc}
-						>
-							<Plus className="w-3.5 h-3.5" /> New document
-						</Button>
-					)}
+				    the list never overflows the bottom of <main>. The column is a
+				    flex stack: the search header stays fixed while only the list
+				    below it scrolls. */}
+				<div className="md:sticky md:top-5 lg:top-6 md:max-h-[calc(100vh-3.75rem)] lg:max-h-[calc(100vh-4rem)] md:flex md:flex-col">
+					{/* On mobile the whole page scrolls, so the header pins itself to
+					    the shell scroller; on md+ it's a non-scrolling flex row above
+					    the list's own scroller. bg-bg so list rows pass cleanly
+					    underneath on mobile. */}
+					<div className="sticky top-0 z-10 md:static flex items-center gap-2 bg-bg pb-3 md:shrink-0">
+						<Input
+							type="search"
+							aria-label="Search documents"
+							placeholder="Search documents"
+							icon={<Search className="w-3.5 h-3.5" />}
+							className="flex-1 min-w-0"
+							value={search}
+							onChange={(e) => setSearch(e.target.value)}
+						/>
+						{onNewDoc && (
+							<Button
+								variant="outline"
+								size="sm"
+								className="h-8 w-8 shrink-0 px-0 rounded-md"
+								onClick={onNewDoc}
+								aria-label="New document"
+								title="New document"
+							>
+								<Plus className="w-4 h-4" />
+							</Button>
+						)}
+					</div>
 
-					{isLoadingList ? (
-						<div className="text-text-2 text-[13px] py-4">Loading...</div>
-					) : items.length === 0 ? (
-						<div className="text-text-2 text-[13px] py-4">No documents</div>
-					) : (
-						<ul className="flex flex-col gap-0.5">
-							{items.map((item) => {
-								const isActive = item.key === selectedKey;
-								return (
-									<li key={item.key}>
-										<button
-											type="button"
-											onClick={() => onSelect(item.key)}
-											className={`w-full text-left px-2 py-1.5 rounded-md transition-colors ${
-												isActive
-													? 'bg-surface-2 text-text-1'
-													: 'text-text-2 hover:bg-surface-2 hover:text-text-1'
-											}`}
-										>
-											<div className="text-[13px] font-medium truncate">{item.label}</div>
-											{item.meta && (
-												<div className="text-[11px] text-text-3 mt-0.5 truncate">{item.meta}</div>
-											)}
-										</button>
-									</li>
-								);
-							})}
-						</ul>
-					)}
+					<div className="md:overflow-y-auto md:min-h-0">
+						{isLoadingList ? (
+							<div className="text-text-2 text-[13px] py-4">Loading...</div>
+						) : items.length === 0 ? (
+							<div className="text-text-2 text-[13px] py-4">No documents</div>
+						) : visibleItems.length === 0 ? (
+							<div className="text-text-2 text-[13px] py-4">No matching documents</div>
+						) : (
+							<ul className="flex flex-col gap-0.5">
+								{visibleItems.map((item) => {
+									const isActive = item.key === selectedKey;
+									return (
+										<li key={item.key}>
+											<button
+												type="button"
+												onClick={() => onSelect(item.key)}
+												className={`w-full text-left px-2 py-1.5 rounded-md transition-colors ${
+													isActive
+														? 'bg-surface-2 text-text-1'
+														: 'text-text-2 hover:bg-surface-2 hover:text-text-1'
+												}`}
+											>
+												<div className="text-[13px] font-medium truncate">{item.label}</div>
+												{item.meta && (
+													<div className="text-[11px] text-text-3 mt-0.5 truncate">{item.meta}</div>
+												)}
+											</button>
+										</li>
+									);
+								})}
+							</ul>
+						)}
+					</div>
 				</div>
 			</aside>
 

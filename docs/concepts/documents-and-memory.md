@@ -71,7 +71,10 @@ every agent can reach them without cluttering the codebase. You read and edit an
 from the **Documents** page in the web app, and agents read and write the same files as they
 work (`list_project_docs`, `read_project_doc`, and `write_project_doc` over Hezo's
 [MCP server](/docs/mcp/hezo-mcp-server)). A document is referenced by its plain filename —
-for example `spec.md` — so links stay stable as the work evolves.
+for example `spec.md` — so links stay stable as the work evolves. The document list sits
+beside the reader, with a **search box** at the top that filters the list as you type and a
+**+** button next to it for creating a new document — both stay in view while you scroll
+the list.
 
 Agents don't carry every document's full text on every run. Instead each run includes a
 **manifest** — a table of contents listing each document's filename, title, and when it
