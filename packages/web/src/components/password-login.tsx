@@ -8,6 +8,7 @@ import { MasterKeyForm, VaultShell } from './master-key-gate';
 import { PasswordSetForm } from './password-set-form';
 import { Button } from './ui/button';
 import { Logo } from './ui/logo';
+import { PasswordInput } from './ui/password-input';
 
 type Mode = 'login' | 'master-key' | 'reset';
 
@@ -100,13 +101,11 @@ export function PasswordLogin() {
 						<label htmlFor="login-password" className="text-sm font-medium text-text-1">
 							Password
 						</label>
-						<input
+						<PasswordInput
 							id="login-password"
-							type="password"
 							value={password}
 							onChange={(e) => setPassword(e.target.value)}
 							autoComplete="current-password"
-							className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text-1 focus:outline-none focus:ring-2 focus:ring-accent"
 						/>
 					</div>
 					{error && <p className="text-sm text-danger">{error}</p>}

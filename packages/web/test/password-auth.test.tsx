@@ -32,6 +32,26 @@ test('shows the password login with no session and signs in with the password', 
 	await expect.poll(() => queryByTestId('password-login')).toBeNull();
 });
 
+test('the login password field has a show/hide toggle', async () => {
+	const { findByTestId, getByLabelText, getByRole, user } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			api.clearToken();
+			localStorage.removeItem('hezo_token');
+		},
+	});
+
+	await findByTestId('password-login');
+	const input = getByLabelText('Password') as HTMLInputElement;
+	expect(input.type).toBe('password');
+
+	await user.click(getByRole('button', { name: 'Show password' }));
+	expect(input.type).toBe('text');
+
+	await user.click(getByRole('button', { name: 'Hide password' }));
+	expect(input.type).toBe('password');
+});
+
 test('offers master-key recovery from the login screen', async () => {
 	const { findByTestId, findByText } = await renderApp({
 		initialPath: '/',

@@ -33,7 +33,8 @@ After the master key unlocks, you create an **admin password**. This is how you 
 from here on — the master key unlocks the *instance*, your password signs *you* in. Your
 password never leaves your browser.
 
-If you ever forget it, reset it with your master key from the sign-in screen. See
+You can change it later in **Settings → Admin password**. If you ever forget it, reset it
+with your master key from the sign-in screen. See
 [Master key & encryption](/docs/security/master-key).
 
 ## 3. Connect a model

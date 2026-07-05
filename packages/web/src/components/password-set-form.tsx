@@ -3,6 +3,7 @@ import { useState } from 'react';
 import type { ApiError } from '../lib/api';
 import { MIN_PASSWORD_LENGTH, setPassword as setPasswordApi } from '../lib/auth';
 import { Button } from './ui/button';
+import { PasswordInput } from './ui/password-input';
 
 interface PasswordSetFormProps {
 	submitLabel: string;
@@ -45,13 +46,11 @@ export function PasswordSetForm({ submitLabel, onSuccess }: PasswordSetFormProps
 				<label htmlFor="new-password" className="text-sm font-medium text-text-1">
 					Password
 				</label>
-				<input
+				<PasswordInput
 					id="new-password"
-					type="password"
 					value={password}
 					onChange={(e) => setPassword(e.target.value)}
 					autoComplete="new-password"
-					className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text-1 focus:outline-none focus:ring-2 focus:ring-accent"
 				/>
 				{tooShort && (
 					<p className="text-xs text-text-2">At least {MIN_PASSWORD_LENGTH} characters.</p>
@@ -61,13 +60,11 @@ export function PasswordSetForm({ submitLabel, onSuccess }: PasswordSetFormProps
 				<label htmlFor="confirm-password" className="text-sm font-medium text-text-1">
 					Confirm password
 				</label>
-				<input
+				<PasswordInput
 					id="confirm-password"
-					type="password"
 					value={confirm}
 					onChange={(e) => setConfirm(e.target.value)}
 					autoComplete="new-password"
-					className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text-1 focus:outline-none focus:ring-2 focus:ring-accent"
 				/>
 				{mismatch && <p className="text-xs text-danger">Passwords don't match.</p>}
 			</div>

@@ -274,8 +274,13 @@ authRoutes.post('/auth/password-verify', async (c) => {
 // bearer must be a full session JWT (logged-in change) or a password-setup-scoped
 // JWT (initial-set / recovery). The password never arrives — only the client-
 // derived { salt, public_key } verifier plus a self-signature proving the client
-// holds the matching private key. Returns a fresh session so the caller is logged
-// in with the password they just set.
+// holds the matching private key. A session-authenticated change while a verifier
+// is already enrolled must additionally prove the CURRENT password: a
+// `/auth/password-challenge` nonce signed with the current-password keypair
+// (`current_challenge_id` + `current_signature`), throttled like login so this
+// endpoint can't be used as a password oracle. Setup-scoped bearers (master-key
+// recovery) and first enrollment are exempt. Returns a fresh session so the
+// caller is logged in with the password they just set.
 authRoutes.post('/auth/password', async (c) => {
 	const masterKeyManager = c.get('masterKeyManager');
 	const db = c.get('db');
@@ -287,18 +292,25 @@ authRoutes.post('/auth/password', async (c) => {
 	if (!header?.startsWith('Bearer ')) {
 		return err(c, 'UNAUTHORIZED', 'Missing authorization header', 401);
 	}
-	const userId = await resolvePasswordMutationUserId(header.slice(7), db, masterKeyManager);
-	if (!userId) {
+	const auth = await resolvePasswordMutationUserId(header.slice(7), db, masterKeyManager);
+	if (!auth) {
 		return err(c, 'UNAUTHORIZED', 'Invalid or expired token', 401);
 	}
+	const { userId, isSetupScoped } = auth;
 
-	let body: { salt?: string; public_key?: string; signature?: string };
+	let body: {
+		salt?: string;
+		public_key?: string;
+		signature?: string;
+		current_challenge_id?: string;
+		current_signature?: string;
+	};
 	try {
 		body = await c.req.json();
 	} catch {
 		return err(c, 'INVALID_REQUEST', 'JSON body required', 400);
 	}
-	const { salt, public_key, signature } = body;
+	const { salt, public_key, signature, current_challenge_id, current_signature } = body;
 	if (
 		typeof salt !== 'string' ||
 		!SALT_HEX.test(salt) ||
@@ -308,6 +320,49 @@ authRoutes.post('/auth/password', async (c) => {
 		!SIGNATURE_HEX.test(signature)
 	) {
 		return err(c, 'INVALID_REQUEST', 'salt, public_key, and signature are required', 400);
+	}
+
+	// A logged-in change (session bearer, verifier already enrolled) must prove
+	// the current password before the verifier is replaced. Verified against the
+	// OLD stored verifier, so this must run before setAdminPasswordVerifier.
+	if (!isSetupScoped && (await getAdminPasswordVerifier(db))) {
+		const now = Date.now();
+		const lockMs = loginLockRemainingMs(now);
+		if (lockMs > 0) {
+			return err(
+				c,
+				'TOO_MANY_ATTEMPTS',
+				`Too many attempts. Try again in ${Math.ceil(lockMs / 1000)}s.`,
+				429,
+			);
+		}
+		if (
+			typeof current_challenge_id !== 'string' ||
+			current_challenge_id.length === 0 ||
+			typeof current_signature !== 'string' ||
+			!SIGNATURE_HEX.test(current_signature)
+		) {
+			return err(
+				c,
+				'CURRENT_PASSWORD_REQUIRED',
+				'Changing the password requires proof of the current password',
+				400,
+			);
+		}
+		// Consume before verifying: one nonce absorbs a single guess.
+		const challenge = c.get('authChallenges').consume(current_challenge_id);
+		if (!challenge) {
+			return err(c, 'INVALID_CHALLENGE', 'Unknown, expired, or already used challenge', 401);
+		}
+		const currentOk = await verifyPasswordSignature(
+			db,
+			buildPasswordLoginMessage(challenge.nonce),
+			current_signature,
+		);
+		if (!currentOk) {
+			recordLoginFailure(now);
+			return err(c, 'INVALID_CREDENTIALS', 'Incorrect password', 401);
+		}
 	}
 
 	// TOFU self-signature: proves the client holds the private key for the verifier

@@ -181,6 +181,37 @@ export async function setPassword(password: string): Promise<void> {
 	clearPendingSetupToken();
 }
 
+/**
+ * Change the admin password while signed in. Proves the CURRENT password by
+ * signing a fresh server challenge with the keypair derived from it (the server
+ * verifies against the stored verifier and throttles like login), then enrolls
+ * a fresh verifier for the new password. Neither password leaves the browser.
+ * The server returns a rotated session, so the user stays signed in.
+ */
+export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+	const challenge = await api.post<{ challenge_id: string; nonce: string; salt: string }>(
+		'/api/auth/password-challenge',
+	);
+	const current = await derivePasswordKeyPair(currentPassword, challenge.salt);
+	const currentSignature = signAuthMessage(
+		current.privateKey,
+		buildPasswordLoginMessage(challenge.nonce),
+	);
+
+	const salt = generatePasswordSalt();
+	const { publicKeyHex, privateKey } = await derivePasswordKeyPair(newPassword, salt);
+	const signature = signAuthMessage(privateKey, buildPasswordSetupMessage(publicKeyHex, salt));
+
+	const data = await api.post<{ token: string }>('/api/auth/password', {
+		salt,
+		public_key: publicKeyHex,
+		signature,
+		current_challenge_id: challenge.challenge_id,
+		current_signature: currentSignature,
+	});
+	api.setToken(data.token);
+}
+
 export function logout() {
 	api.clearToken();
 	clearPendingSetupToken();
