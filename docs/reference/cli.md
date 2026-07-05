@@ -26,12 +26,18 @@ their environment-variable equivalents. The most common:
 ```sh
 hezo --port 8080                 # listen on a different port
 hezo --data-dir /var/lib/hezo    # use a specific data directory
+hezo --database-url postgres://user:pass@host:5432/hezo   # use an external Postgres instead of the embedded database
 hezo --master-key "<phrase>"     # set up or unlock without the web gate
 hezo --web-url https://hezo.example.com   # public base URL for sign-in redirects
 hezo --no-open                   # don't open the web app in your browser on start
 hezo --container-bind-host 0.0.0.0  # native-Linux Docker: let agent containers reach the egress proxy/SSH bridge
 hezo --disable-telemetry         # turn off the anonymous daily usage report (on by default)
 ```
+
+By default the database is embedded and lives under the data directory. With
+`--database-url` (or `HEZO_DATABASE_URL`) Hezo runs against an external PostgreSQL 14+
+instead — see [Using an external Postgres](/docs/deployment/configuration) for
+requirements (TLS, latency, pooling).
 
 On **native-Linux Docker**, agent containers reach the host over the bridge gateway, so the
 host firewall must allow the Docker bridge to reach Hezo's ports. The boot connectivity check
@@ -64,6 +70,10 @@ hezo --reset
 Starts fresh with an empty database. Your previous data isn't deleted — the existing
 `pgdata` is renamed aside on disk — but it stays encrypted with the old master key, so
 this is effectively the only path forward once the master key is lost.
+
+`--reset` applies to the **embedded** database only; combined with `--database-url` it
+exits with an error. To start an external database fresh, drop and recreate it with your
+provider's tools.
 
 ## Info
 
