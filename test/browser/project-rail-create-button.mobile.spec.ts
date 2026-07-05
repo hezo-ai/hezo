@@ -36,7 +36,8 @@ test('mobile drawer: the create button follows the avatar list while it fits', a
 	expect(scrollerBox.y + scrollerBox.height - (buttonBox.y + buttonBox.height)).toBeGreaterThan(
 		100,
 	);
-	expect(await button.evaluate((el) => getComputedStyle(el).boxShadow)).toBe('none');
+	// The elevation shadow is always on, in the inline state too.
+	expect(await button.evaluate((el) => getComputedStyle(el).boxShadow)).not.toBe('none');
 });
 
 test('mobile drawer: the create button pins to the bottom with a shadow when the list overflows', async ({
@@ -59,9 +60,7 @@ test('mobile drawer: the create button pins to the bottom with a shadow when the
 
 	const button = drawer.getByTestId('project-rail-new');
 	await expect(button).toBeVisible();
-	await expect
-		.poll(async () => button.evaluate((el) => getComputedStyle(el).boxShadow))
-		.not.toBe('none');
+	expect(await button.evaluate((el) => getComputedStyle(el).boxShadow)).not.toBe('none');
 
 	const scrollerBox = await scroller.boundingBox();
 	const buttonBox = await button.boundingBox();

@@ -33,8 +33,9 @@ test('the create button flows right after the avatar list while it fits the rail
 	expect(scrollerBox.y + scrollerBox.height - (buttonBox.y + buttonBox.height)).toBeGreaterThan(
 		100,
 	);
-	// Inline state: no elevation shadow, and no separator border above it.
-	expect(await button.evaluate((el) => getComputedStyle(el).boxShadow)).toBe('none');
+	// The elevation shadow is always on — inline too — and there is no
+	// separator border above the button.
+	expect(await button.evaluate((el) => getComputedStyle(el).boxShadow)).not.toBe('none');
 	expect(
 		await button.evaluate((el) => getComputedStyle(el.parentElement as Element).borderTopWidth),
 	).toBe('0px');
@@ -58,11 +59,8 @@ test('the create button pins to the bottom with a shadow once the avatar list ov
 	const button = page.getByTestId('project-rail-new');
 	await expect(button).toBeVisible();
 
-	// The overflow measurement lands a paint after the avatars mount — poll for
-	// the shadow rather than asserting the very first frame.
-	await expect
-		.poll(async () => button.evaluate((el) => getComputedStyle(el).boxShadow))
-		.not.toBe('none');
+	// The always-on elevation shadow is the only separation cue while pinned.
+	expect(await button.evaluate((el) => getComputedStyle(el).boxShadow)).not.toBe('none');
 
 	const scrollerBox = await scroller.boundingBox();
 	const buttonBox = await button.boundingBox();

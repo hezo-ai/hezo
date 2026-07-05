@@ -1,6 +1,6 @@
 import { Link } from '@tanstack/react-router';
 import { Building2, Home, Plus } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { useActiveProject } from '../hooks/use-active-project';
 import { useInboxUnreadCount, useInboxUnreadCountsBySlug } from '../hooks/use-inbox-count';
 import { useMe } from '../hooks/use-me';
@@ -19,9 +19,10 @@ import { Tooltip } from './ui/tooltip';
  * The create-project action is the last item *inside* the scrolling avatar
  * list, with `sticky bottom-0`: while the avatars fit the rail it simply flows
  * right after the last one, and once they overflow it pins to the bottom of
- * the visible area (the avatars scroll beneath it) with an elevation shadow
- * marking the pinned state. Only the HQ entry stays pinned below the scroll
- * area, behind a border.
+ * the visible area (the avatars scroll beneath it). Its elevation shadow is
+ * always on — it is the button's affordance in both states; there is no
+ * separator border in either. Only the HQ entry stays pinned below the
+ * scroll area, behind a border.
  *
  * `showHome` pins a Home button above the avatar list (separated by a border).
  * It's used in the mobile side drawer, where the header logo opens the drawer
@@ -38,29 +39,6 @@ export function ProjectRail({ showHome = false }: { showHome?: boolean } = {}) {
 	const { data: hqInbox } = useInboxUnreadCount(hq?.slug ?? '', !!hq);
 	const [createOpen, setCreateOpen] = useState(false);
 	const hqActive = !!hq && active?.slug === hq.slug;
-
-	// Whether the avatar list overflows its viewport. Drives only the shadow on
-	// the sticky create button — its position is pure CSS, so toggling the class
-	// never changes layout and there is no measure→move feedback loop.
-	const scrollRef = useRef<HTMLDivElement | null>(null);
-	const [overflowing, setOverflowing] = useState(false);
-	useEffect(() => {
-		const el = scrollRef.current;
-		if (!el) return;
-		const measure = () => setOverflowing(el.scrollHeight - el.clientHeight > 1);
-		measure();
-		// The container box changes on window resize or when the pinned HQ block
-		// (de)mounts; content growth (projects loading in) changes scrollHeight
-		// without a box change, which only the childList observer sees.
-		const ro = new ResizeObserver(measure);
-		ro.observe(el);
-		const mo = new MutationObserver(measure);
-		mo.observe(el, { childList: true });
-		return () => {
-			ro.disconnect();
-			mo.disconnect();
-		};
-	}, []);
 
 	return (
 		<>
@@ -90,7 +68,6 @@ export function ProjectRail({ showHome = false }: { showHome?: boolean } = {}) {
 				  overhang plus the active ring.
 				*/}
 				<div
-					ref={scrollRef}
 					className="flex-1 min-h-0 w-full overflow-y-auto flex flex-col items-center gap-2 pt-2.5 pb-1"
 					data-testid="project-rail-scroll"
 				>
@@ -125,8 +102,9 @@ export function ProjectRail({ showHome = false }: { showHome?: boolean } = {}) {
 						  Sticky, not a pinned sibling: in flow it sits right after the
 						  last avatar; once the list overflows it stops at the viewport
 						  bottom while the avatars scroll beneath. The full-width opaque
-						  wrapper masks avatars sliding under; the shadow (elevation, no
-						  separator border) only appears while the list overflows.
+						  wrapper masks avatars sliding under. The shadow is always on
+						  (upward, so the overflow box can't clip it away in the stuck
+						  position) — there is no separator border in either state.
 						*/
 						<div className="sticky bottom-0 z-10 shrink-0 w-full flex justify-center py-1 bg-surface-2">
 							<Tooltip content="New project" side="right">
@@ -135,9 +113,7 @@ export function ProjectRail({ showHome = false }: { showHome?: boolean } = {}) {
 									onClick={() => setCreateOpen(true)}
 									aria-label="New project"
 									data-testid="project-rail-new"
-									className={`w-9 h-9 rounded-md flex items-center justify-center text-text-2 hover:text-text-1 hover:bg-surface border border-dashed border-border transition ${
-										overflowing ? 'shadow-up' : ''
-									}`}
+									className="w-9 h-9 rounded-md flex items-center justify-center text-text-2 hover:text-text-1 hover:bg-surface border border-dashed border-border transition-colors shadow-up"
 								>
 									<Plus className="w-4 h-4" />
 								</button>

@@ -74,10 +74,10 @@
 	--elev-sm: 0 1px 3px oklch(0.2 0.02 262 / 0.07), 0 1px 2px oklch(0.2 0.02 262 / 0.05);
 	--elev-md: 0 4px 12px oklch(0.2 0.02 262 / 0.08), 0 1px 3px oklch(0.2 0.02 262 / 0.06);
 	--elev-lg: 0 12px 32px oklch(0.2 0.02 262 / 0.14), 0 2px 8px oklch(0.2 0.02 262 / 0.08);
-	/* Upward elevation for bottom-stuck elements inside a scroll container — an
-	   overflow box clips a downward shadow at its bottom edge, so the ink has to
-	   spread up onto the content scrolling beneath (e.g. the project rail's
-	   sticky create button). */
+	/* Upward elevation for elements that can stick to the bottom of a scroll
+	   container (the project rail's create button, which carries it in both its
+	   in-flow and stuck states) — an overflow box clips a downward shadow at its
+	   bottom edge, so the ink has to spread up instead. */
 	--elev-up: 0 -2px 10px oklch(0.2 0.02 262 / 0.14), 0 -1px 3px oklch(0.2 0.02 262 / 0.1);
 }
 
