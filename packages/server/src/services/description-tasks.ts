@@ -106,7 +106,7 @@ function buildTeamCoherenceReviewBody(
 `;
 	return `${draftBanner}## Team coherence review
 
-The **${teamSlug}** project-team changed (reason: ${reason}). Audit its roster, then rewrite the descriptive blobs that other agents read so they stay accurate. Use \`team_id\` = \`${teamSlug}\` for the tool calls below.
+The **${teamSlug}** project-team changed (reason: ${reason}). Audit its roster — including whether every role's output gets verified by someone other than its author — then rewrite the descriptive blobs that other agents read so they stay accurate. Use \`team_id\` = \`${teamSlug}\` for the tool calls below.
 
 **Steps**
 
@@ -118,9 +118,12 @@ The **${teamSlug}** project-team changed (reason: ${reason}). Audit its roster, 
    - **Stale prompts** — system prompts that describe a manager, peer, or report that no longer matches the actual team structure.
    - **Coverage gaps** — responsibilities the team is expected to own but no agent describes itself as covering.
    - **Conflicts** — two agents claiming the same responsibility with no division of work.
+   - **Unverified work** — a producing role whose significant deliverables can reach done without review by anyone but their author. Review and verification must be part of the core flow of work for every producing role: a manager reviewing a direct report's output, a peer role responsible for verification (a reviewer checking a writer's content, a QA role checking an engineer's changes), or explicit review/handoff duties written into the producing and reviewing agents' system prompts. The mechanism can be team structure, system prompts, a dedicated reviewer role, or — usually best — a combination; what matters is that no role ships its own work unchecked.
 4. Reconcile what you can:
-   - Use \`update_agent_system_prompt(agent_id, content)\` to rewrite a prompt so it matches the current team structure.
-   - For changes you cannot make through MCP tools (re-parenting an agent, removing an agent, hiring a new role), post a single summary comment on this ticket explaining what should change and request admin confirmation. Do NOT block on the comment — finish steps 5 and 6 with the current roster.
+   - Use \`update_agent_system_prompt(agent_id, content)\` to rewrite a prompt so it matches the current team structure — including baking verification into the flow of work where it is missing: name who reviews the producer's output before it can close, and make reviewing that output an explicit responsibility in the reviewer's or manager's prompt.
+   - Use \`set_agent_reports_to(agent_id, reports_to)\` to fix orphan or wrong reporting lines so delegation and review can actually flow along the org chart.
+   - When a gap (verification or coverage) needs a role that doesn't exist yet, file it with \`create_hire_proposal\` — it lands as a pending approval for the admin to review.
+   - For changes that need admin confirmation before you can action them (removing an agent), post a single summary comment on this ticket explaining what should change and request admin confirmation. Do NOT block on the comment — finish steps 5 and 6 with the current roster.
 5. **Rewrite the descriptive blobs.** For every enabled agent:
    - \`set_agent_summary(agent_id, summary="...")\` — distill the agent's prompt into a single plain-prose paragraph (≤5 lines, third person, no bullets, no greetings) describing what the agent does and how it works.
    - \`set_agent_team_context(agent_id, content="...")\` — write a relationships narrative addressed to that agent ("you"), up to ~30 lines, covering its manager (and how to escalate), direct reports (and how to delegate to each), peers (and typical handoffs), indirect reports / agents two+ levels away (and the correct routing path), and any humans on the admin (and when to involve them).

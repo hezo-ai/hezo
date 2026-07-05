@@ -93,6 +93,21 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 		expect(body).toContain('set_team_summary');
 	});
 
+	it('body requires a verification-coverage audit with concrete remediation tools', async () => {
+		const taskId = await enqueueTeamCoherenceReviewTask(db, teamId, 'agent_hired');
+		const task = await db.query<{ description: string }>(
+			`SELECT description FROM tasks WHERE id = $1`,
+			[taskId],
+		);
+		const body = task.rows[0].description;
+		// The audit list must call out work shipping without independent review...
+		expect(body).toContain('Unverified work');
+		expect(body).toContain('someone other than its author');
+		// ...and the reconcile step must name the tools that close the gap.
+		expect(body).toContain('set_agent_reports_to');
+		expect(body).toContain('create_hire_proposal');
+	});
+
 	it('creates a wakeup for the CEO when enqueueing', async () => {
 		const taskId = await enqueueTeamCoherenceReviewTask(db, teamId, 'agent_hired');
 		const wakeups = await db.query<{ source: string; payload: Record<string, unknown> }>(
