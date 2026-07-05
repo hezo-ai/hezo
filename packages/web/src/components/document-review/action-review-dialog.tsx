@@ -1,49 +1,61 @@
 import * as Dialog from '@radix-ui/react-dialog';
-import { Copy, Loader2 } from 'lucide-react';
-import { useCreateComment } from '../../hooks/use-comments';
+import { Copy } from 'lucide-react';
+import { useState } from 'react';
+import { useCreateCommentOnTask } from '../../hooks/use-comments';
 import { toast } from '../../hooks/use-toast';
 import { copyToClipboard } from '../../lib/clipboard';
 import { Button } from '../ui/button';
 import { DialogContent } from '../ui/dialog';
+import { AddToTaskPicker } from './add-to-task-picker';
 import { buildReviewHandoff } from './review-handoff';
 
-/** Task context for the "Add to <ID>" action — present only when the dialog is opened from a task view. */
+/** Task context when the dialog is opened from a task view — pins that task first in the picker. */
 export interface ReviewTaskContext {
 	/** Route-param project slug (API path + query keys). */
 	projectId: string;
 	/** Route-param task id (lowercase identifier) — API path + query keys. */
 	taskId: string;
-	/** Uppercase display identifier, e.g. "HM-31" — the button label. */
+	/** Uppercase display identifier, e.g. "HM-31". */
 	identifier: string;
+	/** Task title for the picker's pinned row. */
+	title?: string;
 }
 
 interface ActionReviewDialogProps {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
+	/** Route-param project slug — scopes the "Add to task" picker's task list. */
+	projectId: string;
 	filename: string;
 	commentCount: number;
-	/** When set, renders "Add to <identifier>" which posts the handoff as a comment on that task. */
+	/** When set, the picker pins this task as its first entry. */
 	task?: ReviewTaskContext;
 }
 
 /**
  * "Action this review": hands the pending review to an agent. Shows the
- * admin-facing instructions and the handoff blurb — copyable everywhere, and
- * postable straight onto the hosting task as a comment when opened from a task
- * view. The review comments themselves stay in the database (agents read them
- * via read_project_doc). Either action closes the dialog on success.
+ * admin-facing instructions and the handoff blurb — copyable, or postable as a
+ * comment onto any of the project's tasks via the "Add to task" picker (the
+ * hosting task leads the list when opened from a task view). The review
+ * comments themselves stay in the database (agents read them via
+ * read_project_doc). Either action closes the dialog on success.
  */
 export function ActionReviewDialog({
 	open,
 	onOpenChange,
+	projectId,
 	filename,
 	commentCount,
 	task,
 }: ActionReviewDialogProps) {
 	const handoff = buildReviewHandoff(filename);
-	// Inert until fired — the Add button only renders (and handleAdd only runs)
-	// when `task` is set, so the empty-string fallback never reaches the API.
-	const createComment = useCreateComment(task?.projectId ?? '', task?.taskId ?? '');
+	const createComment = useCreateCommentOnTask(projectId);
+	const [pickerOpen, setPickerOpen] = useState(false);
+
+	function handleOpenChange(next: boolean) {
+		if (!next) setPickerOpen(false);
+		onOpenChange(next);
+	}
 
 	async function handleCopy() {
 		const ok = await copyToClipboard(handoff);
@@ -51,29 +63,40 @@ export function ActionReviewDialog({
 			toast.error('Failed to copy to clipboard');
 			return;
 		}
-		onOpenChange(false);
+		handleOpenChange(false);
 	}
 
-	async function handleAdd() {
-		if (!task) return;
+	async function handleAdd(target: { taskId: string; identifier: string }) {
 		try {
-			await createComment.mutateAsync({ content: handoff });
-			onOpenChange(false);
+			await createComment.mutateAsync({ taskId: target.taskId, content: handoff });
+			handleOpenChange(false);
 		} catch (e) {
+			// Close only the picker — the dialog stays so the handoff isn't lost.
+			setPickerOpen(false);
 			toast.error((e as Error).message || 'Failed to add comment');
 		}
 	}
 
 	return (
-		<Dialog.Root open={open} onOpenChange={onOpenChange}>
-			<DialogContent size="md" data-testid="action-review-dialog">
+		<Dialog.Root open={open} onOpenChange={handleOpenChange}>
+			<DialogContent
+				size="md"
+				data-testid="action-review-dialog"
+				onEscapeKeyDown={(e) => {
+					// Escape with the picker open closes just the picker.
+					if (pickerOpen) {
+						e.preventDefault();
+						setPickerOpen(false);
+					}
+				}}
+			>
 				<Dialog.Title className="mb-3 pr-8 text-base font-semibold">
 					Action this review
 				</Dialog.Title>
 				<Dialog.Description className="mb-3 text-[12.5px] leading-relaxed text-text-2">
-					{task
-						? `Add this handoff as a comment on ${task.identifier} — or copy it for another task — and assign it to the agent who should action the feedback. The agent reads the review comments directly from the document.`
-						: "Paste this handoff into a task comment — or a new task's description — and assign it to the agent who should action the feedback. The agent reads the review comments directly from the document."}
+					Add this handoff as a comment on a task — pick one from Add to task, or copy it — and
+					assign it to the agent who should action the feedback. The agent reads the review comments
+					directly from the document.
 				</Dialog.Description>
 				<div
 					className="whitespace-pre-wrap rounded-md border border-border bg-surface-2 p-3 text-[12.5px] leading-relaxed text-text-1"
@@ -85,12 +108,12 @@ export function ActionReviewDialog({
 					{commentCount} comment{commentCount === 1 ? '' : 's'} · {filename}
 				</div>
 				<div
-					className={`mt-3 flex items-center gap-2 ${task ? 'justify-between' : 'justify-center'}`}
+					className="mt-3 flex items-center justify-between gap-2"
 					data-testid="action-review-footer"
 				>
 					<Button
 						size="sm"
-						variant={task ? 'secondary' : 'primary'}
+						variant="secondary"
 						onClick={handleCopy}
 						aria-label="Copy handoff"
 						data-testid="action-review-copy"
@@ -98,18 +121,17 @@ export function ActionReviewDialog({
 						<Copy className="h-3 w-3" />
 						Copy
 					</Button>
-					{task && (
-						<Button
-							size="sm"
-							onClick={handleAdd}
-							disabled={createComment.isPending}
-							aria-label={`Add to ${task.identifier}`}
-							data-testid="action-review-add"
-						>
-							{createComment.isPending && <Loader2 className="h-3 w-3 animate-spin" />}
-							Add to {task.identifier}
-						</Button>
-					)}
+					<AddToTaskPicker
+						projectId={projectId}
+						currentTask={task}
+						open={pickerOpen}
+						onOpenChange={setPickerOpen}
+						pending={createComment.isPending}
+						pendingTaskId={
+							createComment.isPending ? (createComment.variables?.taskId ?? null) : null
+						}
+						onSelect={handleAdd}
+					/>
 				</div>
 			</DialogContent>
 		</Dialog.Root>

@@ -17,7 +17,7 @@ function formatBytes(bytes?: number): string {
 interface PreviewPanelProps {
 	item: PreviewItem;
 	onClose: () => void;
-	/** The hosting task (task-detail surface only) — threads through to the review dialog's "Add to <ID>". */
+	/** The hosting task (task-detail surface only) — pinned first in the review dialog's "Add to task" picker. */
 	task?: ReviewTaskContext;
 }
 

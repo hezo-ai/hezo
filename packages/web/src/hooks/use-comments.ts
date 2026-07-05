@@ -81,6 +81,31 @@ export function useCreateComment(projectId: string, taskId: string) {
 	});
 }
 
+/**
+ * Create a comment on a task chosen at call time (e.g. the action-review
+ * "Add to task" picker). Same cache handling as `useCreateComment`, but the
+ * target task travels in the mutation variables instead of the hook args.
+ */
+export function useCreateCommentOnTask(projectId: string) {
+	return useMutation({
+		mutationFn: ({ taskId, content }: { taskId: string; content: string }) =>
+			api.post<Comment>(`/api/projects/${projectId}/tasks/${taskId}/comments`, { content }),
+		onSuccess: (created, { taskId }) => {
+			queryClient.setQueryData<Comment[]>(
+				queryKeys.projects.taskComments(projectId, taskId),
+				(old) => {
+					if (!old) return [created];
+					if (old.some((c) => c.id === created.id)) return old;
+					return [...old, created];
+				},
+			);
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.projects.taskComments(projectId, taskId),
+			});
+		},
+	});
+}
+
 export interface ReactionMutationResponse {
 	comment_id: string;
 	kind: string;

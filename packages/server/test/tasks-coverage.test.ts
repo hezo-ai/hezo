@@ -146,6 +146,17 @@ describe('GET /tasks list filters', () => {
 		expect(data[0].title).toContain('Zxyzzy');
 	});
 
+	it('filters by search on the task identifier', async () => {
+		const task = await createTask('Identifier-search target');
+		const res = await app.request(
+			`/api/projects/${projectSlug}/tasks?search=${task.identifier.toLowerCase()}`,
+			{ headers: authHeader(token) },
+		);
+		expect(res.status).toBe(200);
+		const data = (await res.json()).data;
+		expect(data.map((t: { id: string }) => t.id)).toContain(task.id);
+	});
+
 	it('ignores an assignee_id filter that is only whitespace/commas', async () => {
 		// The split/trim/filter leaves no ids, so no IN clause is added (the
 		// `ids.length > 0` branch is skipped) and all tasks come back.

@@ -28,8 +28,9 @@ export function ReviewHelp({ className }: { className?: string }) {
 					<strong>Click a highlight</strong> (or its margin icon) to edit or delete that comment.
 				</li>
 				<li>
-					The <strong>clipboard button</strong> copies a handoff you can paste into a task — agents
-					read the comments directly from the document.
+					The <strong>clipboard button</strong> opens a handoff you can copy — or post straight onto
+					a task you pick from the <strong>Add to task</strong> list — agents read the comments
+					directly from the document.
 				</li>
 				<li>
 					The <strong>trash button</strong> clears the entire review.

@@ -10,7 +10,7 @@ interface ReviewToolbarActionsProps {
 	/** Route-param project slug (query keys + API paths). */
 	projectId: string;
 	filename: string;
-	/** Task context when this toolbar renders inside a task view — enables "Add to <ID>" in the action dialog. */
+	/** Task context when this toolbar renders inside a task view — pins that task first in the action dialog's "Add to task" picker. */
 	task?: ReviewTaskContext;
 	/**
 	 * `'grouped'` (default) wraps the controls in a tinted, rounded container so
@@ -103,6 +103,7 @@ export function ReviewToolbarActions({
 			<ActionReviewDialog
 				open={actionOpen}
 				onOpenChange={setActionOpen}
+				projectId={projectId}
 				filename={filename}
 				commentCount={count}
 				task={task}

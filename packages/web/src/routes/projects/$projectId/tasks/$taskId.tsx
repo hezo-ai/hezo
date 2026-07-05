@@ -216,7 +216,7 @@ function TaskDetailPage() {
 				<PreviewPanel
 					item={preview}
 					onClose={() => setPreview(null)}
-					task={{ projectId, taskId, identifier: task.identifier }}
+					task={{ projectId, taskId, identifier: task.identifier, title: task.title }}
 				/>
 			)}
 		</div>
