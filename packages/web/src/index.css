@@ -74,6 +74,11 @@
 	--elev-sm: 0 1px 3px oklch(0.2 0.02 262 / 0.07), 0 1px 2px oklch(0.2 0.02 262 / 0.05);
 	--elev-md: 0 4px 12px oklch(0.2 0.02 262 / 0.08), 0 1px 3px oklch(0.2 0.02 262 / 0.06);
 	--elev-lg: 0 12px 32px oklch(0.2 0.02 262 / 0.14), 0 2px 8px oklch(0.2 0.02 262 / 0.08);
+	/* Upward elevation for bottom-stuck elements inside a scroll container — an
+	   overflow box clips a downward shadow at its bottom edge, so the ink has to
+	   spread up onto the content scrolling beneath (e.g. the project rail's
+	   sticky create button). */
+	--elev-up: 0 -2px 10px oklch(0.2 0.02 262 / 0.14), 0 -1px 3px oklch(0.2 0.02 262 / 0.1);
 }
 
 /* `.log-surface-dark` opts a subtree into the dark palette regardless of the
@@ -143,6 +148,7 @@ html.dark,
 	--elev-sm: 0 1px 3px oklch(0 0 0 / 0.35);
 	--elev-md: 0 4px 14px oklch(0 0 0 / 0.4);
 	--elev-lg: 0 16px 40px oklch(0 0 0 / 0.5);
+	--elev-up: 0 -2px 12px oklch(0 0 0 / 0.5), 0 -1px 3px oklch(0 0 0 / 0.4);
 }
 
 /* Agent run logs keep their pre-Wire palette. The formatted run-log view is the
@@ -327,6 +333,7 @@ html.dark,
 	--shadow-sm: var(--elev-sm);
 	--shadow-md: var(--elev-md);
 	--shadow-lg: var(--elev-lg);
+	--shadow-up: var(--elev-up);
 
 	--radius-sm: 6px;
 	--radius-md: 8px;
