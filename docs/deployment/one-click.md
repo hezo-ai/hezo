@@ -71,8 +71,10 @@ read them before you paste if you'd like to see exactly what runs.
 
 ## How the HTTPS URL works
 
-Your browser needs HTTPS (Hezo streams agent activity over a secure WebSocket), but a
-fresh server has a public IP and usually no domain. To bridge that, the deploy uses
+HTTPS is essential for a working instance — OAuth-connected MCP servers only complete
+their connect flow on an HTTPS address, installing Hezo on your phone needs a secure
+context, and the web app streams agent activity over a secure WebSocket. But a fresh
+server has a public IP and usually no domain. To bridge that, the deploy uses
 **[sslip.io](https://sslip.io)** — a DNS service where `<ip>.sslip.io` always resolves
 to `<ip>`. So `https://203.0.113.10.sslip.io` points straight at your server, and Caddy
 automatically obtains a real Let's Encrypt certificate for it. No domain to buy, no DNS

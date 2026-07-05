@@ -23,6 +23,24 @@ proxy](/docs/security/secret-protection) at request time and the real value neve
 in the connection config. For servers that authenticate with OAuth, connect the account
 once and Hezo attaches and refreshes the token for you.
 
+### OAuth connections need an HTTPS address
+
+For servers that authenticate with OAuth, completing the connection sends your browser
+from the provider's consent page back to your instance's callback URL. Providers and
+browsers only accept **HTTPS** callback URLs (with `http://localhost` as the one
+exception), so your instance must be reached over HTTPS for the final **Allow** step to
+work — on a private network or VPN too, where a plain-HTTP address makes the consent
+popup fail with a blocked or rejected redirect. Your instance does **not** need to be
+publicly reachable: the redirect happens in your browser, so a private HTTPS address
+works fine. See [Serve it over HTTPS](/docs/deployment/cloud#serve-it-over-https) and
+[Secure remote access](/docs/deployment/secure-remote-access) for setting that up.
+
+If your instance's address changes (for example you move from plain HTTP to HTTPS),
+remove the connector and add it again before reconnecting: the OAuth client Hezo
+registered with the provider is tied to the address it was created on, and a stale
+registration is rejected with a "redirect_uri does not match" error. Re-adding the
+connector registers a fresh client on the current address.
+
 ## Local (stdio) servers
 
 Hezo also supports **local, process-based** MCP servers that run inside the project

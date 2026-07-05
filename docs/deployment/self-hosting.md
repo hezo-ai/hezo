@@ -59,8 +59,8 @@ sudo mkdir -p /var/lib/hezo            # a stable data directory
 ```
 
 **2. Put non-secret settings in an env file.** Create an env file for the
-service — the data directory and, if the instance is reached via a public URL,
-its address:
+service — the data directory and, if the instance is reached via a URL beyond
+`localhost`, its HTTPS address:
 
 ```sh
 sudo install -d -m 700 /etc/hezo
@@ -70,7 +70,7 @@ sudo install -m 600 /dev/null /etc/hezo/hezo.env
 ```sh
 # /etc/hezo/hezo.env
 HEZO_DATA_DIR=/var/lib/hezo
-# HEZO_WEB_URL=https://hezo.example.com   # only if reached via a public URL
+# HEZO_WEB_URL=https://hezo.example.com   # the HTTPS URL it's reached at (omit for localhost-only use)
 ```
 
 > **Never put your master key in this file** (or anywhere else on the server).
@@ -138,12 +138,29 @@ ownership of the bind-mounted workspace and per-run config. A custom
 user (root for most images), which also works; include a non-root user named `node`
 if you want agent-created files owned by a non-root uid on the host.
 
+## Serve it over HTTPS
+
+Hezo's process itself serves plain HTTP, so for anything beyond `localhost` use — on a
+private network or VPN just as much as on a public domain — put a TLS-terminating
+reverse proxy in front and browse the instance through it. HTTPS is what makes
+OAuth-connected MCP servers connectable (providers and browsers only accept HTTPS or
+`localhost` callback URLs), lets Hezo install as an app on your phone, and keeps your
+admin password and task content sealed in transit. The proxy must pass WebSocket
+upgrades and forward the `Host` and `X-Forwarded-Proto` headers — see
+[Serve it over HTTPS](/docs/deployment/cloud#serve-it-over-https) for a working
+config, and [Secure remote access](/docs/deployment/secure-remote-access) for
+certificate options on private networks.
+
 ## Networking & firewall
 
 - **3100** — the Hezo server and web app (configurable with `--port`).
 
-That is the only port **people** need to reach — Hezo serves the web app and brokers
-account sign-ins (such as GitHub) itself, so there is no separate gateway service or port.
+That is the only port the **reverse proxy** (and, through it, people) needs to reach —
+Hezo serves the web app and brokers account sign-ins (such as GitHub) itself, so there
+is no separate gateway service or port. With the proxy on the same host, 3100 doesn't
+need to be reachable from outside the host at all — browsers connect to the proxy's
+HTTPS port instead (agent containers still reach 3100 over the Docker bridge; see
+below).
 
 ### Container → host connectivity (native-Linux Docker)
 
