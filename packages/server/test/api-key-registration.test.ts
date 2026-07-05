@@ -1,4 +1,4 @@
-import type { PGlite } from '@electric-sql/pglite';
+import type { Db } from '../src/db/database';
 
 // biome-ignore lint/suspicious/noExplicitAny: tests parse unpredictable JSON-RPC payloads
 type Json = any;
@@ -16,7 +16,7 @@ import {
 } from './helpers/app';
 
 let app: Hono<Env>;
-let db: PGlite;
+let db: Db;
 let token: string; // superuser admin
 let dataDir: string;
 let slugA: string;

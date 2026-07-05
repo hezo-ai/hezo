@@ -1,5 +1,5 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { TaskPriority, TaskStatus, TERMINAL_TASK_STATUSES, WakeupSource } from '@hezo/shared';
+import type { Db } from '../db/database';
 import { allocateTaskIdentifier } from '../lib/task-identifier';
 import { logger } from '../logger';
 import { loadTeamCoordinationContext, type TeamCoordinationContext } from './internal-intake';
@@ -21,18 +21,11 @@ export type TeamCoherenceReviewReason =
 	| 'enabled_changed';
 
 /** Resolves the CEO + the team's own project â€” coherence/setup live in that project. */
-async function loadTeamContext(
-	db: PGlite,
-	teamId: string,
-): Promise<TeamCoordinationContext | null> {
+async function loadTeamContext(db: Db, teamId: string): Promise<TeamCoordinationContext | null> {
 	return loadTeamCoordinationContext(db, teamId);
 }
 
-async function findOpenLabeledTask(
-	db: PGlite,
-	teamId: string,
-	label: string,
-): Promise<string | null> {
+async function findOpenLabeledTask(db: Db, teamId: string, label: string): Promise<string | null> {
 	const placeholders = TERMINAL_TASK_STATUSES.map((_, i) => `$${i + 3}::task_status`).join(', ');
 	const result = await db.query<{ id: string }>(
 		`SELECT id FROM tasks
@@ -46,7 +39,7 @@ async function findOpenLabeledTask(
 }
 
 async function createLabeledInternalTask(
-	db: PGlite,
+	db: Db,
 	ctx: TeamCoordinationContext,
 	title: string,
 	body: string,
@@ -133,7 +126,7 @@ The **${teamSlug}** project-team changed (reason: ${reason}). Audit its roster â
 }
 
 export async function enqueueTeamCoherenceReviewTask(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	reason: TeamCoherenceReviewReason,
 	opts: { autoStart?: boolean } = {},

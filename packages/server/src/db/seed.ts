@@ -1,10 +1,10 @@
-import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentEffort,
 	CEO_AGENT_SLUG,
 	DEFAULT_HEARTBEAT_INTERVAL_MIN,
 	INSTANCE_AGENT_SLUGS,
 } from '@hezo/shared';
+import type { Db } from './/database';
 
 interface AgentSummaries {
 	agents: Record<string, string>;
@@ -186,7 +186,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 	];
 }
 
-export async function seedBuiltins(db: PGlite, roleDocs: Record<string, string>): Promise<void> {
+export async function seedBuiltins(db: Db, roleDocs: Record<string, string>): Promise<void> {
 	summaries = (await import('./agent-summaries.json')).default as AgentSummaries;
 	const defs = buildAgentTypeDefs();
 	// The Coach is an instance-level role (like the CEO), so its prompt lives under

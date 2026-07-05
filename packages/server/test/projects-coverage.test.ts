@@ -1,11 +1,11 @@
 import { mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { generateUnlockKey, MasterKeyManager } from '../src/crypto/master-key';
 import { loadAgentRoles } from '../src/db/agent-roles';
+import type { Db } from '../src/db/database';
 import { seedBuiltins } from '../src/db/seed';
 import type { Env } from '../src/lib/types';
 import { signAdminJwt } from '../src/middleware/auth';
@@ -38,7 +38,7 @@ function pngWithDimensions(width: number, height: number): Buffer {
 
 describe('projects routes — read + intake + icon-validation branches', () => {
 	let app: Hono<Env>;
-	let db: PGlite;
+	let db: Db;
 	let token: string;
 	let teamId: string;
 	let projectId: string;
@@ -213,7 +213,7 @@ describe('projects routes — read + intake + icon-validation branches', () => {
 
 describe('public project icon serve endpoint — signature branches', () => {
 	let app: Hono<Env>;
-	let db: PGlite;
+	let db: Db;
 	let token: string;
 	let projectSlug: string;
 	let projectId: string;
@@ -275,7 +275,7 @@ describe('public project icon serve endpoint — signature branches', () => {
 
 describe('container/start — docker error path', () => {
 	let app: Hono<Env>;
-	let db: PGlite;
+	let db: Db;
 	let token: string;
 	let projectSlug: string;
 	let projectId: string;

@@ -1,7 +1,7 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { McpConnectionKind } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestTeam, projectSlugFor } from './helpers/app';
@@ -16,7 +16,7 @@ import { authHeader, createTestApp, createTestTeam, projectSlugFor } from './hel
  */
 
 let app: Hono<Env>;
-let db: PGlite;
+let db: Db;
 let token: string;
 let teamId: string;
 let projectSlug: string;

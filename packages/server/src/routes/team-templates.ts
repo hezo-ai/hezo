@@ -1,5 +1,5 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { Hono } from 'hono';
+import type { Db } from '../db/database';
 import { err, ok } from '../lib/response';
 import { withTransaction } from '../lib/sql';
 import type { Env } from '../lib/types';
@@ -179,7 +179,7 @@ teamTemplatesRoutes.delete('/team-templates/:id', async (c) => {
 	return c.json({ data: null }, 200);
 });
 
-async function getTeamTemplateWithAgentTypes(db: PGlite, id: string) {
+async function getTeamTemplateWithAgentTypes(db: Db, id: string) {
 	const result = await db.query(
 		`SELECT ct.*,
 		    COALESCE(

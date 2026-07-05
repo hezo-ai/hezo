@@ -1,11 +1,11 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { type AuditActorType, AuthType, DEFAULT_TEAM_ID } from '@hezo/shared';
+import type { Db } from '../db/database';
 import type { AuthInfo } from './types';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function resolveActorMemberId(
-	db: PGlite,
+	db: Db,
 	auth: AuthInfo,
 	teamId: string,
 ): Promise<string | null> {
@@ -43,7 +43,7 @@ export function apiKeyIdFromAuth(auth: AuthInfo): string | null {
  * member row — it is attributed via `actorApiKeyId`.
  */
 export async function resolveActor(
-	db: PGlite,
+	db: Db,
 	auth: AuthInfo,
 	teamId: string | null,
 ): Promise<{
@@ -56,14 +56,14 @@ export async function resolveActor(
 	return { actorType, actorMemberId, actorApiKeyId: apiKeyIdFromAuth(auth) };
 }
 
-export async function resolveTeamId(db: PGlite, raw: string): Promise<string | null> {
+export async function resolveTeamId(db: Db, raw: string): Promise<string | null> {
 	if (UUID_RE.test(raw)) return raw;
 	const result = await db.query<{ id: string }>('SELECT id FROM teams WHERE slug = $1', [raw]);
 	return result.rows[0]?.id ?? null;
 }
 
 export async function resolveProjectId(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	raw: string,
 ): Promise<string | null> {
@@ -87,7 +87,7 @@ export interface ResolvedProject {
  * its backing team. Project slug is the single public handle, so this resolves
  * without a team in hand.
  */
-export async function resolveProject(db: PGlite, raw: string): Promise<ResolvedProject | null> {
+export async function resolveProject(db: Db, raw: string): Promise<ResolvedProject | null> {
 	const result = await db.query<{
 		id: string;
 		team_id: string;
@@ -109,11 +109,7 @@ export async function resolveProject(db: PGlite, raw: string): Promise<ResolvedP
 	};
 }
 
-export async function resolveTaskId(
-	db: PGlite,
-	teamId: string,
-	raw: string,
-): Promise<string | null> {
+export async function resolveTaskId(db: Db, teamId: string, raw: string): Promise<string | null> {
 	if (UUID_RE.test(raw)) return raw;
 	const result = await db.query<{ id: string }>(
 		'SELECT id FROM tasks WHERE team_id = $1 AND LOWER(identifier) = LOWER($2)',
@@ -129,11 +125,7 @@ export async function resolveTaskId(
  * is preferred on any collision. This lets instance agents be addressed through
  * any project's endpoints during cross-team runs.
  */
-export async function resolveAgentId(
-	db: PGlite,
-	teamId: string,
-	raw: string,
-): Promise<string | null> {
+export async function resolveAgentId(db: Db, teamId: string, raw: string): Promise<string | null> {
 	const column = UUID_RE.test(raw) ? 'm.id' : 'ma.slug';
 	const result = await db.query<{ id: string }>(
 		`SELECT m.id FROM members m
@@ -153,10 +145,7 @@ export interface ProjectLocator {
 	teamSlug: string;
 }
 
-export async function getProjectLocator(
-	db: PGlite,
-	projectId: string,
-): Promise<ProjectLocator | null> {
+export async function getProjectLocator(db: Db, projectId: string): Promise<ProjectLocator | null> {
 	const result = await db.query<{
 		id: string;
 		slug: string;

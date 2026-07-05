@@ -1,7 +1,7 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { type AiAuthMethod, type AiProvider, AiProviderStatus } from '@hezo/shared';
 import { decrypt, encrypt } from '../crypto/encryption';
 import type { MasterKeyManager } from '../crypto/master-key';
+import type { Db } from '../db/database';
 import { buildUpdateSet, withTransaction } from '../lib/sql';
 
 export interface AiProviderCredential {
@@ -26,7 +26,7 @@ function deriveLabel(provider: AiProvider, existingCount: number): string {
 }
 
 export async function storeAiProviderKey(
-	db: PGlite,
+	db: Db,
 	masterKeyManager: MasterKeyManager,
 	provider: AiProvider,
 	credential: string,
@@ -57,7 +57,7 @@ export async function storeAiProviderKey(
 }
 
 export async function getProviderCredential(
-	db: PGlite,
+	db: Db,
 	masterKeyManager: MasterKeyManager,
 	provider: AiProvider,
 ): Promise<AiProviderCredential | null> {
@@ -77,7 +77,7 @@ export interface AiProviderCredentialAndModel extends AiProviderCredential {
  * mounted `auth.json` blob.
  */
 export async function updateAiProviderCredential(
-	db: PGlite,
+	db: Db,
 	masterKeyManager: MasterKeyManager,
 	configId: string,
 	value: string,
@@ -97,7 +97,7 @@ export async function updateAiProviderCredential(
 }
 
 export async function getProviderCredentialAndModel(
-	db: PGlite,
+	db: Db,
 	masterKeyManager: MasterKeyManager,
 	provider: AiProvider,
 ): Promise<AiProviderCredentialAndModel | null> {
@@ -129,7 +129,7 @@ export async function getProviderCredentialAndModel(
 	};
 }
 
-export async function listAiProviders(db: PGlite): Promise<AiProviderConfig[]> {
+export async function listAiProviders(db: Db): Promise<AiProviderConfig[]> {
 	const result = await db.query<AiProviderConfig>(
 		`SELECT id, provider, auth_method, label, is_default, status, default_model, metadata, created_at::text
 		 FROM ai_provider_configs
@@ -144,7 +144,7 @@ export interface AiProviderConfigUpdate {
 }
 
 export async function updateAiProviderConfig(
-	db: PGlite,
+	db: Db,
 	configId: string,
 	fields: AiProviderConfigUpdate,
 ): Promise<boolean> {
@@ -164,7 +164,7 @@ export async function updateAiProviderConfig(
 	return result.rows.length > 0;
 }
 
-export async function deleteAiProviderConfig(db: PGlite, configId: string): Promise<boolean> {
+export async function deleteAiProviderConfig(db: Db, configId: string): Promise<boolean> {
 	const result = await db.query<{ id: string }>(
 		`DELETE FROM ai_provider_configs WHERE id = $1 RETURNING id`,
 		[configId],
@@ -172,7 +172,7 @@ export async function deleteAiProviderConfig(db: PGlite, configId: string): Prom
 	return result.rows.length > 0;
 }
 
-export async function setDefaultAiProvider(db: PGlite, configId: string): Promise<boolean> {
+export async function setDefaultAiProvider(db: Db, configId: string): Promise<boolean> {
 	const config = await db.query<{ provider: string }>(
 		`SELECT provider FROM ai_provider_configs WHERE id = $1`,
 		[configId],
@@ -197,7 +197,7 @@ export async function setDefaultAiProvider(db: PGlite, configId: string): Promis
 }
 
 export async function getAiProviderStatus(
-	db: PGlite,
+	db: Db,
 ): Promise<{ configured: boolean; providers: string[] }> {
 	const result = await db.query<{ provider: string }>(
 		`SELECT DISTINCT provider FROM ai_provider_configs WHERE status = $1`,
@@ -211,7 +211,7 @@ export async function getAiProviderStatus(
 }
 
 export async function getProviderConfigCredential(
-	db: PGlite,
+	db: Db,
 	masterKeyManager: MasterKeyManager,
 	configId: string,
 ): Promise<{ provider: string; authMethod: string; value: string } | null> {

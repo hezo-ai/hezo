@@ -16,10 +16,12 @@ handy for baking defaults into a service definition while still overriding per r
 | Flag | Environment variable | Default | Description |
 |---|---|---|---|
 | `--port <port>` | `HEZO_PORT` | `3100` | Port the server and web app listen on (1–65535). |
-| `--data-dir <path>` | `HEZO_DATA_DIR` | `~/.hezo/` | Where Hezo stores its database, encrypted secrets, and assets. |
+| `--data-dir <path>` | `HEZO_DATA_DIR` | `~/.hezo/` | Where Hezo stores its database, encrypted secrets, and assets. Still required with an external database — workspaces, assets, and keys live here. |
+| `--database-url <url>` | `HEZO_DATABASE_URL` | — | Connection string for an [external Postgres](#using-an-external-postgres) (`postgres://user:password@host:5432/hezo`). Omit to use the embedded database under the data directory (the default). |
+| — | `HEZO_DATABASE_POOL_SIZE` | `10` | Connection-pool size for the external database (2–100). Ignored for the embedded database. |
 | `--master-key <phrase>` | `HEZO_MASTER_KEY` | — | The twelve-word master key, to set up or unlock without the web gate. |
 | `--web-url <url>` | `HEZO_WEB_URL` | same origin | Public base URL, used so account sign-ins redirect back correctly. |
-| `--reset` | `HEZO_RESET` | off | Start fresh with an empty database (the existing `pgdata` is renamed aside, not deleted). |
+| `--reset` | `HEZO_RESET` | off | Start fresh with an empty **embedded** database (the existing `pgdata` is renamed aside, not deleted). Not applicable with `--database-url` — recreate an external database with your provider's tools. |
 | `--no-open` | `HEZO_OPEN` | on | Auto-open the web app in your browser on startup. On by default; automatically skipped in environments without a browser (CI, containers, SSH, headless Linux). Pass `--no-open` or set `HEZO_OPEN=0` to disable. |
 | `--log-level <level>` | `HEZO_LOG_LEVEL` | `info` | Logging verbosity: `debug`, `info`, `warn`, or `error`. |
 | `--keep-old-containers` | `HEZO_KEEP_OLD_CONTAINERS` | off | Keep old project containers instead of removing them — for debugging a crashed container. |
@@ -54,6 +56,43 @@ Pass `HEZO_MASTER_KEY` inline like this only for a one-off launch — **never pe
 to an env file, a service definition, or anywhere on the host. The master key is kept in
 memory only so a copy of your disk can't decrypt your data; writing it to disk defeats
 that. See [Master key & encryption](/docs/security/master-key).
+
+## Using an external Postgres
+
+By default Hezo embeds its database inside the single binary and stores it under the data
+directory — no external database to run. If you'd rather use a managed/hosted Postgres
+(for managed backups, more headroom, or your own operational tooling), point Hezo at it:
+
+```sh
+HEZO_DATABASE_URL="postgres://hezo:••••@db.internal:5432/hezo?sslmode=verify-full" \
+  hezo --data-dir /var/lib/hezo
+```
+
+On first start Hezo checks the server version, then creates its schema by applying its
+migrations directly (each migration runs in its own transaction, guarded by an advisory
+lock so two instances can't migrate at once). Upgrades migrate the same way. The current
+backend and connection target (with credentials occluded) are shown under **Settings →
+General → Database**.
+
+Requirements and recommendations:
+
+- **PostgreSQL 14 or newer.** The version is checked at startup.
+- **Use TLS.** With an external database your tasks, comments, and documents travel the
+  network and live with the provider — prefer `sslmode=verify-full` and private
+  networking. [Secrets remain encrypted](/docs/concepts/your-data) with the master key
+  either way.
+- **Keep the database close to the server.** Hezo's background scheduling polls every
+  1–5 seconds, so every millisecond of round-trip latency counts. Same-host,
+  same-VPC, or same-region placement is strongly recommended.
+- **Direct connections or session pooling only.** Transaction-pooling proxies
+  (PgBouncer in transaction mode) break session-scoped advisory locks.
+- **One Hezo server per database.** Concurrent startups coordinate migrations safely,
+  but running two live servers against one database is not supported.
+- The connection string carries credentials: prefer the environment variable over the
+  flag (flags are visible in the process list), and never commit it to a repo.
+- `hezo backup` / `hezo restore` work against an external database too — including
+  **moving an existing embedded instance to hosted Postgres** (and back). See
+  [Backup & recovery](/docs/deployment/backup-and-recovery).
 
 ## Anonymous usage telemetry
 

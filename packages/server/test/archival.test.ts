@@ -1,7 +1,7 @@
-import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
+import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { fullTextSearch } from '../src/services/search';
 import { resolveSystemPrompt } from '../src/services/template-resolver';
@@ -18,7 +18,7 @@ import {
 // only admins hard-delete, and every default listing surface is active-only.
 
 let app: Hono<Env>;
-let db: PGlite;
+let db: Db;
 let token: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;

@@ -1,6 +1,6 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { DocumentType } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Db } from '../src/db/database';
 import {
 	getDocument,
 	listDocuments,
@@ -11,7 +11,7 @@ import {
 import { safeClose } from './helpers';
 import { createTestApp } from './helpers/app';
 
-let db: PGlite;
+let db: Db;
 let teamId: string;
 let projectId: string;
 

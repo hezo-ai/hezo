@@ -1,4 +1,5 @@
 import { verifyAuthSignature } from '@hezo/shared';
+import type { Db } from '../db/database';
 import { logger } from '../logger';
 import { decrypt, deriveKey, encrypt } from './encryption';
 
@@ -9,10 +10,6 @@ const AUTH_PUBLIC_KEY_META = 'auth_public_key';
 const log = logger.child('master-key');
 
 export type MasterKeyState = 'unset' | 'locked' | 'unlocked';
-
-interface DbClient {
-	query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<{ rows: T[] }>;
-}
 
 /**
  * Holds the server's symmetric key material, derived from the **unlock key** —
@@ -49,11 +46,7 @@ export class MasterKeyManager {
 	 * An unlock key without a public key is the test-helper path: the canary is
 	 * stored and the server unlocks, but the auth endpoints are unusable.
 	 */
-	async initialize(
-		db: DbClient,
-		unlockKeyHex?: string,
-		publicKeyHex?: string,
-	): Promise<MasterKeyState> {
+	async initialize(db: Db, unlockKeyHex?: string, publicKeyHex?: string): Promise<MasterKeyState> {
 		const canary = await this.loadCanary(db);
 
 		if (canary) {
@@ -80,28 +73,23 @@ export class MasterKeyManager {
 	 * canary atomically, then unlock. Once a canary exists, unlock() is the only
 	 * way in — there is no implicit re-enrollment.
 	 */
-	async setup(db: DbClient, unlockKeyHex: string, publicKeyHex: string): Promise<boolean> {
+	async setup(db: Db, unlockKeyHex: string, publicKeyHex: string): Promise<boolean> {
 		if (this.state !== 'unset') return false;
 
 		const derivedKey = await deriveKey(unlockKeyHex, CANARY_PURPOSE);
 		const encryptedCanary = encrypt(CANARY_PLAINTEXT, derivedKey);
-		await db.query('BEGIN');
-		try {
-			await db.query(
+		await db.transaction(async (tx) => {
+			await tx.query(
 				`INSERT INTO system_meta (key, value) VALUES ($1, $2)
 				 ON CONFLICT (key) DO UPDATE SET value = $2`,
 				[AUTH_PUBLIC_KEY_META, publicKeyHex],
 			);
-			await db.query(
+			await tx.query(
 				`INSERT INTO system_meta (key, value) VALUES ('master_key_canary', $1)
 				 ON CONFLICT (key) DO UPDATE SET value = $1`,
 				[encryptedCanary],
 			);
-			await db.query('COMMIT');
-		} catch (e) {
-			await db.query('ROLLBACK');
-			throw e;
-		}
+		});
 
 		this.authPublicKeyHex = publicKeyHex;
 		await this.setUnlocked(unlockKeyHex);
@@ -112,7 +100,7 @@ export class MasterKeyManager {
 	 * Canary check against an existing enrollment. Returns false when no canary
 	 * exists yet (state 'unset') — enrollment goes through setup() explicitly.
 	 */
-	async unlock(db: DbClient, unlockKeyHex: string): Promise<boolean> {
+	async unlock(db: Db, unlockKeyHex: string): Promise<boolean> {
 		const canary = await this.loadCanary(db);
 		if (canary && (await this.checkCanary(canary, unlockKeyHex))) {
 			await this.setUnlocked(unlockKeyHex);
@@ -134,7 +122,7 @@ export class MasterKeyManager {
 	}
 
 	/** The enrolled Ed25519 auth public key (hex), memoized after first read. */
-	async getAuthPublicKeyHex(db: DbClient): Promise<string | null> {
+	async getAuthPublicKeyHex(db: Db): Promise<string | null> {
 		if (this.authPublicKeyHex) return this.authPublicKeyHex;
 		const result = await db.query<{ value: string }>(
 			'SELECT value FROM system_meta WHERE key = $1',
@@ -145,7 +133,7 @@ export class MasterKeyManager {
 	}
 
 	/** Verify an Ed25519 signature against the enrolled auth public key. */
-	async verifySignature(db: DbClient, message: string, signatureHex: string): Promise<boolean> {
+	async verifySignature(db: Db, message: string, signatureHex: string): Promise<boolean> {
 		const publicKeyHex = await this.getAuthPublicKeyHex(db);
 		if (!publicKeyHex) return false;
 		return verifyAuthSignature(publicKeyHex, message, signatureHex);
@@ -156,7 +144,7 @@ export class MasterKeyManager {
 	 * from the boot mnemonic. The mnemonic is the root of trust, so a mismatch
 	 * is overwritten (with a warning) rather than rejected.
 	 */
-	private async ensureAuthPublicKey(db: DbClient, publicKeyHex: string): Promise<void> {
+	private async ensureAuthPublicKey(db: Db, publicKeyHex: string): Promise<void> {
 		const stored = await this.getAuthPublicKeyHex(db);
 		if (stored === publicKeyHex) return;
 		if (stored) {
@@ -180,14 +168,14 @@ export class MasterKeyManager {
 		}
 	}
 
-	private async loadCanary(db: DbClient): Promise<string | null> {
+	private async loadCanary(db: Db): Promise<string | null> {
 		const result = await db.query<{ value: string }>(
 			"SELECT value FROM system_meta WHERE key = 'master_key_canary'",
 		);
 		return result.rows[0]?.value ?? null;
 	}
 
-	private async storeCanary(db: DbClient, unlockKeyHex: string): Promise<void> {
+	private async storeCanary(db: Db, unlockKeyHex: string): Promise<void> {
 		const derivedKey = await deriveKey(unlockKeyHex, CANARY_PURPOSE);
 		const encrypted = encrypt(CANARY_PLAINTEXT, derivedKey);
 		await db.query(

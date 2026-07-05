@@ -1,11 +1,11 @@
-import type { PGlite } from '@electric-sql/pglite';
+import type { Db } from '../../db/database';
 import { logger } from '../../logger';
 import type { DockerClient } from '../docker';
 
 const log = logger.child('connector-live-push');
 
 export interface LivePushDeps {
-	db: PGlite;
+	db: Db;
 	docker: DockerClient;
 }
 

@@ -1,11 +1,11 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { HeartbeatRunKind, WakeupSource } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Db } from '../src/db/database';
 import { createHeartbeatRun, type HeartbeatRunBroadcast } from '../src/services/agent-runner';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 
-let db: PGlite;
+let db: Db;
 let teamId: string;
 let captainMemberId: string;
 

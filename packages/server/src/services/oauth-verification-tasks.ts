@@ -1,4 +1,3 @@
-import type { PGlite } from '@electric-sql/pglite';
 import {
 	CommentContentType,
 	type PlatformType,
@@ -8,6 +7,7 @@ import {
 	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
+import type { Db } from '../db/database';
 import { broadcastRowChange } from '../lib/broadcast';
 import { allocateTaskIdentifier } from '../lib/task-identifier';
 import { logger } from '../logger';
@@ -27,7 +27,7 @@ interface TeamContext {
 
 // Credentials and connectors are instance-level, so OAuth verification runs in HQ
 // and is actioned by the CEO (not the per-team Captain).
-async function loadTeamContext(db: PGlite, _teamId: string): Promise<TeamContext | null> {
+async function loadTeamContext(db: Db, _teamId: string): Promise<TeamContext | null> {
 	const ctx = await loadCoordinationContext(db);
 	if (!ctx) return null;
 	return {
@@ -90,7 +90,7 @@ export interface EnqueueResult {
 }
 
 export async function enqueueOAuthVerificationTask(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	platform: PlatformType,
 	originatingTaskId: string | null,

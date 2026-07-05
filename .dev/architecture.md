@@ -48,7 +48,7 @@ manager (agents bring their own models and runtimes).
 |---|---|
 | Server | Hono (TypeScript) on the **Bun** runtime |
 | Binary | `bun build --compile` → one cross-platform executable |
-| Database | **PGlite** (embedded Postgres, in-process), persisted to `~/.hezo/pgdata` |
+| Database | Behind the `Db` interface (`src/db/database.ts`): **PGlite** (embedded Postgres, in-process, persisted to `~/.hezo/pgdata`) by default, or **external Postgres 14+** via `--database-url`/`HEZO_DATABASE_URL` (node-postgres pool) |
 | Frontend | React 19 + TanStack Router + TanStack Query, Tailwind + Radix UI; bundled into the binary |
 | Realtime | WebSocket row-change events → client invalidates React Query keys |
 | Agent interface | MCP (Streamable HTTP) at `POST /mcp` via `@modelcontextprotocol/sdk` |
@@ -1094,15 +1094,41 @@ SQL can't express add a **code migration** TS module under `src/db/migrations/co
 (shared `NNN_` ordering, same per-migration transaction). On startup the runner migrates a
 **copy** of the DB (`<dataDir>/.migrate-tmp`) and **atomically swaps** it in on success; on
 failure the live `pgdata` is untouched, so downgrading to the previous binary just works.
-A data dir carrying migrations the binary doesn't recognize makes the server exit and ask
-the operator to upgrade. Migration mechanics and the per-migration rules are in `AGENTS.md`
-› Database migrations.
+An **external Postgres** migrates **in place** instead: per-migration transactions under a
+session `pg_advisory_lock` (`applyPendingMigrationsExternal`), with the downgrade guard
+re-checked under the lock, so concurrent startups can't double-migrate and a failed
+migration leaves the committed prefix intact. A database carrying migrations the binary
+doesn't recognize makes the server exit and ask the operator to upgrade. Migration
+mechanics and the per-migration rules are in `AGENTS.md` › Database migrations.
 
-**Backup/restore.** Before applying pending migrations to an already-initialized instance,
-the runner snapshots the DB with PGlite `dumpDataDir('gzip')` to `<dataDir>/backups/`
-(last 5 kept); a failed backup aborts the migration. Recovery is
-`hezo restore <backup.tar.gz>` (wipes `pgdata`, reloads the snapshot, keeps the original
-master key) → run the previous binary.
+**Storage abstraction & transactions.** All app code takes the `Db` interface
+(`query`/`exec`/`transaction`/`acquireSessionLock`/`close`); the drivers live in
+`src/db/drivers/` (`PgliteDb`, `PostgresDb`) and are constructed only by
+`src/db/open.ts:openDatabase()` at startup. `Db.transaction(cb)` pins the block's
+connection in AsyncLocalStorage, so closed-over `db.query` calls inside the block join
+the transaction; nested calls join the ambient transaction, and queries from async work
+that outlives its block throw. On PGlite this maps to the engine's native exclusive
+transaction; on Postgres, blocks additionally serialize in-process to preserve the
+read-modify-write semantics the app was written against (plain queries ride the pool
+concurrently). The raw connection string never reaches request-reachable state: startup
+computes a redacted `StorageInfo` once (`redactDatabaseUrl` in `src/lib/db-info.ts` —
+credentials occluded, query params dropped except `sslmode`) and only that is passed to
+`buildApp`, surfaced at the superuser-only `GET /api/database-info` for the Settings →
+General Database card.
+
+**Backup/restore.** The operator format is the **portable logical backup**
+(`src/db/logical-backup.ts`): gzipped JSONL carrying the applied-migration set plus every
+row (bytea → base64, generated tsvector columns excluded and recomputed on load).
+Restore replays the binary's own migrations up to exactly the recorded set, then loads
+data in one transaction with FK constraints dropped/re-added around the inserts (insert
+order and self-references never matter) and serial sequences resumed; migration-seeded
+rows are truncated first so the backup is authoritative. Because both drivers speak the
+same format, `hezo backup`/`hezo restore` also move an instance between embedded PGlite
+and hosted Postgres in either direction. External startup migrations write one of these
+into `<dataDir>/backups/` automatically before applying (last 5 kept; a failed backup
+aborts the migration); the embedded path keeps its stronger copy-swap instead. Legacy
+physical pgdata tarballs (`db/backup.ts` `dumpDataDir`/`restoreDataDir`) still restore
+via `hezo restore` (embedded only).
 
 **Releases & updates.** A PR flow (`.github/workflows/`): `release.yml` computes the next
 version from Conventional Commits and opens a `release/<version>` PR; merging fires

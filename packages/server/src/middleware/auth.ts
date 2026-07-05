@@ -1,10 +1,10 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
-import type { PGlite } from '@electric-sql/pglite';
 import { ApiKeyStatus, AuthType, CeoSessionStatus, HeartbeatRunStatus } from '@hezo/shared';
 import type { Context } from 'hono';
 import { createMiddleware } from 'hono/factory';
 import { sign, verify } from 'hono/jwt';
 import type { MasterKeyManager } from '../crypto/master-key';
+import type { Db } from '../db/database';
 import { resolveProject } from '../lib/resolve';
 import type { AuthInfo, Env } from '../lib/types';
 
@@ -54,7 +54,7 @@ export const PASSWORD_SETUP_SCOPE = 'password_setup';
  */
 export async function verifyToken(
 	token: string,
-	db: PGlite,
+	db: Db,
 	masterKeyManager: MasterKeyManager,
 ): Promise<AuthInfo | null> {
 	if (masterKeyManager.getState() !== 'unlocked') return null;
@@ -259,7 +259,7 @@ export async function signPasswordSetupToken(
  */
 export async function resolvePasswordMutationUserId(
 	token: string,
-	db: PGlite,
+	db: Db,
 	masterKeyManager: MasterKeyManager,
 ): Promise<{ userId: string; isSetupScoped: boolean } | null> {
 	if (masterKeyManager.getState() !== 'unlocked') return null;
@@ -359,11 +359,7 @@ export function safeCompareHex(a: string, b: string): boolean {
  * chat session (`crossTeam`) span every team; a human superuser spans all teams; a
  * board user gets the teams they belong to.
  */
-export async function canAuthAccessTeam(
-	db: PGlite,
-	auth: AuthInfo,
-	teamId: string,
-): Promise<boolean> {
+export async function canAuthAccessTeam(db: Db, auth: AuthInfo, teamId: string): Promise<boolean> {
 	if (auth.type === AuthType.Agent) {
 		// The instance CEO chat session acts across every team (gated at mint time).
 		if (auth.crossTeam) return true;
@@ -385,7 +381,7 @@ export async function canAuthAccessTeam(
  * `Response` to short-circuit the handler.
  */
 async function assertTeamAccess(
-	db: PGlite,
+	db: Db,
 	auth: AuthInfo,
 	c: Context<Env>,
 	teamId: string,
@@ -421,7 +417,7 @@ export const requireProjectAccessMiddleware = createMiddleware<Env>(async (c, ne
 });
 
 export async function requireTeamAccessForResource(
-	db: PGlite,
+	db: Db,
 	c: Context<Env>,
 	resourceTeamId: string,
 ): Promise<{ teamId: string } | Response> {
@@ -437,7 +433,7 @@ export async function requireTeamAccessForResource(
  * and superusers span all teams (HQ included); a board user gets the teams they
  * belong to. Returns team ids — the caller decides how to use them.
  */
-export async function getAccessibleTeamIds(db: PGlite, auth: AuthInfo): Promise<string[]> {
+export async function getAccessibleTeamIds(db: Db, auth: AuthInfo): Promise<string[]> {
 	const allTeams = async (): Promise<string[]> => {
 		const rows = await db.query<{ id: string }>('SELECT id FROM teams');
 		return rows.rows.map((r) => r.id);

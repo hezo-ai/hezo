@@ -1,7 +1,7 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { decrypt } from '../src/crypto/encryption';
 import type { MasterKeyManager } from '../src/crypto/master-key';
+import type { Db } from '../src/db/database';
 import {
 	createConnection,
 	getConnection,
@@ -16,7 +16,7 @@ import {
 import { safeClose } from './helpers';
 import { createTestApp } from './helpers/app';
 
-let db: PGlite;
+let db: Db;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
 

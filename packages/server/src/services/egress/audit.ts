@@ -1,5 +1,5 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { AuditActorType, AuditEntityType } from '@hezo/shared';
+import type { Db } from '../../db/database';
 import { logger } from '../../logger';
 
 const log = logger.child('egress-audit');
@@ -17,7 +17,7 @@ export interface EgressAuditEvent {
 	error?: string | null;
 }
 
-export async function recordEgressEvent(db: PGlite, event: EgressAuditEvent): Promise<void> {
+export async function recordEgressEvent(db: Db, event: EgressAuditEvent): Promise<void> {
 	try {
 		// Egress is scoped to the run's team, which backs exactly one project (1:1);
 		// attribute the row to that project so it shows on the project Activity log.

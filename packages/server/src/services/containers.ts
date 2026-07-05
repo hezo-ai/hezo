@@ -1,6 +1,5 @@
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
-import type { PGlite } from '@electric-sql/pglite';
 import {
 	ContainerStatus,
 	HeartbeatRunStatus,
@@ -12,6 +11,7 @@ import {
 	wsRoom,
 } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
+import type { Db } from '../db/database';
 import { trackBackground } from '../lib/background';
 import { broadcastProjectUpdate, broadcastRowChange } from '../lib/broadcast';
 import { ref } from '../lib/log-ref';
@@ -63,7 +63,7 @@ export interface ProjectRow {
 }
 
 export interface ContainerDeps {
-	db: PGlite;
+	db: Db;
 	docker: DockerClient;
 	dataDir: string;
 	wsManager?: WebSocketManager;
@@ -665,7 +665,7 @@ export async function rebuildContainer(
 }
 
 export async function syncContainerStatus(
-	db: PGlite,
+	db: Db,
 	docker: DockerClient,
 	projectId: string,
 	projectSlug: string,
@@ -1005,7 +1005,7 @@ export async function requeueContainerKilledRuns(
  * waiting for the next scheduled heartbeat.
  */
 export async function wakeAgentsWithPendingWork(
-	db: PGlite,
+	db: Db,
 	projectId: string,
 	teamId: string,
 ): Promise<void> {
@@ -1030,7 +1030,7 @@ export async function wakeAgentsWithPendingWork(
 }
 
 async function allocateHostPorts(
-	db: PGlite,
+	db: Db,
 	devPorts: Array<{ container: number; host?: number }>,
 	projectId: string,
 ): Promise<Array<{ container: number; host: number }>> {

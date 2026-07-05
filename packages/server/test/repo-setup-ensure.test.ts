@@ -1,10 +1,10 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { Db } from '../src/db/database';
 import { enqueueRepoSetupResumeWakeups, ensureRepoSetupAction } from '../src/services/repo-setup';
 import { safeClose } from './helpers';
 import { createTestDbWithMigrations } from './helpers/db';
 
-let db: PGlite;
+let db: Db;
 
 async function seedTeamProjectTask(): Promise<{
 	teamId: string;

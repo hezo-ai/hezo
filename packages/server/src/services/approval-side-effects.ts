@@ -1,5 +1,5 @@
-import type { PGlite } from '@electric-sql/pglite';
 import type { ApprovalType } from '@hezo/shared';
+import type { Db } from '../db/database';
 import type { DomainEventBus } from '../events/bus';
 import { APPROVAL_HANDLERS } from './approval-handlers';
 import type { ApprovalSideEffectCtx, SideEffectBroadcast } from './approval-handlers/types';
@@ -9,7 +9,7 @@ import type { WebSocketManager } from './ws';
 export type { SideEffectBroadcast } from './approval-handlers/types';
 
 function buildCtx(
-	db: PGlite,
+	db: Db,
 	approval: Record<string, unknown>,
 	dataDir: string,
 	actorMemberId: string | null,
@@ -37,7 +37,7 @@ function buildCtx(
  * realtime changes (e.g. the hire handler flipping its proposal comment).
  */
 export async function applyApprovalDeniedSideEffect(
-	db: PGlite,
+	db: Db,
 	approval: Record<string, unknown>,
 	actorMemberId: string | null,
 	wsManager?: WebSocketManager,
@@ -54,7 +54,7 @@ export async function applyApprovalDeniedSideEffect(
  * and resolve to an empty broadcast set.
  */
 export async function applyApprovalSideEffect(
-	db: PGlite,
+	db: Db,
 	approval: Record<string, unknown>,
 	// Provided by the resolve infra for side effects that touch the data dir; the
 	// current set (hire, project creation, skills, …) doesn't need it.

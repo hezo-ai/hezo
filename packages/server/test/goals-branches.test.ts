@@ -1,6 +1,6 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { GoalHealth } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Db } from '../src/db/database';
 import {
 	createGoal,
 	type GoalError,
@@ -19,7 +19,7 @@ import { authHeader, createTestApp, createTestProject, createTestTeam } from './
  * calls — no REST layer, no docker, no GitHub.
  */
 
-let db: PGlite;
+let db: Db;
 let teamId: string;
 let projectId: string;
 

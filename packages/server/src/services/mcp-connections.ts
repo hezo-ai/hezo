@@ -1,6 +1,6 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { McpConnectionKind, type McpInstallStatus } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
+import type { Db } from '../db/database';
 import { logger } from '../logger';
 import type { McpDescriptor } from './mcp-injectors';
 
@@ -48,7 +48,7 @@ export interface McpConnectionRow {
  * Load MCP connections exposed to an agent run. Connectors are instance-global,
  * so every run sees the same set (no team/project scope).
  */
-export async function loadMcpConnectionsForRun(db: PGlite): Promise<McpConnectionRow[]> {
+export async function loadMcpConnectionsForRun(db: Db): Promise<McpConnectionRow[]> {
 	// Filters: skip revoked (user disconnected); skip saas rows that are known
 	// to want OAuth but haven't completed it (no oauth_connection_id and any of:
 	// agent-requested via the connector flow, discovery already persisted
@@ -87,7 +87,7 @@ export async function loadMcpConnectionsForRun(db: PGlite): Promise<McpConnectio
  * run materializes a fresh value (so revocation still cascades on next run).
  */
 async function loadAllOAuthSecrets(
-	db: PGlite,
+	db: Db,
 	masterKeyManager: MasterKeyManager,
 ): Promise<Map<string, { secretName: string; accessToken: string | null }>> {
 	const out = new Map<string, { secretName: string; accessToken: string | null }>();
@@ -133,7 +133,7 @@ async function loadAllOAuthSecrets(
  * proceeds — caller can call the installer separately to (re)try.
  */
 export async function loadMcpConnectionDescriptors(
-	db: PGlite,
+	db: Db,
 	masterKeyManager: MasterKeyManager,
 ): Promise<McpDescriptor[]> {
 	const rows = await loadMcpConnectionsForRun(db);

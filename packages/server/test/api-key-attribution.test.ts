@@ -1,4 +1,4 @@
-import type { PGlite } from '@electric-sql/pglite';
+import type { Db } from '../src/db/database';
 
 // biome-ignore lint/suspicious/noExplicitAny: tests parse unpredictable JSON-RPC payloads
 type Json = any;
@@ -13,7 +13,7 @@ import { authHeader, createTestApp, createTestProject, createTestTeam } from './
 // to its identity so the UI can flag them with a bot badge instead of a bare "admin".
 
 let app: Hono<Env>;
-let db: PGlite;
+let db: Db;
 let token: string; // superuser admin
 let projectSlug: string;
 

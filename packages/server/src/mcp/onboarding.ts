@@ -1,4 +1,4 @@
-import type { PGlite } from '@electric-sql/pglite';
+import type { Db } from '../db/database';
 import { getApiKeyStatusByToken, registerApiKey } from '../services/api-keys';
 
 /**
@@ -53,7 +53,7 @@ export const ONBOARDING_TOOLS: McpToolShape[] = [
 
 /** Handle a `register` tool call. Returns a plain object the caller serializes. */
 export async function handleRegisterTool(
-	db: PGlite,
+	db: Db,
 	args: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
 	const name = typeof args.name === 'string' ? args.name.trim() : '';
@@ -75,7 +75,7 @@ export async function handleRegisterTool(
 
 /** Handle a `connection_status` tool call, keyed by the request's bearer token. */
 export async function handleConnectionStatusTool(
-	db: PGlite,
+	db: Db,
 	token: string | null,
 ): Promise<Record<string, unknown>> {
 	if (!token) {

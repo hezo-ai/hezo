@@ -1,5 +1,5 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { type AuditActorType, type DocumentStatus, DocumentType, wsRoom } from '@hezo/shared';
+import type { Db } from '../db/database';
 import type { DomainEventBus } from '../events/bus';
 import { broadcastCommentFamilyChange, broadcastRowChange } from '../lib/broadcast';
 import { withTransaction } from '../lib/sql';
@@ -137,7 +137,7 @@ const SELECT_WITH_AUTHOR = `SELECT d.id, d.team_id, d.project_id, d.member_agent
 	 LEFT JOIN member_agents maa ON maa.id = d.archived_by_member_id`;
 
 export async function getDocument(
-	db: PGlite,
+	db: Db,
 	scope: DocumentScope,
 ): Promise<DocumentRowWithAuthor | null> {
 	const where = scopeWhere(scope, 'd');
@@ -161,7 +161,7 @@ export interface ListDocumentsOptions {
 }
 
 export async function listDocuments(
-	db: PGlite,
+	db: Db,
 	options: ListDocumentsOptions,
 ): Promise<DocumentRowWithAuthor[]> {
 	const params: unknown[] = [options.type, options.teamId];
@@ -193,7 +193,7 @@ export interface UpsertDocumentInput {
 }
 
 export async function upsertDocument(
-	db: PGlite,
+	db: Db,
 	wsManager: WebSocketManager | undefined,
 	input: UpsertDocumentInput,
 ): Promise<DocumentRow> {
@@ -257,7 +257,7 @@ export async function upsertDocument(
  * untouched so the "Last edited by" attribution stays honest.
  */
 export async function setDocumentStatus(
-	db: PGlite,
+	db: Db,
 	wsManager: WebSocketManager | undefined,
 	scope: DocumentScope,
 	status: DocumentStatus,
@@ -290,7 +290,7 @@ export async function setDocumentStatus(
  * and last_updated_by_member_id stays untouched.
  */
 export async function setDocumentArchived(
-	db: PGlite,
+	db: Db,
 	wsManager: WebSocketManager | undefined,
 	scope: DocumentScope,
 	archived: boolean,
@@ -336,7 +336,7 @@ export async function setDocumentArchived(
  * transaction so the wipe commits atomically with the edit itself. Returns
  * whether anything was deleted so the caller can broadcast after commit.
  */
-async function wipeReviewComments(db: PGlite, documentId: string): Promise<boolean> {
+async function wipeReviewComments(db: Db, documentId: string): Promise<boolean> {
 	const wiped = await db.query<{ id: string }>(
 		'DELETE FROM document_review_comments WHERE document_id = $1 RETURNING id',
 		[documentId],
@@ -358,7 +358,7 @@ function broadcastReviewCommentsCleared(
 	);
 }
 
-async function insertDocument(db: PGlite, input: UpsertDocumentInput): Promise<DocumentRow> {
+async function insertDocument(db: Db, input: UpsertDocumentInput): Promise<DocumentRow> {
 	const scope = input.scope;
 	const projectId = scope.type === DocumentType.ProjectDoc ? scope.projectId : null;
 	const memberAgentId = scope.type === DocumentType.AgentSystemPrompt ? scope.memberAgentId : null;
@@ -388,7 +388,7 @@ function resolveSlug(scope: DocumentScope): string {
 }
 
 async function recordRevision(
-	db: PGlite,
+	db: Db,
 	documentId: string,
 	content: string,
 	changeSummary: string,
@@ -409,7 +409,7 @@ async function recordRevision(
 }
 
 export async function deleteDocument(
-	db: PGlite,
+	db: Db,
 	wsManager: WebSocketManager | undefined,
 	scope: DocumentScope,
 	audit?: DocumentAuditContext & { actorMemberId?: string | null },
@@ -433,7 +433,7 @@ export async function deleteDocument(
 }
 
 export async function listRevisions(
-	db: PGlite,
+	db: Db,
 	documentId: string,
 ): Promise<DocumentRevisionRowWithAuthor[]> {
 	const result = await db.query<DocumentRevisionRowWithAuthor>(
@@ -465,7 +465,7 @@ export interface RestoreRevisionInput {
 }
 
 export async function restoreRevision(
-	db: PGlite,
+	db: Db,
 	wsManager: WebSocketManager | undefined,
 	input: RestoreRevisionInput,
 ): Promise<DocumentRow | null> {
@@ -517,7 +517,7 @@ export async function restoreRevision(
 }
 
 export async function getAgentSystemPrompt(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	memberAgentId: string,
 ): Promise<string> {
@@ -536,7 +536,7 @@ export async function getAgentSystemPrompt(
  * through `upsertDocument` so that revision history is recorded.
  */
 export async function initAgentSystemPrompt(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	memberAgentId: string,
 	content: string,

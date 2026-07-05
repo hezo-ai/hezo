@@ -64,7 +64,8 @@ Everything runs from one self-contained server process:
   CEO.
 - **API + realtime** — drives the UI and streams agent activity live.
 - **Embedded database** — your teams, projects, tasks, and (encrypted) secrets live
-  in a local data directory. No external database to run.
+  in a local data directory by default; no external database to run (an external
+  Postgres is [optional](/docs/deployment/configuration)).
 - **Egress proxy** — the mandatory exit through which all agent network traffic
   flows, where secret placeholders become real values for allowed hosts only.
 - **Docker orchestration** — provisions and manages the containers agents run in.

@@ -1,4 +1,3 @@
-import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentAdminStatus,
 	type AuditActorType,
@@ -8,6 +7,7 @@ import {
 	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
+import type { Db } from '../db/database';
 import type { DomainEventBus } from '../events/bus';
 import { trackBackground } from '../lib/background';
 import { broadcastProjectsChanged, broadcastRowChange } from '../lib/broadcast';
@@ -93,7 +93,7 @@ export interface CreateProjectWithPlanningResult extends CreateProjectResult {
  * control identifier ordering. Emits the project.created audit event.
  */
 export async function createProject(
-	db: PGlite,
+	db: Db,
 	input: CreateProjectWithPlanningInput,
 ): Promise<CreateProjectResult> {
 	const projectName = input.name.trim();
@@ -166,7 +166,7 @@ export async function createProject(
  * (e.g. the CEO coherence review, so it lands first).
  */
 export async function createPlanningTask(
-	db: PGlite,
+	db: Db,
 	input: {
 		teamId: string;
 		project: Record<string, unknown>;
@@ -237,7 +237,7 @@ Container provisioning for this project is in progress. Focus on planning while 
  * first identifier should compose `createProject` + `createPlanningTask` instead.
  */
 export async function createProjectWithPlanningTask(
-	db: PGlite,
+	db: Db,
 	input: CreateProjectWithPlanningInput,
 ): Promise<CreateProjectWithPlanningResult> {
 	const { project, deferCaptainPlanningWake } = await createProject(db, input);
@@ -259,7 +259,7 @@ export type TaskPrefixResult =
 	| { ok: false; code: 'INVALID_REQUEST' | 'CONFLICT'; message: string; status: 400 | 409 };
 
 export async function resolveProjectTaskPrefix(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	provided: string | undefined,
 	projectName: string,
@@ -318,7 +318,7 @@ type ResolveTemplateResult =
  * appending " (2)", " (3)", … to the base. Mirrors `uniqueSlug` — each
  * snapshot of a source team mints a fresh, distinctly-named template.
  */
-async function uniqueTemplateName(db: PGlite, base: string): Promise<string> {
+async function uniqueTemplateName(db: Db, base: string): Promise<string> {
 	let candidate = base;
 	let n = 2;
 	while (
@@ -337,7 +337,7 @@ async function uniqueTemplateName(db: PGlite, base: string): Promise<string> {
  * template (reusable from then on). With neither, defaults to the Blank template.
  */
 export async function resolveCreationTemplate(
-	db: PGlite,
+	db: Db,
 	opts: { templateId?: string; sourceTeamId?: string; description?: string },
 ): Promise<ResolveTemplateResult> {
 	const templateId = opts.templateId?.trim() || undefined;

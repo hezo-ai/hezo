@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { arch, platform } from 'node:os';
-import type { PGlite } from '@electric-sql/pglite';
 import { TaskStatus } from '@hezo/shared';
+import type { Db } from '../db/database';
 import { getSystemMeta } from '../lib/system-meta';
 import { logger } from '../logger';
 import { HEZO_VERSION } from '../version';
@@ -47,7 +47,7 @@ export interface TelemetryPayload {
  * callers converge on the same id rather than clobbering it — the id is stable
  * for the life of the data dir.
  */
-export async function getOrCreateInstanceId(db: PGlite): Promise<string> {
+export async function getOrCreateInstanceId(db: Db): Promise<string> {
 	const existing = await getSystemMeta(db, INSTANCE_ID_KEY);
 	if (existing) return existing;
 	const id = randomUUID();
@@ -64,7 +64,7 @@ export async function getOrCreateInstanceId(db: PGlite): Promise<string> {
  * the whole installation. Token sums are read as `float8` (exact for integers
  * well past any daily volume) to avoid bigint-as-string surprises.
  */
-export async function buildTelemetryPayload(db: PGlite): Promise<TelemetryPayload> {
+export async function buildTelemetryPayload(db: Db): Promise<TelemetryPayload> {
 	const instanceId = await getOrCreateInstanceId(db);
 
 	const counts = await db.query<{ teams: number; projects: number; agents: number }>(
@@ -133,7 +133,7 @@ export async function buildTelemetryPayload(db: PGlite): Promise<TelemetryPayloa
  * never disrupt the instance. Mirrors the update-check's direct `fetch` (server
  * outbound calls do not route through the agent egress proxy).
  */
-export async function reportTelemetry(db: PGlite, opts: { endpoint: string }): Promise<void> {
+export async function reportTelemetry(db: Db, opts: { endpoint: string }): Promise<void> {
 	try {
 		const payload = await buildTelemetryPayload(db);
 		const res = await fetch(opts.endpoint, {

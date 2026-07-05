@@ -1,7 +1,7 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { CommentContentType, TaskStatus, WakeupSource } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import {
 	buildTaskPrompt,
@@ -21,7 +21,7 @@ import {
 } from './helpers/app';
 
 let app: Hono<Env>;
-let db: PGlite;
+let db: Db;
 let token: string;
 
 let teamId: string;

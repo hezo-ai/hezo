@@ -1,11 +1,11 @@
-import type { PGlite } from '@electric-sql/pglite';
+import type { Db } from '../db/database';
 
 /**
  * Archive inbox items that have been seen and were seen more than the retention
  * window ago. Mentions are seen when read; approvals are seen when resolved.
  * Returns the number of rows archived across both kinds.
  */
-export async function archiveOldInboxItems(db: PGlite, retentionDays: number): Promise<number> {
+export async function archiveOldInboxItems(db: Db, retentionDays: number): Promise<number> {
 	const days = String(retentionDays);
 
 	const mentions = await db.query<{ id: string }>(

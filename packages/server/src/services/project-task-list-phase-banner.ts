@@ -1,10 +1,10 @@
-import type { PGlite } from '@electric-sql/pglite';
 import {
 	deriveProjectTaskListPhaseBanner,
 	type ProjectTaskListPhaseBanner,
 	TEAM_COHERENCE_REVIEW_LABEL,
 	TERMINAL_TASK_STATUSES,
 } from '@hezo/shared';
+import type { Db } from '../db/database';
 
 export interface ProjectTaskListPhaseBannerState {
 	phase_banner: ProjectTaskListPhaseBanner | null;
@@ -15,7 +15,7 @@ export interface ProjectTaskListPhaseBannerState {
  * Onboarding fires while the CEO's `team-coherence-review` task is still open.
  */
 export async function getProjectTaskListPhaseBanner(
-	db: PGlite,
+	db: Db,
 	projectId: string,
 ): Promise<ProjectTaskListPhaseBannerState> {
 	const coherencePlaceholders = TERMINAL_TASK_STATUSES.map((_, i) => `$${i + 3}::task_status`).join(

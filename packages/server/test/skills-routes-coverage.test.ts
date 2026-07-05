@@ -1,11 +1,11 @@
 import { mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { generateUnlockKey, MasterKeyManager } from '../src/crypto/master-key';
 import { loadAgentRoles } from '../src/db/agent-roles';
+import type { Db } from '../src/db/database';
 import { seedBuiltins } from '../src/db/seed';
 import type { Env } from '../src/lib/types';
 import { signAdminJwt } from '../src/middleware/auth';
@@ -20,7 +20,7 @@ import { createTestDbWithMigrations } from './helpers/db';
 // and the description-derivation branches in POST/PATCH.
 
 let app: Hono<Env>;
-let db: PGlite;
+let db: Db;
 let token: string;
 let nonSuperToken: string;
 let masterKeyManager: MasterKeyManager;

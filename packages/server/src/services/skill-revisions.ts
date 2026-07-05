@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import type { PGlite } from '@electric-sql/pglite';
 import type { SkillRecord, SkillRevisionRecord } from '@hezo/shared';
+import type { Db } from '../db/database';
 import { withTransaction } from '../lib/sql';
 
 // Skill revisions mirror the document/agent-prompt revision model (see
@@ -17,7 +17,7 @@ import { withTransaction } from '../lib/sql';
  * creation (the caller passes `null` when the skill did not previously exist).
  */
 export async function recordSkillRevisionIfChanged(
-	db: PGlite,
+	db: Db,
 	skillId: string,
 	priorContent: string | null,
 	newContent: string,
@@ -29,7 +29,7 @@ export async function recordSkillRevisionIfChanged(
 }
 
 async function recordSkillRevision(
-	db: PGlite,
+	db: Db,
 	skillId: string,
 	content: string,
 	changeSummary: string,
@@ -49,10 +49,7 @@ async function recordSkillRevision(
 	return revisionNumber;
 }
 
-export async function listSkillRevisions(
-	db: PGlite,
-	skillId: string,
-): Promise<SkillRevisionRecord[]> {
+export async function listSkillRevisions(db: Db, skillId: string): Promise<SkillRevisionRecord[]> {
 	const result = await db.query<SkillRevisionRecord>(
 		`SELECT r.id, r.revision_number, r.content, r.change_summary, r.created_at,
 		        COALESCE(ma.title, m.display_name) AS author_name,
@@ -73,7 +70,7 @@ export async function listSkillRevisions(
  * the updated skill row, or `null` if the skill or revision does not exist.
  */
 export async function restoreSkillRevision(
-	db: PGlite,
+	db: Db,
 	skillId: string,
 	revisionNumber: number,
 	restoredByMemberId: string | null,

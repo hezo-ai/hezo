@@ -1,5 +1,5 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { isReactionKind, type ReactionKind } from '@hezo/shared';
+import type { Db } from '../db/database';
 
 export interface ReactionMember {
 	id: string;
@@ -27,7 +27,7 @@ export type ReactionSuccess = {
 export type ReactionResult = ReactionSuccess | ReactionFailure;
 
 export interface MutateReactionParams {
-	db: PGlite;
+	db: Db;
 	teamId: string;
 	taskId: string;
 	commentId: string;
@@ -36,7 +36,7 @@ export interface MutateReactionParams {
 }
 
 async function verifyCommentBelongsToTaskAndTeam(
-	db: PGlite,
+	db: Db,
 	commentId: string,
 	taskId: string,
 	teamId: string,
@@ -51,7 +51,7 @@ async function verifyCommentBelongsToTaskAndTeam(
 }
 
 async function loadReactionsForComment(
-	db: PGlite,
+	db: Db,
 	commentId: string,
 	viewerMemberId: string | null,
 ): Promise<ReactionGroup[]> {
@@ -123,7 +123,7 @@ export async function removeCommentReaction(params: MutateReactionParams): Promi
  * N+1.
  */
 export async function loadReactionsForTask(
-	db: PGlite,
+	db: Db,
 	taskId: string,
 	viewerMemberId: string | null = null,
 ): Promise<Map<string, ReactionGroup[]>> {

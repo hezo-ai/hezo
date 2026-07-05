@@ -1,5 +1,5 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { type AuditActorType, TaskPriority, TaskStatus, WakeupSource, wsRoom } from '@hezo/shared';
+import type { Db } from '../db/database';
 import type { DomainEventBus } from '../events/bus';
 import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
 import { trackBackground } from '../lib/background';
@@ -67,7 +67,7 @@ export class CreateTaskError extends Error {
 export type TaskRow = Record<string, unknown> & { id: string; identifier: string };
 
 export async function createTask(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	input: CreateTaskInput,
 	caller: CreateTaskCaller,
@@ -237,7 +237,7 @@ const BATCH_INDEX_TOKEN_RE = /^#(0|[1-9]\d*)$/;
  * that item without aborting the rest.
  */
 export async function createTaskBatch(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	items: CreateTaskInput[],
 	caller: CreateTaskCaller,
@@ -346,7 +346,7 @@ function resolveBatchParentRef(
 }
 
 async function attachBlockers(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	taskId: string,
 	rawIds: readonly string[],

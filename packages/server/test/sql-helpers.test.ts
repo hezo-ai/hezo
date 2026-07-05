@@ -1,5 +1,5 @@
 import { TERMINAL_TASK_STATUSES } from '@hezo/shared';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
 	buildUpdateSet,
 	isFkViolation,
@@ -8,38 +8,47 @@ import {
 	terminalStatusParams,
 	withTransaction,
 } from '../src/lib/sql';
+import { createTestDb } from './helpers/db';
 
 const NUL = String.fromCharCode(0);
 
-// withTransaction only depends on db.query for BEGIN/COMMIT/ROLLBACK, so a tiny
-// fake suffices to exercise both the commit and rollback branches without a DB.
-function fakeDb() {
-	const calls: string[] = [];
-	const db = {
-		query: vi.fn(async (sql: string) => {
-			calls.push(sql);
-			return { rows: [] };
-		}),
-	};
-	return { db: db as unknown as Parameters<typeof withTransaction>[0], calls };
-}
-
+// withTransaction delegates to Db.transaction, whose routing (ALS pinning,
+// nested join, rollback) is pinned by database-conformance.test.ts. Here we
+// only prove the wrapper's contract on a real driver: commit-on-success with
+// the callback's closed-over `db` writes included, rollback-and-rethrow on
+// throw.
 describe('withTransaction', () => {
-	it('wraps the callback in BEGIN/COMMIT and returns its result', async () => {
-		const { db, calls } = fakeDb();
-		const result = await withTransaction(db, async () => 42);
-		expect(result).toBe(42);
-		expect(calls).toEqual(['BEGIN', 'COMMIT']);
+	it('commits the callback writes and returns its result', async () => {
+		const db = await createTestDb();
+		try {
+			await db.exec('CREATE TABLE tx_probe (id INT)');
+			const result = await withTransaction(db, async () => {
+				await db.query('INSERT INTO tx_probe (id) VALUES (1)');
+				return 42;
+			});
+			expect(result).toBe(42);
+			const rows = await db.query<{ id: number }>('SELECT id FROM tx_probe');
+			expect(rows.rows).toEqual([{ id: 1 }]);
+		} finally {
+			await db.close();
+		}
 	});
 
-	it('issues ROLLBACK and rethrows when the callback throws', async () => {
-		const { db, calls } = fakeDb();
-		await expect(
-			withTransaction(db, async () => {
-				throw new Error('boom');
-			}),
-		).rejects.toThrow('boom');
-		expect(calls).toEqual(['BEGIN', 'ROLLBACK']);
+	it('rolls back and rethrows when the callback throws', async () => {
+		const db = await createTestDb();
+		try {
+			await db.exec('CREATE TABLE tx_probe (id INT)');
+			await expect(
+				withTransaction(db, async () => {
+					await db.query('INSERT INTO tx_probe (id) VALUES (1)');
+					throw new Error('boom');
+				}),
+			).rejects.toThrow('boom');
+			const rows = await db.query('SELECT id FROM tx_probe');
+			expect(rows.rows).toEqual([]);
+		} finally {
+			await db.close();
+		}
 	});
 });
 

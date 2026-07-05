@@ -1,4 +1,4 @@
-import type { PGlite } from '@electric-sql/pglite';
+import type { Db } from '../../src/db/database';
 
 /**
  * Deterministic, name-normalized snapshot of a Postgres schema for equivalence
@@ -11,6 +11,11 @@ import type { PGlite } from '@electric-sql/pglite';
  * `001`–`016` chain produced (captured once into a committed fixture). It also
  * guards the frozen baseline against accidental drift thereafter.
  *
+ * Every ORDER BY pins COLLATE "C" (and the JS sort compares code points):
+ * the embedded engine initdbs with the C locale while hosted Postgres
+ * commonly runs en_US.utf8, and locale-dependent ordering would make this
+ * text comparison diverge across engines with identical schemas.
+ *
  * Runner bookkeeping (`_migrations`) and the pre-v1 upgrade-path placeholder
  * (`migration_smoke`, created by the old `002` and intentionally dropped in the
  * collapse) are excluded so the comparison reflects the real application schema.
@@ -21,7 +26,7 @@ function excludedList(): string {
 	return EXCLUDED_TABLES.map((t) => `'${t}'`).join(', ');
 }
 
-export async function introspectSchema(db: PGlite): Promise<string> {
+export async function introspectSchema(db: Db): Promise<string> {
 	const sections: string[] = [];
 
 	// 1. Tables (base tables only).
@@ -29,7 +34,7 @@ export async function introspectSchema(db: PGlite): Promise<string> {
 		`SELECT table_name FROM information_schema.tables
 		 WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
 		   AND table_name NOT IN (${excludedList()})
-		 ORDER BY table_name`,
+		 ORDER BY table_name COLLATE "C"`,
 	);
 	sections.push(`== TABLES ==\n${tables.rows.map((r) => r.table_name).join('\n')}`);
 
@@ -46,7 +51,7 @@ export async function introspectSchema(db: PGlite): Promise<string> {
 		        COALESCE(column_default, '') AS column_default
 		 FROM information_schema.columns
 		 WHERE table_schema = 'public' AND table_name NOT IN (${excludedList()})
-		 ORDER BY table_name, column_name`,
+		 ORDER BY table_name COLLATE "C", column_name COLLATE "C"`,
 	);
 	sections.push(
 		`== COLUMNS ==\n${cols.rows
@@ -61,7 +66,7 @@ export async function introspectSchema(db: PGlite): Promise<string> {
 	const enums = await db.query<{ typname: string; enumlabel: string }>(
 		`SELECT t.typname, e.enumlabel
 		 FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid
-		 ORDER BY t.typname, e.enumsortorder`,
+		 ORDER BY t.typname::text COLLATE "C", e.enumsortorder`,
 	);
 	const enumMap = new Map<string, string[]>();
 	for (const row of enums.rows) {
@@ -71,7 +76,7 @@ export async function introspectSchema(db: PGlite): Promise<string> {
 	}
 	sections.push(
 		`== ENUMS ==\n${[...enumMap.entries()]
-			.sort(([a], [b]) => a.localeCompare(b))
+			.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
 			.map(([name, labels]) => `${name}: ${labels.join(', ')}`)
 			.join('\n')}`,
 	);
@@ -80,7 +85,7 @@ export async function introspectSchema(db: PGlite): Promise<string> {
 	const indexes = await db.query<{ indexdef: string }>(
 		`SELECT indexdef FROM pg_indexes
 		 WHERE schemaname = 'public' AND tablename NOT IN (${excludedList()})
-		 ORDER BY indexname`,
+		 ORDER BY indexname::text COLLATE "C"`,
 	);
 	sections.push(`== INDEXES ==\n${indexes.rows.map((r) => r.indexdef).join('\n')}`);
 
@@ -92,7 +97,8 @@ export async function introspectSchema(db: PGlite): Promise<string> {
 		 JOIN pg_class cl ON cl.oid = c.conrelid
 		 JOIN pg_namespace n ON n.oid = cl.relnamespace
 		 WHERE n.nspname = 'public' AND cl.relname NOT IN (${excludedList()})
-		 ORDER BY tbl, contype, def`,
+		 ORDER BY c.conrelid::regclass::text COLLATE "C", c.contype::text COLLATE "C",
+		          pg_get_constraintdef(c.oid) COLLATE "C"`,
 	);
 	sections.push(
 		`== CONSTRAINTS ==\n${constraints.rows
@@ -111,7 +117,7 @@ export async function introspectSchema(db: PGlite): Promise<string> {
 		   AND NOT EXISTS (
 		     SELECT 1 FROM pg_depend d WHERE d.objid = p.oid AND d.deptype = 'e'
 		   )
-		 ORDER BY p.proname, def`,
+		 ORDER BY p.proname::text COLLATE "C", pg_get_functiondef(p.oid) COLLATE "C"`,
 	);
 	sections.push(
 		`== FUNCTIONS ==\n${fns.rows.map((r) => `--- ${r.proname} ---\n${r.def}`).join('\n')}`,
@@ -125,7 +131,7 @@ export async function introspectSchema(db: PGlite): Promise<string> {
 		 JOIN pg_namespace n ON n.oid = cl.relnamespace
 		 WHERE NOT t.tgisinternal AND n.nspname = 'public'
 		   AND cl.relname NOT IN (${excludedList()})
-		 ORDER BY tbl, t.tgname`,
+		 ORDER BY t.tgrelid::regclass::text COLLATE "C", t.tgname::text COLLATE "C"`,
 	);
 	sections.push(`== TRIGGERS ==\n${triggers.rows.map((r) => r.def).join('\n')}`);
 

@@ -26,12 +26,18 @@ their environment-variable equivalents. The most common:
 ```sh
 hezo --port 8080                 # listen on a different port
 hezo --data-dir /var/lib/hezo    # use a specific data directory
+hezo --database-url postgres://user:pass@host:5432/hezo   # use an external Postgres instead of the embedded database
 hezo --master-key "<phrase>"     # set up or unlock without the web gate
 hezo --web-url https://hezo.example.com   # public base URL for sign-in redirects
 hezo --no-open                   # don't open the web app in your browser on start
 hezo --container-bind-host 0.0.0.0  # native-Linux Docker: let agent containers reach the egress proxy/SSH bridge
 hezo --disable-telemetry         # turn off the anonymous daily usage report (on by default)
 ```
+
+By default the database is embedded and lives under the data directory. With
+`--database-url` (or `HEZO_DATABASE_URL`) Hezo runs against an external PostgreSQL 14+
+instead — see [Using an external Postgres](/docs/deployment/configuration) for
+requirements (TLS, latency, pooling).
 
 On **native-Linux Docker**, agent containers reach the host over the bridge gateway, so the
 host firewall must allow the Docker bridge to reach Hezo's ports. The boot connectivity check
@@ -45,14 +51,28 @@ ready. It skips this automatically in environments without a browser — CI, con
 SSH sessions, and headless Linux (no `DISPLAY`/`WAYLAND_DISPLAY`) — and logs where to
 point your browser instead. Use `--no-open` (or `HEZO_OPEN=0`) to turn it off.
 
-## Restore a snapshot
+## Back up the database
 
 ```sh
-hezo restore <backup>
+hezo backup [--output <path>] [--data-dir <path>] [--database-url <url>]
 ```
 
-Restores a pre-upgrade database snapshot into the data directory, for a manual rollback
-to an earlier version. After restoring, start the matching (older) binary. See
+Writes a **portable logical backup** (default
+`<data-dir>/backups/hezo-<timestamp>.backup.gz`) that restores onto either storage
+backend — which also makes it the way to move an instance between the embedded database
+and an external Postgres. For the embedded database, stop the server first. See
+[Backup & recovery](/docs/deployment/backup-and-recovery).
+
+## Restore a backup
+
+```sh
+hezo restore <backup> [--wipe] [--data-dir <path>] [--database-url <url>]
+```
+
+Restores a `hezo backup` file into the embedded database (default) or an external one
+(`--database-url`). The target must be empty unless `--wipe` is passed. Backups taken by
+a newer Hezo are refused — upgrade first. Legacy pre-upgrade `.tar.gz` snapshots restore
+with the same command (embedded only). See
 [Backup & recovery](/docs/deployment/backup-and-recovery).
 
 ## Reset
@@ -64,6 +84,10 @@ hezo --reset
 Starts fresh with an empty database. Your previous data isn't deleted — the existing
 `pgdata` is renamed aside on disk — but it stays encrypted with the old master key, so
 this is effectively the only path forward once the master key is lost.
+
+`--reset` applies to the **embedded** database only; combined with `--database-url` it
+exits with an error. To start an external database fresh, drop and recreate it with your
+provider's tools.
 
 ## Info
 

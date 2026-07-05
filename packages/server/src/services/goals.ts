@@ -1,4 +1,3 @@
-import type { PGlite } from '@electric-sql/pglite';
 import {
 	GoalCheckFrequency as Freq,
 	type GoalCheckFrequency,
@@ -10,6 +9,7 @@ import {
 	type ProgressUpdateRunSummary,
 	wsRoom,
 } from '@hezo/shared';
+import type { Db } from '../db/database';
 import { broadcastRowChange } from '../lib/broadcast';
 import { withTransaction } from '../lib/sql';
 import type { WebSocketManager } from './ws';
@@ -79,7 +79,7 @@ const HISTORY_AGG_SQL = `COALESCE((
 ), '[]'::json)`;
 
 export async function createGoal(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	input: CreateGoalInput,
 	caller: CreateGoalCaller,
@@ -124,7 +124,7 @@ export async function createGoal(
 }
 
 export async function updateGoal(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	goalId: string,
 	input: UpdateGoalInput,
@@ -181,7 +181,7 @@ export async function updateGoal(
 }
 
 export async function listGoals(
-	db: PGlite,
+	db: Db,
 	projectId: string,
 	opts: { includeArchived?: boolean } = {},
 ): Promise<GoalWithProject[]> {
@@ -199,7 +199,7 @@ export async function listGoals(
 }
 
 export async function getGoal(
-	db: PGlite,
+	db: Db,
 	projectId: string,
 	goalId: string,
 ): Promise<GoalWithProject | null> {
@@ -216,7 +216,7 @@ export async function getGoal(
 
 /** Full, un-capped progress series for a goal — for the larger detail/page chart. */
 export async function getGoalHistory(
-	db: PGlite,
+	db: Db,
 	projectId: string,
 	goalId: string,
 ): Promise<{ t: string; percent: number; health: GoalHealth }[] | null> {
@@ -246,7 +246,7 @@ export async function getGoalHistory(
  * Reaching 100% never retires a goal from checking — progress can regress and goals can be
  * never-ending, so an active goal stays on its cadence forever. Only archiving stops checks.
  */
-export async function getDueGoals(db: PGlite, projectId: string): Promise<GoalRow[]> {
+export async function getDueGoals(db: Db, projectId: string): Promise<GoalRow[]> {
 	const r = await db.query<GoalRow>(
 		`SELECT ${GOAL_COLUMNS_BARE} FROM goals g
 		 WHERE g.project_id = $1
@@ -272,7 +272,7 @@ export async function getDueGoals(db: PGlite, projectId: string): Promise<GoalRo
  * what the Goals page reads to annotate "this run updated goals X, Y".
  */
 export async function recordGoalProgress(
-	db: PGlite,
+	db: Db,
 	input: {
 		goalId: string;
 		runId: string;
@@ -323,7 +323,7 @@ export async function recordGoalProgress(
  * it updated. Shown at the bottom of the Goals page.
  */
 export async function listProgressUpdateRuns(
-	db: PGlite,
+	db: Db,
 	projectId: string,
 	limit = 50,
 ): Promise<ProgressUpdateRunSummary[]> {
@@ -358,7 +358,7 @@ export async function listProgressUpdateRuns(
  * tasks it created and the goal-linked tasks it commented on.
  */
 export async function listGoalRunActivity(
-	db: PGlite,
+	db: Db,
 	projectId: string,
 	goalId: string,
 	limit = 50,

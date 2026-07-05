@@ -3,9 +3,9 @@ import { mkdir, rm } from 'node:fs/promises';
 import type { AddressInfo, Server, Socket } from 'node:net';
 import { createServer } from 'node:net';
 import { dirname } from 'node:path';
-import type { PGlite } from '@electric-sql/pglite';
 import { decrypt } from '../../crypto/encryption';
 import type { MasterKeyManager } from '../../crypto/master-key';
+import type { Db } from '../../db/database';
 import { ref } from '../../lib/log-ref';
 import { closeServerWithDeadline } from '../../lib/net';
 import { logger } from '../../logger';
@@ -30,7 +30,7 @@ const TCP_TOKEN_BYTES = 16;
 const TCP_LISTEN_HOST = '127.0.0.1';
 
 export interface SshAgentServerDeps {
-	db: PGlite;
+	db: Db;
 	masterKeyManager: MasterKeyManager;
 	/** Interface the per-run TCP bridge binds to. Defaults to `127.0.0.1`
 	 * (loopback-only — containers reach it via `host.docker.internal`, which on

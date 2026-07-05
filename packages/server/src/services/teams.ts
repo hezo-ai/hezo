@@ -1,4 +1,3 @@
-import type { PGlite } from '@electric-sql/pglite';
 import {
 	DEFAULT_TEAM_ID,
 	DEFAULT_TEAM_NAME,
@@ -9,6 +8,7 @@ import {
 	MemberType,
 } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
+import type { Db } from '../db/database';
 import { toSlug, uniqueSlug } from '../lib/slug';
 import { withTransaction } from '../lib/sql';
 import { logger } from '../logger';
@@ -27,7 +27,7 @@ import type { WebSocketManager } from './ws';
 const log = logger.child('teams');
 
 export interface CreateTeamDeps {
-	db: PGlite;
+	db: Db;
 	docker: DockerClient;
 	wsManager?: WebSocketManager;
 	masterKeyManager?: MasterKeyManager;

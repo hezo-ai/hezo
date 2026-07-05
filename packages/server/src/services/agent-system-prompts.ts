@@ -1,5 +1,5 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { DocumentType } from '@hezo/shared';
+import type { Db } from '../db/database';
 import { resolveAgentId } from '../lib/resolve';
 import { getDocument } from './documents';
 import { resolveSystemPrompt } from './template-resolver';
@@ -26,7 +26,7 @@ export interface AgentSystemPromptResult {
 }
 
 export async function fetchAgentSystemPromptForBatch(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	agentIdOrSlug: string,
 	mode: SystemPromptMode,

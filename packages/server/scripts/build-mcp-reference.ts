@@ -1,8 +1,8 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import type { PGlite } from '@electric-sql/pglite';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { MasterKeyManager } from '../src/crypto/master-key';
+import type { Db } from '../src/db/database';
 import { generateMcpReference, type McpReferenceTool } from '../src/mcp/mcp-reference';
 import { ONBOARDING_TOOLS } from '../src/mcp/onboarding';
 import { registerTools } from '../src/mcp/tools';
@@ -16,7 +16,7 @@ import { registerTools } from '../src/mcp/tools';
 const server = new McpServer({ name: 'hezo', version: '0.0.0' });
 const toolDefs = registerTools(
 	server,
-	{} as unknown as PGlite,
+	{} as unknown as Db,
 	'/tmp/hezo-mcp-reference',
 	{} as unknown as MasterKeyManager,
 );

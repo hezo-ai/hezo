@@ -1,7 +1,7 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { AiAuthMethod, AiProvider } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
+import type { Db } from '../src/db/database';
 import {
 	deleteAiProviderConfig,
 	getAiProviderStatus,
@@ -13,7 +13,7 @@ import {
 import { safeClose } from './helpers';
 import { createTestApp } from './helpers/app';
 
-let db: PGlite;
+let db: Db;
 let masterKeyManager: MasterKeyManager;
 
 beforeAll(async () => {

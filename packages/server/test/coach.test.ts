@@ -1,7 +1,7 @@
-import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
+import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { buildCoachReviewPrompt, type TaskInfo } from '../src/services/agent-runner';
 import { safeClose } from './helpers';
@@ -15,7 +15,7 @@ import {
 import { compliantPrompt } from './helpers/prompt';
 
 let app: Hono<Env>;
-let db: PGlite;
+let db: Db;
 let adminToken: string;
 let teamId: string;
 let teamSlug: string;

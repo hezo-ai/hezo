@@ -1,4 +1,3 @@
-import type { PGlite } from '@electric-sql/pglite';
 import {
 	HeartbeatRunStatus,
 	TaskStatus,
@@ -7,6 +6,7 @@ import {
 	WakeupStatus,
 	wsRoom,
 } from '@hezo/shared';
+import type { Db } from '../db/database';
 import { logger } from '../logger';
 import { type CascadeContext, recordStatusChange } from '../services/task-events';
 import { createWakeup } from '../services/wakeup';
@@ -36,7 +36,7 @@ export const GATED_WAKEUP_SOURCES: ReadonlySet<string> = new Set([
  * runs like Coach review on Done must always proceed).
  */
 export async function shouldDeferWakeupForBlockers(
-	db: PGlite,
+	db: Db,
 	source: string,
 	taskId: string | null | undefined,
 ): Promise<boolean> {
@@ -56,7 +56,7 @@ export async function shouldDeferWakeupForBlockers(
  * Anything else (backlog, in_progress, review, blocked) leaves the downstream
  * gated.
  */
-export async function hasOpenBlockers(db: PGlite, taskId: string): Promise<boolean> {
+export async function hasOpenBlockers(db: Db, taskId: string): Promise<boolean> {
 	const terminalPlaceholders = TERMINAL_TASK_STATUSES.map((_, i) => `$${i + 2}::task_status`).join(
 		', ',
 	);
@@ -79,7 +79,7 @@ export async function hasOpenBlockers(db: PGlite, taskId: string): Promise<boole
  * (or `blockerId === taskId`), the new edge would close the loop.
  */
 export async function wouldCreateCycle(
-	db: PGlite,
+	db: Db,
 	taskId: string,
 	blockerId: string,
 ): Promise<boolean> {
@@ -111,7 +111,7 @@ export async function wouldCreateCycle(
  * events don't fan out duplicate runs.
  */
 export async function recomputeDownstreamReadiness(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	blockerTaskId: string,
 	actorMemberId: string | null,
@@ -166,7 +166,7 @@ export async function recomputeDownstreamReadiness(
  * target collapses to `backlog` (since `blocked` is purely derived).
  */
 export async function coerceTargetStatusForBlockers(
-	db: PGlite,
+	db: Db,
 	taskId: string,
 	requested: string,
 ): Promise<string> {
@@ -183,7 +183,7 @@ export async function coerceTargetStatusForBlockers(
  * or null when no update was needed.
  */
 export async function reconcileBlockedStatus(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	taskId: string,
 	actorMemberId: string | null,
@@ -229,7 +229,7 @@ export async function reconcileBlockedStatus(
  * open blockers. Splits out so callers that already know the task ID (e.g.
  * REST `DELETE /dependencies/:depId`) don't pay for the downstream lookup.
  */
-export async function wakeIfReady(db: PGlite, taskId: string): Promise<void> {
+export async function wakeIfReady(db: Db, taskId: string): Promise<void> {
 	if (await hasOpenBlockers(db, taskId)) return;
 
 	const task = await db.query<{ assignee_id: string | null; team_id: string }>(

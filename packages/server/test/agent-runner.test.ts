@@ -1,5 +1,4 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentEffort,
 	AiAuthMethod,
@@ -11,6 +10,7 @@ import {
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
+import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import {
 	acquireCredentialLock,
@@ -45,7 +45,7 @@ function readPromptFromExec(
 }
 
 let app: Hono<Env>;
-let db: PGlite;
+let db: Db;
 let adminToken: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;

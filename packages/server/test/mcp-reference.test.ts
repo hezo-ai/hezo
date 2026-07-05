@@ -1,10 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { PGlite } from '@electric-sql/pglite';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
+import type { Db } from '../src/db/database';
 import {
 	generateMcpReference,
 	MCP_REFERENCE_CATEGORY_ORDER,
@@ -30,7 +30,7 @@ function collectReferenceTools(): { tools: McpReferenceTool[]; onboarding: McpRe
 	const server = new McpServer({ name: 'hezo', version: '0.0.0' });
 	const toolDefs = registerTools(
 		server,
-		{} as unknown as PGlite,
+		{} as unknown as Db,
 		'/tmp/hezo-mcp-reference',
 		{} as unknown as MasterKeyManager,
 	);

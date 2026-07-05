@@ -1,9 +1,9 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Context } from 'hono';
 import type { MasterKeyManager } from '../crypto/master-key';
+import type { Db } from '../db/database';
 import type { DomainEventBus } from '../events/bus';
 import type { AuthInfo, Env } from '../lib/types';
 import { verifyToken } from '../middleware/auth';
@@ -23,7 +23,7 @@ let mcpServer: McpServer | null = null;
 let toolDefs: ToolDef[] = [];
 
 export function initMcpServer(
-	db: PGlite,
+	db: Db,
 	dataDir: string,
 	masterKeyManager: MasterKeyManager,
 	wsManager?: WebSocketManager,

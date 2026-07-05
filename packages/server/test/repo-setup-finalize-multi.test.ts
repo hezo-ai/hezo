@@ -1,5 +1,5 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { describe, expect, it } from 'vitest';
+import type { Db } from '../src/db/database';
 import {
 	enqueueRepoSetupResumeWakeups,
 	finalizePendingRepoSetup,
@@ -8,7 +8,7 @@ import {
 import { safeClose } from './helpers';
 import { createTestDbWithMigrations } from './helpers/db';
 
-async function seedTeamProject(db: PGlite): Promise<{ teamId: string; projectId: string }> {
+async function seedTeamProject(db: Db): Promise<{ teamId: string; projectId: string }> {
 	const team = await db.query<{ id: string }>(
 		`INSERT INTO teams (name, slug) VALUES ('Multi Co', 'multi-co') RETURNING id`,
 	);
@@ -20,7 +20,7 @@ async function seedTeamProject(db: PGlite): Promise<{ teamId: string; projectId:
 	return { teamId: team.rows[0].id, projectId: project.rows[0].id };
 }
 
-async function seedAgent(db: PGlite, teamId: string, title: string): Promise<string> {
+async function seedAgent(db: Db, teamId: string, title: string): Promise<string> {
 	const member = await db.query<{ id: string }>(
 		`INSERT INTO members (team_id, member_type, display_name)
 		 VALUES ($1, 'agent', $2) RETURNING id`,
@@ -36,7 +36,7 @@ async function seedAgent(db: PGlite, teamId: string, title: string): Promise<str
 }
 
 async function seedTask(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	projectId: string,
 	number: number,
@@ -52,7 +52,7 @@ async function seedTask(
 }
 
 async function seedApprovalAndComments(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	projectId: string,
 	taskIds: string[],
@@ -84,7 +84,7 @@ async function seedApprovalAndComments(
 }
 
 async function seedDeferredWakeup(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	memberId: string,
 	projectId: string,

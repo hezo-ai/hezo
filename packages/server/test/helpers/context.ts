@@ -1,14 +1,14 @@
 import { rmSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
-import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
 import type { MasterKeyManager } from '../../src/crypto/master-key';
+import type { Db } from '../../src/db/database';
 import type { Env } from '../../src/lib/types';
 import { safeClose } from '../helpers';
 import { createTestApp } from './app';
 
 export interface ServerTestContext {
-	db: PGlite;
+	db: Db;
 	app: Hono<Env>;
 	server: Server;
 	baseUrl: string;

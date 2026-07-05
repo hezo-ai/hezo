@@ -4,7 +4,7 @@
  * `(model_id, source)` key; the service decides precedence (manual wins) at
  * read time.
  */
-import type { PGlite } from '@electric-sql/pglite';
+import type { Db } from '../../db/database';
 import { withTransaction } from '../../lib/sql';
 import type { ParsedRate } from './pricepertoken';
 
@@ -27,12 +27,12 @@ export interface ManualRateInput {
 	cache_creation_per_token?: number | null;
 }
 
-export async function countModelPricing(db: PGlite): Promise<number> {
+export async function countModelPricing(db: Db): Promise<number> {
 	const r = await db.query<{ c: number }>('SELECT COUNT(*)::int AS c FROM model_pricing');
 	return r.rows[0]?.c ?? 0;
 }
 
-export async function listModelPricing(db: PGlite): Promise<ModelPricingRow[]> {
+export async function listModelPricing(db: Db): Promise<ModelPricingRow[]> {
 	const r = await db.query<ModelPricingRow>(
 		'SELECT * FROM model_pricing ORDER BY model_id ASC, source ASC',
 	);
@@ -45,7 +45,7 @@ export async function listModelPricing(db: PGlite): Promise<ModelPricingRow[]> {
  * Only touches `source='pricepertoken'` rows — operator overrides are never
  * clobbered.
  */
-export async function upsertFeedRates(db: PGlite, rates: ParsedRate[]): Promise<void> {
+export async function upsertFeedRates(db: Db, rates: ParsedRate[]): Promise<void> {
 	if (rates.length === 0) return;
 	const CHUNK = 100;
 	await withTransaction(db, async () => {
@@ -83,10 +83,7 @@ export async function upsertFeedRates(db: PGlite, rates: ParsedRate[]): Promise<
 }
 
 /** Insert or update a single operator override row (`source='manual'`). */
-export async function upsertManualRate(
-	db: PGlite,
-	input: ManualRateInput,
-): Promise<ModelPricingRow> {
+export async function upsertManualRate(db: Db, input: ManualRateInput): Promise<ModelPricingRow> {
 	const r = await db.query<ModelPricingRow>(
 		`INSERT INTO model_pricing
 		   (model_id, input_per_token, output_per_token, cache_read_per_token, cache_creation_per_token, source, updated_at)
@@ -110,7 +107,7 @@ export async function upsertManualRate(
 }
 
 /** Delete an override row by id. Only manual rows are deletable. */
-export async function deleteManualRate(db: PGlite, id: string): Promise<boolean> {
+export async function deleteManualRate(db: Db, id: string): Promise<boolean> {
 	const r = await db.query(
 		"DELETE FROM model_pricing WHERE id = $1 AND source = 'manual' RETURNING id",
 		[id],

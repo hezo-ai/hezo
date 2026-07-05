@@ -1,5 +1,5 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { DEFAULT_TEAM_ID, wsRoom } from '@hezo/shared';
+import type { Db } from '../db/database';
 import type { ContainerLogStreamer } from './container-logs';
 import type { DockerClient } from './docker';
 import type { ImageBuildTracker } from './image-build-tracker';
@@ -7,7 +7,7 @@ import type { LogStreamBroker } from './log-stream-broker';
 import type { WebSocketManager, WsData, WsSocket } from './ws';
 
 export interface WsSubscribeDeps {
-	db: PGlite | null;
+	db: Db | null;
 	wsManager: WebSocketManager;
 	docker: DockerClient | null;
 	containerLogStreamer: ContainerLogStreamer;

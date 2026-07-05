@@ -1,4 +1,3 @@
-import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentAdminStatus,
 	COACH_AGENT_SLUG,
@@ -6,13 +5,14 @@ import {
 	WakeupStatus,
 	wsRoom,
 } from '@hezo/shared';
+import type { Db } from '../db/database';
 import { broadcastRowChange } from '../lib/broadcast';
 import type { JobManager } from './job-manager';
 import { recordRunTerminated } from './task-events';
 import type { WebSocketManager } from './ws';
 
 export interface TerminateRunDeps {
-	db: PGlite;
+	db: Db;
 	wsManager: WebSocketManager | undefined;
 	jobManager: JobManager;
 }

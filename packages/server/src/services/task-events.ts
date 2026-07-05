@@ -1,5 +1,5 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { CommentContentType, wsRoom } from '@hezo/shared';
+import type { Db } from '../db/database';
 import { broadcastRowChange } from '../lib/broadcast';
 import type { WebSocketManager } from './ws';
 
@@ -26,7 +26,7 @@ export function extractTaskIdentifiers(text: string | null | undefined): string[
  * agent title / display name; everything else is "Admin".
  */
 export async function resolveActorName(
-	db: PGlite,
+	db: Db,
 	actorMemberId: string | null,
 	actorApiKeyId: string | null = null,
 ): Promise<string> {
@@ -53,7 +53,7 @@ interface ActorInfo {
 }
 
 async function resolveActor(
-	db: PGlite,
+	db: Db,
 	actorMemberId: string | null,
 	actorApiKeyId: string | null = null,
 ): Promise<ActorInfo> {
@@ -91,7 +91,7 @@ export interface CascadeContext {
 }
 
 export async function recordStatusChange(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	taskId: string,
 	oldStatus: string,
@@ -130,7 +130,7 @@ export async function recordStatusChange(
 }
 
 export async function recordRunTerminated(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	taskId: string,
 	runId: string,
@@ -166,7 +166,7 @@ export async function recordRunTerminated(
 }
 
 export async function recordWakeupCancelled(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	taskId: string,
 	wakeupId: string,
@@ -202,7 +202,7 @@ export async function recordWakeupCancelled(
 }
 
 export async function recordTitleChange(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	taskId: string,
 	oldTitle: string,
@@ -238,7 +238,7 @@ export async function recordTitleChange(
 }
 
 export async function recordAssigneeChange(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	taskId: string,
 	oldAssigneeId: string | null,
@@ -281,7 +281,7 @@ export async function recordAssigneeChange(
 }
 
 export async function recordTaskLinks(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	sourceTaskId: string,
 	text: string | null | undefined,

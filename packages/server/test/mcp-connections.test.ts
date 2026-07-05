@@ -1,11 +1,11 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
+import type { Db } from '../src/db/database';
 import { loadMcpConnectionDescriptors } from '../src/services/mcp-connections';
 import { safeClose } from './helpers';
 import { createTestApp, createTestTeam, projectSlugFor } from './helpers/app';
 
-let db: PGlite;
+let db: Db;
 let teamId: string;
 let token: string;
 let masterKeyManager: MasterKeyManager;

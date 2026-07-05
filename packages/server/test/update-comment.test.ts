@@ -1,7 +1,7 @@
-import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
+import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
 import {
@@ -20,7 +20,7 @@ import {
  */
 describe('update_comment MCP tool', () => {
 	let app: Hono<Env>;
-	let db: PGlite;
+	let db: Db;
 	let superToken: string;
 	let masterKeyManager: MasterKeyManager;
 

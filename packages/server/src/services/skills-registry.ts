@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import type { PGlite } from '@electric-sql/pglite';
 import { decrypt, encrypt } from '../crypto/encryption';
+import type { Db } from '../db/database';
 import { parseFrontmatter } from '../lib/frontmatter';
 import { deriveSkillSummary } from '../lib/skill-summary';
 import { toSlug } from '../lib/slug';
@@ -43,7 +43,7 @@ export class SkillsRegistryError extends Error {
 
 // --- token storage (encrypted in system_meta) ---
 
-export async function setRegistryToken(db: PGlite, key: Buffer, token: string): Promise<void> {
+export async function setRegistryToken(db: Db, key: Buffer, token: string): Promise<void> {
 	const trimmed = token.trim();
 	if (!trimmed) {
 		await deleteSystemMeta(db, REGISTRY_TOKEN_KEY);
@@ -52,7 +52,7 @@ export async function setRegistryToken(db: PGlite, key: Buffer, token: string): 
 	await setSystemMeta(db, REGISTRY_TOKEN_KEY, encrypt(trimmed, key));
 }
 
-export async function getRegistryToken(db: PGlite, key: Buffer): Promise<string | null> {
+export async function getRegistryToken(db: Db, key: Buffer): Promise<string | null> {
 	const stored = await getSystemMeta(db, REGISTRY_TOKEN_KEY);
 	if (!stored) return null;
 	try {
@@ -62,7 +62,7 @@ export async function getRegistryToken(db: PGlite, key: Buffer): Promise<string 
 	}
 }
 
-export async function hasRegistryToken(db: PGlite): Promise<boolean> {
+export async function hasRegistryToken(db: Db): Promise<boolean> {
 	return (await getSystemMeta(db, REGISTRY_TOKEN_KEY)) !== null;
 }
 
@@ -185,7 +185,7 @@ async function fetchRegistrySkillMarkdown(
  * `created_by_member_id`). Idempotent on the derived slug.
  */
 export async function installRegistrySkill(
-	db: PGlite,
+	db: Db,
 	id: string,
 	token: string | null,
 	actorMemberId: string | null,

@@ -1,5 +1,5 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { AgentAdminStatus, type AuditActorType, wsRoom } from '@hezo/shared';
+import type { Db } from '../db/database';
 import type { DomainEventBus } from '../events/bus';
 import { trackBackground } from '../lib/background';
 import { broadcastRowChange } from '../lib/broadcast';
@@ -11,7 +11,7 @@ import type { WebSocketManager } from './ws';
 const log = logger.child('agent-admin');
 
 export interface SetAgentAdminStatusDeps {
-	db: PGlite;
+	db: Db;
 	wsManager?: WebSocketManager;
 	events?: DomainEventBus;
 }

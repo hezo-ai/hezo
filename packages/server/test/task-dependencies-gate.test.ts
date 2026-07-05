@@ -1,7 +1,7 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { HeartbeatRunStatus, TaskStatus, WakeupSource, WakeupStatus } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Db } from '../src/db/database';
 import {
 	hasOpenBlockers,
 	shouldDeferWakeupForBlockers,
@@ -18,7 +18,7 @@ import {
 	projectSlugFor,
 } from './helpers/app';
 
-let db: PGlite;
+let db: Db;
 let app: Hono<Env>;
 let token: string;
 let teamId: string;

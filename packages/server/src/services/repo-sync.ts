@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import type { PGlite } from '@electric-sql/pglite';
 import { repoNameFromIdentifier } from '@hezo/shared';
+import type { Db } from '../db/database';
 import { logger } from '../logger';
 import { cloneRepo, initRepoInPlace, type RepoLoc } from './git';
 import type { GitExecutor } from './git-executor';
@@ -32,7 +32,7 @@ export interface ProjectIdentity {
  * reported in `failed` (same outcome as a missing key today).
  */
 export async function ensureProjectRepos(
-	db: PGlite,
+	db: Db,
 	project: ProjectIdentity,
 	dataDir: string,
 	executor: GitExecutor,

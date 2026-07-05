@@ -25,8 +25,10 @@ Everything Hezo keeps lives in one place — the **data directory** (default `~/
 - your **encrypted** secrets and signing keys, and
 - project assets.
 
-There's no separate database server to run. Because this directory holds everything,
-it's the one thing to back up — see [Backup & recovery](/docs/deployment/backup-and-recovery).
+There's no separate database server to run by default (an
+[external Postgres](/docs/deployment/configuration) is optional; the data directory is
+still required for assets and keys). Because this directory holds everything, it's the
+one thing to back up — see [Backup & recovery](/docs/deployment/backup-and-recovery).
 
 ## Running it
 
@@ -308,5 +310,6 @@ runs inside a container (update the image instead) and can be turned off with
 ### Updating manually
 
 You can always upgrade by replacing the binary yourself. On startup Hezo runs any
-required database migrations automatically, taking a snapshot first so an upgrade
+required database migrations automatically — the embedded database is migrated on a
+copy and swapped in only on success (the previous copy is kept aside), so an upgrade
 is safe to roll back. See [Backup & recovery](/docs/deployment/backup-and-recovery).

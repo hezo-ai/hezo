@@ -1,4 +1,3 @@
-import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentAdminStatus,
 	AgentRuntimeStatus,
@@ -25,6 +24,7 @@ import {
 	wsRoom,
 } from '@hezo/shared';
 import { Hono } from 'hono';
+import type { Db } from '../db/database';
 import { trackBackground } from '../lib/background';
 import { broadcastChange, broadcastCommentFamilyChange } from '../lib/broadcast';
 import { budgetWindowsError } from '../lib/budget-validation';
@@ -570,7 +570,7 @@ agentsRoutes.get('/projects/:projectId/agents/:agentId', async (c) => {
 // The agent's long-term chat memory (the compacted history shown on the Chat
 // history tab). Only chat-enabled agents — those with a conversation — have one;
 // today that is just the CEO.
-async function isChatEnabledAgent(db: PGlite, memberId: string): Promise<boolean> {
+async function isChatEnabledAgent(db: Db, memberId: string): Promise<boolean> {
 	const r = await db.query('SELECT 1 FROM ceo_conversations WHERE member_id = $1 LIMIT 1', [
 		memberId,
 	]);

@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import type { PGlite } from '@electric-sql/pglite';
+import type { Db } from '../db/database';
 import { isUniqueViolation } from './sql';
 
 function splitExtension(name: string): { base: string; ext: string } {
@@ -27,11 +27,7 @@ function randomSuffix(bytes = 3): string {
  * The DB's UNIQUE(project_id, original_filename) constraint is the real backstop
  * (see `insertAssetWithUniqueName`); this just produces a friendly first guess.
  */
-export async function uniqueAssetName(
-	db: PGlite,
-	projectId: string,
-	desired: string,
-): Promise<string> {
+export async function uniqueAssetName(db: Db, projectId: string, desired: string): Promise<string> {
 	const taken = async (candidate: string): Promise<boolean> => {
 		const r = await db.query(
 			'SELECT 1 FROM assets WHERE project_id = $1 AND original_filename = $2 LIMIT 1',
@@ -73,7 +69,7 @@ export interface InsertedAsset {
  * `assetId`, so a name retry never needs to rewrite the file.
  */
 export async function insertAssetWithUniqueName(
-	db: PGlite,
+	db: Db,
 	input: InsertAssetInput,
 ): Promise<InsertedAsset> {
 	let lastErr: unknown;
@@ -116,7 +112,7 @@ export async function insertAssetWithUniqueName(
  * `assetId`'s blob is orphaned and should be cleaned up by the caller.
  */
 export async function upsertProjectAsset(
-	db: PGlite,
+	db: Db,
 	input: InsertAssetInput,
 ): Promise<InsertedAsset & { replacedAssetId: string | null }> {
 	const existing = await db.query<{ id: string }>(

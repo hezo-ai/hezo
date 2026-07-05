@@ -1,5 +1,5 @@
-import type { PGlite } from '@electric-sql/pglite';
 import type { SearchResult, SearchScope } from '@hezo/shared';
+import type { Db } from '../db/database';
 import { buildHighlightedSnippet } from '../lib/snippet';
 
 const TEXT_SEARCH_CONFIG = 'english';
@@ -33,7 +33,7 @@ export function buildSearchTsQuery(raw: string): string {
  * accurate per-type counts.
  */
 export async function fullTextSearch(
-	db: PGlite,
+	db: Db,
 	teamIds: string[],
 	query: string,
 	options: {

@@ -1,11 +1,11 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Db } from '../src/db/database';
 import type { DockerClient } from '../src/services/docker';
 import { installLocalMcpById, installPendingLocalMcps } from '../src/services/mcp-installer';
 import { safeClose } from './helpers';
 import { createTestApp, createTestTeam } from './helpers/app';
 
-let db: PGlite;
+let db: Db;
 let teamId: string;
 let projectId: string;
 

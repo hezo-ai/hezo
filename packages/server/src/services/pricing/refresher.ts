@@ -5,13 +5,13 @@
  * on fetch/parse failure — the route maps that to a 503 and the daily cron
  * logs and leaves the existing rows in place.
  */
-import type { PGlite } from '@electric-sql/pglite';
+import type { Db } from '../../db/database';
 import { type FetchLike, fetchPricePerTokenPricing } from './pricepertoken';
 import { upsertFeedRates } from './repo';
 
 /** Fetch `get_all_models` and upsert the rows. Returns the row count. */
 export async function refreshPricingFromPricePerToken(
-	db: PGlite,
+	db: Db,
 	fetchImpl?: FetchLike,
 ): Promise<number> {
 	const rates = await fetchPricePerTokenPricing(fetchImpl);

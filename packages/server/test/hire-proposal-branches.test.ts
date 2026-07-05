@@ -1,4 +1,3 @@
-import type { PGlite } from '@electric-sql/pglite';
 import {
 	ApprovalStatus,
 	ApprovalType,
@@ -7,6 +6,7 @@ import {
 	DEFAULT_HEARTBEAT_INTERVAL_MIN,
 } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Db } from '../src/db/database';
 import {
 	buildHirePayloadPatch,
 	insertHireApproval,
@@ -26,7 +26,7 @@ import { compliantPrompt } from './helpers/prompt';
  * slug-exists and reports_to-resolves arms have a real roster to hit.
  */
 
-let db: PGlite;
+let db: Db;
 let teamId: string;
 
 beforeAll(async () => {

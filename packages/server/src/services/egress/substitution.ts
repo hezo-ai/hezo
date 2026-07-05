@@ -1,6 +1,6 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { decrypt } from '../../crypto/encryption';
 import type { MasterKeyManager } from '../../crypto/master-key';
+import type { Db } from '../../db/database';
 import { createPlaceholderRegex, PLACEHOLDER_PROBE } from '../../lib/credential-placeholder';
 import { refreshExpiringTokens } from '../oauth/token-resolver';
 
@@ -26,7 +26,7 @@ import { refreshExpiringTokens } from '../oauth/token-resolver';
 export const PLACEHOLDER_PROBE_REGEX = new RegExp(PLACEHOLDER_PROBE);
 
 export interface SubstitutionScope {
-	db: PGlite;
+	db: Db;
 	masterKeyManager: MasterKeyManager;
 }
 

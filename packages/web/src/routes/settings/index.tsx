@@ -1,4 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router';
+import { DatabaseSection } from '../../components/database-section';
 import { InstanceSettingsSection } from '../../components/instance-settings-section';
 import { VersionDisplay } from '../../components/version-display';
 
@@ -7,6 +8,7 @@ function GeneralSettingsPage() {
 	return (
 		<div className="max-w-[900px]">
 			<InstanceSettingsSection />
+			<DatabaseSection />
 			<VersionDisplay />
 		</div>
 	);

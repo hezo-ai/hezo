@@ -1,9 +1,9 @@
-import type { PGlite } from '@electric-sql/pglite';
 import {
 	DEFAULT_MAX_CHAT_HISTORY_SIZE,
 	MAX_CHAT_HISTORY_SIZE_MAX,
 	MAX_CHAT_HISTORY_SIZE_MIN,
 } from '@hezo/shared';
+import type { Db } from '../db/database';
 
 /**
  * Instance-wide key-value settings stored in the `system_meta` table (the same
@@ -13,14 +13,14 @@ import {
 export const INSTANCE_BASE_URL_KEY = 'instance_base_url';
 export const MAX_CHAT_HISTORY_SIZE_KEY = 'max_chat_history_size';
 
-export async function getSystemMeta(db: PGlite, key: string): Promise<string | null> {
+export async function getSystemMeta(db: Db, key: string): Promise<string | null> {
 	const result = await db.query<{ value: string }>('SELECT value FROM system_meta WHERE key = $1', [
 		key,
 	]);
 	return result.rows[0]?.value ?? null;
 }
 
-export async function setSystemMeta(db: PGlite, key: string, value: string): Promise<void> {
+export async function setSystemMeta(db: Db, key: string, value: string): Promise<void> {
 	await db.query(
 		`INSERT INTO system_meta (key, value) VALUES ($1, $2)
 		 ON CONFLICT (key) DO UPDATE SET value = $2`,
@@ -28,7 +28,7 @@ export async function setSystemMeta(db: PGlite, key: string, value: string): Pro
 	);
 }
 
-export async function deleteSystemMeta(db: PGlite, key: string): Promise<void> {
+export async function deleteSystemMeta(db: Db, key: string): Promise<void> {
 	await db.query('DELETE FROM system_meta WHERE key = $1', [key]);
 }
 
@@ -52,7 +52,7 @@ export function clampMaxChatHistorySize(value: number): number {
  * to the default when unset or malformed, and clamps stored values to the
  * allowed range so a stale out-of-bounds row can never blow up a turn.
  */
-export async function getMaxChatHistorySize(db: PGlite): Promise<number> {
+export async function getMaxChatHistorySize(db: Db): Promise<number> {
 	const raw = await getSystemMeta(db, MAX_CHAT_HISTORY_SIZE_KEY);
 	if (raw === null) return DEFAULT_MAX_CHAT_HISTORY_SIZE;
 	const parsed = Number.parseInt(raw, 10);
@@ -60,7 +60,7 @@ export async function getMaxChatHistorySize(db: PGlite): Promise<number> {
 	return clampMaxChatHistorySize(parsed);
 }
 
-export async function setMaxChatHistorySize(db: PGlite, value: number): Promise<number> {
+export async function setMaxChatHistorySize(db: Db, value: number): Promise<number> {
 	const clamped = clampMaxChatHistorySize(value);
 	await setSystemMeta(db, MAX_CHAT_HISTORY_SIZE_KEY, String(clamped));
 	return clamped;
@@ -72,7 +72,7 @@ export async function setMaxChatHistorySize(db: PGlite, value: number): Promise<
  * global settings. Used to build absolute links for external channels
  * (Telegram, …); null until captured or configured.
  */
-export function getInstanceBaseUrl(db: PGlite): Promise<string | null> {
+export function getInstanceBaseUrl(db: Db): Promise<string | null> {
 	return getSystemMeta(db, INSTANCE_BASE_URL_KEY);
 }
 

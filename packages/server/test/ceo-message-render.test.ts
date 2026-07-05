@@ -1,7 +1,7 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { CeoChannel, HQ_PROJECT_SLUG } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Db } from '../src/db/database';
 import { INSTANCE_BASE_URL_KEY, setSystemMeta } from '../src/lib/system-meta';
 import type { Env } from '../src/lib/types';
 import { renderCeoMessageForChannel } from '../src/services/ceo-message-render';
@@ -9,7 +9,7 @@ import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 
 let app: Hono<Env>;
-let db: PGlite;
+let db: Db;
 let token: string;
 
 let projectSlug: string;

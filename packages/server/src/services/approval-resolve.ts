@@ -1,5 +1,5 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { ApprovalStatus } from '@hezo/shared';
+import type { Db } from '../db/database';
 import type { DomainEventBus } from '../events/bus';
 import {
 	applyApprovalDeniedSideEffect,
@@ -28,7 +28,7 @@ export type ResolveApprovalResult =
 	| { ok: false; error: ResolveApprovalError; message: string };
 
 export async function resolveApproval(
-	db: PGlite,
+	db: Db,
 	approvalId: string,
 	input: ResolveApprovalInput,
 ): Promise<ResolveApprovalResult> {

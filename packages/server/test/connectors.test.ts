@@ -1,8 +1,8 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { CommentContentType, McpConnectionKind, WakeupSource } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
+import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import {
 	createOrFetchConnector,
@@ -28,7 +28,7 @@ import {
 import { type FakeMcpServer, startFakeMcpServer } from './helpers/fake-mcp-server';
 
 let app: Hono<Env>;
-let db: PGlite;
+let db: Db;
 let token: string;
 let projectSlug: string;
 let masterKeyManager: MasterKeyManager;

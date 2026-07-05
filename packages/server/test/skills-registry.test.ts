@@ -2,10 +2,10 @@ import { mkdirSync, rmSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { PGlite } from '@electric-sql/pglite';
 import { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { generateUnlockKey, MasterKeyManager } from '../src/crypto/master-key';
+import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { signAdminJwt } from '../src/middleware/auth';
 import {
@@ -79,7 +79,7 @@ async function createSkillsSim(): Promise<{ baseUrl: string; destroy: () => Prom
 	};
 }
 
-let db: PGlite;
+let db: Db;
 let key: Buffer;
 let app: Hono<Env>;
 let adminToken: string;

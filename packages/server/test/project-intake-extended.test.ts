@@ -1,6 +1,6 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { TaskStatus } from '@hezo/shared';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import type { Db } from '../src/db/database';
 import {
 	completeProjectIntakeAfterProvisioning,
 	createProjectIntake,
@@ -10,7 +10,7 @@ import {
 import { safeClose } from './helpers';
 import { createTestApp } from './helpers/app';
 
-let db: PGlite;
+let db: Db;
 
 beforeAll(async () => {
 	// createTestApp seeds the HQ team + CEO so loadCoordinationContext resolves.

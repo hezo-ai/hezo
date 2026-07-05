@@ -1,5 +1,5 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { McpConnectionKind, type McpTransport } from '@hezo/shared';
+import type { Db } from '../../db/database';
 import { logger } from '../../logger';
 
 const log = logger.child('connector-lifecycle');
@@ -60,7 +60,7 @@ export function statusOf(
  * modification (restoring a previously-revoked row for re-authorization).
  */
 export async function createOrFetchConnector(
-	db: PGlite,
+	db: Db,
 	input: CreateConnectorInput,
 ): Promise<{ row: ConnectorRow; alreadyExisted: boolean }> {
 	const existing = await db.query<ConnectorRow>(
@@ -128,7 +128,7 @@ export async function createOrFetchConnector(
 }
 
 export async function markActive(
-	db: PGlite,
+	db: Db,
 	connectorId: string,
 	oauthConnectionId: string,
 ): Promise<ConnectorRow | null> {
@@ -148,7 +148,7 @@ export async function markActive(
 }
 
 export async function markFailed(
-	db: PGlite,
+	db: Db,
 	connectorId: string,
 	reason: string,
 ): Promise<ConnectorRow | null> {
@@ -162,7 +162,7 @@ export async function markFailed(
 	return result.rows[0] ?? null;
 }
 
-export async function markRevoked(db: PGlite, connectorId: string): Promise<ConnectorRow | null> {
+export async function markRevoked(db: Db, connectorId: string): Promise<ConnectorRow | null> {
 	const result = await db.query<ConnectorRow>(
 		`UPDATE mcp_connections
 		 SET revoked_at = now(), oauth_connection_id = NULL, updated_at = now()
@@ -173,7 +173,7 @@ export async function markRevoked(db: PGlite, connectorId: string): Promise<Conn
 	return result.rows[0] ?? null;
 }
 
-export async function getConnector(db: PGlite, connectorId: string): Promise<ConnectorRow | null> {
+export async function getConnector(db: Db, connectorId: string): Promise<ConnectorRow | null> {
 	const result = await db.query<ConnectorRow>(
 		`SELECT ${CONNECTOR_COLS} FROM mcp_connections WHERE id = $1`,
 		[connectorId],
@@ -181,7 +181,7 @@ export async function getConnector(db: PGlite, connectorId: string): Promise<Con
 	return result.rows[0] ?? null;
 }
 
-export async function listConnectors(db: PGlite): Promise<ConnectorRow[]> {
+export async function listConnectors(db: Db): Promise<ConnectorRow[]> {
 	const result = await db.query<ConnectorRow>(
 		`SELECT ${CONNECTOR_COLS} FROM mcp_connections ORDER BY created_at ASC`,
 	);

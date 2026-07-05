@@ -1,11 +1,16 @@
 import { existsSync } from 'node:fs';
-import type { PGlite } from '@electric-sql/pglite';
 import { AuthType } from '@hezo/shared';
 import { app } from './app';
-import { parseConfig, runRestore, runVersion } from './cli';
+import { parseConfig, runBackup, runRestore, runVersion } from './cli';
 import type { MasterKeyManager } from './crypto/master-key';
 import { PgDataCorruptError } from './db/client';
-import { DbNewerThanAppError, MigrationFailedError } from './db/migrate-errors';
+import type { Db } from './db/database';
+import {
+	DbNewerThanAppError,
+	ExternalDbError,
+	ExternalMigrationFailedError,
+	MigrationFailedError,
+} from './db/migrate-errors';
 import { browserAvailable, openBrowser } from './lib/open-browser';
 import type { AuthInfo } from './lib/types';
 import { logger, setLogLevel } from './logger';
@@ -88,7 +93,10 @@ if (runVersion()) {
 	process.exit(0);
 }
 
-// `hezo restore <backup>` runs and exits before any server startup.
+// `hezo backup` / `hezo restore <backup>` run and exit before any server startup.
+if (await runBackup()) {
+	process.exit(0);
+}
 if (await runRestore()) {
 	process.exit(0);
 }
@@ -165,7 +173,7 @@ let serveFetch: (
 	server: Bun.Server<WsConnectionData>,
 ) => Response | Promise<Response> = app.fetch as typeof serveFetch;
 let wsManager: WebSocketManager | null = null;
-let dbRef: PGlite | null = null;
+let dbRef: Db | null = null;
 let mkmRef: MasterKeyManager | null = null;
 let dockerRef: import('./services/docker').DockerClient | null = null;
 let logsRef: LogStreamBroker | null = null;
@@ -229,10 +237,15 @@ void (async () => {
 		}
 	} catch (err) {
 		if (thisStartupGeneration !== startupGeneration) return;
-		// Fatal, operator-actionable migration conditions: the DB is fine but the
-		// binary can't proceed. Print the guidance and exit rather than limping
-		// along in minimal mode.
-		if (err instanceof DbNewerThanAppError || err instanceof MigrationFailedError) {
+		// Fatal, operator-actionable database conditions: the binary can't
+		// proceed. Print the guidance and exit rather than limping along in
+		// minimal mode.
+		if (
+			err instanceof DbNewerThanAppError ||
+			err instanceof MigrationFailedError ||
+			err instanceof ExternalDbError ||
+			err instanceof ExternalMigrationFailedError
+		) {
 			log.error(`\n${err.message}\n`);
 			process.exit(1);
 		}

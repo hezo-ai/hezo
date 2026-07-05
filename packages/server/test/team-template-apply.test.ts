@@ -1,12 +1,12 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { CAPTAIN_AGENT_SLUG, COACH_AGENT_SLUG, DEFAULT_TEAM_ID, DocumentType } from '@hezo/shared';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import type { Db } from '../src/db/database';
 import { applyTemplateToTeam } from '../src/services/team-template-apply';
 import { createTeam } from '../src/services/teams';
 import { safeClose } from './helpers';
 import { createTestApp, createTestProject } from './helpers/app';
 
-let db: PGlite;
+let db: Db;
 let docker: { listContainers: () => Promise<unknown[]> };
 let dataDir: string;
 

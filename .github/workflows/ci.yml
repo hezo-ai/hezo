@@ -208,6 +208,47 @@ jobs:
           fail-on-error: false
           allow-empty: true
 
+  # External-Postgres driver conformance: the database-* suites run their
+  # env-gated postgres legs against a real postgres:16 service, proving the
+  # PostgresDb driver returns byte-identical shapes to PGlite (the contract the
+  # always-on PGlite legs pin). The Bun-native pg-driver test also runs here —
+  # node-postgres rides node:net/node:tls, which diverge between Node (vitest)
+  # and the production Bun runtime. Single (non-matrix) job: no *-complete
+  # rollup needed; required directly by the main ruleset under its bare name.
+  test-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: hezo
+          POSTGRES_PASSWORD: hezo
+          POSTGRES_DB: hezo
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hezo"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      HEZO_TEST_DATABASE_URL: postgres://hezo:hezo@localhost:5432/hezo
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
+      - run: bun run test --package server --pattern database-
+      - name: Bun-native pg driver test
+        run: cd packages/server && bun test ./test/bun/database-pg-driver.bun.test.ts
+
   test-browser:
     runs-on: ubuntu-latest
     timeout-minutes: 25

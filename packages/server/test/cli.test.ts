@@ -17,6 +17,30 @@ const argv = (...flags: string[]) => ['bun', 'src/index.ts', ...flags];
 const EMPTY_ENV: NodeJS.ProcessEnv = {};
 
 describe('parseConfig', () => {
+	it('leaves databaseUrl unset by default (embedded database)', () => {
+		expect(parseConfig(argv(), EMPTY_ENV).databaseUrl).toBeUndefined();
+	});
+
+	it('accepts --database-url and lets HEZO_DATABASE_URL win over the flag', () => {
+		expect(
+			parseConfig(argv('--database-url', 'postgres://u:p@h:5432/db'), EMPTY_ENV).databaseUrl,
+		).toBe('postgres://u:p@h:5432/db');
+		expect(
+			parseConfig(argv('--database-url', 'postgres://cli@h/db'), {
+				HEZO_DATABASE_URL: 'postgres://env@h/db',
+			}).databaseUrl,
+		).toBe('postgres://env@h/db');
+	});
+
+	it('rejects --reset combined with an external database URL', () => {
+		expect(() =>
+			parseConfig(argv('--database-url', 'postgres://u:p@h/db', '--reset'), EMPTY_ENV),
+		).toThrow('embedded database only');
+		expect(() =>
+			parseConfig(argv('--reset'), { HEZO_DATABASE_URL: 'postgres://u:p@h/db' }),
+		).toThrow('embedded database only');
+	});
+
 	it('returns defaults when no args provided', () => {
 		const config = parseConfig(argv(), EMPTY_ENV);
 		expect(config.port).toBe(3100);

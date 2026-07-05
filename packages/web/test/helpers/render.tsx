@@ -42,9 +42,8 @@ interface TestAppContext {
 	/** The 12-word master key phrase the test app was enrolled with. */
 	mnemonic: string;
 	apiBase: (path: string, init?: RequestInit) => Promise<Response>;
-	// Source the PGlite type from the server helper so it stays in lockstep with
-	// the version server-side seeders (createTestProject) expect — the web tree
-	// resolves a newer @electric-sql/pglite whose nominal type is incompatible.
+	// Source the Db type from the server helper so it stays in lockstep with
+	// what server-side seeders (createTestProject) expect.
 	db: Awaited<ReturnType<typeof createTestApp>>['db'];
 	masterKeyManager: Awaited<ReturnType<typeof createTestApp>>['masterKeyManager'];
 	// Per-test temp dir backing the server's workspace/worktree layout. Lets
@@ -67,7 +66,7 @@ beforeEach(async () => {
 		return test.app.fetch(new Request(url, init));
 	};
 	// The server app/db come from the server package's own type instances
-	// (Hono<Env>, its pglite copy); the web test boundary treats them opaquely.
+	// (Hono<Env>, its Db driver); the web test boundary treats them opaquely.
 	activeContext = {
 		app: test.app,
 		token: test.token,

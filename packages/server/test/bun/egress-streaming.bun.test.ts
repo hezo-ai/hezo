@@ -5,9 +5,9 @@ import { connect as netConnect, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type TLSSocket, connect as tlsConnect } from 'node:tls';
-import type { PGlite } from '@electric-sql/pglite';
 import { encrypt } from '../../src/crypto/encryption';
 import type { MasterKeyManager } from '../../src/crypto/master-key';
+import type { Db } from '../../src/db/database';
 import { type HezoCA, loadOrCreateCA } from '../../src/services/egress/ca';
 import { EgressProxy } from '../../src/services/egress/proxy';
 import { createTestApp, createTestProject, createTestTeam } from '../helpers/app';
@@ -22,7 +22,7 @@ import { mintCertFromCA } from '../helpers/self-signed-cert';
 // every run that touched the GitHub MCP. Node/vitest never sees this — the
 // failure is specific to Bun's connection accounting.
 
-let db: PGlite;
+let db: Db;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
 let agentId: string;

@@ -1,8 +1,8 @@
 import { createServer, type Server } from 'node:http';
-import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
 import { Hono as HonoApp } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { createOrFetchConnector, getConnector } from '../src/services/connectors/lifecycle';
 import { safeClose } from './helpers';
@@ -101,7 +101,7 @@ async function startGenericOAuthSim(
 }
 
 let app: Hono<Env>;
-let db: PGlite;
+let db: Db;
 let token: string;
 let teamId: string;
 let projectSlug: string;

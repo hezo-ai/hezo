@@ -1,5 +1,4 @@
 import { readFileSync, writeFileSync } from 'node:fs';
-import type { PGlite } from '@electric-sql/pglite';
 import {
 	AiAuthMethod,
 	AiProvider,
@@ -11,6 +10,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { decrypt } from '../src/crypto/encryption';
 import type { MasterKeyManager } from '../src/crypto/master-key';
+import type { Db } from '../src/db/database';
 import { DomainEventBus } from '../src/events/bus';
 import type { Env } from '../src/lib/types';
 import {
@@ -100,7 +100,7 @@ function createMockDocker(taskId: string, overrides: Record<string, any> = {}): 
 }
 
 let app: Hono<Env>;
-let db: PGlite;
+let db: Db;
 let adminToken: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;

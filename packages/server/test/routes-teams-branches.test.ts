@@ -1,6 +1,6 @@
-import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { signAdminJwt } from '../src/middleware/auth';
 import { safeClose } from './helpers';
@@ -16,7 +16,7 @@ import { authHeader, createTestApp, createTestTeam, projectSlugFor } from './hel
  */
 
 let app: Hono<Env>;
-let db: PGlite;
+let db: Db;
 let token: string;
 let nonAdminToken: string;
 let projectSlug: string;

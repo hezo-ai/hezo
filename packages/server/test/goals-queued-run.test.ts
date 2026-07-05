@@ -1,8 +1,8 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { WakeupSkipReason, WakeupSource, WakeupStatus } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
+import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { ContainerLogStreamer } from '../src/services/container-logs';
 import { JobManager, type JobManagerDeps } from '../src/services/job-manager';
@@ -20,7 +20,7 @@ import {
 // dedup that must NOT cross-coalesce with the Captain's scheduled task-less heartbeat wakeup, the
 // project-scoped list/cancel routes, and the activateAgent guard that keeps a queued progress
 // wakeup from falling through to ordinary task selection.
-let db: PGlite;
+let db: Db;
 let app: Hono<Env>;
 let token: string;
 let masterKeyManager: MasterKeyManager;

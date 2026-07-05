@@ -1,6 +1,6 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { DEFAULT_TEAM_ID, TaskStatus } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Db } from '../src/db/database';
 import { OAUTH_VERIFICATION_LABEL } from '../src/services/oauth-verification-tasks';
 import { triggerStatusAutomations } from '../src/services/task-automation';
 import { safeClose } from './helpers';
@@ -21,7 +21,7 @@ import {
  * - wakeParentIfChildrenClosed: parent assignee that is a human (not an agent).
  */
 
-let db: PGlite;
+let db: Db;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();

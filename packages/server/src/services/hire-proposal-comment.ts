@@ -1,10 +1,10 @@
-import type { PGlite } from '@electric-sql/pglite';
 import {
 	ActionCommentKind,
 	type ApprovalStatus,
 	CommentContentType,
 	WakeupSource,
 } from '@hezo/shared';
+import type { Db } from '../db/database';
 import { broadcastCommentFamilyChange } from '../lib/broadcast';
 import { logger } from '../logger';
 import { createWakeup } from './wakeup';
@@ -42,7 +42,7 @@ function buildContentSnapshot(payload: Record<string, unknown>): Record<string, 
  * existing comment rather than duplicating it.
  */
 export async function insertHireProposalComment(
-	db: PGlite,
+	db: Db,
 	params: {
 		taskId: string;
 		approvalId: string;
@@ -96,7 +96,7 @@ export async function insertHireProposalComment(
  * agent is already created), so the whole body is caught and logged.
  */
 export async function resolveHireProposalCommentAndWake(
-	db: PGlite,
+	db: Db,
 	params: {
 		approval: Record<string, unknown>;
 		status: HireResolution;
@@ -180,7 +180,7 @@ export async function resolveHireProposalCommentAndWake(
  * agent — a human requester (REST onboard by a superuser) has nothing to resume.
  */
 async function resolveWakeTarget(
-	db: PGlite,
+	db: Db,
 	requestedByMemberId: string | null,
 	taskId: string,
 ): Promise<string | null> {
@@ -196,7 +196,7 @@ async function resolveWakeTarget(
 	return null;
 }
 
-async function isAgent(db: PGlite, memberId: string): Promise<boolean> {
+async function isAgent(db: Db, memberId: string): Promise<boolean> {
 	const r = await db.query('SELECT id FROM member_agents WHERE id = $1', [memberId]);
 	return r.rows.length > 0;
 }

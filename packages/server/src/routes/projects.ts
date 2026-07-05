@@ -1,4 +1,3 @@
-import type { PGlite } from '@electric-sql/pglite';
 import {
 	AuthType,
 	ContainerStatus,
@@ -10,6 +9,7 @@ import {
 } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
+import type { Db } from '../db/database';
 import { trackBackground } from '../lib/background';
 import { broadcastChange, broadcastProjectUpdate } from '../lib/broadcast';
 import { budgetWindowsError } from '../lib/budget-validation';
@@ -73,7 +73,7 @@ async function withIconUrl(
 }
 
 async function cancelRunningAgentTasks(
-	db: PGlite,
+	db: Db,
 	jobManager: JobManager,
 	projectId: string,
 	teamId: string,
@@ -675,10 +675,10 @@ projectsRoutes.post('/projects/:projectId/container/rebuild', async (c) => {
 	const projectId = c.get('projectId') as string;
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
-	const projectResult = await db.query('SELECT * FROM projects WHERE id = $1 AND team_id = $2', [
-		projectId,
-		teamId,
-	]);
+	const projectResult = await db.query<ProjectRow>(
+		'SELECT * FROM projects WHERE id = $1 AND team_id = $2',
+		[projectId, teamId],
+	);
 	if (projectResult.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'Project not found', 404);
 	}
@@ -712,11 +712,11 @@ projectsRoutes.post('/projects/:projectId/container/rebuild', async (c) => {
 		taskKey,
 		async () => {
 			try {
-				await rebuildContainer(containerDeps, projectResult.rows[0] as ProjectRow, teamSlug);
+				await rebuildContainer(containerDeps, projectResult.rows[0], teamSlug);
 				await wakeAgentsWithPendingWork(db, projectId, teamId);
 			} catch (error) {
 				log.error(
-					`Container rebuild failed for project ${ref((projectResult.rows[0] as ProjectRow).slug, projectId)}:`,
+					`Container rebuild failed for project ${ref(projectResult.rows[0].slug, projectId)}:`,
 					error,
 				);
 			}

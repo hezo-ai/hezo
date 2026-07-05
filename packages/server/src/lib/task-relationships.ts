@@ -1,5 +1,5 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { CommentContentType, HeartbeatRunStatus, TaskStatus, WakeupStatus } from '@hezo/shared';
+import type { Db } from '../db/database';
 
 export const MAX_SUB_TASK_DEPTH = 2;
 
@@ -8,7 +8,7 @@ export const SUB_TASK_DEPTH_ERROR = `Sub-tasks cannot be nested more than ${MAX_
 export type Check = { ok: true } | { ok: false; message: string };
 
 export async function assertChildDepthAllowed(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	parentTaskId: string,
 ): Promise<Check> {
@@ -43,7 +43,7 @@ const OPEN_CHILD_STATUSES = [
 ];
 
 export async function assertChildrenAllClosed(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	taskId: string,
 ): Promise<Check> {
@@ -70,7 +70,7 @@ const ACTIVE_WAKEUP_STATUSES = [WakeupStatus.Queued, WakeupStatus.Claimed, Wakeu
 const PING_WAKEUP_SOURCES = ['mention', 'comment', 'reply'];
 
 export async function assertNoOutstandingActivity(
-	db: PGlite,
+	db: Db,
 	taskId: string,
 	callerMemberId: string | null,
 ): Promise<Check> {
@@ -132,7 +132,7 @@ export async function assertNoOutstandingActivity(
 // keeps NULL-author system/run comments from counting as replies). read_at is
 // deliberately ignored — reading is not answering. Enforced for agent callers
 // only: a human closing a ticket is itself the human's decision.
-export async function assertNoUnansweredAdminMentions(db: PGlite, taskId: string): Promise<Check> {
+export async function assertNoUnansweredAdminMentions(db: Db, taskId: string): Promise<Check> {
 	const r = await db.query<{ public_id: string }>(
 		`SELECT tc.public_id
 		 FROM admin_mentions am

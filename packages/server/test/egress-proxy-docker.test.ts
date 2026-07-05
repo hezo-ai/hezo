@@ -14,10 +14,10 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createServer as createHttpsServer, type Server as HttpsServer } from 'node:https';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { encrypt } from '../src/crypto/encryption';
 import type { MasterKeyManager } from '../src/crypto/master-key';
+import type { Db } from '../src/db/database';
 import { loadOrCreateCA } from '../src/services/egress/ca';
 import { EgressProxy } from '../src/services/egress/proxy';
 import { safeClose } from './helpers';
@@ -36,7 +36,7 @@ const imageSkipReason = bridgeImageReady
 	: `${BRIDGE_IMAGE} not built locally — run \`docker build -t ${BRIDGE_IMAGE} -f docker/Dockerfile.agent-base docker\``;
 const finalSkipReason = skipReason ?? imageSkipReason;
 
-let db: PGlite;
+let db: Db;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
 let agentId: string;

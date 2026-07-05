@@ -1,5 +1,5 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { type AiProvider, BudgetPeriod } from '@hezo/shared';
+import type { Db } from '../db/database';
 
 /**
  * Budget enforcement — the single source of truth for agent/project spend.
@@ -55,7 +55,7 @@ const ZERO_SPEND: WindowSpend = { daily: 0, weekly: 0, monthly: 0 };
  * never derived from user input.
  */
 async function getSpendByColumn(
-	db: PGlite,
+	db: Db,
 	column: 'member_id' | 'project_id',
 	id: string,
 ): Promise<WindowSpend> {
@@ -71,11 +71,11 @@ async function getSpendByColumn(
 	return res.rows[0] ?? ZERO_SPEND;
 }
 
-export function getAgentSpend(db: PGlite, memberId: string): Promise<WindowSpend> {
+export function getAgentSpend(db: Db, memberId: string): Promise<WindowSpend> {
 	return getSpendByColumn(db, 'member_id', memberId);
 }
 
-export function getProjectSpend(db: PGlite, projectId: string): Promise<WindowSpend> {
+export function getProjectSpend(db: Db, projectId: string): Promise<WindowSpend> {
 	return getSpendByColumn(db, 'project_id', projectId);
 }
 
@@ -101,10 +101,7 @@ function buildStatus(spend: WindowSpend, limits: BudgetLimits): EntityBudgetStat
 	};
 }
 
-export async function getAgentBudgetStatus(
-	db: PGlite,
-	memberId: string,
-): Promise<EntityBudgetStatus> {
+export async function getAgentBudgetStatus(db: Db, memberId: string): Promise<EntityBudgetStatus> {
 	const [spend, limitsRes] = await Promise.all([
 		getAgentSpend(db, memberId),
 		db.query<BudgetLimits>(
@@ -122,7 +119,7 @@ export async function getAgentBudgetStatus(
 }
 
 export async function getProjectBudgetStatus(
-	db: PGlite,
+	db: Db,
 	projectId: string,
 ): Promise<EntityBudgetStatus> {
 	const [spend, limitsRes] = await Promise.all([
@@ -161,7 +158,7 @@ function firstBlockingPeriod(status: EntityBudgetStatus): BudgetPeriod | null {
  * checked.
  */
 export async function checkOverBudget(
-	db: PGlite,
+	db: Db,
 	memberId: string,
 	projectId: string | null,
 ): Promise<OverBudgetBlock | null> {
@@ -183,7 +180,7 @@ export async function checkOverBudget(
  * callers can broadcast the change.
  */
 export async function recordRunCost(
-	db: PGlite,
+	db: Db,
 	entry: {
 		memberId: string;
 		taskId: string | null;

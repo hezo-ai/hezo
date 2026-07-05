@@ -1,5 +1,5 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { derivePasswordKeyPair, generatePasswordSalt } from '@hezo/shared';
+import type { Queryable } from '../../database';
 import type { CodeMigration } from '../../migrate';
 
 /**
@@ -23,7 +23,7 @@ const DEFAULT_PASSWORD = 'password';
 export const migration013UserPassword: CodeMigration = {
 	// Explicit, stable — a minifier rewriting run.toString() must not shift it.
 	checksum: '013_user_password_v1',
-	run: async (db: PGlite) => {
+	run: async (db: Queryable) => {
 		await db.exec(`
 			ALTER TABLE users ADD COLUMN password_salt TEXT;
 			ALTER TABLE users ADD COLUMN password_public_key TEXT;

@@ -1,4 +1,4 @@
-import type { PGlite } from '@electric-sql/pglite';
+import type { Db } from '../../db/database';
 import type { DomainEventBus } from '../../events/bus';
 import type { ContainerDeps } from '../containers';
 import type { WebSocketManager } from '../ws';
@@ -15,7 +15,7 @@ export interface SideEffectBroadcast {
  * dispatcher in `approval-side-effects.ts` and passed to the matching handler.
  */
 export interface ApprovalSideEffectCtx {
-	db: PGlite;
+	db: Db;
 	/** The resolved approvals row (status already flipped to approved/denied). */
 	approval: Record<string, unknown>;
 	/** `approval.payload`, pre-cast for convenience. */

@@ -5,10 +5,10 @@
 // agent-runner-extended.test.ts; this file fills the reachable per-branch gaps
 // in the building blocks those tests only touch on the happy path.
 
-import type { PGlite } from '@electric-sql/pglite';
 import { AiAuthMethod, AiProvider } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import {
 	type AgentAttachment,
@@ -32,7 +32,7 @@ import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 
 let app: Hono<Env>;
-let db: PGlite;
+let db: Db;
 let adminToken: string;
 let teamId: string;
 let projectId: string;

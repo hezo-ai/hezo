@@ -1,7 +1,7 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { DEFAULT_TEAM_ID, HEZO_DOCS_URL } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { resolveSystemPrompt } from '../src/services/template-resolver';
 import { safeClose } from './helpers';
@@ -13,7 +13,7 @@ import {
 	projectSlugForTeamSlug,
 } from './helpers/app';
 
-let db: PGlite;
+let db: Db;
 let app: Hono<Env>;
 let token: string;
 let teamId: string;

@@ -1,5 +1,5 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { verifyAuthSignature } from '@hezo/shared';
+import type { Db } from '../db/database';
 
 /**
  * Admin password auth — verifier storage + signature checks.
@@ -19,7 +19,7 @@ export interface PasswordVerifier {
 }
 
 /** The superuser's password verifier, or `null` if none is enrolled yet. */
-export async function getAdminPasswordVerifier(db: PGlite): Promise<PasswordVerifier | null> {
+export async function getAdminPasswordVerifier(db: Db): Promise<PasswordVerifier | null> {
 	const result = await db.query<{
 		id: string;
 		password_salt: string | null;
@@ -34,7 +34,7 @@ export async function getAdminPasswordVerifier(db: PGlite): Promise<PasswordVeri
 }
 
 /** True once the admin has enrolled a password verifier. */
-export async function adminPasswordIsSet(db: PGlite): Promise<boolean> {
+export async function adminPasswordIsSet(db: Db): Promise<boolean> {
 	const result = await db.query<{ count: number }>(
 		`SELECT COUNT(*)::int AS count FROM users
 		 WHERE is_superuser = true AND password_public_key IS NOT NULL`,
@@ -44,7 +44,7 @@ export async function adminPasswordIsSet(db: PGlite): Promise<boolean> {
 
 /** Store (or replace) the admin's password verifier. */
 export async function setAdminPasswordVerifier(
-	db: PGlite,
+	db: Db,
 	userId: string,
 	verifier: { salt: string; publicKeyHex: string },
 ): Promise<void> {
@@ -61,7 +61,7 @@ export async function setAdminPasswordVerifier(
  * signature doesn't check out.
  */
 export async function verifyPasswordSignature(
-	db: PGlite,
+	db: Db,
 	message: string,
 	signatureHex: string,
 ): Promise<boolean> {

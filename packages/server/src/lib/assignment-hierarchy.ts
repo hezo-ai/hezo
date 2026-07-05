@@ -1,4 +1,4 @@
-import type { PGlite } from '@electric-sql/pglite';
+import type { Db } from '../db/database';
 
 export type AssignmentHierarchyCheck = { ok: true } | { ok: false; message: string };
 
@@ -15,7 +15,7 @@ export function assignmentHierarchyError(assigneeSlug: string): string {
  * for admin / API-key auth and should be gated by the caller.
  */
 export async function assertSubordinateAssignee(
-	db: PGlite,
+	db: Db,
 	callerMemberId: string,
 	assigneeId: string,
 ): Promise<AssignmentHierarchyCheck> {

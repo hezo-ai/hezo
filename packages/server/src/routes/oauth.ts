@@ -796,7 +796,7 @@ function buildCallbackPage(
  * clone/fetch/push over `git@github.com:` works without exchanging tokens).
  */
 async function ensureTeamKeyRegisteredOnGitHub(
-	db: import('@electric-sql/pglite').PGlite,
+	db: import('../db/database').Db,
 	masterKeyManager: import('../crypto/master-key').MasterKeyManager,
 	teamId: string,
 	accessToken: string,
@@ -846,7 +846,7 @@ interface ProviderConnectHooks {
 	fetchIdentity?(accessToken: string): Promise<ConnectIdentity>;
 	afterConnect?(
 		ctx: {
-			db: import('@electric-sql/pglite').PGlite;
+			db: import('../db/database').Db;
 			masterKeyManager: import('../crypto/master-key').MasterKeyManager;
 			teamId: string;
 		},
@@ -994,7 +994,7 @@ async function finalizeConnectorConnection(
  * the task's team.
  */
 async function fireCredentialProvidedWakeup(
-	db: import('@electric-sql/pglite').PGlite,
+	db: import('../db/database').Db,
 	connector: ConnectorRow,
 ): Promise<void> {
 	if (!connector.created_by_task_id) return;

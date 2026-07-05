@@ -1,4 +1,3 @@
-import type { PGlite } from '@electric-sql/pglite';
 import {
 	buildLoginMessage,
 	buildSetupMessage,
@@ -11,6 +10,7 @@ import {
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
+import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { verifyToken } from '../src/middleware/auth';
 import { safeClose } from './helpers';
@@ -44,7 +44,7 @@ async function errorCode(res: Response): Promise<string> {
 
 describe('setup, unlock, and restart flows', () => {
 	let app: Hono<Env>;
-	let db: PGlite;
+	let db: Db;
 	let masterKeyManager: MasterKeyManager;
 	let dataDir: string;
 	const mnemonic = generateMnemonic();
@@ -180,7 +180,7 @@ describe('setup, unlock, and restart flows', () => {
 
 describe('login flow on an enrolled, unlocked server', () => {
 	let app: Hono<Env>;
-	let db: PGlite;
+	let db: Db;
 	let mnemonic: string;
 	let masterKeyManager: MasterKeyManager;
 

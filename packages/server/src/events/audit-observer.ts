@@ -1,5 +1,5 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { AuditAction, AuditActorType, AuditEntityType } from '@hezo/shared';
+import type { Db } from '../db/database';
 import { type AuditLogInput, auditLog } from '../lib/audit';
 import { trackBackground } from '../lib/background';
 import { logger } from '../logger';
@@ -210,7 +210,7 @@ const INSTANCE_GLOBAL_ENTITIES = new Set<AuditEntityType>([
 ]);
 
 /** Resolve a team's single project (teams are 1:1 with projects). */
-async function resolveProjectIdForTeam(db: PGlite, teamId: string): Promise<string | null> {
+async function resolveProjectIdForTeam(db: Db, teamId: string): Promise<string | null> {
 	const r = await db.query<{ id: string }>(`SELECT id FROM projects WHERE team_id = $1 LIMIT 1`, [
 		teamId,
 	]);
@@ -218,7 +218,7 @@ async function resolveProjectIdForTeam(db: PGlite, teamId: string): Promise<stri
 }
 
 /** Register the audit observer on a bus. The only consumer that persists audit rows. */
-export function registerAuditObserver(bus: DomainEventBus, db: PGlite): void {
+export function registerAuditObserver(bus: DomainEventBus, db: Db): void {
 	bus.subscribe((event) => {
 		const input = mapEventToAudit(event);
 		if (!input) return;
