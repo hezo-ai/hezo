@@ -84,7 +84,7 @@ export function HireProposalComment({ comment, projectId }: Props) {
 				</div>
 			</div>
 			{projectId && approvalId && (
-				<div>
+				<div className="pl-6">
 					<Link
 						to="/projects/$projectId/agents/hire"
 						params={{ projectId }}

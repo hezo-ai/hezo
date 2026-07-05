@@ -128,7 +128,7 @@ export function ConnectRequiredComment({ comment, projectId }: Props) {
 					)}
 				</div>
 			</div>
-			{error && <p className="text-xs text-danger-soft-fg">{error}</p>}
+			{error && <p className="pl-6 text-xs text-danger-soft-fg">{error}</p>}
 			{usesDeviceFlow && deviceOpen && (
 				<ConnectorDeviceFlowDialog
 					open={deviceOpen}
@@ -141,7 +141,7 @@ export function ConnectRequiredComment({ comment, projectId }: Props) {
 					}
 				/>
 			)}
-			<div className="flex items-center gap-2">
+			<div className="flex items-center gap-2 pl-6">
 				<Button
 					size="sm"
 					onClick={openConnect}
