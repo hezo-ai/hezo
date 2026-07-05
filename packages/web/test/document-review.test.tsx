@@ -253,7 +253,7 @@ test('clear review deletes every comment after confirmation', async () => {
 	expect(container.querySelector('[data-testid="review-count-chip"]')).toBeNull();
 });
 
-test('action dialog copies the handoff, closes, and shows no Add button outside a task view', async () => {
+test('action dialog copies the handoff, closes, and offers Add to task outside a task view', async () => {
 	const { findByTestId, filename, user } = await setupDocumentsPage({
 		comments: [{ quote: 'target text', comment: 'Expand this' }],
 	});
@@ -283,13 +283,14 @@ test('action dialog copies the handoff, closes, and shows no Add button outside 
 		expect(handoff.textContent).toContain(filename);
 		expect(handoff.textContent).toContain('automatically deletes every review comment');
 
-		// Task-less surface: no "Add to <task>" button, the lone copy button is
-		// centred, and the meta line carries the count + filename.
-		expect(document.body.querySelector('[data-testid="action-review-add"]')).toBeNull();
+		// The "Add to task…" picker trigger renders even on a task-less surface,
+		// with Copy on the left; the meta line carries the count + filename.
+		expect(document.body.querySelector('[data-testid="action-review-add"]')).toBeTruthy();
 		const footer = document.body.querySelector(
 			'[data-testid="action-review-footer"]',
 		) as HTMLElement;
-		expect(footer.className).toContain('justify-center');
+		expect(footer.className).toContain('justify-between');
+		expect(footer.firstElementChild?.getAttribute('data-testid')).toBe('action-review-copy');
 		const meta = document.body.querySelector('[data-testid="action-review-meta"]') as HTMLElement;
 		expect(meta.textContent).toContain('1 comment');
 		expect(meta.textContent).toContain(filename);

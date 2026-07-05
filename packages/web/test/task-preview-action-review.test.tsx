@@ -12,10 +12,11 @@ import {
 	seedWorkspace,
 } from './helpers/seed';
 
-// The action-review dialog, opened from a task's document preview panel, gains
-// an "Add to <TASK-ID>" button that posts the handoff as a comment on that task
-// (payload is exactly `{ content }` — no wake) and closes the dialog; the copy
-// button sits on the left. Failure keeps the dialog open and toasts.
+// The action-review dialog, opened from a task's document preview panel, offers
+// an "Add to task…" picker whose first entry is the hosting task; selecting it
+// posts the handoff as a comment on that task (payload is exactly `{ content }`
+// — no wake) and closes the dialog; the copy button sits on the left. Failure
+// keeps the dialog open and toasts.
 
 const DOC_CONTENT = ['# Product Requirements', '', 'An unmistakable document body.'].join('\n');
 
@@ -62,27 +63,27 @@ async function openActionDialogFromTask() {
 	return { ...utils, ...ref };
 }
 
-test('Add to <id> posts the handoff as a comment on the task and closes the dialog', async () => {
+test('Add to task pins the hosting task first; selecting it posts the handoff and closes the dialog', async () => {
 	const { container, identifier, user } = await openActionDialogFromTask();
 
-	// Task context: Copy sits left, "Add to <ID>" right, footer spread apart.
+	// Copy sits left, the "Add to task…" trigger right, footer spread apart.
 	const footer = document.body.querySelector('[data-testid="action-review-footer"]') as HTMLElement;
 	expect(footer.className).toContain('justify-between');
 	const add = document.body.querySelector('[data-testid="action-review-add"]') as HTMLElement;
-	expect(add.textContent).toBe(`Add to ${identifier}`);
+	expect(add.textContent).toBe('Add to task…');
 	expect(footer.firstElementChild?.getAttribute('data-testid')).toBe('action-review-copy');
-	expect(footer.lastElementChild?.getAttribute('data-testid')).toBe('action-review-add');
+	expect(footer.lastElementChild?.querySelector('[data-testid="action-review-add"]')).toBeTruthy();
 
 	// Spy on POST /api/.../comments to pin the exact payload.
 	const original = globalThis.fetch;
-	const posts: Array<Record<string, unknown>> = [];
+	const posts: Array<{ url: string; body: Record<string, unknown> }> = [];
 	globalThis.fetch = Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => {
 		const url = typeof input === 'string' ? input : input.toString();
 		if (init?.method === 'POST' && /\/tasks\/[^/]+\/comments$/.test(url)) {
 			const body = init.body;
 			if (typeof body === 'string') {
 				try {
-					posts.push(JSON.parse(body) as Record<string, unknown>);
+					posts.push({ url, body: JSON.parse(body) as Record<string, unknown> });
 				} catch {}
 			}
 		}
@@ -90,6 +91,23 @@ test('Add to <id> posts the handoff as a comment on the task and closes the dial
 	}, original);
 	try {
 		await user.click(add);
+
+		// The picker opens with the hosting task pinned as the FIRST row.
+		const picker = await waitFor(() => {
+			const el = document.body.querySelector('[data-testid="add-to-task-picker"]');
+			expect(el).toBeTruthy();
+			return el as HTMLElement;
+		});
+		const current = picker.querySelector('[data-testid="add-to-task-current"]') as HTMLElement;
+		expect(current).toBeTruthy();
+		expect(current.textContent).toContain('Review the spec');
+		expect(current.textContent).toContain('Current task');
+		const listbox = picker.querySelector('[role="listbox"]') as HTMLElement;
+		expect(listbox.querySelector('button')?.getAttribute('data-testid')).toBe(
+			'add-to-task-current',
+		);
+
+		await user.click(current);
 
 		// The handoff lands in the task thread (the prd.md mention splits the text
 		// across nodes, so assert on the comment bodies rather than findByText).
@@ -105,9 +123,11 @@ test('Add to <id> posts the handoff as a comment on the task and closes the dial
 		globalThis.fetch = original;
 	}
 
-	// Exactly `{ content: <handoff> }` — toEqual proves no wake_assignee or extras.
+	// Exactly `{ content: <handoff> }` — toEqual proves no wake_assignee or extras
+	// — POSTed to the hosting task's path.
 	expect(posts).toHaveLength(1);
-	expect(posts[0]).toEqual({ content: buildReviewHandoff('prd.md') });
+	expect(posts[0].url).toContain(`/tasks/${identifier.toLowerCase()}/comments`);
+	expect(posts[0].body).toEqual({ content: buildReviewHandoff('prd.md') });
 
 	await waitFor(() => {
 		expect(document.body.querySelector('[data-testid="action-review-dialog"]')).toBeNull();
@@ -133,11 +153,18 @@ test('a failed Add keeps the dialog open and toasts the error', async () => {
 		await user.click(
 			document.body.querySelector('[data-testid="action-review-add"]') as HTMLElement,
 		);
+		const current = await waitFor(() => {
+			const el = document.body.querySelector('[data-testid="add-to-task-current"]');
+			expect(el).toBeTruthy();
+			return el as HTMLElement;
+		});
+		await user.click(current);
 		await waitFor(() => {
 			expect(errorSpy).toHaveBeenCalledWith('boom');
 		});
-		// The dialog stays open so the handoff isn't lost.
+		// The dialog stays open so the handoff isn't lost; the picker closes.
 		expect(document.body.querySelector('[data-testid="action-review-dialog"]')).toBeTruthy();
+		expect(document.body.querySelector('[data-testid="add-to-task-picker"]')).toBeNull();
 	} finally {
 		globalThis.fetch = original;
 		errorSpy.mockRestore();

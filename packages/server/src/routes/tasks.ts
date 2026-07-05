@@ -150,7 +150,9 @@ tasksRoutes.get('/projects/:projectId/tasks', async (c) => {
 
 	const search = c.req.query('search');
 	if (search) {
-		conditions.push(`(i.title ILIKE $${idx} OR i.description ILIKE $${idx})`);
+		conditions.push(
+			`(i.title ILIKE $${idx} OR i.description ILIKE $${idx} OR i.identifier ILIKE $${idx})`,
+		);
 		params.push(`%${search}%`);
 		idx++;
 	}
