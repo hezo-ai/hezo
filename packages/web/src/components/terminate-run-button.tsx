@@ -11,6 +11,7 @@ interface TerminateRunButtonProps {
 	runId: string;
 	status: RunStatus;
 	taskId?: string | null;
+	testId?: string;
 }
 
 export function TerminateRunButton({
@@ -19,6 +20,7 @@ export function TerminateRunButton({
 	runId,
 	status,
 	taskId,
+	testId = 'terminate-run-button',
 }: TerminateRunButtonProps) {
 	const [open, setOpen] = useState(false);
 	const mutation = useTerminateRun({ projectId, agentId, runId, taskId });
@@ -32,7 +34,7 @@ export function TerminateRunButton({
 					type="button"
 					onClick={() => setOpen(true)}
 					aria-label="Terminate run"
-					data-testid="terminate-run-button"
+					data-testid={testId}
 					disabled={mutation.isPending}
 					className="inline-flex items-center justify-center h-6 px-2 text-xs text-danger hover:bg-danger/10 rounded-md transition-colors"
 				>
