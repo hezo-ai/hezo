@@ -31,6 +31,11 @@ test('add and remove a reaction toggles the chip', async () => {
 	await user.click(addButton);
 
 	const picker = await findByTestId('reaction-picker', undefined, { timeout: 5_000 });
+	// Regression: the picker must be portaled out of the comment card. The card
+	// clips its children with `overflow-hidden` and sits in a Virtuoso row's
+	// stacking context, so an in-flow popup was drawn under the next comment.
+	// A portaled popup has no comment-item ancestor.
+	expect(picker.closest('[data-testid="comment-item"]')).toBeNull();
 	const ackBtn = picker.querySelector('[data-reaction-kind="ack"]') as HTMLButtonElement;
 	expect(ackBtn).not.toBeNull();
 	await user.click(ackBtn);
