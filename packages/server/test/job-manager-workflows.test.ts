@@ -549,15 +549,16 @@ describe('JobManager workflow methods', () => {
 			const agents = (await agentsRes.json()).data;
 			const secondAgentId = agents.find((a: { id: string }) => a.id !== agentId).id;
 
-			const firstWakeup = await db.query<{ id: string }>(
-				`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, created_at, payload)
-				 VALUES ($1, $2, 'mention', 'claimed', now() - interval '30 seconds', $3::jsonb)
-				 RETURNING id`,
-				[agentId, teamId, JSON.stringify({ task_id: taskId })],
+			// Pretend agent 1 is mid-run holding the task's lock — the exact state
+			// activateAgent creates before launchTask (an execution_locks row plus
+			// the in-memory activeTaskRuns guard that isTaskBusy consults). Driving
+			// a real background runAgent here would race these assertions: the
+			// stubbed run dies immediately and its completion path releases the lock.
+			await db.query(
+				`INSERT INTO execution_locks (task_id, member_id, lock_type) VALUES ($1, $2, 'read')`,
+				[taskId, agentId],
 			);
-			await (manager as any).activateAgent(agentId, teamId, firstWakeup.rows[0].id, {
-				task_id: taskId,
-			});
+			(manager as any).activeTaskRuns.add(taskId);
 
 			const secondWakeup = await db.query<{ id: string }>(
 				`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, created_at, payload)
@@ -587,9 +588,7 @@ describe('JobManager workflow methods', () => {
 			expect(secondStatus.rows[0].status).toBe(WakeupStatus.Queued);
 
 			manager.shutdown();
-			await db.query('DELETE FROM agent_wakeup_requests WHERE id = ANY($1)', [
-				[firstWakeup.rows[0].id, secondWakeup.rows[0].id],
-			]);
+			await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [secondWakeup.rows[0].id]);
 			await db.query(
 				'UPDATE execution_locks SET released_at = now() WHERE task_id = $1 AND released_at IS NULL',
 				[taskId],
