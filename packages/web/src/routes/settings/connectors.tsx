@@ -4,6 +4,7 @@ import { Plus, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
+import { InPlaceForm } from '../../components/ui/in-place-form';
 import { InfoTooltip } from '../../components/ui/info-tooltip';
 import { Input } from '../../components/ui/input';
 import {
@@ -37,9 +38,13 @@ function InstanceConnectorsPage() {
 
 	const [showForm, setShowForm] = useState(false);
 	const [name, setName] = useState('');
-	const [displayName, setDisplayName] = useState('');
 	const [url, setUrl] = useState('');
 	const [error, setError] = useState<string | null>(null);
+
+	function closeForm() {
+		setShowForm(false);
+		setError(null);
+	}
 
 	// Refetch the list when the OAuth popup signals success. The popup posts
 	// {type: 'hezo-oauth-success'} via window.opener.postMessage from the
@@ -68,7 +73,6 @@ function InstanceConnectorsPage() {
 		try {
 			created = await createConnector.mutateAsync({
 				name: name.trim(),
-				display_name: displayName.trim() || undefined,
 				kind: 'saas',
 				config: { url: url.trim() },
 			});
@@ -77,7 +81,6 @@ function InstanceConnectorsPage() {
 			return;
 		}
 		setName('');
-		setDisplayName('');
 		setUrl('');
 		setShowForm(false);
 		// Probe the new connector for OAuth support and pop the authorize window
@@ -109,14 +112,12 @@ function InstanceConnectorsPage() {
 							<h1 className="text-[22px] font-medium">Connectors</h1>
 							<InfoTooltip
 								label="About connectors"
-								content="Remote MCP servers shared with every team's agent runs."
+								content="Servers that advertise OAuth get a connect popup when added; for the rest, authenticate headers with a shared credential placeholder (__HEZO_SECRET_NAME__)."
 								data-testid="connectors-info"
 							/>
 						</div>
 						<p className="text-[13px] text-text-2 mt-1 max-w-[680px]">
-							Remote (SaaS) MCP servers shared with every team's agent runs. Servers that advertise
-							OAuth get a connect popup when added; for the rest, authenticate headers with a shared
-							credential placeholder (<span className="font-mono">__HEZO_SECRET_NAME__</span>).
+							Remote (SaaS) MCP servers shared with every team's agent runs.
 						</p>
 					</div>
 					<Button variant="secondary" size="sm" onClick={() => setShowForm((s) => !s)}>
@@ -125,22 +126,13 @@ function InstanceConnectorsPage() {
 				</div>
 
 				{showForm && (
-					<form onSubmit={handleCreate} className="flex flex-col gap-2 mb-4">
-						<div className="flex flex-col sm:flex-row gap-2">
-							<Input
-								placeholder="Name (e.g. shared-docs)"
-								value={name}
-								onChange={(e) => setName(e.target.value)}
-								required
-								className="flex-1"
-							/>
-							<Input
-								placeholder="Display name (optional)"
-								value={displayName}
-								onChange={(e) => setDisplayName(e.target.value)}
-								className="flex-1"
-							/>
-						</div>
+					<InPlaceForm title="Add connector" onClose={closeForm} onSubmit={handleCreate}>
+						<Input
+							placeholder="Name (e.g. shared-docs)"
+							value={name}
+							onChange={(e) => setName(e.target.value)}
+							required
+						/>
 						<Input
 							placeholder="MCP server URL (e.g. https://mcp.example.com/mcp)"
 							value={url}
@@ -151,19 +143,11 @@ function InstanceConnectorsPage() {
 							<Button type="submit" size="sm" disabled={createConnector.isPending}>
 								Add connector
 							</Button>
-							<Button
-								type="button"
-								variant="secondary"
-								size="sm"
-								onClick={() => {
-									setShowForm(false);
-									setError(null);
-								}}
-							>
+							<Button type="button" variant="secondary" size="sm" onClick={closeForm}>
 								Cancel
 							</Button>
 						</div>
-					</form>
+					</InPlaceForm>
 				)}
 
 				{/* Rendered outside the form: the OAuth kickoff runs after the form

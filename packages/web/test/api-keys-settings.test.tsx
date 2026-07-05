@@ -80,6 +80,19 @@ test('an admin can mint a new key and see it once', async () => {
 	await findByText('minted-key');
 });
 
+test('the create-key form opens in a titled panel and closes via its close button', async () => {
+	const { findByText, getByRole, getByTestId, queryByTestId, user } = await renderApp({
+		initialPath: '/settings/api-keys',
+	});
+
+	await findByText(/full access/i);
+	await user.click(getByRole('button', { name: 'Create' }));
+	expect(getByTestId('in-place-form').textContent).toContain('Create API key');
+
+	await user.click(getByTestId('in-place-form-close'));
+	expect(queryByTestId('in-place-form')).toBeNull();
+});
+
 test('non-superuser sees the managed message instead of the list', async () => {
 	const { findByText } = await renderApp({
 		initialPath: '/settings/api-keys',

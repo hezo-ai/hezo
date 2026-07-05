@@ -1,3 +1,4 @@
+import { within } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
 
@@ -35,4 +36,26 @@ test('the skills.sh search panel is gated on a configured token', async () => {
 	await r.user.click(await r.findByTestId('toggle-search'));
 	// No token configured for a fresh instance → prompts for one instead of searching.
 	expect(await r.findByLabelText('skills.sh API token')).toBeTruthy();
+});
+
+test('the add form and the registry search panel each close via their own close button', async () => {
+	const r = await renderApp({ initialPath: '/settings/skills' });
+
+	// Open both panels: registry search first, then the add form below it.
+	await r.user.click(await r.findByTestId('toggle-search'));
+	await r.user.click(await r.findByRole('button', { name: 'Add' }));
+
+	const searchPanel = await r.findByTestId('registry-search-panel');
+	const addPanel = await r.findByTestId('in-place-form');
+	expect(addPanel.textContent).toContain('Add skill');
+	expect(searchPanel.textContent).toContain('Search skills.sh');
+
+	// Closing the search panel leaves the add form open…
+	await r.user.click(within(searchPanel).getByTestId('in-place-form-close'));
+	expect(r.queryByTestId('registry-search-panel')).toBeNull();
+	expect(r.queryByTestId('in-place-form')).not.toBeNull();
+
+	// …and the add form closes independently.
+	await r.user.click(within(addPanel).getByTestId('in-place-form-close'));
+	expect(r.queryByTestId('in-place-form')).toBeNull();
 });

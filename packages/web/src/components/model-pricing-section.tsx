@@ -13,6 +13,7 @@ import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { type Column, DataTable } from './ui/data-table';
 import { HelpDialog } from './ui/help-dialog';
+import { InPlaceForm } from './ui/in-place-form';
 import { Input } from './ui/input';
 import { Tooltip } from './ui/tooltip';
 
@@ -229,7 +230,7 @@ export function ModelPricingSection() {
 			</div>
 
 			{showForm && (
-				<form onSubmit={handleSubmit} className="flex flex-col gap-2 mb-4">
+				<InPlaceForm title="Add price override" onClose={resetForm} onSubmit={handleSubmit}>
 					<Input
 						placeholder="Model id (e.g. my-custom-model)"
 						value={modelId}
@@ -275,7 +276,7 @@ export function ModelPricingSection() {
 							Cancel
 						</Button>
 					</div>
-				</form>
+				</InPlaceForm>
 			)}
 
 			{!rows.length ? (

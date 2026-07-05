@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { type Column, DataTable } from '../../components/ui/data-table';
+import { InPlaceForm } from '../../components/ui/in-place-form';
 import { InfoTooltip } from '../../components/ui/info-tooltip';
 import { Input } from '../../components/ui/input';
 import { Tooltip } from '../../components/ui/tooltip';
@@ -229,7 +230,11 @@ function InstanceCredentialsPage() {
 				</div>
 
 				{showForm && (
-					<form onSubmit={handleSubmit} className="flex flex-col gap-2 mb-4">
+					<InPlaceForm
+						title={editing ? 'Edit credential' : 'Add credential'}
+						onClose={resetForm}
+						onSubmit={handleSubmit}
+					>
 						<div className="flex flex-col sm:flex-row gap-2">
 							<Input
 								placeholder="Name (e.g. SHARED_API_KEY)"
@@ -288,7 +293,7 @@ function InstanceCredentialsPage() {
 								Cancel
 							</Button>
 						</div>
-					</form>
+					</InPlaceForm>
 				)}
 
 				{!rows.length ? (

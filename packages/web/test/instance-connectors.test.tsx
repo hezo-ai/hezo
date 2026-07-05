@@ -45,6 +45,35 @@ test('lists seeded instance connectors and creates a new one via the form', asyn
 	}
 });
 
+test('the blurb is a single sentence and the add form is a dismissible standout panel', async () => {
+	const {
+		findByText,
+		getByRole,
+		getByTestId,
+		queryByTestId,
+		queryByText,
+		queryByPlaceholderText,
+		user,
+	} = await renderApp({ initialPath: '/settings/connectors' });
+
+	await findByText('Connectors', { selector: 'h1' });
+	// The blurb is just the first sentence; the OAuth/placeholder detail moved
+	// into the info tooltip (unmounted until hover).
+	await findByText("Remote (SaaS) MCP servers shared with every team's agent runs.");
+	expect(queryByText(/Servers that advertise OAuth/)).toBeNull();
+
+	// The form opens inside the titled panel, without a display-name field —
+	// the connector name doubles as its display label.
+	await user.click(getByRole('button', { name: 'Add' }));
+	const panel = getByTestId('in-place-form');
+	expect(panel.textContent).toContain('Add connector');
+	expect(queryByPlaceholderText('Display name (optional)')).toBeNull();
+
+	// The top-right close button hides the form.
+	await user.click(getByTestId('in-place-form-close'));
+	expect(queryByTestId('in-place-form')).toBeNull();
+});
+
 /**
  * Intercept the admin auth-start REST call with a canned response. A live fake
  * MCP server is unreliable under this harness — the patched fetch routes by

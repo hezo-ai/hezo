@@ -97,6 +97,33 @@ test('toggles body substitution on an existing credential via the edit form', as
 	});
 });
 
+test('the add/edit form is a dismissible panel titled for its mode', async () => {
+	const { findByText, getByRole, getByTestId, queryByTestId, user } = await renderApp({
+		initialPath: '/settings/credentials',
+		seed: async (ctx) => {
+			await seedInstanceSecret(ctx, {
+				name: 'PANEL_KEY',
+				value: 'v1',
+				allowed_hosts: ['api.panel.example'],
+			});
+		},
+	});
+
+	await findByText('PANEL_KEY');
+
+	// Create mode opens the standout panel; its close button dismisses it.
+	await user.click(getByRole('button', { name: 'Add' }));
+	expect(getByTestId('in-place-form').textContent).toContain('Add credential');
+	await user.click(getByTestId('in-place-form-close'));
+	expect(queryByTestId('in-place-form')).toBeNull();
+
+	// Edit mode reuses the same panel with an edit title.
+	await user.click(getByRole('button', { name: 'Edit PANEL_KEY' }));
+	expect(getByTestId('in-place-form').textContent).toContain('Edit credential');
+	await user.click(getByTestId('in-place-form-close'));
+	expect(queryByTestId('in-place-form')).toBeNull();
+});
+
 test('settings page shows the superuser Credentials link and navigates to it', async () => {
 	const { findByRole, getAllByRole, user, router } = await renderApp({ initialPath: '/settings' });
 
