@@ -76,6 +76,6 @@ agent can't hurt you. A few guarantees sit underneath everything:
   Hezo's [built-in MCP server](/docs/mcp/hezo-mcp-server), and give your agents the tools
   you already use by [connecting external MCP servers](/docs/mcp/connecting-mcp-servers).
 - **Own your data.** Hezo carries an embedded database by default — no external service
-  to run (or bring your own Postgres) — so your work lives on hardware you control, with
-  safe, data-preserving upgrades. See
-  [Your data & the database](/docs/concepts/your-data).
+  to run (or bring your own Postgres, and keep asset files in your own S3-compatible
+  bucket) — so your work lives in storage you control, with safe, data-preserving
+  upgrades. See [Your data & the database](/docs/concepts/your-data).

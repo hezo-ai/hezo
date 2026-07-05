@@ -63,9 +63,11 @@ Everything runs from one self-contained server process:
 - **Web app** — the board where you oversee teams, tasks, budgets, and chat with the
   CEO.
 - **API + realtime** — drives the UI and streams agent activity live.
-- **Embedded database** — your teams, projects, tasks, and (encrypted) secrets live
-  in a local data directory by default; no external database to run (an external
-  Postgres is [optional](/docs/deployment/configuration)).
+- **Embedded database & asset storage** — your teams, projects, tasks, and (encrypted)
+  secrets live in a local data directory by default; no external database to run (an
+  external Postgres is [optional](/docs/deployment/configuration)). Uploaded asset
+  files live there too, or in any
+  [S3-compatible bucket](/docs/deployment/configuration) if you configure one.
 - **Egress proxy** — the mandatory exit through which all agent network traffic
   flows, where secret placeholders become real values for allowed hosts only.
 - **Docker orchestration** — provisions and manages the containers agents run in.
