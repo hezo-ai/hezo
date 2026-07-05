@@ -1,6 +1,7 @@
 import {
 	ApprovalType,
 	AuthType,
+	DocumentStatus,
 	DocumentType,
 	isMarkdownDocSlug,
 	repoNameFromIdentifier,
@@ -23,6 +24,7 @@ import {
 	listDocuments,
 	listRevisions,
 	restoreRevision,
+	setDocumentStatus,
 	upsertDocument,
 } from '../services/documents';
 
@@ -34,6 +36,7 @@ function toDocResponse(d: DocumentRowWithAuthor) {
 		id: d.id,
 		filename: d.slug,
 		content: d.content,
+		status: d.status,
 		created_at: d.created_at,
 		updated_at: d.updated_at,
 		last_updated_by_name: d.last_updated_by_name,
@@ -55,7 +58,7 @@ projectDocsRoutes.get('/projects/:projectId/docs', async (c) => {
 
 	return ok(
 		c,
-		docs.map((d) => ({ id: d.id, filename: d.slug, updated_at: d.updated_at })),
+		docs.map((d) => ({ id: d.id, filename: d.slug, status: d.status, updated_at: d.updated_at })),
 	);
 });
 
@@ -148,6 +151,52 @@ projectDocsRoutes.put('/projects/:projectId/docs/:filename', async (c) => {
 	return ok(
 		c,
 		toDocResponse(saved ?? { ...doc, last_updated_by_name: null, last_updated_by_type: 'admin' }),
+	);
+});
+
+projectDocsRoutes.patch('/projects/:projectId/docs/:filename', async (c) => {
+	const teamId = c.get('teamId') as string;
+	const db = c.get('db');
+	const filename = c.req.param('filename');
+	const auth = c.get('auth');
+	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
+	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
+
+	const body = await c.req.json<{ status?: string }>();
+	if (!Object.values(DocumentStatus).includes(body.status as DocumentStatus)) {
+		return err(
+			c,
+			'INVALID_REQUEST',
+			`status must be one of: ${Object.values(DocumentStatus).join(', ')}`,
+			400,
+		);
+	}
+
+	const actorMemberId = await resolveActorMemberId(db, auth, teamId);
+	const row = await setDocumentStatus(
+		db,
+		c.get('wsManager'),
+		{ type: DocumentType.ProjectDoc, teamId, projectId, slug: filename },
+		body.status as DocumentStatus,
+		actorMemberId,
+		{
+			events: c.get('events'),
+			actorType: actorTypeFromAuth(auth),
+			actorApiKeyId: apiKeyIdFromAuth(auth),
+		},
+	);
+	if (!row) return err(c, 'NOT_FOUND', `Document '${filename}' not found`, 404);
+
+	// Re-read WITH_AUTHOR so the response carries the resolved last editor.
+	const saved = await getDocument(db, {
+		type: DocumentType.ProjectDoc,
+		teamId,
+		projectId,
+		slug: filename,
+	});
+	return ok(
+		c,
+		toDocResponse(saved ?? { ...row, last_updated_by_name: null, last_updated_by_type: 'admin' }),
 	);
 });
 
