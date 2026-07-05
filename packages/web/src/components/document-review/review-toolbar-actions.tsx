@@ -3,13 +3,15 @@ import { useState } from 'react';
 import { useClearDocReviewComments, useDocReviewComments } from '../../hooks/use-doc-review';
 import { ConfirmDialog } from '../ui/confirm-dialog';
 import { Tooltip } from '../ui/tooltip';
-import { ActionReviewDialog } from './action-review-dialog';
+import { ActionReviewDialog, type ReviewTaskContext } from './action-review-dialog';
 import { ReviewHelp } from './review-help';
 
 interface ReviewToolbarActionsProps {
 	/** Route-param project slug (query keys + API paths). */
 	projectId: string;
 	filename: string;
+	/** Task context when this toolbar renders inside a task view — enables "Add to <ID>" in the action dialog. */
+	task?: ReviewTaskContext;
 	/**
 	 * `'grouped'` (default) wraps the controls in a tinted, rounded container so
 	 * the review-comment tools read as one self-contained cluster, clearly set
@@ -33,6 +35,7 @@ const ICON_BUTTON_CLASSES =
 export function ReviewToolbarActions({
 	projectId,
 	filename,
+	task,
 	variant = 'grouped',
 }: ReviewToolbarActionsProps) {
 	const { data: comments } = useDocReviewComments(projectId, filename);
@@ -102,6 +105,7 @@ export function ReviewToolbarActions({
 				onOpenChange={setActionOpen}
 				filename={filename}
 				commentCount={count}
+				task={task}
 			/>
 			<ConfirmDialog
 				open={confirmClearOpen}
