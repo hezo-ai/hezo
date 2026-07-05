@@ -300,6 +300,9 @@ describe('buildProgressUpdatePrompt', () => {
 		// The status_blurb guidance tells the Captain it renders as markdown and to link PRs.
 		expect(out).toContain('The blurb renders as markdown');
 		expect(out).toContain('[PR #502](https://github.com/owner/repo/pull/502)');
+		// 100% is not terminal — goals can regress or be never-ending.
+		expect(out).toContain('A goal at 100% is not finished for tracking');
+		expect(out).toContain('never-ending');
 		expect(out).toContain('### Ship v2  `g1`');
 		expect(out).toContain('deadline 2026-12-31');
 		expect(out).toContain('- Last status: Halfway there');

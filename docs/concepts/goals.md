@@ -40,8 +40,10 @@ goal has:
   the goal: specific checks, or a standing instruction like "run a weekly cron-style review of
   the signup funnel". Leave it blank to let the Captain decide.
 - **Deadline** *(optional)* — when the goal should be met. The Captain weighs progress against
-  this date when it sets the goal's health, and once the deadline has passed the goal is checked
-  on every heartbeat — regardless of its check frequency — until it's met or archived.
+  this date when it sets the goal's health, and once the deadline has passed an unmet goal is
+  checked on every heartbeat — regardless of its check frequency — until it reaches 100% or is
+  archived. At 100% the goal drops back to its normal check frequency (and the every-heartbeat
+  urgency returns if its progress later slips below 100 again).
 - **Check frequency** — how often the Captain re-assesses the goal: **daily** (the default),
   **weekly**, or **monthly**.
 
@@ -88,6 +90,20 @@ cancel it from there while it's still waiting.
 
 During the same run the Captain also refreshes the **project progress summary** shown at the top
 of the Progress page, so that headline stays in step with the goal estimates.
+
+## Goals aren't finished at 100%
+
+Reaching **100% doesn't end tracking**. A goal that hits 100% stays in rotation and keeps being
+re-assessed on its check frequency, because progress can move back **below** 100: a goal like
+"reach 100 active customers" is met one week and slips to 95 the next when customers churn. When
+that happens the Captain lowers the percentage (explaining why in the blurb) and the progress
+chart shows the dip.
+
+That also means goals can be deliberately **never-ending** — a standing objective like "keep the
+error rate under 1%" or "respond to every support ticket within a day" is measured continuously,
+forever, and simply hovers around 100% while it's being met. The only way to stop the Captain
+checking a goal is to **archive** it (below); do that when a one-shot goal is truly done and no
+longer worth monitoring.
 
 ## Archiving
 

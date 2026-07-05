@@ -1688,7 +1688,11 @@ export function buildProgressUpdatePrompt(
 			'the goal stands and the next step needed. The blurb renders as markdown on the Progress page — ' +
 			'reference tasks by their identifier (e.g. `HM-51`, which auto-links) and link PRs or other URLs ' +
 			'as markdown links (e.g. `[PR #502](https://github.com/owner/repo/pull/502)`). Do not lower a ' +
-			'percentage without explaining why in the blurb. When a goal needs a push, you can either comment on an existing in-flight ticket ' +
+			'percentage without explaining why in the blurb. A goal at 100% is not finished for tracking ' +
+			'purposes: progress can drop back below 100 if the measurement is no longer met, and some goals ' +
+			'are never-ending and measured continuously forever — so re-assess a 100% goal exactly like any ' +
+			'other and record your honest current estimate, even if that means lowering it (with the reason ' +
+			'in the blurb). When a goal needs a push, you can either comment on an existing in-flight ticket ' +
 			'(`create_comment`) to steer or unblock it, or file new task(s) (with `goal_id` set) when a ' +
 			'concrete next step is actually missing — existing backlog or in-flight work often already ' +
 			'covers the goal. Never re-open a closed ticket (done/cancelled are terminal and the system will ' +

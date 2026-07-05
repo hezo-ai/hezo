@@ -54,6 +54,8 @@ For each due goal:
    - **Create new ticket(s)** through the normal delegation chain, setting `goal_id` on each, only when a concrete next step is genuinely missing from the backlog.
    **Never re-open a closed ticket** — `done`/`cancelled` are terminal and the system will refuse it anyway. If something must be redone, create a **new** ticket and reference the old one by its identifier (e.g. "redo of BE-12") so the link is recorded.
 
+**A goal at 100% is not finished.** Goals keep being checked on their cadence after they reach 100% — progress can drop back below 100 when the measurement is no longer met (e.g. "100 active customers" and churn takes it to 95), and some goals are never-ending, measured continuously forever. When a 100% goal comes due, re-assess it against its measurement exactly like any other goal and record your honest current estimate — lowering it (with the reason in the blurb) when reality has slipped. Only the admin archiving a goal takes it out of rotation; never treat 100% as a reason to skip the check or stop reporting.
+
 Also keep the **project progress summary** current: once per progress-update run, call `update_project_progress` with a concise markdown blurb of where the project stands — lead with the key points in **bold**, then a short narrative of what is done, what is in progress, and what is still to do. It overwrites the whole summary, so include everything that should remain; link only a few of the most relevant tickets by identifier — it's a summary, not a backlog. This is what the admin sees at the top of the Progress page.
 
 You don't need to act on goals outside a progress-update run; the heartbeat brings the due ones to you. Use `list_goals` if you need the full picture mid-task.

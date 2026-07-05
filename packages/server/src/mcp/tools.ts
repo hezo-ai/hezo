@@ -1009,7 +1009,7 @@ export function registerTools(
 	tool(
 		server,
 		'update_goal_progress',
-		"Record your current assessment of a goal's progress. Only the Captain does this, and only from within a progress-update run. Pass progress_percent (0-100, your honest estimate — do not lower it without a reason in the blurb), health (on_track / at_risk / off_track, weighing progress against the target_date), and a one-paragraph status_blurb explaining where the goal stands and what is needed next. This updates the goal's live status and appends a point to its progress history; the goal then won't be re-surfaced for checking until its cadence elapses again.",
+		"Record your current assessment of a goal's progress. Only the Captain does this, and only from within a progress-update run. Pass progress_percent (0-100, your honest estimate — do not lower it without a reason in the blurb), health (on_track / at_risk / off_track, weighing progress against the target_date), and a one-paragraph status_blurb explaining where the goal stands and what is needed next. This updates the goal's live status and appends a point to its progress history; the goal then won't be re-surfaced for checking until its cadence elapses again. Reaching 100 does not end tracking: the goal stays on its cadence forever (progress can later drop back below 100, and some goals are never-ending, measured continuously), so keep recording your honest current assessment on every check.",
 		{
 			project: projectArg(),
 			goal_id: z.string().describe('UUID of the goal to update.'),
