@@ -216,6 +216,53 @@ describe('goals service', () => {
 		expect(dueIds.has(deadlineFuture)).toBe(false);
 	});
 
+	it('keeps checking a goal on cadence after it reaches 100%', async () => {
+		// Reaching 100% never retires a goal — progress can regress and goals can be
+		// never-ending. A 100% goal with a stale cadence is due; a fresh one is not.
+		const mk = async (title: string, checkedAgo: string): Promise<string> => {
+			const r = await db.query<{ id: string }>(
+				`INSERT INTO goals (team_id, project_id, title, check_frequency, last_checked_at, progress_percent)
+				 VALUES ($1, $2, $3, 'daily'::goal_check_frequency, now() - interval '${checkedAgo}', 100)
+				 RETURNING id`,
+				[teamId, projectId, title],
+			);
+			return r.rows[0].id;
+		};
+		const fullStale = await mk('full-stale', '2 days');
+		const fullFresh = await mk('full-fresh', '2 hours');
+
+		const due = await getDueGoals(db, projectId);
+		const dueIds = new Set(due.map((g) => g.id));
+		expect(dueIds.has(fullStale)).toBe(true);
+		expect(dueIds.has(fullFresh)).toBe(false);
+	});
+
+	it('relaxes the past-deadline every-heartbeat override once a goal hits 100%', async () => {
+		// Past-deadline goals are due on every heartbeat only while unmet (<100%). At 100%
+		// they fall back to their cadence — still checked forever, just not every heartbeat.
+		const mk = async (title: string, percent: number, checkedAgo: string): Promise<string> => {
+			const r = await db.query<{ id: string }>(
+				`INSERT INTO goals (team_id, project_id, title, check_frequency, last_checked_at, target_date, progress_percent)
+				 VALUES ($1, $2, $3, 'weekly'::goal_check_frequency, now() - interval '${checkedAgo}', now() - interval '1 day', $4)
+				 RETURNING id`,
+				[teamId, projectId, title, percent],
+			);
+			return r.rows[0].id;
+		};
+		// Unmet + past deadline + fresh cadence -> due anyway (the override).
+		const unmetFresh = await mk('deadline-unmet-fresh', 60, '1 hour');
+		// Met + past deadline + fresh cadence -> NOT due (override relaxed to cadence).
+		const metFresh = await mk('deadline-met-fresh', 100, '1 hour');
+		// Met + past deadline + stale cadence -> due on the normal cadence.
+		const metStale = await mk('deadline-met-stale', 100, '8 days');
+
+		const due = await getDueGoals(db, projectId);
+		const dueIds = new Set(due.map((g) => g.id));
+		expect(dueIds.has(unmetFresh)).toBe(true);
+		expect(dueIds.has(metFresh)).toBe(false);
+		expect(dueIds.has(metStale)).toBe(true);
+	});
+
 	it('records progress: updates the goal, advances last_checked_at, writes history and run summary', async () => {
 		const goal = await db.query<{ id: string }>(
 			`INSERT INTO goals (team_id, project_id, title) VALUES ($1, $2, 'Track me') RETURNING id`,
@@ -260,6 +307,41 @@ describe('goals service', () => {
 		// The run carries its Captain so the UI can link to the run in the agent's run list.
 		expect(summary?.member_id).toBe(captainMemberId);
 		expect(summary?.agent_slug).toBe('captain');
+	});
+
+	it('allows progress to drop back below 100 after a goal was met', async () => {
+		// A goal at 100% is not terminal: a later check can honestly lower the estimate
+		// (e.g. "100 active customers" regressing to 95), and history records the dip.
+		const goal = await db.query<{ id: string }>(
+			`INSERT INTO goals (team_id, project_id, title, progress_percent, health)
+			 VALUES ($1, $2, 'Stay at 100 customers', 100, 'on_track'::goal_health) RETURNING id`,
+			[teamId, projectId],
+		);
+		const goalRowId = goal.rows[0].id;
+		const run = await db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs (team_id, member_id, status, kind)
+			 VALUES ($1, $2, 'succeeded'::heartbeat_run_status, 'progress_update'::heartbeat_run_kind)
+			 RETURNING id`,
+			[teamId, captainMemberId],
+		);
+
+		const updated = await recordGoalProgress(
+			db,
+			{
+				goalId: goalRowId,
+				runId: run.rows[0].id,
+				progressPercent: 95,
+				health: GoalHealth.AtRisk,
+				statusBlurb: 'Churn dropped us to 95 active customers',
+			},
+			undefined,
+		);
+		expect(updated.progress_percent).toBe(95);
+		expect(updated.health).toBe('at_risk');
+
+		const goals = await listGoals(db, projectId);
+		const tracked = goals.find((g) => g.id === goalRowId);
+		expect(tracked?.history.at(-1)?.percent).toBe(95);
 	});
 
 	it('rejects a pending health on recordGoalProgress', async () => {

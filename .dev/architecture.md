@@ -128,7 +128,13 @@ the `is_internal` HQ project has none, enforced in the service). Each carries a 
 default daily), an admin-set `archived_at` (NULL = active; there is **no** achieved status),
 and the Captain-maintained snapshot — `progress_percent` (0–100), a `goal_health` enum
 (`pending`/`on_track`/`at_risk`/`off_track`), a `status_blurb`, and `last_checked_at`. The
-Captain refreshes these on its heartbeat via a **progress-update run** (below). `goal_run_updates`
+Captain refreshes these on its heartbeat via a **progress-update run** (below). A goal is
+**due** (`getDueGoals`) when its cadence has elapsed since `last_checked_at` (or it was never
+checked), or on every heartbeat once its `target_date` has passed *while progress is below
+100%* — at 100% the deadline override relaxes back to the cadence, and re-arms if progress
+later regresses. Hitting 100% never retires a goal from checking: progress can drop back
+below 100 and goals can be never-ending (measured continuously), so an active goal stays on
+its cadence forever — only archiving stops checks. `goal_run_updates`
 is the per-run progress history (one row per goal touched by a run, snapshotting
 percent/health/blurb) — the source of each goal's progress chart and the project-wide progress-update
 list on the Progress page. `tasks.goal_id` optionally links a ticket to the goal it advances

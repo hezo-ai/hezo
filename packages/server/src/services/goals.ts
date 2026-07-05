@@ -235,11 +235,16 @@ export async function getGoalHistory(
 
 /**
  * Goals in a project that are due for a Captain check: active (not archived) and either
- * past their deadline or due on cadence. A goal whose **deadline** (`target_date`) has
- * arrived is always checked — it is never skipped while it remains active. Otherwise the
- * goal is skipped unless its **check frequency** is due: never checked, or last checked
- * longer ago than its cadence. The cadence test mirrors the interval-elapsed check the
- * heartbeat scheduler uses for agents.
+ * past their deadline while still unmet, or due on cadence. A goal whose **deadline**
+ * (`target_date`) has arrived is checked on every heartbeat while its progress is below
+ * 100% — the urgency to get it over the line. At 100% that override relaxes and the goal
+ * falls back to its normal cadence; if progress later drops below 100 the override kicks
+ * back in. Otherwise the goal is skipped unless its **check frequency** is due: never
+ * checked, or last checked longer ago than its cadence. The cadence test mirrors the
+ * interval-elapsed check the heartbeat scheduler uses for agents.
+ *
+ * Reaching 100% never retires a goal from checking — progress can regress and goals can be
+ * never-ending, so an active goal stays on its cadence forever. Only archiving stops checks.
  */
 export async function getDueGoals(db: PGlite, projectId: string): Promise<GoalRow[]> {
 	const r = await db.query<GoalRow>(
@@ -247,7 +252,7 @@ export async function getDueGoals(db: PGlite, projectId: string): Promise<GoalRo
 		 WHERE g.project_id = $1
 		   AND g.archived_at IS NULL
 		   AND (
-		     (g.target_date IS NOT NULL AND g.target_date <= now())
+		     (g.target_date IS NOT NULL AND g.target_date <= now() AND g.progress_percent < 100)
 		     OR g.last_checked_at IS NULL
 		     OR g.last_checked_at + (CASE g.check_frequency
 		          WHEN 'daily'   THEN interval '1 day'
