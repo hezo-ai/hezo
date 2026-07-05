@@ -90,7 +90,7 @@ docs/        — User-facing documentation (rendered by the website)
 | Component | Technology |
 |-----------|-----------|
 | Server | [Hono](https://hono.dev/) (TypeScript, on Bun) |
-| Database | [PGlite](https://electric-sql.com/docs/api/pglite) (embedded Postgres) + pgvector |
+| Database | [PGlite](https://electric-sql.com/docs/api/pglite) (embedded Postgres, default) or external Postgres via `--database-url` |
 | Frontend | React (bundled into the server binary) |
 | Encryption | AES-256-GCM (master key in memory only) |
 | OAuth | In-instance device flow + Dynamic Client Registration (no external gateway) |

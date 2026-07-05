@@ -1,11 +1,12 @@
 # @hezo/server
 
-Main Hezo application server. Embeds a PGlite database, runs migrations on startup, manages the master key lifecycle, and serves the REST API.
+Main Hezo application server. Embeds a PGlite database by default (or runs against an external Postgres via `--database-url`), runs migrations on startup, manages the master key lifecycle, and serves the REST API.
 
 ## Tech
 
 - [Hono](https://hono.dev/) — HTTP framework
-- [PGlite](https://electric-sql.com/docs/api/pglite) — embedded Postgres with filesystem persistence
+- [PGlite](https://electric-sql.com/docs/api/pglite) — embedded Postgres with filesystem persistence (default backend)
+- [node-postgres](https://node-postgres.com/) — driver for the optional external Postgres backend (`--database-url`)
 - AES-256-GCM — encryption for secrets and master key canary
 
 ## Setup
@@ -28,7 +29,8 @@ Starts the server on port 3100 with hot reload. In dev, PGlite data persists at 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--port <n>` | `3100` | HTTP listen port (env: `HEZO_PORT`) |
-| `--data-dir <path>` | `~/.hezo` | Data directory for PGlite and assets (env: `HEZO_DATA_DIR`) |
+| `--data-dir <path>` | `~/.hezo` | Data directory for the embedded database and assets (env: `HEZO_DATA_DIR`) |
+| `--database-url <url>` | — | External Postgres connection string; omit for the embedded database (env: `HEZO_DATABASE_URL`) |
 | `--master-key <phrase>` | — | Twelve-word master key to set up/unlock on startup (env: `HEZO_MASTER_KEY`) |
 | `--web-url <url>` | same origin | Public base URL for sign-in redirects (env: `HEZO_WEB_URL`) |
 | `--reset` | `false` | Start fresh (existing `pgdata` is renamed aside, not deleted) (env: `HEZO_RESET`) |
@@ -84,7 +86,7 @@ Migrations are forward-only — no rollbacks. Use `--reset` during development t
 bun run test
 ```
 
-Tests use in-memory PGlite instances — no external database needed.
+Tests use in-memory PGlite instances — no external database needed. The driver-conformance and external-migration suites additionally run env-gated legs against a real Postgres when `HEZO_TEST_DATABASE_URL` is set (CI's `test-postgres` job provides a postgres:16 service).
 
 **Test helpers:**
 - `createTestDb()` — fresh in-memory PGlite with base schema applied

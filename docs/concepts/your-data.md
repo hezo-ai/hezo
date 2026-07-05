@@ -8,25 +8,43 @@ section: Concepts
 
 Hezo is built so that **everything stays yours** — your work, your credentials, your spend,
 all on hardware you control. Part of what makes that practical is that Hezo carries its own
-database: there's nothing external to provision, and your data never leaves your machine.
+database: by default there's nothing external to provision, and your data never leaves your
+machine.
 
-## An embedded database — nothing external to run
+## An embedded database by default — nothing external to run
 
-Hezo runs an **embedded Postgres** database *inside* the single binary. There is **no
-separate database server** to install, configure, or keep running alongside it — you start
-`hezo` and the database comes with it. Your teams, projects, tasks, comments, documents,
-and settings all live in one local **data directory** (default `~/.hezo/`). Back that
-directory up and you've backed up your instance; move it to another machine and your
-instance moves with it. See [Self-hosting](/docs/deployment/self-hosting) for where the
-data directory lives and how to run Hezo unattended.
+Out of the box Hezo runs an **embedded Postgres** database *inside* the single binary.
+There is **no separate database server** to install, configure, or keep running alongside
+it — you start `hezo` and the database comes with it. Your teams, projects, tasks,
+comments, documents, and settings all live in one local **data directory** (default
+`~/.hezo/`). Back that directory up and you've backed up your instance; move it to another
+machine and your instance moves with it. See [Self-hosting](/docs/deployment/self-hosting)
+for where the data directory lives and how to run Hezo unattended.
+
+## Or bring your own Postgres
+
+If you'd rather run against a managed or self-run **PostgreSQL 14+** — for managed
+backups, more headroom, or your own operational tooling — point Hezo at it with
+`--database-url` / `HEZO_DATABASE_URL` (see
+[Using an external Postgres](/docs/deployment/configuration)). The data directory is still
+used for workspaces, uploaded assets, and keys; only the database rows move.
+
+Be clear-eyed about what changes: **your business content — tasks, comments, documents —
+is stored as ordinary database rows**, so with an external database that content lives
+with your database provider and travels the network. Hezo checks the server version at
+startup and shows the connection target (credentials occluded, never the full URL) under
+**Settings → General → Database**. Use TLS (`sslmode=verify-full`), prefer private
+networking, and treat the provider's at-rest encryption and access controls as part of
+your security posture. Secrets are unaffected — see below.
 
 ## Encrypted where it counts
 
 The sensitive things — your AI provider keys, OAuth tokens, the per-project SSH/signing
 keys, and any secrets you store — are **encrypted at rest** with AES-256-GCM, behind the
-[master key](/docs/security/master-key) that only you hold. A copy of the data directory
-without the master key cannot be decrypted, which is why a complete backup needs
-[both](/docs/deployment/backup-and-recovery).
+[master key](/docs/security/master-key) that only you hold. That holds on **both**
+backends: an external database only ever sees ciphertext for these values, and a copy of
+the database without the master key cannot decrypt them, which is why a complete backup
+needs [both](/docs/deployment/backup-and-recovery).
 
 ## Safe upgrades that preserve your data
 
@@ -34,16 +52,18 @@ New Hezo versions sometimes need to change the database's shape. Those changes s
 **real, tracked, data-preserving migrations** that run automatically on startup — and the
 process is deliberately cautious:
 
-- **Your live data is never migrated in place.** Hezo migrates a *copy* of the database and
-  only swaps the upgraded copy in once every step has succeeded. If anything fails, the
-  copy is discarded and your original data is left exactly as it was — so you can simply go
-  back to the previous binary.
-- **A snapshot is taken first.** Before applying migrations to an existing instance, Hezo
-  writes a snapshot into the data directory, so there's always a known-good point to roll
-  back to. See [Backup & recovery](/docs/deployment/backup-and-recovery).
-- **Downgrades are caught, not corrupted.** If you point an older binary at a data
-  directory written by a newer one, Hezo notices and exits with a clear message rather than
-  risking your data.
+- **Embedded: your live data is never migrated in place.** Hezo migrates a *copy* of the
+  database and only swaps the upgraded copy in once every step has succeeded — keeping the
+  previous copy aside in the data directory as a known-good point to roll back to. If
+  anything fails, the copy is discarded and your original data is left exactly as it was —
+  so you can simply go back to the previous binary.
+- **External: migrations apply one transaction at a time,** serialized by a database-side
+  lock so two starting instances can't collide. A failed migration rolls back cleanly and
+  everything applied before it remains intact; pair this with your provider's backups or
+  point-in-time recovery before upgrading.
+- **Downgrades are caught, not corrupted.** If you point an older binary at a database
+  written by a newer one, Hezo notices and exits with a clear message rather than risking
+  your data.
 
 The net effect: upgrades are safe by default, and your data is preserved across them
 without any manual migration work on your part.
