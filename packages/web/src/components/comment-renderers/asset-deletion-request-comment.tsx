@@ -108,8 +108,8 @@ export function AssetDeletionRequestComment({ comment, projectId, taskId }: Prop
 					)}
 				</div>
 			</div>
-			{error && <p className="text-xs text-danger-soft-fg">{error}</p>}
-			<div className="flex items-center gap-2">
+			{error && <p className="pl-6 text-xs text-danger-soft-fg">{error}</p>}
+			<div className="flex items-center gap-2 pl-6">
 				<Button
 					size="sm"
 					variant="destructive"

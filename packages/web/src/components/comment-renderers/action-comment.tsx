@@ -50,7 +50,7 @@ export function ActionComment({ comment, projectId }: Props) {
 					this ticket will resume.
 				</span>
 			</div>
-			<div>
+			<div className="pl-6">
 				<Link to="/projects/$projectId/git" params={{ projectId }}>
 					<Button size="sm">Open Git settings</Button>
 				</Link>

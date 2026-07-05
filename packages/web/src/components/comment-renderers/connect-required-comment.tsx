@@ -49,8 +49,9 @@ export function ConnectRequiredComment({ comment, projectId }: Props) {
 
 	const connector = connectorQuery.data;
 	const status = connector ? connectorStatus(connector) : 'pending';
-	const connectorsUrl = `/teams/${projectId}/connectors`;
-	const focusedConnectorUrl = `${connectorsUrl}?focus=${connector_id}#${connector_id}`;
+	// Connectors are global resources (register_connector creates instance-level
+	// rows), so the manage link goes to the global settings page.
+	const focusedConnectorUrl = `/settings/connectors?focus=${connector_id}#${connector_id}`;
 
 	// Providers whose AS can't do DCR (declared via `deviceAuth`) authorize
 	// through the device flow; everything else uses the redirect popup.
@@ -128,7 +129,7 @@ export function ConnectRequiredComment({ comment, projectId }: Props) {
 					)}
 				</div>
 			</div>
-			{error && <p className="text-xs text-danger-soft-fg">{error}</p>}
+			{error && <p className="pl-6 text-xs text-danger-soft-fg">{error}</p>}
 			{usesDeviceFlow && deviceOpen && (
 				<ConnectorDeviceFlowDialog
 					open={deviceOpen}
@@ -141,7 +142,7 @@ export function ConnectRequiredComment({ comment, projectId }: Props) {
 					}
 				/>
 			)}
-			<div className="flex items-center gap-2">
+			<div className="flex items-center gap-2 pl-6">
 				<Button
 					size="sm"
 					onClick={openConnect}

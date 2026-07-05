@@ -1,7 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
 import { Plus, Trash2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { InfoTooltip } from '../../components/ui/info-tooltip';
@@ -23,10 +23,17 @@ function openAuthPopup(authUrl: string): string | null {
 
 function InstanceConnectorsPage() {
 	const { data: me } = useMe();
+	const { focus } = Route.useSearch();
 	const { data: connectors = [] } = useInstanceConnectors();
 	const createConnector = useCreateInstanceConnector();
 	const authStart = useInstanceAuthStart();
 	const queryClient = useQueryClient();
+
+	// Ref callback fires when the focused row mounts (which can happen after the
+	// initial render once the connectors query resolves). Scrolls into view then.
+	const focusRef = useCallback((el: HTMLDivElement | null) => {
+		if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+	}, []);
 
 	const [showForm, setShowForm] = useState(false);
 	const [name, setName] = useState('');
@@ -170,7 +177,12 @@ function InstanceConnectorsPage() {
 				) : (
 					<div className="flex flex-col gap-1">
 						{connectors.map((c) => (
-							<InstanceConnectorRow key={c.id} connector={c} />
+							<InstanceConnectorRow
+								key={c.id}
+								connector={c}
+								focused={c.id === focus}
+								focusRef={c.id === focus ? focusRef : undefined}
+							/>
 						))}
 					</div>
 				)}
@@ -180,7 +192,13 @@ function InstanceConnectorsPage() {
 	return <div className="max-w-[900px]">{content}</div>;
 }
 
-function InstanceConnectorRow({ connector }: { connector: McpConnection }) {
+interface InstanceConnectorRowProps {
+	connector: McpConnection;
+	focused: boolean;
+	focusRef?: (el: HTMLDivElement | null) => void;
+}
+
+function InstanceConnectorRow({ connector, focused, focusRef }: InstanceConnectorRowProps) {
 	const deleteConnector = useDeleteInstanceConnector();
 	const authStart = useInstanceAuthStart();
 	const [rowError, setRowError] = useState<string | null>(null);
@@ -210,7 +228,11 @@ function InstanceConnectorRow({ connector }: { connector: McpConnection }) {
 
 	return (
 		<div
-			className="rounded-md border border-border bg-surface px-3 py-2 text-[13px]"
+			ref={focusRef}
+			id={connector.id}
+			className={`rounded-md border px-3 py-2 text-[13px] transition-colors ${
+				focused ? 'border-info bg-info-soft' : 'border-border bg-surface'
+			}`}
 			data-testid="instance-connector-row"
 			data-connector-id={connector.id}
 			data-status={status}
@@ -261,6 +283,13 @@ function InstanceConnectorRow({ connector }: { connector: McpConnection }) {
 	);
 }
 
+interface ConnectorsSearch {
+	focus?: string;
+}
+
 export const Route = createFileRoute('/settings/connectors')({
+	validateSearch: (search: Record<string, unknown>): ConnectorsSearch => ({
+		focus: typeof search.focus === 'string' ? search.focus : undefined,
+	}),
 	component: InstanceConnectorsPage,
 });
