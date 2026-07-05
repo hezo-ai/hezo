@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.13.0 - 2026-07-05
+
+### Features
+
+- **web:** rename AI provider configs in place ([#580](https://github.com/hezo-ai/hezo/pull/580))
+- archive (soft delete) for project docs and assets ([#579](https://github.com/hezo-ai/hezo/pull/579))
+- **web:** add-to-task button in the action-review dialog ([#578](https://github.com/hezo-ai/hezo/pull/578))
+- **web:** standardize in-place add/edit forms behind a shared InPlaceForm panel ([#574](https://github.com/hezo-ai/hezo/pull/574))
+- **web:** collapsible document list on the Documents page ([#566](https://github.com/hezo-ai/hezo/pull/566))
+- **web:** add Tasks root breadcrumb on task detail page ([#570](https://github.com/hezo-ai/hezo/pull/570))
+- **coherence:** audit verification coverage in team coherence reviews ([#569](https://github.com/hezo-ai/hezo/pull/569))
+- **docs:** document status (planning/approved) in the metadata banner ([#565](https://github.com/hezo-ai/hezo/pull/565))
+- **web:** documents sidebar search with fixed header ([#567](https://github.com/hezo-ai/hezo/pull/567))
+- **goals:** keep checking goals after they reach 100% ([#563](https://github.com/hezo-ai/hezo/pull/563))
+- **auth:** password show/hide toggle + Admin password settings page ([#562](https://github.com/hezo-ai/hezo/pull/562))
+- **web:** make the scroll-to-bottom button global to all long-form pages ([#561](https://github.com/hezo-ai/hezo/pull/561))
+- **web:** icon-only open-in-new-tab button in preview panel header ([#559](https://github.com/hezo-ai/hezo/pull/559))
+
+### Bug Fixes
+
+- **web:** open a tailored dialog for sub-task creation ([#581](https://github.com/hezo-ai/hezo/pull/581))
+- **web:** use canonical terminate button for running agents in the agent queue ([#576](https://github.com/hezo-ai/hezo/pull/576))
+- **web:** flow the rail create button after the project list until it overflows ([#575](https://github.com/hezo-ai/hezo/pull/575))
+- **web:** align comment-card action rows and fix the connect-required Connectors link ([#572](https://github.com/hezo-ai/hezo/pull/572))
+- **runner:** stop Bun's 5-min fetch idle timeout from killing quiet agent runs ([#571](https://github.com/hezo-ai/hezo/pull/571))
+- **agents:** steer delegated fan-out tasks to be sub-tasks of the current task ([#568](https://github.com/hezo-ai/hezo/pull/568))
+- **web:** refresh budget-status after agent cap edits; drop the hero sparkline ([#564](https://github.com/hezo-ai/hezo/pull/564))
+- **web:** move mobile new-task button to top nav; wrap run header to stop page overflow ([#560](https://github.com/hezo-ai/hezo/pull/560))
+
+### Documentation
+
+- make HTTPS the baseline for all deployment and hosting instructions ([#573](https://github.com/hezo-ai/hezo/pull/573))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.12.0...0.13.0
+
 ## 0.12.0 - 2026-07-04
 
 ### Features
