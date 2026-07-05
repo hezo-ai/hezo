@@ -313,8 +313,9 @@ describe('template resolver', () => {
 		expect(result).toContain('Gate upstream too');
 		// assignment-hierarchy
 		expect(result).toContain('You can assign only to yourself or a direct report');
-		// subtask-preference (deliverable-feed test) + skills discovery
+		// subtask-preference (deliverable-feed test + fan-out tell) + skills discovery
 		expect(result).toContain('deliverable-feed test');
+		expect(result).toContain('Fanning work out from the ticket you are on');
 		expect(result).toContain('npx skills find');
 		// comment hygiene (no-redundant-comments + comment-formatting)
 		expect(result).toContain("Don't repost when nothing changed");
