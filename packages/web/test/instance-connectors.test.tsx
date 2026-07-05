@@ -211,6 +211,57 @@ test('refetches the list when the OAuth popup reports success', async () => {
 	await findByText('Connected');
 });
 
+test('?focus=<id> highlights the connector row and scrolls it into view', async () => {
+	// happy-dom's scrollIntoView is a no-op with no layout, so assert the wiring:
+	// the focused row is the element the scroll fires on.
+	const scrolled: Element[] = [];
+	const spy = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(function (
+		this: Element,
+	) {
+		scrolled.push(this);
+	});
+	try {
+		const { findByText, ctx, router } = await renderApp({
+			initialPath: '/settings/connectors',
+			seed: async (c) => {
+				await seedInstanceConnector(c, {
+					name: 'other-conn',
+					kind: 'saas',
+					config: { url: 'https://other.example/mcp' },
+				});
+				await seedInstanceConnector(c, {
+					name: 'focus-conn',
+					kind: 'saas',
+					config: { url: 'https://focus.example/mcp' },
+				});
+			},
+		});
+		await findByText('focus-conn');
+		const r = await ctx.db.query<{ id: string }>(
+			`SELECT id FROM mcp_connections WHERE name = 'focus-conn'`,
+		);
+		const focusId = r.rows[0].id;
+
+		// The connect_required comment card links here with ?focus=<connector_id>.
+		await router.navigate({ to: '/settings/connectors', search: { focus: focusId } });
+
+		await waitFor(() => {
+			const row = document.querySelector(`[data-connector-id="${focusId}"]`);
+			expect(row).toBeTruthy();
+			expect(row?.className).toContain('border-info');
+		});
+		expect(scrolled.some((el) => el.getAttribute('data-connector-id') === focusId)).toBe(true);
+		// The sibling row is not highlighted.
+		const other = Array.from(
+			document.querySelectorAll('[data-testid="instance-connector-row"]'),
+		).find((el) => el.getAttribute('data-connector-id') !== focusId);
+		expect(other).toBeTruthy();
+		expect(other?.className).not.toContain('border-info');
+	} finally {
+		spy.mockRestore();
+	}
+});
+
 test('settings page sidebar links to connectors', async () => {
 	const { findByRole, getAllByRole, user, router } = await renderApp({ initialPath: '/settings' });
 

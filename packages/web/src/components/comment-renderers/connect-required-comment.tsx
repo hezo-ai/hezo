@@ -49,8 +49,9 @@ export function ConnectRequiredComment({ comment, projectId }: Props) {
 
 	const connector = connectorQuery.data;
 	const status = connector ? connectorStatus(connector) : 'pending';
-	const connectorsUrl = `/teams/${projectId}/connectors`;
-	const focusedConnectorUrl = `${connectorsUrl}?focus=${connector_id}#${connector_id}`;
+	// Connectors are global resources (register_connector creates instance-level
+	// rows), so the manage link goes to the global settings page.
+	const focusedConnectorUrl = `/settings/connectors?focus=${connector_id}#${connector_id}`;
 
 	// Providers whose AS can't do DCR (declared via `deviceAuth`) authorize
 	// through the device flow; everything else uses the redirect popup.

@@ -131,8 +131,9 @@ test('pending connector renders the connect prompt with provider code and links'
 	expect(connectBtn.textContent).toContain('Connect');
 	expect((connectBtn as HTMLButtonElement).disabled).toBe(false);
 
+	// Connectors are global, so the manage link targets the global settings page.
 	const link = await findByTestId('connect-required-link');
-	expect(link.getAttribute('href')).toContain('/connectors?focus=');
+	expect(link.getAttribute('href')).toContain('/settings/connectors?focus=');
 });
 
 test('failed connector shows the failure label plus the auth_error detail', async () => {
@@ -195,7 +196,7 @@ test('active connector renders the success state as a manage link', async () => 
 	const active = await findByTestId('connect-required-active');
 	expect(active.textContent).toContain('DatoCMS connected');
 	expect(active.textContent).toContain('Available to every agent run');
-	expect(active.getAttribute('href')).toContain('/connectors?focus=');
+	expect(active.getAttribute('href')).toContain('/settings/connectors?focus=');
 });
 
 test('clicking Connect on a redirect (non-device) connector opens an OAuth popup with the auth_url', async () => {
