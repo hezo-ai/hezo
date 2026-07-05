@@ -26,7 +26,9 @@ DigitalOcean, Hetzner, Fly, Linode, or an EC2 instance.
    hezo --data-dir /var/lib/hezo
    ```
 
-3. **Unlock it from the browser.** After boot Hezo starts **locked** — open its gate
+3. **Serve it over HTTPS** with a reverse proxy — required, not a nice-to-have; see
+   [below](#serve-it-over-https).
+4. **Unlock it from the browser.** After boot Hezo starts **locked** — open its gate
    and enter your twelve-word master key to unlock the instance. This is by design:
    the master key is kept in memory only and is never stored on the server, so a stolen
    disk image can't decrypt your vault. If you need to unlock a single startup without
@@ -37,7 +39,7 @@ DigitalOcean, Hetzner, Fly, Linode, or an EC2 instance.
    HEZO_MASTER_KEY="your twelve word master key phrase here" hezo --data-dir /var/lib/hezo
    ```
 
-4. **Set the public URL** so account sign-ins redirect back correctly:
+5. **Set the public URL** so account sign-ins redirect back correctly:
 
    ```sh
    hezo --web-url https://hezo.example.com
@@ -45,12 +47,53 @@ DigitalOcean, Hetzner, Fly, Linode, or an EC2 instance.
 
 See the [Configuration reference](/docs/deployment/configuration) for every option.
 
-## Terminate TLS with a reverse proxy
+## Serve it over HTTPS
 
-Hezo serves plain HTTP. For a public deployment, put a reverse proxy (Caddy, nginx, or
-Traefik) in front of it to handle HTTPS and your domain, forwarding to the Hezo port
-(3100 by default). Make sure the proxy is configured to **pass through WebSocket
-upgrades**, since the web app streams agent activity in real time.
+Hezo's own process serves plain HTTP, so every deployment puts a TLS-terminating
+reverse proxy (Caddy, nginx, or Traefik) in front, forwarding to the Hezo port (3100 by
+default). Treat HTTPS as **essential**, whether the address is public or on a private
+network:
+
+- **OAuth-connected MCP servers require it.** Connecting a SaaS MCP server runs an
+  OAuth flow whose callback lands on your instance's URL, and providers and browsers
+  only accept HTTPS (or `localhost`) callbacks — over plain HTTP the connect flow
+  fails. See [Connecting MCP servers](/docs/mcp/connecting-mcp-servers).
+- **The phone experience requires it.** Installing Hezo as a home-screen app needs a
+  secure context.
+- **Everything sensitive rides on every request** — your admin password, agent output,
+  task content. TLS is the baseline.
+
+Configure the proxy to do all three of:
+
+- **Pass through WebSocket upgrades** — the web app streams agent activity in real
+  time.
+- **Preserve the `Host` header** of the original request.
+- **Send `X-Forwarded-Proto`** — Hezo builds absolute URLs (such as the OAuth callback
+  an MCP connection registers with its provider) from the forwarded scheme and host;
+  without this header it falls back to `http://` and OAuth connects fail even though
+  you're browsing over HTTPS.
+
+With Caddy all three are the default — a complete Caddyfile is:
+
+```
+hezo.example.com {
+	reverse_proxy localhost:3100
+}
+```
+
+For nginx, set the headers explicitly on the proxied location:
+
+```nginx
+proxy_set_header Host $host;
+proxy_set_header X-Forwarded-Proto $scheme;
+proxy_set_header Upgrade $http_upgrade;
+proxy_set_header Connection "upgrade";
+```
+
+On a private network (a VPN or mesh) where a public certificate authority can't see
+your hostname, use a private CA or a DNS-01 certificate — see
+[Secure remote access](/docs/deployment/secure-remote-access) for the options per
+setup.
 
 ## Don't expose it to the open internet unguarded
 
