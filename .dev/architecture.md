@@ -223,9 +223,15 @@ task-sidebar panel, Documents tab view mode) via a rehype plugin
 `write_project_doc` tool takes an optional `changelog`, both stored on the revision recorded for
 the *prior* content; `restoreRevision` writes `Restored content from revision N`. The single-doc
 GET returns `created_at` + a resolved `last_updated_by_name`/`last_updated_by_type`, feeding a
-structured **metadata banner** on the Documents page (created/updated + last editor — no more
-run-on metadata paragraph; a conservative display-only strip hides any legacy leading metadata
-block from the rendered body). A **revision-history dialog** shows each version's changelog
+structured **metadata banner** on the Documents page (status + created/updated + last editor — no
+more run-on metadata paragraph; a conservative display-only strip hides any legacy leading metadata
+block from the rendered body). Documents also carry a **`status`** enum column
+(`document_status`: `planning` | `approved`, default `planning`) — lifecycle metadata surfaced
+only for `project_doc` (list + single GET, `list_project_docs`/`read_project_doc`). Humans set it
+from a dropdown in the banner (`PATCH /projects/:projectId/docs/:filename`), agents via the
+`set_project_doc_status` MCP tool; both call `setDocumentStatus` (`services/documents.ts`), which
+records no revision and leaves `last_updated_by_member_id` untouched — a status flip is not a
+content edit (the row trigger still bumps `updated_at`). A **revision-history dialog** shows each version's changelog
 rendered like a task comment; `buildDocVersionHistory`
 (`packages/web/src/lib/doc-version-history.ts`) pairs each version's content with the changelog
 that *produced* it (a one-step shift, since revisions snapshot prior content), so the current

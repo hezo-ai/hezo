@@ -351,17 +351,23 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	// Project docs & assets
 	list_project_docs: {
 		category: 'Project docs & assets',
-		returns: '`{ files: [{ id, filename, title, updated_at }] }` — the markdown project docs.',
+		returns:
+			"`{ files: [{ id, filename, title, status, updated_at }] }` — the markdown project docs. `status` is the doc's lifecycle status (`planning` or `approved`).",
 	},
 	read_project_doc: {
 		category: 'Project docs & assets',
 		returns:
-			'`{ filename, content }` (the full markdown body), plus `review_comments: [{ id, quote, occurrence, comment, created_at }]` when the admin has left pending review feedback on the doc (each comment anchors to an exact `quote` snippet; `occurrence` disambiguates repeats). Any write to the doc deletes all of its review comments, so capture them before writing. Returns `{ error }` if the file is not found.',
+			"`{ filename, content, status }` (the full markdown body plus the doc's lifecycle status, `planning` or `approved`), plus `review_comments: [{ id, quote, occurrence, comment, created_at }]` when the admin has left pending review feedback on the doc (each comment anchors to an exact `quote` snippet; `occurrence` disambiguates repeats). Any write to the doc deletes all of its review comments, so capture them before writing. Returns `{ error }` if the file is not found.",
 	},
 	write_project_doc: {
 		category: 'Project docs & assets',
 		returns:
 			"`{ written: true, id, filename }`, or `{ error }` if the filename is not `.md`. Make all edits in one consolidated write: a content-changing write deletes ALL pending review comments on the doc (read them first) and records a document revision, so many partial writes lose review context and bury the revision history. The optional `changelog` is stored as that revision's changelog and shown in the document's history — put update/status notes there, not in the document body.",
+	},
+	set_project_doc_status: {
+		category: 'Project docs & assets',
+		returns:
+			'`{ updated: true, filename, status }`, or `{ error }` if the file is not found. Status is metadata only — no content change, no revision recorded.',
 	},
 	list_project_assets: {
 		category: 'Project docs & assets',
