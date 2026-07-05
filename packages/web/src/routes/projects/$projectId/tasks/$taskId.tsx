@@ -126,8 +126,8 @@ function TaskDetailPage() {
 
 					<SubTasksSection
 						projectId={projectId}
-						taskId={taskId}
 						parentTaskId={task.id}
+						parentIdentifier={task.identifier}
 						taskProjectSlug={taskProjectSlug}
 					/>
 

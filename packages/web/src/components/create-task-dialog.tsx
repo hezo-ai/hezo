@@ -5,7 +5,7 @@ import { ChevronDown, Loader2, Maximize2, Minimize2 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAgents } from '../hooks/use-agents';
 import { useAllVisibleProjects, useProjectMeta } from '../hooks/use-projects';
-import { useCreateTask } from '../hooks/use-tasks';
+import { useCreateSubTask, useCreateTask } from '../hooks/use-tasks';
 import { MarkdownEditor } from './markdown-editor';
 import { Button } from './ui/button';
 import { DialogContent } from './ui/dialog';
@@ -18,6 +18,12 @@ interface CreateTaskDialogProps {
 	 *  `projectId` — used by the global mobile "+" so a task can be filed into any
 	 *  project. The picked project then drives the assignee list. */
 	selectProject?: boolean;
+	/** When set, the dialog creates a *sub-task* of this parent (identifier or
+	 *  UUID — both resolve server-side) instead of a top-level task. The project
+	 *  is fixed to the parent's, so `selectProject` doesn't apply. */
+	parentTaskId?: string;
+	/** Parent's display identifier (e.g. "OPS-12"), shown in the dialog title. */
+	parentIdentifier?: string;
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 }
@@ -25,6 +31,8 @@ interface CreateTaskDialogProps {
 export function CreateTaskDialog({
 	projectId,
 	selectProject,
+	parentTaskId,
+	parentIdentifier,
 	open,
 	onOpenChange,
 }: CreateTaskDialogProps) {
@@ -46,6 +54,11 @@ export function CreateTaskDialog({
 	const project = useProjectMeta(effectiveProjectId);
 	const { data: agents } = useAgents(effectiveProjectId);
 	const createTask = useCreateTask(effectiveProjectId);
+	// Both hooks are called unconditionally (rules of hooks). `useCreateSubTask`
+	// only builds a URL; it never fires unless `mutateAsync` is invoked below.
+	const createSubTask = useCreateSubTask(effectiveProjectId, parentTaskId ?? '');
+	const isSubTask = !!parentTaskId;
+	const activeMutation = isSubTask ? createSubTask : createTask;
 	const navigate = useNavigate();
 
 	// On open, seed the picker with the passed/active project (only when it's a
@@ -75,22 +88,33 @@ export function CreateTaskDialog({
 
 	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
-		const result = await createTask.mutateAsync({
+		const payload = {
 			title,
 			description: description || undefined,
 			assignee_id: assigneeId || undefined,
 			priority,
-		});
-		onOpenChange(false);
-		setTitle('');
-		setDescription('');
-		navigate({
-			to: '/projects/$projectId/tasks/$taskId',
-			params: {
-				projectId: result.project_slug ?? effectiveProjectId,
-				taskId: result.identifier.toLowerCase(),
-			},
-		});
+		};
+		try {
+			// Branch the call (not the mutation object) so each `mutateAsync` stays
+			// monomorphic — the two hooks have structurally different variables.
+			const result = isSubTask
+				? await createSubTask.mutateAsync(payload)
+				: await createTask.mutateAsync(payload);
+			onOpenChange(false);
+			setTitle('');
+			setDescription('');
+			setAssigneeId('');
+			navigate({
+				to: '/projects/$projectId/tasks/$taskId',
+				params: {
+					projectId: result.project_slug ?? effectiveProjectId,
+					taskId: result.identifier.toLowerCase(),
+				},
+			});
+		} catch {
+			// Surfaced inline via `activeMutation.error` — keep the dialog open so
+			// the user can correct and retry (e.g. the sub-task depth-cap error).
+		}
 	}
 
 	return (
@@ -114,14 +138,16 @@ export function CreateTaskDialog({
 				}
 			>
 				<Dialog.Title className="text-lg font-semibold mb-4 pr-16 shrink-0">
-					Create Task
+					{isSubTask
+						? `Create sub-task${parentIdentifier ? ` · ${parentIdentifier}` : ''}`
+						: 'Create Task'}
 				</Dialog.Title>
 
 				<form
 					onSubmit={handleSubmit}
 					className={fullscreen ? 'flex min-h-0 flex-1 flex-col gap-4' : 'flex flex-col gap-4'}
 				>
-					{selectProject && (
+					{selectProject && !isSubTask && (
 						<label className="flex flex-col gap-1.5">
 							<span className="text-sm text-text-2">Project *</span>
 							<select
@@ -211,9 +237,9 @@ export function CreateTaskDialog({
 						)}
 					</div>
 
-					{createTask.error && (
-						<p className="text-sm text-danger">
-							{(createTask.error as { message: string }).message}
+					{activeMutation.error && (
+						<p className="text-sm text-danger" data-testid="create-task-error">
+							{(activeMutation.error as { message: string }).message}
 						</p>
 					)}
 
@@ -223,9 +249,11 @@ export function CreateTaskDialog({
 						</Button>
 						<Button
 							type="submit"
-							disabled={!effectiveProjectId || !title.trim() || !assigneeId || createTask.isPending}
+							disabled={
+								!effectiveProjectId || !title.trim() || !assigneeId || activeMutation.isPending
+							}
 						>
-							{createTask.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
+							{activeMutation.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
 							Create
 						</Button>
 					</div>
