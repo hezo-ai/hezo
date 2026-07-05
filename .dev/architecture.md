@@ -557,7 +557,7 @@ so a stale `/worktrees` is caught too — without this, a run could dispatch int
 
 **All git runs in the container — the host runs none.** Hezo's only prerequisite is Docker;
 there is no host `git`. Every repo/worktree operation (clone, fetch, `worktree add`, …) runs
-via `docker exec` in the project container (which ships git 2.51), driven from TypeScript on
+via `docker exec` in the project container (which ships Debian's packaged git), driven from TypeScript on
 the server through a `GitExecutor` seam (`services/git-executor.ts`): `ContainerGitExecutor`
 in production, `HostGitExecutor` (host `execFile`) in unit tests. `git.ts` functions take the
 executor plus a `{ hostPath, containerPath }` pair per location — `node:fs` checks use the
