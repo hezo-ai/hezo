@@ -1,29 +1,30 @@
 import { Link } from '@tanstack/react-router';
 import { ChevronDown, Plus } from 'lucide-react';
 import { useState } from 'react';
-import { useCreateSubTask, useTasks } from '../../hooks/use-tasks';
+import { useTasks } from '../../hooks/use-tasks';
 import { DEFAULT_SUBTASK_PAGE_SIZE, useTeam } from '../../hooks/use-teams';
+import { CreateTaskDialog } from '../create-task-dialog';
 import { TaskRunDot } from '../task-run-dot';
 import { TaskStatusBadge } from '../task-status-badge';
-import { Button } from '../ui/button';
 
 interface SubTasksSectionProps {
 	projectId: string;
-	taskId: string;
 	parentTaskId: string;
+	/** Parent's display identifier (e.g. "OPS-12"), shown in the create dialog title. */
+	parentIdentifier: string;
 	taskProjectSlug: string;
 }
 
 /**
  * Collapsible "Sub-tasks" card: a list of direct children with status
- * badges plus an inline form to create new ones. Paginated client-side
- * by the team's `subtask_page_size` setting so very busy parents don't
- * blow up the layout.
+ * badges plus an "Add" button that opens the tailored create-task dialog
+ * (parent fixed, assignee required). Paginated client-side by the team's
+ * `subtask_page_size` setting so very busy parents don't blow up the layout.
  */
 export function SubTasksSection({
 	projectId,
-	taskId,
 	parentTaskId,
+	parentIdentifier,
 	taskProjectSlug,
 }: SubTasksSectionProps) {
 	const { data: team } = useTeam(projectId);
@@ -36,10 +37,7 @@ export function SubTasksSection({
 		parentTaskId ? { parent_task_id: parentTaskId, per_page: '200' } : undefined,
 		{ enabled: !!parentTaskId },
 	);
-	const createSubTask = useCreateSubTask(projectId, taskId);
-
-	const [subTaskTitle, setSubTaskTitle] = useState('');
-	const [showSubForm, setShowSubForm] = useState(false);
+	const [createOpen, setCreateOpen] = useState(false);
 	const [subTasksOpen, setSubTasksOpen] = useState(true);
 	const [subTasksShownState, setSubTasksShownState] = useState<{
 		taskId: string;
@@ -49,18 +47,6 @@ export function SubTasksSection({
 		subTasksShownState && subTasksShownState.taskId === parentTaskId
 			? subTasksShownState.count
 			: subTaskPageSize;
-
-	async function handleSubTask(e: React.FormEvent) {
-		e.preventDefault();
-		if (!subTaskTitle.trim()) return;
-		try {
-			await createSubTask.mutateAsync({ title: subTaskTitle });
-			setSubTaskTitle('');
-			setShowSubForm(false);
-		} catch {
-			// error rendered below the form via createSubTask.error
-		}
-	}
 
 	return (
 		<div
@@ -89,7 +75,7 @@ export function SubTasksSection({
 					type="button"
 					onClick={() => {
 						setSubTasksOpen(true);
-						setShowSubForm((s) => !s);
+						setCreateOpen(true);
 					}}
 					className="text-[11px] text-text-3 hover:text-text-1 flex items-center gap-1 cursor-pointer"
 					data-testid="sub-tasks-add"
@@ -102,29 +88,7 @@ export function SubTasksSection({
 					className="px-3 py-2.5 flex flex-col gap-1.5 border-t border-border"
 					data-testid="sub-tasks-list"
 				>
-					{showSubForm && (
-						<>
-							<form onSubmit={handleSubTask} className="flex gap-2 mb-1">
-								<input
-									value={subTaskTitle}
-									onChange={(e) => setSubTaskTitle(e.target.value)}
-									placeholder="Sub-task title"
-									className="flex-1 rounded-md border border-border bg-surface px-3 py-1.5 text-[13px] text-text-1 outline-none focus:border-border-strong"
-									data-testid="sub-task-title-input"
-								/>
-								<Button type="submit" size="sm" disabled={!subTaskTitle.trim()}>
-									Create
-								</Button>
-							</form>
-							{createSubTask.error && (
-								<div className="text-[12px] text-danger mb-1" data-testid="sub-task-error">
-									{(createSubTask.error as { message?: string }).message ??
-										'Failed to create sub-task'}
-								</div>
-							)}
-						</>
-					)}
-					{(subTasks?.data.length ?? 0) === 0 && !showSubForm && (
+					{(subTasks?.data.length ?? 0) === 0 && (
 						<span className="text-[13px] text-text-2">No sub-tasks.</span>
 					)}
 					{subTasks?.data.slice(0, subTasksShown).map((s) => (
@@ -167,6 +131,13 @@ export function SubTasksSection({
 					)}
 				</div>
 			)}
+			<CreateTaskDialog
+				projectId={projectId}
+				parentTaskId={parentTaskId}
+				parentIdentifier={parentIdentifier}
+				open={createOpen}
+				onOpenChange={setCreateOpen}
+			/>
 		</div>
 	);
 }

@@ -225,3 +225,61 @@ test('sub-tasks card sits between the description card and the comments heading'
 		subTasksCard.compareDocumentPosition(commentsHeading) & Node.DOCUMENT_POSITION_FOLLOWING,
 	).toBeTruthy();
 });
+
+test('Add opens the tailored sub-task dialog; creating one (with assignee) navigates to it', async () => {
+	let projectSlug = '';
+	let parentIdentifier = '';
+
+	const { findByRole, findByTestId, findByLabelText, findByText, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const engineer = ws.agents.find((a) => a.slug === 'engineer') ?? ws.agents[0];
+			const project = await seedProject(ws, { name: 'Sub-Task Dialog Project' });
+			projectSlug = project.slug;
+			const parent = await seedTask(ws, project, {
+				title: 'Dialog Parent',
+				assignee_id: engineer.id,
+			});
+			parentIdentifier = parent.identifier;
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: projectSlug, taskId: parentIdentifier.toLowerCase() },
+	});
+
+	await findByTestId('sub-tasks-toggle');
+
+	// "+ Add" opens the tailored create dialog — titled for the sub-task and
+	// carrying the parent's identifier, rather than the old inline title input.
+	await user.click(await findByTestId('sub-tasks-add'));
+	expect(await findByText(`Create sub-task · ${parentIdentifier}`)).toBeTruthy();
+
+	const titleInput = await findByLabelText('Title');
+	await user.type(titleInput, 'Dialog Child');
+
+	// Assignee is required now — collecting it is the fix for the title-only bug.
+	// The dialog is in a Radix portal on document.body; pick the first real option.
+	await waitFor(() => {
+		const optionsText = Array.from(document.body.querySelectorAll('option')).map(
+			(o) => o.textContent,
+		);
+		expect(optionsText).toContain('Select assignee');
+	});
+	const assigneeSel = Array.from(document.body.querySelectorAll('select')).find((s) =>
+		Array.from(s.options).some((o) => o.text === 'Select assignee'),
+	) as HTMLSelectElement;
+	await waitFor(() => {
+		expect(Array.from(assigneeSel.options).some((o) => o.value !== '')).toBe(true);
+	});
+	const firstAgent = Array.from(assigneeSel.options).find((o) => o.value !== '');
+	if (!firstAgent) throw new Error('expected an assignable agent option');
+	await user.selectOptions(assigneeSel, firstAgent.value);
+
+	await user.click(await findByRole('button', { name: 'Create' }));
+
+	// The server accepts it (assignee present) and we land on the new sub-task.
+	expect(await findByRole('heading', { name: 'Dialog Child' })).toBeTruthy();
+});

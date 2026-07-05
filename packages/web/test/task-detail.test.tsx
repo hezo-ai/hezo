@@ -26,11 +26,10 @@ async function createSubTask(
 }
 
 test('UI surfaces the depth-cap error when creating a sub-task under a depth-2 ticket', async () => {
-	let teamSlug = '';
 	let projectSlug = '';
 	let subSubIdentifier = '';
 
-	const { findByRole, findByTestId, user, router } = await renderApp({
+	const { findByRole, findByTestId, findByLabelText, findByText, user, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -48,7 +47,6 @@ test('UI surfaces the depth-cap error when creating a sub-task under a depth-2 t
 				title: 'Depth Sub-Sub',
 				assignee_id: engineer.id,
 			});
-			teamSlug = ws.team.slug;
 			projectSlug = project.slug;
 			subSubIdentifier = subSub.identifier;
 		},
@@ -64,17 +62,36 @@ test('UI surfaces the depth-cap error when creating a sub-task under a depth-2 t
 
 	await findByRole('heading', { name: 'Depth Sub-Sub' });
 
-	const addButton = await findByTestId('sub-tasks-add');
-	await user.click(addButton);
+	// The inline quick-add is gone — "+ Add" now opens the tailored create-task
+	// dialog, which requires an assignee, so we must pick one to enable submit.
+	await user.click(await findByTestId('sub-tasks-add'));
 
-	const titleInput = await findByTestId('sub-task-title-input');
+	const titleInput = await findByLabelText('Title');
 	await user.type(titleInput, 'Should be rejected');
 
-	const createBtn = await findByRole('button', { name: 'Create' });
-	await user.click(createBtn);
+	// The dialog renders into a Radix portal on document.body; find the assignee
+	// select and pick its first real option (mirrors task-crud.test.tsx).
+	await waitFor(() => {
+		const optionsText = Array.from(document.body.querySelectorAll('option')).map(
+			(o) => o.textContent,
+		);
+		expect(optionsText).toContain('Select assignee');
+	});
+	const assigneeSel = Array.from(document.body.querySelectorAll('select')).find((s) =>
+		Array.from(s.options).some((o) => o.text === 'Select assignee'),
+	) as HTMLSelectElement;
+	await waitFor(() => {
+		expect(Array.from(assigneeSel.options).some((o) => o.value !== '')).toBe(true);
+	});
+	const firstAgent = Array.from(assigneeSel.options).find((o) => o.value !== '');
+	if (!firstAgent) throw new Error('expected an assignable agent option');
+	await user.selectOptions(assigneeSel, firstAgent.value);
 
-	const errorEl = await findByTestId('sub-task-error');
-	expect(errorEl.textContent).toMatch(/2 levels deep/);
+	await user.click(await findByRole('button', { name: 'Create' }));
+
+	// The server checks sub-task depth (services/tasks.ts) before the assignee,
+	// so it rejects with the depth-cap error and the dialog stays open to show it.
+	expect(await findByText(/2 levels deep/)).toBeTruthy();
 });
 
 test('canonical task URL is project-scoped; UUID and wrong-project forms redirect', async () => {
