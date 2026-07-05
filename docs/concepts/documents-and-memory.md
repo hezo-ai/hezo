@@ -111,6 +111,11 @@ can paste into a task comment or a new task's description when assigning the wor
 **clear review** (a trash button that deletes every comment after confirmation), alongside a
 **?** button that opens a short in-app guide to all of this.
 
+On a larger screen you can also **hide the document list** — the panel button just left of
+the document's title collapses it, giving the document the full width of the page; the same
+button brings the list back, and Hezo remembers your choice. (On a phone the list and the
+document already take turns filling the screen.)
+
 Agents read pending review comments directly: `read_project_doc` returns them alongside the
 document content, each one anchored to the exact text you highlighted. So the flow is —
 leave your comments, hand the review to an agent (paste the copied handoff into a task and

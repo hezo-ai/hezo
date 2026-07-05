@@ -4,12 +4,15 @@ import {
 	FileText,
 	History,
 	Loader2,
+	PanelLeftClose,
+	PanelLeftOpen,
 	Pencil,
 	Plus,
 	Search,
 	Trash2,
 } from 'lucide-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { readStored, writeStored } from '../lib/safe-storage';
 import { DocumentBody } from './document-review/document-body';
 import type { DocMetadata } from './document-review/document-metadata-banner';
 import { ReviewToolbarActions } from './document-review/review-toolbar-actions';
@@ -18,6 +21,10 @@ import { Button } from './ui/button';
 import { ConfirmDialog } from './ui/confirm-dialog';
 import { EmptyState } from './ui/empty-state';
 import { Input } from './ui/input';
+import { Tooltip } from './ui/tooltip';
+
+/** Remembers the doc-list collapse choice across documents and visits. */
+const LIST_COLLAPSED_KEY = 'hezo:doc-list-collapsed';
 
 export interface DocItem {
 	key: string;
@@ -108,6 +115,7 @@ export function DocsLibrary({
 	const [draft, setDraft] = useState('');
 	const [deleteOpen, setDeleteOpen] = useState(false);
 	const [search, setSearch] = useState('');
+	const [listCollapsed, setListCollapsed] = useState(() => readStored(LIST_COLLAPSED_KEY) === '1');
 	const prevModeRef = useRef<'view' | 'edit'>('view');
 
 	if (modeKey !== selectedKey) {
@@ -126,6 +134,18 @@ export function DocsLibrary({
 	const selectedItem = selectedKey ? items.find((it) => it.key === selectedKey) : undefined;
 	const showRightPane = showNewForm || selectedKey;
 	const popOutUrl = selectedKey && getPopOutUrl ? getPopOutUrl(selectedKey) : null;
+	// The collapse only applies while a document is open — its toolbar hosts the
+	// only expand control, so with nothing selected (empty state, new-doc form)
+	// the list must stay visible or there'd be no way to pick a document.
+	const collapsed = listCollapsed && !!selectedKey && !showNewForm;
+
+	function toggleList() {
+		setListCollapsed((prev) => {
+			const next = !prev;
+			writeStored(LIST_COLLAPSED_KEY, next ? '1' : '0');
+			return next;
+		});
+	}
 
 	// Filter on the visible label when it's a plain string; fall back to the key
 	// (typically the filename) for rich labels.
@@ -152,12 +172,27 @@ export function DocsLibrary({
 		/* minmax(0,1fr) — a bare 1fr track has an `auto` minimum, so wide doc
 		   content (tables, code) would push the column past the viewport and
 		   side-scroll the doc list out of view instead of scrolling inside the
-		   pane. */
-		<div className="grid grid-cols-1 md:grid-cols-[240px_minmax(0,1fr)] md:gap-6 md:min-h-[500px]">
+		   pane. Collapsing animates the list track (and the gap) to zero so the
+		   document takes the full content width. */
+		<div
+			data-testid="docs-library-grid"
+			className={`grid grid-cols-1 md:min-h-[500px] md:transition-[grid-template-columns,gap] md:duration-200 motion-reduce:md:transition-none ${
+				collapsed
+					? 'md:grid-cols-[0px_minmax(0,1fr)] md:gap-0'
+					: 'md:grid-cols-[240px_minmax(0,1fr)] md:gap-6'
+			}`}
+		>
+			{/* `inert` while collapsed keeps the visually-hidden list out of tab
+			    order and the accessibility tree. `overflow-hidden` clips the list
+			    during the track animation (it also disables the sticky child, which
+			    is moot while hidden); it must NOT apply when expanded or the sticky
+			    doc list stops sticking. */}
 			<aside
-				className={`md:border-r md:border-border md:pr-6 ${
-					showRightPane ? 'hidden md:block' : 'block'
-				}`}
+				inert={collapsed}
+				data-testid="doc-list-pane"
+				className={`min-w-0 md:transition-opacity md:duration-200 motion-reduce:md:transition-none ${
+					collapsed ? 'md:overflow-hidden md:opacity-0' : 'md:border-r md:border-border md:pr-6'
+				} ${showRightPane ? 'hidden md:block' : 'block'}`}
 			>
 				{/* Sticky on desktop so the doc list stays visible while a long
 				    document scrolls. The top offset mirrors the project layout's
@@ -263,9 +298,32 @@ export function DocsLibrary({
 						    z-index sits below the review overlays (selection pill z-20,
 						    editor z-30) so an open comment editor is never hidden. */}
 						<div className="sticky top-0 z-10 flex items-center justify-between gap-2 mb-4 pt-2 pb-3 bg-bg border-b border-border-subtle">
-							<h2 className="text-base font-semibold text-text-1 truncate">
-								{docTitle ?? selectedItem?.label ?? selectedKey}
-							</h2>
+							<div className="flex items-center gap-1.5 min-w-0">
+								{/* Mobile already swaps to a single pane with its own Back
+								    button, so the collapse control is desktop/tablet only. */}
+								<span className="hidden md:block shrink-0">
+									<Tooltip content={collapsed ? 'Show document list' : 'Hide document list'}>
+										<Button
+											variant="ghost"
+											size="sm"
+											className="px-1.5"
+											onClick={toggleList}
+											aria-expanded={!collapsed}
+											aria-label={collapsed ? 'Show document list' : 'Hide document list'}
+											data-testid="doc-list-toggle"
+										>
+											{collapsed ? (
+												<PanelLeftOpen className="w-3.5 h-3.5" />
+											) : (
+												<PanelLeftClose className="w-3.5 h-3.5" />
+											)}
+										</Button>
+									</Tooltip>
+								</span>
+								<h2 className="text-base font-semibold text-text-1 truncate">
+									{docTitle ?? selectedItem?.label ?? selectedKey}
+								</h2>
+							</div>
 							<div className="flex items-center gap-2 shrink-0">
 								{mode === 'view' ? (
 									<>
