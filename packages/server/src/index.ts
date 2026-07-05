@@ -5,7 +5,12 @@ import { parseConfig, runRestore, runVersion } from './cli';
 import type { MasterKeyManager } from './crypto/master-key';
 import { PgDataCorruptError } from './db/client';
 import type { Db } from './db/database';
-import { DbNewerThanAppError, MigrationFailedError } from './db/migrate-errors';
+import {
+	DbNewerThanAppError,
+	ExternalDbError,
+	ExternalMigrationFailedError,
+	MigrationFailedError,
+} from './db/migrate-errors';
 import { browserAvailable, openBrowser } from './lib/open-browser';
 import type { AuthInfo } from './lib/types';
 import { logger, setLogLevel } from './logger';
@@ -229,10 +234,15 @@ void (async () => {
 		}
 	} catch (err) {
 		if (thisStartupGeneration !== startupGeneration) return;
-		// Fatal, operator-actionable migration conditions: the DB is fine but the
-		// binary can't proceed. Print the guidance and exit rather than limping
-		// along in minimal mode.
-		if (err instanceof DbNewerThanAppError || err instanceof MigrationFailedError) {
+		// Fatal, operator-actionable database conditions: the binary can't
+		// proceed. Print the guidance and exit rather than limping along in
+		// minimal mode.
+		if (
+			err instanceof DbNewerThanAppError ||
+			err instanceof MigrationFailedError ||
+			err instanceof ExternalDbError ||
+			err instanceof ExternalMigrationFailedError
+		) {
 			log.error(`\n${err.message}\n`);
 			process.exit(1);
 		}

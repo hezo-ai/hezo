@@ -1,7 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createMemoryDb } from '../src/db/client';
 import type { Db } from '../src/db/database';
+import { PostgresDb } from '../src/db/drivers/postgres';
 import { isFkViolation, isUniqueViolation } from '../src/lib/sql';
+import { createScratchPostgres } from './helpers/scratch-postgres';
 
 /**
  * Driver conformance contract: every `Db` implementation must satisfy these
@@ -25,6 +27,24 @@ const drivers: DriverCase[] = [
 		create: async () => {
 			const db = await createMemoryDb();
 			return { db, cleanup: () => db.close() };
+		},
+	},
+	{
+		// Real Postgres via HEZO_TEST_DATABASE_URL (the test-postgres CI job's
+		// postgres:16 service). Each suite gets a scratch database so runs never
+		// interfere.
+		name: 'postgres',
+		available: Boolean(process.env.HEZO_TEST_DATABASE_URL),
+		create: async () => {
+			const scratch = await createScratchPostgres('conf');
+			const db = await PostgresDb.connect({ url: scratch.url });
+			return {
+				db,
+				cleanup: async () => {
+					await db.close();
+					await scratch.drop();
+				},
+			};
 		},
 	},
 ];

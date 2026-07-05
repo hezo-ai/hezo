@@ -32,7 +32,7 @@ export function loadMigrationSql(file: string): string {
 }
 
 /** Every bundled migration (SQL + code), merged and sorted exactly as the runner sees them. */
-function allMigrations(): Record<string, Migration> {
+export function allMigrations(): Record<string, Migration> {
 	const migrations: Record<string, Migration> = {};
 	for (const file of readdirSync(migrationsDir())
 		.filter((f) => f.endsWith('.sql'))

@@ -1,5 +1,5 @@
 /**
- * Fatal, operator-actionable migration conditions. Both carry a human-readable
+ * Fatal, operator-actionable database conditions. Each carries a human-readable
  * `.message` that the process entry point prints verbatim before exiting — same
  * shape as `PgDataCorruptError` (see `src/db/client.ts`).
  */
@@ -41,5 +41,44 @@ export class MigrationFailedError extends Error {
 				`existing database as-is. (cause: ${causeMsg})`,
 		);
 		this.name = 'MigrationFailedError';
+	}
+}
+
+/**
+ * The external database (`--database-url` / `HEZO_DATABASE_URL`) could not be
+ * used: unreachable, incompatible version, failed preflight, or an invalid
+ * connection string. Messages must carry operator guidance and NEVER the raw
+ * connection string (credentials) — pass pre-redacted text only.
+ */
+export class ExternalDbError extends Error {
+	constructor(
+		message: string,
+		readonly cause?: unknown,
+	) {
+		super(message);
+		this.name = 'ExternalDbError';
+	}
+}
+
+/**
+ * A pending migration failed while being applied IN PLACE to the external
+ * database. Each migration runs in its own transaction, so the failed one
+ * rolled back and everything applied before it remains committed — a re-run
+ * after fixing the cause resumes from the failed migration.
+ */
+export class ExternalMigrationFailedError extends Error {
+	constructor(
+		readonly pending: string[],
+		readonly cause: unknown,
+	) {
+		const causeMsg = cause instanceof Error ? cause.message : String(cause);
+		super(
+			`Database migration failed while applying pending migration(s) (${pending.join(', ')}) ` +
+				`to the external database. Migrations run one transaction each, so the failed ` +
+				`migration rolled back and previously applied ones remain committed. Fix the cause ` +
+				`(or restore your database provider's backup) and start Hezo again to resume. ` +
+				`(cause: ${causeMsg})`,
+		);
+		this.name = 'ExternalMigrationFailedError';
 	}
 }

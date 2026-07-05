@@ -10,13 +10,13 @@ import { logger } from './logger';
 const log = logger.child('startup');
 
 import { MasterKeyManager } from './crypto/master-key';
-import { openPersistentDb } from './db/client';
-import { PgliteDb } from './db/drivers/pglite';
 import type { Migration } from './db/migrate';
+import { openDatabase } from './db/open';
 import { BASE_SCHEMA } from './db/schema';
 import { registerAuditObserver } from './events/audit-observer';
 import { DomainEventBus } from './events/bus';
 import { trackBackground } from './lib/background';
+import type { StorageInfo } from './lib/db-info';
 import { getInstanceBaseUrl } from './lib/system-meta';
 import type { Env } from './lib/types';
 import { generateLlmsTxt } from './mcp/llms-txt';
@@ -35,6 +35,7 @@ import { authRoutes } from './routes/auth';
 import { ceoChatRoutes } from './routes/ceo-chat';
 import { commentsRoutes } from './routes/comments';
 import { costsRoutes } from './routes/costs';
+import { buildDatabaseInfoRoutes } from './routes/database-info';
 import { documentReviewRoutes } from './routes/document-review';
 import { executionLocksRoutes } from './routes/execution-locks';
 import { goalsRoutes } from './routes/goals';
@@ -97,6 +98,11 @@ export interface AppConfig {
 	webUrl: string;
 	/** A master key was configured at startup (env/CLI), so the instance auto-unlocks after a restart. */
 	autoUnlock?: boolean;
+	/**
+	 * Pre-redacted storage metadata for the superuser settings endpoint. Never
+	 * carries the raw connection URL — redaction happened at startup.
+	 */
+	storageInfo?: StorageInfo;
 }
 
 export interface StartupResult {
@@ -128,7 +134,16 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	// `db` may be replaced by a fresh handle if migrations run against a copy and
 	// swap it in, so it's a `let` — every consumer below uses the post-migration handle.
 	setStartupPhase('database');
-	let db: Db = new PgliteDb(await openPersistentDb(config.dataDir, { reset: config.reset }));
+	const opened = await openDatabase({
+		dataDir: config.dataDir,
+		databaseUrl: config.databaseUrl,
+		reset: config.reset,
+	});
+	let db = opened.db;
+	// Pre-redacted display metadata (settings endpoint + logs). The raw
+	// databaseUrl deliberately stops here — it is never handed to buildApp, so
+	// no request handler can reach it.
+	const storageInfo = opened.storage;
 
 	await db.exec(BASE_SCHEMA);
 	setStartupPhase('migrations');
@@ -345,6 +360,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 			dataDir: config.dataDir,
 			webUrl: config.webUrl,
 			autoUnlock: config.masterKey !== undefined,
+			storageInfo,
 		},
 		docker,
 		wsManager,
@@ -537,6 +553,14 @@ export function buildApp(
 	app.route('/api', mentionsRoutes);
 	app.route('/api', aiProvidersRoutes);
 	app.route('/api', instanceSettingsRoutes);
+	// Storage metadata card (General settings). Tests boot buildApp without a
+	// storageInfo — derive the embedded default so the endpoint stays truthful.
+	app.route(
+		'/api',
+		buildDatabaseInfoRoutes(
+			config.storageInfo ?? { backend: 'embedded', display: join(config.dataDir, 'pgdata') },
+		),
+	);
 	app.route('/api', modelPricingRoutes);
 	app.route('/api', reposRoutes);
 	app.route('/api', executionLocksRoutes);
@@ -649,9 +673,17 @@ async function runAvailableMigrations(db: Db, dataDir: string): Promise<Db> {
 		return db;
 	}
 
-	// Migrate a copy and swap on success; on failure the original is untouched
-	// (a downgraded binary can run against it as-is). Returns the live handle to
-	// use, which is a fresh one after a successful swap.
+	// External Postgres migrates IN PLACE under an advisory lock (there is no
+	// datadir to copy-swap); the handle never changes.
+	if (db.kind === 'postgres') {
+		const { applyPendingMigrationsExternal } = await import('./db/migrate-external.js');
+		await applyPendingMigrationsExternal(db, migrations);
+		return db;
+	}
+
+	// Embedded: migrate a copy and swap on success; on failure the original is
+	// untouched (a downgraded binary can run against it as-is). Returns the live
+	// handle to use, which is a fresh one after a successful swap.
 	const { applyPendingMigrations } = await import('./db/migrate-runner.js');
 	return applyPendingMigrations(db, dataDir, migrations);
 }

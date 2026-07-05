@@ -16,6 +16,13 @@ export type LogLevelName = 'debug' | 'info' | 'warn' | 'error';
 export interface HezoConfig {
 	port: number;
 	dataDir: string;
+	/**
+	 * External Postgres connection string (`--database-url` / `HEZO_DATABASE_URL`).
+	 * Unset → the embedded PGlite database under `<dataDir>/pgdata`. The raw value
+	 * carries credentials: it must never be logged or exposed un-redacted (see
+	 * `redactDatabaseUrl` in `lib/db-info.ts`) and never passed into `buildApp`.
+	 */
+	databaseUrl?: string;
 	masterKey?: { unlockKeyHex: string; publicKeyHex: string };
 	webUrl: string;
 	reset: boolean;
@@ -177,6 +184,10 @@ export function parseConfig(
 		.option('--port <port>', 'Server port (env: HEZO_PORT)', String(DEFAULT_PORT))
 		.option('--data-dir <path>', 'Data directory (env: HEZO_DATA_DIR)', DEFAULT_DATA_DIR)
 		.option(
+			'--database-url <url>',
+			'External Postgres connection string (postgres://user:password@host:5432/db). Omit to use the embedded database under the data directory. (env: HEZO_DATABASE_URL)',
+		)
+		.option(
 			'--master-key <phrase>',
 			'The 12-word master key phrase for setup/unlock (env: HEZO_MASTER_KEY)',
 		)
@@ -233,6 +244,15 @@ export function parseConfig(
 
 	const masterKeyRaw = pick('HEZO_MASTER_KEY', cli.masterKey);
 
+	const databaseUrl = pick('HEZO_DATABASE_URL', cli.databaseUrl);
+	const reset = pickBool('HEZO_RESET', cli.reset);
+	if (databaseUrl && reset) {
+		throw new Error(
+			'--reset applies to the embedded database only (it renames a corrupt pgdata aside). ' +
+				'For an external database, drop and recreate it with your provider tools instead.',
+		);
+	}
+
 	// Telemetry defaults ON. The env var (when set) wins; otherwise the only way
 	// to disable via CLI is the explicit `--disable-telemetry` flag.
 	const telemetryEnabled = ((): boolean => {
@@ -244,9 +264,10 @@ export function parseConfig(
 	return {
 		port: parsePort(pick('HEZO_PORT', cli.port) ?? String(DEFAULT_PORT)),
 		dataDir: resolveDataDir(pick('HEZO_DATA_DIR', cli.dataDir) ?? DEFAULT_DATA_DIR),
+		databaseUrl,
 		masterKey: masterKeyRaw ? parseMasterKey(masterKeyRaw) : undefined,
 		webUrl: pick('HEZO_WEB_URL', cli.webUrl) ?? '',
-		reset: pickBool('HEZO_RESET', cli.reset),
+		reset,
 		// Auto-open is on by default; headless detection at startup decides whether
 		// a browser actually launches. HEZO_OPEN=0 / --no-open disables it. With
 		// `--no-open` commander sets cli.open=false; absent, it defaults to true.
