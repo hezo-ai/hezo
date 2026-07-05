@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.14.0 - 2026-07-05
+
+### Features
+
+- **web:** filterable Add-to-task picker in the action review dialog ([#585](https://github.com/hezo-ai/hezo/pull/585))
+
+### Bug Fixes
+
+- **server:** self-heal broken cached repo clones during repo sync ([#588](https://github.com/hezo-ai/hezo/pull/588))
+- **web:** render reaction picker above adjacent comments ([#587](https://github.com/hezo-ai/hezo/pull/587))
+- **web:** use "Install & restart" label and readable overlay copy ([#584](https://github.com/hezo-ai/hezo/pull/584))
+
+### Documentation
+
+- reflect the abstracted asset storage layer in README, introduction, and meta-harness ([#590](https://github.com/hezo-ai/hezo/pull/590))
+- **readme:** note optional hosted Postgres in the storage feature ([#586](https://github.com/hezo-ai/hezo/pull/586))
+
+### Chores
+
+- relicense from MIT to GPL-3.0-or-later ([#583](https://github.com/hezo-ai/hezo/pull/583))
+
+### Other
+
+- Asset storage abstraction: local filesystem + S3-compatible object storage ([#589](https://github.com/hezo-ai/hezo/pull/589))
+- Database storage abstraction: embedded PGlite + external hosted Postgres ([#577](https://github.com/hezo-ai/hezo/pull/577))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.13.0...0.14.0
+
 ## 0.13.0 - 2026-07-05
 
 ### Features
