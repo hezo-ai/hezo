@@ -1383,6 +1383,9 @@ async function prepareWorktrees(
 		if (syncRes.cloned.length > 0) {
 			emitSystem('stdout', `(cloned ${syncRes.cloned.length} repo(s) on demand)`);
 		}
+		if (syncRes.repaired.length > 0) {
+			emitSystem('stdout', `(repaired ${syncRes.repaired.length} repo(s) with a broken origin)`);
+		}
 
 		if (signal?.aborted) {
 			return { workingDir: '/workspace', designatedRepo: null, worktrees: [], executor };

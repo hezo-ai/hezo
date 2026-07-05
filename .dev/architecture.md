@@ -590,6 +590,22 @@ on `mkdirSync`'s `mode` — that mode is masked by the **process umask**, so a h
 `0o027`/`0o077` under systemd `UMask=`) would silently strip the other-execute bit and the agent
 CLI would die with `EACCES` opening its `settings.json` (again only on native-Linux production).
 
+Repo sync (`ensureProjectRepos`, `services/repo-sync.ts`) does **not trust a bare `.git`
+marker** in a repo's reserved workspace directory: an agent may have run `git init` there
+before the repo was connected, leaving a repo with no origin (every fetch then silently
+no-ops and worktree prep dies on an unborn HEAD) or with origin pointed at the wrong repo.
+The sync reads `origin` (`getOriginRemote`, `git.ts`) and **self-heals** a positively-wrong
+state — adopting the directory in place (`connectExistingRepo`) when origin is missing,
+repointing origin (`remote set-url`) when it addresses a different repo/host
+(`remoteUrlMatchesRepo` accepts the SSH form Hezo writes plus hand-configured `ssh://`/
+`https://` forms). Healing never discards local files or commits, and an **indeterminate**
+answer (exec transport failure, stubbed executor) never triggers a repair — only git's own
+"No such remote" / "not a git repository" do. Relatedly, the per-run fetch names `origin`
+explicitly (`git fetch --prune origin`, not `--all`, which exits 0 having fetched nothing
+when no remote is configured), and a worktree add that can resolve neither `origin/<default>`
+nor a born HEAD fails with an actionable "clone has no commits" error instead of git's opaque
+`failed to resolve HEAD as a valid ref`.
+
 Before building a worktree the runner fetches each clone, then **fast-forwards the clone's
 local default branch** (the "main codebase") to `origin/<default>` (resolved via `origin/HEAD`
 → fallback `main`/`master`) — a clean fast-forward when it's checked out, else an `update-ref`,

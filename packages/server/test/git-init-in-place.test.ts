@@ -81,6 +81,25 @@ describe('connectExistingRepo', () => {
 		expect(readFileSync(join(target, 'local-only.txt'), 'utf8')).toBe('scaffold\n');
 	});
 
+	it('repoints an already-configured origin instead of failing on remote add', async () => {
+		// A directory healed after a previous partial failure (or a stray agent
+		// setup) can already carry an origin; connect must be idempotent.
+		const remote = makeEmptyRemote();
+		const target = join(root, 'work');
+		mkdirSync(target, { recursive: true });
+		git(target, 'init', '-b', 'main');
+		git(target, 'remote', 'add', 'origin', 'git@github.com:someone/else.git');
+		writeFileSync(join(target, 'index.html'), '<html></html>');
+
+		const res = await connectExistingRepo(exec, `file://${remote}`, loc(target), false);
+
+		expect(res.success).toBe(true);
+		expect(
+			execFileSync('git', ['remote', 'get-url', 'origin'], { cwd: target }).toString().trim(),
+		).toBe(`file://${remote}`);
+		expect(readFileSync(join(target, 'index.html'), 'utf8')).toBe('<html></html>');
+	});
+
 	it('fails and rolls back its .git when a local file conflicts with the remote', async () => {
 		const remote = makeRemoteWithCommit({ 'README.md': 'from remote\n' });
 		const target = join(root, 'work');

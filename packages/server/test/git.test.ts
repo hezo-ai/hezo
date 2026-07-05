@@ -10,11 +10,14 @@ import {
 	ensureTaskWorktreeWithRetry,
 	fastForwardLocalDefault,
 	fetchRepo,
+	getOriginRemote,
 	getRemoteDefaultBranch,
 	isTransientMountError,
 	mergeDefaultIntoWorktree,
 	pruneWorktrees,
 	type RepoLoc,
+	remoteUrlMatchesRepo,
+	setOriginUrl,
 	type WorktreeLoc,
 } from '../src/services/git';
 import {
@@ -551,6 +554,101 @@ describe('ensureTaskWorktreeWithRetry retries transient mount ENOENT', () => {
 		expect(res.error).toContain('No such file or directory'); // surfaced, not swallowed
 		expect(retries).toBe(2); // retries - 1 onRetry invocations
 		expect(flaky.addCalls).toBe(3); // exactly `retries` attempts, bounded
+	});
+});
+
+// A workspace directory can carry a `.git` that is not a clone of the linked
+// repo — an agent's stray `git init` (no origin, unborn HEAD) or an origin
+// pointed elsewhere. These primitives let repo-sync detect and heal that state
+// instead of every run dying in worktree prep.
+describe('origin remote inspection and repair', () => {
+	// Neutralize ambient URL rewrites (CI proxies inject `url.*.insteadOf` via
+	// GIT_CONFIG_* env and global/system config) so origin URLs read back exactly
+	// as stored — like production's clean container git.
+	const cleanExec = new HostGitExecutor({
+		GIT_CONFIG_COUNT: '0',
+		GIT_CONFIG_GLOBAL: '/dev/null',
+		GIT_CONFIG_SYSTEM: '/dev/null',
+	});
+
+	it('remoteUrlMatchesRepo accepts the URL forms that address the repo', () => {
+		const id = 'hezo-ai/website';
+		expect(remoteUrlMatchesRepo('git@github.com:hezo-ai/website.git', id)).toBe(true);
+		expect(remoteUrlMatchesRepo('git@github.com:hezo-ai/website', id)).toBe(true);
+		expect(remoteUrlMatchesRepo('ssh://git@github.com/hezo-ai/website.git', id)).toBe(true);
+		expect(remoteUrlMatchesRepo('https://github.com/hezo-ai/website.git', id)).toBe(true);
+		expect(remoteUrlMatchesRepo('https://github.com/hezo-ai/website', id)).toBe(true);
+		expect(remoteUrlMatchesRepo('https://user@github.com/hezo-ai/website.git', id)).toBe(true);
+		expect(remoteUrlMatchesRepo('HTTPS://GitHub.com/Hezo-AI/Website.git', id)).toBe(true);
+	});
+
+	it('remoteUrlMatchesRepo rejects other repos and other hosts', () => {
+		const id = 'hezo-ai/website';
+		expect(remoteUrlMatchesRepo('git@github.com:hezo-ai/hezo.git', id)).toBe(false);
+		expect(remoteUrlMatchesRepo('git@github.com:other/website.git', id)).toBe(false);
+		expect(remoteUrlMatchesRepo('git@github.com:prefix-hezo-ai/website.git', id)).toBe(false);
+		expect(remoteUrlMatchesRepo('git@gitlab.com:hezo-ai/website.git', id)).toBe(false);
+		expect(remoteUrlMatchesRepo('https://github.com/hezo-ai/website/extra', id)).toBe(false);
+		expect(remoteUrlMatchesRepo('', id)).toBe(false);
+	});
+
+	it('getOriginRemote reads a configured origin and repairs via setOriginUrl', async () => {
+		const dir = join(testDir, 'origin-inspect');
+		mkdirSync(dir, { recursive: true });
+		run('git init -b main', dir);
+		run('git remote add origin git@github.com:someone/else.git', dir);
+
+		const before = await getOriginRemote(cleanExec, repoLoc(dir));
+		expect(before).toEqual({ status: 'configured', url: 'git@github.com:someone/else.git' });
+
+		const fixed = await setOriginUrl(cleanExec, 'git@github.com:owner/right.git', repoLoc(dir));
+		expect(fixed.success).toBe(true);
+		const after = await getOriginRemote(cleanExec, repoLoc(dir));
+		expect(after).toEqual({ status: 'configured', url: 'git@github.com:owner/right.git' });
+	});
+
+	it('getOriginRemote reports missing only on a definitive git answer', async () => {
+		// A repo with no remotes — git's "No such remote 'origin'".
+		const noOrigin = join(testDir, 'origin-none');
+		mkdirSync(noOrigin, { recursive: true });
+		run('git init -b main', noOrigin);
+		expect(await getOriginRemote(cleanExec, repoLoc(noOrigin))).toEqual({ status: 'missing' });
+
+		// A transport-style failure gives no evidence either way.
+		const flaky: GitExecutor = {
+			exec: async () => ({ exitCode: 1, stdout: '', stderr: 'docker exec transport died' }),
+		};
+		expect(await getOriginRemote(flaky, repoLoc(noOrigin))).toEqual({ status: 'indeterminate' });
+
+		// A zero-exit with no URL (a stubbed executor) is indeterminate too.
+		const silent: GitExecutor = {
+			exec: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
+		};
+		expect(await getOriginRemote(silent, repoLoc(noOrigin))).toEqual({ status: 'indeterminate' });
+	});
+
+	it('fetchRepo fails loudly when no origin remote is configured', async () => {
+		const dir = join(testDir, 'fetch-no-origin');
+		mkdirSync(dir, { recursive: true });
+		run('git init -b main', dir);
+
+		const res = await fetchRepo(exec, repoLoc(dir));
+		expect(res.success).toBe(false);
+		expect(res.error).toBeTruthy();
+	});
+
+	it('ensureTaskWorktree fails with an actionable error on an unborn HEAD', async () => {
+		// A stray `git init` with no commits and no origin — git itself would die
+		// with the opaque "failed to resolve HEAD as a valid ref" (git < 2.42).
+		const dir = join(testDir, 'unborn');
+		mkdirSync(dir, { recursive: true });
+		run('git init -b main', dir);
+
+		const wt = join(testDir, 'worktrees', 'UB-1', 'unborn');
+		const res = await ensureTaskWorktree(exec, repoLoc(dir), wtLoc(wt), 'hezo/UB-1');
+		expect(res.success).toBe(false);
+		expect(res.error).toContain('no commits');
+		expect(res.error).toContain('push an initial commit');
 	});
 });
 

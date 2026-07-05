@@ -1,9 +1,17 @@
 import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { repoNameFromIdentifier } from '@hezo/shared';
+import { RepoHostType, repoNameFromIdentifier } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { logger } from '../logger';
-import { cloneRepo, initRepoInPlace, type RepoLoc } from './git';
+import {
+	buildGitSshUrl,
+	cloneRepo,
+	getOriginRemote,
+	initRepoInPlace,
+	type RepoLoc,
+	remoteUrlMatchesRepo,
+	setOriginUrl,
+} from './git';
 import type { GitExecutor } from './git-executor';
 import { CONTAINER_WORKSPACE_ROOT, getWorkspacePath, getWorktreesPath } from './workspace';
 
@@ -14,6 +22,8 @@ export type LogEmitter = (stream: 'stdout' | 'stderr', text: string) => void;
 /** Repos keyed by name — the workspace directory each clone lives in. */
 export interface RepoSyncResult {
 	cloned: string[];
+	/** Existing dirs whose broken git state was healed (origin added/repointed). */
+	repaired: string[];
 	skipped: string[];
 	failed: Array<{ name: string; error: string }>;
 }
@@ -30,6 +40,15 @@ export interface ProjectIdentity {
  * checks against the bind-mounted workspace. The container must be running and the
  * executor's bridge must carry the project SSH key, or clone-over-SSH fails and is
  * reported in `failed` (same outcome as a missing key today).
+ *
+ * A directory that already carries `.git` is not trusted blindly: an agent may
+ * have run `git init` in the reserved directory before the repo was connected,
+ * leaving a repo with no origin (every fetch then silently no-ops and worktree
+ * prep dies on an unborn HEAD) or with origin pointed somewhere else entirely.
+ * The sync verifies `origin` actually tracks the linked repo and self-heals when
+ * it doesn't — adopting the directory in place when origin is missing, repointing
+ * origin when it's wrong — reported in `repaired`. Healing never discards local
+ * files or commits; a heal that would clobber untracked work fails instead.
  */
 export async function ensureProjectRepos(
 	db: Db,
@@ -39,7 +58,7 @@ export async function ensureProjectRepos(
 	logEmit?: LogEmitter,
 	containerWorkspaceRoot: string = CONTAINER_WORKSPACE_ROOT,
 ): Promise<RepoSyncResult> {
-	const result: RepoSyncResult = { cloned: [], skipped: [], failed: [] };
+	const result: RepoSyncResult = { cloned: [], repaired: [], skipped: [], failed: [] };
 
 	const repos = await db.query<RepoRow>(
 		`SELECT repo_identifier FROM repos
@@ -52,7 +71,8 @@ export async function ensureProjectRepos(
 	const workspacePath = getWorkspacePath(dataDir, project.team_id, project.id);
 	mkdirSync(workspacePath, { recursive: true });
 
-	const pending: Array<{ repo: RepoRow; mode: 'clone' | 'init'; loc: RepoLoc }> = [];
+	type SyncMode = 'clone' | 'init' | 'adopt' | 'repoint';
+	const pending: Array<{ repo: RepoRow; mode: SyncMode; loc: RepoLoc; badOrigin?: string }> = [];
 	for (const r of repos.rows) {
 		const name = repoNameFromIdentifier(r.repo_identifier);
 		const targetDir = join(workspacePath, name);
@@ -61,7 +81,20 @@ export async function ensureProjectRepos(
 			containerPath: `${containerWorkspaceRoot}/${name}`,
 		};
 		if (existsSync(join(targetDir, '.git'))) {
-			result.skipped.push(name);
+			// Verify — don't trust — the existing `.git` (see the docstring). Only a
+			// positively-wrong state is healed; an indeterminate answer leaves the
+			// clone alone.
+			const origin = await getOriginRemote(executor, loc);
+			if (origin.status === 'missing') {
+				pending.push({ repo: r, mode: 'adopt', loc });
+			} else if (
+				origin.status === 'configured' &&
+				!remoteUrlMatchesRepo(origin.url, r.repo_identifier)
+			) {
+				pending.push({ repo: r, mode: 'repoint', loc, badOrigin: origin.url });
+			} else {
+				result.skipped.push(name);
+			}
 		} else if (existsSync(targetDir) && readdirSync(targetDir).length > 0) {
 			// An agent populated this directory before the repo was connected — a
 			// plain clone would refuse the non-empty target, so adopt it in place.
@@ -73,17 +106,42 @@ export async function ensureProjectRepos(
 
 	if (pending.length === 0) return result;
 
-	for (const { repo: r, mode, loc } of pending) {
+	const VERBS: Record<SyncMode, [progressive: string, past: string]> = {
+		clone: ['Cloning', 'Cloned'],
+		init: ['Initializing', 'Initialized'],
+		adopt: ['Repairing', 'Repaired'],
+		repoint: ['Repairing', 'Repaired'],
+	};
+	for (const { repo: r, mode, loc, badOrigin } of pending) {
 		const name = repoNameFromIdentifier(r.repo_identifier);
-		const verb = mode === 'init' ? 'Initializing' : 'Cloning';
-		logEmit?.('stdout', `→ ${verb} ${r.repo_identifier} → ${name}/`);
-		const res =
-			mode === 'init'
-				? await initRepoInPlace(executor, r.repo_identifier, loc)
-				: await cloneRepo(executor, r.repo_identifier, loc);
+		const [verb, done] = VERBS[mode];
+		const detail =
+			mode === 'adopt'
+				? ' (existing directory has no usable origin remote; connecting it in place)'
+				: mode === 'repoint'
+					? ` (origin pointed at ${badOrigin})`
+					: '';
+		logEmit?.('stdout', `→ ${verb} ${r.repo_identifier} → ${name}/${detail}`);
+		let res: { success: boolean; error?: string };
+		switch (mode) {
+			case 'clone':
+				res = await cloneRepo(executor, r.repo_identifier, loc);
+				break;
+			case 'init':
+			case 'adopt':
+				res = await initRepoInPlace(executor, r.repo_identifier, loc);
+				break;
+			case 'repoint':
+				res = await setOriginUrl(
+					executor,
+					buildGitSshUrl(RepoHostType.GitHub, r.repo_identifier),
+					loc,
+				);
+				break;
+		}
 		if (res.success) {
-			logEmit?.('stdout', `✓ ${mode === 'init' ? 'Initialized' : 'Cloned'} ${name}`);
-			result.cloned.push(name);
+			logEmit?.('stdout', `✓ ${done} ${name}`);
+			(mode === 'adopt' || mode === 'repoint' ? result.repaired : result.cloned).push(name);
 		} else {
 			const errMsg = res.error ?? 'unknown error';
 			logEmit?.('stderr', `✗ ${verb} failed for ${name}: ${errMsg}`);
