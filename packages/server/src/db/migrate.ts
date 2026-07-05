@@ -34,6 +34,11 @@ function checksumOf(m: Migration): string {
 	return createHash('sha256').update(m).digest('hex');
 }
 
+/** Public checksum accessor (logical-backup compares recorded vs local sets). */
+export function checksumOfMigration(m: Migration): string {
+	return checksumOf(m);
+}
+
 export async function runMigrations(db: Db, migrations: Record<string, Migration>): Promise<void> {
 	await db.exec(`
     CREATE TABLE IF NOT EXISTS _migrations (

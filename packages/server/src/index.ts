@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { AuthType } from '@hezo/shared';
 import { app } from './app';
-import { parseConfig, runRestore, runVersion } from './cli';
+import { parseConfig, runBackup, runRestore, runVersion } from './cli';
 import type { MasterKeyManager } from './crypto/master-key';
 import { PgDataCorruptError } from './db/client';
 import type { Db } from './db/database';
@@ -93,7 +93,10 @@ if (runVersion()) {
 	process.exit(0);
 }
 
-// `hezo restore <backup>` runs and exits before any server startup.
+// `hezo backup` / `hezo restore <backup>` run and exit before any server startup.
+if (await runBackup()) {
+	process.exit(0);
+}
 if (await runRestore()) {
 	process.exit(0);
 }

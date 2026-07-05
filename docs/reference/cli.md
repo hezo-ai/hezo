@@ -51,14 +51,28 @@ ready. It skips this automatically in environments without a browser — CI, con
 SSH sessions, and headless Linux (no `DISPLAY`/`WAYLAND_DISPLAY`) — and logs where to
 point your browser instead. Use `--no-open` (or `HEZO_OPEN=0`) to turn it off.
 
-## Restore a snapshot
+## Back up the database
 
 ```sh
-hezo restore <backup>
+hezo backup [--output <path>] [--data-dir <path>] [--database-url <url>]
 ```
 
-Restores a pre-upgrade database snapshot into the data directory, for a manual rollback
-to an earlier version. After restoring, start the matching (older) binary. See
+Writes a **portable logical backup** (default
+`<data-dir>/backups/hezo-<timestamp>.backup.gz`) that restores onto either storage
+backend — which also makes it the way to move an instance between the embedded database
+and an external Postgres. For the embedded database, stop the server first. See
+[Backup & recovery](/docs/deployment/backup-and-recovery).
+
+## Restore a backup
+
+```sh
+hezo restore <backup> [--wipe] [--data-dir <path>] [--database-url <url>]
+```
+
+Restores a `hezo backup` file into the embedded database (default) or an external one
+(`--database-url`). The target must be empty unless `--wipe` is passed. Backups taken by
+a newer Hezo are refused — upgrade first. Legacy pre-upgrade `.tar.gz` snapshots restore
+with the same command (embedded only). See
 [Backup & recovery](/docs/deployment/backup-and-recovery).
 
 ## Reset

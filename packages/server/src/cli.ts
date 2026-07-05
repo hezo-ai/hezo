@@ -142,28 +142,139 @@ export function runVersion(
 	return false;
 }
 
+/** Env wins over flag, mirroring parseConfig's `pick` for subcommands. */
+function pickDatabaseUrl(
+	cliValue: unknown,
+	env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+	const e = env.HEZO_DATABASE_URL;
+	if (e !== undefined && e !== '') return e;
+	if (typeof cliValue === 'string' && cliValue.length > 0) return cliValue;
+	return undefined;
+}
+
 /**
- * Handle the `hezo restore <backup>` subcommand: restore a pre-migration
- * snapshot into the data dir's `pgdata`, then exit. Returns `true` when it
- * handled the invocation so the caller skips normal server startup. The
- * operator then runs the matching (older) Hezo binary against the restored DB.
+ * Handle the `hezo backup` subcommand: write a portable logical backup of the
+ * database (either backend) and exit. Returns `true` when it handled the
+ * invocation so the caller skips normal server startup.
+ *
+ * For the embedded database the server must be stopped first — the embedded
+ * engine is single-process. An external database can be backed up any time.
+ */
+export async function runBackup(argv: string[] = process.argv): Promise<boolean> {
+	if (argv[2] !== 'backup') return false;
+
+	const program = new Command()
+		.name('hezo backup')
+		.description('Write a portable logical backup of the database (works for both backends)')
+		.option(
+			'--output <path>',
+			'Output file (default <data-dir>/backups/hezo-<timestamp>.backup.gz)',
+		)
+		.option('--data-dir <path>', 'Data directory', DEFAULT_DATA_DIR)
+		.option('--database-url <url>', 'External Postgres connection string (env: HEZO_DATABASE_URL)')
+		.parse(argv.slice(3), { from: 'user' });
+
+	const opts = program.opts();
+	const dataDir = resolveDataDir(opts.dataDir as string);
+	const databaseUrl = pickDatabaseUrl(opts.databaseUrl);
+
+	const { loadAllMigrations } = await import('./db/load-migrations.js');
+	const migrations = await loadAllMigrations();
+	if (!migrations) throw new Error('No migrations found — cannot determine the schema version.');
+
+	const { openDatabase } = await import('./db/open.js');
+	const { dumpLogicalBackup } = await import('./db/logical-backup.js');
+	const { mkdir, writeFile } = await import('node:fs/promises');
+
+	const opened = await openDatabase({ dataDir, databaseUrl });
+	try {
+		const bytes = await dumpLogicalBackup(opened.db, { hezoVersion: HEZO_VERSION, migrations });
+		const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+		const output = resolve(
+			(opts.output as string | undefined) ?? `${dataDir}/backups/hezo-${stamp}.backup.gz`,
+		);
+		await mkdir(resolve(output, '..'), { recursive: true });
+		await writeFile(output, bytes);
+		console.log(`Wrote logical backup of ${opened.storage.backend} database → ${output}`);
+	} finally {
+		await opened.db.close();
+	}
+	return true;
+}
+
+/**
+ * Handle the `hezo restore <backup>` subcommand, then exit. Two formats:
+ *
+ * - **Portable logical backup** (`hezo backup` output, `.backup.gz`) —
+ *   restores onto EITHER backend, which is also how an instance moves between
+ *   embedded and hosted Postgres. Requires an empty target or `--wipe`.
+ * - **Legacy pgdata tarball** (pre-logical snapshots) — embedded only; wipes
+ *   `pgdata` and reloads the physical snapshot.
+ *
+ * Returns `true` when it handled the invocation so the caller skips normal
+ * server startup.
  */
 export async function runRestore(argv: string[] = process.argv): Promise<boolean> {
 	if (argv[2] !== 'restore') return false;
 
 	const program = new Command()
 		.name('hezo restore')
-		.description('Restore a pre-migration database snapshot (for manual downgrade)')
-		.argument('<backup>', 'path to a backup .tar.gz under <data-dir>/backups')
+		.description('Restore a database backup (logical .backup.gz, or a legacy pgdata .tar.gz)')
+		.argument('<backup>', 'path to a backup file')
 		.option('--data-dir <path>', 'Data directory', DEFAULT_DATA_DIR)
+		.option(
+			'--database-url <url>',
+			'External Postgres connection string to restore into (env: HEZO_DATABASE_URL)',
+		)
+		.option('--wipe', 'Drop the existing schema in the target database before restoring')
 		// argv is [runtime, script, 'restore', <backup>, ...flags] in both dev and
 		// the compiled binary — parse only the tokens after the subcommand name.
 		.parse(argv.slice(3), { from: 'user' });
 
-	const backup = program.args[0];
-	const dataDir = resolveDataDir(program.opts().dataDir as string);
-	const { restoreDataDir } = await import('./db/backup.js');
-	await restoreDataDir(dataDir, resolve(backup));
+	const opts = program.opts();
+	const backupPath = resolve(program.args[0]);
+	const dataDir = resolveDataDir(opts.dataDir as string);
+	const databaseUrl = pickDatabaseUrl(opts.databaseUrl);
+
+	const { readFile } = await import('node:fs/promises');
+	const bytes = await readFile(backupPath);
+
+	const { readLogicalBackupHeader, restoreLogicalBackup } = await import('./db/logical-backup.js');
+	const header = readLogicalBackupHeader(bytes);
+
+	if (!header) {
+		// Legacy physical pgdata tarball — embedded only.
+		if (databaseUrl) {
+			console.error(
+				'This file is a legacy pgdata snapshot, which only restores into the embedded ' +
+					'database. To move data into an external Postgres, take a portable backup with ' +
+					'`hezo backup` and restore that instead.',
+			);
+			process.exit(1);
+		}
+		const { restoreDataDir } = await import('./db/backup.js');
+		await restoreDataDir(dataDir, backupPath);
+		return true;
+	}
+
+	const { loadAllMigrations } = await import('./db/load-migrations.js');
+	const migrations = await loadAllMigrations();
+	if (!migrations) throw new Error('No migrations found — cannot reproduce the backup schema.');
+
+	const { openDatabase } = await import('./db/open.js');
+	const opened = await openDatabase({ dataDir, databaseUrl });
+	try {
+		const summary = await restoreLogicalBackup(opened.db, bytes, migrations, {
+			wipe: opts.wipe === true,
+		});
+		console.log(
+			`Restored logical backup (Hezo ${header.hezoVersion}, taken ${header.createdAt}) ` +
+				`into the ${opened.storage.backend} database: ${summary.rows} rows across ${summary.tables} tables.`,
+		);
+	} finally {
+		await opened.db.close();
+	}
 	return true;
 }
 

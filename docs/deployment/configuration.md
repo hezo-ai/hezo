@@ -90,6 +90,9 @@ Requirements and recommendations:
   but running two live servers against one database is not supported.
 - The connection string carries credentials: prefer the environment variable over the
   flag (flags are visible in the process list), and never commit it to a repo.
+- `hezo backup` / `hezo restore` work against an external database too — including
+  **moving an existing embedded instance to hosted Postgres** (and back). See
+  [Backup & recovery](/docs/deployment/backup-and-recovery).
 
 ## Anonymous usage telemetry
 

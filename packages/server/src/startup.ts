@@ -641,29 +641,10 @@ async function cleanupOrphanRunSockets(_db: Db, dataDir: string): Promise<void> 
 }
 
 async function loadMigrations(): Promise<Record<string, Migration> | null> {
-	const { loadBundledMigrations, loadFilesystemMigrations } = await import('./db/migrate.js');
-	const { codeMigrations } = await import('./db/migrations/code/index.js');
-
-	let sql: Record<string, string> | null = null;
-	try {
-		sql = await loadBundledMigrations();
-	} catch {
-		// Dev (`bun run`): the bundle isn't generated — read from the source tree.
-		// `HEZO_MIGRATIONS_DIR` lets tests point startup at synthetic migrations.
-		try {
-			const migrationsDir =
-				process.env.HEZO_MIGRATIONS_DIR ??
-				join(new URL('.', import.meta.url).pathname, '..', 'migrations');
-			sql = await loadFilesystemMigrations(migrationsDir);
-		} catch {
-			sql = null;
-		}
-	}
-	if (!sql) return null;
-
-	// SQL migrations + code migrations share one ordered sequence (the runner
-	// sorts by name). Code migrations travel through the TS module graph.
-	return { ...sql, ...codeMigrations };
+	// Shared with the backup/restore CLI — bundled SQL (binary) or the source
+	// tree (dev/tests), merged with code migrations into one sorted sequence.
+	const { loadAllMigrations } = await import('./db/load-migrations.js');
+	return loadAllMigrations();
 }
 
 async function runAvailableMigrations(db: Db, dataDir: string): Promise<Db> {
@@ -677,7 +658,9 @@ async function runAvailableMigrations(db: Db, dataDir: string): Promise<Db> {
 	// datadir to copy-swap); the handle never changes.
 	if (db.kind === 'postgres') {
 		const { applyPendingMigrationsExternal } = await import('./db/migrate-external.js');
-		await applyPendingMigrationsExternal(db, migrations);
+		await applyPendingMigrationsExternal(db, migrations, {
+			backup: { dir: join(dataDir, 'backups'), version: HEZO_VERSION },
+		});
 		return db;
 	}
 

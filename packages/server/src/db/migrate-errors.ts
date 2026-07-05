@@ -61,6 +61,31 @@ export class ExternalDbError extends Error {
 }
 
 /**
+ * A logical backup records migrations this binary does not know — it was
+ * taken by a newer Hezo. Restoring it would produce a schema the binary
+ * can't run, so refuse and ask the operator to upgrade first.
+ */
+export class BackupNewerThanAppError extends Error {
+	constructor(readonly unknownMigrations: string[]) {
+		super(
+			`This backup was taken by a newer version of Hezo. ` +
+				`It records migration(s) this binary does not recognize: ` +
+				`${unknownMigrations.join(', ')}. ` +
+				`Upgrade Hezo to at least the version that created the backup, then restore.`,
+		);
+		this.name = 'BackupNewerThanAppError';
+	}
+}
+
+/** A restore precondition failed (non-empty target, format mismatch, …). The message carries the guidance. */
+export class RestorePreconditionError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = 'RestorePreconditionError';
+	}
+}
+
+/**
  * A pending migration failed while being applied IN PLACE to the external
  * database. Each migration runs in its own transaction, so the failed one
  * rolled back and everything applied before it remains committed — a re-run

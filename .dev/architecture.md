@@ -1116,11 +1116,19 @@ credentials occluded, query params dropped except `sslmode`) and only that is pa
 `buildApp`, surfaced at the superuser-only `GET /api/database-info` for the Settings →
 General Database card.
 
-**Backup/restore.** Before applying pending migrations to an already-initialized instance,
-the runner snapshots the DB with PGlite `dumpDataDir('gzip')` to `<dataDir>/backups/`
-(last 5 kept); a failed backup aborts the migration. Recovery is
-`hezo restore <backup.tar.gz>` (wipes `pgdata`, reloads the snapshot, keeps the original
-master key) → run the previous binary.
+**Backup/restore.** The operator format is the **portable logical backup**
+(`src/db/logical-backup.ts`): gzipped JSONL carrying the applied-migration set plus every
+row (bytea → base64, generated tsvector columns excluded and recomputed on load).
+Restore replays the binary's own migrations up to exactly the recorded set, then loads
+data in one transaction with FK constraints dropped/re-added around the inserts (insert
+order and self-references never matter) and serial sequences resumed; migration-seeded
+rows are truncated first so the backup is authoritative. Because both drivers speak the
+same format, `hezo backup`/`hezo restore` also move an instance between embedded PGlite
+and hosted Postgres in either direction. External startup migrations write one of these
+into `<dataDir>/backups/` automatically before applying (last 5 kept; a failed backup
+aborts the migration); the embedded path keeps its stronger copy-swap instead. Legacy
+physical pgdata tarballs (`db/backup.ts` `dumpDataDir`/`restoreDataDir`) still restore
+via `hezo restore` (embedded only).
 
 **Releases & updates.** A PR flow (`.github/workflows/`): `release.yml` computes the next
 version from Conventional Commits and opens a `release/<version>` PR; merging fires
