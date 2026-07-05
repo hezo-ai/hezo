@@ -29,7 +29,13 @@ test('general settings shows the embedded database card just before the Version 
 // real external Postgres needed, and it proves the client renders exactly the
 // pre-redacted string it was given (no reveal affordance, no raw URL).
 function renderExternal(info: DatabaseInfo, opts: { superuser?: boolean } = {}) {
-	const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	// staleTime: Infinity keeps the seeded cache authoritative — the file-level
+	// renderApp beforeEach reroutes fetch into the real in-process backend, and
+	// a mount refetch would overwrite the seeded external payload with the test
+	// server's embedded one.
+	const qc = new QueryClient({
+		defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+	});
 	qc.setQueryData(queryKeys.me(), { type: 'admin', is_superuser: opts.superuser ?? true });
 	qc.setQueryData(queryKeys.databaseInfo(), info);
 	return render(
