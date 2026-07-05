@@ -650,3 +650,46 @@ export async function clickAndWaitForResponse(
 	]);
 	return response;
 }
+
+/**
+ * Serve a deterministic `/api/projects` index for project-rail layout specs.
+ *
+ * The e2e server is shared across parallel workers, each creating teams and
+ * projects of its own, so the real index length is unpredictable. This keeps
+ * only the internal (HQ) entries plus `keepSlug`'s project, then appends
+ * `clones` synthetic copies of it — enough to force (or rule out) rail
+ * overflow regardless of what the other workers are doing. The clone slugs
+ * don't exist server-side, so their per-avatar inbox-count queries are
+ * answered with zero instead of 404ing against the backend.
+ */
+export async function mockRailProjects(
+	page: Page,
+	options: { keepSlug: string; clones: number },
+): Promise<void> {
+	await page.route('**/api/projects', async (route) => {
+		const res = await route.fetch();
+		const json = (await res.json()) as { data: Array<Record<string, unknown>> };
+		const kept = json.data.filter((p) => p.is_internal === true || p.slug === options.keepSlug);
+		const base = kept.find((p) => p.slug === options.keepSlug);
+		if (!base) {
+			throw new Error(`mockRailProjects: project "${options.keepSlug}" not in the live index`);
+		}
+		const clones = Array.from({ length: options.clones }, (_, i) => ({
+			...base,
+			id: `00000000-0000-4000-8000-${String(i + 1).padStart(12, '0')}`,
+			slug: `rail-fill-${i + 1}`,
+			name: `Rail Fill ${i + 1}`,
+		}));
+		await route.fulfill({
+			response: res,
+			body: JSON.stringify({ ...json, data: [...kept, ...clones] }),
+		});
+	});
+	await page.route('**/api/projects/rail-fill-*/inbox/count', (route) =>
+		route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ data: { unread: 0 } }),
+		}),
+	);
+}
