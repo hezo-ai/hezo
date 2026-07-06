@@ -165,6 +165,7 @@ export class DockerClient {
 				return;
 			}
 			const payload = body === undefined ? undefined : JSON.stringify(body);
+			let cleanupAbort: (() => void) | undefined;
 			const req = httpRequest(
 				{
 					socketPath: this.socketPath,
@@ -179,6 +180,13 @@ export class DockerClient {
 								},
 				},
 				(res) => {
+					// Detach the abort handler when the RESPONSE stream ends — never on the
+					// ClientRequest's 'close', which Bun emits prematurely (while the body
+					// is still streaming). Removing the handler on that premature event
+					// leaves a stalled read with nothing left to tear it down, so a hung
+					// exec (e.g. a black-holed git fetch) ignores its timeout and blocks
+					// until the connection dies at OS level.
+					res.on('close', () => cleanupAbort?.());
 					const headers = new Headers();
 					for (const [key, value] of Object.entries(res.headers)) {
 						if (typeof value === 'string') headers.set(key, value);
@@ -198,7 +206,7 @@ export class DockerClient {
 			if (signal) {
 				const onAbort = () => req.destroy(abortError());
 				signal.addEventListener('abort', onAbort, { once: true });
-				req.on('close', () => signal.removeEventListener('abort', onAbort));
+				cleanupAbort = () => signal.removeEventListener('abort', onAbort);
 			}
 			if (payload !== undefined) req.write(payload);
 			req.end();

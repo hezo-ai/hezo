@@ -108,6 +108,30 @@ describe('execStart over node:http (Bun runtime)', () => {
 		}
 		expect((caught as Error)?.name).toBe('AbortError');
 	});
+
+	test('buffered read (no onChunk) aborts a hung exec at the deadline instead of hanging', async () => {
+		// No onChunk → the buffered branch (await res.arrayBuffer()). This is the
+		// git-fetch prep path that hung indefinitely in production: the exec stream
+		// stays open-but-silent, and under Bun destroying the node:http request does
+		// not reject the pending web-body read, so the declared timeout was silently
+		// ineffective. The read must now settle at the deadline, not run forever.
+		sim.onExecStart('exec-hang-buffered', {
+			frames: [{ stream: 'stdout', text: 'partial' }],
+			hangAfterFrames: true,
+		});
+
+		const started = Date.now();
+		let caught: unknown;
+		try {
+			await docker.execStart('exec-hang-buffered', { signal: AbortSignal.timeout(150) });
+		} catch (e) {
+			caught = e;
+		}
+		const elapsed = Date.now() - started;
+
+		expect(caught).toBeDefined();
+		expect(elapsed).toBeLessThan(2000);
+	});
 });
 
 describe('containerLogs over node:http (Bun runtime)', () => {

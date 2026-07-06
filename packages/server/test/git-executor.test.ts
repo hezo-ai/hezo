@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ContainerRunUser } from '../src/services/container-user';
-import { ContainerGitExecutor } from '../src/services/git-executor';
+import { ContainerGitExecutor, GIT_SSH_COMMAND_VALUE } from '../src/services/git-executor';
 import {
 	BRIDGE_RUNNER_BINARY,
 	type BridgeRunnerArgs,
@@ -39,6 +39,28 @@ function recordingDocker(opts: { exitCode?: number; throwOnStart?: boolean } = {
 		execInspect: async () => ({ ExitCode: opts.exitCode ?? 0, Running: false, Pid: 1 }),
 	});
 	return { docker, calls };
+}
+
+const abortErrorOf = (s: AbortSignal): Error =>
+	s.reason instanceof Error
+		? s.reason
+		: new DOMException('This operation was aborted', 'AbortError');
+
+// A docker whose execStart never settles until the exec's abort signal fires —
+// modelling a black-holed in-container command (e.g. a stalled `git fetch`), the
+// production failure this executor's timeout/run-signal handling must survive.
+function hangingDocker() {
+	return createStubDocker({
+		execCreate: async () => 'exec-1',
+		execStart: (_id: string, opts?: { signal?: AbortSignal }) =>
+			new Promise<{ stdout: string; stderr: string }>((_resolve, reject) => {
+				const signal = opts?.signal;
+				if (!signal) return;
+				if (signal.aborted) return reject(abortErrorOf(signal));
+				signal.addEventListener('abort', () => reject(abortErrorOf(signal)), { once: true });
+			}),
+		execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 1 }),
+	});
 }
 
 describe('ContainerGitExecutor', () => {
@@ -128,9 +150,17 @@ describe('ContainerGitExecutor', () => {
 		expect(calls[0].User).toBe('node');
 		expect(calls[0].Env).toContain('GIT_TERMINAL_PROMPT=0');
 		expect(calls[0].Env).toContain(`SSH_AUTH_SOCK=${bridge.socketPath}`);
+		expect(calls[0].Env).toContain(`GIT_SSH_COMMAND=${GIT_SSH_COMMAND_VALUE}`);
 		expect(calls[0].Env).toContain('GIT_CONFIG_COUNT=2');
 		expect(calls[0].Env).toContain('GIT_CONFIG_KEY_0=user.name');
 		expect(calls[0].Env).toContain('GIT_CONFIG_VALUE_0=octocat');
+	});
+
+	it('forPrep sets fail-fast SSH options so a stalled transport cannot hang forever', () => {
+		expect(GIT_SSH_COMMAND_VALUE).toContain('BatchMode=yes');
+		expect(GIT_SSH_COMMAND_VALUE).toContain('ConnectTimeout=15');
+		expect(GIT_SSH_COMMAND_VALUE).toContain('ServerAliveInterval=10');
+		expect(GIT_SSH_COMMAND_VALUE).toContain('ServerAliveCountMax=3');
 	});
 
 	it('surfaces a non-zero exit code from execInspect', async () => {
@@ -150,5 +180,41 @@ describe('ContainerGitExecutor', () => {
 
 		expect(res.exitCode).toBe(1);
 		expect(res.stderr).toContain('docker daemon unreachable');
+	});
+
+	it('times out a hung exec at the per-op deadline instead of hanging', async () => {
+		const exec = ContainerGitExecutor.forPrep(hangingDocker(), 'cid', bridge, runUser);
+
+		const res = await exec.exec(['fetch', '--prune', 'origin'], {
+			cwd: '/workspace/repo',
+			needsSsh: true,
+			timeout: 50,
+		});
+
+		expect(res.exitCode).toBe(1);
+		expect(res.stderr).toContain('timed out');
+	});
+
+	it('interrupts an in-flight exec when the run signal aborts', async () => {
+		const ac = new AbortController();
+		const exec = ContainerGitExecutor.forPrep(
+			hangingDocker(),
+			'cid',
+			bridge,
+			runUser,
+			[],
+			ac.signal,
+		);
+
+		const p = exec.exec(['fetch', '--prune', 'origin'], {
+			cwd: '/workspace/repo',
+			needsSsh: true,
+			timeout: 60_000,
+		});
+		ac.abort();
+		const res = await p;
+
+		expect(res.exitCode).toBe(1);
+		expect(res.stderr).toBe('run aborted');
 	});
 });

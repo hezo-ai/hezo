@@ -73,7 +73,7 @@ import {
 	type WorktreeLoc,
 	worktreeHasChanges,
 } from './git';
-import { ContainerGitExecutor, type GitExecutor } from './git-executor';
+import { ContainerGitExecutor, GIT_SSH_COMMAND_VALUE, type GitExecutor } from './git-executor';
 import { buildGitIdentityEnv } from './git-identity';
 import type { LogStreamBroker } from './log-stream-broker';
 import { loadMcpConnectionDescriptors } from './mcp-connections';
@@ -454,6 +454,8 @@ export async function buildRuntimeInvocation(
 	];
 	if (sshSocketContainerPath) {
 		env.push(`SSH_AUTH_SOCK=${sshSocketContainerPath}`);
+		// Fail fast on a stalled git transport instead of hanging on OS TCP defaults.
+		env.push(`GIT_SSH_COMMAND=${GIT_SSH_COMMAND_VALUE}`);
 	}
 	// Configure git author/committer identity and SSH commit signing from the
 	// team's connected GitHub account + Ed25519 key, so in-container commits
@@ -1378,6 +1380,7 @@ async function prepareWorktrees(
 			bridge,
 			runUser,
 			gitIdentityEnv,
+			signal,
 		);
 
 		emitSystem('stdout', '(syncing repos...)');

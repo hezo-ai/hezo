@@ -3,6 +3,25 @@ import type { ContainerRunUser } from './container-user';
 import type { DockerClient } from './docker';
 import { type BridgeRunnerArgs, buildBridgeRunnerArgv } from './ssh-agent';
 
+/**
+ * SSH options applied to every in-container git transport op so a stalled
+ * connection fails fast instead of hanging on OS TCP defaults. `ConnectTimeout`
+ * bounds the initial connect; `ServerAliveInterval`/`ServerAliveCountMax` detect
+ * an established-then-silent connection (~30s) without tripping a slow-but-alive
+ * transfer; `BatchMode` guarantees git never blocks on an interactive prompt.
+ * Worst case (~45s) stays under the fetch (60s) and clone (120s) op caps.
+ */
+export const GIT_SSH_COMMAND_VALUE =
+	'ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3';
+
+/** Merge a run's abort signal with a per-op timeout signal (either may be absent). */
+function combineAbortSignals(...signals: Array<AbortSignal | undefined>): AbortSignal | undefined {
+	const present = signals.filter((s): s is AbortSignal => s !== undefined);
+	if (present.length === 0) return undefined;
+	if (present.length === 1) return present[0];
+	return AbortSignal.any(present);
+}
+
 export interface GitExecResult {
 	exitCode: number;
 	stdout: string;
@@ -65,6 +84,8 @@ export interface ContainerGitExecutorOptions {
 	bridge?: BridgeRunnerArgs | null;
 	/** The container user every git exec runs as (detected, not assumed `node`). */
 	runUser: ContainerRunUser;
+	/** The run's abort signal, so a cancel / run-timeout interrupts an in-flight exec. */
+	signal?: AbortSignal;
 }
 
 /**
@@ -81,6 +102,7 @@ export class ContainerGitExecutor implements GitExecutor {
 	private readonly bridge: BridgeRunnerArgs | null;
 	private readonly baseEnv: string[];
 	private readonly runUser: ContainerRunUser;
+	private readonly runSignal?: AbortSignal;
 
 	constructor(
 		private readonly docker: DockerClient,
@@ -89,6 +111,7 @@ export class ContainerGitExecutor implements GitExecutor {
 	) {
 		this.bridge = opts.bridge ?? null;
 		this.runUser = opts.runUser;
+		this.runSignal = opts.signal;
 		// The bridge wrapper appends/redirects HEZO_PROMPT_FILE into the command it
 		// runs; it must never leak into a git invocation. Strip it defensively.
 		this.baseEnv = opts.baseEnv.filter((e) => !e.startsWith('HEZO_PROMPT_FILE='));
@@ -109,10 +132,15 @@ export class ContainerGitExecutor implements GitExecutor {
 		bridge: BridgeRunnerArgs | null,
 		runUser: ContainerRunUser,
 		extraEnv: string[] = [],
+		signal?: AbortSignal,
 	): ContainerGitExecutor {
-		const baseEnv = ['GIT_TERMINAL_PROMPT=0', ...extraEnv];
+		const baseEnv = [
+			'GIT_TERMINAL_PROMPT=0',
+			`GIT_SSH_COMMAND=${GIT_SSH_COMMAND_VALUE}`,
+			...extraEnv,
+		];
 		if (bridge) baseEnv.push(`SSH_AUTH_SOCK=${bridge.socketPath}`);
-		return new ContainerGitExecutor(docker, containerId, { baseEnv, bridge, runUser });
+		return new ContainerGitExecutor(docker, containerId, { baseEnv, bridge, runUser, signal });
 	}
 
 	async exec(args: string[], opts: GitExecOpts): Promise<GitExecResult> {
@@ -120,7 +148,10 @@ export class ContainerGitExecutor implements GitExecutor {
 			opts.needsSsh && this.bridge
 				? [...buildBridgeRunnerArgv(this.bridge), 'git', ...args]
 				: ['git', ...args];
-		const signal = opts.timeout ? AbortSignal.timeout(opts.timeout) : undefined;
+		// The per-op deadline and the run's own abort (cancel / run-timeout) both
+		// interrupt an in-flight exec; whichever fires tears down the docker stream.
+		const timeoutSignal = opts.timeout ? AbortSignal.timeout(opts.timeout) : undefined;
+		const signal = combineAbortSignals(this.runSignal, timeoutSignal);
 		try {
 			const execId = await this.docker.execCreate(this.containerId, {
 				Cmd: cmd,
@@ -134,12 +165,15 @@ export class ContainerGitExecutor implements GitExecutor {
 			const info = await this.docker.execInspect(execId);
 			return { exitCode: info.ExitCode, stdout, stderr };
 		} catch (e) {
-			if (signal?.aborted) {
+			if (timeoutSignal?.aborted) {
 				return {
 					exitCode: 1,
 					stdout: '',
 					stderr: `timed out after ${Math.round((opts.timeout ?? 0) / 1000)}s`,
 				};
+			}
+			if (this.runSignal?.aborted) {
+				return { exitCode: 1, stdout: '', stderr: 'run aborted' };
 			}
 			return { exitCode: 1, stdout: '', stderr: e instanceof Error ? e.message : String(e) };
 		}
