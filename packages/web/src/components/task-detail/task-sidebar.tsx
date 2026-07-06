@@ -4,6 +4,7 @@ import {
 	CAPTAIN_AGENT_SLUG,
 	DEFAULT_EFFORT,
 	HQ_PROJECT_SLUG,
+	TASK_STATUS_LABELS,
 	TaskPriority,
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
@@ -101,6 +102,32 @@ export function TaskSidebar({
 					wakeups={queued?.wakeups ?? []}
 					dispatch={queued?.dispatch}
 				/>
+
+				<div>
+					<span className="text-text-3 block mb-1 uppercase tracking-wider font-medium">
+						Status
+					</span>
+					<select
+						value={task.status}
+						onChange={(e) => updateTask.mutate({ status: e.target.value })}
+						className="w-full rounded-md border border-border bg-surface px-2.5 py-1.5 text-xs text-text-1 outline-none"
+						data-testid="task-status-select"
+						aria-label="Task status"
+					>
+						{[
+							TaskStatus.Backlog,
+							TaskStatus.InProgress,
+							TaskStatus.Review,
+							TaskStatus.Blocked,
+							TaskStatus.Done,
+							TaskStatus.Cancelled,
+						].map((s) => (
+							<option key={s} value={s}>
+								{TASK_STATUS_LABELS[s]}
+							</option>
+						))}
+					</select>
+				</div>
 
 				<div>
 					<span className="text-text-3 block mb-1 uppercase tracking-wider font-medium">
