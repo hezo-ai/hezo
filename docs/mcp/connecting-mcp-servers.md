@@ -60,9 +60,11 @@ and the global scope both define a connection of the same name, the project's ow
 Manage connections two ways:
 
 - **Project → Settings → Connectors** shows just that project's connectors.
-- The global **Settings → Connectors** page (admin) lists connectors across every project,
-  with a scope filter — **All projects** or a specific project — to narrow the view and
-  choose where a newly added connector lives.
+- The global **Settings → Connectors** page (admin) lists connectors across every project.
+  Each connector shows its scope — **All projects** or a specific project — as a badge you
+  can click to re-scope it: a searchable dropdown lets you move the connector to any
+  project or back to the global scope. New connectors pick their scope in the Add form the
+  same way.
 
 ## Adding a connection
 

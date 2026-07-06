@@ -4,6 +4,7 @@ import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
 import { resolveActor } from '../lib/resolve';
 import { err, ok } from '../lib/response';
+import { isUniqueViolation } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireAdminEquivalent } from '../middleware/auth';
@@ -136,6 +137,68 @@ mcpConnectionsRoutes.post('/mcp-connections', async (c) => {
 		name: createdRow.name,
 	});
 	return ok(c, result.rows[0], 201);
+});
+
+// Admin surface: re-scope a connector to a different project (or to the global
+// "all projects" scope, project_id null). Only the scope is editable here — the
+// per-row inline scope picker on `/settings/connectors` posts to this.
+mcpConnectionsRoutes.patch('/mcp-connections/:id', async (c) => {
+	const denied = requireAdminEquivalent(c);
+	if (denied) return denied;
+	const db = c.get('db');
+	const id = c.req.param('id');
+
+	const body = await c.req
+		.json<{ project_id?: string | null }>()
+		.catch(() => ({}) as { project_id?: string | null });
+	if (!('project_id' in body)) {
+		return err(c, 'INVALID_REQUEST', 'project_id is required', 400);
+	}
+	// Empty/whitespace collapses to the global scope (project_id null).
+	const projectId = body.project_id?.trim() || null;
+	if (projectId) {
+		const proj = await db.query<{ id: string }>(`SELECT id FROM projects WHERE id = $1`, [
+			projectId,
+		]);
+		if (proj.rows.length === 0) return err(c, 'NOT_FOUND', 'project_id not found', 404);
+	}
+
+	let result: Awaited<ReturnType<typeof db.query>>;
+	try {
+		result = await db.query(
+			`UPDATE mcp_connections SET project_id = $2, updated_at = now()
+			 WHERE id = $1
+			 RETURNING ${CONNECTOR_COLUMNS},
+			   (SELECT name FROM projects WHERE id = project_id) AS project_name,
+			   (SELECT slug FROM projects WHERE id = project_id) AS project_slug`,
+			[id, projectId],
+		);
+	} catch (e) {
+		// Moving into a scope that already holds a connector of the same name trips
+		// one of the partial unique indexes (global name / per-project name).
+		if (isUniqueViolation(e)) {
+			return err(
+				c,
+				'CONFLICT',
+				'a connector with this name already exists in the target scope',
+				409,
+			);
+		}
+		throw e;
+	}
+	if (result.rows.length === 0) return err(c, 'NOT_FOUND', 'connector not found', 404);
+
+	const updated = result.rows[0] as { id: string; name: string };
+	c.get('events').emit({
+		type: 'mcp_connection.updated',
+		teamId: null,
+		actorType: 'admin',
+		actorMemberId: null,
+		connectionId: updated.id,
+		name: updated.name,
+		changeKind: 'scope',
+	});
+	return ok(c, result.rows[0]);
 });
 
 mcpConnectionsRoutes.delete('/mcp-connections/:id', async (c) => {

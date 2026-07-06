@@ -46,6 +46,22 @@ export function useDeleteInstanceConnector() {
 	});
 }
 
+/**
+ * Re-scope a connector: move it to another project, or to the global "all
+ * projects" scope (`project_id: null`). Validation-heavy (the target scope may
+ * already hold a connector of the same name → 409), so it's invalidate+refetch
+ * rather than optimistic — the refreshed list carries the new project_name.
+ */
+export function useUpdateInstanceConnectorScope() {
+	return useMutation({
+		mutationFn: ({ id, project_id }: { id: string; project_id: string | null }) =>
+			api.patch<McpConnection>(`/api/mcp-connections/${id}`, { project_id }),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: INSTANCE_CONNECTORS_KEY });
+		},
+	});
+}
+
 export interface InstanceAuthStartResult {
 	/**
 	 * Authorize URL to open in a popup, or null when the MCP server advertises
