@@ -160,6 +160,125 @@ describe('admin (instance-global) /mcp-connections routes', () => {
 	});
 });
 
+describe('admin PATCH /mcp-connections/:id (re-scope)', () => {
+	async function createGlobalConnector(name: string): Promise<string> {
+		const res = await ctx.app.request('/api/mcp-connections', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name, kind: 'saas', config: { url: `https://${name}/mcp` } }),
+		});
+		expect(res.status).toBe(201);
+		return (await res.json()).data.id as string;
+	}
+
+	async function projectIdForSlug(slug: string): Promise<string> {
+		const p = await ctx.db.query<{ id: string }>('SELECT id FROM projects WHERE slug = $1', [slug]);
+		return p.rows[0].id;
+	}
+
+	it('rejects a non-superuser', async () => {
+		const id = await createGlobalConnector('rescope-forbidden');
+		const res = await ctx.app.request(`/api/mcp-connections/${id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(nonAdminToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ project_id: null }),
+		});
+		expect(res.status).toBe(403);
+	});
+
+	it('rejects a body without project_id', async () => {
+		const id = await createGlobalConnector('rescope-nobody');
+		const res = await ctx.app.request(`/api/mcp-connections/${id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({}),
+		});
+		expect(res.status).toBe(400);
+		expect((await res.json()).error.message).toContain('project_id is required');
+	});
+
+	it('returns 404 for an unknown connector', async () => {
+		const res = await ctx.app.request('/api/mcp-connections/00000000-0000-0000-0000-000000000000', {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ project_id: null }),
+		});
+		expect(res.status).toBe(404);
+		expect((await res.json()).error.message).toContain('connector not found');
+	});
+
+	it('returns 404 for an unknown target project_id', async () => {
+		const id = await createGlobalConnector('rescope-badproj');
+		const res = await ctx.app.request(`/api/mcp-connections/${id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ project_id: '00000000-0000-0000-0000-000000000000' }),
+		});
+		expect(res.status).toBe(404);
+		expect((await res.json()).error.message).toContain('project_id not found');
+	});
+
+	it('moves a global connector into a project, then back to global', async () => {
+		const id = await createGlobalConnector('rescope-move');
+		const projId = await projectIdForSlug(projectSlug);
+
+		const toProject = await ctx.app.request(`/api/mcp-connections/${id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ project_id: projId }),
+		});
+		expect(toProject.status).toBe(200);
+		const scoped = (await toProject.json()).data as {
+			project_id: string | null;
+			project_name: string | null;
+			name: string;
+		};
+		expect(scoped.project_id).toBe(projId);
+		expect(scoped.project_name).toBeTruthy();
+		// The rest of the row is untouched by a scope change.
+		expect(scoped.name).toBe('rescope-move');
+
+		const toGlobal = await ctx.app.request(`/api/mcp-connections/${id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ project_id: '  ' }), // whitespace collapses to global
+		});
+		expect(toGlobal.status).toBe(200);
+		const global = (await toGlobal.json()).data as {
+			project_id: string | null;
+			project_name: string | null;
+		};
+		expect(global.project_id).toBeNull();
+		expect(global.project_name).toBeNull();
+	});
+
+	it('409s when the target scope already holds a same-named connector', async () => {
+		const projId = await projectIdForSlug(projectSlug);
+		// A global connector and a project-scoped one that share a name coexist
+		// (different partial unique indexes) — until you try to merge their scopes.
+		const globalId = await createGlobalConnector('rescope-dup');
+		await ctx.db.query(
+			`INSERT INTO mcp_connections (name, kind, config, install_status, project_id)
+			 VALUES ('rescope-dup', 'saas', '{"url":"https://p/mcp"}'::jsonb, 'installed', $1)`,
+			[projId],
+		);
+
+		const res = await ctx.app.request(`/api/mcp-connections/${globalId}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ project_id: projId }),
+		});
+		expect(res.status).toBe(409);
+		expect((await res.json()).error.code).toBe('CONFLICT');
+		// The global connector kept its original scope (the write rolled back).
+		const still = await ctx.db.query<{ project_id: string | null }>(
+			'SELECT project_id FROM mcp_connections WHERE id = $1',
+			[globalId],
+		);
+		expect(still.rows[0].project_id).toBeNull();
+	});
+});
+
 describe('project-scoped /projects/:projectId/mcp-connections/:id', () => {
 	async function seedSaasConnector(name: string): Promise<string> {
 		const project = await ctx.db.query<{ id: string }>(`SELECT id FROM projects WHERE slug = $1`, [

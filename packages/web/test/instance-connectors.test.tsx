@@ -1,6 +1,7 @@
 import { waitFor } from '@testing-library/react';
 import { expect, test, vi } from 'vitest';
 import { renderApp } from './helpers/render';
+import { seedProject, seedWorkspace } from './helpers/seed';
 
 async function seedInstanceConnector(
 	ctx: { token: string; apiBase: (p: string, i?: RequestInit) => Promise<Response> },
@@ -289,6 +290,41 @@ test('?focus=<id> highlights the connector row and scrolls it into view', async 
 	} finally {
 		spy.mockRestore();
 	}
+});
+
+test('re-scopes a connector via the inline searchable scope dropdown', async () => {
+	let project: { id: string; name: string } | undefined;
+	const { findByText, getByTestId, findByTestId, user } = await renderApp({
+		initialPath: '/settings/connectors',
+		seed: async (ctx) => {
+			await seedInstanceConnector(ctx, {
+				name: 'movable',
+				kind: 'saas',
+				config: { url: 'https://movable.example/mcp' },
+			});
+			// A visible project to move the connector under (shows in the picker).
+			const ws = await seedWorkspace();
+			project = await seedProject(ws, { name: 'Scope Target' });
+		},
+	});
+
+	if (!project) throw new Error('seed did not create the target project');
+
+	await findByText('movable');
+	// The connector starts global — its inline scope trigger reads "All projects".
+	const trigger = await findByTestId('instance-connector-scope');
+	expect(trigger.textContent).toContain('All projects');
+
+	// Click the scope badge → the searchable dropdown opens; filter to the project.
+	await user.click(trigger);
+	const search = await findByTestId('instance-connector-scope-select-search');
+	await user.type(search, 'Scope');
+	await user.click(await findByTestId(`instance-connector-scope-select-option-${project.id}`));
+
+	// The PATCH + refetch re-scopes the row; the badge now shows the project name.
+	await waitFor(() =>
+		expect(getByTestId('instance-connector-scope').textContent).toContain('Scope Target'),
+	);
 });
 
 test('settings page sidebar links to connectors', async () => {

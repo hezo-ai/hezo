@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
-import { Plus, Trash2 } from 'lucide-react';
+import { ChevronDown, Plus, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -8,22 +8,24 @@ import { InPlaceForm } from '../../components/ui/in-place-form';
 import { InfoTooltip } from '../../components/ui/info-tooltip';
 import { Input } from '../../components/ui/input';
 import {
+	SearchableSelect,
+	type SearchableSelectOption,
+} from '../../components/ui/searchable-select';
+import {
 	INSTANCE_CONNECTORS_KEY,
 	useCreateInstanceConnector,
 	useDeleteInstanceConnector,
 	useInstanceAuthStart,
 	useInstanceConnectors,
+	useUpdateInstanceConnectorScope,
 } from '../../hooks/use-instance-connectors';
 import { connectorStatus, type McpConnection } from '../../hooks/use-mcp-connections';
 import { useMe } from '../../hooks/use-me';
 import { useAllVisibleProjects } from '../../hooks/use-projects';
 
-// Scope filter sentinel: show/create against "all projects" (a global connector,
-// project_id null). Any other value is a concrete project id.
+// Scope sentinel: create against / re-scope to "all projects" (a global
+// connector, project_id null). Any other option value is a concrete project id.
 const ALL_PROJECTS = 'all';
-
-const SELECT_CLASS =
-	'rounded-md border border-border bg-surface-2 px-3 py-1.5 text-[13px] text-text-1 outline-none focus:border-border-strong';
 
 function openAuthPopup(authUrl: string): string | null {
 	const popup = window.open(authUrl, 'hezo-connect', 'width=600,height=720');
@@ -45,20 +47,26 @@ function InstanceConnectorsPage() {
 		if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
 	}, []);
 
-	// The scope filter doubles as the create scope: `all` shows every connector
-	// and adds a global one; a project id filters to that project and adds there.
-	const [scope, setScope] = useState<string>(ALL_PROJECTS);
+	// Scope picked in the Add form for the new connector (`all` = global).
+	const [createScope, setCreateScope] = useState<string>(ALL_PROJECTS);
 	const [showForm, setShowForm] = useState(false);
 	const [name, setName] = useState('');
 	const [url, setUrl] = useState('');
 	const [error, setError] = useState<string | null>(null);
 
-	const visibleConnectors = useMemo(
-		() => (scope === ALL_PROJECTS ? connectors : connectors.filter((c) => c.project_id === scope)),
-		[connectors, scope],
+	// Shared "All projects" + every project — drives both the create-form scope
+	// picker and each row's inline re-scope dropdown.
+	const scopeOptions = useMemo<SearchableSelectOption[]>(
+		() => [
+			{ value: ALL_PROJECTS, label: 'All projects' },
+			...projects.map((p) => ({ value: p.id, label: p.name, description: p.teamName })),
+		],
+		[projects],
 	);
-	const scopeName =
-		scope === ALL_PROJECTS ? null : (projects.find((p) => p.id === scope)?.name ?? 'this project');
+	const createScopeName =
+		createScope === ALL_PROJECTS
+			? null
+			: (projects.find((p) => p.id === createScope)?.name ?? 'this project');
 
 	function closeForm() {
 		setShowForm(false);
@@ -94,7 +102,7 @@ function InstanceConnectorsPage() {
 				name: name.trim(),
 				kind: 'saas',
 				config: { url: url.trim() },
-				project_id: scope === ALL_PROJECTS ? null : scope,
+				project_id: createScope === ALL_PROJECTS ? null : createScope,
 			});
 		} catch (err) {
 			setError(err instanceof Error ? err.message : 'Failed to create connector');
@@ -146,33 +154,12 @@ function InstanceConnectorsPage() {
 					</Button>
 				</div>
 
-				<div className="flex items-center gap-2 mb-4">
-					<label htmlFor="connector-scope" className="text-[13px] text-text-2">
-						Scope
-					</label>
-					<select
-						id="connector-scope"
-						aria-label="Filter connectors by project"
-						data-testid="connector-scope-filter"
-						value={scope}
-						onChange={(e) => setScope(e.target.value)}
-						className={SELECT_CLASS}
-					>
-						<option value={ALL_PROJECTS}>All projects</option>
-						{projects.map((p) => (
-							<option key={p.id} value={p.id}>
-								{p.name}
-							</option>
-						))}
-					</select>
-				</div>
-
 				{showForm && (
 					<InPlaceForm
 						title={
-							scope === ALL_PROJECTS
+							createScope === ALL_PROJECTS
 								? 'Add connector (All projects)'
-								: `Add connector — ${scopeName}`
+								: `Add connector — ${createScopeName}`
 						}
 						onClose={closeForm}
 						onSubmit={handleCreate}
@@ -189,6 +176,17 @@ function InstanceConnectorsPage() {
 							onChange={(e) => setUrl(e.target.value)}
 							required
 						/>
+						<div className="flex flex-wrap items-center gap-2">
+							<span className="text-[13px] text-text-2">Scope</span>
+							<SearchableSelect
+								options={scopeOptions}
+								value={createScope}
+								onChange={setCreateScope}
+								searchPlaceholder="Search projects…"
+								emptyLabel="No projects"
+								testId="create-scope-select"
+							/>
+						</div>
 						<div className="flex gap-2">
 							<Button type="submit" size="sm" disabled={createConnector.isPending}>
 								Add connector
@@ -204,18 +202,17 @@ function InstanceConnectorsPage() {
 				    closes, so popup-blocked / auth-start errors need a home too. */}
 				{error && <p className="text-[13px] text-danger mb-4">{error}</p>}
 
-				{!visibleConnectors.length ? (
+				{!connectors.length ? (
 					<p className="text-[13px] text-text-2">
-						{scope === ALL_PROJECTS
-							? 'No connectors yet. Add one above to share it across every project.'
-							: `No connectors scoped to ${scopeName} yet.`}
+						No connectors yet. Add one above to share it across every project.
 					</p>
 				) : (
 					<div className="flex flex-col gap-1">
-						{visibleConnectors.map((c) => (
+						{connectors.map((c) => (
 							<InstanceConnectorRow
 								key={c.id}
 								connector={c}
+								scopeOptions={scopeOptions}
 								focused={c.id === focus}
 								focusRef={c.id === focus ? focusRef : undefined}
 							/>
@@ -230,19 +227,65 @@ function InstanceConnectorsPage() {
 
 interface InstanceConnectorRowProps {
 	connector: McpConnection;
+	scopeOptions: SearchableSelectOption[];
 	focused: boolean;
 	focusRef?: (el: HTMLDivElement | null) => void;
 }
 
-function InstanceConnectorRow({ connector, focused, focusRef }: InstanceConnectorRowProps) {
+/** Pull a human message off either a thrown Error or the API client's ApiError. */
+function errMessage(e: unknown, fallback: string): string {
+	if (e instanceof Error) return e.message;
+	if (e && typeof e === 'object' && 'message' in e) {
+		const m = (e as { message: unknown }).message;
+		if (typeof m === 'string' && m) return m;
+	}
+	return fallback;
+}
+
+function InstanceConnectorRow({
+	connector,
+	scopeOptions,
+	focused,
+	focusRef,
+}: InstanceConnectorRowProps) {
 	const deleteConnector = useDeleteInstanceConnector();
 	const authStart = useInstanceAuthStart();
+	const updateScope = useUpdateInstanceConnectorScope();
 	const [rowError, setRowError] = useState<string | null>(null);
 	const [rowInfo, setRowInfo] = useState<string | null>(null);
 	const status = connectorStatus(connector);
 
 	const url = typeof connector.config?.url === 'string' ? connector.config.url : '';
 	const scopeLabel = connector.project_id ? (connector.project_name ?? 'Project') : 'All projects';
+	const scopeValue = connector.project_id ?? ALL_PROJECTS;
+	const scopeTone = connector.project_id
+		? 'bg-info-soft text-info-soft-fg'
+		: 'bg-neutral-soft text-neutral-soft-fg';
+
+	const changeScope = (next: string) => {
+		setRowError(null);
+		const nextProjectId = next === ALL_PROJECTS ? null : next;
+		// No-op when the picked scope already matches (avoids a needless 409-prone write).
+		if (nextProjectId === (connector.project_id ?? null)) return;
+		updateScope.mutate(
+			{ id: connector.id, project_id: nextProjectId },
+			{ onError: (e: unknown) => setRowError(errMessage(e, 'Failed to change scope')) },
+		);
+	};
+
+	// Badge-styled trigger: clicking it opens the searchable scope picker.
+	const scopeTrigger = (
+		<button
+			type="button"
+			data-testid="instance-connector-scope"
+			aria-label={`Scope: ${scopeLabel}. Change scope`}
+			disabled={updateScope.isPending}
+			className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full h-5 pl-2 pr-1.5 text-[11.5px] font-medium outline-none cursor-pointer transition-opacity hover:opacity-80 focus:ring-1 focus:ring-border-strong disabled:opacity-50 ${scopeTone}`}
+		>
+			{updateScope.isPending ? 'Saving…' : scopeLabel}
+			<ChevronDown className="w-3 h-3 opacity-70" />
+		</button>
+	);
 
 	const openConnect = () => {
 		setRowError(null);
@@ -277,7 +320,15 @@ function InstanceConnectorRow({ connector, focused, focusRef }: InstanceConnecto
 			<div className="flex flex-wrap items-center gap-2">
 				<span className="font-medium">{connector.display_name || connector.name}</span>
 				<Badge color="neutral">{connector.kind}</Badge>
-				<Badge color={connector.project_id ? 'blue' : 'gray'}>{scopeLabel}</Badge>
+				<SearchableSelect
+					options={scopeOptions}
+					value={scopeValue}
+					onChange={changeScope}
+					trigger={scopeTrigger}
+					searchPlaceholder="Search projects…"
+					emptyLabel="No projects"
+					testId="instance-connector-scope-select"
+				/>
 				{status === 'active' && <Badge color="success">Connected</Badge>}
 				{status === 'failed' && <Badge color="danger">Failed</Badge>}
 				{status === 'revoked' && <Badge>Revoked</Badge>}
