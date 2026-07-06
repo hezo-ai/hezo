@@ -2,6 +2,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
+import { waitForBackground } from '../src/lib/background';
 import type { Env } from '../src/lib/types';
 import { createConnection } from '../src/services/oauth/connection-store';
 import { safeClose } from './helpers';
@@ -175,40 +176,13 @@ describe('POST repos — mode=link access branches', () => {
 
 	// The first repo on a project would become its designated repo. Designation is
 	// deferred until the checkout exists, so under the test harness (stub docker,
-	// no real in-container clone) the clone fails → the route runs
-	// markRepoSetupFailed, deletes the row, and returns REPO_SETUP_FAILED. The
-	// [error] lines this logs are this test asserting on that failure path.
-	it('returns REPO_SETUP_FAILED for the first (would-be-designated) repo when the clone fails', async () => {
-		const res = await postRepo({
-			mode: 'link',
-			url: 'sim-user/existing-repo',
-			oauth_connection_id: connId,
-		});
-		expect(res.status).toBe(500);
-		expect((await res.json()).error.code).toBe('REPO_SETUP_FAILED');
-		// The row was rolled back so a fixed retry can re-create it.
-		const row = await db.query(
-			`SELECT 1 FROM repos WHERE project_id = $1 AND repo_identifier = 'sim-user/existing-repo'`,
-			[projectId],
-		);
-		expect(row.rows.length).toBe(0);
-	});
+	// no real in-container clone) the background setup fails → the row parks
+	// `failed` with the error recorded (never deleted), the project stays
+	// undesignated, and a retry can reclaim the row. The [error] lines this logs
+	// are this suite asserting on that failure path.
+	let failedRepoId: string;
 
-	// With a designated repo already in place, a newly-linked repo no longer
-	// "would designate", so a failed clone is reported as clone_status:'failed' on
-	// a 201 and the row persists (the non-designating insert branch).
-	it('persists a non-designating repo with clone_status=failed when the clone fails', async () => {
-		// Seed + designate a placeholder so the next link does not designate.
-		const placeholder = await db.query<{ id: string }>(
-			`INSERT INTO repos (project_id, repo_identifier, host_type)
-			 VALUES ($1, 'acme/placeholder-designated', 'github') RETURNING id`,
-			[projectId],
-		);
-		await db.query('UPDATE projects SET designated_repo_id = $1 WHERE id = $2', [
-			placeholder.rows[0].id,
-			projectId,
-		]);
-
+	it('201s pending, then parks the row failed when the clone fails', async () => {
 		const res = await postRepo({
 			mode: 'link',
 			url: 'sim-user/existing-repo',
@@ -216,20 +190,69 @@ describe('POST repos — mode=link access branches', () => {
 		});
 		expect(res.status).toBe(201);
 		const body = await res.json();
-		expect(body.data.repo_identifier).toBe('sim-user/existing-repo');
+		expect(body.data.setup_status).toBe('pending');
 		expect(body.data.is_designated).toBe(false);
-		expect(body.data.clone_status).toBe('failed');
 
-		const row = await db.query(
-			`SELECT 1 FROM repos WHERE project_id = $1 AND repo_identifier = 'sim-user/existing-repo'`,
+		await waitForBackground();
+
+		const row = await db.query<{ id: string; setup_status: string; setup_error: string | null }>(
+			`SELECT id, setup_status::text AS setup_status, setup_error FROM repos
+			 WHERE project_id = $1 AND repo_identifier = 'sim-user/existing-repo'`,
 			[projectId],
 		);
-		expect(row.rows.length).toBe(1);
+		expect(row.rows).toHaveLength(1);
+		expect(row.rows[0].setup_status).toBe('failed');
+		expect(row.rows[0].setup_error).toBeTruthy();
+		failedRepoId = row.rows[0].id;
+
+		// A repo whose checkout never materialized must not become designated.
+		const project = await db.query<{ designated_repo_id: string | null }>(
+			'SELECT designated_repo_id FROM projects WHERE id = $1',
+			[projectId],
+		);
+		expect(project.rows[0].designated_repo_id).toBeNull();
 	});
 
-	it('409s (REPO_NAME_TAKEN) when re-linking the same accessible repo', async () => {
-		// sim-user/existing-repo now persists from the previous test → unique
-		// violation fires on insert, before any clone.
+	it('409s (REPO_SETUP_IN_PROGRESS) while a setup for the same repo is still pending', async () => {
+		await db.query(`UPDATE repos SET setup_status = 'pending' WHERE id = $1`, [failedRepoId]);
+		const res = await postRepo({
+			mode: 'link',
+			url: 'sim-user/existing-repo',
+			oauth_connection_id: connId,
+		});
+		expect(res.status).toBe(409);
+		expect((await res.json()).error.code).toBe('REPO_SETUP_IN_PROGRESS');
+		await db.query(`UPDATE repos SET setup_status = 'failed' WHERE id = $1`, [failedRepoId]);
+	});
+
+	it('retrying a failed repo reclaims the same row and re-runs setup', async () => {
+		const res = await postRepo({
+			mode: 'link',
+			url: 'sim-user/existing-repo',
+			oauth_connection_id: connId,
+		});
+		expect(res.status).toBe(201);
+		const body = await res.json();
+		expect(body.data.id).toBe(failedRepoId);
+		expect(body.data.setup_status).toBe('pending');
+
+		await waitForBackground();
+
+		const rows = await db.query<{ setup_status: string }>(
+			`SELECT setup_status::text AS setup_status FROM repos
+			 WHERE project_id = $1 AND repo_identifier = 'sim-user/existing-repo'`,
+			[projectId],
+		);
+		// Still exactly one row — the retry reused it (and failed again under the
+		// harness, which is fine: the point is the lifecycle, not the clone).
+		expect(rows.rows).toHaveLength(1);
+		expect(rows.rows[0].setup_status).toBe('failed');
+	});
+
+	it('409s (REPO_NAME_TAKEN) when re-linking a repo that is already set up', async () => {
+		await db.query(`UPDATE repos SET setup_status = 'ready', setup_error = NULL WHERE id = $1`, [
+			failedRepoId,
+		]);
 		const res = await postRepo({
 			mode: 'link',
 			url: 'sim-user/existing-repo',
@@ -241,10 +264,10 @@ describe('POST repos — mode=link access branches', () => {
 });
 
 describe('POST repos — mode=create branches', () => {
-	it('creates a new repo on GitHub then reports clone_status=failed under the harness', async () => {
-		// A designated repo is already in place from the link tests, so this create
-		// does not designate; the GitHub-side create succeeds (sim) and the row
-		// persists with a failed in-container clone.
+	it('creates a new repo on GitHub then parks the row failed under the harness', async () => {
+		// The GitHub-side create succeeds (sim); the in-container clone fails under
+		// the harness, so the background setup settles the row to failed and it
+		// persists for a retry.
 		const res = await postRepo({
 			mode: 'create',
 			owner: 'sim-user',
@@ -255,9 +278,18 @@ describe('POST repos — mode=create branches', () => {
 		expect(res.status).toBe(201);
 		const body = await res.json();
 		expect(body.data.repo_identifier).toBe('sim-user/brand-new-repo');
-		expect(body.data.clone_status).toBe('failed');
+		expect(body.data.setup_status).toBe('pending');
 		// The repo was actually created on GitHub (the sim).
 		expect(sim.state.repos.some((r) => r.full_name === 'sim-user/brand-new-repo')).toBe(true);
+
+		await waitForBackground();
+
+		const row = await db.query<{ setup_status: string }>(
+			`SELECT setup_status::text AS setup_status FROM repos
+			 WHERE project_id = $1 AND repo_identifier = 'sim-user/brand-new-repo'`,
+			[projectId],
+		);
+		expect(row.rows[0].setup_status).toBe('failed');
 	});
 
 	it('409s when the repo already exists on GitHub', async () => {

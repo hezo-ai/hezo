@@ -1,6 +1,6 @@
 import { repoNameFromIdentifier } from '@hezo/shared';
 import { useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, GitBranch, Github, Loader2, Lock, Trash2 } from 'lucide-react';
+import { AlertTriangle, GitBranch, Github, Loader2, Lock, RotateCw, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { useMcpConnections } from '../hooks/use-mcp-connections';
 import {
@@ -8,7 +8,7 @@ import {
 	useEnsureConnector,
 	useOAuthConnections,
 } from '../hooks/use-oauth-connections';
-import { useDeleteRepo, useRepos } from '../hooks/use-repos';
+import { useCreateRepo, useDeleteRepo, useRepos } from '../hooks/use-repos';
 import { repoWebUrl } from '../lib/github';
 import { queryKeys } from '../lib/query-keys';
 import { ConnectorDeviceFlowDialog } from './connector-device-flow-dialog';
@@ -26,6 +26,7 @@ export function GitHubSection({ projectId }: GitHubSectionProps) {
 	const { data: connectors = [] } = useMcpConnections(projectId);
 	const { data: repos } = useRepos(projectId);
 	const deleteRepo = useDeleteRepo(projectId);
+	const retryRepo = useCreateRepo(projectId);
 	const queryClient = useQueryClient();
 
 	const githubConnection = connections.find((c) => c.provider === 'github') ?? null;
@@ -175,50 +176,88 @@ export function GitHubSection({ projectId }: GitHubSectionProps) {
 							return (
 								<div
 									key={r.id}
-									className="flex items-center justify-between rounded-md border border-border-subtle bg-surface px-3 py-2 text-sm"
+									className="flex flex-col gap-1 rounded-md border border-border-subtle bg-surface px-3 py-2 text-sm"
 								>
-									<div className="flex items-center gap-2">
-										<Badge color="gray">{r.host_type}</Badge>
-										<span className="font-medium">{repoName}</span>
-										{(() => {
-											const url = repoWebUrl(r.repo_identifier, r.host_type);
-											return url ? (
-												<a
-													href={url}
-													target="_blank"
-													rel="noopener noreferrer"
-													className="text-info-soft-fg hover:underline"
-													data-testid={`repo-link-${repoName}`}
+									<div className="flex items-center justify-between">
+										<div className="flex flex-wrap items-center gap-2">
+											<Badge color="gray">{r.host_type}</Badge>
+											<span className="font-medium">{repoName}</span>
+											{(() => {
+												const url = repoWebUrl(r.repo_identifier, r.host_type);
+												return url ? (
+													<a
+														href={url}
+														target="_blank"
+														rel="noopener noreferrer"
+														className="text-info-soft-fg hover:underline"
+														data-testid={`repo-link-${repoName}`}
+													>
+														{r.repo_identifier}
+													</a>
+												) : (
+													<span className="text-text-2">{r.repo_identifier}</span>
+												);
+											})()}
+											{r.is_designated && <Badge color="blue">Designated</Badge>}
+											{r.setup_status === 'pending' && (
+												<span
+													className="flex items-center gap-1 text-xs text-text-2"
+													data-testid={`repo-setup-pending-${repoName}`}
 												>
-													{r.repo_identifier}
-												</a>
+													<Loader2 className="size-3 animate-spin" /> Setting up…
+												</span>
+											)}
+										</div>
+										<div className="flex items-center gap-2">
+											{r.setup_status === 'failed' && githubConnection && (
+												<Button
+													variant="secondary"
+													size="sm"
+													disabled={retryRepo.isPending}
+													onClick={() =>
+														retryRepo.mutate({
+															mode: 'link',
+															url: `https://github.com/${r.repo_identifier}`,
+															oauth_connection_id: githubConnection.id,
+														})
+													}
+													data-testid={`repo-setup-retry-${repoName}`}
+												>
+													<RotateCw className="size-3 mr-1" /> Retry
+												</Button>
+											)}
+											{r.is_designated ? (
+												<Tooltip content="Designated repository cannot be removed">
+													<span
+														role="img"
+														aria-label="Designated repository cannot be removed"
+														className="text-text-3"
+														data-testid={`repo-locked-${repoName}`}
+													>
+														<Lock className="w-3.5 h-3.5" />
+													</span>
+												</Tooltip>
 											) : (
-												<span className="text-text-2">{r.repo_identifier}</span>
-											);
-										})()}
-										{r.is_designated && <Badge color="blue">Designated</Badge>}
+												<button
+													type="button"
+													onClick={() => deleteRepo.mutate(r.id)}
+													className="text-text-3 hover:text-danger"
+													aria-label={`Remove repo ${repoName}`}
+													data-testid={`repo-delete-${repoName}`}
+												>
+													<Trash2 className="w-3.5 h-3.5" />
+												</button>
+											)}
+										</div>
 									</div>
-									{r.is_designated ? (
-										<Tooltip content="Designated repository cannot be removed">
-											<span
-												role="img"
-												aria-label="Designated repository cannot be removed"
-												className="text-text-3"
-												data-testid={`repo-locked-${repoName}`}
-											>
-												<Lock className="w-3.5 h-3.5" />
-											</span>
-										</Tooltip>
-									) : (
-										<button
-											type="button"
-											onClick={() => deleteRepo.mutate(r.id)}
-											className="text-text-3 hover:text-danger"
-											aria-label={`Remove repo ${repoName}`}
-											data-testid={`repo-delete-${repoName}`}
+									{r.setup_status === 'failed' && (
+										<p
+											className="text-xs text-danger-soft-fg"
+											data-testid={`repo-setup-failed-${repoName}`}
 										>
-											<Trash2 className="w-3.5 h-3.5" />
-										</button>
+											Setup failed{r.setup_error ? `: ${r.setup_error}` : ''}. Retry to run it
+											again.
+										</p>
 									)}
 								</div>
 							);

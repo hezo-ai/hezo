@@ -10,6 +10,7 @@ import {
 	DEFAULT_TEAM_ID,
 	HeartbeatRunStatus,
 	INSTANCE_AGENT_SLUGS,
+	RepoSetupStatus,
 	TaskPriority,
 	TERMINAL_TASK_STATUSES,
 	WakeupSkipReason,
@@ -673,9 +674,28 @@ export class JobManager {
 			);
 		}
 
-		if (stranded.rows.length > 0 || resetAgents.rows.length > 0) {
+		// Repo rows whose background setup (clone + designation) was in flight when
+		// the previous process died. Their setup can't resume — the work was lost
+		// with the process — so park them `failed`; POSTing the same repo again
+		// reclaims a failed row and re-runs setup.
+		const strandedRepos = await db.query<Record<string, unknown> & { team_id: string }>(
+			`UPDATE repos r
+			 SET setup_status = $1::repo_setup_status,
+			     setup_error = 'Server restarted while repository setup was in flight'
+			 FROM projects p
+			 WHERE p.id = r.project_id AND r.setup_status = $2::repo_setup_status
+			 RETURNING r.id, r.project_id, r.repo_identifier, r.host_type, r.oauth_connection_id,
+			           r.created_at, r.setup_status, r.setup_error, p.team_id,
+			           (p.designated_repo_id = r.id) AS is_designated`,
+			[RepoSetupStatus.Failed, RepoSetupStatus.Pending],
+		);
+		for (const { team_id, ...repo } of strandedRepos.rows) {
+			broadcastRowChange(wsManager, wsRoom.team(team_id), 'repos', 'UPDATE', repo);
+		}
+
+		if (stranded.rows.length > 0 || resetAgents.rows.length > 0 || strandedRepos.rows.length > 0) {
 			log.info(
-				`Startup reconciliation: failed ${stranded.rows.length} stranded run(s), reset ${resetAgents.rows.length} agent(s) to idle`,
+				`Startup reconciliation: failed ${stranded.rows.length} stranded run(s), reset ${resetAgents.rows.length} agent(s) to idle, failed ${strandedRepos.rows.length} interrupted repo setup(s)`,
 			);
 		}
 

@@ -4,6 +4,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
+import { waitForBackground } from '../src/lib/background';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
@@ -162,12 +163,21 @@ describe('repo creation, first-repo designation, and designated immutability', (
 		expect(res.status).toBe(201);
 		const body = await res.json();
 		expect(body.data.repo_identifier).toBe('octo-repo/fresh-service');
-		expect(body.data.is_designated).toBe(true);
-		expect(body.data.clone_status).toBe('skipped');
+		// Checkout + designation settle in the background after the response.
+		expect(body.data.setup_status).toBe('pending');
+		expect(body.data.is_designated).toBe(false);
 		designatedRepoId = body.data.id;
 
 		// Created upstream, not just recorded locally.
 		expect(sim.state.repos.some((r) => r.full_name === 'octo-repo/fresh-service')).toBe(true);
+
+		await waitForBackground();
+
+		const repoRow = await db.query<{ setup_status: string }>(
+			`SELECT setup_status::text AS setup_status FROM repos WHERE id = $1`,
+			[designatedRepoId],
+		);
+		expect(repoRow.rows[0].setup_status).toBe('ready');
 
 		const project = await db.query<{ designated_repo_id: string | null }>(
 			'SELECT designated_repo_id FROM projects WHERE id = $1',
@@ -192,6 +202,8 @@ describe('repo creation, first-repo designation, and designated immutability', (
 		const body = await res.json();
 		expect(body.data.is_designated).toBe(false);
 		secondRepoId = body.data.id;
+
+		await waitForBackground();
 
 		const project = await db.query<{ designated_repo_id: string | null }>(
 			'SELECT designated_repo_id FROM projects WHERE id = $1',

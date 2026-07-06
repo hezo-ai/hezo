@@ -264,6 +264,14 @@ void (async () => {
 
 export default {
 	port: config.port,
+	// Bun's default idleTimeout is 10s, measured between writes on the socket.
+	// Handlers that legitimately work for a while before producing their first
+	// byte (GitHub API round-trips, container queries, big uploads) get their
+	// connection severed mid-request at the default — the client sees a bare
+	// "Failed to fetch" while the server keeps working. 120s is deliberate
+	// headroom, not a license for slow routes: anything that can outlive it
+	// (cloning, provisioning) must run in the background, not in the handler.
+	idleTimeout: 120,
 	fetch: (req: Request, server: Bun.Server<WsConnectionData>) => {
 		const url = new URL(req.url);
 		if (!serverReady) {

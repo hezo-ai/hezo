@@ -22,6 +22,8 @@ interface MockRepo {
 	repo_identifier: string;
 	host_type: string;
 	is_designated: boolean;
+	setup_status?: 'pending' | 'ready' | 'failed';
+	setup_error?: string | null;
 }
 
 /**
@@ -36,6 +38,7 @@ function installGitHubMock(opts: {
 	scopeMissing?: string[];
 	repos?: MockRepo[];
 	ensureFails?: boolean;
+	onRepoPost?: (body: Record<string, unknown>) => void;
 }) {
 	const original = globalThis.fetch;
 	restoreFetch = () => {
@@ -91,6 +94,11 @@ function installGitHubMock(opts: {
 		}
 		if (method === 'DELETE' && /\/api\/projects\/[^/]+\/repos\/[^/]+$/.test(url)) {
 			return jsonRes({ ok: true });
+		}
+		if (method === 'POST' && /\/api\/projects\/[^/]+\/repos$/.test(url)) {
+			const body = init?.body ? JSON.parse(init.body as string) : {};
+			opts.onRepoPost?.(body);
+			return jsonRes({ id: 'r-new', setup_status: 'pending' }, 201);
 		}
 		return original(input as RequestInfo, init);
 	}) as typeof globalThis.fetch;
@@ -191,6 +199,64 @@ test('insufficient scopes show the needs-permissions reauth banner with the miss
 	expect(banner.textContent).toContain('read:org, write:public_key');
 	// The re-authorize button is present.
 	await r.findByTestId('github-reauth');
+});
+
+test('a pending repo shows the setting-up indicator instead of settling silently', async () => {
+	const r = await renderSettings({
+		connection: { id: 'conn-1', provider_account_label: 'octocat' },
+		scopeSufficient: true,
+		repos: [
+			{
+				id: 'r1',
+				repo_identifier: 'octocat/cloning-now',
+				host_type: 'github',
+				is_designated: false,
+				setup_status: 'pending',
+			},
+		],
+	});
+
+	const indicator = await r.findByTestId('repo-setup-pending-cloning-now', undefined, {
+		timeout: 20_000,
+	});
+	expect(indicator.textContent).toContain('Setting up');
+	// A pending repo is neither failed nor retryable yet.
+	expect(r.queryByTestId('repo-setup-retry-cloning-now')).toBeNull();
+	expect(r.queryByTestId('repo-setup-failed-cloning-now')).toBeNull();
+});
+
+test('a failed repo shows the setup error and Retry re-POSTs the same repo link', async () => {
+	const posts: Record<string, unknown>[] = [];
+	const r = await renderSettings({
+		connection: { id: 'conn-1', provider_account_label: 'octocat' },
+		scopeSufficient: true,
+		repos: [
+			{
+				id: 'r1',
+				repo_identifier: 'octocat/broken-clone',
+				host_type: 'github',
+				is_designated: false,
+				setup_status: 'failed',
+				setup_error: 'project container is not running',
+			},
+		],
+		onRepoPost: (body) => posts.push(body),
+	});
+
+	const failedNote = await r.findByTestId('repo-setup-failed-broken-clone', undefined, {
+		timeout: 20_000,
+	});
+	expect(failedNote.textContent).toContain('project container is not running');
+
+	const retry = await r.findByTestId('repo-setup-retry-broken-clone');
+	await r.user.click(retry);
+
+	// Retry re-POSTs the same repo through the normal link flow, so the server
+	// reclaims the failed row and re-runs setup.
+	expect(posts).toHaveLength(1);
+	expect(posts[0].mode).toBe('link');
+	expect(posts[0].url).toBe('https://github.com/octocat/broken-clone');
+	expect(posts[0].oauth_connection_id).toBe('conn-1');
 });
 
 test('a failing connector-ensure surfaces an inline error under the GitHub heading', async () => {
