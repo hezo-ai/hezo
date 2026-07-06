@@ -33,6 +33,12 @@ repository can take a few minutes the first time. The repository shows **"Settin
 until it's ready; if setup fails (for example the workspace couldn't start), the error is
 shown on the repository with a **Retry** button.
 
+If you connect a repository that has **no commits yet**, Hezo seeds it with a minimal
+`README.md` on its first run and pushes that as the initial commit — an empty repository
+has no branch for a task to build on, so this makes it usable immediately. (Repositories
+you create through Hezo already start with an initial commit, so this only applies to
+pre-existing empty repositories you link.)
+
 ## Verified commits, signed on the host
 
 When an agent commits, the **signing happens host-side on its behalf** — the agent asks

@@ -208,6 +208,85 @@ export async function initRepoInPlace(
 	return connectExistingRepo(executor, buildGitSshUrl(hostType, repoIdentifier), target, true);
 }
 
+/** The minimal README seeded as an empty repo's initial commit — just the repo name. */
+export function initialReadmeContent(repoIdentifier: string): string {
+	const name = repoIdentifier.includes('/') ? repoIdentifier.split('/')[1] : repoIdentifier;
+	return `# ${name}\n`;
+}
+
+/**
+ * Bootstraps a connected repo that has no commits yet. `git worktree add` can't
+ * base a branch on an unborn HEAD, so an empty remote otherwise fails run prep
+ * with the "clone is empty (no commits fetched)" error from {@link addTaskWorktree}.
+ * When — and only when — the remote advertises no refs, this writes a minimal
+ * README, commits it on `main`, and pushes so the repo gains a default branch and
+ * worktrees can be built. Idempotent: a no-op returning `{ seeded: false }` once the
+ * remote has any commit.
+ *
+ * The commit is deliberately unsigned (`-c commit.gpgsign=false`): SSH commit
+ * signing runs `ssh-keygen -Y sign` against `SSH_AUTH_SOCK`, which is only live for
+ * bridged (`needsSsh`) ops — a signed local `git commit` here would fail. The push
+ * still runs bridged, so it authenticates as the project over the run's SSH bridge.
+ * The caller must supply a git identity on the executor env (the prep executor does).
+ *
+ * A pre-populated working tree (a directory adopted in place) is preserved: the
+ * README is only written when absent, and `add -A` folds any existing files into the
+ * same initial commit — matching {@link connectExistingRepo}'s "existing files become
+ * the initial content" contract. `needsSsh` gates the network ops (false for the
+ * `file://` remotes used in tests).
+ */
+export async function seedInitialCommitIfEmpty(
+	executor: GitExecutor,
+	repoIdentifier: string,
+	repo: RepoLoc,
+	needsSsh: boolean,
+): Promise<{ seeded: boolean; error?: string }> {
+	const cwd = repo.containerPath;
+
+	// Emptiness is judged by the full remote ref listing: `ls-remote --symref HEAD`
+	// can print a symref line even for an unborn HEAD (see connectExistingRepo), so a
+	// bare `ls-remote` is the authoritative "has any commit" probe.
+	const refs = await executor.exec(['ls-remote', 'origin'], { cwd, needsSsh, timeout: 60_000 });
+	if (refs.exitCode !== 0) return { seeded: false, error: formatGitError(refs.stderr) };
+	if (refs.stdout.trim().length > 0) return { seeded: false };
+
+	// Commit on `main` so the pushed default matches GitHub's default for a fresh repo.
+	// `symbolic-ref` works on an unborn HEAD and is a no-op when HEAD is already `main`.
+	const sym = await executor.exec(['symbolic-ref', 'HEAD', 'refs/heads/main'], {
+		cwd,
+		timeout: 30_000,
+	});
+	if (sym.exitCode !== 0) return { seeded: false, error: formatGitError(sym.stderr) };
+
+	const readmePath = join(repo.hostPath, 'README.md');
+	try {
+		if (!existsSync(readmePath)) {
+			writeFileSync(readmePath, initialReadmeContent(repoIdentifier));
+		}
+	} catch (e) {
+		return { seeded: false, error: e instanceof Error ? e.message : String(e) };
+	}
+
+	const add = await executor.exec(['add', '-A'], { cwd, timeout: 30_000 });
+	if (add.exitCode !== 0) return { seeded: false, error: formatGitError(add.stderr) };
+
+	// Unsigned bootstrap commit — see the docstring.
+	const commit = await executor.exec(
+		['-c', 'commit.gpgsign=false', 'commit', '-m', 'Initial commit'],
+		{ cwd, timeout: 30_000 },
+	);
+	if (commit.exitCode !== 0) return { seeded: false, error: formatGitError(commit.stderr) };
+
+	const push = await executor.exec(['push', '-u', 'origin', 'HEAD:main'], {
+		cwd,
+		needsSsh,
+		timeout: 120_000,
+	});
+	if (push.exitCode !== 0) return { seeded: false, error: formatGitError(push.stderr) };
+
+	return { seeded: true };
+}
+
 export async function fetchRepo(
 	executor: GitExecutor,
 	repo: RepoLoc,

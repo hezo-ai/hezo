@@ -629,8 +629,18 @@ repointing origin (`remote set-url`) when it addresses a different repo/host
 answer (exec transport failure, stubbed executor) never triggers a repair — only git's own
 "No such remote" / "not a git repository" do. Relatedly, the per-run fetch names `origin`
 explicitly (`git fetch --prune origin`, not `--all`, which exits 0 having fetched nothing
-when no remote is configured), and a worktree add that can resolve neither `origin/<default>`
-nor a born HEAD fails with an actionable "clone has no commits" error instead of git's opaque
+when no remote is configured). A connected remote that has **no commits at all** is **seeded
+at the start of its worktree prep, before that fetch** (`seedInitialCommitIfEmpty`, `git.ts`):
+when `git ls-remote origin` shows no refs, Hezo writes a minimal `README.md` (`# <repo>`),
+commits it on `main`, and pushes — so a freshly-created empty repo becomes usable on its first
+run instead of dead-ending. A pre-populated directory (adopted in place) is preserved: the
+README is only written when absent and `git add -A` folds any existing files into the same
+initial commit. The seed commit is intentionally **unsigned** (`-c commit.gpgsign=false`) —
+SSH signing runs against a live `SSH_AUTH_SOCK`, absent for this bare local `git commit`, while
+the push still runs bridged (`needsSsh`) so it authenticates as the project; it is idempotent
+(a no-op once the remote has any commit). Should a commit still not exist afterward (the seed
+push failed, e.g. connectivity), a worktree add that can resolve neither `origin/<default>` nor
+a born HEAD fails with an actionable "clone has no commits" error instead of git's opaque
 `failed to resolve HEAD as a valid ref`.
 
 Before building a worktree the runner fetches each clone, then **fast-forwards the clone's
