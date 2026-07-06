@@ -187,3 +187,41 @@ test('a superuser-less caller on a self-applying instance still cannot apply (do
 	expect(queryByTestId('settings-version-install')).toBeNull();
 	expect(getByTestId('settings-version-download')).toBeTruthy();
 });
+
+test('advances from "Downloading new version…" to "Install & restart" via polling — no reload', async () => {
+	// Reproduces the reported bug: the server hands back the initial `idle` snapshot first
+	// (the background stage hasn't written `downloading` to disk yet), then `staged` once
+	// the download lands. The section must follow that transition live via its `poll: true`
+	// refetch instead of stranding the spinner until the user manually refreshes.
+	vi.spyOn(api, 'get')
+		.mockResolvedValueOnce({ ...AVAILABLE, state: UpdateState.Idle })
+		.mockResolvedValue({ ...AVAILABLE, state: UpdateState.Staged });
+	const qc = new QueryClient({
+		// refetchIntervalInBackground: the happy-dom document isn't "focused", so react-query
+		// would otherwise skip the interval poll a real (focused) browser runs.
+		defaultOptions: {
+			queries: {
+				retry: false,
+				staleTime: Number.POSITIVE_INFINITY,
+				refetchIntervalInBackground: true,
+			},
+		},
+	});
+	qc.setQueryData(queryKeys.me(), { type: 'admin', is_superuser: true });
+	const { findByTestId, queryByTestId } = render(
+		<QueryClientProvider client={qc}>
+			<VersionDisplay />
+		</QueryClientProvider>,
+	);
+
+	// Initial status fetch resolves to `idle` → the download spinner, no install button yet.
+	expect((await findByTestId('settings-version-downloading')).textContent).toContain(
+		'Downloading new version',
+	);
+	expect(queryByTestId('settings-version-install')).toBeNull();
+
+	// The interval poll (~2.5s) observes `staged` and the section flips in place, no reload.
+	const install = await findByTestId('settings-version-install', undefined, { timeout: 5000 });
+	expect(install.textContent).toContain('Install & restart');
+	expect(queryByTestId('settings-version-downloading')).toBeNull();
+});

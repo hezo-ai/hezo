@@ -172,3 +172,38 @@ test('a legacy bare-version dismissal is ignored (banner shows)', () => {
 	const { getByTestId } = renderBanner();
 	expect(getByTestId('update-banner')).toBeTruthy();
 });
+
+test('surfaces "Install & restart" once a background download stages — via polling, no reload', async () => {
+	// Off the settings page the banner is the only status observer, so its own `poll: true`
+	// has to carry it through the background download. The server returns `idle` first (stage
+	// not yet written), then `staged`; the banner must advance from hidden to the instant-
+	// restart button live instead of staying hidden until the user reloads.
+	vi.spyOn(api, 'get')
+		.mockResolvedValueOnce({ ...BASE, state: UpdateState.Idle })
+		.mockResolvedValue({ ...BASE, state: UpdateState.Staged });
+	const qc = new QueryClient({
+		// refetchIntervalInBackground: the happy-dom document isn't "focused", so react-query
+		// would otherwise skip the interval poll a real (focused) browser runs.
+		defaultOptions: {
+			queries: {
+				retry: false,
+				staleTime: Number.POSITIVE_INFINITY,
+				refetchIntervalInBackground: true,
+			},
+		},
+	});
+	qc.setQueryData(['me'], { type: 'admin', is_superuser: true });
+	const { findByTestId, queryByTestId } = render(
+		<QueryClientProvider client={qc}>
+			<UpdateBanner />
+		</QueryClientProvider>,
+	);
+
+	// Mid-download the banner is hidden (no data yet / `idle`).
+	expect(queryByTestId('update-banner')).toBeNull();
+
+	// The interval poll advances idle → staged and the banner appears with the restart button.
+	const button = await findByTestId('update-restart-button', undefined, { timeout: 5000 });
+	expect(button.textContent).toContain('Install & restart');
+	expect(queryByTestId('update-banner')).toBeTruthy();
+});
