@@ -195,4 +195,45 @@ describe('stop-hook command judges emit the runtime-correct decision and guard t
 			expect(script).toContain('stop_hook_active');
 		}
 	});
+
+	it('the Claude Code prompt hook short-circuits on stop_hook_active too (loop parity)', () => {
+		// The native type:"prompt" Stop hook receives the full input JSON via $ARGUMENTS
+		// (including stop_hook_active); the loop breaker tells the judge to allow the stop
+		// once the turn was already continued, matching the command-script guard so a
+		// persistent verdict cannot spin the same headless exec indefinitely.
+		expect(STOP_HOOK_PROMPT).toContain('stop_hook_active');
+		expect(buildClaudeCodeSettings(AiProvider.Anthropic).hooks.Stop[0].hooks[0].prompt).toContain(
+			'stop_hook_active',
+		);
+	});
+});
+
+/**
+ * A ticket parked on a pending admin approval it filed (e.g. a hire proposal via
+ * create_hire_proposal) is a legitimate "waiting on input" stop — the admin's resolution
+ * auto-wakes the requester exactly as an @admin reply does. The judge must not treat
+ * re-evaluating such a task and calling report_no_work (while the approval stays pending)
+ * as an unresolved problem, or it spins the agent. The clause lives in STOP_HOOK_RULES so
+ * it is shared verbatim across every runtime's judge.
+ */
+describe('stop-hook rules bless waiting on a pending admin approval', () => {
+	it('a filed approval pending an admin decision, task non-terminal, is a valid wait', () => {
+		expect(STOP_HOOK_RULES).toContain('awaits an admin decision the agent cannot make itself');
+		expect(STOP_HOOK_RULES).toContain('create_hire_proposal');
+		// report_no_work while the approval stays pending must NOT read as rule 5 / rule 7.
+		expect(STOP_HOOK_RULES).toContain('while the approval is still pending is a valid stop');
+		// The non-terminal guard from the @admin case still applies to the approval wait.
+		expect(STOP_HOOK_RULES).toContain(
+			'The same wait with the task set to done or cancelled is NOT a valid stop',
+		);
+	});
+
+	it('the carve-out reaches every runtime judge', () => {
+		expect(STOP_HOOK_PROMPT).toContain('create_hire_proposal');
+		expect(buildClaudeCodeSettings(AiProvider.Anthropic).hooks.Stop[0].hooks[0].prompt).toContain(
+			'create_hire_proposal',
+		);
+		expect(buildJudgeScriptForRuntime(AgentRuntime.Codex)).toContain('create_hire_proposal');
+		expect(buildJudgeScriptForRuntime(AgentRuntime.Gemini)).toContain('create_hire_proposal');
+	});
 });

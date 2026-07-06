@@ -251,4 +251,43 @@ describe('MCP tool create_hire_proposal', () => {
 		expect(created).toBeDefined();
 		expect(created?.admin_status).toBe('enabled');
 	});
+
+	it('wakes the requesting Captain when the admin resolves the proposal', async () => {
+		// The approval → agent "sync" depends on this wakeup: without it a Captain
+		// parked on the pending proposal only notices the decision on its next
+		// heartbeat (this is the seam behind the "agent thinks admin hasn't approved"
+		// report). The wake fires only for a proposal linked to an originating ticket —
+		// resolveHireProposalCommentAndWake early-returns without a task_id.
+		const taskRow = await db.query<{ id: string }>(
+			'SELECT id FROM tasks WHERE team_id = $1 LIMIT 1',
+			[teamId],
+		);
+		const taskId = taskRow.rows[0].id;
+
+		const proposal = await callTool(await captainToken(), 'create_hire_proposal', {
+			title: 'Incident Commander',
+			system_prompt: compliantPrompt('You coordinate incident response.'),
+			task_id: taskId,
+		});
+		expect(proposal.error).toBeUndefined();
+
+		const resolveRes = await app.request(`/api/approvals/${proposal.approval_id}/resolve`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ status: 'approved' }),
+		});
+		expect(resolveRes.status).toBe(200);
+
+		// A hire_resolved wakeup targeting the Captain (the requester) is queued so the
+		// dispatcher re-runs it as soon as the task frees. Match on the payload rather
+		// than the idempotency key so the assertion holds whether the row was inserted
+		// fresh or coalesced onto an existing queued task wakeup.
+		const wakeup = await db.query<{ member_id: string }>(
+			`SELECT member_id FROM agent_wakeup_requests
+			 WHERE payload->>'approval_id' = $1 AND payload->>'reason' = 'hire_resolved'`,
+			[proposal.approval_id as string],
+		);
+		expect(wakeup.rows.length).toBeGreaterThanOrEqual(1);
+		expect(wakeup.rows[0].member_id).toBe(captainId);
+	});
 });
