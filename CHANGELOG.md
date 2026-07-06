@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.15.3 - 2026-07-06
+
+### Features
+
+- admin git repository state panel with recovery actions ([#611](https://github.com/hezo-ai/hezo/pull/611))
+- **git:** seed an initial commit for empty connected repos at runtime ([#613](https://github.com/hezo-ai/hezo/pull/613))
+- **web:** edit connector scope inline instead of a top filter ([#610](https://github.com/hezo-ai/hezo/pull/610))
+
+### Bug Fixes
+
+- stop agents spinning while awaiting admin approval ([#612](https://github.com/hezo-ai/hezo/pull/612))
+- **web:** keep the version-update UI polling so it advances without a reload ([#609](https://github.com/hezo-ai/hezo/pull/609))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.15.2...0.15.3
+
 ## 0.15.2 - 2026-07-06
 
 ### Features
