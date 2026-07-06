@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.15.0 - 2026-07-06
+
+### Features
+
+- **updates:** auto-install staged updates via --auto-install-updates / HEZO_AUTO_INSTALL_UPDATES ([#596](https://github.com/hezo-ai/hezo/pull/596))
+
+### Bug Fixes
+
+- **containers:** pin container MTU to the host egress MTU on VPN/mesh hosts ([#600](https://github.com/hezo-ai/hezo/pull/600))
+- **runs:** stop a stalled git fetch from hanging a run forever ([#599](https://github.com/hezo-ai/hezo/pull/599))
+- **repos:** run repo checkout setup in the background instead of inside POST /repos ([#595](https://github.com/hezo-ai/hezo/pull/595))
+- **web:** wrap container controls on mobile and add confirm-dialog close button ([#593](https://github.com/hezo-ai/hezo/pull/593))
+
+### Documentation
+
+- **dev:** consolidate hosted-architecture into the full hosted design ([#594](https://github.com/hezo-ai/hezo/pull/594))
+
+### Build System
+
+- **docker:** use Debian-packaged git in agent-base image ([#592](https://github.com/hezo-ai/hezo/pull/592))
+
+### Tests
+
+- raise combined line coverage from 84.6% to 96.1% ([#597](https://github.com/hezo-ai/hezo/pull/597))
+
+### Other
+
+- **web:** strengthen read/unread styling on inbox mention cards ([#598](https://github.com/hezo-ai/hezo/pull/598))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.14.0...0.15.0
+
 ## 0.14.0 - 2026-07-05
 
 ### Features
