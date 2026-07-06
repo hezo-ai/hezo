@@ -2590,7 +2590,7 @@ export function registerTools(
 			const skillId = (args.skill_id as string | undefined) ?? null;
 
 			// Slug from providerId if available, else from display_name. Connectors
-			// are global, so `name` (UNIQUE) is the idempotency key.
+			// are scoped by project, so `(project_id, name)` is the idempotency key.
 			const slugSource = providerId ?? displayName;
 			const name = slugSource
 				.toLowerCase()
@@ -2612,6 +2612,7 @@ export function registerTools(
 				skillId,
 				createdByTaskId: taskId,
 				providerId,
+				projectId: scope.projectId,
 			});
 
 			if (!alreadyExisted) {
@@ -4363,7 +4364,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_mcp_connections',
-		'List the MCP server connections available to agent runs (instance-global — the same catalog for every team). Each row includes a derived `oauth_status` so you can tell whether a connector is usable: "active" means OAuth completed and the MCP tools should appear in your tool list on your next run; "pending" means waiting on the human to click Connect; "failed" means the OAuth flow errored (see auth_error); "revoked" means a human disconnected it; "none" means no OAuth needed (e.g., an env-var-token MCP or a public one). Do NOT confuse `install_status` (which tracks local-package install state and is meaningless for SaaS MCPs) with `oauth_status`. An active OAuth-backed connector also carries `rest_auth` = `{ placeholder, allowed_hosts, scopes }`: put `placeholder` (e.g. in an `Authorization: Bearer <placeholder>` header) on a raw HTTP request to authenticate the provider\'s REST API directly when no MCP tool covers what you need — the egress proxy substitutes the real token, but ONLY for requests to `allowed_hosts`; you never see the value. Use this instead of requesting a PAT (e.g. for GitHub repo-settings edits that the `github` MCP does not expose).',
+		'List the MCP server connections available to agent runs in your project (its own connectors plus global "all projects" ones; a project connector shadows a global one of the same name). Each row includes a derived `oauth_status` so you can tell whether a connector is usable: "active" means OAuth completed and the MCP tools should appear in your tool list on your next run; "pending" means waiting on the human to click Connect; "failed" means the OAuth flow errored (see auth_error); "revoked" means a human disconnected it; "none" means no OAuth needed (e.g., an env-var-token MCP or a public one). Do NOT confuse `install_status` (which tracks local-package install state and is meaningless for SaaS MCPs) with `oauth_status`. An active OAuth-backed connector also carries `rest_auth` = `{ placeholder, allowed_hosts, scopes }`: put `placeholder` (e.g. in an `Authorization: Bearer <placeholder>` header) on a raw HTTP request to authenticate the provider\'s REST API directly when no MCP tool covers what you need — the egress proxy substitutes the real token, but ONLY for requests to `allowed_hosts`; you never see the value. Use this instead of requesting a PAT (e.g. for GitHub repo-settings edits that the `github` MCP does not expose).',
 		{
 			project: projectArg(),
 		},
@@ -4389,17 +4390,21 @@ export function registerTools(
 				oauth_secret_name: string | null;
 				oauth_allowed_hosts: string[] | null;
 				oauth_scopes: string[] | null;
+				oauth_account_label: string | null;
 			}>(
 				`SELECT mc.id, mc.name, mc.display_name, mc.kind::text AS kind,
 				        mc.config, mc.oauth_connection_id, mc.install_status::text AS install_status, mc.install_error,
 				        mc.skill_id, mc.created_by_task_id,
 				        mc.activated_at::text AS activated_at, mc.revoked_at::text AS revoked_at, mc.auth_error,
 				        mc.created_at::text, mc.updated_at::text,
-				        s.name AS oauth_secret_name, s.allowed_hosts AS oauth_allowed_hosts, oc.scopes AS oauth_scopes
+				        s.name AS oauth_secret_name, s.allowed_hosts AS oauth_allowed_hosts, oc.scopes AS oauth_scopes,
+				        oc.provider_account_label AS oauth_account_label
 				 FROM mcp_connections mc
 				 LEFT JOIN oauth_connections oc ON oc.id = mc.oauth_connection_id
 				 LEFT JOIN secrets s ON s.id = oc.access_token_secret_id
-				 ORDER BY mc.name ASC`,
+				 WHERE mc.project_id = $1 OR mc.project_id IS NULL
+				 ORDER BY mc.name ASC, (mc.project_id IS NULL) ASC`,
+				[scope.projectId],
 			);
 			// Derive a single oauth_status field that's the load-bearing signal
 			// for whether the connector is usable by agents on subsequent runs.
@@ -4407,7 +4412,12 @@ export function registerTools(
 				const c = row.config as { dcr?: unknown };
 				return !!c?.dcr;
 			};
-			return r.rows.map((row) => {
+			// A project connector shadows a global one of the same name (the run sees
+			// the same set — see loadMcpConnectionsForRun). Rows are ordered project
+			// first, so keep the first occurrence per name.
+			const byName = new Map<string, (typeof r.rows)[number]>();
+			for (const row of r.rows) if (!byName.has(row.name)) byName.set(row.name, row);
+			return [...byName.values()].map((row) => {
 				let oauth_status: 'active' | 'pending' | 'failed' | 'revoked' | 'none';
 				if (row.kind !== 'saas') oauth_status = 'none';
 				else if (row.revoked_at) oauth_status = 'revoked';
@@ -4458,8 +4468,9 @@ export function registerTools(
 				oauth_connection_id: string | null;
 			}>(
 				`SELECT id, name, kind::text AS kind, config, oauth_connection_id
-				 FROM mcp_connections WHERE id = $1`,
-				[connectorId],
+				 FROM mcp_connections
+				 WHERE id = $1 AND (project_id = $2 OR project_id IS NULL)`,
+				[connectorId, scope.projectId],
 			);
 			if (row.rows.length === 0) return { error: 'connector not found' };
 			const connector = row.rows[0];
@@ -4544,7 +4555,7 @@ export function registerTools(
 	tool(
 		server,
 		'add_mcp_connection',
-		"Register an MCP server (SaaS HTTP or local stdio). Connections are instance-global — available to every team's agent runs. SaaS servers go into the agent's descriptor list immediately. Header values may include __HEZO_SECRET_<NAME>__ placeholders that the egress proxy substitutes at request time. Local servers must be installed before they take effect.",
+		'Register an MCP server (SaaS HTTP or local stdio) for your project. The connection is scoped to your project — available to this project\'s agent runs, alongside any global "all projects" connectors. SaaS servers go into the agent\'s descriptor list immediately. Header values may include __HEZO_SECRET_<NAME>__ placeholders that the egress proxy substitutes at request time. Local servers must be installed before they take effect.',
 		{
 			project: projectArg(),
 			name: z
@@ -4580,16 +4591,16 @@ export function registerTools(
 				id: string;
 				install_status: string;
 			}>(
-				`INSERT INTO mcp_connections (name, kind, config, install_status)
-				 VALUES ($1, $2::mcp_connection_kind, $3::jsonb, $4::mcp_install_status)
-				 ON CONFLICT (name) DO UPDATE
+				`INSERT INTO mcp_connections (name, kind, config, install_status, project_id)
+				 VALUES ($1, $2::mcp_connection_kind, $3::jsonb, $4::mcp_install_status, $5)
+				 ON CONFLICT (project_id, name) WHERE project_id IS NOT NULL DO UPDATE
 				 SET kind = EXCLUDED.kind,
 				     config = EXCLUDED.config,
 				     install_status = EXCLUDED.install_status,
 				     install_error = NULL,
 				     updated_at = now()
 				 RETURNING id, install_status::text AS install_status`,
-				[name, kind, JSON.stringify(config), initialStatus],
+				[name, kind, JSON.stringify(config), initialStatus, scope.projectId],
 			);
 			return {
 				id: r.rows[0].id,
@@ -4606,7 +4617,7 @@ export function registerTools(
 	tool(
 		server,
 		'remove_mcp_connection',
-		'Remove a registered MCP connection (instance-global — removing it affects every team). The next agent run will not see it.',
+		'Remove one of your project\'s registered MCP connections. Only connectors owned by your project can be removed — global "all projects" connectors and other projects\' are managed elsewhere. The next agent run will not see it.',
 		{
 			project: projectArg(),
 			id: z
@@ -4617,8 +4628,8 @@ export function registerTools(
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
 			const r = await db.query<{ id: string }>(
-				'DELETE FROM mcp_connections WHERE id = $1 RETURNING id',
-				[args.id as string],
+				'DELETE FROM mcp_connections WHERE id = $1 AND project_id = $2 RETURNING id',
+				[args.id as string, scope.projectId],
 			);
 			if (r.rows.length === 0) return { error: 'MCP connection not found' };
 			return { removed: true, id: r.rows[0].id };

@@ -10,6 +10,8 @@ export interface McpConnection {
 	kind: 'saas' | 'local';
 	config: Record<string, unknown>;
 	oauth_connection_id: string | null;
+	/** Owning project, or null for a global ("all projects") connector. */
+	project_id: string | null;
 	install_status: 'pending' | 'installed' | 'failed';
 	install_error: string | null;
 	skill_id: string | null;
@@ -19,6 +21,11 @@ export interface McpConnection {
 	auth_error: string | null;
 	created_at: string;
 	updated_at: string;
+	/** Linked OAuth account's username/label (e.g. GitHub login), when connected. */
+	oauth_account_label?: string | null;
+	/** Owning project's name/slug — populated only by the admin cross-project list. */
+	project_name?: string | null;
+	project_slug?: string | null;
 }
 
 export type ConnectorStatus = 'pending' | 'active' | 'failed' | 'revoked';

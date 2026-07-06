@@ -162,12 +162,18 @@ MCP tool) is the markdown blurb shown at the top of the Progress page.
 **Secrets, OAuth, MCP connectors.** `secrets` stores AES-256-GCM ciphertext gated by
 `allowed_hosts` (§ 7). `oauth_connections` records connected GitHub/SaaS accounts; their
 tokens *ride the `secrets` table* (no token column). `mcp_connections` is the catalog of
-SaaS/local MCP servers injected into runs (§ 9). All three are **instance-global** — a
-single shared catalog keyed by a globally-unique name (`secrets.name` /
-`mcp_connections.name` / `oauth_connections (provider, provider_account_id)`), with no
-`team_id` column, so every team's runs see the same set. `team_ssh_keys` is the exception
-— one Ed25519 key **per team** (`UNIQUE(team_id)`, and therefore per project given the
-1:1), encrypted on the team row, never in the vault (§ 8).
+SaaS/local MCP servers injected into runs (§ 9). `secrets` is **instance-global**
+(`secrets.name` globally unique). `oauth_connections` and `mcp_connections` are
+**scoped by project** via a nullable `project_id` (FK → `projects`, `ON DELETE CASCADE`):
+a non-NULL value makes the row private to that project (so two projects can connect
+*separate* GitHub/SaaS accounts), while `project_id NULL` is the global "all projects"
+scope (the instance-admin surface and pre-existing rows). Uniqueness is per-scope via
+partial indexes — `(provider, provider_account_id)` / `(name)` where `project_id IS NULL`,
+and `(project_id, …)` where non-NULL. A run resolves the connectors/identity for **its
+task's project**: the project's own rows plus global ones, a project row shadowing a global
+of the same name. `team_ssh_keys` is separate — one Ed25519 key **per team**
+(`UNIQUE(team_id)`, and therefore per project given the 1:1), encrypted on the team row,
+never in the vault (§ 8).
 
 **Runs, wakeups, sessions.** `agent_wakeup_requests` is the trigger queue, with
 idempotency keys and `coalesced_count` merging (§ 5). `heartbeat_runs` is one row per
@@ -880,8 +886,9 @@ cloning outside a run (provision, repo link) allocates a short-lived bridge via
 public key is auto-registered on the connecting user's account as **both** a signing key
 (`POST /user/ssh_signing_keys` — drives `Verified` badges) and an authentication key
 (`POST /user/keys` — so SSH git works). Registration is idempotent (GitHub 422 "already
-in use" → no-op). Commit *authorship* comes from the instance-global GitHub connection;
-*signing* uses the project's own key.
+in use" → no-op). Commit *authorship* comes from the project's own GitHub connection (its
+`project_id`-scoped `oauth_connections` row, or a global one as fallback); *signing* uses
+the project's (team's) own key.
 
 ---
 
@@ -903,14 +910,18 @@ impossible) and a redirect flow would need a per-host registered callback. The s
 is data-driven via `packages/shared/src/types/connector-capabilities.ts`; generic OAuth
 machinery is in `services/oauth/*`, GitHub REST helpers in `services/github.ts`.
 
-**Storage.** `oauth_connections` is instance-global (one row per provider + account,
-usable by every team's runs). Tokens have no column of their own — they ride the `secrets`
-table under name pattern `OAUTH_<PROVIDER>_<8 hex>` (`_REFRESH` suffix for refresh
-tokens), `allowed_hosts` auto-locked to the provider's hosts. So OAuth tokens flow through
-the same egress placeholder path as any secret; agents emit
+**Storage.** `oauth_connections` is **project-scoped** via `project_id` (non-NULL = private
+to that project so two projects hold separate accounts; NULL = the global "all projects"
+scope), keyed per-scope on `(project_id, provider, provider_account_id)`. Tokens have no
+column of their own — they ride the `secrets` table under name pattern
+`OAUTH_<PROVIDER>_<8 hex>` (`_REFRESH` suffix for refresh tokens), `allowed_hosts`
+auto-locked to the provider's hosts. So OAuth tokens flow through the same egress
+placeholder path as any secret; agents emit
 `Authorization: Bearer __HEZO_SECRET_OAUTH_GITHUB_AB12CD34__`. `refreshExpiringTokens`
 (called by the egress substitution path on every outbound request) refreshes tokens within
-60 s of expiry, coalescing concurrent refreshes per connection.
+60 s of expiry, coalescing concurrent refreshes per connection. Deleting a project (or its
+team) purges the project's connections and their token secrets before the cascade, so no
+encrypted token orphans in the vault.
 
 **Agent connector flow.** An agent calls `register_connector` with an MCP URL (DCR is
 attempted) or a `provider_id` for a device-flow provider. The tool creates a pending
@@ -919,9 +930,13 @@ human completes the OAuth dance from the task chat or the Connectors page, and a
 `credential_provided` wakeup resumes the agent (scoped to the requesting task's own team,
 resolved from the task row — the connect can be completed from any surface).
 
-**Admin connector flow.** The superuser adds connectors manually on the global Settings →
-Connectors page (`POST /api/mcp-connections`, upsert-by-name; re-adding a name replaces
-`config` and clears `auth_error`). The page then auto-probes the new connector via
+**Admin connector flow.** The global Settings → Connectors page lists **every project's**
+connectors plus global ones (each row carries its `project_id` + project name), with a
+**scope-filter dropdown** — `(All projects)` / a specific project — that filters the view
+and sets the create scope. The superuser adds a connector in the selected scope
+(`POST /api/mcp-connections` with an optional `project_id`; upsert-by-`(project_id, name)`;
+re-adding a name in the same scope replaces `config` and clears `auth_error`). The page then
+auto-probes the new connector via
 `POST /api/mcp-connections/:id/auth-start` (superuser-gated) — the same PRM → DCR walk as
 the project-scoped auth-start, with two differences: there is no team context (the state
 envelope carries `teamId: null`, and the callback skips the team-room broadcasts and
@@ -933,11 +948,13 @@ other use case, public / header-authenticated MCPs (`__HEZO_SECRET_*__` placehol
 When OAuth *is* advertised, the UI opens the authorize popup automatically on add, and
 every non-active SaaS row keeps a **Connect**/Retry button.
 
-**Run exclusion.** `loadMcpConnectionsForRun` skips revoked rows, plus SaaS rows that are
-known to want OAuth but haven't completed it — no `oauth_connection_id` and any of:
-agent-requested (`created_by_task_id`), discovery persisted `config.dcr`, or an attempt
-recorded `auth_error`. Injecting those would just 401 on every run. Operator rows that
-never attempted OAuth carry none of the markers and are always included.
+**Run exclusion.** `loadMcpConnectionsForRun(db, projectId)` returns the run's project's own
+connectors plus global ones (a project connector shadows a global of the same name). It
+skips revoked rows, plus SaaS rows that are known to want OAuth but haven't completed it —
+no `oauth_connection_id` and any of: agent-requested (`created_by_task_id`), discovery
+persisted `config.dcr`, or an attempt recorded `auth_error`. Injecting those would just 401
+on every run. Operator rows that never attempted OAuth carry none of the markers and are
+always included.
 
 **MCP connections** (`mcp_connections`, see § 3 scoping). `kind='saas'` carries
 `{ url, headers }` (header values may contain `__HEZO_SECRET_*__`; OAuth-backed rows set

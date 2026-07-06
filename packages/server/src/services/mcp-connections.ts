@@ -45,10 +45,16 @@ export interface McpConnectionRow {
 }
 
 /**
- * Load MCP connections exposed to an agent run. Connectors are instance-global,
- * so every run sees the same set (no team/project scope).
+ * Load MCP connections exposed to an agent run. Scoped to the run's project: its
+ * own connectors plus global ("all projects") ones. When a project and a global
+ * connector share a name, the project's own wins (it shadows the global) — the
+ * `ORDER BY … (project_id IS NULL) DESC` emits globals first so the last-write
+ * Map keeps the project row.
  */
-export async function loadMcpConnectionsForRun(db: Db): Promise<McpConnectionRow[]> {
+export async function loadMcpConnectionsForRun(
+	db: Db,
+	projectId?: string | null,
+): Promise<McpConnectionRow[]> {
 	// Filters: skip revoked (user disconnected); skip saas rows that are known
 	// to want OAuth but haven't completed it (no oauth_connection_id and any of:
 	// agent-requested via the connector flow, discovery already persisted
@@ -56,6 +62,8 @@ export async function loadMcpConnectionsForRun(db: Db): Promise<McpConnectionRow
 	// would just 401 on every run. Operator-created rows that never attempted
 	// OAuth carry none of these markers and continue to be included regardless
 	// (existing behavior for public / header-authenticated MCPs).
+	const scopeClause = projectId != null ? `AND (project_id = $1 OR project_id IS NULL)` : '';
+	const params = projectId != null ? [projectId] : [];
 	const result = await db.query<McpConnectionRow>(
 		`SELECT id, name, kind::text AS kind,
 		        config, oauth_connection_id, install_status::text AS install_status, install_error,
@@ -66,7 +74,9 @@ export async function loadMcpConnectionsForRun(db: Db): Promise<McpConnectionRow
 		            AND (created_by_task_id IS NOT NULL
 		                 OR config ? 'dcr'
 		                 OR auth_error IS NOT NULL))
-		 ORDER BY name ASC`,
+		   ${scopeClause}
+		 ORDER BY name ASC, (project_id IS NULL) DESC`,
+		params,
 	);
 
 	const out = new Map<string, McpConnectionRow>();
@@ -135,8 +145,9 @@ async function loadAllOAuthSecrets(
 export async function loadMcpConnectionDescriptors(
 	db: Db,
 	masterKeyManager: MasterKeyManager,
+	projectId?: string | null,
 ): Promise<McpDescriptor[]> {
-	const rows = await loadMcpConnectionsForRun(db);
+	const rows = await loadMcpConnectionsForRun(db, projectId);
 	const oauthSecrets = await loadAllOAuthSecrets(db, masterKeyManager);
 	const descriptors: McpDescriptor[] = [];
 	for (const row of rows) {

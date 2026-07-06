@@ -12,31 +12,52 @@ import { installLocalMcpById } from '../services/mcp-installer';
 
 const log = logger.child('mcp-connections-route');
 
-// Connectors are instance-global — one catalog shared with every team's runs.
-// The project-scoped routes below keep their paths (so the in-project connectors
-// page works) but read/write the global catalog; the un-prefixed routes are the
-// Admin (superuser) surface for `/settings/connectors`.
+// Connectors are scoped by project_id (NULL = global "all projects" scope). The
+// project-scoped routes below read/write that project's own connectors plus
+// global ones; the un-prefixed routes are the Admin (superuser) surface for
+// `/settings/connectors`, which spans every project.
 const CONNECTOR_COLUMNS = `id, name, display_name, kind::text AS kind,
-        config, oauth_connection_id, install_status::text AS install_status, install_error,
+        config, oauth_connection_id, project_id, install_status::text AS install_status, install_error,
         skill_id, created_by_task_id, activated_at, revoked_at, auth_error,
         created_at, updated_at`;
+
+// Same columns, `mc.`-qualified for queries that JOIN `projects` (whose id/name/
+// slug would otherwise collide with the connector's).
+const CONNECTOR_COLUMNS_MC = `mc.id, mc.name, mc.display_name, mc.kind::text AS kind,
+        mc.config, mc.oauth_connection_id, mc.project_id, mc.install_status::text AS install_status,
+        mc.install_error, mc.skill_id, mc.created_by_task_id, mc.activated_at, mc.revoked_at,
+        mc.auth_error, mc.created_at, mc.updated_at`;
 
 export const mcpConnectionsRoutes = new Hono<Env>();
 
 mcpConnectionsRoutes.get('/projects/:projectId/mcp-connections', async (c) => {
 	const db = c.get('db');
+	const projectId = c.get('projectId') as string;
 	const result = await db.query(
-		`SELECT ${CONNECTOR_COLUMNS} FROM mcp_connections ORDER BY name ASC`,
+		`SELECT ${CONNECTOR_COLUMNS_MC}, oc.provider_account_label AS oauth_account_label
+		 FROM mcp_connections mc
+		 LEFT JOIN oauth_connections oc ON oc.id = mc.oauth_connection_id
+		 WHERE mc.project_id = $1 OR mc.project_id IS NULL
+		 ORDER BY mc.name ASC`,
+		[projectId],
 	);
 	return ok(c, result.rows);
 });
 
+// Admin surface: every connector across all projects, each annotated with its
+// owning project (null = global) so `/settings/connectors` can render + filter
+// by project.
 mcpConnectionsRoutes.get('/mcp-connections', async (c) => {
 	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 	const db = c.get('db');
 	const result = await db.query(
-		`SELECT ${CONNECTOR_COLUMNS} FROM mcp_connections ORDER BY name ASC`,
+		`SELECT ${CONNECTOR_COLUMNS_MC}, p.name AS project_name, p.slug AS project_slug,
+		        oc.provider_account_label AS oauth_account_label
+		 FROM mcp_connections mc
+		 LEFT JOIN projects p ON p.id = mc.project_id
+		 LEFT JOIN oauth_connections oc ON oc.id = mc.oauth_connection_id
+		 ORDER BY mc.name ASC`,
 	);
 	return ok(c, result.rows);
 });
@@ -51,6 +72,7 @@ mcpConnectionsRoutes.post('/mcp-connections', async (c) => {
 		display_name?: string;
 		kind: 'saas' | 'local';
 		config: Record<string, unknown>;
+		project_id?: string | null;
 	}>();
 
 	if (!body.name?.trim()) {
@@ -64,14 +86,29 @@ mcpConnectionsRoutes.post('/mcp-connections', async (c) => {
 		return err(c, 'INVALID_REQUEST', 'saas connections require config.url (string)', 400);
 	}
 
-	// Re-adding an existing name is a reconfiguration: config is replaced
-	// wholesale (dropping any stale config.dcr for a changed URL) and a
+	// The admin surface may target a specific project (from the scope dropdown) or
+	// create a global "all projects" connector (project_id null). Validate a named
+	// project exists; the superuser may act on any.
+	const projectId = body.project_id?.trim() || null;
+	if (projectId) {
+		const proj = await db.query<{ id: string }>(`SELECT id FROM projects WHERE id = $1`, [
+			projectId,
+		]);
+		if (proj.rows.length === 0) return err(c, 'NOT_FOUND', 'project_id not found', 404);
+	}
+
+	// Re-adding an existing name in the same scope is a reconfiguration: config is
+	// replaced wholesale (dropping any stale config.dcr for a changed URL) and a
 	// previous OAuth attempt's auth_error is cleared, so the row starts from a
-	// clean slate. An active row keeps oauth_connection_id/activated_at.
+	// clean slate. An active row keeps oauth_connection_id/activated_at. The
+	// conflict target names the partial unique index matching the row's scope.
+	const conflictTarget = projectId
+		? '(project_id, name) WHERE project_id IS NOT NULL'
+		: '(name) WHERE project_id IS NULL';
 	const result = await db.query(
-		`INSERT INTO mcp_connections (name, display_name, kind, config, install_status)
-		 VALUES ($1, $2, $3::mcp_connection_kind, $4::jsonb, 'installed'::mcp_install_status)
-		 ON CONFLICT (name) DO UPDATE
+		`INSERT INTO mcp_connections (name, display_name, kind, config, install_status, project_id)
+		 VALUES ($1, $2, $3::mcp_connection_kind, $4::jsonb, 'installed'::mcp_install_status, $5)
+		 ON CONFLICT ${conflictTarget} DO UPDATE
 		 SET display_name = EXCLUDED.display_name,
 		     kind = EXCLUDED.kind,
 		     config = EXCLUDED.config,
@@ -80,7 +117,13 @@ mcpConnectionsRoutes.post('/mcp-connections', async (c) => {
 		     auth_error = NULL,
 		     updated_at = now()
 		 RETURNING ${CONNECTOR_COLUMNS}`,
-		[body.name.trim(), body.display_name?.trim() ?? null, body.kind, JSON.stringify(body.config)],
+		[
+			body.name.trim(),
+			body.display_name?.trim() ?? null,
+			body.kind,
+			JSON.stringify(body.config),
+			projectId,
+		],
 	);
 
 	const createdRow = result.rows[0] as { id: string; name: string };
@@ -120,23 +163,31 @@ mcpConnectionsRoutes.delete('/mcp-connections/:id', async (c) => {
 
 mcpConnectionsRoutes.get('/projects/:projectId/mcp-connections/:id', async (c) => {
 	const db = c.get('db');
+	const projectId = c.get('projectId') as string;
 	const id = c.req.param('id');
-	const result = await db.query(`SELECT ${CONNECTOR_COLUMNS} FROM mcp_connections WHERE id = $1`, [
-		id,
-	]);
+	const result = await db.query(
+		`SELECT ${CONNECTOR_COLUMNS} FROM mcp_connections
+		 WHERE id = $1 AND (project_id = $2 OR project_id IS NULL)`,
+		[id, projectId],
+	);
 	if (result.rows.length === 0) return err(c, 'NOT_FOUND', 'connector not found', 404);
 	return ok(c, result.rows[0]);
 });
 
 mcpConnectionsRoutes.post('/projects/:projectId/mcp-connections/:id/revoke', async (c) => {
 	const teamId = c.get('teamId') as string;
+	const projectId = c.get('projectId') as string;
 	const db = c.get('db');
 	const id = c.req.param('id');
 	const { markRevoked } = await import('../services/connectors/lifecycle');
 	const existing = await db.query<{
 		name: string;
 		oauth_connection_id: string | null;
-	}>(`SELECT name, oauth_connection_id FROM mcp_connections WHERE id = $1`, [id]);
+	}>(
+		`SELECT name, oauth_connection_id FROM mcp_connections
+		 WHERE id = $1 AND (project_id = $2 OR project_id IS NULL)`,
+		[id, projectId],
+	);
 	if (existing.rows.length === 0) return err(c, 'NOT_FOUND', 'connector not found', 404);
 	const row = await markRevoked(db, id);
 	if (existing.rows[0].oauth_connection_id) {
@@ -180,6 +231,7 @@ mcpConnectionsRoutes.post('/projects/:projectId/mcp-connections/:id/revoke', asy
 
 mcpConnectionsRoutes.post('/projects/:projectId/mcp-connections', async (c) => {
 	const teamId = c.get('teamId') as string;
+	const projectId = c.get('projectId') as string;
 	const db = c.get('db');
 
 	const body = await c.req.json<{
@@ -205,9 +257,12 @@ mcpConnectionsRoutes.post('/projects/:projectId/mcp-connections', async (c) => {
 	}
 
 	if (body.oauth_connection_id) {
+		// Only an oauth connection visible to this project (its own or global) may
+		// be linked — never another project's.
 		const ownership = await db.query<{ id: string }>(
-			`SELECT id FROM oauth_connections WHERE id = $1`,
-			[body.oauth_connection_id],
+			`SELECT id FROM oauth_connections
+			 WHERE id = $1 AND (project_id = $2 OR project_id IS NULL)`,
+			[body.oauth_connection_id, projectId],
 		);
 		if (ownership.rows.length === 0) {
 			return err(c, 'NOT_FOUND', 'oauth_connection_id not found', 404);
@@ -216,9 +271,9 @@ mcpConnectionsRoutes.post('/projects/:projectId/mcp-connections', async (c) => {
 
 	const initialStatus = body.kind === McpConnectionKind.Saas ? 'installed' : 'pending';
 	const result = await db.query(
-		`INSERT INTO mcp_connections (name, kind, config, oauth_connection_id, install_status)
-		 VALUES ($1, $2::mcp_connection_kind, $3::jsonb, $4, $5::mcp_install_status)
-		 ON CONFLICT (name) DO UPDATE
+		`INSERT INTO mcp_connections (name, kind, config, oauth_connection_id, install_status, project_id)
+		 VALUES ($1, $2::mcp_connection_kind, $3::jsonb, $4, $5::mcp_install_status, $6)
+		 ON CONFLICT (project_id, name) WHERE project_id IS NOT NULL DO UPDATE
 		 SET kind = EXCLUDED.kind,
 		     config = EXCLUDED.config,
 		     oauth_connection_id = EXCLUDED.oauth_connection_id,
@@ -232,6 +287,7 @@ mcpConnectionsRoutes.post('/projects/:projectId/mcp-connections', async (c) => {
 			JSON.stringify(body.config),
 			body.oauth_connection_id ?? null,
 			initialStatus,
+			projectId,
 		],
 	);
 
@@ -307,6 +363,7 @@ async function kickoffLocalInstall(
  */
 mcpConnectionsRoutes.post('/projects/:projectId/connectors/ensure', async (c) => {
 	const teamId = c.get('teamId') as string;
+	const projectId = c.get('projectId') as string;
 	const db = c.get('db');
 	const body = (await c.req.json().catch(() => ({}))) as { provider_id?: string };
 	const providerId = body.provider_id?.trim();
@@ -324,6 +381,7 @@ mcpConnectionsRoutes.post('/projects/:projectId/connectors/ensure', async (c) =>
 		mcpTransport: capability.mcpServer.transport,
 		mcpHeaders: capability.mcpServer.headers,
 		providerId: capability.id,
+		projectId,
 	});
 	if (!alreadyExisted) {
 		broadcastChange(c, wsRoom.team(teamId), 'mcp_connections', 'INSERT', { id: row.id });
@@ -342,12 +400,15 @@ mcpConnectionsRoutes.post('/projects/:projectId/connectors/ensure', async (c) =>
 
 mcpConnectionsRoutes.delete('/projects/:projectId/mcp-connections/:id', async (c) => {
 	const teamId = c.get('teamId') as string;
+	const projectId = c.get('projectId') as string;
 	const db = c.get('db');
 	const id = c.req.param('id');
 
+	// A project may only delete its own connectors, never a global or another
+	// project's.
 	const result = await db.query<{ id: string; name: string }>(
-		'DELETE FROM mcp_connections WHERE id = $1 RETURNING id, name',
-		[id],
+		'DELETE FROM mcp_connections WHERE id = $1 AND project_id = $2 RETURNING id, name',
+		[id, projectId],
 	);
 	if (result.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'MCP connection not found', 404);

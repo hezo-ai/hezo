@@ -273,6 +273,11 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 						<StatusBadge status={status} />
 					</div>
 					{url && <p className="text-xs text-text-2 mt-1 truncate font-mono">{url}</p>}
+					{connector.oauth_account_label && (
+						<p className="text-xs text-text-2 mt-1">
+							Connected as <span className="font-mono">{connector.oauth_account_label}</span>
+						</p>
+					)}
 					{connector.skill_id && (
 						<p className="text-xs text-text-2 mt-1 flex items-center gap-1">
 							<ExternalLink className="size-3" />

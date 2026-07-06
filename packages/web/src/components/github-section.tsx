@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { useMcpConnections } from '../hooks/use-mcp-connections';
 import {
 	useConnectionScopeStatus,
+	useDeleteOAuthConnection,
 	useEnsureConnector,
 	useOAuthConnections,
 } from '../hooks/use-oauth-connections';
@@ -27,6 +28,7 @@ export function GitHubSection({ projectId }: GitHubSectionProps) {
 	const { data: repos } = useRepos(projectId);
 	const deleteRepo = useDeleteRepo(projectId);
 	const retryRepo = useCreateRepo(projectId);
+	const deleteConnection = useDeleteOAuthConnection(projectId);
 	const queryClient = useQueryClient();
 
 	const githubConnection = connections.find((c) => c.provider === 'github') ?? null;
@@ -136,8 +138,29 @@ export function GitHubSection({ projectId }: GitHubSectionProps) {
 					</div>
 				</div>
 			) : (
-				<div className="text-xs text-text-3 mb-3">
-					Connected as <span className="font-mono">{githubConnection.provider_account_label}</span>.
+				<div className="flex items-center justify-between gap-2 mb-3">
+					<div className="text-xs text-text-3">
+						Connected as{' '}
+						<span className="font-mono">{githubConnection.provider_account_label}</span>.
+					</div>
+					<Button
+						variant="ghost"
+						size="sm"
+						disabled={deleteConnection.isPending}
+						onClick={() => {
+							if (
+								window.confirm(
+									`Disconnect GitHub account ${githubConnection.provider_account_label}?`,
+								)
+							) {
+								deleteConnection.mutate(githubConnection.id);
+							}
+						}}
+						data-testid="github-disconnect"
+					>
+						<Trash2 className="size-3.5 mr-1" />
+						{deleteConnection.isPending ? 'Disconnecting…' : 'Disconnect'}
+					</Button>
 				</div>
 			)}
 

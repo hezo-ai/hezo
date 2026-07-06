@@ -882,7 +882,7 @@ Fetch a remote agent skill file (Markdown describing how to use a third-party MC
 
 _Read-only._
 
-List the MCP server connections available to agent runs (instance-global — the same catalog for every team). Each row includes a derived `oauth_status` so you can tell whether a connector is usable: "active" means OAuth completed and the MCP tools should appear in your tool list on your next run; "pending" means waiting on the human to click Connect; "failed" means the OAuth flow errored (see auth_error); "revoked" means a human disconnected it; "none" means no OAuth needed (e.g., an env-var-token MCP or a public one). Do NOT confuse `install_status` (which tracks local-package install state and is meaningless for SaaS MCPs) with `oauth_status`. An active OAuth-backed connector also carries `rest_auth` = `{ placeholder, allowed_hosts, scopes }`: put `placeholder` (e.g. in an `Authorization: Bearer <placeholder>` header) on a raw HTTP request to authenticate the provider's REST API directly when no MCP tool covers what you need — the egress proxy substitutes the real token, but ONLY for requests to `allowed_hosts`; you never see the value. Use this instead of requesting a PAT (e.g. for GitHub repo-settings edits that the `github` MCP does not expose).
+List the MCP server connections available to agent runs in your project (its own connectors plus global "all projects" ones; a project connector shadows a global one of the same name). Each row includes a derived `oauth_status` so you can tell whether a connector is usable: "active" means OAuth completed and the MCP tools should appear in your tool list on your next run; "pending" means waiting on the human to click Connect; "failed" means the OAuth flow errored (see auth_error); "revoked" means a human disconnected it; "none" means no OAuth needed (e.g., an env-var-token MCP or a public one). Do NOT confuse `install_status` (which tracks local-package install state and is meaningless for SaaS MCPs) with `oauth_status`. An active OAuth-backed connector also carries `rest_auth` = `{ placeholder, allowed_hosts, scopes }`: put `placeholder` (e.g. in an `Authorization: Bearer <placeholder>` header) on a raw HTTP request to authenticate the provider's REST API directly when no MCP tool covers what you need — the egress proxy substitutes the real token, but ONLY for requests to `allowed_hosts`; you never see the value. Use this instead of requesting a PAT (e.g. for GitHub repo-settings edits that the `github` MCP does not expose).
 
 **Parameters:**
 
@@ -890,7 +890,7 @@ List the MCP server connections available to agent runs (instance-global — the
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 
-**Returns:** An array of connector rows with a derived `oauth_status` (`active` | `pending` | `failed` | `revoked` | `none`) and, for an active OAuth-backed connector, `rest_auth` = `{ placeholder, allowed_hosts, scopes }` (else `null`). Other fields include `id`, `name`, `display_name`, `kind`, `config`, `install_status`, `install_error`, `skill_id`, `created_by_task_id`, `activated_at`, `revoked_at`, `auth_error`. Instance-global.
+**Returns:** An array of connector rows with a derived `oauth_status` (`active` | `pending` | `failed` | `revoked` | `none`) and, for an active OAuth-backed connector, `rest_auth` = `{ placeholder, allowed_hosts, scopes }` (else `null`). Other fields include `id`, `name`, `display_name`, `kind`, `config`, `project_id`, `oauth_account_label`, `install_status`, `install_error`, `skill_id`, `created_by_task_id`, `activated_at`, `revoked_at`, `auth_error`. Scoped to your project: its own connectors plus global ("all projects") ones, with a project connector shadowing a global one of the same name.
 
 ### `test_connector`
 
@@ -911,7 +911,7 @@ Test an MCP connector end-to-end from the server side. Resolves the stored OAuth
 
 _Write tool._
 
-Register an MCP server (SaaS HTTP or local stdio). Connections are instance-global — available to every team's agent runs. SaaS servers go into the agent's descriptor list immediately. Header values may include __HEZO_SECRET_<NAME>__ placeholders that the egress proxy substitutes at request time. Local servers must be installed before they take effect.
+Register an MCP server (SaaS HTTP or local stdio) for your project. The connection is scoped to your project — available to this project's agent runs, alongside any global "all projects" connectors. SaaS servers go into the agent's descriptor list immediately. Header values may include __HEZO_SECRET_<NAME>__ placeholders that the egress proxy substitutes at request time. Local servers must be installed before they take effect.
 
 **Parameters:**
 
@@ -922,13 +922,13 @@ Register an MCP server (SaaS HTTP or local stdio). Connections are instance-glob
 | `kind` | `saas` \| `local` | Yes | saas = HTTP MCP, local = stdio MCP |
 | `config` | `object` | Yes | For saas: { url, headers? }. For local: { command, args?, env?, package? }. |
 
-**Returns:** `{ id, install_status, note }`, or `{ error }` if `config.url` (saas) / `config.command` (local) is missing. Upserts by `name`; instance-global.
+**Returns:** `{ id, install_status, note }`, or `{ error }` if `config.url` (saas) / `config.command` (local) is missing. Upserts by `name` within your project.
 
 ### `remove_mcp_connection`
 
 _Write tool._
 
-Remove a registered MCP connection (instance-global — removing it affects every team). The next agent run will not see it.
+Remove one of your project's registered MCP connections. Only connectors owned by your project can be removed — global "all projects" connectors and other projects' are managed elsewhere. The next agent run will not see it.
 
 **Parameters:**
 
@@ -937,7 +937,7 @@ Remove a registered MCP connection (instance-global — removing it affects ever
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `id` | `string` | Yes | mcp_connections.id (returned by add_mcp_connection or list_mcp_connections) |
 
-**Returns:** `{ removed: true, id }`, or `{ error }` if the connection is not found. Instance-global.
+**Returns:** `{ removed: true, id }`, or `{ error }` if the connection is not found. Removes only your project's own connector (never a global or another project's).
 
 ## Project docs & assets
 

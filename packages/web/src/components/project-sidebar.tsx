@@ -94,6 +94,13 @@ export function ProjectSidebar() {
 		label: 'Git',
 		testId: 'project-sidebar-git',
 	};
+	// Connectors (this project's MCP servers + GitHub) also disclose under Settings.
+	const connectorsPage = {
+		to: '/projects/$projectId/connectors',
+		params: projectParams,
+		label: 'Connectors',
+		testId: 'project-sidebar-connectors',
+	};
 
 	// Progress (the project's goals + Captain-maintained summary) leads under Inbox; it's a
 	// normal-project concept, so HQ (internal) has none.
@@ -159,9 +166,9 @@ export function ProjectSidebar() {
 						params: projectParams,
 						label: 'Settings',
 						testId: 'project-sidebar-settings',
-						// Git, Container and Activity disclose under Settings when it (or one
-						// of them) is the active route.
-						subItems: [gitPage, containerPage, activityPage],
+						// Git, Connectors, Container and Activity disclose under Settings when
+						// it (or one of them) is the active route.
+						subItems: [gitPage, connectorsPage, containerPage, activityPage],
 					},
 				]),
 	];

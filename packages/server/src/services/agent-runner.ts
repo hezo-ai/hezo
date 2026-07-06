@@ -407,7 +407,7 @@ export async function buildRuntimeInvocation(
 			url: `http://host.docker.internal:${deps.serverPort}/mcp`,
 			bearerToken: agentJwt,
 		},
-		...(await loadMcpConnectionDescriptors(deps.db, deps.masterKeyManager)),
+		...(await loadMcpConnectionDescriptors(deps.db, deps.masterKeyManager, projectId)),
 	];
 
 	const mcpInjection = adapter.build(mcpDescriptors, {
@@ -460,7 +460,12 @@ export async function buildRuntimeInvocation(
 	// Configure git author/committer identity and SSH commit signing from the
 	// team's connected GitHub account + Ed25519 key, so in-container commits
 	// don't fail for lack of an author and land Verified via the agent socket.
-	env.push(...(await buildGitIdentityEnv(deps.db, deps.masterKeyManager, runTeamId)));
+	env.push(
+		...(await buildGitIdentityEnv(deps.db, deps.masterKeyManager, {
+			projectId,
+			teamId: runTeamId,
+		})),
+	);
 	if (egress) {
 		const proxyUrl = `http://${egress.host}:${egress.port}`;
 		const noProxyHosts = [
@@ -1369,11 +1374,10 @@ async function prepareWorktrees(
 		// The team's git identity (+ signing) is passed so the worktree catch-up merge
 		// can record a (verified) merge commit; the run team owns this, matching the
 		// agent's own in-container commits.
-		const gitIdentityEnv = await buildGitIdentityEnv(
-			deps.db,
-			deps.masterKeyManager,
-			project.team_id,
-		);
+		const gitIdentityEnv = await buildGitIdentityEnv(deps.db, deps.masterKeyManager, {
+			projectId: project.id,
+			teamId: project.team_id,
+		});
 		const executor = ContainerGitExecutor.forPrep(
 			deps.docker,
 			project.container_id,

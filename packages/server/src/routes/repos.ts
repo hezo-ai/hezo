@@ -86,7 +86,9 @@ reposRoutes.post('/projects/:projectId/repos', async (c) => {
 	}
 
 	const conn = await getConnection({ db, masterKeyManager }, body.oauth_connection_id);
-	if (!conn) return err(c, 'NOT_FOUND', 'oauth connection not found', 404);
+	if (!conn || (conn.projectId !== null && conn.projectId !== projectId)) {
+		return err(c, 'NOT_FOUND', 'oauth connection not found', 404);
+	}
 	if (conn.provider !== 'github') {
 		return err(c, 'INVALID_REQUEST', 'oauth connection is not for GitHub', 400);
 	}
@@ -270,11 +272,15 @@ reposRoutes.delete('/projects/:projectId/repos/:repoId', async (c) => {
 });
 
 reposRoutes.get('/projects/:projectId/oauth-connections/:id/orgs', async (c) => {
-	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
+	const projectId = c.get('projectId') as string;
 	const masterKeyManager = c.get('masterKeyManager');
 	const conn = await getConnection({ db, masterKeyManager }, c.req.param('id'));
-	if (!conn || conn.provider !== 'github')
+	if (
+		!conn ||
+		conn.provider !== 'github' ||
+		(conn.projectId !== null && conn.projectId !== projectId)
+	)
 		return err(c, 'NOT_FOUND', 'github connection not found', 404);
 
 	const token = await loadOAuthAccessToken(db, masterKeyManager, conn.id);
@@ -286,14 +292,18 @@ reposRoutes.get('/projects/:projectId/oauth-connections/:id/orgs', async (c) => 
 });
 
 reposRoutes.get('/projects/:projectId/oauth-connections/:id/repos', async (c) => {
-	const teamId = c.get('teamId') as string;
 	const owner = c.req.query('owner');
 	const query = c.req.query('q') ?? undefined;
 	if (!owner) return err(c, 'INVALID_REQUEST', 'owner query parameter is required', 400);
 	const db = c.get('db');
+	const projectId = c.get('projectId') as string;
 	const masterKeyManager = c.get('masterKeyManager');
 	const conn = await getConnection({ db, masterKeyManager }, c.req.param('id'));
-	if (!conn || conn.provider !== 'github')
+	if (
+		!conn ||
+		conn.provider !== 'github' ||
+		(conn.projectId !== null && conn.projectId !== projectId)
+	)
 		return err(c, 'NOT_FOUND', 'github connection not found', 404);
 	const token = await loadOAuthAccessToken(db, masterKeyManager, conn.id);
 	if (!token) return err(c, 'OAUTH_TOKEN_UNAVAILABLE', 'token unavailable', 503);

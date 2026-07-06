@@ -4,9 +4,9 @@ import { logger } from '../../logger';
 
 const log = logger.child('connector-lifecycle');
 
-// Connectors are instance-global; rows carry no team/project scope.
+// Connectors are scoped by project_id (NULL = global "all projects" scope).
 const CONNECTOR_COLS = `id, name, display_name, kind::text AS kind,
-        config, oauth_connection_id, install_status::text AS install_status,
+        config, oauth_connection_id, project_id, install_status::text AS install_status,
         install_error, skill_id, created_by_task_id,
         activated_at::text AS activated_at, revoked_at::text AS revoked_at, auth_error,
         created_at::text AS created_at, updated_at::text AS updated_at`;
@@ -23,6 +23,8 @@ export interface CreateConnectorInput {
 	skillId?: string | null;
 	createdByTaskId?: string | null;
 	providerId?: string | null;
+	/** Owning project, or null for a global ("all projects") connector. */
+	projectId?: string | null;
 }
 
 export interface ConnectorRow {
@@ -32,6 +34,7 @@ export interface ConnectorRow {
 	kind: string;
 	config: Record<string, unknown>;
 	oauth_connection_id: string | null;
+	project_id: string | null;
 	install_status: string;
 	install_error: string | null;
 	skill_id: string | null;
@@ -55,17 +58,23 @@ export function statusOf(
 }
 
 /**
- * Idempotently create or fetch a connector. Connectors are global, so the
- * idempotency key is `name`. If one already exists, returns it without
- * modification (restoring a previously-revoked row for re-authorization).
+ * Idempotently create or fetch a connector. Connectors are scoped by project, so
+ * the idempotency key is `(project_id, name)`. The lookup is *strictly* scoped —
+ * it must NOT fall back to a global row of the same name, or a project's "connect"
+ * would return another project's (or the shared global) connector and its token,
+ * reintroducing the cross-project bleed. If one already exists in this scope,
+ * returns it without modification (restoring a previously-revoked row for
+ * re-authorization).
  */
 export async function createOrFetchConnector(
 	db: Db,
 	input: CreateConnectorInput,
 ): Promise<{ row: ConnectorRow; alreadyExisted: boolean }> {
+	const projectId = input.projectId ?? null;
 	const existing = await db.query<ConnectorRow>(
-		`SELECT ${CONNECTOR_COLS} FROM mcp_connections WHERE name = $1`,
-		[input.name],
+		`SELECT ${CONNECTOR_COLS} FROM mcp_connections
+		 WHERE name = $1 AND project_id IS NOT DISTINCT FROM $2`,
+		[input.name, projectId],
 	);
 	const existingRow = existing.rows[0];
 	if (existingRow) {
@@ -104,11 +113,11 @@ export async function createOrFetchConnector(
 	const inserted = await db.query<ConnectorRow>(
 		`INSERT INTO mcp_connections (
 		    name, display_name, kind, config,
-		    install_status, skill_id, created_by_task_id
+		    install_status, skill_id, created_by_task_id, project_id
 		 )
 		 VALUES (
 		    $1, $2, $3::mcp_connection_kind, $4::jsonb,
-		    'pending'::mcp_install_status, $5, $6
+		    'pending'::mcp_install_status, $5, $6, $7
 		 )
 		 RETURNING ${CONNECTOR_COLS}`,
 		[
@@ -118,6 +127,7 @@ export async function createOrFetchConnector(
 			JSON.stringify(config),
 			input.skillId ?? null,
 			input.createdByTaskId ?? null,
+			projectId,
 		],
 	);
 	log.info('connector created', {
@@ -181,7 +191,20 @@ export async function getConnector(db: Db, connectorId: string): Promise<Connect
 	return result.rows[0] ?? null;
 }
 
-export async function listConnectors(db: Db): Promise<ConnectorRow[]> {
+/**
+ * List connectors. With `projectId`, returns that project's own connectors plus
+ * global ("all projects") ones; omit for the instance-admin view (all rows).
+ */
+export async function listConnectors(db: Db, projectId?: string | null): Promise<ConnectorRow[]> {
+	if (projectId != null) {
+		const result = await db.query<ConnectorRow>(
+			`SELECT ${CONNECTOR_COLS} FROM mcp_connections
+			 WHERE project_id = $1 OR project_id IS NULL
+			 ORDER BY created_at ASC`,
+			[projectId],
+		);
+		return result.rows;
+	}
 	const result = await db.query<ConnectorRow>(
 		`SELECT ${CONNECTOR_COLS} FROM mcp_connections ORDER BY created_at ASC`,
 	);

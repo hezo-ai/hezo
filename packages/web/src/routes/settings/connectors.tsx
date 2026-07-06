@@ -1,7 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
 import { Plus, Trash2 } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { InPlaceForm } from '../../components/ui/in-place-form';
@@ -16,6 +16,14 @@ import {
 } from '../../hooks/use-instance-connectors';
 import { connectorStatus, type McpConnection } from '../../hooks/use-mcp-connections';
 import { useMe } from '../../hooks/use-me';
+import { useAllVisibleProjects } from '../../hooks/use-projects';
+
+// Scope filter sentinel: show/create against "all projects" (a global connector,
+// project_id null). Any other value is a concrete project id.
+const ALL_PROJECTS = 'all';
+
+const SELECT_CLASS =
+	'rounded-md border border-border bg-surface-2 px-3 py-1.5 text-[13px] text-text-1 outline-none focus:border-border-strong';
 
 function openAuthPopup(authUrl: string): string | null {
 	const popup = window.open(authUrl, 'hezo-connect', 'width=600,height=720');
@@ -26,6 +34,7 @@ function InstanceConnectorsPage() {
 	const { data: me } = useMe();
 	const { focus } = Route.useSearch();
 	const { data: connectors = [] } = useInstanceConnectors();
+	const { projects } = useAllVisibleProjects();
 	const createConnector = useCreateInstanceConnector();
 	const authStart = useInstanceAuthStart();
 	const queryClient = useQueryClient();
@@ -36,10 +45,20 @@ function InstanceConnectorsPage() {
 		if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
 	}, []);
 
+	// The scope filter doubles as the create scope: `all` shows every connector
+	// and adds a global one; a project id filters to that project and adds there.
+	const [scope, setScope] = useState<string>(ALL_PROJECTS);
 	const [showForm, setShowForm] = useState(false);
 	const [name, setName] = useState('');
 	const [url, setUrl] = useState('');
 	const [error, setError] = useState<string | null>(null);
+
+	const visibleConnectors = useMemo(
+		() => (scope === ALL_PROJECTS ? connectors : connectors.filter((c) => c.project_id === scope)),
+		[connectors, scope],
+	);
+	const scopeName =
+		scope === ALL_PROJECTS ? null : (projects.find((p) => p.id === scope)?.name ?? 'this project');
 
 	function closeForm() {
 		setShowForm(false);
@@ -75,6 +94,7 @@ function InstanceConnectorsPage() {
 				name: name.trim(),
 				kind: 'saas',
 				config: { url: url.trim() },
+				project_id: scope === ALL_PROJECTS ? null : scope,
 			});
 		} catch (err) {
 			setError(err instanceof Error ? err.message : 'Failed to create connector');
@@ -117,7 +137,8 @@ function InstanceConnectorsPage() {
 							/>
 						</div>
 						<p className="text-[13px] text-text-2 mt-1 max-w-[680px]">
-							Remote (SaaS) MCP servers shared with every team's agent runs.
+							Remote (SaaS) MCP servers across every project. Each project's runs see its own
+							connectors plus any scoped to "All projects".
 						</p>
 					</div>
 					<Button variant="secondary" size="sm" onClick={() => setShowForm((s) => !s)}>
@@ -125,8 +146,37 @@ function InstanceConnectorsPage() {
 					</Button>
 				</div>
 
+				<div className="flex items-center gap-2 mb-4">
+					<label htmlFor="connector-scope" className="text-[13px] text-text-2">
+						Scope
+					</label>
+					<select
+						id="connector-scope"
+						aria-label="Filter connectors by project"
+						data-testid="connector-scope-filter"
+						value={scope}
+						onChange={(e) => setScope(e.target.value)}
+						className={SELECT_CLASS}
+					>
+						<option value={ALL_PROJECTS}>All projects</option>
+						{projects.map((p) => (
+							<option key={p.id} value={p.id}>
+								{p.name}
+							</option>
+						))}
+					</select>
+				</div>
+
 				{showForm && (
-					<InPlaceForm title="Add connector" onClose={closeForm} onSubmit={handleCreate}>
+					<InPlaceForm
+						title={
+							scope === ALL_PROJECTS
+								? 'Add connector (All projects)'
+								: `Add connector — ${scopeName}`
+						}
+						onClose={closeForm}
+						onSubmit={handleCreate}
+					>
 						<Input
 							placeholder="Name (e.g. shared-docs)"
 							value={name}
@@ -154,13 +204,15 @@ function InstanceConnectorsPage() {
 				    closes, so popup-blocked / auth-start errors need a home too. */}
 				{error && <p className="text-[13px] text-danger mb-4">{error}</p>}
 
-				{!connectors.length ? (
+				{!visibleConnectors.length ? (
 					<p className="text-[13px] text-text-2">
-						No instance connectors yet. Add one above to share it across every team.
+						{scope === ALL_PROJECTS
+							? 'No connectors yet. Add one above to share it across every project.'
+							: `No connectors scoped to ${scopeName} yet.`}
 					</p>
 				) : (
 					<div className="flex flex-col gap-1">
-						{connectors.map((c) => (
+						{visibleConnectors.map((c) => (
 							<InstanceConnectorRow
 								key={c.id}
 								connector={c}
@@ -190,6 +242,7 @@ function InstanceConnectorRow({ connector, focused, focusRef }: InstanceConnecto
 	const status = connectorStatus(connector);
 
 	const url = typeof connector.config?.url === 'string' ? connector.config.url : '';
+	const scopeLabel = connector.project_id ? (connector.project_name ?? 'Project') : 'All projects';
 
 	const openConnect = () => {
 		setRowError(null);
@@ -224,9 +277,15 @@ function InstanceConnectorRow({ connector, focused, focusRef }: InstanceConnecto
 			<div className="flex flex-wrap items-center gap-2">
 				<span className="font-medium">{connector.display_name || connector.name}</span>
 				<Badge color="neutral">{connector.kind}</Badge>
+				<Badge color={connector.project_id ? 'blue' : 'gray'}>{scopeLabel}</Badge>
 				{status === 'active' && <Badge color="success">Connected</Badge>}
 				{status === 'failed' && <Badge color="danger">Failed</Badge>}
 				{status === 'revoked' && <Badge>Revoked</Badge>}
+				{connector.oauth_account_label && (
+					<span className="text-xs text-text-2 font-mono" data-testid="connector-account">
+						{connector.oauth_account_label}
+					</span>
+				)}
 				<span className="text-xs text-text-3 font-mono truncate flex-1 min-w-0 basis-24">
 					{url}
 				</span>
@@ -245,9 +304,7 @@ function InstanceConnectorRow({ connector, focused, focusRef }: InstanceConnecto
 					<button
 						type="button"
 						onClick={() => {
-							if (
-								confirm(`Remove instance connector "${connector.display_name || connector.name}"?`)
-							) {
+							if (confirm(`Remove connector "${connector.display_name || connector.name}"?`)) {
 								deleteConnector.mutate(connector.id);
 							}
 						}}
