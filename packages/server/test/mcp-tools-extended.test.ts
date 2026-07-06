@@ -627,9 +627,9 @@ describe('MCP register_connector', () => {
 			[secret.rows[0].id],
 		);
 		await db.query(
-			`INSERT INTO mcp_connections (name, display_name, kind, config, install_status, oauth_connection_id, activated_at)
-			 VALUES ('already-active', 'Already Active', 'saas'::mcp_connection_kind, $1::jsonb, 'installed'::mcp_install_status, $2, now())`,
-			[JSON.stringify({ url: 'https://mcp.active.com/' }), oauth.rows[0].id],
+			`INSERT INTO mcp_connections (name, display_name, kind, config, install_status, oauth_connection_id, activated_at, project_id)
+			 VALUES ('already-active', 'Already Active', 'saas'::mcp_connection_kind, $1::jsonb, 'installed'::mcp_install_status, $2, now(), $3)`,
+			[JSON.stringify({ url: 'https://mcp.active.com/' }), oauth.rows[0].id, projectId],
 		);
 
 		const result = (await callToolAs(await captainToken(), 'register_connector', {

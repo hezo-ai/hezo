@@ -146,6 +146,18 @@ teamsRoutes.delete('/projects/:projectId/team', async (c) => {
 		return err(c, 'NOT_FOUND', 'Team not found', 404);
 	}
 
+	// Purge the OAuth connections + vault secrets of every project the team backs
+	// before the cascade delete, so their encrypted tokens don't orphan (the
+	// project_id cascade drops the connection rows but not their `secrets`).
+	const { deleteProjectConnections } = await import('../services/oauth/connection-store');
+	const masterKeyManager = c.get('masterKeyManager');
+	const projects = await db.query<{ id: string }>(`SELECT id FROM projects WHERE team_id = $1`, [
+		teamId,
+	]);
+	for (const project of projects.rows) {
+		await deleteProjectConnections({ db, masterKeyManager }, project.id);
+	}
+
 	await db.query('DELETE FROM teams WHERE id = $1', [teamId]);
 	return c.json({ data: null }, 200);
 });

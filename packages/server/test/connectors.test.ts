@@ -602,6 +602,46 @@ describe('loadMcpConnectionsForRun excludes pending/revoked', () => {
 		expect(rows.find((r) => r.name === 'dcr-pending')).toBeUndefined();
 		expect(rows.find((r) => r.name === 'oauth-failed')).toBeUndefined();
 	});
+
+	it('scopes to the run project (own + global) and a project connector shadows a global one', async () => {
+		const { loadMcpConnectionsForRun } = await import('../src/services/mcp-connections');
+		// A second project (its own team — one project per team) whose connector
+		// must never appear for our project.
+		const otherTeam = await db.query<{ id: string }>(
+			`INSERT INTO teams (name, slug) VALUES ('Other Run Team', 'other-run-team') RETURNING id`,
+		);
+		const otherProject = await db.query<{ id: string }>(
+			`INSERT INTO projects (team_id, name, slug, task_prefix) VALUES ($1, 'Other', 'other-run', 'OTHR') RETURNING id`,
+			[otherTeam.rows[0].id],
+		);
+		await db.query(
+			`INSERT INTO mcp_connections (name, kind, config, install_status, project_id)
+			 VALUES ('other-only', 'saas', '{"url":"https://other/mcp"}'::jsonb, 'installed', $1)`,
+			[otherProject.rows[0].id],
+		);
+		// A global 'shared' and this project's own 'shared' — the project one wins.
+		await db.query(
+			`INSERT INTO mcp_connections (name, kind, config, install_status, project_id)
+			 VALUES ('shared', 'saas', '{"url":"https://global/mcp"}'::jsonb, 'installed', NULL)`,
+		);
+		await db.query(
+			`INSERT INTO mcp_connections (name, kind, config, install_status, project_id)
+			 VALUES ('shared', 'saas', '{"url":"https://project/mcp"}'::jsonb, 'installed', $1)`,
+			[projectId],
+		);
+		// A plain global connector remains visible to every project.
+		await db.query(
+			`INSERT INTO mcp_connections (name, kind, config, install_status, project_id)
+			 VALUES ('global-visible', 'saas', '{"url":"https://gv/mcp"}'::jsonb, 'installed', NULL)`,
+		);
+
+		const rows = await loadMcpConnectionsForRun(db, projectId);
+		expect(rows.find((r) => r.name === 'other-only')).toBeUndefined();
+		expect(rows.find((r) => r.name === 'global-visible')).toBeTruthy();
+		const shared = rows.filter((r) => r.name === 'shared');
+		expect(shared).toHaveLength(1);
+		expect((shared[0].config as { url: string }).url).toBe('https://project/mcp');
+	});
 });
 
 // Importing CommentContentType keeps the symbol used so test isolation imports

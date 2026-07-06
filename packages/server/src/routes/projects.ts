@@ -584,6 +584,12 @@ projectsRoutes.delete('/projects/:projectId', async (c) => {
 			}),
 	);
 
+	// Purge the project's OAuth connections + their vault secrets before the row
+	// delete: the project_id cascade drops the connection rows but would orphan
+	// their encrypted token secrets otherwise.
+	const { deleteProjectConnections } = await import('../services/oauth/connection-store');
+	await deleteProjectConnections({ db, masterKeyManager: c.get('masterKeyManager') }, projectId);
+
 	await db.query('DELETE FROM projects WHERE id = $1', [projectId]);
 	broadcastChange(c, wsRoom.team(teamId), 'projects', 'DELETE', { id: projectId });
 	return c.json({ data: null }, 200);

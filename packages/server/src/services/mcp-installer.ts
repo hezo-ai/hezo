@@ -72,15 +72,16 @@ export async function installLocalMcpById(
 }
 
 async function loadPending(deps: InstallerDeps): Promise<PendingRow[]> {
-	// Connectors are global; the installer provisions every pending local MCP
-	// into this run's container (deps.teamId/projectId pick the container, not
-	// the connector rows).
+	// Provision the pending local MCPs this project's runs can see: its own plus
+	// global ("all projects") rows. deps.projectId scopes both the connector rows
+	// and (via deps.containerId) the target container.
 	const result = await deps.db.query<PendingRow>(
 		`SELECT id, name, config
 		 FROM mcp_connections
 		 WHERE kind = $1::mcp_connection_kind
-		   AND install_status <> $2::mcp_install_status`,
-		[McpConnectionKind.Local, McpInstallStatus.Installed],
+		   AND install_status <> $2::mcp_install_status
+		   AND (project_id = $3 OR project_id IS NULL)`,
+		[McpConnectionKind.Local, McpInstallStatus.Installed, deps.projectId],
 	);
 	return result.rows;
 }

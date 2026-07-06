@@ -3,10 +3,12 @@ import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
 import type { McpConnection } from './use-mcp-connections';
 
-// Instance-level connectors (mcp_connections with team_id NULL) are shared with
-// every team. Only the Admin (superuser) manages them, via the un-prefixed
-// /api/mcp-connections routes. SaaS (remote URL) only — local MCPs carry
-// per-container install state and stay per-team.
+// The admin (superuser) connectors surface. Its list spans EVERY project's
+// connectors plus global ("all projects") ones (project_id NULL), via the
+// un-prefixed /api/mcp-connections routes, so it can render a per-project scope
+// filter. Create targets the selected scope: a project_id, or none for a global
+// connector. SaaS (remote URL) only — local MCPs carry per-container install
+// state and are managed on the project.
 export const INSTANCE_CONNECTORS_KEY = ['instance', 'mcp-connections'] as const;
 
 export interface CreateInstanceConnectorPayload {
@@ -14,6 +16,8 @@ export interface CreateInstanceConnectorPayload {
 	display_name?: string;
 	kind: 'saas';
 	config: { url: string; headers?: Record<string, string> };
+	/** Target project, or omitted/null for a global ("all projects") connector. */
+	project_id?: string | null;
 }
 
 export function useInstanceConnectors() {

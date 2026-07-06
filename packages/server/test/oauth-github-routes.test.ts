@@ -178,7 +178,7 @@ describe('GitHub device-flow connector', () => {
 		const otherConnector = await db.query<{ id: string }>(
 			`INSERT INTO mcp_connections (name, display_name, kind, config, install_status)
 			 VALUES ('github', 'GitHub', 'saas'::mcp_connection_kind, '{}'::jsonb, 'installed')
-			 ON CONFLICT (name) DO UPDATE SET display_name = EXCLUDED.display_name
+			 ON CONFLICT (name) WHERE project_id IS NULL DO UPDATE SET display_name = EXCLUDED.display_name
 			 RETURNING id`,
 		);
 		const start = await app.request(

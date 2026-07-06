@@ -50,9 +50,19 @@ choice.
 
 ## Where a connection applies
 
-MCP connections are **global**: there's a single shared catalog and each
-connection name is unique across the instance. Once you add a server it's available to
-every team's agent runs.
+MCP connections are **scoped by project**. A connection you add to a project is private to
+that project's agent runs, so two projects can each connect a *different* account for the
+same provider (for example, a separate GitHub account per project) without one bleeding
+into the other. Each project's runs see its own connections plus any connection scoped to
+**All projects** — the global scope for servers you want shared everywhere. When a project
+and the global scope both define a connection of the same name, the project's own wins.
+
+Manage connections two ways:
+
+- **Project → Settings → Connectors** shows just that project's connectors.
+- The global **Settings → Connectors** page (admin) lists connectors across every project,
+  with a scope filter — **All projects** or a specific project — to narrow the view and
+  choose where a newly added connector lives.
 
 ## Adding a connection
 

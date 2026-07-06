@@ -60,17 +60,20 @@ export function gitConfigEnv(identity: GitIdentity): string[] {
 }
 
 /**
- * Resolve the Git identity: author/committer from the instance-global GitHub
- * connection (most recent wins), and the commit-signing key from the team's own
- * Ed25519 key (the signing identity stays per-team). Falls back to a generic
- * identity so `git commit` never fails for lack of a configured author.
+ * Resolve the Git identity: author/committer from the project's own GitHub
+ * connection (a global "all projects" connection is the fallback; the project's
+ * own always wins), and the commit-signing key from the team's own Ed25519 key
+ * (the signing identity stays per-team). Falls back to a generic identity so
+ * `git commit` never fails for lack of a configured author. `listConnections`
+ * already orders the project's own connections ahead of global ones, so the
+ * first github row is the correct one for this project.
  */
 export async function resolveGitIdentity(
 	db: Db,
 	masterKeyManager: MasterKeyManager,
-	teamId: string,
+	scope: { projectId: string; teamId: string },
 ): Promise<GitIdentity> {
-	const connections = await listConnections({ db, masterKeyManager });
+	const connections = await listConnections({ db, masterKeyManager }, scope.projectId);
 	const github = connections.find((c) => c.provider === 'github');
 	const derived = github
 		? deriveGitHubIdentity(github.metadata, github.providerAccountLabel)
@@ -78,7 +81,7 @@ export async function resolveGitIdentity(
 
 	const keyRow = await db.query<{ public_key: string }>(
 		`SELECT public_key FROM team_ssh_keys WHERE team_id = $1`,
-		[teamId],
+		[scope.teamId],
 	);
 
 	return {
@@ -91,7 +94,7 @@ export async function resolveGitIdentity(
 export async function buildGitIdentityEnv(
 	db: Db,
 	masterKeyManager: MasterKeyManager,
-	teamId: string,
+	scope: { projectId: string; teamId: string },
 ): Promise<string[]> {
-	return gitConfigEnv(await resolveGitIdentity(db, masterKeyManager, teamId));
+	return gitConfigEnv(await resolveGitIdentity(db, masterKeyManager, scope));
 }

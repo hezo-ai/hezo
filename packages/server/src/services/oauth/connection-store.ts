@@ -18,6 +18,8 @@ export interface OAuthConnectionRow {
 	scopes: string[];
 	expiresAt: Date | null;
 	metadata: Record<string, unknown>;
+	/** Owning project, or null for a global ("all projects") connection. */
+	projectId: string | null;
 	createdAt: Date;
 	updatedAt: Date;
 }
@@ -38,6 +40,12 @@ export interface CreateConnectionInput {
 	metadata?: Record<string, unknown>;
 	/** Hosts the access token is allowed to be substituted on. Required. */
 	allowedHosts: string[];
+	/**
+	 * Owning project. A non-null value scopes the connection to that project so
+	 * two projects can connect separate upstream accounts; null keeps the
+	 * historical global ("all projects") scope (the instance-admin surface).
+	 */
+	projectId?: string | null;
 }
 
 export interface UpdateTokensInput {
@@ -96,12 +104,20 @@ export async function createConnection(
 			refreshSecretId = refreshSecret.rows[0].id;
 		}
 
+		// Reconnecting the same account within the same scope updates the existing
+		// row. Two partial unique indexes back the scoping (one for project_id
+		// NULL, one for non-NULL), so the conflict target must name the matching
+		// index for the row being written — a single ON CONFLICT can't infer both.
+		const projectId = input.projectId ?? null;
+		const conflictTarget = projectId
+			? '(project_id, provider, provider_account_id) WHERE project_id IS NOT NULL'
+			: '(provider, provider_account_id) WHERE project_id IS NULL';
 		const conn = await deps.db.query<RawConnRow>(
 			`INSERT INTO oauth_connections
 				(id, provider, provider_account_id, provider_account_label,
-				 access_token_secret_id, refresh_token_secret_id, scopes, expires_at, metadata)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-			 ON CONFLICT (provider, provider_account_id)
+				 access_token_secret_id, refresh_token_secret_id, scopes, expires_at, metadata, project_id)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			 ON CONFLICT ${conflictTarget}
 			 DO UPDATE SET
 				provider_account_label = EXCLUDED.provider_account_label,
 				access_token_secret_id = EXCLUDED.access_token_secret_id,
@@ -120,6 +136,7 @@ export async function createConnection(
 				input.scopes,
 				input.expiresAt ?? null,
 				JSON.stringify(input.metadata ?? {}),
+				projectId,
 			],
 		);
 
@@ -149,14 +166,32 @@ export async function getConnection(
 	return mapRow(result.rows[0], result.rows[0].access_token_secret_name);
 }
 
-// OAuth connections are instance-global. Listing/lookup are team-agnostic.
-export async function listConnections(deps: ConnectionStoreDeps): Promise<OAuthConnectionRow[]> {
-	const result = await deps.db.query<RawConnRow>(
-		`SELECT oc.*, s.name AS access_token_secret_name
-		 FROM oauth_connections oc
-		 JOIN secrets s ON s.id = oc.access_token_secret_id
-		 ORDER BY oc.created_at DESC`,
-	);
+/**
+ * List OAuth connections. When `projectId` is given, returns that project's own
+ * connections plus global ("all projects") ones, with the project's own first so
+ * a caller taking "the first github" resolves the project-scoped account over a
+ * global fallback. Omit `projectId` for the instance-admin view (all rows).
+ */
+export async function listConnections(
+	deps: ConnectionStoreDeps,
+	projectId?: string | null,
+): Promise<OAuthConnectionRow[]> {
+	const result =
+		projectId != null
+			? await deps.db.query<RawConnRow>(
+					`SELECT oc.*, s.name AS access_token_secret_name
+					 FROM oauth_connections oc
+					 JOIN secrets s ON s.id = oc.access_token_secret_id
+					 WHERE oc.project_id = $1 OR oc.project_id IS NULL
+					 ORDER BY (oc.project_id IS NULL) ASC, oc.created_at DESC`,
+					[projectId],
+				)
+			: await deps.db.query<RawConnRow>(
+					`SELECT oc.*, s.name AS access_token_secret_name
+					 FROM oauth_connections oc
+					 JOIN secrets s ON s.id = oc.access_token_secret_id
+					 ORDER BY oc.created_at DESC`,
+				);
 	return result.rows.map((r) => mapRow(r, r.access_token_secret_name));
 }
 
@@ -164,13 +199,15 @@ export async function findConnectionByAccount(
 	deps: ConnectionStoreDeps,
 	provider: string,
 	providerAccountId: string,
+	projectId?: string | null,
 ): Promise<OAuthConnectionRow | null> {
 	const result = await deps.db.query<RawConnRow>(
 		`SELECT oc.*, s.name AS access_token_secret_name
 		 FROM oauth_connections oc
 		 JOIN secrets s ON s.id = oc.access_token_secret_id
-		 WHERE oc.provider = $1 AND oc.provider_account_id = $2`,
-		[provider, providerAccountId],
+		 WHERE oc.provider = $1 AND oc.provider_account_id = $2
+		   AND oc.project_id IS NOT DISTINCT FROM $3`,
+		[provider, providerAccountId, projectId ?? null],
 	);
 	if (result.rows.length === 0) return null;
 	return mapRow(result.rows[0], result.rows[0].access_token_secret_name);
@@ -212,6 +249,27 @@ export async function deleteConnection(
 
 	if (deleted) log.info('oauth connection deleted', { id: connectionId });
 	return deleted;
+}
+
+/**
+ * Delete every OAuth connection owned by a project, along with its encrypted
+ * token secrets. Must run BEFORE the project (or its team) is deleted: the
+ * `project_id` FK cascade would drop the `oauth_connections` / `mcp_connections`
+ * rows but leave their `secrets` orphaned in the global vault (still
+ * egress-substitutable within their allowed_hosts). Returns the count purged.
+ */
+export async function deleteProjectConnections(
+	deps: ConnectionStoreDeps,
+	projectId: string,
+): Promise<number> {
+	const rows = await deps.db.query<{ id: string }>(
+		`SELECT id FROM oauth_connections WHERE project_id = $1`,
+		[projectId],
+	);
+	for (const row of rows.rows) {
+		await deleteConnection(deps, row.id);
+	}
+	return rows.rows.length;
 }
 
 export async function updateTokens(
@@ -268,6 +326,7 @@ interface RawConnRow {
 	scopes: string[];
 	expires_at: Date | null;
 	metadata: Record<string, unknown>;
+	project_id: string | null;
 	created_at: Date;
 	updated_at: Date;
 }
@@ -284,6 +343,7 @@ function mapRow(row: RawConnRow, accessName: string): OAuthConnectionRow {
 		scopes: row.scopes ?? [],
 		expiresAt: row.expires_at,
 		metadata: row.metadata ?? {},
+		projectId: row.project_id ?? null,
 		createdAt: row.created_at,
 		updatedAt: row.updated_at,
 	};

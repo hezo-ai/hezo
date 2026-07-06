@@ -59,7 +59,7 @@ test('the blurb is a single sentence and the add form is a dismissible standout 
 	await findByText('Connectors', { selector: 'h1' });
 	// The blurb is just the first sentence; the OAuth/placeholder detail moved
 	// into the info tooltip (unmounted until hover).
-	await findByText("Remote (SaaS) MCP servers shared with every team's agent runs.");
+	await findByText(/Remote \(SaaS\) MCP servers across every project\./);
 	expect(queryByText(/Servers that advertise OAuth/)).toBeNull();
 
 	// The form opens inside the titled panel, without a display-name field —

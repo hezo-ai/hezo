@@ -48,6 +48,14 @@ const log = logger.child('oauth-route');
 
 export const oauthRoutes = new Hono<Env>();
 
+/** A project may see its own connections and global ("all projects") ones. */
+function connectionVisibleToProject(
+	conn: { projectId: string | null },
+	projectId: string,
+): boolean {
+	return conn.projectId === null || conn.projectId === projectId;
+}
+
 /**
  * In-flight GitHub device-flow handshakes, keyed by an opaque flow id handed
  * to the client. The device code never leaves the server. Entries are pruned
@@ -56,6 +64,7 @@ export const oauthRoutes = new Hono<Env>();
 interface DeviceFlowEntry {
 	deviceCode: string;
 	teamId: string;
+	projectId: string;
 	connectorId: string;
 	scopes: string[];
 	expiresAt: number;
@@ -122,6 +131,7 @@ oauthRoutes.get('/oauth/callback', async (c) => {
 				: payload.manualConfig.scopes,
 			expiresAt: token.expiresAt ?? null,
 			allowedHosts,
+			projectId: payload.projectId,
 			metadata: {
 				resource_url: payload.resourceUrl,
 				token_url: payload.manualConfig.token_url,
@@ -231,6 +241,7 @@ oauthRoutes.post('/projects/:projectId/oauth/auth-code/start', async (c) => {
 
 	const { state, codeChallenge } = await signState(masterKeyManager, {
 		teamId: teamId,
+		projectId: c.get('projectId') as string,
 		provider: body.provider,
 		redirectUri,
 		returnTo: body.return_to ?? '/',
@@ -267,6 +278,8 @@ type StartConnectorAuthCodeOutcome =
 interface StartConnectorAuthCodeOpts {
 	/** Team that initiated the connect; null for the instance-admin surface. */
 	teamId: string | null;
+	/** Project that initiated the connect; null for the instance-admin surface. */
+	projectId: string | null;
 	/** Path the callback page navigates to when opened without a popup opener. */
 	returnTo: string;
 	/**
@@ -418,6 +431,7 @@ async function startConnectorAuthCode(
 
 	const { state, codeChallenge } = await signState(masterKeyManager, {
 		teamId: opts.teamId,
+		projectId: opts.projectId,
 		provider: `mcp:${connector.id}`,
 		redirectUri,
 		returnTo: opts.returnTo,
@@ -458,6 +472,7 @@ oauthRoutes.post('/projects/:projectId/auth-start', async (c) => {
 
 	const result = await startConnectorAuthCode(c, body.connector_id, {
 		teamId,
+		projectId: c.get('projectId') as string,
 		returnTo: `/projects/${c.req.param('projectId')}/connectors?focus=${body.connector_id}`,
 	});
 	if (result.kind === 'error') return err(c, result.code, result.message, result.status);
@@ -482,6 +497,7 @@ oauthRoutes.post('/mcp-connections/:id/auth-start', async (c) => {
 
 	const result = await startConnectorAuthCode(c, connectorId, {
 		teamId: null,
+		projectId: null,
 		returnTo: `/settings/connectors?focus=${connectorId}`,
 		missingPrmMeansNoOAuth: true,
 	});
@@ -550,6 +566,7 @@ oauthRoutes.get('/oauth/mcp-callback', async (c) => {
 	try {
 		await finalizeConnectorConnection(c, {
 			teamId: payload.teamId,
+			projectId: payload.projectId,
 			connector,
 			capability: getConnectorCapability(connector.name),
 			provider: payload.provider,
@@ -577,8 +594,9 @@ oauthRoutes.get('/oauth/mcp-callback', async (c) => {
 oauthRoutes.get('/projects/:projectId/oauth-connections', async (c) => {
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
-	// OAuth connections are instance-global; the in-project page lists them all.
-	const list = await listConnections({ db, masterKeyManager });
+	const projectId = c.get('projectId') as string;
+	// This project's own connections plus global ("all projects") ones.
+	const list = await listConnections({ db, masterKeyManager }, projectId);
 
 	return ok(
 		c,
@@ -590,6 +608,7 @@ oauthRoutes.get('/projects/:projectId/oauth-connections', async (c) => {
 			scopes: conn.scopes,
 			expires_at: conn.expiresAt,
 			metadata: conn.metadata,
+			project_id: conn.projectId,
 			created_at: conn.createdAt,
 			updated_at: conn.updatedAt,
 		})),
@@ -601,8 +620,11 @@ oauthRoutes.get('/projects/:projectId/oauth-connections/:id/scope-status', async
 	const masterKeyManager = c.get('masterKeyManager');
 	const id = c.req.param('id');
 
+	const projectId = c.get('projectId') as string;
 	const conn = await getConnection({ db, masterKeyManager }, id);
-	if (!conn) return err(c, 'NOT_FOUND', 'oauth connection not found', 404);
+	if (!conn || !connectionVisibleToProject(conn, projectId)) {
+		return err(c, 'NOT_FOUND', 'oauth connection not found', 404);
+	}
 	if (conn.provider !== 'github') {
 		return err(c, 'INVALID_REQUEST', 'scope-status is only supported for github connections', 400);
 	}
@@ -612,12 +634,15 @@ oauthRoutes.get('/projects/:projectId/oauth-connections/:id/scope-status', async
 
 oauthRoutes.delete('/projects/:projectId/oauth-connections/:id', async (c) => {
 	const teamId = c.get('teamId') as string;
+	const projectId = c.get('projectId') as string;
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
 	const id = c.req.param('id');
 
 	const conn = await getConnection({ db, masterKeyManager }, id);
-	if (!conn) return err(c, 'NOT_FOUND', 'oauth connection not found', 404);
+	if (!conn || !connectionVisibleToProject(conn, projectId)) {
+		return err(c, 'NOT_FOUND', 'oauth connection not found', 404);
+	}
 
 	const ok2 = await deleteConnection({ db, masterKeyManager }, id);
 	if (!ok2) return err(c, 'NOT_FOUND', 'oauth connection not found', 404);
@@ -667,6 +692,7 @@ oauthRoutes.post('/projects/:projectId/connectors/:connectorId/device/start', as
 	deviceFlows.set(flowId, {
 		deviceCode: started.deviceCode,
 		teamId,
+		projectId: c.get('projectId') as string,
 		connectorId,
 		scopes,
 		expiresAt: Date.now() + DEVICE_FLOW_TTL_MS,
@@ -728,6 +754,7 @@ oauthRoutes.post('/projects/:projectId/connectors/:connectorId/device/poll', asy
 	try {
 		finalized = await finalizeConnectorConnection(c, {
 			teamId,
+			projectId: entry.projectId,
 			connector,
 			capability,
 			provider: capability.id,
@@ -888,10 +915,13 @@ async function finalizeConnectorConnection(
 	opts: {
 		// teamId is the team that initiated the connect (from the OAuth state /
 		// request context); null when the connect started from the instance-admin
-		// surface. Connectors are global, but the GitHub key registration,
-		// container push, and WS broadcasts are still per-team and are skipped
-		// without one. The wakeup resolves its own team from the requesting task.
+		// surface. The GitHub key registration, container push, and WS broadcasts
+		// are per-team and are skipped without one. The wakeup resolves its own
+		// team from the requesting task.
 		teamId: string | null;
+		// projectId scopes the resulting oauth connection to the initiating project
+		// (matching its connector's scope); null for the instance-admin surface.
+		projectId: string | null;
 		connector: ConnectorRow;
 		capability: ConnectorCapability | undefined;
 		provider: string;
@@ -929,6 +959,7 @@ async function finalizeConnectorConnection(
 			scopes: opts.scopes,
 			expiresAt: opts.expiresAt ?? null,
 			allowedHosts: opts.allowedHosts,
+			projectId: opts.projectId,
 			metadata: { connector_id: connector.id, ...opts.baseMetadata, ...identity.metadata },
 		},
 	);

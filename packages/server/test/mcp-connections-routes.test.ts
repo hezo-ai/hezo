@@ -162,11 +162,14 @@ describe('admin (instance-global) /mcp-connections routes', () => {
 
 describe('project-scoped /projects/:projectId/mcp-connections/:id', () => {
 	async function seedSaasConnector(name: string): Promise<string> {
+		const project = await ctx.db.query<{ id: string }>(`SELECT id FROM projects WHERE slug = $1`, [
+			projectSlug,
+		]);
 		const r = await ctx.db.query<{ id: string }>(
-			`INSERT INTO mcp_connections (name, kind, config, install_status)
-			 VALUES ($1, $2::mcp_connection_kind, '{"url": "https://svc/mcp"}'::jsonb, 'installed')
+			`INSERT INTO mcp_connections (name, kind, config, install_status, project_id)
+			 VALUES ($1, $2::mcp_connection_kind, '{"url": "https://svc/mcp"}'::jsonb, 'installed', $3)
 			 RETURNING id`,
-			[name, McpConnectionKind.Saas],
+			[name, McpConnectionKind.Saas, project.rows[0].id],
 		);
 		return r.rows[0].id;
 	}
@@ -286,5 +289,93 @@ describe('project-scoped POST /mcp-connections branches', () => {
 		});
 		expect(res.status).toBe(400);
 		expect((await res.json()).error.message).toContain('provider_id is required');
+	});
+});
+
+describe('cross-project connector isolation', () => {
+	it("a project's list shows its own + global connectors, never another project's", async () => {
+		// Two separate projects, plus a global ("all projects") connector.
+		const teamA = (await (await createTestTeam(ctx.db, { name: 'Iso A' })).json()).data.id;
+		const teamB = (await (await createTestTeam(ctx.db, { name: 'Iso B' })).json()).data.id;
+		const slugA = await projectSlugFor(ctx.db, teamA);
+		const slugB = await projectSlugFor(ctx.db, teamB);
+		const projA = await ctx.db.query<{ id: string }>('SELECT id FROM projects WHERE slug = $1', [
+			slugA,
+		]);
+		const projB = await ctx.db.query<{ id: string }>('SELECT id FROM projects WHERE slug = $1', [
+			slugB,
+		]);
+
+		await ctx.db.query(
+			`INSERT INTO mcp_connections (name, kind, config, install_status, project_id)
+			 VALUES ('iso-a-only', 'saas', '{"url":"https://a/mcp"}'::jsonb, 'installed', $1)`,
+			[projA.rows[0].id],
+		);
+		await ctx.db.query(
+			`INSERT INTO mcp_connections (name, kind, config, install_status, project_id)
+			 VALUES ('iso-b-only', 'saas', '{"url":"https://b/mcp"}'::jsonb, 'installed', $1)`,
+			[projB.rows[0].id],
+		);
+		await ctx.db.query(
+			`INSERT INTO mcp_connections (name, kind, config, install_status, project_id)
+			 VALUES ('iso-global', 'saas', '{"url":"https://g/mcp"}'::jsonb, 'installed', NULL)`,
+		);
+
+		const listOf = async (slug: string) => {
+			const res = await ctx.app.request(`/api/projects/${slug}/mcp-connections`, {
+				headers: authHeader(token),
+			});
+			expect(res.status).toBe(200);
+			return ((await res.json()).data as Array<{ name: string }>).map((r) => r.name);
+		};
+
+		const aNames = await listOf(slugA);
+		expect(aNames).toContain('iso-a-only');
+		expect(aNames).toContain('iso-global');
+		expect(aNames).not.toContain('iso-b-only');
+
+		const bNames = await listOf(slugB);
+		expect(bNames).toContain('iso-b-only');
+		expect(bNames).toContain('iso-global');
+		expect(bNames).not.toContain('iso-a-only');
+
+		// The admin cross-project list spans everything and annotates each row's
+		// owning project (null for the global one).
+		const adminRes = await ctx.app.request('/api/mcp-connections', { headers: authHeader(token) });
+		const adminRows = (await adminRes.json()).data as Array<{
+			name: string;
+			project_id: string | null;
+			project_name: string | null;
+		}>;
+		const byName = new Map(adminRows.map((r) => [r.name, r]));
+		expect(byName.get('iso-a-only')?.project_id).toBe(projA.rows[0].id);
+		expect(byName.get('iso-b-only')?.project_id).toBe(projB.rows[0].id);
+		expect(byName.get('iso-global')?.project_id).toBeNull();
+		expect(byName.get('iso-a-only')?.project_name).toBeTruthy();
+	});
+
+	it("a project cannot delete another project's connector", async () => {
+		const teamA = (await (await createTestTeam(ctx.db, { name: 'Iso Del A' })).json()).data.id;
+		const teamB = (await (await createTestTeam(ctx.db, { name: 'Iso Del B' })).json()).data.id;
+		const slugA = await projectSlugFor(ctx.db, teamA);
+		const slugB = await projectSlugFor(ctx.db, teamB);
+		const projA = await ctx.db.query<{ id: string }>('SELECT id FROM projects WHERE slug = $1', [
+			slugA,
+		]);
+		const inserted = await ctx.db.query<{ id: string }>(
+			`INSERT INTO mcp_connections (name, kind, config, install_status, project_id)
+			 VALUES ('iso-del', 'saas', '{"url":"https://a/mcp"}'::jsonb, 'installed', $1) RETURNING id`,
+			[projA.rows[0].id],
+		);
+		// Project B tries to delete project A's connector → 404, row still present.
+		const res = await ctx.app.request(
+			`/api/projects/${slugB}/mcp-connections/${inserted.rows[0].id}`,
+			{ method: 'DELETE', headers: authHeader(token) },
+		);
+		expect(res.status).toBe(404);
+		const still = await ctx.db.query('SELECT 1 FROM mcp_connections WHERE id = $1', [
+			inserted.rows[0].id,
+		]);
+		expect(still.rows.length).toBe(1);
 	});
 });
