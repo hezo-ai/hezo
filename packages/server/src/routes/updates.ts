@@ -1,11 +1,11 @@
-import { UPDATE_RESTART_EXIT_CODE, UpdateState } from '@hezo/shared';
+import { UpdateState } from '@hezo/shared';
 import { Hono } from 'hono';
 import { trackBackground } from '../lib/background';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireSuperuser } from '../middleware/auth';
-import { getActiveRuntime, shutdownRuntime } from '../runtime-control';
+import { exitToApplyUpdate } from '../runtime-control';
 import {
 	downloadAndStage,
 	ensureUpdateStaged,
@@ -160,16 +160,7 @@ export function buildUpdatesRoutes(opts: { autoUnlock: boolean }): Hono<Env> {
 			return err(c, 'NO_STAGED_UPDATE', 'No staged update to apply', 409);
 		}
 		setTimeout(() => {
-			void (async () => {
-				const runtime = getActiveRuntime();
-				try {
-					if (runtime) await shutdownRuntime(runtime);
-				} catch (e) {
-					log.error('shutdown before update-apply failed', e);
-				}
-				log.info('Exiting with restart sentinel to apply staged update');
-				process.exit(UPDATE_RESTART_EXIT_CODE);
-			})();
+			void exitToApplyUpdate();
 		}, 100);
 		return ok(c, { state: UpdateState.Applying, targetVersion: state.targetVersion ?? null });
 	});

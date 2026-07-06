@@ -308,6 +308,28 @@ runs inside a container (update the image instead) and can be turned off with
 `HEZO_DISABLE_AUTO_UPDATE`. The daily check schedule is configurable via
 `HEZO_UPDATE_CHECK_CRON`. See [Configuration](/docs/deployment/configuration).
 
+### Installing updates automatically
+
+For a hands-off server, start Hezo with `--auto-install-updates` (or
+`HEZO_AUTO_INSTALL_UPDATES=1`) and it installs staged updates by itself: once a
+newer release has been downloaded and verified, Hezo waits until no agent runs
+are in flight and then performs the same graceful restart as the **Install &
+restart** button — no click needed. If agents are busy, the install is retried
+every few minutes and lands as soon as the instance goes idle.
+
+Two things to know before enabling it:
+
+- **The restart re-locks the instance** — the same as any restart. If nobody
+  unlocks it from the browser gate afterward, agents stay paused until someone
+  does. Automatic installs therefore pair naturally with launches that pass a
+  master key for that startup; if you run fully unattended, weigh the
+  security trade-off of where that key comes from first (see
+  [Master key & encryption](/docs/security/master-key)) — never persist it to
+  disk on the server.
+- It only takes effect where in-app auto-update works at all: the self-managed
+  single binary, not inside a container (update the image instead), and not
+  with `HEZO_DISABLE_AUTO_UPDATE` set.
+
 ### Updating manually
 
 You can always upgrade by replacing the binary yourself. On startup Hezo runs any

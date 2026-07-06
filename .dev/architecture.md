@@ -1215,8 +1215,15 @@ runs from `GET /api/updates/status`
 (fire-and-forget on every banner poll, gated on `isSupervisedWorker()`) and the daily
 `update-check` cron (`HEZO_UPDATE_CHECK_CRON`), so a running instance usually stages a new
 release within seconds. `POST /api/updates/download` (superuser) is the same download path on
-demand; `POST /api/updates/apply` (superuser) gracefully shuts the worker down (`shutdownRuntime`
-in `runtime-control.ts`, also wired to signals) and exits with the sentinel.
+demand; `POST /api/updates/apply` (superuser) gracefully shuts the worker down and exits with
+the sentinel via `exitToApplyUpdate()` (`runtime-control.ts`, which also wires `shutdownRuntime`
+to signals). **Auto-install** (`--auto-install-updates` / `HEZO_AUTO_INSTALL_UPDATES`, off by
+default) makes the install itself unattended: JobManager registers an `auto-install-update` cron
+(`HEZO_AUTO_INSTALL_CRON`, every 5 min; registered only when the flag is set on a supervised
+worker) that reads `state.json` — no network — and, when a verified update is `Staged` and no
+agent runs are in flight (`runningTasks` empty; busy instances defer to the next tick), calls
+the same `exitToApplyUpdate()` path as the operator button. The instance still returns locked
+after the swap unless a master key was supplied at startup.
 `applyStagedUpdate()` does the swap *while the worker is down*: copy
 staged → a temp file adjacent to the target (avoids `EXDEV`), then **Unix** atomic `rename`
 over the binary, or **Windows** rename-trick (rename the locked `.exe` aside, move the new
