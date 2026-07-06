@@ -1211,8 +1211,12 @@ via `hezo restore` (embedded only).
 
 **Releases & updates.** A PR flow (`.github/workflows/`): `release.yml` computes the next
 version from Conventional Commits and opens a `release/<version>` PR; merging fires
-`release-publish.yml`, which tags, cross-compiles, and publishes a GitHub Release (assets
-`hezo-{os}-{arch}[.exe]` + `SHA256SUMS`). The running instance polls
+`release-publish.yml`, which first builds and publishes the agent-base image to GHCR
+(`ghcr.io/hezo-ai/agent-base:<version>` + `:latest`) and then — **only once that push
+succeeds** — tags the merge commit, cross-compiles, and publishes a GitHub Release (assets
+`hezo-{os}-{arch}[.exe]` + `SHA256SUMS`). Gating the Release on the image (the `publish`
+job `needs` `publish-agent-image`) means a published version never advertises binaries whose
+provisioning pull (`agent-base:<version>`) would 404. The running instance polls
 `GET /api/updates/latest` (cached ~1 h, fails soft) and shows a bottom banner. The
 Settings → General page also renders a **Version** section (current version linked to its
 GitHub release, plus a **"Check for new version"** button that calls
