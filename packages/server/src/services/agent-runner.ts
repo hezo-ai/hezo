@@ -70,6 +70,7 @@ import {
 	getWorktreeHead,
 	mergeDefaultIntoWorktree,
 	type RepoLoc,
+	seedInitialCommitIfEmpty,
 	type WorktreeLoc,
 	worktreeHasChanges,
 } from './git';
@@ -1449,6 +1450,19 @@ async function prepareWorktrees(
 			// survives an aborted or timed-out run instead of dying with the ephemeral
 			// worktree. Idempotent and best-effort (never throws).
 			ensurePushHook(repoLoc);
+
+			// Bootstrap a connected repo that has no commits yet: `git worktree add`
+			// can't branch off an unborn HEAD, so an empty remote would otherwise fail
+			// worktree prep below with "clone is empty (no commits fetched)". Seed a
+			// minimal README initial commit and push it so the repo has a default branch;
+			// the fetch just below then materializes its `origin/*` tracking refs. No-op
+			// when the remote already has commits.
+			const seed = await seedInitialCommitIfEmpty(executor, repo.repo_identifier, repoLoc, true);
+			if (seed.seeded) {
+				emitSystem('stdout', `seeded initial commit for ${repoName} (remote was empty)`);
+			} else if (seed.error) {
+				emitSystem('stderr', `could not seed initial commit for ${repoName}: ${seed.error}`);
+			}
 
 			emitSystem('stdout', `git fetch ${repoName}...`);
 			const fetchRes = await fetchRepo(executor, repoLoc);
