@@ -129,6 +129,9 @@ describe('claude-code adapter', () => {
 		expect(hookEntry.model.length).toBeGreaterThan(0);
 		expect(hookEntry.prompt).toContain('quality gate');
 		expect(hookEntry.prompt).toContain('$ARGUMENTS');
+		// The emitted prompt must carry the stop_hook_active loop breaker so a persistent
+		// verdict can't spin the same headless exec (parity with the command-script judges).
+		expect(hookEntry.prompt).toContain('stop_hook_active');
 	});
 
 	it('passes --settings pointing at the container path for the settings file', () => {

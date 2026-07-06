@@ -736,7 +736,11 @@ to end its turn and **blocks** it (keeping the same headless exec alive) when it
 on failing tests, calling problems "out of scope", deferring without filing a sub-task,
 abandoning a plan it announced in the thread without revising it there, or ending the run
 with a handoff/active @-mention only in its final message (which is delivered to no one)
-instead of a posted comment.
+instead of a posted comment. It **allows** the stop when the agent is legitimately parked on
+input it can't obtain itself — an `@admin` comment awaiting a reply, a `request_credential`,
+or a filed hire proposal / opened approval pending an admin decision — with the task left
+non-terminal; the admin's reply or resolution auto-wakes the agent (a hire resolution queues
+a `hire-resolved:<id>` wakeup for the requester), so it need not spin re-reporting no work.
 The rule body (`STOP_HOOK_RULES` in `stop-hook-prompt.ts`) is identical across runtimes;
 judge models are hardcoded per provider (Anthropic `claude-sonnet-4-6` / DeepSeek
 `deepseek-v4-pro` / Z.ai `GLM-4.7` / Kimi `kimi-k2.7-code` / OpenAI `gpt-4o-mini` /
@@ -744,8 +748,11 @@ Google `gemini-1.5-flash`). Wiring differs by runtime's native hook:
 Claude Code uses a `type: "prompt"` `Stop` hook (makes the judge call itself, picking the
 per-provider model via `CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER`);
 Codex/Gemini use command scripts (`buildCodexJudgeScript`/`buildGeminiJudgeScript`) that
-call the provider API. **OpenCode is the sole exception — no judge** (its plugin API can't
-block-and-continue headless). File-mount subscription runtimes fail open (no API key in
+call the provider API. Every runtime's judge short-circuits on `stop_hook_active` — allow
+the stop once the turn has already been continued once — so a persistent verdict can't loop
+the same headless exec: the Codex/Gemini scripts guard it in code, and the Claude Code prompt
+hook now instructs the judge to do the same (its `$ARGUMENTS` carries the flag). **OpenCode
+is the sole exception — no judge** (its plugin API can't block-and-continue headless). File-mount subscription runtimes fail open (no API key in
 env); Anthropic subscription still fires via `CLAUDE_CODE_OAUTH_TOKEN`. Full per-runtime
 detail is in `AGENTS.md` › AI runtime hooks.
 
