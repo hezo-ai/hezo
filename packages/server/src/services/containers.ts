@@ -1,4 +1,6 @@
+import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
 	ContainerStatus,
@@ -72,12 +74,42 @@ export interface ContainerDeps {
 	containerLogStreamer?: ContainerLogStreamer;
 	sshAgentServer?: SshAgentServer | null;
 	egressCAPath?: string | null;
+	/** Test seam: override host egress-MTU detection. Defaults to the real probe. */
+	detectEgressMtu?: () => Promise<number | null>;
 }
 
 /** In-container path the egress CA is bind-mounted to. */
 export const CONTAINER_CA_PATH = '/usr/local/share/ca-certificates/hezo-egress.crt';
 
 const PROVISION_CAP_BYTES = 64 * 1024;
+
+/** Docker's default bridge MTU; below this the container link MTU is pinned to match. */
+const DEFAULT_BRIDGE_MTU = 1500;
+
+/**
+ * The MTU of the host's default-route egress interface, or null when it can't be
+ * determined (non-Linux, `ip` absent, or a parse failure). Uses `ip route get` so
+ * it honours policy routing — a VPN/mesh (WireGuard, NordVPN, Tailscale) installs
+ * its default route in a separate table that `/proc/net/route` alone wouldn't
+ * reflect. Containers reach the internet through this interface via NAT, so an
+ * egress MTU below the docker bridge MTU means a bulk transfer (a `git fetch`)
+ * black-holes at the tunnel boundary unless the container link MTU is pinned to it.
+ */
+export async function detectHostEgressMtu(): Promise<number | null> {
+	try {
+		const dev = await new Promise<string | null>((resolve) => {
+			execFile('ip', ['-o', 'route', 'get', '1.1.1.1'], { timeout: 3000 }, (err, stdout) => {
+				if (err) return resolve(null);
+				resolve(stdout.match(/\bdev\s+(\S+)/)?.[1] ?? null);
+			});
+		});
+		if (!dev) return null;
+		const mtu = Number.parseInt((await readFile(`/sys/class/net/${dev}/mtu`, 'utf8')).trim(), 10);
+		return Number.isFinite(mtu) && mtu > 0 ? mtu : null;
+	} catch {
+		return null;
+	}
+}
 
 function provisionStreamId(projectId: string): string {
 	return `provision:${projectId}`;
@@ -293,6 +325,15 @@ export async function provisionContainer(
 		}
 		const extraHosts = ['host.docker.internal:host-gateway'];
 
+		// A host whose internet egress is a VPN/mesh tunnel (WireGuard, NordVPN,
+		// Tailscale) has a sub-1500 MTU. Containers reach the internet through it via
+		// NAT but otherwise inherit the 1500 docker-bridge MTU, so a bulk transfer
+		// (a git fetch) black-holes at the tunnel boundary. Pin the container link
+		// MTU to the egress MTU; this needs NET_ADMIN, added only when a lower egress
+		// MTU is actually detected so default (non-tunnelled) hosts are unaffected.
+		const egressMtu = await (deps.detectEgressMtu ?? detectHostEgressMtu)();
+		const pinMtu = egressMtu !== null && egressMtu < DEFAULT_BRIDGE_MTU ? egressMtu : null;
+
 		const env: string[] = [];
 
 		// The stored image is the managed sentinel/default for most projects; in a
@@ -320,12 +361,31 @@ export async function provisionContainer(
 				Binds: binds,
 				PortBindings: portBindings,
 				ExtraHosts: extraHosts,
+				...(pinMtu !== null ? { CapAdd: ['NET_ADMIN'] } : {}),
 			},
 			ExposedPorts: exposedPorts,
 		});
 
 		emit('stdout', '→ Starting container');
 		await docker.startContainer(Id);
+		if (pinMtu !== null) {
+			emit(
+				'stdout',
+				`→ Host egress MTU is ${egressMtu} (< ${DEFAULT_BRIDGE_MTU}); pinning container MTU to ${pinMtu}`,
+			);
+			try {
+				const execId = await docker.execCreate(Id, {
+					Cmd: ['ip', 'link', 'set', 'dev', 'eth0', 'mtu', String(pinMtu)],
+					AttachStdout: true,
+					AttachStderr: true,
+				});
+				const out = await docker.execStart(execId);
+				if (out.stderr.trim())
+					emit('stderr', `⚠ could not pin container MTU: ${out.stderr.trim()}`);
+			} catch (e) {
+				emit('stderr', `⚠ could not pin container MTU: ${(e as Error).message}`);
+			}
+		}
 		log.info(
 			`project ${ref(project.slug, project.id)} container ${ref(project.slug, Id.slice(0, 12))} provisioned and started`,
 		);

@@ -37,6 +37,7 @@ interface CreateContainerCall {
 			Binds?: string[];
 			PortBindings?: Record<string, Array<{ HostPort: string }>>;
 			ExtraHosts?: string[];
+			CapAdd?: string[];
 		};
 		ExposedPorts?: Record<string, object>;
 	};
@@ -328,6 +329,48 @@ describe('provisionContainer', () => {
 		const text = logs.getLogText(`provision:${projectId}`);
 		expect(text).toContain('→ Trusting Hezo egress CA');
 		expect(text).toContain('ca-store warning line');
+	});
+
+	it('pins the container MTU (with NET_ADMIN) when the host egress MTU is below the bridge', async () => {
+		await resetContainerRow();
+		const { docker, created } = recordingDocker();
+		const logs = new LogStreamBroker();
+
+		await provisionContainer(
+			baseDeps(docker, { logs, detectEgressMtu: async () => 1420 }),
+			await projectRow(),
+			teamSlug,
+		);
+
+		expect(created[0].config.HostConfig.CapAdd).toEqual(['NET_ADMIN']);
+		const execCreate = docker.execCreate as ReturnType<typeof vi.fn>;
+		const mtuExec = execCreate.mock.calls.find((c) => (c[1] as { Cmd: string[] }).Cmd[0] === 'ip');
+		expect((mtuExec?.[1] as { Cmd: string[] }).Cmd).toEqual([
+			'ip',
+			'link',
+			'set',
+			'dev',
+			'eth0',
+			'mtu',
+			'1420',
+		]);
+		expect(logs.getLogText(`provision:${projectId}`)).toContain('pinning container MTU to 1420');
+	});
+
+	it('leaves MTU and capabilities untouched on a normal (>=1500) egress host', async () => {
+		await resetContainerRow();
+		const { docker, created } = recordingDocker();
+
+		await provisionContainer(
+			baseDeps(docker, { detectEgressMtu: async () => null }),
+			await projectRow(),
+			teamSlug,
+		);
+
+		expect(created[0].config.HostConfig.CapAdd).toBeUndefined();
+		const execCreate = docker.execCreate as ReturnType<typeof vi.fn>;
+		const mtuExec = execCreate.mock.calls.find((c) => (c[1] as { Cmd: string[] }).Cmd[0] === 'ip');
+		expect(mtuExec).toBeUndefined();
 	});
 
 	it('reports a failed update-ca-certificates without failing the provision', async () => {

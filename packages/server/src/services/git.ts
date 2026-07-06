@@ -512,7 +512,7 @@ async function addTaskWorktree(
 					success: false,
 					created: false,
 					error:
-						'clone has no commits and no remote default branch — push an initial commit to the remote and retry (it is fetched on the next run)',
+						'clone is empty (no commits fetched) — the fetch above failed, or the remote genuinely has no commits; fix connectivity or push an initial commit, then retry',
 				};
 			}
 			args = ['worktree', 'add', '-b', branchName, wt.containerPath];

@@ -649,6 +649,7 @@ describe('origin remote inspection and repair', () => {
 		expect(res.success).toBe(false);
 		expect(res.error).toContain('no commits');
 		expect(res.error).toContain('push an initial commit');
+		expect(res.error).toContain('the fetch above failed');
 	});
 });
 
