@@ -18,6 +18,7 @@ import { useQueuedWakeups } from '../../hooks/use-queued-wakeups';
 import type { Task, useUpdateTask } from '../../hooks/use-tasks';
 import { AgentLink } from '../agent-link';
 import { AgentStatusLabel } from '../agent-status-label';
+import { TaskStatusBadge } from '../task-status-badge';
 import { Button } from '../ui/button';
 import { ConfirmDialog } from '../ui/confirm-dialog';
 import { InfoTooltip } from '../ui/info-tooltip';
@@ -101,6 +102,13 @@ export function TaskSidebar({
 					wakeups={queued?.wakeups ?? []}
 					dispatch={queued?.dispatch}
 				/>
+
+				<div>
+					<span className="text-text-3 block mb-1 uppercase tracking-wider font-medium">
+						Status
+					</span>
+					<TaskStatusBadge status={task.status} testId="task-status" />
+				</div>
 
 				<div>
 					<span className="text-text-3 block mb-1 uppercase tracking-wider font-medium">
