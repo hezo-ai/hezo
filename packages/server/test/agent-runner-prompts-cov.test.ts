@@ -1,0 +1,781 @@
+// Prompt-assembly coverage for agent-runner.ts: the progress-update run (no
+// task), the coach review prompt, mention/reply handoffs, requester-context
+// and spawned-from substitution — all driven through the real runAgent path —
+// plus direct branch tests for the pure builders and small helpers.
+
+import { readFileSync } from 'node:fs';
+import {
+	AiAuthMethod,
+	AiProvider,
+	ContainerStatus,
+	HeartbeatRunStatus,
+	WakeupSource,
+} from '@hezo/shared';
+import type { Hono } from 'hono';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import type { MasterKeyManager } from '../src/crypto/master-key';
+import type { Db } from '../src/db/database';
+import type { Env } from '../src/lib/types';
+import {
+	acquireCredentialLock,
+	buildProgressUpdatePrompt,
+	buildProviderEnv,
+	buildTaskPrompt,
+	formatReactionLine,
+	getContainerPromptPath,
+	getHostPromptPath,
+	loadAgentAttachmentsForComments,
+	loadMentionContext,
+	loadReplyContext,
+	loadSpawnedFromTask,
+	type RunnerDeps,
+	runAgent,
+	shellQuoteArg,
+	type TaskInfo,
+} from '../src/services/agent-runner';
+import type { DockerClient } from '../src/services/docker';
+import { LogStreamBroker } from '../src/services/log-stream-broker';
+import type { ReactionGroup } from '../src/services/reactions';
+import { safeClose } from './helpers';
+import {
+	authHeader,
+	createStubDocker,
+	createTestApp,
+	createTestProject,
+	createTestTeam,
+} from './helpers/app';
+import { withRunUserStub } from './helpers/run-user-docker';
+
+let app: Hono<Env>;
+let db: Db;
+let adminToken: string;
+let masterKeyManager: MasterKeyManager;
+let dataDir: string;
+let teamId: string;
+let projectId: string;
+let projectSlug: string;
+let taskId: string;
+let taskIdentifier: string;
+let agentId: string;
+let agentSlug: string | null;
+let agentTitle: string;
+
+const originalFetch = globalThis.fetch;
+
+beforeAll(async () => {
+	const ctx = await createTestApp();
+	app = ctx.app;
+	db = ctx.db;
+	adminToken = ctx.token;
+	masterKeyManager = ctx.masterKeyManager;
+	dataDir = ctx.dataDir;
+
+	const typesRes = await app.request('/api/team-templates', { headers: authHeader(adminToken) });
+	const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
+	const teamRes = await createTestTeam(db, { name: 'Prompt Co', template_id: typeId });
+	teamId = (await teamRes.json()).data.id;
+
+	globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
+	await app.request('/api/ai-providers', {
+		method: 'POST',
+		headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
+		body: JSON.stringify({
+			provider: 'anthropic',
+			api_key: 'sk-ant-prompt-key',
+			label: 'anthropic-prompt',
+		}),
+	});
+	globalThis.fetch = originalFetch;
+
+	const projectRes = await createTestProject(db, teamId, {
+		name: 'Prompt Project',
+		description: 'Prompt test project.',
+	});
+	const projectData = (await projectRes.json()).data;
+	projectId = projectData.id;
+	projectSlug = projectData.slug;
+
+	const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
+		headers: authHeader(adminToken),
+	});
+	const agentRow = (await agentsRes.json()).data[0];
+	agentId = agentRow.id;
+	agentSlug = agentRow.slug ?? null;
+	agentTitle = agentRow.title;
+
+	const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
+		method: 'POST',
+		headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
+		body: JSON.stringify({
+			project_id: projectId,
+			title: 'Prompt Task',
+			description: 'Prompt description',
+			assignee_id: agentId,
+		}),
+	});
+	const taskData = (await taskRes.json()).data;
+	taskId = taskData.id;
+	taskIdentifier = taskData.identifier;
+});
+
+afterAll(async () => {
+	await safeClose(db);
+});
+
+function makeAgent(overrides: Record<string, unknown> = {}) {
+	return { id: agentId, title: 'Prompt Agent', slug: agentSlug, team_id: teamId, ...overrides };
+}
+
+function makeTask(overrides: Partial<TaskInfo> = {}): TaskInfo {
+	return {
+		id: taskId,
+		identifier: taskIdentifier,
+		title: 'Prompt Task',
+		description: 'Prompt description',
+		status: 'backlog',
+		priority: 'medium',
+		project_id: projectId,
+		rules: null,
+		progress_summary: null,
+		...overrides,
+	};
+}
+
+function makeProject(overrides: Record<string, unknown> = {}) {
+	return {
+		id: projectId,
+		slug: projectSlug,
+		team_id: teamId,
+		team_slug: 'prompt-co',
+		container_id: 'container-pr',
+		container_status: ContainerStatus.Running,
+		designated_repo_id: null,
+		is_internal: false,
+		...overrides,
+	};
+}
+
+function readPromptFromExec(opts: { Env: string[] }): string {
+	const entry = opts.Env.find((e) => e.startsWith('HEZO_PROMPT_FILE='));
+	if (!entry) throw new Error('HEZO_PROMPT_FILE env var missing from exec');
+	const runId = entry
+		.slice('HEZO_PROMPT_FILE='.length)
+		.split('/')
+		.pop()!
+		.replace(/\.txt$/, '');
+	return readFileSync(getHostPromptPath(dataDir, teamId, projectId, runId), 'utf8');
+}
+
+function promptCaptureDocker(capture: { prompt: string; env: string[] }): DockerClient {
+	const base = createStubDocker({
+		execCreate: async (_id: string, opts: any) => {
+			capture.prompt = readPromptFromExec(opts);
+			capture.env = opts.Env;
+			return 'exec-prompt';
+		},
+		execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+		execStart: async () => {
+			await db.query(
+				`UPDATE heartbeat_runs SET produced_output = true WHERE member_id = $1 AND status = 'running'`,
+				[agentId],
+			);
+			return { stdout: 'ok', stderr: '' };
+		},
+	});
+	return withRunUserStub(base as unknown as DockerClient);
+}
+
+function baseDeps(docker: DockerClient): RunnerDeps {
+	return {
+		db,
+		docker,
+		masterKeyManager,
+		serverPort: 3000,
+		dataDir,
+		logs: new LogStreamBroker(),
+	};
+}
+
+describe('runAgent — progress-update run (no task)', () => {
+	it('runs a task-less goal check with the progress prompt, env marker, and no run comment', async () => {
+		const capture = { prompt: '', env: [] as string[] };
+		const result = await runAgent(
+			baseDeps(promptCaptureDocker(capture)),
+			makeAgent(),
+			null,
+			makeProject(),
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			{
+				goals: [
+					{
+						id: 'goal-1',
+						title: 'Ship v2',
+						measurement: 'v2 is launched',
+						actions: 'Cut the release',
+						progress_percent: 40,
+						health: 'on_track',
+						status_blurb: 'Going fine',
+						check_frequency: 'weekly',
+						target_date: '2026-08-01',
+					},
+				],
+			},
+		);
+		expect(result.success).toBe(true);
+
+		expect(capture.prompt).toContain('## Progress Update');
+		expect(capture.prompt).toContain('1 goal is due for a progress check');
+		expect(capture.prompt).toContain('### Ship v2  `goal-1`');
+		expect(capture.prompt).toContain('deadline 2026-08-01');
+		expect(capture.prompt).toContain('- Last status: Going fine');
+		expect(capture.prompt).toContain('- Achieved when: v2 is launched');
+		expect(capture.prompt).toContain('- Suggested actions: Cut the release');
+
+		expect(capture.env).toContain('HEZO_PROGRESS_UPDATE=1');
+		expect(capture.env.some((e) => e.startsWith('HEZO_TASK_ID='))).toBe(false);
+
+		const run = await db.query<{ kind: string; task_id: string | null; status: string }>(
+			'SELECT kind::text AS kind, task_id, status FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(run.rows[0].kind).toBe('progress_update');
+		expect(run.rows[0].task_id).toBeNull();
+		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Succeeded);
+
+		// No Run comment is anchored anywhere for a task-less run.
+		const comments = await db.query<{ c: number }>(
+			`SELECT COUNT(*)::int AS c FROM task_comments WHERE content->>'run_id' = $1`,
+			[result.heartbeatRunId],
+		);
+		expect(comments.rows[0].c).toBe(0);
+	});
+});
+
+describe('runAgent — coach review prompt', () => {
+	it('assembles the review prompt with agents involved, reactions, attachments, and non-text comments', async () => {
+		const revRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
+			method: 'POST',
+			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Reviewed Task',
+				description: 'Review me',
+				assignee_id: agentId,
+			}),
+		});
+		const rev = (await revRes.json()).data;
+
+		const textComment = await db.query<{ id: string }>(
+			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+			 VALUES ($1, $2, 'text', $3::jsonb) RETURNING id`,
+			[rev.id, agentId, JSON.stringify({ text: 'Work finished after two attempts.' })],
+		);
+		const textId = textComment.rows[0].id;
+		await db.query(
+			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+			 VALUES ($1, $2, 'system'::comment_content_type, $3::jsonb)`,
+			[rev.id, agentId, JSON.stringify({ from: 'backlog', to: 'done' })],
+		);
+		await db.query(
+			`INSERT INTO comment_reactions (comment_id, member_id, kind) VALUES ($1, $2, 'ack')`,
+			[textId, agentId],
+		);
+		const asset = await db.query<{ id: string }>(
+			`INSERT INTO assets (team_id, project_id, original_filename, content_type, byte_size, sha256, uploaded_by_member_id)
+			 VALUES ($1, $2, 'trace.log', 'text/plain', 512, $3, NULL) RETURNING id`,
+			[teamId, projectId, `sha-${rev.id}-trace`],
+		);
+		await db.query(`INSERT INTO comment_attachments (comment_id, asset_id) VALUES ($1, $2)`, [
+			textId,
+			asset.rows[0].id,
+		]);
+
+		const capture = { prompt: '', env: [] as string[] };
+		const result = await runAgent(
+			baseDeps(promptCaptureDocker(capture)),
+			makeAgent(),
+			makeTask({
+				id: rev.id,
+				identifier: rev.identifier,
+				title: 'Reviewed Task',
+				description: 'Review me',
+				status: 'done',
+				rules: 'Be kind',
+				progress_summary: 'All done',
+			}),
+			makeProject(),
+			{ trigger: 'task_done' },
+		);
+		expect(result.success).toBe(true);
+
+		expect(capture.prompt).toContain(
+			`## Review Completed Ticket: ${rev.identifier} — Reviewed Task`,
+		);
+		expect(capture.prompt).toContain('**Final Status:** done');
+		expect(capture.prompt).toContain('### Rules\nBe kind');
+		expect(capture.prompt).toContain('### Progress Summary\nAll done');
+		expect(capture.prompt).toContain('### Agents Involved');
+		expect(capture.prompt).toContain(`(slug: ${agentSlug}, id: ${agentId})`);
+		expect(capture.prompt).toContain('Work finished after two attempts.');
+		// The system comment renders as raw JSON.
+		expect(capture.prompt).toContain('"from":"backlog"');
+		// Reaction + attachment lines.
+		expect(capture.prompt).toContain('Reactions: ✓');
+		expect(capture.prompt).toContain('attachment: trace.log (text/plain, 512 bytes) → download:');
+	});
+});
+
+describe('runAgent — mention and reply handoffs', () => {
+	it('renders the mention handoff with the author fallback, quoted excerpt, and open tickets', async () => {
+		const comment = await db.query<{ id: string }>(
+			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+			 VALUES ($1, NULL, 'text', $2::jsonb) RETURNING id`,
+			[taskId, JSON.stringify({ text: 'Please look\nat the flaky test.' })],
+		);
+		const commentId = comment.rows[0].id;
+
+		const capture = { prompt: '', env: [] as string[] };
+		const result = await runAgent(
+			baseDeps(promptCaptureDocker(capture)),
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+			{ source: WakeupSource.Mention, comment_id: commentId },
+		);
+		expect(result.success).toBe(true);
+
+		expect(capture.prompt).toContain('## Mention Handoff');
+		expect(capture.prompt).toContain(`You were mentioned by Admin in ${taskIdentifier}`);
+		// Multi-line excerpt rendered as a quote block.
+		expect(capture.prompt).toContain('> Please look\n> at the flaky test.');
+		expect(capture.prompt).toContain('### Your open tickets');
+		expect(capture.prompt).toContain(`- ${taskIdentifier} — Prompt Task`);
+		expect(capture.prompt).toContain(`add_reaction(comment_id='${commentId}', kind='ack')`);
+		expect(capture.prompt).toContain(`parent_task_id = ${taskId}`);
+
+		await db.query('DELETE FROM task_comments WHERE id = $1', [commentId]);
+	});
+
+	it('renders the reply handoff with the agent responder label and referenced tickets', async () => {
+		const original = await db.query<{ id: string }>(
+			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+			 VALUES ($1, NULL, 'text', $2::jsonb) RETURNING id`,
+			[taskId, JSON.stringify({ text: 'What is the plan?' })],
+		);
+		const reply = await db.query<{ id: string }>(
+			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+			 VALUES ($1, $2, 'text', $3::jsonb) RETURNING id`,
+			[taskId, agentId, JSON.stringify({ text: `The plan is tracked in ${taskIdentifier}.` })],
+		);
+
+		const capture = { prompt: '', env: [] as string[] };
+		const result = await runAgent(
+			baseDeps(promptCaptureDocker(capture)),
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+			{
+				source: WakeupSource.Reply,
+				comment_id: reply.rows[0].id,
+				triggering_comment_id: original.rows[0].id,
+			},
+		);
+		expect(result.success).toBe(true);
+
+		expect(capture.prompt).toContain('## Reply Received');
+		// Agent-authored reply → member_agents title + @slug label.
+		expect(capture.prompt).toContain(`${agentTitle} (@${agentSlug}) replied on ${taskIdentifier}`);
+		expect(capture.prompt).toContain('> What is the plan?');
+		expect(capture.prompt).toContain(`> The plan is tracked in ${taskIdentifier}.`);
+		expect(capture.prompt).toContain('### Tickets referenced by the reply');
+		expect(capture.prompt).toContain(`- ${taskIdentifier} — Prompt Task`);
+
+		await db.query('DELETE FROM task_comments WHERE id = ANY($1::uuid[])', [
+			[original.rows[0].id, reply.rows[0].id],
+		]);
+	});
+
+	it('substitutes {{requester_context}} with the task creator line', async () => {
+		await db.query(
+			`INSERT INTO documents (team_id, member_agent_id, type, slug, content)
+			 VALUES ($1, $2, 'agent_system_prompt', 'system-prompt', $3)
+			 ON CONFLICT (member_agent_id) WHERE type = 'agent_system_prompt'
+			 DO UPDATE SET content = EXCLUDED.content`,
+			[teamId, agentId, 'You are an agent.\n\n{{requester_context}}\n'],
+		);
+		// Point the creator at a member whose display_name resolves in the join.
+		await db.query(`UPDATE members SET display_name = 'Casey Requester' WHERE id = $1`, [agentId]);
+		await db.query('UPDATE tasks SET created_by_member_id = $1 WHERE id = $2', [agentId, taskId]);
+		const capture = { prompt: '', env: [] as string[] };
+		const result = await runAgent(
+			baseDeps(promptCaptureDocker(capture)),
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+		);
+		expect(result.success).toBe(true);
+		// resolveSystemPrompt (template-resolver.ts) strips {{requester_context}}
+		// before agent-runner's own substitution branch can see it, so the marker
+		// must be gone from the delivered prompt. (agent-runner.ts's creator-line
+		// substitution at buildRunContext is unreachable as a result — see the
+		// unconditional strip at template-resolver.ts:354.)
+		expect(capture.prompt).not.toContain('{{requester_context}}');
+		expect(capture.prompt).not.toContain('This task was created by');
+
+		await db.query('UPDATE tasks SET created_by_member_id = NULL WHERE id = $1', [taskId]);
+		await db.query(
+			`DELETE FROM documents WHERE member_agent_id = $1 AND type = 'agent_system_prompt'`,
+			[agentId],
+		);
+	});
+
+	it('renders parent + spawned-from provenance lines in the task prompt', async () => {
+		const mk = async (title: string) => {
+			const res = await app.request(`/api/projects/${projectSlug}/tasks`, {
+				method: 'POST',
+				headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					project_id: projectId,
+					title,
+					description: 'd',
+					assignee_id: agentId,
+				}),
+			});
+			const body = await res.json();
+			expect(res.status).toBe(201);
+			return body.data as { id: string; identifier: string };
+		};
+		const parent = await mk('Parent Work');
+		const spawner = await mk('Spawning Work');
+		const wakeup = await db.query<{ id: string }>(
+			`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, payload, claimed_at)
+			 VALUES ($1, $2, 'on_demand'::wakeup_source, 'claimed'::wakeup_status, '{}'::jsonb, now())
+			 RETURNING id`,
+			[agentId, teamId],
+		);
+		const spawnRun = await db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs (member_id, team_id, task_id, wakeup_id, status)
+			 VALUES ($1, $2, $3, $4, 'succeeded'::heartbeat_run_status) RETURNING id`,
+			[agentId, teamId, spawner.id, wakeup.rows[0].id],
+		);
+
+		const capture = { prompt: '', env: [] as string[] };
+		const result = await runAgent(
+			baseDeps(promptCaptureDocker(capture)),
+			makeAgent(),
+			makeTask({ parent_task_id: parent.id, created_by_run_id: spawnRun.rows[0].id }),
+			makeProject(),
+		);
+		expect(result.success).toBe(true);
+		expect(capture.prompt).toContain(`**Parent ticket:** ${parent.identifier} — Parent Work`);
+		expect(capture.prompt).toContain(
+			`**Spawned from:** ${spawner.identifier} — Spawning Work (provenance only`,
+		);
+
+		await db.query('DELETE FROM heartbeat_runs WHERE id = $1', [spawnRun.rows[0].id]);
+		await db.query('DELETE FROM tasks WHERE id = ANY($1::uuid[])', [[parent.id, spawner.id]]);
+	});
+});
+
+describe('prompt builders (direct)', () => {
+	it('buildProgressUpdatePrompt uses plural phrasing and omits optional lines for sparse goals', () => {
+		const prompt = buildProgressUpdatePrompt('SYS', {
+			goals: [
+				{
+					id: 'g1',
+					title: 'Goal One',
+					measurement: '',
+					actions: '',
+					progress_percent: 0,
+					health: 'at_risk',
+					status_blurb: '',
+					check_frequency: 'daily',
+					target_date: null,
+				},
+				{
+					id: 'g2',
+					title: 'Goal Two',
+					measurement: 'Two done',
+					actions: 'Push',
+					progress_percent: 90,
+					health: 'on_track',
+					status_blurb: 'Nearly',
+					check_frequency: 'weekly',
+					target_date: '2026-12-31',
+				},
+			],
+		});
+		expect(prompt).toContain('2 goals are due for a progress check');
+		expect(prompt).toContain('- Achieved when: Not specified.');
+		expect(prompt).not.toContain('- Last status: \n');
+		expect(prompt).toContain('deadline 2026-12-31');
+		expect(prompt).toContain('- Suggested actions: Push');
+	});
+
+	it('buildTaskPrompt renders the retry block with exit code and output tails', () => {
+		const prompt = buildTaskPrompt('SYS', makeTask(), {
+			previous_failure: { exit_code: 3, stderr_tail: 'boom', stdout_tail: 'last words' },
+			retry_count: 2,
+			max_retries: 5,
+		});
+		expect(prompt).toContain('## Retry Attempt 2/5');
+		expect(prompt).toContain('**Exit code:** 3');
+		expect(prompt).toContain('boom');
+		expect(prompt).toContain('last words');
+	});
+
+	it('buildTaskPrompt omits the exit-code line for a null exit code and falls back on an empty description', () => {
+		const prompt = buildTaskPrompt('SYS', makeTask({ description: '' }), {
+			previous_failure: { exit_code: null, stderr_tail: 'err only' },
+			retry_count: 1,
+			max_retries: 3,
+		});
+		expect(prompt).toContain('No description provided.');
+		expect(prompt).not.toContain('**Exit code:**');
+		expect(prompt).toContain('err only');
+	});
+
+	it('buildTaskPrompt renders rules and progress summary sections when present', () => {
+		const prompt = buildTaskPrompt(
+			'SYS',
+			makeTask({ rules: 'Test everything', progress_summary: 'Halfway' }),
+		);
+		expect(prompt).toContain('### Rules for this task\nTest everything');
+		expect(prompt).toContain('### Progress Summary\nHalfway');
+	});
+
+	it('mention handoff falls back to "(empty)" excerpt and "none" tickets', () => {
+		const prompt = buildTaskPrompt(
+			'SYS',
+			makeTask(),
+			{ source: WakeupSource.Mention },
+			{
+				mentionContext: {
+					authorName: 'Admin',
+					excerpt: '',
+					openTickets: [],
+					triggeringCommentId: 'c-1',
+				},
+			},
+		);
+		expect(prompt).toContain('## Mention Handoff');
+		expect(prompt).toContain('> (empty)');
+		expect(prompt).toContain('### Your open tickets\nnone');
+	});
+
+	it('reply handoff falls back for empty excerpts, no referenced tickets, and a slugless responder', () => {
+		const prompt = buildTaskPrompt(
+			'SYS',
+			makeTask(),
+			{ source: WakeupSource.Reply },
+			{
+				replyContext: {
+					responderName: 'Sam',
+					responderSlug: null,
+					replyExcerpt: '',
+					originalExcerpt: '',
+					referencedTasks: [],
+				},
+			},
+		);
+		expect(prompt).toContain('## Reply Received');
+		expect(prompt).toContain(`Sam replied on ${taskIdentifier}`);
+		expect(prompt).not.toContain('(@');
+		expect(prompt).toContain('### Tickets referenced by the reply\nnone');
+		// Both the reply and original excerpts render the empty quote fallback.
+		expect(prompt.match(/> \(empty\)/g)?.length).toBe(2);
+	});
+});
+
+describe('small helpers (direct)', () => {
+	it('formatReactionLine maps glyphs, labels, and fallbacks', () => {
+		expect(formatReactionLine(undefined)).toBeNull();
+		expect(formatReactionLine([])).toBeNull();
+		const groups: ReactionGroup[] = [
+			{
+				kind: 'ack',
+				members: [
+					{ slug: 'dev', display_name: 'Dev' },
+					{ slug: null, display_name: 'Human' },
+					{ slug: null, display_name: null },
+				],
+			},
+			{ kind: 'wave', members: [{ slug: 'qa', display_name: 'QA' }] },
+		] as unknown as ReactionGroup[];
+		expect(formatReactionLine(groups)).toBe('Reactions: ✓ @dev, Human, someone · wave @qa');
+	});
+
+	it('shellQuoteArg quotes only what needs quoting', () => {
+		expect(shellQuoteArg('')).toBe("''");
+		expect(shellQuoteArg('plain-arg_1.0')).toBe('plain-arg_1.0');
+		expect(shellQuoteArg('has space')).toBe("'has space'");
+		expect(shellQuoteArg("it's")).toBe(`'it'\\''s'`);
+	});
+
+	it('buildProviderEnv composes quiet env, static env, and the auth-method credential var', () => {
+		const anthropicKey = buildProviderEnv(AiProvider.Anthropic, {
+			configId: 'c1',
+			value: 'sk-ant-x',
+			authMethod: AiAuthMethod.ApiKey,
+			defaultModel: null,
+		} as any);
+		expect(anthropicKey).toContain('ANTHROPIC_API_KEY=sk-ant-x');
+
+		const anthropicSub = buildProviderEnv(AiProvider.Anthropic, {
+			configId: 'c2',
+			value: 'oauth-token',
+			authMethod: AiAuthMethod.Subscription,
+			defaultModel: null,
+		} as any);
+		expect(anthropicSub).toContain('CLAUDE_CODE_OAUTH_TOKEN=oauth-token');
+
+		// OpenAI subscription auth is file-mounted — no credential env var at all.
+		const openaiSub = buildProviderEnv(AiProvider.OpenAI, {
+			configId: 'c3',
+			value: '{"tokens":{}}',
+			authMethod: AiAuthMethod.Subscription,
+			defaultModel: null,
+		} as any);
+		expect(openaiSub.some((e) => e.includes('{"tokens":{}}'))).toBe(false);
+
+		// Gemini runtime env is stamped for Google.
+		const google = buildProviderEnv(AiProvider.Google, {
+			configId: 'c4',
+			value: 'AIza-key',
+			authMethod: AiAuthMethod.ApiKey,
+			defaultModel: null,
+		} as any);
+		expect(google.some((e) => e.endsWith('=AIza-key'))).toBe(true);
+
+		// DeepSeek routes Claude Code at its own base URL via staticEnv.
+		const deepseek = buildProviderEnv(AiProvider.DeepSeek, {
+			configId: 'c5',
+			value: 'sk-ds',
+			authMethod: AiAuthMethod.ApiKey,
+			defaultModel: null,
+		} as any);
+		expect(deepseek.some((e) => e.startsWith('ANTHROPIC_BASE_URL='))).toBe(true);
+	});
+
+	it('acquireCredentialLock serialises same-id acquisitions and isolates different ids', async () => {
+		const order: string[] = [];
+		const release1 = await acquireCredentialLock('cfg-a');
+		const second = acquireCredentialLock('cfg-a').then((rel) => {
+			order.push('second-acquired');
+			rel();
+		});
+		const releaseOther = await acquireCredentialLock('cfg-b'); // no cross-id blocking
+		order.push('other-acquired');
+		release1();
+		await second;
+		releaseOther();
+		expect(order).toEqual(['other-acquired', 'second-acquired']);
+	});
+
+	it('prompt path helpers agree on the per-run file name', () => {
+		expect(getContainerPromptPath('run-1')).toBe('/workspace/.hezo/prompts/run-1.txt');
+		expect(getHostPromptPath('/data', 'team', 'proj', 'run-1').endsWith('/prompts/run-1.txt')).toBe(
+			true,
+		);
+	});
+});
+
+describe('context loaders (direct edge cases)', () => {
+	it('loadMentionContext returns null without a comment id or with an unknown comment', async () => {
+		expect(await loadMentionContext(db, agentId, teamId, {})).toBeNull();
+		expect(
+			await loadMentionContext(db, agentId, teamId, {
+				comment_id: '00000000-0000-0000-0000-000000000000',
+			}),
+		).toBeNull();
+	});
+
+	it('loadMentionContext extracts text from nested (non-string) comment content', async () => {
+		const comment = await db.query<{ id: string }>(
+			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+			 VALUES ($1, $2, 'text', $3::jsonb) RETURNING id`,
+			[taskId, agentId, JSON.stringify({ nested: { text: 'inner body' } })],
+		);
+		const ctx = await loadMentionContext(db, agentId, teamId, {
+			comment_id: comment.rows[0].id,
+		});
+		expect(ctx).not.toBeNull();
+		expect(ctx!.excerpt).toBe('inner body');
+		// Agent-authored → the member_agents title resolves as author.
+		expect(ctx!.authorName).toBe(agentTitle);
+		await db.query('DELETE FROM task_comments WHERE id = $1', [comment.rows[0].id]);
+	});
+
+	it('loadReplyContext returns null for missing ids and missing rows', async () => {
+		expect(await loadReplyContext(db, {})).toBeNull();
+		expect(
+			await loadReplyContext(db, {
+				comment_id: '00000000-0000-0000-0000-000000000000',
+				triggering_comment_id: '00000000-0000-0000-0000-000000000000',
+			}),
+		).toBeNull();
+		const reply = await db.query<{ id: string }>(
+			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+			 VALUES ($1, NULL, 'text', $2::jsonb) RETURNING id`,
+			[taskId, JSON.stringify({ text: 'orphan reply' })],
+		);
+		expect(
+			await loadReplyContext(db, {
+				comment_id: reply.rows[0].id,
+				triggering_comment_id: '00000000-0000-0000-0000-000000000000',
+			}),
+		).toBeNull();
+		await db.query('DELETE FROM task_comments WHERE id = $1', [reply.rows[0].id]);
+	});
+
+	it('loadSpawnedFromTask returns null with no provenance and collapses parent==spawner', async () => {
+		expect(await loadSpawnedFromTask(db, makeTask())).toBeNull();
+
+		const parentRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
+			method: 'POST',
+			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Both Parent',
+				description: 'd',
+				assignee_id: agentId,
+			}),
+		});
+		const parent = (await parentRes.json()).data;
+		const wakeup = await db.query<{ id: string }>(
+			`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, payload, claimed_at)
+			 VALUES ($1, $2, 'on_demand'::wakeup_source, 'claimed'::wakeup_status, '{}'::jsonb, now())
+			 RETURNING id`,
+			[agentId, teamId],
+		);
+		const run = await db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs (member_id, team_id, task_id, wakeup_id, status)
+			 VALUES ($1, $2, $3, $4, 'succeeded'::heartbeat_run_status) RETURNING id`,
+			[agentId, teamId, parent.id, wakeup.rows[0].id],
+		);
+		const out = await loadSpawnedFromTask(
+			db,
+			makeTask({ parent_task_id: parent.id, created_by_run_id: run.rows[0].id }),
+		);
+		expect(out).not.toBeNull();
+		expect(out!.parentLine).toContain('Both Parent');
+		expect(out!.spawnLine).toBeNull();
+
+		// Parent-only provenance (no spawning run) keeps spawnLine null too.
+		const parentOnly = await loadSpawnedFromTask(db, makeTask({ parent_task_id: parent.id }));
+		expect(parentOnly).not.toBeNull();
+		expect(parentOnly!.parentLine).toContain('Both Parent');
+		expect(parentOnly!.spawnLine).toBeNull();
+
+		await db.query('DELETE FROM heartbeat_runs WHERE id = $1', [run.rows[0].id]);
+		await db.query('DELETE FROM tasks WHERE id = $1', [parent.id]);
+	});
+
+	it('loadAgentAttachmentsForComments short-circuits on an empty id list', async () => {
+		const out = await loadAgentAttachmentsForComments(db, [], masterKeyManager, 3000);
+		expect(out.size).toBe(0);
+	});
+});

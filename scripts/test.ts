@@ -108,6 +108,62 @@ function normalizeLcov(lcovPath: string, pkg: string): void {
 	);
 }
 
+// `bun test --coverage` treats every line of a loaded file as executable —
+// comments, blank lines, SQL string continuations, type-only lines — and emits
+// `DA:<n>,0` for all of them in files its few specs load but never run. The
+// vitest tier (coverage-v8) maps through sourcemaps and only emits DA rows for
+// genuinely executable lines. Coveralls merges the parallel uploads by line
+// number, so the Bun tier's phantom rows count as "missed lines" for every file
+// both tiers load and depress the merged total (~6.5k lines repo-wide) in a way
+// no test can ever recover. Reconcile the models: for each file the vitest lcov
+// also reports, keep only the Bun DA rows whose line numbers exist in the vitest
+// line model (recomputing LF/LH); files only the Bun tier loads pass through
+// unchanged. The vitest lcov is always written and normalized before the Bun
+// tier runs in the same invocation (see main()), locally and in CI.
+function reconcileBunLcovLineModel(bunLcovPath: string, vitestLcovPath: string): void {
+	if (!existsSync(bunLcovPath) || !existsSync(vitestLcovPath)) return;
+	const vitestLines = new Map<string, Set<number>>();
+	let sf = '';
+	for (const line of readFileSync(vitestLcovPath, 'utf8').split('\n')) {
+		if (line.startsWith('SF:')) {
+			sf = line.slice(3).trim();
+			if (!vitestLines.has(sf)) vitestLines.set(sf, new Set());
+		} else if (line.startsWith('DA:')) {
+			vitestLines.get(sf)?.add(Number.parseInt(line.slice(3), 10));
+		}
+	}
+	const records = readFileSync(bunLcovPath, 'utf8')
+		.split(/^end_of_record$/m)
+		.map((rec) => rec.trim())
+		.filter(Boolean)
+		.map((rec) => {
+			const sfMatch = rec.match(/^SF:(.+)$/m);
+			const model = sfMatch ? vitestLines.get(sfMatch[1].trim()) : undefined;
+			if (!model) return rec;
+			let lf = 0;
+			let lh = 0;
+			const kept = rec.split('\n').filter((line) => {
+				if (!line.startsWith('DA:')) return true;
+				const [ln, hits] = line.slice(3).split(',');
+				if (!model.has(Number.parseInt(ln, 10))) return false;
+				lf++;
+				if (Number.parseInt(hits, 10) > 0) lh++;
+				return true;
+			});
+			return kept
+				.map((line) => {
+					if (line.startsWith('LF:')) return `LF:${lf}`;
+					if (line.startsWith('LH:')) return `LH:${lh}`;
+					return line;
+				})
+				.join('\n');
+		});
+	writeFileSync(
+		bunLcovPath,
+		records.length ? `${records.join('\nend_of_record\n')}\nend_of_record\n` : '',
+	);
+}
+
 async function runVitestForPackage(pkg: string): Promise<boolean> {
 	const args = [
 		'vitest',
@@ -166,7 +222,11 @@ async function runBunNativeForPackage(pkg: string): Promise<boolean> {
 	const exitCode = await proc.exited;
 	const duration = Date.now() - start;
 	const passed = exitCode === 0;
-	if (coverage) normalizeLcov(resolve(ROOT, pkg, 'coverage-bun/lcov.info'), pkg);
+	if (coverage) {
+		const bunLcov = resolve(ROOT, pkg, 'coverage-bun/lcov.info');
+		normalizeLcov(bunLcov, pkg);
+		reconcileBunLcovLineModel(bunLcov, resolve(ROOT, pkg, 'coverage/lcov.info'));
+	}
 	console.log(
 		`\n${pkg} (Bun-native): ${passed ? 'passed' : 'FAILED'} (${(duration / 1000).toFixed(1)}s)`,
 	);
