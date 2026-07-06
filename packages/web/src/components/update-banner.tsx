@@ -49,7 +49,12 @@ function readDismissed(): Dismissal | null {
  * release link. Dismissal lasts until the next calendar day (or a newer version ships).
  */
 export function UpdateBanner() {
-	const { data } = useUpdateStatus();
+	// Poll so the banner advances through the background download lifecycle live on any
+	// page (it's the only status observer off the settings page). The hook runs before
+	// the early `return null` below, so its poll keeps ticking while the banner is hidden
+	// mid-download and surfaces "Install & restart" the moment the binary is staged —
+	// without a manual reload.
+	const { data } = useUpdateStatus({ poll: true });
 	const { data: me } = useMe();
 	const apply = useApplyUpdate();
 	const download = useDownloadUpdate();

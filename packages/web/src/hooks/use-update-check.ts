@@ -56,15 +56,48 @@ export function useCheckForUpdate() {
 	});
 }
 
+/** Poll cadence (ms) while a staged-update download is advancing. */
+const POLL_INTERVAL_MS = 2500;
+
+/**
+ * Refetch cadence for the staged-update lifecycle while `useUpdateStatus({ poll })` is
+ * active — the interval in ms, or `false` to stop.
+ *
+ * The server stages the download in the background (kicked by `GET /api/updates/status`
+ * itself) and records only a coarse on-disk `state`, with no push when it changes, so the
+ * UI has to poll to observe `idle → downloading → staged`. Keep polling while the server is
+ * actively mid-flight (`checking`/`downloading`/`applying`) OR a self-applying instance has
+ * an available update that hasn't reached a terminal state yet — the latter covers the
+ * `idle` snapshot the first poll returns before the background stage has written
+ * `downloading`, the gap that otherwise stranded the "Downloading new version…" spinner
+ * until a manual reload. Terminal states (`staged`/`error`) stop the poll, and so does "no
+ * update / can't self-apply in place" — there's nothing to wait for.
+ */
+export function updateStatusPollInterval(data: UpdateStatusInfo | undefined): number | false {
+	if (!data) return false;
+	const { state } = data;
+	if (state === UpdateState.Staged || state === UpdateState.Error) return false;
+	if (
+		state === UpdateState.Checking ||
+		state === UpdateState.Downloading ||
+		state === UpdateState.Applying ||
+		(data.updateAvailable && data.canApply)
+	) {
+		return POLL_INTERVAL_MS;
+	}
+	return false;
+}
+
 /**
  * Latest-release info plus the staged-update lifecycle and whether this instance
  * can apply-and-restart. Drives the "Install & restart" affordance.
  *
- * Pass `{ poll: true }` (the settings Version section) to auto-refetch every few
- * seconds while the server is mid-flight (`checking`/`downloading`/`applying`), so
- * the section advances through the lifecycle live without a manual reload. Polling
- * stops on its own once the state settles (staged/idle/error). The banner leaves it
- * off — it only needs the terminal state.
+ * Pass `{ poll: true }` (the settings Version section and the top-of-shell banner) to
+ * auto-refetch every few seconds while an update is downloading/staging, so the UI advances
+ * through the lifecycle live without a manual reload. `updateStatusPollInterval` keeps
+ * polling through the whole pre-terminal lifecycle — including the `idle` snapshot before
+ * staging starts — and stops on its own once the state settles (`staged`/`error`) or there's
+ * nothing to stage.
  */
 export function useUpdateStatus(opts?: { poll?: boolean }) {
 	return useQuery({
@@ -73,16 +106,7 @@ export function useUpdateStatus(opts?: { poll?: boolean }) {
 		staleTime: 60 * 60 * 1000,
 		gcTime: 60 * 60 * 1000,
 		retry: false,
-		refetchInterval: opts?.poll
-			? (query) => {
-					const state = query.state.data?.state;
-					return state === UpdateState.Checking ||
-						state === UpdateState.Downloading ||
-						state === UpdateState.Applying
-						? 2500
-						: false;
-				}
-			: undefined,
+		refetchInterval: opts?.poll ? (query) => updateStatusPollInterval(query.state.data) : undefined,
 	});
 }
 

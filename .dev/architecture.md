@@ -1241,11 +1241,15 @@ GitHub release, plus a **"Check for new version"** button that calls
 1 h cache, the same upstream check the daily cron runs). When an update is available this
 section mirrors the banner's staged-update lifecycle **in place** — driven by
 `useUpdateStatus({ poll })`, which auto-refetches `GET /api/updates/status` every few seconds
-while the state is `checking`/`downloading`/`applying` so the section advances live without a
-reload: a self-applying instance shows **"Downloading new version…"** while staging, then an
-**"Install & restart"** button (same restart confirmation) once `Staged`, or a **"Retry
-download"** on `Error`; an instance that can't self-apply falls back to the **"Download"**
-release link.
+through the whole pre-terminal lifecycle (`updateStatusPollInterval`: while the server is
+`checking`/`downloading`/`applying`, **and** through the initial `idle` snapshot a self-applying
+instance returns before staging has started) so the section advances live without a reload, then
+stops once the state settles at `staged`/`error` (or there's nothing to stage): a self-applying
+instance shows **"Downloading new version…"** while staging, then an **"Install & restart"**
+button (same restart confirmation) once `Staged`, or a **"Retry download"** on `Error`; an
+instance that can't self-apply falls back to the **"Download"** release link. The top-of-shell
+banner polls the same way (`useUpdateStatus({ poll: true })`), so it surfaces "Install & restart"
+live on any page the moment the binary is staged — not only after a manual reload.
 
 **Self-update & supervisor.** A compiled binary with auto-update enabled
 (`isAutoUpdateEnabled()` — compiled, not `HEZO_DISABLE_AUTO_UPDATE`, not in a container)
@@ -1264,7 +1268,8 @@ re-attempts so a transient failure self-heals instead of sticking forever; likew
 `Downloading` state is respected only while **fresh** (`STAGE_DOWNLOAD_STALE_MS`), so a download
 abandoned by a worker crash/restart is re-attempted rather than wedging staging permanently. It
 runs from `GET /api/updates/status`
-(fire-and-forget on every banner poll, gated on `isSupervisedWorker()`) and the daily
+(fire-and-forget on every status poll from the banner or settings section, gated on
+`isSupervisedWorker()`) and the daily
 `update-check` cron (`HEZO_UPDATE_CHECK_CRON`), so a running instance usually stages a new
 release within seconds. `POST /api/updates/download` (superuser) is the same download path on
 demand; `POST /api/updates/apply` (superuser) gracefully shuts the worker down and exits with
