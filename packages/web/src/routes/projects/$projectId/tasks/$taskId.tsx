@@ -16,6 +16,7 @@ import { SubTasksSection } from '../../../../components/task-detail/sub-tasks-se
 import { TaskHeader } from '../../../../components/task-detail/task-header';
 import { TaskSidebar } from '../../../../components/task-detail/task-sidebar';
 import { TaskSummary } from '../../../../components/task-detail/task-summary';
+import { ResizableSplit } from '../../../../components/ui/resizable-split';
 import { useAgents } from '../../../../hooks/use-agents';
 import { type Comment, useComments, useCreateComment } from '../../../../hooks/use-comments';
 import { useExecutionLock } from '../../../../hooks/use-execution-locks';
@@ -61,10 +62,11 @@ function TaskDetailPage() {
 	const [commentEffort, setCommentEffort] = useState<AgentEffort | null>(null);
 	const [replyTarget, setReplyTarget] = useState<Comment | null>(null);
 	// A doc clicked in a comment opens in the preview panel: an in-grid column at
-	// lg+ that widens on the roomier xl/2xl breakpoints (up to 2× its base width)
-	// so wide screens get a more readable document view, and its own full-screen
-	// overlay (above the main content and the meta drawer) below lg. It is
-	// independent of the meta side rail.
+	// lg+ that defaults to widening on the roomier xl/2xl breakpoints (up to 2× its
+	// base width) and is user-resizable by dragging the divider between it and the
+	// task content (persisted in localStorage); and its own full-screen overlay
+	// (above the main content and the meta drawer) below lg. It is independent of
+	// the meta side rail.
 	const [preview, setPreview] = useState<PreviewItem | null>(null);
 	// The meta side rail is a collapsed-by-default drawer on mobile, toggled by
 	// the chevron. It is independent of the preview panel — opening/closing a
@@ -104,8 +106,71 @@ function TaskDetailPage() {
 	const taskProjectSlug = task.project_slug ?? projectId;
 
 	return (
-		<div
-			className={`grid grid-cols-1 gap-5 ${preview ? 'lg:grid-cols-[1fr_360px] xl:grid-cols-[1fr_520px] 2xl:grid-cols-[1fr_720px]' : 'lg:grid-cols-[1fr_190px]'}`}
+		<ResizableSplit
+			side="right"
+			storageKey="hezo:preview-panel-width"
+			defaultTrackClass="lg:grid-cols-[1fr_360px] xl:grid-cols-[1fr_520px] 2xl:grid-cols-[1fr_720px]"
+			collapsedTrackClass="lg:grid-cols-[1fr_190px]"
+			panel={
+				preview ? (
+					<PreviewPanel
+						item={preview}
+						onClose={() => setPreview(null)}
+						task={{ projectId, taskId, identifier: task.identifier, title: task.title }}
+					/>
+				) : null
+			}
+			aside={
+				<>
+					{/* Right rail: an in-grid sticky column at lg+, a slide-in floating
+					    drawer below lg (collapsed by default, toggled by the chevron). */}
+					<button
+						type="button"
+						onClick={() => setSidebarOpen((o) => !o)}
+						data-testid="task-sidebar-toggle"
+						aria-label={sidebarOpen ? 'Collapse task details' : 'Expand task details'}
+						aria-expanded={sidebarOpen}
+						className="lg:hidden fixed right-0 top-1/2 -translate-y-1/2 z-50 h-12 w-7 rounded-l-md border border-r-0 border-border bg-surface text-text-2 hover:text-text-1 shadow-md flex items-center justify-center"
+					>
+						{sidebarOpen ? (
+							<ChevronRight className="w-4 h-4" />
+						) : (
+							<ChevronLeft className="w-4 h-4" />
+						)}
+					</button>
+					{sidebarOpen && (
+						<button
+							type="button"
+							aria-label="Close task details"
+							onClick={() => setSidebarOpen(false)}
+							className="lg:hidden fixed inset-0 z-40 bg-[var(--overlay)] cursor-default"
+						/>
+					)}
+					{/* Task meta side panel. Mobile: a fixed right-side drawer toggled by the
+					    chevron. Desktop: `lg:contents` makes this wrapper generate no box, so
+					    TaskSidebar becomes the direct grid child (in-grid sticky column). While
+					    a preview is open the sidebar column yields to the preview on desktop
+					    (`lg:hidden`); on mobile the preview is its own overlay above this. */}
+					<div
+						data-testid="task-rail"
+						className={`fixed top-0 right-0 z-40 h-full w-[280px] max-w-[85vw] overflow-y-auto bg-surface p-4 shadow-xl transition-transform duration-200 ${
+							sidebarOpen ? 'translate-x-0' : 'translate-x-full'
+						} ${preview ? 'lg:hidden' : 'lg:contents'}`}
+					>
+						<TaskSidebar
+							task={task}
+							projectId={projectId}
+							agents={agents}
+							lock={lock}
+							comments={comments}
+							updateTask={updateTask}
+							commentEffort={commentEffort}
+							setCommentEffort={setCommentEffort}
+							scrollToBottom={scrollToBottom}
+						/>
+					</div>
+				</>
+			}
 		>
 			<PreviewProvider value={openPreview}>
 				<div className="min-w-0">
@@ -166,60 +231,7 @@ function TaskDetailPage() {
 					</div>
 				</div>
 			</PreviewProvider>
-
-			{/* Right rail: an in-grid sticky column at lg+, a slide-in floating
-				    drawer below lg (collapsed by default, toggled by the chevron). */}
-			<button
-				type="button"
-				onClick={() => setSidebarOpen((o) => !o)}
-				data-testid="task-sidebar-toggle"
-				aria-label={sidebarOpen ? 'Collapse task details' : 'Expand task details'}
-				aria-expanded={sidebarOpen}
-				className="lg:hidden fixed right-0 top-1/2 -translate-y-1/2 z-50 h-12 w-7 rounded-l-md border border-r-0 border-border bg-surface text-text-2 hover:text-text-1 shadow-md flex items-center justify-center"
-			>
-				{sidebarOpen ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
-			</button>
-			{sidebarOpen && (
-				<button
-					type="button"
-					aria-label="Close task details"
-					onClick={() => setSidebarOpen(false)}
-					className="lg:hidden fixed inset-0 z-40 bg-[var(--overlay)] cursor-default"
-				/>
-			)}
-			{/* Task meta side panel. Mobile: a fixed right-side drawer toggled by the
-				    chevron. Desktop: `lg:contents` makes this wrapper generate no box, so
-				    TaskSidebar becomes the direct grid child (in-grid sticky column). While
-				    a preview is open the sidebar column yields to the preview on desktop
-				    (`lg:hidden`); on mobile the preview is its own overlay above this. */}
-			<div
-				data-testid="task-rail"
-				className={`fixed top-0 right-0 z-40 h-full w-[280px] max-w-[85vw] overflow-y-auto bg-surface p-4 shadow-xl transition-transform duration-200 ${
-					sidebarOpen ? 'translate-x-0' : 'translate-x-full'
-				} ${preview ? 'lg:hidden' : 'lg:contents'}`}
-			>
-				<TaskSidebar
-					task={task}
-					projectId={projectId}
-					agents={agents}
-					lock={lock}
-					comments={comments}
-					updateTask={updateTask}
-					commentEffort={commentEffort}
-					setCommentEffort={setCommentEffort}
-					scrollToBottom={scrollToBottom}
-				/>
-			</div>
-			{/* Document preview: its own layer. Mobile: a full-screen overlay above
-				    the main content and the meta drawer. Desktop: the in-grid column 2. */}
-			{preview && (
-				<PreviewPanel
-					item={preview}
-					onClose={() => setPreview(null)}
-					task={{ projectId, taskId, identifier: task.identifier, title: task.title }}
-				/>
-			)}
-		</div>
+		</ResizableSplit>
 	);
 }
 
