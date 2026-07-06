@@ -1,4 +1,5 @@
 import { UPDATE_RESTART_EXIT_CODE } from '@hezo/shared';
+import { createSupervisorUnlockKeyStore } from './lib/unlock-handoff';
 import { logger } from './logger';
 import { applyStagedUpdate, sweepStaleBinaries, UpdateApplyError } from './services/updater';
 
@@ -11,6 +12,11 @@ const log = logger.child('supervisor');
  * other exit code is propagated unchanged, so external restart policies
  * (systemd/launchd/Docker) behave exactly as before the supervisor existed.
  *
+ * The worker IPC channel carries the unlock-key handoff (`lib/unlock-handoff.ts`):
+ * the worker pushes its in-memory unlock key on unlock, the store below holds it
+ * across the restart, and the relaunched worker asks for it back — so an update
+ * install comes back **unlocked** without the key ever touching disk.
+ *
  * Never returns — it loops until the worker exits non-sentinel, then exits the
  * process with the worker's code.
  */
@@ -19,6 +25,9 @@ export async function runSupervisor(dataDir: string): Promise<never> {
 	await sweepStaleBinaries();
 	log.info('Supervisor starting; launching worker');
 
+	// Survives relaunch iterations; the key exists only in this process's memory.
+	const unlockKeys = createSupervisorUnlockKeyStore();
+
 	for (;;) {
 		// Re-exec this binary with the same user args (argv[0]=runtime, argv[1]=entry).
 		const child = Bun.spawn([process.execPath, ...process.argv.slice(2)], {
@@ -26,6 +35,12 @@ export async function runSupervisor(dataDir: string): Promise<never> {
 			stdin: 'inherit',
 			stdout: 'inherit',
 			stderr: 'inherit',
+			// JSON keeps the handoff wire format stable across versions — after an
+			// update this (old) supervisor code talks to the new worker binary.
+			serialization: 'json',
+			ipc(message, subprocess) {
+				unlockKeys.handleMessage(message, (reply) => subprocess.send(reply));
+			},
 		});
 
 		const forward = (sig: NodeJS.Signals) => () => {

@@ -318,6 +318,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		connectivityProbe,
 		pricing,
 		telemetry: config.telemetry,
+		autoInstallUpdates: config.autoInstallUpdates,
 	});
 	const ceoSessionManager = new CeoSessionManager({
 		db,

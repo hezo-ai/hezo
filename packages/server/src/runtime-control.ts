@@ -1,4 +1,8 @@
+import { UPDATE_RESTART_EXIT_CODE } from '@hezo/shared';
+import { logger } from './logger';
 import type { StartupResult } from './startup';
+
+const log = logger.child('runtime');
 
 /**
  * Holds the live server runtime so request handlers (e.g. the update-apply
@@ -31,4 +35,21 @@ export async function shutdownRuntime(result: StartupResult): Promise<void> {
 	await result.sshAgentServer.releaseAll();
 	await result.assetStore.close();
 	await result.db.close();
+}
+
+/**
+ * Gracefully shut down the live runtime and exit with the restart sentinel so
+ * the supervisor applies the staged binary and relaunches. Shared by the
+ * superuser "Install & restart" route and the auto-install cron; callers have
+ * already verified a staged update exists. Never returns.
+ */
+export async function exitToApplyUpdate(): Promise<never> {
+	const runtime = getActiveRuntime();
+	try {
+		if (runtime) await shutdownRuntime(runtime);
+	} catch (err) {
+		log.error('shutdown before update-apply failed', err);
+	}
+	log.info('Exiting with restart sentinel to apply staged update');
+	process.exit(UPDATE_RESTART_EXIT_CODE);
 }

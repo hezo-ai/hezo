@@ -1,11 +1,11 @@
-import { UPDATE_RESTART_EXIT_CODE, UpdateState } from '@hezo/shared';
+import { UpdateState } from '@hezo/shared';
 import { Hono } from 'hono';
 import { trackBackground } from '../lib/background';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireSuperuser } from '../middleware/auth';
-import { getActiveRuntime, shutdownRuntime } from '../runtime-control';
+import { exitToApplyUpdate } from '../runtime-control';
 import {
 	downloadAndStage,
 	ensureUpdateStaged,
@@ -89,8 +89,11 @@ export async function getLatestInfo(opts?: { force?: boolean }): Promise<UpdateI
 
 /**
  * Build the updates router. `autoUnlock` reflects whether a master key is
- * configured at startup (env/CLI) — when true the instance auto-unlocks after a
- * restart, so the UI can soften the "you'll need your master key" warning.
+ * configured at startup (env/CLI). The status route reports auto-unlock when
+ * either that is true or the supervisor unlock-key handoff is active (supervised
+ * worker with an IPC channel — see `lib/unlock-handoff.ts`), so the UI can
+ * soften the "you'll need your master key" warning: an update restart hands the
+ * in-memory unlock key to the relaunched worker.
  */
 export function buildUpdatesRoutes(opts: { autoUnlock: boolean }): Hono<Env> {
 	const routes = new Hono<Env>();
@@ -121,7 +124,10 @@ export function buildUpdatesRoutes(opts: { autoUnlock: boolean }): Hono<Env> {
 			state: state.state,
 			targetVersion: state.targetVersion ?? null,
 			error: state.error ?? null,
-			autoUnlock: opts.autoUnlock,
+			// An authed caller implies the instance is unlocked, so the worker has
+			// already pushed its key to the supervisor — the handoff will restore
+			// the unlock after the update restart.
+			autoUnlock: opts.autoUnlock || (isSupervisedWorker() && typeof process.send === 'function'),
 			canApply: isSupervisedWorker(),
 		});
 	});
@@ -160,16 +166,7 @@ export function buildUpdatesRoutes(opts: { autoUnlock: boolean }): Hono<Env> {
 			return err(c, 'NO_STAGED_UPDATE', 'No staged update to apply', 409);
 		}
 		setTimeout(() => {
-			void (async () => {
-				const runtime = getActiveRuntime();
-				try {
-					if (runtime) await shutdownRuntime(runtime);
-				} catch (e) {
-					log.error('shutdown before update-apply failed', e);
-				}
-				log.info('Exiting with restart sentinel to apply staged update');
-				process.exit(UPDATE_RESTART_EXIT_CODE);
-			})();
+			void exitToApplyUpdate();
 		}, 100);
 		return ok(c, { state: UpdateState.Applying, targetVersion: state.targetVersion ?? null });
 	});

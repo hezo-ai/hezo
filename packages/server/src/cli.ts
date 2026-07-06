@@ -38,6 +38,15 @@ export interface HezoConfig {
 	logLevel: LogLevelName;
 	keepOldContainers: boolean;
 	/**
+	 * Install staged updates automatically (`--auto-install-updates` /
+	 * `HEZO_AUTO_INSTALL_UPDATES`). Once a newer release is downloaded and
+	 * verified, the server gracefully restarts onto it by itself instead of
+	 * waiting for a superuser's "Install & restart" — deferring while agent runs
+	 * are in flight. Only effective where the in-app update flow is available at
+	 * all (the self-managed compiled binary, not inside a container).
+	 */
+	autoInstallUpdates: boolean;
+	/**
 	 * Interface the egress proxy and SSH bridge bind to so agent containers can
 	 * reach them. Defaults to `127.0.0.1` (loopback — works with Docker Desktop,
 	 * which tunnels `host.docker.internal` to host loopback). On native-Linux
@@ -331,6 +340,10 @@ export function parseConfig(
 			'Interface the egress proxy and SSH bridge bind to so agent containers can reach them. Default 127.0.0.1 (works with Docker Desktop). On native-Linux Docker set 0.0.0.0 (or the bridge gateway IP) and firewall-restrict the egress port range to the docker bridge. (env: HEZO_CONTAINER_BIND_HOST)',
 		)
 		.option(
+			'--auto-install-updates',
+			'Install updates automatically: once a newer release is downloaded and verified, gracefully restart onto it without waiting for "Install & restart" in the web UI (in-flight agent runs delay the restart). Only takes effect where in-app auto-update is available — the self-managed binary, not inside a container. The instance comes back unlocked: the in-memory unlock key is handed to the relaunched process over IPC, never written to disk. (env: HEZO_AUTO_INSTALL_UPDATES)',
+		)
+		.option(
 			'--disable-telemetry',
 			'Disable anonymous daily usage telemetry (aggregate counts only — no names, content, or costs). On by default. (env: HEZO_TELEMETRY_ENABLED=0)',
 		)
@@ -398,6 +411,7 @@ export function parseConfig(
 		open: pickOpen('HEZO_OPEN', cli.open),
 		logLevel: parseLogLevel(pick('HEZO_LOG_LEVEL', cli.logLevel) ?? 'info'),
 		keepOldContainers: pickBool('HEZO_KEEP_OLD_CONTAINERS', cli.keepOldContainers),
+		autoInstallUpdates: pickBool('HEZO_AUTO_INSTALL_UPDATES', cli.autoInstallUpdates),
 		containerBindHost: pick('HEZO_CONTAINER_BIND_HOST', cli.containerBindHost) ?? '127.0.0.1',
 		telemetry: {
 			enabled: telemetryEnabled,

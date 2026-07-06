@@ -51,8 +51,24 @@ describe('parseConfig', () => {
 		expect(config.logLevel).toBe('info');
 		expect(config.keepOldContainers).toBe(false);
 		expect(config.containerBindHost).toBe('127.0.0.1');
+		expect(config.autoInstallUpdates).toBe(false);
 		expect(config.telemetry.enabled).toBe(true);
 		expect(config.telemetry.endpoint).toBe('https://hezo.ai/api/telemetry');
+	});
+
+	it('enables auto-install of updates with --auto-install-updates', () => {
+		expect(parseConfig(argv('--auto-install-updates'), EMPTY_ENV).autoInstallUpdates).toBe(true);
+	});
+
+	it('enables auto-install of updates with HEZO_AUTO_INSTALL_UPDATES', () => {
+		expect(parseConfig(argv(), { HEZO_AUTO_INSTALL_UPDATES: '1' }).autoInstallUpdates).toBe(true);
+	});
+
+	it('lets HEZO_AUTO_INSTALL_UPDATES=0 override the --auto-install-updates flag', () => {
+		expect(
+			parseConfig(argv('--auto-install-updates'), { HEZO_AUTO_INSTALL_UPDATES: '0' })
+				.autoInstallUpdates,
+		).toBe(false);
 	});
 
 	it('disables telemetry with --disable-telemetry', () => {

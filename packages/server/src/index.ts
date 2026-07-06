@@ -14,6 +14,7 @@ import {
 } from './db/migrate-errors';
 import { browserAvailable, openBrowser } from './lib/open-browser';
 import type { AuthInfo } from './lib/types';
+import { setupWorkerUnlockHandoff } from './lib/unlock-handoff';
 import { logger, setLogLevel } from './logger';
 import { canAuthAccessTeam, verifyToken } from './middleware/auth';
 import { getActiveRuntime, setActiveRuntime, shutdownRuntime } from './runtime-control';
@@ -219,6 +220,11 @@ void (async () => {
 		containerLogStreamerRef = result.containerLogStreamer;
 		serverReady = true;
 		setStartupPhase('ready');
+		// Update-restart unlock handoff: in a supervised worker, keep the
+		// supervisor's in-memory copy of the unlock key current and, on a locked
+		// boot right after an update install, ask for it back so the instance
+		// comes up unlocked. No-op without an IPC channel (dev, plain binary).
+		setupWorkerUnlockHandoff({ db: result.db, masterKeyManager: result.masterKeyManager });
 		const url = `http://localhost:${result.port}`;
 		log.info(`Hezo server running at ${url} [${result.masterKeyState}]`);
 		if (config.open) {

@@ -297,16 +297,39 @@ re-attempts on a later check. (If the background download is disabled or can't
 run — for example inside a container — the bar instead links to the GitHub
 release page.)
 
-Because the restart re-locks the instance, **you'll need your 12-word master key
-to unlock Hezo again afterward** from the browser gate — that re-lock is by design,
-and unlocking interactively is the secure way back up (don't stash the key on the
-server to avoid it). In-flight agent runs are aborted and recovered automatically,
-and connected browsers reconnect on their own.
+An update restart comes back **unlocked**: the part of Hezo that supervises the
+restart holds the unlock key **in memory** across the swap and hands it to the new
+process, so nothing is ever written to disk and you don't re-enter your master key
+after an update. Restarts that supervisor doesn't survive — a service restart, a
+crash, a reboot — still come up locked by design, and you unlock from the browser
+gate (don't stash the key on the server to avoid that). In-flight agent runs are
+aborted and recovered automatically, and connected browsers reconnect on their own.
 
 Auto-update applies to the self-managed single binary. It is disabled when Hezo
 runs inside a container (update the image instead) and can be turned off with
 `HEZO_DISABLE_AUTO_UPDATE`. The daily check schedule is configurable via
 `HEZO_UPDATE_CHECK_CRON`. See [Configuration](/docs/deployment/configuration).
+
+### Installing updates automatically
+
+For a hands-off server, start Hezo with `--auto-install-updates` (or
+`HEZO_AUTO_INSTALL_UPDATES=1`) and it installs staged updates by itself: once a
+newer release has been downloaded and verified, Hezo waits until no agent runs
+are in flight and then performs the same graceful restart as the **Install &
+restart** button — no click needed. If agents are busy, the install is retried
+every few minutes and lands as soon as the instance goes idle.
+
+Two things to know before enabling it:
+
+- **The instance comes back unlocked** after the automatic restart — the unlock
+  key is handed to the new process in memory (see above), so agents resume
+  without anyone re-entering the master key. Restarts outside the update flow
+  (service restart, reboot, crash) still come up locked by design and are
+  unlocked from the browser gate — never persist the key to disk on the server
+  to avoid that (see [Master key & encryption](/docs/security/master-key)).
+- It only takes effect where in-app auto-update works at all: the self-managed
+  single binary, not inside a container (update the image instead), and not
+  with `HEZO_DISABLE_AUTO_UPDATE` set.
 
 ### Updating manually
 

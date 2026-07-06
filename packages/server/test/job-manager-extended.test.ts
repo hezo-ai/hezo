@@ -1,8 +1,10 @@
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import {
 	AgentRuntimeStatus,
 	ContainerStatus,
 	HeartbeatRunStatus,
-	TaskStatus,
+	UpdateState,
 	WakeupSkipReason,
 	WakeupStatus,
 } from '@hezo/shared';
@@ -921,6 +923,95 @@ describe('JobManager — extended coverage', () => {
 			// In the test runtime isSupervisedWorker() is false, so this returns
 			// immediately without touching the filesystem / network.
 			await (manager as unknown as { checkForUpdate(): Promise<void> }).checkForUpdate();
+			manager.shutdown();
+		});
+	});
+
+	describe('auto-install of staged updates', () => {
+		type WithAutoInstall = { autoInstallStagedUpdate(): Promise<void> };
+
+		async function seedUpdateState(state: UpdateState): Promise<void> {
+			await mkdir(join(dataDir, '.update'), { recursive: true });
+			await writeFile(
+				join(dataDir, '.update', 'state.json'),
+				JSON.stringify({ state, targetVersion: '9.9.9', updatedAt: Date.now() }),
+			);
+		}
+
+		afterEach(async () => {
+			await rm(join(dataDir, '.update'), { recursive: true, force: true });
+		});
+
+		it('restarts onto a staged update when idle', async () => {
+			await seedUpdateState(UpdateState.Staged);
+			let restarts = 0;
+			const manager = createJobManager({
+				autoInstallUpdates: true,
+				isSupervisedWorker: () => true,
+				requestUpdateRestart: async () => {
+					restarts++;
+				},
+			});
+			await (manager as unknown as WithAutoInstall).autoInstallStagedUpdate();
+			expect(restarts).toBe(1);
+			manager.shutdown();
+		});
+
+		it('defers the restart while agent runs are in flight, then installs once idle', async () => {
+			await seedUpdateState(UpdateState.Staged);
+			let restarts = 0;
+			const manager = createJobManager({
+				autoInstallUpdates: true,
+				isSupervisedWorker: () => true,
+				requestUpdateRestart: async () => {
+					restarts++;
+				},
+			});
+			let release!: () => void;
+			const gate = new Promise<void>((r) => {
+				release = r;
+			});
+			manager.launchTask('auto-install-busy', () => gate, 60_000);
+
+			await (manager as unknown as WithAutoInstall).autoInstallStagedUpdate();
+			expect(restarts).toBe(0); // deferred — a run is in flight
+
+			release();
+			await waitForBackground();
+			await (manager as unknown as WithAutoInstall).autoInstallStagedUpdate();
+			expect(restarts).toBe(1); // next tick installs
+			manager.shutdown();
+		});
+
+		it('does not restart when no update is staged', async () => {
+			await seedUpdateState(UpdateState.Downloading);
+			let restarts = 0;
+			const manager = createJobManager({
+				autoInstallUpdates: true,
+				isSupervisedWorker: () => true,
+				requestUpdateRestart: async () => {
+					restarts++;
+				},
+			});
+			await (manager as unknown as WithAutoInstall).autoInstallStagedUpdate();
+			expect(restarts).toBe(0);
+			manager.shutdown();
+		});
+
+		it('does not restart when not a supervised worker, even with a staged update', async () => {
+			await seedUpdateState(UpdateState.Staged);
+			let restarts = 0;
+			const manager = createJobManager({
+				autoInstallUpdates: true,
+				// The env-derived default is also false in tests; pass it explicitly so
+				// the assertion doesn't hinge on the test runtime's environment.
+				isSupervisedWorker: () => false,
+				requestUpdateRestart: async () => {
+					restarts++;
+				},
+			});
+			await (manager as unknown as WithAutoInstall).autoInstallStagedUpdate();
+			expect(restarts).toBe(0);
 			manager.shutdown();
 		});
 	});

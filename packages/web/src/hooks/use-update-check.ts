@@ -15,7 +15,11 @@ export interface UpdateStatusInfo extends UpdateInfo {
 	state: UpdateState;
 	targetVersion: string | null;
 	error: string | null;
-	/** A master key is configured, so the instance auto-unlocks after a restart. */
+	/**
+	 * The instance comes back unlocked after the update restart — either a master
+	 * key is configured at startup, or the supervisor holds the in-memory unlock
+	 * key across the restart and hands it to the relaunched worker.
+	 */
 	autoUnlock: boolean;
 	/** The server can actually apply-and-restart (supervised compiled binary). */
 	canApply: boolean;

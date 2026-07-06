@@ -13,6 +13,7 @@ import {
 	RepoSetupStatus,
 	TaskPriority,
 	TERMINAL_TASK_STATUSES,
+	UpdateState,
 	WakeupSkipReason,
 	WakeupSource,
 	WakeupStatus,
@@ -28,6 +29,7 @@ import { shouldDeferWakeupForBlockers } from '../lib/dependencies';
 import { ref } from '../lib/log-ref';
 import { logger } from '../logger';
 import { getLatestInfo } from '../routes/updates';
+import { exitToApplyUpdate } from '../runtime-control';
 import {
 	type ProgressUpdateContext,
 	type RunnerDeps,
@@ -66,7 +68,7 @@ import { ensureRepoSetupAction } from './repo-setup';
 import { getProjectConcurrency, isTaskBusyInDb } from './run-concurrency';
 import type { SshAgentServer } from './ssh-agent';
 import { reportTelemetry } from './telemetry';
-import { ensureUpdateStaged, isSupervisedWorker } from './updater';
+import { ensureUpdateStaged, isSupervisedWorker, readUpdateState } from './updater';
 import {
 	absorbQueuedTaskWakeups,
 	assignmentWakeupAlreadyServed,
@@ -182,6 +184,20 @@ export interface JobManagerDeps {
 	pricing?: PricingService;
 	/** Anonymous daily usage telemetry. Omitted/disabled → the cron is not registered. */
 	telemetry?: { enabled: boolean; endpoint: string };
+	/**
+	 * Install staged updates automatically (`--auto-install-updates` /
+	 * `HEZO_AUTO_INSTALL_UPDATES`): restart onto a staged newer binary without
+	 * waiting for an operator's "Install & restart". Omitted/false → the
+	 * auto-install cron is not registered.
+	 */
+	autoInstallUpdates?: boolean;
+	/**
+	 * Test seams for the auto-install path — both defaults are process-global
+	 * (the supervised-worker gate reads env/execPath; the restart trigger shuts
+	 * the runtime down and exits the process).
+	 */
+	isSupervisedWorker?: () => boolean;
+	requestUpdateRestart?: () => Promise<void>;
 }
 
 const COALESCING_WINDOW_MS = Number(process.env.HEZO_WAKEUP_COALESCING_MS ?? 2_000);
@@ -194,6 +210,9 @@ const PRICING_REFRESH_CRON = process.env.HEZO_PRICING_REFRESH_CRON ?? '0 0 2 * *
 // Daily check for a newer release; when auto-update is enabled and one is found,
 // download+verify+stage it so an operator "Update & restart" is instant.
 const UPDATE_CHECK_CRON = process.env.HEZO_UPDATE_CHECK_CRON ?? '0 0 4 * * *';
+// Frequent because it is cheap (reads the local state file; no network) — it exists so a
+// deferred install (agent runs in flight at staging time) retries minutes later, not next day.
+const AUTO_INSTALL_CRON = process.env.HEZO_AUTO_INSTALL_CRON ?? '0 */5 * * * *';
 // Anonymous daily usage telemetry report — runs at 5am UTC, after the update
 // check, when telemetry is enabled (opt-out, default on).
 const TELEMETRY_CRON = process.env.HEZO_TELEMETRY_CRON ?? '0 0 5 * * *';
@@ -462,6 +481,13 @@ export class JobManager {
 			log: cronLog,
 			onTick: () => this.guarded('update-check', () => this.checkForUpdate()),
 		});
+		if (this.deps.autoInstallUpdates && (this.deps.isSupervisedWorker ?? isSupervisedWorker)()) {
+			this.cron.createJob('auto-install-update', {
+				cron: AUTO_INSTALL_CRON,
+				log: cronLog,
+				onTick: () => this.guarded('auto-install-update', () => this.autoInstallStagedUpdate()),
+			});
+		}
 		if (this.deps.pricing) {
 			this.cron.createJob('pricing-refresh', {
 				cron: PRICING_REFRESH_CRON,
@@ -2573,6 +2599,31 @@ export class JobManager {
 	private async checkForUpdate(): Promise<void> {
 		if (!isSupervisedWorker()) return;
 		await ensureUpdateStaged(this.deps.dataDir, getLatestInfo);
+	}
+
+	/**
+	 * Auto-install cron (opt-in via `--auto-install-updates` /
+	 * `HEZO_AUTO_INSTALL_UPDATES`). When a downloaded-and-verified update is
+	 * staged and no agent runs are in flight, gracefully restart onto it — the
+	 * same shutdown-and-sentinel-exit path as the operator's "Install & restart".
+	 * A busy instance defers to the next tick, so the install lands minutes after
+	 * the instance goes idle. The instance comes back unlocked: the supervisor
+	 * holds the in-memory unlock key across the restart and hands it to the
+	 * relaunched worker (see `lib/unlock-handoff.ts`).
+	 */
+	private async autoInstallStagedUpdate(): Promise<void> {
+		if (!(this.deps.isSupervisedWorker ?? isSupervisedWorker)()) return;
+		const state = await readUpdateState(this.deps.dataDir);
+		if (state.state !== UpdateState.Staged) return;
+		if (this.runningTasks.size > 0) {
+			log.info(
+				`Deferring auto-install of update ${state.targetVersion}: ` +
+					`${this.runningTasks.size} agent run(s) in flight`,
+			);
+			return;
+		}
+		log.info(`Auto-installing staged update ${state.targetVersion}; restarting`);
+		await (this.deps.requestUpdateRestart ?? exitToApplyUpdate)();
 	}
 
 	private async refreshPricing(): Promise<void> {
