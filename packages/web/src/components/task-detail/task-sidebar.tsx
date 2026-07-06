@@ -4,7 +4,6 @@ import {
 	CAPTAIN_AGENT_SLUG,
 	DEFAULT_EFFORT,
 	HQ_PROJECT_SLUG,
-	TASK_STATUS_LABELS,
 	TaskPriority,
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
@@ -19,6 +18,7 @@ import { useQueuedWakeups } from '../../hooks/use-queued-wakeups';
 import type { Task, useUpdateTask } from '../../hooks/use-tasks';
 import { AgentLink } from '../agent-link';
 import { AgentStatusLabel } from '../agent-status-label';
+import { TaskStatusBadge } from '../task-status-badge';
 import { Button } from '../ui/button';
 import { ConfirmDialog } from '../ui/confirm-dialog';
 import { InfoTooltip } from '../ui/info-tooltip';
@@ -107,26 +107,7 @@ export function TaskSidebar({
 					<span className="text-text-3 block mb-1 uppercase tracking-wider font-medium">
 						Status
 					</span>
-					<select
-						value={task.status}
-						onChange={(e) => updateTask.mutate({ status: e.target.value })}
-						className="w-full rounded-md border border-border bg-surface px-2.5 py-1.5 text-xs text-text-1 outline-none"
-						data-testid="task-status-select"
-						aria-label="Task status"
-					>
-						{[
-							TaskStatus.Backlog,
-							TaskStatus.InProgress,
-							TaskStatus.Review,
-							TaskStatus.Blocked,
-							TaskStatus.Done,
-							TaskStatus.Cancelled,
-						].map((s) => (
-							<option key={s} value={s}>
-								{TASK_STATUS_LABELS[s]}
-							</option>
-						))}
-					</select>
+					<TaskStatusBadge status={task.status} testId="task-status" />
 				</div>
 
 				<div>
