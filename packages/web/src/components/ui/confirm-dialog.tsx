@@ -1,5 +1,5 @@
 import * as AlertDialog from '@radix-ui/react-alert-dialog';
-import { Loader2 } from 'lucide-react';
+import { Loader2, X } from 'lucide-react';
 import { useState } from 'react';
 import { dialogContentClassName, dialogOverlayClassName } from './dialog';
 
@@ -50,6 +50,17 @@ export function ConfirmDialog({
 			<AlertDialog.Portal>
 				<AlertDialog.Overlay className={dialogOverlayClassName} />
 				<AlertDialog.Content data-testid="confirm-dialog" className={dialogContentClassName.sm}>
+					<AlertDialog.Cancel asChild>
+						<button
+							type="button"
+							disabled={loading}
+							className="absolute right-3 top-3 z-10 -m-1 p-2 text-text-2 hover:text-text-1 disabled:opacity-50 disabled:pointer-events-none sm:right-4 sm:top-4"
+							aria-label="Close"
+							data-testid="confirm-dialog-close"
+						>
+							<X className="h-4 w-4" />
+						</button>
+					</AlertDialog.Cancel>
 					<AlertDialog.Title className="text-base font-semibold mb-2">{title}</AlertDialog.Title>
 					{description && (
 						<AlertDialog.Description className="text-[13px] text-text-2 mb-5 leading-relaxed">

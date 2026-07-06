@@ -214,3 +214,28 @@ test('the Restart control opens a confirm dialog whose confirm posts to the rebu
 	await r.user.click(await r.findByRole('button', { name: 'Restart' }));
 	await waitFor(() => expect(rebuilt).toBe(true), { timeout: 15_000 });
 });
+
+test('the confirm dialog has a top-right close button that dismisses it without running the action', async () => {
+	let rebuilt = false;
+	const r = await renderContainer(
+		(teamId) =>
+			fakeProject(teamId, {
+				slug: 'close-flow',
+				container_status: 'running',
+				container_id: '111122223333',
+				docker_base_image: 'hezo/agent-base:latest',
+			}),
+		{ onRebuild: () => (rebuilt = true) },
+	);
+
+	const restartBtn = await r.findByRole('button', { name: /Restart/ }, { timeout: 20_000 });
+	await r.user.click(restartBtn);
+	await r.findByText('Restart container?');
+
+	// The X in the top-right corner dismisses the dialog like Cancel does.
+	const closeBtn = await r.findByTestId('confirm-dialog-close');
+	await r.user.click(closeBtn);
+
+	await waitFor(() => expect(r.queryByText('Restart container?')).toBeNull(), { timeout: 15_000 });
+	expect(rebuilt).toBe(false);
+});
