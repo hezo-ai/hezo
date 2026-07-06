@@ -90,18 +90,22 @@ function ContainerPage() {
 	return (
 		<div className="flex flex-col gap-5">
 			{/* Controls */}
-			<div className="flex items-center gap-3 rounded-lg border border-border-subtle bg-surface px-4 py-3">
-				{isBuilding ? (
-					<Badge color="info" testId="container-status-badge-building">
-						Rebuilding{imageBuild ? ` ${imageBuild.percent}%` : ''}
-					</Badge>
-				) : (
-					<ContainerStatusBadge status={project.container_status} />
-				)}
-				{project.container_id && (
-					<span className="font-mono text-xs text-text-2">{project.container_id.slice(0, 12)}</span>
-				)}
-				<div className="ml-auto flex items-center gap-2">
+			<div className="flex flex-col gap-3 rounded-lg border border-border-subtle bg-surface px-4 py-3 sm:flex-row sm:items-center">
+				<div className="flex items-center gap-3">
+					{isBuilding ? (
+						<Badge color="info" testId="container-status-badge-building">
+							Rebuilding{imageBuild ? ` ${imageBuild.percent}%` : ''}
+						</Badge>
+					) : (
+						<ContainerStatusBadge status={project.container_status} />
+					)}
+					{project.container_id && (
+						<span className="font-mono text-xs text-text-2">
+							{project.container_id.slice(0, 12)}
+						</span>
+					)}
+				</div>
+				<div className="flex flex-wrap items-center gap-2 sm:ml-auto">
 					<Tooltip content="Start container">
 						<Button
 							variant="ghost"
