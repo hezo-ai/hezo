@@ -43,11 +43,15 @@ export function MentionCard({ mention, showTeam = false }: MentionCardProps) {
 	const author = mention.author_slug ? `@${mention.author_slug}` : mention.author_display_name;
 	const unread = !mention.read_at;
 
+	const stateClass = unread
+		? ' border-l-4 border-l-accent bg-accent-soft shadow-sm'
+		: ' border-l-4 border-l-transparent bg-transparent opacity-65 hover:opacity-100';
+
 	return (
 		<button
 			type="button"
 			onClick={handleClick}
-			className={`${linkCardClass}${unread ? ' border-l-2 border-l-accent bg-surface-2' : ''}`}
+			className={`${linkCardClass}${stateClass}`}
 			data-testid="mention-card"
 			data-unread={unread}
 		>
@@ -56,7 +60,7 @@ export function MentionCard({ mention, showTeam = false }: MentionCardProps) {
 					<span
 						role="img"
 						aria-label="Unread"
-						className="w-2 h-2 rounded-full bg-inverse shrink-0"
+						className="w-2.5 h-2.5 rounded-full bg-accent shrink-0"
 					/>
 				)}
 				<Badge variant="dot" color="info">
@@ -65,8 +69,8 @@ export function MentionCard({ mention, showTeam = false }: MentionCardProps) {
 				{showTeam && <span className="text-xs text-text-2">{mention.team_slug}</span>}
 				<span className="text-xs text-text-2">{relativeTime(mention.created_at)}</span>
 			</div>
-			<p className="text-xs text-text-2 mb-1">
-				<span className="font-medium">{author}</span> asked you on{' '}
+			<p className={`text-xs mb-1 ${unread ? 'text-text-1' : 'text-text-2'}`}>
+				<span className={unread ? 'font-semibold' : 'font-medium'}>{author}</span> asked you on{' '}
 				<Link
 					to={'/projects/$projectId/tasks/$taskId' as never}
 					params={
