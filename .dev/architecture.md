@@ -776,6 +776,17 @@ name maps to the bridge gateway IP. The bind interface for both the egress proxy
 ssh-agent TCP bridge is read **per-run** from a shared mutable holder (`EffectiveBindHost`),
 seeded from `HEZO_CONTAINER_BIND_HOST` / `--container-bind-host` (default `127.0.0.1`).
 
+**Egress MTU.** Containers reach the internet through the host's default-route interface via
+NAT but otherwise inherit Docker's 1500-byte bridge MTU. On a host whose egress is a VPN/mesh
+tunnel (WireGuard, NordVPN, Tailscale — commonly 1420) a full-size packet then black-holes at
+the tunnel: the TLS/SSH handshake (small packets) completes, but a bulk transfer — a
+`git fetch` pack — stalls mid-stream. Provisioning detects the egress-interface MTU
+(`detectHostEgressMtu`, via `ip route get` so a policy-routed VPN table is honoured, not just
+`/proc/net/route`) and, when it is below 1500, pins the container link MTU to it — adding
+`CAP_NET_ADMIN` and running `ip link set dev eth0 mtu <n>` right after start (the base image
+ships `iproute2`; `/sys` is read-only in a container so netlink, not a `/sys` write, is
+required). Normal (≥1500) hosts are untouched — no capability, no MTU change.
+
 A boot-time preflight (`container-connectivity-preflight.ts`) starts a throwaway container,
 probes the MCP port and a bind-host listener in the egress range (20000–29999), and resolves
 the bridge gateway IP both host-side (`DockerClient.inspectNetwork('bridge')` → `IPAM.Config[]

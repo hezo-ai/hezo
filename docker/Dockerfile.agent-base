@@ -11,7 +11,7 @@ FROM node:24-slim
 # building git from source is no longer needed; the distro package keeps the
 # image build fast and cache-friendly.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git curl jq unzip openssh-client ca-certificates python3 socat sudo \
+    git curl jq unzip openssh-client ca-certificates python3 socat sudo iproute2 \
     && rm -rf /var/lib/apt/lists/*
 
 # The container runs as the unprivileged `node` user (so bind-mounted worktree
