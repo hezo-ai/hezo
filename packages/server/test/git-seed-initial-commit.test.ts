@@ -139,4 +139,25 @@ describe('seedInitialCommitIfEmpty', () => {
 		// The pre-existing README is preserved verbatim, not clobbered by the default.
 		expect(git(remote, 'show', 'main:README.md')).toBe('hand-written');
 	});
+
+	it('re-pushes a stranded local commit when a prior push failed, without re-committing', async () => {
+		// A prior attempt committed locally but its push failed (transient network),
+		// leaving the remote empty and HEAD born. The retry must push that same commit,
+		// not re-run `git commit` (which would die with "nothing to commit").
+		const remote = makeEmptyRemote();
+		const work = cloneInto(remote);
+		writeFileSync(join(work, 'README.md'), '# widgets\n');
+		git(work, 'add', '-A');
+		git(work, 'commit', '-m', 'Initial commit');
+		const strandedSha = git(work, 'rev-parse', 'HEAD');
+		// Remote is still empty — nothing has been pushed yet (no `main` branch).
+		expect(git(remote, 'branch', '--list', 'main')).toBe('');
+
+		const res = await seedInitialCommitIfEmpty(exec, 'acme/widgets', loc(work), false);
+
+		expect(res.seeded).toBe(true);
+		expect(res.error).toBeUndefined();
+		// The *existing* local commit reached the remote (same SHA — no new commit).
+		expect(git(remote, 'rev-parse', 'main')).toBe(strandedSha);
+	});
 });
