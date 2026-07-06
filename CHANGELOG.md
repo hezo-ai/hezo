@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.15.2 - 2026-07-06
+
+### Features
+
+- scope OAuth accounts and MCP connectors per project ([#607](https://github.com/hezo-ai/hezo/pull/607))
+- **web:** drag to resize the document preview panel ([#606](https://github.com/hezo-ai/hezo/pull/606))
+- **web:** show task status in the task meta panel ([#605](https://github.com/hezo-ai/hezo/pull/605))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.15.1...0.15.2
+
 ## 0.15.1 - 2026-07-06
 
 ### Bug Fixes
