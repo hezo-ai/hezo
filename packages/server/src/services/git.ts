@@ -310,9 +310,26 @@ export async function fastForwardLocalDefault(
 		}
 	}
 	const upd = await executor.exec(['update-ref', local, remote], { cwd, timeout: 30_000 });
-	return upd.exitCode === 0
-		? undefined
-		: `could not fast-forward ${def}: ${formatGitError(upd.stderr)}`;
+	if (upd.exitCode !== 0) {
+		return `could not fast-forward ${def}: ${formatGitError(upd.stderr)}`;
+	}
+
+	// A clone populated by fetch alone (adopted in place, or one whose initial
+	// checkout never completed) has an unborn HEAD: the local default ref now
+	// exists, but HEAD still points at a branch with no commit, and `git worktree
+	// add` reads HEAD and dies with "Failed to resolve HEAD as a valid ref" — even
+	// when handed an explicit commit-ish. Point HEAD at the freshly-materialised
+	// default branch (ref only, working tree left untouched) so worktree prep can
+	// proceed and the stale clone self-heals.
+	const headBorn = await executor.exec(['rev-parse', '--verify', '--quiet', 'HEAD'], {
+		cwd,
+		timeout: 30_000,
+	});
+	if (headBorn.exitCode !== 0) {
+		const sym = await executor.exec(['symbolic-ref', 'HEAD', local], { cwd, timeout: 30_000 });
+		if (sym.exitCode !== 0) return `could not set HEAD to ${def}: ${formatGitError(sym.stderr)}`;
+	}
+	return undefined;
 }
 
 /**

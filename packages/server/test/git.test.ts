@@ -651,6 +651,43 @@ describe('origin remote inspection and repair', () => {
 		expect(res.error).toContain('push an initial commit');
 		expect(res.error).toContain('the fetch above failed');
 	});
+
+	it("fastForwardLocalDefault repairs a clone stuck at git clone's .invalid HEAD sentinel", async () => {
+		// The production failure: a `git clone` that dies mid-fetch (a dropped network,
+		// the MTU black-hole) leaves .git/HEAD at the `refs/heads/.invalid` sentinel that
+		// clone sets before it resolves the real default. Once a later fetch succeeds,
+		// origin/<default> exists but HEAD is still the invalid ref — and `git worktree
+		// add`, even with an explicit commit-ish, dies with "failed to resolve HEAD as a
+		// valid ref" (an unborn *valid* branch would be fine; an invalid ref is not).
+		const def = branchOf(cloneDir); // the branch that exists on the bare "remote"
+		const initDir = join(testDir, 'invalid-head-clone');
+		mkdirSync(initDir, { recursive: true });
+		run('git init', initDir);
+		configure(initDir, 'Test');
+		run(`git remote add origin ${bareRepoDir}`, initDir);
+		const fetched = await fetchRepo(exec, repoLoc(initDir));
+		expect(fetched.success).toBe(true);
+		// Stick HEAD at the sentinel, exactly as an interrupted clone leaves it.
+		writeFileSync(join(initDir, '.git', 'HEAD'), 'ref: refs/heads/.invalid\n');
+		const before = await exec.exec(['rev-parse', '--verify', '--quiet', 'HEAD'], { cwd: initDir });
+		expect(before.exitCode).not.toBe(0); // HEAD does not resolve
+
+		const warn = await fastForwardLocalDefault(exec, repoLoc(initDir));
+		expect(warn).toBeUndefined();
+
+		// HEAD now resolves to the remote default tip.
+		const remoteTip = execSync(`git rev-parse refs/remotes/origin/${def}`, { cwd: initDir })
+			.toString()
+			.trim();
+		expect(sha(initDir)).toBe(remoteTip);
+		expect(branchOf(initDir)).toBe(def);
+
+		// The worktree add that previously failed with "failed to resolve HEAD" now works.
+		const wtDir = join(testDir, 'wt-invalid-head', 'repo');
+		const wt = await ensureTaskWorktree(exec, repoLoc(initDir), wtLoc(wtDir), 'hezo/IH-1');
+		expect(wt.success).toBe(true);
+		expect(existsSync(join(wtDir, 'README.md'))).toBe(true);
+	});
 });
 
 describe('isTransientMountError', () => {
