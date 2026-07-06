@@ -86,13 +86,15 @@ certificate for that name instead.
 
 ## After it's up
 
-- **The master key locks the *instance*.** After any restart, Hezo comes up **locked**
+- **The master key locks the *instance*.** After a restart, Hezo comes up **locked**
   until you provide the twelve words again on the browser gate — that locked-on-restart
   behaviour is by design, and unlocking from the browser is the secure way to bring it
-  back up. **Don't save your master key to a file on the server** (an env file, the
-  systemd unit, anywhere on disk): it's the one secret Hezo keeps in memory only, and a
-  copy sitting next to the encrypted data lets anyone who can read the disk decrypt
-  everything. See [First-run setup](/docs/getting-started/first-run) and
+  back up. (In-app **update** restarts are the exception: the unlock key is handed to
+  the new process in memory, so an update doesn't re-lock.) **Don't save your master key
+  to a file on the server** (an env file, the systemd unit, anywhere on disk): it's the
+  one secret Hezo keeps in memory only, and a copy sitting next to the encrypted data
+  lets anyone who can read the disk decrypt everything. See
+  [First-run setup](/docs/getting-started/first-run) and
   [Master key & encryption](/docs/security/master-key).
 - **Backups.** Everything lives in `/var/lib/hezo` — back that one directory up. See
   [Backup & recovery](/docs/deployment/backup-and-recovery).

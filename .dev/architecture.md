@@ -1222,17 +1222,24 @@ default) makes the install itself unattended: JobManager registers an `auto-inst
 (`HEZO_AUTO_INSTALL_CRON`, every 5 min; registered only when the flag is set on a supervised
 worker) that reads `state.json` — no network — and, when a verified update is `Staged` and no
 agent runs are in flight (`runningTasks` empty; busy instances defer to the next tick), calls
-the same `exitToApplyUpdate()` path as the operator button. The instance still returns locked
-after the swap unless a master key was supplied at startup.
+the same `exitToApplyUpdate()` path as the operator button.
 `applyStagedUpdate()` does the swap *while the worker is down*: copy
 staged → a temp file adjacent to the target (avoids `EXDEV`), then **Unix** atomic `rename`
 over the binary, or **Windows** rename-trick (rename the locked `.exe` aside, move the new
 one in, verify, roll back on failure; stale `-old-` files swept on next supervisor start).
 State survives the restart via the normal recovery path (`reconcileOnStartup`), and the
-instance returns **locked** unless `HEZO_MASTER_KEY` is set (the web restart overlay polls
-`/api/status` and reloads onto the master-key gate). `GET /api/updates/status` surfaces the
-staged-update state plus an `autoUnlock` hint so the UI's confirmation can warn about the
-master-key re-unlock. The web banner shows an **"Install & restart"** button only once the
+instance returns **unlocked** via the **unlock-key handoff** (`lib/unlock-handoff.ts`): the
+worker pushes its in-memory unlock key to the supervisor over the spawn's IPC channel
+(`serialization: 'json'` — the wire format must stay stable, since post-update the old
+supervisor code talks to the new worker binary) on every `onUnlock`; the supervisor holds it
+in memory only (`createSupervisorUnlockKeyStore`) and answers the relaunched worker's request
+on a locked boot (`setupWorkerUnlockHandoff`, wired in `index.ts`). The reply still passes the
+master-key canary check, so a stale key just leaves the instance locked; the key never touches
+disk, argv, or env. Restarts the supervisor doesn't survive (crash, service restart, reboot)
+still come up locked — the web restart overlay polls `/api/status` and reloads onto the
+master-key gate. `GET /api/updates/status` surfaces the staged-update state plus an
+`autoUnlock` hint (startup master key **or** an active handoff channel on a supervised worker)
+so the UI's confirmation only warns about re-unlock when re-unlock will actually be needed. The web banner shows an **"Install & restart"** button only once the
 binary is `Staged` (so the restart is instant); while the background download is in flight it
 stays hidden. On a download `Error`, a self-applying instance shows a **"Retry download"**
 button (which re-triggers `POST /api/updates/download`) with the GitHub release as a secondary

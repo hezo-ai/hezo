@@ -2587,8 +2587,9 @@ export class JobManager {
 	 * staged and no agent runs are in flight, gracefully restart onto it — the
 	 * same shutdown-and-sentinel-exit path as the operator's "Install & restart".
 	 * A busy instance defers to the next tick, so the install lands minutes after
-	 * the instance goes idle. As with any restart, the instance comes back locked
-	 * unless a master key was provided at startup.
+	 * the instance goes idle. The instance comes back unlocked: the supervisor
+	 * holds the in-memory unlock key across the restart and hands it to the
+	 * relaunched worker (see `lib/unlock-handoff.ts`).
 	 */
 	private async autoInstallStagedUpdate(): Promise<void> {
 		if (!(this.deps.isSupervisedWorker ?? isSupervisedWorker)()) return;

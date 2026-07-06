@@ -55,6 +55,12 @@ unlock it from the browser gate each time. If you genuinely must automate one la
 can pass `HEZO_MASTER_KEY` to that single invocation, but treat the phrase like a crypto
 wallet seed — keep the only durable copy somewhere safe **off** the server.
 
+The one exception is an in-app **update** restart: the process that supervises the update
+hands the unlock key to the new process **in memory** — still never written to disk — so
+installing an update doesn't ask for the phrase again. Every other restart (service
+restart, reboot, crash) locks as described above. See
+[Updating](/docs/deployment/self-hosting#updating).
+
 ## Your password vs. the master key
 
 The master key and your password do two different jobs:

@@ -341,7 +341,7 @@ export function parseConfig(
 		)
 		.option(
 			'--auto-install-updates',
-			'Install updates automatically: once a newer release is downloaded and verified, gracefully restart onto it without waiting for "Install & restart" in the web UI (in-flight agent runs delay the restart). Only takes effect where in-app auto-update is available — the self-managed binary, not inside a container. The instance starts locked after the automatic restart unless a master key was provided at startup. (env: HEZO_AUTO_INSTALL_UPDATES)',
+			'Install updates automatically: once a newer release is downloaded and verified, gracefully restart onto it without waiting for "Install & restart" in the web UI (in-flight agent runs delay the restart). Only takes effect where in-app auto-update is available — the self-managed binary, not inside a container. The instance comes back unlocked: the in-memory unlock key is handed to the relaunched process over IPC, never written to disk. (env: HEZO_AUTO_INSTALL_UPDATES)',
 		)
 		.option(
 			'--disable-telemetry',

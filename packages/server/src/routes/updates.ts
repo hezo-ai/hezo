@@ -89,8 +89,11 @@ export async function getLatestInfo(opts?: { force?: boolean }): Promise<UpdateI
 
 /**
  * Build the updates router. `autoUnlock` reflects whether a master key is
- * configured at startup (env/CLI) — when true the instance auto-unlocks after a
- * restart, so the UI can soften the "you'll need your master key" warning.
+ * configured at startup (env/CLI). The status route reports auto-unlock when
+ * either that is true or the supervisor unlock-key handoff is active (supervised
+ * worker with an IPC channel — see `lib/unlock-handoff.ts`), so the UI can
+ * soften the "you'll need your master key" warning: an update restart hands the
+ * in-memory unlock key to the relaunched worker.
  */
 export function buildUpdatesRoutes(opts: { autoUnlock: boolean }): Hono<Env> {
 	const routes = new Hono<Env>();
@@ -121,7 +124,10 @@ export function buildUpdatesRoutes(opts: { autoUnlock: boolean }): Hono<Env> {
 			state: state.state,
 			targetVersion: state.targetVersion ?? null,
 			error: state.error ?? null,
-			autoUnlock: opts.autoUnlock,
+			// An authed caller implies the instance is unlocked, so the worker has
+			// already pushed its key to the supervisor — the handoff will restore
+			// the unlock after the update restart.
+			autoUnlock: opts.autoUnlock || (isSupervisedWorker() && typeof process.send === 'function'),
 			canApply: isSupervisedWorker(),
 		});
 	});
