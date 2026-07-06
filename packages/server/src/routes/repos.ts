@@ -1,17 +1,39 @@
-import { RepoSetupStatus, repoNameFromIdentifier, wsRoom } from '@hezo/shared';
+import { join } from 'node:path';
+import { ContainerStatus, RepoSetupStatus, repoNameFromIdentifier, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
+import { withProjectGitLock } from '../lib/git-lock';
 import { getProjectLocator, resolveProjectId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import { isUniqueViolation } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
+import { requireSuperuser } from '../middleware/auth';
+import { resolveContainerRunUser } from '../services/container-user';
 import type { ContainerDeps } from '../services/containers';
+import {
+	getCloneState,
+	getWorktreeState,
+	listWorktrees,
+	pruneWorktrees,
+	type RepoLoc,
+	resetCloneToOrigin,
+	type WorktreeLoc,
+} from '../services/git';
+import { ContainerGitExecutor } from '../services/git-executor';
 import { createGitHubRepo, parseGitHubUrl, validateRepoAccess } from '../services/github';
 import { getConnection } from '../services/oauth/connection-store';
 import { performRepoSetup } from '../services/repo-provisioning';
 import { removeRepoFromWorkspace } from '../services/repo-sync';
+import { getProjectConcurrency } from '../services/run-concurrency';
+import { type BridgeRunnerArgs, withProvisionBridge } from '../services/ssh-agent';
+import {
+	CONTAINER_WORKSPACE_ROOT,
+	CONTAINER_WORKTREES_ROOT,
+	getWorkspacePath,
+	getWorktreesPath,
+} from '../services/workspace';
 
 const log = logger.child('routes');
 
@@ -271,6 +293,218 @@ reposRoutes.delete('/projects/:projectId/repos/:repoId', async (c) => {
 	return ok(c, { deleted: true });
 });
 
+/**
+ * Admin-only live git state for one repository's clone: the default branch, HEAD,
+ * clean/dirty, ahead/behind origin (all read locally — no network fetch), plus the
+ * active per-task worktrees. Git runs inside the project container, so this
+ * requires the container running; a stopped container returns
+ * `{ container_running: false }` rather than auto-starting one (a passive inspect
+ * must never trigger a minutes-long provision). Reads run under the project git
+ * lock so they never interleave with a run's worktree prep on the shared `.git`.
+ */
+reposRoutes.get('/projects/:projectId/repos/:repoId/git-state', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
+
+	const teamId = c.get('teamId') as string;
+	const db = c.get('db');
+	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
+	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
+	const dataDir = c.get('dataDir');
+	if (!dataDir)
+		return err(c, 'GIT_STATE_UNSUPPORTED', 'git state unavailable in this deployment', 400);
+
+	const repo = await loadRepoForGit(db, dataDir, teamId, projectId, c.req.param('repoId'));
+	if (!repo) return err(c, 'NOT_FOUND', 'Repo not found', 404);
+
+	if (!repo.containerId || !repo.containerRunning) {
+		return ok(c, { container_running: false });
+	}
+	const containerId = repo.containerId;
+
+	const docker = c.get('docker');
+	const runUser = await resolveContainerRunUser(docker, containerId);
+	const executor = ContainerGitExecutor.forPrep(docker, containerId, null, runUser);
+	const worktreesPath = getWorktreesPath(dataDir, teamId, projectId);
+	const wtPrefix = `${CONTAINER_WORKTREES_ROOT}/`;
+
+	const state = await withProjectGitLock(projectId, async () => {
+		const clone = await getCloneState(executor, repo.repoLoc);
+		const entries = await listWorktrees(executor, repo.repoLoc);
+		const worktrees: {
+			taskIdentifier: string;
+			branch: string | null;
+			head: string | null;
+			dirty: boolean;
+		}[] = [];
+		for (const entry of entries) {
+			// Skip the main worktree (the clone itself, under /workspace/<repo>); only
+			// list the per-task worktrees under /worktrees/<taskId>/<repo>.
+			if (!entry.path.startsWith(wtPrefix)) continue;
+			const taskIdentifier = entry.path.slice(wtPrefix.length).split('/')[0];
+			if (!taskIdentifier) continue;
+			const wtLoc: WorktreeLoc = {
+				hostPath: join(worktreesPath, taskIdentifier, repo.repoName),
+				containerPath: entry.path,
+			};
+			const wt = await getWorktreeState(executor, wtLoc);
+			worktrees.push({
+				taskIdentifier,
+				branch: entry.branch ? entry.branch.replace(/^refs\/heads\//, '') : null,
+				head: wt.head,
+				dirty: wt.dirty,
+			});
+		}
+		return { clone, worktrees };
+	});
+
+	// Attach each worktree's task title/status in one query.
+	const identifiers = [...new Set(state.worktrees.map((w) => w.taskIdentifier))];
+	const taskMap = new Map<string, { title: string; status: string }>();
+	if (identifiers.length > 0) {
+		const tasks = await db.query<{ identifier: string; title: string; status: string }>(
+			'SELECT identifier, title, status FROM tasks WHERE project_id = $1 AND identifier = ANY($2)',
+			[projectId, identifiers],
+		);
+		for (const t of tasks.rows) taskMap.set(t.identifier, { title: t.title, status: t.status });
+	}
+
+	return ok(c, {
+		container_running: true,
+		clone: state.clone,
+		worktrees: state.worktrees.map((w) => ({ ...w, task: taskMap.get(w.taskIdentifier) ?? null })),
+	});
+});
+
+const RESET_ACTIONS = ['discard_local', 'prune_worktrees', 'reclone'] as const;
+type ResetAction = (typeof RESET_ACTIONS)[number];
+
+/**
+ * Admin-only recovery for a wedged repository. Actions:
+ * - `discard_local`: `git reset --hard` + `clean -fd` on the clone (best-effort
+ *   fetch first) — unsticks the "local changes would be overwritten" sync failure.
+ * - `prune_worktrees`: `git worktree prune` — clears stale worktrees from crashed runs.
+ * - `reclone`: wipe the on-disk clone and re-run the standard provisioning path.
+ *
+ * All are blocked (409) while any agent run is active on the project — reset
+ * mutates the shared `.git` a live run's worktree prep also touches, and reclone
+ * deletes worktrees a run may hold. `discard_local`/`prune_worktrees` additionally
+ * require a running container; `reclone` starts one as part of provisioning.
+ */
+reposRoutes.post('/projects/:projectId/repos/:repoId/reset', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
+
+	const teamId = c.get('teamId') as string;
+	const db = c.get('db');
+	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
+	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
+	const dataDir = c.get('dataDir');
+	if (!dataDir)
+		return err(c, 'GIT_RESET_UNSUPPORTED', 'git reset unavailable in this deployment', 400);
+
+	const body = await c.req.json<{ action?: string }>().catch(() => ({}) as { action?: string });
+	if (!body.action || !RESET_ACTIONS.includes(body.action as ResetAction)) {
+		return err(c, 'INVALID_REQUEST', `action must be one of: ${RESET_ACTIONS.join(', ')}`, 400);
+	}
+	const action = body.action as ResetAction;
+
+	const repo = await loadRepoForGit(db, dataDir, teamId, projectId, c.req.param('repoId'));
+	if (!repo) return err(c, 'NOT_FOUND', 'Repo not found', 404);
+
+	// Never reset while a run may hold a worktree in this project's shared .git.
+	const { active } = await getProjectConcurrency(db, projectId);
+	if (active > 0) {
+		return err(
+			c,
+			'RUN_IN_PROGRESS',
+			`Cannot reset while ${active} agent run(s) are active on this project; stop or wait for them to finish first`,
+			409,
+		);
+	}
+
+	const docker = c.get('docker');
+
+	if (action === 'reclone') {
+		// Wipe the clone (+ this repo's worktrees) and re-run the standard repo-setup
+		// path, which re-clones and settles the row to ready/failed. The frontend
+		// already renders `setup_status === 'pending'` as "Setting up…".
+		try {
+			removeRepoFromWorkspace(dataDir, teamId, projectId, repo.repoName);
+		} catch (e) {
+			log.error(`Failed to wipe workspace for reclone of ${repo.repoName}:`, e);
+			return err(c, 'RECLONE_FAILED', 'failed to remove existing clone', 500);
+		}
+		const updated = await db.query<Record<string, unknown>>(
+			`UPDATE repos r SET setup_status = $1::repo_setup_status, setup_error = NULL
+			 WHERE r.id = $2 AND r.project_id = $3
+			 RETURNING r.id, r.project_id, r.repo_identifier, r.host_type, r.oauth_connection_id,
+			           r.created_at, r.setup_status, r.setup_error,
+			           (SELECT p.designated_repo_id = r.id FROM projects p WHERE p.id = r.project_id)
+			             AS is_designated`,
+			[RepoSetupStatus.Pending, repo.repoId, projectId],
+		);
+		if (updated.rows[0]) {
+			broadcastChange(c, wsRoom.team(teamId), 'repos', 'UPDATE', updated.rows[0]);
+		}
+		const setupDeps: Omit<ContainerDeps, 'docker' | 'dataDir'> = {
+			db,
+			wsManager: c.get('wsManager'),
+			masterKeyManager: c.get('masterKeyManager'),
+			logs: c.get('logs'),
+			containerLogStreamer: c.get('containerLogStreamer'),
+			sshAgentServer: c.get('sshAgentServer'),
+			egressCAPath: c.get('egressProxy')?.caCertPath ?? null,
+		};
+		trackBackground(
+			performRepoSetup(
+				{ ...setupDeps, docker, dataDir },
+				{ teamId, projectId, repoId: repo.repoId, repoIdentifier: repo.repoIdentifier },
+			).catch((e) => log.error(`Background reclone for ${repo.repoIdentifier} failed:`, e)),
+		);
+		return ok(c, { reset: true, action });
+	}
+
+	// discard_local / prune_worktrees run git in the container → require it running.
+	if (!repo.containerId || !repo.containerRunning) {
+		return err(c, 'CONTAINER_NOT_RUNNING', 'Start the project container before resetting', 409);
+	}
+	const containerId = repo.containerId;
+	const runUser = await resolveContainerRunUser(docker, containerId);
+
+	const result = await withProjectGitLock(
+		projectId,
+		async (): Promise<{
+			success: boolean;
+			error?: string;
+			warning?: string;
+		}> => {
+			if (action === 'prune_worktrees') {
+				const executor = ContainerGitExecutor.forPrep(docker, containerId, null, runUser);
+				await pruneWorktrees(executor, repo.repoLoc);
+				return { success: true };
+			}
+			// discard_local: the best-effort fetch needs the SSH bridge.
+			const sshAgentServer = c.get('sshAgentServer');
+			const runReset = (bridge: BridgeRunnerArgs | null) =>
+				resetCloneToOrigin(
+					ContainerGitExecutor.forPrep(docker, containerId, bridge, runUser),
+					repo.repoLoc,
+				);
+			return sshAgentServer
+				? withProvisionBridge(sshAgentServer, teamId, dataDir, runUser.name, ({ bridge }) =>
+						runReset(bridge),
+					)
+				: runReset(null);
+		},
+	);
+
+	if (!result.success) {
+		return err(c, 'RESET_FAILED', result.error ?? 'git reset failed', 500);
+	}
+	return ok(c, { reset: true, action, warning: result.warning ?? null });
+});
+
 reposRoutes.get('/projects/:projectId/oauth-connections/:id/orgs', async (c) => {
 	const db = c.get('db');
 	const projectId = c.get('projectId') as string;
@@ -330,4 +564,51 @@ async function loadOAuthAccessToken(
 	if (result.rows.length === 0) return null;
 	const { decrypt } = await import('../crypto/encryption');
 	return decrypt(result.rows[0].encrypted_value, key);
+}
+
+interface RepoGitTarget {
+	repoId: string;
+	repoIdentifier: string;
+	repoName: string;
+	repoLoc: RepoLoc;
+	containerId: string | null;
+	containerRunning: boolean;
+}
+
+/**
+ * Resolve a repo row scoped to its project plus the addressing the container git
+ * executor needs: the clone's host/container paths and the project container's
+ * id + running state. Returns null when the repo isn't on the project.
+ */
+async function loadRepoForGit(
+	db: import('../db/database').Db,
+	dataDir: string,
+	teamId: string,
+	projectId: string,
+	repoId: string,
+): Promise<RepoGitTarget | null> {
+	const repoRes = await db.query<{ repo_identifier: string }>(
+		'SELECT repo_identifier FROM repos WHERE id = $1 AND project_id = $2',
+		[repoId, projectId],
+	);
+	if (repoRes.rows.length === 0) return null;
+	const repoIdentifier = repoRes.rows[0].repo_identifier;
+	const repoName = repoNameFromIdentifier(repoIdentifier);
+
+	const containerRes = await db.query<{
+		container_id: string | null;
+		container_status: string | null;
+	}>('SELECT container_id, container_status FROM projects WHERE id = $1', [projectId]);
+
+	return {
+		repoId,
+		repoIdentifier,
+		repoName,
+		repoLoc: {
+			hostPath: join(getWorkspacePath(dataDir, teamId, projectId), repoName),
+			containerPath: `${CONTAINER_WORKSPACE_ROOT}/${repoName}`,
+		},
+		containerId: containerRes.rows[0]?.container_id ?? null,
+		containerRunning: containerRes.rows[0]?.container_status === ContainerStatus.Running,
+	};
 }

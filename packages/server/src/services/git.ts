@@ -412,12 +412,21 @@ export async function createWorktree(
 	return { success: true };
 }
 
-interface WorktreeListEntry {
+export interface WorktreeListEntry {
 	path: string;
 	branch?: string;
 }
 
-async function listWorktrees(executor: GitExecutor, repo: RepoLoc): Promise<WorktreeListEntry[]> {
+/**
+ * Parses `git worktree list --porcelain` into `{ path, branch? }` entries. The
+ * main worktree (the clone itself) is always index 0; linked task worktrees
+ * follow. `branch` is the full ref (`refs/heads/<name>`) or absent when the
+ * worktree is detached.
+ */
+export async function listWorktrees(
+	executor: GitExecutor,
+	repo: RepoLoc,
+): Promise<WorktreeListEntry[]> {
 	const res = await executor.exec(['worktree', 'list', '--porcelain'], {
 		cwd: repo.containerPath,
 		timeout: 30_000,
@@ -668,6 +677,153 @@ export async function worktreeHasChanges(
 	if (status.exitCode === 0 && status.stdout.trim().length > 0) return true;
 	const headAfter = await getWorktreeHead(executor, wt);
 	return headAfter !== null && headBefore !== null && headAfter !== headBefore;
+}
+
+/**
+ * A clone's local git state for the admin git-state panel. Read **without
+ * touching the network**: `ahead`/`behind` compare HEAD against the last-fetched
+ * `origin/<default>` tracking ref, so they reflect the most recent `git fetch`,
+ * not live origin. `cloned:false` means the on-disk clone has no `.git` yet (repo
+ * setup still pending or failed).
+ */
+export interface CloneState {
+	cloned: boolean;
+	defaultBranch: string | null;
+	headBranch: string | null;
+	head: string | null;
+	dirty: boolean;
+	ahead: number | null;
+	behind: number | null;
+}
+
+export async function getCloneState(executor: GitExecutor, repo: RepoLoc): Promise<CloneState> {
+	if (!existsSync(join(repo.hostPath, '.git'))) {
+		return {
+			cloned: false,
+			defaultBranch: null,
+			headBranch: null,
+			head: null,
+			dirty: false,
+			ahead: null,
+			behind: null,
+		};
+	}
+	const cwd = repo.containerPath;
+	const defaultBranch = await getRemoteDefaultBranch(executor, repo);
+
+	const headBranchRes = await executor.exec(['symbolic-ref', '--quiet', '--short', 'HEAD'], {
+		cwd,
+		timeout: 10_000,
+	});
+	const headBranch = headBranchRes.exitCode === 0 ? headBranchRes.stdout.trim() || null : null;
+
+	const headRes = await executor.exec(['rev-parse', '--verify', '--quiet', 'HEAD'], {
+		cwd,
+		timeout: 10_000,
+	});
+	const head = headRes.exitCode === 0 ? headRes.stdout.trim() || null : null;
+
+	const statusRes = await executor.exec(['status', '--porcelain'], { cwd, timeout: 10_000 });
+	const dirty = statusRes.exitCode === 0 && statusRes.stdout.trim().length > 0;
+
+	let ahead: number | null = null;
+	let behind: number | null = null;
+	if (defaultBranch && head) {
+		const remoteRef = `refs/remotes/origin/${defaultBranch}`;
+		const remoteExists = await executor.exec(['rev-parse', '--verify', '--quiet', remoteRef], {
+			cwd,
+			timeout: 10_000,
+		});
+		if (remoteExists.exitCode === 0) {
+			// left = commits only on origin/<def> (behind), right = only on HEAD (ahead).
+			const counts = await executor.exec(
+				['rev-list', '--left-right', '--count', `${remoteRef}...HEAD`],
+				{ cwd, timeout: 10_000 },
+			);
+			if (counts.exitCode === 0) {
+				const [left, right] = counts.stdout.trim().split(/\s+/);
+				const b = Number.parseInt(left ?? '', 10);
+				const a = Number.parseInt(right ?? '', 10);
+				behind = Number.isNaN(b) ? null : b;
+				ahead = Number.isNaN(a) ? null : a;
+			}
+		}
+	}
+
+	return { cloned: true, defaultBranch, headBranch, head, dirty, ahead, behind };
+}
+
+/**
+ * A task worktree's live state for the git-state panel: its current commit and
+ * whether it has uncommitted/untracked changes. `worktreeHasChanges(…, null)`
+ * reduces to "`git status --porcelain` non-empty".
+ */
+export async function getWorktreeState(
+	executor: GitExecutor,
+	wt: WorktreeLoc,
+): Promise<{ head: string | null; dirty: boolean }> {
+	const head = await getWorktreeHead(executor, wt);
+	const dirty = await worktreeHasChanges(executor, wt, null);
+	return { head, dirty };
+}
+
+/**
+ * Recovers a wedged clone to a syncable state: discards all uncommitted and
+ * untracked changes and puts the local default branch back on the (last-fetched)
+ * remote tip. This is the escape hatch for the "could not fast-forward <default>:
+ * your local changes would be overwritten" state that silently stops periodic
+ * sync. A best-effort `git fetch` runs first so the reset lands on the latest
+ * origin; a fetch failure is non-fatal (returned as `warning`) so a transient
+ * network fault never blocks local recovery. Untracked files are removed with
+ * `clean -fd` — no `-x`, so gitignored build artifacts (e.g. `node_modules`) are
+ * kept and the next run needn't rebuild them. Committed work already pushed to
+ * the remote is unaffected.
+ */
+export async function resetCloneToOrigin(
+	executor: GitExecutor,
+	repo: RepoLoc,
+): Promise<{ success: boolean; error?: string; warning?: string }> {
+	const cwd = repo.containerPath;
+
+	let warning: string | undefined;
+	const fetched = await fetchRepo(executor, repo);
+	if (!fetched.success) {
+		warning = `fetch failed, reset to last-known origin: ${fetched.error ?? 'unknown error'}`;
+	}
+
+	const def = await getRemoteDefaultBranch(executor, repo);
+	if (!def) {
+		return { success: false, error: 'no default branch resolved (empty remote?)', warning };
+	}
+
+	// getRemoteDefaultBranch only returns a name whose origin tracking ref exists,
+	// so this normally resolves; fall back to the local branch defensively.
+	const remoteRef = `refs/remotes/origin/${def}`;
+	const remoteExists = await executor.exec(['rev-parse', '--verify', '--quiet', remoteRef], {
+		cwd,
+		timeout: 10_000,
+	});
+	const target = remoteExists.exitCode === 0 ? remoteRef : def;
+
+	// Force onto the default branch: reattaches a detached HEAD and abandons any
+	// unrelated branch a human may have left checked out in the clone. `-f`
+	// discards conflicting working-tree changes so the switch can't be blocked.
+	const checkout = await executor.exec(['checkout', '-f', def], { cwd, timeout: 30_000 });
+	if (checkout.exitCode !== 0) {
+		return { success: false, error: formatGitError(checkout.stderr), warning };
+	}
+
+	const reset = await executor.exec(['reset', '--hard', target], { cwd, timeout: 30_000 });
+	if (reset.exitCode !== 0) {
+		return { success: false, error: formatGitError(reset.stderr), warning };
+	}
+
+	const clean = await executor.exec(['clean', '-fd'], { cwd, timeout: 30_000 });
+	if (clean.exitCode !== 0) {
+		return { success: false, error: formatGitError(clean.stderr), warning };
+	}
+
+	return { success: true, warning };
 }
 
 /**

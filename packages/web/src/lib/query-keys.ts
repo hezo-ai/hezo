@@ -197,6 +197,7 @@ export const queryKeys = {
 		secrets: (slug: string) => ['projects', slug, 'secrets'],
 		credentials: (slug: string) => ['projects', slug, 'credentials'],
 		repos: (slug: string) => ['projects', slug, 'repos'],
+		gitState: (slug: string, repoId: string) => ['projects', slug, 'repos', repoId, 'git-state'],
 		mcpConnections: (slug: string) => ['projects', slug, 'mcp-connections'],
 		mcpConnectionsFiltered: (slug: string, filterProjectId: string | null) => [
 			'projects',
