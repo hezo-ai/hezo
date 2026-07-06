@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.15.1 - 2026-07-06
+
+### Bug Fixes
+
+- **git:** repair a clone stuck at git clone's .invalid HEAD sentinel ([#603](https://github.com/hezo-ai/hezo/pull/603))
+
+### Other
+
+- **release:** gate GitHub Release on agent-base image publish ([#602](https://github.com/hezo-ai/hezo/pull/602))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.15.0...0.15.1
+
 ## 0.15.0 - 2026-07-06
 
 ### Features
