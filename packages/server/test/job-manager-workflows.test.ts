@@ -1861,6 +1861,45 @@ describe('JobManager workflow methods', () => {
 			manager.shutdown();
 		});
 
+		it('fails repos stranded pending by a restart and broadcasts the update', async () => {
+			// A repo whose background setup (clone + designation) was in flight when
+			// the previous process died: the work is lost, so the row must park
+			// `failed` (retriable via POST) rather than stay `pending` forever.
+			const inserted = await db.query<{ id: string }>(
+				`INSERT INTO repos (project_id, repo_identifier, host_type, setup_status)
+				 VALUES ($1, 'acme/stranded-setup', 'github', 'pending'::repo_setup_status)
+				 RETURNING id`,
+				[projectId],
+			);
+
+			const broadcasts: Array<{ table: string; row: Record<string, unknown> }> = [];
+			const manager = createJobManager({
+				wsManager: {
+					broadcast: (_room: string, msg: { table: string; row: Record<string, unknown> }) => {
+						broadcasts.push({ table: msg.table, row: msg.row });
+					},
+				} as any,
+			});
+
+			await manager.reconcileOnStartup();
+
+			const row = await db.query<{ setup_status: string; setup_error: string | null }>(
+				`SELECT setup_status::text AS setup_status, setup_error FROM repos WHERE id = $1`,
+				[inserted.rows[0].id],
+			);
+			expect(row.rows[0].setup_status).toBe('failed');
+			expect(row.rows[0].setup_error).toContain('Server restarted');
+
+			const repoBroadcast = broadcasts.find(
+				(b) => b.table === 'repos' && b.row.id === inserted.rows[0].id,
+			);
+			expect(repoBroadcast).toBeTruthy();
+			expect(repoBroadcast?.row.setup_status).toBe('failed');
+
+			manager.shutdown();
+			await db.query('DELETE FROM repos WHERE id = $1', [inserted.rows[0].id]);
+		});
+
 		describe('container restart', () => {
 			// Other projects (notably HQ) get provisioned in the background during
 			// file-level setup and end up with container_status='running'. Clear all

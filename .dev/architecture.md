@@ -103,7 +103,18 @@ container config, dev ports, the designated repo, and `is_internal` (only HQ).
 **Repos.** `repos` stores a GitHub `owner/repo` identifier; the segment after the owner
 is the display label, worktree directory name, and `@mention` handle. The **first** repo
 linked to a project becomes its immutable `designated_repo_id` (`ON DELETE RESTRICT` +
-a 409 `DESIGNATED_REPO_IMMUTABLE` guard).
+a 409 `DESIGNATED_REPO_IMMUTABLE` guard). Adding a repo is **asynchronous**: `POST
+/repos` validates GitHub-side access (or creates the repo upstream), inserts the row
+with `setup_status = 'pending'`, and returns immediately; the slow half — container up,
+in-container clone, first-repo designation + approval finalize — runs in a tracked
+background task (`services/repo-provisioning.ts`) and settles the row to
+`ready`/`failed` (`setup_error` records why), broadcast to the team room as a `repos`
+UPDATE. Failures never delete the row: designation is still deferred until a checkout
+exists (the gate never half-opens), and POSTing the same repo again reclaims a
+`failed` row back to `pending` and re-runs setup (a live `pending` duplicate 409s
+`REPO_SETUP_IN_PROGRESS`; a `ready` duplicate 409s `REPO_NAME_TAKEN`). Rows still
+`pending` at boot were lost with the previous process — `JobManager.reconcileOnStartup`
+parks them `failed` so they surface as retryable instead of spinning forever.
 
 **Tasks & threads.** `tasks` are Linear-style tickets with a frozen `identifier`
 (`<task_prefix>-<n>`, e.g. `IN-42`), a required `assignee_id → members.id`, `rules`, and

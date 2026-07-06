@@ -983,6 +983,20 @@ export type AuditActorType = (typeof AuditActorType)[keyof typeof AuditActorType
 export const RepoHostType = { GitHub: 'github' } as const;
 export type RepoHostType = (typeof RepoHostType)[keyof typeof RepoHostType];
 
+/**
+ * Lifecycle of a linked repo's checkout setup (container up + in-container
+ * clone + first-repo designation), which runs in the background after the
+ * POST /repos insert returns. `pending` rows found at startup were interrupted
+ * by a restart and are marked `failed`; a `failed` repo is retried by POSTing
+ * the same repo again.
+ */
+export const RepoSetupStatus = {
+	Pending: 'pending',
+	Ready: 'ready',
+	Failed: 'failed',
+} as const;
+export type RepoSetupStatus = (typeof RepoSetupStatus)[keyof typeof RepoSetupStatus];
+
 export const AuthType = {
 	Admin: 'admin',
 	ApiKey: 'api_key',

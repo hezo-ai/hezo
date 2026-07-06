@@ -27,6 +27,12 @@ your GitHub account as both a *signing* key (so commits show the Verified badge)
 *authentication* key (so SSH git operations work). Subsequent repositories reuse that
 connection.
 
+When you link or create a repository, Hezo records it right away and prepares the
+checkout **in the background** — starting the project's workspace and cloning the
+repository can take a few minutes the first time. The repository shows **"Setting up…"**
+until it's ready; if setup fails (for example the workspace couldn't start), the error is
+shown on the repository with a **Retry** button.
+
 ## Verified commits, signed on the host
 
 When an agent commits, the **signing happens host-side on its behalf** — the agent asks

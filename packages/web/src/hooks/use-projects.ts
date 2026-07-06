@@ -61,6 +61,9 @@ export interface Repo {
 	host_type: string;
 	created_at: string;
 	is_designated?: boolean;
+	/** Background checkout setup lifecycle; the row settles via WebSocket UPDATE. */
+	setup_status?: 'pending' | 'ready' | 'failed';
+	setup_error?: string | null;
 }
 
 export type ProjectWithTeam = Project & { teamSlug: string; teamName: string };

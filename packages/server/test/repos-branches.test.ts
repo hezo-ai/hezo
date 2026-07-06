@@ -4,6 +4,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
+import { waitForBackground } from '../src/lib/background';
 import type { Env } from '../src/lib/types';
 import { createConnection } from '../src/services/oauth/connection-store';
 import { ensureRepoSetupAction } from '../src/services/repo-setup';
@@ -152,8 +153,20 @@ describe('POST repos — first-repo designation resolves a pending repo-setup ap
 		});
 		expect(res.status).toBe(201);
 		const body = await res.json();
-		expect(body.data.is_designated).toBe(true);
-		expect(body.data.clone_status).toBe('skipped');
+		// The response returns before the checkout/designation settles.
+		expect(body.data.setup_status).toBe('pending');
+		expect(body.data.is_designated).toBe(false);
+
+		// Drain the background setup (clone skipped via the pre-seeded .git dir,
+		// then designation + approval finalize).
+		await waitForBackground();
+
+		const repoRow = await db.query<{ setup_status: string; setup_error: string | null }>(
+			`SELECT setup_status::text AS setup_status, setup_error FROM repos WHERE id = $1`,
+			[body.data.id],
+		);
+		expect(repoRow.rows[0].setup_status).toBe('ready');
+		expect(repoRow.rows[0].setup_error).toBeNull();
 
 		// The approval was auto-resolved.
 		const approval = await db.query<{ status: string }>(

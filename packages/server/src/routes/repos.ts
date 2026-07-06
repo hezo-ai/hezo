@@ -1,23 +1,17 @@
-import { repoNameFromIdentifier, wsRoom } from '@hezo/shared';
-import { type Context, Hono } from 'hono';
+import { RepoSetupStatus, repoNameFromIdentifier, wsRoom } from '@hezo/shared';
+import { Hono } from 'hono';
+import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
 import { getProjectLocator, resolveProjectId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
-import { isUniqueViolation, withTransaction } from '../lib/sql';
+import { isUniqueViolation } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
-import { resolveContainerRunUser } from '../services/container-user';
-import { ensureProjectContainerRunning } from '../services/containers';
-import { ContainerGitExecutor } from '../services/git-executor';
+import type { ContainerDeps } from '../services/containers';
 import { createGitHubRepo, parseGitHubUrl, validateRepoAccess } from '../services/github';
 import { getConnection } from '../services/oauth/connection-store';
-import {
-	enqueueRepoSetupResumeWakeups,
-	finalizePendingRepoSetup,
-	markRepoSetupFailed,
-} from '../services/repo-setup';
-import { ensureProjectRepos, removeRepoFromWorkspace } from '../services/repo-sync';
-import { type BridgeRunnerArgs, withProvisionBridge } from '../services/ssh-agent';
+import { performRepoSetup } from '../services/repo-provisioning';
+import { removeRepoFromWorkspace } from '../services/repo-sync';
 
 const log = logger.child('routes');
 
@@ -31,7 +25,7 @@ reposRoutes.get('/projects/:projectId/repos', async (c) => {
 
 	const result = await db.query(
 		`SELECT r.id, r.project_id, r.repo_identifier, r.host_type,
-		        r.oauth_connection_id, r.created_at,
+		        r.oauth_connection_id, r.created_at, r.setup_status, r.setup_error,
 		        (p.designated_repo_id = r.id) AS is_designated,
 		        oc.provider_account_label AS oauth_account_label
 		 FROM repos r
@@ -48,9 +42,11 @@ reposRoutes.get('/projects/:projectId/repos', async (c) => {
 /**
  * Add a GitHub repository to the project. The user must already have an
  * active GitHub OAuth connection for this team; the request supplies its
- * id, and the server validates access via the corresponding token before
- * recording the repo. Clones run over HTTPS, with the proxy substituting
- * the access-token placeholder at request time.
+ * id, and the server validates access (mode=link) or creates the repo on
+ * GitHub (mode=create) via the corresponding token before recording the row.
+ * The row is returned `pending`; the checkout itself (container up +
+ * in-container clone + first-repo designation) settles in the background —
+ * see `performRepoSetup`.
  */
 reposRoutes.post('/projects/:projectId/repos', async (c) => {
 	const teamId = c.get('teamId') as string;
@@ -143,45 +139,48 @@ reposRoutes.post('/projects/:projectId/repos', async (c) => {
 		host_type: string;
 		oauth_connection_id: string | null;
 		created_at: string;
+		setup_status: string;
+		setup_error: string | null;
 	};
-	const emptyFinalize: Awaited<ReturnType<typeof finalizePendingRepoSetup>> = {
-		resolvedApprovalId: null,
-		affectedTaskIds: [],
-		deferredWakeups: [],
-		approvalRow: null,
-		updatedCommentRows: [],
-		systemCommentRows: [],
-	};
+	const REPO_COLUMNS = `id, project_id, repo_identifier, host_type, oauth_connection_id,
+	                      created_at, setup_status, setup_error`;
 
+	// The row is inserted `pending` and the response returns immediately; the
+	// slow half (container up + in-container clone + first-repo designation)
+	// runs in the background and settles the row to ready/failed, broadcast to
+	// the team room. Holding the request open for that work is not an option —
+	// it can take minutes (image pull, provisioning), which outlives HTTP
+	// timeouts, and a connection or server death mid-flight used to strand a
+	// half-set-up row that 409'd every retry.
 	let insertedRepo: InsertedRepo;
-	let becameDesignated = false;
-	let finalizeResult = emptyFinalize;
-	// Whether this repo would become the project's designated repo once its
-	// checkout is in place. Designation is deferred until the clone/init
-	// succeeds so a setup failure never leaves the gate half-open.
-	let wouldDesignate = false;
-
 	try {
-		const txResult = await withTransaction(db, async () => {
-			const lockRes = await db.query<{ id: string; designated_repo_id: string | null }>(
-				'SELECT id, designated_repo_id FROM projects WHERE id = $1 FOR UPDATE',
-				[projectId],
-			);
-			if (lockRes.rows.length === 0) throw new Error('project disappeared during insert');
-			const projectRow = lockRes.rows[0];
-
-			const insertRes = await db.query<InsertedRepo>(
-				`INSERT INTO repos (project_id, repo_identifier, host_type, oauth_connection_id)
-				 VALUES ($1, $2, 'github'::repo_host_type, $3)
-				 RETURNING id, project_id, repo_identifier, host_type, oauth_connection_id, created_at`,
-				[projectId, repoIdentifier, conn.id],
-			);
-			return { inserted: insertRes.rows[0], wouldDesignate: !projectRow.designated_repo_id };
-		});
-		insertedRepo = txResult.inserted;
-		wouldDesignate = txResult.wouldDesignate;
+		const insertRes = await db.query<InsertedRepo>(
+			`INSERT INTO repos (project_id, repo_identifier, host_type, oauth_connection_id, setup_status)
+			 VALUES ($1, $2, 'github'::repo_host_type, $3, $4::repo_setup_status)
+			 RETURNING ${REPO_COLUMNS}`,
+			[projectId, repoIdentifier, conn.id, RepoSetupStatus.Pending],
+		);
+		insertedRepo = insertRes.rows[0];
 	} catch (e) {
-		if (isUniqueViolation(e)) {
+		if (!isUniqueViolation(e)) {
+			const msg = e instanceof Error ? e.message : 'Failed to insert repo';
+			return err(c, 'REPO_INSERT_FAILED', msg, 500);
+		}
+		// A repo with this name is already on the project. A `failed` row for the
+		// same repo is a retry: reclaim it to pending and run setup again (rows
+		// stranded pending by a restart are marked failed at startup, so a live
+		// `pending` row really is in flight).
+		const existing = await db.query<InsertedRepo>(
+			`SELECT ${REPO_COLUMNS} FROM repos
+			 WHERE project_id = $1 AND split_part(repo_identifier, '/', 2) = $2`,
+			[projectId, repoName],
+		);
+		const row = existing.rows[0];
+		if (
+			!row ||
+			row.repo_identifier !== repoIdentifier ||
+			row.setup_status === RepoSetupStatus.Ready
+		) {
 			return err(
 				c,
 				'REPO_NAME_TAKEN',
@@ -189,143 +188,43 @@ reposRoutes.post('/projects/:projectId/repos', async (c) => {
 				409,
 			);
 		}
-		const msg = e instanceof Error ? e.message : 'Failed to insert repo';
-		return err(c, 'REPO_INSERT_FAILED', msg, 500);
+		const reclaimed = await db.query<InsertedRepo>(
+			`UPDATE repos
+			 SET setup_status = $1::repo_setup_status, setup_error = NULL, oauth_connection_id = $2
+			 WHERE id = $3 AND setup_status = $4::repo_setup_status
+			 RETURNING ${REPO_COLUMNS}`,
+			[RepoSetupStatus.Pending, conn.id, row.id, RepoSetupStatus.Failed],
+		);
+		if (reclaimed.rows.length === 0) {
+			return err(c, 'REPO_SETUP_IN_PROGRESS', `${repoIdentifier} is already being set up`, 409);
+		}
+		insertedRepo = reclaimed.rows[0];
 	}
 
 	const dataDir = c.get('dataDir');
 	const docker = c.get('docker');
-	let cloneStatus: 'skipped' | 'cloned' | 'failed' = 'skipped';
-	let cloneError: string | undefined;
-
-	if (dataDir && docker) {
-		const locator = await getProjectLocator(db, projectId);
-		if (locator) {
-			// Git runs inside the project container, so bring it up first (provisioning
-			// clones if it had to provision), then clone in-container. The host runs no git.
-			await ensureProjectContainerUp(c, projectId);
-			const containerRow = await db.query<{
-				container_id: string | null;
-				container_status: string | null;
-			}>('SELECT container_id, container_status FROM projects WHERE id = $1', [projectId]);
-			const containerId = containerRow.rows[0]?.container_id ?? null;
-			const running = containerRow.rows[0]?.container_status === 'running';
-			const sshAgentServer = c.get('sshAgentServer');
-
-			if (containerId && running) {
-				const runUser = await resolveContainerRunUser(docker, containerId);
-				const syncRepos = (bridge: BridgeRunnerArgs | null) =>
-					ensureProjectRepos(
-						db,
-						{ id: projectId, team_id: teamId },
-						dataDir,
-						ContainerGitExecutor.forPrep(docker, containerId, bridge, runUser),
-					);
-				const syncRes = sshAgentServer
-					? await withProvisionBridge(sshAgentServer, teamId, dataDir, runUser.name, ({ bridge }) =>
-							syncRepos(bridge),
-						)
-					: await syncRepos(null);
-				const failed = syncRes.failed.find((f) => f.name === repoName);
-				if (failed) {
-					cloneStatus = 'failed';
-					cloneError = failed.error;
-					log.error(`Failed to clone ${repoIdentifier}:`, cloneError);
-				} else if (
-					syncRes.cloned.includes(repoName) ||
-					// A pre-existing dir whose broken git state was healed (origin
-					// added/repointed) — setup produced a usable checkout, same as a clone.
-					syncRes.repaired.includes(repoName)
-				) {
-					cloneStatus = 'cloned';
-				}
-			} else {
-				cloneStatus = 'failed';
-				cloneError = 'project container is not running';
-				log.error(`Cannot clone ${repoIdentifier}: container not running`);
-			}
-		}
-	}
-
-	if (wouldDesignate) {
-		if (cloneStatus === 'failed') {
-			// Setup never produced a usable checkout. Don't designate or persist the
-			// repo; tell the operator on the gated task(s) and leave the approval
-			// pending so a fixed retry resolves it. Agents stay correctly parked.
-			const failure = await markRepoSetupFailed(db, {
-				teamId,
-				projectId,
-				repoIdentifier,
-				error: cloneError ?? 'unknown error',
-			});
-			await db.query('DELETE FROM repos WHERE id = $1', [insertedRepo.id]);
-			for (const row of failure.systemCommentRows) {
-				broadcastChange(c, wsRoom.team(teamId), 'task_comments', 'INSERT', row);
-			}
-			return err(
-				c,
-				'REPO_SETUP_FAILED',
-				`Failed to set up ${repoIdentifier}: ${cloneError ?? 'unknown error'}`,
-				500,
-			);
-		}
-
-		finalizeResult = await withTransaction(db, async () => {
-			await db.query('UPDATE projects SET designated_repo_id = $1 WHERE id = $2', [
-				insertedRepo.id,
-				projectId,
-			]);
-			return finalizePendingRepoSetup(db, {
-				teamId,
-				projectId,
-				repoId: insertedRepo.id,
-				repoIdentifier,
-			});
-		});
-		becameDesignated = true;
-
-		if (finalizeResult.resolvedApprovalId) {
-			await enqueueRepoSetupResumeWakeups(
-				db,
-				teamId,
-				insertedRepo.id,
-				finalizeResult.resolvedApprovalId,
-				finalizeResult.deferredWakeups,
-			);
-		}
-	}
+	const setupDeps: Omit<ContainerDeps, 'docker' | 'dataDir'> = {
+		db,
+		wsManager: c.get('wsManager'),
+		masterKeyManager: c.get('masterKeyManager'),
+		logs: c.get('logs'),
+		containerLogStreamer: c.get('containerLogStreamer'),
+		sshAgentServer: c.get('sshAgentServer'),
+		egressCAPath: c.get('egressProxy')?.caCertPath ?? null,
+	};
+	trackBackground(
+		performRepoSetup(
+			{ ...setupDeps, docker, dataDir },
+			{ teamId, projectId, repoId: insertedRepo.id, repoIdentifier },
+		).catch((e) => log.error(`Background repo setup for ${repoIdentifier} failed:`, e)),
+	);
 
 	broadcastChange(c, wsRoom.team(teamId), 'repos', 'INSERT', {
 		...insertedRepo,
-		is_designated: becameDesignated,
+		is_designated: false,
 	} as Record<string, unknown>);
 
-	if (becameDesignated) {
-		broadcastChange(c, wsRoom.team(teamId), 'projects', 'UPDATE', {
-			id: projectId,
-			designated_repo_id: insertedRepo.id,
-		});
-		if (finalizeResult.approvalRow) {
-			broadcastChange(c, wsRoom.team(teamId), 'approvals', 'UPDATE', finalizeResult.approvalRow);
-		}
-		for (const row of finalizeResult.updatedCommentRows) {
-			broadcastChange(c, wsRoom.team(teamId), 'task_comments', 'UPDATE', row);
-		}
-		for (const row of finalizeResult.systemCommentRows) {
-			broadcastChange(c, wsRoom.team(teamId), 'task_comments', 'INSERT', row);
-		}
-	}
-
-	return ok(
-		c,
-		{
-			...insertedRepo,
-			is_designated: becameDesignated,
-			clone_status: cloneStatus,
-			clone_error: cloneError ?? null,
-		},
-		201,
-	);
+	return ok(c, { ...insertedRepo, is_designated: false }, 201);
 });
 
 reposRoutes.delete('/projects/:projectId/repos/:repoId', async (c) => {
@@ -421,31 +320,4 @@ async function loadOAuthAccessToken(
 	if (result.rows.length === 0) return null;
 	const { decrypt } = await import('../crypto/encryption');
 	return decrypt(result.rows[0].encrypted_value, key);
-}
-
-async function ensureProjectContainerUp(c: Context<Env>, projectId: string): Promise<void> {
-	const docker = c.get('docker');
-	const dataDir = c.get('dataDir');
-	const egressProxy = c.get('egressProxy');
-
-	if (!docker || !dataDir) return;
-
-	try {
-		await ensureProjectContainerRunning(
-			{
-				db: c.get('db'),
-				docker,
-				dataDir,
-				wsManager: c.get('wsManager'),
-				masterKeyManager: c.get('masterKeyManager'),
-				logs: c.get('logs'),
-				containerLogStreamer: c.get('containerLogStreamer'),
-				sshAgentServer: c.get('sshAgentServer'),
-				egressCAPath: egressProxy?.caCertPath ?? null,
-			},
-			projectId,
-		);
-	} catch (e) {
-		log.error('Failed to auto-start container after repo add:', e);
-	}
 }
