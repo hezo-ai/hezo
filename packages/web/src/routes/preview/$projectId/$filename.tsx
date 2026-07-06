@@ -49,6 +49,8 @@ function DocPreviewPage() {
 						updatedAt: doc.updated_at,
 						editorName: doc.last_updated_by_name,
 						editorType: doc.last_updated_by_type,
+						archivedAt: doc.archived_at,
+						archivedByName: doc.archived_by_name,
 					}}
 					review={{ filename, docUpdatedAt: doc.updated_at }}
 				/>
