@@ -576,7 +576,16 @@ host (bind-mounted) path; git commands use the container path. SSH-transport ops
 fetch) are wrapped with the per-run SSH bridge (`hezo-run-with-bridge`) so `git@github.com:`
 authenticates through the host ssh-agent; the container's baked-in `/etc/ssh/ssh_known_hosts`
 verifies the host key. Cloning outside a run (container provision, repo link) uses a
-short-lived `withProvisionBridge`.
+short-lived `withProvisionBridge`. **Git-over-SSH fails fast.** Every git exec sets a
+`GIT_SSH_COMMAND` carrying `ConnectTimeout` + `ServerAliveInterval`/`ServerAliveCountMax` +
+`BatchMode`, so a stalled or black-holed `git@github.com` connection dies in ~45s rather than
+hanging on OS TCP defaults; each exec also carries a per-op timeout (fetch 60s, clone 120s)
+and, for prep, the run's own abort signal — both abort the `docker exec` stream, so a hung
+transport can no longer block the run (or the per-project git lock) until it is killed by
+hand. The abort actually tears the exec down because the streaming Docker transport removes
+its abort handler on the *response* stream's end, never on the `ClientRequest`'s `close`
+(which Bun emits prematurely, mid-body) — otherwise the timeout would fire against a handler
+that had already been detached.
 
 **Container run-user & host-file ownership.** The agent base image (`node:24-slim`) sets no
 `USER`, so the container runs as **root**; Hezo deprivileges individual `docker exec`s — the
