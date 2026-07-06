@@ -673,6 +673,24 @@ clone whose `core.hooksPath` is redirected (e.g. husky) simply doesn't fire it. 
 changes are still not covered — the agent commits to preserve, and the role prompts frame frequent
 committing (not a manual end-of-run push) as the durability action.
 
+**Admin git-state & recovery (superuser).** Because a clone's live state lives only in the
+container, the project Git settings page exposes a per-repo, **superuser-only** panel to inspect
+and repair it. `GET /api/projects/:projectId/repos/:repoId/git-state` reads it — the clone's
+default branch, HEAD, dirty flag, and ahead/behind vs. the last-fetched `origin/<default>` (all
+computed locally, no network fetch), plus the active `/worktrees/<task>/<repo>` worktrees joined
+to their tasks — and returns `{ container_running: false }` when the container is stopped rather
+than auto-starting one, since a passive inspect must not trigger a provision. `POST .../reset`
+runs one of three recovery actions: `discard_local` (`git reset --hard` + `clean -fd` — no `-x`,
+so gitignored build artifacts survive — after a best-effort fetch; the escape hatch for the
+"local changes would be overwritten" fast-forward failure that otherwise silently stalls sync),
+`prune_worktrees` (`git worktree prune`), and `reclone` (wipe the clone via `removeRepoFromWorkspace`
+then re-run `performRepoSetup`, reusing its `pending`→`ready`/`failed` lifecycle). Reset is
+**blocked (409) while any agent run is active on the project** (`getProjectConcurrency`) — it
+mutates the shared `.git` a live worktree prep also touches, and reclone deletes worktrees a run
+may hold — and `discard_local`/`prune_worktrees` additionally require a running container. Every
+read and reset runs under the same per-project git lock (`withProjectGitLock`, extracted to
+`lib/git-lock.ts`) as run-time worktree prep, so they never interleave on the shared `.git`.
+
 **Timeout handling (graceful cut).** The `run_timeout_min` timer aborts the run's signal with a
 tagged `'run_timeout'` reason (`JobManager.launchTask`), so the runner finalizes it as `timed_out`
 — distinct from a bare abort (user cancel / shutdown → `cancelled`) and container death

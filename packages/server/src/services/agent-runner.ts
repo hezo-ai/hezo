@@ -33,6 +33,7 @@ import type { Db } from '../db/database';
 import type { DomainEventBus } from '../events/bus';
 import { signAgentAssetUrl } from '../lib/asset-urls';
 import { broadcastProjectUpdate, broadcastRowChange } from '../lib/broadcast';
+import { withProjectGitLock } from '../lib/git-lock';
 import { withTransaction } from '../lib/sql';
 import { logger } from '../logger';
 import { signAgentJwt } from '../middleware/auth';
@@ -1306,23 +1307,6 @@ export function shellQuoteArg(arg: string): string {
 	if (arg === '') return "''";
 	if (/^[A-Za-z0-9_\-./=:@%+,]+$/.test(arg)) return arg;
 	return `'${arg.replace(/'/g, `'\\''`)}'`;
-}
-
-// Serializes git operations that mutate a repo's shared .git store (clone,
-// fetch, worktree add) per project. Concurrent runs on the same project work in
-// separate per-task worktrees but share one .git per repo, so these brief setup
-// steps must not overlap or they race on git's index/ref locks. Keyed by
-// project id, so different projects never block one another.
-const projectGitLocks = new Map<string, Promise<unknown>>();
-function withProjectGitLock<T>(projectId: string, fn: () => Promise<T>): Promise<T> {
-	const prev = projectGitLocks.get(projectId) ?? Promise.resolve();
-	const run = prev.then(() => fn());
-	const tail = run.catch(() => {});
-	projectGitLocks.set(projectId, tail);
-	void tail.then(() => {
-		if (projectGitLocks.get(projectId) === tail) projectGitLocks.delete(projectId);
-	});
-	return run;
 }
 
 interface WorktreeRef {

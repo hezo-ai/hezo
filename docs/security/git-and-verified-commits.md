@@ -68,6 +68,29 @@ often. One thing to know: because Hezo pushes on every commit, a branch that run
 push will build more often than it would with a single end-of-run push — scope CI to pull
 requests if that becomes noisy.
 
+## Recovering a stuck repository
+
+Occasionally a project's working copy of a repository gets into a state where Hezo's automatic
+syncing can't move it forward on its own — most often when the local copy of the main branch has
+uncommitted changes that stop it from fast-forwarding to the latest commit on GitHub. When that
+happens the repository quietly stops keeping up with the remote.
+
+For these cases, an **admin** can open the project's **Git** settings page and expand any
+repository to see its live state: the current branch, whether the working copy has uncommitted
+changes, how far ahead or behind GitHub it is, and which tasks currently have work in progress
+against it. From there, three recovery actions are available:
+
+- **Discard local changes** — throws away uncommitted changes in the project's copy and resets it
+  to match GitHub. This is the fix for the stuck-sync case above. Work already committed and pushed
+  to GitHub is never affected.
+- **Prune worktrees** — clears out leftover per-task working copies from runs that were interrupted.
+  Committed work on their branches is preserved.
+- **Re-clone** — the last resort: deletes the project's copy entirely and clones it fresh from GitHub.
+
+These actions only ever affect the local working copy on your instance, never the repository on
+GitHub, and they're deliberately **blocked while any agent is actively working** in the project so a
+reset can't pull the rug out from under a running task.
+
 This is the same posture described in [Container isolation](/docs/security/container-isolation):
 the keys that matter most stay on the host, and a compromised agent can use them only
 indirectly, for the operations Hezo performs on its behalf.

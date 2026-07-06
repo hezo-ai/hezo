@@ -1,8 +1,19 @@
 import { repoNameFromIdentifier } from '@hezo/shared';
 import { useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, GitBranch, Github, Loader2, Lock, RotateCw, Trash2 } from 'lucide-react';
+import {
+	AlertTriangle,
+	ChevronDown,
+	ChevronRight,
+	GitBranch,
+	Github,
+	Loader2,
+	Lock,
+	RotateCw,
+	Trash2,
+} from 'lucide-react';
 import { useState } from 'react';
 import { useMcpConnections } from '../hooks/use-mcp-connections';
+import { useMe } from '../hooks/use-me';
 import {
 	useConnectionScopeStatus,
 	useDeleteOAuthConnection,
@@ -13,6 +24,7 @@ import { useCreateRepo, useDeleteRepo, useRepos } from '../hooks/use-repos';
 import { repoWebUrl } from '../lib/github';
 import { queryKeys } from '../lib/query-keys';
 import { ConnectorDeviceFlowDialog } from './connector-device-flow-dialog';
+import { RepoGitStatePanel } from './repo-git-state-panel';
 import { RepoPickerModal } from './repo-picker-modal';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -36,9 +48,20 @@ export function GitHubSection({ projectId }: GitHubSectionProps) {
 	const scopeStatusQuery = useConnectionScopeStatus(projectId, githubConnection?.id);
 
 	const ensure = useEnsureConnector(projectId);
+	const { data: me } = useMe();
+	const isSuperuser = me?.is_superuser === true;
 	const [pickerOpen, setPickerOpen] = useState(false);
 	const [deviceConnectorId, setDeviceConnectorId] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const [expandedRepos, setExpandedRepos] = useState<Set<string>>(new Set());
+
+	const toggleRepoExpanded = (repoId: string) =>
+		setExpandedRepos((prev) => {
+			const next = new Set(prev);
+			if (next.has(repoId)) next.delete(repoId);
+			else next.add(repoId);
+			return next;
+		});
 
 	const isReady = !!githubConnection && scopeStatusQuery.data?.sufficient === true;
 	const needsReauth =
@@ -196,6 +219,7 @@ export function GitHubSection({ projectId }: GitHubSectionProps) {
 					<div className="flex flex-col gap-2">
 						{repos?.map((r) => {
 							const repoName = repoNameFromIdentifier(r.repo_identifier);
+							const isExpanded = expandedRepos.has(r.id);
 							return (
 								<div
 									key={r.id}
@@ -203,6 +227,22 @@ export function GitHubSection({ projectId }: GitHubSectionProps) {
 								>
 									<div className="flex items-center justify-between">
 										<div className="flex flex-wrap items-center gap-2">
+											{isSuperuser && (
+												<button
+													type="button"
+													onClick={() => toggleRepoExpanded(r.id)}
+													className="-ml-1 text-text-3 hover:text-text-1"
+													aria-label={`${isExpanded ? 'Hide' : 'Show'} git state for ${repoName}`}
+													aria-expanded={isExpanded}
+													data-testid={`repo-git-toggle-${repoName}`}
+												>
+													{isExpanded ? (
+														<ChevronDown className="size-3.5" />
+													) : (
+														<ChevronRight className="size-3.5" />
+													)}
+												</button>
+											)}
 											<Badge color="gray">{r.host_type}</Badge>
 											<span className="font-medium">{repoName}</span>
 											{(() => {
@@ -281,6 +321,9 @@ export function GitHubSection({ projectId }: GitHubSectionProps) {
 											Setup failed{r.setup_error ? `: ${r.setup_error}` : ''}. Retry to run it
 											again.
 										</p>
+									)}
+									{isExpanded && (
+										<RepoGitStatePanel projectId={projectId} repoId={r.id} repoName={repoName} />
 									)}
 								</div>
 							);
