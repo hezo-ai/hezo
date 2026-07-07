@@ -204,7 +204,7 @@ test('clicking a mention deep-links to and highlights the source comment', async
 
 test('inbox shows read mentions as history and highlights unread ones', async () => {
 	let ctx: { projectSlug: string };
-	const { findAllByTestId, router } = await renderApp({
+	const { findAllByTestId, findByText, user, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -223,6 +223,8 @@ test('inbox shows read mentions as history and highlights unread ones', async ()
 		params: { projectId: ctx!.projectSlug },
 	});
 
+	// The inbox defaults to the Unread filter; switch to All to see read + unread together.
+	await user.click(await findByText('All'));
 	await waitFor(async () => expect((await findAllByTestId('mention-card')).length).toBe(2), {
 		timeout: 10_000,
 	});
@@ -252,6 +254,8 @@ test('read/unread filter and keyword search narrow the inbox', async () => {
 		params: { projectId: ctx!.projectSlug },
 	});
 
+	// The inbox defaults to Unread; switch to All to establish the 2-card baseline.
+	await user.click(await findByText('All'));
 	await waitFor(async () => expect((await findAllByTestId('mention-card')).length).toBe(2), {
 		timeout: 10_000,
 	});
@@ -306,7 +310,8 @@ test('archived mentions are hidden by default and shown under the Archived filte
 		params: { projectId: ctx!.projectSlug },
 	});
 
-	// Default view shows only the active (non-archived) mention.
+	// The All filter shows only the active (non-archived) mention; the archived one is hidden.
+	await user.click(await findByText('All'));
 	await findByText(/active decision/, undefined, { timeout: 10_000 });
 	await waitFor(async () => expect((await findAllByTestId('mention-card')).length).toBe(1));
 
