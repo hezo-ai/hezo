@@ -11,6 +11,7 @@ import {
 	loadMentionContext,
 	loadReplyContext,
 	loadSpawnedFromTask,
+	RECENT_COMMENTS_LIMIT,
 } from '../src/services/agent-runner';
 import { getAgentSystemPrompt } from '../src/services/documents';
 import { resolveSystemPrompt } from '../src/services/template-resolver';
@@ -624,24 +625,28 @@ describe('recent comments block + comment-wake handoff (integration)', () => {
 	const commentText = (c: { content: Record<string, unknown> }): string =>
 		String((c.content as { text?: unknown }).text ?? '');
 
-	it('loads exactly the latest 5 comments in chronological order (drops older ones)', async () => {
-		const task = await createTaskWithNComments(6);
-		const recent = await loadCommentHistory(db, task.id, masterKeyManager, 0, { limit: 5 });
+	it('loads exactly the latest N comments in chronological order (drops older ones)', async () => {
+		const total = RECENT_COMMENTS_LIMIT + 3;
+		const task = await createTaskWithNComments(total);
+		const recent = await loadCommentHistory(db, task.id, masterKeyManager, 0, {
+			limit: RECENT_COMMENTS_LIMIT,
+		});
 
-		expect(recent.length).toBe(5);
-		// Oldest ("comment number 1") is dropped; the window is 2..6, oldest-first.
-		expect(recent.map(commentText)).toEqual([
-			'comment number 2',
-			'comment number 3',
-			'comment number 4',
-			'comment number 5',
-			'comment number 6',
-		]);
+		expect(recent.length).toBe(RECENT_COMMENTS_LIMIT);
+		// Only the newest RECENT_COMMENTS_LIMIT survive, oldest-first within that window.
+		const expected = Array.from(
+			{ length: RECENT_COMMENTS_LIMIT },
+			(_, i) => `comment number ${total - RECENT_COMMENTS_LIMIT + 1 + i}`,
+		);
+		expect(recent.map(commentText)).toEqual(expected);
 	});
 
-	it('renders the Recent Comments block with the list_comments pointer and omits the 6th-newest', async () => {
-		const task = await createTaskWithNComments(6);
-		const recent = await loadCommentHistory(db, task.id, masterKeyManager, 0, { limit: 5 });
+	it('renders the Recent Comments block with the list_comments pointer and omits older comments', async () => {
+		const total = RECENT_COMMENTS_LIMIT + 3;
+		const task = await createTaskWithNComments(total);
+		const recent = await loadCommentHistory(db, task.id, masterKeyManager, 0, {
+			limit: RECENT_COMMENTS_LIMIT,
+		});
 
 		const prompt = buildTaskPrompt(
 			'System prompt',
@@ -660,9 +665,9 @@ describe('recent comments block + comment-wake handoff (integration)', () => {
 			{ recentComments: recent },
 		);
 
-		expect(prompt).toContain('### Recent Comments (latest 5)');
-		expect(prompt).toContain('comment number 6');
-		expect(prompt).not.toContain('comment number 1');
+		expect(prompt).toContain(`### Recent Comments (latest ${RECENT_COMMENTS_LIMIT})`);
+		expect(prompt).toContain(`comment number ${total}`); // newest is present
+		expect(prompt).not.toContain('comment number 1'); // oldest is dropped
 		expect(prompt).toContain('call `list_comments` to read the full thread');
 	});
 
@@ -703,7 +708,9 @@ describe('recent comments block + comment-wake handoff (integration)', () => {
 		expect(wakeCtx?.excerpt).toContain('no emdashes');
 		expect(wakeCtx?.commentId).toBe(commentId);
 
-		const recent = await loadCommentHistory(db, task.id, masterKeyManager, 0, { limit: 5 });
+		const recent = await loadCommentHistory(db, task.id, masterKeyManager, 0, {
+			limit: RECENT_COMMENTS_LIMIT,
+		});
 		const prompt = buildTaskPrompt(
 			'System prompt',
 			{
@@ -756,7 +763,9 @@ describe('recent comments block + comment-wake handoff (integration)', () => {
 			comment_id: commentId,
 		};
 		const mentionCtx = await loadMentionContext(db, architectMemberId, teamId, payload);
-		const recent = await loadCommentHistory(db, task.id, masterKeyManager, 0, { limit: 5 });
+		const recent = await loadCommentHistory(db, task.id, masterKeyManager, 0, {
+			limit: RECENT_COMMENTS_LIMIT,
+		});
 
 		const prompt = buildTaskPrompt(
 			'System prompt',
@@ -776,7 +785,7 @@ describe('recent comments block + comment-wake handoff (integration)', () => {
 		);
 
 		expect(prompt).toContain('## Mention Handoff');
-		expect(prompt).toContain('### Recent Comments (latest 5)');
+		expect(prompt).toContain(`### Recent Comments (latest ${RECENT_COMMENTS_LIMIT})`);
 	});
 
 	it('SHARED_INSTRUCTIONS directs every agent to read the thread before acting', async () => {

@@ -552,7 +552,7 @@ singletons (CEO/Coach) are exempt — they have no in-team manager. `{{team_cont
 
 **Task prompt.** After the system prompt, `buildTaskPrompt` (`agent-runner.ts`) appends the
 run's task block: the current task's identifier/title/priority/status, plus its `rules`,
-`description`, and `progress_summary`. It also injects the **latest 5 comments** inline (the
+`description`, and `progress_summary`. It also injects the **latest 3 comments** inline (the
 comment that woke the run tagged) as a head-start — small enough to carry on every run, while
 the `SHARED_INSTRUCTIONS` "read the thread before you act" rule still directs the agent to
 `list_comments` for the full thread before acting, since instructions posted after a task is

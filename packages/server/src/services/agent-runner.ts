@@ -623,7 +623,7 @@ async function buildRunContext(
 			(task as TaskInfo).id,
 			deps.masterKeyManager,
 			deps.serverPort,
-			{ limit: 5 },
+			{ limit: RECENT_COMMENTS_LIMIT },
 		);
 		basePrompt = buildTaskPrompt(resolvedPrompt, task as TaskInfo, wakeupPayload, {
 			mentionContext,
@@ -1814,6 +1814,9 @@ export interface BuildTaskPromptContext {
 	wakingCommentId?: string;
 }
 
+/** How many of a task's most recent comments to inline in every run prompt as a head-start. */
+export const RECENT_COMMENTS_LIMIT = 3;
+
 /** One due goal handed to the Captain in a progress-update run. */
 export interface ProgressUpdateGoal {
 	id: string;
@@ -1919,7 +1922,7 @@ export function buildTaskPrompt(
 
 	if (recentComments && recentComments.length > 0) {
 		parts.push('');
-		parts.push('### Recent Comments (latest 5)');
+		parts.push(`### Recent Comments (latest ${RECENT_COMMENTS_LIMIT})`);
 		parts.push(renderCommentHistory(recentComments, { wakingCommentId: ctx.wakingCommentId }));
 		parts.push('');
 		parts.push(
