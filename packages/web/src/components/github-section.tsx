@@ -82,20 +82,10 @@ export function GitHubSection({ projectId }: GitHubSectionProps) {
 
 	return (
 		<section data-testid="github-section">
-			<div className="flex items-center justify-between mb-3">
+			<div className="flex items-center mb-3">
 				<h2 className="text-sm font-medium text-text-2 flex items-center gap-1.5">
 					<Github className="w-4 h-4" /> GitHub
 				</h2>
-				{isReady && hasRepos && (
-					<Button
-						variant="ghost"
-						size="sm"
-						onClick={() => setPickerOpen(true)}
-						data-testid="repo-setup-add"
-					>
-						Set up repo
-					</Button>
-				)}
 			</div>
 			<p className="text-xs text-text-3 mb-3">
 				Connects this team to GitHub for both git operations (clone, push, signed commits) and the
@@ -217,6 +207,19 @@ export function GitHubSection({ projectId }: GitHubSectionProps) {
 			<div className="mt-4">
 				{hasRepos ? (
 					<div className="flex flex-col gap-2">
+						{isReady && (
+							<div className="flex justify-end">
+								<Button
+									variant="ghost"
+									size="sm"
+									onClick={() => setPickerOpen(true)}
+									data-testid="repo-setup-add"
+								>
+									<GitBranch className="size-4 mr-2" />
+									Add repo
+								</Button>
+							</div>
+						)}
 						{repos?.map((r) => {
 							const repoName = repoNameFromIdentifier(r.repo_identifier);
 							const isExpanded = expandedRepos.has(r.id);
@@ -346,7 +349,7 @@ export function GitHubSection({ projectId }: GitHubSectionProps) {
 								</div>
 								<Button size="sm" onClick={() => setPickerOpen(true)} data-testid="repo-setup-add">
 									<GitBranch className="size-4 mr-2" />
-									Set up repo
+									Add repo
 								</Button>
 							</div>
 						</div>
