@@ -1,4 +1,5 @@
 import { DOCUMENT_STATUS_LABELS, type DocumentStatus } from '@hezo/shared';
+import { Archive } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { documentStatusMeta } from '../../lib/status-meta';
 import { ActorBadge } from '../ui/actor-badge';
@@ -14,6 +15,10 @@ export interface DocMetadata {
 	status?: string;
 	/** When set, the status renders as an editable dropdown instead of a static badge. */
 	onStatusChange?: (status: DocumentStatus) => void;
+	/** Soft-delete stamp — null/absent = active. When set, the banner flags the doc as archived. */
+	archivedAt?: string | null;
+	/** Resolved name of whoever archived it (single-doc responses only). */
+	archivedByName?: string | null;
 }
 
 function shortDate(iso: string): string {
@@ -49,10 +54,25 @@ export function DocumentMetadataBanner({
 	editorType,
 	status,
 	onStatusChange,
+	archivedAt,
+	archivedByName,
 }: DocMetadata) {
-	if (!createdAt && !updatedAt && !editorName && !status) return null;
+	if (!createdAt && !updatedAt && !editorName && !status && !archivedAt) return null;
 	const sep = <span className="text-border-strong">·</span>;
 	const items: ReactNode[] = [];
+	if (archivedAt) {
+		items.push(
+			<span
+				key="archived"
+				className="inline-flex items-center gap-1.5 tabular-nums text-warning-soft-fg"
+			>
+				<Archive className="h-3.5 w-3.5 shrink-0" aria-hidden />
+				<span className="text-[9.5px] font-semibold uppercase tracking-wide">Archived</span>
+				<span title={fullDateTime(archivedAt)}>{shortDate(archivedAt)}</span>
+				{archivedByName && <span className="text-text-2">by {archivedByName}</span>}
+			</span>,
+		);
+	}
 	if (status) {
 		items.push(
 			<span key="status" className="inline-flex items-center gap-1.5">

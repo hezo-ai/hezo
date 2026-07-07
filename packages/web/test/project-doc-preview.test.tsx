@@ -2,6 +2,7 @@ import { waitFor } from '@testing-library/react';
 import { expect, test, vi } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
 import {
+	archiveSeededDocument,
 	type SeededProject,
 	type SeededWorkspace,
 	seedComment,
@@ -104,6 +105,77 @@ test('standalone preview route renders a markdown doc without an iframe', async 
 	await findByText('Hello standalone');
 	expect(container.querySelector('iframe')).toBeNull();
 	expect(queryByTestId('mobile-nav-toggle')).toBeNull();
+});
+
+test('standalone preview route flags an archived doc in the metadata banner', async () => {
+	let ctx!: { projectSlug: string };
+	const { findByText, findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Archived Bare' });
+			await seedDoc(ws, project, 'old-notes.md', '# Retired notes');
+			await archiveSeededDocument(ws, project, 'old-notes.md');
+			ctx = { projectSlug: project.slug };
+		},
+	});
+
+	await router.navigate({
+		to: '/preview/$projectId/$filename',
+		params: { projectId: ctx.projectSlug, filename: 'old-notes.md' },
+	});
+
+	await findByText('Retired notes');
+	const banner = await findByTestId('doc-metadata-banner');
+	expect(banner.textContent).toContain('Archived');
+});
+
+test('standalone preview route shows no archived flag for an active doc', async () => {
+	let ctx!: { projectSlug: string };
+	const { findByText, findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Active Bare' });
+			await seedDoc(ws, project, 'live-notes.md', '# Live notes');
+			ctx = { projectSlug: project.slug };
+		},
+	});
+
+	await router.navigate({
+		to: '/preview/$projectId/$filename',
+		params: { projectId: ctx.projectSlug, filename: 'live-notes.md' },
+	});
+
+	await findByText('Live notes');
+	const banner = await findByTestId('doc-metadata-banner');
+	expect(banner.textContent).not.toContain('Archived');
+});
+
+test('the task-detail preview panel flags an archived doc in the metadata banner', async () => {
+	let ctx!: { projectSlug: string; taskId: string };
+	const { findByTestId, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Panel Archive Demo' });
+			await seedDoc(ws, project, 'ui-mockups.md', '# Mockups');
+			await archiveSeededDocument(ws, project, 'ui-mockups.md');
+			const task = await seedTask(ws, project, { title: 'Review the mockup' });
+			await seedComment(ws, task, 'Please review ui-mockups.md before the demo.');
+			ctx = { projectSlug: project.slug, taskId: task.id };
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: ctx.projectSlug, taskId: ctx.taskId },
+	});
+
+	const mention = await findByTestId('doc-mention-link', undefined, { timeout: 15_000 });
+	await user.click(mention);
+	const banner = await findByTestId('doc-metadata-banner');
+	expect(banner.textContent).toContain('Archived');
 });
 
 test('a doc mention in a task comment opens the preview panel instead of a new tab', async () => {

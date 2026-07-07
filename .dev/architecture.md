@@ -678,8 +678,10 @@ container, the project Git settings page exposes a per-repo, **superuser-only** 
 and repair it. `GET /api/projects/:projectId/repos/:repoId/git-state` reads it — the clone's
 default branch, HEAD, dirty flag, and ahead/behind vs. the last-fetched `origin/<default>` (all
 computed locally, no network fetch), plus the active `/worktrees/<task>/<repo>` worktrees joined
-to their tasks — and returns `{ container_running: false }` when the container is stopped rather
-than auto-starting one, since a passive inspect must not trigger a provision. `POST .../reset`
+to their tasks and the project's active (queued/running) agent-run count (`active_runs`, from
+`getProjectConcurrency`) so the panel can disable the reset controls proactively instead of only
+failing them server-side — and returns `{ container_running: false }` when the container is stopped
+rather than auto-starting one, since a passive inspect must not trigger a provision. `POST .../reset`
 runs one of three recovery actions: `discard_local` (`git reset --hard` + `clean -fd` — no `-x`,
 so gitignored build artifacts survive — after a best-effort fetch; the escape hatch for the
 "local changes would be overwritten" fast-forward failure that otherwise silently stalls sync),

@@ -6,7 +6,7 @@ import {
 	resolveAttachmentContentType,
 } from '@hezo/shared';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { type ApiError, api } from '../lib/api';
+import { ApiError, api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
 import { queryKeys } from '../lib/query-keys';
 
@@ -32,24 +32,16 @@ export function useUploadProjectAsset(projectId: string) {
 	return useMutation<CommentAttachment, ApiError, UploadAssetInput>({
 		mutationFn: async ({ file, folder }) => {
 			if (!isAllowedAttachmentExtension(file.name)) {
-				throw {
-					code: 'INVALID_TYPE',
-					message: `Unsupported file type: ${file.name}`,
-					status: 400,
-				} as ApiError;
+				throw new ApiError('INVALID_TYPE', `Unsupported file type: ${file.name}`, 400);
 			}
 			// Mirrors the server's resolution: script/text extensions coerce to
 			// text/plain (browsers declare text/javascript etc.), other extensions
 			// reject a contradictory declared type.
 			if (resolveAttachmentContentType(file.name, file.type) === null) {
-				throw {
-					code: 'INVALID_TYPE',
-					message: `Unsupported content type: ${file.type}`,
-					status: 400,
-				} as ApiError;
+				throw new ApiError('INVALID_TYPE', `Unsupported content type: ${file.type}`, 400);
 			}
 			if (file.size > ATTACHMENT_MAX_BYTES) {
-				throw { code: 'TOO_LARGE', message: 'File exceeds 10 MB', status: 400 } as ApiError;
+				throw new ApiError('TOO_LARGE', 'File exceeds 10 MB', 400);
 			}
 			const fd = new FormData();
 			fd.set('file', file, file.name);

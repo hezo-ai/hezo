@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -14,7 +14,10 @@ import {
 } from '../src/services/git';
 import { HostGitExecutor } from '../src/services/git-executor';
 
-const root = mkdtempSync(join(tmpdir(), 'git-clone-state-'));
+// Canonicalize the temp root: on macOS tmpdir() is under /var (a symlink to
+// /private/var) and git reports worktree paths canonicalized, so raw comparisons
+// against the mkdtemp path would mismatch. No-op where tmpdir() has no symlinks.
+const root = realpathSync(mkdtempSync(join(tmpdir(), 'git-clone-state-')));
 const exec = new HostGitExecutor();
 const repoLoc = (p: string): RepoLoc => ({ hostPath: p, containerPath: p });
 const wtLoc = (p: string): WorktreeLoc => ({ hostPath: p, containerPath: p });
