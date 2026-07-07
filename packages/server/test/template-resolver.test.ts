@@ -348,6 +348,21 @@ describe('template resolver', () => {
 		expect(result).toContain('do not `@`-mention any agent in that comment');
 	});
 
+	it('completion handoff tells agents to track the full approval chain before closing', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		// The incident: a reviewer marked the ticket done on its own review after a
+		// rework/detour, forgetting the admin's final approval was still owed. A
+		// reviewer's own pass is one link in the chain, not the terminal approval.
+		expect(result).toContain("A reviewer's own pass is not the ticket's final approval");
+		expect(result).toContain('who still owes an approval');
+		expect(result).toContain('stated by **any** participant');
+		// A rework/detour does not discharge a still-outstanding approval.
+		expect(result).toContain('does **not** discharge a pending approval');
+		// The fix: a live @-mention ask with the ticket kept non-terminal, not prose.
+		expect(result).toContain('post the approval request as a **live `@`-mention ask**');
+		expect(result).toContain('A prose "ready for admin approval"');
+	});
+
 	it('completion handoff requires reconciling an announced plan before closing', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		// An agent that announced a fan-out, got the unblocking answer, then silently

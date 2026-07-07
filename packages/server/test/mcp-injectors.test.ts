@@ -54,6 +54,14 @@ describe('MCP_ADAPTERS', () => {
 			// there must have been posted via create_comment or the stop is blocked.
 			expect(STOP_HOOK_RULES).toContain('exists only in the final message');
 		});
+
+		it('rule 11 blocks closing while an inherited approval is still ungranted', () => {
+			// A reviewer's own pass is not the ticket's final approval; an approval the
+			// thread established as required (admin final approval / a named approver's
+			// sign-off) must actually land before the ticket can close.
+			expect(STOP_HOOK_RULES).toContain('approval requirement INHERITED from the thread');
+			expect(STOP_HOOK_RULES).toContain('does NOT discharge a pending approval');
+		});
 	});
 
 	it('every adapter produces a valid injection for a single Hezo descriptor', () => {

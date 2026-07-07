@@ -123,9 +123,9 @@ describe('stop-hook rules block announced-plan abandonment', () => {
 		expect(STOP_HOOK_RULES).toContain('never for legitimately revising scope in the thread');
 	});
 
-	it('report_no_work carve-out spans rules 1-10', () => {
-		expect(STOP_HOOK_RULES).toContain('block rules 1-10');
-		expect(STOP_HOOK_RULES).not.toContain('block rules 1-9');
+	it('report_no_work carve-out spans rules 1-11', () => {
+		expect(STOP_HOOK_RULES).toContain('block rules 1-11');
+		expect(STOP_HOOK_RULES).not.toContain('block rules 1-10');
 	});
 
 	it('every runtime judge embeds the rule', () => {
@@ -170,6 +170,58 @@ describe('stop-hook rules block handoffs left only in the final message', () => 
 		);
 		expect(buildJudgeScriptForRuntime(AgentRuntime.Codex)).toContain('delivered to NO ONE');
 		expect(buildJudgeScriptForRuntime(AgentRuntime.Gemini)).toContain('delivered to NO ONE');
+	});
+});
+
+/**
+ * The incident shape: a ticket's flow required a final approval (the admin's
+ * sign-off) that the thread established across earlier runs, but a reviewer marked
+ * it done on the strength of its OWN review after a rework/detour — forgetting the
+ * inherited approval was never granted. Rule 11 blocks closing on an approval
+ * requirement inherited from the thread (distinct from rule 7's own-outbound-ask),
+ * and the allow-clause blesses waiting on a posted approval ask with the ticket
+ * non-terminal. Shared verbatim across every runtime's judge.
+ */
+describe('stop-hook rules block closing while an inherited approval is still owed', () => {
+	it("blocks closing on the agent's own review when a higher/final sign-off is ungranted", () => {
+		expect(STOP_HOOK_RULES).toContain('approval requirement INHERITED from the thread');
+		expect(STOP_HOOK_RULES).toContain("A reviewer's own pass");
+		expect(STOP_HOOK_RULES).toContain('silently short-circuits the approval chain');
+	});
+
+	it("distinguishes rule 11 from rule 7's own-outbound-ask", () => {
+		expect(STOP_HOOK_RULES).toContain('DISTINCT from rule 7');
+		expect(STOP_HOOK_RULES).toContain('stated by ANY participant');
+	});
+
+	it('a rework/detour cycle does not discharge a pending approval', () => {
+		expect(STOP_HOOK_RULES).toContain('does NOT discharge a pending approval');
+	});
+
+	it('the block reason routes the agent to a live @-mention approval ask, ticket non-terminal', () => {
+		expect(STOP_HOOK_RULES).toContain('post the outstanding approval as a live @-mention ask');
+		expect(STOP_HOOK_RULES).toContain(
+			'may become done only after the required approval actually lands',
+		);
+	});
+
+	it('the allow-clause blesses a correctly-posted approval wait as a valid stop', () => {
+		expect(STOP_HOOK_RULES).toContain(
+			"Waiting on an approval or sign-off the ticket's flow requires",
+		);
+	});
+
+	it('every runtime judge embeds the rule', () => {
+		expect(STOP_HOOK_PROMPT).toContain('approval requirement INHERITED from the thread');
+		expect(buildClaudeCodeSettings(AiProvider.Anthropic).hooks.Stop[0].hooks[0].prompt).toContain(
+			'approval requirement INHERITED from the thread',
+		);
+		expect(buildJudgeScriptForRuntime(AgentRuntime.Codex)).toContain(
+			'approval requirement INHERITED from the thread',
+		);
+		expect(buildJudgeScriptForRuntime(AgentRuntime.Gemini)).toContain(
+			'approval requirement INHERITED from the thread',
+		);
 	});
 });
 
