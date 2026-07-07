@@ -42,12 +42,17 @@ test('agent detail page defaults to Executions tab and exposes Settings tab', as
 
 	const main = await findByRole('main');
 	await waitFor(() => {
+		// The active tab renders as a folder tab raised in front: its fill matches
+		// the panel below (bg-bg) and its bottom border is removed so it merges in.
 		const executionsLink = within(main).getByRole('link', { name: 'Executions' });
-		expect(executionsLink.className).toMatch(/border-inverse/);
+		expect(executionsLink.className).toMatch(/bg-bg/);
+		expect(executionsLink.className).toMatch(/border-b-transparent/);
 	});
 
 	const settingsLink = within(getByRole('main')).getByRole('link', { name: 'Settings' });
 	expect(settingsLink).toBeTruthy();
+	// The inactive tab is recessed on the baseline (surface-2 fill, no merge).
+	expect(settingsLink.className).toMatch(/bg-surface-2/);
 });
 
 test('agent settings tab shows budget, heartbeat, title, and save controls', async () => {

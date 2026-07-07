@@ -1,46 +1,132 @@
 import { Link, useMatchRoute } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
 
-interface TabItem {
-	to: string;
+export interface TabItem {
+	/** Stable identity + controlled-mode value. Defaults to `to` when omitted. */
+	key?: string;
+	label: ReactNode;
+	/** Route-mode target. Used when the component is not in controlled mode. */
+	to?: string;
 	params?: Record<string, string>;
-	label: string;
+	/** Optional leading icon. */
+	icon?: ReactNode;
+	/** Optional trailing count, rendered as "(n)". */
 	count?: number;
 	badge?: ReactNode;
+	testId?: string;
 }
 
 interface TabsProps {
 	items: TabItem[];
+	/** Controlled mode: when `onValueChange` is provided, tabs render as buttons driven by `value`. */
+	value?: string;
+	onValueChange?: (key: string) => void;
+	/**
+	 * Background utility for the active ("in front") tab. It must match the panel
+	 * directly below the tab strip so the selected tab visually merges into it —
+	 * the browser/folder-tab look. Defaults to the page background `bg-bg`; pass
+	 * `bg-surface` when the tabs sit above a surface panel (e.g. inside a modal).
+	 */
+	activeSurface?: string;
+	'aria-label'?: string;
+	/** Extra classes for the tab-strip container (e.g. margins). */
+	className?: string;
 }
 
-// Wire's `.hz-tab`: underline tabs, neutral active (text-1 + bottom border),
-// counts rendered in Geist Mono.
-export function Tabs({ items }: TabsProps) {
-	const matchRoute = useMatchRoute();
+// Folder ("browser tab") styling, defined once. The active tab gets top + side
+// borders and a rounded top, then pulls itself down 1px (`-mb-px` +
+// `border-b-transparent` + a fill matching the panel below) so it covers the
+// strip's baseline border and reads as raised in front of the others. Inactive
+// tabs stay recessed on the baseline.
+const BASE_TAB =
+	'relative flex items-center gap-1.5 rounded-t-md border px-3 py-2 text-[13px] font-medium transition-colors';
 
+function tabClass(isActive: boolean, activeSurface: string): string {
+	return isActive
+		? `${BASE_TAB} z-10 -mb-px border-border border-b-transparent ${activeSurface} text-text-1`
+		: `${BASE_TAB} border-transparent bg-surface-2 text-text-2 hover:bg-surface-3 hover:text-text-1`;
+}
+
+function TabInner({ item }: { item: TabItem }) {
 	return (
-		<nav className="mb-5 flex gap-5 border-b border-border">
+		<>
+			{item.icon}
+			{item.label}
+			{item.count != null && <span className="ml-0.5 text-text-3">({item.count})</span>}
+			{item.badge}
+		</>
+	);
+}
+
+function tabStripClass(className?: string): string {
+	return `flex items-end gap-1 border-b border-border${className ? ` ${className}` : ''}`;
+}
+
+/**
+ * Route-mode tab strip: active state is derived from the current URL, tabs are
+ * `<Link>`s. Isolated in its own component so the router hook is only called
+ * when actually in route mode.
+ */
+function RouteTabs({
+	items,
+	activeSurface = 'bg-bg',
+	className,
+	'aria-label': ariaLabel,
+}: TabsProps) {
+	const matchRoute = useMatchRoute();
+	return (
+		<nav aria-label={ariaLabel} className={tabStripClass(className)}>
 			{items.map((item) => {
-				const isActive = matchRoute({ to: item.to, params: item.params, fuzzy: true });
+				if (!item.to) return null;
+				const isActive = !!matchRoute({ to: item.to, params: item.params, fuzzy: true });
 				return (
 					<Link
-						key={item.to}
+						key={item.key ?? item.to}
 						to={item.to}
 						params={item.params ?? {}}
-						className={`-mb-px border-b-2 py-2 text-[13.5px] font-medium transition-colors ${
-							isActive
-								? 'border-text-1 text-text-1'
-								: 'border-transparent text-text-2 hover:text-text-1'
-						}`}
+						data-testid={item.testId}
+						className={tabClass(isActive, activeSurface)}
 					>
-						{item.label}
-						{item.count != null && (
-							<span className="ml-1.5 font-mono text-[11px] text-text-3">{item.count}</span>
-						)}
-						{item.badge}
+						<TabInner item={item} />
 					</Link>
 				);
 			})}
 		</nav>
 	);
+}
+
+/** Controlled-mode tab strip: active state is driven by `value`, tabs are buttons. */
+function ControlledTabs({
+	items,
+	value,
+	onValueChange,
+	activeSurface = 'bg-bg',
+	className,
+	'aria-label': ariaLabel,
+}: TabsProps) {
+	return (
+		<div role="tablist" aria-label={ariaLabel} className={tabStripClass(className)}>
+			{items.map((item) => {
+				const key = item.key ?? item.to ?? '';
+				const isActive = key === value;
+				return (
+					<button
+						key={key}
+						type="button"
+						role="tab"
+						aria-selected={isActive}
+						data-testid={item.testId}
+						onClick={() => onValueChange?.(key)}
+						className={tabClass(isActive, activeSurface)}
+					>
+						<TabInner item={item} />
+					</button>
+				);
+			})}
+		</div>
+	);
+}
+
+export function Tabs(props: TabsProps) {
+	return props.onValueChange != null ? <ControlledTabs {...props} /> : <RouteTabs {...props} />;
 }

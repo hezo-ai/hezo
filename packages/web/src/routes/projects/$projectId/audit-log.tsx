@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { AuditLogTable } from '../../../components/audit-log-table';
 import { Badge } from '../../../components/ui/badge';
 import { type Column, DataTable } from '../../../components/ui/data-table';
+import { Tabs } from '../../../components/ui/tabs';
 import { type AuditEntry, useProjectAuditLog } from '../../../hooks/use-audit-log';
 
 type TabKey = 'all' | 'egress';
@@ -104,22 +105,12 @@ function ProjectAuditLogPage() {
 				<h2 className="text-base font-medium">Activity</h2>
 				<p className="text-[13px] text-text-2 mt-1">{activeTab.description}</p>
 			</div>
-			<div className="flex gap-1 mb-4 border-b border-border-subtle">
-				{tabs.map((t) => (
-					<button
-						key={t.key}
-						type="button"
-						onClick={() => setTab(t.key)}
-						className={`px-3 py-1.5 text-[13px] -mb-px border-b-2 cursor-pointer transition-colors ${
-							tab === t.key
-								? 'border-info text-text-1 font-medium'
-								: 'border-transparent text-text-2 hover:text-text-1'
-						}`}
-					>
-						{t.label}
-					</button>
-				))}
-			</div>
+			<Tabs
+				items={tabs.map((t) => ({ key: t.key, label: t.label }))}
+				value={tab}
+				onValueChange={(k) => setTab(k as TabKey)}
+				className="mb-4"
+			/>
 			{tab === 'egress' ? (
 				!entries?.length ? (
 					<p className="text-[13px] text-text-2">No outbound traffic recorded yet.</p>

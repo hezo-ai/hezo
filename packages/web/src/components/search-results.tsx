@@ -2,6 +2,7 @@ import { HIGHLIGHT_SENTINEL, type SearchResult, type SearchResultType } from '@h
 import { Link } from '@tanstack/react-router';
 import { BookOpen, CheckSquare, FileText, type LucideIcon, MessageSquare } from 'lucide-react';
 import { Fragment, type ReactNode, useMemo, useState } from 'react';
+import { Tabs } from './ui/tabs';
 
 const TYPE_META: Record<SearchResultType, { label: string; Icon: LucideIcon }> = {
 	task: { label: 'Tasks', Icon: CheckSquare },
@@ -47,34 +48,21 @@ export function SearchResults({
 
 	return (
 		<div className="flex min-h-0 flex-col">
-			<div
-				role="tablist"
-				className="flex items-center gap-1 overflow-x-auto border-b border-border px-1"
-			>
-				{tabs.map((t) => {
+			<Tabs
+				items={tabs.map((t) => {
 					const { label, Icon } = TYPE_META[t];
-					const isActive = t === active;
-					return (
-						<button
-							key={t}
-							type="button"
-							role="tab"
-							aria-selected={isActive}
-							data-testid={`search-tab-${t}`}
-							onClick={() => setActiveType(t)}
-							className={`-mb-px flex shrink-0 items-center gap-1.5 border-b-2 px-2.5 py-2 text-[13px] transition-colors ${
-								isActive
-									? 'border-accent font-medium text-text-1'
-									: 'border-transparent text-text-2 hover:text-text-1'
-							}`}
-						>
-							<Icon className="h-3.5 w-3.5" />
-							{label}
-							<span className="text-text-3">({grouped[t].length})</span>
-						</button>
-					);
+					return {
+						key: t,
+						label,
+						icon: <Icon className="h-3.5 w-3.5" />,
+						count: grouped[t].length,
+						testId: `search-tab-${t}`,
+					};
 				})}
-			</div>
+				value={active}
+				onValueChange={(k) => setActiveType(k as SearchResultType)}
+				activeSurface="bg-surface"
+			/>
 			<ul className="flex flex-col overflow-y-auto py-1" data-testid="search-results-list">
 				{grouped[active].map((r) => (
 					<li key={`${r.type}-${r.id}`}>
