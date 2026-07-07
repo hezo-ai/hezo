@@ -144,6 +144,9 @@ test('Install & restart asks for confirmation (with master-key warning) then app
 	const postSpy = vi
 		.spyOn(api, 'post')
 		.mockResolvedValue({ state: UpdateState.Applying, targetVersion: '0.2.0' });
+	// The mounted overlay polls `/api/status`; there's no server here, so stub fetch
+	// to a clean rejection (happy-dom's real fetch would log an ECONNREFUSED).
+	vi.spyOn(global, 'fetch').mockRejectedValue(new Error('down'));
 	const { getByTestId, findByTestId, queryByTestId } = renderVersion({ state: UpdateState.Staged });
 
 	await user.click(getByTestId('settings-version-install'));

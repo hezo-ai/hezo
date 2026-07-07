@@ -67,7 +67,13 @@ export function UpdateBanner() {
 	const errored = data?.state === UpdateState.Error;
 
 	if (applying) {
-		return <UpdateRestartOverlay targetVersion={data?.targetVersion ?? data?.latest ?? null} />;
+		return (
+			<UpdateRestartOverlay
+				targetVersion={data?.targetVersion ?? data?.latest ?? null}
+				fromVersion={data?.current ?? null}
+				autoUnlock={data?.autoUnlock ?? false}
+			/>
+		);
 	}
 
 	const isDismissed =
