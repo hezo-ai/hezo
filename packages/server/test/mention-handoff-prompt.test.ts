@@ -1,10 +1,13 @@
 import { CommentContentType, TaskStatus, WakeupSource } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import {
 	buildTaskPrompt,
+	loadCommentHistory,
+	loadCommentWakeContext,
 	loadMentionContext,
 	loadReplyContext,
 	loadSpawnedFromTask,
@@ -23,6 +26,7 @@ import {
 let app: Hono<Env>;
 let db: Db;
 let token: string;
+let masterKeyManager: MasterKeyManager;
 
 let teamId: string;
 let projectId: string;
@@ -47,6 +51,7 @@ beforeAll(async () => {
 	app = ctx.app;
 	db = ctx.db;
 	token = ctx.token;
+	masterKeyManager = ctx.masterKeyManager;
 
 	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 	const typeId = (await typesRes.json()).data.find(
@@ -581,5 +586,207 @@ describe('spawned-from prompt line', () => {
 			created_by_run_id: null,
 		});
 		expect(spawn).toBeNull();
+	});
+});
+
+describe('recent comments block + comment-wake handoff (integration)', () => {
+	async function createTaskWithNComments(
+		count: number,
+	): Promise<{ id: string; identifier: string }> {
+		const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Recent comments task',
+				assignee_id: captainMemberId,
+			}),
+		});
+		const task = (await taskRes.json()).data as { id: string; identifier: string };
+		for (let n = 1; n <= count; n++) {
+			// Explicit, strictly-increasing created_at so "latest 5" ordering is deterministic
+			// (bare now() can collide across fast inserts in the same second).
+			await db.query(
+				`INSERT INTO task_comments (task_id, author_member_id, content_type, content, created_at)
+				 VALUES ($1, $2, $3::comment_content_type, $4::jsonb, now() + ($5 || ' seconds')::interval)`,
+				[
+					task.id,
+					captainMemberId,
+					CommentContentType.Text,
+					JSON.stringify({ text: `comment number ${n}` }),
+					n,
+				],
+			);
+		}
+		return task;
+	}
+
+	const commentText = (c: { content: Record<string, unknown> }): string =>
+		String((c.content as { text?: unknown }).text ?? '');
+
+	it('loads exactly the latest 5 comments in chronological order (drops older ones)', async () => {
+		const task = await createTaskWithNComments(6);
+		const recent = await loadCommentHistory(db, task.id, masterKeyManager, 0, { limit: 5 });
+
+		expect(recent.length).toBe(5);
+		// Oldest ("comment number 1") is dropped; the window is 2..6, oldest-first.
+		expect(recent.map(commentText)).toEqual([
+			'comment number 2',
+			'comment number 3',
+			'comment number 4',
+			'comment number 5',
+			'comment number 6',
+		]);
+	});
+
+	it('renders the Recent Comments block with the list_comments pointer and omits the 6th-newest', async () => {
+		const task = await createTaskWithNComments(6);
+		const recent = await loadCommentHistory(db, task.id, masterKeyManager, 0, { limit: 5 });
+
+		const prompt = buildTaskPrompt(
+			'System prompt',
+			{
+				id: task.id,
+				identifier: task.identifier,
+				title: 'Recent comments task',
+				description: 'x',
+				status: 'in_progress',
+				priority: 'medium',
+				project_id: projectId,
+				rules: null,
+				progress_summary: null,
+			},
+			undefined,
+			{ recentComments: recent },
+		);
+
+		expect(prompt).toContain('### Recent Comments (latest 5)');
+		expect(prompt).toContain('comment number 6');
+		expect(prompt).not.toContain('comment number 1');
+		expect(prompt).toContain('call `list_comments` to read the full thread');
+	});
+
+	it('references the waking comment for a WakeupSource.Comment (assignee) wake and tags it in the thread', async () => {
+		const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Style guide task',
+				assignee_id: captainMemberId,
+			}),
+		});
+		const task = (await taskRes.json()).data as { id: string; identifier: string };
+
+		// A human (admin) comment — author_member_id NULL — carrying the new instruction.
+		const commentInsert = await db.query<{ id: string }>(
+			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+			 VALUES ($1, NULL, $2::comment_content_type, $3::jsonb)
+			 RETURNING id`,
+			[
+				task.id,
+				CommentContentType.Text,
+				JSON.stringify({ text: 'Please follow the new style guide: no emdashes, use hyphens.' }),
+			],
+		);
+		const commentId = commentInsert.rows[0].id;
+
+		const payload = {
+			source: WakeupSource.Comment,
+			task_id: task.id,
+			comment_id: commentId,
+		};
+
+		const wakeCtx = await loadCommentWakeContext(db, payload);
+		expect(wakeCtx).not.toBeNull();
+		expect(wakeCtx?.authorName).toBe('Admin');
+		expect(wakeCtx?.excerpt).toContain('no emdashes');
+		expect(wakeCtx?.commentId).toBe(commentId);
+
+		const recent = await loadCommentHistory(db, task.id, masterKeyManager, 0, { limit: 5 });
+		const prompt = buildTaskPrompt(
+			'System prompt',
+			{
+				id: task.id,
+				identifier: task.identifier,
+				title: 'Style guide task',
+				description: 'x',
+				status: 'in_progress',
+				priority: 'medium',
+				project_id: projectId,
+				rules: null,
+				progress_summary: null,
+			},
+			payload,
+			{ commentWakeContext: wakeCtx, recentComments: recent, wakingCommentId: commentId },
+		);
+
+		expect(prompt).toContain('## New Comment on Your Task');
+		expect(prompt).toContain('> Please follow the new style guide: no emdashes, use hyphens.');
+		// The same comment is tagged inside the Recent Comments thread.
+		expect(prompt).toContain('← the comment that woke you');
+	});
+
+	it('renders the Recent Comments block alongside a mention handoff', async () => {
+		const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Mention + recent',
+				assignee_id: captainMemberId,
+			}),
+		});
+		const task = (await taskRes.json()).data as { id: string; identifier: string };
+		const commentInsert = await db.query<{ id: string }>(
+			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+			 VALUES ($1, $2, $3::comment_content_type, $4::jsonb)
+			 RETURNING id`,
+			[
+				task.id,
+				captainMemberId,
+				CommentContentType.Text,
+				JSON.stringify({ text: '@architect please update the spec' }),
+			],
+		);
+		const commentId = commentInsert.rows[0].id;
+		const payload = {
+			source: WakeupSource.Mention,
+			task_id: task.id,
+			comment_id: commentId,
+		};
+		const mentionCtx = await loadMentionContext(db, architectMemberId, teamId, payload);
+		const recent = await loadCommentHistory(db, task.id, masterKeyManager, 0, { limit: 5 });
+
+		const prompt = buildTaskPrompt(
+			'System prompt',
+			{
+				id: task.id,
+				identifier: task.identifier,
+				title: 'Mention + recent',
+				description: 'x',
+				status: 'in_progress',
+				priority: 'high',
+				project_id: projectId,
+				rules: null,
+				progress_summary: null,
+			},
+			payload,
+			{ mentionContext: mentionCtx, recentComments: recent, wakingCommentId: commentId },
+		);
+
+		expect(prompt).toContain('## Mention Handoff');
+		expect(prompt).toContain('### Recent Comments (latest 5)');
+	});
+
+	it('SHARED_INSTRUCTIONS directs every agent to read the thread before acting', async () => {
+		const captainSystemPrompt = await getAgentSystemPrompt(db, teamId, captainMemberId);
+		const resolved = await resolveSystemPrompt(db, captainSystemPrompt, {
+			teamId,
+			projectId,
+			agentId: captainMemberId,
+		});
+		expect(resolved).toContain('Read the thread before you act');
+		expect(resolved).toContain('list_comments');
 	});
 });

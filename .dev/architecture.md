@@ -550,6 +550,19 @@ edited prompt can never silently drop the agent's identity or live context. The 
 singletons (CEO/Coach) are exempt — they have no in-team manager. `{{team_context}}` is
 **not** required because the resolver auto-appends that block on every run regardless.
 
+**Task prompt.** After the system prompt, `buildTaskPrompt` (`agent-runner.ts`) appends the
+run's task block: the current task's identifier/title/priority/status, plus its `rules`,
+`description`, and `progress_summary`. It also injects the **latest 5 comments** inline (the
+comment that woke the run tagged) as a head-start — small enough to carry on every run, while
+the `SHARED_INSTRUCTIONS` "read the thread before you act" rule still directs the agent to
+`list_comments` for the full thread before acting, since instructions posted after a task is
+created routinely change it. A comment-sourced wakeup additionally renders a handoff that
+quotes the triggering comment verbatim: `## Mention Handoff` (`mention`), `## Reply Received`
+(`reply`), or `## New Comment on Your Task` (the opt-in assignee `comment` wake, previously the
+one comment source that surfaced no reference to what triggered it). The Coach's `task_done`
+review is the one path that instead embeds the **full** comment history (both share
+`loadCommentHistory`/`renderCommentHistory`).
+
 **Containers & worktrees.** One container per project; the project's
 `<dataDir>/teams/<slug>/projects/<slug>/workspace/` bind-mounts to `/workspace`, with one
 subdirectory per linked repo. For each task the runner creates a `git worktree` at
