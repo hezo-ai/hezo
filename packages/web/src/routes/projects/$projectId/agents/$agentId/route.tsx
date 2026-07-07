@@ -1,9 +1,10 @@
 import { AgentAdminStatus } from '@hezo/shared';
-import { createFileRoute, Link, Outlet, useMatchRoute } from '@tanstack/react-router';
+import { createFileRoute, Link, Outlet } from '@tanstack/react-router';
 import { ArrowLeft } from 'lucide-react';
 import { NextHeartbeatIndicator } from '../../../../../components/next-heartbeat-indicator';
 import { Badge } from '../../../../../components/ui/badge';
 import { ExpandableText } from '../../../../../components/ui/expandable-text';
+import { Tabs } from '../../../../../components/ui/tabs';
 import { useAgent } from '../../../../../hooks/use-agents';
 import { agentRuntimeStatusMeta } from '../../../../../lib/status-meta';
 
@@ -23,7 +24,6 @@ const settingsTab = {
 function AgentLayout() {
 	const { projectId, agentId } = Route.useParams();
 	const { data: agent, isLoading } = useAgent(projectId, agentId);
-	const matchRoute = useMatchRoute();
 	const params = { projectId, agentId };
 
 	if (isLoading || !agent) return <div className="text-text-2">Loading...</div>;
@@ -71,25 +71,7 @@ function AgentLayout() {
 				/>
 			</div>
 
-			<div className="flex gap-1 border-b border-border mb-6 mt-6">
-				{tabs.map((tab) => {
-					const isActive = matchRoute({ to: tab.to, params, fuzzy: true });
-					return (
-						<Link
-							key={tab.to}
-							to={tab.to}
-							params={params}
-							className={`px-3 py-2 text-[13px] font-medium border-b-2 transition-colors -mb-px ${
-								isActive
-									? 'border-inverse text-text-1'
-									: 'border-transparent text-text-2 hover:text-text-1 hover:border-border-strong'
-							}`}
-						>
-							{tab.label}
-						</Link>
-					);
-				})}
-			</div>
+			<Tabs items={tabs.map((tab) => ({ ...tab, params }))} className="mt-6 mb-6" />
 
 			<Outlet />
 		</div>

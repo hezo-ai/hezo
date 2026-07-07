@@ -20,7 +20,7 @@ test('project Activity page exposes the Outbound traffic (egress) tab', async ()
 	await findByRole('heading', { name: 'Activity' }, { timeout: 10_000 });
 
 	// Switching to the egress tab swaps in its description and empty state.
-	await user.click(await findByRole('button', { name: 'Outbound traffic' }));
+	await user.click(await findByRole('tab', { name: 'Outbound traffic' }));
 	await findByText(/Every outbound HTTPS request/, undefined, { timeout: 10_000 });
 	expect(await findByText(/No outbound traffic recorded yet/)).toBeTruthy();
 });

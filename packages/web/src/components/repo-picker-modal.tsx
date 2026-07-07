@@ -11,6 +11,7 @@ import type { ApiError } from '../lib/api';
 import { Button } from './ui/button';
 import { DialogContent } from './ui/dialog';
 import { Input } from './ui/input';
+import { Tabs } from './ui/tabs';
 
 interface RepoPickerModalProps {
 	open: boolean;
@@ -129,32 +130,16 @@ export function RepoPickerModal({
 					Create a new repository for this project in one of your orgs, or pick an existing one.
 				</Dialog.Description>
 
-				<div className="flex gap-1 border-b border-border mb-4">
-					<button
-						type="button"
-						className={`px-3 py-1.5 text-sm border-b-2 transition-colors ${
-							mode === 'create'
-								? 'text-text-1 font-medium border-text-1'
-								: 'text-text-2 border-transparent hover:text-text-1'
-						}`}
-						onClick={() => setMode('create')}
-						data-testid="repo-picker-tab-create"
-					>
-						Create new
-					</button>
-					<button
-						type="button"
-						className={`px-3 py-1.5 text-sm border-b-2 transition-colors ${
-							mode === 'link'
-								? 'text-text-1 font-medium border-text-1'
-								: 'text-text-2 border-transparent hover:text-text-1'
-						}`}
-						onClick={() => setMode('link')}
-						data-testid="repo-picker-tab-link"
-					>
-						Link existing
-					</button>
-				</div>
+				<Tabs
+					items={[
+						{ key: 'create', label: 'Create new', testId: 'repo-picker-tab-create' },
+						{ key: 'link', label: 'Link existing', testId: 'repo-picker-tab-link' },
+					]}
+					value={mode}
+					onValueChange={(k) => setMode(k as PickerMode)}
+					activeSurface="bg-surface"
+					className="mb-4"
+				/>
 
 				<form onSubmit={handleSubmit} className="space-y-3">
 					<div className="flex flex-col gap-1.5">
