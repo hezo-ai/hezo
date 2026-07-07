@@ -1,6 +1,6 @@
 // Coverage for routes/projects/$projectId/agents/$agentId/chat-history.tsx: the
 // long-term chat-memory editor. Chat memory exists only for chat-enabled agents
-// (those with a ceo_conversations row — today the CEO), so the specs enable chat
+// (those with a chat_conversations row — today the CEO), so the specs enable chat
 // on a workspace agent directly in the DB and drive the page against the real
 // GET/PUT /chat-memory routes.
 
@@ -16,10 +16,11 @@ async function enableChatMemory(
 	content?: string,
 ): Promise<void> {
 	const { db } = getTestContext();
-	await db.query(`INSERT INTO ceo_conversations (member_id, team_id) VALUES ($1, $2)`, [
-		agentId,
-		ws.team.id,
-	]);
+	await db.query(
+		`INSERT INTO chat_conversations (member_id, team_id, project_id)
+		 VALUES ($1, $2, (SELECT id FROM projects WHERE team_id = $2 LIMIT 1))`,
+		[agentId, ws.team.id],
+	);
 	if (content !== undefined) {
 		await db.query(`INSERT INTO chat_memories (member_id, content) VALUES ($1, $2)`, [
 			agentId,
