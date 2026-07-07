@@ -35,7 +35,7 @@ test.describe('Draggable floating buttons (portrait mobile)', () => {
 		await page.goto(`/projects/${project.slug}/tasks`);
 		await waitForPageLoad(page);
 
-		const launcher = page.getByTestId('ceo-chat-launcher');
+		const launcher = page.getByTestId('chat-launcher');
 		await expect(launcher).toBeVisible({ timeout: 15000 });
 		const home = await launcher.boundingBox();
 		if (!home) throw new Error('Missing layout box');
@@ -54,7 +54,7 @@ test.describe('Draggable floating buttons (portrait mobile)', () => {
 		expect(dragged.y).toBeLessThan(home.y - 50);
 
 		// The drop must not count as a click — no chat panel.
-		await expect(page.getByTestId('ceo-chat-panel')).toBeHidden();
+		await expect(page.getByTestId('chat-panel')).toBeHidden();
 
 		// Position is memory-only: a reload puts the button back in its corner.
 		await page.reload();
@@ -80,7 +80,7 @@ test.describe('Draggable floating buttons (portrait mobile)', () => {
 		await page.goto(`/projects/${project.slug}/tasks`);
 		await waitForPageLoad(page);
 
-		const launcher = page.getByTestId('ceo-chat-launcher');
+		const launcher = page.getByTestId('chat-launcher');
 		await expect(launcher).toBeVisible({ timeout: 15000 });
 		const home = await launcher.boundingBox();
 		if (!home) throw new Error('Missing layout box');
@@ -95,12 +95,12 @@ test.describe('Draggable floating buttons (portrait mobile)', () => {
 		// A tap still opens the chat panel in its normal mobile layout (the panel
 		// is unaffected by the launcher's position — near-fullscreen sheet).
 		await launcher.click();
-		const panel = page.getByTestId('ceo-chat-panel');
+		const panel = page.getByTestId('chat-panel');
 		await expect(panel).toBeVisible();
 		const panelBox = await panel.boundingBox();
 		if (!panelBox) throw new Error('Missing layout box');
 		expect(panelBox.width).toBeGreaterThan(300); // spans the viewport width
-		await page.getByTestId('ceo-chat-close').click();
+		await page.getByTestId('chat-close').click();
 
 		// The launcher remounts where it was dragged (in-memory position).
 		await expect(launcher).toBeVisible();

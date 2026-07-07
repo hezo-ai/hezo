@@ -202,9 +202,14 @@ claiming (and then mis-dispatching) the queued manual run. Token usage is flushe
 row *during* the run (alongside the log), so a run the server kills mid-flight still
 reports the tokens/cost it burned instead of `0`; `usage_partial` flags such a snapshot
 until a clean completion supersedes it. `agent_task_sessions` persists
-per-task session state for compaction across heartbeats. `ceo_sessions` /
-`ceo_conversations` / `ceo_messages` back the live CEO chat, and `chat_memories` holds each
-chat-enabled agent's automatically-maintained long-term memory (§ 4).
+per-task session state for compaction across heartbeats. `chat_sessions` /
+`chat_conversations` / `chat_messages` back the live realtime chat (today the CEO
+chat) — generically named so the schema is first-class for a chat with any agent:
+a conversation carries `member_id` (the agent) + `team_id` + `project_id`, a session
+the same, and a message an `author_member_id` (the responding agent). `chat_message_attachments`
+links files sent through the chatbox to their message (stored in the HQ asset library
+under `uploads/chat/`), and `chat_memories` holds each chat-enabled agent's
+automatically-maintained long-term memory (§ 4).
 
 **Costs & budgets.** `cost_entries` is the immutable per-run spend ledger, attributed to
 the AI provider config that produced it — **never** team-scoped. `model_pricing` holds
@@ -394,28 +399,28 @@ after the container-restart reconcile pass and brings HQ up via
 provision if missing) — fire-and-forget so a slow image pull doesn't delay startup. This is
 unconditional because the standard restart pass deliberately leaves `stopped` projects
 alone, whereas HQ — home of the always-on CEO/Coach — should run whenever the instance does.
-The live CEO chat (`ceo-session-manager.ts`) also provisions it on demand as a fallback. Turns
+The live CEO chat (`chat-session-manager.ts`) also provisions it on demand as a fallback. Turns
 are **serialized** (a `turnLock` chain) so concurrent sends can't each spawn a turn — a newer
 message interrupts the in-flight reply (kept as `interrupted`) and only the latest streams. No
 turn survives a process restart, so `reconcileOnStartup` clears orphaned non-terminal
-`ceo_messages` (deletes empty `streaming`/`pending` placeholders, marks partial ones
+`chat_messages` (deletes empty `streaming`/`pending` placeholders, marks partial ones
 `interrupted`) — an abandoned turn never lingers as a stuck "thinking" bubble.
 
 **Automatic, agent-driven chat memory.** Each turn's prompt carries the agent's **long-term
 memory** (`chat_memories`, one markdown row per member, no revision history) plus the full
-**active window** — the non-compacted `ceo_messages`, which *is* the short-term memory. The
+**active window** — the non-compacted `chat_messages`, which *is* the short-term memory. The
 window is bounded by a byte cap (`max_chat_history_size`, default 40 KB, in `system_meta`,
 operator-set under Settings → Chatbox). When a reply settles and the window exceeds the cap,
-`runCompaction` runs a **headless exec** (no `ceo_message`, no broadcast) that hands the agent
+`runCompaction` runs a **headless exec** (no `chat_message`, no broadcast) that hands the agent
 its current memory plus the whole window and asks it to fold the durable points into memory via
 the `update_chat_memory` MCP tool — the agent does the summarization, there is **no server-side
 LLM call**. Eviction is gated on the agent actually advancing its memory: only then does the
 server mark all but the latest few messages (`CHAT_WINDOW_RETAIN_MESSAGES`) `compacted_at`,
 resetting the window to a short tail (a no-op or aborted run loses nothing). Compaction runs in
 the background and is preempted by a new user turn (it shares the per-session prompt file), so the
-chat is never blocked. The `GET /api/ceo/conversation` chatbox view and each turn's transcript
+chat is never blocked. The `GET /api/chat/conversation` chatbox view and each turn's transcript
 filter `compacted_at IS NULL`, so scrolling up tops out at the window boundary. On a successful
-compaction the server broadcasts `CeoCompacted` on the `ceo:global` room; every open chatbox
+compaction the server broadcasts `ChatCompacted` on the `chat:global` room; every open chatbox
 refetches and drops the evicted messages live, rendering a "chat compacted" marker (driven by the
 response's `compacted_count`) where the oldest messages were. The store generalizes to any
 chat-enabled agent; the operator can review and edit it on the agent's **Chat history** tab
@@ -1428,7 +1433,7 @@ shapes.
   project — there is no bare `GET /teams`), `team-templates`, `agent-types`, `repos`,
   `project-docs`.
 - **Agents & runs** — `agents` (hire/fire/pause/resume, system-prompt revisions),
-  `execution-locks`, `queued-wakeups`, `ceo-chat` (live CEO session).
+  `execution-locks`, `queued-wakeups`, `chat` (live realtime chat session — today the CEO).
 - **Tasks & collaboration** — `tasks`, `goals` (CRUD + `/goals/runs` + `/goals/:id/history`),
   `comments`, `mentions`, `assets`, `inbox`, `search` (full-text).
 - **Money & governance** — `costs` (project-scoped, `group_by=day` for charts),

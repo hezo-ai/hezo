@@ -16,28 +16,28 @@ beforeEach(() => {
 
 describe('in-memory store', () => {
 	test('returns null before any position is set', () => {
-		expect(getFabPosition('ceo-chat')).toBeNull();
+		expect(getFabPosition('chat')).toBeNull();
 	});
 
 	test('stores a position and the latest write wins', () => {
-		setFabPosition('ceo-chat', { xFrac: 0.25, yFrac: 0.5 });
-		expect(getFabPosition('ceo-chat')).toEqual({ xFrac: 0.25, yFrac: 0.5 });
-		setFabPosition('ceo-chat', { xFrac: 0.9, yFrac: 0.1 });
-		expect(getFabPosition('ceo-chat')).toEqual({ xFrac: 0.9, yFrac: 0.1 });
+		setFabPosition('chat', { xFrac: 0.25, yFrac: 0.5 });
+		expect(getFabPosition('chat')).toEqual({ xFrac: 0.25, yFrac: 0.5 });
+		setFabPosition('chat', { xFrac: 0.9, yFrac: 0.1 });
+		expect(getFabPosition('chat')).toEqual({ xFrac: 0.9, yFrac: 0.1 });
 	});
 
 	test('clamps fractions to [0,1] on write and rejects non-finite values', () => {
-		setFabPosition('ceo-chat', { xFrac: -3, yFrac: 42 });
-		expect(getFabPosition('ceo-chat')).toEqual({ xFrac: 0, yFrac: 1 });
+		setFabPosition('chat', { xFrac: -3, yFrac: 42 });
+		expect(getFabPosition('chat')).toEqual({ xFrac: 0, yFrac: 1 });
 		// Non-finite values are garbage, not "very far right" — they zero out.
-		setFabPosition('ceo-chat', { xFrac: Number.NaN, yFrac: Number.POSITIVE_INFINITY });
-		expect(getFabPosition('ceo-chat')).toEqual({ xFrac: 0, yFrac: 0 });
+		setFabPosition('chat', { xFrac: Number.NaN, yFrac: Number.POSITIVE_INFINITY });
+		expect(getFabPosition('chat')).toEqual({ xFrac: 0, yFrac: 0 });
 	});
 
 	test('reset clears every stored position', () => {
-		setFabPosition('ceo-chat', { xFrac: 0.5, yFrac: 0.5 });
+		setFabPosition('chat', { xFrac: 0.5, yFrac: 0.5 });
 		resetFabPositions();
-		expect(getFabPosition('ceo-chat')).toBeNull();
+		expect(getFabPosition('chat')).toBeNull();
 	});
 });
 

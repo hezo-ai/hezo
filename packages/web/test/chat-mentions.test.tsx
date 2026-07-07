@@ -1,4 +1,4 @@
-import type { CeoMessage } from '@hezo/web/hooks/use-ceo-chat';
+import type { ChatMessage } from '@hezo/web/hooks/use-chat';
 import { queryClient } from '@hezo/web/lib/query-client';
 import { queryKeys } from '@hezo/web/lib/query-keys';
 import { waitFor } from '@testing-library/react';
@@ -8,14 +8,14 @@ import { seedAsset, seedComment, seedProject, seedTask, seedWorkspace } from './
 
 // The CEO chat renders replies in instance scope: entity references resolve
 // through the real in-process backend (POST /api/mentions/resolve) and unique
-// ones become client-side <Link>s. The harness has no CeoSessionManager, so
+// ones become client-side <Link>s. The harness has no ChatSessionManager, so
 // replies are seeded straight into the conversation query cache the widget
-// reads (same pattern as ceo-chat.test.tsx).
+// reads (same pattern as chat.test.tsx).
 
 const now = () => new Date().toISOString();
 
 function seedCeoReply(content: string) {
-	queryClient.setQueryData(queryKeys.ceoConversation(), {
+	queryClient.setQueryData(queryKeys.chatConversation(), {
 		conversation_id: 'test-convo',
 		messages: [
 			{
@@ -25,7 +25,7 @@ function seedCeoReply(content: string) {
 				status: 'complete',
 				content,
 				created_at: now(),
-			} as CeoMessage,
+			} as ChatMessage,
 		],
 	});
 }
@@ -68,8 +68,8 @@ test('CEO replies render unique refs as links; unknown and backticked refs stay 
 		},
 	});
 
-	(await findByTestId('ceo-chat-launcher')).click();
-	await findByTestId('ceo-chat-panel');
+	(await findByTestId('chat-launcher')).click();
+	await findByTestId('chat-panel');
 
 	const ident = refs.taskIdentifier;
 	seedCeoReply(
@@ -95,7 +95,7 @@ test('CEO replies render unique refs as links; unknown and backticked refs stay 
 	expect(docLink.getAttribute('target')).toBe('_blank');
 
 	// Unknown identifiers stay plain text — no link wraps ZZ-99.
-	const body = getByTestId('ceo-chat-markdown');
+	const body = getByTestId('chat-markdown');
 	const linkTexts = Array.from(body.querySelectorAll('a')).map((a) => a.textContent);
 	expect(linkTexts).not.toContain('ZZ-99');
 	expect(body.textContent).toContain('ZZ-99');
@@ -115,8 +115,8 @@ test('CEO replies linkify backticked doc and asset references, opening them in a
 		},
 	});
 
-	(await findByTestId('ceo-chat-launcher')).click();
-	await findByTestId('ceo-chat-panel');
+	(await findByTestId('chat-launcher')).click();
+	await findByTestId('chat-panel');
 
 	// The exact shape that misfired in production: an LLM-authored reply that wraps
 	// the doc/asset filenames in backticks. They must still resolve to new-tab links
@@ -134,7 +134,7 @@ test('CEO replies linkify backticked doc and asset references, opening them in a
 	expect(assetLink.getAttribute('target')).toBe('_blank');
 
 	// The backticked refs are no longer rendered as inert <code>.
-	const body = getByTestId('ceo-chat-markdown');
+	const body = getByTestId('chat-markdown');
 	const codeTexts = Array.from(body.querySelectorAll('code')).map((el) => el.textContent);
 	expect(codeTexts).not.toContain('prd.md');
 	expect(codeTexts).not.toContain(`assets/${refs.assetFilename}`);
@@ -149,8 +149,8 @@ test('clicking a chat comment link navigates client-side with the chat still ope
 		},
 	});
 
-	(await findByTestId('ceo-chat-launcher')).click();
-	await findByTestId('ceo-chat-panel');
+	(await findByTestId('chat-launcher')).click();
+	await findByTestId('chat-panel');
 
 	seedCeoReply(`Answered in ${refs.taskIdentifier}#comment-${refs.commentId}.`);
 
@@ -165,8 +165,8 @@ test('clicking a chat comment link navigates client-side with the chat still ope
 
 	// The widget lives in the root layout, outside the route outlet — the panel
 	// (and the rendered reply) survive the navigation.
-	expect(getByTestId('ceo-chat-panel')).toBeTruthy();
-	expect(getByTestId('ceo-chat-markdown')).toBeTruthy();
+	expect(getByTestId('chat-panel')).toBeTruthy();
+	expect(getByTestId('chat-markdown')).toBeTruthy();
 });
 
 test('agent mentions link to the agent home project; HQ singletons resolve to hq', async () => {
@@ -177,8 +177,8 @@ test('agent mentions link to the agent home project; HQ singletons resolve to hq
 		},
 	});
 
-	(await findByTestId('ceo-chat-launcher')).click();
-	await findByTestId('ceo-chat-panel');
+	(await findByTestId('chat-launcher')).click();
+	await findByTestId('chat-panel');
 
 	seedCeoReply('Ask @@ceo to review.');
 
@@ -199,14 +199,14 @@ test('an unresolved passive @@mention sheds its @@ prefix and renders as the bar
 		},
 	});
 
-	(await findByTestId('ceo-chat-launcher')).click();
-	await findByTestId('ceo-chat-panel');
+	(await findByTestId('chat-launcher')).click();
+	await findByTestId('chat-panel');
 
 	seedCeoReply('HM-70 is with @@nonexistentrole — two focused amendments.');
 
-	const body = await findByTestId('ceo-chat-markdown');
+	const body = await findByTestId('chat-markdown');
 	await waitFor(() => {
-		if (!getByTestId('ceo-chat-markdown').textContent?.includes('nonexistentrole')) {
+		if (!getByTestId('chat-markdown').textContent?.includes('nonexistentrole')) {
 			throw new Error('reply not rendered yet');
 		}
 	});

@@ -1,4 +1,10 @@
-import type { CeoChannel, CeoMessageRole, CeoMessageStatus, ImageBuildStatus } from './common.js';
+import type {
+	ChatChannel,
+	ChatMessageRole,
+	ChatMessageStatus,
+	CommentAttachment,
+	ImageBuildStatus,
+} from './common.js';
 
 export enum WsMessageType {
 	Connected = 'connected',
@@ -7,10 +13,10 @@ export enum WsMessageType {
 	ContainerLog = 'container_log',
 	ImageBuild = 'image_build',
 	RunLog = 'run_log',
-	CeoMessageStart = 'ceo_message_start',
-	CeoMessageDelta = 'ceo_message_delta',
-	CeoMessageComplete = 'ceo_message_complete',
-	CeoCompacted = 'ceo_compacted',
+	ChatMessageStart = 'chat_message_start',
+	ChatMessageDelta = 'chat_message_delta',
+	ChatMessageComplete = 'chat_message_complete',
+	ChatCompacted = 'chat_compacted',
 	ProjectsChanged = 'projects_changed',
 	Error = 'error',
 }
@@ -97,27 +103,29 @@ export interface WsProjectsChangedMessage {
  * begin streaming AND for user messages from any channel, so every mirrored
  * surface (web, future Telegram/WhatsApp) renders the full thread live.
  */
-export interface WsCeoMessageStartMessage {
-	type: WsMessageType.CeoMessageStart;
+export interface WsChatMessageStartMessage {
+	type: WsMessageType.ChatMessageStart;
 	messageId: string;
-	role: CeoMessageRole;
-	channel: CeoChannel;
+	role: ChatMessageRole;
+	channel: ChatChannel;
 	content: string;
 	createdAt: string;
+	/** Files attached to a user message, so the sent bubble renders chips at once. */
+	attachments?: CommentAttachment[];
 }
 
 /** Incremental assistant text appended to the bubble keyed by `messageId`. */
-export interface WsCeoMessageDeltaMessage {
-	type: WsMessageType.CeoMessageDelta;
+export interface WsChatMessageDeltaMessage {
+	type: WsMessageType.ChatMessageDelta;
 	messageId: string;
 	text: string;
 }
 
 /** Terminal event for a CEO message: finalizes content, status, and usage. */
-export interface WsCeoMessageCompleteMessage {
-	type: WsMessageType.CeoMessageComplete;
+export interface WsChatMessageCompleteMessage {
+	type: WsMessageType.ChatMessageComplete;
 	messageId: string;
-	status: CeoMessageStatus;
+	status: ChatMessageStatus;
 	content: string;
 	inputTokens: number;
 	outputTokens: number;
@@ -131,8 +139,8 @@ export interface WsCeoMessageCompleteMessage {
  * retained tail (plus a `compacted_count`), so the chatbox drops the old
  * messages and shows the "chat compacted" marker at the top.
  */
-export interface WsCeoCompactedMessage {
-	type: WsMessageType.CeoCompacted;
+export interface WsChatCompactedMessage {
+	type: WsMessageType.ChatCompacted;
 	conversationId: string;
 }
 
@@ -142,10 +150,10 @@ export type WsServerMessage =
 	| WsContainerLogMessage
 	| WsImageBuildMessage
 	| WsRunLogMessage
-	| WsCeoMessageStartMessage
-	| WsCeoMessageDeltaMessage
-	| WsCeoMessageCompleteMessage
-	| WsCeoCompactedMessage
+	| WsChatMessageStartMessage
+	| WsChatMessageDeltaMessage
+	| WsChatMessageCompleteMessage
+	| WsChatCompactedMessage
 	| WsProjectsChangedMessage
 	| WsConnectedMessage
 	| WsErrorMessage;

@@ -1,10 +1,10 @@
-import { CeoChannel, HQ_PROJECT_SLUG } from '@hezo/shared';
+import { ChatChannel, HQ_PROJECT_SLUG } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
 import { INSTANCE_BASE_URL_KEY, setSystemMeta } from '../src/lib/system-meta';
 import type { Env } from '../src/lib/types';
-import { renderCeoMessageForChannel } from '../src/services/ceo-message-render';
+import { renderChatMessageForChannel } from '../src/services/chat-message-render';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 
@@ -57,21 +57,21 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
-describe('renderCeoMessageForChannel', () => {
+describe('renderChatMessageForChannel', () => {
 	const message = 'Check RD-901 and spec.md before review.';
 
 	it('returns web content unchanged — the client renders links itself', async () => {
-		expect(await renderCeoMessageForChannel(db, message, CeoChannel.Web)).toBe(message);
+		expect(await renderChatMessageForChannel(db, message, ChatChannel.Web)).toBe(message);
 	});
 
 	it('returns whatsapp content unchanged — plain-text policy', async () => {
 		await setSystemMeta(db, INSTANCE_BASE_URL_KEY, BASE);
-		expect(await renderCeoMessageForChannel(db, message, CeoChannel.WhatsApp)).toBe(message);
+		expect(await renderChatMessageForChannel(db, message, ChatChannel.WhatsApp)).toBe(message);
 	});
 
 	it('returns telegram content unchanged while no base URL is configured', async () => {
 		await db.query('DELETE FROM system_meta WHERE key = $1', [INSTANCE_BASE_URL_KEY]);
-		expect(await renderCeoMessageForChannel(db, message, CeoChannel.Telegram)).toBe(message);
+		expect(await renderChatMessageForChannel(db, message, ChatChannel.Telegram)).toBe(message);
 	});
 
 	describe('telegram with a base URL', () => {
@@ -80,17 +80,17 @@ describe('renderCeoMessageForChannel', () => {
 		});
 
 		it('links a unique task reference', async () => {
-			expect(await renderCeoMessageForChannel(db, 'See RD-901 now', CeoChannel.Telegram)).toBe(
+			expect(await renderChatMessageForChannel(db, 'See RD-901 now', ChatChannel.Telegram)).toBe(
 				`See [RD-901](${BASE}/projects/${projectSlug}/tasks/rd-901) now`,
 			);
 		});
 
 		it('links a comment reference via the task it belongs to', async () => {
 			expect(
-				await renderCeoMessageForChannel(
+				await renderChatMessageForChannel(
 					db,
 					`Answered in RD-901#comment-${COMMENT_ID} today`,
-					CeoChannel.Telegram,
+					ChatChannel.Telegram,
 				),
 			).toBe(
 				`Answered in [RD-901#comment-${COMMENT_ID}](${BASE}/projects/${projectSlug}/tasks/rd-901#comment-${COMMENT_ID}) today`,
@@ -99,10 +99,10 @@ describe('renderCeoMessageForChannel', () => {
 
 		it('links project docs, KB docs, and assets', async () => {
 			expect(
-				await renderCeoMessageForChannel(
+				await renderChatMessageForChannel(
 					db,
 					'Read spec.md and playbook.md plus assets/mock.png today',
-					CeoChannel.Telegram,
+					ChatChannel.Telegram,
 				),
 			).toBe(
 				`Read [spec.md](${BASE}/projects/${projectSlug}/documents?file=spec.md) ` +
@@ -113,7 +113,7 @@ describe('renderCeoMessageForChannel', () => {
 
 		it('links agents to their home project and @admin to the global inbox', async () => {
 			expect(
-				await renderCeoMessageForChannel(db, 'Ask @@ceo or @admin first', CeoChannel.Telegram),
+				await renderChatMessageForChannel(db, 'Ask @@ceo or @admin first', ChatChannel.Telegram),
 			).toBe(
 				`Ask [ceo](${BASE}/projects/${HQ_PROJECT_SLUG}/agents/ceo) ` +
 					`or [@admin](${BASE}${'/home/inbox'}) first`,
@@ -125,13 +125,17 @@ describe('renderCeoMessageForChannel', () => {
 			// teams) still sheds its internal `@@` syntax; an unresolved active @slug
 			// keeps its (readable) prefix as plain text.
 			expect(
-				await renderCeoMessageForChannel(db, 'Handed to @@nobody, cc @ghost', CeoChannel.Telegram),
+				await renderChatMessageForChannel(
+					db,
+					'Handed to @@nobody, cc @ghost',
+					ChatChannel.Telegram,
+				),
 			).toBe('Handed to nobody, cc @ghost');
 		});
 
 		it('keeps unknown references and code spans bare in a mixed message', async () => {
 			const mixed = 'RD-901 is real but ZZ-99 is not, and `RD-901` stays code:\n```\nRD-901\n```';
-			expect(await renderCeoMessageForChannel(db, mixed, CeoChannel.Telegram)).toBe(
+			expect(await renderChatMessageForChannel(db, mixed, ChatChannel.Telegram)).toBe(
 				`[RD-901](${BASE}/projects/${projectSlug}/tasks/rd-901) is real but ZZ-99 is not, ` +
 					'and `RD-901` stays code:\n```\nRD-901\n```',
 			);

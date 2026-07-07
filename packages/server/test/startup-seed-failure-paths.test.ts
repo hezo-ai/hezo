@@ -77,7 +77,7 @@ describe('startup seed failure paths', () => {
 		vi.restoreAllMocks();
 		if (result) {
 			result.jobManager.shutdown();
-			await result.ceoSessionManager.stop();
+			await result.chatSessionManager.stop();
 			await waitForBackground();
 			await result.db.close().catch(() => undefined);
 			result = null;

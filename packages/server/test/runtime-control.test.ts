@@ -4,20 +4,20 @@ import type { StartupResult } from '../src/startup';
 
 function fakeRuntime() {
 	const jobManager = { shutdown: vi.fn() };
-	const ceoSessionManager = { stop: vi.fn(async () => {}) };
+	const chatSessionManager = { stop: vi.fn(async () => {}) };
 	const egressProxy = { releaseAll: vi.fn(async () => {}) };
 	const sshAgentServer = { releaseAll: vi.fn(async () => {}) };
 	const assetStore = { close: vi.fn(async () => {}) };
 	const db = { close: vi.fn(async () => {}) };
 	const result = {
 		jobManager,
-		ceoSessionManager,
+		chatSessionManager,
 		egressProxy,
 		sshAgentServer,
 		assetStore,
 		db,
 	} as unknown as StartupResult;
-	return { result, jobManager, ceoSessionManager, egressProxy, sshAgentServer, assetStore, db };
+	return { result, jobManager, chatSessionManager, egressProxy, sshAgentServer, assetStore, db };
 }
 
 describe('active runtime accessors', () => {
@@ -31,12 +31,12 @@ describe('active runtime accessors', () => {
 
 describe('shutdownRuntime', () => {
 	it('stops every subsystem and closes the db on the first call, then is idempotent', async () => {
-		const { result, jobManager, ceoSessionManager, egressProxy, sshAgentServer, assetStore, db } =
+		const { result, jobManager, chatSessionManager, egressProxy, sshAgentServer, assetStore, db } =
 			fakeRuntime();
 
 		await shutdownRuntime(result);
 		expect(jobManager.shutdown).toHaveBeenCalledTimes(1);
-		expect(ceoSessionManager.stop).toHaveBeenCalledTimes(1);
+		expect(chatSessionManager.stop).toHaveBeenCalledTimes(1);
 		expect(egressProxy.releaseAll).toHaveBeenCalledTimes(1);
 		expect(sshAgentServer.releaseAll).toHaveBeenCalledTimes(1);
 		expect(assetStore.close).toHaveBeenCalledTimes(1);

@@ -18,16 +18,16 @@ import {
 import type { Env } from '../src/lib/types';
 import { signAdminJwt } from '../src/middleware/auth';
 import {
-	buildCompactionPrompt,
-	formatLongTermMemoryBlock,
-} from '../src/services/ceo-session-manager';
-import {
 	getChatMemory,
 	loadActiveWindow,
 	markCompacted,
 	selectFlush,
 	upsertChatMemory,
 } from '../src/services/chat-memory';
+import {
+	buildCompactionPrompt,
+	formatLongTermMemoryBlock,
+} from '../src/services/chat-session-manager';
 import { safeClose } from './helpers';
 import {
 	authHeader,
@@ -130,7 +130,8 @@ describe('chat_memories store + active window', () => {
 
 	beforeAll(async () => {
 		const c = await db.query<{ id: string }>(
-			`INSERT INTO ceo_conversations (member_id, team_id) VALUES ($1, $2) RETURNING id`,
+			`INSERT INTO chat_conversations (member_id, team_id, project_id)
+			 VALUES ($1, $2, (SELECT id FROM projects WHERE team_id = $2 AND is_internal = true)) RETURNING id`,
 			[ceoMemberId, DEFAULT_TEAM_ID],
 		);
 		conversationId = c.rows[0].id;
@@ -149,8 +150,8 @@ describe('chat_memories store + active window', () => {
 	it('loadActiveWindow returns only complete, non-empty, non-compacted messages oldest→newest', async () => {
 		const ins = async (role: string, status: string, content: string) => {
 			const r = await db.query<{ id: string }>(
-				`INSERT INTO ceo_messages (conversation_id, role, channel, status, content)
-				 VALUES ($1, $2::ceo_message_role, 'web', $3::ceo_message_status, $4) RETURNING id`,
+				`INSERT INTO chat_messages (conversation_id, role, channel, status, content)
+				 VALUES ($1, $2::chat_message_role, 'web', $3::chat_message_status, $4) RETURNING id`,
 				[conversationId, role, status, content],
 			);
 			return r.rows[0].id;
@@ -270,8 +271,9 @@ describe('agent chat-memory REST route', () => {
 	beforeAll(async () => {
 		// Ensure the CEO is chat-enabled (has a conversation).
 		await db.query(
-			`INSERT INTO ceo_conversations (member_id, team_id)
-			 SELECT $1, $2 WHERE NOT EXISTS (SELECT 1 FROM ceo_conversations WHERE member_id = $1)`,
+			`INSERT INTO chat_conversations (member_id, team_id, project_id)
+			 SELECT $1, $2, (SELECT id FROM projects WHERE team_id = $2 AND is_internal = true)
+			 WHERE NOT EXISTS (SELECT 1 FROM chat_conversations WHERE member_id = $1)`,
 			[ceoMemberId, DEFAULT_TEAM_ID],
 		);
 	});

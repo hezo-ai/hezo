@@ -68,7 +68,7 @@ describe('startup boot paths (master key, routes, socket cleanup)', () => {
 		vi.restoreAllMocks();
 		if (result) {
 			result.jobManager.shutdown();
-			await result.ceoSessionManager.stop();
+			await result.chatSessionManager.stop();
 			await waitForBackground();
 			await result.db.close().catch(() => undefined);
 			result = null;

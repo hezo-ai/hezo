@@ -5,7 +5,7 @@ import type { Db } from '../db/database';
  * compaction.
  *
  * Each chat-enabled agent keeps a single markdown `chat_memories` row (no
- * revision history). The active message window — the non-compacted `ceo_messages`
+ * revision history). The active message window — the non-compacted `chat_messages`
  * shown in the chatbox and replayed into each turn — is bounded by a byte cap.
  * When the window exceeds the cap the agent itself summarizes the whole window
  * into its long-term memory; the server then evicts all but the latest few
@@ -47,28 +47,49 @@ export interface WindowMessage {
 	id: string;
 	role: string;
 	content: string;
+	/** Library paths of files attached to this message (e.g. `uploads/chat/x.png`). */
+	attachmentNames: string[];
 }
 
 /**
- * The active (non-compacted) window for a conversation, oldest→newest. Only
- * complete, non-empty messages count — streaming placeholders and failed turns
- * are neither shown nor replayed, so they shouldn't weigh on the byte budget.
+ * The active (non-compacted) window for a conversation, oldest→newest. Complete
+ * messages that carry text OR an attachment count — streaming placeholders and
+ * failed turns are neither shown nor replayed, so they shouldn't weigh on the
+ * byte budget. Attachment filenames ride along so the prompt can reference the
+ * files the operator sent (an attachment-only message has empty content but
+ * still belongs in the window).
  */
 export async function loadActiveWindow(db: Db, conversationId: string): Promise<WindowMessage[]> {
-	const r = await db.query<WindowMessage>(
-		`SELECT id, role, content FROM ceo_messages
-		 WHERE conversation_id = $1 AND compacted_at IS NULL
-		   AND status = 'complete' AND content <> ''
-		 ORDER BY created_at ASC`,
+	const r = await db.query<{
+		id: string;
+		role: string;
+		content: string;
+		attachment_names: string | null;
+	}>(
+		`SELECT m.id, m.role, m.content,
+		        string_agg(a.original_filename, E'\n' ORDER BY ca.created_at)
+		          FILTER (WHERE a.id IS NOT NULL) AS attachment_names
+		 FROM chat_messages m
+		 LEFT JOIN chat_message_attachments ca ON ca.chat_message_id = m.id
+		 LEFT JOIN assets a ON a.id = ca.asset_id
+		 WHERE m.conversation_id = $1 AND m.compacted_at IS NULL
+		   AND m.status = 'complete' AND (m.content <> '' OR ca.chat_message_id IS NOT NULL)
+		 GROUP BY m.id, m.role, m.content, m.created_at
+		 ORDER BY m.created_at ASC`,
 		[conversationId],
 	);
-	return r.rows;
+	return r.rows.map((row) => ({
+		id: row.id,
+		role: row.role,
+		content: row.content,
+		attachmentNames: row.attachment_names ? row.attachment_names.split('\n') : [],
+	}));
 }
 
 /** Mark a set of messages compacted (evicted from the active window). No-op for []. */
 export async function markCompacted(db: Db, ids: string[]): Promise<void> {
 	if (ids.length === 0) return;
-	await db.query(`UPDATE ceo_messages SET compacted_at = now() WHERE id = ANY($1::uuid[])`, [ids]);
+	await db.query(`UPDATE chat_messages SET compacted_at = now() WHERE id = ANY($1::uuid[])`, [ids]);
 }
 
 export interface FlushMessage {

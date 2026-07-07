@@ -2,7 +2,7 @@ import {
 	ADMIN_MENTION_SLUG,
 	agentPath,
 	assetPath,
-	CeoChannel,
+	ChatChannel,
 	commentPath,
 	extractMentionCandidates,
 	GLOBAL_INBOX_PATH,
@@ -18,7 +18,7 @@ import { resolveInstanceMentions } from './instance-mentions';
 /**
  * Renders a stored CEO message (canonical bare-reference markdown, per
  * agents/_partials/common/linking-syntax.md) for a delivery channel. Stored
- * `ceo_messages.content` is NEVER rewritten — rendering happens at the
+ * `chat_messages.content` is NEVER rewritten — rendering happens at the
  * consumption edge, so each channel decides how references appear:
  *
  * - `web`      → returned unchanged. The web client resolves references itself
@@ -36,12 +36,12 @@ import { resolveInstanceMentions } from './instance-mentions';
  * references stay bare text; references inside code fences and inline code are
  * never touched.
  */
-export async function renderCeoMessageForChannel(
+export async function renderChatMessageForChannel(
 	db: Db,
 	content: string,
-	channel: CeoChannel,
+	channel: ChatChannel,
 ): Promise<string> {
-	if (channel !== CeoChannel.Telegram) return content;
+	if (channel !== ChatChannel.Telegram) return content;
 
 	const baseUrl = await getInstanceBaseUrl(db);
 	if (!baseUrl) return content;

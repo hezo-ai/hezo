@@ -5,20 +5,22 @@ import {
 	type AgentRuntime,
 	type AiProvider,
 	CEO_AGENT_SLUG,
-	CeoChannel,
-	CeoMessageRole,
-	CeoMessageStatus,
-	CeoSessionStatus,
 	CHAT_WINDOW_RETAIN_MESSAGES,
+	ChatChannel,
+	ChatMessageRole,
+	ChatMessageStatus,
+	ChatSessionStatus,
+	type CommentAttachment,
 	DEFAULT_TEAM_ID,
 	PROVIDER_RUNTIME_ADAPTERS,
 	WsMessageType,
 	wsRoom,
 } from '@hezo/shared';
 import { trackBackground } from '../lib/background';
+import { loadChatMessageAttachments } from '../lib/chat-attachments';
 import { getMaxChatHistorySize } from '../lib/system-meta';
 import { logger } from '../logger';
-import { signCeoSessionJwt } from '../middleware/auth';
+import { signChatSessionJwt } from '../middleware/auth';
 import {
 	buildRuntimeInvocation,
 	type EgressEnvDescriptor,
@@ -46,12 +48,12 @@ import { resolveSystemPrompt } from './template-resolver';
 import { getRunSocketPath } from './workspace';
 import type { WebSocketManager } from './ws';
 
-const log = logger.child('ceo-session');
+const log = logger.child('chat-session');
 
 /** Container working directory for the (repo-free) chat session. */
 const CHAT_WORKING_DIR = '/workspace';
 /** How often to verify the live session's container is still healthy. */
-const HEALTH_INTERVAL_MS = Number(process.env.HEZO_CEO_HEALTH_INTERVAL_MS ?? 10_000);
+const HEALTH_INTERVAL_MS = Number(process.env.HEZO_CHAT_HEALTH_INTERVAL_MS ?? 10_000);
 
 const CHAT_GUIDE = `# Live Chat
 
@@ -153,7 +155,7 @@ interface CurrentTurn {
  * no held-open process. A new message interrupts an in-flight reply and starts
  * a fresh turn whose prompt already includes the prior message.
  */
-export class CeoSessionManager {
+export class ChatSessionManager {
 	private live: LiveSession | null = null;
 	private current: CurrentTurn | null = null;
 	private ensuring: Promise<LiveSession> | null = null;
@@ -192,22 +194,22 @@ export class CeoSessionManager {
 	 */
 	async reconcileOnStartup(): Promise<void> {
 		await this.deps.db.query(
-			`UPDATE ceo_sessions SET status = $1, stopped_at = now()
+			`UPDATE chat_sessions SET status = $1, stopped_at = now()
 			 WHERE status IN ($2, $3)`,
-			[CeoSessionStatus.Crashed, CeoSessionStatus.Starting, CeoSessionStatus.Running],
+			[ChatSessionStatus.Crashed, ChatSessionStatus.Starting, ChatSessionStatus.Running],
 		);
 		// No CEO turn survives a process restart, so any message left in a non-terminal
 		// state (streaming/pending) is orphaned — its run is gone. Empty ones are pure
 		// "thinking" placeholders with nothing to show: delete them so they don't reload
 		// as perpetual dots. Non-empty ones kept a partial reply: mark them interrupted.
-		await this.deps.db.query(`DELETE FROM ceo_messages WHERE status IN ($1, $2) AND content = ''`, [
-			CeoMessageStatus.Streaming,
-			CeoMessageStatus.Pending,
-		]);
-		await this.deps.db.query(`UPDATE ceo_messages SET status = $1 WHERE status IN ($2, $3)`, [
-			CeoMessageStatus.Interrupted,
-			CeoMessageStatus.Streaming,
-			CeoMessageStatus.Pending,
+		await this.deps.db.query(
+			`DELETE FROM chat_messages WHERE status IN ($1, $2) AND content = ''`,
+			[ChatMessageStatus.Streaming, ChatMessageStatus.Pending],
+		);
+		await this.deps.db.query(`UPDATE chat_messages SET status = $1 WHERE status IN ($2, $3)`, [
+			ChatMessageStatus.Interrupted,
+			ChatMessageStatus.Streaming,
+			ChatMessageStatus.Pending,
 		]);
 	}
 
@@ -218,8 +220,9 @@ export class CeoSessionManager {
 	 */
 	async sendTurn(input: {
 		text: string;
-		channel?: CeoChannel;
+		channel?: ChatChannel;
 		authorUserId?: string | null;
+		attachmentIds?: string[];
 	}): Promise<{ userMessageId: string; assistantMessageId: string }> {
 		// Serialize turns: chain on the prior send so two overlapping requests run the
 		// body sequentially (the second only after the first has set `this.current`),
@@ -234,11 +237,12 @@ export class CeoSessionManager {
 
 	private async runSendTurn(input: {
 		text: string;
-		channel?: CeoChannel;
+		channel?: ChatChannel;
 		authorUserId?: string | null;
+		attachmentIds?: string[];
 	}): Promise<{ userMessageId: string; assistantMessageId: string }> {
 		const session = await this.ensureSession();
-		const channel = input.channel ?? CeoChannel.Web;
+		const channel = input.channel ?? ChatChannel.Web;
 
 		// A user turn preempts any in-flight background compaction so the shared
 		// prompt file and container exec are free, and so the new message is part
@@ -258,25 +262,45 @@ export class CeoSessionManager {
 
 		const userMessageId = await this.insertMessage({
 			conversationId: session.conversationId,
-			role: CeoMessageRole.User,
+			role: ChatMessageRole.User,
 			channel,
-			status: CeoMessageStatus.Complete,
+			status: ChatMessageStatus.Complete,
 			content: input.text,
 			authorUserId: input.authorUserId ?? null,
 			completed: true,
 		});
-		this.broadcastStart(userMessageId, CeoMessageRole.User, channel, input.text);
+		// Link any uploaded files to the user message, then resolve their metadata so
+		// the sent bubble streams in with its attachment chips already attached.
+		const attachmentIds = input.attachmentIds ?? [];
+		let userAttachments: CommentAttachment[] = [];
+		if (attachmentIds.length > 0) {
+			await this.deps.db.query(
+				`INSERT INTO chat_message_attachments (chat_message_id, asset_id)
+				 SELECT $1::uuid, asset FROM UNNEST($2::uuid[]) AS asset`,
+				[userMessageId, attachmentIds],
+			);
+			userAttachments =
+				(
+					await loadChatMessageAttachments(
+						this.deps.db,
+						[userMessageId],
+						this.deps.masterKeyManager,
+					)
+				).get(userMessageId) ?? [];
+		}
+		this.broadcastStart(userMessageId, ChatMessageRole.User, channel, input.text, userAttachments);
 
 		const assistantMessageId = await this.insertMessage({
 			conversationId: session.conversationId,
-			role: CeoMessageRole.Assistant,
-			channel: CeoChannel.Web,
-			status: CeoMessageStatus.Streaming,
+			role: ChatMessageRole.Assistant,
+			channel: ChatChannel.Web,
+			status: ChatMessageStatus.Streaming,
 			content: '',
+			authorMemberId: session.ceoMemberId,
 			sessionId: session.sessionId,
 			completed: false,
 		});
-		this.broadcastStart(assistantMessageId, CeoMessageRole.Assistant, CeoChannel.Web, '');
+		this.broadcastStart(assistantMessageId, ChatMessageRole.Assistant, ChatChannel.Web, '');
 
 		const abort = new AbortController();
 		const promise = this.runTurn(session, assistantMessageId, abort);
@@ -293,13 +317,14 @@ export class CeoSessionManager {
 			this.current.abort.abort('restart');
 			await this.current.promise.catch(() => undefined);
 		}
-		await this.teardown(CeoSessionStatus.Stopped);
+		await this.teardown(ChatSessionStatus.Stopped);
 	}
 
 	/** Resolve the single global conversation row, creating it on first use. */
 	async getConversationId(): Promise<string> {
 		const ceoMemberId = await this.resolveCeoMemberId();
-		return this.ensureConversation(ceoMemberId);
+		const projectId = await this.resolveHqProjectId();
+		return this.ensureConversation(ceoMemberId, projectId);
 	}
 
 	private async ensureSession(): Promise<LiveSession> {
@@ -384,18 +409,23 @@ export class CeoSessionManager {
 		if (!credential) throw new Error(`No ${provider} credential configured`);
 		const modelOverride = override.rows[0]?.model ?? credential.defaultModel ?? null;
 
-		const conversationId = await this.ensureConversation(ceoMemberId);
+		const conversationId = await this.ensureConversation(ceoMemberId, project.id);
 
 		// Reclaim any DB rows left live by a crash without an in-memory session, so
 		// the singleton insert below doesn't collide.
 		await db.query(
-			`UPDATE ceo_sessions SET status = $1, stopped_at = now()
+			`UPDATE chat_sessions SET status = $1, stopped_at = now()
 			 WHERE member_id = $2 AND status IN ($3, $4)`,
-			[CeoSessionStatus.Crashed, ceoMemberId, CeoSessionStatus.Starting, CeoSessionStatus.Running],
+			[
+				ChatSessionStatus.Crashed,
+				ceoMemberId,
+				ChatSessionStatus.Starting,
+				ChatSessionStatus.Running,
+			],
 		);
 
 		const inserted = await db.query<{ id: string }>(
-			`INSERT INTO ceo_sessions (member_id, team_id, project_id, container_id, runtime_type, status)
+			`INSERT INTO chat_sessions (member_id, team_id, project_id, container_id, runtime_type, status)
 			 VALUES ($1, $2, $3, $4, $5::agent_runtime, $6)
 			 RETURNING id`,
 			[
@@ -404,7 +434,7 @@ export class CeoSessionManager {
 				project.id,
 				containerId,
 				runtimeType,
-				CeoSessionStatus.Starting,
+				ChatSessionStatus.Starting,
 			],
 		);
 		const sessionId = inserted.rows[0].id;
@@ -412,7 +442,7 @@ export class CeoSessionManager {
 		let releaseSsh = async (): Promise<void> => undefined;
 		let releaseEgress = async (): Promise<void> => undefined;
 		try {
-			const label = `ceo/chat`;
+			const label = `chat`;
 
 			// Warm ssh bridge (commit signing / git over ssh), allocated once.
 			let sshSocketContainerPath: string | null = null;
@@ -478,7 +508,7 @@ export class CeoSessionManager {
 				releaseEgress = () => egressProxy.releaseRunProxy(sessionId);
 			}
 
-			const agentJwt = await signCeoSessionJwt(
+			const agentJwt = await signChatSessionJwt(
 				this.deps.masterKeyManager,
 				ceoMemberId,
 				DEFAULT_TEAM_ID,
@@ -513,8 +543,8 @@ export class CeoSessionManager {
 				egress,
 			});
 
-			await db.query(`UPDATE ceo_sessions SET status = $1 WHERE id = $2`, [
-				CeoSessionStatus.Running,
+			await db.query(`UPDATE chat_sessions SET status = $1 WHERE id = $2`, [
+				ChatSessionStatus.Running,
 				sessionId,
 			]);
 
@@ -545,8 +575,8 @@ export class CeoSessionManager {
 			await releaseEgress().catch(() => undefined);
 			await db
 				.query(
-					`UPDATE ceo_sessions SET status = $1, error = $2, stopped_at = now() WHERE id = $3`,
-					[CeoSessionStatus.Crashed, (err as Error).message, sessionId],
+					`UPDATE chat_sessions SET status = $1, error = $2, stopped_at = now() WHERE id = $3`,
+					[ChatSessionStatus.Crashed, (err as Error).message, sessionId],
 				)
 				.catch(() => undefined);
 			throw err;
@@ -561,7 +591,7 @@ export class CeoSessionManager {
 		const accumulated = { text: '' };
 		let finalized = false;
 		const finalize = async (
-			status: CeoMessageStatus,
+			status: ChatMessageStatus,
 			usage: AgentRunUsage | null,
 			error?: string,
 		) => {
@@ -604,13 +634,13 @@ export class CeoSessionManager {
 				},
 			});
 			handle(parser.flush());
-			await finalize(CeoMessageStatus.Complete, parser.getUsage());
+			await finalize(ChatMessageStatus.Complete, parser.getUsage());
 		} catch (err) {
 			if (abort.signal.aborted) {
-				await finalize(CeoMessageStatus.Interrupted, null);
+				await finalize(ChatMessageStatus.Interrupted, null);
 			} else {
 				log.error('CEO chat turn failed', err);
-				await finalize(CeoMessageStatus.Failed, null, (err as Error).message);
+				await finalize(ChatMessageStatus.Failed, null, (err as Error).message);
 			}
 		} finally {
 			rmSync(session.promptHostPath, { force: true });
@@ -637,7 +667,7 @@ export class CeoSessionManager {
 		// The full active (non-compacted) window IS the short-term memory — its size
 		// is bounded by compaction, so there's no per-turn message limit here.
 		const window = await loadActiveWindow(this.deps.db, session.conversationId);
-		const transcript = window.map((r) => `${roleLabel(r.role)}: ${r.content}`).join('\n\n');
+		const transcript = window.map(chatTranscriptLine).join('\n\n');
 
 		return [
 			resolved,
@@ -679,7 +709,7 @@ export class CeoSessionManager {
 	/**
 	 * Headless compaction run: hand the agent the whole active window and have it
 	 * fold the durable points into long-term memory via `update_chat_memory`, then
-	 * evict all but the latest few messages. No `ceo_message`, no broadcast — the
+	 * evict all but the latest few messages. No `chat_message`, no broadcast — the
 	 * operator sees nothing. Eviction is gated on the agent actually advancing its
 	 * memory this run, so a no-op (or aborted) run loses nothing.
 	 */
@@ -690,7 +720,7 @@ export class CeoSessionManager {
 			window.map((m) => ({
 				id: m.id,
 				bytes: Buffer.byteLength(m.content, 'utf8'),
-				line: `${roleLabel(m.role)}: ${m.content}`,
+				line: chatTranscriptLine(m),
 			})),
 			maxBytes,
 			CHAT_WINDOW_RETAIN_MESSAGES,
@@ -733,8 +763,8 @@ export class CeoSessionManager {
 			await markCompacted(this.deps.db, flush.evictIds);
 			// Tell every mirrored chatbox to drop the evicted messages and show the
 			// "chat compacted" marker — the conversation refetch returns just the tail.
-			this.deps.wsManager.broadcast(wsRoom.ceo(), {
-				type: WsMessageType.CeoCompacted,
+			this.deps.wsManager.broadcast(wsRoom.chat(), {
+				type: WsMessageType.ChatCompacted,
 				conversationId: session.conversationId,
 			});
 		} else {
@@ -753,7 +783,7 @@ export class CeoSessionManager {
 		const row = proj.rows[0];
 		if (!row || row.container_status !== 'running' || row.container_id !== this.live.containerId) {
 			log.warn('HQ container unavailable; tearing down CEO chat session');
-			await this.teardown(CeoSessionStatus.Stopped);
+			await this.teardown(ChatSessionStatus.Stopped);
 		}
 	}
 
@@ -762,17 +792,17 @@ export class CeoSessionManager {
 			this.current.abort.abort('shutdown');
 			await this.current.promise.catch(() => undefined);
 		}
-		await this.teardown(CeoSessionStatus.Stopped);
+		await this.teardown(ChatSessionStatus.Stopped);
 	}
 
-	private async teardown(status: CeoSessionStatus): Promise<void> {
+	private async teardown(status: ChatSessionStatus): Promise<void> {
 		const live = this.live;
 		if (!live) return;
 		this.live = null;
 		await live.releaseSsh().catch(() => undefined);
 		await live.releaseEgress().catch(() => undefined);
 		await this.deps.db
-			.query(`UPDATE ceo_sessions SET status = $1, stopped_at = now() WHERE id = $2`, [
+			.query(`UPDATE chat_sessions SET status = $1, stopped_at = now() WHERE id = $2`, [
 				status,
 				live.sessionId,
 			])
@@ -791,33 +821,45 @@ export class CeoSessionManager {
 		return id;
 	}
 
-	private async ensureConversation(ceoMemberId: string): Promise<string> {
+	/** The HQ (is_internal) project — the scope a CEO chat conversation belongs to. */
+	private async resolveHqProjectId(): Promise<string> {
+		const r = await this.deps.db.query<{ id: string }>(
+			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
+			[DEFAULT_TEAM_ID],
+		);
+		const id = r.rows[0]?.id;
+		if (!id) throw new Error('HQ project not found');
+		return id;
+	}
+
+	private async ensureConversation(ceoMemberId: string, projectId: string): Promise<string> {
 		const existing = await this.deps.db.query<{ id: string }>(
-			`SELECT id FROM ceo_conversations WHERE member_id = $1 ORDER BY created_at ASC LIMIT 1`,
+			`SELECT id FROM chat_conversations WHERE member_id = $1 ORDER BY created_at ASC LIMIT 1`,
 			[ceoMemberId],
 		);
 		if (existing.rows[0]) return existing.rows[0].id;
 		const created = await this.deps.db.query<{ id: string }>(
-			`INSERT INTO ceo_conversations (member_id, team_id) VALUES ($1, $2) RETURNING id`,
-			[ceoMemberId, DEFAULT_TEAM_ID],
+			`INSERT INTO chat_conversations (member_id, team_id, project_id) VALUES ($1, $2, $3) RETURNING id`,
+			[ceoMemberId, DEFAULT_TEAM_ID, projectId],
 		);
 		return created.rows[0].id;
 	}
 
 	private async insertMessage(input: {
 		conversationId: string;
-		role: CeoMessageRole;
-		channel: CeoChannel;
-		status: CeoMessageStatus;
+		role: ChatMessageRole;
+		channel: ChatChannel;
+		status: ChatMessageStatus;
 		content: string;
 		authorUserId?: string | null;
+		authorMemberId?: string | null;
 		sessionId?: string | null;
 		completed: boolean;
 	}): Promise<string> {
 		const r = await this.deps.db.query<{ id: string }>(
-			`INSERT INTO ceo_messages
-			   (conversation_id, role, channel, status, content, author_user_id, session_id, completed_at)
-			 VALUES ($1, $2::ceo_message_role, $3::ceo_channel, $4::ceo_message_status, $5, $6, $7, ${input.completed ? 'now()' : 'NULL'})
+			`INSERT INTO chat_messages
+			   (conversation_id, role, channel, status, content, author_user_id, author_member_id, session_id, completed_at)
+			 VALUES ($1, $2::chat_message_role, $3::chat_channel, $4::chat_message_status, $5, $6, $7, $8, ${input.completed ? 'now()' : 'NULL'})
 			 RETURNING id`,
 			[
 				input.conversationId,
@@ -826,6 +868,7 @@ export class CeoSessionManager {
 				input.status,
 				input.content,
 				input.authorUserId ?? null,
+				input.authorMemberId ?? null,
 				input.sessionId ?? null,
 			],
 		);
@@ -834,14 +877,14 @@ export class CeoSessionManager {
 
 	private async finalizeMessage(
 		messageId: string,
-		status: CeoMessageStatus,
+		status: ChatMessageStatus,
 		content: string,
 		usage: AgentRunUsage | null,
 		error?: string,
 	): Promise<void> {
 		await this.deps.db.query(
-			`UPDATE ceo_messages
-			 SET status = $2::ceo_message_status, content = $3, input_tokens = $4, output_tokens = $5,
+			`UPDATE chat_messages
+			 SET status = $2::chat_message_status, content = $3, input_tokens = $4, output_tokens = $5,
 			     cost_cents = $6, error = $7, completed_at = now()
 			 WHERE id = $1`,
 			[
@@ -856,13 +899,13 @@ export class CeoSessionManager {
 		);
 		if (this.live) {
 			await this.deps.db
-				.query(`UPDATE ceo_sessions SET last_activity_at = now() WHERE id = $1`, [
+				.query(`UPDATE chat_sessions SET last_activity_at = now() WHERE id = $1`, [
 					this.live.sessionId,
 				])
 				.catch(() => undefined);
 		}
-		this.deps.wsManager.broadcast(wsRoom.ceo(), {
-			type: WsMessageType.CeoMessageComplete,
+		this.deps.wsManager.broadcast(wsRoom.chat(), {
+			type: WsMessageType.ChatMessageComplete,
 			messageId,
 			status,
 			content,
@@ -874,23 +917,25 @@ export class CeoSessionManager {
 
 	private broadcastStart(
 		messageId: string,
-		role: CeoMessageRole,
-		channel: CeoChannel,
+		role: ChatMessageRole,
+		channel: ChatChannel,
 		content: string,
+		attachments?: CommentAttachment[],
 	): void {
-		this.deps.wsManager.broadcast(wsRoom.ceo(), {
-			type: WsMessageType.CeoMessageStart,
+		this.deps.wsManager.broadcast(wsRoom.chat(), {
+			type: WsMessageType.ChatMessageStart,
 			messageId,
 			role,
 			channel,
 			content,
 			createdAt: new Date().toISOString(),
+			...(attachments && attachments.length > 0 ? { attachments } : {}),
 		});
 	}
 
 	private broadcastDelta(messageId: string, text: string): void {
-		this.deps.wsManager.broadcast(wsRoom.ceo(), {
-			type: WsMessageType.CeoMessageDelta,
+		this.deps.wsManager.broadcast(wsRoom.chat(), {
+			type: WsMessageType.ChatMessageDelta,
 			messageId,
 			text,
 		});
@@ -898,7 +943,23 @@ export class CeoSessionManager {
 }
 
 function roleLabel(role: string): string {
-	if (role === CeoMessageRole.User) return 'Operator';
-	if (role === CeoMessageRole.Assistant) return 'CEO';
+	if (role === ChatMessageRole.User) return 'Operator';
+	if (role === ChatMessageRole.Assistant) return 'CEO';
 	return 'System';
+}
+
+/**
+ * One transcript line for a windowed message, appending a bare-reference list of
+ * any attached files (`assets/<library-path>`) so the CEO can open them from the
+ * HQ asset library. An attachment-only message (empty text) still gets its files.
+ */
+function chatTranscriptLine(msg: {
+	role: string;
+	content: string;
+	attachmentNames: string[];
+}): string {
+	const base = `${roleLabel(msg.role)}: ${msg.content}`;
+	if (msg.attachmentNames.length === 0) return base;
+	const refs = `[Attached files: ${msg.attachmentNames.map((n) => `assets/${n}`).join(', ')}]`;
+	return msg.content ? `${base}\n${refs}` : `${base}${refs}`;
 }

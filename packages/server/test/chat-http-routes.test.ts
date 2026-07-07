@@ -1,16 +1,16 @@
 import {
-	CeoChannel,
-	CeoMessageRole,
-	CeoMessageStatus,
-	CeoSessionStatus,
+	ChatChannel,
+	ChatMessageRole,
+	ChatMessageStatus,
+	ChatSessionStatus,
 	DEFAULT_TEAM_ID,
 } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import { encrypt } from '../src/crypto/encryption';
 import type { Env } from '../src/lib/types';
-import { signAdminJwt, signCeoSessionJwt } from '../src/middleware/auth';
-import { CeoSessionManager } from '../src/services/ceo-session-manager';
+import { signAdminJwt, signChatSessionJwt } from '../src/middleware/auth';
+import { ChatSessionManager } from '../src/services/chat-session-manager';
 import type { ExecLogChunk } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { WebSocketManager } from '../src/services/ws';
@@ -71,7 +71,7 @@ async function seedProviderAndContainer(ctx: ServerTestContext): Promise<string>
 describe('CEO chat HTTP routes', () => {
 	let ctx: ServerTestContext;
 	let hqProjectId: string;
-	let manager: CeoSessionManager;
+	let manager: ChatSessionManager;
 	/** A second app over the same db/state, with the CEO session manager wired in. */
 	let app: Hono<Env>;
 
@@ -83,16 +83,16 @@ describe('CEO chat HTTP routes', () => {
 	});
 	beforeEach(async () => {
 		await ctx.db.query('DELETE FROM chat_memories');
-		await ctx.db.query('DELETE FROM ceo_messages');
-		await ctx.db.query('DELETE FROM ceo_sessions');
-		await ctx.db.query('DELETE FROM ceo_conversations');
+		await ctx.db.query('DELETE FROM chat_messages');
+		await ctx.db.query('DELETE FROM chat_sessions');
+		await ctx.db.query('DELETE FROM chat_conversations');
 		await ctx.db.query('DELETE FROM ai_provider_configs');
 		hqProjectId = await seedProviderAndContainer(ctx);
 
 		const docker = replyDocker();
 		const wsManager = new WebSocketManager();
 		const logs = new LogStreamBroker();
-		manager = new CeoSessionManager({
+		manager = new ChatSessionManager({
 			db: ctx.db,
 			docker,
 			masterKeyManager: ctx.masterKeyManager,
@@ -129,43 +129,43 @@ describe('CEO chat HTTP routes', () => {
 		createdAt?: string;
 	}): Promise<string> {
 		const r = await ctx.db.query<{ id: string }>(
-			`INSERT INTO ceo_messages (conversation_id, role, channel, status, content, compacted_at, created_at, completed_at)
-			 VALUES ($1, $2::ceo_message_role, 'web'::ceo_channel, $3::ceo_message_status, $4,
+			`INSERT INTO chat_messages (conversation_id, role, channel, status, content, compacted_at, created_at, completed_at)
+			 VALUES ($1, $2::chat_message_role, 'web'::chat_channel, $3::chat_message_status, $4,
 			         ${input.compacted ? 'now()' : 'NULL'},
 			         ${input.createdAt ? '$5::timestamptz' : 'now()'}, now())
 			 RETURNING id`,
 			input.createdAt
 				? [
 						input.conversationId,
-						input.role ?? CeoMessageRole.User,
-						input.status ?? CeoMessageStatus.Complete,
+						input.role ?? ChatMessageRole.User,
+						input.status ?? ChatMessageStatus.Complete,
 						input.content,
 						input.createdAt,
 					]
 				: [
 						input.conversationId,
-						input.role ?? CeoMessageRole.User,
-						input.status ?? CeoMessageStatus.Complete,
+						input.role ?? ChatMessageRole.User,
+						input.status ?? ChatMessageStatus.Complete,
 						input.content,
 					],
 		);
 		return r.rows[0].id;
 	}
 
-	describe('when no CeoSessionManager is wired', () => {
+	describe('when no ChatSessionManager is wired', () => {
 		// ctx.app is the stock test app, built without a manager → every CEO chat
 		// endpoint reports 503 UNAVAILABLE rather than crashing.
 		test('all four endpoints return 503 UNAVAILABLE', async () => {
 			const h = { ...authHeader(ctx.token), 'Content-Type': 'application/json' };
-			const conv = await ctx.app.request('/api/ceo/conversation', { headers: h });
+			const conv = await ctx.app.request('/api/chat/conversation', { headers: h });
 			expect(conv.status).toBe(503);
 			expect((await conv.json()).error.code).toBe('UNAVAILABLE');
 
-			const msgs = await ctx.app.request('/api/ceo/messages', { headers: h });
+			const msgs = await ctx.app.request('/api/chat/messages', { headers: h });
 			expect(msgs.status).toBe(503);
 			expect((await msgs.json()).error.code).toBe('UNAVAILABLE');
 
-			const post = await ctx.app.request('/api/ceo/messages', {
+			const post = await ctx.app.request('/api/chat/messages', {
 				method: 'POST',
 				headers: h,
 				body: JSON.stringify({ text: 'hello' }),
@@ -173,7 +173,7 @@ describe('CEO chat HTTP routes', () => {
 			expect(post.status).toBe(503);
 			expect((await post.json()).error.code).toBe('UNAVAILABLE');
 
-			const restart = await ctx.app.request('/api/ceo/session/restart', {
+			const restart = await ctx.app.request('/api/chat/session/restart', {
 				method: 'POST',
 				headers: h,
 			});
@@ -190,13 +190,13 @@ describe('CEO chat HTTP routes', () => {
 			const token = await signAdminJwt(ctx.masterKeyManager, user.rows[0].id);
 			const h = { ...authHeader(token), 'Content-Type': 'application/json' };
 
-			const conv = await app.request('/api/ceo/conversation', { headers: h });
+			const conv = await app.request('/api/chat/conversation', { headers: h });
 			expect(conv.status).toBe(403);
 
-			const msgs = await app.request('/api/ceo/messages', { headers: h });
+			const msgs = await app.request('/api/chat/messages', { headers: h });
 			expect(msgs.status).toBe(403);
 
-			const post = await app.request('/api/ceo/messages', {
+			const post = await app.request('/api/chat/messages', {
 				method: 'POST',
 				headers: h,
 				body: JSON.stringify({ text: 'hello' }),
@@ -205,7 +205,7 @@ describe('CEO chat HTTP routes', () => {
 
 			// restart is admin-equivalent-only: a plain (non-superuser) user is rejected
 			// by requireAdminEquivalent before the manager is even consulted.
-			const restart = await app.request('/api/ceo/session/restart', {
+			const restart = await app.request('/api/chat/session/restart', {
 				method: 'POST',
 				headers: h,
 			});
@@ -213,13 +213,13 @@ describe('CEO chat HTTP routes', () => {
 			expect((await restart.json()).error.code).toBe('FORBIDDEN');
 			// No session was ever touched.
 			const sessions = await ctx.db.query<{ n: number }>(
-				'SELECT COUNT(*)::int AS n FROM ceo_sessions',
+				'SELECT COUNT(*)::int AS n FROM chat_sessions',
 			);
 			expect(sessions.rows[0].n).toBe(0);
 		});
 	});
 
-	describe('GET /api/ceo/conversation', () => {
+	describe('GET /api/chat/conversation', () => {
 		test('returns the active window plus the compacted count', async () => {
 			const conversationId = await manager.getConversationId();
 			await seedMessage({
@@ -235,12 +235,12 @@ describe('CEO chat HTTP routes', () => {
 			});
 			await seedMessage({
 				conversationId,
-				role: CeoMessageRole.Assistant,
+				role: ChatMessageRole.Assistant,
 				content: 'second active',
 				createdAt: '2026-01-03T00:00:00Z',
 			});
 
-			const res = await app.request('/api/ceo/conversation', { headers: authHeader(ctx.token) });
+			const res = await app.request('/api/chat/conversation', { headers: authHeader(ctx.token) });
 			expect(res.status).toBe(200);
 			const body = (await res.json()).data;
 			expect(body.conversation_id).toBe(conversationId);
@@ -253,20 +253,20 @@ describe('CEO chat HTTP routes', () => {
 		});
 
 		test('creates the conversation on first use and returns an empty window', async () => {
-			const res = await app.request('/api/ceo/conversation', { headers: authHeader(ctx.token) });
+			const res = await app.request('/api/chat/conversation', { headers: authHeader(ctx.token) });
 			expect(res.status).toBe(200);
 			const body = (await res.json()).data;
 			expect(body.conversation_id).toBeTruthy();
 			expect(body.messages).toEqual([]);
 			expect(body.compacted_count).toBe(0);
 			const rows = await ctx.db.query<{ n: number }>(
-				'SELECT COUNT(*)::int AS n FROM ceo_conversations',
+				'SELECT COUNT(*)::int AS n FROM chat_conversations',
 			);
 			expect(rows.rows[0].n).toBe(1);
 		});
 	});
 
-	describe('GET /api/ceo/messages', () => {
+	describe('GET /api/chat/messages', () => {
 		let conversationId: string;
 		beforeEach(async () => {
 			conversationId = await manager.getConversationId();
@@ -280,7 +280,7 @@ describe('CEO chat HTTP routes', () => {
 		});
 
 		test('returns the newest messages in ascending order, capped by limit', async () => {
-			const res = await app.request('/api/ceo/messages?limit=2', {
+			const res = await app.request('/api/chat/messages?limit=2', {
 				headers: authHeader(ctx.token),
 			});
 			expect(res.status).toBe(200);
@@ -291,7 +291,7 @@ describe('CEO chat HTTP routes', () => {
 
 		test('pages older messages with before', async () => {
 			const res = await app.request(
-				`/api/ceo/messages?before=${encodeURIComponent('2026-01-03T00:00:00Z')}&limit=10`,
+				`/api/chat/messages?before=${encodeURIComponent('2026-01-03T00:00:00Z')}&limit=10`,
 				{ headers: authHeader(ctx.token) },
 			);
 			expect(res.status).toBe(200);
@@ -301,21 +301,21 @@ describe('CEO chat HTTP routes', () => {
 
 		test('clamps invalid and oversized limits', async () => {
 			// Non-numeric → default 100 → all five.
-			const bad = await app.request('/api/ceo/messages?limit=abc', {
+			const bad = await app.request('/api/chat/messages?limit=abc', {
 				headers: authHeader(ctx.token),
 			});
 			expect(((await bad.json()) as { data: { messages: unknown[] } }).data.messages.length).toBe(
 				5,
 			);
 			// Zero/negative → default 100.
-			const zero = await app.request('/api/ceo/messages?limit=0', {
+			const zero = await app.request('/api/chat/messages?limit=0', {
 				headers: authHeader(ctx.token),
 			});
 			expect(((await zero.json()) as { data: { messages: unknown[] } }).data.messages.length).toBe(
 				5,
 			);
 			// Oversized → clamped to 200 (still returns all five).
-			const big = await app.request('/api/ceo/messages?limit=99999', {
+			const big = await app.request('/api/chat/messages?limit=99999', {
 				headers: authHeader(ctx.token),
 			});
 			expect(((await big.json()) as { data: { messages: unknown[] } }).data.messages.length).toBe(
@@ -324,10 +324,10 @@ describe('CEO chat HTTP routes', () => {
 		});
 	});
 
-	describe('POST /api/ceo/messages', () => {
+	describe('POST /api/chat/messages', () => {
 		test('rejects a missing, non-string, or blank text body', async () => {
 			const h = { ...authHeader(ctx.token), 'Content-Type': 'application/json' };
-			const missing = await app.request('/api/ceo/messages', {
+			const missing = await app.request('/api/chat/messages', {
 				method: 'POST',
 				headers: h,
 				body: JSON.stringify({}),
@@ -335,14 +335,14 @@ describe('CEO chat HTTP routes', () => {
 			expect(missing.status).toBe(400);
 			expect((await missing.json()).error.code).toBe('BAD_REQUEST');
 
-			const nonString = await app.request('/api/ceo/messages', {
+			const nonString = await app.request('/api/chat/messages', {
 				method: 'POST',
 				headers: h,
 				body: JSON.stringify({ text: 42 }),
 			});
 			expect(nonString.status).toBe(400);
 
-			const blank = await app.request('/api/ceo/messages', {
+			const blank = await app.request('/api/chat/messages', {
 				method: 'POST',
 				headers: h,
 				body: JSON.stringify({ text: '   ' }),
@@ -350,7 +350,7 @@ describe('CEO chat HTTP routes', () => {
 			expect(blank.status).toBe(400);
 
 			// Malformed JSON falls into the .catch(() => ({})) arm → same 400.
-			const invalid = await app.request('/api/ceo/messages', {
+			const invalid = await app.request('/api/chat/messages', {
 				method: 'POST',
 				headers: h,
 				body: 'not json{{',
@@ -358,12 +358,14 @@ describe('CEO chat HTTP routes', () => {
 			expect(invalid.status).toBe(400);
 
 			// No message row was persisted by any of the rejects.
-			const rows = await ctx.db.query<{ n: number }>('SELECT COUNT(*)::int AS n FROM ceo_messages');
+			const rows = await ctx.db.query<{ n: number }>(
+				'SELECT COUNT(*)::int AS n FROM chat_messages',
+			);
 			expect(rows.rows[0].n).toBe(0);
 		});
 
 		test('persists the user message (attributed to the admin) and streams a reply', async () => {
-			const res = await app.request('/api/ceo/messages', {
+			const res = await app.request('/api/chat/messages', {
 				method: 'POST',
 				headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 				body: JSON.stringify({ text: '  Hello CEO  ' }),
@@ -380,23 +382,23 @@ describe('CEO chat HTTP routes', () => {
 				content: string;
 				author_user_id: string | null;
 				channel: string;
-			}>('SELECT content, author_user_id, channel FROM ceo_messages WHERE id = $1', [
+			}>('SELECT content, author_user_id, channel FROM chat_messages WHERE id = $1', [
 				body.user_message_id,
 			]);
 			// Trimmed, web-channel, attributed to the posting admin.
 			expect(user.rows[0].content).toBe('Hello CEO');
 			expect(user.rows[0].author_user_id).toBe(admin.rows[0].id);
-			expect(user.rows[0].channel).toBe(CeoChannel.Web);
+			expect(user.rows[0].channel).toBe(ChatChannel.Web);
 
 			await poll(async () => {
 				const r = await ctx.db.query<{ status: string }>(
-					'SELECT status FROM ceo_messages WHERE id = $1',
+					'SELECT status FROM chat_messages WHERE id = $1',
 					[body.assistant_message_id],
 				);
-				return r.rows[0]?.status === CeoMessageStatus.Complete;
+				return r.rows[0]?.status === ChatMessageStatus.Complete;
 			});
 			const asst = await ctx.db.query<{ content: string }>(
-				'SELECT content FROM ceo_messages WHERE id = $1',
+				'SELECT content FROM chat_messages WHERE id = $1',
 				[body.assistant_message_id],
 			);
 			expect(asst.rows[0].content).toBe('Hi there');
@@ -409,11 +411,11 @@ describe('CEO chat HTTP routes', () => {
 				[DEFAULT_TEAM_ID],
 			);
 			const session = await ctx.db.query<{ id: string }>(
-				`INSERT INTO ceo_sessions (member_id, team_id, project_id, runtime_type, status)
+				`INSERT INTO chat_sessions (member_id, team_id, project_id, runtime_type, status)
 				 VALUES ($1, $2, $3, 'claude_code', 'running') RETURNING id`,
 				[ceo.rows[0].id, DEFAULT_TEAM_ID, hqProjectId],
 			);
-			const token = await signCeoSessionJwt(
+			const token = await signChatSessionJwt(
 				ctx.masterKeyManager,
 				ceo.rows[0].id,
 				DEFAULT_TEAM_ID,
@@ -421,7 +423,7 @@ describe('CEO chat HTTP routes', () => {
 				hqProjectId,
 			);
 
-			const res = await app.request('/api/ceo/messages', {
+			const res = await app.request('/api/chat/messages', {
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 				body: JSON.stringify({ text: 'from an agent' }),
@@ -429,23 +431,23 @@ describe('CEO chat HTTP routes', () => {
 			expect(res.status).toBe(201);
 			const body = (await res.json()).data;
 			const user = await ctx.db.query<{ author_user_id: string | null }>(
-				'SELECT author_user_id FROM ceo_messages WHERE id = $1',
+				'SELECT author_user_id FROM chat_messages WHERE id = $1',
 				[body.user_message_id],
 			);
 			expect(user.rows[0].author_user_id).toBeNull();
 			await poll(async () => {
 				const r = await ctx.db.query<{ status: string }>(
-					'SELECT status FROM ceo_messages WHERE id = $1',
+					'SELECT status FROM chat_messages WHERE id = $1',
 					[body.assistant_message_id],
 				);
-				return r.rows[0]?.status === CeoMessageStatus.Complete;
+				return r.rows[0]?.status === ChatMessageStatus.Complete;
 			});
 		});
 
 		test('returns 503 CEO_UNAVAILABLE when the turn cannot start', async () => {
 			// No provider configured → startSession throws → route maps it to 503.
 			await ctx.db.query('DELETE FROM ai_provider_configs');
-			const res = await app.request('/api/ceo/messages', {
+			const res = await app.request('/api/chat/messages', {
 				method: 'POST',
 				headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 				body: JSON.stringify({ text: 'hello' }),
@@ -457,9 +459,9 @@ describe('CEO chat HTTP routes', () => {
 		});
 	});
 
-	describe('POST /api/ceo/session/restart', () => {
+	describe('POST /api/chat/session/restart', () => {
 		test('stops the live session; the next turn allocates a fresh one', async () => {
-			const first = await app.request('/api/ceo/messages', {
+			const first = await app.request('/api/chat/messages', {
 				method: 'POST',
 				headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 				body: JSON.stringify({ text: 'boot the session' }),
@@ -468,13 +470,13 @@ describe('CEO chat HTTP routes', () => {
 			const firstBody = (await first.json()).data;
 			await poll(async () => {
 				const r = await ctx.db.query<{ status: string }>(
-					'SELECT status FROM ceo_messages WHERE id = $1',
+					'SELECT status FROM chat_messages WHERE id = $1',
 					[firstBody.assistant_message_id],
 				);
-				return r.rows[0]?.status === CeoMessageStatus.Complete;
+				return r.rows[0]?.status === ChatMessageStatus.Complete;
 			});
 
-			const res = await app.request('/api/ceo/session/restart', {
+			const res = await app.request('/api/chat/session/restart', {
 				method: 'POST',
 				headers: authHeader(ctx.token),
 			});
@@ -482,15 +484,97 @@ describe('CEO chat HTTP routes', () => {
 			expect((await res.json()).data.restarted).toBe(true);
 
 			const live = await ctx.db.query<{ n: number }>(
-				`SELECT COUNT(*)::int AS n FROM ceo_sessions WHERE status IN ($1, $2)`,
-				[CeoSessionStatus.Starting, CeoSessionStatus.Running],
+				`SELECT COUNT(*)::int AS n FROM chat_sessions WHERE status IN ($1, $2)`,
+				[ChatSessionStatus.Starting, ChatSessionStatus.Running],
 			);
 			expect(live.rows[0].n).toBe(0);
 			const stopped = await ctx.db.query<{ n: number }>(
-				`SELECT COUNT(*)::int AS n FROM ceo_sessions WHERE status = $1`,
-				[CeoSessionStatus.Stopped],
+				`SELECT COUNT(*)::int AS n FROM chat_sessions WHERE status = $1`,
+				[ChatSessionStatus.Stopped],
 			);
 			expect(stopped.rows[0].n).toBe(1);
+		});
+	});
+
+	describe('file uploads', () => {
+		async function uploadFile(name = 'diagram.png'): Promise<{
+			id: string;
+			original_filename: string;
+			url: string;
+		}> {
+			const fd = new FormData();
+			fd.set('file', new File([new Uint8Array([1, 2, 3, 4])], name, { type: 'image/png' }));
+			const res = await app.request('/api/chat/assets', {
+				method: 'POST',
+				headers: authHeader(ctx.token),
+				body: fd,
+			});
+			expect(res.status).toBe(201);
+			return (await res.json()).data;
+		}
+
+		test('POST /chat/assets stores the file under uploads/chat in the HQ project', async () => {
+			const asset = await uploadFile();
+			expect(asset.original_filename).toBe('uploads/chat/diagram.png');
+			expect(typeof asset.url).toBe('string');
+			const row = await ctx.db.query<{ project_id: string }>(
+				'SELECT project_id FROM assets WHERE id = $1',
+				[asset.id],
+			);
+			expect(row.rows[0].project_id).toBe(hqProjectId);
+		});
+
+		test('a message with attachment_ids links them and returns them on the conversation', async () => {
+			const asset = await uploadFile('shot.png');
+			const res = await app.request('/api/chat/messages', {
+				method: 'POST',
+				headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ text: 'here it is', attachment_ids: [asset.id] }),
+			});
+			expect(res.status).toBe(201);
+			const userMessageId = (await res.json()).data.user_message_id;
+
+			const link = await ctx.db.query<{ n: number }>(
+				'SELECT COUNT(*)::int AS n FROM chat_message_attachments WHERE chat_message_id = $1 AND asset_id = $2',
+				[userMessageId, asset.id],
+			);
+			expect(link.rows[0].n).toBe(1);
+
+			const convo = await app.request('/api/chat/conversation', { headers: authHeader(ctx.token) });
+			const messages = (await convo.json()).data.messages as Array<{
+				id: string;
+				attachments: Array<{ id: string; url: string }>;
+			}>;
+			const sent = messages.find((m) => m.id === userMessageId);
+			expect(sent?.attachments).toHaveLength(1);
+			expect(sent?.attachments[0].id).toBe(asset.id);
+			expect(typeof sent?.attachments[0].url).toBe('string');
+		});
+
+		test('accepts an attachment-only message (no text)', async () => {
+			const asset = await uploadFile('only.png');
+			const res = await app.request('/api/chat/messages', {
+				method: 'POST',
+				headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ text: '', attachment_ids: [asset.id] }),
+			});
+			expect(res.status).toBe(201);
+		});
+
+		test('rejects attachment_ids that are not HQ assets', async () => {
+			const res = await app.request('/api/chat/messages', {
+				method: 'POST',
+				headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					text: 'nope',
+					attachment_ids: ['00000000-0000-0000-0000-000000000000'],
+				}),
+			});
+			expect(res.status).toBe(400);
+			const rows = await ctx.db.query<{ n: number }>(
+				'SELECT COUNT(*)::int AS n FROM chat_messages',
+			);
+			expect(rows.rows[0].n).toBe(0);
 		});
 	});
 });

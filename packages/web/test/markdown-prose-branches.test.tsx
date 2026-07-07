@@ -4,7 +4,7 @@
 // (/home/inbox), and the asset-mention fallback when no signed URL is available
 // (same-tab library link instead of a new-tab anchor).
 
-import type { CeoMessage } from '@hezo/web/hooks/use-ceo-chat';
+import type { ChatMessage } from '@hezo/web/hooks/use-chat';
 import { queryClient } from '@hezo/web/lib/query-client';
 import { queryKeys } from '@hezo/web/lib/query-keys';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -138,13 +138,13 @@ test('@admin in a CEO reply (instance scope, no project) links to /home/inbox', 
 		},
 	});
 
-	(await findByTestId('ceo-chat-launcher')).click();
-	await findByTestId('ceo-chat-panel');
+	(await findByTestId('chat-launcher')).click();
+	await findByTestId('chat-panel');
 
-	// The harness backend has no CeoSessionManager, so the reply is seeded into
-	// the conversation cache (same pattern as ceo-chat-mentions.test.tsx). The
+	// The harness backend has no ChatSessionManager, so the reply is seeded into
+	// the conversation cache (same pattern as chat-mentions.test.tsx). The
 	// passive @@captain mention guarantees the mention plugin runs.
-	queryClient.setQueryData(queryKeys.ceoConversation(), {
+	queryClient.setQueryData(queryKeys.chatConversation(), {
 		conversation_id: 'test-convo',
 		messages: [
 			{
@@ -154,7 +154,7 @@ test('@admin in a CEO reply (instance scope, no project) links to /home/inbox', 
 				status: 'complete',
 				content: 'Ask @admin to approve — context for @@captain.',
 				created_at: new Date().toISOString(),
-			} as CeoMessage,
+			} as ChatMessage,
 		],
 	});
 

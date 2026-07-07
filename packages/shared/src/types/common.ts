@@ -408,6 +408,13 @@ export function taskUploadsFolder(identifier: string): string {
 	return segment.length > 0 ? `${ASSET_UPLOADS_FOLDER}/${segment}` : ASSET_UPLOADS_FOLDER;
 }
 
+/**
+ * Library folder for files uploaded through the realtime chatbox (CEO chat):
+ * `uploads/chat`, a sibling of the per-task `uploads/<task-identifier>`
+ * folders. Files land in the HQ project's asset library under this path.
+ */
+export const CHAT_UPLOADS_FOLDER = `${ASSET_UPLOADS_FOLDER}/chat`;
+
 /** Split 'a/b/c.png' into { folder: 'a/b', basename: 'c.png' }; folder '' at root. */
 export function splitAssetPath(path: string): { folder: string; basename: string } {
 	const slash = path.lastIndexOf('/');
@@ -876,21 +883,21 @@ export interface ProjectProgress {
  * conversation; every channel (web today, Telegram/WhatsApp later) mirrors the
  * full thread, so `channel` is message *provenance* only, never a partition key.
  */
-export const CeoChannel = {
+export const ChatChannel = {
 	Web: 'web',
 	Telegram: 'telegram',
 	WhatsApp: 'whatsapp',
 } as const;
-export type CeoChannel = (typeof CeoChannel)[keyof typeof CeoChannel];
+export type ChatChannel = (typeof ChatChannel)[keyof typeof ChatChannel];
 
-export const CeoMessageRole = {
+export const ChatMessageRole = {
 	User: 'user',
 	Assistant: 'assistant',
 	System: 'system',
 } as const;
-export type CeoMessageRole = (typeof CeoMessageRole)[keyof typeof CeoMessageRole];
+export type ChatMessageRole = (typeof ChatMessageRole)[keyof typeof ChatMessageRole];
 
-export const CeoMessageStatus = {
+export const ChatMessageStatus = {
 	Pending: 'pending',
 	Streaming: 'streaming',
 	Complete: 'complete',
@@ -898,16 +905,16 @@ export const CeoMessageStatus = {
 	/** A reply cut short because a newer message interrupted it (partial text kept). */
 	Interrupted: 'interrupted',
 } as const;
-export type CeoMessageStatus = (typeof CeoMessageStatus)[keyof typeof CeoMessageStatus];
+export type ChatMessageStatus = (typeof ChatMessageStatus)[keyof typeof ChatMessageStatus];
 
 /** Lifecycle of the persistent CEO chat session (its warm-resource lease + auth principal). */
-export const CeoSessionStatus = {
+export const ChatSessionStatus = {
 	Starting: 'starting',
 	Running: 'running',
 	Crashed: 'crashed',
 	Stopped: 'stopped',
 } as const;
-export type CeoSessionStatus = (typeof CeoSessionStatus)[keyof typeof CeoSessionStatus];
+export type ChatSessionStatus = (typeof ChatSessionStatus)[keyof typeof ChatSessionStatus];
 
 export const PluginStatus = {
 	Installed: 'installed',

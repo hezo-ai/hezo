@@ -37,7 +37,7 @@ import { buildAssetStorageInfoRoutes } from './routes/asset-storage-info';
 import { assetsRoutes, publicAssetsRoutes } from './routes/assets';
 import { auditLogRoutes } from './routes/audit-log';
 import { authRoutes } from './routes/auth';
-import { ceoChatRoutes } from './routes/ceo-chat';
+import { chatRoutes } from './routes/chat';
 import { commentsRoutes } from './routes/comments';
 import { costsRoutes } from './routes/costs';
 import { buildDatabaseInfoRoutes } from './routes/database-info';
@@ -67,7 +67,7 @@ import { teamsRoutes } from './routes/teams';
 import { uiStateRoutes } from './routes/ui-state';
 import { buildUpdatesRoutes } from './routes/updates';
 import { AuthChallengeStore } from './services/auth-challenges';
-import { CeoSessionManager } from './services/ceo-session-manager';
+import { ChatSessionManager } from './services/chat-session-manager';
 import { checkAndAutoRebindConnectivity } from './services/container-connectivity-preflight';
 import {
 	ContainerConnectivityStatus,
@@ -122,7 +122,7 @@ export interface StartupResult {
 	port: number;
 	masterKeyState: MasterKeyState;
 	jobManager: JobManager;
-	ceoSessionManager: CeoSessionManager;
+	chatSessionManager: ChatSessionManager;
 	wsManager: WebSocketManager;
 	db: Db;
 	assetStore: AssetStore;
@@ -320,7 +320,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		telemetry: config.telemetry,
 		autoInstallUpdates: config.autoInstallUpdates,
 	});
-	const ceoSessionManager = new CeoSessionManager({
+	const chatSessionManager = new ChatSessionManager({
 		db,
 		docker,
 		masterKeyManager,
@@ -370,10 +370,10 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 						.catch((err) => log.error('Failed to warm HQ container on startup:', err)),
 				);
 			});
-		ceoSessionManager
+		chatSessionManager
 			.reconcileOnStartup()
 			.catch((err) => log.error('CEO session reconciliation failed:', err))
-			.finally(() => ceoSessionManager.start());
+			.finally(() => chatSessionManager.start());
 	});
 
 	const app = buildApp(
@@ -395,7 +395,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		egressProxy,
 		containerLogStreamer,
 		events,
-		ceoSessionManager,
+		chatSessionManager,
 		pricing,
 		assetStore,
 	);
@@ -405,7 +405,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		port: config.port,
 		masterKeyState,
 		jobManager,
-		ceoSessionManager,
+		chatSessionManager,
 		wsManager,
 		db,
 		assetStore,
@@ -430,7 +430,7 @@ export function buildApp(
 	egressProxy: EgressProxy | null = null,
 	containerLogStreamer: ContainerLogStreamer = new ContainerLogStreamer(),
 	events: DomainEventBus = new DomainEventBus(),
-	ceoSessionManager?: CeoSessionManager,
+	chatSessionManager?: ChatSessionManager,
 	pricing?: PricingService,
 	assetStore?: AssetStore,
 ): Hono<Env> {
@@ -457,7 +457,7 @@ export function buildApp(
 		c.set('wsManager', wsManager);
 		c.set('events', events);
 		if (jobManager) c.set('jobManager', jobManager);
-		if (ceoSessionManager) c.set('ceoSessionManager', ceoSessionManager);
+		if (chatSessionManager) c.set('chatSessionManager', chatSessionManager);
 		c.set('logs', logs);
 		c.set('containerLogStreamer', containerLogStreamer);
 		c.set('dataDir', config.dataDir);
@@ -619,7 +619,7 @@ export function buildApp(
 	app.route('/api', previewRoutes);
 	app.route('/api', searchRoutes);
 	app.route('/api', buildUpdatesRoutes({ autoUnlock: config.autoUnlock ?? false }));
-	app.route('/api', ceoChatRoutes);
+	app.route('/api', chatRoutes);
 
 	// Frontend (SPA) serving. The compiled binary serves from the in-memory
 	// bundle embedded at build time (`loadStaticBundle`); in dev that bundle is

@@ -8,7 +8,7 @@ import {
 } from '@tanstack/react-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppHeader } from '../components/app-header';
-import { CeoChatWidget } from '../components/ceo-chat/ceo-chat-widget';
+import { ChatWidget } from '../components/chat/chat-widget';
 import { GlobalSearchDialog } from '../components/global-search-dialog';
 import { MasterKeyGate } from '../components/master-key-gate';
 import { PasswordLogin } from '../components/password-login';
@@ -144,7 +144,7 @@ function ShellLayout() {
 	return (
 		<>
 			<ShellChrome drawerOpen={drawerOpen} setDrawerOpen={setDrawerOpen} />
-			<CeoChatWidget open={chatOpen} onOpenChange={setChatOpen} />
+			<ChatWidget open={chatOpen} onOpenChange={setChatOpen} />
 			<PwaInstallPrompt />
 		</>
 	);

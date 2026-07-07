@@ -13,7 +13,7 @@
  * from the fractions against the current viewport on every render.
  */
 
-export type FabId = 'ceo-chat';
+export type FabId = 'chat';
 
 export interface FabPosition {
 	/** 0 = flush left, 1 = flush right, of `viewportWidth - buttonWidth`. */

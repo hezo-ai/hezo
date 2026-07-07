@@ -1,4 +1,4 @@
-import type { CeoMessage } from '@hezo/web/hooks/use-ceo-chat';
+import type { ChatMessage } from '@hezo/web/hooks/use-chat';
 import { toast } from '@hezo/web/hooks/use-toast';
 import { queryClient } from '@hezo/web/lib/query-client';
 import { queryKeys } from '@hezo/web/lib/query-keys';
@@ -6,20 +6,20 @@ import { fireEvent, waitFor } from '@testing-library/react';
 import { expect, test, vi } from 'vitest';
 import { renderApp } from './helpers/render';
 
-// The component harness builds the backend without a CeoSessionManager (the chat
+// The component harness builds the backend without a ChatSessionManager (the chat
 // endpoints return 503) and stubs WebSocket, so this tier covers the widget
 // shell: launching, opening, and the composer. Real WS-streamed replies are
 // exercised manually / in Playwright (decision-tree item 5).
 //
 // The streaming-render tests below can't drive real WS deltas (stubbed), so they
-// seed the conversation query cache the hook reads from — `useCeoChat` resolves
+// seed the conversation query cache the hook reads from — `useChat` resolves
 // `useQueryClient()` to this same singleton (re-wrapped by __root.tsx) — to put a
 // message into each streaming state and assert how the bubble renders it.
 
 const now = () => new Date().toISOString();
 
-function seedConversation(messages: CeoMessage[], compactedCount = 0) {
-	queryClient.setQueryData(queryKeys.ceoConversation(), {
+function seedConversation(messages: ChatMessage[], compactedCount = 0) {
+	queryClient.setQueryData(queryKeys.chatConversation(), {
 		conversation_id: 'test-convo',
 		messages,
 		compacted_count: compactedCount,
@@ -29,21 +29,21 @@ function seedConversation(messages: CeoMessage[], compactedCount = 0) {
 test('CEO chat launcher opens the panel and composer', async () => {
 	const { findByTestId, getByTestId } = await renderApp({ initialPath: '/home' });
 
-	const launcher = await findByTestId('ceo-chat-launcher');
+	const launcher = await findByTestId('chat-launcher');
 	launcher.click();
 
-	const panel = await findByTestId('ceo-chat-panel');
+	const panel = await findByTestId('chat-panel');
 	expect(panel).toBeTruthy();
-	expect(getByTestId('ceo-chat-input')).toBeTruthy();
-	expect(getByTestId('ceo-chat-send')).toBeTruthy();
+	expect(getByTestId('chat-input')).toBeTruthy();
+	expect(getByTestId('chat-send')).toBeTruthy();
 });
 
 test('composer enables send when text is entered and clears on submit', async () => {
 	const { findByTestId, getByTestId, user } = await renderApp({ initialPath: '/home' });
 
-	(await findByTestId('ceo-chat-launcher')).click();
-	const input = (await findByTestId('ceo-chat-input')) as HTMLTextAreaElement;
-	const send = getByTestId('ceo-chat-send') as HTMLButtonElement;
+	(await findByTestId('chat-launcher')).click();
+	const input = (await findByTestId('chat-input')) as HTMLTextAreaElement;
+	const send = getByTestId('chat-send') as HTMLButtonElement;
 
 	expect(send.disabled).toBe(true);
 	await user.type(input, 'What is blocked?');
@@ -58,9 +58,9 @@ test('shows the user message optimistically and disables send while in flight', 
 	const { findByTestId, getByTestId, getByText, queryByText, user } = await renderApp({
 		initialPath: '/home',
 	});
-	(await findByTestId('ceo-chat-launcher')).click();
-	const input = (await findByTestId('ceo-chat-input')) as HTMLTextAreaElement;
-	const sendBtn = getByTestId('ceo-chat-send') as HTMLButtonElement;
+	(await findByTestId('chat-launcher')).click();
+	const input = (await findByTestId('chat-input')) as HTMLTextAreaElement;
+	const sendBtn = getByTestId('chat-send') as HTMLButtonElement;
 
 	await user.type(input, 'i just enabled markdown assets');
 	// fireEvent (synchronous) so we can observe the optimistic state before the
@@ -70,7 +70,7 @@ test('shows the user message optimistically and disables send while in flight', 
 	// The user's message renders immediately (optimistic), before any WS round-trip…
 	expect(getByText('i just enabled markdown assets')).toBeTruthy();
 	// …a pending assistant "thinking" indicator shows…
-	expect(getByTestId('ceo-chat-typing')).toBeTruthy();
+	expect(getByTestId('chat-typing')).toBeTruthy();
 	// …and the send button is disabled so an impatient re-click can't spawn duplicates.
 	expect(sendBtn.disabled).toBe(true);
 
@@ -79,15 +79,15 @@ test('shows the user message optimistically and disables send while in flight', 
 });
 
 test('surfaces a failed CEO send as an error toast', async () => {
-	// The harness backend has no CeoSessionManager, so POST /api/ceo/messages
+	// The harness backend has no ChatSessionManager, so POST /api/chat/messages
 	// returns 503 — the send mutation's onError must surface the server message.
 	const errorSpy = vi.spyOn(toast, 'error');
 	try {
 		const { findByTestId, getByTestId, user } = await renderApp({ initialPath: '/home' });
-		(await findByTestId('ceo-chat-launcher')).click();
-		const input = (await findByTestId('ceo-chat-input')) as HTMLTextAreaElement;
+		(await findByTestId('chat-launcher')).click();
+		const input = (await findByTestId('chat-input')) as HTMLTextAreaElement;
 		await user.type(input, 'why is everything stuck?');
-		await user.click(getByTestId('ceo-chat-send') as HTMLButtonElement);
+		await user.click(getByTestId('chat-send') as HTMLButtonElement);
 		await waitFor(() => expect(errorSpy).toHaveBeenCalledWith('CEO chat is not available'));
 	} finally {
 		errorSpy.mockRestore();
@@ -96,20 +96,20 @@ test('surfaces a failed CEO send as an error toast', async () => {
 
 test('shows the empty state once history loads', async () => {
 	const { findByTestId, findByText } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('ceo-chat-launcher')).click();
+	(await findByTestId('chat-launcher')).click();
 	expect(await findByText(/Say hello to the CEO/i)).toBeTruthy();
 });
 
 test('the header identifies the CEO with the HQ badge and the composer invites cross-project questions', async () => {
 	const { findByTestId, getByTestId, getByText } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('ceo-chat-launcher')).click();
-	await findByTestId('ceo-chat-panel');
+	(await findByTestId('chat-launcher')).click();
+	await findByTestId('chat-panel');
 
 	// Header reads "CEO" alongside the HQ team badge (the CEO lives in HQ).
 	expect(getByText('CEO')).toBeTruthy();
 	expect(getByText('HQ')).toBeTruthy();
 	// The placeholder reflects the global, every-project scope of the chat.
-	const input = getByTestId('ceo-chat-input') as HTMLTextAreaElement;
+	const input = getByTestId('chat-input') as HTMLTextAreaElement;
 	expect(input.placeholder).toBe('Ask the CEO anything, across every project…');
 });
 
@@ -125,8 +125,8 @@ test('blocks the composer and links to the container page when the HQ container 
 		},
 	});
 
-	(await findByTestId('ceo-chat-launcher')).click();
-	const panel = await findByTestId('ceo-chat-panel');
+	(await findByTestId('chat-launcher')).click();
+	const panel = await findByTestId('chat-panel');
 
 	// The container-state notice replaces the composer inside the chat panel.
 	const notice = await waitFor(() => {
@@ -135,7 +135,7 @@ test('blocks the composer and links to the container page when the HQ container 
 		return el as HTMLElement;
 	});
 	expect(notice.textContent ?? '').toContain('error');
-	expect(panel.querySelector('[data-testid="ceo-chat-input"]')).toBeNull();
+	expect(panel.querySelector('[data-testid="chat-input"]')).toBeNull();
 
 	// It links to the HQ container page.
 	const link = notice.querySelector('[data-testid="hq-container-notice-link"]');
@@ -144,8 +144,8 @@ test('blocks the composer and links to the container page when the HQ container 
 
 test('each message carries its role eyebrow — "You" for the operator, "CEO · HQ" for the CEO', async () => {
 	const { findByTestId, findByText } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('ceo-chat-launcher')).click();
-	await findByTestId('ceo-chat-panel');
+	(await findByTestId('chat-launcher')).click();
+	await findByTestId('chat-panel');
 
 	seedConversation([
 		{
@@ -172,8 +172,8 @@ test('each message carries its role eyebrow — "You" for the operator, "CEO · 
 
 test('shows the "chat compacted" marker at the top once older messages are compacted', async () => {
 	const { findByTestId } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('ceo-chat-launcher')).click();
-	await findByTestId('ceo-chat-panel');
+	(await findByTestId('chat-launcher')).click();
+	await findByTestId('chat-panel');
 
 	// The retained tail plus a positive compacted_count (older messages summarized
 	// into long-term memory and evicted).
@@ -191,14 +191,14 @@ test('shows the "chat compacted" marker at the top once older messages are compa
 		4,
 	);
 
-	const banner = await findByTestId('ceo-chat-compacted-banner');
+	const banner = await findByTestId('chat-compacted-banner');
 	expect(banner.textContent ?? '').toContain('compacted');
 });
 
 test('shows no compaction marker when nothing has been compacted', async () => {
 	const { findByTestId, findByText, queryByTestId } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('ceo-chat-launcher')).click();
-	await findByTestId('ceo-chat-panel');
+	(await findByTestId('chat-launcher')).click();
+	await findByTestId('chat-panel');
 
 	seedConversation([
 		{
@@ -212,20 +212,20 @@ test('shows no compaction marker when nothing has been compacted', async () => {
 	]);
 
 	await findByText('hello there');
-	expect(queryByTestId('ceo-chat-compacted-banner')).toBeNull();
+	expect(queryByTestId('chat-compacted-banner')).toBeNull();
 });
 
 test('the closed launcher button exposes a "Chat with CEO" tooltip on hover', async () => {
 	const { findByTestId, getAllByText, user } = await renderApp({ initialPath: '/home' });
-	const launcher = await findByTestId('ceo-chat-launcher');
+	const launcher = await findByTestId('chat-launcher');
 	await user.hover(launcher);
 	await waitFor(() => expect(getAllByText('Chat with CEO').length).toBeGreaterThan(0));
 });
 
 test('streaming with no text yet shows the typing indicator, not an empty bubble', async () => {
 	const { findByTestId, queryByTestId } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('ceo-chat-launcher')).click();
-	await findByTestId('ceo-chat-panel');
+	(await findByTestId('chat-launcher')).click();
+	await findByTestId('chat-panel');
 
 	seedConversation([
 		{
@@ -238,18 +238,18 @@ test('streaming with no text yet shows the typing indicator, not an empty bubble
 		},
 	]);
 
-	expect(await findByTestId('ceo-chat-typing')).toBeTruthy();
+	expect(await findByTestId('chat-typing')).toBeTruthy();
 	// No bubble (the indicator replaces it) and no in-bubble dots yet.
-	expect(queryByTestId('ceo-chat-message')).toBeNull();
-	expect(queryByTestId('ceo-chat-streaming-dots')).toBeNull();
+	expect(queryByTestId('chat-message')).toBeNull();
+	expect(queryByTestId('chat-streaming-dots')).toBeNull();
 });
 
 test('streaming with text shows the reply plus trailing dots, not the standalone indicator', async () => {
 	const { findByTestId, findByText, getByTestId, queryByTestId } = await renderApp({
 		initialPath: '/home',
 	});
-	(await findByTestId('ceo-chat-launcher')).click();
-	await findByTestId('ceo-chat-panel');
+	(await findByTestId('chat-launcher')).click();
+	await findByTestId('chat-panel');
 
 	seedConversation([
 		{
@@ -265,15 +265,15 @@ test('streaming with text shows the reply plus trailing dots, not the standalone
 	expect(await findByText('Working on it')).toBeTruthy();
 	// Dots sit just below the reply bubble; the standalone "thinking"
 	// indicator is gone now that the answer has started.
-	expect(await findByTestId('ceo-chat-streaming-dots')).toBeTruthy();
-	expect(getByTestId('ceo-chat-message')).toBeTruthy();
-	expect(queryByTestId('ceo-chat-typing')).toBeNull();
+	expect(await findByTestId('chat-streaming-dots')).toBeTruthy();
+	expect(getByTestId('chat-message')).toBeTruthy();
+	expect(queryByTestId('chat-typing')).toBeNull();
 });
 
 test('a completed reply shows no typing dots', async () => {
 	const { findByTestId, findByText, queryByTestId } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('ceo-chat-launcher')).click();
-	await findByTestId('ceo-chat-panel');
+	(await findByTestId('chat-launcher')).click();
+	await findByTestId('chat-panel');
 
 	seedConversation([
 		{
@@ -287,8 +287,8 @@ test('a completed reply shows no typing dots', async () => {
 	]);
 
 	expect(await findByText('All done')).toBeTruthy();
-	expect(queryByTestId('ceo-chat-streaming-dots')).toBeNull();
-	expect(queryByTestId('ceo-chat-typing')).toBeNull();
+	expect(queryByTestId('chat-streaming-dots')).toBeNull();
+	expect(queryByTestId('chat-typing')).toBeNull();
 });
 
 // The header mirrors the in-thread "still working" dots up next to the CEO
@@ -297,8 +297,8 @@ test('a completed reply shows no typing dots', async () => {
 // indicators, whether or not any text has landed yet.
 test('the header shows processing dots while the CEO is composing with no text yet', async () => {
 	const { findByTestId } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('ceo-chat-launcher')).click();
-	await findByTestId('ceo-chat-panel');
+	(await findByTestId('chat-launcher')).click();
+	await findByTestId('chat-panel');
 
 	seedConversation([
 		{
@@ -311,13 +311,13 @@ test('the header shows processing dots while the CEO is composing with no text y
 		},
 	]);
 
-	expect(await findByTestId('ceo-chat-header-dots')).toBeTruthy();
+	expect(await findByTestId('chat-header-dots')).toBeTruthy();
 });
 
 test('the header keeps the processing dots while a reply is still streaming text', async () => {
 	const { findByTestId, findByText } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('ceo-chat-launcher')).click();
-	await findByTestId('ceo-chat-panel');
+	(await findByTestId('chat-launcher')).click();
+	await findByTestId('chat-panel');
 
 	seedConversation([
 		{
@@ -332,13 +332,13 @@ test('the header keeps the processing dots while a reply is still streaming text
 
 	// Both the in-thread trailing dots and the header dots are present mid-stream.
 	expect(await findByText('Working on it')).toBeTruthy();
-	expect(await findByTestId('ceo-chat-header-dots')).toBeTruthy();
+	expect(await findByTestId('chat-header-dots')).toBeTruthy();
 });
 
 test('the header drops the processing dots once the reply settles', async () => {
 	const { findByTestId, findByText, queryByTestId } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('ceo-chat-launcher')).click();
-	await findByTestId('ceo-chat-panel');
+	(await findByTestId('chat-launcher')).click();
+	await findByTestId('chat-panel');
 
 	seedConversation([
 		{
@@ -352,13 +352,13 @@ test('the header drops the processing dots once the reply settles', async () => 
 	]);
 
 	await findByText('All done');
-	expect(queryByTestId('ceo-chat-header-dots')).toBeNull();
+	expect(queryByTestId('chat-header-dots')).toBeNull();
 });
 
 test('a CEO reply renders its markdown as formatted HTML, not raw text', async () => {
 	const { findByTestId } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('ceo-chat-launcher')).click();
-	await findByTestId('ceo-chat-panel');
+	(await findByTestId('chat-launcher')).click();
+	await findByTestId('chat-panel');
 
 	seedConversation([
 		{
@@ -373,7 +373,7 @@ test('a CEO reply renders its markdown as formatted HTML, not raw text', async (
 		},
 	]);
 
-	const body = await findByTestId('ceo-chat-markdown');
+	const body = await findByTestId('chat-markdown');
 	// Inline emphasis and code spans become real elements rather than literal
 	// `**`/backtick syntax.
 	expect(body.querySelector('strong')?.textContent).toBe('Two projects');
@@ -391,45 +391,45 @@ test('a CEO reply renders its markdown as formatted HTML, not raw text', async (
 // stubbed), so these drive the persisted path: a seeded count renders the
 // overlay, and opening the chat clears both the badge and the stored tally.
 test('the minimized launcher shows an unread overlay for unseen CEO replies', async () => {
-	localStorage.setItem('hezo_ceo_unread', '3');
+	localStorage.setItem('hezo_chat_unread', '3');
 	const { findByTestId } = await renderApp({ initialPath: '/home' });
 
-	const badge = await findByTestId('ceo-chat-unread-badge');
+	const badge = await findByTestId('chat-unread-badge');
 	expect(badge.textContent).toBe('3');
 	// The accessible name surfaces the count too, not just the visual dot.
-	const launcher = await findByTestId('ceo-chat-launcher');
+	const launcher = await findByTestId('chat-launcher');
 	expect(launcher.getAttribute('aria-label')).toBe('Chat with the CEO (3 unread)');
 });
 
 test('opening the chat clears the unread overlay and its persisted count', async () => {
-	localStorage.setItem('hezo_ceo_unread', '2');
+	localStorage.setItem('hezo_chat_unread', '2');
 	const { findByTestId, queryByTestId } = await renderApp({ initialPath: '/home' });
 
 	// Visible on the closed launcher…
-	expect(await findByTestId('ceo-chat-unread-badge')).toBeTruthy();
+	expect(await findByTestId('chat-unread-badge')).toBeTruthy();
 
 	// …open (reads it) then close again.
-	(await findByTestId('ceo-chat-launcher')).click();
-	await findByTestId('ceo-chat-panel');
-	(await findByTestId('ceo-chat-close')).click();
+	(await findByTestId('chat-launcher')).click();
+	await findByTestId('chat-panel');
+	(await findByTestId('chat-close')).click();
 
 	// Back on the launcher the badge is gone and the stored tally is wiped.
-	await findByTestId('ceo-chat-launcher');
-	await waitFor(() => expect(queryByTestId('ceo-chat-unread-badge')).toBeNull());
-	expect(localStorage.getItem('hezo_ceo_unread')).toBeNull();
+	await findByTestId('chat-launcher');
+	await waitFor(() => expect(queryByTestId('chat-unread-badge')).toBeNull());
+	expect(localStorage.getItem('hezo_chat_unread')).toBeNull();
 });
 
 test('the expand toggle fills the viewport below the nav, then restores the anchored panel', async () => {
 	const { findByTestId, getByTestId } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('ceo-chat-launcher')).click();
-	const panel = await findByTestId('ceo-chat-panel');
+	(await findByTestId('chat-launcher')).click();
+	const panel = await findByTestId('chat-panel');
 
 	// Default: anchored desktop panel, clear of the 48px header (top-16).
 	expect(panel.getAttribute('data-expanded')).toBe('false');
 	expect(panel.className).toContain('md:w-[420px]');
 	expect(panel.className).toContain('top-16');
 
-	const expand = getByTestId('ceo-chat-expand');
+	const expand = getByTestId('chat-expand');
 	expect(expand.getAttribute('aria-label')).toBe('Expand chat');
 	expand.click();
 
@@ -438,46 +438,46 @@ test('the expand toggle fills the viewport below the nav, then restores the anch
 	expect(panel.className).toContain('md:inset-x-4');
 	expect(panel.className).not.toContain('md:w-[420px]');
 	expect(panel.className).toContain('top-16');
-	expect(getByTestId('ceo-chat-expand').getAttribute('aria-label')).toBe('Collapse chat');
+	expect(getByTestId('chat-expand').getAttribute('aria-label')).toBe('Collapse chat');
 
 	// Collapse restores the anchored panel.
-	getByTestId('ceo-chat-expand').click();
+	getByTestId('chat-expand').click();
 	await waitFor(() => expect(panel.getAttribute('data-expanded')).toBe('false'));
 	expect(panel.className).toContain('md:w-[420px]');
 });
 
 test('expanded mode lays a modal backdrop that dismisses the chat when clicked', async () => {
 	const { findByTestId, queryByTestId, getByTestId } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('ceo-chat-launcher')).click();
-	await findByTestId('ceo-chat-panel');
+	(await findByTestId('chat-launcher')).click();
+	await findByTestId('chat-panel');
 
 	// Anchored: no backdrop — the rest of the page stays interactive.
-	expect(queryByTestId('ceo-chat-overlay')).toBeNull();
+	expect(queryByTestId('chat-overlay')).toBeNull();
 
 	// Expanding makes it modal: a scrim appears behind the panel.
-	getByTestId('ceo-chat-expand').click();
-	const overlay = await findByTestId('ceo-chat-overlay');
+	getByTestId('chat-expand').click();
+	const overlay = await findByTestId('chat-overlay');
 	expect(overlay).toBeTruthy();
 
 	// Clicking the backdrop dismisses the chat entirely.
 	overlay.click();
-	await findByTestId('ceo-chat-launcher');
-	expect(queryByTestId('ceo-chat-panel')).toBeNull();
-	expect(queryByTestId('ceo-chat-overlay')).toBeNull();
+	await findByTestId('chat-launcher');
+	expect(queryByTestId('chat-panel')).toBeNull();
+	expect(queryByTestId('chat-overlay')).toBeNull();
 });
 
 test('collapsing out of expanded removes the backdrop but keeps the chat open', async () => {
 	const { findByTestId, queryByTestId, getByTestId } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('ceo-chat-launcher')).click();
-	await findByTestId('ceo-chat-panel');
+	(await findByTestId('chat-launcher')).click();
+	await findByTestId('chat-panel');
 
-	getByTestId('ceo-chat-expand').click();
-	await findByTestId('ceo-chat-overlay');
+	getByTestId('chat-expand').click();
+	await findByTestId('chat-overlay');
 
 	// The collapse toggle exits modal mode: backdrop gone, panel still open.
-	getByTestId('ceo-chat-expand').click();
-	await waitFor(() => expect(queryByTestId('ceo-chat-overlay')).toBeNull());
-	expect(getByTestId('ceo-chat-panel')).toBeTruthy();
+	getByTestId('chat-expand').click();
+	await waitFor(() => expect(queryByTestId('chat-overlay')).toBeNull());
+	expect(getByTestId('chat-panel')).toBeTruthy();
 });
 
 test('Escape closes the chat from both the anchored and the expanded view', async () => {
@@ -486,26 +486,26 @@ test('Escape closes the chat from both the anchored and the expanded view', asyn
 	});
 
 	// Anchored → Escape closes back to the launcher.
-	(await findByTestId('ceo-chat-launcher')).click();
-	await findByTestId('ceo-chat-panel');
+	(await findByTestId('chat-launcher')).click();
+	await findByTestId('chat-panel');
 	await user.keyboard('{Escape}');
-	await findByTestId('ceo-chat-launcher');
-	expect(queryByTestId('ceo-chat-panel')).toBeNull();
+	await findByTestId('chat-launcher');
+	expect(queryByTestId('chat-panel')).toBeNull();
 
 	// Expanded (modal) → Escape closes it too, scrim and all.
-	(await findByTestId('ceo-chat-launcher')).click();
-	(await findByTestId('ceo-chat-expand')).click();
-	await findByTestId('ceo-chat-overlay');
+	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('chat-expand')).click();
+	await findByTestId('chat-overlay');
 	await user.keyboard('{Escape}');
-	await findByTestId('ceo-chat-launcher');
-	expect(queryByTestId('ceo-chat-panel')).toBeNull();
-	expect(queryByTestId('ceo-chat-overlay')).toBeNull();
+	await findByTestId('chat-launcher');
+	expect(queryByTestId('chat-panel')).toBeNull();
+	expect(queryByTestId('chat-overlay')).toBeNull();
 });
 
 test('a user message is shown as typed, not parsed as markdown', async () => {
 	const { findByTestId, findByText } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('ceo-chat-launcher')).click();
-	await findByTestId('ceo-chat-panel');
+	(await findByTestId('chat-launcher')).click();
+	await findByTestId('chat-panel');
 
 	seedConversation([
 		{
@@ -526,8 +526,8 @@ test('a user message is shown as typed, not parsed as markdown', async () => {
 
 test('the copy button writes the whole conversation to the clipboard, labelled by speaker', async () => {
 	const { findByTestId, user } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('ceo-chat-launcher')).click();
-	await findByTestId('ceo-chat-panel');
+	(await findByTestId('chat-launcher')).click();
+	await findByTestId('chat-panel');
 
 	seedConversation([
 		{
@@ -548,7 +548,7 @@ test('the copy button writes the whole conversation to the clipboard, labelled b
 		},
 	]);
 
-	const copyBtn = (await findByTestId('ceo-chat-copy')) as HTMLButtonElement;
+	const copyBtn = (await findByTestId('chat-copy')) as HTMLButtonElement;
 	expect(copyBtn.getAttribute('aria-label')).toBe('Copy conversation');
 
 	const writes: string[] = [];
@@ -575,11 +575,11 @@ test('the copy button writes the whole conversation to the clipboard, labelled b
 
 test('the copy button is disabled until the conversation has a message', async () => {
 	const { findByTestId, getByTestId } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('ceo-chat-launcher')).click();
-	await findByTestId('ceo-chat-panel');
+	(await findByTestId('chat-launcher')).click();
+	await findByTestId('chat-panel');
 
 	// Empty conversation → nothing to copy yet.
-	expect(((await findByTestId('ceo-chat-copy')) as HTMLButtonElement).disabled).toBe(true);
+	expect(((await findByTestId('chat-copy')) as HTMLButtonElement).disabled).toBe(true);
 
 	// Once a message lands, the affordance enables.
 	seedConversation([
@@ -592,15 +592,13 @@ test('the copy button is disabled until the conversation has a message', async (
 			created_at: now(),
 		},
 	]);
-	await waitFor(() =>
-		expect((getByTestId('ceo-chat-copy') as HTMLButtonElement).disabled).toBe(false),
-	);
+	await waitFor(() => expect((getByTestId('chat-copy') as HTMLButtonElement).disabled).toBe(false));
 });
 
 test('each message has its own copy button that copies only that message', async () => {
 	const { findByTestId, findAllByTestId, user } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('ceo-chat-launcher')).click();
-	await findByTestId('ceo-chat-panel');
+	(await findByTestId('chat-launcher')).click();
+	await findByTestId('chat-panel');
 
 	seedConversation([
 		{
@@ -622,7 +620,7 @@ test('each message has its own copy button that copies only that message', async
 	]);
 
 	// One copy affordance per message — for the operator's turn and the CEO's alike.
-	const copyButtons = await findAllByTestId('ceo-chat-message-copy');
+	const copyButtons = await findAllByTestId('chat-message-copy');
 	expect(copyButtons).toHaveLength(2);
 	expect(copyButtons[0].getAttribute('aria-label')).toBe('Copy message');
 
@@ -653,8 +651,8 @@ test('each message has its own copy button that copies only that message', async
 
 test('a streaming reply shows no per-message copy button until it settles', async () => {
 	const { findByTestId, findByText, queryAllByTestId } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('ceo-chat-launcher')).click();
-	await findByTestId('ceo-chat-panel');
+	(await findByTestId('chat-launcher')).click();
+	await findByTestId('chat-panel');
 
 	seedConversation([
 		{
@@ -670,5 +668,5 @@ test('a streaming reply shows no per-message copy button until it settles', asyn
 	await findByText('Working on it');
 	// Mid-stream the trailing dots stand in; the copy affordance only appears once
 	// the reply is complete.
-	expect(queryAllByTestId('ceo-chat-message-copy')).toHaveLength(0);
+	expect(queryAllByTestId('chat-message-copy')).toHaveLength(0);
 });

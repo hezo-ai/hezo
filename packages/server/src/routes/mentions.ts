@@ -26,7 +26,7 @@ interface SearchResult {
 
 // Instance-wide resolution for the global CEO chat. No `:projectId` in the
 // path, so the project-access middleware does not apply — access is gated on
-// the HQ team exactly like the /ceo/* routes. References resolve only when
+// the HQ team exactly like the /chat/* routes. References resolve only when
 // unique across the whole instance (see resolveInstanceMentions).
 mentionsRoutes.post('/mentions/resolve', async (c) => {
 	const db = c.get('db');

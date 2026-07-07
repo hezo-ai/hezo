@@ -17,11 +17,11 @@ test.describe('CEO chat widget — responsive layout', () => {
 		await waitForPageLoad(page);
 
 		// The launcher mounts with the app shell; allow for cold-start boot latency.
-		const launcher = page.getByTestId('ceo-chat-launcher');
+		const launcher = page.getByTestId('chat-launcher');
 		await expect(launcher).toBeVisible({ timeout: 15000 });
 		await launcher.click();
 
-		const panel = page.getByTestId('ceo-chat-panel');
+		const panel = page.getByTestId('chat-panel');
 		await expect(panel).toBeVisible();
 
 		// Mobile: inset-x-2 (8px each side) on a 375px viewport → ~359px wide.
@@ -48,11 +48,11 @@ test.describe('CEO chat widget — responsive layout', () => {
 		await page.goto(`/projects/${sharedWorkspace.projectSlug}/tasks`);
 		await waitForPageLoad(page);
 
-		const launcher = page.getByTestId('ceo-chat-launcher');
+		const launcher = page.getByTestId('chat-launcher');
 		await expect(launcher).toBeVisible({ timeout: 15000 });
 		await launcher.click();
 
-		const panel = page.getByTestId('ceo-chat-panel');
+		const panel = page.getByTestId('chat-panel');
 		await expect(panel).toBeVisible();
 
 		// Anchored by default: a narrow corner panel.
@@ -60,7 +60,7 @@ test.describe('CEO chat widget — responsive layout', () => {
 		expect(anchored?.width ?? 0).toBeLessThan(440);
 
 		// Expand → fills the viewport width…
-		await page.getByTestId('ceo-chat-expand').click();
+		await page.getByTestId('chat-expand').click();
 		await expect(panel).toHaveAttribute('data-expanded', 'true');
 		const expandedBox = await panel.boundingBox();
 		expect(expandedBox).not.toBeNull();
@@ -74,14 +74,14 @@ test.describe('CEO chat widget — responsive layout', () => {
 
 		// A modal scrim now occludes the page content below the nav: full viewport
 		// width, starting at the header's bottom (the nav itself stays uncovered).
-		const overlay = page.getByTestId('ceo-chat-overlay');
+		const overlay = page.getByTestId('chat-overlay');
 		await expect(overlay).toBeVisible();
 		const overlayBox = await overlay.boundingBox();
 		expect(overlayBox?.width ?? 0).toBeGreaterThan(1200);
 		expect(overlayBox?.y ?? 0).toBeGreaterThanOrEqual(headerBottom - 1);
 
 		// Collapse restores the anchored corner panel and removes the scrim.
-		await page.getByTestId('ceo-chat-expand').click();
+		await page.getByTestId('chat-expand').click();
 		await expect(panel).toHaveAttribute('data-expanded', 'false');
 		await expect(overlay).toBeHidden();
 		const restored = await panel.boundingBox();
@@ -95,13 +95,13 @@ test.describe('CEO chat widget — responsive layout', () => {
 		await page.goto(`/projects/${sharedWorkspace.projectSlug}/tasks`);
 		await waitForPageLoad(page);
 
-		const launcher = page.getByTestId('ceo-chat-launcher');
+		const launcher = page.getByTestId('chat-launcher');
 		await expect(launcher).toBeVisible({ timeout: 15000 });
 		await launcher.click();
-		await expect(page.getByTestId('ceo-chat-panel')).toBeVisible();
+		await expect(page.getByTestId('chat-panel')).toBeVisible();
 
 		await page.keyboard.press('Escape');
-		await expect(page.getByTestId('ceo-chat-panel')).toBeHidden();
+		await expect(page.getByTestId('chat-panel')).toBeHidden();
 		await expect(launcher).toBeVisible();
 	});
 
@@ -115,13 +115,13 @@ test.describe('CEO chat widget — responsive layout', () => {
 		await page.goto(`/projects/${sharedWorkspace.projectSlug}/tasks`);
 		await waitForPageLoad(page);
 
-		const launcher = page.getByTestId('ceo-chat-launcher');
+		const launcher = page.getByTestId('chat-launcher');
 		await expect(launcher).toBeVisible({ timeout: 15000 });
 		await launcher.click();
-		await expect(page.getByTestId('ceo-chat-panel')).toBeVisible();
+		await expect(page.getByTestId('chat-panel')).toBeVisible();
 
 		// The mobile panel is already near-full-screen, so the control is hidden.
-		await expect(page.getByTestId('ceo-chat-expand')).toBeHidden();
+		await expect(page.getByTestId('chat-expand')).toBeHidden();
 	});
 
 	// Kept in Playwright by decision-tree item 1 (real CSS layout): this is a
@@ -166,22 +166,22 @@ test.describe('CEO chat widget — responsive layout', () => {
 
 		// A real CEO reply needs the HQ container + a live LLM, so mock the read
 		// endpoint to get a deterministic conversation that overflows the panel.
-		await page.route('**/api/ceo/conversation', (route) =>
+		await page.route('**/api/chat/conversation', (route) =>
 			route.fulfill({ json: { data: { conversation_id: 'conv-seed', messages: seeded } } }),
 		);
 
 		await page.goto(`/projects/${sharedWorkspace.projectSlug}/tasks`);
 		await waitForPageLoad(page);
 
-		const launcher = page.getByTestId('ceo-chat-launcher');
+		const launcher = page.getByTestId('chat-launcher');
 		await expect(launcher).toBeVisible({ timeout: 15000 });
 		await launcher.click();
 
-		const panel = page.getByTestId('ceo-chat-panel');
+		const panel = page.getByTestId('chat-panel');
 		await expect(panel).toBeVisible();
 		await expect(panel).toHaveAttribute('data-expanded', 'false');
 
-		const list = page.getByTestId('ceo-chat-messages');
+		const list = page.getByTestId('chat-messages');
 		const distanceFromBottom = () =>
 			list.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight);
 
@@ -202,9 +202,9 @@ test.describe('CEO chat widget — responsive layout', () => {
 		await expect.poll(distanceFromBottom).toBeGreaterThan(100);
 
 		// Expand to the full-viewport sheet, then collapse back to the corner panel.
-		await page.getByTestId('ceo-chat-expand').click();
+		await page.getByTestId('chat-expand').click();
 		await expect(panel).toHaveAttribute('data-expanded', 'true');
-		await page.getByTestId('ceo-chat-expand').click();
+		await page.getByTestId('chat-expand').click();
 		await expect(panel).toHaveAttribute('data-expanded', 'false');
 
 		// Regression guard: each resize must re-pin the list to the bottom so the
@@ -230,12 +230,12 @@ test.describe('CEO chat widget — composer auto-grow', () => {
 		await page.goto(`/projects/${sharedWorkspace.projectSlug}/tasks`);
 		await waitForPageLoad(page);
 
-		const launcher = page.getByTestId('ceo-chat-launcher');
+		const launcher = page.getByTestId('chat-launcher');
 		await expect(launcher).toBeVisible({ timeout: 15000 });
 		await launcher.click();
-		await expect(page.getByTestId('ceo-chat-panel')).toBeVisible();
+		await expect(page.getByTestId('chat-panel')).toBeVisible();
 
-		const input = page.getByTestId('ceo-chat-input');
+		const input = page.getByTestId('chat-input');
 		const heightOf = async () => (await input.boundingBox())?.height ?? 0;
 
 		// Empty composer starts as a single row.
@@ -247,7 +247,7 @@ test.describe('CEO chat widget — composer auto-grow', () => {
 		await expect.poll(heightOf).toBeGreaterThan(initialHeight + 20);
 
 		// Submitting clears the draft, collapsing the composer back to one row.
-		await page.getByTestId('ceo-chat-send').click();
+		await page.getByTestId('chat-send').click();
 		await expect(input).toHaveValue('');
 		await expect.poll(heightOf).toBeLessThan(initialHeight + 8);
 	});
@@ -266,12 +266,12 @@ test.describe('CEO chat widget — composer auto-grow', () => {
 		await page.goto(`/projects/${sharedWorkspace.projectSlug}/tasks`);
 		await waitForPageLoad(page);
 
-		const launcher = page.getByTestId('ceo-chat-launcher');
+		const launcher = page.getByTestId('chat-launcher');
 		await expect(launcher).toBeVisible({ timeout: 15000 });
 		await launcher.click();
-		await expect(page.getByTestId('ceo-chat-panel')).toBeVisible();
+		await expect(page.getByTestId('chat-panel')).toBeVisible();
 
-		const input = page.getByTestId('ceo-chat-input');
+		const input = page.getByTestId('chat-input');
 		// scrollHeight > clientHeight means content is taller than the box → the top
 		// is clipped/scrolled out of view, which is the bug we're guarding against.
 		const isClipped = () =>
@@ -292,15 +292,15 @@ test.describe('CEO chat widget — composer auto-grow', () => {
 
 		// Expanding widens the composer: the same text now fits in fewer rows, so the
 		// box must shrink rather than keep its taller height.
-		await page.getByTestId('ceo-chat-expand').click();
-		await expect(page.getByTestId('ceo-chat-panel')).toHaveAttribute('data-expanded', 'true');
+		await page.getByTestId('chat-expand').click();
+		await expect(page.getByTestId('chat-panel')).toHaveAttribute('data-expanded', 'true');
 		await expect.poll(heightOf).toBeLessThan(narrowHeight - 10);
 		expect(await isClipped()).toBe(false);
 
 		// Collapsing narrows it again: the text re-wraps to more rows, so the box must
 		// grow back — without this re-fit the top line would be clipped.
-		await page.getByTestId('ceo-chat-expand').click();
-		await expect(page.getByTestId('ceo-chat-panel')).toHaveAttribute('data-expanded', 'false');
+		await page.getByTestId('chat-expand').click();
+		await expect(page.getByTestId('chat-panel')).toHaveAttribute('data-expanded', 'false');
 		await expect.poll(heightOf).toBeGreaterThan(narrowHeight - 5);
 		expect(await isClipped()).toBe(false);
 	});

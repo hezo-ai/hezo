@@ -88,7 +88,7 @@ export const wsRoom = {
 	team: (id: string) => `team:${id}`,
 	agent: (id: string) => `agent:${id}`,
 	/** The single global CEO chat room. Every mirrored surface subscribes here. */
-	ceo: () => 'ceo:global',
+	chat: () => 'chat:global',
 	/**
 	 * The single global base-image build room. Base images (e.g.
 	 * `hezo/agent-base:latest`) are shared across all projects, so their build

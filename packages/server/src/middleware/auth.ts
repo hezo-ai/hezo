@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { ApiKeyStatus, AuthType, CeoSessionStatus, HeartbeatRunStatus } from '@hezo/shared';
+import { ApiKeyStatus, AuthType, ChatSessionStatus, HeartbeatRunStatus } from '@hezo/shared';
 import type { Context } from 'hono';
 import { createMiddleware } from 'hono/factory';
 import { sign, verify } from 'hono/jwt';
@@ -10,7 +10,7 @@ import type { AuthInfo, Env } from '../lib/types';
 
 const AGENT_JWT_TTL_SECONDS = 60 * 60 * 4;
 // The CEO chat session outlives a run; the token is revoked structurally via
-// the ceo_sessions row status, so a long TTL is safe.
+// the chat_sessions row status, so a long TTL is safe.
 const CEO_SESSION_JWT_TTL_SECONDS = 60 * 60 * 24 * 30;
 
 const PUBLIC_PATHS = [
@@ -100,18 +100,18 @@ export async function verifyToken(
 			const teamId = payload.team_id as string;
 
 			// Persistent CEO chat session principal: validated against the
-			// ceo_sessions row (the live-session proof, revoked by flipping its
+			// chat_sessions row (the live-session proof, revoked by flipping its
 			// status), not a heartbeat_runs row. Carries cross-team privilege.
 			if (payload.session_id) {
 				const sessionId = payload.session_id as string;
 				const sessionResult = await db.query<{ status: string; project_id: string }>(
-					'SELECT status, project_id FROM ceo_sessions WHERE id = $1 AND member_id = $2 AND team_id = $3',
+					'SELECT status, project_id FROM chat_sessions WHERE id = $1 AND member_id = $2 AND team_id = $3',
 					[sessionId, memberId, teamId],
 				);
 				const sessionRow = sessionResult.rows[0];
 				if (
-					sessionRow?.status !== CeoSessionStatus.Starting &&
-					sessionRow?.status !== CeoSessionStatus.Running
+					sessionRow?.status !== ChatSessionStatus.Starting &&
+					sessionRow?.status !== ChatSessionStatus.Running
 				) {
 					return null;
 				}
@@ -311,13 +311,13 @@ export async function signAgentJwt(
 
 /**
  * Mint the long-lived MCP token for the persistent CEO chat session. Unlike a
- * run token it carries `session_id` (validated against `ceo_sessions`) and
+ * run token it carries `session_id` (validated against `chat_sessions`) and
  * `cross_team` (act across every team — the team-level analogue of
  * `cross_project`). Revocation is structural via the session row's status, so
  * the TTL is long; the caller is responsible for asserting the member is the
  * instance CEO in the HQ team before minting.
  */
-export async function signCeoSessionJwt(
+export async function signChatSessionJwt(
 	masterKeyManager: { getJwtKey: () => Promise<Buffer> },
 	memberId: string,
 	teamId: string,
