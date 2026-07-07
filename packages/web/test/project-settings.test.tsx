@@ -130,9 +130,9 @@ test('edits the per-project concurrency cap and persists it', async () => {
 		params: { projectId: projectSlug },
 	});
 
-	// Read view shows the seeded default of 3.
+	// Read view shows the seeded default of 10.
 	const readValue = await findByTestId('max-concurrent-runs-value', undefined, { timeout: 8_000 });
-	expect(readValue.textContent).toContain('3');
+	expect(readValue.textContent).toContain('10');
 
 	await user.click(await findByRole('button', { name: 'Edit' }));
 	const input = (await findByTestId('max-concurrent-runs-input', undefined, {
