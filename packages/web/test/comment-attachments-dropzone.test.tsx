@@ -100,6 +100,35 @@ test('dropping allowed files uploads them and renders linked chips; the X remove
 	expect(await findByTestId('comment-attachment-hint')).toBeTruthy();
 });
 
+test('the Upload button picks files via the hidden input and uploads them', async () => {
+	const { findByTestId, queryByTestId } = await renderTaskPage();
+
+	// The idle hint and the Upload button both show before any chip.
+	expect(await findByTestId('comment-attachment-hint')).toBeTruthy();
+	await findByTestId('comment-attachment-upload-button');
+
+	// The picker is a native multi-select input pre-filtered to allowed extensions.
+	const input = (await findByTestId('comment-attachment-upload-button-input')) as HTMLInputElement;
+	expect(input.getAttribute('type')).toBe('file');
+	expect(input.multiple).toBe(true);
+	expect(input.getAttribute('accept')).toContain('.png');
+
+	const png = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'picked.png', {
+		type: 'image/png',
+	});
+	// Choosing a file in the OS dialog fires `change` on the hidden input.
+	Object.defineProperty(input, 'files', { value: [png], configurable: true });
+	fireEvent.change(input);
+
+	const chip = await findByTestId('comment-attachment-chip', undefined, { timeout: 15_000 });
+	expect(chip.textContent).toContain('picked.png');
+
+	// The hint is replaced by the chip row, but the Upload button persists so more
+	// files can be added — the only way to attach on touch devices.
+	expect(queryByTestId('comment-attachment-hint')).toBeNull();
+	expect(queryByTestId('comment-attachment-upload-button')).toBeTruthy();
+});
+
 test('each content type gets its own chip icon (image/audio/video/document/fallback)', async () => {
 	const { zone, container } = await renderTaskPage();
 

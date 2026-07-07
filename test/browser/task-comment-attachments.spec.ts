@@ -186,6 +186,9 @@ test.describe('Task Comment Attachments', () => {
 		await expect(hint).toBeVisible();
 		await expect(hint).toContainText('Drag and drop files to attach');
 
+		// The Upload button sits beside the hint as the click-to-attach alternative.
+		await expect(page.locator('[data-testid="comment-attachment-upload-button"]')).toBeVisible();
+
 		const info = page.locator('[data-testid="comment-attachment-hint-info"]');
 		const tooltip = page.getByRole('tooltip');
 		// Radix opens this tooltip in its trigger's `onFocus` handler, which fires
@@ -276,7 +279,7 @@ test.describe('Task Comment Attachments', () => {
 		await expect(errorChip).toContainText('virus.exe');
 	});
 
-	test('mobile viewport — hint visible, chips wrap and overlay still triggers', async ({
+	test('mobile viewport — Upload button drives attach, drag hint text is hidden', async ({
 		sharedPage: page,
 		sharedWorkspace,
 	}) => {
@@ -285,10 +288,13 @@ test.describe('Task Comment Attachments', () => {
 
 		await openTaskDetail(page, project.slug, task);
 
-		const hint = page.locator('[data-testid="comment-attachment-hint"]');
-		await expect(hint).toBeVisible();
-		await expect(hint).toContainText('Drag and drop files to attach');
+		// Touch devices can't drag files, so the "Drag and drop…" text is hidden on
+		// mobile; the Upload button is the affordance instead.
+		const uploadButton = page.locator('[data-testid="comment-attachment-upload-button"]');
+		await expect(uploadButton).toBeVisible();
+		await expect(page.locator('[data-testid="comment-attachment-hint-text"]')).toBeHidden();
 
+		// A drop still uploads (the whole zone remains a drop target) and chips wrap.
 		await dropFileAndAwaitUpload(
 			page,
 			task.id,
@@ -302,7 +308,8 @@ test.describe('Task Comment Attachments', () => {
 			hasText: 'mobile.png',
 		});
 		await expect(chip).toBeVisible({ timeout: UPLOAD_WAIT_MS });
-		await expect(hint).toBeHidden();
+		// The Upload button persists alongside the chips so more files can be added.
+		await expect(uploadButton).toBeVisible();
 		await expect(chip.locator('[data-testid="comment-attachment-preview"]')).toBeVisible();
 	});
 });
