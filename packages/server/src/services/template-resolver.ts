@@ -1,7 +1,8 @@
-import { HEZO_DOCS_URL } from '@hezo/shared';
+import { HEZO_DOCS_URL, repoNameFromIdentifier } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { terminalStatusParams } from '../lib/sql';
 import { buildHezoDocsBlock } from './docs-bundle';
+import { CONTAINER_WORKTREES_ROOT } from './workspace';
 
 /**
  * The marker in `agents/_instance/ceo.md` where the product/API documentation is
@@ -630,6 +631,14 @@ interface RepoContextRow {
  * brand-new repo to make their invented name work. Regenerated every run from
  * live DB state; omitted entirely when the project has no linked repo (a
  * code-touching run with no repo is gated upstream by the repo-setup approval).
+ *
+ * Every linked repo — not just the designated one — is cloned and checked out to
+ * its own per-task worktree (`agent-runner.ts` loops all of them), so the block
+ * names each additional repo's on-disk path and tells the agent to read it from
+ * disk. Without that, an agent asked to reference a second connected repo has no
+ * signal it is local and reaches for the `github` MCP `get_file_contents` API
+ * instead — slower, per-file token cost, and it reads GitHub's default branch
+ * rather than the ref checked out for this run.
  */
 async function buildRepositoryBlock(db: Db, ctx: ResolveContext): Promise<string> {
 	if (!ctx.projectId) return '';
@@ -645,14 +654,34 @@ async function buildRepositoryBlock(db: Db, ctx: ResolveContext): Promise<string
 	);
 	if (repos.rows.length === 0) return '';
 
+	let taskIdentifier = '';
+	if (ctx.taskId) {
+		const r = await db.query<{ identifier: string }>('SELECT identifier FROM tasks WHERE id = $1', [
+			ctx.taskId,
+		]);
+		taskIdentifier = r.rows[0]?.identifier ?? '';
+	}
+
 	const designated = repos.rows.find((r) => r.is_designated === true) ?? repos.rows[0];
 	const others = repos.rows.filter((r) => r !== designated);
 
+	// Each additional repo's worktree is a sibling of the working directory (the
+	// designated repo's worktree) — `/worktrees/<TICKET>/<name>`. Emit the concrete
+	// path when the ticket identifier resolves; otherwise describe it relative to
+	// the working directory so the guidance still holds.
+	const localPathOf = (name: string): string =>
+		taskIdentifier
+			? `\`${CONTAINER_WORKTREES_ROOT}/${taskIdentifier}/${name}\``
+			: `a sibling directory named \`${name}\` next to your working directory`;
+
 	const repoLines = [
-		`- Designated repository: \`${designated.repo_identifier}\` (${designated.host_type})`,
+		`- Designated repository: \`${designated.repo_identifier}\` (${designated.host_type}) — already cloned; your working directory is its worktree.`,
 	];
-	if (others.length > 0) {
-		repoLines.push(`- Also linked: ${others.map((r) => `\`${r.repo_identifier}\``).join(', ')}`);
+	for (const o of others) {
+		const name = repoNameFromIdentifier(o.repo_identifier);
+		repoLines.push(
+			`- Also linked: \`${o.repo_identifier}\` (${o.host_type}) — also cloned and checked out locally at ${localPathOf(name)}.`,
+		);
 	}
 
 	return `
@@ -665,6 +694,7 @@ This project has a **designated repository** — the one and only place your cod
 
 ${repoLines.join('\n')}
 
+- **Read connected repositories from disk, never through an API.** Every linked repo above is cloned and checked out locally for this run — your working directory is the designated repo's worktree, and any additional repos sit in sibling worktree directories (paths above). Inspect them with \`ls\`/\`Read\`/\`grep\`/\`cat\` directly. Do **not** pull a repo's file contents through the \`github\` MCP (\`get_file_contents\`) or any other remote fetch just to read code — that is slower, spends tokens per file, and returns GitHub's default branch instead of the exact ref checked out here. The \`github\` MCP is for GitHub *operations* (pull requests, CI logs, issues), not for reading files that are already on disk.
 - **Commits auto-push to \`origin\`; you don't need a manual push to preserve work.** Every commit you make is pushed to \`origin/<branch>\` (e.g. \`origin/hezo/<TICKET>\`) automatically the moment it lands — git authenticates over **SSH** with the project's key — so committed work survives even if the run ends early. An explicit \`git push -u origin <branch>\` still works out of the box if you want one. You do **not** need a GitHub Personal Access Token for git, so never call \`request_credential\` for a PAT to push or to create a repo.
 - **Open and manage pull requests against this repository** with the \`github\` MCP tools (e.g. \`create_pull_request\`), targeting this repo. Use the \`github\` MCP for any other GitHub API need rather than raw \`curl\` to \`api.github.com\`.
 - **When CI checks fail, read the logs through the \`github\` MCP, never by hand.** Use \`get_job_logs\` with \`failed_only: true\` + the \`run_id\` (or a specific \`job_id\`), \`return_content: true\`, and a \`tail_lines\` bound (e.g. 200) so output stays scoped to the failure. Find the run and its jobs with \`list_workflow_runs\` / \`list_workflow_jobs\`, or \`pull_request_read\` (\`method: "get_check_runs"\`) for a PR's checks. Do **not** \`curl\` \`api.github.com/.../actions/jobs/<id>/logs\` or wrestle with zip downloads — the MCP returns ready-to-read text.
