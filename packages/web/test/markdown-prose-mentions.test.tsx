@@ -10,6 +10,52 @@ import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
 import { seedComment, seedProject, seedTask, seedWorkspace } from './helpers/seed';
 
+/**
+ * Seed a "source" task whose description references a "target" task by identifier,
+ * put the target at `targetStatus`, render the source's task page, and return the
+ * resolved `task-mention-link` element for the target. The description field runs
+ * through markdown-prose, so the reference linkifies once `/tasks/resolve` returns.
+ */
+async function renderTaskMention(targetStatus: string): Promise<HTMLAnchorElement> {
+	let projSlug = '';
+	let sourceIdentifier = '';
+	let targetIdentifier = '';
+
+	const { findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Status Mention Project' });
+			const target = await seedTask(ws, project, { title: 'Target task title' });
+			const source = await seedTask(ws, project, {
+				title: 'Source task',
+				description: `See also ${target.identifier} for related work.`,
+			});
+			// Set status directly: the closing automations (approval gates, child
+			// checks) are irrelevant here and would make the terminal cases flaky.
+			const { db } = getTestContext();
+			await db.query('UPDATE tasks SET status = $1::task_status WHERE id = $2', [
+				targetStatus,
+				target.id,
+			]);
+			projSlug = project.slug;
+			targetIdentifier = target.identifier;
+			sourceIdentifier = source.identifier;
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: projSlug, taskId: sourceIdentifier.toLowerCase() },
+	});
+
+	const link = (await findByTestId('task-mention-link', undefined, {
+		timeout: 20_000,
+	})) as HTMLAnchorElement;
+	expect(link.textContent).toContain(targetIdentifier);
+	return link;
+}
+
 async function seedSkill(name: string, slug: string): Promise<void> {
 	const { apiBase, token } = getTestContext();
 	const res = await apiBase('/api/skills', {
@@ -180,3 +226,28 @@ test('a passive @@agent mention renders the bare slug as a passive-flagged link'
 	// Passive form drops the leading "@" in the visible label.
 	expect(passiveLink.textContent).toBe(seeded.agentSlug);
 });
+
+test('a mention of a done task strikes through the link and carries its status', async () => {
+	const link = await renderTaskMention('done');
+	// The threaded status drives both the strikethrough and the tooltip pill.
+	expect(link.getAttribute('data-mention-task-status')).toBe('done');
+	expect(link.className).toContain('line-through');
+});
+
+test('a mention of a cancelled task strikes through the link', async () => {
+	const link = await renderTaskMention('cancelled');
+	expect(link.getAttribute('data-mention-task-status')).toBe('cancelled');
+	expect(link.className).toContain('line-through');
+});
+
+test('a mention of an open (in-progress) task is not struck through', async () => {
+	const link = await renderTaskMention('in_progress');
+	expect(link.getAttribute('data-mention-task-status')).toBe('in_progress');
+	expect(link.className).not.toContain('line-through');
+});
+
+// The status pill itself lives inside a Radix tooltip that only mounts its portal
+// content on a real pointer hover — a path happy-dom can't drive — so the
+// hover→pill assertion lives in test/browser/task-mention-status.spec.ts. The
+// `data-mention-task-status` assertions above prove the exact value that feeds the
+// pill reaches the DOM.

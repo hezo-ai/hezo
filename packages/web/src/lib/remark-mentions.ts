@@ -47,6 +47,7 @@ export interface AgentMentionData {
 export interface TaskMentionData {
 	title: string;
 	projectSlug: string;
+	status: string;
 }
 
 export interface KbDocMentionData {
@@ -306,6 +307,7 @@ function buildLink(token: MentionToken, opts: Options): LinkNode | null {
 				hProperties: {
 					'data-mention-task-identifier': token.identifier,
 					'data-mention-task-title': data.title,
+					'data-mention-task-status': data.status,
 					'data-mention-project-slug': data.projectSlug,
 				},
 			},
