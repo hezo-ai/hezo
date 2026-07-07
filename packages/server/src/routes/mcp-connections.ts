@@ -1,14 +1,20 @@
 import { getConnectorCapability, McpConnectionKind, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
+import { encrypt } from '../crypto/encryption';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
+import { validateSecretName } from '../lib/credential-placeholder';
 import { resolveActor } from '../lib/resolve';
 import { err, ok } from '../lib/response';
-import { isUniqueViolation } from '../lib/sql';
+import { isUniqueViolation, withTransaction } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireAdminEquivalent } from '../middleware/auth';
-import { createOrFetchConnector } from '../services/connectors/lifecycle';
+import {
+	createOrFetchConnector,
+	fireCredentialProvidedWakeup,
+	markApiKeyActive,
+} from '../services/connectors/lifecycle';
 import { installLocalMcpById } from '../services/mcp-installer';
 
 const log = logger.child('mcp-connections-route');
@@ -18,14 +24,14 @@ const log = logger.child('mcp-connections-route');
 // global ones; the un-prefixed routes are the Admin (superuser) surface for
 // `/settings/connectors`, which spans every project.
 const CONNECTOR_COLUMNS = `id, name, display_name, kind::text AS kind,
-        config, oauth_connection_id, project_id, install_status::text AS install_status, install_error,
+        config, oauth_connection_id, api_key_secret_id, project_id, install_status::text AS install_status, install_error,
         skill_id, created_by_task_id, activated_at, revoked_at, auth_error,
         created_at, updated_at`;
 
 // Same columns, `mc.`-qualified for queries that JOIN `projects` (whose id/name/
 // slug would otherwise collide with the connector's).
 const CONNECTOR_COLUMNS_MC = `mc.id, mc.name, mc.display_name, mc.kind::text AS kind,
-        mc.config, mc.oauth_connection_id, mc.project_id, mc.install_status::text AS install_status,
+        mc.config, mc.oauth_connection_id, mc.api_key_secret_id, mc.project_id, mc.install_status::text AS install_status,
         mc.install_error, mc.skill_id, mc.created_by_task_id, mc.activated_at, mc.revoked_at,
         mc.auth_error, mc.created_at, mc.updated_at`;
 
@@ -246,13 +252,23 @@ mcpConnectionsRoutes.post('/projects/:projectId/mcp-connections/:id/revoke', asy
 	const existing = await db.query<{
 		name: string;
 		oauth_connection_id: string | null;
+		api_key_secret_id: string | null;
 	}>(
-		`SELECT name, oauth_connection_id FROM mcp_connections
+		`SELECT name, oauth_connection_id, api_key_secret_id FROM mcp_connections
 		 WHERE id = $1 AND (project_id = $2 OR project_id IS NULL)`,
 		[id, projectId],
 	);
 	if (existing.rows.length === 0) return err(c, 'NOT_FOUND', 'connector not found', 404);
 	const row = await markRevoked(db, id);
+	// markRevoked already nulled api_key_secret_id (ON DELETE SET NULL would too);
+	// purge the pasted-key secret from the vault so a revoke leaves nothing behind.
+	if (existing.rows[0].api_key_secret_id) {
+		await db
+			.query(`DELETE FROM secrets WHERE id = $1`, [existing.rows[0].api_key_secret_id])
+			.catch((e) =>
+				log.warn('failed to delete api-key secret on revoke', { error: (e as Error).message }),
+			);
+	}
 	if (existing.rows[0].oauth_connection_id) {
 		const { deleteConnection } = await import('../services/oauth/connection-store');
 		const masterKeyManager = c.get('masterKeyManager');
@@ -290,6 +306,136 @@ mcpConnectionsRoutes.post('/projects/:projectId/mcp-connections/:id/revoke', asy
 		changeKind: 'revoked',
 	});
 	return ok(c, row);
+});
+
+/**
+ * Derive a stable, grammar-valid vault secret name for a connector's pasted API
+ * key. Keyed on the connector id (first 8 hex) so re-pasting upserts the same
+ * secret and two like-named connectors in different projects never collide.
+ */
+function apiKeySecretName(connectorName: string, connectorId: string): string {
+	const suffix = connectorId.replace(/-/g, '').slice(0, 8).toUpperCase();
+	let base = connectorName
+		.toUpperCase()
+		.replace(/[^A-Z0-9_]/g, '_')
+		.replace(/^[^A-Z]+/, '');
+	if (base.length === 0) base = 'KEY';
+	// Cap so total `MCP_<base>_<suffix>` stays within the 64-char grammar limit.
+	base = base.slice(0, 64 - 'MCP_'.length - 1 - suffix.length);
+	return `MCP_${base}_${suffix}`;
+}
+
+/**
+ * Attach a pasted API key to a connector whose provider exposes no OAuth (e.g.
+ * Typefully). The key is encrypted into the vault, scoped by allowed_hosts to
+ * the MCP server host, and referenced from the connector via api_key_secret_id.
+ * The raw key NEVER touches the agent run — the descriptor emits a
+ * `__HEZO_SECRET_*__` placeholder and the egress proxy substitutes at request
+ * time (AGENTS.md red line). Response-driven (security-sensitive).
+ */
+mcpConnectionsRoutes.post('/projects/:projectId/mcp-connections/:id/api-key', async (c) => {
+	const teamId = c.get('teamId') as string;
+	const projectId = c.get('projectId') as string;
+	const db = c.get('db');
+	const masterKeyManager = c.get('masterKeyManager');
+	const id = c.req.param('id');
+
+	const body = await c.req
+		.json<{ value?: string; header?: string; scheme?: string }>()
+		.catch(() => ({}) as { value?: string; header?: string; scheme?: string });
+	const value = typeof body.value === 'string' ? body.value.trim() : '';
+	if (!value) return err(c, 'INVALID_REQUEST', 'value is required', 400);
+
+	// Scoped load: the connector must belong to this project (or be global) and be
+	// a saas MCP with a url — API-key auth is an HTTP header on the MCP endpoint.
+	const existing = await db.query<{
+		id: string;
+		name: string;
+		kind: string;
+		config: Record<string, unknown>;
+		revoked_at: string | null;
+		created_by_task_id: string | null;
+	}>(
+		`SELECT id, name, kind::text AS kind, config, revoked_at::text AS revoked_at, created_by_task_id
+		 FROM mcp_connections
+		 WHERE id = $1 AND (project_id = $2 OR project_id IS NULL)`,
+		[id, projectId],
+	);
+	if (existing.rows.length === 0) return err(c, 'NOT_FOUND', 'connector not found', 404);
+	const conn = existing.rows[0];
+	if (conn.revoked_at) {
+		return err(c, 'CONNECTOR_REVOKED', 'connector has been revoked; re-add it to reconnect', 400);
+	}
+	if (conn.kind !== McpConnectionKind.Saas) {
+		return err(c, 'INVALID_REQUEST', 'API-key auth applies to saas MCP connectors', 400);
+	}
+	const url = typeof conn.config?.url === 'string' ? (conn.config.url as string) : '';
+	let host = '';
+	try {
+		host = new URL(url).host.toLowerCase();
+	} catch {
+		return err(c, 'INVALID_REQUEST', 'connector has no valid MCP server url', 400);
+	}
+
+	const encryptionKey = masterKeyManager.getKey();
+	if (!encryptionKey) return err(c, 'LOCKED', 'Master key not available', 503);
+
+	// Header/scheme override (the form's "Advanced" disclosure). Default to
+	// `Authorization` / `Bearer ` — covers most MCP servers incl. Typefully. An
+	// explicit empty scheme lets a provider take the raw key (e.g. `X-API-Key`).
+	const header =
+		typeof body.header === 'string' && body.header.trim().length > 0
+			? body.header.trim()
+			: undefined;
+	const scheme = typeof body.scheme === 'string' ? body.scheme : undefined;
+	const apiKeyConfig =
+		header !== undefined || scheme !== undefined
+			? { ...(header !== undefined ? { header } : {}), ...(scheme !== undefined ? { scheme } : {}) }
+			: null;
+
+	const secretName = apiKeySecretName(conn.name, conn.id);
+	const nameCheck = validateSecretName(secretName);
+	if (!nameCheck.valid) {
+		return err(c, 'INVALID_REQUEST', `derived secret name invalid: ${nameCheck.error}`, 500);
+	}
+
+	const updated = await withTransaction(db, async () => {
+		const secret = await db.query<{ id: string }>(
+			`INSERT INTO secrets (name, encrypted_value, category, allowed_hosts)
+			 VALUES ($1, $2, 'api_token'::secret_category, $3::text[])
+			 ON CONFLICT (name) DO UPDATE
+			   SET encrypted_value = EXCLUDED.encrypted_value,
+			       category = EXCLUDED.category,
+			       allowed_hosts = EXCLUDED.allowed_hosts,
+			       updated_at = now()
+			 RETURNING id`,
+			[secretName, encrypt(value, encryptionKey), [host]],
+		);
+		return markApiKeyActive(db, conn.id, secret.rows[0].id, apiKeyConfig);
+	});
+	if (!updated) return err(c, 'NOT_FOUND', 'connector not found', 404);
+
+	broadcastChange(c, wsRoom.team(teamId), 'mcp_connections', 'UPDATE', {
+		id: conn.id,
+		status: 'active',
+	});
+	const actor = await resolveActor(db, c.get('auth'), teamId);
+	c.get('events').emit({
+		type: 'mcp_connection.updated',
+		teamId,
+		actorType: actor.actorType,
+		actorMemberId: actor.actorMemberId,
+		connectionId: conn.id,
+		name: conn.name,
+		changeKind: 'api_key_set',
+	});
+	// Resume the agent that requested this connector (if any), like OAuth connect.
+	await fireCredentialProvidedWakeup(db, {
+		id: conn.id,
+		created_by_task_id: conn.created_by_task_id,
+	});
+
+	return ok(c, updated);
 });
 
 mcpConnectionsRoutes.post('/projects/:projectId/mcp-connections', async (c) => {

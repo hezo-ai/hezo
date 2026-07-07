@@ -1,10 +1,15 @@
 import { getConnectorCapability } from '@hezo/shared';
 import { useQueryClient } from '@tanstack/react-query';
-import { Check, Plug } from 'lucide-react';
+import { Check, KeyRound, Plug } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { connectorStatus, useMcpConnection } from '../../hooks/use-mcp-connections';
+import {
+	connectorStatus,
+	useMcpConnection,
+	useSetConnectorApiKey,
+} from '../../hooks/use-mcp-connections';
 import { useAuthStart } from '../../hooks/use-oauth-connections';
 import { queryKeys } from '../../lib/query-keys';
+import { ConnectorApiKeyForm } from '../connector-api-key-form';
 import { ConnectorDeviceFlowDialog } from '../connector-device-flow-dialog';
 import { Button } from '../ui/button';
 import type { CommentDataOf } from './comment-data';
@@ -21,6 +26,7 @@ export function ConnectRequiredComment({ comment, projectId }: Props) {
 	const queryClient = useQueryClient();
 	const [error, setError] = useState<string | null>(null);
 	const [deviceOpen, setDeviceOpen] = useState(false);
+	const [showApiKey, setShowApiKey] = useState(false);
 
 	// Refetch the connector immediately when the OAuth popup signals success,
 	// without waiting for the WebSocket invalidation round-trip. The popup
@@ -49,9 +55,10 @@ export function ConnectRequiredComment({ comment, projectId }: Props) {
 
 	const connector = connectorQuery.data;
 	const status = connector ? connectorStatus(connector) : 'pending';
-	// Connectors are global resources (register_connector creates instance-level
-	// rows), so the manage link goes to the global settings page.
-	const focusedConnectorUrl = `/settings/connectors?focus=${connector_id}#${connector_id}`;
+	// This card renders inside a project task, so the manage link targets the
+	// project's own Connectors page (which surfaces the same connector, project
+	// + global) rather than the global settings surface.
+	const focusedConnectorUrl = `/projects/${projectId}/connectors?focus=${connector_id}#${connector_id}`;
 
 	// Providers whose AS can't do DCR (declared via `deviceAuth`) authorize
 	// through the device flow; everything else uses the redirect popup.
@@ -142,22 +149,41 @@ export function ConnectRequiredComment({ comment, projectId }: Props) {
 					}
 				/>
 			)}
-			<div className="flex items-center gap-2 pl-6">
-				<Button
-					size="sm"
-					onClick={openConnect}
-					disabled={authStart.isPending}
-					data-testid="connect-button"
-				>
-					{authStart.isPending ? 'Starting…' : 'Connect'}
-				</Button>
-				<a
-					href={focusedConnectorUrl}
-					className="text-xs text-text-2 hover:text-text-1 underline"
-					data-testid="connect-required-link"
-				>
-					Open in Connectors
-				</a>
+			<div className="flex flex-col gap-2 pl-6">
+				<div className="flex items-center gap-2 flex-wrap">
+					<Button
+						size="sm"
+						onClick={openConnect}
+						disabled={authStart.isPending}
+						data-testid="connect-button"
+					>
+						{authStart.isPending ? 'Starting…' : 'Connect'}
+					</Button>
+					<Button
+						size="sm"
+						variant="outline"
+						onClick={() => setShowApiKey((v) => !v)}
+						data-testid="connect-required-api-key-toggle"
+					>
+						<KeyRound className="w-3.5 h-3.5 mr-1" />
+						Use API key
+					</Button>
+					<a
+						href={focusedConnectorUrl}
+						className="text-xs text-text-2 hover:text-text-1 underline"
+						data-testid="connect-required-link"
+					>
+						Open in Connectors
+					</a>
+				</div>
+				{showApiKey && (
+					<ConnectorApiKeyForm
+						projectId={projectId}
+						connectorId={connector_id}
+						onSuccess={() => setShowApiKey(false)}
+						onCancel={() => setShowApiKey(false)}
+					/>
+				)}
 			</div>
 		</div>
 	);

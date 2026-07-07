@@ -124,7 +124,7 @@ describe.skipIf(skipReason !== null)('MCP connections — Docker integration', (
 		);
 		expect(insert.rows[0].install_status).toBe('installed');
 
-		const descriptors = await loadMcpConnectionDescriptors(db, masterKeyManager);
+		const descriptors = await loadMcpConnectionDescriptors(db);
 		const echo = descriptors.find((d) => d.name === 'echo');
 		expect(echo?.kind).toBe('http');
 		if (echo?.kind !== 'http') throw new Error('expected http descriptor');

@@ -962,7 +962,8 @@ supports; once a token exists, both strategies finalize through one shared path.
 |---|---|---|---|
 | **DCR auth-code + PKCE** | PRM discovery (RFC 9728) → Dynamic Client Registration (RFC 7591) → redirect popup → `/api/oauth/mcp-callback`. Zero config — the AS mints a `client_id`. | the AS advertises a `registration_endpoint` | DatoCMS, Linear, Notion, Vercel, … |
 | **Device flow (RFC 8628)** | `connectors/:id/device/start` → user types a code → `…/device/poll`. Needs a pre-registered public `client_id`; no redirect, no secret. | the capability registry declares a `deviceAuth` descriptor | **GitHub** |
-| **Paste / `request_credential`** | raw key pasted into the vault | provider exposes no OAuth | `paste` fallback |
+| **API key** | human pastes a key on the connect_required card or the Connectors page → `POST /api/projects/:projectId/mcp-connections/:id/api-key` encrypts it into the vault (`allowed_hosts` = the MCP host) and links it via `mcp_connections.api_key_secret_id`. | the MCP server exposes no OAuth (no PRM) and authenticates with a bearer/API key | **Typefully**, header-auth MCPs |
+| **Paste / `request_credential`** | raw key pasted into the vault, referenced by placeholder from a tool call | an agent needs an arbitrary secret (not a whole connector) | `request_credential` |
 
 GitHub uses the device flow because its AS advertises no `registration_endpoint` (DCR
 impossible) and a redirect flow would need a per-host registered callback. The selection
@@ -1009,21 +1010,38 @@ every non-active SaaS row keeps a **Connect**/Retry button.
 
 **Run exclusion.** `loadMcpConnectionsForRun(db, projectId)` returns the run's project's own
 connectors plus global ones (a project connector shadows a global of the same name). It
-skips revoked rows, plus SaaS rows that are known to want OAuth but haven't completed it —
-no `oauth_connection_id` and any of: agent-requested (`created_by_task_id`), discovery
-persisted `config.dcr`, or an attempt recorded `auth_error`. Injecting those would just 401
-on every run. Operator rows that never attempted OAuth carry none of the markers and are
-always included.
+skips revoked rows, plus SaaS rows that are known to want auth but haven't completed it —
+no `oauth_connection_id` **and** no `api_key_secret_id`, and any of: agent-requested
+(`created_by_task_id`), discovery persisted `config.dcr`, or an attempt recorded
+`auth_error`. Injecting those would just 401 on every run. A connector that finished either
+handshake (an OAuth connection or a pasted API key) is always included, as are operator rows
+that never attempted auth (public / header-authenticated MCPs).
 
 **MCP connections** (`mcp_connections`, see § 3 scoping). `kind='saas'` carries
-`{ url, headers }` (header values may contain `__HEZO_SECRET_*__`; OAuth-backed rows set
-`oauth_connection_id` and the loader emits the `Bearer` placeholder). `kind='local'`
-carries a stdio `{ command, args, env }` (the on-demand installer is a deferred phase);
-local servers authenticate via credential placeholders in their `env` (e.g. a
-username/password login that fetches a token), never OAuth, so the connectors UI treats a
-non-revoked, non-failed local row as **connected the moment it exists** (`statusOf`/
-`connectorStatus` short-circuit `kind='local'` to `active`) rather than showing it a
-meaningless "Pending connect" OAuth affordance.
+`{ url, headers, apiKey? }`. Connector auth is **always emitted as a `__HEZO_SECRET_*__`
+placeholder, never a materialized token** (the § 7 red line): the descriptor loader resolves
+the secret *name* only — for OAuth-backed rows (`oauth_connection_id`) it emits
+`Authorization: Bearer __HEZO_SECRET_OAUTH_…__`; for API-key rows (`api_key_secret_id`) it
+emits the placeholder in the header/scheme named by `config.apiKey` (default
+`Authorization` / `Bearer `). No decryption happens at build time, so descriptors build even
+while the master key is locked; the egress proxy substitutes at request time, scoped by the
+secret's `allowed_hosts`. `kind='local'` carries a stdio `{ command, args, env }` (the
+on-demand installer is a deferred phase); local servers authenticate via credential
+placeholders in their `env` (e.g. a username/password login that fetches a token), never
+OAuth, so the connectors UI treats a non-revoked, non-failed local row as **connected the
+moment it exists** (`statusOf`/`connectorStatus` short-circuit `kind='local'` to `active`)
+rather than showing it a meaningless "Pending connect" OAuth affordance.
+
+**Connector auth must traverse the egress proxy.** Because connector auth is a placeholder,
+each coding CLI's MCP-startup HTTP MUST go through the per-run proxy or the placeholder ships
+unsubstituted and 401s (a fail-closed usability miss, never a leak — § 7). All four runtimes
+do: Claude Code & Gemini install their own global undici proxy dispatcher from `HTTPS_PROXY`
+(and trust `NODE_EXTRA_CA_CERTS`); OpenCode runs on bundled **Bun**, whose `fetch` reads the
+proxy env natively (single-cert `NODE_EXTRA_CA_CERTS` trusted); Codex is **Rust/reqwest**,
+which honors the proxy env by default and trusts the egress CA via the system store that the
+container's start-up `update-ca-certificates` populates. The runner also sets
+`NODE_USE_ENV_PROXY=1` as a Node safety net for any spawned Node process without its own
+dispatcher.
 At run build, `loadMcpConnectionDescriptors` merges connectors after the built-in `hezo`
 MCP, and each of the five runtime adapters translates the descriptors into the spawn
 artifacts its CLI expects (Claude Code `--mcp-config`, Codex `config.toml`, Gemini

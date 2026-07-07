@@ -10,6 +10,10 @@ export interface McpConnection {
 	kind: 'saas' | 'local';
 	config: Record<string, unknown>;
 	oauth_connection_id: string | null;
+	/** Vault secret holding a pasted API key, for connectors whose provider
+	 * exposes no OAuth. Set once a key is provided; the descriptor emits a
+	 * placeholder for it. */
+	api_key_secret_id: string | null;
 	/** Owning project, or null for a global ("all projects") connector. */
 	project_id: string | null;
 	install_status: 'pending' | 'installed' | 'failed';
@@ -34,6 +38,9 @@ export function connectorStatus(c: McpConnection): ConnectorStatus {
 	if (c.revoked_at) return 'revoked';
 	if (c.auth_error && !c.activated_at) return 'failed';
 	if (c.oauth_connection_id && c.activated_at) return 'active';
+	// API-key connectors (provider exposes no OAuth) store a pasted key in the
+	// vault and reference it via api_key_secret_id; active once stamped.
+	if (c.api_key_secret_id && c.activated_at) return 'active';
 	// Local (stdio) connectors authenticate via credential placeholders
 	// (__HEZO_SECRET_*__ — e.g. a username/password login that fetches a token),
 	// not OAuth. There is no oauth_connection_id/activated_at handshake to
@@ -58,6 +65,42 @@ export function useMcpConnection(projectId: string, connectorId: string | undefi
 			if (!data) return 10_000;
 			const status = connectorStatus(data);
 			return status === 'pending' || status === 'failed' ? 10_000 : false;
+		},
+	});
+}
+
+export interface SetConnectorApiKeyPayload {
+	value: string;
+	/** Optional header override (default `Authorization`). */
+	header?: string;
+	/** Optional scheme prefix override (default `Bearer `; pass '' for a raw key). */
+	scheme?: string;
+}
+
+/**
+ * Attach a pasted API key to a connector whose provider exposes no OAuth.
+ * Response-driven (security-sensitive) — the connector must never optimistically
+ * appear connected before the server has stored the key.
+ */
+export function useSetConnectorApiKey(projectId: string) {
+	return useMutation({
+		mutationFn: ({
+			connectorId,
+			payload,
+		}: {
+			connectorId: string;
+			payload: SetConnectorApiKeyPayload;
+		}) =>
+			api.post<McpConnection>(
+				`/api/projects/${projectId}/mcp-connections/${connectorId}/api-key`,
+				payload,
+			),
+		onSuccess: (updated) => {
+			queryClient.setQueryData<McpConnection>(
+				queryKeys.projects.mcpConnectionDetail(projectId, updated.id),
+				updated,
+			);
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.mcpConnections(projectId) });
 		},
 	});
 }

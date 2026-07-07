@@ -23,6 +23,17 @@ proxy](/docs/security/secret-protection) at request time and the real value neve
 in the connection config. For servers that authenticate with OAuth, connect the account
 once and Hezo attaches and refreshes the token for you.
 
+### Servers that use an API key
+
+Some hosted MCP servers don't offer OAuth at all — they authenticate with a plain API
+key. When an agent registers one (or you add it yourself), its **Connect required** card
+in the task and the project's **Connectors** page show a **Use API key** option next to
+**Connect**. Paste the key there: Hezo stores it encrypted in your vault, scoped so it's
+only ever sent to that server's host, and each agent run receives a **placeholder** — the
+real key is never visible to the agent. By default the key is sent as an `Authorization:
+Bearer <key>` header; open **Advanced** to change the header name or drop the scheme for
+servers that expect something else (for example `X-API-Key: <key>`).
+
 ### OAuth connections need an HTTPS address
 
 For servers that authenticate with OAuth, completing the connection sends your browser

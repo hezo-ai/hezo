@@ -1,6 +1,6 @@
 import { McpConnectionKind, type McpInstallStatus } from '@hezo/shared';
-import type { MasterKeyManager } from '../crypto/master-key';
 import type { Db } from '../db/database';
+import { credentialPlaceholder } from '../lib/credential-placeholder';
 import { logger } from '../logger';
 import type { McpDescriptor } from './mcp-injectors';
 
@@ -21,6 +21,17 @@ export interface SaasMcpConfig {
 		token_endpoint: string;
 		scopes_supported?: string[];
 	};
+	/**
+	 * API-key auth shape for connectors authenticated by a pasted key
+	 * (`api_key_secret_id` set), used when the provider exposes no OAuth. Names
+	 * the header the placeholder rides in and the scheme prefix. Both optional;
+	 * default to `Authorization` / `Bearer ` (covers most MCP servers). The
+	 * value is ALWAYS a `__HEZO_SECRET_*__` placeholder — never the raw key.
+	 */
+	apiKey?: {
+		header?: string;
+		scheme?: string;
+	};
 }
 
 export interface LocalMcpConfig {
@@ -38,6 +49,7 @@ export interface McpConnectionRow {
 	kind: McpConnectionKind;
 	config: McpConnectionConfig;
 	oauth_connection_id: string | null;
+	api_key_secret_id: string | null;
 	install_status: McpInstallStatus;
 	install_error: string | null;
 	created_at: string;
@@ -56,21 +68,24 @@ export async function loadMcpConnectionsForRun(
 	projectId?: string | null,
 ): Promise<McpConnectionRow[]> {
 	// Filters: skip revoked (user disconnected); skip saas rows that are known
-	// to want OAuth but haven't completed it (no oauth_connection_id and any of:
-	// agent-requested via the connector flow, discovery already persisted
-	// config.dcr, or an OAuth attempt recorded auth_error) — injecting those
-	// would just 401 on every run. Operator-created rows that never attempted
-	// OAuth carry none of these markers and continue to be included regardless
-	// (existing behavior for public / header-authenticated MCPs).
+	// to want auth but haven't completed it — no oauth_connection_id AND no
+	// api_key_secret_id, plus any of: agent-requested via the connector flow,
+	// discovery already persisted config.dcr, or an auth attempt recorded
+	// auth_error. Injecting those would just 401 on every run. A connector that
+	// HAS completed auth (either an OAuth connection or a pasted API key) is
+	// always included. Operator-created rows that never attempted auth carry none
+	// of these markers and continue to be included regardless (existing behavior
+	// for public / header-authenticated MCPs).
 	const scopeClause = projectId != null ? `AND (project_id = $1 OR project_id IS NULL)` : '';
 	const params = projectId != null ? [projectId] : [];
 	const result = await db.query<McpConnectionRow>(
 		`SELECT id, name, kind::text AS kind,
-		        config, oauth_connection_id, install_status::text AS install_status, install_error,
+		        config, oauth_connection_id, api_key_secret_id,
+		        install_status::text AS install_status, install_error,
 		        created_at::text, updated_at::text
 		 FROM mcp_connections
 		 WHERE revoked_at IS NULL
-		   AND NOT (kind = 'saas' AND oauth_connection_id IS NULL
+		   AND NOT (kind = 'saas' AND oauth_connection_id IS NULL AND api_key_secret_id IS NULL
 		            AND (created_by_task_id IS NOT NULL
 		                 OR config ? 'dcr'
 		                 OR auth_error IS NOT NULL))
@@ -85,70 +100,59 @@ export async function loadMcpConnectionsForRun(
 }
 
 /**
- * Build a lookup map oauthConnectionId → {secretName, decryptedAccessToken}.
- * We materialize the token at descriptor-build time and emit it directly in
- * the MCP descriptor's Authorization header rather than relying on an
- * egress-proxy placeholder substitution: Claude Code (and similar adapters)
- * make their MCP-startup HTTP calls through an `undici` client whose
- * `EnvHttpProxyAgent` activation we can't always guarantee in CI/container
- * environments. The AI-adapter API key follows the same materialize-at-launch
- * carve-out (see services/agent-runner.ts:buildProviderEnv); the run-scoped
- * container is ephemeral, the vault remains the long-term store, and each
- * run materializes a fresh value (so revocation still cascades on next run).
+ * Resolve the vault secret NAME behind each connector's auth so the descriptor
+ * can emit an `__HEZO_SECRET_<NAME>__` placeholder for it.
+ *
+ * RED LINE (AGENTS.md § Security): we deliberately NEVER decrypt here. Plaintext
+ * confidential data must never enter an agent run — not its `--mcp-config`, its
+ * config files, or its env. The descriptor carries only the placeholder; the
+ * egress proxy substitutes the real value at request time, scoped by the
+ * secret's `allowed_hosts` (auto-locked to the MCP host on connect). A call that
+ * somehow bypasses the proxy just carries the unsubstituted placeholder and
+ * fails upstream — a usability failure, never a leak. Because we resolve names
+ * only, descriptors build fine even while the master key is locked.
+ *
+ * Returns two maps: OAuth-connection id → secret name, and secret id → secret
+ * name (for API-key connectors that reference a `secrets` row directly).
  */
-async function loadAllOAuthSecrets(
-	db: Db,
-	masterKeyManager: MasterKeyManager,
-): Promise<Map<string, { secretName: string; accessToken: string | null }>> {
-	const out = new Map<string, { secretName: string; accessToken: string | null }>();
-	const key = masterKeyManager.getKey();
-	const result = await db.query<{
-		connection_id: string;
-		secret_name: string;
-		encrypted_value: string;
-	}>(
-		`SELECT oc.id AS connection_id, s.name AS secret_name, s.encrypted_value
+async function loadConnectorSecretNames(db: Db): Promise<{
+	byOauthConnectionId: Map<string, string>;
+	bySecretId: Map<string, string>;
+}> {
+	const byOauthConnectionId = new Map<string, string>();
+	const oauth = await db.query<{ connection_id: string; secret_name: string }>(
+		`SELECT oc.id AS connection_id, s.name AS secret_name
 		 FROM oauth_connections oc
 		 JOIN secrets s ON s.id = oc.access_token_secret_id`,
 	);
-	if (!key) {
-		// Master key locked: log per-row and emit no token. Caller falls through
-		// to placeholder mode (which is also broken in this state, but at least
-		// the descriptor is still built so the failure mode is "401 from upstream"
-		// rather than "MCP missing from config entirely").
-		for (const row of result.rows) {
-			out.set(row.connection_id, { secretName: row.secret_name, accessToken: null });
-		}
-		return out;
-	}
-	const { decrypt } = await import('../crypto/encryption');
-	for (const row of result.rows) {
-		let accessToken: string | null = null;
-		try {
-			accessToken = decrypt(row.encrypted_value, key);
-		} catch (e) {
-			log.warn('could not decrypt oauth access token; descriptor will use placeholder', {
-				connection_id: row.connection_id,
-				error: (e as Error).message,
-			});
-		}
-		out.set(row.connection_id, { secretName: row.secret_name, accessToken });
-	}
-	return out;
+	for (const row of oauth.rows) byOauthConnectionId.set(row.connection_id, row.secret_name);
+
+	const bySecretId = new Map<string, string>();
+	const apiKeys = await db.query<{ id: string; name: string }>(
+		`SELECT s.id, s.name
+		 FROM secrets s
+		 JOIN mcp_connections mc ON mc.api_key_secret_id = s.id`,
+	);
+	for (const row of apiKeys.rows) bySecretId.set(row.id, row.name);
+
+	return { byOauthConnectionId, bySecretId };
 }
 
 /**
  * Map persisted connection rows into runtime descriptors. Local MCPs whose
  * install hasn't completed are skipped with a warning so the agent run still
  * proceeds — caller can call the installer separately to (re)try.
+ *
+ * Connector auth is emitted as a `__HEZO_SECRET_*__` placeholder, never the raw
+ * value (see {@link loadConnectorSecretNames} and the AGENTS.md red line). No
+ * master key is needed at build time.
  */
 export async function loadMcpConnectionDescriptors(
 	db: Db,
-	masterKeyManager: MasterKeyManager,
 	projectId?: string | null,
 ): Promise<McpDescriptor[]> {
 	const rows = await loadMcpConnectionsForRun(db, projectId);
-	const oauthSecrets = await loadAllOAuthSecrets(db, masterKeyManager);
+	const secretNames = await loadConnectorSecretNames(db);
 	const descriptors: McpDescriptor[] = [];
 	for (const row of rows) {
 		if (row.kind === McpConnectionKind.Saas) {
@@ -170,28 +174,49 @@ export async function loadMcpConnectionDescriptors(
 				continue;
 			}
 			if (row.oauth_connection_id) {
-				const entry = oauthSecrets.get(row.oauth_connection_id);
-				if (entry && entry.accessToken) {
-					headers = stripExistingAuth(headers);
-					headers.Authorization = `Bearer ${entry.accessToken}`;
-					log.debug('mcp descriptor built with materialized oauth token', {
+				const secretName = secretNames.byOauthConnectionId.get(row.oauth_connection_id);
+				if (secretName) {
+					headers = stripHeader(headers, 'Authorization');
+					headers.Authorization = `Bearer ${credentialPlaceholder(secretName)}`;
+					log.debug('mcp descriptor built with oauth placeholder', {
 						name: row.name,
 						url: config.url,
 						host,
-						secret_name: entry.secretName,
-						token_prefix: entry.accessToken.slice(0, 8),
-						token_length: entry.accessToken.length,
+						secret_name: secretName,
 					});
 				} else {
 					log.warn('mcp connection references missing oauth secret; skipping', {
 						id: row.id,
 						oauth_connection_id: row.oauth_connection_id,
-						secret_name: entry?.secretName,
+					});
+					continue;
+				}
+			} else if (row.api_key_secret_id) {
+				const secretName = secretNames.bySecretId.get(row.api_key_secret_id);
+				if (secretName) {
+					const headerName =
+						config.apiKey?.header && config.apiKey.header.trim().length > 0
+							? config.apiKey.header.trim()
+							: 'Authorization';
+					const scheme = config.apiKey?.scheme ?? 'Bearer ';
+					headers = stripHeader(headers, headerName);
+					headers[headerName] = `${scheme}${credentialPlaceholder(secretName)}`;
+					log.debug('mcp descriptor built with api-key placeholder', {
+						name: row.name,
+						url: config.url,
+						host,
+						header: headerName,
+						secret_name: secretName,
+					});
+				} else {
+					log.warn('mcp connection references missing api-key secret; skipping', {
+						id: row.id,
+						api_key_secret_id: row.api_key_secret_id,
 					});
 					continue;
 				}
 			} else {
-				log.debug('mcp descriptor built without oauth (no oauth_connection_id)', {
+				log.debug('mcp descriptor built without connector-managed auth', {
 					name: row.name,
 					url: config.url,
 					host,
@@ -229,10 +254,12 @@ export async function loadMcpConnectionDescriptors(
 	return descriptors;
 }
 
-function stripExistingAuth(headers: Record<string, string>): Record<string, string> {
+/** Drop any case-variant of `name` from a header map (so we can set it cleanly). */
+function stripHeader(headers: Record<string, string>, name: string): Record<string, string> {
+	const lower = name.toLowerCase();
 	const out: Record<string, string> = {};
 	for (const [k, v] of Object.entries(headers)) {
-		if (k.toLowerCase() !== 'authorization') out[k] = v;
+		if (k.toLowerCase() !== lower) out[k] = v;
 	}
 	return out;
 }
