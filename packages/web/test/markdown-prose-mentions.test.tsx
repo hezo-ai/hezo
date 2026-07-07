@@ -1,5 +1,5 @@
 // Coverage for components/markdown-prose.tsx mention-link rendering branches the
-// existing comment / ceo-chat specs don't reach: the KB-doc (skill) mention link,
+// existing comment / chat specs don't reach: the KB-doc (skill) mention link,
 // the @admin inbox mention, the passive @@agent mention attribute + bare-slug
 // label, and the plain external-link fallback. Driven through the real task-
 // comment surface so the resolve hooks populate the mention maps against the real

@@ -2,9 +2,9 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
 	AuthType,
-	CeoMessageRole,
-	CeoMessageStatus,
-	CeoSessionStatus,
+	ChatMessageRole,
+	ChatMessageStatus,
+	ChatSessionStatus,
 	DEFAULT_TEAM_ID,
 	WsMessageType,
 	wsRoom,
@@ -12,12 +12,12 @@ import {
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
 import { encrypt } from '../src/crypto/encryption';
 import { setMaxChatHistorySize } from '../src/lib/system-meta';
+import { getChatMemory, upsertChatMemory } from '../src/services/chat-memory';
 import {
 	buildCompactionPrompt,
-	CeoSessionManager,
+	ChatSessionManager,
 	formatLongTermMemoryBlock,
-} from '../src/services/ceo-session-manager';
-import { getChatMemory, upsertChatMemory } from '../src/services/chat-memory';
+} from '../src/services/chat-session-manager';
 import {
 	ContainerConnectivityStatus,
 	type ProbeResult,
@@ -157,7 +157,7 @@ function makeManager(
 	const wsManager = new WebSocketManager();
 	const logs = new LogStreamBroker();
 	logs.setWsManager(wsManager);
-	const manager = new CeoSessionManager({
+	const manager = new ChatSessionManager({
 		db: ctx.db,
 		docker,
 		masterKeyManager: ctx.masterKeyManager,
@@ -176,7 +176,7 @@ function captureCeoRoom(wsManager: WebSocketManager): Array<Record<string, unkno
 		data: { auth: { type: AuthType.Admin, isSuperuser: true }, rooms: new Set() },
 		send: (msg: string) => events.push(JSON.parse(msg)),
 	};
-	wsManager.subscribe(socket, wsRoom.ceo());
+	wsManager.subscribe(socket, wsRoom.chat());
 	return events;
 }
 
@@ -198,11 +198,11 @@ async function seedWindow(
 ): Promise<string[]> {
 	const ids: string[] = [];
 	for (let i = 0; i < count; i++) {
-		const role = i % 2 === 0 ? CeoMessageRole.User : CeoMessageRole.Assistant;
+		const role = i % 2 === 0 ? ChatMessageRole.User : ChatMessageRole.Assistant;
 		const content = `window message ${i} ${'x'.repeat(bytesEach)}`;
 		const r = await ctx.db.query<{ id: string }>(
-			`INSERT INTO ceo_messages (conversation_id, role, channel, status, content, created_at, completed_at)
-			 VALUES ($1, $2::ceo_message_role, 'web'::ceo_channel, 'complete'::ceo_message_status, $3,
+			`INSERT INTO chat_messages (conversation_id, role, channel, status, content, created_at, completed_at)
+			 VALUES ($1, $2::chat_message_role, 'web'::chat_channel, 'complete'::chat_message_status, $3,
 			         now() - interval '1 hour' + ($4 || ' minutes')::interval, now())
 			 RETURNING id`,
 			[conversationId, role, content, String(i)],
@@ -215,10 +215,10 @@ async function seedWindow(
 async function waitComplete(ctx: ServerTestContext, messageId: string): Promise<void> {
 	await poll(async () => {
 		const r = await ctx.db.query<{ status: string }>(
-			'SELECT status FROM ceo_messages WHERE id = $1',
+			'SELECT status FROM chat_messages WHERE id = $1',
 			[messageId],
 		);
-		return r.rows[0]?.status === CeoMessageStatus.Complete;
+		return r.rows[0]?.status === ChatMessageStatus.Complete;
 	});
 }
 
@@ -248,7 +248,7 @@ describe('buildCompactionPrompt', () => {
 	});
 });
 
-describe('CeoSessionManager — window compaction', () => {
+describe('ChatSessionManager — window compaction', () => {
 	let ctx: ServerTestContext;
 	let projectId: string;
 
@@ -260,9 +260,9 @@ describe('CeoSessionManager — window compaction', () => {
 	});
 	beforeEach(async () => {
 		await ctx.db.query('DELETE FROM chat_memories');
-		await ctx.db.query('DELETE FROM ceo_messages');
-		await ctx.db.query('DELETE FROM ceo_sessions');
-		await ctx.db.query('DELETE FROM ceo_conversations');
+		await ctx.db.query('DELETE FROM chat_messages');
+		await ctx.db.query('DELETE FROM chat_sessions');
+		await ctx.db.query('DELETE FROM chat_conversations');
 		await ctx.db.query('DELETE FROM ai_provider_configs');
 		await ctx.db.query('DELETE FROM system_meta WHERE key = $1', ['max_chat_history_size']);
 		projectId = await seedProviderAndContainer(ctx);
@@ -293,7 +293,7 @@ describe('CeoSessionManager — window compaction', () => {
 		// Compaction runs in the background after the reply settles.
 		await poll(async () => {
 			const r = await ctx.db.query<{ n: number }>(
-				'SELECT COUNT(*)::int AS n FROM ceo_messages WHERE compacted_at IS NOT NULL',
+				'SELECT COUNT(*)::int AS n FROM chat_messages WHERE compacted_at IS NOT NULL',
 			);
 			return r.rows[0].n > 0;
 		});
@@ -301,11 +301,11 @@ describe('CeoSessionManager — window compaction', () => {
 		// Window at compaction time = 10 seeded + user + assistant = 12; retain 6 →
 		// the 6 oldest (all seeded) are evicted, the tail stays active.
 		const compacted = await ctx.db.query<{ id: string }>(
-			'SELECT id FROM ceo_messages WHERE compacted_at IS NOT NULL',
+			'SELECT id FROM chat_messages WHERE compacted_at IS NOT NULL',
 		);
 		expect(compacted.rows.map((r) => r.id).sort()).toEqual(seeded.slice(0, 6).sort());
 		const active = await ctx.db.query<{ n: number }>(
-			`SELECT COUNT(*)::int AS n FROM ceo_messages WHERE compacted_at IS NULL AND status = 'complete'`,
+			`SELECT COUNT(*)::int AS n FROM chat_messages WHERE compacted_at IS NULL AND status = 'complete'`,
 		);
 		expect(active.rows[0].n).toBe(6);
 
@@ -320,7 +320,7 @@ describe('CeoSessionManager — window compaction', () => {
 		expect(memory?.content).toBe('Summary: operator prefers terse replies.');
 		expect(
 			events.some(
-				(e) => e.type === WsMessageType.CeoCompacted && e.conversationId === conversationId,
+				(e) => e.type === WsMessageType.ChatCompacted && e.conversationId === conversationId,
 			),
 		).toBe(true);
 
@@ -331,7 +331,7 @@ describe('CeoSessionManager — window compaction', () => {
 		// NOTE: this exercises the gate's reachable arm — no chat_memories row at all
 		// (`after === null`). The other arm (pre-existing memory whose updated_at did
 		// not change) is currently broken in src: PGlite returns `updated_at` as a Date
-		// object, so `after.updated_at !== before` at ceo-session-manager.ts:731
+		// object, so `after.updated_at !== before` at chat-session-manager.ts:731
 		// compares object identity and is ALWAYS true — a no-op compaction run still
 		// evicts when memory pre-exists. Reported upstream; not fixed here.
 		await setMaxChatHistorySize(ctx.db, 8 * 1024);
@@ -353,11 +353,11 @@ describe('CeoSessionManager — window compaction', () => {
 		// Nothing evicted, no memory row appeared, no compaction broadcast. (The
 		// manager logs a warn for this — that skipped arm is the behavior under test.)
 		const compacted = await ctx.db.query<{ n: number }>(
-			'SELECT COUNT(*)::int AS n FROM ceo_messages WHERE compacted_at IS NOT NULL',
+			'SELECT COUNT(*)::int AS n FROM chat_messages WHERE compacted_at IS NOT NULL',
 		);
 		expect(compacted.rows[0].n).toBe(0);
 		expect(await getChatMemory(ctx.db, ceoId)).toBeNull();
-		expect(events.some((e) => e.type === WsMessageType.CeoCompacted)).toBe(false);
+		expect(events.some((e) => e.type === WsMessageType.ChatCompacted)).toBe(false);
 		// The empty-memory placeholder went into the compaction prompt.
 		expect(chat.compactionPrompts[0]).toContain('_(empty)_');
 
@@ -384,7 +384,7 @@ describe('CeoSessionManager — window compaction', () => {
 		);
 
 		const compacted = await ctx.db.query<{ n: number }>(
-			'SELECT COUNT(*)::int AS n FROM ceo_messages WHERE compacted_at IS NOT NULL',
+			'SELECT COUNT(*)::int AS n FROM chat_messages WHERE compacted_at IS NOT NULL',
 		);
 		expect(compacted.rows[0].n).toBe(0);
 
@@ -412,7 +412,7 @@ describe('CeoSessionManager — window compaction', () => {
 
 		// The aborted compaction evicted nothing and wrote no memory.
 		const compacted = await ctx.db.query<{ n: number }>(
-			'SELECT COUNT(*)::int AS n FROM ceo_messages WHERE compacted_at IS NOT NULL',
+			'SELECT COUNT(*)::int AS n FROM chat_messages WHERE compacted_at IS NOT NULL',
 		);
 		expect(compacted.rows[0].n).toBe(0);
 		const memory = await ctx.db.query<{ n: number }>(
@@ -439,14 +439,14 @@ describe('CeoSessionManager — window compaction', () => {
 		);
 		expect(chat.flags.compactionEntered).toBe(false);
 		const compacted = await ctx.db.query<{ n: number }>(
-			'SELECT COUNT(*)::int AS n FROM ceo_messages WHERE compacted_at IS NOT NULL',
+			'SELECT COUNT(*)::int AS n FROM chat_messages WHERE compacted_at IS NOT NULL',
 		);
 		expect(compacted.rows[0].n).toBe(0);
 		await manager.stop();
 	});
 });
 
-describe('CeoSessionManager — warm resources (ssh bridge + egress) and lifecycle', () => {
+describe('ChatSessionManager — warm resources (ssh bridge + egress) and lifecycle', () => {
 	let ctx: ServerTestContext;
 	let projectId: string;
 
@@ -458,9 +458,9 @@ describe('CeoSessionManager — warm resources (ssh bridge + egress) and lifecyc
 	});
 	beforeEach(async () => {
 		await ctx.db.query('DELETE FROM chat_memories');
-		await ctx.db.query('DELETE FROM ceo_messages');
-		await ctx.db.query('DELETE FROM ceo_sessions');
-		await ctx.db.query('DELETE FROM ceo_conversations');
+		await ctx.db.query('DELETE FROM chat_messages');
+		await ctx.db.query('DELETE FROM chat_sessions');
+		await ctx.db.query('DELETE FROM chat_conversations');
 		await ctx.db.query('DELETE FROM ai_provider_configs');
 		projectId = await seedProviderAndContainer(ctx);
 	});
@@ -512,10 +512,10 @@ describe('CeoSessionManager — warm resources (ssh bridge + egress) and lifecyc
 		await waitComplete(ctx, assistantMessageId);
 
 		const session = await ctx.db.query<{ id: string; status: string }>(
-			'SELECT id, status FROM ceo_sessions ORDER BY started_at DESC LIMIT 1',
+			'SELECT id, status FROM chat_sessions ORDER BY started_at DESC LIMIT 1',
 		);
 		const sessionId = session.rows[0].id;
-		expect(session.rows[0].status).toBe(CeoSessionStatus.Running);
+		expect(session.rows[0].status).toBe(ChatSessionStatus.Running);
 		expect(ssh.calls.allocated).toEqual([sessionId]);
 		expect(egress.calls.allocated).toEqual([sessionId]);
 
@@ -536,10 +536,10 @@ describe('CeoSessionManager — warm resources (ssh bridge + egress) and lifecyc
 		expect(ssh.calls.released).toEqual([sessionId]);
 		expect(egress.calls.released).toEqual([sessionId]);
 		const stopped = await ctx.db.query<{ status: string }>(
-			'SELECT status FROM ceo_sessions WHERE id = $1',
+			'SELECT status FROM chat_sessions WHERE id = $1',
 			[sessionId],
 		);
-		expect(stopped.rows[0].status).toBe(CeoSessionStatus.Stopped);
+		expect(stopped.rows[0].status).toBe(ChatSessionStatus.Stopped);
 	});
 
 	test('a failed session start releases the already-allocated ssh bridge', async () => {
@@ -570,9 +570,9 @@ describe('CeoSessionManager — warm resources (ssh bridge + egress) and lifecyc
 		expect(ssh.calls.released).toEqual(ssh.calls.allocated);
 		expect(egress.calls.allocated.length).toBe(0);
 		const session = await ctx.db.query<{ status: string; error: string }>(
-			'SELECT status, error FROM ceo_sessions ORDER BY started_at DESC LIMIT 1',
+			'SELECT status, error FROM chat_sessions ORDER BY started_at DESC LIMIT 1',
 		);
-		expect(session.rows[0].status).toBe(CeoSessionStatus.Crashed);
+		expect(session.rows[0].status).toBe(ChatSessionStatus.Crashed);
 		expect(session.rows[0].error).toContain('Egress proxy unreachable');
 	});
 
@@ -590,14 +590,14 @@ describe('CeoSessionManager — warm resources (ssh bridge + egress) and lifecyc
 		await manager.stop();
 
 		const row = await ctx.db.query<{ status: string; content: string }>(
-			'SELECT status, content FROM ceo_messages WHERE id = $1',
+			'SELECT status, content FROM chat_messages WHERE id = $1',
 			[assistantMessageId],
 		);
-		expect(row.rows[0].status).toBe(CeoMessageStatus.Interrupted);
+		expect(row.rows[0].status).toBe(ChatMessageStatus.Interrupted);
 		expect(row.rows[0].content).toBe('partial ');
 		const live = await ctx.db.query<{ n: number }>(
-			`SELECT COUNT(*)::int AS n FROM ceo_sessions WHERE status IN ($1, $2)`,
-			[CeoSessionStatus.Starting, CeoSessionStatus.Running],
+			`SELECT COUNT(*)::int AS n FROM chat_sessions WHERE status IN ($1, $2)`,
+			[ChatSessionStatus.Starting, ChatSessionStatus.Running],
 		);
 		expect(live.rows[0].n).toBe(0);
 	});
@@ -619,10 +619,10 @@ describe('CeoSessionManager — warm resources (ssh bridge + egress) and lifecyc
 		await waitComplete(ctx, second.assistantMessageId);
 
 		const firstRow = await ctx.db.query<{ status: string; content: string }>(
-			'SELECT status, content FROM ceo_messages WHERE id = $1',
+			'SELECT status, content FROM chat_messages WHERE id = $1',
 			[first.assistantMessageId],
 		);
-		expect(firstRow.rows[0].status).toBe(CeoMessageStatus.Interrupted);
+		expect(firstRow.rows[0].status).toBe(ChatMessageStatus.Interrupted);
 		expect(firstRow.rows[0].content).toBe('thinking…');
 		// Both operator messages are in the next turn's prompt (the interrupted
 		// partial itself is not — loadActiveWindow replays complete messages only).
@@ -641,18 +641,18 @@ describe('CeoSessionManager — warm resources (ssh bridge + egress) and lifecyc
 		await manager.restart();
 
 		const row = await ctx.db.query<{ status: string }>(
-			'SELECT status FROM ceo_messages WHERE id = $1',
+			'SELECT status FROM chat_messages WHERE id = $1',
 			[assistantMessageId],
 		);
-		expect(row.rows[0].status).toBe(CeoMessageStatus.Interrupted);
+		expect(row.rows[0].status).toBe(ChatMessageStatus.Interrupted);
 		const live = await ctx.db.query<{ n: number }>(
-			`SELECT COUNT(*)::int AS n FROM ceo_sessions WHERE status IN ($1, $2)`,
-			[CeoSessionStatus.Starting, CeoSessionStatus.Running],
+			`SELECT COUNT(*)::int AS n FROM chat_sessions WHERE status IN ($1, $2)`,
+			[ChatSessionStatus.Starting, ChatSessionStatus.Running],
 		);
 		expect(live.rows[0].n).toBe(0);
 		const stopped = await ctx.db.query<{ n: number }>(
-			`SELECT COUNT(*)::int AS n FROM ceo_sessions WHERE status = $1`,
-			[CeoSessionStatus.Stopped],
+			`SELECT COUNT(*)::int AS n FROM chat_sessions WHERE status = $1`,
+			[ChatSessionStatus.Stopped],
 		);
 		expect(stopped.rows[0].n).toBe(1);
 
@@ -700,7 +700,7 @@ describe('CeoSessionManager — warm resources (ssh bridge + egress) and lifecyc
 			vi.useRealTimers();
 		}
 		// No session rows were ever created by the idle health tick.
-		const rows = await ctx.db.query<{ n: number }>('SELECT COUNT(*)::int AS n FROM ceo_sessions');
+		const rows = await ctx.db.query<{ n: number }>('SELECT COUNT(*)::int AS n FROM chat_sessions');
 		expect(rows.rows[0].n).toBe(0);
 	});
 
@@ -718,8 +718,8 @@ describe('CeoSessionManager — warm resources (ssh bridge + egress) and lifecyc
 		await (manager as unknown as { checkHealth(): Promise<void> }).checkHealth();
 
 		const live = await ctx.db.query<{ n: number }>(
-			`SELECT COUNT(*)::int AS n FROM ceo_sessions WHERE status IN ($1, $2)`,
-			[CeoSessionStatus.Starting, CeoSessionStatus.Running],
+			`SELECT COUNT(*)::int AS n FROM chat_sessions WHERE status IN ($1, $2)`,
+			[ChatSessionStatus.Starting, ChatSessionStatus.Running],
 		);
 		expect(live.rows[0].n).toBe(0);
 		await manager.stop();
@@ -728,7 +728,7 @@ describe('CeoSessionManager — warm resources (ssh bridge + egress) and lifecyc
 	test('reconcileOnStartup crashes orphaned sessions and settles orphaned messages', async () => {
 		const ceoId = await ceoMemberId(ctx);
 		await ctx.db.query(
-			`INSERT INTO ceo_sessions (member_id, team_id, project_id, runtime_type, status)
+			`INSERT INTO chat_sessions (member_id, team_id, project_id, runtime_type, status)
 			 VALUES ($1, $2, $3, 'claude_code', 'starting')`,
 			[ceoId, DEFAULT_TEAM_ID, projectId],
 		);
@@ -736,12 +736,12 @@ describe('CeoSessionManager — warm resources (ssh bridge + egress) and lifecyc
 		const { manager } = makeManager(ctx, chat.docker);
 		const conversationId = await manager.getConversationId();
 		const empty = await ctx.db.query<{ id: string }>(
-			`INSERT INTO ceo_messages (conversation_id, role, channel, status, content)
+			`INSERT INTO chat_messages (conversation_id, role, channel, status, content)
 			 VALUES ($1, 'assistant', 'web', 'streaming', '') RETURNING id`,
 			[conversationId],
 		);
 		const partial = await ctx.db.query<{ id: string }>(
-			`INSERT INTO ceo_messages (conversation_id, role, channel, status, content)
+			`INSERT INTO chat_messages (conversation_id, role, channel, status, content)
 			 VALUES ($1, 'assistant', 'web', 'pending', 'half a reply') RETURNING id`,
 			[conversationId],
 		);
@@ -749,16 +749,18 @@ describe('CeoSessionManager — warm resources (ssh bridge + egress) and lifecyc
 		await manager.reconcileOnStartup();
 
 		const session = await ctx.db.query<{ status: string }>(
-			'SELECT status FROM ceo_sessions LIMIT 1',
+			'SELECT status FROM chat_sessions LIMIT 1',
 		);
-		expect(session.rows[0].status).toBe(CeoSessionStatus.Crashed);
-		const gone = await ctx.db.query('SELECT 1 FROM ceo_messages WHERE id = $1', [empty.rows[0].id]);
+		expect(session.rows[0].status).toBe(ChatSessionStatus.Crashed);
+		const gone = await ctx.db.query('SELECT 1 FROM chat_messages WHERE id = $1', [
+			empty.rows[0].id,
+		]);
 		expect(gone.rows.length).toBe(0);
 		const kept = await ctx.db.query<{ status: string }>(
-			'SELECT status FROM ceo_messages WHERE id = $1',
+			'SELECT status FROM chat_messages WHERE id = $1',
 			[partial.rows[0].id],
 		);
-		expect(kept.rows[0].status).toBe(CeoMessageStatus.Interrupted);
+		expect(kept.rows[0].status).toBe(ChatMessageStatus.Interrupted);
 	});
 
 	test('a member model override picks the provider without runtime resolution', async () => {
@@ -772,7 +774,7 @@ describe('CeoSessionManager — warm resources (ssh bridge + egress) and lifecyc
 			const { assistantMessageId } = await manager.sendTurn({ text: 'hi' });
 			await waitComplete(ctx, assistantMessageId);
 			const session = await ctx.db.query<{ runtime_type: string }>(
-				'SELECT runtime_type FROM ceo_sessions ORDER BY started_at DESC LIMIT 1',
+				'SELECT runtime_type FROM chat_sessions ORDER BY started_at DESC LIMIT 1',
 			);
 			expect(session.rows[0].runtime_type).toBe('claude_code');
 			// The override model is passed through to the runtime CLI invocation.
@@ -797,13 +799,13 @@ describe('CeoSessionManager — warm resources (ssh bridge + egress) and lifecyc
 		// The failure is logged (asserted error path) and lands on the message row.
 		await poll(async () => {
 			const r = await ctx.db.query<{ status: string }>(
-				'SELECT status FROM ceo_messages WHERE id = $1',
+				'SELECT status FROM chat_messages WHERE id = $1',
 				[assistantMessageId],
 			);
-			return r.rows[0]?.status === CeoMessageStatus.Failed;
+			return r.rows[0]?.status === ChatMessageStatus.Failed;
 		});
 		const row = await ctx.db.query<{ error: string }>(
-			'SELECT error FROM ceo_messages WHERE id = $1',
+			'SELECT error FROM chat_messages WHERE id = $1',
 			[assistantMessageId],
 		);
 		expect(row.rows[0].error).toContain('turn exec blew up');
@@ -815,7 +817,7 @@ describe('CeoSessionManager — warm resources (ssh bridge + egress) and lifecyc
 		const { manager } = makeManager(ctx, chat.docker);
 		const conversationId = await manager.getConversationId();
 		await ctx.db.query(
-			`INSERT INTO ceo_messages (conversation_id, role, channel, status, content, completed_at)
+			`INSERT INTO chat_messages (conversation_id, role, channel, status, content, completed_at)
 			 VALUES ($1, 'system', 'web', 'complete', 'maintenance note from the platform', now())`,
 			[conversationId],
 		);

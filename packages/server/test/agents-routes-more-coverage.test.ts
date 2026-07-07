@@ -314,10 +314,11 @@ describe('chat memory', () => {
 		const ceo = await ctx.db.query<{ id: string }>(
 			"SELECT id FROM member_agents WHERE slug = 'ceo' LIMIT 1",
 		);
-		await ctx.db.query(`INSERT INTO ceo_conversations (member_id, team_id) VALUES ($1, $2)`, [
-			ceo.rows[0].id,
-			DEFAULT_TEAM_ID,
-		]);
+		await ctx.db.query(
+			`INSERT INTO chat_conversations (member_id, team_id, project_id)
+			 VALUES ($1, $2, (SELECT id FROM projects WHERE team_id = $2 AND is_internal = true))`,
+			[ceo.rows[0].id, DEFAULT_TEAM_ID],
+		);
 
 		// No memory yet — empty content, null updated_at.
 		const empty = await ctx.app.request(`/api/projects/${projectSlug}/agents/ceo/chat-memory`, {

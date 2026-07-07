@@ -23,7 +23,7 @@ export async function handleWsSubscribe(
 	deps: WsSubscribeDeps,
 ): Promise<void> {
 	// The single global CEO chat room: gated on HQ-team access (superuser or HQ member).
-	if (room === wsRoom.ceo()) {
+	if (room === wsRoom.chat()) {
 		const allowed = await deps.canAccessTeam(ws.data.auth, DEFAULT_TEAM_ID);
 		if (!allowed) return;
 		deps.wsManager.subscribe(ws, room);

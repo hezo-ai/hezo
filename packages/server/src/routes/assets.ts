@@ -139,7 +139,9 @@ export async function storeUploadedAsset(
 	return ok(c, { ...asset, url }, 201);
 }
 
-async function readUploadForm(c: Context<Env>): Promise<{ file: File; folder?: string } | null> {
+export async function readUploadForm(
+	c: Context<Env>,
+): Promise<{ file: File; folder?: string } | null> {
 	let form: Awaited<ReturnType<typeof c.req.parseBody>>;
 	try {
 		form = await c.req.parseBody({ all: false });

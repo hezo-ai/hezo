@@ -76,6 +76,13 @@ single ongoing conversation — pick up where you left off rather than starting 
 thread each time. As the CEO works, its reply **streams back in real time**, so you can
 follow its thinking instead of waiting for a finished block of text.
 
+**Attach files to a message.** Click the paperclip in the composer — or, on desktop, drag
+files straight onto the chat — to send images, PDFs, and other supported files (up to
+10&nbsp;MB each) along with your text. Each file uploads as you add it and appears as a
+removable chip until you send; the message then carries the files as links you and the CEO
+can open. Attachments are saved to the global HQ project's asset library, so they stay
+available after the conversation scrolls on.
+
 Keep working alongside it: **minimize** the chat to the corner button and a badge appears
 there when a CEO reply lands while you're away — the same unread indicator the inbox uses
 — clearing the moment you reopen it. On a phone, the corner button can be **dragged**

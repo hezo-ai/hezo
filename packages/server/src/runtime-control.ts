@@ -30,7 +30,7 @@ export async function shutdownRuntime(result: StartupResult): Promise<void> {
 	if (shuttingDown) return;
 	shuttingDown = true;
 	result.jobManager.shutdown();
-	await result.ceoSessionManager.stop();
+	await result.chatSessionManager.stop();
 	await result.egressProxy.releaseAll();
 	await result.sshAgentServer.releaseAll();
 	await result.assetStore.close();

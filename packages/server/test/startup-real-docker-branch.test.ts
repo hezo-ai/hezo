@@ -36,7 +36,7 @@ describe('startup real-Docker branch (no daemon required)', () => {
 	afterAll(async () => {
 		if (result) {
 			result.jobManager.shutdown();
-			await result.ceoSessionManager.stop();
+			await result.chatSessionManager.stop();
 			await waitForBackground();
 			await result.db.close().catch(() => undefined);
 		}

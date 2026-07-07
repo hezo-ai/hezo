@@ -33,7 +33,7 @@ export const queryKeys = {
 	/** Instance-wide mention resolution (global CEO chat), keyed by sorted candidates. */
 	instanceMentionsResolve: (key: KeyParam) => ['instance', 'mentions', 'resolve', key],
 	/** The single global CEO chat conversation (history + streamed messages). */
-	ceoConversation: () => ['ceo', 'conversation'],
+	chatConversation: () => ['chat', 'conversation'],
 	/** Global full-text search (Cmd/Ctrl+K palette), keyed by query + scope. */
 	search: (q: string, scope: string) => ['search', q, scope],
 

@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
-import { signCeoSessionJwt } from '../src/middleware/auth';
+import { signChatSessionJwt } from '../src/middleware/auth';
 import { safeClose } from './helpers';
 import {
 	authHeader,
@@ -210,11 +210,11 @@ describe('MCP cross-team CEO — instance-wide discovery', () => {
 			[DEFAULT_TEAM_ID],
 		);
 		const session = await db.query<{ id: string }>(
-			`INSERT INTO ceo_sessions (member_id, team_id, project_id, runtime_type, status)
+			`INSERT INTO chat_sessions (member_id, team_id, project_id, runtime_type, status)
 			 VALUES ($1, $2, $3, 'claude_code', 'running') RETURNING id`,
 			[ceo.rows[0].id, DEFAULT_TEAM_ID, hqProject.rows[0].id],
 		);
-		ceoToken = await signCeoSessionJwt(
+		ceoToken = await signChatSessionJwt(
 			masterKeyManager,
 			ceo.rows[0].id,
 			DEFAULT_TEAM_ID,

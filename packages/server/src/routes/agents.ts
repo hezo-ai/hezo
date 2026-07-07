@@ -555,7 +555,7 @@ agentsRoutes.get('/projects/:projectId/agents/:agentId', async (c) => {
 	const result = await db.query(
 		`SELECT ${AGENT_BASE_COLUMNS},
 			(m.team_id <> $2) AS is_instance,
-			EXISTS (SELECT 1 FROM ceo_conversations cc WHERE cc.member_id = m.id) AS chat_enabled,
+			EXISTS (SELECT 1 FROM chat_conversations cc WHERE cc.member_id = m.id) AS chat_enabled,
 			(SELECT ma2.title FROM member_agents ma2 WHERE ma2.id = ma.reports_to) AS reports_to_title,
 			(SELECT count(*) FROM tasks i WHERE i.assignee_id = m.id AND i.status NOT IN (${ts2.placeholders}))::int AS assigned_task_count
 		 FROM members m
@@ -571,7 +571,7 @@ agentsRoutes.get('/projects/:projectId/agents/:agentId', async (c) => {
 // history tab). Only chat-enabled agents — those with a conversation — have one;
 // today that is just the CEO.
 async function isChatEnabledAgent(db: Db, memberId: string): Promise<boolean> {
-	const r = await db.query('SELECT 1 FROM ceo_conversations WHERE member_id = $1 LIMIT 1', [
+	const r = await db.query('SELECT 1 FROM chat_conversations WHERE member_id = $1 LIMIT 1', [
 		memberId,
 	]);
 	return r.rows.length > 0;

@@ -1,9 +1,15 @@
-import { CeoMessageStatus, HQ_PROJECT_NAME } from '@hezo/shared';
+import { assetBasename, ChatMessageStatus, HQ_PROJECT_NAME } from '@hezo/shared';
 import {
 	ArrowRight,
 	Check,
 	Copy,
+	ExternalLink,
+	FileAudio,
+	File as FileIcon,
+	FileText,
+	FileVideo,
 	History,
+	Image as ImageIcon,
 	Loader2,
 	Maximize2,
 	MessageSquare,
@@ -11,11 +17,19 @@ import {
 	X,
 } from 'lucide-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
-import { type CeoMessage, useCeoChat } from '../../hooks/use-ceo-chat';
+import { type ChatMessage, useChat } from '../../hooks/use-chat';
 import { useContainerHealth } from '../../hooks/use-container-health';
 import { useDraggableFab } from '../../hooks/use-draggable-fab';
+import { useFileAttachments } from '../../hooks/use-file-attachments';
 import { useHqProject } from '../../hooks/use-projects';
+import { useUploadChatAttachment } from '../../hooks/use-upload-chat-attachment';
 import { copyToClipboard } from '../../lib/clipboard';
+import {
+	ATTACHMENT_ACCEPT,
+	AttachmentChips,
+	FileDropZone,
+	UploadButton,
+} from '../file-attachments';
 import { HqContainerNotice } from '../hq-container-notice';
 import { MarkdownProse } from '../markdown-prose';
 import { CountOverlayBadge } from '../ui/count-overlay-badge';
@@ -30,25 +44,25 @@ function fitTextareaToContent(el: HTMLTextAreaElement): void {
 /**
  * Floating chat with the CEO, pinned bottom-right (on portrait mobile screens
  * the launcher can be dragged elsewhere). Talks to the single global CEO
- * conversation; messages stream in over the `ceo:global` WebSocket room. Sending a
+ * conversation; messages stream in over the `chat:global` WebSocket room. Sending a
  * new message while a reply is in flight interrupts it (handled server-side) and
  * starts a fresh turn. The CEO is the instance-level singleton living in the HQ
  * team, so every reply is labelled `CEO · HQ`.
  */
-interface CeoChatWidgetProps {
+interface ChatWidgetProps {
 	/** Open state is lifted to the shell so sibling surfaces (the floating
 	 *  new-task button) can react to the chat being open. */
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 }
 
-export function CeoChatWidget({ open, onOpenChange }: CeoChatWidgetProps) {
+export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 	const setOpen = onOpenChange;
 	const [expanded, setExpanded] = useState(false);
 	// Draggable launcher on portrait mobile screens (the panel itself never
 	// moves). Must be called before the `if (!open)` early return below.
-	const fab = useDraggableFab('ceo-chat');
-	const { messages, send, streaming, sending, loaded, unread, compactedCount } = useCeoChat(open);
+	const fab = useDraggableFab('chat');
+	const { messages, send, streaming, sending, loaded, unread, compactedCount } = useChat(open);
 	const hq = useHqProject();
 	const hqHealth = useContainerHealth(hq);
 	// The CEO can only act while the HQ container is up. When it isn't, the chat
@@ -56,6 +70,24 @@ export function CeoChatWidget({ open, onOpenChange }: CeoChatWidgetProps) {
 	const blockedHealth = hqHealth && hqHealth.kind !== 'healthy' ? hqHealth : null;
 	const [draft, setDraft] = useState('');
 	const [copied, setCopied] = useState(false);
+	// Files staged for the next message; the reusable attachment kit owns the
+	// upload lifecycle and resolves ids → metadata (chips).
+	const [pendingAttachmentIds, setPendingAttachmentIds] = useState<string[]>([]);
+	const uploadAttachment = useUploadChatAttachment();
+	const {
+		isDragActive,
+		visibleAttachments,
+		uploading,
+		errors,
+		hasAnyChip,
+		handleFiles,
+		removeAttachment,
+		dropZoneProps,
+	} = useFileAttachments({
+		value: pendingAttachmentIds,
+		onChange: setPendingAttachmentIds,
+		uploadFile: (file) => uploadAttachment.mutateAsync(file),
+	});
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const inputRef = useRef<HTMLTextAreaElement>(null);
 	const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -122,12 +154,22 @@ export function CeoChatWidget({ open, onOpenChange }: CeoChatWidgetProps) {
 
 	const submit = () => {
 		const text = draft.trim();
-		// Block while a send is in flight or a reply is streaming — prevents the
-		// impatient double-click (seeing the optimistic bubble "stuck" during the
-		// egress check) that used to spawn duplicate CEO turns.
-		if (!text || sending || streaming) return;
+		// A message needs text or at least one attachment. Block while a send is in
+		// flight or a reply is streaming — prevents the impatient double-click
+		// (seeing the optimistic bubble "stuck" during the egress check) that used
+		// to spawn duplicate CEO turns. Files still uploading also block the send.
+		if (
+			(!text && visibleAttachments.length === 0) ||
+			uploading.length > 0 ||
+			sending ||
+			streaming
+		) {
+			return;
+		}
+		const attachments = visibleAttachments;
 		setDraft('');
-		send(text).catch(() => undefined);
+		setPendingAttachmentIds([]);
+		send(text, attachments).catch(() => undefined);
 	};
 
 	// Copy the whole conversation as plain text, each turn labelled by speaker.
@@ -153,13 +195,13 @@ export function CeoChatWidget({ open, onOpenChange }: CeoChatWidgetProps) {
 					onClick={() => setOpen(true)}
 					{...fab.handlers}
 					style={fab.style}
-					data-testid="ceo-chat-launcher"
+					data-testid="chat-launcher"
 					aria-label={unread > 0 ? `Chat with the CEO (${unread} unread)` : 'Chat with the CEO'}
 					className="fixed bottom-4 right-4 z-50 flex h-12 w-12 touch-none items-center justify-center rounded-full bg-inverse text-inverse-fg shadow-lg hover:opacity-90"
 				>
 					<MessageSquare className="h-5 w-5" />
 					{/* Unread CEO replies overlay the launcher, mirroring the inbox icon. */}
-					<CountOverlayBadge count={unread} testId="ceo-chat-unread-badge" />
+					<CountOverlayBadge count={unread} testId="chat-unread-badge" />
 				</button>
 			</Tooltip>
 		);
@@ -181,13 +223,13 @@ export function CeoChatWidget({ open, onOpenChange }: CeoChatWidgetProps) {
 				<button
 					type="button"
 					aria-label="Close chat"
-					data-testid="ceo-chat-overlay"
+					data-testid="chat-overlay"
 					onClick={() => setOpen(false)}
 					className="fixed inset-x-0 bottom-0 top-12 z-40 bg-[var(--overlay)] cursor-default"
 				/>
 			)}
 			<div
-				data-testid="ceo-chat-panel"
+				data-testid="chat-panel"
 				data-expanded={expanded}
 				className={`fixed z-50 flex flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-xl ${sizeClass}`}
 			>
@@ -203,7 +245,7 @@ export function CeoChatWidget({ open, onOpenChange }: CeoChatWidgetProps) {
 						    live-region announcement, so this stays aria-hidden to avoid a
 						    duplicate read. */}
 						{streaming && (
-							<span data-testid="ceo-chat-header-dots" className="pl-0.5">
+							<span data-testid="chat-header-dots" className="pl-0.5">
 								<Dots />
 							</span>
 						)}
@@ -216,7 +258,7 @@ export function CeoChatWidget({ open, onOpenChange }: CeoChatWidgetProps) {
 							onClick={copyConversation}
 							disabled={messages.length === 0}
 							aria-label={copied ? 'Conversation copied' : 'Copy conversation'}
-							data-testid="ceo-chat-copy"
+							data-testid="chat-copy"
 							className="flex h-9 w-9 items-center justify-center rounded-md text-text-2 hover:bg-surface-2 hover:text-text-1 disabled:pointer-events-none disabled:opacity-40"
 						>
 							{copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
@@ -227,7 +269,7 @@ export function CeoChatWidget({ open, onOpenChange }: CeoChatWidgetProps) {
 							type="button"
 							onClick={() => setExpanded((v) => !v)}
 							aria-label={expanded ? 'Collapse chat' : 'Expand chat'}
-							data-testid="ceo-chat-expand"
+							data-testid="chat-expand"
 							className="hidden h-9 w-9 items-center justify-center rounded-md text-text-2 hover:bg-surface-2 hover:text-text-1 md:flex"
 						>
 							{expanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
@@ -236,7 +278,7 @@ export function CeoChatWidget({ open, onOpenChange }: CeoChatWidgetProps) {
 							type="button"
 							onClick={() => setOpen(false)}
 							aria-label="Close chat"
-							data-testid="ceo-chat-close"
+							data-testid="chat-close"
 							className="flex h-9 w-9 items-center justify-center rounded-md text-text-2 hover:bg-surface-2 hover:text-text-1"
 						>
 							<X className="h-4 w-4" />
@@ -246,7 +288,7 @@ export function CeoChatWidget({ open, onOpenChange }: CeoChatWidgetProps) {
 
 				{hq && blockedHealth ? (
 					<div
-						data-testid="ceo-chat-messages"
+						data-testid="chat-messages"
 						className="flex flex-1 items-center justify-center overflow-y-auto"
 					>
 						<HqContainerNotice
@@ -256,10 +298,16 @@ export function CeoChatWidget({ open, onOpenChange }: CeoChatWidgetProps) {
 						/>
 					</div>
 				) : (
-					<>
+					<FileDropZone
+						isDragActive={isDragActive}
+						dropZoneProps={dropZoneProps}
+						className="flex flex-1 flex-col overflow-hidden"
+						data-testid="chat-drop"
+						overlayTestId="chat-drop-overlay"
+					>
 						<div
 							ref={scrollRef}
-							data-testid="ceo-chat-messages"
+							data-testid="chat-messages"
 							className="flex flex-1 flex-col gap-4 overflow-y-auto px-4 py-4 scroll-smooth"
 						>
 							{!loaded && (
@@ -276,7 +324,7 @@ export function CeoChatWidget({ open, onOpenChange }: CeoChatWidgetProps) {
 							)}
 							{loaded && compactedCount > 0 && (
 								<div
-									data-testid="ceo-chat-compacted-banner"
+									data-testid="chat-compacted-banner"
 									className="flex items-center gap-2 px-1 pt-1 text-[11px] text-text-3"
 									title="Older messages were summarized into the CEO's long-term memory and removed from the live chat."
 								>
@@ -294,7 +342,26 @@ export function CeoChatWidget({ open, onOpenChange }: CeoChatWidgetProps) {
 						</div>
 
 						<div className="border-t border-border p-3">
-							<div className="flex items-end gap-2 rounded-2xl border border-border bg-surface px-2 py-1.5 transition-colors focus-within:border-border-strong">
+							{hasAnyChip && (
+								<AttachmentChips
+									attachments={visibleAttachments}
+									uploading={uploading}
+									errors={errors}
+									onRemove={removeAttachment}
+									rowTestId="chat-attachment-row"
+									chipTestId="chat-attachment-chip"
+									previewTestId="chat-attachment-preview"
+									errorTestId="chat-attachment-error"
+								/>
+							)}
+							<div className="flex items-end gap-1 rounded-2xl border border-border bg-surface px-1.5 py-1 transition-colors focus-within:border-border-strong">
+								<UploadButton
+									onFiles={handleFiles}
+									accept={ATTACHMENT_ACCEPT}
+									iconOnly
+									label="Attach files"
+									data-testid="chat-attach"
+								/>
 								<textarea
 									ref={inputRef}
 									value={draft}
@@ -307,22 +374,27 @@ export function CeoChatWidget({ open, onOpenChange }: CeoChatWidgetProps) {
 									}}
 									rows={1}
 									placeholder="Ask the CEO anything, across every project…"
-									data-testid="ceo-chat-input"
+									data-testid="chat-input"
 									className="max-h-32 min-h-[2.25rem] flex-1 resize-none overflow-y-auto bg-transparent px-2 py-2 text-[13px] leading-5 text-text-1 outline-none placeholder:text-text-3"
 								/>
 								<button
 									type="button"
 									onClick={submit}
-									disabled={!draft.trim() || sending || streaming}
+									disabled={
+										(!draft.trim() && visibleAttachments.length === 0) ||
+										uploading.length > 0 ||
+										sending ||
+										streaming
+									}
 									aria-label="Send message"
-									data-testid="ceo-chat-send"
+									data-testid="chat-send"
 									className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-solid text-accent-solid-fg transition-colors hover:bg-accent-hover disabled:opacity-40"
 								>
 									<ArrowRight className="h-4 w-4" />
 								</button>
 							</div>
 						</div>
-					</>
+					</FileDropZone>
 				)}
 			</div>
 		</>
@@ -334,11 +406,11 @@ function RoleLabel({ children }: { children: ReactNode }) {
 	return <span className="text-eyebrow px-1 text-text-3">{children}</span>;
 }
 
-function MessageBubble({ message }: { message: CeoMessage }) {
+function MessageBubble({ message }: { message: ChatMessage }) {
 	const isCeo = message.role === 'assistant';
-	const interrupted = message.status === CeoMessageStatus.Interrupted;
-	const failed = message.status === CeoMessageStatus.Failed;
-	const streaming = message.status === CeoMessageStatus.Streaming;
+	const interrupted = message.status === ChatMessageStatus.Interrupted;
+	const failed = message.status === ChatMessageStatus.Failed;
+	const streaming = message.status === ChatMessageStatus.Streaming;
 
 	if (isCeo) {
 		// Still composing with no text yet → the typing indicator stands in for
@@ -349,7 +421,7 @@ function MessageBubble({ message }: { message: CeoMessage }) {
 		return (
 			<div
 				className="group flex max-w-[90%] flex-col gap-1"
-				data-testid="ceo-chat-message"
+				data-testid="chat-message"
 				data-role="ceo"
 			>
 				<RoleLabel>CEO · {HQ_PROJECT_NAME}</RoleLabel>
@@ -360,7 +432,7 @@ function MessageBubble({ message }: { message: CeoMessage }) {
 					    @agent, …) render as client-side links; ambiguous ones stay
 					    plain text. */}
 					{message.content ? (
-						<MarkdownProse testId="ceo-chat-markdown" instance>
+						<MarkdownProse testId="chat-markdown" instance>
 							{message.content}
 						</MarkdownProse>
 					) : failed ? (
@@ -383,14 +455,63 @@ function MessageBubble({ message }: { message: CeoMessage }) {
 	return (
 		<div
 			className="group flex max-w-[90%] flex-col items-end gap-1 self-end"
-			data-testid="ceo-chat-message"
+			data-testid="chat-message"
 			data-role="user"
 		>
 			<RoleLabel>You</RoleLabel>
-			<div className="rounded-2xl rounded-br-sm bg-inverse px-3.5 py-2.5 text-sm leading-relaxed text-inverse-fg whitespace-pre-wrap">
-				{message.content}
-			</div>
+			{message.content.length > 0 && (
+				<div className="rounded-2xl rounded-br-sm bg-inverse px-3.5 py-2.5 text-sm leading-relaxed text-inverse-fg whitespace-pre-wrap">
+					{message.content}
+				</div>
+			)}
+			{message.attachments && message.attachments.length > 0 && (
+				<SentAttachments attachments={message.attachments} />
+			)}
 			{message.content.length > 0 && <MessageCopyButton text={message.content} align="end" />}
+		</div>
+	);
+}
+
+/** Type-based icon for a sent attachment chip. */
+function attachmentIcon(contentType: string) {
+	const cls = 'h-3.5 w-3.5 shrink-0 text-text-3';
+	if (contentType.startsWith('image/')) return <ImageIcon className={cls} />;
+	if (contentType.startsWith('audio/')) return <FileAudio className={cls} />;
+	if (contentType.startsWith('video/')) return <FileVideo className={cls} />;
+	if (contentType === 'application/pdf' || contentType === 'text/plain') {
+		return <FileText className={cls} />;
+	}
+	return <FileIcon className={cls} />;
+}
+
+/**
+ * Read-only linked chips for the files sent with a message, aligned under the
+ * (right-aligned) user bubble. Each opens the stored asset in a new tab.
+ */
+function SentAttachments({
+	attachments,
+}: {
+	attachments: NonNullable<ChatMessage['attachments']>;
+}) {
+	return (
+		<div
+			className="flex max-w-full flex-wrap justify-end gap-1.5"
+			data-testid="chat-message-attachments"
+		>
+			{attachments.map((a) => (
+				<a
+					key={a.id}
+					href={a.url}
+					target="_blank"
+					rel="noopener noreferrer"
+					data-testid="chat-message-attachment"
+					className="flex items-center gap-1.5 rounded-sm border border-border bg-surface-3 px-2 py-1 text-[12px] text-text-1 hover:underline"
+				>
+					{attachmentIcon(a.content_type)}
+					<span className="max-w-[160px] truncate">{assetBasename(a.original_filename)}</span>
+					<ExternalLink className="h-3 w-3 shrink-0 text-text-3" />
+				</a>
+			))}
 		</div>
 	);
 }
@@ -426,7 +547,7 @@ function MessageCopyButton({ text, align }: { text: string; align: 'start' | 'en
 			type="button"
 			onClick={handleCopy}
 			aria-label={copied ? 'Message copied' : 'Copy message'}
-			data-testid="ceo-chat-message-copy"
+			data-testid="chat-message-copy"
 			className={`${align === 'end' ? 'self-end' : 'self-start'} flex h-6 w-6 items-center justify-center rounded-md text-text-3 opacity-100 transition-opacity hover:bg-surface-2 hover:text-text-1 focus-visible:opacity-100 [@media(hover:hover)]:opacity-0 group-hover:opacity-100`}
 		>
 			{copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
@@ -453,7 +574,7 @@ function TypingIndicator() {
 	return (
 		<div
 			className="flex max-w-[90%] flex-col gap-1.5"
-			data-testid="ceo-chat-typing"
+			data-testid="chat-typing"
 			role="status"
 			aria-label="CEO is typing"
 		>
@@ -473,7 +594,7 @@ function StreamingDots() {
 	return (
 		<span
 			className="px-1 pt-0.5"
-			data-testid="ceo-chat-streaming-dots"
+			data-testid="chat-streaming-dots"
 			role="status"
 			aria-label="CEO is still typing"
 		>

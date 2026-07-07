@@ -4,7 +4,7 @@ import type { MasterKeyManager } from '../crypto/master-key';
 import type { Db } from '../db/database';
 import type { DomainEventBus } from '../events/bus';
 import type { AuthChallengeStore } from '../services/auth-challenges';
-import type { CeoSessionManager } from '../services/ceo-session-manager';
+import type { ChatSessionManager } from '../services/chat-session-manager';
 import type { ContainerLogStreamer } from '../services/container-logs';
 import type { DockerClient } from '../services/docker';
 import type { EgressProxy } from '../services/egress';
@@ -40,7 +40,7 @@ export type AuthInfo =
 			taskId: string | null;
 			projectId: string;
 			crossProject: boolean;
-			/** Set for a persistent CEO chat session token (validated against ceo_sessions). */
+			/** Set for a persistent CEO chat session token (validated against chat_sessions). */
 			sessionId?: string;
 			/** Instance CEO session: may act across teams (the team-level analogue of crossProject). */
 			crossTeam?: boolean;
@@ -56,7 +56,7 @@ export type Env = {
 		wsManager: WebSocketManager;
 		events: DomainEventBus;
 		jobManager: JobManager;
-		ceoSessionManager?: CeoSessionManager;
+		chatSessionManager?: ChatSessionManager;
 		logs: LogStreamBroker;
 		containerLogStreamer: ContainerLogStreamer;
 		auth: AuthInfo;

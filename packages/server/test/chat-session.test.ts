@@ -2,15 +2,15 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
 	AuthType,
-	CeoMessageStatus,
-	CeoSessionStatus,
+	ChatMessageStatus,
+	ChatSessionStatus,
 	DEFAULT_TEAM_ID,
 	wsRoom,
 } from '@hezo/shared';
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import { encrypt } from '../src/crypto/encryption';
-import { signCeoSessionJwt, verifyToken } from '../src/middleware/auth';
-import { CeoSessionManager } from '../src/services/ceo-session-manager';
+import { signChatSessionJwt, verifyToken } from '../src/middleware/auth';
+import { ChatSessionManager } from '../src/services/chat-session-manager';
 import type { ExecLogChunk } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { getWorkspacePath } from '../src/services/workspace';
@@ -101,7 +101,7 @@ function captureCeoRoom(wsManager: WebSocketManager): { events: Array<Record<str
 		data: { auth: { type: AuthType.Admin, isSuperuser: true }, rooms: new Set() },
 		send: (msg: string) => events.push(JSON.parse(msg)),
 	};
-	wsManager.subscribe(socket, wsRoom.ceo());
+	wsManager.subscribe(socket, wsRoom.chat());
 	return { events };
 }
 
@@ -125,7 +125,7 @@ function makeManager(ctx: ServerTestContext, docker: ReturnType<typeof createStu
 	const wsManager = new WebSocketManager();
 	const logs = new LogStreamBroker();
 	logs.setWsManager(wsManager);
-	const manager = new CeoSessionManager({
+	const manager = new ChatSessionManager({
 		db: ctx.db,
 		docker,
 		masterKeyManager: ctx.masterKeyManager,
@@ -137,7 +137,7 @@ function makeManager(ctx: ServerTestContext, docker: ReturnType<typeof createStu
 	return { manager, wsManager };
 }
 
-describe('CeoSessionManager', () => {
+describe('ChatSessionManager', () => {
 	let ctx: ServerTestContext;
 	let projectId: string;
 
@@ -148,9 +148,9 @@ describe('CeoSessionManager', () => {
 		await destroyTestContext(ctx);
 	});
 	beforeEach(async () => {
-		await ctx.db.query('DELETE FROM ceo_messages');
-		await ctx.db.query('DELETE FROM ceo_sessions');
-		await ctx.db.query('DELETE FROM ceo_conversations');
+		await ctx.db.query('DELETE FROM chat_messages');
+		await ctx.db.query('DELETE FROM chat_sessions');
+		await ctx.db.query('DELETE FROM chat_conversations');
 		await ctx.db.query('DELETE FROM ai_provider_configs');
 		projectId = await seedProviderAndContainer(ctx);
 	});
@@ -165,17 +165,17 @@ describe('CeoSessionManager', () => {
 
 		await poll(async () => {
 			const r = await ctx.db.query<{ status: string }>(
-				'SELECT status FROM ceo_messages WHERE id = $1',
+				'SELECT status FROM chat_messages WHERE id = $1',
 				[assistantMessageId],
 			);
-			return r.rows[0]?.status === CeoMessageStatus.Complete;
+			return r.rows[0]?.status === ChatMessageStatus.Complete;
 		});
 
 		const asst = await ctx.db.query<{
 			content: string;
 			input_tokens: number;
 			output_tokens: number;
-		}>('SELECT content, input_tokens, output_tokens FROM ceo_messages WHERE id = $1', [
+		}>('SELECT content, input_tokens, output_tokens FROM chat_messages WHERE id = $1', [
 			assistantMessageId,
 		]);
 		expect(asst.rows[0].content).toBe('Hi there');
@@ -183,14 +183,14 @@ describe('CeoSessionManager', () => {
 		expect(Number(asst.rows[0].output_tokens)).toBe(5);
 
 		const user = await ctx.db.query<{ role: string; content: string }>(
-			'SELECT role, content FROM ceo_messages WHERE id = $1',
+			'SELECT role, content FROM chat_messages WHERE id = $1',
 			[userMessageId],
 		);
 		expect(user.rows[0].content).toBe('Hello CEO');
 
-		const deltas = captured.events.filter((e) => e.type === 'ceo_message_delta');
+		const deltas = captured.events.filter((e) => e.type === 'chat_message_delta');
 		expect(deltas.some((d) => d.text === 'Hi there')).toBe(true);
-		expect(captured.events.some((e) => e.type === 'ceo_message_complete')).toBe(true);
+		expect(captured.events.some((e) => e.type === 'chat_message_complete')).toBe(true);
 
 		await manager.stop();
 	});
@@ -211,10 +211,10 @@ describe('CeoSessionManager', () => {
 		const { assistantMessageId } = await manager.sendTurn({ text: 'Hello CEO' });
 		await poll(async () => {
 			const r = await ctx.db.query<{ status: string }>(
-				'SELECT status FROM ceo_messages WHERE id = $1',
+				'SELECT status FROM chat_messages WHERE id = $1',
 				[assistantMessageId],
 			);
-			return r.rows[0]?.status === CeoMessageStatus.Complete;
+			return r.rows[0]?.status === ChatMessageStatus.Complete;
 		});
 
 		const proj = await ctx.db.query<{ container_id: string | null; container_status: string }>(
@@ -234,10 +234,10 @@ describe('CeoSessionManager', () => {
 		const first = await manager.sendTurn({ text: 'What is the status?' });
 		await poll(async () => {
 			const r = await ctx.db.query<{ status: string }>(
-				'SELECT status FROM ceo_messages WHERE id = $1',
+				'SELECT status FROM chat_messages WHERE id = $1',
 				[first.assistantMessageId],
 			);
-			return r.rows[0]?.status === CeoMessageStatus.Complete;
+			return r.rows[0]?.status === ChatMessageStatus.Complete;
 		});
 
 		await manager.sendTurn({ text: 'And the next step?' });
@@ -310,17 +310,17 @@ describe('CeoSessionManager', () => {
 
 		await poll(async () => {
 			const r = await ctx.db.query<{ status: string }>(
-				'SELECT status FROM ceo_messages WHERE id = $1',
+				'SELECT status FROM chat_messages WHERE id = $1',
 				[first.assistantMessageId],
 			);
-			return r.rows[0]?.status === CeoMessageStatus.Interrupted;
+			return r.rows[0]?.status === ChatMessageStatus.Interrupted;
 		});
 		await poll(async () => {
 			const r = await ctx.db.query<{ status: string }>(
-				'SELECT status FROM ceo_messages WHERE id = $1',
+				'SELECT status FROM chat_messages WHERE id = $1',
 				[second.assistantMessageId],
 			);
-			return r.rows[0]?.status === CeoMessageStatus.Complete;
+			return r.rows[0]?.status === ChatMessageStatus.Complete;
 		});
 
 		await manager.stop();
@@ -333,16 +333,16 @@ describe('CeoSessionManager', () => {
 		const a = await manager.sendTurn({ text: 'one' });
 		await poll(async () => {
 			const r = await ctx.db.query<{ status: string }>(
-				'SELECT status FROM ceo_messages WHERE id = $1',
+				'SELECT status FROM chat_messages WHERE id = $1',
 				[a.assistantMessageId],
 			);
-			return r.rows[0]?.status === CeoMessageStatus.Complete;
+			return r.rows[0]?.status === ChatMessageStatus.Complete;
 		});
 		await manager.sendTurn({ text: 'two' });
 
 		const live = await ctx.db.query<{ n: number }>(
-			`SELECT COUNT(*)::int AS n FROM ceo_sessions WHERE status IN ($1, $2)`,
-			[CeoSessionStatus.Starting, CeoSessionStatus.Running],
+			`SELECT COUNT(*)::int AS n FROM chat_sessions WHERE status IN ($1, $2)`,
+			[ChatSessionStatus.Starting, ChatSessionStatus.Running],
 		);
 		expect(live.rows[0].n).toBe(1);
 
@@ -355,14 +355,14 @@ describe('CeoSessionManager', () => {
 			[DEFAULT_TEAM_ID],
 		);
 		await ctx.db.query(
-			`INSERT INTO ceo_sessions (member_id, team_id, project_id, runtime_type, status)
+			`INSERT INTO chat_sessions (member_id, team_id, project_id, runtime_type, status)
 			 VALUES ($1, $2, $3, 'claude_code', 'running')`,
 			[ceo.rows[0].id, DEFAULT_TEAM_ID, projectId],
 		);
 		const { manager } = makeManager(ctx, makeChatDocker(ctx.dataDir, projectId).docker);
 		await manager.reconcileOnStartup();
-		const r = await ctx.db.query<{ status: string }>('SELECT status FROM ceo_sessions LIMIT 1');
-		expect(r.rows[0].status).toBe(CeoSessionStatus.Crashed);
+		const r = await ctx.db.query<{ status: string }>('SELECT status FROM chat_sessions LIMIT 1');
+		expect(r.rows[0].status).toBe(ChatSessionStatus.Crashed);
 	});
 
 	test('reconcileOnStartup clears orphaned streaming messages (deletes empty, interrupts partial)', async () => {
@@ -370,8 +370,8 @@ describe('CeoSessionManager', () => {
 		const conversationId = await manager.getConversationId();
 		const insert = async (status: string, content: string, role = 'assistant') => {
 			const r = await ctx.db.query<{ id: string }>(
-				`INSERT INTO ceo_messages (conversation_id, role, channel, status, content)
-				 VALUES ($1, $2::ceo_message_role, 'web'::ceo_channel, $3::ceo_message_status, $4)
+				`INSERT INTO chat_messages (conversation_id, role, channel, status, content)
+				 VALUES ($1, $2::chat_message_role, 'web'::chat_channel, $3::chat_message_status, $4)
 				 RETURNING id`,
 				[conversationId, role, status, content],
 			);
@@ -386,16 +386,16 @@ describe('CeoSessionManager', () => {
 		await manager.reconcileOnStartup();
 
 		const rows = await ctx.db.query<{ id: string; status: string }>(
-			'SELECT id, status FROM ceo_messages',
+			'SELECT id, status FROM chat_messages',
 		);
 		const byId = new Map(rows.rows.map((r) => [r.id, r.status]));
 		// Empty orphaned placeholders (the stuck "thinking" dots) are deleted.
 		expect(byId.has(emptyStreaming)).toBe(false);
 		expect(byId.has(emptyPending)).toBe(false);
 		// A partial reply is preserved, marked interrupted; terminal rows untouched.
-		expect(byId.get(partialStreaming)).toBe(CeoMessageStatus.Interrupted);
-		expect(byId.get(done)).toBe(CeoMessageStatus.Complete);
-		expect(byId.get(userMsg)).toBe(CeoMessageStatus.Complete);
+		expect(byId.get(partialStreaming)).toBe(ChatMessageStatus.Interrupted);
+		expect(byId.get(done)).toBe(ChatMessageStatus.Complete);
+		expect(byId.get(userMsg)).toBe(ChatMessageStatus.Complete);
 	});
 
 	test('serializes concurrent sends — no overlapping turns or orphaned streaming rows', async () => {
@@ -412,20 +412,20 @@ describe('CeoSessionManager', () => {
 		// interrupted by the later, which the mutex makes deterministic).
 		await poll(async () => {
 			const r = await ctx.db.query<{ n: number }>(
-				`SELECT COUNT(*)::int AS n FROM ceo_messages WHERE role = 'assistant' AND status = $1`,
-				[CeoMessageStatus.Streaming],
+				`SELECT COUNT(*)::int AS n FROM chat_messages WHERE role = 'assistant' AND status = $1`,
+				[ChatMessageStatus.Streaming],
 			);
 			return r.rows[0].n === 0;
 		});
 
 		// Exactly one assistant row per send (not duplicated) and a single live session.
 		const assistants = await ctx.db.query<{ n: number }>(
-			`SELECT COUNT(*)::int AS n FROM ceo_messages WHERE role = 'assistant'`,
+			`SELECT COUNT(*)::int AS n FROM chat_messages WHERE role = 'assistant'`,
 		);
 		expect(assistants.rows[0].n).toBe(2);
 		const sessions = await ctx.db.query<{ n: number }>(
-			`SELECT COUNT(*)::int AS n FROM ceo_sessions WHERE status IN ($1, $2)`,
-			[CeoSessionStatus.Starting, CeoSessionStatus.Running],
+			`SELECT COUNT(*)::int AS n FROM chat_sessions WHERE status IN ($1, $2)`,
+			[ChatSessionStatus.Starting, ChatSessionStatus.Running],
 		);
 		expect(sessions.rows[0].n).toBe(1);
 
@@ -453,12 +453,12 @@ describe('CEO session auth', () => {
 			[DEFAULT_TEAM_ID],
 		);
 		const session = await ctx.db.query<{ id: string }>(
-			`INSERT INTO ceo_sessions (member_id, team_id, project_id, runtime_type, status)
+			`INSERT INTO chat_sessions (member_id, team_id, project_id, runtime_type, status)
 			 VALUES ($1, $2, $3, 'claude_code', 'running') RETURNING id`,
 			[ceo.rows[0].id, DEFAULT_TEAM_ID, project.rows[0].id],
 		);
 		const sessionId = session.rows[0].id;
-		const token = await signCeoSessionJwt(
+		const token = await signChatSessionJwt(
 			ctx.masterKeyManager,
 			ceo.rows[0].id,
 			DEFAULT_TEAM_ID,
@@ -474,7 +474,7 @@ describe('CEO session auth', () => {
 		expect(auth.crossProject).toBe(true);
 		expect(auth.runId).toBeNull();
 
-		await ctx.db.query(`UPDATE ceo_sessions SET status = 'stopped' WHERE id = $1`, [sessionId]);
+		await ctx.db.query(`UPDATE chat_sessions SET status = 'stopped' WHERE id = $1`, [sessionId]);
 		const denied = await verifyToken(token, ctx.db, ctx.masterKeyManager);
 		expect(denied).toBeNull();
 	});

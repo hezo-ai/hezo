@@ -8,7 +8,7 @@ import { WsClientAction, WsMessageType } from '../src/types/websocket';
 describe('websocket message enums', () => {
 	it('exposes stable wire values', () => {
 		expect(WsMessageType.RowChange).toBe('row_change');
-		expect(WsMessageType.CeoMessageDelta).toBe('ceo_message_delta');
+		expect(WsMessageType.ChatMessageDelta).toBe('chat_message_delta');
 		expect(WsClientAction.Subscribe).toBe('subscribe');
 		expect(WsClientAction.Unsubscribe).toBe('unsubscribe');
 	});

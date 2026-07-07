@@ -1,13 +1,13 @@
 import {
 	AuthType,
-	CeoMessageStatus,
-	CeoSessionStatus,
+	ChatMessageStatus,
+	ChatSessionStatus,
 	DEFAULT_TEAM_ID,
 	wsRoom,
 } from '@hezo/shared';
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import { encrypt } from '../src/crypto/encryption';
-import { CeoSessionManager } from '../src/services/ceo-session-manager';
+import { ChatSessionManager } from '../src/services/chat-session-manager';
 import {
 	ContainerConnectivityStatus,
 	type ProbeResult,
@@ -93,7 +93,7 @@ function makeManager(
 	const wsManager = new WebSocketManager();
 	const logs = new LogStreamBroker();
 	logs.setWsManager(wsManager);
-	const manager = new CeoSessionManager({
+	const manager = new ChatSessionManager({
 		db: ctx.db,
 		docker,
 		masterKeyManager: ctx.masterKeyManager,
@@ -106,7 +106,7 @@ function makeManager(
 	return { manager, wsManager };
 }
 
-describe('CeoSessionManager — startSession failure branches', () => {
+describe('ChatSessionManager — startSession failure branches', () => {
 	let ctx: ServerTestContext;
 	beforeAll(async () => {
 		ctx = await createTestContext();
@@ -115,9 +115,9 @@ describe('CeoSessionManager — startSession failure branches', () => {
 		await destroyTestContext(ctx);
 	});
 	beforeEach(async () => {
-		await ctx.db.query('DELETE FROM ceo_messages');
-		await ctx.db.query('DELETE FROM ceo_sessions');
-		await ctx.db.query('DELETE FROM ceo_conversations');
+		await ctx.db.query('DELETE FROM chat_messages');
+		await ctx.db.query('DELETE FROM chat_sessions');
+		await ctx.db.query('DELETE FROM chat_conversations');
 		await ctx.db.query('DELETE FROM ai_provider_configs');
 		await markHqRunning(ctx);
 	});
@@ -136,13 +136,13 @@ describe('CeoSessionManager — startSession failure branches', () => {
 		const { assistantMessageId } = await manager.sendTurn({ text: 'go' });
 		await poll(async () => {
 			const r = await ctx.db.query<{ status: string; error: string | null }>(
-				'SELECT status, error FROM ceo_messages WHERE id = $1',
+				'SELECT status, error FROM chat_messages WHERE id = $1',
 				[assistantMessageId],
 			);
-			return r.rows[0]?.status === CeoMessageStatus.Failed;
+			return r.rows[0]?.status === ChatMessageStatus.Failed;
 		});
 		const row = await ctx.db.query<{ error: string }>(
-			'SELECT error FROM ceo_messages WHERE id = $1',
+			'SELECT error FROM chat_messages WHERE id = $1',
 			[assistantMessageId],
 		);
 		expect(row.rows[0].error).toContain('exec blew up');
@@ -161,20 +161,20 @@ describe('CeoSessionManager — startSession failure branches', () => {
 		const { assistantMessageId } = await manager.sendTurn({ text: 'hi' });
 		await poll(async () => {
 			const r = await ctx.db.query<{ status: string }>(
-				'SELECT status FROM ceo_messages WHERE id = $1',
+				'SELECT status FROM chat_messages WHERE id = $1',
 				[assistantMessageId],
 			);
-			return r.rows[0]?.status === CeoMessageStatus.Complete;
+			return r.rows[0]?.status === ChatMessageStatus.Complete;
 		});
 		const session = await ctx.db.query<{ runtime_type: string }>(
-			`SELECT runtime_type FROM ceo_sessions ORDER BY started_at DESC LIMIT 1`,
+			`SELECT runtime_type FROM chat_sessions ORDER BY started_at DESC LIMIT 1`,
 		);
 		expect(session.rows[0].runtime_type).toBe('claude_code');
 		await manager.stop();
 	});
 });
 
-describe('CeoSessionManager — connectivity gate abort', () => {
+describe('ChatSessionManager — connectivity gate abort', () => {
 	let ctx: ServerTestContext;
 	beforeAll(async () => {
 		ctx = await createTestContext();
@@ -183,9 +183,9 @@ describe('CeoSessionManager — connectivity gate abort', () => {
 		await destroyTestContext(ctx);
 	});
 	beforeEach(async () => {
-		await ctx.db.query('DELETE FROM ceo_messages');
-		await ctx.db.query('DELETE FROM ceo_sessions');
-		await ctx.db.query('DELETE FROM ceo_conversations');
+		await ctx.db.query('DELETE FROM chat_messages');
+		await ctx.db.query('DELETE FROM chat_sessions');
+		await ctx.db.query('DELETE FROM chat_conversations');
 		await ctx.db.query('DELETE FROM ai_provider_configs');
 		await markHqRunning(ctx);
 		await seedProvider(ctx);
@@ -223,9 +223,9 @@ describe('CeoSessionManager — connectivity gate abort', () => {
 		expect(proxyAllocated).toBe(false);
 		// The session row was created then marked crashed by the catch arm.
 		const session = await ctx.db.query<{ status: string; error: string }>(
-			`SELECT status, error FROM ceo_sessions ORDER BY started_at DESC LIMIT 1`,
+			`SELECT status, error FROM chat_sessions ORDER BY started_at DESC LIMIT 1`,
 		);
-		expect(session.rows[0].status).toBe(CeoSessionStatus.Crashed);
+		expect(session.rows[0].status).toBe(ChatSessionStatus.Crashed);
 		expect(session.rows[0].error).toContain('Egress proxy unreachable');
 	});
 
@@ -246,16 +246,16 @@ describe('CeoSessionManager — connectivity gate abort', () => {
 		const { assistantMessageId } = await manager.sendTurn({ text: 'hello' });
 		await poll(async () => {
 			const r = await ctx.db.query<{ status: string }>(
-				'SELECT status FROM ceo_messages WHERE id = $1',
+				'SELECT status FROM chat_messages WHERE id = $1',
 				[assistantMessageId],
 			);
-			return r.rows[0]?.status === CeoMessageStatus.Complete;
+			return r.rows[0]?.status === ChatMessageStatus.Complete;
 		});
 		await manager.stop();
 	});
 });
 
-describe('CeoSessionManager — lifecycle branches', () => {
+describe('ChatSessionManager — lifecycle branches', () => {
 	let ctx: ServerTestContext;
 	beforeAll(async () => {
 		ctx = await createTestContext();
@@ -264,9 +264,9 @@ describe('CeoSessionManager — lifecycle branches', () => {
 		await destroyTestContext(ctx);
 	});
 	beforeEach(async () => {
-		await ctx.db.query('DELETE FROM ceo_messages');
-		await ctx.db.query('DELETE FROM ceo_sessions');
-		await ctx.db.query('DELETE FROM ceo_conversations');
+		await ctx.db.query('DELETE FROM chat_messages');
+		await ctx.db.query('DELETE FROM chat_sessions');
+		await ctx.db.query('DELETE FROM chat_conversations');
 		await ctx.db.query('DELETE FROM ai_provider_configs');
 		await markHqRunning(ctx);
 		await seedProvider(ctx);
@@ -277,17 +277,17 @@ describe('CeoSessionManager — lifecycle branches', () => {
 		const first = await manager.sendTurn({ text: 'one' });
 		await poll(async () => {
 			const r = await ctx.db.query<{ status: string }>(
-				'SELECT status FROM ceo_messages WHERE id = $1',
+				'SELECT status FROM chat_messages WHERE id = $1',
 				[first.assistantMessageId],
 			);
-			return r.rows[0]?.status === CeoMessageStatus.Complete;
+			return r.rows[0]?.status === ChatMessageStatus.Complete;
 		});
 
 		await manager.restart();
 		// The prior session row is now stopped.
 		const stopped = await ctx.db.query<{ n: number }>(
-			`SELECT COUNT(*)::int AS n FROM ceo_sessions WHERE status = $1`,
-			[CeoSessionStatus.Stopped],
+			`SELECT COUNT(*)::int AS n FROM chat_sessions WHERE status = $1`,
+			[ChatSessionStatus.Stopped],
 		);
 		expect(stopped.rows[0].n).toBeGreaterThanOrEqual(1);
 
@@ -295,14 +295,14 @@ describe('CeoSessionManager — lifecycle branches', () => {
 		const second = await manager.sendTurn({ text: 'two' });
 		await poll(async () => {
 			const r = await ctx.db.query<{ status: string }>(
-				'SELECT status FROM ceo_messages WHERE id = $1',
+				'SELECT status FROM chat_messages WHERE id = $1',
 				[second.assistantMessageId],
 			);
-			return r.rows[0]?.status === CeoMessageStatus.Complete;
+			return r.rows[0]?.status === ChatMessageStatus.Complete;
 		});
 		const live = await ctx.db.query<{ n: number }>(
-			`SELECT COUNT(*)::int AS n FROM ceo_sessions WHERE status IN ($1, $2)`,
-			[CeoSessionStatus.Starting, CeoSessionStatus.Running],
+			`SELECT COUNT(*)::int AS n FROM chat_sessions WHERE status IN ($1, $2)`,
+			[ChatSessionStatus.Starting, ChatSessionStatus.Running],
 		);
 		expect(live.rows[0].n).toBe(1);
 		await manager.stop();
@@ -320,10 +320,10 @@ describe('CeoSessionManager — lifecycle branches', () => {
 		const { assistantMessageId } = await manager.sendTurn({ text: 'hi' });
 		await poll(async () => {
 			const r = await ctx.db.query<{ status: string }>(
-				'SELECT status FROM ceo_messages WHERE id = $1',
+				'SELECT status FROM chat_messages WHERE id = $1',
 				[assistantMessageId],
 			);
-			return r.rows[0]?.status === CeoMessageStatus.Complete;
+			return r.rows[0]?.status === ChatMessageStatus.Complete;
 		});
 
 		// Container vanishes; checkHealth should notice the mismatch and teardown.
@@ -337,8 +337,8 @@ describe('CeoSessionManager — lifecycle branches', () => {
 		await (manager as unknown as { checkHealth(): Promise<void> }).checkHealth();
 
 		const live = await ctx.db.query<{ n: number }>(
-			`SELECT COUNT(*)::int AS n FROM ceo_sessions WHERE status IN ($1, $2)`,
-			[CeoSessionStatus.Starting, CeoSessionStatus.Running],
+			`SELECT COUNT(*)::int AS n FROM chat_sessions WHERE status IN ($1, $2)`,
+			[ChatSessionStatus.Starting, ChatSessionStatus.Running],
 		);
 		expect(live.rows[0].n).toBe(0);
 		await manager.stop();
@@ -364,13 +364,13 @@ describe('CeoSessionManager — lifecycle branches', () => {
 		const b = await manager.getConversationId();
 		expect(a).toBe(b);
 		const count = await ctx.db.query<{ n: number }>(
-			`SELECT COUNT(*)::int AS n FROM ceo_conversations`,
+			`SELECT COUNT(*)::int AS n FROM chat_conversations`,
 		);
 		expect(count.rows[0].n).toBe(1);
 	});
 
 	test('formatLongTermMemoryBlock shows a placeholder when empty and the body when present', async () => {
-		const { formatLongTermMemoryBlock } = await import('../src/services/ceo-session-manager');
+		const { formatLongTermMemoryBlock } = await import('../src/services/chat-session-manager');
 		expect(formatLongTermMemoryBlock('   ')).toContain('nothing recorded yet');
 		const withBody = formatLongTermMemoryBlock('Operator prefers terse replies');
 		expect(withBody).toContain('Operator prefers terse replies');
@@ -379,7 +379,7 @@ describe('CeoSessionManager — lifecycle branches', () => {
 	});
 });
 
-describe('CeoSessionManager — broadcast wiring', () => {
+describe('ChatSessionManager — broadcast wiring', () => {
 	let ctx: ServerTestContext;
 	beforeAll(async () => {
 		ctx = await createTestContext();
@@ -388,9 +388,9 @@ describe('CeoSessionManager — broadcast wiring', () => {
 		await destroyTestContext(ctx);
 	});
 	beforeEach(async () => {
-		await ctx.db.query('DELETE FROM ceo_messages');
-		await ctx.db.query('DELETE FROM ceo_sessions');
-		await ctx.db.query('DELETE FROM ceo_conversations');
+		await ctx.db.query('DELETE FROM chat_messages');
+		await ctx.db.query('DELETE FROM chat_sessions');
+		await ctx.db.query('DELETE FROM chat_conversations');
 		await ctx.db.query('DELETE FROM ai_provider_configs');
 		await markHqRunning(ctx);
 		await seedProvider(ctx);
@@ -404,21 +404,21 @@ describe('CeoSessionManager — broadcast wiring', () => {
 				data: { auth: { type: AuthType.Admin, isSuperuser: true }, rooms: new Set() },
 				send: (m: string) => events.push(JSON.parse(m)),
 			},
-			wsRoom.ceo(),
+			wsRoom.chat(),
 		);
 
 		const { assistantMessageId } = await manager.sendTurn({ text: 'hi' });
 		await poll(async () => {
 			const r = await ctx.db.query<{ status: string }>(
-				'SELECT status FROM ceo_messages WHERE id = $1',
+				'SELECT status FROM chat_messages WHERE id = $1',
 				[assistantMessageId],
 			);
-			return r.rows[0]?.status === CeoMessageStatus.Complete;
+			return r.rows[0]?.status === ChatMessageStatus.Complete;
 		});
 
-		expect(events.some((e) => e.type === 'ceo_message_start')).toBe(true);
-		expect(events.some((e) => e.type === 'ceo_message_delta' && e.text === 'Hi there')).toBe(true);
-		expect(events.some((e) => e.type === 'ceo_message_complete')).toBe(true);
+		expect(events.some((e) => e.type === 'chat_message_start')).toBe(true);
+		expect(events.some((e) => e.type === 'chat_message_delta' && e.text === 'Hi there')).toBe(true);
+		expect(events.some((e) => e.type === 'chat_message_complete')).toBe(true);
 		await manager.stop();
 	});
 });
