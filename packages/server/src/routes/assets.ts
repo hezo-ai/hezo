@@ -169,10 +169,9 @@ assetsRoutes.post(
 
 		const taskLocator = await db.query<{
 			project_id: string;
-			title: string;
 			identifier: string;
 		}>(
-			`SELECT i.project_id, i.title, i.identifier
+			`SELECT i.project_id, i.identifier
 			 FROM tasks i
 			 WHERE i.id = $1 AND i.team_id = $2`,
 			[taskId, teamId],
@@ -180,20 +179,21 @@ assetsRoutes.post(
 		if (taskLocator.rows.length === 0) {
 			return err(c, 'NOT_FOUND', 'Task not found', 404);
 		}
-		const { project_id: projectId, title, identifier } = taskLocator.rows[0];
+		const { project_id: projectId, identifier } = taskLocator.rows[0];
 
 		const upload = await readUploadForm(c);
 		if (!upload) return err(c, 'INVALID_REQUEST', 'Missing file field', 400);
 
-		// Task-thread attachments are filed under uploads/<task-name> so the
-		// library groups each task's uploads without manual sorting.
+		// Task-thread attachments are filed under uploads/<task-identifier> so
+		// the library groups each task's uploads without manual sorting, and the
+		// folder stays stable when the task is renamed.
 		return storeUploadedAsset(
 			c,
 			teamId,
 			projectId,
 			upload.file,
 			taskId,
-			taskUploadsFolder(title, identifier),
+			taskUploadsFolder(identifier),
 		);
 	},
 );

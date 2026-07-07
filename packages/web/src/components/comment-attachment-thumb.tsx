@@ -14,7 +14,7 @@ function iconFor(contentType: string) {
 }
 
 export function CommentAttachmentThumb({ attachment }: { attachment: CommentAttachment }) {
-	// Attachments live under a library folder (uploads/<task-name>); the chip
+	// Attachments live under a library folder (uploads/<task-identifier>); the chip
 	// shows just the file's name while the tooltip keeps the full path.
 	const basename = assetBasename(attachment.original_filename);
 	return (

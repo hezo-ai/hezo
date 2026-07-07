@@ -396,23 +396,15 @@ export function normalizeAssetFolder(raw: string): string | null {
 /** Top-level library folder that collects files uploaded through task threads. */
 export const ASSET_UPLOADS_FOLDER = 'uploads';
 
-// Keeps per-task folder names readable on folder cards and in `assets/<path>`
-// references even when the task title runs long.
-const TASK_UPLOADS_SEGMENT_MAX_LENGTH = 60;
-
 /**
  * Library folder for files uploaded through a task's thread:
- * `uploads/<task-name>`. The task's title becomes a single link-safe segment
- * (slashes flattened first so a title can't add nesting levels), truncated to
- * a card-friendly length; when nothing survives cleanup the task identifier
- * (e.g. `IN-42`) stands in.
+ * `uploads/<task-identifier>` (e.g. `uploads/IN-42`). The task identifier is a
+ * stable, link-safe key, so uploads stay grouped under one folder even when the
+ * task is renamed; it is normalized as a single segment for safety and falls
+ * back to the bare `uploads` root only if nothing survives cleanup.
  */
-export function taskUploadsFolder(title: string, identifier: string): string {
-	const flattened = title.replace(/[/\\]+/g, '-');
-	let segment = normalizeAssetSegment(flattened)
-		.slice(0, TASK_UPLOADS_SEGMENT_MAX_LENGTH)
-		.replace(/[._-]+$/, '');
-	if (segment.length === 0) segment = normalizeAssetSegment(identifier);
+export function taskUploadsFolder(identifier: string): string {
+	const segment = normalizeAssetSegment(identifier);
 	return segment.length > 0 ? `${ASSET_UPLOADS_FOLDER}/${segment}` : ASSET_UPLOADS_FOLDER;
 }
 
