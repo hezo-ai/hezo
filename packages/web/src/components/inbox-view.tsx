@@ -35,9 +35,9 @@ type InboxRow =
 	  };
 
 const READ_OPTIONS: { value: ReadFilter; label: string }[] = [
-	{ value: 'all', label: 'All' },
 	{ value: 'unread', label: 'Unread' },
 	{ value: 'read', label: 'Read' },
+	{ value: 'all', label: 'All' },
 	{ value: 'archived', label: 'Archived' },
 ];
 
@@ -62,7 +62,7 @@ function approvalSearch(a: Approval): string {
 }
 
 export function InboxView({ projectSlugs, scope }: InboxViewProps) {
-	const [readFilter, setReadFilter] = useState<ReadFilter>('all');
+	const [readFilter, setReadFilter] = useState<ReadFilter>('unread');
 	const archivedView = readFilter === 'archived';
 	const { data: approvals, isLoading: approvalsLoading } = useAllApprovals(projectSlugs, {
 		archived: archivedView,

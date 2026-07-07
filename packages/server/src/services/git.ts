@@ -221,7 +221,9 @@ export function initialReadmeContent(repoIdentifier: string): string {
  * When — and only when — the remote advertises no refs, this writes a minimal
  * README, commits it on `main`, and pushes so the repo gains a default branch and
  * worktrees can be built. Idempotent: a no-op returning `{ seeded: false }` once the
- * remote has any commit.
+ * remote has any commit, and recoverable — if an earlier call committed locally but
+ * its push failed (a transient network error), a later call re-pushes the existing
+ * commit instead of re-committing (which would die with "nothing to commit").
  *
  * The commit is deliberately unsigned (`-c commit.gpgsign=false`): SSH commit
  * signing runs `ssh-keygen -Y sign` against `SSH_AUTH_SOCK`, which is only live for
@@ -250,32 +252,43 @@ export async function seedInitialCommitIfEmpty(
 	if (refs.exitCode !== 0) return { seeded: false, error: formatGitError(refs.stderr) };
 	if (refs.stdout.trim().length > 0) return { seeded: false };
 
-	// Commit on `main` so the pushed default matches GitHub's default for a fresh repo.
-	// `symbolic-ref` works on an unborn HEAD and is a no-op when HEAD is already `main`.
-	const sym = await executor.exec(['symbolic-ref', 'HEAD', 'refs/heads/main'], {
+	// A prior attempt may have committed locally but failed to push (e.g. a transient
+	// network error): the remote is still empty while HEAD is already born. Only build
+	// the commit when HEAD is genuinely unborn — otherwise re-running `git commit` here
+	// dies with "nothing to commit" and strands the local commit unpushed forever. When
+	// HEAD already has a commit, fall straight through to (re)pushing it.
+	const born = await executor.exec(['rev-parse', '--verify', '--quiet', 'HEAD'], {
 		cwd,
 		timeout: 30_000,
 	});
-	if (sym.exitCode !== 0) return { seeded: false, error: formatGitError(sym.stderr) };
+	if (born.exitCode !== 0) {
+		// Commit on `main` so the pushed default matches GitHub's default for a fresh repo.
+		// `symbolic-ref` works on an unborn HEAD and is a no-op when HEAD is already `main`.
+		const sym = await executor.exec(['symbolic-ref', 'HEAD', 'refs/heads/main'], {
+			cwd,
+			timeout: 30_000,
+		});
+		if (sym.exitCode !== 0) return { seeded: false, error: formatGitError(sym.stderr) };
 
-	const readmePath = join(repo.hostPath, 'README.md');
-	try {
-		if (!existsSync(readmePath)) {
-			writeFileSync(readmePath, initialReadmeContent(repoIdentifier));
+		const readmePath = join(repo.hostPath, 'README.md');
+		try {
+			if (!existsSync(readmePath)) {
+				writeFileSync(readmePath, initialReadmeContent(repoIdentifier));
+			}
+		} catch (e) {
+			return { seeded: false, error: e instanceof Error ? e.message : String(e) };
 		}
-	} catch (e) {
-		return { seeded: false, error: e instanceof Error ? e.message : String(e) };
+
+		const add = await executor.exec(['add', '-A'], { cwd, timeout: 30_000 });
+		if (add.exitCode !== 0) return { seeded: false, error: formatGitError(add.stderr) };
+
+		// Unsigned bootstrap commit — see the docstring.
+		const commit = await executor.exec(
+			['-c', 'commit.gpgsign=false', 'commit', '-m', 'Initial commit'],
+			{ cwd, timeout: 30_000 },
+		);
+		if (commit.exitCode !== 0) return { seeded: false, error: formatGitError(commit.stderr) };
 	}
-
-	const add = await executor.exec(['add', '-A'], { cwd, timeout: 30_000 });
-	if (add.exitCode !== 0) return { seeded: false, error: formatGitError(add.stderr) };
-
-	// Unsigned bootstrap commit — see the docstring.
-	const commit = await executor.exec(
-		['-c', 'commit.gpgsign=false', 'commit', '-m', 'Initial commit'],
-		{ cwd, timeout: 30_000 },
-	);
-	if (commit.exitCode !== 0) return { seeded: false, error: formatGitError(commit.stderr) };
 
 	const push = await executor.exec(['push', '-u', 'origin', 'HEAD:main'], {
 		cwd,

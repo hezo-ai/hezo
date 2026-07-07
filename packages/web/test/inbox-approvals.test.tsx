@@ -84,7 +84,9 @@ test('can approve a pending approval', async () => {
 
 	await findByText('Proposing strategy', undefined, { timeout: 10_000 });
 	await user.click(await findByRole('button', { name: 'Approve' }));
-	// Resolved approvals stay in the inbox as read history with a status badge.
+	// Resolving moves the approval out of the default Unread view; it stays in the
+	// inbox as read history with a status badge under the All filter.
+	await user.click(await findByText('All'));
 	await findByText('approved', undefined, { timeout: 15_000 });
 	await findByText('Proposing strategy');
 });
@@ -110,7 +112,9 @@ test('can deny a pending approval', async () => {
 
 	await findByText('Proposing strategy', undefined, { timeout: 10_000 });
 	await user.click(await findByRole('button', { name: 'Deny' }));
-	// Resolved approvals stay in the inbox as read history with a status badge.
+	// Resolving moves the approval out of the default Unread view; it stays in the
+	// inbox as read history with a status badge under the All filter.
+	await user.click(await findByText('All'));
 	await findByText('denied', undefined, { timeout: 15_000 });
 	await findByText('Proposing strategy');
 });
