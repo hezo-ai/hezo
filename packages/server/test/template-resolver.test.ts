@@ -1257,7 +1257,7 @@ describe('repository block', () => {
 		expect(result).not.toContain(repoIns.rows[0].id);
 	});
 
-	it('lists additional linked repos under the designated one', async () => {
+	it('lists additional linked repos under the designated one and marks them cloned locally', async () => {
 		await db.query(
 			`INSERT INTO repos (project_id, repo_identifier, host_type)
 			 VALUES ($1, 'acme/docs', 'github'::repo_host_type)`,
@@ -1269,6 +1269,34 @@ describe('repository block', () => {
 		});
 		expect(result).toContain('Designated repository: `acme/widgets`');
 		expect(result).toContain('Also linked: `acme/docs`');
+		// The additional repo is flagged as cloned/checked out locally, and — with no
+		// resolved ticket here — described relative to the working directory.
+		expect(result).toContain('also cloned and checked out locally at');
+		expect(result).toContain('a sibling directory named `docs` next to your working directory');
+		// Steer reading to disk, not the github MCP file API.
+		expect(result).toContain('Read connected repositories from disk, never through an API');
+		expect(result).toContain('get_file_contents');
+	});
+
+	it('names the concrete worktree path of a linked repo when the ticket resolves', async () => {
+		await db.query(
+			`INSERT INTO repos (project_id, repo_identifier, host_type)
+			 VALUES ($1, 'acme/api', 'github'::repo_host_type)`,
+			[repoProjectId],
+		);
+		const task = await db.query<{ id: string; identifier: string }>(
+			`INSERT INTO tasks (team_id, project_id, number, identifier, title, status, priority, labels)
+			 VALUES ($1, $2, next_project_task_number($2), 'REPO-1', 'Repo worktree ticket', 'backlog'::task_status, 'medium'::task_priority, '[]'::jsonb)
+			 RETURNING id, identifier`,
+			[repoTeamId, repoProjectId],
+		);
+		const result = await resolveSystemPrompt(db, 'Simple prompt', {
+			teamId: repoTeamId,
+			projectId: repoProjectId,
+			taskId: task.rows[0].id,
+		});
+		// The additional repo is addressed by its absolute per-task worktree path.
+		expect(result).toContain(`/worktrees/${task.rows[0].identifier}/api`);
 	});
 
 	it('omits the Repository block for a cross-team (roaming) resolve', async () => {

@@ -541,6 +541,11 @@ document, loaded from its **home** team) is resolved per run by
 `{{team_preferences_context}}`, `{{team_description}}`, `{{team_context}}`,
 `{{current_date}}`, and the CEO-only `{{projects_context}}`), then the resolver appends the
 Run Context / Repository / Project State / Teammates blocks and `SHARED_INSTRUCTIONS`.
+The **Repository** block names the designated repo *and every other linked repo*, giving each
+additional one its on-disk worktree path (`/worktrees/<task>/<repo>`, a sibling of the working
+directory), and directs agents to read connected repos from disk (`ls`/`Read`/`grep`) rather
+than fetch their files through the `github` MCP `get_file_contents` API — which is slower, costs
+tokens per file, and returns GitHub's default branch instead of the ref checked out for the run.
 Every surface that authors or edits a prompt — the hire proposal create/edit
 (`prepareHireProposal`, `PATCH /approvals`), direct agent create + `PATCH /agents`, and the
 `create_hire_proposal` / `update_agent_system_prompt` MCP tools — validates a supplied,
