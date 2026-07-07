@@ -35,9 +35,10 @@ connect, authenticate, and register for access, see
   **Authorization** below.
 - **Errors:** a handled failure comes back as `{ "error": "<message>" }` in the tool
   result (the HTTP response itself stays successful).
-- **Result size:** a tool result is capped at 64 KB; over that you get
-  `{ "error": "result_too_large", … }`. Narrow it with filters, a single-resource
-  `get_*`, `before` pagination, or `excerpt_chars`.
+- **Result size:** a tool result is capped at 64 KB (higher for a few
+  full-resource inspection tools, e.g. `get_agent_system_prompts`); over the
+  cap you get `{ "error": "result_too_large", … }`. Narrow it with filters, a
+  single-resource `get_*`, `before` pagination, or `excerpt_chars`.
 - **Excerpts (`excerpt_chars`):** list tools accept `excerpt_chars` to truncate long
   text fields, adding `_truncated`/`_length` companions.
 - **Pagination (`before`):** `list_comments` walks older items by passing the oldest
@@ -577,7 +578,7 @@ Read an agent's system prompt. Accessible by any agent or the admin in the same 
 
 _Read-only._
 
-Read multiple agent system prompts in one call (max 50). Per-item `mode` chooses the resolution depth: `placeholders` (default) substitutes `{{…}}` with real values and stops, matching get_agent_system_prompt's default; `preview` additionally appends the resolver's runtime blocks (Project State, Team Context, Teammates, Working Guidelines) minus the per-run Run Context, matching the web UI's preview panel; `raw` returns the stored template untouched. Use this to compare prompts across the team in one round-trip — e.g. Captain auditing how team_context renders for every agent. SIZE: a single `preview` fills most of the 64KB result cap (result_too_large), so batch multiple items only as `raw`/`placeholders` and fetch previews one at a time. For a single prompt, use get_agent_system_prompt.
+Read multiple agent system prompts in one call (max 50). Per-item `mode` chooses the resolution depth: `placeholders` (default) substitutes `{{…}}` with real values and stops, matching get_agent_system_prompt's default; `preview` additionally appends the resolver's runtime blocks (Project State, Team Context, Teammates, Working Guidelines) minus the per-run Run Context, matching the web UI's preview panel; `raw` returns the stored template untouched. Use this to compare prompts across the team in one round-trip — e.g. Captain auditing how team_context renders for every agent. SIZE: this tool has a raised 128KB result cap (a fully-resolved `preview` prompt is large), but still batch multiple items only as `raw`/`placeholders` and fetch previews one at a time so a multi-`preview` call can't exceed even the raised cap (result_too_large). For a single prompt, use get_agent_system_prompt.
 
 **Parameters:**
 

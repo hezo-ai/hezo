@@ -415,6 +415,16 @@ const APPROVAL_COLUMNS = `id, team_id, type, status, requested_by_member_id,
 // agent (the persisted file itself trips the same cap).
 export const MCP_RESULT_BYTE_LIMIT = 64_000;
 
+// A few inspection tools return a single, inherently large resource rather than
+// a list — a fully-resolved agent system prompt already fills most of the 64 KB
+// cap and only grows as shared guidance is added. These get a higher per-tool
+// limit so a legitimate single-resource read isn't rejected as
+// `result_too_large`; the generic cap still guards every list/query tool against
+// context bloat. Keyed by tool name; falls back to MCP_RESULT_BYTE_LIMIT.
+export const MCP_RESULT_BYTE_LIMIT_OVERRIDES: Readonly<Record<string, number>> = {
+	get_agent_system_prompts: 131_072,
+};
+
 export interface Excerpt {
 	excerpt: string | null;
 	truncated: boolean;
@@ -517,13 +527,14 @@ function tool(
 		}
 		const text = JSON.stringify(result, null, 2);
 		const sizeBytes = Buffer.byteLength(text, 'utf8');
-		if (sizeBytes > MCP_RESULT_BYTE_LIMIT) {
+		const byteLimit = MCP_RESULT_BYTE_LIMIT_OVERRIDES[name] ?? MCP_RESULT_BYTE_LIMIT;
+		if (sizeBytes > byteLimit) {
 			const guard = JSON.stringify(
 				{
 					error: 'result_too_large',
 					tool: name,
 					size_bytes: sizeBytes,
-					limit_bytes: MCP_RESULT_BYTE_LIMIT,
+					limit_bytes: byteLimit,
 					hint: 'Narrow the query — add filters, fetch a single resource via get_*, paginate with `before` (where supported), or pass `excerpt_chars: 300` to truncate long fields.',
 				},
 				null,
@@ -2977,7 +2988,7 @@ export function registerTools(
 	tool(
 		server,
 		'get_agent_system_prompts',
-		`Read multiple agent system prompts in one call (max ${MAX_BATCH_AGENT_SYSTEM_PROMPTS}). Per-item \`mode\` chooses the resolution depth: \`placeholders\` (default) substitutes \`{{…}}\` with real values and stops, matching get_agent_system_prompt's default; \`preview\` additionally appends the resolver's runtime blocks (Project State, Team Context, Teammates, Working Guidelines) minus the per-run Run Context, matching the web UI's preview panel; \`raw\` returns the stored template untouched. Use this to compare prompts across the team in one round-trip — e.g. Captain auditing how team_context renders for every agent. SIZE: a single \`preview\` fills most of the 64KB result cap (result_too_large), so batch multiple items only as \`raw\`/\`placeholders\` and fetch previews one at a time. For a single prompt, use get_agent_system_prompt.`,
+		`Read multiple agent system prompts in one call (max ${MAX_BATCH_AGENT_SYSTEM_PROMPTS}). Per-item \`mode\` chooses the resolution depth: \`placeholders\` (default) substitutes \`{{…}}\` with real values and stops, matching get_agent_system_prompt's default; \`preview\` additionally appends the resolver's runtime blocks (Project State, Team Context, Teammates, Working Guidelines) minus the per-run Run Context, matching the web UI's preview panel; \`raw\` returns the stored template untouched. Use this to compare prompts across the team in one round-trip — e.g. Captain auditing how team_context renders for every agent. SIZE: this tool has a raised 128KB result cap (a fully-resolved \`preview\` prompt is large), but still batch multiple items only as \`raw\`/\`placeholders\` and fetch previews one at a time so a multi-\`preview\` call can't exceed even the raised cap (result_too_large). For a single prompt, use get_agent_system_prompt.`,
 		{
 			project: projectArg(),
 			items: z

@@ -752,9 +752,12 @@ rendering for the Codex config lives in `mcp-injectors/toml.ts`.
 **Completeness stop-hook.** Every run is gated by a judge that fires when the agent tries
 to end its turn and **blocks** it (keeping the same headless exec alive) when it's bailing
 on failing tests, calling problems "out of scope", deferring without filing a sub-task,
-abandoning a plan it announced in the thread without revising it there, or ending the run
+abandoning a plan it announced in the thread without revising it there, ending the run
 with a handoff/active @-mention only in its final message (which is delivered to no one)
-instead of a posted comment. It **allows** the stop when the agent is legitimately parked on
+instead of a posted comment, or marking a ticket done on the strength of its own review
+while an approval the thread established as required — the admin's final approval or a named
+approver's sign-off — was never granted (an inherited approval-chain requirement, distinct
+from an unanswered question the agent itself posted; a rework/detour does not discharge it). It **allows** the stop when the agent is legitimately parked on
 input it can't obtain itself — an `@admin` comment awaiting a reply, a `request_credential`,
 or a filed hire proposal / opened approval pending an admin decision — with the task left
 non-terminal; the admin's reply or resolution auto-wakes the agent (a hire resolution queues
