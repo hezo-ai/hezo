@@ -8,7 +8,7 @@ import {
 } from '@hezo/shared';
 import { createFileRoute } from '@tanstack/react-router';
 import { Loader2 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { type DocItem, DocsLibrary } from '../../../components/docs-library';
 import { RevisionHistoryDialog } from '../../../components/document-review/revision-history-dialog';
 import { ViewingRevisionBanner } from '../../../components/document-review/viewing-revision-banner';
@@ -37,11 +37,15 @@ interface DocumentsSearch {
 	file?: string;
 	/** Archive filter — absent means the default Active view. */
 	filter?: ArchiveFilter;
+	/** Deep-link from a preview surface's Edit button: open `file` in edit mode. */
+	edit?: boolean;
+	/** Deep-link from a preview surface's History button: open the revision dialog. */
+	history?: boolean;
 }
 
 function ProjectDocumentsPage() {
 	const { projectId } = Route.useParams();
-	const { file, filter = ArchiveFilter.Active } = Route.useSearch();
+	const { file, filter = ArchiveFilter.Active, edit, history } = Route.useSearch();
 	const navigate = Route.useNavigate();
 
 	const { data: docs, isLoading: isLoadingList } = useProjectDocs(projectId);
@@ -64,12 +68,23 @@ function ProjectDocumentsPage() {
 	// Which past version (if any) is being viewed, and whether the history dialog is open.
 	const [viewingRevision, setViewingRevision] = useState<DocVersionEntry | null>(null);
 	const [historyOpen, setHistoryOpen] = useState(false);
+	const historyAutoOpenedRef = useRef(false);
 	// Return to the latest version whenever the selected file changes.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: reset only on file switch
 	useEffect(() => {
 		setViewingRevision(null);
 		setHistoryOpen(false);
 	}, [file]);
+
+	// Honour a deep-linked `?history=1` from a preview surface once: open the
+	// revision dialog for the selected doc. Declared after the file-reset effect so
+	// it wins on the initial mount, and latched so closing the dialog is final.
+	useEffect(() => {
+		if (history && !historyAutoOpenedRef.current && file && !isAgentsMd) {
+			historyAutoOpenedRef.current = true;
+			setHistoryOpen(true);
+		}
+	}, [history, file, isAgentsMd]);
 
 	const versionEntries = useMemo(
 		() => (doc && !isAgentsMd ? buildDocVersionHistory(doc, revisions) : []),
@@ -263,6 +278,7 @@ function ProjectDocumentsPage() {
 					) : undefined
 				}
 				onShowHistory={file && !isAgentsMd ? () => setHistoryOpen(true) : undefined}
+				autoEdit={!!edit}
 				readOnly={!!viewingRevision}
 				emptyTitle="Select a document"
 				emptyDescription="Choose a project document from the list to view or edit it."
@@ -357,6 +373,12 @@ export const Route = createFileRoute('/projects/$projectId/documents')({
 		filter:
 			isArchiveFilter(search.filter) && search.filter !== ArchiveFilter.Active
 				? search.filter
+				: undefined,
+		// Drop when falsy so the deep-link flags never linger in the URL.
+		edit: search.edit === true || search.edit === '1' || search.edit === 'true' ? true : undefined,
+		history:
+			search.history === true || search.history === '1' || search.history === 'true'
+				? true
 				: undefined,
 	}),
 	component: ProjectDocumentsPage,

@@ -137,6 +137,12 @@ document from a task's preview panel, that task is suggested first) and
 **clear review** (a trash button that deletes every comment after confirmation), alongside a
 **?** button that opens a short in-app guide to all of this.
 
+Wherever you read a document — the Documents page, the task-sidebar preview, or its own tab —
+its header carries **Edit** and **History** buttons. On the two preview views these take you
+to the document on the Documents page, ready to edit or with its version history open, so you
+can move from a quick look straight into changing the document or seeing how it changed.
+(Edit is hidden while a document is archived, since archived documents are read-only.)
+
 On a larger screen you can also **hide the document list** — the panel button just left of
 the document's title collapses it, giving the document the full width of the page; the same
 button brings the list back, and Hezo remembers your choice. (On a phone the list and the
