@@ -2,10 +2,15 @@ import { readStored, removeStored, writeStored } from './safe-storage';
 
 const TOKEN_KEY = 'hezo_token';
 
-export interface ApiError {
-	code: string;
-	message: string;
-	status: number;
+export class ApiError extends Error {
+	constructor(
+		public code: string,
+		message: string,
+		public status: number,
+	) {
+		super(message);
+		this.name = 'ApiError';
+	}
 }
 
 export interface PaginationMeta {
@@ -39,11 +44,11 @@ class ApiClient {
 
 	private async extractError(res: Response): Promise<ApiError> {
 		const json = await res.json().catch(() => null);
-		return {
-			code: json?.error?.code ?? 'UNKNOWN',
-			message: json?.error?.message ?? res.statusText,
-			status: res.status,
-		};
+		return new ApiError(
+			json?.error?.code ?? 'UNKNOWN',
+			json?.error?.message ?? res.statusText,
+			res.status,
+		);
 	}
 
 	private async fetchJson<T>(method: string, path: string, body?: unknown): Promise<T> {

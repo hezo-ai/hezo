@@ -12,7 +12,7 @@ import {
 	type MasterKeyState,
 	signAuthMessage,
 } from '@hezo/shared';
-import { type ApiError, api } from './api';
+import { ApiError, api } from './api';
 
 export interface StatusResponse {
 	/** Absent while the server is still booting (`starting` is true). */
@@ -170,12 +170,11 @@ export async function setPassword(password: string): Promise<void> {
 		error?: { code?: string; message?: string };
 	} | null;
 	if (!res.ok) {
-		const e: ApiError = {
-			code: json?.error?.code ?? 'UNKNOWN',
-			message: json?.error?.message ?? res.statusText,
-			status: res.status,
-		};
-		throw e;
+		throw new ApiError(
+			json?.error?.code ?? 'UNKNOWN',
+			json?.error?.message ?? res.statusText,
+			res.status,
+		);
 	}
 	if (json?.data?.token) api.setToken(json.data.token);
 	clearPendingSetupToken();

@@ -17,6 +17,91 @@ async function seedRepo(projectId: string, identifier = 'acme/website'): Promise
 	);
 }
 
+const RUNNING_CLONE = {
+	cloned: true,
+	defaultBranch: 'main',
+	headBranch: 'main',
+	head: 'abcdef1234567',
+	dirty: false,
+	ahead: 0,
+	behind: 0,
+};
+
+// Stub the lazy git-state fetch with a running-container payload so the panel
+// renders its reset buttons (the in-process backend has no container). Returns a
+// restore fn so the global fetch never leaks into other tests.
+function stubGitState(payload: Record<string, unknown>): () => void {
+	const appFetch = globalThis.fetch;
+	globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+		const url =
+			input instanceof Request ? input.url : typeof input === 'string' ? input : input.toString();
+		if (new URL(url, 'http://localhost').pathname.endsWith('/git-state')) {
+			return new Response(JSON.stringify({ data: payload }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' },
+			});
+		}
+		return appFetch(input, init);
+	}) as typeof globalThis.fetch;
+	return () => {
+		globalThis.fetch = appFetch;
+	};
+}
+
+async function renderExpandedPanel() {
+	let slug = '';
+	const rendered = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Website' });
+			await seedRepo(project.id);
+			slug = project.slug;
+		},
+	});
+	await rendered.router.navigate({ to: '/projects/$projectId/git', params: { projectId: slug } });
+	await rendered.user.click(await rendered.findByTestId('repo-git-toggle-website'));
+	return rendered;
+}
+
+const RESET_ACTIONS = ['discard_local', 'prune_worktrees', 'reclone'] as const;
+
+test('reset actions are disabled while a run is active on the project', async () => {
+	const restore = stubGitState({
+		container_running: true,
+		clone: RUNNING_CLONE,
+		worktrees: [],
+		active_runs: 1,
+	});
+	try {
+		const { findByTestId } = await renderExpandedPanel();
+		for (const action of RESET_ACTIONS) {
+			const btn = (await findByTestId(`repo-reset-${action}-website`)) as HTMLButtonElement;
+			expect(btn.disabled).toBe(true);
+		}
+	} finally {
+		restore();
+	}
+});
+
+test('reset actions are enabled when no run is active', async () => {
+	const restore = stubGitState({
+		container_running: true,
+		clone: RUNNING_CLONE,
+		worktrees: [],
+		active_runs: 0,
+	});
+	try {
+		const { findByTestId } = await renderExpandedPanel();
+		for (const action of RESET_ACTIONS) {
+			const btn = (await findByTestId(`repo-reset-${action}-website`)) as HTMLButtonElement;
+			expect(btn.disabled).toBe(false);
+		}
+	} finally {
+		restore();
+	}
+});
+
 test('superuser can expand a repo to inspect its git state', async () => {
 	let slug = '';
 	const { findByTestId, user, router } = await renderApp({

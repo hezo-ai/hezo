@@ -369,10 +369,15 @@ reposRoutes.get('/projects/:projectId/repos/:repoId/git-state', async (c) => {
 		for (const t of tasks.rows) taskMap.set(t.identifier, { title: t.title, status: t.status });
 	}
 
+	// Reset actions are blocked while any run is active on the project; surface the
+	// count so the panel can gate its buttons instead of failing the reset reactively.
+	const { active } = await getProjectConcurrency(db, projectId);
+
 	return ok(c, {
 		container_running: true,
 		clone: state.clone,
 		worktrees: state.worktrees.map((w) => ({ ...w, task: taskMap.get(w.taskIdentifier) ?? null })),
+		active_runs: active,
 	});
 });
 

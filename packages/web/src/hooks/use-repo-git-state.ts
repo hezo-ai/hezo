@@ -29,7 +29,13 @@ export interface GitWorktree {
 
 export type RepoGitState =
 	| { container_running: false }
-	| { container_running: true; clone: CloneState; worktrees: GitWorktree[] };
+	| {
+			container_running: true;
+			clone: CloneState;
+			worktrees: GitWorktree[];
+			/** Queued/running agent runs on the project; reset is blocked while > 0. */
+			active_runs: number;
+	  };
 
 export type ResetAction = 'discard_local' | 'prune_worktrees' | 'reclone';
 

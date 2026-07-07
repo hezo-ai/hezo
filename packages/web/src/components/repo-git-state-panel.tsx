@@ -118,38 +118,53 @@ export function RepoGitStatePanel({ projectId, repoId, repoName }: RepoGitStateP
 				<>
 					<CloneSummary clone={data.clone} />
 					<Worktrees projectId={projectId} worktrees={data.worktrees} />
-					{isSuperuser && (
-						<div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-							<ResetActionButton
-								action="discard_local"
-								label="Discard local changes"
-								repoName={repoName}
-								disabled={resetRepo.isPending || !data.clone.cloned || !data.clone.defaultBranch}
-								disabledReason={
-									!data.clone.cloned
-										? 'Repository is not cloned yet'
-										: !data.clone.defaultBranch
-											? 'No default branch to reset to (empty repository)'
-											: undefined
-								}
-								onClick={() => setDialog('discard_local')}
-							/>
-							<ResetActionButton
-								action="prune_worktrees"
-								label="Prune worktrees"
-								repoName={repoName}
-								disabled={resetRepo.isPending}
-								onClick={() => setDialog('prune_worktrees')}
-							/>
-							<ResetActionButton
-								action="reclone"
-								label="Re-clone"
-								repoName={repoName}
-								disabled={resetRepo.isPending}
-								onClick={() => setDialog('reclone')}
-							/>
-						</div>
-					)}
+					{isSuperuser &&
+						(() => {
+							const runInProgressReason =
+								data.active_runs > 0
+									? `Cannot reset while ${data.active_runs} agent run(s) are active on this project`
+									: undefined;
+							return (
+								<div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+									<ResetActionButton
+										action="discard_local"
+										label="Discard local changes"
+										repoName={repoName}
+										disabled={
+											resetRepo.isPending ||
+											data.active_runs > 0 ||
+											!data.clone.cloned ||
+											!data.clone.defaultBranch
+										}
+										disabledReason={
+											runInProgressReason ??
+											(!data.clone.cloned
+												? 'Repository is not cloned yet'
+												: !data.clone.defaultBranch
+													? 'No default branch to reset to (empty repository)'
+													: undefined)
+										}
+										onClick={() => setDialog('discard_local')}
+									/>
+									<ResetActionButton
+										action="prune_worktrees"
+										label="Prune worktrees"
+										repoName={repoName}
+										disabled={resetRepo.isPending || data.active_runs > 0}
+										disabledReason={runInProgressReason}
+										onClick={() => setDialog('prune_worktrees')}
+									/>
+									<ResetActionButton
+										action="reclone"
+										label="Re-clone"
+										repoName={repoName}
+										disabled={resetRepo.isPending || data.active_runs > 0}
+										disabledReason={runInProgressReason}
+										onClick={() => setDialog('reclone')}
+									/>
+								</div>
+							);
+						})()}
 				</>
 			) : null}
 

@@ -266,10 +266,9 @@ test('a failing connector-ensure surfaces an inline error under the GitHub headi
 	});
 
 	// Disconnected CTA renders; clicking Connect kicks off ensureConnector, which
-	// 500s here → the catch sets the inline error. The thrown ApiError is a plain
-	// object (not an Error instance), so startConnect falls back to its generic
-	// message rather than the server's text.
+	// 500s here → the catch sets the inline error. The thrown ApiError is an Error
+	// instance, so startConnect surfaces the server's own message.
 	const connectBtn = await r.findByTestId('github-connect', undefined, { timeout: 20_000 });
 	await r.user.click(connectBtn);
-	await r.findByText('Failed to start GitHub OAuth');
+	await r.findByText('connector setup failed');
 });

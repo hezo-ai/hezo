@@ -82,6 +82,40 @@ describe('GET /repos/:repoId/git-state', () => {
 		const res = await fetch(url, { headers: authHeader(ctx.token) });
 		expect(res.status).toBe(404);
 	});
+
+	it('reports active_runs so the panel can gate reset before it fails server-side', async () => {
+		// Container "running" reaches the payload that carries active_runs (no .git
+		// dir → getCloneState short-circuits to cloned:false; no execs needed).
+		await ctx.db.query(
+			`UPDATE projects SET container_id = 'test-container', container_status = 'running' WHERE id = $1`,
+			[projectId],
+		);
+		try {
+			const idle = (await (
+				await fetch(gitStateUrl(), { headers: authHeader(ctx.token) })
+			).json()) as {
+				data: { container_running: boolean; active_runs: number };
+			};
+			expect(idle.data.container_running).toBe(true);
+			expect(idle.data.active_runs).toBe(0);
+
+			// A queued/running run on the project is exactly what the reset guard blocks on.
+			const runId = await createAgentRun(ctx.db, captainId, teamId, planningTaskId);
+			try {
+				const busy = (await (
+					await fetch(gitStateUrl(), { headers: authHeader(ctx.token) })
+				).json()) as { data: { active_runs: number } };
+				expect(busy.data.active_runs).toBe(1);
+			} finally {
+				await finalizeAgentRun(ctx.db, runId);
+			}
+		} finally {
+			await ctx.db.query(
+				`UPDATE projects SET container_id = NULL, container_status = NULL WHERE id = $1`,
+				[projectId],
+			);
+		}
+	});
 });
 
 describe('POST /repos/:repoId/reset', () => {

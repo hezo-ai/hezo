@@ -259,12 +259,10 @@ test('an invalid github_pat value triggers the rejected-submission error branch 
 	);
 	await user.click(await findByTestId('credential-submit'));
 
-	// The route rejects a value that doesn't look like a GitHub PAT (400). The
-	// renderer's onError surfaces the inline error and the card stays un-fulfilled
-	// (the api client throws a plain ApiError, so the renderer shows its fallback
-	// "Failed to submit" copy — the load-bearing thing is the error branch + that
-	// no fulfilled state is shown).
-	await findByText('Failed to submit');
+	// The route rejects a value that doesn't look like a GitHub PAT (400). The api
+	// client throws an ApiError (an Error instance), so the renderer's onError
+	// surfaces the server's own message inline and the card stays un-fulfilled.
+	await findByText(/does not look like a GitHub PAT/);
 	expect(queryByTestId('credential-fulfilled')).toBeNull();
 	expect((await findByTestId('credential-request')).getAttribute('data-credential-name')).toBe(
 		'GH_PAT',

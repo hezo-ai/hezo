@@ -17,6 +17,11 @@ function git(cwd: string, ...args: string[]): void {
 		cwd,
 		env: {
 			...process.env,
+			// Isolate the fixture from the developer's ~/.gitconfig so ambient settings
+			// (notably forced commit signing) never break these commits. Identity comes
+			// from the GIT_*_NAME/EMAIL env below, so nulling global/system config is safe.
+			GIT_CONFIG_GLOBAL: '/dev/null',
+			GIT_CONFIG_SYSTEM: '/dev/null',
 			GIT_AUTHOR_NAME: 'Test',
 			GIT_AUTHOR_EMAIL: 'test@example.com',
 			GIT_COMMITTER_NAME: 'Test',
