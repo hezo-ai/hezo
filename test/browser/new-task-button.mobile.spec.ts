@@ -111,4 +111,34 @@ test.describe('Header new-task button responsiveness', () => {
 		expect(btnBox.x).toBeGreaterThan(barBox.x + barBox.width - 4);
 		expect(Math.abs(btnBox.y - barBox.y)).toBeLessThan(barBox.height);
 	});
+
+	// The create button's "New task" label is `hidden lg:inline` — a real
+	// media-query/layout assertion (decision-tree items 1–2), so it needs
+	// Chromium + setViewportSize; happy-dom can't resolve the breakpoint.
+	test('the create button is icon-only on mobile and shows its label on desktop', async ({
+		page,
+		sharedWorkspace,
+	}) => {
+		const { token } = sharedWorkspace;
+		const project = await createProjectAndClearPlanning(page, '', token, {
+			name: uniqueName('Task Label'),
+			description: 'E2E new-task label responsiveness.',
+		});
+
+		const newTask = page.getByTestId('task-list-new-task');
+		// The label lives in a span; the button also carries it as aria-label/title,
+		// but getByText only matches the rendered text node, so it targets the span.
+		const label = newTask.getByText('New task', { exact: true });
+
+		// Mobile: icon-only — the label span is display:none.
+		await page.setViewportSize({ width: 375, height: 800 });
+		await page.goto(`/projects/${project.slug}/tasks`);
+		await waitForPageLoad(page);
+		await expect(newTask).toBeVisible({ timeout: 15000 });
+		await expect(label).toBeHidden();
+
+		// Desktop (≥lg): the "New task" label renders beside the icon.
+		await page.setViewportSize({ width: 1280, height: 900 });
+		await expect(label).toBeVisible();
+	});
 });

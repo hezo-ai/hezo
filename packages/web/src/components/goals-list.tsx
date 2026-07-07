@@ -345,6 +345,8 @@ export function GoalsList({ projectId }: GoalsListProps) {
 						title="New goal"
 					>
 						<Plus className="w-4 h-4" />
+						{/* Label appears at the desktop breakpoint; icon-only below it. */}
+						<span className="hidden lg:inline">New goal</span>
 					</Button>
 				)}
 			</div>

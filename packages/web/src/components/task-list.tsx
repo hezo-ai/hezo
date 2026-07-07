@@ -552,17 +552,22 @@ export function TaskList({ projectId }: TaskListProps) {
 
 			<div className="mb-4 flex flex-row items-stretch gap-2">
 				{filterBar}
-				{/* Icon-only create button pinned to the filter bar's row, matching its
-				    height. The accessible name keeps it discoverable without the label. */}
+				{/* Create button pinned to the filter bar's row, matching its height.
+				    Icon-only on mobile/tablet to save space; the "New task" label
+				    appears at the desktop breakpoint (lg+). The accessible name keeps
+				    it discoverable at every width. */}
 				<button
 					type="button"
 					onClick={() => setCreateOpen(true)}
 					data-testid="task-list-new-task"
 					aria-label="New task"
 					title="New task"
-					className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-inverse text-inverse-fg transition-colors hover:opacity-90 outline-none focus-visible:ring-[3px] focus-visible:ring-ring focus-visible:border-accent"
+					className="flex h-10 w-10 shrink-0 items-center justify-center gap-1.5 rounded-md bg-inverse text-inverse-fg transition-colors hover:opacity-90 outline-none focus-visible:ring-[3px] focus-visible:ring-ring focus-visible:border-accent lg:w-auto lg:px-3"
 				>
 					<Plus className="w-4 h-4" />
+					<span className="hidden text-[13px] font-medium whitespace-nowrap lg:inline">
+						New task
+					</span>
 				</button>
 			</div>
 
