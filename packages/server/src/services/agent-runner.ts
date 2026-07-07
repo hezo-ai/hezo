@@ -595,6 +595,12 @@ async function buildRunContext(
 		wakeupPayload?.source === WakeupSource.Reply
 			? await loadReplyContext(deps.db, wakeupPayload)
 			: null;
+	const commentWakeContext =
+		wakeupPayload?.source === WakeupSource.Comment
+			? await loadCommentWakeContext(deps.db, wakeupPayload)
+			: null;
+	const wakingCommentId =
+		typeof wakeupPayload?.comment_id === 'string' ? wakeupPayload.comment_id : undefined;
 	const spawnedFrom = task ? await loadSpawnedFromTask(deps.db, task) : null;
 	let basePrompt: string;
 	if (progressUpdate) {
@@ -610,10 +616,22 @@ async function buildRunContext(
 			deps.serverPort,
 		);
 	} else {
+		// Every task run gets the latest few comments inline as a head-start; the shared
+		// instructions still direct the agent to fetch the full thread before acting.
+		const recentComments = await loadCommentHistory(
+			deps.db,
+			(task as TaskInfo).id,
+			deps.masterKeyManager,
+			deps.serverPort,
+			{ limit: RECENT_COMMENTS_LIMIT },
+		);
 		basePrompt = buildTaskPrompt(resolvedPrompt, task as TaskInfo, wakeupPayload, {
 			mentionContext,
 			replyContext,
+			commentWakeContext,
 			spawnedFrom,
+			recentComments,
+			wakingCommentId,
 		});
 	}
 	const taskPrompt = effortApplication.promptDirective
@@ -1663,11 +1681,141 @@ function extractCommentText(content: unknown): string {
 		.join('\n');
 }
 
+export interface RenderableComment {
+	id: string;
+	content_type: string;
+	content: Record<string, unknown>;
+	author_name: string;
+	created_at: string;
+	reactions: ReactionGroup[] | undefined;
+	attachments: AgentAttachment[];
+}
+
+/**
+ * Load a task's comments for injection into a run prompt. With `opts.limit` set, returns the
+ * newest N comments in chronological (oldest-first) order — used for the "Recent Comments"
+ * head-start block in every task run. With no limit, returns the full thread oldest-first —
+ * used by the Coach review. Each row is enriched with its reactions and signed attachment
+ * download URLs.
+ */
+export async function loadCommentHistory(
+	db: Db,
+	taskId: string,
+	masterKeyManager: MasterKeyManager,
+	serverPort: number,
+	opts: { limit?: number } = {},
+): Promise<RenderableComment[]> {
+	const { limit } = opts;
+	const rows = await db.query<{
+		id: string;
+		content_type: string;
+		content: Record<string, unknown>;
+		author_name: string;
+		created_at: string;
+	}>(
+		`SELECT ic.id, ic.content_type, ic.content,
+		        COALESCE(ma.title, m.display_name, 'Admin') AS author_name,
+		        ic.created_at::text
+		 FROM task_comments ic
+		 LEFT JOIN members m ON m.id = ic.author_member_id
+		 LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
+		 WHERE ic.task_id = $1
+		 ORDER BY ic.created_at ${limit != null ? 'DESC' : 'ASC'}${limit != null ? ' LIMIT $2' : ''}`,
+		limit != null ? [taskId, limit] : [taskId],
+	);
+	// The limited query pulls the newest N (DESC); flip back to chronological for rendering.
+	const ordered = limit != null ? [...rows.rows].reverse() : rows.rows;
+
+	const reactionsByComment = await loadReactionsForTask(db, taskId);
+	const attachmentsByComment = await loadAgentAttachmentsForComments(
+		db,
+		ordered.map((c) => c.id),
+		masterKeyManager,
+		serverPort,
+	);
+
+	return ordered.map((c) => ({
+		...c,
+		reactions: reactionsByComment.get(c.id),
+		attachments: attachmentsByComment.get(c.id) ?? [],
+	}));
+}
+
+/**
+ * Serialize loaded comments into the `[timestamp] Author (type): text` block shared by the
+ * Coach review's full history and the task prompt's Recent Comments. When `wakingCommentId`
+ * matches a row, that line is tagged so the agent can see which comment triggered the run.
+ */
+export function renderCommentHistory(
+	comments: RenderableComment[],
+	opts: { wakingCommentId?: string } = {},
+): string {
+	return comments
+		.map((c) => {
+			const text =
+				c.content_type === 'text' ? extractCommentText(c.content) : JSON.stringify(c.content);
+			const tag =
+				opts.wakingCommentId && c.id === opts.wakingCommentId
+					? '  ← the comment that woke you'
+					: '';
+			const base = `[${c.created_at}] ${c.author_name} (${c.content_type}): ${text}${tag}`;
+			const reactionLine = formatReactionLine(c.reactions);
+			const attachmentLines = c.attachments.map(
+				(a) =>
+					`  attachment: ${a.original_filename} (${a.content_type}, ${a.byte_size} bytes) → download: ${a.url}`,
+			);
+			const extra = [reactionLine, ...attachmentLines].filter((l): l is string => l !== null);
+			return extra.length > 0 ? `${base}\n${extra.join('\n')}` : base;
+		})
+		.join('\n');
+}
+
+export interface CommentWakeContext {
+	authorName: string;
+	excerpt: string;
+	commentId: string;
+}
+
+/**
+ * Load the single comment that woke an assignee-comment run (`WakeupSource.Comment`) so it can
+ * be quoted verbatim in the prompt. The mention/reply paths have their own richer handoffs; this
+ * covers the plain assignee wake, whose payload carries `comment_id` but which rendered no
+ * reference to it before.
+ */
+export async function loadCommentWakeContext(
+	db: Db,
+	wakeupPayload: Record<string, unknown>,
+): Promise<CommentWakeContext | null> {
+	const commentId = typeof wakeupPayload.comment_id === 'string' ? wakeupPayload.comment_id : null;
+	if (!commentId) return null;
+	const row = await db.query<{ content: Record<string, unknown>; author_name: string | null }>(
+		`SELECT ic.content,
+		        COALESCE(ma.title, m.display_name, 'Admin') AS author_name
+		 FROM task_comments ic
+		 LEFT JOIN members m ON m.id = ic.author_member_id
+		 LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
+		 WHERE ic.id = $1`,
+		[commentId],
+	);
+	if (row.rows.length === 0) return null;
+	return {
+		authorName: row.rows[0].author_name ?? 'Admin',
+		excerpt: extractCommentText(row.rows[0].content).trim(),
+		commentId,
+	};
+}
+
 export interface BuildTaskPromptContext {
 	mentionContext?: MentionContext | null;
 	replyContext?: ReplyContext | null;
+	commentWakeContext?: CommentWakeContext | null;
 	spawnedFrom?: SpawnedFromTask | null;
+	recentComments?: RenderableComment[];
+	wakingCommentId?: string;
 }
+
+/** How many of a task's most recent comments to inline in every run prompt as a head-start. */
+export const RECENT_COMMENTS_LIMIT = 3;
 
 /** One due goal handed to the Captain in a progress-update run. */
 export interface ProgressUpdateGoal {
@@ -1739,13 +1887,15 @@ export function buildTaskPrompt(
 	wakeupPayload?: Record<string, unknown>,
 	ctx: BuildTaskPromptContext = {},
 ): string {
-	const { mentionContext, replyContext, spawnedFrom } = ctx;
+	const { mentionContext, replyContext, commentWakeContext, spawnedFrom, recentComments } = ctx;
 	const parts = [systemPrompt, '', '---', ''];
 
 	if (replyContext && wakeupPayload?.source === WakeupSource.Reply) {
 		parts.push(...renderReplyHandoff(task, replyContext));
 	} else if (mentionContext && wakeupPayload?.source === WakeupSource.Mention) {
 		parts.push(...renderMentionHandoff(task, mentionContext));
+	} else if (commentWakeContext && wakeupPayload?.source === WakeupSource.Comment) {
+		parts.push(...renderCommentWakeHandoff(task, commentWakeContext));
 	}
 
 	parts.push(`## Current Task: ${task.identifier} — ${task.title}`);
@@ -1770,6 +1920,16 @@ export function buildTaskPrompt(
 		parts.push(task.progress_summary);
 	}
 
+	if (recentComments && recentComments.length > 0) {
+		parts.push('');
+		parts.push(`### Recent Comments (latest ${RECENT_COMMENTS_LIMIT})`);
+		parts.push(renderCommentHistory(recentComments, { wakingCommentId: ctx.wakingCommentId }));
+		parts.push('');
+		parts.push(
+			'These are only the most recent comments. Before you start, call `list_comments` to read the full thread — earlier comments may carry instructions that change this task.',
+		);
+	}
+
 	if (wakeupPayload?.previous_failure) {
 		const pf = wakeupPayload.previous_failure as Record<string, unknown>;
 		parts.push('');
@@ -1785,6 +1945,26 @@ export function buildTaskPrompt(
 	parts.push('Work on this task. Post comments via the Agent API to report progress.');
 
 	return parts.join('\n');
+}
+
+function renderCommentWakeHandoff(task: TaskInfo, ctx: CommentWakeContext): string[] {
+	const excerptBlock = ctx.excerpt
+		? ctx.excerpt
+				.split('\n')
+				.map((line) => `> ${line}`)
+				.join('\n')
+		: '> (empty)';
+	return [
+		'## New Comment on Your Task',
+		`${ctx.authorName} commented on ${task.identifier}, which woke this run — their full comment:`,
+		'',
+		excerptBlock,
+		'',
+		'Read it carefully: it may add or change the instructions for this task. Then review the rest of the thread (see Recent Comments below, and `list_comments` for the full history) before you act.',
+		'',
+		'---',
+		'',
+	];
 }
 
 function renderMentionHandoff(task: TaskInfo, ctx: MentionContext): string[] {
@@ -1983,25 +2163,7 @@ export async function buildCoachReviewPrompt(
 	masterKeyManager: MasterKeyManager,
 	serverPort: number,
 ): Promise<string> {
-	const comments = await db.query<{
-		id: string;
-		content_type: string;
-		content: Record<string, unknown>;
-		author_name: string;
-		created_at: string;
-	}>(
-		`SELECT ic.id, ic.content_type, ic.content,
-		        COALESCE(ma.title, m.display_name, 'Unknown') AS author_name,
-		        ic.created_at::text
-		 FROM task_comments ic
-		 LEFT JOIN members m ON m.id = ic.author_member_id
-		 LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
-		 WHERE ic.task_id = $1
-		 ORDER BY ic.created_at ASC`,
-		[task.id],
-	);
-
-	const reactionsByComment = await loadReactionsForTask(db, task.id);
+	const comments = await loadCommentHistory(db, task.id, masterKeyManager, serverPort);
 
 	const involvedAgents = await db.query<{
 		id: string;
@@ -2017,28 +2179,7 @@ export async function buildCoachReviewPrompt(
 		[teamId, task.id],
 	);
 
-	const commentIds = comments.rows.map((c) => c.id);
-	const attachmentsByComment = await loadAgentAttachmentsForComments(
-		db,
-		commentIds,
-		masterKeyManager,
-		serverPort,
-	);
-
-	const commentLog = comments.rows
-		.map((c) => {
-			const text =
-				c.content_type === 'text' ? extractCommentText(c.content) : JSON.stringify(c.content);
-			const base = `[${c.created_at}] ${c.author_name} (${c.content_type}): ${text}`;
-			const reactionLine = formatReactionLine(reactionsByComment.get(c.id));
-			const attachmentLines = (attachmentsByComment.get(c.id) ?? []).map(
-				(a) =>
-					`  attachment: ${a.original_filename} (${a.content_type}, ${a.byte_size} bytes) → download: ${a.url}`,
-			);
-			const extra = [reactionLine, ...attachmentLines].filter((l): l is string => l !== null);
-			return extra.length > 0 ? `${base}\n${extra.join('\n')}` : base;
-		})
-		.join('\n');
+	const commentLog = renderCommentHistory(comments);
 
 	const agentList = involvedAgents.rows
 		.map((a) => `- ${a.title} (slug: ${a.slug}, id: ${a.id})`)
