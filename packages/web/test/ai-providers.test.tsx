@@ -134,7 +134,7 @@ test('can add an Anthropic API key via the settings UI', async () => {
 	await user.click(getByRole('button', { name: 'Save' }));
 
 	// Once a provider is configured the gate drops and the settings page renders.
-	await findByText('active', undefined, { timeout: 15_000 });
+	await findByText('verified', undefined, { timeout: 15_000 });
 });
 
 test('offers Claude Code subscription (setup-token) paste flow for Anthropic', async () => {
@@ -176,7 +176,7 @@ test('Kimi offers only an API-key form (no subscription, runs on Claude Code/Moo
 	fireEvent.change(keyInput, { target: { value: 'sk-kimi-component-test' } });
 	await user.click(getByRole('button', { name: 'Save' }));
 
-	await findByText('active', undefined, { timeout: 15_000 });
+	await findByText('verified', undefined, { timeout: 15_000 });
 });
 
 test('offers Codex subscription paste flow for OpenAI', async () => {
@@ -234,7 +234,7 @@ test('offers Gemini subscription paste flow for Google', async () => {
 });
 
 test('lists API key + Subscription rows for a provider and flips the default', async () => {
-	const { findByRole, findByText, getByRole, queryAllByText, user, ctx } = await renderApp({
+	const { findByRole, findByText, getByRole, queryAllByText, ctx } = await renderApp({
 		initialPath: '/settings/ai-providers',
 		seed: async () => {
 			await clearAiProviders();
@@ -267,8 +267,8 @@ test('lists API key + Subscription rows for a provider and flips the default', a
 		},
 		{ timeout: 15_000 },
 	);
-	// The first-created config is the default; the badge only shows when >1 exist.
-	expect(queryAllByText('Default').length).toBeGreaterThan(0);
+	// The first-created config is the (single, instance-wide) default and shows the badge.
+	expect(queryAllByText('Default').length).toBe(1);
 
 	const setDefaultBtn = getByRole('button', { name: 'Set openai-mix-subscription as default' });
 	fireEvent.click(setDefaultBtn);
@@ -288,6 +288,53 @@ test('lists API key + Subscription rows for a provider and flips the default', a
 			};
 			const defaultConfig = body.data.find((c) => c.is_default && c.provider === 'openai');
 			expect(defaultConfig?.auth_method).toBe('subscription');
+		},
+		{ timeout: 15_000 },
+	);
+});
+
+test('flips the single instance-wide default across two different providers', async () => {
+	const { findByRole, findByText, getByRole, queryAllByText, ctx } = await renderApp({
+		initialPath: '/settings/ai-providers',
+		seed: async () => {
+			await clearAiProviders();
+			// First config added anywhere becomes the single global default.
+			const anthropic = await postProvider({
+				provider: 'anthropic',
+				api_key: 'sk-ant-default-x',
+				label: 'anthropic-x',
+			});
+			expect(anthropic.status).toBe(201);
+			const google = await postProvider({
+				provider: 'google',
+				api_key: 'gm-default-x',
+				label: 'google-x',
+			});
+			expect(google.status).toBe(201);
+		},
+	});
+
+	await findByRole('heading', { name: 'AI providers' });
+	await findByText('anthropic-x');
+	await findByText('google-x');
+
+	// Exactly one config across all providers is the default, always badged.
+	await waitFor(() => expect(queryAllByText('Default').length).toBe(1), { timeout: 15_000 });
+
+	// Promote the other provider's config — the default moves globally.
+	fireEvent.click(getByRole('button', { name: 'Set google-x as default' }));
+
+	await waitFor(
+		async () => {
+			const res = await ctx.apiBase('/api/ai-providers', {
+				headers: { Authorization: `Bearer ${ctx.token}` },
+			});
+			const body = (await res.json()) as {
+				data: Array<{ provider: string; is_default: boolean }>;
+			};
+			const defaults = body.data.filter((c) => c.is_default);
+			expect(defaults.length).toBe(1);
+			expect(defaults[0].provider).toBe('google');
 		},
 		{ timeout: 15_000 },
 	);

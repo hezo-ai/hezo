@@ -64,6 +64,11 @@ You can connect **several providers at once** and keep them all available. That'
 useful for spreading work across accounts, keeping a cheaper model on hand for routine
 tasks and a frontier model for the hard ones, or simply having a fallback.
 
+When a key is stored it's checked against the provider and shown as **verified** (the
+Verify action re-checks it any time). Mark one provider as the **default** with the star:
+that's the single global default every agent uses unless it has its own model override.
+Change the default and agents on the default pick up the new provider on their next run.
+
 ## Give an agent its own model
 
 By default the agents on a team share the team's model, but you can **override the model

@@ -1,4 +1,4 @@
-import { AI_PROVIDER_INFO, AiAuthMethod, type AiProvider } from '@hezo/shared';
+import { AI_PROVIDER_INFO, AiAuthMethod, type AiProvider, AiProviderStatus } from '@hezo/shared';
 import { Check, Loader2, Pencil, Plus, ShieldCheck, Star, Trash2, X } from 'lucide-react';
 import { useState } from 'react';
 import {
@@ -30,10 +30,6 @@ export function AiProvidersSection() {
 
 	const rows = configs ?? [];
 
-	function providerCount(provider: string) {
-		return rows.filter((c) => c.provider === provider).length;
-	}
-
 	async function handleVerify(configId: string) {
 		setVerifyingId(configId);
 		try {
@@ -56,7 +52,7 @@ export function AiProvidersSection() {
 			render: (c) => (
 				<span className="flex items-center gap-2">
 					<ProviderNameCell config={c} />
-					{c.is_default && providerCount(c.provider) > 1 && <Badge color="accent">Default</Badge>}
+					{c.is_default && <Badge color="accent">Default</Badge>}
 				</span>
 			),
 		},
@@ -88,7 +84,13 @@ export function AiProvidersSection() {
 			header: 'Status',
 			render: (c) => (
 				<Badge
-					color={c.status === 'active' ? 'success' : c.status === 'invalid' ? 'danger' : 'neutral'}
+					color={
+						c.status === AiProviderStatus.Verified
+							? 'success'
+							: c.status === AiProviderStatus.Invalid
+								? 'danger'
+								: 'neutral'
+					}
 				>
 					{c.status}
 				</Badge>
@@ -104,7 +106,6 @@ export function AiProvidersSection() {
 			key: 'actions',
 			header: '',
 			render: (c) => {
-				const multiple = providerCount(c.provider) > 1;
 				return (
 					<span className="flex items-center gap-2 justify-end">
 						{verifiedOk[c.id] && (
@@ -112,7 +113,7 @@ export function AiProvidersSection() {
 								<ShieldCheck className="w-3.5 h-3.5 text-success-soft-fg" />
 							</Tooltip>
 						)}
-						{multiple && !c.is_default && (
+						{!c.is_default && (
 							<Tooltip content="Set as default">
 								<button
 									type="button"

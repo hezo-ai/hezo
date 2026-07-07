@@ -39,12 +39,17 @@ export async function storeAiProviderKey(
 
 	const encryptedValue = encrypt(credential, encryptionKey);
 
-	const existing = await db.query<{ id: string }>(
+	const existingForProvider = await db.query<{ id: string }>(
 		`SELECT id FROM ai_provider_configs WHERE provider = $1::ai_provider`,
 		[provider],
 	);
-	const isDefault = existing.rows.length === 0;
-	const resolvedLabel = label?.trim() || deriveLabel(provider, existing.rows.length);
+	// The default is a single instance-wide flag: only the first config added to
+	// the instance (across all providers) becomes the default.
+	const anyConfig = await db.query<{ exists: number }>(
+		`SELECT 1 AS exists FROM ai_provider_configs LIMIT 1`,
+	);
+	const isDefault = anyConfig.rows.length === 0;
+	const resolvedLabel = label?.trim() || deriveLabel(provider, existingForProvider.rows.length);
 
 	const configResult = await db.query<{ id: string }>(
 		`INSERT INTO ai_provider_configs (provider, auth_method, label, encrypted_credential, is_default, metadata)
@@ -115,7 +120,7 @@ export async function getProviderCredentialAndModel(
 		 WHERE provider = $1::ai_provider AND status = $2
 		 ORDER BY is_default DESC, created_at ASC
 		 LIMIT 1`,
-		[provider, AiProviderStatus.Active],
+		[provider, AiProviderStatus.Verified],
 	);
 
 	if (result.rows.length === 0) return null;
@@ -173,19 +178,18 @@ export async function deleteAiProviderConfig(db: Db, configId: string): Promise<
 }
 
 export async function setDefaultAiProvider(db: Db, configId: string): Promise<boolean> {
-	const config = await db.query<{ provider: string }>(
-		`SELECT provider FROM ai_provider_configs WHERE id = $1`,
+	const config = await db.query<{ id: string }>(
+		`SELECT id FROM ai_provider_configs WHERE id = $1`,
 		[configId],
 	);
 
 	if (config.rows.length === 0) return false;
 
-	const provider = config.rows[0].provider;
-
+	// A single instance-wide default: demote every other config, then promote this one.
 	await withTransaction(db, async () => {
 		await db.query(
-			`UPDATE ai_provider_configs SET is_default = false WHERE provider = $1::ai_provider AND id <> $2`,
-			[provider, configId],
+			`UPDATE ai_provider_configs SET is_default = false, updated_at = now() WHERE id <> $1 AND is_default = true`,
+			[configId],
 		);
 		await db.query(
 			`UPDATE ai_provider_configs SET is_default = true, updated_at = now() WHERE id = $1`,
@@ -201,7 +205,7 @@ export async function getAiProviderStatus(
 ): Promise<{ configured: boolean; providers: string[] }> {
 	const result = await db.query<{ provider: string }>(
 		`SELECT DISTINCT provider FROM ai_provider_configs WHERE status = $1`,
-		[AiProviderStatus.Active],
+		[AiProviderStatus.Verified],
 	);
 
 	return {

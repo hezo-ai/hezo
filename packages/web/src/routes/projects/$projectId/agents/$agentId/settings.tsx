@@ -2,6 +2,7 @@ import {
 	AgentAdminStatus,
 	AI_PROVIDER_INFO,
 	type AiProvider,
+	AiProviderStatus,
 	type BudgetWindowsCents,
 	CAPTAIN_AGENT_SLUG,
 	hasFixedReportsTo,
@@ -352,7 +353,7 @@ function ModelOverride({ provider, model, onProviderChange, onModelChange }: Mod
 	const configByProvider = useMemo(() => {
 		const map = new Map<string, { id: string; default_model: string | null }>();
 		for (const c of configs ?? []) {
-			if (c.status !== 'active') continue;
+			if (c.status !== AiProviderStatus.Verified) continue;
 			if (!map.has(c.provider)) {
 				map.set(c.provider, { id: c.id, default_model: c.default_model });
 			}
