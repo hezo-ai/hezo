@@ -121,7 +121,7 @@ describe('task attachment upload (POST /projects/:projectId/tasks/:taskId/assets
 		expect((await res.json()).error.code).toBe('INVALID_REQUEST');
 	});
 
-	it('stores the upload under uploads/<task-name> and records the row', async () => {
+	it('stores the upload under uploads/<task-identifier> and records the row', async () => {
 		const res = await ctx.app.request(
 			`/api/projects/${projectSlug}/tasks/${taskIdentifier.toLowerCase()}/assets`,
 			{
@@ -132,7 +132,7 @@ describe('task attachment upload (POST /projects/:projectId/tasks/:taskId/assets
 		);
 		expect(res.status).toBe(201);
 		const body = await res.json();
-		expect(body.data.original_filename).toBe('uploads/Attach-Here/shot.png');
+		expect(body.data.original_filename).toBe(`uploads/${taskIdentifier}/shot.png`);
 		expect(body.data.content_type).toBe('image/png');
 		expect(body.data.url).toMatch(/^\/api\/assets\/[0-9a-f-]+\?exp=\d+&sig=/);
 

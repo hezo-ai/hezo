@@ -270,9 +270,9 @@ renders markdown assets with a rich preview plus a view-source toggle. **Folders
 path prefixes** inside `assets.original_filename` (up to 2 levels, e.g. `launch/hero.png`) —
 no folder table, `UNIQUE(project_id, original_filename)` keys the full path, and blobs never
 move on a rename. Task-thread attachment uploads (`POST …/tasks/:taskId/assets`) auto-file
-under `uploads/<task-name>` (`taskUploadsFolder` in `@hezo/shared`: the title sanitized to one
-segment, task identifier as fallback), while direct library uploads land in the folder the
-uploader chose. Reorganization: `move_project_asset`/`copy_project_asset` (MCP) and
+under `uploads/<task-identifier>` (`taskUploadsFolder` in `@hezo/shared`: the task identifier
+e.g. `IN-42` sanitized to one segment, so the folder stays stable across renames), while direct
+library uploads land in the folder the uploader chose. Reorganization: `move_project_asset`/`copy_project_asset` (MCP) and
 `PATCH /api/projects/:id/assets/:assetId` (the web Move dialog, human-only) reorganize
 metadata only, erroring on destination collision. **Archival is the agent-facing soft
 delete** (docs and assets both carry `archived_at` + `archived_by_member_id`, migration
