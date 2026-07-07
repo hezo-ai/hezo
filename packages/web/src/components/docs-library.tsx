@@ -273,12 +273,15 @@ export function DocsLibrary({
 								<Button
 									variant="accent"
 									size="sm"
-									className="h-8 w-8 shrink-0 px-0 rounded-md"
+									// Icon-only below desktop to keep the narrow doc-list column
+									// clear for the filter; the "New document" label appears at lg+.
+									className="h-8 w-8 shrink-0 px-0 rounded-md lg:w-auto lg:px-2.5"
 									onClick={onNewDoc}
 									aria-label="New document"
 									title="New document"
 								>
 									<Plus className="w-4 h-4" />
+									<span className="hidden lg:inline">New document</span>
 								</Button>
 							)}
 						</div>
