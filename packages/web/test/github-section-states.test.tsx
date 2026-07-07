@@ -152,9 +152,9 @@ test('connected with repos lists each repo with a web link; designated is locked
 		],
 	});
 
-	// "Set up repo" header affordance appears once ready + has repos. The repos
-	// query can resolve before scope-status, so await this isReady-gated element
-	// before asserting on the rest of the rendered state.
+	// "Add repo" affordance (above the repo list) appears once ready + has repos.
+	// The repos query can resolve before scope-status, so await this isReady-gated
+	// element before asserting on the rest of the rendered state.
 	const setupButtons = await r.findAllByTestId('repo-setup-add', undefined, { timeout: 20_000 });
 	expect(setupButtons.length).toBeGreaterThan(0);
 
