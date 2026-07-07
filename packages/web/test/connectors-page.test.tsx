@@ -31,6 +31,27 @@ async function seedSaasConnector(
 	return (await res.json()).data;
 }
 
+// Seed a local (stdio) MCP connector — e.g. a self-hosted umami server that logs
+// in with a username/password credential placeholder rather than OAuth. Local
+// connectors carry a `config.command`, never a url, and never an oauth handshake.
+async function seedLocalConnector(
+	ws: SeededWorkspace,
+	input: { name: string; command: string },
+): Promise<{ id: string; name: string }> {
+	const { apiBase } = getTestContext();
+	const res = await apiBase(`/api/projects/${ws.internalSlug}/mcp-connections`, {
+		method: 'POST',
+		headers: ws.headers,
+		body: JSON.stringify({
+			name: input.name,
+			kind: 'local',
+			config: { command: input.command, args: [], env: {} },
+		}),
+	});
+	if (res.status !== 201) throw new Error(`seedLocalConnector failed: ${res.status}`);
+	return (await res.json()).data;
+}
+
 // Seed an "active" GitHub OAuth connection straight into the DB (the same shape
 // finalizeConnectorConnection produces) so the GitHub row renders its connected
 // state without driving the full device flow.
@@ -220,6 +241,32 @@ test('an active non-GitHub connector renders Disconnect and revokes', async () =
 		expect(row?.getAttribute('data-status')).toBe('revoked');
 	});
 	await findByTestId('connector-connect');
+});
+
+test('a local (credential-auth) connector renders Connected, not a Connect button', async () => {
+	let slug = '';
+	const { findByText, getByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			slug = ws.internalSlug;
+			await seedLocalConnector(ws, { name: 'umami', command: 'umami-mcp' });
+		},
+	});
+	await router.navigate({ to: CONNECTORS_ROUTE, params: { projectId: slug } });
+
+	await findByText('umami');
+	// Local connectors have no OAuth handshake — they're connected as soon as the
+	// row exists, so the row shows the Connected badge, not "Pending connect".
+	const umamiRow = within(getByTestId('connectors-list'))
+		.getAllByTestId('connector-row')
+		.find((li) => li.getAttribute('data-connector-id'));
+	if (!umamiRow) throw new Error('umami connector row not found');
+	expect(umamiRow.getAttribute('data-status')).toBe('active');
+	// A local connector never offers the (OAuth) Connect button — only Disconnect.
+	expect(within(umamiRow).queryByTestId('connector-connect')).toBeNull();
+	within(umamiRow).getByTestId('connector-revoke');
+	await findByText('Connected');
 });
 
 test('GitHub Connect drives the device flow to a connected OAuth connection', async () => {

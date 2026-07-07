@@ -34,6 +34,12 @@ export function connectorStatus(c: McpConnection): ConnectorStatus {
 	if (c.revoked_at) return 'revoked';
 	if (c.auth_error && !c.activated_at) return 'failed';
 	if (c.oauth_connection_id && c.activated_at) return 'active';
+	// Local (stdio) connectors authenticate via credential placeholders
+	// (__HEZO_SECRET_*__ — e.g. a username/password login that fetches a token),
+	// not OAuth. There is no oauth_connection_id/activated_at handshake to
+	// complete, so a non-revoked, non-failed local row is connected the moment it
+	// exists — never leave it stuck on "Pending connect" offering an OAuth flow.
+	if (c.kind === 'local') return 'active';
 	return 'pending';
 }
 

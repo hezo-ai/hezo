@@ -1013,7 +1013,12 @@ always included.
 **MCP connections** (`mcp_connections`, see § 3 scoping). `kind='saas'` carries
 `{ url, headers }` (header values may contain `__HEZO_SECRET_*__`; OAuth-backed rows set
 `oauth_connection_id` and the loader emits the `Bearer` placeholder). `kind='local'`
-carries a stdio `{ command, args, env }` (the on-demand installer is a deferred phase).
+carries a stdio `{ command, args, env }` (the on-demand installer is a deferred phase);
+local servers authenticate via credential placeholders in their `env` (e.g. a
+username/password login that fetches a token), never OAuth, so the connectors UI treats a
+non-revoked, non-failed local row as **connected the moment it exists** (`statusOf`/
+`connectorStatus` short-circuit `kind='local'` to `active`) rather than showing it a
+meaningless "Pending connect" OAuth affordance.
 At run build, `loadMcpConnectionDescriptors` merges connectors after the built-in `hezo`
 MCP, and each of the five runtime adapters translates the descriptors into the spawn
 artifacts its CLI expects (Claude Code `--mcp-config`, Codex `config.toml`, Gemini

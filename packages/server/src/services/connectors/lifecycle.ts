@@ -49,11 +49,19 @@ export interface ConnectorRow {
 export type ConnectorStatus = 'pending' | 'active' | 'failed' | 'revoked';
 
 export function statusOf(
-	row: Pick<ConnectorRow, 'oauth_connection_id' | 'activated_at' | 'revoked_at' | 'auth_error'>,
+	row: Pick<
+		ConnectorRow,
+		'kind' | 'oauth_connection_id' | 'activated_at' | 'revoked_at' | 'auth_error'
+	>,
 ): ConnectorStatus {
 	if (row.revoked_at) return 'revoked';
 	if (row.auth_error && !row.activated_at) return 'failed';
 	if (row.oauth_connection_id && row.activated_at) return 'active';
+	// Local (stdio) connectors authenticate via credential placeholders
+	// (__HEZO_SECRET_*__ — e.g. a username/password login that fetches a token),
+	// not OAuth, so there is no oauth_connection_id/activated_at handshake. A
+	// non-revoked, non-failed local row is connected the moment it exists.
+	if (row.kind === McpConnectionKind.Local) return 'active';
 	return 'pending';
 }
 

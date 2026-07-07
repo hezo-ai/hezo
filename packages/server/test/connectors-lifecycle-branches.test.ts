@@ -53,6 +53,7 @@ afterAll(async () => {
 
 describe('statusOf precedence', () => {
 	const base = {
+		kind: McpConnectionKind.Saas,
 		oauth_connection_id: null,
 		activated_at: null,
 		revoked_at: null,
@@ -87,6 +88,20 @@ describe('statusOf precedence', () => {
 
 	it('pending when activated but missing the oauth connection id', () => {
 		expect(statusOf({ ...base, activated_at: 'now' })).toBe('pending');
+	});
+
+	it('active for a local connector with no oauth (credential-placeholder auth)', () => {
+		// Local (stdio) connectors log in via __HEZO_SECRET_*__ placeholders, not
+		// OAuth, so they are connected as soon as the row exists.
+		expect(statusOf({ ...base, kind: McpConnectionKind.Local })).toBe('active');
+	});
+
+	it('revoked still wins over a local connector', () => {
+		expect(statusOf({ ...base, kind: McpConnectionKind.Local, revoked_at: 'now' })).toBe('revoked');
+	});
+
+	it('failed still wins over a local connector', () => {
+		expect(statusOf({ ...base, kind: McpConnectionKind.Local, auth_error: 'boom' })).toBe('failed');
 	});
 });
 
