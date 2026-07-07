@@ -101,6 +101,23 @@ describe('POST /ai-providers/:configId/verify', () => {
 		expect(status.rows[0].status).toBe('invalid');
 	});
 
+	it('restores the config to verified when a previously-invalid key checks out again', async () => {
+		// The prior test left this config marked `invalid`; a successful re-verify heals it.
+		globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
+		const res = await app.request(`/api/ai-providers/${configId}/verify`, {
+			method: 'POST',
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		expect((await res.json()).data.valid).toBe(true);
+
+		const status = await db.query<{ status: string }>(
+			'SELECT status FROM ai_provider_configs WHERE id = $1',
+			[configId],
+		);
+		expect(status.rows[0].status).toBe('verified');
+	});
+
 	it('returns valid:false when the provider is unreachable', async () => {
 		globalThis.fetch = vi.fn().mockRejectedValue(new Error('net')) as unknown as typeof fetch;
 		const res = await app.request(`/api/ai-providers/${configId}/verify`, {

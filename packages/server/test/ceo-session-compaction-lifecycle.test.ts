@@ -138,7 +138,7 @@ async function seedProviderAndContainer(ctx: ServerTestContext): Promise<string>
 	if (!key) throw new Error('master key unavailable');
 	await ctx.db.query(
 		`INSERT INTO ai_provider_configs (provider, auth_method, label, encrypted_credential, is_default, status, default_model)
-		 VALUES ('anthropic', 'api_key', 'test', $1, true, 'active', 'claude-sonnet-4-6')`,
+		 VALUES ('anthropic', 'api_key', 'test', $1, true, 'verified', 'claude-sonnet-4-6')`,
 		[encrypt('sk-ant-test', key)],
 	);
 	const proj = await ctx.db.query<{ id: string }>(

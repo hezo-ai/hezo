@@ -1136,7 +1136,7 @@ export const AiAuthMethod = {
 export type AiAuthMethod = (typeof AiAuthMethod)[keyof typeof AiAuthMethod];
 
 export const AiProviderStatus = {
-	Active: 'active',
+	Verified: 'verified',
 	Invalid: 'invalid',
 	Revoked: 'revoked',
 } as const;

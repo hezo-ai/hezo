@@ -1201,7 +1201,7 @@ describe('runAgent — rotated subscription auth tombstone', () => {
 			'SELECT encrypted_credential, status FROM ai_provider_configs WHERE id = $1',
 			[configId],
 		);
-		expect(cfg.rows[0].status).toBe('active');
+		expect(cfg.rows[0].status).toBe('verified');
 		expect(decrypt(cfg.rows[0].encrypted_credential, masterKeyManager.getKey())).toBe(
 			validAuthJson,
 		);

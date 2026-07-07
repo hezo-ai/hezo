@@ -35,7 +35,7 @@ export async function resolveRuntimeForTask(
 			 WHERE status = $1 AND provider IN (${placeholders})
 			 ORDER BY is_default DESC, created_at ASC
 			 LIMIT 1`,
-			[AiProviderStatus.Active, ...candidates],
+			[AiProviderStatus.Verified, ...candidates],
 		);
 		const row = result.rows[0];
 		if (!row) return null;
@@ -51,7 +51,7 @@ export async function resolveRuntimeForTask(
 		 WHERE status = $1 AND provider IN (${placeholders})
 		 ORDER BY is_default DESC, created_at ASC
 		 LIMIT 1`,
-		[AiProviderStatus.Active, ...known],
+		[AiProviderStatus.Verified, ...known],
 	);
 	const first = providers.rows[0];
 	if (!first) return null;

@@ -2,6 +2,7 @@ import {
 	AI_PROVIDER_INFO,
 	AiAuthMethod,
 	type AiProvider,
+	AiProviderStatus,
 	ALL_AI_PROVIDERS,
 	parseProviderModels,
 } from '@hezo/shared';
@@ -202,12 +203,18 @@ aiProvidersRoutes.post('/ai-providers/:configId/verify', async (c) => {
 	try {
 		const valid = await verifyProviderKey(cred.provider as AiProvider, cred.value, cred.authMethod);
 		if (valid) {
+			// Persist the healthy state so the badge is truthful and a key that was
+			// previously marked `invalid` recovers on a successful re-verify.
+			await db.query(
+				`UPDATE ai_provider_configs SET status = $1, updated_at = now() WHERE id = $2`,
+				[AiProviderStatus.Verified, configId],
+			);
 			return ok(c, { valid: true });
 		}
-		await db.query(
-			`UPDATE ai_provider_configs SET status = 'invalid', updated_at = now() WHERE id = $1`,
-			[configId],
-		);
+		await db.query(`UPDATE ai_provider_configs SET status = $1, updated_at = now() WHERE id = $2`, [
+			AiProviderStatus.Invalid,
+			configId,
+		]);
 		return ok(c, { valid: false, message: 'API key is invalid or expired' });
 	} catch {
 		return ok(c, { valid: false, message: 'Could not reach provider to verify key' });

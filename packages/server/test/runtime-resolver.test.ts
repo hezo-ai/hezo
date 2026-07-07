@@ -106,7 +106,7 @@ describe('resolveRuntimeForTask', () => {
 			AiAuthMethod.ApiKey,
 			'anthropic-primary',
 		);
-		await storeAiProviderKey(
+		const deepseekId = await storeAiProviderKey(
 			db,
 			masterKeyManager,
 			AiProvider.DeepSeek,
@@ -115,17 +115,15 @@ describe('resolveRuntimeForTask', () => {
 			'deepseek-primary',
 		);
 
-		// Both providers ship a default row of their own; tiebreak goes to whichever
-		// was added first under the same runtime.
+		// Anthropic was added first, so it holds the single instance-wide default and
+		// wins the shared ClaudeCode runtime on is_default DESC.
 		expect(await resolveRuntimeForTask(db, AgentRuntime.ClaudeCode)).toEqual({
 			runtime: AgentRuntime.ClaudeCode,
 			provider: AiProvider.Anthropic,
 		});
 
-		// Demote anthropic so deepseek wins on is_default DESC.
-		await db.query(
-			`UPDATE ai_provider_configs SET is_default = false WHERE provider = 'anthropic'`,
-		);
+		// Make deepseek the global default so it wins on is_default DESC.
+		await setDefaultAiProvider(db, deepseekId);
 
 		expect(await resolveRuntimeForTask(db, AgentRuntime.ClaudeCode)).toEqual({
 			runtime: AgentRuntime.ClaudeCode,

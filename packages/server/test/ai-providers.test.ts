@@ -759,49 +759,53 @@ describe('AI providers models endpoint', () => {
 	});
 });
 
-describe('AI providers default-per-provider invariant', () => {
-	it('enforces exactly one default per provider after setting a new default', async () => {
+describe('AI providers single global default invariant', () => {
+	async function addProvider(provider: string, apiKey: string, label: string): Promise<string> {
+		const res = await app.request('/api/ai-providers', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ provider, api_key: apiKey, label }),
+		});
+		expect(res.status).toBe(201);
+		return (await res.json()).data.id;
+	}
+
+	async function listConfigs(): Promise<Array<{ id: string; is_default: boolean }>> {
+		const list = await app.request('/api/ai-providers', { headers: authHeader(token) });
+		return (await list.json()).data;
+	}
+
+	it('auto-defaults only the first config added to the instance', async () => {
 		await db.query('DELETE FROM ai_provider_configs');
 
-		const first = await app.request('/api/ai-providers', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				provider: 'anthropic',
-				api_key: 'sk-ant-first',
-				label: 'anthropic-a',
-			}),
-		});
-		const firstId = (await first.json()).data.id;
+		const firstId = await addProvider('anthropic', 'sk-ant-first', 'anthropic-a');
+		// A second config for a DIFFERENT provider does not become a second default.
+		const secondId = await addProvider('deepseek', 'sk-deepseek-second', 'deepseek-a');
 
-		const second = await app.request('/api/ai-providers', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				provider: 'anthropic',
-				api_key: 'sk-ant-second',
-				label: 'anthropic-b',
-			}),
-		});
-		const secondId = (await second.json()).data.id;
+		const configs = await listConfigs();
+		const defaults = configs.filter((c) => c.is_default);
+		expect(defaults.length).toBe(1);
+		expect(defaults[0].id).toBe(firstId);
+		expect(configs.find((c) => c.id === secondId)?.is_default).toBe(false);
+	});
 
-		const promote = await app.request(`/api/ai-providers/${secondId}/default`, {
+	it('enforces exactly one default instance-wide after promoting across providers', async () => {
+		await db.query('DELETE FROM ai_provider_configs');
+
+		const anthropicId = await addProvider('anthropic', 'sk-ant-a', 'anthropic-a');
+		const googleId = await addProvider('google', 'gm-b', 'google-b');
+
+		const promote = await app.request(`/api/ai-providers/${googleId}/default`, {
 			method: 'PATCH',
 			headers: authHeader(token),
 		});
 		expect(promote.status).toBe(200);
 
-		const list = await app.request('/api/ai-providers', { headers: authHeader(token) });
-		const configs = (await list.json()).data as Array<{
-			id: string;
-			provider: string;
-			is_default: boolean;
-		}>;
-		const anthropicConfigs = configs.filter((c) => c.provider === 'anthropic');
-		const defaults = anthropicConfigs.filter((c) => c.is_default);
+		const configs = await listConfigs();
+		const defaults = configs.filter((c) => c.is_default);
 		expect(defaults.length).toBe(1);
-		expect(defaults[0].id).toBe(secondId);
-		expect(anthropicConfigs.find((c) => c.id === firstId)?.is_default).toBe(false);
+		expect(defaults[0].id).toBe(googleId);
+		expect(configs.find((c) => c.id === anthropicId)?.is_default).toBe(false);
 	});
 });
 

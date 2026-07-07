@@ -753,9 +753,17 @@ Google → `gemini`, OpenRouter → `opencode`.
 row per `(provider, label)`, each inlining an encrypted credential. `auth_method`
 distinguishes an **API key** (injected as env at run start) from a **subscription** blob
 (materialized to a per-run mount in the container). Subscription auth is supported by
-Anthropic, OpenAI, and Google. `resolveRuntimeForTask` filters by
-`PROVIDERS_BY_RUNTIME[runtime]`, then orders `is_default DESC, created_at ASC`; an
-agent's `model_override_*` (or the config's `default_model`) sets the CLI `--model`.
+Anthropic, OpenAI, and Google. A config's `status` is `verified` (the healthy default —
+the add flow live-verifies the key, and the Verify action persists the result, restoring
+`verified` on a key that had gone `invalid`), `invalid` (a verify was rejected), or
+`revoked` (a retired provider). Exactly **one** config instance-wide carries the
+`is_default` flag — a single global default enforced by a partial-unique index
+(`ai_provider_configs_single_default`); the first config added to the instance auto-takes
+it, and `setDefaultAiProvider` moves it atomically. `resolveRuntimeForTask` filters by
+`status = 'verified'` and `PROVIDERS_BY_RUNTIME[runtime]`, then orders
+`is_default DESC, created_at ASC`, so the global default wins whenever it's a candidate
+for the chosen runtime, else the oldest verified config; an agent's `model_override_*`
+(or the config's `default_model`) sets the CLI `--model`.
 
 **Reasoning effort.** Each run resolves an `agent_effort` level
 (`minimal|low|medium|high|max`) from the wakeup payload → `member_agents.default_effort` →
