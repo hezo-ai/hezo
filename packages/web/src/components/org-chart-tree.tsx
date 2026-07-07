@@ -24,7 +24,14 @@ export function useOrgChartAutoFit() {
 			if (!containerWidth || !contentWidth) return;
 			const next = Math.min(1, containerWidth / contentWidth);
 			setScale(next);
-			setHeight(contentHeight * next);
+			// The container is border-box with vertical padding and clips via
+			// overflow-hidden, so the height must cover the scaled content *plus*
+			// that padding — otherwise the padding eats into the box and the last
+			// row's bottom border falls outside the clip. Round the scaled height
+			// up and add 1px to absorb the sub-pixel rounding of the scaled border.
+			const style = getComputedStyle(container);
+			const paddingY = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+			setHeight(Math.ceil(contentHeight * next) + paddingY + 1);
 		};
 
 		recompute();
@@ -153,7 +160,12 @@ export function OrgChartTree({ roots, projectId, mode, hint, testId }: OrgChartT
 
 	return (
 		<div data-testid={testId}>
-			<div ref={containerRef} className="w-full overflow-hidden pt-1" style={{ height }}>
+			<div
+				ref={containerRef}
+				data-testid={testId ? `${testId}-viewport` : undefined}
+				className="w-full overflow-hidden py-1"
+				style={{ height }}
+			>
 				<div
 					ref={contentRef}
 					className="flex flex-col items-center"
