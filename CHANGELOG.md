@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.15.4 - 2026-07-07
+
+### Features
+
+- standardize comment wakeups on active @-mentions ([#624](https://github.com/hezo-ai/hezo/pull/624))
+- surface waking comment and recent comments in agent run prompts ([#623](https://github.com/hezo-ai/hezo/pull/623))
+- surface Edit and History on all document views ([#621](https://github.com/hezo-ai/hezo/pull/621))
+- **agents:** track the full approval chain before closing a ticket ([#617](https://github.com/hezo-ai/hezo/pull/617))
+- **web:** default inbox to unread and reorder tab pills ([#616](https://github.com/hezo-ai/hezo/pull/616))
+
+### Bug Fixes
+
+- point agents at on-disk worktrees for connected repos ([#629](https://github.com/hezo-ai/hezo/pull/629))
+- **web:** relabel repo button to "Add repo" above the repo list ([#628](https://github.com/hezo-ai/hezo/pull/628))
+- **connectors:** show local (credential-auth) connectors as Connected ([#626](https://github.com/hezo-ai/hezo/pull/626))
+- keep document preview panel top pinned on scroll ([#622](https://github.com/hezo-ai/hezo/pull/622))
+- restore clipped bottom border on org-chart bottom-row agent cards ([#620](https://github.com/hezo-ai/hezo/pull/620))
+- gate repo git reset on active runs and surface real API errors ([#619](https://github.com/hezo-ai/hezo/pull/619))
+- **git:** recover a stranded initial commit when the seed push fails ([#615](https://github.com/hezo-ai/hezo/pull/615))
+
+### Other
+
+- **release:** grant actions:write so agent-base cache export can't fail the release ([#627](https://github.com/hezo-ai/hezo/pull/627))
+- Simplify README Features section ([#618](https://github.com/hezo-ai/hezo/pull/618))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.15.3...0.15.4
+
 ## 0.16.0 - 2026-07-07
 
 ### Features
