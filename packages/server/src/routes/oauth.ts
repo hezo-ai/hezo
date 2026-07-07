@@ -1,12 +1,6 @@
 import { randomBytes } from 'node:crypto';
-import {
-	type ConnectorCapability,
-	getConnectorCapability,
-	WakeupSource,
-	wsRoom,
-} from '@hezo/shared';
+import { type ConnectorCapability, getConnectorCapability, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
-import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
 import { requestOrigin } from '../lib/request-origin';
 import { err, ok } from '../lib/response';
@@ -15,6 +9,7 @@ import { logger } from '../logger';
 import { requireAdminEquivalent } from '../middleware/auth';
 import {
 	type ConnectorRow,
+	fireCredentialProvidedWakeup,
 	getConnector,
 	markActive,
 	markFailed,
@@ -42,7 +37,6 @@ import {
 } from '../services/oauth/provider-generic';
 import { type ManualOAuthConfig, signState, verifyState } from '../services/oauth/state';
 import { generateTeamSSHKey, getTeamSSHKey } from '../services/ssh-keys';
-import { createWakeup } from '../services/wakeup';
 
 const log = logger.child('oauth-route');
 
@@ -1012,38 +1006,4 @@ async function finalizeConnectorConnection(
 	}
 
 	return { connectionId: conn.id, label: conn.providerAccountLabel };
-}
-
-/**
- * Fire a CredentialProvided wakeup on the assignee of the task that requested
- * the connector, if any. Fire-and-forget — the agent's run is inherently async.
- *
- * The wakeup's team is resolved from the requesting task itself, not from
- * whoever completed the connect: connectors are global, so the OAuth dance can
- * finish from another project's Connectors page or from the instance settings
- * page (which has no team context at all), while the waiting agent lives in
- * the task's team.
- */
-async function fireCredentialProvidedWakeup(
-	db: import('../db/database').Db,
-	connector: ConnectorRow,
-): Promise<void> {
-	if (!connector.created_by_task_id) return;
-	const row = await db.query<{ assignee_id: string | null; team_id: string }>(
-		`SELECT assignee_id, team_id FROM tasks WHERE id = $1`,
-		[connector.created_by_task_id],
-	);
-	const assigneeId = row.rows[0]?.assignee_id;
-	const taskTeamId = row.rows[0]?.team_id;
-	if (!assigneeId || !taskTeamId) return;
-	trackBackground(
-		createWakeup(
-			db,
-			assigneeId,
-			taskTeamId,
-			WakeupSource.CredentialProvided,
-			{ connector_id: connector.id, task_id: connector.created_by_task_id },
-			`connector:${connector.id}`,
-		).catch((e) => log.warn('wakeup enqueue failed (non-fatal)', { error: (e as Error).message })),
-	);
 }

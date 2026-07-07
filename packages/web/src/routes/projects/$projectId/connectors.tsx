@@ -1,7 +1,8 @@
 import { getConnectorCapability } from '@hezo/shared';
 import { createFileRoute, Link } from '@tanstack/react-router';
-import { Check, ExternalLink, Github, Plug, Trash2, X } from 'lucide-react';
+import { Check, ExternalLink, Github, KeyRound, Plug, Trash2, X } from 'lucide-react';
 import { useCallback, useState } from 'react';
+import { ConnectorApiKeyForm } from '../../../components/connector-api-key-form';
 import { ConnectorDeviceFlowDialog } from '../../../components/connector-device-flow-dialog';
 import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
@@ -199,6 +200,7 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 	const revoke = useRevokeConnector(projectId);
 	const [error, setError] = useState<string | null>(null);
 	const [deviceOpen, setDeviceOpen] = useState(false);
+	const [showApiKey, setShowApiKey] = useState(false);
 
 	const capability = getConnectorCapability(connector.name);
 	const usesDeviceFlow = !!capability?.deviceAuth;
@@ -303,17 +305,39 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 							{revoke.isPending ? 'Revoking…' : 'Disconnect'}
 						</Button>
 					) : (
-						<Button
-							size="sm"
-							onClick={openConnect}
-							disabled={authStart.isPending}
-							data-testid="connector-connect"
-						>
-							{authStart.isPending ? 'Starting…' : status === 'failed' ? 'Retry' : 'Connect'}
-						</Button>
+						<>
+							<Button
+								size="sm"
+								onClick={openConnect}
+								disabled={authStart.isPending}
+								data-testid="connector-connect"
+							>
+								{authStart.isPending ? 'Starting…' : status === 'failed' ? 'Retry' : 'Connect'}
+							</Button>
+							<Button
+								size="sm"
+								variant="outline"
+								onClick={() => setShowApiKey((v) => !v)}
+								data-testid="connector-api-key-toggle"
+							>
+								<KeyRound className="size-3.5 mr-1" />
+								API key
+							</Button>
+						</>
 					)}
 				</div>
 			</div>
+
+			{status !== 'active' && showApiKey && (
+				<div className="mt-3 pt-3 border-t border-border">
+					<ConnectorApiKeyForm
+						projectId={projectId}
+						connectorId={connector.id}
+						onSuccess={() => setShowApiKey(false)}
+						onCancel={() => setShowApiKey(false)}
+					/>
+				</div>
+			)}
 
 			{connector.created_by_task_id && (
 				<div className="mt-3 pt-3 border-t border-border text-xs text-text-2">

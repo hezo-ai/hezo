@@ -409,7 +409,7 @@ export async function buildRuntimeInvocation(
 			url: `http://host.docker.internal:${deps.serverPort}/mcp`,
 			bearerToken: agentJwt,
 		},
-		...(await loadMcpConnectionDescriptors(deps.db, deps.masterKeyManager, projectId)),
+		...(await loadMcpConnectionDescriptors(deps.db, projectId)),
 	];
 
 	const mcpInjection = adapter.build(mcpDescriptors, {
@@ -484,6 +484,25 @@ export async function buildRuntimeInvocation(
 			`https_proxy=${proxyUrl}`,
 			`NO_PROXY=${noProxy}`,
 			`no_proxy=${noProxy}`,
+			// Defense-in-depth: make Node's *built-in* global fetch/undici honor the
+			// proxy env vars for any Node process the agent spawns that doesn't set
+			// its own dispatcher. Node ≥24 gates this behind NODE_USE_ENV_PROXY; it
+			// respects NO_PROXY, so LLM-provider traffic still goes direct.
+			//
+			// Connector auth rides an egress-substituted `__HEZO_SECRET_*__`
+			// placeholder (AGENTS.md red line — never a materialized token), so every
+			// runtime's MCP HTTP MUST traverse the proxy or the placeholder 401s. Each
+			// of the four coding CLIs already ensures this on its own, so this var is a
+			// safety net, not the load-bearing mechanism:
+			//   • Claude Code & Gemini (Node): install their own global undici
+			//     ProxyAgent/EnvHttpProxyAgent from HTTPS_PROXY at startup (this then
+			//     overrides NODE_USE_ENV_PROXY for them — fine); trust NODE_EXTRA_CA_CERTS.
+			//   • OpenCode (bundled Bun, not Node): Bun's fetch reads HTTP(S)_PROXY
+			//     natively; trusts our single-cert NODE_EXTRA_CA_CERTS.
+			//   • Codex (Rust/reqwest): honors HTTP(S)_PROXY by default; ignores the
+			//     Node/curl CA vars but falls back to the system trust store, into which
+			//     the container's start-up `update-ca-certificates` installs the egress CA.
+			`NODE_USE_ENV_PROXY=1`,
 			// Rely on update-ca-certificates for curl/git; do not set SSL_CERT_FILE to
 			// the egress CA alone — that replaces the system trust store and breaks TLS.
 			`NODE_EXTRA_CA_CERTS=${egress.containerCAPath}`,

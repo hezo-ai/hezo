@@ -292,6 +292,9 @@ describe('runAgent — egress proxy + ssh agent env injection', () => {
 		expect(capturedEnv).toContain(`http_proxy=${proxyUrl}`);
 		expect(capturedEnv).toContain(`HTTPS_PROXY=${proxyUrl}`);
 		expect(capturedEnv).toContain(`https_proxy=${proxyUrl}`);
+		// Node ≥24 safety net so spawned Node processes without their own dispatcher
+		// route through the proxy (connector auth is a placeholder that MUST traverse it).
+		expect(capturedEnv).toContain('NODE_USE_ENV_PROXY=1');
 		// NO_PROXY excludes the proxy host itself + loopback (plus the provider's
 		// direct upstream hosts); host.docker.internal is NOT in it.
 		expect(

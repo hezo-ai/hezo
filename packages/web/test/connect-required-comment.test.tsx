@@ -131,9 +131,12 @@ test('pending connector renders the connect prompt with provider code and links'
 	expect(connectBtn.textContent).toContain('Connect');
 	expect((connectBtn as HTMLButtonElement).disabled).toBe(false);
 
-	// Connectors are global, so the manage link targets the global settings page.
+	// The card lives inside a project task, so the manage link targets the
+	// project's own Connectors page (not the global settings surface).
 	const link = await findByTestId('connect-required-link');
-	expect(link.getAttribute('href')).toContain('/settings/connectors?focus=');
+	const href = link.getAttribute('href') ?? '';
+	expect(href).toContain('/projects/');
+	expect(href).toContain('/connectors?focus=');
 });
 
 test('failed connector shows the failure label plus the auth_error detail', async () => {
@@ -196,7 +199,33 @@ test('active connector renders the success state as a manage link', async () => 
 	const active = await findByTestId('connect-required-active');
 	expect(active.textContent).toContain('DatoCMS connected');
 	expect(active.textContent).toContain('Available to every agent run');
-	expect(active.getAttribute('href')).toContain('/settings/connectors?focus=');
+	const activeHref = active.getAttribute('href') ?? '';
+	expect(activeHref).toContain('/projects/');
+	expect(activeHref).toContain('/connectors?focus=');
+});
+
+test('pasting an API key via the inline form activates the connector', async () => {
+	const { findByTestId, user } = await setup(async (_ws, taskId, agentId) => {
+		// Typefully-style: a saas connector with no OAuth. The form posts to the
+		// real /api-key route against the in-process backend.
+		const connector = await insertConnector({ name: 'typefully', displayName: 'Typefully' });
+		await insertConnectRequiredComment(taskId, agentId, {
+			connector_id: connector.id,
+			display_name: 'Typefully',
+			provider_id: 'typefully',
+		});
+	});
+
+	const card = await findByTestId('connect-required');
+	expect(card.getAttribute('data-status')).toBe('pending');
+
+	await user.click(await findByTestId('connect-required-api-key-toggle'));
+	await user.type(await findByTestId('connector-api-key-input'), 'tf_live_key_123');
+	await user.click(await findByTestId('connector-api-key-save'));
+
+	// On success the connector detail cache is updated and the card renders the
+	// connected state (never optimistically — this only appears after the store).
+	await findByTestId('connect-required-active');
 });
 
 test('clicking Connect on a redirect (non-device) connector opens an OAuth popup with the auth_url', async () => {

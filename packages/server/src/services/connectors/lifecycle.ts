@@ -1,12 +1,14 @@
-import { McpConnectionKind, type McpTransport } from '@hezo/shared';
+import { McpConnectionKind, type McpTransport, WakeupSource } from '@hezo/shared';
 import type { Db } from '../../db/database';
+import { trackBackground } from '../../lib/background';
 import { logger } from '../../logger';
+import { createWakeup } from '../wakeup';
 
 const log = logger.child('connector-lifecycle');
 
 // Connectors are scoped by project_id (NULL = global "all projects" scope).
 const CONNECTOR_COLS = `id, name, display_name, kind::text AS kind,
-        config, oauth_connection_id, project_id, install_status::text AS install_status,
+        config, oauth_connection_id, api_key_secret_id, project_id, install_status::text AS install_status,
         install_error, skill_id, created_by_task_id,
         activated_at::text AS activated_at, revoked_at::text AS revoked_at, auth_error,
         created_at::text AS created_at, updated_at::text AS updated_at`;
@@ -34,6 +36,7 @@ export interface ConnectorRow {
 	kind: string;
 	config: Record<string, unknown>;
 	oauth_connection_id: string | null;
+	api_key_secret_id: string | null;
 	project_id: string | null;
 	install_status: string;
 	install_error: string | null;
@@ -51,12 +54,21 @@ export type ConnectorStatus = 'pending' | 'active' | 'failed' | 'revoked';
 export function statusOf(
 	row: Pick<
 		ConnectorRow,
-		'kind' | 'oauth_connection_id' | 'activated_at' | 'revoked_at' | 'auth_error'
+		| 'kind'
+		| 'oauth_connection_id'
+		| 'api_key_secret_id'
+		| 'activated_at'
+		| 'revoked_at'
+		| 'auth_error'
 	>,
 ): ConnectorStatus {
 	if (row.revoked_at) return 'revoked';
 	if (row.auth_error && !row.activated_at) return 'failed';
 	if (row.oauth_connection_id && row.activated_at) return 'active';
+	// API-key connectors (provider exposes no OAuth) authenticate via a pasted
+	// key stored in the vault and referenced by api_key_secret_id; the descriptor
+	// emits a placeholder for it. Active once the key is stored and stamped.
+	if (row.api_key_secret_id && row.activated_at) return 'active';
 	// Local (stdio) connectors authenticate via credential placeholders
 	// (__HEZO_SECRET_*__ — e.g. a username/password login that fetches a token),
 	// not OAuth, so there is no oauth_connection_id/activated_at handshake. A
@@ -91,7 +103,7 @@ export async function createOrFetchConnector(
 			await db.query(
 				`UPDATE mcp_connections
 				 SET revoked_at = NULL, auth_error = NULL, oauth_connection_id = NULL,
-				     activated_at = NULL, updated_at = now()
+				     api_key_secret_id = NULL, activated_at = NULL, updated_at = now()
 				 WHERE id = $1`,
 				[existingRow.id],
 			);
@@ -101,6 +113,7 @@ export async function createOrFetchConnector(
 					revoked_at: null,
 					auth_error: null,
 					oauth_connection_id: null,
+					api_key_secret_id: null,
 					activated_at: null,
 				},
 				alreadyExisted: true,
@@ -180,15 +193,78 @@ export async function markFailed(
 	return result.rows[0] ?? null;
 }
 
+/**
+ * Activate a connector authenticated by a pasted API key. The key itself lives
+ * in the vault `secrets` row `apiKeySecretId`; here we only link the row and
+ * stamp it active. `apiKey` persists the (non-default) header/scheme the
+ * descriptor uses to carry the placeholder.
+ */
+export async function markApiKeyActive(
+	db: Db,
+	connectorId: string,
+	apiKeySecretId: string,
+	apiKey: { header?: string; scheme?: string } | null,
+): Promise<ConnectorRow | null> {
+	const result = await db.query<ConnectorRow>(
+		`UPDATE mcp_connections
+		 SET api_key_secret_id = $1,
+		     config = CASE WHEN $2::jsonb IS NULL THEN config - 'apiKey'
+		                   ELSE jsonb_set(config, '{apiKey}', $2::jsonb) END,
+		     activated_at = now(),
+		     auth_error = NULL,
+		     revoked_at = NULL,
+		     install_status = 'installed'::mcp_install_status,
+		     updated_at = now()
+		 WHERE id = $3
+		 RETURNING ${CONNECTOR_COLS}`,
+		[apiKeySecretId, apiKey ? JSON.stringify(apiKey) : null, connectorId],
+	);
+	return result.rows[0] ?? null;
+}
+
 export async function markRevoked(db: Db, connectorId: string): Promise<ConnectorRow | null> {
 	const result = await db.query<ConnectorRow>(
 		`UPDATE mcp_connections
-		 SET revoked_at = now(), oauth_connection_id = NULL, updated_at = now()
+		 SET revoked_at = now(), oauth_connection_id = NULL, api_key_secret_id = NULL, updated_at = now()
 		 WHERE id = $1
 		 RETURNING ${CONNECTOR_COLS}`,
 		[connectorId],
 	);
 	return result.rows[0] ?? null;
+}
+
+/**
+ * Fire a CredentialProvided wakeup on the assignee of the task that requested
+ * the connector, if any. Fire-and-forget — the agent's run is inherently async.
+ *
+ * The wakeup's team is resolved from the requesting task itself, not from
+ * whoever completed the connect: connectors are global, so the connect (OAuth
+ * dance, or an API-key paste) can finish from another project's Connectors page
+ * or from the instance settings page (no team context at all), while the
+ * waiting agent lives in the task's team.
+ */
+export async function fireCredentialProvidedWakeup(
+	db: Db,
+	connector: Pick<ConnectorRow, 'id' | 'created_by_task_id'>,
+): Promise<void> {
+	if (!connector.created_by_task_id) return;
+	const row = await db.query<{ assignee_id: string | null; team_id: string }>(
+		`SELECT assignee_id, team_id FROM tasks WHERE id = $1`,
+		[connector.created_by_task_id],
+	);
+	const assigneeId = row.rows[0]?.assignee_id;
+	const taskTeamId = row.rows[0]?.team_id;
+	if (!assigneeId || !taskTeamId) return;
+	trackBackground(
+		createWakeup(
+			db,
+			assigneeId,
+			taskTeamId,
+			WakeupSource.CredentialProvided,
+			{ connector_id: connector.id, task_id: connector.created_by_task_id },
+			`connector:${connector.id}`,
+		).catch((e) => log.warn('wakeup enqueue failed (non-fatal)', { error: (e as Error).message })),
+	);
 }
 
 export async function getConnector(db: Db, connectorId: string): Promise<ConnectorRow | null> {
