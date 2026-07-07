@@ -93,6 +93,13 @@ interface DocsLibraryProps {
 	bodyBanner?: ReactNode;
 	/** Opens the revision-history dialog; when set, a History button shows in the toolbar. */
 	onShowHistory?: () => void;
+	/**
+	 * Open the selected doc directly in edit mode once its content has loaded — set
+	 * by the Edit affordance on the read-only preview surfaces, which deep-link here
+	 * with `?edit=1`. Honoured a single time per mount (cancelling back to view
+	 * won't re-trigger); a no-op for read-only/archived docs.
+	 */
+	autoEdit?: boolean;
 	/** View-only (an older revision is shown): hides Edit/Delete. */
 	readOnly?: boolean;
 
@@ -129,6 +136,7 @@ export function DocsLibrary({
 	docMeta,
 	bodyBanner,
 	onShowHistory,
+	autoEdit,
 	readOnly,
 	emptyTitle = 'No documents yet',
 	emptyDescription,
@@ -142,6 +150,7 @@ export function DocsLibrary({
 	const [search, setSearch] = useState('');
 	const [listCollapsed, setListCollapsed] = useState(() => readStored(LIST_COLLAPSED_KEY) === '1');
 	const prevModeRef = useRef<'view' | 'edit'>('view');
+	const autoEditHonoredRef = useRef(false);
 
 	if (modeKey !== selectedKey) {
 		setModeKey(selectedKey);
@@ -154,6 +163,23 @@ export function DocsLibrary({
 		}
 		prevModeRef.current = mode;
 	}, [mode, docContent]);
+
+	// Honour a deep-linked `?edit=1` once the doc content has loaded: flip into
+	// edit mode a single time. Waiting for content (rather than starting in edit)
+	// lets the draft-init effect above seed the editor from the loaded text.
+	useEffect(() => {
+		if (
+			autoEdit &&
+			!autoEditHonoredRef.current &&
+			selectedKey &&
+			docContent != null &&
+			!readOnly &&
+			!archivedInfo
+		) {
+			autoEditHonoredRef.current = true;
+			setMode('edit');
+		}
+	}, [autoEdit, selectedKey, docContent, readOnly, archivedInfo]);
 
 	const showNewForm = isCreating && !!newForm;
 	const selectedItem = selectedKey ? items.find((it) => it.key === selectedKey) : undefined;

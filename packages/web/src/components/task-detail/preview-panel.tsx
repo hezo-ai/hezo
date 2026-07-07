@@ -1,4 +1,5 @@
-import { ExternalLink, X } from 'lucide-react';
+import { Link } from '@tanstack/react-router';
+import { ExternalLink, History, Pencil, X } from 'lucide-react';
 import { type ProjectDoc, useProjectDoc } from '../../hooks/use-project-docs';
 import { docPreviewPath } from '../../lib/doc-preview';
 import type { ReviewTaskContext } from '../document-review/action-review-dialog';
@@ -6,6 +7,11 @@ import { DocumentBody } from '../document-review/document-body';
 import { ReviewToolbarActions } from '../document-review/review-toolbar-actions';
 import { Tooltip } from '../ui/tooltip';
 import type { PreviewItem } from './preview-context';
+
+// Icon-button styling shared by the panel's document-level actions (edit,
+// history, open-in-new-tab), so the whole header row reads as one cluster.
+const ICON_ACTION_CLASSES =
+	'shrink-0 rounded-md p-1 text-text-3 transition-colors hover:bg-surface-3 hover:text-text-1';
 
 function formatBytes(bytes?: number): string {
 	if (!bytes || bytes < 0) return '';
@@ -32,6 +38,9 @@ export function PreviewPanel({ item, onClose, task }: PreviewPanelProps) {
 	const docQuery = useProjectDoc(item.projectId, item.filename);
 	const openUrl = docPreviewPath(item.projectSlug, item.filename);
 	const meta = formatBytes(item.size);
+	// Archived docs are read-only — mirror the Documents toolbar and drop Edit
+	// (History stays: past revisions are still viewable/restorable there).
+	const isArchived = !!docQuery.data?.archived_at;
 
 	return (
 		<aside
@@ -47,13 +56,39 @@ export function PreviewPanel({ item, onClose, task }: PreviewPanelProps) {
 					{item.filename}
 				</span>
 				<ReviewToolbarActions projectId={item.projectId} filename={item.filename} task={task} />
+				{!isArchived && (
+					<Tooltip content="Edit document">
+						<Link
+							to="/projects/$projectId/documents"
+							params={{ projectId: item.projectSlug }}
+							search={{ file: item.filename, edit: true }}
+							aria-label="Edit document"
+							className={ICON_ACTION_CLASSES}
+							data-testid="preview-edit"
+						>
+							<Pencil className="h-4 w-4" />
+						</Link>
+					</Tooltip>
+				)}
+				<Tooltip content="Revision history">
+					<Link
+						to="/projects/$projectId/documents"
+						params={{ projectId: item.projectSlug }}
+						search={{ file: item.filename, history: true }}
+						aria-label="Revision history"
+						className={ICON_ACTION_CLASSES}
+						data-testid="preview-history"
+					>
+						<History className="h-4 w-4" />
+					</Link>
+				</Tooltip>
 				<Tooltip content="Open in new tab">
 					<a
 						href={openUrl}
 						target="_blank"
 						rel="noopener noreferrer"
 						aria-label="Open in new tab"
-						className="shrink-0 rounded-md p-1 text-text-3 transition-colors hover:bg-surface-3 hover:text-text-1"
+						className={ICON_ACTION_CLASSES}
 						data-testid="preview-open-tab"
 					>
 						<ExternalLink className="h-4 w-4" />

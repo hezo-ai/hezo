@@ -130,6 +130,69 @@ test('shows revision history via the History dialog and restores a previous vers
 	await findByText('Original plan', undefined, { timeout: 15_000 });
 });
 
+test('a deep-linked ?edit=1 opens the selected doc directly in edit mode', async () => {
+	let ws!: SeededWorkspace;
+	let projectSlug = '';
+	const filename = `edit-link-${Math.random().toString(36).slice(2, 8)}.md`;
+
+	const { findByRole, container, router } = await renderApp({
+		initialPath: '/',
+		seed: async ({ apiBase, token }) => {
+			ws = await seedWorkspace();
+			const project = await seedProject(ws, {
+				name: uniqueName('Edit Deep Link'),
+				description: 'Tests the ?edit=1 deep-link from a preview surface.',
+			});
+			projectSlug = project.slug;
+			await seedDoc(apiBase, token, projectSlug, filename, [{ content: 'Deep link body' }]);
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/documents',
+		params: { projectId: projectSlug },
+		search: { file: filename, edit: true } as never,
+	});
+
+	// Lands in edit mode: the Save action and the editor textarea are present
+	// (rather than the read-only Edit button), seeded with the loaded content.
+	await findByRole('button', { name: 'Save' }, { timeout: 15_000 });
+	const editArea = container.querySelector('textarea') as HTMLTextAreaElement;
+	expect(editArea).toBeTruthy();
+	expect(editArea.value).toContain('Deep link body');
+});
+
+test('a deep-linked ?history=1 opens the revision-history dialog', async () => {
+	let ws!: SeededWorkspace;
+	let projectSlug = '';
+	const filename = `history-link-${Math.random().toString(36).slice(2, 8)}.md`;
+
+	const { findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async ({ apiBase, token }) => {
+			ws = await seedWorkspace();
+			const project = await seedProject(ws, {
+				name: uniqueName('History Deep Link'),
+				description: 'Tests the ?history=1 deep-link from a preview surface.',
+			});
+			projectSlug = project.slug;
+			await seedDoc(apiBase, token, projectSlug, filename, [
+				{ content: 'First' },
+				{ content: 'Second', change_summary: 'revise' },
+			]);
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/documents',
+		params: { projectId: projectSlug },
+		search: { file: filename, history: true } as never,
+	});
+
+	// The revision dialog opens on load without clicking the History button.
+	await findByTestId('revision-history-dialog', undefined, { timeout: 15_000 });
+});
+
 test('shows the metadata banner and hides a legacy metadata header from the rendered body', async () => {
 	let ws!: SeededWorkspace;
 	let projectSlug = '';

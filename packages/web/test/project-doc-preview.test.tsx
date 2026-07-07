@@ -178,6 +178,88 @@ test('the task-detail preview panel flags an archived doc in the metadata banner
 	expect(banner.textContent).toContain('Archived');
 });
 
+test('standalone preview route exposes Edit and History deep-links into the documents editor', async () => {
+	let ctx!: { projectSlug: string };
+	const { findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Preview Actions' });
+			await seedDoc(ws, project, 'notes.md', '# Hello standalone');
+			ctx = { projectSlug: project.slug };
+		},
+	});
+
+	await router.navigate({
+		to: '/preview/$projectId/$filename',
+		params: { projectId: ctx.projectSlug, filename: 'notes.md' },
+	});
+
+	const editLink = (await findByTestId('preview-edit')) as HTMLAnchorElement;
+	const historyLink = (await findByTestId('preview-history')) as HTMLAnchorElement;
+	// Both point back at the authoritative Documents surface for this file — Edit
+	// opens it in edit mode, History opens the revision dialog.
+	expect(editLink.getAttribute('href')).toContain(`/projects/${ctx.projectSlug}/documents`);
+	expect(editLink.getAttribute('href')).toContain('file=notes.md');
+	expect(editLink.getAttribute('href')).toContain('edit');
+	expect(historyLink.getAttribute('href')).toContain('file=notes.md');
+	expect(historyLink.getAttribute('href')).toContain('history');
+});
+
+test('standalone preview hides Edit for an archived doc but keeps History', async () => {
+	let ctx!: { projectSlug: string };
+	const { findByTestId, queryByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Archived Actions' });
+			await seedDoc(ws, project, 'retired.md', '# Retired');
+			await archiveSeededDocument(ws, project, 'retired.md');
+			ctx = { projectSlug: project.slug };
+		},
+	});
+
+	await router.navigate({
+		to: '/preview/$projectId/$filename',
+		params: { projectId: ctx.projectSlug, filename: 'retired.md' },
+	});
+
+	// History stays reachable on an archived doc (revisions remain viewable); the
+	// Edit affordance is suppressed since an archived doc is read-only.
+	await findByTestId('preview-history');
+	expect(queryByTestId('preview-edit')).toBeNull();
+});
+
+test('the task-detail preview panel exposes Edit and History deep-links into the documents editor', async () => {
+	let ctx!: { projectSlug: string; taskId: string };
+	const { findByTestId, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Panel Actions Demo' });
+			await seedDoc(ws, project, 'ui-mockups.md', '# Mockups');
+			const task = await seedTask(ws, project, { title: 'Review the mockup' });
+			await seedComment(ws, task, 'Please review ui-mockups.md before the demo.');
+			ctx = { projectSlug: project.slug, taskId: task.id };
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: ctx.projectSlug, taskId: ctx.taskId },
+	});
+
+	const mention = await findByTestId('doc-mention-link', undefined, { timeout: 15_000 });
+	await user.click(mention);
+
+	const editLink = (await findByTestId('preview-edit')) as HTMLAnchorElement;
+	const historyLink = (await findByTestId('preview-history')) as HTMLAnchorElement;
+	expect(editLink.getAttribute('href')).toContain(`/projects/${ctx.projectSlug}/documents`);
+	expect(editLink.getAttribute('href')).toContain('file=ui-mockups.md');
+	expect(editLink.getAttribute('href')).toContain('edit');
+	expect(historyLink.getAttribute('href')).toContain('history');
+});
+
 test('a doc mention in a task comment opens the preview panel instead of a new tab', async () => {
 	let ctx!: { projectSlug: string; taskId: string };
 	const { container, findByTestId, user, router } = await renderApp({
