@@ -139,14 +139,6 @@ describe('GET /tasks — list filters, sort, pagination, annotations', () => {
 		expect(data.map((t: { id: string }) => t.id)).toEqual([child.id]);
 	});
 
-	it('serves the phase banner for the project', async () => {
-		const res = await app.request(`/api/projects/${projectSlug}/tasks/phase-banner`, {
-			headers: authHeader(token),
-		});
-		expect(res.status).toBe(200);
-		expect((await res.json()).data).toBeDefined();
-	});
-
 	it('paginates with meta and honours an explicit sort', async () => {
 		await createTask('Paginated one');
 		await createTask('Paginated two');

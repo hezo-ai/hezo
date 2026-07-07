@@ -69,7 +69,6 @@ export const queryKeys = {
 			'infinite',
 			filters,
 		],
-		tasksPhaseBanner: (slug: string) => ['projects', slug, 'tasks', 'phase-banner'],
 		tasksResolve: (slug: string, key: string[]) => ['projects', slug, 'tasks', 'resolve', key],
 		task: (slug: string, taskId: string) => ['projects', slug, 'tasks', taskId],
 		taskComments: (slug: string, taskId: string) => ['projects', slug, 'tasks', taskId, 'comments'],
