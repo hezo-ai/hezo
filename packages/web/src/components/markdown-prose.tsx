@@ -1,3 +1,4 @@
+import { TERMINAL_TASK_STATUSES } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
 import { ExternalLink } from 'lucide-react';
 import { type ReactNode, useMemo } from 'react';
@@ -22,6 +23,7 @@ import {
 } from '../lib/remark-mentions';
 import { CommentRefLink, MENTION_CLASSES } from './comment-ref-link';
 import { useOpenPreview } from './task-detail/preview-context';
+import { TaskStatusBadge } from './task-status-badge';
 import { Tooltip } from './ui/tooltip';
 
 type RemarkPlugin = Parameters<typeof Markdown>[0]['remarkPlugins'];
@@ -112,7 +114,11 @@ export function MarkdownProse({
 		const source = instanceResolved?.tasks ?? resolvedTasks;
 		if (!source) return m;
 		for (const i of source) {
-			m.set(i.identifier.toLowerCase(), { title: i.title, projectSlug: i.project_slug });
+			m.set(i.identifier.toLowerCase(), {
+				title: i.title,
+				projectSlug: i.project_slug,
+				status: i.status,
+			});
 		}
 		return m;
 	}, [resolvedTasks, instanceResolved]);
@@ -251,6 +257,7 @@ export function MarkdownProse({
 					'data-mention-passive'?: string;
 					'data-mention-task-identifier'?: string;
 					'data-mention-task-title'?: string;
+					'data-mention-task-status'?: string;
 					'data-mention-project-slug'?: string;
 					'data-mention-comment-task-identifier'?: string;
 					'data-mention-comment-id'?: string;
@@ -382,16 +389,34 @@ export function MarkdownProse({
 				const taskIdentifier = attrs['data-mention-task-identifier'];
 				const taskTitle = attrs['data-mention-task-title'];
 				const taskProjectSlug = attrs['data-mention-project-slug'];
+				const taskStatus = attrs['data-mention-task-status'];
 				if (taskIdentifier && taskTitle && taskProjectSlug && mentionsEnabled) {
+					const closed = taskStatus
+						? (TERMINAL_TASK_STATUSES as readonly string[]).includes(taskStatus)
+						: false;
 					return (
-						<Tooltip content={taskTitle}>
+						<Tooltip
+							content={
+								<span className="flex flex-col gap-1">
+									<span>{taskTitle}</span>
+									{taskStatus ? (
+										<TaskStatusBadge
+											status={taskStatus}
+											className="self-start"
+											testId="task-mention-status-pill"
+										/>
+									) : null}
+								</span>
+							}
+						>
 							<Link
 								to="/projects/$projectId/tasks/$taskId"
 								params={{
 									projectId: taskProjectSlug,
 									taskId: taskIdentifier.toLowerCase(),
 								}}
-								className={MENTION_CLASSES}
+								className={closed ? `${MENTION_CLASSES} line-through` : MENTION_CLASSES}
+								data-mention-task-status={taskStatus}
 								data-testid="task-mention-link"
 							>
 								{props.children}
