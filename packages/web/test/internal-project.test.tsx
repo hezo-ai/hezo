@@ -26,8 +26,6 @@ test('HQ task list does not show the project progress bar', async () => {
 
 	await findAllByRole('link', { name: 'Tasks' }, { timeout: 10_000 });
 	expect(queryByTestId('task-progress-bar')).toBeNull();
-	expect(queryByTestId('project-task-list-phase-banner-onboarding')).toBeNull();
-	expect(queryByTestId('project-task-list-phase-banner-planning')).toBeNull();
 });
 
 test('sidebar exposes Tasks, Documents, Assets and Container for the HQ project (not Settings)', async () => {

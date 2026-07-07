@@ -19,15 +19,11 @@ const TABLE_TO_QUERY_KEY: Record<
 > = {
 	tasks: (cid) => [
 		queryKeys.projects.tasks(cid),
-		queryKeys.projects.tasksPhaseBanner(cid),
 		queryKeys.projects.all(),
 		queryKeys.projectIntakes(),
 	],
 	heartbeat_runs: (cid, row) => {
-		const keys: QueryKey[] = [
-			queryKeys.projects.tasks(cid),
-			queryKeys.projects.tasksPhaseBanner(cid),
-		];
+		const keys: QueryKey[] = [queryKeys.projects.tasks(cid)];
 		// A run starting/finishing flips the task's run-now availability (task_busy),
 		// so refresh that task's queued-wakeups (and their dispatch state).
 		if (row.task_id) {

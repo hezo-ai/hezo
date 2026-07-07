@@ -8,7 +8,6 @@ import { useNavigate } from '@tanstack/react-router';
 import { AlertTriangle, AtSign, ChevronDown, ListPlus, Plus, Search } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAgents } from '../hooks/use-agents';
-import { useProjectMeta } from '../hooks/use-projects';
 import { type Task, useInfiniteTasks, useTasks } from '../hooks/use-tasks';
 import { nestTasksForDisplay } from '../lib/nest-tasks-for-display';
 import {
@@ -21,7 +20,6 @@ import {
 } from '../lib/task-filter-storage';
 import { AdminApprovalsBanner } from './admin-approvals-banner';
 import { CreateTaskDialog } from './create-task-dialog';
-import { ProjectTaskListHeader } from './project-task-list-header';
 import { TaskPriorityBadge } from './task-priority-badge';
 import { TaskRunDot } from './task-run-dot';
 import { TaskStatusBadge } from './task-status-badge';
@@ -133,8 +131,6 @@ function TaskListSection({
 
 export function TaskList({ projectId }: TaskListProps) {
 	const navigate = useNavigate();
-	const project = useProjectMeta(projectId);
-	const showProjectProgress = project != null && !project.is_internal;
 	const { data: agents } = useAgents(projectId);
 	const [expanded, setExpanded] = useState(false);
 	// Hydrate the filter bar from this project's last-set selections (or defaults).
@@ -548,7 +544,6 @@ export function TaskList({ projectId }: TaskListProps) {
 	return (
 		<div>
 			<AdminApprovalsBanner projectId={projectId} />
-			{showProjectProgress && <ProjectTaskListHeader projectId={projectId} />}
 
 			<div className="mb-4 flex flex-row items-stretch gap-2">
 				{filterBar}
