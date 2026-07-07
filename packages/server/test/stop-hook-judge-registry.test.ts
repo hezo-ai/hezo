@@ -153,9 +153,19 @@ describe('stop-hook rules block handoffs left only in the final message', () => 
 		expect(STOP_HOOK_RULES).toContain('exists only in the final message');
 	});
 
-	it('accepts a message that reports an already-posted comment or mentions passively', () => {
-		expect(STOP_HOOK_RULES).toContain('REPORTS an already-posted comment');
-		expect(STOP_HOOK_RULES).toContain('names teammates passively');
+	it('treats an unposted final-message handoff as undelivered and blocks by default', () => {
+		// The incident: a stative "@admin — … is presented for your final approval" read as a
+		// report and was ALLOWED. The final-message-only branch now blocks by default instead.
+		expect(STOP_HOOK_RULES).toContain('UNDELIVERED handoff — BLOCK by default');
+	});
+
+	it('exempts only an explicit already-posted claim, not report-like readiness phrasing', () => {
+		// A stative description of the work's readiness ("is presented for your final approval")
+		// no longer earns an exemption — only a first-person claim of the create_comment itself.
+		expect(STOP_HOOK_RULES).toContain('EXPLICITLY states the same handoff was already posted');
+		expect(STOP_HOOK_RULES).toContain('must still be blocked');
+		// The deliberately-passive @@<slug> form still notifies no one and stays exempt.
+		expect(STOP_HOOK_RULES).toContain('written passively (@@<slug>)');
 	});
 
 	it('the block reason routes the agent to create_comment without duplicate reposts', () => {
