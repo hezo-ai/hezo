@@ -215,7 +215,8 @@ What maps onto Hezo's five planes:
   credential injection** (`sbx secret set-custom`: env var + wildcard domains
   + placeholder; agent sees `proxy-managed`; proxy injects the real value at
   egress) — conceptually identical to Hezo's `__HEZO_SECRET_<NAME>__` +
-  `allowed_hosts` substitution.
+  `allowed_hosts` substitution. Descriptive parity only: Hezo does **not**
+  adopt it — see the credential-custody decision below.
 - Each sandbox has a private inner Docker daemon — agents could run
   `docker build`/`compose`, a capability Hezo containers do not have today.
 
@@ -229,10 +230,33 @@ Why it can only be **opt-in**, never the default:
   target — and Hetzner Cloud).
 - Headless/server operation is undocumented (workstation product; the Linux
   secret store falls back to an encrypted file; no systemd story).
-- Overlaps Hezo's egress/credential layer: either chain Hezo's proxy as sbx's
-  upstream (HTTP/S only, `DOCKER_SANDBOXES_PROXY`) under an open-ish policy,
-  or cede `allowed_hosts`/auditing to sbx (two sources of truth, no Hezo
-  audit rows).
+- Overlaps Hezo's egress/credential layer — resolved by the custody decision
+  below: Hezo's proxy stays the substitution point; sbx's policy proxy is at
+  most a pass-through/outer layer, never the credential holder.
+
+**Decision (2026-07): credential storage stays in Hezo.** An `SbxRuntime`
+must not use sbx's credential features (`sbx secret`, `sbx secret
+set-custom`, the built-in provider injection). Secrets remain
+AES-256-GCM-encrypted in Hezo's `secrets` table under the in-memory-only
+master key, and placeholder substitution + `allowed_hosts` enforcement +
+audit stay in Hezo's egress proxy (`services/egress/proxy.ts`,
+`substitution.ts`, `audit.ts`). Rationale:
+
+- sbx stores secrets in the OS keychain with a **disk-persisted
+  encrypted-file fallback on headless Linux** — outside the master-key
+  custody model that makes Hezo's encryption-at-rest meaningful.
+- Delegation would create two sources of truth (secrets table ↔ sbx store)
+  that need syncing, and secrets would leave Hezo's vault at sync time.
+- Hezo's egress audit trail (substitution events by secret name) and
+  per-secret `allowed_hosts` checks live in Hezo's substitution layer;
+  ceding injection to sbx loses both.
+- The `request_credential` MCP flow provisions secrets into Hezo's vault; a
+  second store breaks that loop.
+
+Concretely: sandboxes keep Hezo's env-var proxy wiring (`HTTP(S)_PROXY` →
+Hezo's egress proxy, Hezo CA trusted in-guest), with sbx's own proxy either
+bypassed under a permissive policy or chaining to Hezo's proxy as its
+upstream (`DOCKER_SANDBOXES_PROXY`, HTTP/S only).
 
 **Spike questions that gate any build (≈1 week):**
 
@@ -245,6 +269,11 @@ Why it can only be **opt-in**, never the default:
    how SSH transits (special case? CONNECT tunnel? open policy only?).
 3. Exec exit-code/stream fidelity under CLI stdio, a container-logs-follow
    equivalent, machine-readable stats, and headless/systemd operation.
+4. Per the custody decision: can sbx run with its credential injection
+   entirely unused while Hezo's proxy does the substitution — CONNECT
+   pass-through (or upstream chaining) that preserves Hezo's placeholder
+   rewriting, and the in-guest trust path for Hezo's CA when sbx's own
+   MITM CA sits in front (double-MITM)?
 
 If favorable: `SbxRuntime` behind the runtime seam is ~3–6 weeks (CLI client
 w/ streaming execs, template pipeline, SSH_AUTH_SOCK wiring, egress chaining,
@@ -303,9 +332,11 @@ without giving up a single supported platform.
    passthrough behind `--container-runtime` with a `/dev/kvm` + daemon-runtime
    preflight and loud "experimental, Linux-only" framing. Zero
    default-behavior change.
-3. **Phase 2 — sbx spike (1 wk), then decide**: prototype the three spike
+3. **Phase 2 — sbx spike (1 wk), then decide**: prototype the four spike
    questions; if favorable, build the `SbxRuntime` opt-in (~3–6 wks) as the
-   "microVM isolation" mode on Apple Silicon / Windows 11 / KVM-Linux.
+   "microVM isolation" mode on Apple Silicon / Windows 11 / KVM-Linux —
+   with credentials remaining in Hezo's vault and Hezo's egress proxy doing
+   substitution/audit (sbx's secret store unused, per the custody decision).
 4. **Watch list (don't build)**: moby/moby#52017 (Kata-under-Docker fix);
    Claude-Code-under-gVisor issues (#27230, #35454) and Bun-under-runsc
    (bun#16063); Apple `container` maturation (possible future macOS backend);
@@ -315,7 +346,8 @@ without giving up a single supported platform.
 ## Open questions / spikes
 
 - sbx: host-callback reachability, git-SSH egress, exec/stats/headless
-  fidelity (the Phase-2 spike).
+  fidelity, and Hezo-proxy chaining with sbx credential injection unused
+  (the Phase-2 spike).
 - DigitalOcean nested-virt quality (community-sourced; verify against DO
   docs/support before relying on it).
 - Kata virtio-fs vs Hezo's chown/propagation semantics; `host-gateway`
