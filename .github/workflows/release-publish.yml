@@ -42,6 +42,16 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # Writing the type=gha build cache (cache-to below) requires the actions
+      # scope. This job runs on pull_request (the release PR merging into main),
+      # where the cache-service runtime token is NOT granted cache-write scope by
+      # default — unlike ci.yml's build-agent-image, which runs on push and works
+      # without it. Without this the cache export fails ("failed to reserve cache:
+      # token has no writable scopes"), and because buildkit exports the image and
+      # the cache concurrently and treats a cache-export error as fatal, that
+      # cancels the in-flight GHCR push and fails the whole release (see the failed
+      # run 28863819276 on release/0.16.0).
+      actions: write
     steps:
       - uses: actions/checkout@v5
         with:
@@ -67,7 +77,10 @@ jobs:
             ghcr.io/hezo-ai/agent-base:${{ steps.meta.outputs.version }}
             ghcr.io/hezo-ai/agent-base:latest
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # ignore-error keeps an optional cache-export problem from cancelling the
+          # GHCR push this release gates on — the downstream publish job needs this
+          # image live before it tags and cuts the Release.
+          cache-to: type=gha,mode=max,ignore-error=true
 
   # Cross-compile the release binaries, tag the merge commit, and publish the
   # GitHub Release. `needs: publish-agent-image` is the gate the whole change is
