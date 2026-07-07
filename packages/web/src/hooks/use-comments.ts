@@ -61,7 +61,6 @@ export function useCreateComment(projectId: string, taskId: string) {
 			content: string;
 			content_type?: string;
 			effort?: string;
-			wake_assignee?: boolean;
 			parent_comment_id?: string;
 			attachment_ids?: string[];
 		}) => api.post<Comment>(`/api/projects/${projectId}/tasks/${taskId}/comments`, data),

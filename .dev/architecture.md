@@ -493,7 +493,8 @@ Work reaches an agent through the **wakeup → job-manager → agent-runner** pi
 
 **Wakeups.** Every trigger is an `agent_wakeup_requests` row. Sources: `heartbeat`
 (scheduled fallback tick), `timer` (recovery: orphan detector, retry), `assignment`,
-`mention`, `reply`, `comment` (opt-in assignee wake), `credential_provided` (a human
+`mention`, `reply`, `comment` (a system-posted comment wake; user comments wake agents
+only by actively `@`-mentioning them, never implicitly), `credential_provided` (a human
 supplied a requested credential), `on_demand`, `automation`.
 Event-based triggers wake agents immediately; scheduled heartbeats are the idle-agent
 fallback. A scheduled heartbeat that fires but finds no actionable task is a no-op that

@@ -102,7 +102,9 @@ test.describe('Task detail — right sidebar sticky positioning', () => {
 		);
 		await expect(effort).toBeVisible();
 
-		await expect(sidebar.getByRole('checkbox', { name: 'Wake assignee on submit' })).toHaveCount(0);
+		// The wake preview lives in the comment composer, not the sidebar.
+		await expect(sidebar.getByTestId('wake-preview')).toHaveCount(0);
+		await expect(page.getByTestId('wake-preview')).toBeVisible();
 	});
 });
 

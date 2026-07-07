@@ -32,6 +32,15 @@ export function ProjectIntakeHomePanel({ intake }: ProjectIntakeHomePanelProps) 
 		return textComments[textComments.length - 1];
 	}, [comments]);
 
+	// The CEO owns this intake and always greets first, so there is a CEO comment
+	// to reply to. Threading the admin's message to it wakes the CEO via the
+	// reply path (WakeupSource.Reply) — the standardized way a comment pages an
+	// agent now that plain comments no longer implicitly wake the assignee.
+	const lastCeoComment = useMemo(
+		() => [...(comments ?? [])].reverse().find((c) => c.author_type === 'agent'),
+		[comments],
+	);
+
 	useEffect(() => {
 		if (lastChatMessage?.author_type === 'agent') {
 			setAwaitingReply(false);
@@ -45,7 +54,10 @@ export function ProjectIntakeHomePanel({ intake }: ProjectIntakeHomePanelProps) 
 		setMessage('');
 		setAwaitingReply(true);
 		try {
-			await createComment.mutateAsync({ content: text, wake_assignee: true });
+			await createComment.mutateAsync({
+				content: text,
+				...(lastCeoComment ? { parent_comment_id: lastCeoComment.id } : {}),
+			});
 		} catch {
 			setAwaitingReply(false);
 		}

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	buildMentionRegex,
+	extractActiveAgentMentionSlugs,
 	extractBacktickedMentionCandidates,
 	extractDocCandidates,
 	extractMentionCandidates,
@@ -179,6 +180,25 @@ describe('extractMentionCandidates', () => {
 		expect(c.filenames).toEqual(['readme.md']);
 		expect(c.assets).toEqual(['diagram.png']);
 		expect(sorted(c.agents)).toEqual(['alice', 'bob']);
+	});
+});
+
+describe('extractActiveAgentMentionSlugs', () => {
+	it('keeps only active @slug mentions (drops passive, @admin, and code)', () => {
+		const input = [
+			'@alice pinged @@bob passively and cc @admin',
+			'again @Alice (dup, different case)',
+			'```',
+			'@charlie in a fenced block',
+			'```',
+			'inline `@dave` too',
+		].join('\n');
+		expect(sorted(extractActiveAgentMentionSlugs(input))).toEqual(['alice']);
+	});
+
+	it('returns [] when there is no active mention', () => {
+		expect(extractActiveAgentMentionSlugs('just @@passive and @admin here')).toEqual([]);
+		expect(extractActiveAgentMentionSlugs('')).toEqual([]);
 	});
 });
 

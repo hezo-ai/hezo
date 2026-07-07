@@ -123,7 +123,7 @@ test('Add to task pins the hosting task first; selecting it posts the handoff an
 		globalThis.fetch = original;
 	}
 
-	// Exactly `{ content: <handoff> }` — toEqual proves no wake_assignee or extras
+	// Exactly `{ content: <handoff> }` — toEqual proves no extra fields
 	// — POSTed to the hosting task's path.
 	expect(posts).toHaveLength(1);
 	expect(posts[0].url).toContain(`/tasks/${identifier.toLowerCase()}/comments`);

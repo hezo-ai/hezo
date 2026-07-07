@@ -312,7 +312,7 @@ describe('non-text comments skip mention wakeups', () => {
 	});
 });
 
-describe('admin POST comments honors wake_assignee opt-in', () => {
+describe('admin POST comments wake only via active @-mention', () => {
 	async function postAdminComment(taskId: string, body: Record<string, unknown>): Promise<string> {
 		const res = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/comments`, {
 			method: 'POST',
@@ -323,8 +323,19 @@ describe('admin POST comments honors wake_assignee opt-in', () => {
 		return (await res.json()).data.id;
 	}
 
-	it('wakes the assignee when wake_assignee is true', async () => {
-		const taskId = await insertTask(architectId, 'Admin wake true');
+	it('does not wake the assignee on a plain comment', async () => {
+		const taskId = await insertTask(architectId, 'Admin plain comment');
+		const commentId = await postAdminComment(taskId, {
+			content_type: CommentContentType.Text,
+			content: { text: 'Just a note — nobody is paged.' },
+		});
+
+		const wakeups = await wakeupsForComment(commentId);
+		expect(wakeups).toEqual([]);
+	});
+
+	it('ignores a legacy wake_assignee flag (wakeups are mention-only now)', async () => {
+		const taskId = await insertTask(architectId, 'Admin legacy flag');
 		const commentId = await postAdminComment(taskId, {
 			content_type: CommentContentType.Text,
 			content: { text: 'Take a look when you can.' },
@@ -332,48 +343,22 @@ describe('admin POST comments honors wake_assignee opt-in', () => {
 		});
 
 		const wakeups = await wakeupsForComment(commentId);
-		expect(wakeups).toHaveLength(1);
-		expect(wakeups[0].source).toBe(WakeupSource.Comment);
-		expect(wakeups[0].member_id).toBe(architectId);
-		expect(wakeups[0].payload.task_id).toBe(taskId);
-		expect(wakeups[0].payload.comment_id).toBe(commentId);
-	});
-
-	it('does not wake the assignee when wake_assignee is false', async () => {
-		const taskId = await insertTask(architectId, 'Admin wake false');
-		const commentId = await postAdminComment(taskId, {
-			content_type: CommentContentType.Text,
-			content: { text: 'Just a note.' },
-			wake_assignee: false,
-		});
-
-		const wakeups = await wakeupsForComment(commentId);
 		expect(wakeups).toEqual([]);
 	});
 
-	it('does not wake the assignee when wake_assignee is omitted', async () => {
-		const taskId = await insertTask(architectId, 'Admin wake omitted');
-		const commentId = await postAdminComment(taskId, {
-			content_type: CommentContentType.Text,
-			content: { text: 'No flag at all.' },
-		});
-
-		const wakeups = await wakeupsForComment(commentId);
-		expect(wakeups).toEqual([]);
-	});
-
-	it('does not double-fire when the assignee is also @-mentioned', async () => {
-		const taskId = await insertTask(architectId, 'Admin wake mention overlap');
+	it('wakes the assignee when it is actively @-mentioned', async () => {
+		const taskId = await insertTask(architectId, 'Admin mention assignee');
 		const commentId = await postAdminComment(taskId, {
 			content_type: CommentContentType.Text,
 			content: { text: '@architect please weigh in.' },
-			wake_assignee: true,
 		});
 
 		const wakeups = await wakeupsForComment(commentId);
 		expect(wakeups).toHaveLength(1);
 		expect(wakeups[0].source).toBe(WakeupSource.Mention);
 		expect(wakeups[0].member_id).toBe(architectId);
+		expect(wakeups[0].payload.task_id).toBe(taskId);
+		expect(wakeups[0].payload.comment_id).toBe(commentId);
 	});
 });
 

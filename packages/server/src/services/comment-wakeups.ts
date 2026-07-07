@@ -25,7 +25,6 @@ export interface FireCommentWakeupsParams {
 	authorUserId?: string | null;
 	authorRunId?: string | null;
 	effort?: string | null;
-	wakeAssignee?: boolean;
 	parentCommentId?: string | null;
 	wsManager?: WebSocketManager;
 }
@@ -41,7 +40,6 @@ export async function fireCommentWakeups(params: FireCommentWakeupsParams): Prom
 		authorMemberId,
 		authorUserId,
 		effort,
-		wakeAssignee,
 		parentCommentId,
 		wsManager,
 	} = params;
@@ -98,26 +96,6 @@ export async function fireCommentWakeups(params: FireCommentWakeupsParams): Prom
 				idempotencyKey,
 			).catch((e) => log.error('Failed to create mention wakeup:', e)),
 		);
-	}
-
-	if (wakeAssignee) {
-		const taskRow = await db.query<{ assignee_id: string | null }>(
-			'SELECT assignee_id FROM tasks WHERE id = $1 AND team_id = $2',
-			[taskId, teamId],
-		);
-		const assigneeId = taskRow.rows[0]?.assignee_id ?? null;
-		if (assigneeId && assigneeId !== authorMemberId && !mentionedAgentIds.has(assigneeId)) {
-			const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [assigneeId]);
-			if (isAgent.rows.length > 0) {
-				wakeupPromises.push(
-					createWakeup(db, assigneeId, teamId, WakeupSource.Comment, {
-						task_id: taskId,
-						comment_id: commentId,
-						...effortPayload,
-					}).catch((e) => log.error('Failed to create comment wakeup:', e)),
-				);
-			}
-		}
 	}
 
 	await Promise.all(wakeupPromises);

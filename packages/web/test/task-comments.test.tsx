@@ -237,9 +237,9 @@ test('agent mentions render as bold anchor-colored links to agent page', async (
 	expect(fakeMatch).toBeUndefined();
 });
 
-test('wake-assignee checkbox is default-checked and reflected in submit body', async () => {
+test('wake preview shows "(no one)" by default, no checkbox, and submit omits wake_assignee', async () => {
 	const seeded = { projectSlug: '', taskId: '' };
-	const { findByPlaceholderText, findByText, getByRole, router } = await renderApp({
+	const { findByPlaceholderText, findByText, findByTestId, getByRole, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -255,8 +255,11 @@ test('wake-assignee checkbox is default-checked and reflected in submit body', a
 	});
 
 	const composer = (await findByPlaceholderText('Add a comment...')) as HTMLTextAreaElement;
-	const checkbox = await findByRoleClosest(composer, 'checkbox', 'Wake assignee on submit');
-	expect(checkbox.checked).toBe(true);
+	// The legacy checkbox is gone; a "Wake:" preview stands in its place.
+	expect(composer.closest('form')?.querySelector('input[type="checkbox"]')).toBeNull();
+	const preview = await findByTestId('wake-preview');
+	expect(preview.textContent).toContain('Wake:');
+	expect(preview.textContent).toContain('(no one)');
 
 	const original = globalThis.fetch;
 	const posts: Array<Record<string, unknown>> = [];
@@ -276,41 +279,34 @@ test('wake-assignee checkbox is default-checked and reflected in submit body', a
 		const userMod = await import('@testing-library/user-event');
 		const user = userMod.default.setup({ delay: null });
 
-		await user.type(composer, 'wake-assignee on');
+		await user.type(composer, 'a plain comment');
 		await user.click(getByRole('button', { name: 'Comment' }));
-		await findByText('wake-assignee on');
+		await findByText('a plain comment');
 		expect(composer.value).toBe('');
-
-		expect(checkbox.checked).toBe(true);
-		await user.click(checkbox);
-		expect(checkbox.checked).toBe(false);
-
-		await user.type(composer, 'wake-assignee off');
-		await user.click(getByRole('button', { name: 'Comment' }));
-		await findByText('wake-assignee off');
 	} finally {
 		globalThis.fetch = original;
 	}
 
-	expect(posts.length).toBe(2);
-	expect(posts[0].wake_assignee).toBe(true);
-	expect(posts[1].wake_assignee).toBe(false);
+	expect(posts.length).toBe(1);
+	expect('wake_assignee' in posts[0]).toBe(false);
 });
 
-test('replying to an agent hides the wake-assignee toggle and omits the flag', async () => {
-	const seeded = { projectSlug: '', taskId: '' };
-	const { findByPlaceholderText, findByTestId, findByText, getByRole, router } = await renderApp({
-		initialPath: '/',
-		seed: async () => {
-			const ws = await seedWorkspace();
-			const project = await seedProject(ws, { name: 'Agent Reply Project' });
-			const task = await seedTask(ws, project, { title: 'Agent Reply Task' });
-			// Author the parent as the assignee agent so author_type is 'agent'.
-			await seedComment(ws, task, 'Agent original comment', { authorMemberId: ws.agents[0].id });
-			seeded.projectSlug = project.slug;
-			seeded.taskId = task.identifier.toLowerCase();
-		},
-	});
+test('replying to an agent surfaces it as a wake pill and threads the reply', async () => {
+	const seeded = { projectSlug: '', taskId: '', agentTitle: '' };
+	const { findByPlaceholderText, findByTestId, findAllByTestId, findByText, getByRole, router } =
+		await renderApp({
+			initialPath: '/',
+			seed: async () => {
+				const ws = await seedWorkspace();
+				const project = await seedProject(ws, { name: 'Agent Reply Project' });
+				const task = await seedTask(ws, project, { title: 'Agent Reply Task' });
+				// Author the parent as the assignee agent so author_type is 'agent'.
+				await seedComment(ws, task, 'Agent original comment', { authorMemberId: ws.agents[0].id });
+				seeded.projectSlug = project.slug;
+				seeded.taskId = task.identifier.toLowerCase();
+				seeded.agentTitle = ws.agents[0].title;
+			},
+		});
 	await router.navigate({
 		to: '/projects/$projectId/tasks/$taskId',
 		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
@@ -331,13 +327,10 @@ test('replying to an agent hides the wake-assignee toggle and omits the flag', a
 	expect(indicator.textContent).toContain('Agent original comment');
 
 	const composer = (await findByPlaceholderText('Add a comment...')) as HTMLTextAreaElement;
-	const form = composer.closest('form');
-	expect(form).not.toBeNull();
-	// The toggle is gone when the parent is an agent.
-	const wakeCheckbox = form?.querySelector(
-		'input[type="checkbox"][aria-label="Wake assignee on submit"]',
-	);
-	expect(wakeCheckbox).toBeNull();
+	expect(composer.closest('form')?.querySelector('input[type="checkbox"]')).toBeNull();
+	// Replying to an agent wakes it (reply-wake), so it shows up as a wake pill.
+	const pills = await findAllByTestId('wake-pill');
+	expect(pills.some((p) => p.textContent === seeded.agentTitle)).toBe(true);
 
 	const original = globalThis.fetch;
 	const posts: Array<Record<string, unknown>> = [];
@@ -367,7 +360,38 @@ test('replying to an agent hides the wake-assignee toggle and omits the flag', a
 	expect(posts[0].parent_comment_id).toBeTruthy();
 });
 
-test('replying to a human keeps the wake-assignee toggle and sends the flag', async () => {
+test('actively @-mentioning an agent shows it as a wake pill', async () => {
+	const seeded = { projectSlug: '', taskId: '', agentSlug: '', agentTitle: '' };
+	const { findByPlaceholderText, findByTestId, findAllByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Mention Wake Project' });
+			const task = await seedTask(ws, project, { title: 'Mention Wake Task' });
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
+			seeded.agentSlug = ws.agents[0].slug;
+			seeded.agentTitle = ws.agents[0].title;
+		},
+	});
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
+	});
+
+	const composer = (await findByPlaceholderText('Add a comment...')) as HTMLTextAreaElement;
+	expect((await findByTestId('wake-preview')).textContent).toContain('(no one)');
+
+	const userMod = await import('@testing-library/user-event');
+	const user = userMod.default.setup({ delay: null });
+	await user.type(composer, `@${seeded.agentSlug} please weigh in`);
+
+	const pills = await findAllByTestId('wake-pill');
+	expect(pills.some((p) => p.textContent === seeded.agentTitle)).toBe(true);
+	expect((await findByTestId('wake-preview')).textContent).not.toContain('(no one)');
+});
+
+test('replying to a human wakes no one (no pill, no wake_assignee)', async () => {
 	const seeded = { projectSlug: '', taskId: '' };
 	const { findByPlaceholderText, findByTestId, findByText, getByRole, router } = await renderApp({
 		initialPath: '/',
@@ -399,9 +423,10 @@ test('replying to a human keeps the wake-assignee toggle and sends the flag', as
 	expect(indicator.textContent).toContain('Human original comment');
 
 	const composer = (await findByPlaceholderText('Add a comment...')) as HTMLTextAreaElement;
-	// The toggle stays for a human-authored parent — nothing else wakes the assignee.
-	const checkbox = await findByRoleClosest(composer, 'checkbox', 'Wake assignee on submit');
-	expect(checkbox.checked).toBe(true);
+	// Replying to a human wakes nobody — no @-mention, no agent reply-target.
+	const preview = await findByTestId('wake-preview');
+	expect(preview.textContent).toContain('(no one)');
+	expect(preview.querySelector('[data-testid="wake-pill"]')).toBeNull();
 
 	const original = globalThis.fetch;
 	const posts: Array<Record<string, unknown>> = [];
@@ -426,7 +451,7 @@ test('replying to a human keeps the wake-assignee toggle and sends the flag', as
 	}
 
 	expect(posts.length).toBe(1);
-	expect(posts[0].wake_assignee).toBe(true);
+	expect('wake_assignee' in posts[0]).toBe(false);
 	expect(posts[0].parent_comment_id).toBeTruthy();
 });
 
@@ -555,17 +580,3 @@ test('a comment link to another comment renders as a clickable link to its hash'
 		`/projects/${seeded.projectSlug}/tasks/${seeded.taskId}#comment-${seeded.targetCommentId}`,
 	);
 });
-
-// Tiny helper for finding the checkbox by its aria-label within the same form
-// as the composer; happy-dom doesn't expose XPath axes the way Playwright does.
-async function findByRoleClosest(
-	composer: HTMLElement,
-	role: string,
-	name: string,
-): Promise<HTMLInputElement> {
-	const form = composer.closest('form');
-	if (!form) throw new Error('Composer is not inside a form');
-	const input = form.querySelector(`input[type="checkbox"][aria-label="${name}"]`);
-	if (!input) throw new Error(`No ${role} named "${name}" inside composer form`);
-	return input as HTMLInputElement;
-}

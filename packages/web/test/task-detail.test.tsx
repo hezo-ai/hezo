@@ -202,7 +202,7 @@ test('bare ticket identifier renders as a tooltip-ed link and navigates to the t
 	expect(router.state.location.pathname).toBe(targetPath);
 });
 
-test('right sidebar houses the Effort control while wake-assignee lives in the comment form', async () => {
+test('right sidebar houses the Effort control while the wake preview lives in the comment form', async () => {
 	let teamSlug = '';
 	let projectSlug = '';
 	let taskIdentifier = '';
@@ -235,10 +235,10 @@ test('right sidebar houses the Effort control while wake-assignee lives in the c
 	);
 	expect(effort).toBeTruthy();
 
-	const wakeCheckboxInSidebar = sidebar.querySelector(
-		'input[type="checkbox"][aria-label="Wake assignee on submit"]',
-	);
-	expect(wakeCheckboxInSidebar).toBeNull();
+	// The wake preview belongs to the comment composer, not the sidebar.
+	expect(sidebar.querySelector('[data-testid="wake-preview"]')).toBeNull();
+	const preview = await findByTestId('wake-preview');
+	expect(preview.textContent).toContain('Wake:');
 });
 
 test('Progress Summary and Rules cards expose info icons with help text', async () => {
