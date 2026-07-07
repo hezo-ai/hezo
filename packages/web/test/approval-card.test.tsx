@@ -112,7 +112,7 @@ test('a deploy-production approval names the target environment', async () => {
 });
 
 test('a resolved (approved) approval is read-only history: status badge, resolution note, no buttons', async () => {
-	const { findByText, queryByRole } = await renderTeamInbox(async ({ ws }) => {
+	const { findByText, queryByRole, user } = await renderTeamInbox(async ({ ws }) => {
 		await insertApproval(ws, {
 			type: 'strategy',
 			payload: { plan: 'Old launch plan' },
@@ -121,6 +121,9 @@ test('a resolved (approved) approval is read-only history: status badge, resolut
 		});
 	});
 
+	// Resolved approvals are read, so they live under the All filter (the inbox
+	// defaults to Unread).
+	await user.click(await findByText('All'));
 	await findByText('Old launch plan', undefined, { timeout: 15_000 });
 	// Resolved approvals show the status badge + resolution note.
 	await findByText('approved');
@@ -131,7 +134,7 @@ test('a resolved (approved) approval is read-only history: status badge, resolut
 });
 
 test('a denied approval shows a red denied badge', async () => {
-	const { findByText } = await renderTeamInbox(async ({ ws }) => {
+	const { findByText, user } = await renderTeamInbox(async ({ ws }) => {
 		await insertApproval(ws, {
 			type: 'strategy',
 			payload: { plan: 'Rejected plan' },
@@ -140,6 +143,9 @@ test('a denied approval shows a red denied badge', async () => {
 		});
 	});
 
+	// Denied approvals are read, so they live under the All filter (the inbox
+	// defaults to Unread).
+	await user.click(await findByText('All'));
 	await findByText('Rejected plan', undefined, { timeout: 15_000 });
 	await findByText('denied');
 	await findByText(/Not now\./);
