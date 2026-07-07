@@ -18,7 +18,7 @@ import {
 // Line-coverage tests for packages/server/src/routes/comments.ts over real
 // HTTP: the comment list with reactions + attachments, reaction round-trips
 // (incl. the no-member-identity 403), comment creation (attachments,
-// wake_assignee, agent author, reply wakeups), the fulfill-credential flow
+// mention-only wakeups, agent author, reply wakeups), the fulfill-credential flow
 // across every secret-category kind (host overrides, body substitution,
 // requester wakeups) and resolve-asset-deletion approve/deny with all its
 // validation branches.
@@ -308,24 +308,19 @@ describe('POST comment — creation branches', () => {
 		expect(joins.rows).toHaveLength(1);
 	});
 
-	it('wake_assignee=true from an admin wakes the assignee agent', async () => {
-		await db.query(
-			`DELETE FROM agent_wakeup_requests WHERE member_id = $1 AND source = 'comment'`,
-			[agentId],
-		);
+	it('a plain admin comment does not wake the assignee (wakeups are mention-only)', async () => {
 		const res = await postComment({
 			content_type: 'text',
 			content: { text: 'please pick this up' },
-			wake_assignee: true,
 		});
 		expect(res.status).toBe(201);
 		const commentId = (await res.json()).data.id;
-		const wakeup = await db.query<{ source: string }>(
-			`SELECT source::text AS source FROM agent_wakeup_requests
+		const wakeup = await db.query(
+			`SELECT 1 FROM agent_wakeup_requests
 			 WHERE member_id = $1 AND payload->>'comment_id' = $2`,
 			[agentId, commentId],
 		);
-		expect(wakeup.rows.length).toBeGreaterThanOrEqual(1);
+		expect(wakeup.rows).toHaveLength(0);
 	});
 
 	it('an agent-authored comment carries the agent identity', async () => {

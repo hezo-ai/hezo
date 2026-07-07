@@ -171,7 +171,6 @@ commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments', async (c) => 
 		content_type?: string;
 		content: Record<string, unknown>;
 		effort?: string;
-		wake_assignee?: boolean;
 		parent_comment_id?: string | null;
 		attachment_ids?: string[];
 	}>();
@@ -234,11 +233,6 @@ commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments', async (c) => 
 	// An API key authors as its first-class identity, not a member.
 	const authorApiKeyId = apiKeyIdFromAuth(auth);
 
-	// Only Admin (human) callers can opt into waking the assignee on a plain
-	// comment. Agent-authored comments (via the /mcp create_comment tool) keep
-	// mention-only behavior regardless of the body field.
-	const wakeAssignee = auth.type === AuthType.Admin && body.wake_assignee === true;
-
 	const result = await withTransaction(db, async () => {
 		const inserted = await db.query<{ id: string }>(
 			`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, parent_comment_id, content_type, content)
@@ -276,7 +270,6 @@ commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments', async (c) => 
 		authorUserId: auth.type === AuthType.Admin ? auth.userId : null,
 		authorRunId: auth.type === AuthType.Agent ? auth.runId : null,
 		effort: commentEffort,
-		wakeAssignee,
 		parentCommentId,
 		wsManager: c.get('wsManager'),
 	});

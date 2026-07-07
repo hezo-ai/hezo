@@ -113,10 +113,9 @@ test.describe('Task Comments', () => {
 		await expect(page.getByTestId('reply-indicator')).toBeVisible();
 
 		await composer.fill('Mobile reply');
-		// Don't wake the Captain on submit: its synthetic run would post a run
-		// comment and re-render the thread while we wait for the reply below,
-		// adding avoidable load and re-render races. The reply is what we assert.
-		await page.getByRole('checkbox', { name: 'Wake assignee on submit' }).uncheck();
+		// Replying to a human-authored parent wakes no one, so submitting won't
+		// spawn a synthetic Captain run that would post a run comment and re-render
+		// the thread while we wait for the reply below. The reply is what we assert.
 		await page.getByRole('button', { name: 'Comment', exact: true }).click();
 
 		const followUp = page

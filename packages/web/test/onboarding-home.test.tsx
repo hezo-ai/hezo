@@ -1,3 +1,4 @@
+import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
 
@@ -41,4 +42,51 @@ test('renders the CEO intake panel once an open intake exists', async () => {
 	await findByTestId('home-project-intake', undefined, { timeout: 20_000 });
 	// The conversation composer is present so the admin can reply (and approve) in-thread.
 	await findByTestId('home-project-intake-input', undefined, { timeout: 20_000 });
+});
+
+// The admin's intake reply must wake the CEO. Since plain comments no longer
+// wake the assignee, the panel threads the message to the CEO's greeting so the
+// reply path (WakeupSource.Reply) does it — carrying parent_comment_id, no
+// legacy wake_assignee flag.
+test('sending an intake reply threads to the CEO greeting to wake the CEO', async () => {
+	const { findByTestId, findByText, getByRole } = await renderApp({
+		initialPath: '/home',
+		seed: async () => {
+			await startIntake(`Home Intake Reply ${Date.now()}`);
+		},
+	});
+
+	const input = (await findByTestId('home-project-intake-input', undefined, {
+		timeout: 20_000,
+	})) as HTMLTextAreaElement;
+	// Wait for the CEO greeting to render, so its comment is in the client cache
+	// and available as the reply target when we send.
+	await findByText(/kicking off a new project/, undefined, { timeout: 20_000 });
+
+	const original = globalThis.fetch;
+	const posts: Array<Record<string, unknown>> = [];
+	globalThis.fetch = Object.assign(async (i: RequestInfo | URL, init?: RequestInit) => {
+		const url = typeof i === 'string' ? i : i.toString();
+		if (
+			init?.method === 'POST' &&
+			/\/tasks\/[^/]+\/comments$/.test(url) &&
+			typeof init.body === 'string'
+		) {
+			try {
+				posts.push(JSON.parse(init.body) as Record<string, unknown>);
+			} catch {}
+		}
+		return original(i, init);
+	}, original);
+	try {
+		const user = (await import('@testing-library/user-event')).default.setup({ delay: null });
+		await user.type(input, 'Here is what I want to build.');
+		await user.click(getByRole('button', { name: 'Send' }));
+		await waitFor(() => expect(posts.length).toBeGreaterThanOrEqual(1));
+	} finally {
+		globalThis.fetch = original;
+	}
+
+	expect(posts[0].parent_comment_id).toBeTruthy();
+	expect('wake_assignee' in posts[0]).toBe(false);
 });

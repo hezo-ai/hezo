@@ -1,11 +1,14 @@
-import type { AgentEffort } from '@hezo/shared';
+import { type AgentEffort, extractActiveAgentMentionSlugs } from '@hezo/shared';
 import { CornerDownRight, Loader2, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useAgents } from '../../hooks/use-agents';
 import type { Comment, useCreateComment } from '../../hooks/use-comments';
 import type { Task } from '../../hooks/use-tasks';
 import { CommentAttachmentsDrop } from '../comment-attachments-drop';
 import { MentionTextarea } from '../mention-textarea';
+import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
+import { InfoTooltip } from '../ui/info-tooltip';
 
 type CreateCommentMutation = ReturnType<typeof useCreateComment>;
 
@@ -38,11 +41,12 @@ function previewCommentText(c: Comment): string {
 
 /**
  * The bottom-of-page comment-entry form: a MentionTextarea wrapped in a
- * drag-drop attachments target, a "wake assignee on submit" toggle (hidden when
- * replying to an agent's comment, since the reply already wakes that agent), and
- * the submit button. The "Effort" select
- * lives in the sidebar but writes into the same commentEffort state — owned
- * by the route component and passed in. `replyTarget` is similarly owned
+ * drag-drop attachments target, a "Wake:" preview row that pills every agent
+ * this comment will page, and the submit button. A comment wakes an agent only
+ * when it actively `@`-mentions it (replying to an agent's comment counts too,
+ * via WakeupSource.Reply) — there is no implicit assignee wake. The "Effort"
+ * select lives in the sidebar but writes into the same commentEffort state —
+ * owned by the route component and passed in. `replyTarget` is similarly owned
  * upstream so the comments list can `Reply →` into the composer.
  */
 export function CommentComposer({
@@ -59,12 +63,34 @@ export function CommentComposer({
 	commentTextareaRef,
 }: CommentComposerProps) {
 	const [commentText, setCommentText] = useState('');
-	const [wakeAssignee, setWakeAssignee] = useState(true);
 	const [pendingAttachmentIds, setPendingAttachmentIds] = useState<string[]>([]);
 
-	// Replying to an agent's comment already wakes that agent (WakeupSource.Reply),
-	// so the "wake assignee" toggle is redundant there — hide it and omit the flag.
+	// Replying to an agent's comment wakes that agent (WakeupSource.Reply) even
+	// without an explicit `@`-mention, so it joins the wake preview below.
 	const replyingToAgent = replyTarget?.author_type === 'agent';
+
+	const { data: agents } = useAgents(projectId);
+
+	// The agents this comment will wake when posted: every actively `@`-mentioned
+	// agent resolvable in the project roster (which includes the HQ CEO/Coach),
+	// plus the reply-target agent. Deduped by id, so an agent that is both
+	// mentioned and replied-to shows once. Mirrors the server's wakeup fan-out.
+	const wakeAgents = useMemo(() => {
+		const roster = agents ?? [];
+		const bySlug = new Map(roster.map((a) => [a.slug.toLowerCase(), a] as const));
+		const picked = new Map<string, { id: string; name: string }>();
+		for (const slug of extractActiveAgentMentionSlugs(commentText)) {
+			const a = bySlug.get(slug);
+			if (a) picked.set(a.id, { id: a.id, name: a.title });
+		}
+		if (replyingToAgent && replyTarget) {
+			const replyId = replyTarget.author_member_id;
+			const a = replyId ? roster.find((r) => r.id === replyId) : undefined;
+			const id = a?.id ?? replyId ?? `reply:${replyTarget.id}`;
+			picked.set(id, { id, name: a?.title ?? replyTarget.author_name });
+		}
+		return Array.from(picked.values());
+	}, [agents, commentText, replyingToAgent, replyTarget]);
 
 	async function handleComment(e: React.FormEvent) {
 		e.preventDefault();
@@ -72,13 +98,11 @@ export function CommentComposer({
 		await createComment.mutateAsync({
 			content: commentText,
 			...(commentEffort ? { effort: commentEffort } : {}),
-			...(task.assignee_id && !replyingToAgent ? { wake_assignee: wakeAssignee } : {}),
 			...(replyTarget ? { parent_comment_id: replyTarget.id } : {}),
 			...(pendingAttachmentIds.length > 0 ? { attachment_ids: pendingAttachmentIds } : {}),
 		});
 		setCommentText('');
 		setCommentEffort(null);
-		setWakeAssignee(true);
 		setReplyTarget(null);
 		setPendingAttachmentIds([]);
 	}
@@ -134,19 +158,31 @@ export function CommentComposer({
 						</button>
 					</div>
 				)}
-				<div className="flex items-center justify-end gap-2">
-					{task.assignee_id && !replyingToAgent && (
-						<label className="flex items-center gap-2 text-[13px] text-text-2 cursor-pointer select-none">
-							<input
-								type="checkbox"
-								checked={wakeAssignee}
-								onChange={(e) => setWakeAssignee(e.target.checked)}
-								className="rounded"
-								aria-label="Wake assignee on submit"
-							/>
-							<span>Wake assignee</span>
-						</label>
-					)}
+				<div className="flex flex-wrap items-center justify-between gap-2">
+					<div
+						className="flex flex-wrap items-center gap-1.5 min-w-0 text-[13px] text-text-2"
+						data-testid="wake-preview"
+					>
+						<span className="shrink-0">Wake:</span>
+						<InfoTooltip
+							label="Who this comment wakes"
+							data-testid="wake-preview-info"
+							content={
+								wakeAgents.length > 0
+									? 'These agents will be woken up when this comment is posted.'
+									: '@-mention an agent to wake it up when this comment is posted.'
+							}
+						/>
+						{wakeAgents.length === 0 ? (
+							<span className="text-text-3">(no one)</span>
+						) : (
+							wakeAgents.map((a) => (
+								<Badge key={a.id} color="info" testId="wake-pill">
+									{a.name}
+								</Badge>
+							))
+						)}
+					</div>
 					<Button
 						type="submit"
 						size="sm"

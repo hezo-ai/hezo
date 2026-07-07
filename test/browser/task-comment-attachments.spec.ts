@@ -155,12 +155,10 @@ test.describe('Task Comment Attachments', () => {
 		const chip = page.locator('[data-testid="comment-attachment-chip"]', { hasText: 'shot.png' });
 		await expect(chip).toBeVisible({ timeout: UPLOAD_WAIT_MS });
 
-		// Don't wake the Captain on submit: its synthetic run would post a run
-		// comment and re-render the thread while we're waiting on the attachment
-		// thumb below, adding avoidable load and re-render races. The thumb is what
-		// this test asserts, not the agent run.
-		await page.getByRole('checkbox', { name: 'Wake assignee on submit' }).uncheck();
-
+		// A plain comment (no @-mention) wakes no one, so submitting won't spawn a
+		// synthetic Captain run that would post a run comment and re-render the
+		// thread while we're waiting on the attachment thumb below. The thumb is
+		// what this test asserts, not the agent run.
 		const send = page.getByRole('button', { name: 'Comment', exact: true });
 		await expect(send).toBeEnabled();
 		await send.click();

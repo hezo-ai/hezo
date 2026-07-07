@@ -137,6 +137,28 @@ export function extractMentionCandidates(value: string): MentionCandidates {
 }
 
 /**
+ * The active-agent slugs in `value` — the ones that page an agent. Unlike
+ * `extractMentionCandidates().agents` (which merges active `@slug` and passive
+ * `@@slug` into one list), this keeps only active `@slug` mentions, since a
+ * passive mention never wakes anyone. `@admin` is excluded (it fans out to the
+ * human inbox, not an agent). Code blocks and inline code are stripped, and
+ * results are lowercased and deduped. Mirrors the server's comment-wakeup rule
+ * so the composer's "Wake:" preview matches who actually gets woken.
+ */
+export function extractActiveAgentMentionSlugs(value: string): string[] {
+	const stripped = stripCode(value);
+	const slugs = new Set<string>();
+	const re = buildMentionRegex();
+	let m = re.exec(stripped);
+	while (m !== null) {
+		const token = parseMentionMatch(m);
+		if (token.kind === 'agent' && token.slug !== ADMIN_MENTION_SLUG) slugs.add(token.slug);
+		m = re.exec(stripped);
+	}
+	return Array.from(slugs);
+}
+
+/**
  * The inverse of {@link extractMentionCandidates}: pulls resolvable references
  * that are wrapped in *inline code* (and therefore render inert) instead of from
  * the surrounding prose. Fenced and indented code blocks are excluded — those
