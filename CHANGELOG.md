@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.16.0 - 2026-07-08
+
+### Features
+
+- **web:** label icon-only add-item buttons on desktop ([#642](https://github.com/hezo-ai/hezo/pull/642))
+- **web:** status pill + terminal strikethrough in task-mention tooltip ([#641](https://github.com/hezo-ai/hezo/pull/641))
+- remove CEO onboarding phase banner ([#640](https://github.com/hezo-ai/hezo/pull/640))
+- **concurrency:** raise default max concurrent runs per project to 10 ([#638](https://github.com/hezo-ai/hezo/pull/638))
+- **chat:** realtime chatbox file uploads + generalize chat schema and naming ([#639](https://github.com/hezo-ai/hezo/pull/639))
+- **ai-providers:** "verified" status and a single global default ([#637](https://github.com/hezo-ai/hezo/pull/637))
+- **connectors:** api-key auth via egress placeholders; stop token materialization ([#636](https://github.com/hezo-ai/hezo/pull/636))
+- **web:** add Upload button to comment composer, extract reusable file-attachment kit ([#634](https://github.com/hezo-ai/hezo/pull/634))
+
+### Bug Fixes
+
+- **stop-hook:** block final-message-only handoffs the judge wrongly allowed ([#643](https://github.com/hezo-ai/hezo/pull/643))
+- **assets:** name comment upload folders after task ID, not title ([#633](https://github.com/hezo-ai/hezo/pull/633))
+- **updates:** unstick restart overlay and correct its master-key copy ([#632](https://github.com/hezo-ai/hezo/pull/632))
+
+### Refactors
+
+- **web:** folder-style tab bars via a reusable Tabs component ([#635](https://github.com/hezo-ai/hezo/pull/635))
+
+### Documentation
+
+- **dev:** add Docker→microVM feasibility assessment ([#631](https://github.com/hezo-ai/hezo/pull/631))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.15.4...0.16.0
+
 ## 0.15.4 - 2026-07-07
 
 ### Features
