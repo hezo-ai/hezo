@@ -1068,11 +1068,26 @@ export interface SkillRecord {
 	source_url: string | null;
 	content_hash: string;
 	created_by_member_id: string | null;
+	/**
+	 * Scope: NULL = global ("all projects"); a project id = private to that
+	 * project (shadows a global skill of the same slug within that project).
+	 */
+	project_id: string | null;
 	tags: string[];
 	is_active: boolean;
 	auto_load: boolean;
 	created_at: string;
 	updated_at: string;
+}
+
+/**
+ * A skill row as returned by the admin `/api/skills` list and the per-project
+ * `/api/projects/:projectId/skills` list — annotated with its owning project
+ * (both null for a global skill). `content` is omitted from list endpoints.
+ */
+export interface SkillListItemRecord extends Omit<SkillRecord, 'content'> {
+	project_name?: string | null;
+	project_slug?: string | null;
 }
 
 /**

@@ -83,6 +83,7 @@ mentionsRoutes.post('/mentions/resolve', async (c) => {
 
 mentionsRoutes.post('/projects/:projectId/docs/resolve', async (c) => {
 	const teamId = c.get('teamId') as string;
+	const projectId = c.get('projectId') as string;
 	const db = c.get('db');
 
 	const body = await c.req.json<{
@@ -147,8 +148,8 @@ mentionsRoutes.post('/projects/:projectId/docs/resolve', async (c) => {
 		}>(
 			`SELECT slug, name AS title, octet_length(content)::int AS size, updated_at
 			 FROM skills
-			 WHERE LOWER(slug) = ANY($1::text[])`,
-			[kbSlugs],
+			 WHERE LOWER(slug) = ANY($1::text[]) AND (project_id = $2 OR project_id IS NULL)`,
+			[kbSlugs, projectId],
 		);
 		kbDocs = result.rows;
 	}
@@ -226,6 +227,7 @@ mentionsRoutes.post('/projects/:projectId/docs/resolve', async (c) => {
 
 mentionsRoutes.get('/projects/:projectId/mentions/search', async (c) => {
 	const teamId = c.get('teamId') as string;
+	const projectId = c.get('projectId') as string;
 	const db = c.get('db');
 
 	const q = (c.req.query('q') ?? '').trim();
@@ -298,9 +300,10 @@ mentionsRoutes.get('/projects/:projectId/mentions/search', async (c) => {
 			`SELECT slug, name AS title
 			 FROM skills
 			 WHERE ($1 = '' OR slug ILIKE $2 OR name ILIKE $2)
+			   AND (project_id = $4 OR project_id IS NULL)
 			 ORDER BY name
 			 LIMIT $3`,
-			[q, pattern, perKind],
+			[q, pattern, perKind, projectId],
 		);
 		for (const row of r.rows) {
 			results.push({

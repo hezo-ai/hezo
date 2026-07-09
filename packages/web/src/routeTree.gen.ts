@@ -24,6 +24,7 @@ import { Route as SettingsAdminPasswordRouteImport } from './routes/settings/adm
 import { Route as ProjectsProjectIdRouteRouteImport } from './routes/projects/$projectId/route'
 import { Route as ProjectsProjectIdIndexRouteImport } from './routes/projects/$projectId/index'
 import { Route as HomeInboxIndexRouteImport } from './routes/home/inbox/index'
+import { Route as ProjectsProjectIdSkillsRouteImport } from './routes/projects/$projectId/skills'
 import { Route as ProjectsProjectIdGitRouteImport } from './routes/projects/$projectId/git'
 import { Route as ProjectsProjectIdDocumentsRouteImport } from './routes/projects/$projectId/documents'
 import { Route as ProjectsProjectIdContainerRouteImport } from './routes/projects/$projectId/container'
@@ -122,6 +123,11 @@ const HomeInboxIndexRoute = HomeInboxIndexRouteImport.update({
   id: '/home/inbox/',
   path: '/home/inbox/',
   getParentRoute: () => rootRouteImport,
+} as any)
+const ProjectsProjectIdSkillsRoute = ProjectsProjectIdSkillsRouteImport.update({
+  id: '/skills',
+  path: '/skills',
+  getParentRoute: () => ProjectsProjectIdRouteRoute,
 } as any)
 const ProjectsProjectIdGitRoute = ProjectsProjectIdGitRouteImport.update({
   id: '/git',
@@ -281,6 +287,7 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId/container': typeof ProjectsProjectIdContainerRoute
   '/projects/$projectId/documents': typeof ProjectsProjectIdDocumentsRoute
   '/projects/$projectId/git': typeof ProjectsProjectIdGitRoute
+  '/projects/$projectId/skills': typeof ProjectsProjectIdSkillsRoute
   '/home/inbox/': typeof HomeInboxIndexRoute
   '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
   '/projects/$projectId/agents/$agentId': typeof ProjectsProjectIdAgentsAgentIdRouteRouteWithChildren
@@ -319,6 +326,7 @@ export interface FileRoutesByTo {
   '/projects/$projectId/container': typeof ProjectsProjectIdContainerRoute
   '/projects/$projectId/documents': typeof ProjectsProjectIdDocumentsRoute
   '/projects/$projectId/git': typeof ProjectsProjectIdGitRoute
+  '/projects/$projectId/skills': typeof ProjectsProjectIdSkillsRoute
   '/home/inbox': typeof HomeInboxIndexRoute
   '/projects/$projectId': typeof ProjectsProjectIdIndexRoute
   '/projects/$projectId/agents/hire': typeof ProjectsProjectIdAgentsHireRoute
@@ -359,6 +367,7 @@ export interface FileRoutesById {
   '/projects/$projectId/container': typeof ProjectsProjectIdContainerRoute
   '/projects/$projectId/documents': typeof ProjectsProjectIdDocumentsRoute
   '/projects/$projectId/git': typeof ProjectsProjectIdGitRoute
+  '/projects/$projectId/skills': typeof ProjectsProjectIdSkillsRoute
   '/home/inbox/': typeof HomeInboxIndexRoute
   '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
   '/projects/$projectId/agents/$agentId': typeof ProjectsProjectIdAgentsAgentIdRouteRouteWithChildren
@@ -401,6 +410,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/container'
     | '/projects/$projectId/documents'
     | '/projects/$projectId/git'
+    | '/projects/$projectId/skills'
     | '/home/inbox/'
     | '/projects/$projectId/'
     | '/projects/$projectId/agents/$agentId'
@@ -439,6 +449,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/container'
     | '/projects/$projectId/documents'
     | '/projects/$projectId/git'
+    | '/projects/$projectId/skills'
     | '/home/inbox'
     | '/projects/$projectId'
     | '/projects/$projectId/agents/hire'
@@ -478,6 +489,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/container'
     | '/projects/$projectId/documents'
     | '/projects/$projectId/git'
+    | '/projects/$projectId/skills'
     | '/home/inbox/'
     | '/projects/$projectId/'
     | '/projects/$projectId/agents/$agentId'
@@ -612,6 +624,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/home/inbox/'
       preLoaderRoute: typeof HomeInboxIndexRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/projects/$projectId/skills': {
+      id: '/projects/$projectId/skills'
+      path: '/skills'
+      fullPath: '/projects/$projectId/skills'
+      preLoaderRoute: typeof ProjectsProjectIdSkillsRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
     }
     '/projects/$projectId/git': {
       id: '/projects/$projectId/git'
@@ -840,6 +859,7 @@ interface ProjectsProjectIdRouteRouteChildren {
   ProjectsProjectIdContainerRoute: typeof ProjectsProjectIdContainerRoute
   ProjectsProjectIdDocumentsRoute: typeof ProjectsProjectIdDocumentsRoute
   ProjectsProjectIdGitRoute: typeof ProjectsProjectIdGitRoute
+  ProjectsProjectIdSkillsRoute: typeof ProjectsProjectIdSkillsRoute
   ProjectsProjectIdIndexRoute: typeof ProjectsProjectIdIndexRoute
   ProjectsProjectIdAgentsAgentIdRouteRoute: typeof ProjectsProjectIdAgentsAgentIdRouteRouteWithChildren
   ProjectsProjectIdAgentsHireRoute: typeof ProjectsProjectIdAgentsHireRoute
@@ -862,6 +882,7 @@ const ProjectsProjectIdRouteRouteChildren: ProjectsProjectIdRouteRouteChildren =
     ProjectsProjectIdContainerRoute: ProjectsProjectIdContainerRoute,
     ProjectsProjectIdDocumentsRoute: ProjectsProjectIdDocumentsRoute,
     ProjectsProjectIdGitRoute: ProjectsProjectIdGitRoute,
+    ProjectsProjectIdSkillsRoute: ProjectsProjectIdSkillsRoute,
     ProjectsProjectIdIndexRoute: ProjectsProjectIdIndexRoute,
     ProjectsProjectIdAgentsAgentIdRouteRoute:
       ProjectsProjectIdAgentsAgentIdRouteRouteWithChildren,

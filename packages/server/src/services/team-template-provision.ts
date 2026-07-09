@@ -113,7 +113,7 @@ async function createInlineSkillsFromTemplate(
 		await db.query(
 			`INSERT INTO skills (name, slug, description, content, content_hash)
 			 VALUES ($1, $2, $3, $4, $5)
-			 ON CONFLICT (slug) DO NOTHING`,
+			 ON CONFLICT (slug) WHERE project_id IS NULL DO NOTHING`,
 			[name, slug, description, skill.content, hash],
 		);
 	}
@@ -141,7 +141,7 @@ export async function createSkillsFromTemplate(
 			await db.query(
 				`INSERT INTO skills (name, slug, description, content, source_url, content_hash)
 				 VALUES ($1, $2, $3, $4, $5, $6)
-				 ON CONFLICT (slug) DO NOTHING`,
+				 ON CONFLICT (slug) WHERE project_id IS NULL DO NOTHING`,
 				[name, slug, description, content, skill.source_url, hash],
 			);
 		} catch (e) {

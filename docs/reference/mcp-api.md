@@ -737,7 +737,7 @@ Approve or deny an approval
 
 _Write tool._
 
-Propose a new skill for the team's skills database (reusable team know-how: MCP server usage, integration steps, conventions, how agents coordinate). Creates an approval request; when approved the skill is written to the skills database.
+Propose a new skill for the team's skills database (reusable team know-how: MCP server usage, integration steps, conventions, how agents coordinate). Creates an approval request; when approved the skill is written to the skills database. Choose `scope`: 'global' shares it with every project, 'project' keeps it private to this project. Defaults to 'project'.
 
 **Parameters:**
 
@@ -748,6 +748,7 @@ Propose a new skill for the team's skills database (reusable team know-how: MCP 
 | `skill_slug` | `string` | Yes | URL-safe slug for the skill file |
 | `content` | `string` | Yes | Skill content (markdown) |
 | `reason` | `string` | Yes | Why this skill should be added |
+| `scope` | `project` \| `global` | No | 'global' shares the skill with every project; 'project' keeps it private to this project. Defaults to 'project'. |
 
 **Returns:** `{ approval_id, status }` — creates a skill-proposal approval that writes the skill when approved.
 
@@ -802,7 +803,7 @@ Load the full body of a skill from the team's skills database by slug. Use after
 
 _Write tool._
 
-Add or update a skill in the team's skills database directly (no approval needed) — record reusable team know-how such as MCP server usage, integration steps, conventions, and how agents coordinate. Use propose_skill when approval is required. If description is omitted it is derived from the skill body.
+Add or update a skill in the team's skills database directly (no approval needed) — record reusable team know-how such as MCP server usage, integration steps, conventions, and how agents coordinate. Use propose_skill when approval is required. If description is omitted it is derived from the skill body. Choose `scope` deliberately: 'global' when the know-how helps agents in ANY project (related or not), 'project' when it is specific to this project. Omitting scope defaults to 'project'.
 
 **Parameters:**
 
@@ -814,6 +815,7 @@ Add or update a skill in the team's skills database directly (no approval needed
 | `content` | `string` | Yes | Skill content (markdown) |
 | `description` | `string` | No | Short description |
 | `tags` | `string` | No | Comma-separated tags |
+| `scope` | `project` \| `global` | No | 'global' shares the skill with every project; 'project' keeps it private to this project. Defaults to 'project'. |
 
 **Returns:** `{ skill_id, slug, created: true }`. Upserts by `slug` and writes a skill revision; `description` is derived from the body when omitted.
 
@@ -865,7 +867,7 @@ Register a third-party MCP server connector for the team and ask the human to au
 
 _Read-only._
 
-Fetch a remote agent skill file (Markdown describing how to use a third-party MCP server) and store it as a global skill (auto_load). Returns the skill_id and slug. Subsequent agent runs across every team get this skill file injected into their adapter's skills directory. Idempotent on the derived slug — re-fetching the same URL updates the existing skill.
+Fetch a remote agent skill file (Markdown describing how to use a third-party MCP server) and store it as a skill (auto_load). Returns the skill_id and slug. Subsequent agent runs get this skill file injected into their adapter's skills directory. Idempotent on the derived slug — re-fetching the same URL updates the existing skill. Choose `scope`: 'global' shares it with every project (e.g. a widely-used MCP's usage docs), 'project' keeps it private to this project. Defaults to 'project'.
 
 **Parameters:**
 
@@ -874,6 +876,7 @@ Fetch a remote agent skill file (Markdown describing how to use a third-party MC
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `url` | `string` | Yes | HTTPS URL of the skill file. Only http/https schemes are allowed; response must be < 256KB; 10s timeout. |
 | `title` | `string` | No | Human-readable title shown in the team KB. Defaults to the URL pathname. |
+| `scope` | `project` \| `global` | No | 'global' shares the skill with every project; 'project' keeps it private to this project. Defaults to 'project'. |
 
 **Returns:** `{ skill_id, slug, source_url, size_bytes, reused }`, or `{ error }` (invalid URL, non-HTTP(S), over 256 KB, or fetch failure). Stored as an auto-load global skill; idempotent on the derived slug.
 

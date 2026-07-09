@@ -86,7 +86,11 @@ export async function snapshotTeamAsTemplate(
 			slug: string;
 			description: string;
 			content: string;
-		}>(`SELECT name, slug, description, content FROM skills WHERE is_active = true`);
+			// Only global skills go into a reusable template — a project-scoped skill
+			// is private to one project and must not be captured for other teams.
+		}>(
+			`SELECT name, slug, description, content FROM skills WHERE is_active = true AND project_id IS NULL`,
+		);
 		const skillsConfig = skillsRes.rows;
 
 		const prefRes = await db.query<{ content: string }>(

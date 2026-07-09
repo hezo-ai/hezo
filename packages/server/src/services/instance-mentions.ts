@@ -98,9 +98,11 @@ export async function resolveInstanceMentions(
 		out.project_docs = docs.rows;
 
 		const kb = await db.query<InstanceResolvedKbDoc>(
+			// Instance-wide surface (global CEO chat): resolve global skills only —
+			// project-scoped skills are private to their project.
 			`SELECT slug, name AS title, octet_length(content)::int AS size, updated_at
 			 FROM skills
-			 WHERE LOWER(slug) = ANY($1::text[])`,
+			 WHERE LOWER(slug) = ANY($1::text[]) AND project_id IS NULL`,
 			[candidates.filenames.map((f) => f.toLowerCase())],
 		);
 		out.kb_docs = kb.rows;

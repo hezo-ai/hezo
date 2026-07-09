@@ -1,6 +1,7 @@
-import { waitFor } from '@testing-library/react';
+import { waitFor, within } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
+import { seedProject, seedWorkspace } from './helpers/seed';
 
 async function seedInstanceSkill(
 	ctx: { token: string; apiBase: (p: string, i?: RequestInit) => Promise<Response> },
@@ -88,6 +89,39 @@ test('shows skill revision history and restores a prior version', async () => {
 	await waitFor(() =>
 		expect((getByLabelText('Skill content') as HTMLTextAreaElement).value).toBe('Original body v1'),
 	);
+});
+
+test('re-scopes a skill from global to a project via the inline scope dropdown', async () => {
+	let project: { id: string; name: string } | undefined;
+	const { getByText, findByText, findByTestId, user } = await renderApp({
+		initialPath: '/settings/skills',
+		seed: async (ctx) => {
+			await seedInstanceSkill(ctx, { name: 'Movable Skill', content: '# body' });
+			// A visible project to move the skill under (shows in the scope picker).
+			const ws = await seedWorkspace();
+			project = await seedProject(ws, { name: 'Scope Target' });
+		},
+	});
+	if (!project) throw new Error('seed did not create the target project');
+
+	const nameEl = await findByText('Movable Skill');
+	const row = nameEl.closest('[data-testid="instance-skill-row"]') as HTMLElement;
+	// The skill starts global — its inline scope trigger reads "All projects".
+	expect(within(row).getByTestId('instance-skill-scope').textContent).toContain('All projects');
+
+	// Click the scope badge → the searchable dropdown opens; filter to the project.
+	await user.click(within(row).getByTestId('instance-skill-scope'));
+	const search = await findByTestId('instance-skill-scope-select-search');
+	await user.type(search, 'Scope');
+	await user.click(await findByTestId(`instance-skill-scope-select-option-${project.id}`));
+
+	// The PATCH + refetch re-scopes the row; the badge now shows the project name.
+	await waitFor(() => {
+		const r = getByText('Movable Skill').closest(
+			'[data-testid="instance-skill-row"]',
+		) as HTMLElement;
+		expect(within(r).getByTestId('instance-skill-scope').textContent).toContain('Scope Target');
+	});
 });
 
 test('settings page sidebar links to skills', async () => {

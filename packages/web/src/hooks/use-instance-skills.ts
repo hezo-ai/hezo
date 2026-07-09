@@ -1,20 +1,29 @@
-import type { RegistrySkillSearchResult, SkillRecord, SkillRevisionRecord } from '@hezo/shared';
+import type {
+	RegistrySkillSearchResult,
+	SkillListItemRecord,
+	SkillRecord,
+	SkillRevisionRecord,
+} from '@hezo/shared';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
 
 export type Skill = SkillRecord;
-export type SkillListItem = Omit<SkillRecord, 'content'>;
+export type SkillListItem = SkillListItemRecord;
 export interface CreateSkillInput {
 	name: string;
 	content: string;
 	description?: string;
 	slug?: string;
 	tags?: string[];
+	/** null / omitted = global; a project id scopes it to that project. */
+	project_id?: string | null;
 }
 
-// Skills are instance-global — one catalog shared with every team's agents.
-// Only the Admin (superuser) manages them, via the /api/skills routes.
+// The global Skills page (/settings/skills) lists ALL skills — global (project_id
+// null) and every project's — annotated with the owning project. Only the Admin
+// (superuser) manages them and changes their scope, via the /api/skills routes.
+// Skills are addressed by id (slug is no longer globally unique once scoped).
 export const INSTANCE_SKILLS_KEY = ['instance', 'skills'] as const;
 
 export function useInstanceSkills() {
@@ -33,16 +42,16 @@ export function useCreateInstanceSkill() {
 	});
 }
 
-export function useInstanceSkill(slug: string | null) {
+export function useInstanceSkill(id: string | null) {
 	return useQuery({
-		queryKey: [...INSTANCE_SKILLS_KEY, slug],
-		queryFn: () => api.get<Skill>(`/api/skills/${slug}`),
-		enabled: !!slug,
+		queryKey: [...INSTANCE_SKILLS_KEY, id],
+		queryFn: () => api.get<Skill>(`/api/skills/${id}`),
+		enabled: !!id,
 	});
 }
 
 export interface UpdateInstanceSkillPayload {
-	slug: string;
+	id: string;
 	name?: string;
 	description?: string;
 	tags?: string[];
@@ -51,8 +60,20 @@ export interface UpdateInstanceSkillPayload {
 
 export function useUpdateInstanceSkill() {
 	return useMutation({
-		mutationFn: ({ slug, ...data }: UpdateInstanceSkillPayload) =>
-			api.patch<SkillListItem>(`/api/skills/${slug}`, data),
+		mutationFn: ({ id, ...data }: UpdateInstanceSkillPayload) =>
+			api.patch<SkillListItem>(`/api/skills/${id}`, data),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: INSTANCE_SKILLS_KEY });
+		},
+	});
+}
+
+// Re-scope a skill (global <-> a project). Invalidate rather than optimistic —
+// a cross-scope slug clash 409s. Mirrors useUpdateInstanceConnectorScope.
+export function useUpdateInstanceSkillScope() {
+	return useMutation({
+		mutationFn: ({ id, project_id }: { id: string; project_id: string | null }) =>
+			api.patch<SkillListItem>(`/api/skills/${id}`, { project_id }),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: INSTANCE_SKILLS_KEY });
 		},
@@ -61,7 +82,7 @@ export function useUpdateInstanceSkill() {
 
 export function useDeleteInstanceSkill() {
 	return useMutation({
-		mutationFn: (slug: string) => api.delete(`/api/skills/${slug}`),
+		mutationFn: (id: string) => api.delete(`/api/skills/${id}`),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: INSTANCE_SKILLS_KEY });
 		},
@@ -69,22 +90,22 @@ export function useDeleteInstanceSkill() {
 }
 
 // Revision history + restore — mirrors the agent system-prompt revision hooks.
-export function useInstanceSkillRevisions(slug: string | null) {
+export function useInstanceSkillRevisions(id: string | null) {
 	return useQuery({
-		queryKey: [...INSTANCE_SKILLS_KEY, slug, 'revisions'],
-		queryFn: () => api.get<SkillRevisionRecord[]>(`/api/skills/${slug}/revisions`),
-		enabled: !!slug,
+		queryKey: [...INSTANCE_SKILLS_KEY, id, 'revisions'],
+		queryFn: () => api.get<SkillRevisionRecord[]>(`/api/skills/${id}/revisions`),
+		enabled: !!id,
 	});
 }
 
-export function useRestoreInstanceSkill(slug: string | null) {
+export function useRestoreInstanceSkill(id: string | null) {
 	return useMutation({
 		mutationFn: (revisionNumber: number) =>
-			api.post(`/api/skills/${slug}/restore`, { revision_number: revisionNumber }),
+			api.post(`/api/skills/${id}/restore`, { revision_number: revisionNumber }),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: INSTANCE_SKILLS_KEY });
-			queryClient.invalidateQueries({ queryKey: [...INSTANCE_SKILLS_KEY, slug] });
-			queryClient.invalidateQueries({ queryKey: [...INSTANCE_SKILLS_KEY, slug, 'revisions'] });
+			queryClient.invalidateQueries({ queryKey: [...INSTANCE_SKILLS_KEY, id] });
+			queryClient.invalidateQueries({ queryKey: [...INSTANCE_SKILLS_KEY, id, 'revisions'] });
 		},
 	});
 }

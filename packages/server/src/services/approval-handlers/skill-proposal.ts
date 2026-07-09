@@ -14,20 +14,42 @@ export const skillProposalHandler: ApprovalHandler = {
 		const requestedBy =
 			(payload.requested_by as string) ?? (approval.requested_by_member_id as string) ?? null;
 
-		// Skills are global. Write to DB (source of truth).
+		// The proposer chose the scope: 'global' (project_id null, shared with every
+		// project) or 'project' (default) — private to the approval's project. A team
+		// backs exactly one project (1:1), so resolve it from the approval's team.
+		let targetProjectId: string | null = null;
+		if (payload.scope !== 'global') {
+			const proj = await db.query<{ id: string }>('SELECT id FROM projects WHERE team_id = $1', [
+				approval.team_id as string,
+			]);
+			targetProjectId = proj.rows[0]?.id ?? null;
+		}
+
+		// Write to DB (source of truth). Upsert against the scope's partial index.
 		const prior = await db.query<{ content: string }>(
-			'SELECT content FROM skills WHERE slug = $1',
-			[slug],
+			'SELECT content FROM skills WHERE slug = $1 AND project_id IS NOT DISTINCT FROM $2',
+			[slug, targetProjectId],
 		);
+		const conflictTarget = targetProjectId
+			? '(project_id, slug) WHERE project_id IS NOT NULL'
+			: '(slug) WHERE project_id IS NULL';
 		const skillResult = await db.query<{ id: string }>(
-			`INSERT INTO skills (name, slug, description, content, content_hash, created_by_member_id)
-			 VALUES ($1, $2, $3, $4, $5, $6)
-			 ON CONFLICT (slug) DO UPDATE SET
+			`INSERT INTO skills (name, slug, description, content, content_hash, created_by_member_id, project_id)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7)
+			 ON CONFLICT ${conflictTarget} DO UPDATE SET
 			   content = EXCLUDED.content,
 			   content_hash = EXCLUDED.content_hash,
 			   updated_at = now()
 			 RETURNING id`,
-			[name, slug, (payload.reason as string) ?? '', content, contentHash, requestedBy],
+			[
+				name,
+				slug,
+				(payload.reason as string) ?? '',
+				content,
+				contentHash,
+				requestedBy,
+				targetProjectId,
+			],
 		);
 
 		if (skillResult.rows[0]) {
