@@ -1,4 +1,4 @@
-import { CommentContentType, ReactionKind } from '@hezo/shared';
+import { CommentContentType, DEFAULT_TEAM_ID, ReactionKind } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
@@ -323,6 +323,104 @@ describe('REST reactions endpoints', () => {
 			{ method: 'PUT', headers: authHeader(otherToken) },
 		);
 		expect(res.status).toBe(403);
+	});
+
+	it('lets a superuser react in a team they can access but are not a member of (HQ fallback)', async () => {
+		// The reported bug: a superuser has access to every team (superuser bypass)
+		// but only a `member_users` row in HQ and teams they created — so reacting
+		// in a team provisioned some other way (CEO intake, template, seed) 403'd
+		// with "No member identity for caller". The fix resolves the reactor to the
+		// caller's HQ membership, mirroring how HQ agents act cross-team.
+
+		// Give the seeded superuser an HQ (default-team) member row, exactly as
+		// production's addUserToDefaultTeam does at setup. createTestApp inserts the
+		// user directly and skips that step, so we mirror it here.
+		const adminRes = await db.query<{ id: string; display_name: string }>(
+			'SELECT id, display_name FROM users WHERE is_superuser = true ORDER BY created_at LIMIT 1',
+		);
+		const adminUserId = adminRes.rows[0].id;
+		const hqMember = await db.query<{ id: string }>(
+			`INSERT INTO members (team_id, member_type, display_name)
+			 VALUES ($1, 'user'::member_type, $2) RETURNING id`,
+			[DEFAULT_TEAM_ID, adminRes.rows[0].display_name],
+		);
+		await db.query(`INSERT INTO member_users (id, user_id, role) VALUES ($1, $2, 'admin')`, [
+			hqMember.rows[0].id,
+			adminUserId,
+		]);
+
+		// A team the admin can access but is NOT a member of — created by a
+		// different user, mirroring a CEO/other-admin-provisioned team.
+		const otherUser = await db.query<{ id: string }>(
+			"INSERT INTO users (display_name, is_superuser) VALUES ('Other Owner', false) RETURNING id",
+		);
+		const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
+		const typeId = (await typesRes.json()).data.find(
+			(t: Record<string, unknown>) => t.name === 'Startup',
+		).id;
+		const foreignTeam = await createTestTeam(db, {
+			name: 'Fallback Co',
+			template_id: typeId,
+			creatorUserId: otherUser.rows[0].id,
+		});
+		const foreignData = (await foreignTeam.json()).data;
+		const foreignTeamId = foreignData.id;
+		const foreignSlug = foreignData.slug;
+
+		const foreignAgentsRes = await app.request(
+			`/api/projects/${await projectSlugForTeamSlug(db, foreignSlug)}/agents`,
+			{ headers: authHeader(token) },
+		);
+		const foreignCaptain = (await foreignAgentsRes.json()).data.find(
+			(a: { slug: string }) => a.slug === 'captain',
+		);
+		const foreignProjectRes = await createTestProject(db, foreignTeamId, {
+			name: 'Fallback Project',
+			description: 'Admin-not-a-member reaction target.',
+		});
+		const foreignProjectId = (await foreignProjectRes.json()).data.id as string;
+		const foreignTaskId = await insertTask(foreignCaptain.id, 'fallback', {
+			teamId: foreignTeamId,
+			projectId: foreignProjectId,
+		});
+		const foreignCommentId = await insertComment(foreignTaskId, foreignCaptain.id);
+
+		// Sanity: the admin genuinely has no member row in the foreign team.
+		const membership = await db.query(
+			`SELECT 1 FROM members m JOIN member_users mu ON mu.id = m.id
+			 WHERE mu.user_id = $1 AND m.team_id = $2`,
+			[adminUserId, foreignTeamId],
+		);
+		expect(membership.rows).toHaveLength(0);
+
+		const url = `/api/projects/${foreignProjectId}/tasks/${foreignTaskId}/comments/${foreignCommentId}/reactions/${ReactionKind.Ack}`;
+
+		// PUT succeeds now (was 403), attributed to the admin's HQ member identity.
+		const put = await app.request(url, { method: 'PUT', headers: authHeader(token) });
+		expect(put.status).toBe(200);
+		const putBody = (await put.json()).data as { reactions: ReactionGroup[] };
+		expect(putBody.reactions).toHaveLength(1);
+		expect(putBody.reactions[0].members).toHaveLength(1);
+		expect(putBody.reactions[0].members[0].id).toBe(hqMember.rows[0].id);
+		expect(putBody.reactions[0].members[0].slug).toBeNull();
+		expect(putBody.reactions[0].members[0].display_name).toBe(adminRes.rows[0].display_name);
+
+		// GET reflects you_reacted for the same admin (viewer resolves via HQ too).
+		const getRes = await app.request(
+			`/api/projects/${foreignProjectId}/tasks/${foreignTaskId}/comments`,
+			{ headers: authHeader(token) },
+		);
+		const rows = (await getRes.json()).data as Array<{
+			id: string;
+			reactions: Array<{ kind: string; you_reacted: boolean }>;
+		}>;
+		const commentRow = rows.find((r) => r.id === foreignCommentId)!;
+		expect(commentRow.reactions[0].you_reacted).toBe(true);
+
+		// DELETE removes it.
+		const del = await app.request(url, { method: 'DELETE', headers: authHeader(token) });
+		expect(del.status).toBe(200);
+		expect(await reactionsRowCount(foreignCommentId)).toBe(0);
 	});
 });
 

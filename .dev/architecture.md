@@ -124,7 +124,12 @@ an agent-maintained `progress_summary`. Numbering is atomic via `project_task_co
 `system` (timeline entries like `status_change`/`task_link`), `run` (auto-written
 on run completion), `preview`, `action`,
 `connect_required`, `credential_request`. Each comment carries a `public_id` slug for
-`#comment-<id>` deep-links. `comment_reactions` holds emoji reactions.
+`#comment-<id>` deep-links. `comment_reactions` holds emoji reactions, keyed by a
+non-null `member_id` (unlike a comment's nullable `author_member_id`, which lets an admin
+author as a null-member "Admin"). Because a reaction needs a real member, a human acting in
+a team they can access but aren't a member of resolves to their **HQ (default-team)**
+membership (`resolveReactorMemberId`) — the same cross-team identity HQ agents use to act in
+other teams' projects — so a superuser can react anywhere, not only in HQ or teams they created.
 Marking a task `done` is gated in both update paths (REST PATCH and MCP `update_task`,
 shared helpers in `lib/task-relationships.ts`): every sub-task terminal, no outstanding
 pinged-agent activity by others (active runs, pending mention/comment/reply wakeups), and —

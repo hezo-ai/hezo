@@ -70,6 +70,7 @@ import {
 	resolveActorMemberId,
 	resolveAgentId,
 	resolveProject,
+	resolveReactorMemberId,
 	resolveTaskId,
 } from '../lib/resolve';
 import { assertRunTaskScope } from '../lib/run-scope';
@@ -2034,7 +2035,7 @@ export function registerTools(
 				 ORDER BY ic.created_at DESC, ic.id DESC LIMIT 50`,
 				params,
 			);
-			const viewerMemberId = await resolveActorMemberId(db, auth, teamId);
+			const viewerMemberId = await resolveReactorMemberId(db, auth, teamId);
 			const reactionsByComment = await loadReactionsForTask(db, taskId, viewerMemberId);
 			const commentIds = r.rows.map((row) => row.id as string);
 			const attachmentsByComment = await loadAgentAttachmentsForComments(
@@ -2090,7 +2091,7 @@ export function registerTools(
 			const scope = await resolveTaskScope(db, auth, args);
 			if ('error' in scope) return scope;
 			const { teamId, taskId } = scope;
-			const memberId = await resolveActorMemberId(db, auth, teamId);
+			const memberId = await resolveReactorMemberId(db, auth, teamId);
 			if (!memberId) return { error: 'No member identity for caller' };
 			const result = await addCommentReaction({
 				db,
@@ -2144,7 +2145,7 @@ export function registerTools(
 			const scope = await resolveTaskScope(db, auth, args);
 			if ('error' in scope) return scope;
 			const { teamId, taskId } = scope;
-			const memberId = await resolveActorMemberId(db, auth, teamId);
+			const memberId = await resolveReactorMemberId(db, auth, teamId);
 			if (!memberId) return { error: 'No member identity for caller' };
 			const result = await removeCommentReaction({
 				db,

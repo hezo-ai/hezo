@@ -21,6 +21,36 @@ export async function resolveActorMemberId(
 }
 
 /**
+ * Resolve the member identity that owns a *reaction* for the caller. Reactions
+ * require a non-null `member_id` (unlike comments, which can be authored by a
+ * null-member "Admin"), so a human acting in a team they can access but aren't a
+ * member of would otherwise have no identity to react with. Prefer the caller's
+ * member in the current team, then fall back to their default-team (HQ)
+ * membership — the same cross-team identity HQ agents (CEO/Coach) use to act in
+ * other teams' projects, and the same fallback `resolveAgentId` already applies.
+ * Every enrolled human is an HQ member, so this resolves for any admin; an API
+ * key (no member, no user) still returns null.
+ */
+export async function resolveReactorMemberId(
+	db: Db,
+	auth: AuthInfo,
+	teamId: string,
+): Promise<string | null> {
+	if (auth.type === AuthType.Agent) return auth.memberId;
+	if (auth.type === AuthType.Admin) {
+		const result = await db.query<{ id: string }>(
+			`SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id
+			 WHERE mu.user_id = $1 AND m.team_id IN ($2, $3)
+			 ORDER BY (m.team_id = $2) DESC
+			 LIMIT 1`,
+			[auth.userId, teamId, DEFAULT_TEAM_ID],
+		);
+		return result.rows[0]?.id ?? null;
+	}
+	return null;
+}
+
+/**
  * Map an auth context to its audit actor type. An agent run is an `agent`; an
  * approved API key (the instance MCP credential) is an `api_key`; everything else
  * (board user, superuser) is an `admin`.

@@ -181,7 +181,9 @@ describe('GET comments — reactions and attachments hydrate', () => {
 describe('reactions — identity and validation branches', () => {
 	it('403s a caller with no member identity in the team (PUT and DELETE)', async () => {
 		// A second superuser spans all teams via access control but has no member
-		// row in this team, so the reaction routes reject with FORBIDDEN.
+		// row in this team — nor in HQ, since it is inserted directly rather than
+		// enrolled — so the reactor fallback (current team → HQ) finds nothing and
+		// the reaction routes reject with FORBIDDEN.
 		const stray = await db.query<{ id: string }>(
 			"INSERT INTO users (display_name, is_superuser) VALUES ('Stray Admin', true) RETURNING id",
 		);
