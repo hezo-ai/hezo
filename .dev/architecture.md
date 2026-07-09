@@ -263,9 +263,20 @@ that *produced* it (a one-step shift, since revisions snapshot prior content), s
 head's changelog is the newest revision's `change_summary`. Selecting an older revision renders it
 read-only with the review layer suppressed — review comments exist only for the latest content —
 under a "viewing revision N" banner. Restore stays admin-only (agents 403 on the REST route; no
-MCP restore tool). `skills` is the
-instance/team reference store (manifest-injected into runs, full-text-searchable) with
-`skill_revisions` history. `assets` + `task_attachments`/`comment_attachments` handle
+MCP restore tool). `skills` is the reusable-know-how reference store
+(manifest-injected into runs, full-text-searchable) with `skill_revisions` history. Each skill is
+**scoped** by a nullable `skills.project_id` (mirrors `mcp_connections`, migration 024): **NULL =
+global** (shared with every project), a **non-NULL project id = private to that project**. Slug
+uniqueness is partitioned into two partial unique indexes (`(slug) WHERE project_id IS NULL` +
+`(project_id, slug) WHERE project_id IS NOT NULL`), so the same slug can exist once globally and
+once per project, and a project skill **shadows** a global one of the same slug within that project.
+Run-time reads (the `{{skills_context}}` manifest, `list_skills`/`get_skill`, full-text search,
+mention resolution) return the run's project skills plus globals, de-duped so the project's copy
+wins. Skills authored during a run (`create_skill`/`fetch_skill_file`/`propose_skill`) carry a
+`scope` the agent chooses (`global`|`project`), defaulting to **project**. The admin manages the
+whole catalog and re-scopes rows at `/settings/skills` (id-addressed `/api/skills` routes); a
+per-project page (`/projects/:projectId/skills`, any project member) lists that project's skills
+plus globals and edits/removes only the project's own. `assets` + `task_attachments`/`comment_attachments` handle
 uploaded files (blobs in the configured **asset store** keyed by `projectId/assetId` — see
 § Asset storage below — served over HMAC-signed URLs with
 `nosniff` and a basename-only download filename); agents can also author text-based assets

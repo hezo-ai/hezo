@@ -204,6 +204,10 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 
 	const capability = getConnectorCapability(connector.name);
 	const usesDeviceFlow = !!capability?.deviceAuth;
+	// Global connectors (project_id null) are shared across every project and
+	// managed on the global /settings/connectors page — they are read-only here:
+	// no connect/disconnect/api-key, just a "Global" badge and a link to manage.
+	const isGlobal = connector.project_id === null;
 
 	const url =
 		typeof connector.config === 'object' &&
@@ -273,6 +277,14 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 							{connector.display_name ?? connector.name}
 						</h2>
 						<StatusBadge status={status} />
+						{isGlobal && (
+							<Badge
+								className="bg-neutral-soft text-neutral-soft-fg"
+								testId="connector-global-badge"
+							>
+								Global
+							</Badge>
+						)}
 					</div>
 					{url && <p className="text-xs text-text-2 mt-1 truncate font-mono">{url}</p>}
 					{connector.oauth_account_label && (
@@ -293,7 +305,16 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 				</div>
 
 				<div className="flex items-center gap-2 shrink-0">
-					{status === 'active' ? (
+					{isGlobal ? (
+						// Read-only here: manage global connectors on the global page.
+						<Link
+							to="/settings/connectors"
+							className="flex items-center gap-1 text-xs text-text-3 hover:text-text-1"
+							data-testid="connector-global-manage-link"
+						>
+							Manage <ExternalLink className="size-3" />
+						</Link>
+					) : status === 'active' ? (
 						<Button
 							size="sm"
 							variant="outline"
@@ -328,7 +349,7 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 				</div>
 			</div>
 
-			{status !== 'active' && showApiKey && (
+			{!isGlobal && status !== 'active' && showApiKey && (
 				<div className="mt-3 pt-3 border-t border-border">
 					<ConnectorApiKeyForm
 						projectId={projectId}

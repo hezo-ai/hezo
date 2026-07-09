@@ -19,8 +19,8 @@ the agents as they work:
   reads to catch up on what's happened.
 - **Per project** — the **Documents** library of PRDs, specs, and research the whole team
   keeps coming back to.
-- **Global** — [skills](/docs/concepts/skills), the reusable know-how every team can
-  reach for.
+- **Global or per-project** — [skills](/docs/concepts/skills), reusable know-how that is
+  either shared with every project or scoped to one.
 - **Per team** — [preferences](#team-preferences): custom instructions applied to every
   agent on a team.
 - **The CEO's** — its [long-term chat memory](#long-term-chat-memory) of your standing
@@ -49,7 +49,7 @@ cached to go stale. Context reaches the agent in one of two ways:
 | Progress summary | One task | In full, every run | You and agents |
 | Comment thread | One task | Read by the agent at the start of a run | You and agents |
 | Project documents | One project | Manifest, full text on demand | You and agents |
-| Skills | Whole instance | Manifest, full text on demand | You and agents |
+| Skills | Global or one project | Manifest, full text on demand | You and agents |
 | Team preferences | One team | In full, every run | You |
 | Long-term chat memory | The CEO | In full, every chat turn | The CEO (automatically) and you |
 

@@ -101,6 +101,13 @@ export function ProjectSidebar() {
 		label: 'Connectors',
 		testId: 'project-sidebar-connectors',
 	};
+	// Skills (this project's scoped skills + globals) disclose under Settings, below Connectors.
+	const skillsPage = {
+		to: '/projects/$projectId/skills',
+		params: projectParams,
+		label: 'Skills',
+		testId: 'project-sidebar-skills',
+	};
 
 	// Progress (the project's goals + Captain-maintained summary) leads under Inbox; it's a
 	// normal-project concept, so HQ (internal) has none.
@@ -166,9 +173,9 @@ export function ProjectSidebar() {
 						params: projectParams,
 						label: 'Settings',
 						testId: 'project-sidebar-settings',
-						// Git, Connectors, Container and Activity disclose under Settings when
-						// it (or one of them) is the active route.
-						subItems: [gitPage, connectorsPage, containerPage, activityPage],
+						// Git, Connectors, Skills, Container and Activity disclose under Settings
+						// when it (or one of them) is the active route.
+						subItems: [gitPage, connectorsPage, skillsPage, containerPage, activityPage],
 					},
 				]),
 	];

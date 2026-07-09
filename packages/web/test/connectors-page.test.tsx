@@ -84,6 +84,19 @@ async function markConnectorActive(connectorId: string, oauthConnectionId: strin
 	);
 }
 
+// Seed a genuinely global connector (project_id NULL) straight into the DB so
+// the project page renders it read-only (managed on the global settings page).
+async function seedGlobalConnector(name: string, url: string): Promise<{ id: string }> {
+	const { db } = getTestContext();
+	const r = await db.query<{ id: string }>(
+		`INSERT INTO mcp_connections (name, kind, config, install_status, project_id)
+		 VALUES ($1, 'saas', $2::jsonb, 'installed', NULL)
+		 RETURNING id`,
+		[name, JSON.stringify({ url })],
+	);
+	return r.rows[0];
+}
+
 const CONNECTORS_ROUTE = '/projects/$projectId/connectors';
 
 let sim: GitHubSim | null = null;
@@ -123,6 +136,31 @@ test('lists a seeded MCP connector alongside the always-present GitHub row', asy
 	// The GitHub row, with no connection, shows the pending-connect affordance.
 	const list = getByTestId('connectors-list');
 	expect(list.querySelector('[data-connector-name="github"][data-status="pending"]')).toBeTruthy();
+});
+
+test('a global connector is read-only on the project page (badge + manage link, no actions)', async () => {
+	let slug = '';
+	const { findByText, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			slug = ws.internalSlug;
+			await seedGlobalConnector('shared-global', 'https://global.example/mcp');
+		},
+	});
+	await router.navigate({ to: CONNECTORS_ROUTE, params: { projectId: slug } });
+
+	await findByText('shared-global');
+	const row = (await findByText('shared-global')).closest(
+		'[data-testid="connector-row"]',
+	) as HTMLElement;
+	// A "Global" badge + a link to the global connectors page, and NO mutating actions.
+	expect(within(row).getByTestId('connector-global-badge')).toBeTruthy();
+	const manage = within(row).getByTestId('connector-global-manage-link');
+	expect(manage.getAttribute('href')).toBe('/settings/connectors');
+	expect(within(row).queryByTestId('connector-connect')).toBeNull();
+	expect(within(row).queryByTestId('connector-revoke')).toBeNull();
+	expect(within(row).queryByTestId('connector-api-key-toggle')).toBeNull();
 });
 
 test('shows the empty-state hint when there are no connectors or OAuth connections', async () => {

@@ -6,33 +6,54 @@ section: Concepts
 
 # Skills
 
-**Skills** are reusable, project-independent know-how you give your agents — a standard
-operating procedure written once and shared with every team. Where a
+**Skills** are reusable know-how you give your agents — a standard operating procedure
+written once and reached for whenever it's relevant. Where a
 [project document](/docs/concepts/documents-and-memory) is knowledge *about one project*,
-a skill is a *portable capability* any agent on any team can draw on: how to use a
-particular MCP server, your commit conventions, a release checklist, a house style for
-research write-ups.
+a skill is a *portable capability* an agent can draw on: how to use a particular MCP server,
+your commit conventions, a release checklist, a house style for research write-ups.
 
-## Instance-global by design
-
-There is **one skills catalog for the whole instance**. A skill you add is available to
-every team's agents — you don't re-create it per project. Each skill is a markdown
-document with a name, a short description, and optional tags. On every run agents are given
-a **manifest** of the available skills — each one's name and description, not its full body
-— so they know what they can reach for; an agent then loads a skill's full instructions
-on demand when it's relevant to the task. That manifest-plus-load-on-demand pattern is part
-of how Hezo gives agents [long-term memory](/docs/concepts/documents-and-memory#what-an-agent-carries-into-every-run)
+Each skill is a markdown document with a name, a short description, and optional tags. On
+every run agents are given a **manifest** of the skills available to that run — each one's
+name and description, not its full body — so they know what they can reach for; an agent then
+loads a skill's full instructions on demand when it's relevant to the task. That
+manifest-plus-load-on-demand pattern is part of how Hezo gives agents
+[long-term memory](/docs/concepts/documents-and-memory#what-an-agent-carries-into-every-run)
 without bloating every prompt.
+
+## Global and project scope
+
+Every skill is either **global** or **scoped to one project**:
+
+- **Global** skills are shared with every project — the right home for know-how any agent
+  might need (a widely-used tool's usage, a general technique).
+- **Project** skills are private to a single project — its particular deployment steps, its
+  own conventions, a runbook only that project needs.
+
+A run sees its own project's skills **plus** all global ones; if a project skill and a global
+skill share the same slug, the project's copy takes precedence for that project. This keeps
+each project's manifest focused while still letting broadly-useful know-how reach everyone.
 
 ## Where skills come from
 
-- **Author them yourself.** Open **Settings → Skills** and write one directly. The editor
+- **Author them yourself.** Open **Settings → Skills** — the global Skills page — and write
+  one directly, choosing its scope (global, or a specific project) as you add it. The editor
   previews the markdown as you go.
 - **Search and add from [skills.sh](https://skills.sh).** With a skills.sh token
   configured, search the public registry and install a skill straight into your catalog.
 - **Let agents contribute.** While working, an agent can add a skill directly
   (`create_skill`) or, when you'd rather review first, file one for your approval
-  (`propose_skill`) — the proposal lands in your inbox like any other approval.
+  (`propose_skill`) — the proposal lands in your inbox like any other approval. The agent
+  chooses whether the new skill is global or project-scoped, and defaults to the current
+  project when it doesn't say.
+
+## Managing scope
+
+The global **Settings → Skills** page lists **every** skill — global and each project's —
+and each row has a scope drop-down so you can move a skill between global and any project (it
+works just like the [Connectors](/docs/mcp/connecting-mcp-servers) page). Each project also has its
+own **Skills** page, under **Connectors** in the project's settings menu, showing that
+project's skills plus the globals; you can edit or remove the project's own skills there,
+while global ones are shown for reference and stay managed on the global page.
 
 Skills are part of what the [Coach](/docs/concepts/coach-and-self-improving-teams) can
 write to: when a retrospective surfaces a reusable procedure, it may capture it as a skill
