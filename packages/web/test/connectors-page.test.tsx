@@ -1,5 +1,5 @@
 import { createGitHubSim, type GitHubSim } from '@hezo/server/test/helpers/github-sim';
-import { waitFor, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
 import { type SeededWorkspace, seedWorkspace } from './helpers/seed';
@@ -141,7 +141,6 @@ test('shows the empty-state hint when there are no connectors or OAuth connectio
 });
 
 test('GitHub row renders the connected state and disconnects', async () => {
-	window.confirm = () => true;
 	let slug = '';
 	const { findByText, findByTestId, queryByText, router } = await renderApp({
 		initialPath: '/',
@@ -159,9 +158,11 @@ test('GitHub row renders the connected state and disconnects', async () => {
 	await findByText('octocat');
 	await findByText(/repo workflow read:org/);
 
-	// Disconnect calls DELETE /oauth-connections/:id then invalidates the list.
+	// Disconnect opens the shared confirm dialog; confirming calls DELETE
+	// /oauth-connections/:id then invalidates the list.
 	const disconnect = (await findByTestId('connector-revoke')) as HTMLButtonElement;
 	disconnect.click();
+	(await screen.findByTestId('confirm-dialog-confirm')).click();
 
 	// After deletion the row falls back to the disconnected ("Connect") state.
 	await findByTestId('connector-connect');
@@ -202,7 +203,6 @@ test('Connect on a redirect (non-device) connector surfaces the popup-blocked er
 });
 
 test('an active non-GitHub connector renders Disconnect and revokes', async () => {
-	window.confirm = () => true;
 	let slug = '';
 	const { findByText, getByTestId, findByTestId, router } = await renderApp({
 		initialPath: '/',
@@ -231,6 +231,7 @@ test('an active non-GitHub connector renders Disconnect and revokes', async () =
 
 	const revoke = within(linearRow).getByTestId('connector-revoke');
 	revoke.click();
+	(await screen.findByTestId('confirm-dialog-confirm')).click();
 
 	// Revoke (POST .../revoke → markRevoked) flips the row to revoked; the list
 	// re-renders with the revoked status badge.

@@ -1,8 +1,10 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
+import { RelatedItemsList } from '../../components/related-items-list';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
+import { ConfirmDialog } from '../../components/ui/confirm-dialog';
 import { type Column, DataTable } from '../../components/ui/data-table';
 import { InPlaceForm } from '../../components/ui/in-place-form';
 import { InfoTooltip } from '../../components/ui/info-tooltip';
@@ -16,6 +18,7 @@ import {
 	useUpdateInstanceSecret,
 } from '../../hooks/use-instance-credentials';
 import { useMe } from '../../hooks/use-me';
+import { toast } from '../../hooks/use-toast';
 
 function formatRelative(iso: string | null): string {
 	if (!iso) return 'never';
@@ -31,6 +34,7 @@ function formatRelative(iso: string | null): string {
 
 function InstanceCredentialsPage() {
 	const { data: me } = useMe();
+	const { focus } = Route.useSearch();
 	const { data: rows = [] } = useInstanceCredentials();
 	const createSecret = useCreateInstanceSecret();
 	const updateSecret = useUpdateInstanceSecret();
@@ -39,6 +43,8 @@ function InstanceCredentialsPage() {
 	// `editing` null = the form (when open) creates; otherwise it edits that row.
 	const [showForm, setShowForm] = useState(false);
 	const [editing, setEditing] = useState<CredentialUsage | null>(null);
+	// The credential pending a revoke confirmation (drives the shared ConfirmDialog).
+	const [pendingDelete, setPendingDelete] = useState<CredentialUsage | null>(null);
 	const [name, setName] = useState('');
 	const [value, setValue] = useState('');
 	const [allowedHosts, setAllowedHosts] = useState('');
@@ -173,24 +179,38 @@ function InstanceCredentialsPage() {
 							<Pencil className="w-3.5 h-3.5" />
 						</button>
 					</Tooltip>
-					<Tooltip content="Revoke">
-						<button
-							type="button"
-							onClick={() => {
-								if (
-									confirm(
-										`Revoke instance credential "${r.name}"? Every team that references the placeholder will get an unknown_secret 400 from the proxy on the next outbound call.`,
-									)
-								) {
-									deleteSecret.mutate(r.id);
-								}
-							}}
-							aria-label={`Revoke ${r.name}`}
-							className="text-text-3 hover:text-danger"
+					{r.connectors.length > 0 ? (
+						<Tooltip
+							content={`In use by ${r.connectors.length} connector${
+								r.connectors.length === 1 ? '' : 's'
+							} — remove ${r.connectors.length === 1 ? 'it' : 'them'} first`}
 						>
-							<Trash2 className="w-3.5 h-3.5" />
-						</button>
-					</Tooltip>
+							{/* Wrapping span keeps the tooltip working over a disabled button. */}
+							<span className="inline-flex">
+								<button
+									type="button"
+									disabled
+									aria-label={`Revoke ${r.name} (in use)`}
+									data-testid={`credential-revoke-${r.id}`}
+									className="text-text-3 opacity-40 cursor-not-allowed"
+								>
+									<Trash2 className="w-3.5 h-3.5" />
+								</button>
+							</span>
+						</Tooltip>
+					) : (
+						<Tooltip content="Revoke">
+							<button
+								type="button"
+								onClick={() => setPendingDelete(r)}
+								aria-label={`Revoke ${r.name}`}
+								data-testid={`credential-revoke-${r.id}`}
+								className="text-text-3 hover:text-danger"
+							>
+								<Trash2 className="w-3.5 h-3.5" />
+							</button>
+						</Tooltip>
+					)}
 				</span>
 			),
 		},
@@ -301,14 +321,73 @@ function InstanceCredentialsPage() {
 						No instance credentials yet. Add one above to share it across every team.
 					</p>
 				) : (
-					<DataTable columns={columns} data={rows} rowKey={(row) => row.id} />
+					<DataTable
+						columns={columns}
+						data={rows}
+						rowKey={(row) => row.id}
+						getRowId={(row) => row.id}
+						focusedRowId={focus}
+						subRow={(r) =>
+							r.connectors.length > 0 ? (
+								<RelatedItemsList
+									label="Used by"
+									testId={`credential-connectors-${r.id}`}
+									items={r.connectors.map((conn) => ({
+										key: conn.id,
+										label: `${conn.display_name || conn.name} · ${
+											conn.project_slug ?? 'all projects'
+										}`,
+										href: `/settings/connectors?focus=${conn.id}#${conn.id}`,
+										testId: `credential-connector-link-${conn.id}`,
+									}))}
+								/>
+							) : null
+						}
+					/>
 				)}
 			</>
 		);
 
-	return <div className="max-w-[900px]">{content}</div>;
+	return (
+		<div className="max-w-[900px]">
+			{content}
+			<ConfirmDialog
+				open={pendingDelete !== null}
+				onOpenChange={(open) => {
+					if (!open) setPendingDelete(null);
+				}}
+				title="Revoke credential?"
+				description={
+					pendingDelete ? (
+						<>
+							Revoke instance credential <span className="font-mono">{pendingDelete.name}</span>?
+							Every team that references the placeholder will get an unknown_secret 400 from the
+							proxy on the next outbound call.
+						</>
+					) : undefined
+				}
+				confirmLabel="Revoke"
+				variant="danger"
+				onConfirm={async () => {
+					if (!pendingDelete) return;
+					try {
+						await deleteSecret.mutateAsync(pendingDelete.id);
+					} catch (e) {
+						toast.error(e instanceof Error ? e.message : 'Failed to revoke credential');
+					}
+				}}
+			/>
+		</div>
+	);
+}
+
+interface CredentialsSearch {
+	focus?: string;
 }
 
 export const Route = createFileRoute('/settings/credentials')({
+	validateSearch: (search: Record<string, unknown>): CredentialsSearch => ({
+		focus: typeof search.focus === 'string' ? search.focus : undefined,
+	}),
 	component: InstanceCredentialsPage,
 });

@@ -77,6 +77,25 @@ Manage connections two ways:
   project or back to the global scope. New connectors pick their scope in the Add form the
   same way.
 
+## Connectors and their credentials
+
+[Credentials](/docs/security/secret-protection) stay **global** — one shared vault, not
+scoped per project. But because a connector *is* scoped, the credential a connector creates
+is **named after that connector's project** (a project-scoped connector's API key gets a
+short project tag in its name; a global connector's does not), so when two projects connect
+the same kind of server you can still tell their credentials apart at a glance.
+
+Both pages show the link between the two:
+
+- Under each connector, the **credential** it uses — click it to jump to that credential on
+  the Credentials page.
+- Under each credential (**Settings → Credentials**), the **connectors** that use it — click
+  one to jump to it on the Connectors page.
+
+Because a connector depends on its credential, a credential that's still in use **can't be
+deleted**: its revoke button is disabled with a note explaining why. Remove the connector
+first, then the credential can be revoked.
+
 ## Adding a connection
 
 Register connections from the web app, or let an agent add one itself when it needs a

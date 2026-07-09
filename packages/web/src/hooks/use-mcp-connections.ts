@@ -30,6 +30,9 @@ export interface McpConnection {
 	/** Owning project's name/slug — populated only by the admin cross-project list. */
 	project_name?: string | null;
 	project_slug?: string | null;
+	/** The credential(s) this connector uses — its pasted API-key secret or the
+	 * access token of its OAuth connection. Populated by the list/detail routes. */
+	credentials?: { id: string; name: string }[];
 }
 
 export type ConnectorStatus = 'pending' | 'active' | 'failed' | 'revoked';
