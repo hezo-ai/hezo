@@ -17,14 +17,15 @@ and your agents run on the models you choose.
 | **Anthropic** | Claude | Claude Code | API key or subscription |
 | **OpenAI** | ChatGPT / GPT | Codex | API key or subscription |
 | **Google** | Gemini | Gemini | API key or subscription |
+| **xAI** | Grok | Grok Build | API key |
 | **Kimi** (Moonshot) | Kimi | Claude Code | API key |
 | **DeepSeek** | DeepSeek | Claude Code | API key |
 | **Z.ai** | GLM | Claude Code | API key |
 
 Each provider is driven through its **native command-line runtime** inside the agent's
 container — so you get each model's first-party agentic tooling, not a lowest-common-
-denominator wrapper. (Kimi runs through Claude Code against Moonshot's
-Anthropic-compatible endpoint.)
+denominator wrapper. (xAI runs on its own **Grok Build** CLI, on the `grok-4.5` model;
+Kimi runs through Claude Code against Moonshot's Anthropic-compatible endpoint.)
 
 ## Local models (on the roadmap)
 
@@ -50,6 +51,7 @@ form in Hezo walks you through these same steps inline.
 | **Anthropic** | [Claude Console → API keys](https://platform.claude.com/settings/keys) | Prepaid credits, billed per token |
 | **OpenAI** | [OpenAI Platform → API keys](https://platform.openai.com/api-keys) | Billed per token; add a payment method first (separate from ChatGPT) |
 | **Google** | [Google AI Studio → API keys](https://aistudio.google.com/apikey) | Free tier with strict rate limits; enable billing on the key's Google Cloud project for sustained use |
+| **xAI** | [xAI Console → API keys](https://console.x.ai/) | Billed per token; add credits first |
 | **Kimi** (Moonshot) | [Kimi Open Platform → API keys](https://platform.kimi.ai/console/api-keys) | Prepaid balance |
 | **DeepSeek** | [DeepSeek Platform → API keys](https://platform.deepseek.com/api_keys) | Prepaid balance |
 | **Z.ai** | [Z.ai platform → API keys](https://z.ai/manage-apikey/apikey-list) | Prepaid balance ([billing page](https://z.ai/manage-apikey/billing)) |

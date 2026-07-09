@@ -101,6 +101,11 @@ export function createAgentStreamParser(
 		// bespoke parser once a real run's events are captured (see PR notes).
 		case AgentRuntime.OpenCode:
 			return createGenericJsonlParser(price);
+		// Grok's `streaming-json` emits thought/text/end events and NO token usage;
+		// usage is recovered post-run from the `--debug-file` (see the runner and
+		// `extractGrokUsageFromDebugLog`), so this parser's getUsage() stays null.
+		case AgentRuntime.Grok:
+			return createGrokParser();
 		default:
 			return createPassthroughParser();
 	}
@@ -243,6 +248,8 @@ export function createAgentChatParser(
 			return createGeminiChatParser(price);
 		case AgentRuntime.OpenCode:
 			return createGenericChatParser(price);
+		case AgentRuntime.Grok:
+			return createGrokChatParser();
 		default:
 			return { onStdout: () => [], flush: () => [], getUsage: () => null };
 	}
@@ -953,6 +960,151 @@ function createGenericChatParser(price: PriceModelFn): AgentChatParser {
 	};
 	const reader = createJsonlEventReader(render);
 	return { onStdout: reader.onStdout, flush: reader.flush, getUsage: () => usage };
+}
+
+// ---------------------------------------------------------------------------
+// Grok (`grok -p … --output-format streaming-json`)
+//
+// Grok's stream is a sequence of `{"type":"thought","data":…}` (reasoning
+// chunks), `{"type":"text","data":…}` (assistant text chunks) and a terminal
+// `{"type":"end","stopReason":…}`. It carries NO token usage — cost is recovered
+// separately from the `--debug-file` (see `extractGrokUsageFromDebugLog`), so
+// `getUsage()` here is always null and the runner supplies the real usage.
+// ---------------------------------------------------------------------------
+
+interface GrokEvent {
+	type?: string;
+	data?: string;
+	stopReason?: string;
+	message?: string;
+	sessionId?: string;
+}
+
+function createGrokParser(): AgentStreamParser {
+	let terminalError: string | null = null;
+	let thoughtBuf = '';
+	let textBuf = '';
+
+	const flushThought = (out: string[]): void => {
+		if (thoughtBuf.trim()) out.push(formatThinking(thoughtBuf));
+		thoughtBuf = '';
+	};
+	const flushText = (out: string[]): void => {
+		const t = textBuf.trim();
+		if (t) out.push(t);
+		textBuf = '';
+	};
+
+	const renderEvent = (raw: unknown): string[] => {
+		const event = raw as GrokEvent;
+		const type = event.type ?? '';
+
+		if (type === 'thought') {
+			thoughtBuf += event.data ?? '';
+			return [];
+		}
+		if (type === 'text') {
+			const out: string[] = [];
+			flushThought(out);
+			textBuf += event.data ?? '';
+			return out;
+		}
+		if (type === 'end') {
+			const out: string[] = [];
+			flushThought(out);
+			flushText(out);
+			const status = event.stopReason ? String(event.stopReason) : 'success';
+			// No token counts in the stream; usage is filled from the debug file.
+			out.push(`[done] ${status}`);
+			return out;
+		}
+		if (type === 'error') {
+			const msg = extractErrorMessage(undefined, event.message);
+			if (msg) terminalError = classifyRuntimeError(msg) ?? terminalError;
+			return msg ? [`[tool-error] ${truncate(msg.replace(/\s+/g, ' ').trim(), MAX_LINE_LEN)}`] : [];
+		}
+		return [];
+	};
+
+	return createJsonlParser(
+		renderEvent,
+		() => null,
+		() => terminalError,
+	);
+}
+
+function createGrokChatParser(): AgentChatParser {
+	const render = (raw: unknown): AgentChatTurnEvent[] => {
+		const event = raw as GrokEvent;
+		// Stream the assistant text into the chat bubble; reasoning is not shown.
+		if (event.type === 'text' && event.data) return [{ text: event.data }];
+		return [];
+	};
+	const reader = createJsonlEventReader(render);
+	return { onStdout: reader.onStdout, flush: reader.flush, getUsage: () => null };
+}
+
+function matchInt(line: string, re: RegExp): number | null {
+	const m = line.match(re);
+	return m ? Number.parseInt(m[1], 10) : null;
+}
+
+/**
+ * Recover a Grok run's token usage from its `--debug-file` contents.
+ *
+ * Grok emits no usage on stdout, but its debug log records one
+ * `process_conversation_turn` tracing span per turn carrying
+ * `input_tokens=` / `output_tokens=` / `cache_read_tokens=` (and `model_id=` /
+ * `request_id=`). The span's fields are echoed on several lines within the same
+ * span, so we key by `request_id` (last write wins) before summing across turns,
+ * then price the buckets the same way the Codex parser does (input_tokens is
+ * inclusive of the cached portion — bill `input - cache_read` at the full input
+ * rate and `cache_read` at the discounted cache-read rate). Returns null when the
+ * log contains no usable span (unpriced ⇒ the caller records $0, fail-low).
+ */
+export function extractGrokUsageFromDebugLog(
+	contents: string,
+	price: PriceModelFn = NO_PRICE,
+): AgentRunUsage | null {
+	const byRequest = new Map<
+		string,
+		{ input: number; output: number; cacheRead: number; model?: string }
+	>();
+	let counter = 0;
+	for (const line of contents.split('\n')) {
+		if (!line.includes('input_tokens=')) continue;
+		const input = matchInt(line, /\binput_tokens=(\d+)/);
+		if (input === null) continue;
+		const output = matchInt(line, /\boutput_tokens=(\d+)/) ?? 0;
+		const cacheRead = matchInt(line, /\bcache_read_tokens=(\d+)/) ?? 0;
+		const reqMatch = line.match(/\brequest_id="([^"]+)"/);
+		const modelMatch = line.match(/\bmodel_id="([^"]+)"/);
+		const reqId = reqMatch ? reqMatch[1] : `#${counter++}`;
+		byRequest.set(reqId, {
+			input,
+			output,
+			cacheRead,
+			model: modelMatch ? modelMatch[1] : undefined,
+		});
+	}
+	if (byRequest.size === 0) return null;
+
+	let input = 0;
+	let output = 0;
+	let cacheRead = 0;
+	let model: string | undefined;
+	for (const t of byRequest.values()) {
+		input += t.input;
+		output += t.output;
+		cacheRead += t.cacheRead;
+		if (t.model) model = t.model;
+	}
+	const costCents = price(model, {
+		inputTokens: Math.max(0, input - cacheRead),
+		cacheReadTokens: cacheRead,
+		outputTokens: output,
+	});
+	return { inputTokens: input, outputTokens: output, costCents };
 }
 
 // ---------------------------------------------------------------------------

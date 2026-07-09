@@ -1,6 +1,10 @@
 import { AgentRuntime, type CostTokens, costCentsFromRate, type ModelRate } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
-import { createAgentStreamParser, type PriceModelFn } from '../src/services/agent-stream-parser';
+import {
+	createAgentStreamParser,
+	extractGrokUsageFromDebugLog,
+	type PriceModelFn,
+} from '../src/services/agent-stream-parser';
 
 /** A price function backed by a fixed rate table, mirroring PricingService. */
 const RATES: Record<string, ModelRate> = {
@@ -17,6 +21,7 @@ const RATES: Record<string, ModelRate> = {
 		cacheReadPerToken: 0.000001,
 	},
 	'gemini-2.5-flash': { inputPerToken: 0.000005, outputPerToken: 0.00001 },
+	'grok-4.5': { inputPerToken: 0.00001, outputPerToken: 0.00003, cacheReadPerToken: 0.000001 },
 };
 const price: PriceModelFn = (model: string | undefined, tokens: CostTokens) => {
 	const rate = model ? RATES[model] : undefined;
@@ -626,5 +631,66 @@ describe('getFinalAssistantMessage', () => {
 			`${JSON.stringify({ type: 'message', role: 'assistant', content: 'blocked — @admin please advise' })}\n`,
 		);
 		expect(parser.getFinalAssistantMessage()).toBe('blocked — @admin please advise');
+	});
+});
+
+describe('grok stream parser', () => {
+	it('renders thought/text/end and reports no stream usage (usage comes from the debug log)', () => {
+		const parser = createAgentStreamParser(AgentRuntime.Grok, price);
+		let out = '';
+		out += parser.onStdout(`${JSON.stringify({ type: 'thought', data: 'let me ' })}\n`);
+		out += parser.onStdout(`${JSON.stringify({ type: 'thought', data: 'reason' })}\n`);
+		out += parser.onStdout(`${JSON.stringify({ type: 'text', data: 'Hello ' })}\n`);
+		out += parser.onStdout(`${JSON.stringify({ type: 'text', data: 'world' })}\n`);
+		out += parser.onStdout(`${JSON.stringify({ type: 'end', stopReason: 'EndTurn' })}\n`);
+		// Accumulated thought flushes as one [thinking] line when text starts; text
+		// accumulates and flushes on the terminal end event alongside [done].
+		expect(out).toContain('[thinking] let me reason');
+		expect(out).toContain('Hello world');
+		expect(out).toContain('[done] EndTurn');
+		// The stream carries no token usage.
+		expect(parser.getUsage()).toBeNull();
+	});
+
+	it('surfaces a stream error as a terminal error', () => {
+		const parser = createAgentStreamParser(AgentRuntime.Grok);
+		// A recognized auth phrase is classified; other messages pass through raw.
+		parser.onStdout(`${JSON.stringify({ type: 'error', message: '401 unauthorized' })}\n`);
+		expect(parser.getTerminalError()).toMatch(/authentication failed/i);
+	});
+});
+
+describe('extractGrokUsageFromDebugLog', () => {
+	// One real `process_conversation_turn` span line, verbatim shape.
+	const span = (reqId: string, input: number, output: number, cacheRead: number) =>
+		`2026-07-09T08:38:38Z DEBUG session.process_conversation_turn{session_id=s agent.name="grok-build-plan" model_id="grok-4.5" request_id="${reqId}" ttft_ms=951 input_tokens=${input} output_tokens=${output} cache_read_tokens=${cacheRead} stop_reason="stop" response.has_tool_call=false}: record`;
+
+	it('sums usage across turns, dedups by request_id, and prices codex-style', () => {
+		// req-a is echoed on two lines within its span (must not double-count).
+		const log = [
+			span('req-a', 10586, 9, 4352),
+			span('req-a', 10586, 9, 4352),
+			span('req-b', 200, 50, 0),
+			'some other unrelated debug line without tokens',
+		].join('\n');
+
+		const usage = extractGrokUsageFromDebugLog(log, price);
+		expect(usage).not.toBeNull();
+		// input_tokens is inclusive: 10586 + 200 = 10786; output 9 + 50 = 59.
+		expect(usage?.inputTokens).toBe(10786);
+		expect(usage?.outputTokens).toBe(59);
+		// Cost: input priced as (input - cacheRead) at full rate + cacheRead at
+		// cache-read rate + output. cacheRead total = 4352.
+		const expected = costCentsFromRate(RATES['grok-4.5'], {
+			inputTokens: 10786 - 4352,
+			cacheReadTokens: 4352,
+			outputTokens: 59,
+		});
+		expect(usage?.costCents).toBeCloseTo(expected, 8);
+	});
+
+	it('returns null when the log has no usable span', () => {
+		expect(extractGrokUsageFromDebugLog('no token spans here\n')).toBeNull();
+		expect(extractGrokUsageFromDebugLog('')).toBeNull();
 	});
 });

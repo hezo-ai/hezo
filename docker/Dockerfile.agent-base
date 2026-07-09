@@ -35,6 +35,18 @@ RUN npm install -g @anthropic-ai/claude-code \
     && npm install -g @google/gemini-cli \
     && npm install -g opencode-ai
 
+# xAI Grok Build (`grok`) — a standalone static binary (no npm). The installer
+# downloads to $HOME/.grok/downloads and symlinks GROK_BIN_DIR; install under a
+# world-readable /opt with the symlink on the shared PATH so the non-root `node`
+# run-user can execute it. Pinned for reproducibility — bump GROK_VERSION to
+# upgrade (re-verify `grok --help`/config/debug-span format on a bump). At
+# run-time GROK_HOME is overridden per-run to the agent's config dir.
+ARG GROK_VERSION=0.2.93
+RUN HOME=/opt GROK_BIN_DIR=/usr/local/bin bash -c \
+      "curl -fsSL https://x.ai/cli/install.sh | bash -s ${GROK_VERSION}" \
+    && chmod -R a+rX /opt/.grok \
+    && grok --version
+
 # Pre-install Bun (latest) for agent-authored JS/TS projects — the common case,
 # and the runtime Hezo itself uses. Installed globally via npm so `bun`/`bunx`
 # land on the shared PATH for both root and the `node` user (matching the AI CLIs

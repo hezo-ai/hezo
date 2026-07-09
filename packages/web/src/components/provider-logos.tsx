@@ -51,6 +51,12 @@ const KimiLogo: FC<LogoProps> = ({ className }) => (
 	</svg>
 );
 
+const XaiLogo: FC<LogoProps> = ({ className }) => (
+	<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className={className}>
+		<path d="M3.2 3h4.28l4.32 6.02L15.9 3H21l-6.86 9.05L21 21h-4.28l-4.62-6.44L7.08 21H3l7.14-9.42L3.2 3z" />
+	</svg>
+);
+
 export const PROVIDER_LOGOS: Partial<Record<AiProvider, FC<LogoProps>>> = {
 	[Provider.Anthropic]: AnthropicLogo,
 	[Provider.OpenAI]: OpenAiLogo,
@@ -58,6 +64,7 @@ export const PROVIDER_LOGOS: Partial<Record<AiProvider, FC<LogoProps>>> = {
 	[Provider.DeepSeek]: DeepSeekLogo,
 	[Provider.ZAi]: ZAiLogo,
 	[Provider.Kimi]: KimiLogo,
+	[Provider.XAi]: XaiLogo,
 };
 
 interface ProviderLogoProps {

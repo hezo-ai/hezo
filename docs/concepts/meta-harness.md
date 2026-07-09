@@ -35,8 +35,9 @@ get quality results across very different models. Three things do the levelling:
   independently judges whether the work is *actually* done before letting the run end — it
   won't let an agent stop on failing tests, quietly declare a problem "out of scope", or
   punt with "I'll leave that for later". This discipline rides on top of every harness that
-  supports it, which matters most for models that wouldn't hold that line on their own. (One
-  harness, OpenCode, can't support the hook yet, so runs there rely on the model alone.)
+  supports it, which matters most for models that wouldn't hold that line on their own. (Two
+  harnesses, OpenCode and Grok Build, can't support the hook yet, so runs there rely on the
+  model alone.)
 - **The same capabilities and the same safety, whichever model you choose.** The tools,
   [skills](/docs/concepts/skills), memory, sandbox, and secret protection described below are
   identical no matter which harness an agent runs on — switching a model, or running several

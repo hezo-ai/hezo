@@ -7,6 +7,7 @@ import {
 	CLAUDE_CODE_QUIET_ENV,
 	CommentContentType,
 	ContainerStatus,
+	type CostTokens,
 	claudeCodeModelArg,
 	GEMINI_RUNTIME_ENV,
 	HeartbeatRunKind,
@@ -39,7 +40,11 @@ import { withTransaction } from '../lib/sql';
 import { logger } from '../logger';
 import { signAgentJwt } from '../middleware/auth';
 import { pauseAgentForBudget } from './agent-runtime-status';
-import { type AgentRunUsage, createAgentStreamParser } from './agent-stream-parser';
+import {
+	type AgentRunUsage,
+	createAgentStreamParser,
+	extractGrokUsageFromDebugLog,
+} from './agent-stream-parser';
 import {
 	type AiProviderCredential,
 	getProviderCredentialAndModel,
@@ -293,6 +298,42 @@ export function getHostPromptPath(
 	);
 }
 
+// Basename of the Grok `--debug-file`, written into the per-run home mount so it
+// is readable host-side after the run. Grok reports no token usage on stdout, so
+// the runner parses this file for cost, then scrubs it (it also contains the
+// XAI_API_KEY in plaintext). See `extractGrokUsageFromDebugLog`.
+const GROK_DEBUG_BASENAME = 'debug.log';
+
+/**
+ * Recover a Grok run's token usage from its per-run `--debug-file` and then
+ * delete the file (it holds the XAI_API_KEY in plaintext). A no-op for every
+ * other runtime (returns null, so the caller keeps the parser's stream usage).
+ * Best-effort: a missing or unreadable log yields null (⇒ $0), and the home
+ * mount is removed at run cleanup regardless.
+ */
+function extractGrokRunUsage(
+	runtimeType: AgentRuntime,
+	homeMount: RuntimeHomeMount | null,
+	priceFn: ((model: string | undefined, tokens: CostTokens) => number) | undefined,
+	onError: (msg: string) => void,
+): AgentRunUsage | null {
+	if (runtimeType !== AgentRuntime.Grok || !homeMount) return null;
+	const debugPath = join(homeMount.hostDir, GROK_DEBUG_BASENAME);
+	try {
+		if (!existsSync(debugPath)) return null;
+		return extractGrokUsageFromDebugLog(readFileSync(debugPath, 'utf8'), priceFn);
+	} catch (e) {
+		onError(`failed to read grok debug log for usage: ${(e as Error).message}`);
+		return null;
+	} finally {
+		try {
+			rmSync(debugPath, { force: true });
+		} catch {
+			// The whole home mount is removed at cleanup; a failed scrub here is not fatal.
+		}
+	}
+}
+
 // Deliver the prompt either on stdin (default) or as a trailing arg (OpenCode,
 // Kimi), selected per runtime via the HEZO_PROMPT_MODE env var. The bridge
 // wrapper script honors the same env var.
@@ -524,11 +565,21 @@ export async function buildRuntimeInvocation(
 	}
 	const modelArgs = cliModel ? ['--model', cliModel] : [];
 
+	// Grok reports no token usage on its stdout stream, so point it at a per-run
+	// debug log (inside the home mount, hence readable host-side) that the runner
+	// parses for cost after the run and then scrubs. Other runtimes report usage
+	// on the stream and need no such file.
+	const grokDebugArgs =
+		runtimeType === AgentRuntime.Grok && homeMount
+			? ['--debug-file', join(homeMount.containerDir, GROK_DEBUG_BASENAME)]
+			: [];
+
 	const cmd = [
 		cliCommand,
 		...RUNTIME_HEADLESS_PREFIX_ARGS[runtimeType],
 		...mcpInjection.cliArgs,
 		...RUNTIME_STREAM_ARGS[runtimeType],
+		...grokDebugArgs,
 		...RUNTIME_AUTO_APPROVE_ARGS[runtimeType],
 		...RUNTIME_DISALLOWED_TOOLS_ARGS[runtimeType],
 		...effortApplication.extraArgs,
@@ -1098,10 +1149,10 @@ export async function runAgent(
 		);
 
 		const pricing = deps.pricing;
-		const parser = createAgentStreamParser(
-			runtimeType,
-			pricing ? (model, tokens) => pricing.costCents(model, tokens) : undefined,
-		);
+		const priceFn = pricing
+			? (model: string | undefined, tokens: CostTokens) => pricing.costCents(model, tokens)
+			: undefined;
+		const parser = createAgentStreamParser(runtimeType, priceFn);
 
 		const persistRotatedAuth = async () => {
 			const mount = context.subscriptionMount;
@@ -1230,6 +1281,14 @@ export async function runAgent(
 			const durationMs = Date.now() - startTime;
 			const exitedClean = execInfo.ExitCode === 0;
 
+			// Grok emits no usage on its stream; recover it from the `--debug-file`
+			// (readable host-side in the home mount), then scrub the file — it also
+			// holds the XAI_API_KEY in plaintext. Falls back to null (⇒ $0) if the
+			// log is missing/unparseable; the home mount is removed at cleanup anyway.
+			const runUsage = extractGrokRunUsage(runtimeType, context.homeMount, priceFn, (msg) =>
+				log.error(`Run ${heartbeatRunId}: ${msg}`),
+			);
+
 			// A clean exit is only a real success if the run produced persisted
 			// output: a Hezo write (comment/task/doc/blocker/…, flagged on the run
 			// row by the MCP tool layer) or a code change in a worktree. A run that
@@ -1341,7 +1400,9 @@ export async function runAgent(
 					exitCode: execInfo.ExitCode,
 					durationMs,
 					error: noOutputError ?? terminalError ?? undefined,
-					usage: parser.getUsage(),
+					// Grok's usage comes from the debug log (runUsage); every other
+					// runtime reports it on the stream (parser.getUsage()).
+					usage: runUsage ?? parser.getUsage(),
 					// The stream ran to its terminal event, so this usage is final, not a
 					// mid-run snapshot — clear the partial flag any earlier flush set.
 					usagePartial: false,
