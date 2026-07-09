@@ -9,6 +9,10 @@ interface Props {
 	taskId: string;
 	value: string[];
 	onChange: (ids: string[]) => void;
+	/** Grow to fill a bounded flex column (used by the composer's fullscreen mode)
+	 *  so the textarea below the fixed upload row + chips takes the remaining
+	 *  height. Defaults to the natural, content-sized layout. */
+	fill?: boolean;
 	children: ReactNode;
 }
 
@@ -21,7 +25,14 @@ interface Props {
  * (`useFileAttachments`, `FileDropZone`, `UploadButton`, `AttachmentChips`) are
  * reused as-is by the realtime chat input.
  */
-export function CommentAttachmentsDrop({ projectId, taskId, value, onChange, children }: Props) {
+export function CommentAttachmentsDrop({
+	projectId,
+	taskId,
+	value,
+	onChange,
+	fill,
+	children,
+}: Props) {
 	const upload = useUploadAttachment(projectId, taskId);
 	const {
 		isDragActive,
@@ -42,6 +53,7 @@ export function CommentAttachmentsDrop({ projectId, taskId, value, onChange, chi
 		<FileDropZone
 			isDragActive={isDragActive}
 			dropZoneProps={dropZoneProps}
+			className={fill ? 'flex min-h-0 flex-1 flex-col' : undefined}
 			data-testid="comment-attachments-drop"
 			overlayTestId="comment-attachment-drop-overlay"
 		>
@@ -97,7 +109,7 @@ export function CommentAttachmentsDrop({ projectId, taskId, value, onChange, chi
 					errorTestId="comment-attachment-error"
 				/>
 			)}
-			{children}
+			{fill ? <div className="flex min-h-0 flex-1 flex-col">{children}</div> : children}
 		</FileDropZone>
 	);
 }

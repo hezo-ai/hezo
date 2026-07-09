@@ -1,13 +1,16 @@
 import { type AgentEffort, extractActiveAgentMentionSlugs } from '@hezo/shared';
-import { CornerDownRight, Loader2, Trash2 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import * as Dialog from '@radix-ui/react-dialog';
+import { CornerDownRight, Loader2, Maximize2, Minimize2, Trash2 } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import { useAgents } from '../../hooks/use-agents';
+import { useAutoGrowTextarea } from '../../hooks/use-auto-grow-textarea';
 import type { Comment, useCreateComment } from '../../hooks/use-comments';
 import type { Task } from '../../hooks/use-tasks';
 import { CommentAttachmentsDrop } from '../comment-attachments-drop';
 import { MentionTextarea } from '../mention-textarea';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
+import { DialogContent } from '../ui/dialog';
 import { InfoTooltip } from '../ui/info-tooltip';
 
 type CreateCommentMutation = ReturnType<typeof useCreateComment>;
@@ -64,6 +67,19 @@ export function CommentComposer({
 }: CommentComposerProps) {
 	const [commentText, setCommentText] = useState('');
 	const [pendingAttachmentIds, setPendingAttachmentIds] = useState<string[]>([]);
+	// Expand the composer to a full-viewport editor (available at every breakpoint —
+	// the inline box is cramped on mobile too). In expanded mode the textarea fills
+	// the space via flex; inline it auto-grows/shrinks with its content.
+	const [expanded, setExpanded] = useState(false);
+
+	// Auto-size the inline textarea to its content (capped by `max-h-[40vh]`, then it
+	// scrolls). Disabled when expanded so the `flex-1` fill height wins instead.
+	useAutoGrowTextarea(commentTextareaRef, [commentText, expanded], !expanded);
+
+	// Focus the editor when it opens fullscreen so the user can type immediately.
+	useEffect(() => {
+		if (expanded) commentTextareaRef.current?.focus();
+	}, [expanded, commentTextareaRef]);
 
 	// Replying to an agent's comment wakes that agent (WakeupSource.Reply) even
 	// without an explicit `@`-mention, so it joins the wake preview below.
@@ -107,15 +123,20 @@ export function CommentComposer({
 		setPendingAttachmentIds([]);
 	}
 
-	return (
-		<form ref={commentFormRef} onSubmit={handleComment} className="flex gap-2.5 scroll-mt-20">
-			<div className="hidden md:block w-[26px] shrink-0" aria-hidden />
-			<div className="flex-1 min-w-0 flex flex-col gap-2">
+	const formBody = (
+		<form
+			ref={commentFormRef}
+			onSubmit={handleComment}
+			className={expanded ? 'flex min-h-0 flex-1 flex-col gap-2' : 'flex gap-2.5 scroll-mt-20'}
+		>
+			{!expanded && <div className="hidden md:block w-[26px] shrink-0" aria-hidden />}
+			<div className={`flex-1 min-w-0 flex flex-col gap-2${expanded ? ' min-h-0' : ''}`}>
 				<CommentAttachmentsDrop
 					projectId={projectId}
 					taskId={task.id}
 					value={pendingAttachmentIds}
 					onChange={setPendingAttachmentIds}
+					fill={expanded}
 				>
 					<MentionTextarea
 						ref={commentTextareaRef}
@@ -130,7 +151,13 @@ export function CommentComposer({
 							}
 						}}
 						placeholder="Add a comment..."
-						className="min-h-[60px]"
+						containerClassName={expanded ? 'relative flex min-h-0 flex-1 flex-col' : 'relative'}
+						wrapperClassName={expanded ? 'flex min-h-0 flex-1 flex-col' : undefined}
+						className={
+							expanded
+								? 'flex-1 min-h-0 resize-none overflow-y-auto'
+								: 'min-h-[60px] max-h-[40vh] resize-none overflow-y-auto'
+						}
 					/>
 				</CommentAttachmentsDrop>
 				{replyTarget && (
@@ -183,18 +210,50 @@ export function CommentComposer({
 							))
 						)}
 					</div>
-					<Button
-						type="submit"
-						size="sm"
-						disabled={
-							(!commentText.trim() && pendingAttachmentIds.length === 0) || createComment.isPending
-						}
-					>
-						{createComment.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
-						Comment
-					</Button>
+					<div className="flex items-center gap-2">
+						<button
+							type="button"
+							onClick={() => setExpanded((v) => !v)}
+							aria-label={expanded ? 'Collapse comment editor' : 'Expand comment editor'}
+							data-testid="comment-expand"
+							className="text-text-2 hover:text-text-1 p-1.5 -m-1 shrink-0"
+						>
+							{expanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+						</button>
+						<Button
+							type="submit"
+							size="sm"
+							disabled={
+								(!commentText.trim() && pendingAttachmentIds.length === 0) ||
+								createComment.isPending
+							}
+						>
+							{createComment.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
+							Comment
+						</Button>
+					</div>
 				</div>
 			</div>
 		</form>
+	);
+
+	// Inline by default; in expanded mode the same form (and its state, which lives
+	// above this conditional) is portalled into the shared fullscreen dialog so the
+	// draft survives the inline↔dialog remount. The dialog's close button and Escape
+	// both collapse it via `onOpenChange`.
+	if (!expanded) return formBody;
+	return (
+		<Dialog.Root open onOpenChange={setExpanded}>
+			<DialogContent
+				fullscreen
+				aria-describedby={undefined}
+				data-testid="comment-composer-fullscreen"
+			>
+				<Dialog.Title className="text-lg font-semibold mb-4 pr-16 shrink-0">
+					Add a comment
+				</Dialog.Title>
+				{formBody}
+			</DialogContent>
+		</Dialog.Root>
 	);
 }
