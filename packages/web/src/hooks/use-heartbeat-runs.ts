@@ -45,7 +45,14 @@ export interface HeartbeatRun {
 	run_comment_public_id: string | null;
 	created_tasks: { id: string; identifier: string; title: string; project_slug: string }[];
 	created_docs: { filename: string; project_slug: string }[];
-	created_skills: { name: string; slug: string; created: boolean; source_url: string | null }[];
+	created_skills: {
+		name: string;
+		slug: string;
+		created: boolean;
+		source_url: string | null;
+		/** Owning project slug for a project-scoped skill; null for a global skill. */
+		project_slug: string | null;
+	}[];
 	proposed_skills: { name: string; slug: string }[];
 }
 
