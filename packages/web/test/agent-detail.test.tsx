@@ -44,10 +44,11 @@ test('agent detail page defaults to Executions tab and exposes Settings tab', as
 	await waitFor(() => {
 		// The active tab renders as a folder tab raised in front: its fill matches
 		// the panel below (bg-bg) and its bottom border is painted that same colour
-		// (border-b-bg), covering the strip baseline so it merges in.
+		// with an important utility (border-b-bg!), covering the strip baseline so it
+		// merges in.
 		const executionsLink = within(main).getByRole('link', { name: 'Executions' });
 		expect(executionsLink.className).toMatch(/bg-bg/);
-		expect(executionsLink.className).toMatch(/border-b-bg/);
+		expect(executionsLink.className).toMatch(/border-b-bg!/);
 	});
 
 	const settingsLink = within(getByRole('main')).getByRole('link', { name: 'Settings' });
