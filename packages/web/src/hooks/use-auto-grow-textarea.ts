@@ -26,28 +26,29 @@ export function useAutoGrowTextarea(
 	deps: DependencyList,
 	enabled = true,
 ): void {
-	// Re-fit when the content (or another caller-supplied signal) changes, and
-	// collapse back to a single row when it is cleared. When disabled we drop the
-	// inline height so a `flex-1` fill height is not overridden.
+	// One effect does both jobs so they stay in lockstep, re-running on every
+	// caller-supplied signal in `deps`. `deps` must therefore include whatever
+	// gates the textarea's presence (e.g. a panel's `open`, or an `expanded`
+	// flag) — the element mounts *after* the component in those cases, so the
+	// observer has to (re)attach when that signal flips, not just on first mount.
 	useEffect(() => {
 		const el = ref.current;
 		if (!el) return;
+		// Disabled: something else owns the height (a `flex-1` fill), so drop any
+		// inline height we set and attach no observer.
 		if (!enabled) {
 			el.style.height = '';
 			return;
 		}
+		// Grow/shrink to the current content, then keep it right as the width
+		// changes. The content height depends on the textarea's *width* too: a
+		// container resize, a viewport breakpoint change, or a web font swapping in
+		// all re-wrap the text, and without re-measuring the box keeps a stale
+		// height — too tall after it widens, or clipping the top line after it
+		// narrows. The `clientWidth === lastWidth` guard keeps our own height writes
+		// (which don't change width) from feeding back into a resize loop.
 		fitTextareaToContent(el);
-	}, [ref, enabled, ...deps]);
-
-	// The content height also depends on the textarea's *width*: a container
-	// resize, a viewport breakpoint change, or a web font swapping in all re-wrap
-	// the text. Without re-measuring on those, the box keeps a stale height — too
-	// tall after it widens, or clipping the top line after it narrows. A
-	// ResizeObserver re-fits on any width change; the guard keeps our own height
-	// writes (which don't change width) from feeding back into a resize loop.
-	useEffect(() => {
-		const el = ref.current;
-		if (!el || !enabled || typeof ResizeObserver === 'undefined') return;
+		if (typeof ResizeObserver === 'undefined') return;
 		let lastWidth = el.clientWidth;
 		const ro = new ResizeObserver(() => {
 			if (el.clientWidth === lastWidth) return;
@@ -56,5 +57,5 @@ export function useAutoGrowTextarea(
 		});
 		ro.observe(el);
 		return () => ro.disconnect();
-	}, [ref, enabled]);
+	}, [ref, enabled, ...deps]);
 }
