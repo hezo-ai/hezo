@@ -1,7 +1,7 @@
 import { type AdminMentionItem, ApprovalStatus } from '@hezo/shared';
-import { Inbox, Search } from 'lucide-react';
+import { CheckCheck, Inbox, Search } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { useAllAdminMentions } from '../hooks/use-admin-mentions';
+import { useAllAdminMentions, useMarkAllMentionsRead } from '../hooks/use-admin-mentions';
 import { type Approval, useAllApprovals } from '../hooks/use-approvals';
 import { ApprovalCard } from './approval-card';
 import { MentionCard } from './mention-card';
@@ -70,6 +70,7 @@ export function InboxView({ projectSlugs, scope }: InboxViewProps) {
 	const { data: mentions, isLoading: mentionsLoading } = useAllAdminMentions(projectSlugs, {
 		archived: archivedView,
 	});
+	const markAllRead = useMarkAllMentionsRead();
 	const [search, setSearch] = useState('');
 	const [debouncedSearch, setDebouncedSearch] = useState('');
 
@@ -109,6 +110,22 @@ export function InboxView({ projectSlugs, scope }: InboxViewProps) {
 		});
 	}, [rows, readFilter, debouncedSearch]);
 
+	// Projects that still have an unread mention. "Mark all as read" targets
+	// mentions only — approvals become read by being resolved, not dismissed.
+	const unreadMentionSlugs = useMemo(() => {
+		const slugs = new Set<string>();
+		for (const m of mentions ?? []) {
+			if (!m.read_at) slugs.add(m.project_slug);
+		}
+		return [...slugs];
+	}, [mentions]);
+
+	const handleMarkAllRead = () => {
+		for (const slug of unreadMentionSlugs) {
+			markAllRead.mutate(slug);
+		}
+	};
+
 	if (isLoading) {
 		return <div className="text-text-2">Loading...</div>;
 	}
@@ -129,7 +146,23 @@ export function InboxView({ projectSlugs, scope }: InboxViewProps) {
 			</div>
 
 			<div className="flex flex-col gap-2 mb-4 sm:flex-row sm:items-center sm:justify-between">
-				<FilterPills options={READ_OPTIONS} value={readFilter} onChange={setReadFilter} />
+				<div className="flex items-center justify-between gap-2 sm:justify-start">
+					<FilterPills
+						options={READ_OPTIONS}
+						value={readFilter}
+						onChange={setReadFilter}
+						className=""
+					/>
+					<button
+						type="button"
+						onClick={handleMarkAllRead}
+						disabled={unreadMentionSlugs.length === 0 || markAllRead.isPending}
+						className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1 text-[12px] text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-text-3"
+					>
+						<CheckCheck className="w-3.5 h-3.5" />
+						Mark all as read
+					</button>
+				</div>
 				<div className="relative sm:w-64">
 					<Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text-3" />
 					<input

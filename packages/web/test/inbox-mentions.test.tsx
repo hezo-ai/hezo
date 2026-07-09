@@ -321,6 +321,78 @@ test('archived mentions are hidden by default and shown under the Archived filte
 	await waitFor(async () => expect((await findAllByTestId('mention-card')).length).toBe(1));
 });
 
+test('mark all as read clears every unread mention', async () => {
+	let ctx: { projectSlug: string; mentionIds: string[] };
+	const { findAllByTestId, findByText, getByText, queryByTestId, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Demo' });
+			const t1 = await seedTask(ws, project, { title: 'First ticket' });
+			const t2 = await seedTask(ws, project, { title: 'Second ticket' });
+			const m1 = await seedAgentAdminMention(ws, t1, '@admin first decision.');
+			const m2 = await seedAgentAdminMention(ws, t2, '@admin second decision.');
+			ctx = { projectSlug: project.slug, mentionIds: [m1.mentionId, m2.mentionId] };
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/inbox',
+		params: { projectId: ctx!.projectSlug },
+	});
+
+	// Defaults to the Unread filter — both mentions are present.
+	await waitFor(async () => expect((await findAllByTestId('mention-card')).length).toBe(2), {
+		timeout: 10_000,
+	});
+
+	await user.click(getByText('Mark all as read'));
+
+	// Unread view empties out once the mutation lands and the list refetches.
+	await waitFor(() => expect(queryByTestId('mention-card')).toBeNull(), { timeout: 10_000 });
+
+	// Both rows persisted read_at server-side.
+	const { db } = getTestContext();
+	const rows = await db.query<{ read_at: string | null }>(
+		'SELECT read_at FROM admin_mentions WHERE id = ANY($1)',
+		[ctx!.mentionIds],
+	);
+	expect(rows.rows.length).toBe(2);
+	expect(rows.rows.every((r) => r.read_at !== null)).toBe(true);
+
+	// The read mentions are still visible under the Read filter.
+	await user.click(await findByText('Read'));
+	await waitFor(async () => expect((await findAllByTestId('mention-card')).length).toBe(2), {
+		timeout: 10_000,
+	});
+});
+
+test('mark all as read is disabled when there are no unread mentions', async () => {
+	let ctx: { projectSlug: string };
+	const { findByText, getByText, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Demo' });
+			const task = await seedTask(ws, project, { title: 'Handled ticket' });
+			const { mentionId } = await seedAgentAdminMention(ws, task, '@admin already handled.');
+			await markMentionRead(mentionId);
+			ctx = { projectSlug: project.slug };
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/inbox',
+		params: { projectId: ctx!.projectSlug },
+	});
+
+	// Switch to All so the read mention is on screen and the list has loaded.
+	await findByText('All');
+	const button = getByText('Mark all as read').closest('button');
+	expect(button).not.toBeNull();
+	expect((button as HTMLButtonElement).disabled).toBe(true);
+});
+
 test('header inbox icon shows the global unread count badge', async () => {
 	const { findByTestId } = await renderApp({
 		initialPath: '/home',
