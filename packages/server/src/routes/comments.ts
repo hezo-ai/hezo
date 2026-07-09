@@ -7,7 +7,7 @@ import { validateCredentialValue } from '../lib/credential-validator';
 import {
 	apiKeyIdFromAuth,
 	resolveActor,
-	resolveActorMemberId,
+	resolveReactorMemberId,
 	resolveTaskId,
 } from '../lib/resolve';
 import { err, ok } from '../lib/response';
@@ -50,7 +50,7 @@ commentsRoutes.get('/projects/:projectId/tasks/:taskId/comments', async (c) => {
 		[taskId],
 	);
 
-	const viewerMemberId = await resolveActorMemberId(db, c.get('auth'), teamId);
+	const viewerMemberId = await resolveReactorMemberId(db, c.get('auth'), teamId);
 	const reactionsByComment = await loadReactionsForTask(db, taskId, viewerMemberId);
 	for (const comment of result.rows as Record<string, unknown>[]) {
 		comment.reactions = reactionsByComment.get(comment.id as string) ?? [];
@@ -79,7 +79,7 @@ commentsRoutes.put(
 		const commentId = c.req.param('commentId');
 		const kind = c.req.param('kind');
 
-		const memberId = await resolveActorMemberId(db, c.get('auth'), teamId);
+		const memberId = await resolveReactorMemberId(db, c.get('auth'), teamId);
 		if (!memberId) {
 			return err(c, 'FORBIDDEN', 'No member identity for caller', 403);
 		}
@@ -117,7 +117,7 @@ commentsRoutes.delete(
 		const commentId = c.req.param('commentId');
 		const kind = c.req.param('kind');
 
-		const memberId = await resolveActorMemberId(db, c.get('auth'), teamId);
+		const memberId = await resolveReactorMemberId(db, c.get('auth'), teamId);
 		if (!memberId) {
 			return err(c, 'FORBIDDEN', 'No member identity for caller', 403);
 		}
