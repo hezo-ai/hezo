@@ -317,7 +317,7 @@ describe('instance connector OAuth (admin auth-start)', () => {
 		}
 	});
 
-	it('rejects auth-start for non-superusers, unknown, local, and revoked connectors', async () => {
+	it('rejects auth-start for non-superusers, unknown, and local connectors', async () => {
 		const conn = await createSaasConnector('authz-check', `${fake.url}/mcp`);
 
 		const nonSuper = await db.query<{ id: string }>(
@@ -347,14 +347,22 @@ describe('instance connector OAuth (admin auth-start)', () => {
 			headers: authHeader(token),
 		});
 		expect(localRes.status).toBe(400);
+	});
 
+	it('restores a revoked connector in place on auth-start (admin surface)', async () => {
 		const revoked = await createSaasConnector('revoked-authz', `${fake.url}/mcp`);
 		await db.query(`UPDATE mcp_connections SET revoked_at = now() WHERE id = $1`, [revoked.id]);
 		const revokedRes = await app.request(`/api/mcp-connections/${revoked.id}/auth-start`, {
 			method: 'POST',
 			headers: authHeader(token),
 		});
-		expect(revokedRes.status).toBe(400);
+		// Restored + re-authorized rather than rejected: the DCR walk returns an
+		// authorize URL and the row is left un-revoked.
+		expect(revokedRes.status).toBe(200);
+		const authUrl = ((await revokedRes.json()) as { data: { auth_url: string } }).data.auth_url;
+		expect(authUrl).toContain(`${fake.url}/authorize`);
+		const after = await getConnector(db, revoked.id);
+		expect(after?.revoked_at).toBeNull();
 	});
 
 	it("fires the credential_provided wakeup under the requesting task's team when connected from the admin surface", async () => {

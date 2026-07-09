@@ -13,6 +13,7 @@ import {
 	getConnector,
 	markActive,
 	markFailed,
+	restoreRevokedConnector,
 } from '../services/connectors/lifecycle';
 import { pushConnectorToTeamContainers } from '../services/connectors/live-push';
 import {
@@ -301,16 +302,23 @@ async function startConnectorAuthCode(
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
 
-	const connector = await getConnector(db, connectorId);
+	let connector = await getConnector(db, connectorId);
 	if (!connector)
 		return { kind: 'error', code: 'NOT_FOUND', message: 'connector not found', status: 404 };
-	if (connector.revoked_at)
-		return {
-			kind: 'error',
-			code: 'CONNECTOR_REVOKED',
-			message: 'connector has been revoked; create a new one to reconnect',
-			status: 400,
-		};
+	// Clicking Connect on a revoked connector restores it in place for a fresh
+	// re-authorization rather than erroring — the user gets a clean reconnect
+	// (old token/key cleared, activation reset) without recreating the connector.
+	// The cached DCR registration in `config` survives, so the DCR walk below
+	// reuses it. Broadcast the flip out of 'revoked' so the row updates live.
+	if (connector.revoked_at) {
+		connector = (await restoreRevokedConnector(db, connector.id)) ?? connector;
+		if (opts.teamId) {
+			broadcastChange(c, wsRoom.team(opts.teamId), 'mcp_connections', 'UPDATE', {
+				id: connector.id,
+				status: 'pending',
+			});
+		}
+	}
 	if (connector.kind !== 'saas')
 		return {
 			kind: 'error',
@@ -468,10 +476,15 @@ oauthRoutes.post('/projects/:projectId/auth-start', async (c) => {
 		teamId,
 		projectId: c.get('projectId') as string,
 		returnTo: `/projects/${c.req.param('projectId')}/connectors?focus=${body.connector_id}`,
+		// A connector added on this page may be a public / header-authenticated MCP
+		// with no OAuth to discover. Resolve that to a null auth_url ("use API key")
+		// rather than a discovery failure — same speculative-probe posture as the
+		// admin surface. Errors past discovery (broken AS metadata, DCR rejected)
+		// still fail the connector.
+		missingPrmMeansNoOAuth: true,
 	});
 	if (result.kind === 'error') return err(c, result.code, result.message, result.status);
-	// Unreachable without `missingPrmMeansNoOAuth`; kept for exhaustiveness.
-	if (result.kind === 'no_oauth') return err(c, 'OAUTH_DISCOVERY_FAILED', result.reason, 503);
+	if (result.kind === 'no_oauth') return ok(c, { auth_url: null, reason: result.reason });
 	return ok(c, { auth_url: result.authUrl });
 });
 

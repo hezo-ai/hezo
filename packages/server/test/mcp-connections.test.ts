@@ -235,6 +235,48 @@ describe('POST /projects/:projectId/mcp-connections/:id/api-key', () => {
 		expect(conn.rows[0].api_key_secret_id).toBeNull();
 		await safeClose(ctx.db);
 	});
+
+	it('restores a revoked connector when a new api key is pasted (fresh reconnect)', async () => {
+		const ctx = await createTestApp();
+		const { projectSlug, connectorId } = await seedConnector(ctx);
+
+		// Connect, then revoke — leaves the row revoked with no key.
+		const setUrl = `/api/projects/${projectSlug}/mcp-connections/${connectorId}/api-key`;
+		await ctx.app.request(setUrl, {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
+			body: JSON.stringify({ value: 'tf_old' }),
+		});
+		await ctx.app.request(`/api/projects/${projectSlug}/mcp-connections/${connectorId}/revoke`, {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
+			body: '{}',
+		});
+
+		// Pasting a new key restores in place rather than erroring with CONNECTOR_REVOKED.
+		const res = await ctx.app.request(setUrl, {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
+			body: JSON.stringify({ value: 'tf_new' }),
+		});
+		expect(res.status).toBe(200);
+		const updated = (await res.json()).data as {
+			revoked_at: string | null;
+			activated_at: string | null;
+			api_key_secret_id: string | null;
+		};
+		expect(updated.revoked_at).toBeNull();
+		expect(updated.activated_at).toBeTruthy();
+		expect(updated.api_key_secret_id).toBeTruthy();
+
+		// The descriptor now emits the new key's placeholder (never the raw value).
+		const descriptors = await loadMcpConnectionDescriptors(ctx.db);
+		const tf = descriptors.find((d) => d.name === 'typefully');
+		if (tf?.kind !== 'http') throw new Error('expected http descriptor');
+		expect(tf.headers?.Authorization).toContain('__HEZO_SECRET_');
+		expect(JSON.stringify(tf)).not.toContain('tf_new');
+		await safeClose(ctx.db);
+	});
 });
 
 describe('api-key credential naming + connector→credential relationship', () => {

@@ -360,19 +360,28 @@ describe('POST /projects/:projectId/auth-start (connector DCR walk)', () => {
 		expect(res.status).toBe(404);
 	});
 
-	it('400s CONNECTOR_REVOKED for a revoked connector', async () => {
-		const { row } = await createOrFetchConnector(db, {
-			name: 'revoked-conn',
-			displayName: 'Revoked',
-			mcpUrl: `${bare.baseUrl}/mcp`,
-			mcpTransport: 'http',
-		});
-		await db.query(`UPDATE mcp_connections SET revoked_at = now() WHERE id = $1`, [row.id]);
-		const res = await authStart(row.id);
-		expect(res.status).toBe(400);
-		expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
-			'CONNECTOR_REVOKED',
-		);
+	it('restores a revoked connector in place and re-authorizes instead of erroring', async () => {
+		const fake = await startFakeMcpServer();
+		try {
+			const { row } = await createOrFetchConnector(db, {
+				name: 'revoked-conn',
+				displayName: 'Revoked',
+				mcpUrl: `${fake.url}/mcp`,
+				mcpTransport: 'http',
+			});
+			await db.query(`UPDATE mcp_connections SET revoked_at = now() WHERE id = $1`, [row.id]);
+			const res = await authStart(row.id);
+			// No CONNECTOR_REVOKED error — the row is restored and the DCR walk yields
+			// an authorize URL (a fresh reconnect).
+			expect(res.status).toBe(200);
+			const authUrl = ((await res.json()) as { data: { auth_url: string } }).data.auth_url;
+			expect(authUrl).toContain('/authorize?');
+			// The connector is un-revoked, ready to re-authorize.
+			const after = await getConnector(db, row.id);
+			expect(after?.revoked_at).toBeNull();
+		} finally {
+			await fake.close();
+		}
 	});
 
 	it('400s for a non-saas connector', async () => {
@@ -401,7 +410,7 @@ describe('POST /projects/:projectId/auth-start (connector DCR walk)', () => {
 		);
 	});
 
-	it('503s and marks the connector failed when PRM discovery finds nothing (project surface)', async () => {
+	it('resolves a PRM-less MCP server to { auth_url: null } without failing the connector (project surface)', async () => {
 		const { row } = await createOrFetchConnector(db, {
 			name: 'no-prm-conn',
 			displayName: 'No PRM',
@@ -409,12 +418,13 @@ describe('POST /projects/:projectId/auth-start (connector DCR walk)', () => {
 			mcpTransport: 'http',
 		});
 		const res = await authStart(row.id);
-		expect(res.status).toBe(503);
-		expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
-			'OAUTH_DISCOVERY_FAILED',
-		);
+		// A connector added on the project page may be public / header-authenticated:
+		// missing PRM is the normal "use API key" shape, not a discovery failure.
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { data: { auth_url: string | null; reason?: string } };
+		expect(body.data.auth_url).toBeNull();
 		const after = await getConnector(db, row.id);
-		expect(after?.auth_error).toMatch(/^discovery:/);
+		expect(after?.auth_error).toBeNull();
 	});
 
 	it('400s OAUTH_DCR_UNSUPPORTED when the AS advertises no registration_endpoint', async () => {

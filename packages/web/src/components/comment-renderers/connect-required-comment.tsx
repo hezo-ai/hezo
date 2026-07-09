@@ -2,11 +2,7 @@ import { getConnectorCapability } from '@hezo/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { Check, KeyRound, Plug } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import {
-	connectorStatus,
-	useMcpConnection,
-	useSetConnectorApiKey,
-} from '../../hooks/use-mcp-connections';
+import { connectorStatus, useMcpConnection } from '../../hooks/use-mcp-connections';
 import { useAuthStart } from '../../hooks/use-oauth-connections';
 import { queryKeys } from '../../lib/query-keys';
 import { ConnectorApiKeyForm } from '../connector-api-key-form';
@@ -25,6 +21,7 @@ export function ConnectRequiredComment({ comment, projectId }: Props) {
 	const authStart = useAuthStart(projectId ?? '');
 	const queryClient = useQueryClient();
 	const [error, setError] = useState<string | null>(null);
+	const [info, setInfo] = useState<string | null>(null);
 	const [deviceOpen, setDeviceOpen] = useState(false);
 	const [showApiKey, setShowApiKey] = useState(false);
 
@@ -67,12 +64,19 @@ export function ConnectRequiredComment({ comment, projectId }: Props) {
 
 	const openConnect = () => {
 		setError(null);
+		setInfo(null);
 		if (usesDeviceFlow) {
 			setDeviceOpen(true);
 			return;
 		}
 		authStart.mutate(connector_id, {
 			onSuccess: ({ auth_url }) => {
+				// A null auth_url means the server advertises no OAuth (public /
+				// header-authenticated) — point the user at the Use API key button.
+				if (!auth_url) {
+					setInfo("This MCP server doesn't advertise OAuth — use the API key option below.");
+					return;
+				}
 				const popup = window.open(auth_url, 'hezo-connect', 'width=600,height=720');
 				if (!popup) {
 					setError('Pop-up blocked. Allow pop-ups for Hezo and try again.');
@@ -137,6 +141,7 @@ export function ConnectRequiredComment({ comment, projectId }: Props) {
 				</div>
 			</div>
 			{error && <p className="pl-6 text-xs text-danger-soft-fg">{error}</p>}
+			{info && <p className="pl-6 text-xs text-text-2">{info}</p>}
 			{usesDeviceFlow && deviceOpen && (
 				<ConnectorDeviceFlowDialog
 					open={deviceOpen}

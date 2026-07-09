@@ -138,6 +138,60 @@ test('lists a seeded MCP connector alongside the always-present GitHub row', asy
 	expect(list.querySelector('[data-connector-name="github"][data-status="pending"]')).toBeTruthy();
 });
 
+test('the Add form creates a project-scoped connector and auto-probes OAuth', async () => {
+	let slug = '';
+	const { findByText, findByTestId, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			slug = ws.internalSlug;
+		},
+	});
+	await router.navigate({ to: CONNECTORS_ROUTE, params: { projectId: slug } });
+	await findByText('Connectors', { selector: 'h1' });
+
+	// Stub the post-create auth-start so submitting doesn't drive the real DCR
+	// discovery machinery (network) — return an authorize URL and capture the
+	// popup the form opens with it.
+	const original = globalThis.fetch;
+	globalThis.fetch = Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => {
+		const url = typeof input === 'string' ? input : input.toString();
+		if (init?.method === 'POST' && /\/auth-start$/.test(url)) {
+			return new Response(
+				JSON.stringify({ data: { auth_url: 'https://as.example.com/authorize' } }),
+				{
+					status: 200,
+					headers: { 'Content-Type': 'application/json' },
+				},
+			);
+		}
+		return original(input, init);
+	}, original);
+	const opened: Array<string | URL | undefined> = [];
+	const originalOpen = window.open;
+	window.open = ((u?: string | URL) => {
+		opened.push(u);
+		return {} as Window;
+	}) as typeof window.open;
+
+	try {
+		// Open the Add form, fill name + URL, submit.
+		(await findByTestId('connector-add-toggle')).click();
+		await user.type(await findByTestId('connector-add-name'), 'linear');
+		await user.type(await findByTestId('connector-add-url'), 'https://mcp.linear.example/mcp');
+		(await findByTestId('connector-add-submit')).click();
+
+		// The created connector renders as its own row with its url (create → refetch).
+		await findByText('linear');
+		await findByText('https://mcp.linear.example/mcp');
+		// The auto-probe opened the authorize popup with the returned URL.
+		await waitFor(() => expect(opened).toContain('https://as.example.com/authorize'));
+	} finally {
+		window.open = originalOpen;
+		globalThis.fetch = original;
+	}
+});
+
 test('a global connector is read-only on the project page (badge + manage link, no actions)', async () => {
 	let slug = '';
 	const { findByText, router } = await renderApp({

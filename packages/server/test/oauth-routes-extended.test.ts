@@ -360,23 +360,31 @@ describe('POST /projects/:projectId/auth-start (connector error branches)', () =
 		expect(res.status).toBe(400);
 	});
 
-	it('400 CONNECTOR_REVOKED for a revoked connector', async () => {
-		const { row } = await createOrFetchConnector(db, {
-			name: 'revoked-conn',
-			displayName: 'Revoked',
-			mcpUrl: `${sim.baseUrl}/mcp`,
-			mcpTransport: 'http',
-		});
-		await db.query(`UPDATE mcp_connections SET revoked_at = now() WHERE id = $1`, [row.id]);
-		const res = await app.request(`/api/projects/${projectSlug}/auth-start`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ connector_id: row.id }),
-		});
-		expect(res.status).toBe(400);
-		expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
-			'CONNECTOR_REVOKED',
-		);
+	it('restores a revoked connector and re-authorizes instead of erroring', async () => {
+		const fake = await startFakeMcpServer();
+		try {
+			const { row } = await createOrFetchConnector(db, {
+				name: 'revoked-conn',
+				displayName: 'Revoked',
+				mcpUrl: `${fake.url}/mcp`,
+				mcpTransport: 'http',
+			});
+			await db.query(`UPDATE mcp_connections SET revoked_at = now() WHERE id = $1`, [row.id]);
+			const res = await app.request(`/api/projects/${projectSlug}/auth-start`, {
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ connector_id: row.id }),
+			});
+			// No CONNECTOR_REVOKED — the row is restored and the DCR walk yields an
+			// authorize URL, and the connector is left un-revoked (a fresh reconnect).
+			expect(res.status).toBe(200);
+			const authUrl = ((await res.json()) as { data: { auth_url: string } }).data.auth_url;
+			expect(authUrl).toContain('/authorize?');
+			const after = await getConnector(db, row.id);
+			expect(after?.revoked_at).toBeNull();
+		} finally {
+			await fake.close();
+		}
 	});
 
 	it('400 when the connector is not a saas MCP connector', async () => {

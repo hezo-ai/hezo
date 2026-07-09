@@ -1035,15 +1035,32 @@ and sets the create scope. The superuser adds a connector in the selected scope
 re-adding a name in the same scope replaces `config` and clears `auth_error`). The page then
 auto-probes the new connector via
 `POST /api/mcp-connections/:id/auth-start` (superuser-gated) — the same PRM → DCR walk as
-the project-scoped auth-start, with two differences: there is no team context (the state
+the project-scoped auth-start; the only difference is team context (the state
 envelope carries `teamId: null`, and the callback skips the team-room broadcasts and
 per-team provider hooks; the settings page refetches off the popup's
-`hezo-oauth-success` postMessage instead), and an MCP server that advertises **no** PRM
-resolves to `{ auth_url: null }` without marking the row failed
-(`PrmUnavailableError` → `no_oauth`) — missing PRM is the normal shape for the page's
-other use case, public / header-authenticated MCPs (`__HEZO_SECRET_*__` placeholders).
-When OAuth *is* advertised, the UI opens the authorize popup automatically on add, and
-every non-active SaaS row keeps a **Connect**/Retry button.
+`hezo-oauth-success` postMessage instead). **Both** surfaces pass `missingPrmMeansNoOAuth`,
+so an MCP server that advertises **no** PRM resolves to `{ auth_url: null }` without marking
+the row failed (`PrmUnavailableError` → `no_oauth`) — missing PRM is the normal shape for
+public / header-authenticated MCPs (`__HEZO_SECRET_*__` placeholders), which either surface
+can add. When OAuth *is* advertised, the UI opens the authorize popup automatically on add,
+and every non-active SaaS row keeps a **Connect**/Retry button.
+
+**User-added connectors (project page).** The per-project Connectors page has the same
+**Add** affordance (name + MCP URL → `POST /api/projects/:projectId/mcp-connections`,
+implicitly this-project-scoped), then auto-probes via the project auth-start exactly as the
+admin page does, so an operator can register either an OAuth or a header-authenticated MCP
+without an agent having asked for one first.
+
+**Revoked → reconnect restores in place.** Revoking clears the token/API-key secret and
+stamps `revoked_at` but keeps the row. Pressing **Connect** or **API key** on a revoked
+connector does **not** error — `startConnectorAuthCode` (OAuth) and the api-key route both
+call `restoreRevokedConnector` (equivalently, `markApiKeyActive` clears `revoked_at`),
+which nulls the revocation and every auth artifact (`oauth_connection_id`,
+`api_key_secret_id`, `activated_at`, `auth_error`) while preserving `config` — including any
+cached DCR client registration, so the reconnect reuses it. This is the same in-place
+restore `createOrFetchConnector` performs for a re-requested agent connector. The only case
+that still needs delete-and-recreate is an instance-address change (the DCR client is bound
+to the old redirect URL).
 
 **Run exclusion.** `loadMcpConnectionsForRun(db, projectId)` returns the run's project's own
 connectors plus global ones (a project connector shadows a global of the same name). It

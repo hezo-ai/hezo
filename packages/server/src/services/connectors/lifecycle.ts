@@ -100,24 +100,8 @@ export async function createOrFetchConnector(
 	if (existingRow) {
 		// If this row was previously revoked, restore it for re-authorization.
 		if (existingRow.revoked_at) {
-			await db.query(
-				`UPDATE mcp_connections
-				 SET revoked_at = NULL, auth_error = NULL, oauth_connection_id = NULL,
-				     api_key_secret_id = NULL, activated_at = NULL, updated_at = now()
-				 WHERE id = $1`,
-				[existingRow.id],
-			);
-			return {
-				row: {
-					...existingRow,
-					revoked_at: null,
-					auth_error: null,
-					oauth_connection_id: null,
-					api_key_secret_id: null,
-					activated_at: null,
-				},
-				alreadyExisted: true,
-			};
+			const restored = await restoreRevokedConnector(db, existingRow.id);
+			return { row: restored ?? existingRow, alreadyExisted: true };
 		}
 		return { row: existingRow, alreadyExisted: true };
 	}
@@ -226,6 +210,32 @@ export async function markRevoked(db: Db, connectorId: string): Promise<Connecto
 	const result = await db.query<ConnectorRow>(
 		`UPDATE mcp_connections
 		 SET revoked_at = now(), oauth_connection_id = NULL, api_key_secret_id = NULL, updated_at = now()
+		 WHERE id = $1
+		 RETURNING ${CONNECTOR_COLS}`,
+		[connectorId],
+	);
+	return result.rows[0] ?? null;
+}
+
+/**
+ * Restore a previously-revoked connector to a clean, re-authorizable state — the
+ * "fresh replacement" a user gets by clicking Connect (or pasting an API key) on
+ * a revoked row, instead of being told to recreate it. Clears the revocation and
+ * every auth artifact (linked OAuth connection, pasted API key, activation stamp,
+ * prior auth error) while preserving the connector's identity and `config` —
+ * including any cached DCR client registration, still valid at the Authorization
+ * Server, so a reconnect skips re-registration. The revoke path already purged
+ * the old token / key secret from the vault, so this only resets the row.
+ * Returns null on a non-existent id.
+ */
+export async function restoreRevokedConnector(
+	db: Db,
+	connectorId: string,
+): Promise<ConnectorRow | null> {
+	const result = await db.query<ConnectorRow>(
+		`UPDATE mcp_connections
+		 SET revoked_at = NULL, auth_error = NULL, oauth_connection_id = NULL,
+		     api_key_secret_id = NULL, activated_at = NULL, updated_at = now()
 		 WHERE id = $1
 		 RETURNING ${CONNECTOR_COLS}`,
 		[connectorId],
