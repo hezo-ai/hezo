@@ -109,5 +109,10 @@ export function applyEffortToRuntime(
 		// prompt directive — the portable lever every runtime honors.
 		case AgentRuntime.OpenCode:
 			return { extraArgs: [], extraEnv: [], promptDirective: GENERIC_PROMPT_DIRECTIVE[effort] };
+		// Grok exposes `--reasoning-effort`, but its accepted values aren't
+		// documented/stable across the 0.2.x betas, so steer effort through the
+		// portable prompt directive like OpenCode.
+		case AgentRuntime.Grok:
+			return { extraArgs: [], extraEnv: [], promptDirective: GENERIC_PROMPT_DIRECTIVE[effort] };
 	}
 }

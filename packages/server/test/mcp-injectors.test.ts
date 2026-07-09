@@ -524,3 +524,78 @@ describe('opencode adapter', () => {
 		expect(config.mcp.bare.headers).toBeUndefined();
 	});
 });
+
+describe('grok adapter', () => {
+	const adapter = MCP_ADAPTERS[AgentRuntime.Grok];
+	const GROK_HOME = '/workspace/.hezo/subscription/grok/run-1';
+
+	it('declares inline bearer storage and a required home dir', () => {
+		expect(adapter.capabilities.requiresHomeDir).toBe(true);
+		expect(adapter.capabilities.bearerTokenStorage).toBe('inline');
+	});
+
+	it('throws when no host home dir is provided', () => {
+		expect(() =>
+			adapter.build([HEZO_DESCRIPTOR], { hostHomeDir: null, containerHomeDir: null }),
+		).toThrow(/hostHomeDir/);
+	});
+
+	it('writes config.toml with an [mcp_servers.*] http block + inline bearer header and auto_update=false', () => {
+		const injection = adapter.build([HEZO_DESCRIPTOR], {
+			hostHomeDir: GROK_HOME,
+			containerHomeDir: GROK_HOME,
+		});
+
+		// GROK_HOME is set via the home-mount env entry by the runner, not the
+		// adapter; the adapter only writes config.toml + the debug flag (added by
+		// the runner). It carries no cliArgs/envEntries of its own.
+		expect(injection.cliArgs).toEqual([]);
+		expect(injection.envEntries).toEqual([]);
+		expect(injection.files.length).toBe(1);
+		const file = injection.files[0];
+		expect(file.hostPath).toBe(`${GROK_HOME}/config.toml`);
+		expect(file.mode).toBe(0o600);
+
+		expect(file.contents).toContain('[mcp_servers.hezo]');
+		expect(file.contents).toContain(`url = "${URL}"`);
+		expect(file.contents).toContain('enabled = true');
+		expect(file.contents).toContain('[mcp_servers.hezo.headers]');
+		expect(file.contents).toContain(`Authorization = "Bearer ${TOKEN}"`);
+		expect(file.contents).toContain('[cli]\nauto_update = false');
+	});
+
+	it('emits NO Stop-hook judge script (Grok Stop hooks are passive — fail-open like OpenCode)', () => {
+		const injection = adapter.build([HEZO_DESCRIPTOR], {
+			hostHomeDir: GROK_HOME,
+			containerHomeDir: GROK_HOME,
+		});
+		expect(injection.files.some((f) => f.hostPath.endsWith('stop-hook-judge.mjs'))).toBe(false);
+		expect(injection.files.every((f) => !f.contents.includes('quality gate'))).toBe(true);
+	});
+
+	it('renders a stdio MCP server with command/args and an [mcp_servers.*.env] sub-table', () => {
+		const stdio: McpDescriptor = {
+			kind: 'stdio',
+			name: 'local-srv',
+			command: '/usr/bin/srv',
+			args: ['--port', '7'],
+			env: { TOKEN: 'x' },
+		};
+		const injection = adapter.build([stdio], {
+			hostHomeDir: GROK_HOME,
+			containerHomeDir: GROK_HOME,
+		});
+		const contents = injection.files[0].contents;
+		expect(contents).toContain('[mcp_servers.local-srv]');
+		expect(contents).toContain('command = "/usr/bin/srv"');
+		expect(contents).toContain('args = ["--port", "7"]');
+		expect(contents).toContain('[mcp_servers.local-srv.env]');
+		expect(contents).toContain('TOKEN = "x"');
+	});
+
+	it('still writes [cli] auto_update=false with an empty descriptor list', () => {
+		const injection = adapter.build([], { hostHomeDir: GROK_HOME, containerHomeDir: GROK_HOME });
+		expect(injection.files[0].contents).toContain('[cli]\nauto_update = false');
+		expect(injection.files[0].contents).not.toContain('[mcp_servers.');
+	});
+});

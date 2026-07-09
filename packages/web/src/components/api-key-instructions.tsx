@@ -178,6 +178,31 @@ export const API_KEY_INSTRUCTIONS: Record<AiProvider, ProviderInstructionContent
 			<>The Kimi API is prepaid — top up a small balance on the platform before agents run.</>
 		),
 	},
+	[AiProvider.XAi]: {
+		title: 'How to get your xAI API key',
+		steps: [
+			<>
+				Sign in to the <InstructionsLink href="https://console.x.ai/">xAI Console</InstructionsLink>{' '}
+				(or create an account).
+			</>,
+			<>
+				Open{' '}
+				<InstructionsLink href="https://console.x.ai/team/default/api-keys">
+					API keys
+				</InstructionsLink>{' '}
+				and click <strong>Create API key</strong>.
+			</>,
+			<>
+				Copy the key (starts with <code>xai-</code>) and paste it below — it's only shown once.
+			</>,
+		],
+		footer: (
+			<>
+				Runs use xAI's <strong>Grok Build</strong> CLI on the <code>grok-4.5</code> model. API usage
+				is billed per token — add credits under the console's Billing settings before agents run.
+			</>
+		),
+	},
 };
 
 /** The gray, provider-specific "how to get your API key" box. */

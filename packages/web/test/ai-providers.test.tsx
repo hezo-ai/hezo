@@ -33,7 +33,7 @@ async function postProvider(body: Record<string, unknown>) {
 	});
 }
 
-test('Add provider modal shows provider cards (no xAI/OpenRouter, no Moonshot, no OAuth)', async () => {
+test('Add provider modal shows provider cards (incl. xAI; no OpenRouter, no Moonshot, no OAuth)', async () => {
 	const { findByRole, getByRole, queryAllByText, queryAllByRole, user } = await renderApp({
 		initialPath: '/settings/ai-providers',
 	});
@@ -44,11 +44,10 @@ test('Add provider modal shows provider cards (no xAI/OpenRouter, no Moonshot, n
 	const dialog = await findByRole('dialog');
 	// The picker step renders one selectable card per provider (each card's
 	// accessible name is just the provider name).
-	for (const name of ['Anthropic', 'OpenAI', 'Google', 'DeepSeek', 'Kimi']) {
+	for (const name of ['Anthropic', 'OpenAI', 'Google', 'DeepSeek', 'Kimi', 'xAI']) {
 		expect(within(dialog).getByRole('button', { name: new RegExp(name) })).toBeTruthy();
 	}
-	// xAI (dropped) and OpenRouter (hidden for now) are not offered.
-	expect(within(dialog).queryByRole('button', { name: /xAI/ })).toBeNull();
+	// OpenRouter stays hidden for now (plumbing present, card suppressed).
 	expect(within(dialog).queryByRole('button', { name: /OpenRouter/ })).toBeNull();
 	// Cards show only the logo + name now — the runtime label is no longer on them.
 	expect(queryAllByText('Grok Build').length).toBe(0);

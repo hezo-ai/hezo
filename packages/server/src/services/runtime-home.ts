@@ -113,6 +113,16 @@ export const SUBSCRIPTION_LAYOUTS: Partial<Record<AiProvider, SubscriptionLayout
 		envVarName: 'HEZO_OPENCODE_CONFIG_DIR',
 		rotates: false,
 	},
+	// Grok (xAI) needs a per-run config dir to host `config.toml` (MCP servers +
+	// `[cli] auto_update=false`) and the `--debug-file` cost log. Unlike the
+	// Claude Code markers, GROK_HOME is a real env var the grok CLI honours: it
+	// relocates the `.grok` config/session root, so the CLI reads our per-run
+	// `config.toml` from `$GROK_HOME/config.toml`. Api-key only (no auth file).
+	[AiProvider.XAi]: {
+		dirName: 'grok',
+		envVarName: 'GROK_HOME',
+		rotates: false,
+	},
 };
 
 export function getContainerSubscriptionRoot(

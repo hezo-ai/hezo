@@ -6,6 +6,7 @@ export const AgentRuntime = {
 	Codex: 'codex',
 	Gemini: 'gemini',
 	OpenCode: 'opencode',
+	Grok: 'grok',
 } as const;
 export type AgentRuntime = (typeof AgentRuntime)[keyof typeof AgentRuntime];
 
@@ -1148,6 +1149,7 @@ export const AiProvider = {
 	ZAi: 'z_ai',
 	OpenRouter: 'openrouter',
 	Kimi: 'kimi',
+	XAi: 'x_ai',
 } as const;
 export type AiProvider = (typeof AiProvider)[keyof typeof AiProvider];
 
@@ -1280,6 +1282,17 @@ export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapte
 		},
 		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'ANTHROPIC_AUTH_TOKEN' },
 	},
+	// xAI Grok Build runs on its own first-party `grok` CLI (its own runtime),
+	// authenticated by XAI_API_KEY sent direct to api.x.ai (the sanctioned
+	// model-provider credential — no MITM). No subscription auth; api-key only.
+	// The grok CLI reads its config from $GROK_HOME (see SUBSCRIPTION_LAYOUTS),
+	// so no staticEnv base-url override is needed. Like OpenCode, Grok has no
+	// completeness Stop-hook judge (its Stop hook is passive — see the grok MCP
+	// injector), so it runs fail-open.
+	[AiProvider.XAi]: {
+		runtime: AgentRuntime.Grok,
+		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'XAI_API_KEY' },
+	},
 };
 
 /** Default upstream API hostnames per provider (for egress NO_PROXY). */
@@ -1291,6 +1304,7 @@ const PROVIDER_UPSTREAM_HOSTS: Record<AiProvider, readonly string[]> = {
 	[AiProvider.ZAi]: ['api.z.ai'],
 	[AiProvider.OpenRouter]: ['openrouter.ai'],
 	[AiProvider.Kimi]: ['api.moonshot.ai'],
+	[AiProvider.XAi]: ['api.x.ai'],
 };
 
 /**
@@ -1373,6 +1387,7 @@ export const RUNTIME_COMMANDS: Record<AgentRuntime, string> = {
 	[AgentRuntime.Codex]: 'codex',
 	[AgentRuntime.Gemini]: 'gemini',
 	[AgentRuntime.OpenCode]: 'opencode',
+	[AgentRuntime.Grok]: 'grok',
 };
 
 /**
@@ -1387,6 +1402,9 @@ export const RUNTIME_PROMPT_DELIVERY: Record<AgentRuntime, 'stdin' | 'arg'> = {
 	[AgentRuntime.Codex]: 'stdin',
 	[AgentRuntime.Gemini]: 'stdin',
 	[AgentRuntime.OpenCode]: 'arg',
+	// `grok -p <PROMPT>` (aka --single) takes the prompt as the value of the
+	// trailing `-p` flag, so the bridge appends `"$(cat $HEZO_PROMPT_FILE)"`.
+	[AgentRuntime.Grok]: 'arg',
 };
 
 /**
@@ -1399,6 +1417,9 @@ export const RUNTIME_AUTO_APPROVE_ARGS: Record<AgentRuntime, readonly string[]> 
 	[AgentRuntime.Codex]: ['--dangerously-bypass-approvals-and-sandbox'],
 	[AgentRuntime.Gemini]: ['--yolo'],
 	[AgentRuntime.OpenCode]: ['--dangerously-skip-permissions'],
+	// Grok's Claude-Code-style permission modes; bypassPermissions skips every
+	// approval prompt so a headless `docker exec` run never hangs on one.
+	[AgentRuntime.Grok]: ['--permission-mode', 'bypassPermissions'],
 };
 
 /**
@@ -1418,6 +1439,7 @@ export const RUNTIME_DISALLOWED_TOOLS_ARGS: Record<AgentRuntime, readonly string
 	[AgentRuntime.Codex]: [],
 	[AgentRuntime.Gemini]: [],
 	[AgentRuntime.OpenCode]: [],
+	[AgentRuntime.Grok]: [],
 };
 
 /**
@@ -1436,6 +1458,11 @@ export const RUNTIME_STREAM_ARGS: Record<AgentRuntime, readonly string[]> = {
 	// OpenCode `run --format json` emits raw JSON events whose terminal event
 	// carries token usage.
 	[AgentRuntime.OpenCode]: ['--format', 'json'],
+	// Grok's `streaming-json` emits thought/text/end events. Unlike the others
+	// its stream carries NO token usage — cost is recovered post-run from the
+	// `--debug-file` tracing spans (added per-run in the runner). See
+	// `extractGrokUsageFromDebugLog` in agent-stream-parser.ts.
+	[AgentRuntime.Grok]: ['--output-format', 'streaming-json'],
 };
 
 /**
@@ -1449,6 +1476,8 @@ export const RUNTIME_HEADLESS_PREFIX_ARGS: Record<AgentRuntime, readonly string[
 	[AgentRuntime.Gemini]: [],
 	// `opencode run …` gates non-interactive execution behind the `run` subcommand.
 	[AgentRuntime.OpenCode]: ['run'],
+	// `grok` runs headless directly (the `-p` flag, added as a suffix arg).
+	[AgentRuntime.Grok]: [],
 };
 
 /**
@@ -1463,6 +1492,9 @@ export const RUNTIME_HEADLESS_SUFFIX_ARGS: Record<AgentRuntime, readonly string[
 	[AgentRuntime.Gemini]: [],
 	// OpenCode takes the prompt as a positional `message` (appended in arg mode).
 	[AgentRuntime.OpenCode]: [],
+	// Grok takes the prompt as the value of `-p` (single-turn/print mode); the
+	// bridge appends `"$(cat $HEZO_PROMPT_FILE)"` right after it (arg delivery).
+	[AgentRuntime.Grok]: ['-p'],
 };
 
 export interface AiProviderVerifyEndpoint {
@@ -1551,6 +1583,18 @@ export const AI_PROVIDER_INFO: Record<AiProvider, AiProviderInfo> = {
 		// the default-model dropdown; returns the standard `data[]` shape.
 		verifyEndpoint: {
 			url: 'https://api.moonshot.ai/v1/models',
+			headers: (apiKey) => ({ Authorization: `Bearer ${apiKey}` }),
+		},
+	},
+	[AiProvider.XAi]: {
+		name: 'xAI',
+		runtimeLabel: 'Grok Build',
+		keyPrefix: 'xai-',
+		keyPlaceholder: 'xai-...',
+		// xAI's OpenAI-compatible catalog. Drives key verification and the
+		// default-model dropdown (grok-4.5, grok-build-0.1, …); standard `data[]`.
+		verifyEndpoint: {
+			url: 'https://api.x.ai/v1/models',
 			headers: (apiKey) => ({ Authorization: `Bearer ${apiKey}` }),
 		},
 	},

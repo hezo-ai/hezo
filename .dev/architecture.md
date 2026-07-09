@@ -756,20 +756,21 @@ agents back to `idle` once a window rolls over or a limit is raised.
 
 ## 6. AI providers, runtimes & the completeness stop-hook
 
-**Providers → runtimes.** `AiProvider` has **seven** values — `anthropic`, `openai`,
-`google`, `deepseek`, `z_ai`, `openrouter`, `kimi` — and `AgentRuntime` has **four** —
-`claude_code`, `codex`, `gemini`, `opencode`. The mapping is data-driven in
+**Providers → runtimes.** `AiProvider` has **eight** values — `anthropic`, `openai`,
+`google`, `deepseek`, `z_ai`, `openrouter`, `kimi`, `x_ai` — and `AgentRuntime` has **five** —
+`claude_code`, `codex`, `gemini`, `opencode`, `grok`. The mapping is data-driven in
 `packages/shared/src/types/common.ts` (`PROVIDER_RUNTIME_ADAPTERS`, `PROVIDER_TO_RUNTIME`,
 `PROVIDERS_BY_RUNTIME`): Anthropic + DeepSeek + Z.ai + Kimi → `claude_code` (DeepSeek/Z.ai/Kimi
 inject `ANTHROPIC_BASE_URL` + model defaults to point Claude Code at their Anthropic-compatible
 gateway — Kimi at `api.moonshot.ai/anthropic`, model `kimi-k2.7-code`), OpenAI → `codex`,
-Google → `gemini`, OpenRouter → `opencode`.
+Google → `gemini`, OpenRouter → `opencode`, xAI → `grok` (its own first-party Grok Build CLI,
+`XAI_API_KEY` direct to `api.x.ai`, model `grok-4.5`).
 
 **Provider config.** `ai_provider_configs` is instance-level (shared across teams), one
 row per `(provider, label)`, each inlining an encrypted credential. `auth_method`
 distinguishes an **API key** (injected as env at run start) from a **subscription** blob
 (materialized to a per-run mount in the container). Subscription auth is supported by
-Anthropic, OpenAI, and Google. A config's `status` is `verified` (the healthy default —
+Anthropic, OpenAI, and Google (xAI is API-key only). A config's `status` is `verified` (the healthy default —
 the add flow live-verifies the key, and the Verify action persists the result, restoring
 `verified` on a key that had gone `invalid`), `invalid` (a verify was rejected), or
 `revoked` (a retired provider). Exactly **one** config instance-wide carries the
@@ -785,14 +786,20 @@ for the chosen runtime, else the oldest verified config; an agent's `model_overr
 (`minimal|low|medium|high|max`) from the wakeup payload → `member_agents.default_effort` →
 global `medium`. Each runtime maps it natively: `claude_code` appends
 `think`/`think hard`/`ultrathink`; `codex` passes `-c model_reasoning_effort=`; `gemini`
-sets `GEMINI_REASONING_EFFORT`. It's also exposed as `HEZO_AGENT_EFFORT`.
+sets `GEMINI_REASONING_EFFORT`; `opencode`/`grok` steer effort through the portable prompt
+directive. It's also exposed as `HEZO_AGENT_EFFORT`.
 
-**Per-runtime wiring** lives in the MCP injectors (`services/mcp-injectors/`, four
-adapters in `index.ts`: ClaudeCode, Codex, Gemini, OpenCode). Each builds the
+**Per-runtime wiring** lives in the MCP injectors (`services/mcp-injectors/`, five
+adapters in `index.ts`: ClaudeCode, Codex, Gemini, OpenCode, Grok). Each builds the
 CLI invocation (headless prefix, prompt delivery, stream/auto-approve args), injects MCP
-servers, and wires the stop-hook. OpenCode takes the prompt as a CLI **argument**
-(`HEZO_PROMPT_MODE=arg`, `RUNTIME_PROMPT_DELIVERY`); the rest read it on stdin. Shared TOML
-rendering for the Codex config lives in `mcp-injectors/toml.ts`.
+servers, and wires the stop-hook. OpenCode and Grok take the prompt as a CLI **argument**
+(`HEZO_PROMPT_MODE=arg`, `RUNTIME_PROMPT_DELIVERY`); the rest read it on stdin. Grok writes
+its MCP servers into a per-run `config.toml` (`$GROK_HOME`, relocated via
+`SUBSCRIPTION_LAYOUTS`) with inline bearer headers, plus `[cli] auto_update=false`; shared
+TOML rendering for the Codex config lives in `mcp-injectors/toml.ts`. **Grok reports no
+token usage on its stream** — the runner points it at a per-run `--debug-file` and parses
+the `process_conversation_turn` tracing spans for cost (`extractGrokUsageFromDebugLog`),
+then scrubs the file (it also holds the `XAI_API_KEY`).
 
 **Completeness stop-hook.** Every run is gated by a judge that fires when the agent tries
 to end its turn and **blocks** it (keeping the same headless exec alive) when it's bailing
@@ -821,8 +828,10 @@ hook now instructs the judge to do the same. For Claude Code the `$ARGUMENTS` pl
 the raw Stop-hook input JSON, which carries both `stop_hook_active` and the agent's final
 message in `last_assistant_message`; the prompt points the judge explicitly at that field so a
 weaker judge model (e.g. DeepSeek judging itself) evaluates the message — the text rule 10
-turns on — rather than the surrounding metadata. **OpenCode
-is the sole exception — no judge** (its plugin API can't block-and-continue headless). File-mount subscription runtimes fail open (no API key in
+turns on — rather than the surrounding metadata. **OpenCode and Grok are the exceptions — no
+judge** (OpenCode's plugin API can't block-and-continue headless; Grok's hooks advertise
+`blockingEvents: ["pre_tool_use"]` only, so its `Stop` hook is passive and can't keep the loop
+alive), so both run fail-open. File-mount subscription runtimes fail open (no API key in
 env); Anthropic subscription still fires via `CLAUDE_CODE_OAUTH_TOKEN`. Full per-runtime
 detail is in `AGENTS.md` › AI runtime hooks.
 
@@ -1104,12 +1113,13 @@ rather than showing it a meaningless "Pending connect" OAuth affordance.
 
 **Connector auth must traverse the egress proxy.** Because connector auth is a placeholder,
 each coding CLI's MCP-startup HTTP MUST go through the per-run proxy or the placeholder ships
-unsubstituted and 401s (a fail-closed usability miss, never a leak — § 7). All four runtimes
+unsubstituted and 401s (a fail-closed usability miss, never a leak — § 7). All five runtimes
 do: Claude Code & Gemini install their own global undici proxy dispatcher from `HTTPS_PROXY`
 (and trust `NODE_EXTRA_CA_CERTS`); OpenCode runs on bundled **Bun**, whose `fetch` reads the
-proxy env natively (single-cert `NODE_EXTRA_CA_CERTS` trusted); Codex is **Rust/reqwest**,
-which honors the proxy env by default and trusts the egress CA via the system store that the
-container's start-up `update-ca-certificates` populates. The runner also sets
+proxy env natively (single-cert `NODE_EXTRA_CA_CERTS` trusted); Codex and Grok are **Rust**
+binaries that honor the proxy env by default and trust the egress CA via the system store that
+the container's start-up `update-ca-certificates` populates (Grok's own Hezo MCP call is plain
+HTTP to `host.docker.internal`, so it needs no CA trust regardless). The runner also sets
 `NODE_USE_ENV_PROXY=1` as a Node safety net for any spawned Node process without its own
 dispatcher.
 At run build, `loadMcpConnectionDescriptors` merges connectors after the built-in `hezo`
