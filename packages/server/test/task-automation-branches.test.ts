@@ -1,8 +1,11 @@
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { DEFAULT_TEAM_ID, TaskStatus } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
 import { OAUTH_VERIFICATION_LABEL } from '../src/services/oauth-verification-tasks';
 import { triggerStatusAutomations } from '../src/services/task-automation';
+import { getWorktreesPath } from '../src/services/workspace';
 import { safeClose } from './helpers';
 import {
 	authHeader,
@@ -22,10 +25,12 @@ import {
  */
 
 let db: Db;
+let dataDir: string;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
 	db = ctx.db;
+	dataDir = ctx.dataDir;
 });
 
 afterAll(async () => {
@@ -270,6 +275,99 @@ describe('wakeParentIfChildrenClosed — parent assignee is not an agent', () =>
 			[member.rows[0].id],
 		);
 		expect(wakeups.rows.length).toBe(0);
+	});
+});
+
+describe('triggerStatusAutomations — worktree cleanup on close', () => {
+	// Seeds a fake per-task worktree dir at the real on-disk layout the runner uses:
+	// <worktreesRoot>/<identifier>/<repo>. Returns the task's identifier-scoped dir.
+	async function seedWorktreeDir(taskId: string): Promise<string> {
+		const meta = await db.query<{ identifier: string; project_id: string }>(
+			'SELECT identifier, project_id FROM tasks WHERE id = $1',
+			[taskId],
+		);
+		const { identifier, project_id } = meta.rows[0];
+		const taskDir = join(getWorktreesPath(dataDir, DEFAULT_TEAM_ID, project_id), identifier);
+		mkdirSync(join(taskDir, 'repo'), { recursive: true });
+		writeFileSync(join(taskDir, 'repo', 'file.txt'), 'work');
+		return taskDir;
+	}
+
+	it('removes the task worktree when the task reaches Done (the MCP + REST shared path)', async () => {
+		const task = await hqTask({ title: 'done with worktree', status: TaskStatus.InProgress });
+		const taskDir = await seedWorktreeDir(task);
+		expect(existsSync(taskDir)).toBe(true);
+
+		await triggerStatusAutomations(
+			db,
+			DEFAULT_TEAM_ID,
+			task,
+			TaskStatus.InProgress,
+			TaskStatus.Done,
+			null,
+			null,
+			undefined,
+			dataDir,
+		);
+
+		expect(existsSync(taskDir)).toBe(false);
+	});
+
+	it('removes the task worktree when the task is Cancelled', async () => {
+		const task = await hqTask({ title: 'cancelled with worktree', status: TaskStatus.InProgress });
+		const taskDir = await seedWorktreeDir(task);
+
+		await triggerStatusAutomations(
+			db,
+			DEFAULT_TEAM_ID,
+			task,
+			TaskStatus.InProgress,
+			TaskStatus.Cancelled,
+			null,
+			null,
+			undefined,
+			dataDir,
+		);
+
+		expect(existsSync(taskDir)).toBe(false);
+	});
+
+	it('leaves the worktree intact on a non-terminal transition (run start)', async () => {
+		const task = await hqTask({ title: 'starting run', status: TaskStatus.Backlog });
+		const taskDir = await seedWorktreeDir(task);
+
+		await triggerStatusAutomations(
+			db,
+			DEFAULT_TEAM_ID,
+			task,
+			TaskStatus.Backlog,
+			TaskStatus.InProgress,
+			null,
+			null,
+			undefined,
+			dataDir,
+		);
+
+		expect(existsSync(taskDir)).toBe(true);
+	});
+
+	it('is a no-op for worktrees when no dataDir is threaded through', async () => {
+		const task = await hqTask({ title: 'no dataDir', status: TaskStatus.InProgress });
+		const taskDir = await seedWorktreeDir(task);
+
+		await triggerStatusAutomations(
+			db,
+			DEFAULT_TEAM_ID,
+			task,
+			TaskStatus.InProgress,
+			TaskStatus.Done,
+			null,
+			null,
+			undefined,
+			undefined,
+		);
+
+		expect(existsSync(taskDir)).toBe(true);
 	});
 });
 

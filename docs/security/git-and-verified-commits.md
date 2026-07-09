@@ -83,8 +83,11 @@ against it. From there, three recovery actions are available:
 - **Discard local changes** — throws away uncommitted changes in the project's copy and resets it
   to match GitHub. This is the fix for the stuck-sync case above. Work already committed and pushed
   to GitHub is never affected.
-- **Prune worktrees** — clears out leftover per-task working copies from runs that were interrupted.
-  Committed work on their branches is preserved.
+- **Prune worktrees** — clears out per-task working copies for closed (completed or cancelled) tasks,
+  plus any leftover copies from runs that were interrupted. Working copies for tasks still in progress
+  are left untouched. A closed task's working copy is normally removed automatically the moment the
+  task closes; this button is the manual sweep for anything left behind. Committed work on their
+  branches is preserved.
 - **Re-clone** — the last resort: deletes the project's copy entirely and clones it fresh from GitHub.
 
 These actions only ever affect the local working copy on your instance, never the repository on

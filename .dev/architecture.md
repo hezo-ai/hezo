@@ -589,8 +589,13 @@ review is the one path that instead embeds the **full** comment history (both sh
 `<dataDir>/teams/<slug>/projects/<slug>/workspace/` bind-mounts to `/workspace`, with one
 subdirectory per linked repo. For each task the runner creates a `git worktree` at
 `/worktrees/<task-identifier>/<repo-name>` on branch `hezo/<task-identifier>`, persisted
-across runs and torn down on terminal status. The working dir resolves to the designated
-repo's worktree (falling back to `/workspace`).
+across runs and torn down when the task reaches a terminal status (`done`/`cancelled`). That
+teardown (`removeTaskWorktrees`, a host-side `rmSync`) fires from `triggerStatusAutomations`,
+so it runs for **both** close paths — a human close via `PATCH /tasks` and an agent close via
+the MCP `update_task` tool — leaving no orphaned worktrees behind either way. Committed work
+survives on the pushed `hezo/<task-identifier>` branch ref; the harmless dangling git metadata
+is swept lazily on the next run's worktree prep or by the manual "Prune worktrees" admin action.
+The working dir resolves to the designated repo's worktree (falling back to `/workspace`).
 
 Because Docker Desktop bind-mount propagation can lag right after a container reprovision (a
 path the host just `mkdirSync`'d briefly stats as missing inside the container), the runner
@@ -720,8 +725,11 @@ rather than auto-starting one, since a passive inspect must not trigger a provis
 runs one of three recovery actions: `discard_local` (`git reset --hard` + `clean -fd` — no `-x`,
 so gitignored build artifacts survive — after a best-effort fetch; the escape hatch for the
 "local changes would be overwritten" fast-forward failure that otherwise silently stalls sync),
-`prune_worktrees` (`git worktree prune`), and `reclone` (wipe the clone via `removeRepoFromWorkspace`
-then re-run `performRepoSetup`, reusing its `pending`→`ready`/`failed` lifecycle). Reset is
+`prune_worktrees` (force-removes the on-disk worktrees of closed/terminal and orphaned tasks —
+`removeWorktreesWhere`, keeping open tasks' worktrees — then `git worktree prune` to clear
+dangling metadata; the branch refs survive), and `reclone` (wipe the clone via
+`removeRepoFromWorkspace` then re-run `performRepoSetup`, reusing its
+`pending`→`ready`/`failed` lifecycle). Reset is
 **blocked (409) while any agent run is active on the project** (`getProjectConcurrency`) — it
 mutates the shared `.git` a live worktree prep also touches, and reclone deletes worktrees a run
 may hold — and `discard_local`/`prune_worktrees` additionally require a running container. Every

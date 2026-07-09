@@ -735,6 +735,54 @@ export async function pruneWorktrees(executor: GitExecutor, repo: RepoLoc): Prom
 }
 
 /**
+ * Force-removes a single linked worktree by its path — clears both the checked-out
+ * tree and git's `.git/worktrees/<name>` admin entry. Double `--force` removes it even
+ * when the worktree is dirty or locked (the caller has already established the tree is
+ * safe to discard, e.g. it belongs to a closed task). The branch ref survives, so
+ * committed work pushed to `hezo/<identifier>` is never lost.
+ */
+export async function removeWorktree(
+	executor: GitExecutor,
+	repo: RepoLoc,
+	worktreeContainerPath: string,
+): Promise<void> {
+	await executor.exec(['worktree', 'remove', '--force', '--force', worktreeContainerPath], {
+		cwd: repo.containerPath,
+		timeout: 30_000,
+	});
+}
+
+/**
+ * Sweeps the per-task worktrees under `worktreesRootContainer` (the container-side
+ * `/worktrees` root), force-removing every one whose task identifier satisfies
+ * `shouldRemove`, then prunes any dangling admin metadata. The identifier is the first
+ * path segment under the root (`/worktrees/<identifier>/<repo>`), matching the layout the
+ * runner creates and the git-state endpoint reads. Returns the identifiers removed. Used
+ * by the admin "Prune worktrees" action to clear worktrees of closed/orphaned tasks; the
+ * main worktree (the clone under `/workspace`) never sits under the worktrees root, so it
+ * is inherently skipped.
+ */
+export async function removeWorktreesWhere(
+	executor: GitExecutor,
+	repo: RepoLoc,
+	worktreesRootContainer: string,
+	shouldRemove: (taskIdentifier: string) => boolean,
+): Promise<string[]> {
+	const prefix = `${worktreesRootContainer}/`;
+	const entries = await listWorktrees(executor, repo);
+	const removed: string[] = [];
+	for (const entry of entries) {
+		if (!entry.path.startsWith(prefix)) continue;
+		const taskIdentifier = entry.path.slice(prefix.length).split('/')[0];
+		if (!taskIdentifier || !shouldRemove(taskIdentifier)) continue;
+		await removeWorktree(executor, repo, entry.path);
+		removed.push(taskIdentifier);
+	}
+	await pruneWorktrees(executor, repo);
+	return removed;
+}
+
+/**
  * Resolve the current commit a worktree points at, or null if the worktree is
  * missing or has no commit (e.g. an unborn branch). Captured before a run so a
  * post-run comparison can tell whether the agent advanced the branch.

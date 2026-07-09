@@ -15,6 +15,7 @@ import { recomputeDownstreamReadiness } from '../lib/dependencies';
 import { assertChildrenAllClosed } from '../lib/task-relationships';
 import { logger } from '../logger';
 import { OAUTH_VERIFICATION_LABEL } from './oauth-verification-tasks';
+import { removeTaskWorktrees } from './repo-sync';
 import { recordStatusChange } from './task-events';
 import { createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
@@ -158,6 +159,7 @@ export async function triggerStatusAutomations(
 	actorMemberId: string | null,
 	actorApiKeyId: string | null,
 	wsManager?: WebSocketManager,
+	dataDir?: string | null,
 ): Promise<void> {
 	await recordStatusChange(
 		db,
@@ -191,6 +193,29 @@ export async function triggerStatusAutomations(
 			await wakeParentIfChildrenClosed(db, teamId, taskId);
 		} catch (e) {
 			log.error('Failed to wake parent on child closure:', e);
+		}
+
+		// A closed task's per-task worktree is dead weight — remove it so worktrees
+		// don't pile up for done/cancelled tasks. This lives here (not just in the
+		// REST handler) so an agent closing a ticket via the MCP `update_task` tool
+		// gets the same cleanup a human close via `PATCH /tasks` does. Host-side only
+		// (a fast local rmSync that works even when the container is stopped); the
+		// harmless dangling git metadata is swept lazily on the next run's worktree
+		// prep or by the manual "Prune worktrees" admin action. Committed work is safe
+		// on the pushed `hezo/<identifier>` branch ref.
+		if (dataDir) {
+			try {
+				const taskRow = await db.query<{ identifier: string; project_id: string }>(
+					'SELECT identifier, project_id FROM tasks WHERE id = $1 AND team_id = $2',
+					[taskId, teamId],
+				);
+				const taskInfo = taskRow.rows[0];
+				if (taskInfo) {
+					removeTaskWorktrees(dataDir, teamId, taskInfo.project_id, taskInfo.identifier);
+				}
+			} catch (e) {
+				log.error('Failed to clean up worktrees on task close:', e);
+			}
 		}
 	}
 
