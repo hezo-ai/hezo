@@ -21,6 +21,7 @@ import {
 	remarkMentions,
 	type TaskMentionData,
 } from '../lib/remark-mentions';
+import { remarkNormalizeInlineCode } from '../lib/remark-normalize-inline-code';
 import { CommentRefLink, MENTION_CLASSES } from './comment-ref-link';
 import { useOpenPreview } from './task-detail/preview-context';
 import { TaskStatusBadge } from './task-status-badge';
@@ -164,7 +165,11 @@ export function MarkdownProse({
 	}, [resolvedDocs, instanceResolved]);
 
 	const remarkPlugins = useMemo<RemarkPlugin>(() => {
-		const plugins: NonNullable<RemarkPlugin> = [remarkGfm];
+		// remarkNormalizeInlineCode runs first (right after GFM parsing) so an
+		// LLM-double-wrapped token like `` `x` `` renders as a clean `x` chip
+		// instead of showing its inner backticks, and so the inline-code linkifiers
+		// below see the unwrapped value.
+		const plugins: NonNullable<RemarkPlugin> = [remarkGfm, remarkNormalizeInlineCode];
 		// The plugin also runs when the text carries a passive `@@` mention even if
 		// nothing resolved: an unresolved passive mention still needs its internal
 		// `@@` prefix stripped to a bare slug (see remark-mentions splitTextNode), so
