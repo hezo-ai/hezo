@@ -26,8 +26,9 @@ export function buildSearchTsQuery(raw: string): string {
  * There is no model to load and no async indexing step — a row is searchable the
  * moment it is written, since `search_tsv` is a STORED generated column.
  *
- * `teamIds` scopes team-owned content (tasks, project docs, comments); skills are
- * instance-global and returned regardless of team. `limit` applies **per type** —
+ * `teamIds` scopes team-owned content (tasks, project docs, comments) and also
+ * skills: global skills (project_id null) plus any project skill whose project's
+ * team is in `teamIds`. `limit` applies **per type** —
  * each branch caps at `limit` and the results are merged sorted by rank with no
  * cross-type truncation, so callers (the web palette) can group by type and show
  * accurate per-type counts.
@@ -165,9 +166,11 @@ export async function fullTextSearch(
 			`SELECT id, name, LEFT(content, 4000) AS content, ts_rank(search_tsv, q) AS score
 			 FROM skills, to_tsquery('${TEXT_SEARCH_CONFIG}', $1) q
 			 WHERE is_active = true AND search_tsv @@ q
+			 AND (project_id IS NULL
+			      OR project_id IN (SELECT id FROM projects WHERE team_id = ANY($3::uuid[])))
 			 ORDER BY score DESC
 			 LIMIT $2`,
-			[tsQuery, limit],
+			[tsQuery, limit, teamIds],
 		);
 		for (const r of skillResults.rows) {
 			const { snippet } = buildHighlightedSnippet(r.content, query);

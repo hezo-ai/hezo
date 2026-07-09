@@ -301,8 +301,9 @@ async function buildBacktickedEntityWarning(
 		);
 		for (const row of docs.rows) refs.push(row.slug);
 		const kb = await db.query<{ slug: string }>(
-			`SELECT slug FROM skills WHERE LOWER(slug) = ANY($1::text[])`,
-			[candidates.filenames.map((f) => f.toLowerCase())],
+			`SELECT slug FROM skills
+			 WHERE LOWER(slug) = ANY($1::text[]) AND (project_id = $2 OR project_id IS NULL)`,
+			[candidates.filenames.map((f) => f.toLowerCase()), projectId],
 		);
 		for (const row of kb.rows) refs.push(row.slug);
 	}
@@ -404,7 +405,7 @@ async function markRunReportedNoWork(db: Db, runId: string, reason: string): Pro
 const TASK_COLUMNS = TASK_COLUMNS_BARE.replace(/[A-Za-z_][A-Za-z_0-9]*/g, 'i.$&');
 
 const SKILL_COLUMNS = `id, name, slug, description, content, source_url,
-	content_hash, created_by_member_id, tags, is_active, auto_load, created_at, updated_at`;
+	content_hash, created_by_member_id, project_id, tags, is_active, auto_load, created_at, updated_at`;
 
 const APPROVAL_COLUMNS = `id, team_id, type, status, requested_by_member_id,
 	resolution_note, resolved_at, created_at, payload`;
@@ -2704,7 +2705,7 @@ export function registerTools(
 	tool(
 		server,
 		'fetch_skill_file',
-		"Fetch a remote agent skill file (Markdown describing how to use a third-party MCP server) and store it as a global skill (auto_load). Returns the skill_id and slug. Subsequent agent runs across every team get this skill file injected into their adapter's skills directory. Idempotent on the derived slug — re-fetching the same URL updates the existing skill.",
+		"Fetch a remote agent skill file (Markdown describing how to use a third-party MCP server) and store it as a skill (auto_load). Returns the skill_id and slug. Subsequent agent runs get this skill file injected into their adapter's skills directory. Idempotent on the derived slug — re-fetching the same URL updates the existing skill. Choose `scope`: 'global' shares it with every project (e.g. a widely-used MCP's usage docs), 'project' keeps it private to this project. Defaults to 'project'.",
 		{
 			project: projectArg(),
 			url: z
@@ -2716,6 +2717,12 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe('Human-readable title shown in the team KB. Defaults to the URL pathname.'),
+			scope: z
+				.enum(['project', 'global'])
+				.optional()
+				.describe(
+					"'global' shares the skill with every project; 'project' keeps it private to this project. Defaults to 'project'.",
+				),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -2768,19 +2775,24 @@ export function registerTools(
 			const title = (args.title as string | undefined) ?? parsed.pathname;
 
 			const authorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+			const targetProjectId = args.scope === 'global' ? null : scope.projectId;
 			const { createHash } = await import('node:crypto');
 			const contentHash = createHash('sha256').update(body).digest('hex');
 			const description = deriveSkillSummary(body);
 
-			const existing = await db.query<{ id: string }>('SELECT id FROM skills WHERE slug = $1', [
-				slug,
-			]);
-			// Global skill, flagged auto_load so the runner writes it to
-			// ~/.claude/skills for every run. Idempotent on slug.
+			const existing = await db.query<{ id: string }>(
+				'SELECT id FROM skills WHERE slug = $1 AND project_id IS NOT DISTINCT FROM $2',
+				[slug, targetProjectId],
+			);
+			// Flagged auto_load so the runner writes it to ~/.claude/skills for every
+			// (scoped) run. Idempotent on slug within the chosen scope.
+			const conflictTarget = targetProjectId
+				? '(project_id, slug) WHERE project_id IS NOT NULL'
+				: '(slug) WHERE project_id IS NULL';
 			const upserted = await db.query<{ id: string; slug: string }>(
-				`INSERT INTO skills (name, slug, description, content, source_url, content_hash, created_by_member_id, tags, auto_load)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7, '[]'::jsonb, true)
-				 ON CONFLICT (slug) DO UPDATE SET
+				`INSERT INTO skills (name, slug, description, content, source_url, content_hash, created_by_member_id, tags, auto_load, project_id)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, '[]'::jsonb, true, $8)
+				 ON CONFLICT ${conflictTarget} DO UPDATE SET
 				   name = EXCLUDED.name,
 				   description = EXCLUDED.description,
 				   content = EXCLUDED.content,
@@ -2789,12 +2801,13 @@ export function registerTools(
 				   auto_load = true,
 				   updated_at = now()
 				 RETURNING id, slug`,
-				[title, slug, description, body, url, contentHash, authorMemberId],
+				[title, slug, description, body, url, contentHash, authorMemberId, targetProjectId],
 			);
 
 			return {
 				skill_id: upserted.rows[0].id,
 				slug: upserted.rows[0].slug,
+				scope: targetProjectId ? 'project' : 'global',
 				source_url: url,
 				size_bytes: body.length,
 				reused: existing.rows.length > 0,
@@ -4186,13 +4199,19 @@ export function registerTools(
 	tool(
 		server,
 		'propose_skill',
-		"Propose a new skill for the team's skills database (reusable team know-how: MCP server usage, integration steps, conventions, how agents coordinate). Creates an approval request; when approved the skill is written to the skills database.",
+		"Propose a new skill for the team's skills database (reusable team know-how: MCP server usage, integration steps, conventions, how agents coordinate). Creates an approval request; when approved the skill is written to the skills database. Choose `scope`: 'global' shares it with every project, 'project' keeps it private to this project. Defaults to 'project'.",
 		{
 			project: projectArg(),
 			skill_name: z.string().describe('Human-readable skill name'),
 			skill_slug: z.string().describe('URL-safe slug for the skill file'),
 			content: z.string().describe('Skill content (markdown)'),
 			reason: z.string().describe('Why this skill should be added'),
+			scope: z
+				.enum(['project', 'global'])
+				.optional()
+				.describe(
+					"'global' shares the skill with every project; 'project' keeps it private to this project. Defaults to 'project'.",
+				),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -4212,6 +4231,7 @@ export function registerTools(
 						skill_slug: args.skill_slug,
 						content: args.content,
 						reason: args.reason,
+						scope: args.scope === 'global' ? 'global' : 'project',
 					}),
 				],
 			);
@@ -4266,19 +4286,28 @@ export function registerTools(
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
 
-			let query = `SELECT id, name, slug, description, tags, created_at, updated_at
-			             FROM skills WHERE is_active = true`;
-			const params: unknown[] = [];
+			// This project's own skills plus globals (project shadows a global of
+			// the same slug — de-duped below).
+			let query = `SELECT id, name, slug, description, tags, project_id, created_at, updated_at
+			             FROM skills WHERE is_active = true AND (project_id = $1 OR project_id IS NULL)`;
+			const params: unknown[] = [scope.projectId];
 
 			if (args.tags) {
 				const tagList = (args.tags as string).split(',').map((t) => t.trim());
-				query += ` AND tags ?| $1`;
+				query += ` AND tags ?| $${params.length + 1}`;
 				params.push(tagList);
 			}
 
-			query += ' ORDER BY name';
-			const result = await db.query(query, params);
-			return { skills: result.rows };
+			// Project row before global so the de-dupe keeps the project's shadowing copy.
+			query += ' ORDER BY name, project_id NULLS LAST';
+			const result = await db.query<{ slug: string }>(query, params);
+			const seen = new Set<string>();
+			const skills = result.rows.filter((r) => {
+				if (seen.has(r.slug)) return false;
+				seen.add(r.slug);
+				return true;
+			});
+			return { skills };
 		},
 		db,
 	);
@@ -4295,9 +4324,13 @@ export function registerTools(
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
 
-			const result = await db.query(`SELECT ${SKILL_COLUMNS} FROM skills WHERE slug = $1 LIMIT 1`, [
-				args.slug,
-			]);
+			// Prefer this project's own skill over a global one of the same slug.
+			const result = await db.query(
+				`SELECT ${SKILL_COLUMNS} FROM skills
+				 WHERE slug = $1 AND (project_id = $2 OR project_id IS NULL)
+				 ORDER BY project_id NULLS LAST LIMIT 1`,
+				[args.slug, scope.projectId],
+			);
 			if (result.rows.length === 0) return { error: 'Skill not found' };
 			return result.rows[0];
 		},
@@ -4307,7 +4340,7 @@ export function registerTools(
 	tool(
 		server,
 		'create_skill',
-		"Add or update a skill in the team's skills database directly (no approval needed) — record reusable team know-how such as MCP server usage, integration steps, conventions, and how agents coordinate. Use propose_skill when approval is required. If description is omitted it is derived from the skill body.",
+		"Add or update a skill in the team's skills database directly (no approval needed) — record reusable team know-how such as MCP server usage, integration steps, conventions, and how agents coordinate. Use propose_skill when approval is required. If description is omitted it is derived from the skill body. Choose `scope` deliberately: 'global' when the know-how helps agents in ANY project (related or not), 'project' when it is specific to this project. Omitting scope defaults to 'project'.",
 		{
 			project: projectArg(),
 			name: z.string().describe('Human-readable skill name'),
@@ -4315,11 +4348,19 @@ export function registerTools(
 			content: z.string().describe('Skill content (markdown)'),
 			description: z.string().optional().describe('Short description'),
 			tags: z.string().optional().describe('Comma-separated tags'),
+			scope: z
+				.enum(['project', 'global'])
+				.optional()
+				.describe(
+					"'global' shares the skill with every project; 'project' keeps it private to this project. Defaults to 'project'.",
+				),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
 
+			// The agent chooses the scope; absent a choice we keep it project-private.
+			const targetProjectId = args.scope === 'global' ? null : scope.projectId;
 			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 			const { createHash } = await import('node:crypto');
 			const contentHash = createHash('sha256')
@@ -4332,14 +4373,18 @@ export function registerTools(
 				(args.description as string)?.trim() || deriveSkillSummary(args.content as string);
 
 			const priorSkill = await db.query<{ content: string }>(
-				'SELECT content FROM skills WHERE slug = $1',
-				[args.slug],
+				'SELECT content FROM skills WHERE slug = $1 AND project_id IS NOT DISTINCT FROM $2',
+				[args.slug, targetProjectId],
 			);
 
+			// Upsert against the partial unique index matching the chosen scope.
+			const conflictTarget = targetProjectId
+				? '(project_id, slug) WHERE project_id IS NOT NULL'
+				: '(slug) WHERE project_id IS NULL';
 			const result = await db.query<{ id: string; slug: string }>(
-				`INSERT INTO skills (name, slug, description, content, content_hash, created_by_member_id, tags)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-				 ON CONFLICT (slug) DO UPDATE SET
+				`INSERT INTO skills (name, slug, description, content, content_hash, created_by_member_id, tags, project_id)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+				 ON CONFLICT ${conflictTarget} DO UPDATE SET
 				   content = EXCLUDED.content,
 				   content_hash = EXCLUDED.content_hash,
 				   description = EXCLUDED.description,
@@ -4354,6 +4399,7 @@ export function registerTools(
 					contentHash,
 					callerMemberId,
 					JSON.stringify(tagList),
+					targetProjectId,
 				],
 			);
 
@@ -4367,7 +4413,12 @@ export function registerTools(
 				callerMemberId,
 			);
 
-			return { skill_id: skillId, slug: result.rows[0].slug, created: true };
+			return {
+				skill_id: skillId,
+				slug: result.rows[0].slug,
+				scope: targetProjectId ? 'project' : 'global',
+				created: true,
+			};
 		},
 		db,
 	);

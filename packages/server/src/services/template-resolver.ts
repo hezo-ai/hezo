@@ -124,6 +124,7 @@ const SHARED_INSTRUCTIONS = `
 - **Project assets**: Use \`list_project_assets\`, \`read_project_asset\`, and \`write_project_asset\` for non-markdown deliverables — mockups, wireframes, diagrams, PDFs, scripts. Assets are addressed by their library path — a filename optionally inside folders up to two levels deep (\`hero.png\`, \`launch/images/hero.png\`) — never a container filesystem path; \`read_project_asset\` returns text-based assets inline, and for a binary asset it returns a signed download URL you fetch yourself (\`curl -fsSL '<url>' -o /tmp/<filename>\`). Reorganize with \`move_project_asset\`/\`copy_project_asset\`; obsolete assets are archived, never deleted (see **Organizing the Assets Library** below).
 - **AGENTS.md**: For practical conventions, commands, and constraints when working on this project's repo. Update via git in the repo.
 - **Skills database**: the team's single store of reusable, *project-independent* know-how — how to use an MCP server or integration, recurring procedures, conventions, how the team coordinates. It is distinct from project docs (project-specific material) and from agent system prompts. Each run you receive a skills **manifest** (name + slug + one-line summary) in the injected skills context; the manifest is not the full body, so call \`get_skill(slug)\` to read one in full when it looks relevant. When you learn something reusable the team will want again, record it with \`create_skill\` (or \`propose_skill\` where approval is required) — a focused name, a one-line description, and a body covering just that topic. Knowledge specific to one project belongs in a project doc, not a skill; guidance about how an agent should behave is a system-prompt change, not a skill.
+- **Choose the skill's scope deliberately.** \`create_skill\`, \`propose_skill\`, and \`fetch_skill_file\` take a \`scope\`: choose \`global\` when the know-how helps agents working in **any** project (a widely-used tool's usage, a general technique, an integration many projects will reach for), and \`project\` when it is specific to *this* project (its particular deployment steps, its own conventions, a runbook only this project needs). When in doubt, prefer \`project\` — it keeps other projects' skill manifests uncluttered, and an admin can promote a project skill to global later. Omitting \`scope\` defaults to \`project\`.
 - **Finding new skills**: when a task needs a capability you don't already have, first re-check the manifest. If nothing fits, search the open ecosystem from inside the container — \`npx skills find "<query>"\` (and browse https://skills.sh), preferring well-adopted skills. A local \`npx skills add … -g\` install lives only in this container and is discarded when the run ends — to make a skill permanent for every future run, persist it into the catalog: call \`fetch_skill_file({ url })\` if you have its raw \`SKILL.md\` URL, otherwise install it locally, read its \`SKILL.md\`, and call \`create_skill({ name, slug, content, tags })\` (re-adding the same slug updates it). If no suitable skill exists anywhere, do the work directly and capture anything reusable with \`create_skill\`.
 
 ### Organizing the Assets Library
@@ -281,12 +282,33 @@ export async function resolveSystemPrompt(
 	// the agent calls get_skill(slug) to load one on demand. The discovery and
 	// authoring workflow lives in SHARED_INSTRUCTIONS, not inline here.
 	if (resolved.includes('{{skills_context}}')) {
-		const dbSkills = await db.query<{ name: string; slug: string; description: string }>(
-			'SELECT name, slug, description FROM skills WHERE is_active = true ORDER BY name',
-		);
+		// This run's project skills plus globals (a project skill shadows a global
+		// of the same slug). Cross-team sessions with no project see globals only.
+		const dbSkills = ctx.projectId
+			? await db.query<{ name: string; slug: string; description: string }>(
+					`SELECT name, slug, description FROM skills
+					 WHERE is_active = true AND (project_id = $1 OR project_id IS NULL)
+					 ORDER BY slug, project_id NULLS LAST`,
+					[ctx.projectId],
+				)
+			: await db.query<{ name: string; slug: string; description: string }>(
+					`SELECT name, slug, description FROM skills
+					 WHERE is_active = true AND project_id IS NULL
+					 ORDER BY slug`,
+				);
+		// De-dupe by slug (keeps the project's shadowing row, ordered first), then
+		// present alphabetically by name.
+		const seenSlugs = new Set<string>();
+		const skillRows = dbSkills.rows
+			.filter((s) => {
+				if (seenSlugs.has(s.slug)) return false;
+				seenSlugs.add(s.slug);
+				return true;
+			})
+			.sort((a, b) => a.name.localeCompare(b.name));
 		let manifest: string;
-		if (dbSkills.rows.length > 0) {
-			const lines = dbSkills.rows
+		if (skillRows.length > 0) {
+			const lines = skillRows
 				.map((s) => `- ${s.name} (slug: ${s.slug})${s.description ? `: ${s.description}` : ''}`)
 				.join('\n');
 			manifest = [

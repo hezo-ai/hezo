@@ -199,14 +199,15 @@ export async function installRegistrySkill(
 	const description = data.description?.trim() || deriveSkillSummary(content);
 	const hash = createHash('sha256').update(content).digest('hex');
 
+	// Registry installs land as global skills (project_id null).
 	const existing = await db.query<{ id: string; content: string }>(
-		'SELECT id, content FROM skills WHERE slug = $1',
+		'SELECT id, content FROM skills WHERE slug = $1 AND project_id IS NULL',
 		[slug],
 	);
 	const upserted = await db.query<{ id: string; slug: string; name: string }>(
 		`INSERT INTO skills (name, slug, description, content, source_url, content_hash, created_by_member_id, tags)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, '[]'::jsonb)
-		 ON CONFLICT (slug) DO UPDATE SET
+		 ON CONFLICT (slug) WHERE project_id IS NULL DO UPDATE SET
 		     name = EXCLUDED.name,
 		     description = EXCLUDED.description,
 		     content = EXCLUDED.content,

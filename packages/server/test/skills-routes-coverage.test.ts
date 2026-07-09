@@ -59,12 +59,18 @@ beforeEach(async () => {
 	await db.query('DELETE FROM skills');
 });
 
+const MISSING_ID = '00000000-0000-0000-0000-000000000000';
+
 function create(body: Record<string, unknown>): Promise<Response> {
 	return app.request('/api/skills', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify(body),
 	});
+}
+
+async function createId(body: Record<string, unknown>): Promise<string> {
+	return (await (await create(body)).json()).data.id as string;
 }
 
 describe('POST /api/skills validation guards', () => {
@@ -119,9 +125,9 @@ describe('POST /api/skills validation guards', () => {
 	});
 });
 
-describe('PATCH /api/skills/:slug branches', () => {
-	it('404s when patching a non-existent slug', async () => {
-		const res = await app.request('/api/skills/missing-skill', {
+describe('PATCH /api/skills/:id branches', () => {
+	it('404s when patching a non-existent id', async () => {
+		const res = await app.request(`/api/skills/${MISSING_ID}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'whatever' }),
@@ -130,8 +136,8 @@ describe('PATCH /api/skills/:slug branches', () => {
 	});
 
 	it('400s when no updatable fields are supplied', async () => {
-		await create({ name: 'Patchable', slug: 'patchable', content: 'v1' });
-		const res = await app.request('/api/skills/patchable', {
+		const id = await createId({ name: 'Patchable', slug: 'patchable', content: 'v1' });
+		const res = await app.request(`/api/skills/${id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({}),
@@ -141,8 +147,8 @@ describe('PATCH /api/skills/:slug branches', () => {
 	});
 
 	it('updates name and tags only without touching content', async () => {
-		await create({ name: 'Multi', slug: 'multi', content: 'original' });
-		const res = await app.request('/api/skills/multi', {
+		const id = await createId({ name: 'Multi', slug: 'multi', content: 'original' });
+		const res = await app.request(`/api/skills/${id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Renamed', tags: ['a', 'b'] }),
@@ -155,8 +161,13 @@ describe('PATCH /api/skills/:slug branches', () => {
 	});
 
 	it('re-derives the description from new content when description is blank', async () => {
-		await create({ name: 'ReDesc', slug: 'redesc', content: 'old', description: 'old desc' });
-		const res = await app.request('/api/skills/redesc', {
+		const id = await createId({
+			name: 'ReDesc',
+			slug: 'redesc',
+			content: 'old',
+			description: 'old desc',
+		});
+		const res = await app.request(`/api/skills/${id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ description: '', content: 'A brand new opening line.' }),
@@ -168,8 +179,8 @@ describe('PATCH /api/skills/:slug branches', () => {
 	});
 
 	it('sets an explicit non-empty description', async () => {
-		await create({ name: 'D2', slug: 'd2', content: 'body' });
-		const res = await app.request('/api/skills/d2', {
+		const id = await createId({ name: 'D2', slug: 'd2', content: 'body' });
+		const res = await app.request(`/api/skills/${id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ description: 'hand written' }),
@@ -178,14 +189,14 @@ describe('PATCH /api/skills/:slug branches', () => {
 	});
 });
 
-describe('GET/DELETE /api/skills/:slug not-found branches', () => {
+describe('GET/DELETE /api/skills/:id not-found branches', () => {
 	it('404s reading a missing skill', async () => {
-		const res = await app.request('/api/skills/nope', { headers: authHeader(token) });
+		const res = await app.request(`/api/skills/${MISSING_ID}`, { headers: authHeader(token) });
 		expect(res.status).toBe(404);
 	});
 
 	it('404s deleting a missing skill', async () => {
-		const res = await app.request('/api/skills/nope', {
+		const res = await app.request(`/api/skills/${MISSING_ID}`, {
 			method: 'DELETE',
 			headers: authHeader(token),
 		});
@@ -193,12 +204,14 @@ describe('GET/DELETE /api/skills/:slug not-found branches', () => {
 	});
 
 	it('404s listing revisions for a missing skill', async () => {
-		const res = await app.request('/api/skills/nope/revisions', { headers: authHeader(token) });
+		const res = await app.request(`/api/skills/${MISSING_ID}/revisions`, {
+			headers: authHeader(token),
+		});
 		expect(res.status).toBe(404);
 	});
 
 	it('404s restoring against a missing skill', async () => {
-		const res = await app.request('/api/skills/nope/restore', {
+		const res = await app.request(`/api/skills/${MISSING_ID}/restore`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ revision_number: 1 }),
