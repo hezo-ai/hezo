@@ -145,12 +145,16 @@ const HEARTBEAT_RUN_COLUMNS = `hr.id, hr.member_id, hr.team_id, hr.wakeup_id, hr
 		'[]'::jsonb
 	) AS created_docs,
 	-- Skills the agent added/updated directly in the skills database this run.
+	-- project_slug is the owning project's slug for a project-scoped skill, or
+	-- NULL for a global skill — the frontend links a scoped skill to the project
+	-- Skills page and a global one to /settings/skills.
 	COALESCE(
 		(SELECT jsonb_agg(
-			jsonb_build_object('name', s.name, 'slug', s.slug, 'source_url', s.source_url, 'created', (s.created_at >= hr.started_at))
+			jsonb_build_object('name', s.name, 'slug', s.slug, 'source_url', s.source_url, 'created', (s.created_at >= hr.started_at), 'project_slug', sp.slug)
 			ORDER BY s.updated_at ASC
 		)
 		FROM skills s
+		LEFT JOIN projects sp ON sp.id = s.project_id
 		WHERE s.created_by_member_id = hr.member_id
 		  AND hr.started_at IS NOT NULL
 		  AND s.updated_at >= hr.started_at

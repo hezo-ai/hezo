@@ -312,8 +312,14 @@ test('run comment links updated docs, skills, and proposed skills', async () => 
 				created_tasks: [],
 				created_docs: [{ filename: 'spec.md', project_slug: project.slug }],
 				created_skills: [
-					{ name: 'Deploy Flow', slug: 'deploy-flow', created: true },
-					{ name: 'Triage', slug: 'triage', created: false },
+					{ name: 'Deploy Flow', slug: 'deploy-flow', created: true, project_slug: null },
+					{ name: 'Triage', slug: 'triage', created: false, project_slug: null },
+					{
+						name: 'Typefully Publishing',
+						slug: 'typefully-publishing',
+						created: true,
+						project_slug: project.slug,
+					},
 				],
 				proposed_skills: [{ name: 'Linear Triage', slug: 'linear-triage' }],
 			};
@@ -348,8 +354,12 @@ test('run comment links updated docs, skills, and proposed skills', async () => 
 	const skillLinks = Array.from(skillsSection.querySelectorAll('a')) as HTMLAnchorElement[];
 	const added = skillLinks.find((a) => a.textContent === 'Added skill Deploy Flow');
 	const updated = skillLinks.find((a) => a.textContent === 'Updated skill Triage');
+	// Global skills (project_slug null) link to the global Skills page…
 	expect(added?.getAttribute('href')).toBe(`/settings/skills`);
 	expect(updated?.getAttribute('href')).toBe(`/settings/skills`);
+	// …a project-scoped skill links to its own project's Skills page instead.
+	const scoped = skillLinks.find((a) => a.textContent === 'Added skill Typefully Publishing');
+	expect(scoped?.getAttribute('href')).toBe(`/projects/${seeded.projectSlug}/skills`);
 
 	const proposedSection = await findByTestId('run-comment-proposed-skills');
 	const proposedLink = proposedSection.querySelector('a') as HTMLAnchorElement | null;

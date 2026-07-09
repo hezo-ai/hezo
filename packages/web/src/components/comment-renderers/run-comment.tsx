@@ -409,9 +409,21 @@ export function RunCommentBody({
 				<div className="flex flex-col gap-1 pt-1" data-testid="run-comment-created-skills">
 					{createdSkills.map((skill) => (
 						<span key={skill.slug} className="text-xs self-start">
-							<Link to="/settings/skills" className="text-info-soft-fg hover:underline">
-								{skill.created ? 'Added' : 'Updated'} skill {skill.name}
-							</Link>
+							{/* A project-scoped skill lives on the owning project's Skills page;
+							    a global skill is managed on /settings/skills. */}
+							{skill.project_slug ? (
+								<Link
+									to="/projects/$projectId/skills"
+									params={{ projectId: skill.project_slug }}
+									className="text-info-soft-fg hover:underline"
+								>
+									{skill.created ? 'Added' : 'Updated'} skill {skill.name}
+								</Link>
+							) : (
+								<Link to="/settings/skills" className="text-info-soft-fg hover:underline">
+									{skill.created ? 'Added' : 'Updated'} skill {skill.name}
+								</Link>
+							)}
 							{skill.source_url && (
 								<span className="text-text-3"> · from {skillSourceLabel(skill.source_url)}</span>
 							)}

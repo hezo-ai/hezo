@@ -606,6 +606,14 @@ describe('created_tasks tracking', () => {
 			slug: 'deploy-flow',
 			content: '# Deploy Flow\n\nHow to deploy.',
 		});
+		// A global skill (scope: 'global') has no owning project — project_slug null.
+		await callMcp('create_skill', {
+			project: projectId,
+			name: 'Global Runbook',
+			slug: 'global-runbook',
+			content: '# Global Runbook\n\nShared everywhere.',
+			scope: 'global',
+		});
 		await callMcp('propose_skill', {
 			project: projectId,
 			skill_name: 'Linear Triage',
@@ -633,10 +641,18 @@ describe('created_tasks tracking', () => {
 			name: string;
 			slug: string;
 			created: boolean;
+			project_slug: string | null;
 		}>;
 		const deploySkill = createdSkills.find((s) => s.slug === 'deploy-flow');
 		expect(deploySkill).toBeDefined();
 		expect(deploySkill?.created).toBe(true);
+		// create_skill defaults to project scope, so this skill carries the owning
+		// project's slug — the frontend links it to that project's Skills page.
+		expect(deploySkill?.project_slug).toBe(projectSlug);
+		// A global skill has no owning project — project_slug is null.
+		const globalSkill = createdSkills.find((s) => s.slug === 'global-runbook');
+		expect(globalSkill).toBeDefined();
+		expect(globalSkill?.project_slug).toBeNull();
 
 		const proposedSlugs = (body.data.proposed_skills as Array<{ name: string; slug: string }>).map(
 			(s) => s.slug,
