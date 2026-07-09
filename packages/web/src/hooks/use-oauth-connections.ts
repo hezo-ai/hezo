@@ -17,7 +17,13 @@ export interface OAuthConnection {
 }
 
 export interface AuthStartResult {
-	auth_url: string;
+	/**
+	 * Authorize URL to open in a popup, or null when the MCP server advertises no
+	 * OAuth (public / header-authenticated) — a normal outcome, not an error: the
+	 * connector is left untouched and can be connected with a pasted API key.
+	 */
+	auth_url: string | null;
+	reason?: string;
 }
 
 export interface DeviceFlowStart {
@@ -64,6 +70,12 @@ export function useAuthStart(projectId: string) {
 			api.post<AuthStartResult>(`/api/projects/${projectId}/auth-start`, {
 				connector_id: connectorId,
 			}),
+		onSettled: () => {
+			// auth-start mutates the row on every path — restores a revoked connector,
+			// persists config.dcr on a successful DCR walk, records auth_error on
+			// failure — so refresh the list to reflect the new status either way.
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.mcpConnections(projectId) });
+		},
 	});
 }
 

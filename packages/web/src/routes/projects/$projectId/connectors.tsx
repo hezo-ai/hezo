@@ -1,6 +1,6 @@
 import { getConnectorCapability } from '@hezo/shared';
 import { createFileRoute, Link } from '@tanstack/react-router';
-import { Check, ExternalLink, Github, KeyRound, Plug, Trash2, X } from 'lucide-react';
+import { Check, ExternalLink, Github, KeyRound, Plug, Plus, Trash2, X } from 'lucide-react';
 import { useCallback, useState } from 'react';
 import { ConnectorApiKeyForm } from '../../../components/connector-api-key-form';
 import { ConnectorDeviceFlowDialog } from '../../../components/connector-device-flow-dialog';
@@ -8,9 +8,12 @@ import { RelatedItemsList } from '../../../components/related-items-list';
 import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
 import { ConfirmDialog } from '../../../components/ui/confirm-dialog';
+import { InPlaceForm } from '../../../components/ui/in-place-form';
+import { Input } from '../../../components/ui/input';
 import {
 	connectorStatus,
 	type McpConnection,
+	useCreateMcpConnection,
 	useMcpConnections,
 	useRevokeConnector,
 } from '../../../hooks/use-mcp-connections';
@@ -50,19 +53,34 @@ function ConnectorsPage() {
 	const githubConnection = oauthConnections.find((c) => c.provider === 'github') ?? null;
 	const isEmpty = connectors.length === 0 && oauthConnections.length === 0;
 
+	const [showAdd, setShowAdd] = useState(false);
+
 	return (
 		<div className="space-y-6 max-w-4xl">
-			<header>
-				<h1 className="text-xl font-semibold flex items-center gap-2">
-					<Plug className="size-5" />
-					Connectors
-				</h1>
-				<p className="text-sm text-text-3 mt-1">
-					Third-party services agents use — GitHub for git operations, MCP servers + skill files for
-					everything else. Tokens are stored in the Hezo vault and substituted at egress; agents
-					never see them.
-				</p>
+			<header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+				<div>
+					<h1 className="text-xl font-semibold flex items-center gap-2">
+						<Plug className="size-5" />
+						Connectors
+					</h1>
+					<p className="text-sm text-text-3 mt-1">
+						Third-party services agents use — GitHub for git operations, MCP servers + skill files
+						for everything else. Tokens are stored in the Hezo vault and substituted at egress;
+						agents never see them.
+					</p>
+				</div>
+				<Button
+					size="sm"
+					variant="secondary"
+					onClick={() => setShowAdd((s) => !s)}
+					className="shrink-0 self-start"
+					data-testid="connector-add-toggle"
+				>
+					<Plus className="size-3.5 mr-1" /> Add
+				</Button>
 			</header>
+
+			{showAdd && <AddConnectorForm projectId={projectId} onClose={() => setShowAdd(false)} />}
 
 			<ul className="space-y-3" data-testid="connectors-list">
 				<GitHubRow projectId={projectId} connection={githubConnection} />
@@ -81,12 +99,109 @@ function ConnectorsPage() {
 
 			{isEmpty && (
 				<p className="text-xs text-text-3 text-center">
-					No third-party MCP servers yet. When an agent calls{' '}
+					No third-party MCP servers yet. Add one above, or when an agent calls{' '}
 					<code className="px-1 py-0.5 rounded bg-surface-2 text-xs">register_connector</code>, a
 					Connect button appears here and on the task that requested it.
 				</p>
 			)}
 		</div>
+	);
+}
+
+interface AddConnectorFormProps {
+	projectId: string;
+	onClose: () => void;
+}
+
+/**
+ * Add a remote (SaaS) MCP connector directly to this project — the same
+ * name+URL create the admin page offers, scoped implicitly to this project.
+ * On submit it creates the row, then probes for OAuth: an OAuth-capable server
+ * opens the authorize popup automatically; a public / header-authenticated one
+ * resolves to a null auth_url and the new row just offers its API-key option.
+ */
+function AddConnectorForm({ projectId, onClose }: AddConnectorFormProps) {
+	const create = useCreateMcpConnection(projectId);
+	const authStart = useAuthStart(projectId);
+	const [name, setName] = useState('');
+	const [url, setUrl] = useState('');
+	const [error, setError] = useState<string | null>(null);
+
+	const submit = async (e: React.FormEvent) => {
+		e.preventDefault();
+		setError(null);
+		if (!name.trim() || !url.trim()) {
+			setError('Name and MCP server URL are required.');
+			return;
+		}
+		let created: McpConnection;
+		try {
+			created = await create.mutateAsync({
+				name: name.trim(),
+				kind: 'saas',
+				config: { url: url.trim() },
+			});
+		} catch (err) {
+			setError(err instanceof Error ? err.message : 'Failed to add connector');
+			return;
+		}
+		// The row already shows in the list; probe the new connector for OAuth and
+		// pop the authorize window when it advertises any. Header-auth / public MCPs
+		// resolve to auth_url null and are connected later with a pasted API key from
+		// their row, so those just close the form. Keep the form open only to surface
+		// a blocked popup (its error can't render once the form unmounts).
+		try {
+			const started = await authStart.mutateAsync(created.id);
+			if (started.auth_url) {
+				const popup = window.open(started.auth_url, 'hezo-connect', 'width=600,height=720');
+				if (!popup) {
+					setError('Pop-up blocked. Allow pop-ups for Hezo and try again.');
+					return;
+				}
+			}
+		} catch {
+			// The row exists regardless; any auth failure is recorded on it (Failed
+			// badge + Retry), so the user can connect from the row itself.
+		}
+		onClose();
+	};
+
+	return (
+		<InPlaceForm
+			title="Add connector"
+			onClose={onClose}
+			onSubmit={submit}
+			data-testid="connector-add-form"
+		>
+			<Input
+				placeholder="Name (e.g. linear)"
+				value={name}
+				onChange={(e) => setName(e.target.value)}
+				data-testid="connector-add-name"
+				required
+			/>
+			<Input
+				placeholder="MCP server URL (e.g. https://mcp.example.com/mcp)"
+				value={url}
+				onChange={(e) => setUrl(e.target.value)}
+				data-testid="connector-add-url"
+				required
+			/>
+			{error && <p className="text-xs text-danger-soft-fg">{error}</p>}
+			<div className="flex gap-2">
+				<Button
+					type="submit"
+					size="sm"
+					disabled={create.isPending}
+					data-testid="connector-add-submit"
+				>
+					{create.isPending ? 'Adding…' : 'Add connector'}
+				</Button>
+				<Button type="button" size="sm" variant="secondary" onClick={onClose}>
+					Cancel
+				</Button>
+			</div>
+		</InPlaceForm>
 	);
 }
 
@@ -217,6 +332,7 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 	const authStart = useAuthStart(projectId);
 	const revoke = useRevokeConnector(projectId);
 	const [error, setError] = useState<string | null>(null);
+	const [info, setInfo] = useState<string | null>(null);
 	const [deviceOpen, setDeviceOpen] = useState(false);
 	const [showApiKey, setShowApiKey] = useState(false);
 	const [confirmOpen, setConfirmOpen] = useState(false);
@@ -241,6 +357,7 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 
 	const openConnect = () => {
 		setError(null);
+		setInfo(null);
 		// Providers whose AS can't do DCR (declared via `deviceAuth`) authorize
 		// through the device flow; everything else uses the redirect popup.
 		if (usesDeviceFlow) {
@@ -249,6 +366,12 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 		}
 		authStart.mutate(connector.id, {
 			onSuccess: ({ auth_url }) => {
+				// A null auth_url means the server advertises no OAuth (public /
+				// header-authenticated) — not an error: point the user at the API key.
+				if (!auth_url) {
+					setInfo("This MCP server doesn't advertise OAuth — connect it with the API key option.");
+					return;
+				}
 				const popup = window.open(auth_url, 'hezo-connect', 'width=600,height=720');
 				if (!popup) {
 					setError('Pop-up blocked. Allow pop-ups for Hezo and try again.');
@@ -321,6 +444,7 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 						<p className="text-xs text-danger-soft-fg mt-2">{connector.auth_error}</p>
 					)}
 					{error && <p className="text-xs text-danger-soft-fg mt-2">{error}</p>}
+					{info && <p className="text-xs text-text-3 mt-2">{info}</p>}
 				</div>
 
 				<div className="flex items-center gap-2 shrink-0">

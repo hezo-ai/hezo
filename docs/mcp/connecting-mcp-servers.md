@@ -70,12 +70,25 @@ and the global scope both define a connection of the same name, the project's ow
 
 Manage connections two ways:
 
-- **Project → Settings → Connectors** shows just that project's connectors.
+- **Project → Settings → Connectors** shows just that project's connectors. **Add** a
+  connector here — give it a name and MCP server URL — and it's scoped to that project;
+  Hezo probes it for OAuth and opens the connect popup automatically, or you attach an
+  API key from its row if the server authenticates with a header instead.
 - The global **Settings → Connectors** page (admin) lists connectors across every project.
   Each connector shows its scope — **All projects** or a specific project — as a badge you
   can click to re-scope it: a searchable dropdown lets you move the connector to any
   project or back to the global scope. New connectors pick their scope in the Add form the
   same way.
+
+## Reconnecting a revoked connector
+
+Revoking a connector clears its stored token or API key so agents lose access immediately,
+but the connector stays on the page marked **Revoked**. To reconnect, just press **Connect**
+(or **API key**) on it again — Hezo restores the connector in place and runs a fresh
+authorization, so you never have to delete and recreate it. (The exception is an
+instance-address change — see [OAuth connections need an HTTPS address](#oauth-connections-need-an-https-address)
+above — where the OAuth client is tied to the old address and the connector must be removed
+and added again.)
 
 ## Connectors and their credentials
 

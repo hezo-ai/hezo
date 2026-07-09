@@ -385,9 +385,9 @@ mcpConnectionsRoutes.post('/projects/:projectId/mcp-connections/:id/api-key', as
 	);
 	if (existing.rows.length === 0) return err(c, 'NOT_FOUND', 'connector not found', 404);
 	const conn = existing.rows[0];
-	if (conn.revoked_at) {
-		return err(c, 'CONNECTOR_REVOKED', 'connector has been revoked; re-add it to reconnect', 400);
-	}
+	// A revoked connector is restored in place: pasting a key is a fresh reconnect
+	// rather than an error. markApiKeyActive below clears revoked_at and re-stamps
+	// activated_at as part of attaching the new key.
 	if (conn.kind !== McpConnectionKind.Saas) {
 		return err(c, 'INVALID_REQUEST', 'API-key auth applies to saas MCP connectors', 400);
 	}
