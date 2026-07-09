@@ -823,9 +823,22 @@ assumes the agent itself may misbehave; the egress proxy is the choke point.
 
 **Secrets.** `secrets` rows are AES-256-GCM ciphertext plus `allowed_hosts` (e.g.
 `['api.stripe.com']`, `*.googleapis.com` wildcards) or the `allow_all_hosts` escape hatch.
-They are **instance-global** by default (`team_id NULL`), bounded per-secret by
-`allowed_hosts`; project/team-scoped rows are possible and win on name dedup
-(project > team > instance). The master key (§ 10) decrypts at request time.
+They are **instance-global** — `name` is globally unique and the egress proxy resolves the
+placeholder by name with no project context — bounded per-secret by `allowed_hosts`. The
+master key (§ 10) decrypts at request time. Connectors, by contrast, are project-scoped
+(`mcp_connections.project_id`, NULL = global); a credential does **not** follow its
+connector's scope (moving a connector between scopes leaves its credential untouched).
+Instead the credential *name* carries the project signal (see the API-key row below), so a
+global credential list stays legible.
+
+**Connector ↔ credential relationships.** The admin credentials list (`GET /api/credentials`)
+returns, per credential, the `connectors` that use it (matched via `api_key_secret_id` or the
+connector's OAuth access token); the connector lists return the reverse `credentials` array.
+The web surfaces render each as an indented, deep-linked sub-list under the other (credentials
+page ↔ `/settings/connectors`, connector pages ↔ `/settings/credentials`, both via a
+`?focus=<id>#<id>` anchor). A credential in use by ≥1 connector cannot be deleted — `DELETE
+/api/secrets/:id` returns `409 IN_USE` and the UI disables the revoke control with a tooltip;
+remove the connector(s) first.
 
 **Acquisition.** An agent calls the `request_credential` MCP tool (`name`, `kind`,
 `allowed_hosts`, human `instructions`, `confirmation_text`). `CredentialKind` =
@@ -975,7 +988,7 @@ supports; once a token exists, both strategies finalize through one shared path.
 |---|---|---|---|
 | **DCR auth-code + PKCE** | PRM discovery (RFC 9728) → Dynamic Client Registration (RFC 7591) → redirect popup → `/api/oauth/mcp-callback`. Zero config — the AS mints a `client_id`. | the AS advertises a `registration_endpoint` | DatoCMS, Linear, Notion, Vercel, … |
 | **Device flow (RFC 8628)** | `connectors/:id/device/start` → user types a code → `…/device/poll`. Needs a pre-registered public `client_id`; no redirect, no secret. | the capability registry declares a `deviceAuth` descriptor | **GitHub** |
-| **API key** | human pastes a key on the connect_required card or the Connectors page → `POST /api/projects/:projectId/mcp-connections/:id/api-key` encrypts it into the vault (`allowed_hosts` = the MCP host) and links it via `mcp_connections.api_key_secret_id`. | the MCP server exposes no OAuth (no PRM) and authenticates with a bearer/API key | **Typefully**, header-auth MCPs |
+| **API key** | human pastes a key on the connect_required card or the Connectors page → `POST /api/projects/:projectId/mcp-connections/:id/api-key` encrypts it into the vault (`allowed_hosts` = the MCP host) and links it via `mcp_connections.api_key_secret_id`. The generated secret name is `MCP_<CONNECTOR>_<PROJFRAG>` for a project-scoped connector (`PROJFRAG` = first 5 hex of the project UUID, uppercased) and `MCP_<CONNECTOR>` for a global one, so two same-type connectors in different projects get distinctly-named credentials. | the MCP server exposes no OAuth (no PRM) and authenticates with a bearer/API key | **Typefully**, header-auth MCPs |
 | **Paste / `request_credential`** | raw key pasted into the vault, referenced by placeholder from a tool call | an agent needs an arbitrary secret (not a whole connector) | `request_credential` |
 
 GitHub uses the device flow because its AS advertises no `registration_endpoint` (DCR

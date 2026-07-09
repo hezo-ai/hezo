@@ -34,7 +34,19 @@ secretsRoutes.get('/credentials', async (c) => {
 		        s.allowed_hosts, s.allow_all_hosts, s.allow_body_substitution, s.created_at, s.updated_at,
 		        usage.last_used_at,
 		        usage.use_count,
-		        usage.last_host
+		        usage.last_host,
+		        COALESCE((
+		            SELECT json_agg(json_build_object(
+		                'id', mc.id, 'name', mc.name, 'display_name', mc.display_name,
+		                'project_id', mc.project_id, 'project_slug', p.slug
+		            ) ORDER BY mc.name)
+		            FROM mcp_connections mc
+		            LEFT JOIN projects p ON p.id = mc.project_id
+		            WHERE mc.api_key_secret_id = s.id
+		               OR mc.oauth_connection_id IN (
+		                    SELECT oc.id FROM oauth_connections oc WHERE oc.access_token_secret_id = s.id
+		               )
+		        ), '[]'::json) AS connectors
 		 FROM secrets s
 		 LEFT JOIN LATERAL (
 		     SELECT max(al.created_at) AS last_used_at,
@@ -211,6 +223,22 @@ secretsRoutes.delete('/secrets/:secretId', async (c) => {
 	if (denied) return denied;
 	const db = c.get('db');
 	const secretId = c.req.param('secretId');
+
+	// A credential in use by one or more connectors (its pasted API key, or the
+	// access token of a connector's OAuth connection) cannot be deleted — removing
+	// it would silently break the connector's auth. Delete the connector first.
+	// (The UI also disables the control; this is the authoritative guard.)
+	const inUse = await db.query<{ c: number }>(
+		`SELECT count(*)::int AS c FROM mcp_connections mc
+		 WHERE mc.api_key_secret_id = $1
+		    OR mc.oauth_connection_id IN (
+		         SELECT oc.id FROM oauth_connections oc WHERE oc.access_token_secret_id = $1
+		    )`,
+		[secretId],
+	);
+	if (inUse.rows[0].c > 0) {
+		return err(c, 'IN_USE', 'Credential is in use by one or more connectors', 409);
+	}
 
 	const result = await db.query<{ id: string; name: string }>(
 		'DELETE FROM secrets WHERE id = $1 RETURNING id, name',

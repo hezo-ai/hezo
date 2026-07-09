@@ -2,8 +2,10 @@ import { useQueryClient } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
 import { ChevronDown, Plus, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { RelatedItemsList } from '../../components/related-items-list';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
+import { ConfirmDialog } from '../../components/ui/confirm-dialog';
 import { InPlaceForm } from '../../components/ui/in-place-form';
 import { InfoTooltip } from '../../components/ui/info-tooltip';
 import { Input } from '../../components/ui/input';
@@ -253,7 +255,9 @@ function InstanceConnectorRow({
 	const updateScope = useUpdateInstanceConnectorScope();
 	const [rowError, setRowError] = useState<string | null>(null);
 	const [rowInfo, setRowInfo] = useState<string | null>(null);
+	const [confirmOpen, setConfirmOpen] = useState(false);
 	const status = connectorStatus(connector);
+	const credentials = connector.credentials ?? [];
 
 	const url = typeof connector.config?.url === 'string' ? connector.config.url : '';
 	const scopeLabel = connector.project_id ? (connector.project_name ?? 'Project') : 'All projects';
@@ -354,11 +358,7 @@ function InstanceConnectorRow({
 					)}
 					<button
 						type="button"
-						onClick={() => {
-							if (confirm(`Remove connector "${connector.display_name || connector.name}"?`)) {
-								deleteConnector.mutate(connector.id);
-							}
-						}}
+						onClick={() => setConfirmOpen(true)}
 						aria-label="Remove"
 						className="text-text-3 hover:text-danger"
 					>
@@ -366,11 +366,40 @@ function InstanceConnectorRow({
 					</button>
 				</div>
 			</div>
+			{credentials.length > 0 && (
+				<RelatedItemsList
+					label="Credentials"
+					testId={`connector-credentials-${connector.id}`}
+					items={credentials.map((cred) => ({
+						key: cred.id,
+						label: cred.name,
+						href: `/settings/credentials?focus=${cred.id}#${cred.id}`,
+						testId: `connector-credential-link-${cred.id}`,
+					}))}
+				/>
+			)}
 			{connector.auth_error && status === 'failed' && (
 				<p className="text-xs text-danger mt-1">{connector.auth_error}</p>
 			)}
 			{rowError && <p className="text-xs text-danger mt-1">{rowError}</p>}
 			{rowInfo && <p className="text-xs text-text-3 mt-1">{rowInfo}</p>}
+			<ConfirmDialog
+				open={confirmOpen}
+				onOpenChange={setConfirmOpen}
+				title="Remove connector?"
+				description={
+					<>
+						Remove connector{' '}
+						<span className="font-medium">{connector.display_name || connector.name}</span>? Its
+						runs will lose access to this MCP server.
+					</>
+				}
+				confirmLabel="Remove"
+				variant="danger"
+				onConfirm={async () => {
+					await deleteConnector.mutateAsync(connector.id);
+				}}
+			/>
 		</div>
 	);
 }

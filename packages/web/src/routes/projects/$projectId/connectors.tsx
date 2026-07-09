@@ -4,14 +4,17 @@ import { Check, ExternalLink, Github, KeyRound, Plug, Trash2, X } from 'lucide-r
 import { useCallback, useState } from 'react';
 import { ConnectorApiKeyForm } from '../../../components/connector-api-key-form';
 import { ConnectorDeviceFlowDialog } from '../../../components/connector-device-flow-dialog';
+import { RelatedItemsList } from '../../../components/related-items-list';
 import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
+import { ConfirmDialog } from '../../../components/ui/confirm-dialog';
 import {
 	connectorStatus,
 	type McpConnection,
 	useMcpConnections,
 	useRevokeConnector,
 } from '../../../hooks/use-mcp-connections';
+import { useMe } from '../../../hooks/use-me';
 import {
 	type OAuthConnection,
 	useAuthStart,
@@ -97,14 +100,9 @@ function GitHubRow({ projectId, connection }: GitHubRowProps) {
 	const ensure = useEnsureConnector(projectId);
 	const [deviceConnectorId, setDeviceConnectorId] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const [confirmOpen, setConfirmOpen] = useState(false);
 	const status = connection ? 'active' : 'pending';
 	const connecting = ensure.isPending;
-
-	const doRevoke = () => {
-		if (!connection) return;
-		if (!window.confirm(`Remove ${connection.provider_account_label}?`)) return;
-		deleteConn.mutate(connection.id);
-	};
 
 	const startConnect = async () => {
 		setError(null);
@@ -164,7 +162,7 @@ function GitHubRow({ projectId, connection }: GitHubRowProps) {
 						<Button
 							size="sm"
 							variant="outline"
-							onClick={doRevoke}
+							onClick={() => setConfirmOpen(true)}
 							disabled={deleteConn.isPending}
 							data-testid="connector-revoke"
 						>
@@ -183,6 +181,25 @@ function GitHubRow({ projectId, connection }: GitHubRowProps) {
 					)}
 				</div>
 			</div>
+			{connection && (
+				<ConfirmDialog
+					open={confirmOpen}
+					onOpenChange={setConfirmOpen}
+					title="Disconnect GitHub?"
+					description={
+						<>
+							Remove the GitHub connection{' '}
+							<span className="font-mono">{connection.provider_account_label}</span>? Git operations
+							and the GitHub MCP server will stop working for this project.
+						</>
+					}
+					confirmLabel="Disconnect"
+					variant="danger"
+					onConfirm={async () => {
+						await deleteConn.mutateAsync(connection.id);
+					}}
+				/>
+			)}
 		</li>
 	);
 }
@@ -195,12 +212,18 @@ interface ConnectorRowProps {
 }
 
 function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowProps) {
+	const { data: me } = useMe();
 	const status = connectorStatus(connector);
 	const authStart = useAuthStart(projectId);
 	const revoke = useRevokeConnector(projectId);
 	const [error, setError] = useState<string | null>(null);
 	const [deviceOpen, setDeviceOpen] = useState(false);
 	const [showApiKey, setShowApiKey] = useState(false);
+	const [confirmOpen, setConfirmOpen] = useState(false);
+	const credentials = connector.credentials ?? [];
+	// The credentials page is superuser-only, so link there only for a superuser;
+	// members see the credential name as plain text.
+	const isSuperuser = !!me?.is_superuser;
 
 	const capability = getConnectorCapability(connector.name);
 	const usesDeviceFlow = !!capability?.deviceAuth;
@@ -233,17 +256,13 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 		});
 	};
 
-	const doRevoke = () => {
+	const doRevoke = async () => {
 		setError(null);
-		if (
-			!window.confirm(
-				`Revoke ${connector.display_name ?? connector.name}? Agents will lose access immediately.`,
-			)
-		)
-			return;
-		revoke.mutate(connector.id, {
-			onError: (e: unknown) => setError(e instanceof Error ? e.message : 'Failed to revoke'),
-		});
+		try {
+			await revoke.mutateAsync(connector.id);
+		} catch (e) {
+			setError(e instanceof Error ? e.message : 'Failed to revoke');
+		}
 	};
 
 	return (
@@ -297,7 +316,7 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 						<Button
 							size="sm"
 							variant="outline"
-							onClick={doRevoke}
+							onClick={() => setConfirmOpen(true)}
 							disabled={revoke.isPending}
 							data-testid="connector-revoke"
 						>
@@ -339,6 +358,21 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 				</div>
 			)}
 
+			{credentials.length > 0 && (
+				<div className="mt-3">
+					<RelatedItemsList
+						label="Credentials"
+						testId={`connector-credentials-${connector.id}`}
+						items={credentials.map((cred) => ({
+							key: cred.id,
+							label: cred.name,
+							href: isSuperuser ? `/settings/credentials?focus=${cred.id}#${cred.id}` : undefined,
+							testId: `connector-credential-link-${cred.id}`,
+						}))}
+					/>
+				</div>
+			)}
+
 			{connector.created_by_task_id && (
 				<div className="mt-3 pt-3 border-t border-border text-xs text-text-2">
 					Requested by an agent.{' '}
@@ -351,6 +385,21 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 					</Link>
 				</div>
 			)}
+
+			<ConfirmDialog
+				open={confirmOpen}
+				onOpenChange={setConfirmOpen}
+				title="Disconnect connector?"
+				description={
+					<>
+						Revoke <span className="font-medium">{connector.display_name ?? connector.name}</span>?
+						Agents will lose access immediately.
+					</>
+				}
+				confirmLabel="Disconnect"
+				variant="danger"
+				onConfirm={doRevoke}
+			/>
 		</li>
 	);
 }

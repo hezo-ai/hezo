@@ -35,13 +35,27 @@ const CONNECTOR_COLUMNS_MC = `mc.id, mc.name, mc.display_name, mc.kind::text AS 
         mc.install_error, mc.skill_id, mc.created_by_task_id, mc.activated_at, mc.revoked_at,
         mc.auth_error, mc.created_at, mc.updated_at`;
 
+// The credential(s) a connector uses, as a JSON array — its pasted API-key secret
+// or the access token of its linked OAuth connection (relation R, symmetric with
+// the `connectors` array on GET /credentials). Correlated on the connector row
+// aliased `<alias>`; returns `[]` for a connector with no connector-managed auth.
+const connectorCredentialsJson = (alias: string): string =>
+	`COALESCE((
+		SELECT json_agg(json_build_object('id', cs.id, 'name', cs.name) ORDER BY cs.name)
+		FROM secrets cs
+		WHERE cs.id = ${alias}.api_key_secret_id
+		   OR cs.id = (SELECT oc2.access_token_secret_id FROM oauth_connections oc2
+		               WHERE oc2.id = ${alias}.oauth_connection_id)
+	), '[]'::json) AS credentials`;
+
 export const mcpConnectionsRoutes = new Hono<Env>();
 
 mcpConnectionsRoutes.get('/projects/:projectId/mcp-connections', async (c) => {
 	const db = c.get('db');
 	const projectId = c.get('projectId') as string;
 	const result = await db.query(
-		`SELECT ${CONNECTOR_COLUMNS_MC}, oc.provider_account_label AS oauth_account_label
+		`SELECT ${CONNECTOR_COLUMNS_MC}, oc.provider_account_label AS oauth_account_label,
+		        ${connectorCredentialsJson('mc')}
 		 FROM mcp_connections mc
 		 LEFT JOIN oauth_connections oc ON oc.id = mc.oauth_connection_id
 		 WHERE mc.project_id = $1 OR mc.project_id IS NULL
@@ -60,7 +74,8 @@ mcpConnectionsRoutes.get('/mcp-connections', async (c) => {
 	const db = c.get('db');
 	const result = await db.query(
 		`SELECT ${CONNECTOR_COLUMNS_MC}, p.name AS project_name, p.slug AS project_slug,
-		        oc.provider_account_label AS oauth_account_label
+		        oc.provider_account_label AS oauth_account_label,
+		        ${connectorCredentialsJson('mc')}
 		 FROM mcp_connections mc
 		 LEFT JOIN projects p ON p.id = mc.project_id
 		 LEFT JOIN oauth_connections oc ON oc.id = mc.oauth_connection_id
@@ -235,8 +250,8 @@ mcpConnectionsRoutes.get('/projects/:projectId/mcp-connections/:id', async (c) =
 	const projectId = c.get('projectId') as string;
 	const id = c.req.param('id');
 	const result = await db.query(
-		`SELECT ${CONNECTOR_COLUMNS} FROM mcp_connections
-		 WHERE id = $1 AND (project_id = $2 OR project_id IS NULL)`,
+		`SELECT ${CONNECTOR_COLUMNS_MC}, ${connectorCredentialsJson('mc')} FROM mcp_connections mc
+		 WHERE mc.id = $1 AND (mc.project_id = $2 OR mc.project_id IS NULL)`,
 		[id, projectId],
 	);
 	if (result.rows.length === 0) return err(c, 'NOT_FOUND', 'connector not found', 404);
@@ -310,19 +325,25 @@ mcpConnectionsRoutes.post('/projects/:projectId/mcp-connections/:id/revoke', asy
 
 /**
  * Derive a stable, grammar-valid vault secret name for a connector's pasted API
- * key. Keyed on the connector id (first 8 hex) so re-pasting upserts the same
- * secret and two like-named connectors in different projects never collide.
+ * key. A project-scoped connector's key is qualified with the first 5 hex chars
+ * of its project UUID (`MCP_<base>_<PROJFRAG>`) so two connectors of the same
+ * type in different projects get distinctly-named credentials — the name is the
+ * only project signal, since credentials themselves stay global. A global
+ * ("all projects") connector's key is unqualified (`MCP_<base>`). Deriving from
+ * (connector name, project) keeps re-pastes upserting the same secret; connector
+ * names are unique within a scope, so the base never collides in-scope.
  */
-function apiKeySecretName(connectorName: string, connectorId: string): string {
-	const suffix = connectorId.replace(/-/g, '').slice(0, 8).toUpperCase();
+function apiKeySecretName(connectorName: string, projectId: string | null): string {
+	const frag = projectId ? projectId.replace(/-/g, '').slice(0, 5).toUpperCase() : '';
 	let base = connectorName
 		.toUpperCase()
 		.replace(/[^A-Z0-9_]/g, '_')
 		.replace(/^[^A-Z]+/, '');
 	if (base.length === 0) base = 'KEY';
-	// Cap so total `MCP_<base>_<suffix>` stays within the 64-char grammar limit.
-	base = base.slice(0, 64 - 'MCP_'.length - 1 - suffix.length);
-	return `MCP_${base}_${suffix}`;
+	// Cap so total `MCP_<base>[_<frag>]` stays within the 64-char grammar limit.
+	const tail = frag ? 1 + frag.length : 0;
+	base = base.slice(0, 64 - 'MCP_'.length - tail);
+	return frag ? `MCP_${base}_${frag}` : `MCP_${base}`;
 }
 
 /**
@@ -355,8 +376,9 @@ mcpConnectionsRoutes.post('/projects/:projectId/mcp-connections/:id/api-key', as
 		config: Record<string, unknown>;
 		revoked_at: string | null;
 		created_by_task_id: string | null;
+		project_id: string | null;
 	}>(
-		`SELECT id, name, kind::text AS kind, config, revoked_at::text AS revoked_at, created_by_task_id
+		`SELECT id, name, kind::text AS kind, config, revoked_at::text AS revoked_at, created_by_task_id, project_id
 		 FROM mcp_connections
 		 WHERE id = $1 AND (project_id = $2 OR project_id IS NULL)`,
 		[id, projectId],
@@ -393,7 +415,7 @@ mcpConnectionsRoutes.post('/projects/:projectId/mcp-connections/:id/api-key', as
 			? { ...(header !== undefined ? { header } : {}), ...(scheme !== undefined ? { scheme } : {}) }
 			: null;
 
-	const secretName = apiKeySecretName(conn.name, conn.id);
+	const secretName = apiKeySecretName(conn.name, conn.project_id);
 	const nameCheck = validateSecretName(secretName);
 	if (!nameCheck.valid) {
 		return err(c, 'INVALID_REQUEST', `derived secret name invalid: ${nameCheck.error}`, 500);

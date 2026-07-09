@@ -172,3 +172,92 @@ describe('global credentials (secrets)', () => {
 		expect(del.status).toBe(404);
 	});
 });
+
+describe('credential ↔ connector relationships', () => {
+	// Seed a project + a connector whose api_key_secret_id points at `secretId`.
+	async function seedConnectorUsing(
+		secretId: string,
+		opts: { projectScoped: boolean } = { projectScoped: true },
+	): Promise<{ connectorId: string; projectId: string | null; projectSlug: string | null }> {
+		const suffix = Math.random().toString(36).slice(2, 8);
+		const team = await db.query<{ id: string }>(
+			`INSERT INTO teams (name, slug) VALUES ($1, $2) RETURNING id`,
+			[`Rel ${suffix}`, `rel-${suffix}`],
+		);
+		const proj = await db.query<{ id: string; slug: string }>(
+			`INSERT INTO projects (team_id, name, slug, task_prefix, docker_base_image, container_status)
+			 VALUES ($1, $2, $3, 'RP', 'hezo/agent-base:latest', NULL) RETURNING id, slug`,
+			[team.rows[0].id, `Rel Proj ${suffix}`, `rel-proj-${suffix}`],
+		);
+		const projectId = opts.projectScoped ? proj.rows[0].id : null;
+		const conn = await db.query<{ id: string }>(
+			`INSERT INTO mcp_connections (name, kind, config, install_status, project_id, api_key_secret_id, activated_at)
+			 VALUES ($1, 'saas', '{"url":"https://mcp.rel.example/mcp"}'::jsonb, 'installed', $2, $3, now())
+			 RETURNING id`,
+			[`rel-connector-${suffix}`, projectId, secretId],
+		);
+		return {
+			connectorId: conn.rows[0].id,
+			projectId,
+			projectSlug: opts.projectScoped ? proj.rows[0].slug : null,
+		};
+	}
+
+	it('GET /credentials lists the connectors that use each credential', async () => {
+		const create = await createSecret({
+			name: 'REL_LINKED_KEY',
+			value: 'v',
+			allowed_hosts: ['mcp.rel.example'],
+		});
+		const secretId = (await create.json()).data.id as string;
+		const { connectorId, projectId, projectSlug } = await seedConnectorUsing(secretId);
+
+		const res = await app.request('/api/credentials', { headers: authHeader(token) });
+		const rows = (await res.json()).data as {
+			id: string;
+			name: string;
+			connectors: {
+				id: string;
+				name: string;
+				project_id: string | null;
+				project_slug: string | null;
+			}[];
+		}[];
+		const linked = rows.find((r) => r.name === 'REL_LINKED_KEY');
+		expect(linked).toBeDefined();
+		expect(linked?.connectors).toHaveLength(1);
+		expect(linked?.connectors[0]).toMatchObject({
+			id: connectorId,
+			project_id: projectId,
+			project_slug: projectSlug,
+		});
+
+		// A credential with no connector reports an empty array.
+		const unused = rows.find((r) => r.name === 'SHARED_API_KEY');
+		expect(unused?.connectors).toEqual([]);
+	});
+
+	it('blocks deleting a credential that is in use by a connector (409), allows it once free', async () => {
+		const create = await createSecret({
+			name: 'REL_GUARDED_KEY',
+			value: 'v',
+			allowed_hosts: ['mcp.rel.example'],
+		});
+		const secretId = (await create.json()).data.id as string;
+		const { connectorId } = await seedConnectorUsing(secretId);
+
+		const blocked = await app.request(`/api/secrets/${secretId}`, {
+			method: 'DELETE',
+			headers: authHeader(token),
+		});
+		expect(blocked.status).toBe(409);
+
+		// Detach the connector, then the delete is allowed.
+		await db.query(`DELETE FROM mcp_connections WHERE id = $1`, [connectorId]);
+		const allowed = await app.request(`/api/secrets/${secretId}`, {
+			method: 'DELETE',
+			headers: authHeader(token),
+		});
+		expect(allowed.status).toBe(200);
+	});
+});

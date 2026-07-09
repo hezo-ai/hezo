@@ -237,6 +237,123 @@ describe('POST /projects/:projectId/mcp-connections/:id/api-key', () => {
 	});
 });
 
+describe('api-key credential naming + connector→credential relationship', () => {
+	function projFrag(projectId: string): string {
+		return projectId.replace(/-/g, '').slice(0, 5).toUpperCase();
+	}
+
+	async function seedProjectConnector(
+		ctx: Awaited<ReturnType<typeof createTestApp>>,
+		name: string,
+	): Promise<{ projectSlug: string; projectId: string; connectorId: string }> {
+		const co = await createTestTeam(ctx.db, {
+			name: `Name ${Math.random().toString(36).slice(2)}`,
+		});
+		const team = (await co.json()).data;
+		const projectSlug = await projectSlugFor(ctx.db, team.id);
+		const proj = await ctx.db.query<{ id: string }>(`SELECT id FROM projects WHERE slug = $1`, [
+			projectSlug,
+		]);
+		const insert = await ctx.app.request(`/api/projects/${projectSlug}/mcp-connections`, {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name, kind: 'saas', config: { url: 'https://mcp.name.example/mcp' } }),
+		});
+		const connector = (await insert.json()).data as { id: string };
+		return { projectSlug, projectId: proj.rows[0].id, connectorId: connector.id };
+	}
+
+	async function setApiKey(
+		ctx: Awaited<ReturnType<typeof createTestApp>>,
+		projectSlug: string,
+		connectorId: string,
+	): Promise<string> {
+		const res = await ctx.app.request(
+			`/api/projects/${projectSlug}/mcp-connections/${connectorId}/api-key`,
+			{
+				method: 'POST',
+				headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
+				body: JSON.stringify({ value: `key_${Math.random().toString(36).slice(2)}` }),
+			},
+		);
+		return (await res.json()).data.api_key_secret_id as string;
+	}
+
+	it('qualifies a project-scoped connector credential with the project UUID fragment', async () => {
+		const ctx = await createTestApp();
+		const { projectSlug, projectId, connectorId } = await seedProjectConnector(ctx, 'namedmcp');
+		const secretId = await setApiKey(ctx, projectSlug, connectorId);
+		const secret = await ctx.db.query<{ name: string }>(`SELECT name FROM secrets WHERE id = $1`, [
+			secretId,
+		]);
+		const name = secret.rows[0].name;
+		const { validateSecretName } = await import('../src/lib/credential-placeholder');
+		expect(validateSecretName(name).valid).toBe(true);
+		expect(name).toBe(`MCP_NAMEDMCP_${projFrag(projectId)}`);
+		await safeClose(ctx.db);
+	});
+
+	it('gives two same-type connectors in different projects distinctly-named credentials', async () => {
+		const ctx = await createTestApp();
+		const a = await seedProjectConnector(ctx, 'shared');
+		const b = await seedProjectConnector(ctx, 'shared');
+		const nameA = (
+			await ctx.db.query<{ name: string }>(`SELECT name FROM secrets WHERE id = $1`, [
+				await setApiKey(ctx, a.projectSlug, a.connectorId),
+			])
+		).rows[0].name;
+		const nameB = (
+			await ctx.db.query<{ name: string }>(`SELECT name FROM secrets WHERE id = $1`, [
+				await setApiKey(ctx, b.projectSlug, b.connectorId),
+			])
+		).rows[0].name;
+		expect(nameA).not.toBe(nameB);
+		expect(nameA.endsWith(projFrag(a.projectId))).toBe(true);
+		expect(nameB.endsWith(projFrag(b.projectId))).toBe(true);
+		await safeClose(ctx.db);
+	});
+
+	it('leaves a global connector credential unqualified (no project fragment)', async () => {
+		const ctx = await createTestApp();
+		// Admin surface creates a global (project_id null) connector; the api-key
+		// route accepts it (project_id IS NULL) via any project path.
+		const created = await ctx.app.request(`/api/mcp-connections`, {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				name: 'globalmcp',
+				kind: 'saas',
+				config: { url: 'https://mcp.global.example/mcp' },
+				project_id: null,
+			}),
+		});
+		const connectorId = (await created.json()).data.id as string;
+		const co = await createTestTeam(ctx.db, { name: 'Any Proj' });
+		const projectSlug = await projectSlugFor(ctx.db, (await co.json()).data.id);
+		const secretId = await setApiKey(ctx, projectSlug, connectorId);
+		const name = (
+			await ctx.db.query<{ name: string }>(`SELECT name FROM secrets WHERE id = $1`, [secretId])
+		).rows[0].name;
+		expect(name).toBe('MCP_GLOBALMCP');
+		await safeClose(ctx.db);
+	});
+
+	it('the connector list surfaces the credential(s) it uses', async () => {
+		const ctx = await createTestApp();
+		const { projectSlug, connectorId } = await seedProjectConnector(ctx, 'listcreds');
+		const secretId = await setApiKey(ctx, projectSlug, connectorId);
+		const list = await ctx.app.request(`/api/projects/${projectSlug}/mcp-connections`, {
+			headers: { Authorization: `Bearer ${ctx.token}` },
+		});
+		const row = ((await list.json()).data as { id: string; credentials: { id: string }[] }[]).find(
+			(r) => r.id === connectorId,
+		);
+		expect(row?.credentials).toHaveLength(1);
+		expect(row?.credentials[0].id).toBe(secretId);
+		await safeClose(ctx.db);
+	});
+});
+
 describe('POST /teams/:teamId/connectors/ensure', () => {
 	it('creates a connector from the registry on first call, returns the same row on second', async () => {
 		const ctx = await createTestApp();
