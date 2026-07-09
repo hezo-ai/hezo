@@ -34,17 +34,29 @@ interface TabsProps {
 }
 
 // Folder ("browser tab") styling, defined once. The active tab gets top + side
-// borders and a rounded top, then pulls itself down 1px (`-mb-px` +
-// `border-b-transparent` + a fill matching the panel below) so it covers the
-// strip's baseline border and reads as raised in front of the others. Inactive
-// tabs stay recessed on the baseline.
+// borders and a rounded top, then pulls itself down 1px (`-mb-px`) and paints an
+// opaque bottom border the same colour as the panel below (`border-b-<surface>`)
+// so it covers the strip's baseline border and reads as raised in front of the
+// others, merging into that panel. A *transparent* bottom border wouldn't do it:
+// the strip's baseline shows straight through, so the active tab reads as a
+// closed box with a bottom border. Inactive tabs stay recessed on the baseline.
 const BASE_TAB =
 	'relative flex items-center gap-1.5 rounded-t-md border px-3 py-2 text-[13px] font-medium transition-colors';
 
+// Maps each supported active-surface fill to the matching bottom-border colour.
+// Kept as literal class strings (not derived at runtime) so Tailwind's scanner
+// emits the utilities. Falls back to `border-b-bg` for any unlisted surface.
+const SURFACE_BOTTOM_BORDER: Record<string, string> = {
+	'bg-bg': 'border-b-bg',
+	'bg-surface': 'border-b-surface',
+};
+
 function tabClass(isActive: boolean, activeSurface: string): string {
-	return isActive
-		? `${BASE_TAB} z-10 -mb-px border-border border-b-transparent ${activeSurface} text-text-1`
-		: `${BASE_TAB} border-transparent bg-surface-2 text-text-2 hover:bg-surface-3 hover:text-text-1`;
+	if (!isActive) {
+		return `${BASE_TAB} border-transparent bg-surface-2 text-text-2 hover:bg-surface-3 hover:text-text-1`;
+	}
+	const bottomBorder = SURFACE_BOTTOM_BORDER[activeSurface] ?? 'border-b-bg';
+	return `${BASE_TAB} z-10 -mb-px border-border ${bottomBorder} ${activeSurface} text-text-1`;
 }
 
 function TabInner({ item }: { item: TabItem }) {
