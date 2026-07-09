@@ -6,7 +6,7 @@ import {
 	wsRoom,
 } from '@hezo/shared';
 import type { Db } from '../db/database';
-import { broadcastRowChange } from '../lib/broadcast';
+import { broadcastCommentFamilyChange, broadcastRowChange } from '../lib/broadcast';
 import { extractMentionSlugs } from '../lib/mentions';
 import { logger } from '../logger';
 import { createWakeup } from './wakeup';
@@ -112,6 +112,81 @@ export async function fireCommentWakeups(params: FireCommentWakeupsParams): Prom
 			effortPayload,
 		});
 	}
+}
+
+export interface PostAgentCommentParams {
+	db: Db;
+	wsManager?: WebSocketManager;
+	teamId: string;
+	projectId: string;
+	taskId: string;
+	authorMemberId: string | null;
+	authorApiKeyId?: string | null;
+	authorUserId?: string | null;
+	createdByRunId: string | null;
+	parentCommentId?: string | null;
+	text: string;
+	effort?: string | null;
+}
+
+/**
+ * Insert a text comment on a task and run the exact delivery side effects a
+ * `create_comment` MCP call does — the realtime broadcast plus
+ * `fireCommentWakeups` (mention / @admin inbox / reply fan-out). Shared by the
+ * `create_comment` tool and the runner's handoff-delivery guardrail so an
+ * auto-delivered final message is byte-identical to a comment the agent posts
+ * itself. Returns the inserted row (`RETURNING *`, so it carries `public_id`).
+ */
+export async function postAgentComment(
+	params: PostAgentCommentParams,
+): Promise<{ id: string; public_id: string } & Record<string, unknown>> {
+	const {
+		db,
+		wsManager,
+		teamId,
+		projectId,
+		taskId,
+		authorMemberId,
+		authorApiKeyId = null,
+		authorUserId = null,
+		createdByRunId,
+		parentCommentId = null,
+		text,
+		effort,
+	} = params;
+
+	const content = { text };
+	const r = await db.query<{ id: string; public_id: string } & Record<string, unknown>>(
+		`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, parent_comment_id, content_type, content, created_by_run_id) VALUES ($1, $2, $3, $4, $5::comment_content_type, $6::jsonb, $7) RETURNING *`,
+		[
+			taskId,
+			authorMemberId,
+			authorApiKeyId,
+			parentCommentId,
+			CommentContentType.Text,
+			JSON.stringify(content),
+			createdByRunId,
+		],
+	);
+	const row = r.rows[0];
+	// Realtime: notify open task pages. task_comments has no project_id column, so
+	// the helper injects it for the web client's slug resolution.
+	broadcastCommentFamilyChange(wsManager, teamId, projectId, 'task_comments', 'INSERT', row);
+	await fireCommentWakeups({
+		db,
+		taskId,
+		teamId,
+		commentId: row.id,
+		content,
+		contentType: CommentContentType.Text,
+		authorMemberId,
+		authorUserId,
+		authorRunId: createdByRunId,
+		effort,
+		parentCommentId,
+		wsManager,
+	});
+	return row;
 }
 
 interface ReplyWakeupCtx {

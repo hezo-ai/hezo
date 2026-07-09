@@ -47,6 +47,14 @@ export interface AgentStreamParser {
 	 * heartbeat_run row instead of leaving the reason buried in the log.
 	 */
 	getTerminalError(): string | null;
+	/**
+	 * The run's last human-visible assistant text (its final message), or null
+	 * when the run produced none. A run's final message is otherwise delivered to
+	 * no one — it is logged, not posted — so the runner uses this to detect a
+	 * handoff/@-mention the agent left only in its final message and deliver it as
+	 * a real comment (see the handoff-delivery guardrail in `agent-runner.ts`).
+	 */
+	getFinalAssistantMessage(): string | null;
 }
 
 /**
@@ -105,6 +113,7 @@ function createPassthroughParser(): AgentStreamParser {
 		flush: () => '',
 		getUsage: () => null,
 		getTerminalError: () => null,
+		getFinalAssistantMessage: () => null,
 	};
 }
 
@@ -121,6 +130,7 @@ function createJsonlParser(
 	renderEvent: (event: unknown) => string[],
 	getUsage: () => AgentRunUsage | null,
 	getTerminalError: () => string | null = () => null,
+	getFinalAssistantMessage: () => string | null = () => null,
 ): AgentStreamParser {
 	let buffer = '';
 
@@ -156,6 +166,7 @@ function createJsonlParser(
 		},
 		getUsage,
 		getTerminalError,
+		getFinalAssistantMessage,
 	};
 }
 
@@ -407,6 +418,7 @@ function createClaudeCodeParser(price: PriceModelFn): AgentStreamParser {
 	// authoritative figure once `result` lands.
 	const run = { input: 0, cacheCreation: 0, cacheRead: 0, output: 0 };
 	let sawResult = false;
+	let finalMessage: string | null = null;
 
 	const renderEvent = (raw: unknown): string[] => {
 		const event = raw as ClaudeStreamEvent;
@@ -445,7 +457,12 @@ function createClaudeCodeParser(price: PriceModelFn): AgentStreamParser {
 					out.push(formatToolUse(block.name ?? 'unknown', block.input));
 				} else if (block.type === 'text') {
 					const text = (block.text ?? '').trim();
-					if (text) out.push(text);
+					if (text) {
+						out.push(text);
+						// Fallback capture of the run's final message for runs that end
+						// without a `result` event; the authoritative value is `result`.
+						finalMessage = text;
+					}
 				}
 			}
 			return out;
@@ -463,6 +480,12 @@ function createClaudeCodeParser(price: PriceModelFn): AgentStreamParser {
 
 		if (event.type === 'result') {
 			sawResult = true;
+			// `result` is Claude Code's authoritative final assistant message on a
+			// clean turn; on an error turn it carries the failure text, so only take
+			// it as the run's final message when the result is not an error.
+			if (!event.is_error && typeof event.result === 'string' && event.result.trim()) {
+				finalMessage = event.result.trim();
+			}
 			const u = event.usage ?? {};
 			const regularInput = u.input_tokens ?? 0;
 			const cacheCreation = u.cache_creation_input_tokens ?? 0;
@@ -499,6 +522,7 @@ function createClaudeCodeParser(price: PriceModelFn): AgentStreamParser {
 		renderEvent,
 		() => usage,
 		() => terminalError,
+		() => finalMessage,
 	);
 }
 
@@ -540,6 +564,7 @@ function createCodexParser(price: PriceModelFn): AgentStreamParser {
 	let usage: AgentRunUsage | null = null;
 	let turns = 0;
 	let modelId: string | undefined;
+	let finalMessage: string | null = null;
 
 	const renderEvent = (raw: unknown): string[] => {
 		const event = raw as CodexEvent;
@@ -575,6 +600,11 @@ function createCodexParser(price: PriceModelFn): AgentStreamParser {
 		}
 
 		if (type === 'item.completed' && event.item) {
+			const kind = event.item.type ?? event.item.item_type ?? '';
+			if (kind === 'agent_message' || kind === 'assistant_message') {
+				const text = (event.item.text ?? event.item.message ?? '').trim();
+				if (text) finalMessage = text;
+			}
 			return renderCodexItem(event.item);
 		}
 
@@ -586,7 +616,12 @@ function createCodexParser(price: PriceModelFn): AgentStreamParser {
 		return [];
 	};
 
-	return createJsonlParser(renderEvent, () => usage);
+	return createJsonlParser(
+		renderEvent,
+		() => usage,
+		() => null,
+		() => finalMessage,
+	);
 }
 
 function renderCodexItem(item: CodexItem): string[] {
@@ -661,6 +696,7 @@ interface GeminiEvent {
 
 function createGeminiParser(price: PriceModelFn): AgentStreamParser {
 	let usage: AgentRunUsage | null = null;
+	let finalMessage: string | null = null;
 
 	const renderEvent = (raw: unknown): string[] => {
 		const event = raw as GeminiEvent;
@@ -673,6 +709,7 @@ function createGeminiParser(price: PriceModelFn): AgentStreamParser {
 		if (type === 'message') {
 			if (event.role === 'user') return [];
 			const text = (event.content ?? event.text ?? '').trim();
+			if (text) finalMessage = text;
 			return text ? [text] : [];
 		}
 
@@ -704,7 +741,12 @@ function createGeminiParser(price: PriceModelFn): AgentStreamParser {
 		return [];
 	};
 
-	return createJsonlParser(renderEvent, () => usage);
+	return createJsonlParser(
+		renderEvent,
+		() => usage,
+		() => null,
+		() => finalMessage,
+	);
 }
 
 /**
@@ -843,6 +885,7 @@ const GENERIC_TERMINAL_RE = /complete|finish|result|done|stop|\bend\b/i;
 function createGenericJsonlParser(price: PriceModelFn): AgentStreamParser {
 	let usage: AgentRunUsage | null = null;
 	let modelId: string | undefined;
+	let finalMessage: string | null = null;
 
 	const renderEvent = (raw: unknown): string[] => {
 		if (!isRecord(raw)) return [];
@@ -873,7 +916,10 @@ function createGenericJsonlParser(price: PriceModelFn): AgentStreamParser {
 		}
 
 		const text = extractGenericText(event);
-		if (text) return [text];
+		if (text) {
+			finalMessage = text;
+			return [text];
+		}
 
 		if (captured && GENERIC_TERMINAL_RE.test(type)) {
 			return [`[done] success tokens=${captured.inputTokens}/${captured.outputTokens}`];
@@ -881,7 +927,12 @@ function createGenericJsonlParser(price: PriceModelFn): AgentStreamParser {
 		return [];
 	};
 
-	return createJsonlParser(renderEvent, () => usage);
+	return createJsonlParser(
+		renderEvent,
+		() => usage,
+		() => null,
+		() => finalMessage,
+	);
 }
 
 function createGenericChatParser(price: PriceModelFn): AgentChatParser {

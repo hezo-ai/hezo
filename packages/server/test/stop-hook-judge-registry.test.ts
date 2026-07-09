@@ -268,6 +268,18 @@ describe('stop-hook command judges emit the runtime-correct decision and guard t
 			'stop_hook_active',
 		);
 	});
+
+	it('the Claude Code prompt hook points the judge at the last_assistant_message field', () => {
+		// $ARGUMENTS is the raw Stop-hook input JSON, whose `last_assistant_message`
+		// field carries the agent's final message. The prompt names that field
+		// explicitly so a weaker judge model (e.g. DeepSeek judging itself) evaluates
+		// the message text — the input rule 10 turns on — rather than the surrounding
+		// metadata blob.
+		expect(STOP_HOOK_PROMPT).toContain('last_assistant_message');
+		expect(buildClaudeCodeSettings(AiProvider.DeepSeek).hooks.Stop[0].hooks[0].prompt).toContain(
+			'last_assistant_message',
+		);
+	});
 });
 
 /**

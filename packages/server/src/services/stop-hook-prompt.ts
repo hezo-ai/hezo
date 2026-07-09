@@ -54,11 +54,13 @@ export const CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER: Partial<Record<AiProvider, str
 };
 
 /**
- * The rule body the judge LLM evaluates against. Claude Code's hook
- * appends "Agent's final context:\n$ARGUMENTS" and lets Claude Code
- * substitute the transcript. Codex and Gemini get the rules as the
- * system prompt and the assistant's final message as the user message
- * (see the judge scripts).
+ * The rule body the judge LLM evaluates against. Claude Code's `type:"prompt"`
+ * hook appends the raw Stop-hook input JSON as `$ARGUMENTS`; that JSON carries
+ * the assistant's final message in its `last_assistant_message` field (alongside
+ * `stop_hook_active`), and STOP_HOOK_PROMPT points the judge explicitly at that
+ * field so a weaker judge model evaluates the message, not the surrounding
+ * metadata. Codex and Gemini get the rules as the system prompt and the
+ * assistant's final message as the user message (see the judge scripts).
  */
 export const STOP_HOOK_RULES = `You are a quality gate. The agent is about to stop working on a Hezo task. Review its final message and decide whether the work is truly complete.
 
@@ -81,9 +83,11 @@ Separately, if the agent has genuinely evaluated the current task, concluded the
 
 export const STOP_HOOK_PROMPT = `${STOP_HOOK_RULES}
 
-Loop breaker (check this FIRST): the "Agent's final context" below is the raw Stop-hook input JSON. If it contains "stop_hook_active": true, this turn has ALREADY been continued once by this very hook — output {"decision":"allow"} immediately, with no further analysis. Blocking again would re-continue the same run and can loop the agent indefinitely on a verdict that is not going to change. (The command-script judges for the other runtimes short-circuit on this same flag.)
+Loop breaker (check this FIRST): the "Stop-hook input" below is the raw Stop-hook input JSON. If it contains "stop_hook_active": true, this turn has ALREADY been continued once by this very hook — output {"decision":"allow"} immediately, with no further analysis. Blocking again would re-continue the same run and can loop the agent indefinitely on a verdict that is not going to change. (The command-script judges for the other runtimes short-circuit on this same flag.)
 
-Agent's final context:
+The agent's final message — the text you evaluate against the rules above — is the "last_assistant_message" field of the Stop-hook input JSON below. Evaluate THAT message. Every other field (session_id, transcript_path, cwd, permission_mode, hook_event_name) is metadata: ignore it, except "stop_hook_active" for the loop breaker above. In particular, rule 10 turns on what the "last_assistant_message" text itself says — an active @<agent-slug> or @admin mention or a baton-passing handoff there is UNDELIVERED and blocks by default. If "last_assistant_message" is absent or empty, output {"decision":"allow"}.
+
+Stop-hook input:
 $ARGUMENTS`;
 
 interface ClaudeStopHookEntry {

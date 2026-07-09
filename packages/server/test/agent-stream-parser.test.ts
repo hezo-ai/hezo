@@ -555,3 +555,76 @@ describe('agent-stream-parser — generic (opencode)', () => {
 		expect(out).toBe('');
 	});
 });
+
+describe('getFinalAssistantMessage', () => {
+	it('captures the Claude Code result event as the final message', () => {
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		expect(parser.getFinalAssistantMessage()).toBeNull();
+		parser.onStdout(
+			`${JSON.stringify({
+				type: 'result',
+				subtype: 'success',
+				is_error: false,
+				result: '@admin — Higgsfield is broken, which way do you want to go?',
+				usage: { input_tokens: 5, output_tokens: 3 },
+			})}\n`,
+		);
+		expect(parser.getFinalAssistantMessage()).toBe(
+			'@admin — Higgsfield is broken, which way do you want to go?',
+		);
+	});
+
+	it('falls back to the last assistant text block when no result event arrives', () => {
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		const assistant = (text: string) =>
+			`${JSON.stringify({
+				type: 'assistant',
+				message: { role: 'assistant', content: [{ type: 'text', text }] },
+			})}\n`;
+		parser.onStdout(assistant('first pass'));
+		parser.onStdout(assistant('handing off to @architect now'));
+		// Last assistant message wins; no `result` event was emitted.
+		expect(parser.getFinalAssistantMessage()).toBe('handing off to @architect now');
+	});
+
+	it('does not take an error result as the final message', () => {
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		parser.onStdout(
+			`${JSON.stringify({
+				type: 'result',
+				subtype: 'error',
+				is_error: true,
+				result: 'API Error: 529 overloaded',
+			})}\n`,
+		);
+		expect(parser.getFinalAssistantMessage()).toBeNull();
+	});
+
+	it('captures the Codex final agent_message', () => {
+		const parser = createAgentStreamParser(AgentRuntime.Codex);
+		parser.onStdout(
+			`${JSON.stringify({
+				type: 'item.completed',
+				item: { type: 'agent_message', text: 'done — over to you @admin' },
+			})}\n`,
+		);
+		expect(parser.getFinalAssistantMessage()).toBe('done — over to you @admin');
+	});
+
+	it('captures the Gemini final assistant message and ignores user turns', () => {
+		const parser = createAgentStreamParser(AgentRuntime.Gemini);
+		parser.onStdout(`${JSON.stringify({ type: 'message', role: 'user', content: 'ignored' })}\n`);
+		parser.onStdout(
+			`${JSON.stringify({ type: 'message', role: 'assistant', content: 'ready for @admin review' })}\n`,
+		);
+		expect(parser.getFinalAssistantMessage()).toBe('ready for @admin review');
+	});
+
+	it('captures the OpenCode/generic final assistant text', () => {
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
+		parser.onStdout(
+			`${JSON.stringify({ type: 'message', role: 'assistant', content: 'blocked — @admin please advise' })}\n`,
+		);
+		expect(parser.getFinalAssistantMessage()).toBe('blocked — @admin please advise');
+	});
+});
