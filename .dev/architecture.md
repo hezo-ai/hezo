@@ -817,10 +817,26 @@ Codex/Gemini use command scripts (`buildCodexJudgeScript`/`buildGeminiJudgeScrip
 call the provider API. Every runtime's judge short-circuits on `stop_hook_active` — allow
 the stop once the turn has already been continued once — so a persistent verdict can't loop
 the same headless exec: the Codex/Gemini scripts guard it in code, and the Claude Code prompt
-hook now instructs the judge to do the same (its `$ARGUMENTS` carries the flag). **OpenCode
+hook now instructs the judge to do the same. For Claude Code the `$ARGUMENTS` placeholder is
+the raw Stop-hook input JSON, which carries both `stop_hook_active` and the agent's final
+message in `last_assistant_message`; the prompt points the judge explicitly at that field so a
+weaker judge model (e.g. DeepSeek judging itself) evaluates the message — the text rule 10
+turns on — rather than the surrounding metadata. **OpenCode
 is the sole exception — no judge** (its plugin API can't block-and-continue headless). File-mount subscription runtimes fail open (no API key in
 env); Anthropic subscription still fires via `CLAUDE_CODE_OAUTH_TOKEN`. Full per-runtime
 detail is in `AGENTS.md` › AI runtime hooks.
+
+**Handoff-delivery net.** The stop-hook judge is best-effort — an LLM, model-dependent, and it
+blocks at most once per run (the `stop_hook_active` ceiling) — so a stranded handoff is *also*
+caught **deterministically** at run completion, independent of any judge. In `agent-runner.ts`,
+when a run exits cleanly, the runner reads the run's final assistant message from the stream
+parser (`getFinalAssistantMessage()`); if it carries an active `@`-mention/handoff
+(`extractMentionSlugs`) that this run never actually posted as a comment, the runner delivers it
+as a real comment via `postAgentComment` — the same insert + broadcast + `fireCommentWakeups`
+path `create_comment` uses — so the mention fans out to the admin inbox / agent wakeup instead
+of vanishing (a run's final message is logged, posted to no one). It flips an otherwise no-op run
+to a success, runs on **every** runtime including OpenCode, and is why the one-block judge ceiling
+is acceptable: correctness no longer depends on the judge firing.
 
 ---
 

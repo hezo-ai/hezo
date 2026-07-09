@@ -92,7 +92,7 @@ import {
 import { broadcastApprovalChange } from '../services/approval-broadcast';
 import { resolveApproval } from '../services/approval-resolve';
 import { upsertChatMemory } from '../services/chat-memory';
-import { fireCommentWakeups } from '../services/comment-wakeups';
+import { fireCommentWakeups, postAgentComment } from '../services/comment-wakeups';
 import type { ContainerDeps } from '../services/containers';
 import { enqueueTeamCoherenceReviewTask } from '../services/description-tasks';
 import { listReviewComments } from '../services/document-review';
@@ -2211,45 +2211,23 @@ export function registerTools(
 			// Attribute the comment to the run that wrote it (only on the agent-run path) so the
 			// goal detail page can show "this progress-update run commented on task X".
 			const createdByRunId = auth.type === AuthType.Agent ? (auth.runId ?? null) : null;
-			const content = { text: args.content };
-			// RETURNING * includes public_id (the timestamp slug for comment links),
-			// so the agent gets it back without a follow-up list_comments.
-			const r = await db.query<{ id: string; public_id: string }>(
-				`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, parent_comment_id, content_type, content, created_by_run_id) VALUES ($1, $2, $3, $4, $5::comment_content_type, $6::jsonb, $7) RETURNING *`,
-				[
-					taskId,
-					authorMemberId,
-					authorApiKeyId,
-					parentCommentId,
-					CommentContentType.Text,
-					JSON.stringify(content),
-					createdByRunId,
-				],
-			);
-			// Realtime: notify open task pages. Agent comments come through MCP,
-			// which (unlike the REST POST path) never broadcast — so they only
-			// appeared on refresh. task_comments has no project_id column, so the
-			// helper injects it for the web client's slug resolution.
-			broadcastCommentFamilyChange(
-				wsManager,
-				teamId,
-				scope.projectId,
-				'task_comments',
-				'INSERT',
-				r.rows[0],
-			);
-			await fireCommentWakeups({
+			// Insert + realtime broadcast + mention/@admin/reply wakeups, shared with
+			// the runner's handoff-delivery guardrail via postAgentComment so a
+			// comment the agent posts and one auto-delivered from a stranded final
+			// message are byte-identical. RETURNING * includes public_id (the
+			// comment-link slug), so the agent gets it back without a list_comments.
+			const row = await postAgentComment({
 				db,
-				taskId,
-				teamId,
-				commentId: r.rows[0].id,
-				content,
-				contentType: CommentContentType.Text,
-				authorMemberId,
-				authorUserId: auth.type === AuthType.Admin ? auth.userId : null,
-				authorRunId: auth.type === AuthType.Agent ? auth.runId : null,
-				parentCommentId,
 				wsManager,
+				teamId,
+				projectId: scope.projectId,
+				taskId,
+				authorMemberId,
+				authorApiKeyId,
+				authorUserId: auth.type === AuthType.Admin ? auth.userId : null,
+				createdByRunId,
+				parentCommentId,
+				text: args.content as string,
 			});
 			trackBackground(
 				recordTaskLinks(
@@ -2285,9 +2263,9 @@ export function registerTools(
 				const warning = [teammateWarning, backtickWarning, terminalAskWarning]
 					.filter((w): w is string => Boolean(w))
 					.join(' ');
-				if (warning) return { ...r.rows[0], warning };
+				if (warning) return { ...row, warning };
 			}
-			return r.rows[0];
+			return row;
 		},
 		db,
 	);

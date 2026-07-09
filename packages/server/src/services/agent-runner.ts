@@ -34,6 +34,7 @@ import type { DomainEventBus } from '../events/bus';
 import { signAgentAssetUrl } from '../lib/asset-urls';
 import { broadcastProjectUpdate, broadcastRowChange } from '../lib/broadcast';
 import { withProjectGitLock } from '../lib/git-lock';
+import { extractMentionSlugs } from '../lib/mentions';
 import { withTransaction } from '../lib/sql';
 import { logger } from '../logger';
 import { signAgentJwt } from '../middleware/auth';
@@ -45,6 +46,7 @@ import {
 	updateAiProviderCredential,
 } from './ai-provider-keys';
 import { checkOverBudget, recordRunCost } from './budget';
+import { postAgentComment } from './comment-wakeups';
 import { formatContainerConnectivityMessage } from './container-connectivity-preflight';
 import {
 	CONNECTIVITY_STALE_MS,
@@ -1258,6 +1260,64 @@ export async function runAgent(
 				reportedNoWork = flagged.rows[0]?.reported_no_work ?? false;
 				noWorkReason = flagged.rows[0]?.no_work_reason ?? null;
 			}
+
+			// Deterministic handoff-delivery net. An agent that ends its turn with an
+			// active @-mention/handoff in its FINAL MESSAGE rather than a create_comment
+			// call strands the work: a run's final message is logged, never posted, so
+			// no mention inside it is parsed and it wakes nobody. If the final message
+			// names someone this run never actually posted a comment to, deliver it as a
+			// real comment so the mention fires (admin inbox / agent wakeup) — flipping
+			// the run to a success. This is the deterministic backstop to the completeness
+			// stop-hook judge (which is best-effort and model-dependent), and it runs on
+			// every runtime, including OpenCode, which has no judge at all. Best-effort:
+			// a failure here must never throw out of the run-completion path.
+			if (exitedClean && task) {
+				try {
+					const finalMessage = parser.getFinalAssistantMessage();
+					const finalMentions = finalMessage?.trim() ? extractMentionSlugs(finalMessage) : [];
+					if (finalMentions.length > 0) {
+						// Mentions this run already delivered as a comment (the same
+						// extractor fireCommentWakeups uses), so an agent that DID post the
+						// handoff and merely echoed it in the final message isn't double-posted.
+						const posted = await deps.db.query<{ content: unknown }>(
+							`SELECT content FROM task_comments WHERE created_by_run_id = $1 AND content_type = 'text'`,
+							[heartbeatRunId],
+						);
+						const delivered = new Set<string>();
+						for (const c of posted.rows) {
+							for (const slug of extractMentionSlugs(c.content)) delivered.add(slug);
+						}
+						const undelivered = finalMentions.filter((slug) => !delivered.has(slug));
+						if (undelivered.length > 0 && finalMessage) {
+							await postAgentComment({
+								db: deps.db,
+								wsManager: deps.wsManager,
+								teamId: runTeamId,
+								projectId: project.id,
+								taskId: task.id,
+								authorMemberId: agent.id,
+								createdByRunId: heartbeatRunId,
+								text: finalMessage,
+							});
+							// The run delivered a real comment, so it is no longer a no-op:
+							// flip the local flag (drives `success` below) and the row column
+							// (what the MCP write path sets) so status and produced_output agree.
+							await deps.db.query(
+								'UPDATE heartbeat_runs SET produced_output = true WHERE id = $1',
+								[heartbeatRunId],
+							);
+							producedOutput = true;
+							emit(
+								'stdout',
+								`\n[runner] auto-delivered stranded handoff (@${undelivered.join(', @')}) from the run's final message as a comment\n`,
+							);
+						}
+					}
+				} catch (e) {
+					log.error(`Run ${heartbeatRunId} handoff-delivery guardrail failed:`, e);
+				}
+			}
+
 			const success = exitedClean && (producedOutput || reportedNoWork);
 			const noOutputError =
 				exitedClean && !producedOutput && !reportedNoWork
