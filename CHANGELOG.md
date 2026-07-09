@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.17.0 - 2026-07-09
+
+### Features
+
+- **ai:** add xAI Grok Build as a provider + runtime ([#652](https://github.com/hezo-ai/hezo/pull/652))
+- **connectors:** restore revoked connectors in place + add-connector on project page ([#651](https://github.com/hezo-ai/hezo/pull/651))
+- **web:** brand logos for OpenAI, DeepSeek, z.ai, and Kimi in the AI provider picker ([#650](https://github.com/hezo-ai/hezo/pull/650))
+- expandable, auto-growing task comment input ([#647](https://github.com/hezo-ai/hezo/pull/647))
+- show connector↔credential relationships with project-aware naming ([#645](https://github.com/hezo-ai/hezo/pull/645))
+
+### Bug Fixes
+
+- make agents post a comment when they act on, or answer, a mention ([#654](https://github.com/hezo-ai/hezo/pull/654))
+- deliver stranded final-message handoffs as comments ([#653](https://github.com/hezo-ai/hezo/pull/653))
+- **web:** remove stray bottom border on the active folder tab ([#649](https://github.com/hezo-ai/hezo/pull/649))
+
+### Documentation
+
+- **dev:** Grok Build support design & feasibility assessment ([#648](https://github.com/hezo-ai/hezo/pull/648))
+
+### Other
+
+- Scope skills per-project or global (like Connectors) ([#646](https://github.com/hezo-ai/hezo/pull/646))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.16.0...0.17.0
+
 ## 0.16.0 - 2026-07-08
 
 ### Features
