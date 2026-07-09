@@ -1,0 +1,277 @@
+import type { Hono } from 'hono';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { MasterKeyManager } from '../src/crypto/master-key';
+import type { Db } from '../src/db/database';
+import { detectPassiveTeammateAsks } from '../src/lib/mentions';
+import type { Env } from '../src/lib/types';
+import { safeClose } from './helpers';
+import {
+	authHeader,
+	createTestApp,
+	createTestProject,
+	createTestTeam,
+	mintAgentToken,
+} from './helpers/app';
+
+// The screenshot case: an agent ends a comment with `@@admin — …` (the passive
+// mention form). It renders as a bare-word link, so it LOOKS like a ping, but @@
+// notifies no one — the handoff stalls. We warn only when the text next to the
+// passive mention reads like an ask (an active @admin was intended), never on a
+// deliberate passive reference.
+
+describe('detectPassiveTeammateAsks', () => {
+	const slugs = ['architect', 'qa-engineer', 'engineer', 'admin'];
+
+	it('flags the screenshot case: passive @@admin address with a second-person ask', () => {
+		expect(
+			detectPassiveTeammateAsks(
+				"@@admin — the drafts are ready for your re-review in Typefully when you're set.",
+				slugs,
+			),
+		).toEqual(['admin']);
+	});
+
+	it('flags an emphasised passive address with an imperative opener', () => {
+		expect(detectPassiveTeammateAsks('**@@architect** — please review.', slugs)).toEqual([
+			'architect',
+		]);
+	});
+
+	it('flags a leading-line passive address that asks a question', () => {
+		expect(detectPassiveTeammateAsks('@@admin: can you approve?', slugs)).toEqual(['admin']);
+	});
+
+	it('does not flag a passive FYI with no ask intent', () => {
+		expect(detectPassiveTeammateAsks('@@admin — release is done.', slugs)).toEqual([]);
+	});
+
+	it('does not flag a mid-prose passive reference', () => {
+		expect(detectPassiveTeammateAsks('as @@admin noted, ship it when you can.', slugs)).toEqual([]);
+	});
+
+	it('does not flag a slug that is also actively mentioned', () => {
+		expect(detectPassiveTeammateAsks('@admin — done. cc @@admin, your call.', slugs)).toEqual([]);
+	});
+
+	it('does not flag an active-only mention', () => {
+		expect(detectPassiveTeammateAsks('@architect — please review.', slugs)).toEqual([]);
+	});
+
+	it('does not flag a passive address to a non-teammate', () => {
+		expect(detectPassiveTeammateAsks('@@database — check your config', slugs)).toEqual([]);
+	});
+
+	it('ignores passive asks inside inline code and fenced blocks', () => {
+		expect(detectPassiveTeammateAsks('inert: `@@admin — please review` here', slugs)).toEqual([]);
+		expect(detectPassiveTeammateAsks('```\n@@admin — can you approve?\n```', slugs)).toEqual([]);
+	});
+
+	it('scopes the ask signal to the paragraph carrying the passive mention', () => {
+		// The "you" lives in a different paragraph than @@admin, so no ask is inferred.
+		expect(
+			detectPassiveTeammateAsks('@@admin — release is done.\n\nthanks, you all rock', slugs),
+		).toEqual([]);
+	});
+});
+
+describe('MCP create_comment / update_comment warn on passive-mention asks', () => {
+	let app: Hono<Env>;
+	let db: Db;
+	let token: string;
+	let masterKeyManager: MasterKeyManager;
+
+	let teamId: string;
+	let projectId: string;
+	let architectId: string;
+	let architectSlug: string;
+	let productLeadId: string;
+
+	async function insertTask(assigneeId: string, title: string): Promise<string> {
+		const meta = await db.query<{ task_prefix: string; number: number }>(
+			`SELECT p.task_prefix, next_project_task_number(p.id) AS number
+			 FROM projects p WHERE p.id = $1`,
+			[projectId],
+		);
+		const n = meta.rows[0].number;
+		const res = await db.query<{ id: string }>(
+			`INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier, title, status, priority, labels)
+			 VALUES ($1, $2, $3, $4, $5, $6, 'backlog'::task_status, 'medium'::task_priority, '[]'::jsonb)
+			 RETURNING id`,
+			[teamId, projectId, assigneeId, n, `${meta.rows[0].task_prefix}-${n}`, title],
+		);
+		return res.rows[0].id;
+	}
+
+	async function callTool(
+		agentToken: string,
+		name: string,
+		args: Record<string, unknown>,
+	): Promise<{ id?: string; warning?: string; error?: string }> {
+		const res = await app.request('/mcp', {
+			method: 'POST',
+			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				method: 'tools/call',
+				params: { name, arguments: args },
+				id: 1,
+			}),
+		});
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			result: { content: Array<{ type: string; text: string }> };
+		};
+		return JSON.parse(body.result.content[0].text) as {
+			id?: string;
+			warning?: string;
+			error?: string;
+		};
+	}
+
+	async function adminMentionCount(commentId: string): Promise<number> {
+		const r = await db.query<{ c: number }>(
+			`SELECT COUNT(*)::int AS c FROM admin_mentions WHERE comment_id = $1`,
+			[commentId],
+		);
+		return r.rows[0].c;
+	}
+
+	beforeAll(async () => {
+		const ctx = await createTestApp();
+		app = ctx.app;
+		db = ctx.db;
+		token = ctx.token;
+		masterKeyManager = ctx.masterKeyManager;
+
+		const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
+		const typeId = (await typesRes.json()).data.find(
+			(t: Record<string, unknown>) => t.name === 'Startup',
+		).id;
+
+		const teamRes = await createTestTeam(db, { name: 'Passive Co', template_id: typeId });
+		teamId = (await teamRes.json()).data.id;
+
+		const projectData = (await (await createTestProject(db, teamId, { name: 'Project' })).json())
+			.data;
+		projectId = projectData.id;
+
+		const agentsRes = await app.request(`/api/projects/${projectData.slug}/agents`, {
+			headers: authHeader(token),
+		});
+		const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
+		const architect = agents.find((a) => a.slug === 'architect')!;
+		architectId = architect.id;
+		architectSlug = architect.slug;
+		productLeadId = agents.find((a) => a.slug === 'product-lead')!.id;
+	});
+
+	afterAll(async () => {
+		await safeClose(db);
+	});
+
+	it('warns on a passive @@admin ask and notifies no one', async () => {
+		const taskId = await insertTask(architectId, 'Passive admin ask');
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			productLeadId,
+			teamId,
+			taskId,
+			{ projectId },
+		);
+		const result = await callTool(agentToken, 'create_comment', {
+			project: projectId,
+			task_id: taskId,
+			content: "@@admin — the drafts are ready for your re-review when you're set.",
+		});
+		expect(result.warning).toBeDefined();
+		expect(result.warning).toContain('admin');
+		expect(result.warning).toContain('active mention');
+		// The passive form genuinely notified no one.
+		expect(await adminMentionCount(result.id!)).toBe(0);
+	});
+
+	it('does not warn on a passive @@admin reference with no ask intent', async () => {
+		const taskId = await insertTask(architectId, 'Passive admin FYI');
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			productLeadId,
+			teamId,
+			taskId,
+			{ projectId },
+		);
+		const result = await callTool(agentToken, 'create_comment', {
+			project: projectId,
+			task_id: taskId,
+			content: '@@admin — release is done.',
+		});
+		expect(result.warning).toBeUndefined();
+		expect(await adminMentionCount(result.id!)).toBe(0);
+	});
+
+	it('does not warn on an active @admin ask and does notify', async () => {
+		const taskId = await insertTask(architectId, 'Active admin ask');
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			productLeadId,
+			teamId,
+			taskId,
+			{ projectId },
+		);
+		const result = await callTool(agentToken, 'create_comment', {
+			project: projectId,
+			task_id: taskId,
+			content: '@admin — the drafts are ready for your re-review.',
+		});
+		expect(result.warning).toBeUndefined();
+		expect(await adminMentionCount(result.id!)).toBeGreaterThan(0);
+	});
+
+	it('does not warn when an agent passively addresses itself', async () => {
+		const taskId = await insertTask(architectId, 'Self passive ask');
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			architectId,
+			teamId,
+			taskId,
+			{ projectId },
+		);
+		const result = await callTool(agentToken, 'create_comment', {
+			project: projectId,
+			task_id: taskId,
+			content: `@@${architectSlug} — remember to review your own plan.`,
+		});
+		expect(result.warning).toBeUndefined();
+	});
+
+	it('warns when an edit turns a comment into a passive @@admin ask', async () => {
+		const taskId = await insertTask(architectId, 'Edit into passive ask');
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			productLeadId,
+			teamId,
+			taskId,
+			{ projectId },
+		);
+		const created = await callTool(agentToken, 'create_comment', {
+			project: projectId,
+			task_id: taskId,
+			content: 'Draft ready.',
+		});
+		expect(created.warning).toBeUndefined();
+
+		const edited = await callTool(agentToken, 'update_comment', {
+			project: projectId,
+			task_id: taskId,
+			comment_id: created.id,
+			content: '@@admin — please take a look when you can.',
+		});
+		expect(edited.warning).toBeDefined();
+		expect(edited.warning).toContain('admin');
+		expect(await adminMentionCount(created.id!)).toBe(0);
+	});
+});

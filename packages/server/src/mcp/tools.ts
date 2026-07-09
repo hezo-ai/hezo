@@ -63,7 +63,11 @@ import {
 	wakeIfReady,
 	wouldCreateCycle,
 } from '../lib/dependencies';
-import { detectUnlinkedTeammateReferences, extractMentionSlugs } from '../lib/mentions';
+import {
+	detectPassiveTeammateAsks,
+	detectUnlinkedTeammateReferences,
+	extractMentionSlugs,
+} from '../lib/mentions';
 import {
 	actorTypeFromAuth,
 	apiKeyIdFromAuth,
@@ -214,6 +218,26 @@ function isErrorResult(result: unknown): boolean {
 }
 
 /**
+ * The teammate slugs a comment warning may name: every agent in the task's team
+ * plus the HQ instance agents (mirroring the mention-wakeup scoping), excluding
+ * the author so a self-reference never warns, plus @admin. Shared by the
+ * unlinked- and passive-mention warnings.
+ */
+async function resolveWarnableSlugs(
+	db: Db,
+	teamId: string,
+	authorMemberId: string,
+): Promise<string[]> {
+	const roster = await db.query<{ slug: string }>(
+		`SELECT ma.slug FROM member_agents ma
+		 JOIN members m ON m.id = ma.id
+		 WHERE (m.team_id = $1 OR m.team_id = $2) AND ma.id <> $3`,
+		[teamId, DEFAULT_TEAM_ID, authorMemberId],
+	);
+	return [...roster.rows.map((r) => r.slug), ADMIN_MENTION_SLUG];
+}
+
+/**
  * Returns a warning string when a comment addresses a teammate by bold/bare name
  * instead of a mention, or null when nothing is amiss. The author's own slug is
  * excluded so a self-reference never warns; resolution mirrors the mention-wakeup
@@ -225,13 +249,7 @@ async function buildUnlinkedMentionWarning(
 	authorMemberId: string,
 	content: string,
 ): Promise<string | null> {
-	const roster = await db.query<{ slug: string }>(
-		`SELECT ma.slug FROM member_agents ma
-		 JOIN members m ON m.id = ma.id
-		 WHERE (m.team_id = $1 OR m.team_id = $2) AND ma.id <> $3`,
-		[teamId, DEFAULT_TEAM_ID, authorMemberId],
-	);
-	const knownSlugs = [...roster.rows.map((r) => r.slug), ADMIN_MENTION_SLUG];
+	const knownSlugs = await resolveWarnableSlugs(db, teamId, authorMemberId);
 	const offenders = detectUnlinkedTeammateReferences(content, knownSlugs);
 	if (offenders.length === 0) return null;
 	const named = offenders.map((s) => `**${s}**`).join(', ');
@@ -241,6 +259,34 @@ async function buildUnlinkedMentionWarning(
 		`and notifies no one, so no wakeup was created. If you need them to act on this ` +
 		`ticket, post a follow-up using an active mention (${fixes}); if you were only ` +
 		`referring to them, use the passive form (@@${offenders[0]}).`
+	);
+}
+
+/**
+ * Returns a warning when a comment addresses a teammate with the PASSIVE mention
+ * form (@@slug) yet the surrounding text reads like an ask — the passive form
+ * links but notifies no one, so an intended handoff stalls silently. Only an
+ * addressing use paired with a directed-ask signal is flagged (see
+ * detectPassiveTeammateAsks), so a deliberate passive reference is left alone.
+ * Same scoping as buildUnlinkedMentionWarning; best-effort and non-blocking.
+ */
+async function buildPassiveMentionWarning(
+	db: Db,
+	teamId: string,
+	authorMemberId: string,
+	content: string,
+): Promise<string | null> {
+	const knownSlugs = await resolveWarnableSlugs(db, teamId, authorMemberId);
+	const offenders = detectPassiveTeammateAsks(content, knownSlugs);
+	if (offenders.length === 0) return null;
+	const named = offenders.map((s) => `@@${s}`).join(', ');
+	const fixes = offenders.map((s) => `@${s}`).join(', ');
+	return (
+		`You addressed ${named} with the passive form (@@) but the text reads like an ask — ` +
+		`that renders as a link and notifies no one, so no wakeup or admin-inbox alert was ` +
+		`created. If you need them to act on this ticket, edit this comment or post a follow-up ` +
+		`with an active mention (${fixes}); if you only meant to refer to them, leave the ` +
+		`passive form as-is.`
 	);
 }
 
@@ -2248,21 +2294,26 @@ export function registerTools(
 			// already-persisted comment on this check.
 			if (authorMemberId) {
 				const commentText = args.content as string;
-				const [teammateWarning, backtickWarning, terminalAskWarning] = await Promise.all([
-					buildUnlinkedMentionWarning(db, teamId, authorMemberId, commentText).catch((e) => {
-						log.error('Failed to check comment for unlinked teammate references:', e);
-						return null;
-					}),
-					buildBacktickedEntityWarning(db, teamId, scope.projectId, commentText).catch((e) => {
-						log.error('Failed to check comment for backticked entity references:', e);
-						return null;
-					}),
-					buildTerminalTaskAskWarning(db, taskId, commentText).catch((e) => {
-						log.error('Failed to check comment for asks on a terminal task:', e);
-						return null;
-					}),
-				]);
-				const warning = [teammateWarning, backtickWarning, terminalAskWarning]
+				const [teammateWarning, passiveWarning, backtickWarning, terminalAskWarning] =
+					await Promise.all([
+						buildUnlinkedMentionWarning(db, teamId, authorMemberId, commentText).catch((e) => {
+							log.error('Failed to check comment for unlinked teammate references:', e);
+							return null;
+						}),
+						buildPassiveMentionWarning(db, teamId, authorMemberId, commentText).catch((e) => {
+							log.error('Failed to check comment for passive teammate asks:', e);
+							return null;
+						}),
+						buildBacktickedEntityWarning(db, teamId, scope.projectId, commentText).catch((e) => {
+							log.error('Failed to check comment for backticked entity references:', e);
+							return null;
+						}),
+						buildTerminalTaskAskWarning(db, taskId, commentText).catch((e) => {
+							log.error('Failed to check comment for asks on a terminal task:', e);
+							return null;
+						}),
+					]);
+				const warning = [teammateWarning, passiveWarning, backtickWarning, terminalAskWarning]
 					.filter((w): w is string => Boolean(w))
 					.join(' ');
 				if (warning) return { ...row, warning };
@@ -2356,13 +2407,17 @@ export function registerTools(
 					wsManager,
 				).catch((e) => log.error('Failed to record task links from edited comment:', e)),
 			);
-			const [teammateWarning, backtickWarning] = await Promise.all([
+			const [teammateWarning, passiveWarning, backtickWarning] = await Promise.all([
 				buildUnlinkedMentionWarning(db, teamId, auth.memberId, args.content as string).catch(
 					(e) => {
 						log.error('Failed to check edited comment for unlinked teammate references:', e);
 						return null;
 					},
 				),
+				buildPassiveMentionWarning(db, teamId, auth.memberId, args.content as string).catch((e) => {
+					log.error('Failed to check edited comment for passive teammate asks:', e);
+					return null;
+				}),
 				buildBacktickedEntityWarning(db, teamId, scope.projectId, args.content as string).catch(
 					(e) => {
 						log.error('Failed to check edited comment for backticked entity references:', e);
@@ -2370,7 +2425,7 @@ export function registerTools(
 					},
 				),
 			]);
-			const warning = [teammateWarning, backtickWarning]
+			const warning = [teammateWarning, passiveWarning, backtickWarning]
 				.filter((w): w is string => Boolean(w))
 				.join(' ');
 			if (warning) return { ...r.rows[0], warning };
