@@ -32,12 +32,13 @@ clone of the existing Claude Code one. But two things are *not* free:
    `Stop`/`SessionEnd` are passive and cannot block-and-continue, which Hezo's
    judge requires.
 
-Recommended path: **native `grok` runtime on `grok-4.5`, judge omitted, token
-usage parsed from `--debug-file`.** The alternative (route `grok-4.5` through
-Codex's OpenAI-compatible provider) both keeps the Stop judge *and* gives clean
-`usage` JSON — at the cost of running the model outside its native harness. If
-the debug-log cost path proves too brittle, that alternative becomes the
-recommendation; see "Rejected alternative" and "Cost accounting".
+**Recommended path (decided): the native `grok` runtime on `grok-4.5`** — judge
+omitted (fail-open, like OpenCode), token usage parsed from `--debug-file`. This
+runs `grok-4.5` in the harness it was tuned for and gets Grok Build's native web
+search / skills / subagents / plan mode. The two caveats above are the accepted
+price and both are already-precedented postures. Routing through Codex is **not**
+recommended and is kept only as a documented fallback (see "Codex fallback")
+should the debug-log cost path prove unworkable in practice.
 
 ## History — this is a re-add, not a new integration
 
@@ -279,20 +280,20 @@ confirmed against a real key. No open spike items remain.
   `stop-hook-judge-registry.test.ts`, agent-runner + stream-parser tests, the
   web provider test.
 
-## Rejected alternative — route grok-4.5 through Codex
+## Codex fallback (not the chosen path)
 
-Codex can point at an OpenAI-compatible provider (`[model_providers.xai]`,
-`base_url=https://api.x.ai/v1`, `wire_api="chat"`). It buys **two** things the
-native runtime can't: it **preserves the Codex `Stop` command-hook judge**, and
-its OpenAI-compatible responses carry a clean `usage` object, so **cost
-accounting is trivial** (no debug-log parsing). The cost is running `grok-4.5`
-inside OpenAI's agent harness rather than Grok Build's own — xAI ships `grok-4.5`
-specifically to drive Grok Build, so raw agent quality likely suffers.
+Documented only as a contingency if the native `--debug-file` cost path proves
+unworkable. Codex can point at an OpenAI-compatible provider
+(`[model_providers.xai]`, `base_url=https://api.x.ai/v1`, `wire_api="chat"`),
+which buys two things the native runtime can't: it **preserves the Codex `Stop`
+command-hook judge**, and its OpenAI-compatible responses carry a clean `usage`
+object, so **cost accounting is trivial** (no debug-log parsing).
 
-Net: pick the native runtime for **quality**, the Codex path for **operational
-cleanliness** (judge + easy cost). If the `--debug-file` cost path proves too
-brittle in practice, the Codex path is the fallback — and it is a stronger
-fallback than the "back pocket" framing of the earlier draft implied.
+Why it is *not* the recommendation: it runs `grok-4.5` inside OpenAI's agent
+harness rather than Grok Build's own. xAI ships `grok-4.5` specifically to drive
+Grok Build, so raw agent quality likely suffers, and the integration loses Grok
+Build's native web search / skills / subagents / plan mode. We go native for
+quality and accept the two caveats; this path is the escape hatch, nothing more.
 
 ## Residual unknowns — now resolved (via authenticated run)
 
