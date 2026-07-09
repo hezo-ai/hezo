@@ -302,6 +302,22 @@ describe('template resolver', () => {
 		expect(result).toContain('ready for review');
 	});
 
+	it('tells a triage run to post a summary comment when it acted or the admin mentioned it, not just an ack', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		// A mention on someone else's ticket used to end with an ack reaction only.
+		// Now a substantive triage response — or any admin mention — also gets a short
+		// summary comment on the triggering thread so the mentioner sees what was done,
+		// not just that it was seen.
+		expect(result).toContain(
+			'a reaction alone tells the commenter you saw the mention, not what you did with it',
+		);
+		expect(result).toContain('you took substantive action this run');
+		expect(result).toContain('the mentioner is the admin');
+		expect(result).toContain(
+			'Post the reaction alone — no comment — only when the mention needed no action from you at all',
+		);
+	});
+
 	it('promotes the universal partials into the shared guidelines for every agent', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		// check-before-create
