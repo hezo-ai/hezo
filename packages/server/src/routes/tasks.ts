@@ -14,7 +14,6 @@ import { buildMeta, parsePagination } from '../lib/pagination';
 import {
 	actorTypeFromAuth,
 	apiKeyIdFromAuth,
-	getProjectLocator,
 	resolveActorMemberId as resolveAuthActorMemberId,
 	resolveTaskId,
 } from '../lib/resolve';
@@ -28,7 +27,6 @@ import {
 import { buildTaskListOrderBy, parseTaskListSort } from '../lib/task-sort';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
-import { removeTaskWorktrees } from '../services/repo-sync';
 import { cancelCoachWorkForTask, terminateRunsForTask } from '../services/run-termination';
 import { triggerStatusAutomations } from '../services/task-automation';
 import { recordAssigneeChange, recordTaskLinks, recordTitleChange } from '../services/task-events';
@@ -692,6 +690,7 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 				actorMemberId,
 				actorApiKeyId,
 				c.get('wsManager'),
+				c.get('dataDir'),
 			);
 		} catch (e) {
 			log.error('Failed to trigger status automations:', e);
@@ -748,26 +747,9 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 			);
 		}
 
-		if ((TERMINAL_TASK_STATUSES as readonly string[]).includes(body.status)) {
-			const dataDir = c.get('dataDir');
-			if (dataDir) {
-				const taskRow = await db.query<{ identifier: string; project_id: string }>(
-					'SELECT identifier, project_id FROM tasks WHERE id = $1',
-					[taskId],
-				);
-				const taskInfo = taskRow.rows[0];
-				if (taskInfo) {
-					const locator = await getProjectLocator(db, taskInfo.project_id);
-					if (locator) {
-						try {
-							removeTaskWorktrees(dataDir, locator.teamId, locator.id, taskInfo.identifier);
-						} catch (error) {
-							log.error(`Failed to clean up worktrees for task ${taskInfo.identifier}:`, error);
-						}
-					}
-				}
-			}
-		}
+		// Worktree cleanup on a terminal transition now lives in
+		// `triggerStatusAutomations` (above), so both this REST path and the MCP
+		// `update_task` path prune closed tasks' worktrees consistently.
 	}
 
 	broadcastChange(

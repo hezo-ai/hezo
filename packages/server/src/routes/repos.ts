@@ -1,5 +1,11 @@
 import { join } from 'node:path';
-import { ContainerStatus, RepoSetupStatus, repoNameFromIdentifier, wsRoom } from '@hezo/shared';
+import {
+	ContainerStatus,
+	RepoSetupStatus,
+	repoNameFromIdentifier,
+	TERMINAL_TASK_STATUSES,
+	wsRoom,
+} from '@hezo/shared';
 import { Hono } from 'hono';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
@@ -16,8 +22,8 @@ import {
 	getCloneState,
 	getWorktreeState,
 	listWorktrees,
-	pruneWorktrees,
 	type RepoLoc,
+	removeWorktreesWhere,
 	resetCloneToOrigin,
 	type WorktreeLoc,
 } from '../services/git';
@@ -483,11 +489,34 @@ reposRoutes.post('/projects/:projectId/repos/:repoId/reset', async (c) => {
 			success: boolean;
 			error?: string;
 			warning?: string;
+			removed?: string[];
 		}> => {
 			if (action === 'prune_worktrees') {
 				const executor = ContainerGitExecutor.forPrep(docker, containerId, null, runUser);
-				await pruneWorktrees(executor, repo.repoLoc);
-				return { success: true };
+				// Remove worktrees whose task is closed (terminal) or no longer exists —
+				// finished tickets plus leftovers from crashed/interrupted runs. Open
+				// tasks' worktrees are left intact; reset is already 409-gated on active
+				// runs, so nothing live is touched. Committed work survives on the pushed
+				// `hezo/<identifier>` branch refs. `removeWorktreesWhere` also runs the
+				// plain `git worktree prune` afterward to clear any dangling metadata.
+				const taskRows = await db.query<{ identifier: string; status: string }>(
+					'SELECT identifier, status FROM tasks WHERE project_id = $1',
+					[projectId],
+				);
+				const statusByIdentifier = new Map(taskRows.rows.map((t) => [t.identifier, t.status]));
+				const isStale = (identifier: string): boolean => {
+					const status = statusByIdentifier.get(identifier);
+					return (
+						status === undefined || (TERMINAL_TASK_STATUSES as readonly string[]).includes(status)
+					);
+				};
+				const removed = await removeWorktreesWhere(
+					executor,
+					repo.repoLoc,
+					CONTAINER_WORKTREES_ROOT,
+					isStale,
+				);
+				return { success: true, removed };
 			}
 			// discard_local: the best-effort fetch needs the SSH bridge.
 			const sshAgentServer = c.get('sshAgentServer');
@@ -507,7 +536,12 @@ reposRoutes.post('/projects/:projectId/repos/:repoId/reset', async (c) => {
 	if (!result.success) {
 		return err(c, 'RESET_FAILED', result.error ?? 'git reset failed', 500);
 	}
-	return ok(c, { reset: true, action, warning: result.warning ?? null });
+	return ok(c, {
+		reset: true,
+		action,
+		warning: result.warning ?? null,
+		removed: result.removed ?? [],
+	});
 });
 
 reposRoutes.get('/projects/:projectId/oauth-connections/:id/orgs', async (c) => {

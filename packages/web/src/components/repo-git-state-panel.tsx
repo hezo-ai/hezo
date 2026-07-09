@@ -34,7 +34,7 @@ const RESET_DIALOGS: Record<
 	prune_worktrees: {
 		title: 'Prune stale worktrees?',
 		description:
-			'Removes leftover per-task worktrees from crashed or interrupted runs and prunes worktree references. Committed work on their branches is preserved.',
+			'Removes per-task worktrees for closed tasks and leftover worktrees from crashed or interrupted runs, and prunes worktree references. Committed work on their branches is preserved.',
 		confirmLabel: 'Prune worktrees',
 	},
 	reclone: {

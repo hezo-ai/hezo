@@ -1374,6 +1374,7 @@ export function registerTools(
 						actorMemberId,
 						actorApiKeyId,
 						wsManager,
+						dataDir,
 					);
 				} catch (e) {
 					log.error('Failed to trigger status automations:', e);
