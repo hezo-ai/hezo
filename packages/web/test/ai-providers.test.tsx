@@ -56,7 +56,24 @@ test('Add provider modal shows provider cards (no xAI/OpenRouter, no Moonshot, n
 	expect(queryAllByRole('button', { name: /OAuth/i }).length).toBe(0);
 });
 
-test('drilling into a logo-less provider shows a monogram, not an overflowing wordmark, and Back returns to the picker', async () => {
+test('the add picker renders a brand logo for every offered provider (OpenAI, DeepSeek, z.ai, Kimi included)', async () => {
+	const { findByRole, getByRole, user } = await renderApp({
+		initialPath: '/settings/ai-providers',
+	});
+
+	await findByRole('heading', { name: 'AI providers' });
+	await user.click(getByRole('button', { name: 'Add provider' }));
+
+	const dialog = await findByRole('dialog');
+	// Every card renders an inline brand SVG in its logo slot — including the ones
+	// that used to fall back to a bare wordmark (OpenAI, DeepSeek, z.ai, Kimi).
+	for (const name of ['Anthropic', 'OpenAI', 'Google', 'DeepSeek', 'z.ai', 'Kimi']) {
+		const card = within(dialog).getByRole('button', { name });
+		expect(card.querySelector('svg')).toBeTruthy();
+	}
+});
+
+test('drilling into a provider shows its brand mark and a single "Connect …" label, and Back returns to the picker', async () => {
 	const { findByRole, getByRole, getByText, queryByText, user } = await renderApp({
 		initialPath: '/settings/ai-providers',
 		seed: async () => {
@@ -67,12 +84,15 @@ test('drilling into a logo-less provider shows a monogram, not an overflowing wo
 
 	await findByRole('heading', { name: 'Set up an AI provider' }, { timeout: 15_000 });
 
-	// DeepSeek has no registered brand SVG, so its logo slot hits the fallback.
-	await user.click(getByRole('button', { name: 'DeepSeek' }));
+	// DeepSeek has a registered brand SVG, so its card renders the mark instead of
+	// a big-font wordmark.
+	const deepSeekCard = getByRole('button', { name: 'DeepSeek' });
+	expect(deepSeekCard.querySelector('svg')).toBeTruthy();
+	await user.click(deepSeekCard);
 
-	// The header names the provider once, in the "Connect …" label. The logo slot
-	// renders a compact initial — not the full-name wordmark that used to overflow
-	// the small (24px) icon box, overlap the label, and cover the Back button.
+	// The header names the provider once, in the "Connect …" label. The small
+	// (24px) icon slot renders the brand mark — never a second full-name wordmark,
+	// which used to overflow the box, overlap the label, and cover the Back button.
 	getByText('Connect DeepSeek');
 	expect(queryByText('DeepSeek', { exact: true })).toBeNull();
 
