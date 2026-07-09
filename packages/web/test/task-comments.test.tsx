@@ -54,6 +54,51 @@ test('submits comment via Cmd/Ctrl+Enter shortcut', async () => {
 	expect(composer.value).toBe('');
 });
 
+test('expand opens a fullscreen editor with every control, and collapse returns inline', async () => {
+	const { findByTestId, findByPlaceholderText, getByRole, queryByTestId, user } =
+		await setupTaskRoute();
+
+	// Inline by default: no fullscreen container yet.
+	await findByPlaceholderText('Add a comment...');
+	expect(queryByTestId('comment-composer-fullscreen')).toBeNull();
+
+	const expandBtn = await findByTestId('comment-expand');
+	expect(expandBtn.getAttribute('aria-label')).toBe('Expand comment editor');
+	await user.click(expandBtn);
+
+	// Fullscreen editor with the textarea and every auxiliary control still present.
+	const fullscreen = await findByTestId('comment-composer-fullscreen');
+	expect(fullscreen).toBeTruthy();
+	const textarea = await findByPlaceholderText('Add a comment...');
+	expect(fullscreen.contains(textarea)).toBe(true);
+	expect(fullscreen.querySelector('[data-testid="comment-attachment-upload-button"]')).toBeTruthy();
+	expect(fullscreen.querySelector('[data-testid="wake-preview"]')).toBeTruthy();
+	expect(getByRole('button', { name: 'Comment' })).toBeTruthy();
+
+	// The toggle flips to collapse and returns the composer inline.
+	const collapseBtn = await findByTestId('comment-expand');
+	expect(collapseBtn.getAttribute('aria-label')).toBe('Collapse comment editor');
+	await user.click(collapseBtn);
+	await waitFor(() => expect(queryByTestId('comment-composer-fullscreen')).toBeNull());
+	await findByPlaceholderText('Add a comment...');
+});
+
+test('draft survives expand and the comment posts from the fullscreen editor', async () => {
+	const { findByText, findByTestId, findByPlaceholderText, getByRole, user } =
+		await setupTaskRoute();
+
+	// Type inline, then expand — the draft (state lives above the remount) carries over.
+	const inline = (await findByPlaceholderText('Add a comment...')) as HTMLTextAreaElement;
+	await user.type(inline, 'Drafted inline, sent fullscreen');
+	await user.click(await findByTestId('comment-expand'));
+
+	const expanded = (await findByPlaceholderText('Add a comment...')) as HTMLTextAreaElement;
+	expect(expanded.value).toBe('Drafted inline, sent fullscreen');
+
+	await user.click(getByRole('button', { name: 'Comment' }));
+	await findByText('Drafted inline, sent fullscreen');
+});
+
 test('comments persist after page reload', async () => {
 	const seeded = { projectSlug: '', taskId: '' };
 	const { findByText, router } = await renderApp({
