@@ -21,11 +21,12 @@ test('controlled Tabs marks the active tab with folder-tab styling and recesses 
 	expect(inactive.getAttribute('aria-selected')).toBe('false');
 
 	// Active tab is raised "in front": its fill matches the panel below (default
-	// bg-bg) and its bottom border is painted that same colour (border-b-bg), so it
-	// covers the strip's baseline and merges into the panel instead of reading as a
-	// closed box with a bottom border.
+	// bg-bg) and its bottom border is painted that same colour with an important
+	// utility (border-b-bg!) — the `!` beats the global unlayered border-color
+	// reset — so it covers the strip's baseline and merges into the panel instead
+	// of reading as a closed box with a bottom border.
 	expect(active.className).toMatch(/bg-bg/);
-	expect(active.className).toMatch(/border-b-bg/);
+	expect(active.className).toMatch(/border-b-bg!/);
 	expect(active.className).toMatch(/text-text-1/);
 
 	// Inactive tab stays recessed on the baseline.
@@ -78,7 +79,7 @@ test('controlled Tabs tracks the selected value as it changes', async () => {
 	// Selection moves: the clicked tab becomes the raised folder tab.
 	const egress = getByRole('tab', { name: /Outbound/ });
 	expect(egress.getAttribute('aria-selected')).toBe('true');
-	expect(egress.className).toMatch(/border-b-bg/);
+	expect(egress.className).toMatch(/border-b-bg!/);
 	expect(getByRole('tab', { name: 'All' }).getAttribute('aria-selected')).toBe('false');
 });
 
@@ -89,7 +90,7 @@ test('activeSurface controls the fill the active tab merges into', () => {
 	const active = getByRole('tab', { name: 'All' });
 	expect(active.className).toMatch(/bg-surface\b/);
 	expect(active.className).not.toMatch(/bg-bg/);
-	// The bottom border colour tracks the surface so it covers the strip baseline.
-	expect(active.className).toMatch(/border-b-surface\b/);
-	expect(active.className).not.toMatch(/border-b-bg/);
+	// The bottom border colour tracks the surface (important, to cover the baseline).
+	expect(active.className).toMatch(/border-b-surface!/);
+	expect(active.className).not.toMatch(/border-b-bg!/);
 });

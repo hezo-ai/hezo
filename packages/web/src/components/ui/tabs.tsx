@@ -44,18 +44,23 @@ const BASE_TAB =
 	'relative flex items-center gap-1.5 rounded-t-md border px-3 py-2 text-[13px] font-medium transition-colors';
 
 // Maps each supported active-surface fill to the matching bottom-border colour.
-// Kept as literal class strings (not derived at runtime) so Tailwind's scanner
-// emits the utilities. Falls back to `border-b-bg` for any unlisted surface.
+// The `!` (important) is load-bearing: a global unlayered `* { border-color }`
+// reset in index.css otherwise beats every layered `border-*` colour utility and
+// forces this border back to the grey border token, so the active tab reads as a
+// closed box instead of merging into the panel. `!` clears the reset — the same
+// trick the log-viewer toolbar uses (`border-transparent!`). Kept as literal
+// class strings (not derived at runtime) so Tailwind's scanner emits them; falls
+// back to `border-b-bg!` for any unlisted surface.
 const SURFACE_BOTTOM_BORDER: Record<string, string> = {
-	'bg-bg': 'border-b-bg',
-	'bg-surface': 'border-b-surface',
+	'bg-bg': 'border-b-bg!',
+	'bg-surface': 'border-b-surface!',
 };
 
 function tabClass(isActive: boolean, activeSurface: string): string {
 	if (!isActive) {
 		return `${BASE_TAB} border-transparent bg-surface-2 text-text-2 hover:bg-surface-3 hover:text-text-1`;
 	}
-	const bottomBorder = SURFACE_BOTTOM_BORDER[activeSurface] ?? 'border-b-bg';
+	const bottomBorder = SURFACE_BOTTOM_BORDER[activeSurface] ?? 'border-b-bg!';
 	return `${BASE_TAB} z-10 -mb-px border-border ${bottomBorder} ${activeSurface} text-text-1`;
 }
 
