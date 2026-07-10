@@ -240,6 +240,97 @@ test.describe('Task detail — document preview panel (mobile, 390px)', () => {
 	});
 });
 
+test.describe('Comment header — mobile (narrow viewport)', () => {
+	// The comment header (author · timestamp · "replying to …" · copy) must stay
+	// on a single row on a narrow phone. The timestamp is the segment that
+	// truncates with an ellipsis to make room; its full value is revealed in a
+	// tooltip on tap. This needs a real layout pass (#1/#2 in the tier tree), so
+	// it lives in Playwright.
+	async function seedReply(page: Page, token: string, projectSlug: string, taskId: string) {
+		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+		const parentRes = await page.request.post(
+			`/api/projects/${projectSlug}/tasks/${taskId}/comments`,
+			{ headers, data: { content_type: 'text', content: { text: 'Parent comment.' } } },
+		);
+		const parent = ((await parentRes.json()) as { data: { id: string } }).data;
+		const replyRes = await page.request.post(
+			`/api/projects/${projectSlug}/tasks/${taskId}/comments`,
+			{
+				headers,
+				data: {
+					content_type: 'text',
+					content: { text: 'A reply that carries a replying-to indicator in its header.' },
+					parent_comment_id: parent.id,
+				},
+			},
+		);
+		if (!replyRes.ok()) throw new Error(`seed reply failed: ${replyRes.status()}`);
+	}
+
+	test('header stays on one row; timestamp truncates and reveals the full value on tap', async ({
+		page,
+		freshWorkspace,
+	}) => {
+		const { token } = freshWorkspace;
+		const { project, task } = await createProjectAndTask(page, token, 'Mobile Comment Header');
+		await seedReply(page, token, project.slug, task.id);
+
+		// 320px — a small phone — to force the header to run out of room so the
+		// truncation branch actually fires.
+		await page.setViewportSize({ width: 320, height: 800 });
+		await page.goto(`/projects/${project.slug}/tasks/${task.identifier.toLowerCase()}`);
+		await waitForPageLoad(page);
+		await expect(page.getByRole('heading', { name: 'Mobile Task' })).toBeVisible({
+			timeout: 20000,
+		});
+
+		// Scope to the reply's header — it's the comment carrying a "replying to" link.
+		const replyItem = page
+			.getByTestId('comment-item')
+			.filter({ has: page.getByTestId('replying-to') });
+		await expect(replyItem).toBeVisible({ timeout: 15000 });
+		const timestamp = replyItem.getByTestId('comment-timestamp-link');
+		const author = replyItem.getByTestId('comment-author');
+		const replyingTo = replyItem.getByTestId('replying-to');
+		await expect(timestamp).toBeVisible();
+
+		// The page never scrolls horizontally.
+		const overflow = await page.evaluate(() => {
+			const main = document.querySelector('main');
+			return main ? main.scrollWidth - main.clientWidth : -1;
+		});
+		expect(overflow).toBe(0);
+
+		// Author, timestamp, and "replying to" all sit on the SAME row — their
+		// vertical spans overlap (the header did not wrap onto a second line).
+		const authorBox = await author.boundingBox();
+		const tsBox = await timestamp.boundingBox();
+		const replyBox = await replyingTo.boundingBox();
+		if (!authorBox || !tsBox || !replyBox) throw new Error('Missing layout box');
+		const sameRow = (a: typeof authorBox, b: typeof tsBox) =>
+			a.y < b.y + b.height && b.y < a.y + a.height;
+		expect(sameRow(authorBox, tsBox)).toBe(true);
+		expect(sameRow(authorBox, replyBox)).toBe(true);
+
+		// The timestamp is the segment that gave way: it is clipped to an ellipsis
+		// (rendered narrower than its full text), yet its full value is intact in
+		// the DOM for the tooltip.
+		const truncated = await timestamp.evaluate((el) => el.scrollWidth > el.clientWidth);
+		expect(truncated).toBe(true);
+		expect(tsBox.x + tsBox.width).toBeLessThanOrEqual(320);
+		const full = ((await timestamp.textContent()) ?? '').trim();
+		expect(full.length).toBeGreaterThan(0);
+
+		// Tapping the timestamp reveals the full date/time in a tooltip (Radix
+		// tooltips never open on tap, so the component drives `open` from its own
+		// touchstart handler).
+		await timestamp.dispatchEvent('touchstart');
+		const tooltip = page.getByRole('tooltip');
+		await expect(tooltip).toBeVisible({ timeout: 5000 });
+		expect(((await tooltip.textContent()) ?? '').trim()).toBe(full);
+	});
+});
+
 // Render a completed run comment cheaply by mocking the comments + heartbeat-run
 // responses — no real agent runtime needed (cribbed from agent-run-logs.spec.ts).
 async function mockRunComment(page: Page, token: string) {
