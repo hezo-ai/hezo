@@ -152,7 +152,13 @@ export function RunCommentBody({
 	const runQuery = useHeartbeatRun(projectId, agentId, runId);
 	const run = runQuery.data;
 	const status = run?.status ?? 'queued';
-	const isActive = isActiveRunStatus(status);
+	// Only positively-active once the run has actually loaded. While the per-run
+	// query is still resolving (`run == null`), `status` defaults to 'queued' —
+	// which would otherwise read as active and force the log open. On a virtualized
+	// feed every scroll remount refires this query, so treating "loading" as active
+	// made completed entries flash expanded, then collapse once the run resolved.
+	// Keeping the unknown/loading state non-active renders it collapsed instead.
+	const isActive = run != null && isActiveRunStatus(status);
 	// Offer a manual retry on a failed/timed-out run, but only on the latest run
 	// and only when nothing is already running or queued for this task — that's
 	// exactly what `retryableRunId` resolves to (null otherwise).
@@ -286,21 +292,22 @@ export function RunCommentBody({
 	return (
 		<>
 			{inline &&
-				(completed ? (
-					canRetry && taskId ? (
-						<div className="flex items-center gap-1 min-w-0">
-							{expandToggle}
-							<RunRetryButton projectId={projectId} taskId={taskId} runId={runId} />
-						</div>
-					) : (
-						expandToggle
-					)
-				) : (
+				(isActive ? (
+					// Actively running/queued: the log is force-shown, so the header is a
+					// static (non-collapsible) summary with no toggle.
 					<div className="flex items-center min-h-[26px] min-w-0" data-testid="run-comment-header">
 						{summaryRow}
 					</div>
+				) : canRetry && taskId ? (
+					<div className="flex items-center gap-1 min-w-0">
+						{expandToggle}
+						<RunRetryButton projectId={projectId} taskId={taskId} runId={runId} />
+					</div>
+				) : (
+					// Completed or still loading: collapsed by default, expandable on click.
+					expandToggle
 				))}
-			{(!completed || expanded) && (
+			{(isActive || expanded) && (
 				<div id={logRegionId}>
 					<LogViewer
 						lines={lines}
