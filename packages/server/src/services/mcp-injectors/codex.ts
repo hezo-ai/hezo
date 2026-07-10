@@ -15,6 +15,32 @@ function renderStopHookBlock(judgeScriptContainerPath: string): string {
 
 const JUDGE_SCRIPT_BASENAME = 'stop-hook-judge.mjs';
 
+// Codex's background-terminal poll ceiling (`background_terminal_max_timeout`,
+// milliseconds) is the structural analog of Claude Code's
+// `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS`: how long an empty poll on a
+// backgrounded/long-running command waits for output before yielding back to the
+// model. Default is 300000 (5 min); raise it to an hour (the value Codex's own
+// built-in `awaiter` agent uses). Unlike Claude Code there is no "0 = infinite"
+// sentinel — the wait is clamped to a max, so 0 would be invalid; use a large
+// finite value.
+const BACKGROUND_TERMINAL_MAX_TIMEOUT_MS = 3_600_000;
+
+// Per-MCP-server bounds (seconds). Codex aborts a single tool call after
+// `tool_timeout_sec` (default 300 = 5 min) and drops a server that doesn't start
+// within `startup_timeout_sec` (default 30). Raise both so a long-running MCP
+// tool or a slow-starting stdio server isn't cut off.
+const MCP_TOOL_TIMEOUT_SEC = 1_800;
+const MCP_STARTUP_TIMEOUT_SEC = 120;
+
+/** Append Codex's per-server timeout keys to a rendered `[mcp_servers.<name>]` table. */
+function withServerTimeouts(serverBlock: string): string {
+	return [
+		serverBlock,
+		`startup_timeout_sec = ${MCP_STARTUP_TIMEOUT_SEC}`,
+		`tool_timeout_sec = ${MCP_TOOL_TIMEOUT_SEC}`,
+	].join('\n');
+}
+
 export const codexAdapter: RuntimeMcpAdapter = {
 	capabilities: {
 		transport: 'streamable-http',
@@ -30,11 +56,15 @@ export const codexAdapter: RuntimeMcpAdapter = {
 		const judgeScriptContainerPath = join(ctx.containerHomeDir, JUDGE_SCRIPT_BASENAME);
 
 		// Top-level keys must precede every [table] header in TOML, so the
-		// web-search mode leads the file. "live" fetches current pages rather
-		// than the cached index, giving agents real-time web search.
-		const blocks: string[] = ['web_search = "live"'];
+		// web-search mode + background-terminal ceiling lead the file. "live"
+		// fetches current pages rather than the cached index, giving agents
+		// real-time web search.
+		const blocks: string[] = [
+			`web_search = "live"\nbackground_terminal_max_timeout = ${BACKGROUND_TERMINAL_MAX_TIMEOUT_MS}`,
+		];
 		for (const d of descriptors) {
-			blocks.push(d.kind === 'http' ? renderHttpBlock(d) : renderStdioBlock(d));
+			const serverBlock = d.kind === 'http' ? renderHttpBlock(d) : renderStdioBlock(d);
+			blocks.push(withServerTimeouts(serverBlock));
 		}
 		blocks.push(renderStopHookBlock(judgeScriptContainerPath));
 		const contents = `${blocks.join('\n\n')}\n`;

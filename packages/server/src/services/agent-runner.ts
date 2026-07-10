@@ -782,6 +782,37 @@ function abortErrorMessage(reason: RunAbortReason | null): string | undefined {
 	return reason ?? undefined;
 }
 
+/**
+ * Claude Code's headless `--print` mode caps how long it waits for still-running
+ * background tasks (a `run_in_background` job, a Workflow fan-out that hasn't
+ * synthesized yet) and then FORCE-KILLS them, printing a diagnostic line like
+ * "Background tasks still running after 600s; terminating." to its own output.
+ * `CLAUDE_CODE_QUIET_ENV` sets `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0` to lift
+ * that ceiling, but an older CLI (or one that ignores the override) still
+ * terminates the work — and the CLI then exits 0 with a NON-error `result`, so a
+ * run that already wrote something earlier (e.g. a progress update) would be
+ * counted a success even though its actual deliverable was killed mid-flight.
+ * This is the runner-side backstop: detect the diagnostic so the run is failed.
+ *
+ * Matched only against the CLI's own diagnostic output — stderr, plus non-JSON
+ * stdout lines. The stream-json events an agent's text rides in are JSON objects
+ * (they start with `{`), so an agent that merely echoes this phrase in its
+ * message can't trip the backstop.
+ */
+const BACKGROUND_TERMINATION_MARKER = /Background tasks still running after .*?terminating/i;
+
+export function detectTerminatedBackgroundWork(stdout: string, stderr: string): boolean {
+	if (BACKGROUND_TERMINATION_MARKER.test(stderr)) return true;
+	for (const line of stdout.split('\n')) {
+		const trimmed = line.trim();
+		// Skip the JSON stream events (agent-authored text lives inside these); a
+		// CLI diagnostic is a bare line that never starts with `{`.
+		if (trimmed === '' || trimmed.startsWith('{')) continue;
+		if (BACKGROUND_TERMINATION_MARKER.test(trimmed)) return true;
+	}
+	return false;
+}
+
 function extractTriggeredBy(payload: Record<string, unknown> | undefined): TriggeredBy | null {
 	const raw = payload?.triggered_by;
 	if (!raw || typeof raw !== 'object') return null;
@@ -1377,16 +1408,31 @@ export async function runAgent(
 				}
 			}
 
-			const success = exitedClean && (producedOutput || reportedNoWork);
+			// A clean exit where the runtime force-terminated still-running background
+			// work is NOT a success: the run abandoned unfinished work (e.g. a
+			// deep-research Workflow that never got to synthesize its report) even
+			// though it exits 0 and may have written something earlier. Fail it so it
+			// surfaces and is retried rather than silently counting as done.
+			const backgroundWorkTerminated =
+				exitedClean &&
+				runtimeType === AgentRuntime.ClaudeCode &&
+				detectTerminatedBackgroundWork(stdout, stderr);
+
+			const success =
+				exitedClean && (producedOutput || reportedNoWork) && !backgroundWorkTerminated;
+			const backgroundError = backgroundWorkTerminated
+				? 'run ended with background tasks still running — the runtime terminated the unfinished work before it completed, so the run abandoned incomplete work'
+				: undefined;
 			const noOutputError =
-				exitedClean && !producedOutput && !reportedNoWork
+				exitedClean && !producedOutput && !reportedNoWork && !backgroundWorkTerminated
 					? 'run produced no output (no code changes, comments, tasks, documents, or other writes)'
 					: undefined;
 			// A failed run's terminal error (e.g. a provider billing/auth rejection)
 			// otherwise lives only in the log; surface it on the run row so the board
 			// shows why the run failed instead of a bare "failed".
 			const terminalError = success ? null : parser.getTerminalError();
-			if (noOutputError) emit('stderr', `\n[runner] ${noOutputError}\n`);
+			if (backgroundError) emit('stderr', `\n[runner] ${backgroundError}\n`);
+			else if (noOutputError) emit('stderr', `\n[runner] ${noOutputError}\n`);
 			else if (reportedNoWork && !producedOutput)
 				emit('stdout', `\n[runner] no work to do${noWorkReason ? ` — ${noWorkReason}` : ''}\n`);
 			else if (terminalError) emit('stderr', `\n[runner] ${terminalError}\n`);
@@ -1399,7 +1445,7 @@ export async function runAgent(
 					status: success ? HeartbeatRunStatus.Succeeded : HeartbeatRunStatus.Failed,
 					exitCode: execInfo.ExitCode,
 					durationMs,
-					error: noOutputError ?? terminalError ?? undefined,
+					error: backgroundError ?? noOutputError ?? terminalError ?? undefined,
 					// Grok's usage comes from the debug log (runUsage); every other
 					// runtime reports it on the stream (parser.getUsage()).
 					usage: runUsage ?? parser.getUsage(),

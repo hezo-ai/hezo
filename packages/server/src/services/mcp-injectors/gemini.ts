@@ -9,11 +9,13 @@ import type {
 
 interface GeminiHttpEntry {
 	httpUrl: string;
+	timeout: number;
 	headers?: Record<string, string>;
 }
 
 interface GeminiStdioEntry {
 	command: string;
+	timeout: number;
 	args?: string[];
 	env?: Record<string, string>;
 }
@@ -35,10 +37,27 @@ interface GeminiSettings {
 	hooks: {
 		AfterAgent: GeminiHookMatcherGroup[];
 	};
+	tools: {
+		shell: {
+			inactivityTimeout: number;
+		};
+	};
 }
 
+// The Gemini CLI kills a `run_shell_command` that produces no output for
+// `tools.shell.inactivityTimeout` seconds (default 300 = 5 min) — a long, quiet
+// build/test/agent step is terminated mid-flight. `0` disables the kill entirely
+// (the CLI early-returns when the value is ≤ 0), so legitimately long silent work
+// is never cut off. There is no env-var equivalent; it's a settings.json key.
+const SHELL_INACTIVITY_TIMEOUT_DISABLED = 0;
+
+// Per-MCP-server request timeout (`mcpServers.<name>.timeout`, milliseconds). The
+// CLI default is already 10 min; we set it explicitly so a future default change
+// can't silently tighten it, and to stay consistent with the other runtimes.
+const MCP_REQUEST_TIMEOUT_MS = 600_000;
+
 function buildHttpEntry(d: McpHttpDescriptor): GeminiHttpEntry {
-	const entry: GeminiHttpEntry = { httpUrl: d.url };
+	const entry: GeminiHttpEntry = { httpUrl: d.url, timeout: MCP_REQUEST_TIMEOUT_MS };
 	const headers: Record<string, string> = { ...(d.headers ?? {}) };
 	if (d.bearerToken) headers.Authorization = `Bearer ${d.bearerToken}`;
 	if (Object.keys(headers).length > 0) entry.headers = headers;
@@ -46,7 +65,7 @@ function buildHttpEntry(d: McpHttpDescriptor): GeminiHttpEntry {
 }
 
 function buildStdioEntry(d: McpStdioDescriptor): GeminiStdioEntry {
-	const entry: GeminiStdioEntry = { command: d.command };
+	const entry: GeminiStdioEntry = { command: d.command, timeout: MCP_REQUEST_TIMEOUT_MS };
 	if (d.args?.length) entry.args = d.args;
 	if (d.env && Object.keys(d.env).length > 0) entry.env = d.env;
 	return entry;
@@ -81,6 +100,11 @@ export const geminiAdapter: RuntimeMcpAdapter = {
 						],
 					},
 				],
+			},
+			tools: {
+				shell: {
+					inactivityTimeout: SHELL_INACTIVITY_TIMEOUT_DISABLED,
+				},
 			},
 		};
 

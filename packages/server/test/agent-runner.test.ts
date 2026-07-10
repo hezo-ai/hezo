@@ -16,6 +16,7 @@ import {
 	acquireCredentialLock,
 	buildProviderEnv,
 	buildSubscriptionMount,
+	detectTerminatedBackgroundWork,
 	getHostPromptPath,
 	getHostSubscriptionRoot,
 	type RunnerDeps,
@@ -522,6 +523,84 @@ describe('runAgent', () => {
 		expect(run.rows[0].reported_no_work).toBe(true);
 		expect(run.rows[0].no_work_reason).toBe('planning ticket — sub-tasks still open');
 		expect(run.rows[0].error).toBeNull();
+	});
+
+	it('fails a clean exit where the CLI terminated still-running background work', async () => {
+		// producesOutput defaults true: the run wrote something earlier (e.g. a
+		// progress update), so absent the backstop it would count as a success. But
+		// the CLI printed its background-termination diagnostic to stderr, meaning it
+		// killed unfinished work (a run_in_background job / Workflow fan-out) — the
+		// run's real deliverable never landed, so it must be failed, not succeeded.
+		const deps: RunnerDeps = {
+			db,
+			docker: createMockDocker({
+				execStart: async () => ({
+					stdout: 'done',
+					stderr:
+						'Background tasks still running after 600s; terminating. Set CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 to wait indefinitely.',
+				}),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			}),
+			masterKeyManager,
+			serverPort: 3000,
+			dataDir: '/tmp/test-data',
+			logs: new LogStreamBroker(),
+		};
+
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+
+		expect(result.success).toBe(false);
+		expect(result.exitCode).toBe(0);
+
+		const run = await db.query<{
+			status: string;
+			produced_output: boolean;
+			error: string | null;
+		}>('SELECT status, produced_output, error FROM heartbeat_runs WHERE id = $1', [
+			result.heartbeatRunId,
+		]);
+		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
+		// It DID write earlier — abandoned background work overrides that.
+		expect(run.rows[0].produced_output).toBe(true);
+		expect(run.rows[0].error).toContain('background tasks still running');
+	});
+
+	it('does not fail when the agent merely echoes the termination phrase in its message', async () => {
+		// The phrase rides inside a stream-json assistant event (a JSON line on
+		// stdout), not as a CLI diagnostic — the backstop must ignore it so a run
+		// discussing this very behaviour isn't falsely failed.
+		const echoed = JSON.stringify({
+			type: 'assistant',
+			message: {
+				role: 'assistant',
+				content: [
+					{
+						type: 'text',
+						text: 'Claude Code prints "Background tasks still running after 600s; terminating." when it kills them.',
+					},
+				],
+			},
+		});
+		const deps: RunnerDeps = {
+			db,
+			docker: createMockDocker({
+				execStart: async () => ({ stdout: `${echoed}\n`, stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			}),
+			masterKeyManager,
+			serverPort: 3000,
+			dataDir: '/tmp/test-data',
+			logs: new LogStreamBroker(),
+		};
+
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+
+		expect(result.success).toBe(true);
+		const run = await db.query<{ status: string }>(
+			'SELECT status FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Succeeded);
 	});
 
 	it('records failure in heartbeat run on non-zero exit code', async () => {
@@ -2539,5 +2618,41 @@ describe('shellQuoteArg', () => {
 		expect(shellQuoteArg('$FOO')).toBe(`'$FOO'`);
 		expect(shellQuoteArg('a"b')).toBe(`'a"b'`);
 		expect(shellQuoteArg('a|b')).toBe(`'a|b'`);
+	});
+});
+
+describe('detectTerminatedBackgroundWork', () => {
+	it('matches the CLI diagnostic on stderr', () => {
+		expect(
+			detectTerminatedBackgroundWork(
+				'done',
+				'Background tasks still running after 600s; terminating. Set CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 to wait indefinitely.',
+			),
+		).toBe(true);
+	});
+
+	it('matches a bare non-JSON diagnostic line on stdout', () => {
+		expect(
+			detectTerminatedBackgroundWork(
+				'{"type":"result","subtype":"success"}\nBackground tasks still running after 30s; terminating.\n',
+				'',
+			),
+		).toBe(true);
+	});
+
+	it('ignores the phrase when it rides inside a stream-json stdout event', () => {
+		const line = JSON.stringify({
+			type: 'assistant',
+			message: {
+				content: [
+					{ type: 'text', text: 'Background tasks still running after 600s; terminating.' },
+				],
+			},
+		});
+		expect(detectTerminatedBackgroundWork(`${line}\n`, '')).toBe(false);
+	});
+
+	it('returns false for ordinary output', () => {
+		expect(detectTerminatedBackgroundWork('all done\n', '')).toBe(false);
 	});
 });
