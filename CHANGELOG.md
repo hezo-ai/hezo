@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.18.0 - 2026-07-10
+
+### Features
+
+- **server:** warn agents when a passive @@mention was meant as an active ask ([#663](https://github.com/hezo-ai/hezo/pull/663))
+- add "Mark all as read" button to inbox toolbar ([#661](https://github.com/hezo-ai/hezo/pull/661))
+- auto-prune worktrees for closed tasks and in admin prune button ([#656](https://github.com/hezo-ai/hezo/pull/656))
+
+### Bug Fixes
+
+- let admins react to comments in teams they aren't a member of ([#662](https://github.com/hezo-ai/hezo/pull/662))
+- shorten docs library button label to "New" ([#660](https://github.com/hezo-ai/hezo/pull/660))
+- **web:** link project-scoped "Added skill" to the project Skills page ([#659](https://github.com/hezo-ai/hezo/pull/659))
+- **web:** make the active folder tab's bottom border !important ([#657](https://github.com/hezo-ai/hezo/pull/657))
+- **web:** strip redundant backticks so inline code renders as clean chips ([#658](https://github.com/hezo-ai/hezo/pull/658))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.17.0...0.18.0
+
 ## 0.17.0 - 2026-07-09
 
 ### Features
