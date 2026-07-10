@@ -33,6 +33,7 @@ import { agentsRoutes } from './routes/agents';
 import { aiProvidersRoutes } from './routes/ai-providers';
 import { apiKeysRoutes } from './routes/api-keys';
 import { approvalsRoutes } from './routes/approvals';
+import { assetReviewRoutes } from './routes/asset-review';
 import { buildAssetStorageInfoRoutes } from './routes/asset-storage-info';
 import { assetsRoutes, publicAssetsRoutes } from './routes/assets';
 import { auditLogRoutes } from './routes/audit-log';
@@ -592,6 +593,7 @@ export function buildApp(
 	app.route('/api', uiStateRoutes);
 	app.route('/api', projectDocsRoutes);
 	app.route('/api', documentReviewRoutes);
+	app.route('/api', assetReviewRoutes);
 	app.route('/api', mentionsRoutes);
 	app.route('/api', aiProvidersRoutes);
 	app.route('/api', instanceSettingsRoutes);

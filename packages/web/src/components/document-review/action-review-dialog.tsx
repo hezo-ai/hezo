@@ -1,4 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog';
+import { useNavigate } from '@tanstack/react-router';
 import { Copy } from 'lucide-react';
 import { useState } from 'react';
 import { useCreateCommentOnTask } from '../../hooks/use-comments';
@@ -30,6 +31,10 @@ interface ActionReviewDialogProps {
 	commentCount: number;
 	/** When set, the picker pins this task as its first entry. */
 	task?: ReviewTaskContext;
+	/** Override the handoff blurb (asset reviews); defaults to the doc handoff. */
+	handoff?: string;
+	/** What the agent reads the comments from — 'document' (default) or 'asset'. */
+	sourceNoun?: string;
 }
 
 /**
@@ -47,9 +52,12 @@ export function ActionReviewDialog({
 	filename,
 	commentCount,
 	task,
+	handoff: handoffOverride,
+	sourceNoun = 'document',
 }: ActionReviewDialogProps) {
-	const handoff = buildReviewHandoff(filename);
+	const handoff = handoffOverride ?? buildReviewHandoff(filename);
 	const createComment = useCreateCommentOnTask(projectId);
+	const navigate = useNavigate();
 	const [pickerOpen, setPickerOpen] = useState(false);
 
 	function handleOpenChange(next: boolean) {
@@ -68,7 +76,25 @@ export function ActionReviewDialog({
 
 	async function handleAdd(target: { taskId: string; identifier: string }) {
 		try {
-			await createComment.mutateAsync({ taskId: target.taskId, content: handoff });
+			const created = await createComment.mutateAsync({
+				taskId: target.taskId,
+				content: handoff,
+			});
+			// The comment landed on a different page, so the confirmation carries
+			// the way there — deep-linked to the comment via the #comment-<id> hash.
+			const taskId = target.identifier.toLowerCase();
+			toast.success(`Handoff added to ${target.identifier}`, {
+				link: {
+					label: 'View comment',
+					href: `/projects/${projectId}/tasks/${taskId}#comment-${created.public_id}`,
+					onNavigate: () =>
+						navigate({
+							to: '/projects/$projectId/tasks/$taskId',
+							params: { projectId, taskId },
+							hash: `comment-${created.public_id}`,
+						}),
+				},
+			});
 			handleOpenChange(false);
 		} catch (e) {
 			// Close only the picker — the dialog stays so the handoff isn't lost.
@@ -96,7 +122,7 @@ export function ActionReviewDialog({
 				<Dialog.Description className="mb-3 text-[12.5px] leading-relaxed text-text-2">
 					Add this handoff as a comment on a task — pick one from Add to task, or copy it — and
 					assign it to the agent who should action the feedback. The agent reads the review comments
-					directly from the document.
+					directly from the {sourceNoun}.
 				</Dialog.Description>
 				<div
 					className="whitespace-pre-wrap rounded-md border border-border bg-surface-2 p-3 text-[12.5px] leading-relaxed text-text-1"

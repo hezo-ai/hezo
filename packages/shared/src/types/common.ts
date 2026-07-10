@@ -326,6 +326,46 @@ export function isAgentAuthorableAssetMime(mime: string): boolean {
 	return AGENT_AUTHORABLE_ASSET_MIME.has(mime);
 }
 
+// Asset content types whose review comments anchor to a text selection
+// (`quote` + `occurrence`, exactly like project docs). Every other type takes
+// un-anchored whole-asset comments. Region (rect) anchors for visual types are
+// future work — see .dev/architecture.md.
+export const TEXT_REVIEWABLE_ASSET_MIME: ReadonlySet<string> = new Set([
+	'text/markdown',
+	'text/plain',
+]);
+
+export function isTextReviewableAssetMime(mime: string): boolean {
+	return TEXT_REVIEWABLE_ASSET_MIME.has(mime);
+}
+
+/**
+ * A review comment on a project document or an asset (exactly one target —
+ * enforced by DB CHECK). Doc comments always carry `quote`/`doc_updated_at`;
+ * asset comments carry `asset_sha256` and, for text assets only, a
+ * `quote`/`occurrence` anchor (NULL quote = whole-asset comment). Row shape of
+ * the `review_comments` table, shared by the server service, REST responses,
+ * and the web hooks.
+ */
+export interface ReviewComment {
+	id: string;
+	document_id: string | null;
+	asset_id: string | null;
+	/** Exact rendered-text snippet the comment anchors to; NULL = whole-asset. */
+	quote: string | null;
+	/** 0-based Nth occurrence of `quote` in the rendered text stream. */
+	occurrence: number;
+	comment: string;
+	/** NULL means the admin (same convention as task_comments). */
+	author_member_id: string | null;
+	/** documents.updated_at at authoring time (doc targets only). */
+	doc_updated_at: string | null;
+	/** assets.sha256 at authoring time (asset targets only). */
+	asset_sha256: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
 // Clean one path segment (a folder name or a basename) into its link-safe
 // form: start with an alphanumeric, then `[A-Za-z0-9._-]`. Returns '' when
 // nothing survives so callers can decide between a fallback and a rejection.
@@ -493,6 +533,8 @@ export interface ProjectAsset {
 	id: string;
 	content_type: string;
 	byte_size: number;
+	/** Content hash — the review-comment stale token (see ReviewComment). */
+	sha256: string;
 	original_filename: string;
 	created_at: string;
 	/** Set when the asset is archived (soft-deleted); null/absent = active. */

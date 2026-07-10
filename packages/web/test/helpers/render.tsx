@@ -1,4 +1,5 @@
 import { createTestApp } from '@hezo/server/test/helpers/app';
+import { Toaster } from '@hezo/web/components/ui/toast';
 import { api } from '@hezo/web/lib/api';
 import { queryClient as singletonQueryClient } from '@hezo/web/lib/query-client';
 import { ThemeProvider } from '@hezo/web/lib/theme';
@@ -232,6 +233,9 @@ export async function renderApp(options: RenderOptions) {
 		<QueryClientProvider client={activeQueryClient}>
 			<ThemeProvider>
 				<RouterProvider router={router} />
+				{/* Mirrors main.tsx: the Toaster mounts beside (not inside) the
+				    router, so toast assertions work like production. */}
+				<Toaster />
 			</ThemeProvider>
 		</QueryClientProvider>
 	);

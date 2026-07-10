@@ -106,7 +106,7 @@ test('CEO replies render unique refs as links; unknown and backticked refs stay 
 	expect(codeTexts).toContain(ident);
 });
 
-test('CEO replies linkify backticked doc and asset references, opening them in a new tab', async () => {
+test('CEO replies linkify backticked doc and asset references', async () => {
 	let refs!: SeededRefs;
 	const { findByTestId, getByTestId } = await renderApp({
 		initialPath: '/home',
@@ -119,8 +119,8 @@ test('CEO replies linkify backticked doc and asset references, opening them in a
 	await findByTestId('chat-panel');
 
 	// The exact shape that misfired in production: an LLM-authored reply that wraps
-	// the doc/asset filenames in backticks. They must still resolve to new-tab links
-	// instead of rendering as inert code the operator can't click.
+	// the doc/asset filenames in backticks. They must still resolve to links (docs
+	// new-tab, assets into the viewer) instead of inert code the operator can't click.
 	seedCeoReply(`The report is at \`prd.md\` and the mockup is \`assets/${refs.assetFilename}\`.`);
 
 	const docLink = await findByTestId('doc-mention-link');
@@ -130,8 +130,9 @@ test('CEO replies linkify backticked doc and asset references, opening them in a
 
 	const assetLink = getByTestId('asset-mention-link');
 	expect(assetLink.textContent).toContain(`assets/${refs.assetFilename}`);
-	expect(assetLink.getAttribute('href')).toMatch(/^\/api\/assets\/[0-9a-f-]+\?exp=\d+&sig=/);
-	expect(assetLink.getAttribute('target')).toBe('_blank');
+	// Asset mentions are same-tab router links into the asset viewer.
+	expect(assetLink.getAttribute('href')).toMatch(/^\/projects\/[^/]+\/assets\/view\?file=/);
+	expect(assetLink.getAttribute('target')).toBeNull();
 
 	// The backticked refs are no longer rendered as inert <code>.
 	const body = getByTestId('chat-markdown');

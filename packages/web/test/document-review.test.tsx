@@ -81,7 +81,7 @@ async function reviewCommentRows(): Promise<
 > {
 	const { db } = getTestContext();
 	const res = await db.query<{ quote: string; occurrence: number; comment: string }>(
-		'SELECT quote, occurrence, comment FROM document_review_comments ORDER BY created_at',
+		'SELECT quote, occurrence, comment FROM review_comments ORDER BY created_at',
 	);
 	return res.rows;
 }

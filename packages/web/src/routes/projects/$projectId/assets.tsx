@@ -4,7 +4,6 @@ import {
 	assetBasename,
 	assetFolder,
 	isArchiveFilter,
-	isMarkdownAssetMime,
 	matchesArchiveFilter,
 	normalizeAssetFolder,
 } from '@hezo/shared';
@@ -16,13 +15,8 @@ import {
 	ArchiveRestore,
 	Check,
 	ChevronDown,
-	Code,
 	Copy,
 	ExternalLink,
-	FileAudio,
-	File as FileIcon,
-	FileText,
-	FileVideo,
 	Filter,
 	Folder,
 	FolderInput,
@@ -34,7 +28,7 @@ import {
 	Upload,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { MarkdownAssetDialog } from '../../../components/markdown-asset-dialog';
+import { AssetIcon, formatBytes } from '../../../components/asset-icon';
 import { ArchivedBadge } from '../../../components/ui/archived-badge';
 import { Breadcrumb, type BreadcrumbSegment } from '../../../components/ui/breadcrumb';
 import { Button } from '../../../components/ui/button';
@@ -159,29 +153,6 @@ interface ErrorChip {
 	message: string;
 }
 
-function AssetIcon({ contentType }: { contentType: string }) {
-	const cls = 'h-8 w-8 text-text-3';
-	if (contentType.startsWith('audio/')) return <FileAudio className={cls} />;
-	if (contentType.startsWith('video/')) return <FileVideo className={cls} />;
-	if (contentType === 'text/html') return <Code className={cls} />;
-	if (
-		contentType === 'application/pdf' ||
-		contentType === 'text/plain' ||
-		isMarkdownAssetMime(contentType)
-	) {
-		return <FileText className={cls} />;
-	}
-	if (contentType.startsWith('image/')) return <ImageIcon className={cls} />;
-	return <FileIcon className={cls} />;
-}
-
-function formatBytes(bytes: number): string {
-	if (!Number.isFinite(bytes) || bytes < 0) return '0 B';
-	if (bytes < 1024) return `${bytes} B`;
-	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
 function ProjectAssetsPage() {
 	const { projectId } = Route.useParams();
 	const { file: focusFile, folder: folderParam, filter = ArchiveFilter.Active } = Route.useSearch();
@@ -210,8 +181,22 @@ function ProjectAssetsPage() {
 	const [errors, setErrors] = useState<ErrorChip[]>([]);
 	const [pendingDelete, setPendingDelete] = useState<ProjectAsset | null>(null);
 	const [pendingMove, setPendingMove] = useState<ProjectAsset | null>(null);
-	const [viewMarkdown, setViewMarkdown] = useState<ProjectAsset | null>(null);
 	const [newFolderOpen, setNewFolderOpen] = useState(false);
+
+	// Every asset opens in the in-app viewer (where review comments live); the
+	// card's corner popout keeps raw new-tab access.
+	const openViewer = useCallback(
+		(asset: ProjectAsset) => {
+			navigate({
+				to: '/projects/$projectId/assets/view',
+				search: {
+					file: asset.original_filename,
+					...(filter !== ArchiveFilter.Active ? { filter } : {}),
+				},
+			});
+		},
+		[navigate, filter],
+	);
 
 	const pushError = useCallback((filename: string, message: string) => {
 		const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -469,7 +454,7 @@ function ProjectAssetsPage() {
 								highlighted={focusFile === asset.original_filename}
 								onDelete={() => setPendingDelete(asset)}
 								onMove={() => setPendingMove(asset)}
-								onView={() => setViewMarkdown(asset)}
+								onView={() => openViewer(asset)}
 								onArchive={() => archive.mutate({ assetId: asset.id, archived: true })}
 								onRestore={() => archive.mutate({ assetId: asset.id, archived: false })}
 							/>
@@ -533,17 +518,6 @@ function ProjectAssetsPage() {
 					open={pendingMove !== null}
 					onOpenChange={(open) => {
 						if (!open) setPendingMove(null);
-					}}
-				/>
-			)}
-
-			{viewMarkdown && (
-				<MarkdownAssetDialog
-					asset={viewMarkdown}
-					projectId={projectId}
-					open={viewMarkdown !== null}
-					onOpenChange={(open) => {
-						if (!open) setViewMarkdown(null);
 					}}
 				/>
 			)}
@@ -972,7 +946,6 @@ function AssetCard({
 
 	const isImage = asset.content_type.startsWith('image/');
 	const isHtml = asset.content_type === 'text/html';
-	const isMarkdown = isMarkdownAssetMime(asset.content_type);
 	const isArchived = asset.archived_at != null;
 	const basename = assetBasename(asset.original_filename);
 	const thumbnail = isImage ? (
@@ -1001,30 +974,17 @@ function AssetCard({
 				highlighted ? 'border-info' : 'border-border'
 			}`}
 		>
-			{/* Markdown renders in-app (rich preview + view-source); everything else
-			    opens its raw signed URL in a new tab. */}
-			{isMarkdown ? (
-				<button
-					type="button"
-					onClick={onView}
-					className={mediaClass}
-					data-testid="asset-open-markdown"
-					aria-label={`View ${asset.original_filename}`}
-				>
-					{thumbnail}
-				</button>
-			) : (
-				<a
-					href={asset.url}
-					target="_blank"
-					rel="noopener noreferrer"
-					className={mediaClass}
-					data-testid="asset-open-link"
-					aria-label={`Open ${asset.original_filename} in a new tab`}
-				>
-					{thumbnail}
-				</a>
-			)}
+			{/* Every type opens the in-app viewer (split-pane content + review
+			    comments); the corner popout keeps raw new-tab access. */}
+			<button
+				type="button"
+				onClick={onView}
+				className={mediaClass}
+				data-testid="asset-open-viewer"
+				aria-label={`View ${asset.original_filename}`}
+			>
+				{thumbnail}
+			</button>
 			{isArchived && (
 				<span className="absolute right-1.5 top-1.5">
 					<ArchivedBadge overlay />

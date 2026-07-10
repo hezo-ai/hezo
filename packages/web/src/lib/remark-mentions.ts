@@ -65,7 +65,6 @@ export type ProjectDocsMap = Map<string, Map<string, ProjectDocMentionData>>;
 
 export interface AssetMentionData {
 	id: string;
-	signedUrl: string;
 	/** Set in instance scope: the project the asset belongs to. */
 	projectSlug?: string;
 }
@@ -205,7 +204,6 @@ function buildLink(token: MentionToken, opts: Options): LinkNode | null {
 				hProperties: {
 					'data-mention-asset-project-slug': slug,
 					'data-mention-asset-filename': token.filename,
-					'data-mention-asset-url': data.signedUrl,
 				},
 			},
 		};

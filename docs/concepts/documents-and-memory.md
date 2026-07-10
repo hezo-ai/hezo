@@ -135,7 +135,9 @@ agent — or post directly with the **Add to task** button, which opens a filter
 project's tasks and adds the handoff to the one you pick as a comment; when you're reviewing a
 document from a task's preview panel, that task is suggested first) and
 **clear review** (a trash button that deletes every comment after confirmation), alongside a
-**?** button that opens a short in-app guide to all of this.
+**?** button that opens a short in-app guide to all of this. Posting a handoff onto a task
+confirms with a link straight to the new task comment. The same review loop also covers the
+files in the assets library — see [Reviewing assets](/docs/concepts/assets).
 
 Wherever you read a document — the Documents page, the task-sidebar preview, or its own tab —
 its header carries **Edit** and **History** buttons. On the two preview views these take you

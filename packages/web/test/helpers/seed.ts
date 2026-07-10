@@ -242,6 +242,26 @@ export async function archiveSeededDocument(
 	});
 }
 
+/** Leave a review comment on an asset via the real API (no quote = whole-asset). */
+export async function seedAssetReviewComment(
+	workspace: SeededWorkspace,
+	project: SeededProject,
+	assetId: string,
+	input: { quote?: string; occurrence?: number; comment: string },
+): Promise<{ id: string }> {
+	const { apiBase } = getTestContext();
+	const res = await apiBase(`/api/projects/${project.slug}/assets/${assetId}/review-comments`, {
+		method: 'POST',
+		headers: workspace.headers,
+		body: JSON.stringify({
+			quote: input.quote,
+			occurrence: input.occurrence,
+			comment: input.comment,
+		}),
+	});
+	return ((await res.json()) as { data: { id: string } }).data;
+}
+
 /** Leave a review comment on a project doc via the real API. */
 export async function seedReviewComment(
 	workspace: SeededWorkspace,

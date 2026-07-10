@@ -134,9 +134,8 @@ test.describe('Task Comment Attachments', () => {
 		throw new Error(`drop on ${selector} never triggered an upload for task ${taskId}`);
 	}
 
-	test('drag-drop adds a chip, sends, renders an icon thumb, opens in new tab', async ({
+	test('drag-drop adds a chip, sends, renders an icon thumb that opens the viewer', async ({
 		sharedPage: page,
-		context,
 		sharedWorkspace,
 	}) => {
 		const { task, project } = await createTask(page, sharedWorkspace.token);
@@ -168,10 +167,11 @@ test.describe('Task Comment Attachments', () => {
 			.first();
 		await expect(thumb).toBeVisible({ timeout: UPLOAD_WAIT_MS });
 
-		const [popup] = await Promise.all([context.waitForEvent('page'), thumb.click()]);
-		await popup.waitForLoadState();
-		expect(popup.url()).toContain('/api/assets/');
-		await popup.close();
+		// The posted-comment thumb is a same-tab link into the in-app asset viewer
+		// (raw view stays reachable from the viewer's toolbar).
+		await thumb.click();
+		await expect(page).toHaveURL(/\/assets\/view\?file=uploads/);
+		await expect(page.locator('[data-testid="asset-viewer-image"]')).toBeVisible();
 	});
 
 	test('hint with tooltip shows when empty, hides once a chip appears, returns after removal', async ({
@@ -230,7 +230,7 @@ test.describe('Task Comment Attachments', () => {
 		await expect(hint).toBeVisible();
 	});
 
-	test('pending chip exposes a preview link with the signed asset URL', async ({
+	test('pending chip exposes a new-tab preview link into the asset viewer', async ({
 		sharedPage: page,
 		sharedWorkspace,
 	}) => {
@@ -251,11 +251,13 @@ test.describe('Task Comment Attachments', () => {
 			.locator('[data-testid="comment-attachment-preview"]')
 			.filter({ hasText: 'preview.png' });
 		await expect(preview).toBeVisible({ timeout: UPLOAD_WAIT_MS });
+		// New tab on purpose: the chip renders in the composer, and a same-tab
+		// navigation would destroy the draft.
 		await expect(preview).toHaveAttribute('target', '_blank');
 		await expect(preview).toHaveAttribute('rel', 'noopener noreferrer');
 		const href = await preview.getAttribute('href');
 		expect(href).toBeTruthy();
-		expect(href).toContain('/api/assets/');
+		expect(href).toContain('/assets/view?file=');
 	});
 
 	test('rejects an unsupported extension with an inline error chip', async ({

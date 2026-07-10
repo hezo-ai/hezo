@@ -30,9 +30,11 @@ import { Tooltip } from './ui/tooltip';
 type RemarkPlugin = Parameters<typeof Markdown>[0]['remarkPlugins'];
 type RehypePlugin = Parameters<typeof Markdown>[0]['rehypePlugins'];
 
-const REVIEW_MARK_CLASSES =
+// Exported for the plain-text review surface (asset viewer), which renders the
+// same `mark[data-review-id]` highlights without going through react-markdown.
+export const REVIEW_MARK_CLASSES =
 	'cursor-pointer rounded-[3px] px-px bg-accent/15 text-text-1 transition-colors hover:bg-accent/25 [box-shadow:inset_0_-1.5px_0_0_color-mix(in_oklab,var(--color-accent)_45%,transparent)]';
-const REVIEW_MARK_ACTIVE_CLASSES =
+export const REVIEW_MARK_ACTIVE_CLASSES =
 	'cursor-pointer rounded-[3px] px-px bg-accent/30 text-text-1 ring-2 ring-ring [box-shadow:inset_0_-1.5px_0_0_color-mix(in_oklab,var(--color-accent)_45%,transparent)]';
 
 // break-words wraps long unbreakable strings (URLs, paths) inside the prose
@@ -157,7 +159,6 @@ export function MarkdownProse({
 		for (const a of source) {
 			m.set(a.filename, {
 				id: a.id,
-				signedUrl: a.signed_url,
 				projectSlug: a.project_slug,
 			});
 		}
@@ -274,7 +275,6 @@ export function MarkdownProse({
 					'data-mention-doc-filename'?: string;
 					'data-mention-asset-project-slug'?: string;
 					'data-mention-asset-filename'?: string;
-					'data-mention-asset-url'?: string;
 					'data-mention-size'?: string;
 					'data-mention-updated-at'?: string;
 				};
@@ -345,25 +345,13 @@ export function MarkdownProse({
 
 				const assetProject = attrs['data-mention-asset-project-slug'];
 				const assetFilename = attrs['data-mention-asset-filename'];
-				const assetUrl = attrs['data-mention-asset-url'];
 				if (assetProject && assetFilename && mentionsEnabled) {
-					if (assetUrl) {
-						return (
-							<DedicatedViewMention
-								href={assetUrl}
-								nameTestId="asset-mention-link"
-								previewTestId="asset-mention-preview-link"
-								previewAriaLabel="Open asset in new tab"
-							>
-								{props.children}
-							</DedicatedViewMention>
-						);
-					}
-					// No signed URL → no dedicated view to open. Keep the same-tab
-					// library link with no icon (consistent with the general rule).
+					// The in-app viewer is the canonical asset link target (raw view
+					// stays reachable from its toolbar); same-tab in-app mentions carry
+					// no new-tab icon per the general rule.
 					return (
 						<Link
-							to="/projects/$projectId/assets"
+							to="/projects/$projectId/assets/view"
 							params={{ projectId: assetProject }}
 							search={{ file: assetFilename }}
 							className={MENTION_CLASSES}

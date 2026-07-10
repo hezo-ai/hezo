@@ -1,4 +1,4 @@
-import { assetBasename } from '@hezo/shared';
+import { assetBasename, assetPath } from '@hezo/shared';
 import {
 	ExternalLink,
 	FileAudio,
@@ -31,6 +31,12 @@ interface AttachmentChipsProps {
 	uploading: UploadingFile[];
 	errors: ErrorChip[];
 	onRemove: (id: string) => void;
+	/**
+	 * Route-param slug of the project the uploads land in; when set the chip
+	 * opens the in-app asset viewer. Always a new tab — these chips render in a
+	 * composer, and a same-tab navigation would destroy the draft.
+	 */
+	projectId?: string;
 	rowTestId?: string;
 	chipTestId?: string;
 	previewTestId?: string;
@@ -47,6 +53,7 @@ export function AttachmentChips({
 	uploading,
 	errors,
 	onRemove,
+	projectId,
 	rowTestId,
 	chipTestId,
 	previewTestId,
@@ -63,7 +70,7 @@ export function AttachmentChips({
 					{iconFor(a.content_type)}
 					<Tooltip content={a.original_filename}>
 						<a
-							href={a.url}
+							href={projectId ? assetPath(projectId, a.original_filename) : a.url}
 							target="_blank"
 							rel="noopener noreferrer"
 							className="flex items-center gap-1 text-text-1 hover:underline"

@@ -19,7 +19,7 @@ export function TextComment({ comment, projectId, projectSlug }: Props) {
 			{comment.attachments && comment.attachments.length > 0 ? (
 				<div className="mt-2 flex flex-wrap gap-1.5" data-testid="comment-attachments">
 					{comment.attachments.map((a) => (
-						<CommentAttachmentThumb key={a.id} attachment={a} />
+						<CommentAttachmentThumb key={a.id} attachment={a} projectId={projectId} />
 					))}
 				</div>
 			) : null}

@@ -388,12 +388,12 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	read_project_asset: {
 		category: 'Project docs & assets',
 		returns:
-			"For a text asset, `{ filename, content_type, content }`. For a binary asset, `{ filename, content_type, byte_size, binary: true, url }` — a signed download URL valid for 24h; fetch it with plain `curl` (no auth header), and re-call the tool for a fresh one if it expires. Returns `{ error }` if not found — match the full path, folder prefix included — or if the asset's archive state doesn't match `filter` (default `'active'`, so archived assets need `filter: 'archived'` or `'all'`; an archived read carries `archived: true`).",
+			"For a text asset, `{ filename, content_type, content }`. For a binary asset, `{ filename, content_type, byte_size, binary: true, url }` — a signed download URL valid for 24h; fetch it with plain `curl` (no auth header), and re-call the tool for a fresh one if it expires. Either shape also carries `review_comments: [{ id, quote?, occurrence?, comment, created_at }]` when the admin has left pending review feedback on the asset: on a text asset (markdown, plain text) a comment anchors to an exact `quote` snippet (`occurrence` disambiguates repeats); a comment without a quote applies to the whole file. Any write to the asset's path deletes all of its review comments, so capture them before writing. Returns `{ error }` if not found — match the full path, folder prefix included — or if the asset's archive state doesn't match `filter` (default `'active'`, so archived assets need `filter: 'archived'` or `'all'`; an archived read carries `archived: true`).",
 	},
 	write_project_asset: {
 		category: 'Project docs & assets',
 		returns:
-			'`{ written: true, id, reference: "assets/<path>" }`, or `{ error }` if the type is not text-based (`.html`, `.svg`, `.txt`, `.md`, or a script/text format: `.sh`, `.py`, `.js`, `.ts`, `.json`, `.csv`, `.yaml`, `.yml`), the path is invalid (max 2 folder levels), the content exceeds 10 MB, or an archived asset holds the path (unarchive it first or pick another path). Re-saving the same path overwrites it; matching is path-exact.',
+			'`{ written: true, id, reference: "assets/<path>" }`, or `{ error }` if the type is not text-based (`.html`, `.svg`, `.txt`, `.md`, or a script/text format: `.sh`, `.py`, `.js`, `.ts`, `.json`, `.csv`, `.yaml`, `.yml`), the path is invalid (max 2 folder levels), the content exceeds 10 MB, or an archived asset holds the path (unarchive it first or pick another path). Re-saving the same path overwrites it; matching is path-exact. Overwriting deletes ALL pending review comments on the asset (the admin feedback returned by read_project_asset) — read them first and make all edits in one consolidated write.',
 	},
 	move_project_asset: {
 		category: 'Project docs & assets',

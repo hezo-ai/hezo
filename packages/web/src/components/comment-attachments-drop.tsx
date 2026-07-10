@@ -103,6 +103,7 @@ export function CommentAttachmentsDrop({
 					uploading={uploading}
 					errors={errors}
 					onRemove={removeAttachment}
+					projectId={projectId}
 					rowTestId="comment-attachment-pending-row"
 					chipTestId="comment-attachment-chip"
 					previewTestId="comment-attachment-preview"

@@ -59,8 +59,9 @@ Anywhere you write text in Hezo — a task, a comment, a document — you can po
 by writing `assets/<path>` (for example `assets/login-mockup.png`, or
 `assets/launch/images/hero.png` for one inside folders). You don't have to type it out: each
 asset card has a **Copy link** action that copies its exact `assets/<path>` reference to your
-clipboard, ready to paste. Opening a link to a foldered asset takes you straight to its folder
-with the file highlighted.
+clipboard, ready to paste. Every asset link — a reference in a comment, an attachment chip, a
+card in the library — opens the asset in its **viewer** (see below), whose breadcrumb takes
+you back to the file's folder in the library.
 
 This is also how the **CEO** hands you files from the chat. When you ask the CEO to whip
 something up — a quick mockup, a diagram, a one-off HTML page — it saves the result to an
@@ -97,13 +98,33 @@ only on archived cards, so removing an asset for good is a deliberate two-step: 
 then delete it from the Archived view (with a confirmation, since attachments referencing it
 are removed too).
 
-## Previews
+## The asset viewer
 
-Assets aren't just stored — they're **previewable**. When an agent produces an HTML
-deliverable — a mockup, a dashboard, a report — you can open it and click through it right in
-Hezo, rendered live, without checking anything out or running it yourself. HTML previews run
+Clicking any asset opens it in the **asset viewer** — a split view with the file's content on
+the left and its **review comments** on the right (on a phone the comments pane tucks away
+behind an edge toggle, like the task page's side panel). Each type renders natively: an
+agent's **HTML** deliverable — a mockup, a dashboard, a report — renders live and clickable
 in a **sandbox**, isolated from your instance and your data, so viewing an agent's output is
-safe by default.
+safe by default; **markdown** renders as formatted prose with a **view-source** toggle;
+images and SVGs display scaled to fit; other types show a summary card. **Open raw** in the
+viewer's toolbar still opens the underlying file in its own tab whenever you want the
+unwrapped thing.
 
-Markdown assets open the same way: click one and it renders as formatted prose right in Hezo,
-with a **view-source** toggle to flip to the raw markdown whenever you want it.
+## Reviewing assets
+
+Assets take **review comments**, the same feedback loop [documents](/docs/concepts/documents-and-memory)
+have. On a **text asset** (markdown, plain text) select any passage — or hover a line — to
+leave a comment anchored right there; it stays highlighted, with its note in the margin. On
+any other type (an image, an HTML mockup, a PDF) add comments from the review pane — each
+applies to the asset as a whole. Clicking a comment in the pane shows you where it lives in
+the content.
+
+When the review is ready, **Action this review** hands it to an agent: copy the handoff
+blurb, or post it straight onto a task and assign the agent — a confirmation with a link to
+the new task comment appears so you can jump there. The agent reads the comments alongside
+the file (`read_project_asset`) and actions them.
+
+One rule to know: a review applies to the **current version** of an asset. The moment
+anything rewrites the file — an agent's `write_project_asset`, typically — all of its review
+comments are cleared, exactly like documents. Agents are instructed to capture every comment
+before their first write.

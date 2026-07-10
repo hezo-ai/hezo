@@ -13,3 +13,13 @@ export function buildReviewHandoff(filename: string): string {
 		`Action each comment and update the document accordingly. If any feedback is unclear or you are unsure how to proceed, ask the admin in the task thread before making changes.`,
 	].join('\n\n');
 }
+
+/** The asset flavor: same lifecycle rules, read/write via the asset tools. */
+export function buildAssetReviewHandoff(path: string): string {
+	return [
+		`Review comments have been left on the asset assets/${path}.`,
+		`Read it with read_project_asset — the pending review comments come back alongside the content. On a text asset each comment anchors to an exact quote; a comment without a quote applies to the whole file.`,
+		`IMPORTANT: capture ALL review comments before your first write. Any write_project_asset to this path automatically deletes every review comment on it, so keep them in context and make one consolidated update rather than multiple passes.`,
+		`Action each comment and update the asset accordingly. If any feedback is unclear or you are unsure how to proceed, ask the admin in the task thread before making changes.`,
+	].join('\n\n');
+}

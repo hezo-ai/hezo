@@ -332,13 +332,13 @@ export async function setDocumentArchived(
 
 /**
  * Review comments are version-scoped: any content change consumes the pending
- * review (see services/document-review.ts). Runs inside the caller's document
+ * review (see services/review-comments.ts). Runs inside the caller's document
  * transaction so the wipe commits atomically with the edit itself. Returns
  * whether anything was deleted so the caller can broadcast after commit.
  */
 async function wipeReviewComments(db: Db, documentId: string): Promise<boolean> {
 	const wiped = await db.query<{ id: string }>(
-		'DELETE FROM document_review_comments WHERE document_id = $1 RETURNING id',
+		'DELETE FROM review_comments WHERE document_id = $1 RETURNING id',
 		[documentId],
 	);
 	return wiped.rows.length > 0;
