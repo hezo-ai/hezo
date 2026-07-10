@@ -789,8 +789,16 @@ streak), so a task that never fits its run window can't loop forever.
 **Success gate.** A clean exit (`exit_code = 0`) only counts as `succeeded` if the run
 **produced output** — `produced_output` is set by any write tool (and a post-run worktree
 diff), or the agent explicitly calls `report_no_work`. A clean exit with neither is a
-silent no-op, marked `failed`. The completeness **stop-hook** (§ 6) is a separate gate
-that blocks the agent from ending its turn with unfinished work.
+silent no-op, marked `failed`. One further demotion overrides even a run that *did* write:
+if the CLI force-terminated still-running background work (Claude Code's headless
+`--print` mode prints "Background tasks still running after Ns; terminating" and kills a
+`run_in_background` job or a `Workflow` fan-out that never synthesized), the run
+**abandoned unfinished work** and is marked `failed` regardless of earlier output
+(`detectTerminatedBackgroundWork` scans the CLI's own diagnostic output — stderr and
+non-JSON stdout lines — so an agent that merely echoes the phrase can't trip it). This is
+a backstop to `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0` (which lifts the wait ceiling) for
+CLI versions that ignore the override. The completeness **stop-hook** (§ 6) is a separate
+gate that blocks the agent from ending its turn with unfinished work.
 
 **Sessions & recovery.** `agent_task_sessions` persists per-task session state; each
 heartbeat spawns a fresh subprocess and injects handoff markdown from the prior session,
