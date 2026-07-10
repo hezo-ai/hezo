@@ -59,6 +59,15 @@ container. The connection model is in place; automatic installation of local ser
 still being rolled out, so prefer hosted (HTTP) servers for now where you have the
 choice.
 
+A local server that reaches an outside API usually reads its key from an **environment
+variable** (say a YouTube tool that reads `YOUTUBE_API_KEY`). You never put the real key in
+the connection — the connection holds a **placeholder**, and the value is stored as a
+[credential](/docs/security/secret-protection) the agent requests from you and you paste in.
+The [egress proxy](/docs/security/secret-protection) swaps in the real value only when the
+server calls out, scoped to that API's host. Because connections are scoped per project
+(below), each project supplies its own key for the same tool without them ever colliding —
+each project's credential just gets its own name.
+
 ## Where a connection applies
 
 MCP connections are **scoped by project**. A connection you add to a project is private to
