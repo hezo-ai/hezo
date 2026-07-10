@@ -393,6 +393,38 @@ test('mark all as read is disabled when there are no unread mentions', async () 
 	expect((button as HTMLButtonElement).disabled).toBe(true);
 });
 
+test('mark all as read only shows on the Unread tab', async () => {
+	let ctx: { projectSlug: string };
+	const { findByText, queryByText, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Demo' });
+			const task = await seedTask(ws, project, { title: 'Unread ticket' });
+			await seedAgentAdminMention(ws, task, '@admin fresh decision needed.');
+			ctx = { projectSlug: project.slug };
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/inbox',
+		params: { projectId: ctx!.projectSlug },
+	});
+
+	// Defaults to the Unread tab — the button is present.
+	await findByText('Mark all as read');
+
+	// It disappears on every other tab.
+	for (const tab of ['Read', 'All', 'Archived']) {
+		await user.click(await findByText(tab));
+		await waitFor(() => expect(queryByText('Mark all as read')).toBeNull());
+	}
+
+	// …and returns on Unread.
+	await user.click(await findByText('Unread'));
+	await findByText('Mark all as read');
+});
+
 test('header inbox icon shows the global unread count badge', async () => {
 	const { findByTestId } = await renderApp({
 		initialPath: '/home',
