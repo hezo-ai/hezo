@@ -28,6 +28,7 @@ interface OpencodeRemoteServer {
 	type: 'remote';
 	url: string;
 	enabled: true;
+	timeout: number;
 	headers?: Record<string, string>;
 }
 
@@ -35,6 +36,7 @@ interface OpencodeLocalServer {
 	type: 'local';
 	command: string[];
 	enabled: true;
+	timeout: number;
 	environment?: Record<string, string>;
 }
 
@@ -47,10 +49,23 @@ interface OpencodeConfig {
 
 const CONFIG_BASENAME = 'opencode.json';
 
+// OpenCode's per-MCP-server request timeout (`mcp.<name>.timeout`) defaults to a
+// mere 5000 ms — any Hezo MCP tool call that takes longer than 5s fails outright.
+// There is no env-var override (OpenCode reads only a fixed env-var set, none
+// timeout-related), so we stamp a generous per-server timeout into the
+// `opencode.json` the injector already writes. 10 min matches the other runtimes'
+// MCP ceilings and is safely above any real Hezo tool call.
+const MCP_REQUEST_TIMEOUT_MS = 600_000;
+
 function buildRemoteServer(d: McpHttpDescriptor): OpencodeRemoteServer {
 	const headers: Record<string, string> = { ...(d.headers ?? {}) };
 	if (d.bearerToken) headers.Authorization = `Bearer ${d.bearerToken}`;
-	const server: OpencodeRemoteServer = { type: 'remote', url: d.url, enabled: true };
+	const server: OpencodeRemoteServer = {
+		type: 'remote',
+		url: d.url,
+		enabled: true,
+		timeout: MCP_REQUEST_TIMEOUT_MS,
+	};
 	if (Object.keys(headers).length > 0) server.headers = headers;
 	return server;
 }
@@ -60,6 +75,7 @@ function buildLocalServer(d: McpStdioDescriptor): OpencodeLocalServer {
 		type: 'local',
 		command: [d.command, ...(d.args ?? [])],
 		enabled: true,
+		timeout: MCP_REQUEST_TIMEOUT_MS,
 	};
 	if (d.env && Object.keys(d.env).length > 0) server.environment = d.env;
 	return server;

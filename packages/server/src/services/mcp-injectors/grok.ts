@@ -33,6 +33,19 @@ import type {
 
 const CONFIG_BASENAME = 'config.toml';
 
+// A slow-starting stdio MCP server (e.g. an `npx -y <pkg>` cold start that must
+// download the package) can exceed Grok's 30s default MCP startup handshake
+// (`[mcp_servers.<name>].startup_timeout_sec`) and be dropped at launch. Give it
+// a generous ceiling. (Grok's per-tool-call default, `tool_timeout_sec`, is
+// already 6000s, so we leave that alone.)
+const MCP_STARTUP_TIMEOUT_SEC = 120;
+
+// Grok's bash toolset defaults to a 120s foreground `timeout_secs`; on expiry it
+// auto-backgrounds rather than killing the command (`auto_background_on_timeout`
+// is true by default), but raising the foreground window lets a normal long
+// build/test finish inline instead of being pushed to a background poll loop.
+const BASH_TIMEOUT_SEC = 3600;
+
 /** Render a TOML key: bare when it only uses `[A-Za-z0-9_-]`, else quoted. */
 function tomlKey(name: string): string {
 	return TOML_KEY_RE.test(name) ? name : escapeTomlBasicString(name);
@@ -50,7 +63,12 @@ function renderSubTable(serverKey: string, sub: string, entries: Record<string, 
 function renderHttpServer(d: McpHttpDescriptor): string {
 	const key = safeName(d.name);
 	const blocks: string[] = [
-		[`[mcp_servers.${key}]`, `url = ${escapeTomlBasicString(d.url)}`, 'enabled = true'].join('\n'),
+		[
+			`[mcp_servers.${key}]`,
+			`url = ${escapeTomlBasicString(d.url)}`,
+			'enabled = true',
+			`startup_timeout_sec = ${MCP_STARTUP_TIMEOUT_SEC}`,
+		].join('\n'),
 	];
 	const headers: Record<string, string> = { ...(d.headers ?? {}) };
 	if (d.bearerToken) headers.Authorization = `Bearer ${d.bearerToken}`;
@@ -65,6 +83,7 @@ function renderStdioServer(d: McpStdioDescriptor): string {
 	const lines = [`[mcp_servers.${key}]`, `command = ${escapeTomlBasicString(d.command)}`];
 	if (d.args && d.args.length > 0) lines.push(`args = ${tomlArray(d.args)}`);
 	lines.push('enabled = true');
+	lines.push(`startup_timeout_sec = ${MCP_STARTUP_TIMEOUT_SEC}`);
 	const blocks: string[] = [lines.join('\n')];
 	if (d.env && Object.keys(d.env).length > 0) {
 		blocks.push(renderSubTable(key, 'env', d.env));
@@ -87,6 +106,9 @@ export const grokAdapter: RuntimeMcpAdapter = {
 		for (const d of descriptors) {
 			blocks.push(d.kind === 'http' ? renderHttpServer(d) : renderStdioServer(d));
 		}
+		// Give long foreground shell commands room to finish inline before Grok
+		// auto-backgrounds them at the 120s default.
+		blocks.push(`[toolset.bash]\ntimeout_secs = ${BASH_TIMEOUT_SEC}`);
 		// Never let the CLI self-update mid-run inside the locked-down container.
 		blocks.push('[cli]\nauto_update = false');
 		const contents = `${blocks.join('\n\n')}\n`;

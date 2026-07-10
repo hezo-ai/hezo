@@ -219,6 +219,24 @@ describe('codex adapter', () => {
 		expect(config.contents.indexOf('web_search')).toBeLessThan(config.contents.indexOf('['));
 	});
 
+	it('raises the background-terminal ceiling (top-level) and per-MCP-server timeouts', () => {
+		const injection = adapter.build([HEZO_DESCRIPTOR], {
+			hostHomeDir: HOME,
+			containerHomeDir: HOME,
+		});
+		const config = injection.files.find((f) => f.hostPath === `${HOME}/config.toml`);
+		if (!config) throw new Error('config.toml not emitted');
+		// The direct analog of CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS (default 300000).
+		expect(config.contents).toContain('background_terminal_max_timeout = 3600000');
+		// Must stay a top-level key: before the first [table] header.
+		expect(config.contents.indexOf('background_terminal_max_timeout')).toBeLessThan(
+			config.contents.indexOf('['),
+		);
+		// Per-server tool + startup ceilings (defaults 300s / 30s).
+		expect(config.contents).toContain('tool_timeout_sec = 1800');
+		expect(config.contents).toContain('startup_timeout_sec = 120');
+	});
+
 	it('throws when no host home dir is provided', () => {
 		expect(() =>
 			adapter.build([HEZO_DESCRIPTOR], { hostHomeDir: null, containerHomeDir: null }),
@@ -317,6 +335,22 @@ describe('gemini adapter', () => {
 		expect(parsed.hooks.AfterAgent.length).toBe(1);
 		expect(parsed.hooks.AfterAgent[0].hooks[0].type).toBe('command');
 		expect(parsed.hooks.AfterAgent[0].hooks[0].command).toBe(`node ${HOME}/stop-hook-judge.mjs`);
+	});
+
+	it('disables the 5-min shell inactivity kill and sets a generous per-MCP timeout', () => {
+		const injection = adapter.build([HEZO_DESCRIPTOR], {
+			hostHomeDir: HOME,
+			containerHomeDir: HOME,
+		});
+		const settings = injection.files.find((f) => f.hostPath === `${HOME}/.gemini/settings.json`);
+		if (!settings) throw new Error('settings.json not emitted');
+		const parsed = JSON.parse(settings.contents) as {
+			tools: { shell: { inactivityTimeout: number } };
+			mcpServers: Record<string, { timeout: number }>;
+		};
+		// 0 disables the kill of a long, silent `run_shell_command` (default 300s).
+		expect(parsed.tools.shell.inactivityTimeout).toBe(0);
+		expect(parsed.mcpServers.hezo.timeout).toBe(600_000);
 	});
 
 	it('throws when no host home dir is provided', () => {
@@ -477,6 +511,19 @@ describe('opencode adapter', () => {
 		expect(config.mcp.hezo.headers?.Authorization).toBe(`Bearer ${TOKEN}`);
 	});
 
+	it('raises the per-MCP-server request timeout well above the 5s default', () => {
+		const injection = adapter.build([HEZO_DESCRIPTOR], {
+			hostHomeDir: HOME,
+			containerHomeDir: HOME,
+		});
+		const config = JSON.parse(injection.files[0].contents) as {
+			mcp: Record<string, { timeout: number }>;
+		};
+		// OpenCode's `mcp.<name>.timeout` defaults to 5000ms — any tool call slower
+		// than 5s fails. We stamp a generous 10-minute ceiling instead.
+		expect(config.mcp.hezo.timeout).toBe(600_000);
+	});
+
 	it('emits NO Stop-hook judge script (OpenCode has no in-process block-and-continue hook)', () => {
 		const injection = adapter.build([HEZO_DESCRIPTOR], {
 			hostHomeDir: HOME,
@@ -511,6 +558,7 @@ describe('opencode adapter', () => {
 			type: 'local',
 			command: ['/usr/bin/srv', '--port', '7'],
 			enabled: true,
+			timeout: 600_000,
 			environment: { TOKEN: 'x' },
 		});
 	});
@@ -562,6 +610,11 @@ describe('grok adapter', () => {
 		expect(file.contents).toContain('[mcp_servers.hezo.headers]');
 		expect(file.contents).toContain(`Authorization = "Bearer ${TOKEN}"`);
 		expect(file.contents).toContain('[cli]\nauto_update = false');
+		// Slow-starting MCP servers get more than the 30s default startup handshake,
+		// and long foreground shell commands more than the 120s default before Grok
+		// auto-backgrounds them.
+		expect(file.contents).toContain('startup_timeout_sec = 120');
+		expect(file.contents).toContain('[toolset.bash]\ntimeout_secs = 3600');
 	});
 
 	it('emits NO Stop-hook judge script (Grok Stop hooks are passive — fail-open like OpenCode)', () => {

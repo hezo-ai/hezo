@@ -856,6 +856,24 @@ token usage on its stream** — the runner points it at a per-run `--debug-file`
 the `process_conversation_turn` tracing spans for cost (`extractGrokUsageFromDebugLog`),
 then scrubs the file (it also holds the `XAI_API_KEY`).
 
+**Runtime timeout hardening.** Each CLI ships default timeouts that would cut off Hezo's
+legitimately long agent/background work; every runtime is relaxed at its own config surface
+(no exact cross-runtime env analog exists for Claude Code's `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`).
+**Claude Code** lifts the headless background-wait ceiling via that env var (in
+`CLAUDE_CODE_QUIET_ENV`). **Codex** (`config.toml`) sets top-level
+`background_terminal_max_timeout = 3600000` (its direct analog; default 5 min — Codex has no
+`0`-means-infinite sentinel, so a large finite value is used) and per-`[mcp_servers.*]`
+`tool_timeout_sec`/`startup_timeout_sec`; its built-in `openai` provider's per-stream knobs
+(`stream_idle_timeout_ms`) are **not** tunable while going direct (config/`-c` overrides of a
+built-in provider are silently ignored by Codex's vacant-only merge) and only drive a
+reconnect/retry, not a kill, so they're left at default. **Gemini** (`settings.json`) sets
+`tools.shell.inactivityTimeout = 0` (disables the 5-min kill of a silent shell command) and a
+per-MCP-server `timeout`. **OpenCode** (`opencode.json`) raises the per-MCP-server `timeout`
+from its 5 s (!) default to 10 min; its bash tool has a non-configurable 10-min hard cap.
+**Grok** (`config.toml`) raises `[toolset.bash].timeout_secs` and per-`[mcp_servers.*]`
+`startup_timeout_sec` (its bash already auto-backgrounds on timeout rather than killing). All
+values live as named constants in each `mcp-injectors/*.ts` adapter.
+
 **Completeness stop-hook.** Every run is gated by a judge that fires when the agent tries
 to end its turn and **blocks** it (keeping the same headless exec alive) when it's bailing
 on failing tests, calling problems "out of scope", deferring without filing a sub-task,
