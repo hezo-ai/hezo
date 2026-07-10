@@ -2,8 +2,13 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
 import type { ComponentPropsWithoutRef, ReactNode } from 'react';
 
+// z-[90]/overlay z-[80] keep dialogs above the full-screen mobile surfaces that
+// can host their triggers — the task-detail preview panel (z-[60]) and the review
+// editor bottom sheet (z-[70]). At the lower z-50 the opaque preview panel painted
+// over dialogs opened from its toolbar, so on mobile the dialog scroll-locked the
+// page but was never visible. (In-dialog tooltips ride above at z-[95].)
 const base =
-	'fixed inset-0 z-50 flex flex-col bg-surface p-4 overflow-y-auto outline-none sm:inset-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:w-full sm:max-h-[90vh] sm:rounded-lg sm:border sm:border-border sm:p-6 sm:shadow-lg';
+	'fixed inset-0 z-[90] flex flex-col bg-surface p-4 overflow-y-auto outline-none sm:inset-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:w-full sm:max-h-[90vh] sm:rounded-lg sm:border sm:border-border sm:p-6 sm:shadow-lg';
 
 export const dialogContentClassName = {
 	sm: `${base} sm:max-w-sm`,
@@ -21,9 +26,9 @@ export type DialogSize = keyof typeof dialogContentClassName;
  * field grow to fill the space (e.g. the create-task description).
  */
 export const fullscreenContentClassName =
-	'fixed inset-0 z-50 flex flex-col bg-surface p-4 overflow-hidden outline-none sm:inset-4 sm:rounded-lg sm:border sm:border-border sm:p-6 sm:shadow-lg';
+	'fixed inset-0 z-[90] flex flex-col bg-surface p-4 overflow-hidden outline-none sm:inset-4 sm:rounded-lg sm:border sm:border-border sm:p-6 sm:shadow-lg';
 
-export const dialogOverlayClassName = 'fixed inset-0 bg-[var(--overlay)] backdrop-blur-sm z-40';
+export const dialogOverlayClassName = 'fixed inset-0 bg-[var(--overlay)] backdrop-blur-sm z-[80]';
 
 type DialogContentBaseProps = ComponentPropsWithoutRef<typeof Dialog.Content>;
 

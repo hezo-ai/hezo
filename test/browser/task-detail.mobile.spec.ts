@@ -109,6 +109,17 @@ test.describe('Task detail — document preview panel (mobile, 390px)', () => {
 		});
 		if (!docRes.ok()) throw new Error(`seed prd.md failed: ${docRes.status()}`);
 
+		// A review comment on the doc enables the "Action this review" / "Clear"
+		// toolbar buttons (they're disabled at count 0).
+		const reviewRes = await page.request.post(
+			`/api/projects/${project.slug}/docs/prd.md/review-comments`,
+			{
+				headers,
+				data: { quote: 'unmistakable document body', occurrence: 0, comment: 'Tighten this.' },
+			},
+		);
+		if (!reviewRes.ok()) throw new Error(`seed review comment failed: ${reviewRes.status()}`);
+
 		const commentRes = await page.request.post(
 			`/api/projects/${project.slug}/tasks/${task.id}/comments`,
 			{
@@ -162,6 +173,70 @@ test.describe('Task detail — document preview panel (mobile, 390px)', () => {
 		// The meta drawer is still collapsed off-screen and the toggle untouched.
 		expect((await rail.boundingBox())?.x ?? 0).toBeGreaterThanOrEqual(360);
 		await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+	});
+
+	test('review-toolbar dialogs open ABOVE the full-screen preview panel', async ({
+		page,
+		freshWorkspace,
+	}) => {
+		// Regression: below lg the preview panel is `fixed inset-0 z-[60]` and opaque,
+		// while the shared Dialog used to sit at z-50. Dialogs opened from the panel's
+		// review toolbar (help "?", "Action this review") scroll-locked the page but
+		// were painted over by the panel — present in the DOM, invisible on screen.
+		// This is a real-CSS-stacking assertion happy-dom can't make (#1 in the tier
+		// decision tree), so it lives in Playwright. It fails on z-50 and holds on the
+		// raised z-[80]/z-[90] dialog layer.
+		const { token } = freshWorkspace;
+		const { project, task } = await createProjectTaskWithDocMention(page, token);
+
+		await page.goto(`/projects/${project.slug}/tasks/${task.identifier.toLowerCase()}`);
+		await waitForPageLoad(page);
+		await expect(page.getByRole('heading', { name: 'Mobile Task' })).toBeVisible({
+			timeout: 20000,
+		});
+
+		const mention = page.getByTestId('doc-mention-link').first();
+		await expect(mention).toBeVisible({ timeout: 15000 });
+		await mention.click();
+		await expect(page.getByTestId('preview-panel')).toBeInViewport();
+
+		// Assert the element painted at a dialog's centre actually belongs to that
+		// dialog — the direct test of "not occluded by the z-[60] panel". A visible
+		// check alone wouldn't catch occlusion (the dialog is technically visible,
+		// just covered).
+		async function expectDialogOnTop(locator: ReturnType<Page['locator']>) {
+			await expect(locator).toBeVisible();
+			const box = await locator.boundingBox();
+			expect(box).not.toBeNull();
+			if (!box) return;
+			const cx = Math.round(box.x + box.width / 2);
+			const cy = Math.round(box.y + box.height / 2);
+			const dialogId = await locator.evaluate((el) => {
+				el.setAttribute('data-occlusion-probe', '1');
+				return true;
+			});
+			expect(dialogId).toBe(true);
+			const topmostIsInsideDialog = await page.evaluate(
+				({ x, y }) => {
+					const el = document.elementFromPoint(x, y);
+					return !!el?.closest('[data-occlusion-probe="1"]');
+				},
+				{ x: cx, y: cy },
+			);
+			expect(topmostIsInsideDialog).toBe(true);
+			await locator.evaluate((el) => el.removeAttribute('data-occlusion-probe'));
+		}
+
+		// 1) The help "?" dialog.
+		await page.getByTestId('review-help').click();
+		const helpDialog = page.getByRole('dialog').filter({ hasText: 'How document review works' });
+		await expectDialogOnTop(helpDialog);
+		await page.getByTestId('dialog-close').click();
+		await expect(helpDialog).toHaveCount(0);
+
+		// 2) The "Action this review" finalisation dialog.
+		await page.getByTestId('review-action-open').click();
+		await expectDialogOnTop(page.getByTestId('action-review-dialog'));
 	});
 });
 

@@ -146,22 +146,24 @@ export function InboxView({ projectSlugs, scope }: InboxViewProps) {
 			</div>
 
 			<div className="flex flex-col gap-2 mb-4 sm:flex-row sm:items-center sm:justify-between">
-				<div className="flex items-center justify-between gap-2 sm:justify-start">
+				<div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center">
 					<FilterPills
 						options={READ_OPTIONS}
 						value={readFilter}
 						onChange={setReadFilter}
 						className=""
 					/>
-					<button
-						type="button"
-						onClick={handleMarkAllRead}
-						disabled={unreadMentionSlugs.length === 0 || markAllRead.isPending}
-						className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1 text-[12px] text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-text-3"
-					>
-						<CheckCheck className="w-3.5 h-3.5" />
-						Mark all as read
-					</button>
+					{readFilter === 'unread' && (
+						<button
+							type="button"
+							onClick={handleMarkAllRead}
+							disabled={unreadMentionSlugs.length === 0 || markAllRead.isPending}
+							className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1 text-[12px] text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-text-3"
+						>
+							<CheckCheck className="w-3.5 h-3.5" />
+							Mark all as read
+						</button>
+					)}
 				</div>
 				<div className="relative sm:w-64">
 					<Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text-3" />
