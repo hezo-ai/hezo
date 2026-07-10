@@ -107,7 +107,7 @@ describe('renderChatMessageForChannel', () => {
 			).toBe(
 				`Read [spec.md](${BASE}/projects/${projectSlug}/documents?file=spec.md) ` +
 					`and [playbook.md](${BASE}/settings/skills?slug=playbook.md) ` +
-					`plus [assets/mock.png](${BASE}/projects/${projectSlug}/assets?file=mock.png) today`,
+					`plus [assets/mock.png](${BASE}/projects/${projectSlug}/assets/view?file=mock.png) today`,
 			);
 		});
 
