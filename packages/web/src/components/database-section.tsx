@@ -1,11 +1,12 @@
+import { Database, Server } from 'lucide-react';
 import { type DatabaseInfo, useDatabaseInfo } from '../hooks/use-database-info';
 import { useMe } from '../hooks/use-me';
 
 /**
- * Storage card on General settings (rendered just before the Version
- * section). Superuser-only, matching the endpoint's gate. The connection
- * string arrives pre-redacted from the server — this component never sees,
- * stores, or reveals the raw URL.
+ * Database storage card, rendered side-by-side with the asset-storage card
+ * inside {@link StorageSection}. Superuser-only, matching the endpoint's gate.
+ * The connection string arrives pre-redacted from the server — this component
+ * never sees, stores, or reveals the raw URL.
  */
 export function DatabaseSection() {
 	const { data: me } = useMe();
@@ -15,46 +16,44 @@ export function DatabaseSection() {
 	if (!isSuperuser) return null;
 
 	return (
-		<section className="mt-8" data-testid="settings-database">
-			<div className="mb-4">
-				<h2 className="text-base font-medium">Database</h2>
-				<p className="text-[13px] text-text-2 mt-1">Where this instance stores its data.</p>
-			</div>
-			<div className="border border-border rounded-md p-3 bg-surface">
-				{info === undefined ? null : <DatabaseDetails info={info} />}
-			</div>
-		</section>
+		<div className="border border-border rounded-md p-3 bg-surface" data-testid="settings-database">
+			{info === undefined ? null : <DatabaseDetails info={info} />}
+		</div>
 	);
 }
 
 function DatabaseDetails({ info }: { info: DatabaseInfo }) {
+	const isExternal = info.backend === 'external';
+	// Icon stands in for the storage type — a managed Postgres server vs. the
+	// bundled embedded database.
+	const Icon = isExternal ? Server : Database;
 	return (
-		<dl className="flex flex-col gap-3">
-			<div>
-				<dt className="text-[13px] font-medium">Storage</dt>
-				<dd className="text-[13px] text-text-2 mt-0.5" data-testid="settings-database-backend">
-					{info.backend === 'external' ? 'External Postgres' : 'Embedded (PGlite)'}
-				</dd>
+		<div className="flex items-start gap-3">
+			<div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-surface-2 text-text-2">
+				<Icon className="h-4 w-4" />
 			</div>
-			<div>
-				<dt className="text-[13px] font-medium">
-					{info.backend === 'external' ? 'Connection' : 'Location'}
-				</dt>
-				<dd
-					className="text-[13px] text-text-2 mt-0.5 font-mono break-all"
+			<div className="min-w-0">
+				<div className="flex items-baseline gap-1.5 flex-wrap">
+					<h3 className="text-[13px] font-medium">Database</h3>
+					<span className="text-[10px] text-text-3" aria-hidden="true">
+						&bull;
+					</span>
+					<span className="text-[13px] text-text-2" data-testid="settings-database-backend">
+						{isExternal ? 'External Postgres' : 'Embedded (PGlite)'}
+					</span>
+				</div>
+				<p
+					className="text-[12px] text-text-2 mt-1 font-mono break-all"
 					data-testid="settings-database-display"
 				>
 					{info.display}
-				</dd>
-			</div>
-			{info.server_version && (
-				<div>
-					<dt className="text-[13px] font-medium">Server version</dt>
-					<dd className="text-[13px] text-text-2 mt-0.5" data-testid="settings-database-version">
+				</p>
+				{info.server_version && (
+					<p className="text-[12px] text-text-3 mt-1" data-testid="settings-database-version">
 						PostgreSQL {info.server_version}
-					</dd>
-				</div>
-			)}
-		</dl>
+					</p>
+				)}
+			</div>
+		</div>
 	);
 }
