@@ -518,3 +518,57 @@ describe('loadMcpConnectionDescriptors', () => {
 		}
 	});
 });
+
+describe('loadMcpConnectionDescriptors project scoping', () => {
+	// The plan's core multi-project claim: two projects can each register their own
+	// project-scoped `local` MCP (same connection name, same env var) whose
+	// config.env references its OWN per-project secret placeholder. A run only
+	// loads its own project's connection, so the two credentials never collide.
+	it('gives two projects independent local-MCP env credentials (no cross-contamination)', async () => {
+		const ctx = await createTestApp();
+		async function projectId(name: string): Promise<string> {
+			const co = await createTestTeam(ctx.db, { name });
+			const slug = await projectSlugFor(ctx.db, (await co.json()).data.id);
+			const p = await ctx.db.query<{ id: string }>(`SELECT id FROM projects WHERE slug = $1`, [
+				slug,
+			]);
+			return p.rows[0].id;
+		}
+		const alpha = await projectId(`Alpha ${Math.random().toString(36).slice(2)}`);
+		const bravo = await projectId(`Bravo ${Math.random().toString(36).slice(2)}`);
+
+		for (const [pid, placeholder] of [
+			[alpha, '__HEZO_SECRET_YOUTUBE_ALPHA__'],
+			[bravo, '__HEZO_SECRET_YOUTUBE_BRAVO__'],
+		] as const) {
+			await ctx.db.query(
+				`INSERT INTO mcp_connections (name, kind, config, install_status, project_id)
+				 VALUES ('youtube', 'local', $1::jsonb, 'installed', $2)`,
+				[
+					JSON.stringify({
+						command: 'npx',
+						args: ['-y', 'youtube-mcp'],
+						env: { YOUTUBE_API_KEY: placeholder },
+					}),
+					pid,
+				],
+			);
+		}
+
+		const alphaDescs = await loadMcpConnectionDescriptors(ctx.db, alpha);
+		const alphaYt = alphaDescs.find((d) => d.name === 'youtube');
+		if (alphaYt?.kind !== 'stdio') throw new Error('expected stdio descriptor for alpha');
+		expect(alphaYt.env?.YOUTUBE_API_KEY).toBe('__HEZO_SECRET_YOUTUBE_ALPHA__');
+
+		const bravoDescs = await loadMcpConnectionDescriptors(ctx.db, bravo);
+		const bravoYt = bravoDescs.find((d) => d.name === 'youtube');
+		if (bravoYt?.kind !== 'stdio') throw new Error('expected stdio descriptor for bravo');
+		expect(bravoYt.env?.YOUTUBE_API_KEY).toBe('__HEZO_SECRET_YOUTUBE_BRAVO__');
+
+		// Cross-contamination guard: neither project's run can see the other's placeholder.
+		expect(JSON.stringify(alphaDescs)).not.toContain('YOUTUBE_BRAVO');
+		expect(JSON.stringify(bravoDescs)).not.toContain('YOUTUBE_ALPHA');
+
+		await safeClose(ctx.db);
+	});
+});

@@ -67,6 +67,19 @@ describe('template resolver', () => {
 		expect(result).toContain('already handed this ticket off');
 	});
 
+	it('appends the credential-handling guidance to every runtime prompt', async () => {
+		const result = await resolveSystemPrompt(db, 'Base prompt.', { teamId });
+		// The paste form is the only channel — never accept a plaintext secret in chat.
+		expect(result).toContain('the only way a secret value reaches you');
+		// Agents must scope request_credential to the upstream API host(s).
+		expect(result).toContain('the upstream API host');
+		// In-container tools that read a credential from env ride a project-scoped
+		// local MCP connection (placeholder in config.env), not a hand-injected global
+		// secret — so two projects' credentials for the same service don't collide.
+		expect(result).toContain('add_mcp_connection');
+		expect(result).toContain('config.env');
+	});
+
 	it('appends the ask-before-closing completion rule', async () => {
 		const result = await resolveSystemPrompt(db, 'Base prompt.', { teamId });
 		// Never mark done while an active mention you posted awaits an answer —

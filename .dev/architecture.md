@@ -1119,8 +1119,13 @@ emits the placeholder in the header/scheme named by `config.apiKey` (default
 while the master key is locked; the egress proxy substitutes at request time, scoped by the
 secret's `allowed_hosts`. `kind='local'` carries a stdio `{ command, args, env }` (the
 on-demand installer is a deferred phase); local servers authenticate via credential
-placeholders in their `env` (e.g. a username/password login that fetches a token), never
-OAuth, so the connectors UI treats a non-revoked, non-failed local row as **connected the
+placeholders in their `env` (e.g. an npm MCP that reads an API key from the environment, or
+a username/password login that fetches a token), never OAuth. Because connections are
+project-scoped (§ 3), each project supplies its own env credential for the same tool under a
+per-project-unique vault secret name — an agent registers the tool with `add_mcp_connection`
+(placeholder in `config.env`) and provides the value via `request_credential`, so two
+projects' credentials for one service never collide in the instance-global vault. The
+connectors UI treats a non-revoked, non-failed local row as **connected the
 moment it exists** (`statusOf`/`connectorStatus` short-circuit `kind='local'` to `active`)
 rather than showing it a meaningless "Pending connect" OAuth affordance.
 
