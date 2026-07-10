@@ -3,13 +3,10 @@ import type { DocumentRevision } from '../components/revisions-panel';
 import { type ApiError, api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
 import { queryKeys } from '../lib/query-keys';
-import { useSimpleOptimisticUpdate } from './use-optimistic-mutation';
 
 export interface ProjectDoc {
 	id: string;
 	filename: string;
-	/** Lifecycle status: 'planning' | 'approved'. */
-	status?: string;
 	updated_at: string;
 	content?: string;
 	/** Set when the doc is archived (soft-deleted); null = active. */
@@ -78,17 +75,6 @@ export function useUpdateProjectDoc(projectId: string) {
 			});
 		},
 	});
-}
-
-export function useUpdateProjectDocStatus(projectId: string, filename: string | null) {
-	return useSimpleOptimisticUpdate<ProjectDoc>(
-		`/api/projects/${projectId}/docs/${filename}`,
-		queryKeys.projects.doc(projectId, filename),
-		{
-			invalidateOnSettled: [queryKeys.projects.docs(projectId)],
-			errorMessage: 'Failed to update document status',
-		},
-	);
 }
 
 /**

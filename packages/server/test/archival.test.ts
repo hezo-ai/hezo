@@ -168,16 +168,13 @@ describe('project doc archival — REST', () => {
 		expect((await res.json()).data.archived_by_name).toBe('Archivist');
 	});
 
-	it('blocks writes, status flips, and revision restores while archived', async () => {
+	it('blocks writes and revision restores while archived', async () => {
 		await putDoc('frozen.md', 'v1');
 		await putDoc('frozen.md', 'v2'); // record a revision to restore
 		await patchDoc('frozen.md', { archived: true });
 
 		const write = await putDoc('frozen.md', 'v3');
 		expect(write.status).toBe(409);
-
-		const status = await patchDoc('frozen.md', { status: 'approved' });
-		expect(status.status).toBe(409);
 
 		const restore = await app.request(`/api/projects/${projectId}/docs/frozen.md/restore`, {
 			method: 'POST',
@@ -191,12 +188,10 @@ describe('project doc archival — REST', () => {
 		expect((await putDoc('frozen.md', 'v3')).status).toBe(200);
 	});
 
-	it('rejects PATCH with both or neither of status/archived', async () => {
+	it('rejects PATCH without a boolean archived flag', async () => {
 		await putDoc('patch-shape.md', 'x');
 		expect((await patchDoc('patch-shape.md', {})).status).toBe(400);
-		expect((await patchDoc('patch-shape.md', { status: 'approved', archived: true })).status).toBe(
-			400,
-		);
+		expect((await patchDoc('patch-shape.md', { archived: 'yes' })).status).toBe(400);
 	});
 
 	it('forbids agents deleting docs; admin delete still works', async () => {
@@ -295,13 +290,6 @@ describe('project doc archival — MCP', () => {
 			content: 'new body',
 		});
 		expect(String(write.error)).toContain('unarchive_project_doc');
-
-		const status = await callToolViaMcp(t, 'set_project_doc_status', {
-			project: projectId,
-			filename: 'mcp-hidden.md',
-			status: 'approved',
-		});
-		expect(String(status.error)).toContain('archived');
 	});
 });
 

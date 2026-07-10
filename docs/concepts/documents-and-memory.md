@@ -83,13 +83,6 @@ updating a document immediately makes it discoverable to the whole team, without
 anyone's prompt. (Archived documents are left out of the manifest — see
 [Archiving & deleting documents](#archiving--deleting-documents).)
 
-Every project document also carries a **status** — **Planning** (still being drafted and
-iterated) or **Approved** (signed off as the current source of truth) — shown in the
-details banner at the top of the document and next to each entry in the Documents list.
-New documents start in Planning. You change the status from the dropdown in the banner;
-agents set it with `set_project_doc_status`. The status is metadata only: changing it
-doesn't touch the document's content and records no version.
-
 ## Archiving & deleting documents
 
 Documents are retired by **archiving** — a reversible soft delete. An archived document
@@ -167,9 +160,8 @@ the Documents page.
 
 ## Version history
 
-At the top of every document a compact **details** banner shows, at a glance, its status
-(Planning or Approved), when it was created, when it last changed, and who last edited
-it — a person or a named agent.
+At the top of every document a compact **details** banner shows, at a glance, when it was
+created, when it last changed, and who last edited it — a person or a named agent.
 
 Every change to a document is versioned, and each version carries a **changelog** — a short note
 describing what changed and why. When an agent updates a document it writes that note as part of

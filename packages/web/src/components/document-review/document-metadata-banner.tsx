@@ -1,20 +1,13 @@
-import { DOCUMENT_STATUS_LABELS, type DocumentStatus } from '@hezo/shared';
 import { Archive } from 'lucide-react';
 import type { ReactNode } from 'react';
-import { documentStatusMeta } from '../../lib/status-meta';
 import { ActorBadge } from '../ui/actor-badge';
 import { getInitials } from '../ui/avatar';
-import { Badge } from '../ui/badge';
 
 export interface DocMetadata {
 	createdAt?: string;
 	updatedAt?: string;
 	editorName?: string | null;
 	editorType?: string;
-	/** Lifecycle status: 'planning' | 'approved'. */
-	status?: string;
-	/** When set, the status renders as an editable dropdown instead of a static badge. */
-	onStatusChange?: (status: DocumentStatus) => void;
 	/** Soft-delete stamp — null/absent = active. When set, the banner flags the doc as archived. */
 	archivedAt?: string | null;
 	/** Resolved name of whoever archived it (single-doc responses only). */
@@ -52,12 +45,10 @@ export function DocumentMetadataBanner({
 	updatedAt,
 	editorName,
 	editorType,
-	status,
-	onStatusChange,
 	archivedAt,
 	archivedByName,
 }: DocMetadata) {
-	if (!createdAt && !updatedAt && !editorName && !status && !archivedAt) return null;
+	if (!createdAt && !updatedAt && !editorName && !archivedAt) return null;
 	const sep = <span className="text-border-strong">·</span>;
 	const items: ReactNode[] = [];
 	if (archivedAt) {
@@ -70,29 +61,6 @@ export function DocumentMetadataBanner({
 				<span className="text-[9.5px] font-semibold uppercase tracking-wide">Archived</span>
 				<span title={fullDateTime(archivedAt)}>{shortDate(archivedAt)}</span>
 				{archivedByName && <span className="text-text-2">by {archivedByName}</span>}
-			</span>,
-		);
-	}
-	if (status) {
-		items.push(
-			<span key="status" className="inline-flex items-center gap-1.5">
-				<span className={K}>Status</span>
-				{onStatusChange ? (
-					<select
-						aria-label="Document status"
-						value={status}
-						onChange={(e) => onStatusChange(e.target.value as DocumentStatus)}
-						className="rounded-md border border-border bg-surface px-1.5 py-0.5 text-[11px] text-text-1 outline-none"
-					>
-						{Object.entries(DOCUMENT_STATUS_LABELS).map(([value, label]) => (
-							<option key={value} value={value}>
-								{label}
-							</option>
-						))}
-					</select>
-				) : (
-					<Badge color={documentStatusMeta(status).color}>{documentStatusMeta(status).label}</Badge>
-				)}
 			</span>,
 		);
 	}

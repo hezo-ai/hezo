@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { getTestContext, renderApp } from './helpers/render';
+import { renderApp } from './helpers/render';
 import { type SeededWorkspace, seedProject, seedWorkspace } from './helpers/seed';
 
 function uniqueName(base: string): string {
@@ -228,53 +228,6 @@ test('shows the metadata banner and hides a legacy metadata header from the rend
 	expect(banner.textContent).toContain('Created');
 	// …while the legacy in-body metadata header is stripped from the rendered view.
 	expect(queryByText(/experiment-zzz/)).toBeNull();
-});
-
-test('shows the document status in the banner and updates it via the dropdown', async () => {
-	let ws!: SeededWorkspace;
-	let projectSlug = '';
-	const filename = `status-${Math.random().toString(36).slice(2, 8)}.md`;
-
-	const { findByText, findByLabelText, user, router } = await renderApp({
-		initialPath: '/',
-		seed: async ({ apiBase, token }) => {
-			ws = await seedWorkspace();
-			const project = await seedProject(ws, {
-				name: uniqueName('Status Project'),
-				description: 'Tests the document status dropdown.',
-			});
-			projectSlug = project.slug;
-			await seedDoc(apiBase, token, projectSlug, filename, [{ content: 'Doc body' }]);
-		},
-	});
-
-	await router.navigate({
-		to: '/projects/$projectId/documents',
-		params: { projectId: projectSlug },
-		search: { file: filename } as never,
-	});
-
-	await findByText('Doc body', undefined, { timeout: 15_000 });
-
-	// New docs start in Planning; the banner renders an editable dropdown.
-	const statusSelect = (await findByLabelText('Document status')) as HTMLSelectElement;
-	expect(statusSelect.value).toBe('planning');
-
-	await user.selectOptions(statusSelect, 'approved');
-	// Optimistic update — the select reflects the new value immediately.
-	expect(statusSelect.value).toBe('approved');
-
-	// The server processed the mutation: the DB row carries the new status.
-	const { db } = getTestContext();
-	await new Promise((r) => setTimeout(r, 300));
-	const row = await db.query<{ status: string }>(
-		`SELECT status FROM documents WHERE slug = $1 AND type = 'project_doc'`,
-		[filename],
-	);
-	expect(row.rows[0].status).toBe('approved');
-
-	// The doc list entry surfaces the status label.
-	await findByText(/Approved · Updated/, undefined, { timeout: 15_000 });
 });
 
 test('viewing an older revision shows the banner, hides Edit, and can return to latest', async () => {
