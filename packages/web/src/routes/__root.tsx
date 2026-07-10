@@ -16,6 +16,7 @@ import { ProjectRail } from '../components/project-rail';
 import { ProjectSidebar } from '../components/project-sidebar';
 import { PwaInstallPrompt } from '../components/pwa-install-prompt';
 import { ScrollToBottomButton } from '../components/scroll-to-bottom-button';
+import { ScrollToTopButton } from '../components/scroll-to-top-button';
 import { CreatePasswordFlow, SetupGate } from '../components/setup/setup-wizard';
 import { StartingScreen } from '../components/starting-screen';
 import { UpdateBanner } from '../components/update-banner';
@@ -24,6 +25,7 @@ import { useActiveProject } from '../hooks/use-active-project';
 import { useMe } from '../hooks/use-me';
 import { useProjectsIndex } from '../hooks/use-projects';
 import { useScrollToBottom } from '../hooks/use-scroll-to-bottom';
+import { useScrollToTop } from '../hooks/use-scroll-to-top';
 import { useStatus } from '../hooks/use-status';
 import { useShellWebSockets } from '../hooks/use-websocket';
 import { api } from '../lib/api';
@@ -169,6 +171,7 @@ function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
 		setMainEl(el);
 	}, []);
 	const { atBottom, scrollToBottom } = useScrollToBottom(mainEl);
+	const { atTop, scrollToTop } = useScrollToTop(mainEl);
 	const pathname = useLocation({ select: (l) => l.pathname });
 	const hash = useLocation({ select: (l) => l.hash });
 	const lastPathnameRef = useRef(pathname);
@@ -243,6 +246,13 @@ function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
 						<main ref={attachMain} className="flex-1 min-w-0 overflow-auto relative">
 							<Outlet />
 						</main>
+						{/* Top-centre of the content area, just below the app header. */}
+						<ScrollToTopButton
+							onClick={scrollToTop}
+							atTop={atTop}
+							testId="scroll-to-top"
+							positionClassName="absolute top-4 left-1/2 -translate-x-1/2 z-30"
+						/>
 						{/* Bottom-centre of the content area: clear of the CEO chat
 						    launcher (bottom-right) at every breakpoint. */}
 						<ScrollToBottomButton
