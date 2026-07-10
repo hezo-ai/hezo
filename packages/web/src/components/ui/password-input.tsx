@@ -1,14 +1,25 @@
 import { Eye, EyeOff } from 'lucide-react';
 import { type InputHTMLAttributes, useState } from 'react';
 
-type PasswordInputProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'type'>;
+interface PasswordInputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'type'> {
+	/**
+	 * Noun used in the toggle's aria-label ("Show {revealLabel}" / "Hide {revealLabel}").
+	 * Defaults to "password". Set a collision-free noun (e.g. "key") when a nearby
+	 * `getByLabelText` query would otherwise match the toggle as well as the field.
+	 */
+	revealLabel?: string;
+}
 
 /**
  * Password field with a trailing show/hide toggle. Renders only the input (plus
  * the eye button) — labels stay external so existing `getByLabelText` queries
  * and form layouts keep working. Styled to match the auth-form inputs.
  */
-export function PasswordInput({ className = '', ...props }: PasswordInputProps) {
+export function PasswordInput({
+	className = '',
+	revealLabel = 'password',
+	...props
+}: PasswordInputProps) {
 	const [visible, setVisible] = useState(false);
 	return (
 		<div className="relative">
@@ -20,7 +31,7 @@ export function PasswordInput({ className = '', ...props }: PasswordInputProps) 
 			<button
 				type="button"
 				onClick={() => setVisible((v) => !v)}
-				aria-label={visible ? 'Hide password' : 'Show password'}
+				aria-label={`${visible ? 'Hide' : 'Show'} ${revealLabel}`}
 				className="absolute inset-y-0 right-0 flex items-center px-3 text-text-3 hover:text-text-1"
 			>
 				{visible ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}

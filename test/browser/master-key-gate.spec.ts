@@ -92,10 +92,15 @@ test('setup → password → provider, then restart → unlock → password logi
 	await page.getByRole('button', { name: /generate master key/i }).click();
 	const words = page.getByTestId('mnemonic-word');
 	await expect(words).toHaveCount(12);
+	// The words are masked (password-style) by default — reveal them first.
+	await page.getByRole('button', { name: /^show key$/i }).click();
 	// Each item renders "<n> <word>" — strip the leading position number.
 	const phrase = (await words.allTextContents())
 		.map((t) => t.replace(/^\s*\d+\s*/, '').trim())
 		.join(' ');
+	// Confirm step: paste the phrase back to prove it was captured, then commit.
+	await page.getByRole('button', { name: 'Continue', exact: true }).click();
+	await page.getByLabel(/master key/i).fill(phrase);
 	await page.getByRole('button', { name: /set key & continue/i }).click();
 
 	// The unlock reveal plays, then the wizard advances to the dedicated
