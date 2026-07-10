@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.19.0 - 2026-07-10
+
+### Features
+
+- request in-container tool credentials via project-scoped MCP connections ([#668](https://github.com/hezo-ai/hezo/pull/668))
+- add Log out button to the settings menu ([#665](https://github.com/hezo-ai/hezo/pull/665))
+- clarify master-key onboarding with confirm step and masked words ([#666](https://github.com/hezo-ai/hezo/pull/666))
+
+### Bug Fixes
+
+- remove Claude Code headless background-task wait ceiling ([#672](https://github.com/hezo-ai/hezo/pull/672))
+- **web:** collapse run entries by default; add a scroll-to-top button ([#669](https://github.com/hezo-ai/hezo/pull/669))
+
+### Other
+
+- Review comments for assets + split-pane asset viewer ([#667](https://github.com/hezo-ai/hezo/pull/667))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.18.0...0.19.0
+
 ## 0.18.0 - 2026-07-10
 
 ### Features
