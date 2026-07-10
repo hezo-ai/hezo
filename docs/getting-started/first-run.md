@@ -40,6 +40,10 @@ You can change it later in **Settings → Admin password**. If you ever forget i
 with your master key from the sign-in screen. See
 [Master key & encryption](/docs/security/master-key).
 
+To sign out, use **Log out** at the bottom of the **Settings** menu — it clears your
+session and returns you to the admin-password sign-in screen. (The instance itself stays
+unlocked; signing back in only needs your password.)
+
 ## 3. Connect a model
 
 Agents need a model to run. Add at least one **AI provider** — paste an API key (or

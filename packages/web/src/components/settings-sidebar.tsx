@@ -1,7 +1,9 @@
 import { Link, useLocation } from '@tanstack/react-router';
-import { ChevronDown } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { ChevronDown, LogOut } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
 import { useMe } from '../hooks/use-me';
+import { logout } from '../lib/auth';
+import { queryClient } from '../lib/query-client';
 
 interface NavItem {
 	to: string;
@@ -39,6 +41,26 @@ function itemClass(active: boolean): string {
 }
 
 /**
+ * "Log out" action pinned to the bottom of the menu, separated from the nav
+ * items by a gap. Clears the session token and wipes the cached, authenticated
+ * data, then re-evaluates the top-level gate — with no session the `me` probe
+ * 401s and the app falls back to the admin-password sign-in screen.
+ */
+function LogoutButton({ onClick, className }: { onClick: () => void; className?: string }) {
+	return (
+		<button
+			type="button"
+			onClick={onClick}
+			data-testid="settings-logout"
+			className={`flex items-center gap-2 text-left text-[13px] px-3 py-1.5 rounded-md transition-colors cursor-pointer text-text-2 hover:text-text-1 hover:bg-surface-2 ${className ?? ''}`}
+		>
+			<LogOut className="w-4 h-4 shrink-0" />
+			<span>Log out</span>
+		</button>
+	);
+}
+
+/**
  * Navigation for the Settings section, shared across the main page and every
  * subpage so the menu is always present.
  *  - Desktop (md+): a persistent left sidebar, sticky to the top of the scroll
@@ -61,6 +83,19 @@ export function SettingsSidebar() {
 	useEffect(() => {
 		setOpen(false);
 	}, [pathname]);
+
+	const handleLogout = useCallback(() => {
+		setOpen(false);
+		logout();
+		// Reset every query: drops each back to its initial (data-less) state so no
+		// authenticated response lingers behind the sign-in screen, and refetches
+		// the active ones. Crucially, the top-level gate's `me` probe re-runs and —
+		// with the token now cleared — 401s, flipping the app to the admin-password
+		// sign-in screen. (A plain `invalidateQueries`/`clear` won't do this: an
+		// invalidated query keeps its last data on a failed refetch, and a cleared
+		// query's mounted observer doesn't reliably re-probe.)
+		queryClient.resetQueries();
+	}, []);
 
 	return (
 		<>
@@ -101,6 +136,7 @@ export function SettingsSidebar() {
 									{item.label}
 								</Link>
 							))}
+							<LogoutButton onClick={handleLogout} className="mt-3" />
 						</nav>
 					</>
 				)}
@@ -116,6 +152,7 @@ export function SettingsSidebar() {
 						{item.label}
 					</Link>
 				))}
+				<LogoutButton onClick={handleLogout} className="mt-4" />
 			</nav>
 		</>
 	);
