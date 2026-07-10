@@ -24,6 +24,7 @@ const ADMIN_ITEMS: NavItem[] = [
 	{ to: '/settings/connectors', label: 'Connectors' },
 	{ to: '/settings/credentials', label: 'Credentials' },
 	{ to: '/settings/api-keys', label: 'API keys' },
+	{ to: '/settings/archived-projects', label: 'Archived projects' },
 	{ to: '/settings/audit-log', label: 'Activity' },
 ];
 

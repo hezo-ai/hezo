@@ -1,13 +1,16 @@
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
+import { signAdminJwt } from '../src/middleware/auth';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestTeam } from './helpers/app';
 
 let app: Hono<Env>;
 let db: Db;
 let token: string;
+let masterKeyManager: MasterKeyManager;
 let projectSlug: string;
 let teamId: string;
 let teamSlug: string;
@@ -40,6 +43,7 @@ beforeAll(async () => {
 	app = ctx.app;
 	db = ctx.db;
 	token = ctx.token;
+	masterKeyManager = ctx.masterKeyManager;
 
 	const teamRes = await createTestTeam(db, { name: 'Project Test Co' });
 	const teamData = (await teamRes.json()).data;
@@ -386,5 +390,92 @@ describe('slug-based project access', () => {
 		});
 		expect(res.status).toBe(200);
 		expect((await res.json()).data.description).toBe('Slug-based update');
+	});
+});
+
+describe('project archive / unarchive', () => {
+	// A fresh project per assertion keeps this suite independent of the CRUD
+	// block's shared `backend-api` project.
+	async function newProjectSlug(name: string): Promise<string> {
+		const res = await createProject({ name, description: VALID_DESCRIPTION });
+		expect(res.status).toBe(201);
+		return (await res.json()).data.slug as string;
+	}
+
+	async function archive(slug: string, headers = authHeader(token)) {
+		return app.request(`/api/projects/${slug}/archive`, { method: 'POST', headers });
+	}
+	async function unarchive(slug: string, headers = authHeader(token)) {
+		return app.request(`/api/projects/${slug}/unarchive`, { method: 'POST', headers });
+	}
+	async function listSlugs(filter?: string): Promise<string[]> {
+		const url = filter ? `/api/projects?filter=${filter}` : '/api/projects';
+		const res = await app.request(url, { headers: authHeader(token) });
+		return ((await res.json()).data as Array<{ slug: string }>).map((p) => p.slug);
+	}
+
+	it('archives a project: stamps archived_at and hides it from the default index', async () => {
+		const slug = await newProjectSlug('Archive Me');
+
+		expect(await listSlugs()).toContain(slug);
+
+		const res = await archive(slug);
+		expect(res.status).toBe(200);
+		expect((await res.json()).data.archived_at).not.toBeNull();
+
+		// Default index (the rail) excludes it; ?filter=archived includes it.
+		expect(await listSlugs()).not.toContain(slug);
+		expect(await listSlugs('archived')).toContain(slug);
+		expect(await listSlugs('all')).toContain(slug);
+	});
+
+	it('unarchives a project: clears archived_at and restores it to the index', async () => {
+		const slug = await newProjectSlug('Restore Me');
+		await archive(slug);
+		expect(await listSlugs()).not.toContain(slug);
+
+		const res = await unarchive(slug);
+		expect(res.status).toBe(200);
+		expect((await res.json()).data.archived_at).toBeNull();
+		expect(await listSlugs()).toContain(slug);
+		expect(await listSlugs('archived')).not.toContain(slug);
+	});
+
+	it('refuses to archive an internal project (403)', async () => {
+		const internal = await db.query<{ slug: string }>(
+			'SELECT slug FROM projects WHERE is_internal = true LIMIT 1',
+		);
+		const res = await archive(internal.rows[0].slug);
+		expect(res.status).toBe(403);
+	});
+
+	it('rejects archive/unarchive from a non-superuser team member (403)', async () => {
+		const slug = await newProjectSlug('Guard Me');
+		const projectRow = await db.query<{ id: string; team_id: string }>(
+			'SELECT id, team_id FROM projects WHERE slug = $1',
+			[slug],
+		);
+		const projectTeamId = projectRow.rows[0].team_id;
+
+		// A non-superuser who IS a member of the project's team — so the request
+		// clears the team-access middleware and 403s specifically on requireSuperuser.
+		const userRes = await db.query<{ id: string }>(
+			"INSERT INTO users (display_name, is_superuser) VALUES ('Board User', false) RETURNING id",
+		);
+		const memberRes = await db.query<{ id: string }>(
+			`INSERT INTO members (team_id, display_name, member_type)
+			 VALUES ($1, 'Board User', 'user') RETURNING id`,
+			[projectTeamId],
+		);
+		await db.query('INSERT INTO member_users (id, user_id) VALUES ($1, $2)', [
+			memberRes.rows[0].id,
+			userRes.rows[0].id,
+		]);
+		const nonSuperToken = await signAdminJwt(masterKeyManager, userRes.rows[0].id);
+
+		expect((await archive(slug, authHeader(nonSuperToken))).status).toBe(403);
+		expect((await unarchive(slug, authHeader(nonSuperToken))).status).toBe(403);
+		// Still active — the rejected archive was a no-op.
+		expect(await listSlugs()).toContain(slug);
 	});
 });

@@ -1,7 +1,9 @@
 import {
+	ArchiveFilter,
 	AuthType,
 	ContainerStatus,
 	isAllowedProjectIconStoredMime,
+	isArchiveFilter,
 	MemberType,
 	PROJECT_ICON_MAX_BYTES,
 	PROJECT_ICON_MAX_DIMENSION,
@@ -21,7 +23,7 @@ import { toSlug, uniqueSlug } from '../lib/slug';
 import { terminalStatusParams } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
-import { requireAdminEquivalent } from '../middleware/auth';
+import { requireAdminEquivalent, requireSuperuser } from '../middleware/auth';
 import {
 	type ContainerDeps,
 	type ProjectRow,
@@ -102,6 +104,19 @@ projectsRoutes.get('/projects', async (c) => {
 	const isSuperuser = auth.type === AuthType.Admin && auth.isSuperuser;
 	const isAdmin = auth.type === AuthType.Admin;
 
+	// Archive filter (default: active only — the rail hides archived projects).
+	// `archived` backs the global-settings "Archived projects" page; `all` is
+	// an escape hatch. The condition carries no params (literal IS [NOT] NULL),
+	// so it can be spliced in without disturbing the positional param indices.
+	const filterParam = c.req.query('filter');
+	const filter: ArchiveFilter = isArchiveFilter(filterParam) ? filterParam : ArchiveFilter.Active;
+	const archivedCond =
+		filter === ArchiveFilter.Active
+			? 'p.archived_at IS NULL'
+			: filter === ArchiveFilter.Archived
+				? 'p.archived_at IS NOT NULL'
+				: null;
+
 	const ts = terminalStatusParams(1);
 	const agentTypeIdx = ts.values.length + 1;
 	const params: unknown[] = [...ts.values, MemberType.Agent];
@@ -124,12 +139,14 @@ projectsRoutes.get('/projects', async (c) => {
 
 	let query: string;
 	if (!isAdmin || isSuperuser) {
-		query = `${base} ORDER BY p.created_at DESC`;
+		const where = archivedCond ? ` WHERE ${archivedCond}` : '';
+		query = `${base}${where} ORDER BY p.created_at DESC`;
 	} else {
+		const and = archivedCond ? ` AND ${archivedCond}` : '';
 		query = `${base}
      JOIN members m2 ON m2.team_id = p.team_id
      JOIN member_users mu ON mu.id = m2.id
-     WHERE mu.user_id = $${params.length + 1}
+     WHERE mu.user_id = $${params.length + 1}${and}
      ORDER BY p.created_at DESC`;
 		params.push(auth.userId);
 	}
@@ -436,6 +453,97 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 		`UPDATE projects SET ${sets.join(', ')} WHERE id = $${idx} RETURNING *`,
 		params,
 	);
+
+	broadcastChange(
+		c,
+		wsRoom.team(teamId),
+		'projects',
+		'UPDATE',
+		result.rows[0] as Record<string, unknown>,
+	);
+	return ok(c, result.rows[0]);
+});
+
+// --- Archive / unarchive ------------------------------------------------------
+// Soft-delete a project: it drops out of the default project index (the rail),
+// keeping its row/tasks/history so it can be restored. Superuser-only, matching
+// the global-settings "Archived projects" page that unarchives. Archiving also
+// stops the container (a retired project is dormant); unarchiving restores
+// visibility only — the container stays stopped, like any stopped project.
+projectsRoutes.post('/projects/:projectId/archive', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
+
+	const teamId = c.get('teamId') as string;
+	const db = c.get('db');
+	const projectId = c.get('projectId') as string;
+	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
+
+	const existing = await db.query<{
+		slug: string;
+		is_internal: boolean;
+		container_id: string | null;
+	}>('SELECT slug, is_internal, container_id FROM projects WHERE id = $1 AND team_id = $2', [
+		projectId,
+		teamId,
+	]);
+	if (existing.rows.length === 0) return err(c, 'NOT_FOUND', 'Project not found', 404);
+	if (existing.rows[0].is_internal) {
+		return err(c, 'FORBIDDEN', 'Cannot archive an internal project', 403);
+	}
+
+	const { slug: projectSlug, container_id: containerId } = existing.rows[0];
+
+	// Cancel in-flight agent runs before stopping the container (mirrors
+	// POST /projects/:projectId/container/stop). No container yet → just mark it
+	// stopped so the archived project reads as dormant.
+	if (containerId) {
+		await cancelRunningAgentTasks(db, c.get('jobManager'), projectId, teamId);
+	}
+
+	const result = await db.query(
+		`UPDATE projects
+		 SET archived_at = now(), container_status = $1::container_status
+		 WHERE id = $2 RETURNING *`,
+		[containerId ? ContainerStatus.Stopping : ContainerStatus.Stopped, projectId],
+	);
+
+	if (containerId) {
+		const containerDeps = buildContainerDeps(c);
+		c.get('jobManager').launchTask(
+			`stop:${projectId}`,
+			async () => {
+				await stopContainerGracefully(containerDeps, projectId, projectSlug, teamId, containerId);
+			},
+			60_000,
+		);
+	}
+
+	broadcastChange(
+		c,
+		wsRoom.team(teamId),
+		'projects',
+		'UPDATE',
+		result.rows[0] as Record<string, unknown>,
+	);
+	log.info(`project ${ref(projectSlug, projectId)} archived`);
+	return ok(c, result.rows[0]);
+});
+
+projectsRoutes.post('/projects/:projectId/unarchive', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
+
+	const teamId = c.get('teamId') as string;
+	const db = c.get('db');
+	const projectId = c.get('projectId') as string;
+	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
+
+	const result = await db.query(
+		`UPDATE projects SET archived_at = NULL WHERE id = $1 AND team_id = $2 RETURNING *`,
+		[projectId, teamId],
+	);
+	if (result.rows.length === 0) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
 	broadcastChange(
 		c,

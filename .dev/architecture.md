@@ -98,7 +98,13 @@ team** (`projects.team_id → teams.id`, `UNIQUE` — the 1:1 invariant in § 4)
 is a first-class catalog of role templates (built-in + custom); `team_templates` +
 `team_template_agent_types` define team "recipes" (which roles, the org chart via
 `reports_to_slug`, per-template config overrides). `projects` carries `task_prefix`,
-container config, dev ports, the designated repo, and `is_internal` (only HQ).
+container config, dev ports, the designated repo, `is_internal` (only HQ), and a nullable
+`archived_at` soft-delete stamp (NULL = active). Archiving a project (superuser-only
+`POST /projects/:id/archive`, from the settings page) sets `archived_at`, stops the
+container, and cancels in-flight runs; the `GET /projects` index filters to active by
+default (`?filter=active|archived|all`, mirroring the docs/assets soft-delete), so an
+archived project drops out of the left rail while keeping its tasks/history. Unarchiving
+(`POST /projects/:id/unarchive`) clears the stamp and restores rail visibility.
 
 **Repos.** `repos` stores a GitHub `owner/repo` identifier; the segment after the owner
 is the display label, worktree directory name, and `@mention` handle. The **first** repo
