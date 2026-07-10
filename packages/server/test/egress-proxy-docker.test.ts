@@ -111,7 +111,7 @@ describe.skipIf(finalSkipReason !== null)('EgressProxy — Docker integration', 
 					'sh',
 					'-c',
 					`update-ca-certificates > /dev/null 2>&1 && ` +
-						`curl -sS -o /dev/null -w '%{http_code}' --proxy http://host.docker.internal:${allocated.proxyPort} ` +
+						`curl -sS -o /dev/null -w '%{http_code}' --proxy http://run:${allocated.token}@host.docker.internal:${allocated.proxyPort} ` +
 						`-H 'authorization: Bearer __HEZO_SECRET_DOCKER_TEST_HEADER_KEY__' https://localhost:${upstreamPort}/echo`,
 				],
 				timeoutMs: 60_000,
@@ -137,7 +137,7 @@ describe.skipIf(finalSkipReason !== null)('EgressProxy — Docker integration', 
 					'sh',
 					'-c',
 					`update-ca-certificates > /dev/null 2>&1 && ` +
-						`curl -sS -o /dev/null -w '%{http_code}' --proxy http://host.docker.internal:${allocated.proxyPort} ` +
+						`curl -sS -o /dev/null -w '%{http_code}' --proxy http://run:${allocated.token}@host.docker.internal:${allocated.proxyPort} ` +
 						`'https://localhost:${upstreamPort}/echo?token=__HEZO_SECRET_DOCKER_TEST_URL_KEY__'`,
 				],
 				timeoutMs: 60_000,
@@ -162,7 +162,7 @@ describe.skipIf(finalSkipReason !== null)('EgressProxy — Docker integration', 
 					'sh',
 					'-c',
 					`update-ca-certificates > /dev/null 2>&1 && ` +
-						`curl -sS -o /dev/null -w '%{http_code}' --proxy http://host.docker.internal:${allocated.proxyPort} ` +
+						`curl -sS -o /dev/null -w '%{http_code}' --proxy http://run:${allocated.token}@host.docker.internal:${allocated.proxyPort} ` +
 						`-X POST -H 'content-type: application/json' ` +
 						`-d '${body}' ` +
 						`https://localhost:${upstreamPort}/echo`,
@@ -190,7 +190,7 @@ describe.skipIf(finalSkipReason !== null)('EgressProxy — Docker integration', 
 					'sh',
 					'-c',
 					`update-ca-certificates > /dev/null 2>&1 && ` +
-						`curl -sS -o /dev/null -w '%{http_code}' --proxy http://host.docker.internal:${allocated.proxyPort} ` +
+						`curl -sS -o /dev/null -w '%{http_code}' --proxy http://run:${allocated.token}@host.docker.internal:${allocated.proxyPort} ` +
 						`-H 'authorization: Bearer __HEZO_SECRET_DOCKER_TEST_RESTRICTED__' ` +
 						`https://localhost:${upstreamPort}/echo`,
 				],
@@ -215,7 +215,7 @@ describe.skipIf(finalSkipReason !== null)('EgressProxy — Docker integration', 
 					'sh',
 					'-c',
 					`update-ca-certificates > /dev/null 2>&1 && ` +
-						`curl -sS -o /dev/null --proxy http://host.docker.internal:${allocated.proxyPort} ` +
+						`curl -sS -o /dev/null --proxy http://run:${allocated.token}@host.docker.internal:${allocated.proxyPort} ` +
 						`-H 'authorization: Bearer __HEZO_SECRET_DOCKER_TEST_AUDIT__' ` +
 						`https://localhost:${upstreamPort}/echo`,
 				],
@@ -233,6 +233,37 @@ describe.skipIf(finalSkipReason !== null)('EgressProxy — Docker integration', 
 		expect(row.secret_names_used).toEqual(['DOCKER_TEST_AUDIT']);
 		const serialised = JSON.stringify(row);
 		expect(serialised).not.toContain('audit-secret-value');
+	}, 90_000);
+
+	it('rejects the CONNECT with 407 and never substitutes when the container omits the per-run token', async () => {
+		const runId = `egress-docker-noauth-${Date.now()}`;
+		await insertSecret('DOCKER_TEST_NOAUTH', 'must-not-leak', ['localhost']);
+		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
+		try {
+			const beforeHits = upstreamHits.length;
+			const result = await runInContainer({
+				caHostPath: `${dataDir}/ca/certs/ca.pem`,
+				command: [
+					'sh',
+					'-c',
+					`update-ca-certificates > /dev/null 2>&1 && ` +
+						// No userinfo on the proxy URL → no Proxy-Authorization → 407.
+						`curl -sS --proxy http://host.docker.internal:${allocated.proxyPort} ` +
+						`-H 'authorization: Bearer __HEZO_SECRET_DOCKER_TEST_NOAUTH__' https://localhost:${upstreamPort}/echo`,
+				],
+				timeoutMs: 60_000,
+			});
+			// The 407 lands on the CONNECT, so curl never gets a tunnel to speak
+			// HTTP through: it fails with exit 56 and a "407" proxy error on
+			// stderr (exact wording varies by curl version) instead of
+			// surfacing a status code.
+			expect(result.exitCode).not.toBe(0);
+			expect(result.stderr).toContain('407');
+			// The upstream must never have been reached, so the secret never left.
+			expect(upstreamHits.length).toBe(beforeHits);
+		} finally {
+			await proxy.releaseRunProxy(runId);
+		}
 	}, 90_000);
 });
 

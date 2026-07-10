@@ -167,6 +167,42 @@ export const DEFAULT_MEMORY_LIMIT_GIB = 16;
 
 const memoryLimitBytes = (gib: number) => gib * 1024 ** 3;
 
+/**
+ * Headroom the cgroup hard cap sits above the project's working-set ceiling.
+ * The stats poller in the sync loop stays the graceful early-stop (clean
+ * `stopContainer` + explanation in `container_error` at the configured limit);
+ * the cgroup cap exists so a runaway allocation between poll ticks hits the
+ * kernel OOM killer (exit 137) instead of destabilizing the host. MemorySwap
+ * is set equal to Memory, so the cap has no swap escape valve.
+ */
+const MEMORY_HARD_CAP_HEADROOM_BYTES = 512 * 1024 ** 2;
+
+/** Fork-bomb backstop; generous for npm/build process fan-out. */
+const CONTAINER_PIDS_LIMIT = 4096;
+
+/**
+ * Capabilities added back after `CapDrop: ALL` — the minimum the agent
+ * workload needs: chown/ownership fixes on the bind-mounted workspace
+ * (CHOWN, DAC_OVERRIDE, FOWNER), the `node` user's passwordless-sudo setuid
+ * transition and runtime apt installs (SETUID, SETGID), process signalling
+ * (KILL), and sudo's audit writes (AUDIT_WRITE). NET_ADMIN is appended
+ * separately, only when MTU pinning needs it.
+ *
+ * Deliberately absent: `no-new-privileges` (would break the sudo/setuid path
+ * the runtime apt/npx installs depend on) and `userns-remap` (daemon-global,
+ * would remap every other container on the host and break the bind-mount
+ * ownership model).
+ */
+export const CONTAINER_BASE_CAPABILITIES = [
+	'CHOWN',
+	'DAC_OVERRIDE',
+	'FOWNER',
+	'SETUID',
+	'SETGID',
+	'KILL',
+	'AUDIT_WRITE',
+];
+
 const MEMORY_USAGE_LOG_INTERVAL_MS = 30_000;
 
 interface MemoryUsageEntry {
@@ -351,6 +387,16 @@ export async function provisionContainer(
 
 		emit('stdout', `→ Creating container ${containerName}`);
 
+		// cgroup hard cap = the project's working-set ceiling + headroom; the
+		// sync-loop stats poller remains the graceful early-stop at the ceiling
+		// itself (see MEMORY_HARD_CAP_HEADROOM_BYTES).
+		const limitRow = await db.query<{ memory_limit_gib: number }>(
+			'SELECT memory_limit_gib FROM projects WHERE id = $1',
+			[project.id],
+		);
+		const memoryLimitGib = limitRow.rows[0]?.memory_limit_gib ?? DEFAULT_MEMORY_LIMIT_GIB;
+		const memoryHardCapBytes = memoryLimitBytes(memoryLimitGib) + MEMORY_HARD_CAP_HEADROOM_BYTES;
+
 		const { Id } = await docker.createContainer(containerName, {
 			Image: baseImage,
 			Cmd: ['sleep', 'infinity'],
@@ -361,7 +407,12 @@ export async function provisionContainer(
 				Binds: binds,
 				PortBindings: portBindings,
 				ExtraHosts: extraHosts,
-				...(pinMtu !== null ? { CapAdd: ['NET_ADMIN'] } : {}),
+				Init: true,
+				Memory: memoryHardCapBytes,
+				MemorySwap: memoryHardCapBytes,
+				PidsLimit: CONTAINER_PIDS_LIMIT,
+				CapDrop: ['ALL'],
+				CapAdd: [...CONTAINER_BASE_CAPABILITIES, ...(pinMtu !== null ? ['NET_ADMIN'] : [])],
 			},
 			ExposedPorts: exposedPorts,
 		});

@@ -504,6 +504,7 @@ export class ChatSessionManager {
 					host: allocated.proxyHost,
 					port: allocated.proxyPort,
 					containerCAPath: '/usr/local/share/ca-certificates/hezo-egress.crt',
+					token: allocated.token,
 				};
 				releaseEgress = () => egressProxy.releaseRunProxy(sessionId);
 			}

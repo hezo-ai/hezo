@@ -232,7 +232,7 @@ function fakeEgressProxy() {
 		proxy: {
 			allocateRunProxy: async (runId: string, _ctx: unknown) => {
 				calls.allocated.push(runId);
-				return { proxyHost: '127.0.0.1', proxyPort: 18080 };
+				return { proxyHost: '127.0.0.1', proxyPort: 18080, token: 'testtoken0123456789abcdef' };
 			},
 			releaseRunProxy: async (runId: string) => {
 				calls.released.push(runId);
@@ -286,8 +286,9 @@ describe('runAgent — egress proxy + ssh agent env injection', () => {
 		expect(result.success).toBe(true);
 
 		// Egress proxy env: both upper- and lower-case proxy vars, NO_PROXY, and the
-		// three CA-bundle pointers the in-container tooling reads.
-		const proxyUrl = 'http://127.0.0.1:18080';
+		// three CA-bundle pointers the in-container tooling reads. The per-run token
+		// rides the URL userinfo so the client sends it as Proxy-Authorization.
+		const proxyUrl = 'http://run:testtoken0123456789abcdef@127.0.0.1:18080';
 		expect(capturedEnv).toContain(`HTTP_PROXY=${proxyUrl}`);
 		expect(capturedEnv).toContain(`http_proxy=${proxyUrl}`);
 		expect(capturedEnv).toContain(`HTTPS_PROXY=${proxyUrl}`);

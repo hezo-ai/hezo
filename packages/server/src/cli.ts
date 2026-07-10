@@ -56,6 +56,17 @@ export interface HezoConfig {
 	 */
 	containerBindHost: string;
 	/**
+	 * Require a per-run token on every request to the egress proxy. On by
+	 * default: each run's `HTTP(S)_PROXY` URL carries a random token that the
+	 * proxy checks (constant-time) before substituting any secret, so a
+	 * co-resident process that reaches the proxy address can't drive
+	 * substitution for another run. Disable only to unblock a runtime whose HTTP
+	 * client can't carry proxy credentials — the secret red line still holds
+	 * either way (an unauthenticated caller only ships unsubstituted
+	 * placeholders). `--no-egress-proxy-auth` / `HEZO_EGRESS_PROXY_AUTH=0`.
+	 */
+	egressProxyAuth: boolean;
+	/**
 	 * Anonymous daily usage telemetry. On by default (opt-out): once a day the
 	 * server POSTs aggregate counts (projects, tasks, tokens, AI-provider mix,
 	 * version) — no names, content, or costs — to `endpoint`, keyed by a random
@@ -340,6 +351,10 @@ export function parseConfig(
 			'Interface the egress proxy and SSH bridge bind to so agent containers can reach them. Default 127.0.0.1 (works with Docker Desktop). On native-Linux Docker set 0.0.0.0 (or the bridge gateway IP) and firewall-restrict the egress port range to the docker bridge. (env: HEZO_CONTAINER_BIND_HOST)',
 		)
 		.option(
+			'--no-egress-proxy-auth',
+			"Disable per-run egress proxy authentication. On by default: each run's HTTP(S)_PROXY URL carries a token the proxy verifies before substituting secrets. Only disable to unblock a runtime whose HTTP client cannot send proxy credentials — the secret red line still holds (an unauthenticated caller only ships unsubstituted placeholders). (env: HEZO_EGRESS_PROXY_AUTH=0)",
+		)
+		.option(
 			'--auto-install-updates',
 			'Install updates automatically: once a newer release is downloaded and verified, gracefully restart onto it without waiting for "Install & restart" in the web UI (in-flight agent runs delay the restart). Only takes effect where in-app auto-update is available — the self-managed binary, not inside a container. The instance comes back unlocked: the in-memory unlock key is handed to the relaunched process over IPC, never written to disk. (env: HEZO_AUTO_INSTALL_UPDATES)',
 		)
@@ -413,6 +428,9 @@ export function parseConfig(
 		keepOldContainers: pickBool('HEZO_KEEP_OLD_CONTAINERS', cli.keepOldContainers),
 		autoInstallUpdates: pickBool('HEZO_AUTO_INSTALL_UPDATES', cli.autoInstallUpdates),
 		containerBindHost: pick('HEZO_CONTAINER_BIND_HOST', cli.containerBindHost) ?? '127.0.0.1',
+		// Egress-proxy auth defaults ON. The env var (when set) wins; otherwise
+		// `--no-egress-proxy-auth` sets cli.egressProxyAuth=false, absent it is true.
+		egressProxyAuth: pickOpen('HEZO_EGRESS_PROXY_AUTH', cli.egressProxyAuth),
 		telemetry: {
 			enabled: telemetryEnabled,
 			endpoint:

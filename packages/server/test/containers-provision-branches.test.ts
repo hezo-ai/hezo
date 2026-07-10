@@ -8,6 +8,7 @@ import type { Db } from '../src/db/database';
 import { waitForBackground } from '../src/lib/background';
 import type { ContainerLogStreamer } from '../src/services/container-logs';
 import {
+	CONTAINER_BASE_CAPABILITIES,
 	CONTAINER_CA_PATH,
 	type ContainerDeps,
 	type ProjectRow,
@@ -38,6 +39,11 @@ interface CreateContainerCall {
 			PortBindings?: Record<string, Array<{ HostPort: string }>>;
 			ExtraHosts?: string[];
 			CapAdd?: string[];
+			CapDrop?: string[];
+			Init?: boolean;
+			Memory?: number;
+			MemorySwap?: number;
+			PidsLimit?: number;
 		};
 		ExposedPorts?: Record<string, object>;
 	};
@@ -342,7 +348,10 @@ describe('provisionContainer', () => {
 			teamSlug,
 		);
 
-		expect(created[0].config.HostConfig.CapAdd).toEqual(['NET_ADMIN']);
+		expect(created[0].config.HostConfig.CapAdd).toEqual([
+			...CONTAINER_BASE_CAPABILITIES,
+			'NET_ADMIN',
+		]);
 		const execCreate = docker.execCreate as ReturnType<typeof vi.fn>;
 		const mtuExec = execCreate.mock.calls.find((c) => (c[1] as { Cmd: string[] }).Cmd[0] === 'ip');
 		expect((mtuExec?.[1] as { Cmd: string[] }).Cmd).toEqual([
@@ -357,7 +366,7 @@ describe('provisionContainer', () => {
 		expect(logs.getLogText(`provision:${projectId}`)).toContain('pinning container MTU to 1420');
 	});
 
-	it('leaves MTU and capabilities untouched on a normal (>=1500) egress host', async () => {
+	it('leaves MTU untouched and grants only base capabilities on a normal (>=1500) egress host', async () => {
 		await resetContainerRow();
 		const { docker, created } = recordingDocker();
 
@@ -367,10 +376,44 @@ describe('provisionContainer', () => {
 			teamSlug,
 		);
 
-		expect(created[0].config.HostConfig.CapAdd).toBeUndefined();
+		expect(created[0].config.HostConfig.CapAdd).toEqual(CONTAINER_BASE_CAPABILITIES);
 		const execCreate = docker.execCreate as ReturnType<typeof vi.fn>;
 		const mtuExec = execCreate.mock.calls.find((c) => (c[1] as { Cmd: string[] }).Cmd[0] === 'ip');
 		expect(mtuExec).toBeUndefined();
+	});
+
+	it('applies hardened HostConfig defaults: init, cgroup memory cap, pids limit, cap-drop', async () => {
+		await resetContainerRow();
+		const { docker, created } = recordingDocker();
+
+		await provisionContainer(baseDeps(docker), await projectRow(), teamSlug);
+
+		const hc = created[0].config.HostConfig;
+		expect(hc.Init).toBe(true);
+		expect(hc.CapDrop).toEqual(['ALL']);
+		expect(hc.PidsLimit).toBe(4096);
+		// Hard cap = project ceiling (default 16 GiB) + 512 MiB headroom, no swap
+		// escape valve — the stats poller stops the container at the ceiling
+		// itself; the cgroup is the between-ticks backstop.
+		const expectedCap = 16 * 1024 ** 3 + 512 * 1024 ** 2;
+		expect(hc.Memory).toBe(expectedCap);
+		expect(hc.MemorySwap).toBe(expectedCap);
+	});
+
+	it('derives the cgroup cap from a project-specific memory_limit_gib', async () => {
+		await resetContainerRow();
+		await db.query('UPDATE projects SET memory_limit_gib = 2 WHERE id = $1', [projectId]);
+		try {
+			const { docker, created } = recordingDocker();
+
+			await provisionContainer(baseDeps(docker), await projectRow(), teamSlug);
+
+			const expectedCap = 2 * 1024 ** 3 + 512 * 1024 ** 2;
+			expect(created[0].config.HostConfig.Memory).toBe(expectedCap);
+			expect(created[0].config.HostConfig.MemorySwap).toBe(expectedCap);
+		} finally {
+			await db.query('UPDATE projects SET memory_limit_gib = DEFAULT WHERE id = $1', [projectId]);
+		}
 	});
 
 	it('reports a failed update-ca-certificates without failing the provision', async () => {

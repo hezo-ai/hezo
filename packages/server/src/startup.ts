@@ -261,6 +261,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		ca: egressCA,
 		proxyBindHost: config.containerBindHost,
 		bindHostRef: bindHost,
+		authEnabled: config.egressProxyAuth,
 	});
 	// Verify a container can actually reach back to the host — the MCP server
 	// (firewall signal) and a listener at the egress/SSH bind host. On native-Linux
