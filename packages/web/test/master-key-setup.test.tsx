@@ -1,6 +1,16 @@
+import { generateMnemonic } from '@hezo/shared';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, test } from 'vitest';
 import { MasterKeyForm } from '../src/components/master-key-gate';
+
+/** Reveal the grid, then read the 12 words back (strip the leading position number). */
+function revealedPhrase(): string {
+	fireEvent.click(screen.getByRole('button', { name: /^show key$/i }));
+	return screen
+		.getAllByTestId('mnemonic-word')
+		.map((w) => (w.textContent ?? '').replace(/^\d+/, ''))
+		.join(' ');
+}
 
 afterEach(() => {
 	cleanup();
@@ -54,4 +64,91 @@ test('unlock rejects an invalid phrase inline without authenticating', async () 
 	fireEvent.click(screen.getByRole('button', { name: /unlock/i }));
 
 	await screen.findByText(/not a valid 12-word master key/i);
+});
+
+test('generated words are masked (password-style) by default', async () => {
+	render(<MasterKeyForm state="unset" embedded />);
+	fireEvent.click(screen.getByRole('button', { name: /generate master key/i }));
+
+	const words = await screen.findAllByTestId('mnemonic-word');
+	expect(words).toHaveLength(12);
+	// Each chip shows its position number plus a dot mask — never the word.
+	for (const w of words) {
+		expect(w.textContent).toContain('•');
+	}
+});
+
+test('the eye toggle reveals and re-hides the words', async () => {
+	render(<MasterKeyForm state="unset" embedded />);
+	fireEvent.click(screen.getByRole('button', { name: /generate master key/i }));
+	await screen.findAllByTestId('mnemonic-word');
+
+	// Reveal → 12 real alpha words, no dots.
+	fireEvent.click(screen.getByRole('button', { name: /^show key$/i }));
+	const revealed = screen
+		.getAllByTestId('mnemonic-word')
+		.map((w) => (w.textContent ?? '').replace(/^\d+/, ''));
+	expect(revealed).toHaveLength(12);
+	expect(revealed.every((t) => /^[a-z]+$/.test(t))).toBe(true);
+
+	// Hide → masked again.
+	fireEvent.click(screen.getByRole('button', { name: /^hide key$/i }));
+	expect(
+		screen.getAllByTestId('mnemonic-word').every((w) => (w.textContent ?? '').includes('•')),
+	).toBe(true);
+});
+
+test('the confirm step shows a masked entry field with a toggle', async () => {
+	render(<MasterKeyForm state="unset" embedded />);
+	fireEvent.click(screen.getByRole('button', { name: /generate master key/i }));
+	await screen.findAllByTestId('mnemonic-word');
+	fireEvent.click(screen.getByRole('button', { name: /^continue$/i }));
+
+	const field = (await screen.findByLabelText(/master key/i)) as HTMLInputElement;
+	expect(field.type).toBe('password');
+	expect(screen.getByRole('button', { name: /^show key$/i })).toBeTruthy();
+});
+
+test('the confirm step rejects a phrase that does not match the generated key', async () => {
+	render(<MasterKeyForm state="unset" embedded />);
+	fireEvent.click(screen.getByRole('button', { name: /generate master key/i }));
+	await screen.findAllByTestId('mnemonic-word');
+	fireEvent.click(screen.getByRole('button', { name: /^continue$/i }));
+
+	// A different valid phrase must not satisfy the paste-back check (no network hit).
+	fireEvent.change(await screen.findByLabelText(/master key/i), {
+		target: { value: generateMnemonic() },
+	});
+	fireEvent.click(screen.getByRole('button', { name: /set key & continue/i }));
+
+	await screen.findByText(/doesn't match your master key/i);
+});
+
+test('Back returns from confirm to the generated key', async () => {
+	render(<MasterKeyForm state="unset" embedded />);
+	fireEvent.click(screen.getByRole('button', { name: /generate master key/i }));
+	await screen.findAllByTestId('mnemonic-word');
+	fireEvent.click(screen.getByRole('button', { name: /^continue$/i }));
+	await screen.findByLabelText(/master key/i);
+
+	fireEvent.click(screen.getByRole('button', { name: /^back$/i }));
+
+	expect(await screen.findAllByTestId('mnemonic-word')).toHaveLength(12);
+	expect(screen.getByRole('button', { name: /^continue$/i })).toBeTruthy();
+});
+
+test('Generate a new key replaces the phrase and re-masks it', async () => {
+	render(<MasterKeyForm state="unset" embedded />);
+	fireEvent.click(screen.getByRole('button', { name: /generate master key/i }));
+	await screen.findAllByTestId('mnemonic-word');
+	const first = revealedPhrase();
+
+	fireEvent.click(screen.getByRole('button', { name: /generate a new key/i }));
+
+	const words = await screen.findAllByTestId('mnemonic-word');
+	expect(words).toHaveLength(12);
+	// Re-masked after regenerating.
+	expect(words.every((w) => (w.textContent ?? '').includes('•'))).toBe(true);
+	// A fresh phrase, distinct from the first.
+	expect(revealedPhrase()).not.toBe(first);
 });

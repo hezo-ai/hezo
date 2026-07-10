@@ -4,7 +4,7 @@ import {
 	normalizeMnemonic,
 	validateMnemonic,
 } from '@hezo/shared';
-import { KeyRound, Loader2, Lock, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, Eye, EyeOff, KeyRound, Loader2, Lock, ShieldCheck } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
 import { authenticateWithMnemonic } from '../lib/auth';
@@ -13,6 +13,7 @@ import { queryClient } from '../lib/query-client';
 import { queryKeys } from '../lib/query-keys';
 import { Button } from './ui/button';
 import { Logo } from './ui/logo';
+import { PasswordInput } from './ui/password-input';
 
 const REVEAL_STRIPS = 11;
 
@@ -66,11 +67,33 @@ export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFor
 	const [loading, setLoading] = useState(false);
 	const [copied, setCopied] = useState(false);
 	const [revealing, setRevealing] = useState(false);
+	// Setup is a two-step flow: generate + save the key, then paste it back to
+	// confirm before it's committed. `phase` only matters when `isUnset`.
+	const [phase, setPhase] = useState<'generate' | 'confirm'>('generate');
+	// The generated words start masked (password-style); the eye toggle reveals them.
+	const [revealed, setRevealed] = useState(false);
 
 	const isUnset = state === 'unset';
 
 	function handleGenerate() {
 		setGeneratedKey(generateMnemonic());
+		setRevealed(false);
+		setCopied(false);
+		setError('');
+	}
+
+	function goToConfirm() {
+		setError('');
+		setKey('');
+		setRevealed(false);
+		setPhase('confirm');
+	}
+
+	function goBackToGenerate() {
+		setError('');
+		setKey('');
+		setRevealed(false);
+		setPhase('generate');
 	}
 
 	function finishTransition() {
@@ -81,6 +104,12 @@ export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFor
 
 	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
+		// In setup we're always on the confirm step here: the pasted phrase must
+		// match the phrase we generated, so we know the user captured all 12 words.
+		if (isUnset && normalizeMnemonic(key) !== generatedKey) {
+			setError("That doesn't match your master key. Paste all 12 words exactly.");
+			return;
+		}
 		const phrase = isUnset ? (generatedKey ?? '') : normalizeMnemonic(key);
 		if (!phrase) return;
 		setError('');
@@ -115,6 +144,21 @@ export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFor
 		}
 	}
 
+	const heading = !isUnset
+		? 'Unlock Hezo'
+		: phase === 'confirm'
+			? 'Confirm you saved your key'
+			: 'Create your master key';
+	const subtitle = !isUnset
+		? 'The instance is locked. Enter your 12-word master key to bring it back online.'
+		: phase === 'confirm'
+			? 'Paste the 12 words back so we know you have the full phrase. You can go back and generate a new one.'
+			: 'The one key that encrypts your data and unlocks this instance.';
+
+	// The generate-phase word grid + the confirm/unlock entry field.
+	const showGenerated = isUnset && phase === 'generate' && generatedKey !== null;
+	const showEntry = !isUnset || phase === 'confirm';
+
 	return (
 		<>
 			{revealing && <UnlockReveal onDone={finishTransition} />}
@@ -124,32 +168,38 @@ export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFor
 					<div className="p-3 rounded-full bg-surface-2 border border-border-strong text-accent-soft-fg">
 						{isUnset ? <KeyRound className="w-6 h-6" /> : <ShieldCheck className="w-6 h-6" />}
 					</div>
-					<h2 className="text-lg font-semibold text-text-1">
-						{isUnset ? 'Create your master key' : 'Unlock Hezo'}
-					</h2>
-					<p className="text-sm text-text-2 text-center">
-						{isUnset
-							? 'This 12-word key unlocks the instance and encrypts everything in it.'
-							: 'The instance is locked. Enter your 12-word master key to bring it back online.'}
-					</p>
+					<h2 className="text-lg font-semibold text-text-1">{heading}</h2>
+					<p className="text-sm text-text-2 text-center">{subtitle}</p>
 				</div>
 			)}
 
 			<form onSubmit={handleSubmit} className="flex flex-col gap-4">
-				{isUnset && !generatedKey && (
+				{isUnset && phase === 'generate' && !generatedKey && (
 					<Button type="button" variant="secondary" onClick={handleGenerate}>
 						<KeyRound className="w-4 h-4" />
 						Generate master key
 					</Button>
 				)}
 
-				{generatedKey && (
+				{showGenerated && (
 					<div className="flex flex-col gap-3">
+						<div className="flex items-center justify-between">
+							<span className="text-eyebrow text-text-2">Your master key</span>
+							<button
+								type="button"
+								onClick={() => setRevealed((v) => !v)}
+								aria-label={revealed ? 'Hide key' : 'Show key'}
+								className="flex items-center gap-1.5 text-xs text-text-3 hover:text-text-1"
+							>
+								{revealed ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+								{revealed ? 'Hide' : 'Show'}
+							</button>
+						</div>
 						<ol
 							className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2"
 							aria-label="Master key"
 						>
-							{generatedKey.split(' ').map((word, index) => (
+							{(generatedKey ?? '').split(' ').map((word, index) => (
 								<li
 									// biome-ignore lint/suspicious/noArrayIndexKey: fixed-length, never-reordered list with possibly-repeating words; position is the stable identity
 									key={index}
@@ -159,51 +209,98 @@ export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFor
 									<span className="w-4 text-right text-[10px] tabular-nums text-text-3 select-none">
 										{index + 1}
 									</span>
-									<span className="font-mono text-xs text-text-1">{word}</span>
+									<span className="font-mono text-xs text-text-1">
+										{revealed ? word : '••••••'}
+									</span>
 								</li>
 							))}
 						</ol>
 						<Button type="button" variant="ghost" size="sm" onClick={handleCopy}>
 							{copied ? 'Copied!' : 'Copy to clipboard'}
 						</Button>
-						<div className="flex gap-2.5 items-start rounded-md border border-warning-soft-fg/25 bg-warning-soft px-3 py-2.5 text-[12.5px] leading-relaxed text-warning-soft-fg">
-							<Lock className="w-4 h-4 shrink-0 mt-0.5" />
-							<span>
-								<span className="font-semibold text-text-1">
-									Store these words somewhere safe now.
-								</span>{' '}
-								They're the only way to unlock the instance after a restart and to reset a forgotten
-								password. Hezo can't recover them for you.
-							</span>
+						<div className="flex flex-col gap-2.5 rounded-md border border-warning-soft-fg/25 bg-warning-soft px-3 py-3 text-[12.5px] leading-relaxed text-warning-soft-fg">
+							<div className="flex gap-2.5 items-start">
+								<KeyRound className="w-4 h-4 shrink-0 mt-0.5" />
+								<span>
+									<span className="font-semibold text-text-1">
+										Encrypts everything, unlocks every restart.
+									</span>{' '}
+									This key protects all data in your instance and brings it back online after each
+									restart.
+								</span>
+							</div>
+							<div className="flex gap-2.5 items-start">
+								<AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+								<span>
+									<span className="font-semibold text-text-1">
+										No one can recover it — not even Hezo.
+									</span>{' '}
+									Lose these words and your data is locked away for good.
+								</span>
+							</div>
+							<div className="flex gap-2.5 items-start">
+								<Lock className="w-4 h-4 shrink-0 mt-0.5" />
+								<span>
+									<span className="font-semibold text-text-1">Save it now</span> in a password
+									manager or another safe place — you'll confirm it on the next step.
+								</span>
+							</div>
 						</div>
 					</div>
 				)}
 
-				{!isUnset && (
+				{showEntry && (
 					<div className="flex flex-col gap-1.5">
 						<label htmlFor="mnemonic-entry" className="text-sm font-medium text-text-1">
 							Master Key
 						</label>
-						<textarea
+						<PasswordInput
 							id="mnemonic-entry"
+							revealLabel="key"
+							className="font-mono"
 							value={key}
 							onChange={(e) => setKey(e.target.value)}
-							placeholder="Enter your 12-word master key"
-							rows={3}
+							placeholder={
+								isUnset ? 'Paste your 12-word master key' : 'Enter your 12-word master key'
+							}
 							autoComplete="off"
 							autoCapitalize="none"
 							spellCheck={false}
-							className="w-full resize-none rounded-md border border-border-strong bg-surface-2 p-2.5 font-mono text-xs text-text-1 placeholder:text-text-3 focus:outline-none focus:ring-2 focus:ring-accent"
 						/>
 					</div>
 				)}
 
 				{error && <p className="text-sm text-danger">{error}</p>}
 
-				<Button type="submit" disabled={loading || (isUnset ? !generatedKey : !key.trim())}>
-					{loading && <Loader2 className="w-4 h-4 animate-spin" />}
-					{isUnset ? 'Set key & continue' : 'Unlock'}
-				</Button>
+				{showGenerated && (
+					<div className="flex flex-col gap-2">
+						<Button type="button" onClick={goToConfirm}>
+							Continue
+						</Button>
+						<Button type="button" variant="ghost" size="sm" onClick={handleGenerate}>
+							Generate a new key
+						</Button>
+					</div>
+				)}
+
+				{isUnset && phase === 'confirm' && (
+					<div className="flex flex-col gap-2">
+						<Button type="submit" disabled={loading || !key.trim()}>
+							{loading && <Loader2 className="w-4 h-4 animate-spin" />}
+							Set key & continue
+						</Button>
+						<Button type="button" variant="ghost" size="sm" onClick={goBackToGenerate}>
+							Back
+						</Button>
+					</div>
+				)}
+
+				{!isUnset && (
+					<Button type="submit" disabled={loading || !key.trim()}>
+						{loading && <Loader2 className="w-4 h-4 animate-spin" />}
+						Unlock
+					</Button>
+				)}
 			</form>
 		</>
 	);

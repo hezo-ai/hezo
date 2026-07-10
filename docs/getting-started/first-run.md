@@ -15,7 +15,10 @@ Hezo encrypts everything sensitive — model keys, OAuth tokens, signing keys �
 The encryption key is derived from a **master key**: a twelve-word phrase generated
 for you on first run.
 
-- **Write it down and keep it somewhere safe.** It is shown once.
+- **Write it down and keep it somewhere safe** — a password manager is ideal. It is
+  shown once. The words stay hidden until you reveal them with the eye toggle.
+- **You confirm it by pasting it back** before setup continues, so you can't move on
+  without the full phrase. Need a different one? Generate a new key first.
 - It is held **in memory only** and never written to disk.
 - If you lose it, there is no recovery — the only way forward is to reset and start
   fresh. See [Master key & encryption](/docs/security/master-key).
