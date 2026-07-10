@@ -1232,6 +1232,12 @@ export interface ProviderRuntimeAdapter {
  * still bypasses NO_PROXY in several Claude Code subsystems (undici fetch,
  * Sentry transport) and lands in the MITM proxy. Stamp these flags into
  * env for every Claude Code runtime.
+ *
+ * Alongside the telemetry/noise-suppression `DISABLE_*` flags, this bag also
+ * carries a headless background-wait override: `claude -p` caps how long it
+ * waits for still-running background tasks and then terminates them, which
+ * kills Hezo's legitimately long background work. See
+ * `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS` below.
  */
 export const CLAUDE_CODE_QUIET_ENV = {
 	DISABLE_TELEMETRY: '1',
@@ -1239,6 +1245,13 @@ export const CLAUDE_CODE_QUIET_ENV = {
 	DISABLE_AUTOUPDATER: '1',
 	DISABLE_NON_ESSENTIAL_MODEL_CALLS: '1',
 	DISABLE_BUG_COMMAND: '1',
+	// Headless `claude -p` caps waiting for still-running background tasks at 600s
+	// and then kills them ("Background tasks still running after 600s; terminating").
+	// Hezo runs legitimately long background work (Workflow fan-out agents, long
+	// `run_in_background` jobs); `0` removes the ceiling so the run waits for its own
+	// background tasks instead of terminating them early. The wait is then bounded
+	// only by the run's overall container/heartbeat lifecycle, not an arbitrary cap.
+	CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: '0',
 } as const;
 
 /**

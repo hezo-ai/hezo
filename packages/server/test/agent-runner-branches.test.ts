@@ -115,6 +115,9 @@ describe('buildProviderEnv', () => {
 		// Claude Code quiet flags are prepended for ClaudeCode-runtime providers.
 		expect(env).toContain('DISABLE_TELEMETRY=1');
 		expect(env).toContain('DISABLE_AUTOUPDATER=1');
+		// Headless `-p` background-task wait ceiling is removed so long background
+		// work isn't terminated at 600s.
+		expect(env).toContain('CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0');
 		// API-key auth → the ANTHROPIC_API_KEY var carries the secret.
 		expect(env).toContain('ANTHROPIC_API_KEY=sk-ant-123');
 		// No subscription var leaks in.
