@@ -236,12 +236,13 @@ assetsRoutes.get('/projects/:projectId/assets', async (c) => {
 		id: string;
 		content_type: string;
 		byte_size: number;
+		sha256: string;
 		original_filename: string;
 		created_at: string;
 		archived_at: string | null;
 		comment_attachment_count: number;
 	}>(
-		`SELECT a.id, a.content_type, a.byte_size, a.original_filename, a.created_at, a.archived_at,
+		`SELECT a.id, a.content_type, a.byte_size, a.sha256, a.original_filename, a.created_at, a.archived_at,
 		        COUNT(ca.comment_id)::int AS comment_attachment_count
 		 FROM assets a
 		 LEFT JOIN comment_attachments ca ON ca.asset_id = a.id

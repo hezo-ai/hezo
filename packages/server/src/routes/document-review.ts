@@ -3,6 +3,7 @@ import { type Context, Hono } from 'hono';
 import { resolveActorMemberId, resolveProjectId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { getDocument } from '../services/documents';
 import {
 	clearReviewComments,
 	createReviewComment,
@@ -10,8 +11,7 @@ import {
 	listReviewComments,
 	StaleDocumentError,
 	updateReviewComment,
-} from '../services/document-review';
-import { getDocument } from '../services/documents';
+} from '../services/review-comments';
 
 /**
  * Review comments on a project document (view-mode highlight annotations).
@@ -46,7 +46,10 @@ async function resolveDoc(c: Context<Env>): Promise<DocContext | Response> {
 documentReviewRoutes.get(BASE, async (c) => {
 	const resolved = await resolveDoc(c);
 	if (resolved instanceof Response) return resolved;
-	const comments = await listReviewComments(c.get('db'), resolved.documentId);
+	const comments = await listReviewComments(c.get('db'), {
+		kind: 'document',
+		documentId: resolved.documentId,
+	});
 	return ok(c, comments);
 });
 
@@ -78,7 +81,7 @@ documentReviewRoutes.post(BASE, async (c) => {
 		const row = await createReviewComment(db, c.get('wsManager'), {
 			teamId,
 			projectId: resolved.projectId,
-			documentId: resolved.documentId,
+			target: { kind: 'document', documentId: resolved.documentId },
 			quote: body.quote,
 			occurrence,
 			comment: body.comment,
@@ -107,7 +110,7 @@ documentReviewRoutes.patch(`${BASE}/:commentId`, async (c) => {
 	const row = await updateReviewComment(c.get('db'), c.get('wsManager'), {
 		teamId: c.get('teamId') as string,
 		projectId: resolved.projectId,
-		documentId: resolved.documentId,
+		target: { kind: 'document', documentId: resolved.documentId },
 		commentId: c.req.param('commentId'),
 		comment: body.comment,
 	});
@@ -122,7 +125,7 @@ documentReviewRoutes.delete(`${BASE}/:commentId`, async (c) => {
 	const removed = await deleteReviewComment(c.get('db'), c.get('wsManager'), {
 		teamId: c.get('teamId') as string,
 		projectId: resolved.projectId,
-		documentId: resolved.documentId,
+		target: { kind: 'document', documentId: resolved.documentId },
 		commentId: c.req.param('commentId'),
 	});
 	if (!removed) return err(c, 'NOT_FOUND', 'Review comment not found', 404);
@@ -136,7 +139,7 @@ documentReviewRoutes.delete(BASE, async (c) => {
 	await clearReviewComments(c.get('db'), c.get('wsManager'), {
 		teamId: c.get('teamId') as string,
 		projectId: resolved.projectId,
-		documentId: resolved.documentId,
+		target: { kind: 'document', documentId: resolved.documentId },
 	});
 	return c.json({ data: null }, 200);
 });

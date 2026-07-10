@@ -290,7 +290,7 @@ Three strategies, picked by mutation shape. Default to optimistic unless the mut
 
 Security-sensitive mutations (`useFulfillCredential`) MUST stay response-driven — never optimistically appear fulfilled.
 
-Errors-only toast: `toast.error(...)` from `packages/web/src/hooks/use-toast.ts` fires automatically on `useOptimisticMutation` rollback. Successes are not toasted — the UI change itself is the confirmation. For inline form errors (validation the user should fix in place), keep the inline pattern in addition to the toast.
+Errors-only toast: `toast.error(...)` from `packages/web/src/hooks/use-toast.ts` fires automatically on `useOptimisticMutation` rollback. Successes are not toasted — the UI change itself is the confirmation. One carve-out: when an action's result lives on a **different page** (e.g. the review handoff posted as a comment onto a task), there is no visible UI change to confirm it, so fire `toast.success(...)` with a `link` to the result. For inline form errors (validation the user should fix in place), keep the inline pattern in addition to the toast.
 
 ## Slugs vs UUIDs
 

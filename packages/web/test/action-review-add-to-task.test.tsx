@@ -151,6 +151,16 @@ test('task-less surface: picker lists tasks with no pinned entry, filters, and p
 	await waitFor(() => {
 		expect(document.body.querySelector('[data-testid="action-review-dialog"]')).toBeNull();
 	});
+
+	// The comment landed on a different page, so a success toast carries the way
+	// there — deep-linked to the created comment via its #comment-<id> hash.
+	const toastLink = await waitFor(() => {
+		const el = document.body.querySelector('[data-testid="toast-link"]');
+		expect(el).toBeTruthy();
+		return el as HTMLAnchorElement;
+	});
+	expect(toastLink.textContent).toBe('View comment');
+	expect(toastLink.getAttribute('href')).toMatch(new RegExp(`/tasks/${target.taskId}#comment-.+$`));
 });
 
 test('keyboard: arrows move the highlight, Enter posts to the highlighted task, Escape closes only the picker', async () => {

@@ -1,0 +1,267 @@
+import { fireEvent, waitFor } from '@testing-library/react';
+import { expect, test } from 'vitest';
+import { getTestContext, renderApp } from './helpers/render';
+import {
+	archiveSeededAsset,
+	type SeededAsset,
+	type SeededProject,
+	type SeededWorkspace,
+	seedAsset,
+	seedAssetReviewComment,
+	seedProject,
+	seedWorkspace,
+} from './helpers/seed';
+
+// The split-pane asset viewer (/projects/:slug/assets/view?file=…): per-type
+// left-pane rendering, the document-style anchored review flow on text assets,
+// whole-asset comments on non-text assets via the right panel, archived
+// read-only mode, and the asset-flavored "Action this review" handoff.
+
+const MD_CONTENT = [
+	'# Launch Post',
+	'',
+	'Alpha paragraph with target text inside.',
+	'',
+	'Beta paragraph closes it out.',
+].join('\n');
+
+interface Setup {
+	ws: SeededWorkspace;
+	project: SeededProject;
+	asset: SeededAsset;
+}
+
+async function setupViewer(input: {
+	filename: string;
+	contentType?: string;
+	bytes?: Uint8Array;
+	folder?: string;
+	comments?: Array<{ quote?: string; occurrence?: number; comment: string }>;
+	archived?: boolean;
+}) {
+	let setup!: Setup;
+	const utils = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Viewer Project' });
+			const asset = await seedAsset(ws, project, {
+				filename: input.filename,
+				contentType: input.contentType,
+				bytes: input.bytes,
+				folder: input.folder,
+			});
+			for (const c of input.comments ?? []) {
+				await seedAssetReviewComment(ws, project, asset.id, c);
+			}
+			if (input.archived) await archiveSeededAsset(ws, project, asset.id, true);
+			setup = { ws, project, asset };
+		},
+	});
+	await utils.router.navigate({
+		to: '/projects/$projectId/assets/view',
+		params: { projectId: setup.project.slug },
+		search: { file: setup.asset.original_filename },
+	});
+	await utils.findByTestId('asset-viewer');
+	return { ...utils, ...setup };
+}
+
+async function assetReviewRows(): Promise<
+	Array<{ quote: string | null; occurrence: number; comment: string }>
+> {
+	const { db } = getTestContext();
+	const res = await db.query<{ quote: string | null; occurrence: number; comment: string }>(
+		'SELECT quote, occurrence, comment FROM review_comments WHERE asset_id IS NOT NULL ORDER BY created_at',
+	);
+	return res.rows;
+}
+
+test('selecting text in a markdown asset creates an anchored comment, like a document', async () => {
+	const { container, findByTestId, user } = await setupViewer({
+		filename: 'post.md',
+		contentType: 'text/markdown',
+		bytes: new TextEncoder().encode(MD_CONTENT),
+	});
+
+	// The markdown body renders through the shared review surface.
+	const rendered = await findByTestId('asset-viewer-rendered');
+	await waitFor(() => expect(rendered.querySelector('h1')?.textContent).toBe('Launch Post'));
+
+	const para = Array.from(container.querySelectorAll('p')).find((p) =>
+		p.textContent?.includes('target text'),
+	) as HTMLElement;
+	const textNode = para.firstChild as Text;
+	const start = textNode.data.indexOf('target text');
+
+	const range = document.createRange();
+	range.setStart(textNode, start);
+	range.setEnd(textNode, start + 'target text'.length);
+	const selection = window.getSelection();
+	selection?.removeAllRanges();
+	selection?.addRange(range);
+	document.dispatchEvent(new Event('selectionchange'));
+
+	const pill = await findByTestId('review-selection-pill');
+	fireEvent.mouseDown(pill);
+
+	const editor = await findByTestId('review-editor');
+	expect(editor.textContent).toContain('target text');
+	await user.type(
+		(await findByTestId('review-editor-textarea')) as HTMLTextAreaElement,
+		'Needs a concrete example',
+	);
+	await user.click(await findByTestId('review-editor-save'));
+
+	await waitFor(async () => {
+		const rows = await assetReviewRows();
+		expect(rows.length).toBe(1);
+		expect(rows[0].quote).toBe('target text');
+		expect(rows[0].comment).toBe('Needs a concrete example');
+	});
+	// The highlight renders in the left pane and the comment lists in the panel.
+	await waitFor(() => {
+		expect(container.querySelector('mark[data-review-id]')?.textContent).toBe('target text');
+	});
+	const row = await findByTestId('asset-review-row');
+	expect(row.textContent).toContain('Needs a concrete example');
+	expect(row.textContent).toContain('target text');
+});
+
+test('a plain-text asset renders seeded quote anchors as highlights in its <pre>', async () => {
+	const txt = 'first line of output\nsecond line with the flaky assertion\nthird line';
+	const { container, findByTestId } = await setupViewer({
+		filename: 'log.txt',
+		contentType: 'text/plain',
+		bytes: new TextEncoder().encode(txt),
+		comments: [{ quote: 'flaky assertion', comment: 'This is the real bug' }],
+	});
+
+	const pre = await findByTestId('asset-plain-text');
+	expect(pre.textContent).toBe(txt);
+	await waitFor(() => {
+		const mark = container.querySelector('mark[data-review-id]');
+		expect(mark?.textContent).toBe('flaky assertion');
+	});
+	// Clicking the panel row activates its highlight.
+	const row = await findByTestId('asset-review-row');
+	(row.querySelector('button') as HTMLButtonElement).click();
+	await waitFor(() => expect(row.getAttribute('data-active')).toBe('true'));
+});
+
+test('an image takes whole-asset comments from the panel composer, with edit and delete', async () => {
+	const { findByTestId, queryByTestId, user } = await setupViewer({ filename: 'shot.png' });
+
+	await findByTestId('asset-viewer-image');
+
+	// Non-text assets compose whole-asset comments in the right panel.
+	await user.click(await findByTestId('asset-review-composer-open'));
+	await user.type(
+		(await findByTestId('asset-review-composer')) as HTMLTextAreaElement,
+		'The logo is off-center',
+	);
+	await user.click(await findByTestId('asset-review-composer-save'));
+
+	const row = await findByTestId('asset-review-row');
+	expect(row.textContent).toContain('Whole asset');
+	expect(row.textContent).toContain('The logo is off-center');
+	await waitFor(async () => {
+		const rows = await assetReviewRows();
+		expect(rows.length).toBe(1);
+		expect(rows[0].quote).toBeNull();
+	});
+
+	// Inline edit.
+	await user.click(await findByTestId('asset-review-edit'));
+	const editArea = (await findByTestId('asset-review-edit-textarea')) as HTMLTextAreaElement;
+	await user.clear(editArea);
+	await user.type(editArea, 'Center the logo');
+	await user.click(await findByTestId('asset-review-edit-save'));
+	await waitFor(async () => {
+		expect((await assetReviewRows())[0].comment).toBe('Center the logo');
+	});
+
+	// Delete empties the review.
+	await user.click(await findByTestId('asset-review-delete'));
+	await waitFor(async () => {
+		expect((await assetReviewRows()).length).toBe(0);
+	});
+	expect(queryByTestId('asset-review-row')).toBeNull();
+});
+
+test('a PDF renders the metadata card with an open-raw link', async () => {
+	const { findByTestId } = await setupViewer({
+		filename: 'spec.pdf',
+		contentType: 'application/pdf',
+		bytes: new TextEncoder().encode('%PDF-1.4 fake'),
+	});
+
+	const card = await findByTestId('asset-viewer-metadata');
+	expect(card.textContent).toContain('spec.pdf');
+	expect(card.textContent).toContain('application/pdf');
+	expect(card.querySelector('a[target="_blank"]')).toBeTruthy();
+});
+
+test('an archived asset renders read-only: no composer, frozen review', async () => {
+	const { findByTestId, queryByTestId } = await setupViewer({
+		filename: 'old.png',
+		comments: [{ comment: 'Kept for the record' }],
+		archived: true,
+	});
+
+	await findByTestId('asset-viewer-image');
+	// The seeded comment is still visible…
+	const row = await findByTestId('asset-review-row');
+	expect(row.textContent).toContain('Kept for the record');
+	// …but nothing is editable: no composer, no per-row edit/delete, clear disabled.
+	expect(queryByTestId('asset-review-composer-open')).toBeNull();
+	expect(queryByTestId('asset-review-edit')).toBeNull();
+	expect(queryByTestId('asset-review-delete')).toBeNull();
+	const clear = (await findByTestId('review-clear')) as HTMLButtonElement;
+	expect(clear.disabled).toBe(true);
+});
+
+test('"Action this review" hands off with the asset-flavored blurb', async () => {
+	const { findByTestId, user } = await setupViewer({
+		filename: 'post.md',
+		contentType: 'text/markdown',
+		bytes: new TextEncoder().encode(MD_CONTENT),
+		folder: 'launch',
+		comments: [{ quote: 'target text', comment: 'Sharpen this' }],
+	});
+
+	// The count chip appearing means the comments query has landed — before
+	// that the action button is disabled (count 0).
+	await findByTestId('review-count-chip');
+	await user.click(await findByTestId('review-action-open'));
+	const handoff = await waitFor(() => {
+		const el = document.body.querySelector('[data-testid="action-review-handoff"]');
+		expect(el).toBeTruthy();
+		return el as HTMLElement;
+	});
+	expect(handoff.textContent).toContain('assets/launch/post.md');
+	expect(handoff.textContent).toContain('read_project_asset');
+	expect(handoff.textContent).toContain('write_project_asset');
+});
+
+test('the viewer breadcrumb walks back to the grid folder and Open raw links the signed URL', async () => {
+	const { findByTestId, findByText, router, user, asset, project } = await setupViewer({
+		filename: 'hero.png',
+		contentType: 'image/png',
+		folder: 'launch',
+	});
+
+	const raw = (await findByTestId('asset-viewer-raw')) as HTMLAnchorElement;
+	// Each list fetch mints a fresh signature, so match the stable prefix only.
+	expect(raw.getAttribute('href')).toContain(`/api/assets/${asset.id}?exp=`);
+	expect(raw.getAttribute('target')).toBe('_blank');
+
+	// Breadcrumb: Assets › launch › hero.png; the folder crumb returns to the grid.
+	const crumb = await findByTestId('asset-viewer-breadcrumb');
+	expect(crumb.textContent).toContain('hero.png');
+	await user.click(await findByText('launch'));
+	await waitFor(() => {
+		expect(router.state.location.pathname).toBe(`/projects/${project.slug}/assets`);
+		expect(router.state.location.search).toMatchObject({ folder: 'launch' });
+	});
+});

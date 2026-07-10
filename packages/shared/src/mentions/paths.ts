@@ -18,7 +18,9 @@ export function projectDocPath(projectSlug: string, filename: string): string {
 }
 
 export function assetPath(projectSlug: string, filename: string): string {
-	return `/projects/${projectSlug}/assets?file=${encodeURIComponent(filename)}`;
+	// The in-app asset viewer (content + review comments) is the canonical link
+	// target for an asset; raw view is reachable from its toolbar.
+	return `/projects/${projectSlug}/assets/view?file=${encodeURIComponent(filename)}`;
 }
 
 export function agentPath(projectSlug: string, agentSlug: string): string {

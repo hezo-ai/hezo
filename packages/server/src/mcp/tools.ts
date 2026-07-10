@@ -100,7 +100,6 @@ import { upsertChatMemory } from '../services/chat-memory';
 import { fireCommentWakeups, postAgentComment } from '../services/comment-wakeups';
 import type { ContainerDeps } from '../services/containers';
 import { enqueueTeamCoherenceReviewTask } from '../services/description-tasks';
-import { listReviewComments } from '../services/document-review';
 import {
 	getAgentSystemPrompt,
 	getDocument,
@@ -126,6 +125,7 @@ import {
 	loadReactionsForTask,
 	removeCommentReaction,
 } from '../services/reactions';
+import { listReviewComments } from '../services/review-comments';
 import { recordSkillRevisionIfChanged } from '../services/skill-revisions';
 import { triggerStatusAutomations } from '../services/task-automation';
 import { recordTaskLinks } from '../services/task-events';
@@ -3626,7 +3626,7 @@ export function registerTools(
 	tool(
 		server,
 		'write_project_asset',
-		'Save a text-based file to the project assets library so a human can open it (an interactive HTML mockup, an SVG diagram, a plain-text export, a script, or a markdown deliverable such as a blog post or report). Allowed extensions: .html, .svg, .txt, .md, plus script/text formats stored as plain text (.sh, .py, .js, .ts, .json, .csv, .yaml, .yml). The filename may include a folder path up to 2 levels deep (e.g. "scripts/deploy-check.sh" or "launch/images/hero.svg") — folders spring into existence with their first asset. Re-saving the same path overwrites it, so the reference stays stable; overwrite matching is PATH-EXACT ("x.html" and "blog/x.html" are different assets — after a move, write to the new full path or you will fork the file). Returns the reference string to drop into a comment as `assets/<path>` (no backticks). HTML opens interactively in a new tab; markdown renders with a rich preview and a view-source toggle. Use a markdown asset for a standalone deliverable opened from the assets library; use write_project_doc for project context docs (specs, PRDs, research). Mockups and other deliverables belong here, never committed to the source repo.',
+		'Save a text-based file to the project assets library so a human can open it (an interactive HTML mockup, an SVG diagram, a plain-text export, a script, or a markdown deliverable such as a blog post or report). Allowed extensions: .html, .svg, .txt, .md, plus script/text formats stored as plain text (.sh, .py, .js, .ts, .json, .csv, .yaml, .yml). The filename may include a folder path up to 2 levels deep (e.g. "scripts/deploy-check.sh" or "launch/images/hero.svg") — folders spring into existence with their first asset. Re-saving the same path overwrites it, so the reference stays stable; overwrite matching is PATH-EXACT ("x.html" and "blog/x.html" are different assets — after a move, write to the new full path or you will fork the file). IMPORTANT: any write to an existing path deletes ALL of its pending review comments (the admin\'s feedback returned by read_project_asset) — capture every comment in your context before the first write, and make all desired edits in one consolidated write. Returns the reference string to drop into a comment as `assets/<path>` (no backticks). HTML opens interactively in a new tab; markdown renders with a rich preview and a view-source toggle. Use a markdown asset for a standalone deliverable opened from the assets library; use write_project_doc for project context docs (specs, PRDs, research). Mockups and other deliverables belong here, never committed to the source repo.',
 		{
 			project: projectArg(),
 			filename: z
@@ -3693,6 +3693,21 @@ export function registerTools(
 			if (result.replacedAssetId) {
 				await assets.delete(projectId, result.replacedAssetId).catch(() => {});
 			}
+			if (result.wipedReviewComments) {
+				// The overwrite consumed the pending review (wiped inside the upsert's
+				// transaction) — tell viewers so their comment panes clear live.
+				broadcastCommentFamilyChange(
+					wsManager,
+					teamId,
+					projectId,
+					'asset_review_comments',
+					'DELETE',
+					{
+						asset_id: result.replacedAssetId,
+						cleared: true,
+					},
+				);
+			}
 			broadcastRowChange(wsManager, wsRoom.team(teamId), 'assets', 'INSERT', {
 				id: result.id,
 				team_id: teamId,
@@ -3707,7 +3722,7 @@ export function registerTools(
 	tool(
 		server,
 		'read_project_asset',
-		"Read a project asset's contents by path (e.g. \"ui-mockups.html\" or \"scripts/check.sh\") — the files that list_project_assets returns (UI mockups, wireframes, SVG diagrams, text exports, scripts, markdown deliverables). Use the full path exactly as listed, folder prefix included. Text-based assets (HTML, SVG, plain text, markdown) come back inline as `content`. Binary assets (images, PDFs, media) are not inlined; the response gives a signed download `url` — fetch it with a plain `curl -fsSL '<url>' -o /tmp/<filename>` (no auth header needed; the URL is valid for 24h, re-call this tool for a fresh one). Archived assets are not readable by default — set filter: 'archived' or 'all' to read one. For markdown project docs use read_project_doc instead.",
+		"Read a project asset's contents by path (e.g. \"ui-mockups.html\" or \"scripts/check.sh\") — the files that list_project_assets returns (UI mockups, wireframes, SVG diagrams, text exports, scripts, markdown deliverables). Use the full path exactly as listed, folder prefix included. Text-based assets (HTML, SVG, plain text, markdown) come back inline as `content`. Binary assets (images, PDFs, media) are not inlined; the response gives a signed download `url` — fetch it with a plain `curl -fsSL '<url>' -o /tmp/<filename>` (no auth header needed; the URL is valid for 24h, re-call this tool for a fresh one). If an admin has left review comments on the asset they come back as `review_comments`: for text assets (markdown, plain text) each anchors to an exact `quote` (with `occurrence` = 0-based Nth match of that snippet); a comment without a quote applies to the whole file. Capture them all before any write_project_asset to the path — overwriting deletes every review comment. Archived assets are not readable by default — set filter: 'archived' or 'all' to read one. For markdown project docs use read_project_doc instead.",
 		{
 			project: projectArg(),
 			filename: z
@@ -3746,6 +3761,22 @@ export function registerTools(
 				};
 			}
 
+			// A pending admin review rides along on every read (text and binary
+			// alike — a whole-asset comment on an image matters as much as a quote
+			// anchor in markdown).
+			const reviewComments = await listReviewComments(db, { kind: 'asset', assetId: asset.id });
+			const reviewField =
+				reviewComments.length === 0
+					? {}
+					: {
+							review_comments: reviewComments.map((r) => ({
+								id: r.id,
+								...(r.quote !== null ? { quote: r.quote, occurrence: r.occurrence } : {}),
+								comment: r.comment,
+								created_at: r.created_at,
+							})),
+						};
+
 			// Text-based assets are returned inline; binary assets get a signed
 			// download URL the agent fetches itself (curl) — blobs are never on the
 			// container filesystem.
@@ -3759,6 +3790,7 @@ export function registerTools(
 					binary: true,
 					url: await signAgentAssetUrl(asset.id, masterKeyManager, agentPort),
 					...(archived ? { archived: true } : {}),
+					...reviewField,
 				};
 			}
 
@@ -3768,6 +3800,7 @@ export function registerTools(
 				content_type: asset.content_type,
 				content: buf.toString('utf-8'),
 				...(archived ? { archived: true } : {}),
+				...reviewField,
 			};
 		},
 		db,
@@ -4028,7 +4061,10 @@ export function registerTools(
 				};
 			}
 			const archivedField = archived ? { archived: true } : {};
-			const reviewComments = await listReviewComments(db, doc.id);
+			const reviewComments = await listReviewComments(db, {
+				kind: 'document',
+				documentId: doc.id,
+			});
 			if (reviewComments.length === 0)
 				return { filename: doc.slug, content: doc.content, status: doc.status, ...archivedField };
 			return {

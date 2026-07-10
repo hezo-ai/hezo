@@ -165,9 +165,9 @@ test('@admin in a CEO reply (instance scope, no project) links to /home/inbox', 
 });
 
 // ---------------------------------------------------------------------------
-// Asset mention without a signed URL: same-tab library link fallback.
+// Asset mention: the viewer link never depends on the signed URL.
 
-test('an asset mention with no signed URL falls back to a same-tab assets-library link', async () => {
+test('an asset mention links to the asset viewer even with no signed URL', async () => {
 	const seeded = { projectSlug: '', taskId: '' };
 	const { findByTestId, queryByTestId, router } = await renderApp({
 		initialPath: '/',
@@ -182,9 +182,9 @@ test('an asset mention with no signed URL falls back to a same-tab assets-librar
 		},
 	});
 
-	// The live server always signs asset URLs; a missing/empty signature (e.g. a
-	// locked vault) must degrade to the library link. Strip the signature from
-	// the resolve response underneath the page.
+	// The mention is a router link into the viewer, so a missing/empty signature
+	// (e.g. a locked vault) must not change it. Strip the signature from the
+	// resolve response underneath the page to prove the independence.
 	const passthrough = globalThis.fetch;
 	globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 		const url =
@@ -209,8 +209,10 @@ test('an asset mention with no signed URL falls back to a same-tab assets-librar
 	});
 
 	const link = await findByTestId('asset-mention-link', undefined, { timeout: 20_000 });
-	// Same-tab router link into the assets library, keyed to the file…
-	expect(link.getAttribute('href')).toBe(`/projects/${seeded.projectSlug}/assets?file=login.png`);
+	// Same-tab router link into the asset viewer, keyed to the file…
+	expect(link.getAttribute('href')).toBe(
+		`/projects/${seeded.projectSlug}/assets/view?file=login.png`,
+	);
 	expect(link.getAttribute('target')).toBeNull();
 	// …with no new-tab icon (that suffix marks dedicated-view links only).
 	expect(queryByTestId('asset-mention-preview-link')).toBeNull();

@@ -110,34 +110,45 @@ export async function insertAssetWithUniqueName(
  * `assets/<filename>` instead of accreting random suffixes on each re-save. The
  * caller writes the new blob keyed by `assetId`; on overwrite the previous
  * `assetId`'s blob is orphaned and should be cleaned up by the caller.
+ *
+ * Overwriting deletes the asset's pending review comments in the same
+ * transaction (they are version-scoped, like document review comments — and the
+ * id swap below would otherwise trip the `review_comments.asset_id` FK).
+ * `wipedReviewComments` tells the caller to broadcast the cleared event.
  */
 export async function upsertProjectAsset(
 	db: Db,
 	input: InsertAssetInput,
-): Promise<InsertedAsset & { replacedAssetId: string | null }> {
+): Promise<InsertedAsset & { replacedAssetId: string | null; wipedReviewComments: boolean }> {
 	const existing = await db.query<{ id: string }>(
 		'SELECT id FROM assets WHERE project_id = $1 AND original_filename = $2 LIMIT 1',
 		[input.projectId, input.desiredName],
 	);
 	const prior = existing.rows[0]?.id ?? null;
 	if (prior) {
-		const r = await db.query<InsertedAsset>(
-			`UPDATE assets
-			 SET id = $1, content_type = $2, byte_size = $3, sha256 = $4,
-			     uploaded_by_member_id = $5, created_at = now()
-			 WHERE project_id = $6 AND original_filename = $7
-			 RETURNING id, content_type, byte_size, original_filename`,
-			[
-				input.assetId,
-				input.contentType,
-				input.byteSize,
-				input.sha256,
-				input.uploadedByMemberId,
-				input.projectId,
-				input.desiredName,
-			],
-		);
-		return { ...r.rows[0], replacedAssetId: prior };
+		return db.transaction(async (tx) => {
+			const wiped = await tx.query<{ id: string }>(
+				'DELETE FROM review_comments WHERE asset_id = $1 RETURNING id',
+				[prior],
+			);
+			const r = await tx.query<InsertedAsset>(
+				`UPDATE assets
+				 SET id = $1, content_type = $2, byte_size = $3, sha256 = $4,
+				     uploaded_by_member_id = $5, created_at = now()
+				 WHERE project_id = $6 AND original_filename = $7
+				 RETURNING id, content_type, byte_size, original_filename`,
+				[
+					input.assetId,
+					input.contentType,
+					input.byteSize,
+					input.sha256,
+					input.uploadedByMemberId,
+					input.projectId,
+					input.desiredName,
+				],
+			);
+			return { ...r.rows[0], replacedAssetId: prior, wipedReviewComments: wiped.rows.length > 0 };
+		});
 	}
 	const r = await db.query<InsertedAsset>(
 		`INSERT INTO assets (id, team_id, project_id, content_type, byte_size, sha256, original_filename, uploaded_by_member_id)
@@ -154,5 +165,5 @@ export async function upsertProjectAsset(
 			input.uploadedByMemberId,
 		],
 	);
-	return { ...r.rows[0], replacedAssetId: null };
+	return { ...r.rows[0], replacedAssetId: null, wipedReviewComments: false };
 }

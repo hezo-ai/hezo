@@ -1,4 +1,5 @@
 import { assetBasename, ChatMessageStatus, HQ_PROJECT_NAME } from '@hezo/shared';
+import { Link } from '@tanstack/react-router';
 import {
 	ArrowRight,
 	Check,
@@ -308,7 +309,7 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 								</div>
 							)}
 							{messages.map((m) => (
-								<MessageBubble key={m.id} message={m} />
+								<MessageBubble key={m.id} message={m} projectSlug={hq?.slug} />
 							))}
 						</div>
 
@@ -319,6 +320,7 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 									uploading={uploading}
 									errors={errors}
 									onRemove={removeAttachment}
+									projectId={hq?.slug}
 									rowTestId="chat-attachment-row"
 									chipTestId="chat-attachment-chip"
 									previewTestId="chat-attachment-preview"
@@ -377,7 +379,14 @@ function RoleLabel({ children }: { children: ReactNode }) {
 	return <span className="text-eyebrow px-1 text-text-3">{children}</span>;
 }
 
-function MessageBubble({ message }: { message: ChatMessage }) {
+function MessageBubble({
+	message,
+	projectSlug,
+}: {
+	message: ChatMessage;
+	/** HQ project slug — chat uploads land in its asset library. */
+	projectSlug?: string;
+}) {
 	const isCeo = message.role === 'assistant';
 	const interrupted = message.status === ChatMessageStatus.Interrupted;
 	const failed = message.status === ChatMessageStatus.Failed;
@@ -436,7 +445,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 				</div>
 			)}
 			{message.attachments && message.attachments.length > 0 && (
-				<SentAttachments attachments={message.attachments} />
+				<SentAttachments attachments={message.attachments} projectSlug={projectSlug} />
 			)}
 			{message.content.length > 0 && <MessageCopyButton text={message.content} align="end" />}
 		</div>
@@ -457,32 +466,52 @@ function attachmentIcon(contentType: string) {
 
 /**
  * Read-only linked chips for the files sent with a message, aligned under the
- * (right-aligned) user bubble. Each opens the stored asset in a new tab.
+ * (right-aligned) user bubble. Each opens the in-app asset viewer (chat
+ * uploads land in the HQ project's library); before the HQ slug resolves the
+ * chip degrades to the raw signed URL in a new tab.
  */
 function SentAttachments({
 	attachments,
+	projectSlug,
 }: {
 	attachments: NonNullable<ChatMessage['attachments']>;
+	projectSlug?: string;
 }) {
+	const chipClasses =
+		'flex items-center gap-1.5 rounded-sm border border-border bg-surface-3 px-2 py-1 text-[12px] text-text-1 hover:underline';
 	return (
 		<div
 			className="flex max-w-full flex-wrap justify-end gap-1.5"
 			data-testid="chat-message-attachments"
 		>
-			{attachments.map((a) => (
-				<a
-					key={a.id}
-					href={a.url}
-					target="_blank"
-					rel="noopener noreferrer"
-					data-testid="chat-message-attachment"
-					className="flex items-center gap-1.5 rounded-sm border border-border bg-surface-3 px-2 py-1 text-[12px] text-text-1 hover:underline"
-				>
-					{attachmentIcon(a.content_type)}
-					<span className="max-w-[160px] truncate">{assetBasename(a.original_filename)}</span>
-					<ExternalLink className="h-3 w-3 shrink-0 text-text-3" />
-				</a>
-			))}
+			{attachments.map((a) =>
+				projectSlug ? (
+					<Link
+						key={a.id}
+						to="/projects/$projectId/assets/view"
+						params={{ projectId: projectSlug }}
+						search={{ file: a.original_filename }}
+						data-testid="chat-message-attachment"
+						className={chipClasses}
+					>
+						{attachmentIcon(a.content_type)}
+						<span className="max-w-[160px] truncate">{assetBasename(a.original_filename)}</span>
+					</Link>
+				) : (
+					<a
+						key={a.id}
+						href={a.url}
+						target="_blank"
+						rel="noopener noreferrer"
+						data-testid="chat-message-attachment"
+						className={chipClasses}
+					>
+						{attachmentIcon(a.content_type)}
+						<span className="max-w-[160px] truncate">{assetBasename(a.original_filename)}</span>
+						<ExternalLink className="h-3 w-3 shrink-0 text-text-3" />
+					</a>
+				),
+			)}
 		</div>
 	);
 }

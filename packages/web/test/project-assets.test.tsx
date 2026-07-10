@@ -3,9 +3,9 @@ import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
 import { seedAsset, seedComment, seedProject, seedTask, seedWorkspace } from './helpers/seed';
 
-test('the assets library lists uploads with an open-in-new-tab link to a signed url', async () => {
+test('an asset card opens the in-app viewer, with a raw new-tab popout beside it', async () => {
 	let ctx!: { projectSlug: string };
-	const { findByText, findByTestId, router } = await renderApp({
+	const { findByText, findByTestId, user, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -21,12 +21,20 @@ test('the assets library lists uploads with an open-in-new-tab link to a signed 
 	});
 
 	await findByText('mockup.png');
-	const openLink = await findByTestId('asset-open-link');
-	expect(openLink.getAttribute('href')).toMatch(/^\/api\/assets\/[0-9a-f-]+\?exp=\d+&sig=/);
-	expect(openLink.getAttribute('target')).toBe('_blank');
+	// The corner popout keeps raw new-tab access to the signed URL.
+	const popout = await findByTestId('asset-popout');
+	expect(popout.getAttribute('href')).toMatch(/^\/api\/assets\/[0-9a-f-]+\?exp=\d+&sig=/);
+	expect(popout.getAttribute('target')).toBe('_blank');
+
+	// The card media navigates to the viewer.
+	await user.click(await findByTestId('asset-open-viewer'));
+	await findByTestId('asset-viewer');
+	expect(router.state.location.pathname).toBe(`/projects/${ctx.projectSlug}/assets/view`);
+	expect(router.state.location.search).toMatchObject({ file: 'mockup.png' });
+	await findByTestId('asset-viewer-image');
 });
 
-test('a markdown asset renders in-app with a view-source toggle', async () => {
+test('a markdown asset opens in the viewer with a view-source toggle', async () => {
 	let ctx!: { projectSlug: string };
 	const md = '# Launch Post\n\nWe shipped **markdown assets**.';
 	const { findByTestId, user, router } = await renderApp({
@@ -48,16 +56,16 @@ test('a markdown asset renders in-app with a view-source toggle', async () => {
 		params: { projectId: ctx.projectSlug },
 	});
 
-	// Markdown opens the in-app viewer (a button), not an external new-tab link.
-	await user.click(await findByTestId('asset-open-markdown'));
+	// The card navigates to the in-app viewer.
+	await user.click(await findByTestId('asset-open-viewer'));
 
 	// Preview renders the markdown — the heading becomes an <h1>, not a literal `#`.
-	const rendered = await findByTestId('markdown-asset-rendered');
+	const rendered = await findByTestId('asset-viewer-rendered');
 	await waitFor(() => expect(rendered.querySelector('h1')?.textContent).toBe('Launch Post'));
 
 	// Flipping to Source shows the raw markdown verbatim (the `#`, the `**`).
-	await user.click(await findByTestId('markdown-asset-source-tab'));
-	const source = await findByTestId('markdown-asset-source');
+	await user.click(await findByTestId('asset-viewer-source-tab'));
+	const source = await findByTestId('asset-viewer-source');
 	expect(source.textContent).toBe(md);
 });
 
@@ -96,9 +104,9 @@ test('an asset is archived first, then deleted from the Archived view', async ()
 	await waitFor(() => expect(queryByText('remove-me.png')).toBeNull());
 });
 
-test('an assets/<name> reference in a task comment opens in a new tab, not the preview panel', async () => {
+test('an assets/<name> reference in a task comment links to the in-app asset viewer', async () => {
 	let ctx!: { projectSlug: string; taskId: string };
-	const { container, findByTestId, router } = await renderApp({
+	const { container, findByTestId, queryByTestId, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -115,21 +123,20 @@ test('an assets/<name> reference in a task comment opens in a new tab, not the p
 		params: { projectId: ctx.projectSlug, taskId: ctx.taskId },
 	});
 
-	// The asset mention is an anchor that opens the signed URL in a new tab, with a
-	// trailing external-link icon — never the in-page preview panel.
+	// The asset mention is a same-tab router link into the asset viewer (the
+	// canonical asset link target — raw view lives in the viewer's toolbar).
 	const link = (await findByTestId('asset-mention-link', undefined, {
 		timeout: 15_000,
 	})) as HTMLAnchorElement;
 	expect(link.tagName).toBe('A');
 	expect(link.textContent).toContain('assets/login.png');
-	expect(link.getAttribute('target')).toBe('_blank');
-	expect(link.getAttribute('href')).toMatch(/^\/api\/assets\/[0-9a-f-]+\?exp=\d+&sig=/);
+	expect(link.getAttribute('target')).toBeNull();
+	expect(link.getAttribute('href')).toBe(`/projects/${ctx.projectSlug}/assets/view?file=login.png`);
 
-	// The trailing external-link icon points at the same signed URL.
-	const icon = (await findByTestId('asset-mention-preview-link')) as HTMLAnchorElement;
-	expect(icon.getAttribute('href')).toBe(link.getAttribute('href'));
+	// Same-tab in-app mentions carry no new-tab icon.
+	expect(queryByTestId('asset-mention-preview-link')).toBeNull();
 
-	// Assets no longer route through the in-page preview panel.
+	// Assets never route through the in-page preview panel.
 	expect(container.querySelector('[data-testid="preview-panel"]')).toBeNull();
 });
 
@@ -156,16 +163,18 @@ test('a foldered assets/<folder>/<name> reference links; an over-deep path stays
 		params: { projectId: ctx.projectSlug, taskId: ctx.taskId },
 	});
 
-	// The 2-level path resolves and links to the signed URL.
+	// The 2-level path resolves and links into the asset viewer.
 	const link = (await findByTestId('asset-mention-link', undefined, {
 		timeout: 15_000,
 	})) as HTMLAnchorElement;
 	expect(link.textContent).toContain('assets/blog/images/hero.png');
-	expect(link.getAttribute('href')).toMatch(/^\/api\/assets\/[0-9a-f-]+\?exp=\d+&sig=/);
+	expect(link.getAttribute('href')).toMatch(
+		/^\/projects\/[^/]+\/assets\/view\?file=blog(%2F|\/)images(%2F|\/)hero\.png$/,
+	);
 
 	// The 3-level path never parses as an asset reference — plain prose text
-	// (the valid mention contributes its link + external-icon anchors; none of
-	// the anchors carry the over-deep path).
+	// (the valid mention contributes its link anchor; none of the anchors carry
+	// the over-deep path).
 	const comment = await findByText(/never assets\/a\/b\/c\/d\.png anywhere/);
 	const anchors = Array.from(comment.querySelectorAll('a'));
 	expect(anchors.length).toBeGreaterThan(0);

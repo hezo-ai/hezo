@@ -116,7 +116,7 @@ describe('entity paths', () => {
 			`/projects/todo6/tasks/to-1#comment-${PUBLIC_ID}`,
 		);
 		expect(projectDocPath('todo6', 'prd.md')).toBe('/projects/todo6/documents?file=prd.md');
-		expect(assetPath('todo6', 'a b.png')).toBe('/projects/todo6/assets?file=a%20b.png');
+		expect(assetPath('todo6', 'a b.png')).toBe('/projects/todo6/assets/view?file=a%20b.png');
 		expect(agentPath('hq', 'ceo')).toBe('/projects/hq/agents/ceo');
 		expect(projectInboxPath('todo6')).toBe('/projects/todo6/inbox');
 	});

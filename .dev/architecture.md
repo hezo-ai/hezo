@@ -235,17 +235,42 @@ interrupted run still counts against budgets.
 **Docs, skills, assets.** `documents` is one table backing three Markdown kinds by
 `type` (`project_doc`, `team_preferences`, `agent_system_prompt`), each with partial
 unique scoping and full revision history in `document_revisions`.
-`document_review_comments` holds the admin's view-mode highlight feedback on a project
-doc: each row anchors a `comment` to an exact `quote` + `occurrence` (nth match) over the
-document's rendered text stream, plus the `doc_updated_at` it was authored against
-(creates carry the client's `updated_at` and 409 on mismatch). Review comments are
-**version-scoped**: any content-changing write — admin PUT, agent `write_project_doc`, or
-a revision restore — deletes all of them inside the same transaction
-(`services/documents.ts`), so anchors can never go stale; a no-op save keeps them.
-Agents read them via `read_project_doc` (returned alongside `content`); the web renders
-them as `<mark>` highlights with margin icons on the three view surfaces (preview route,
+`review_comments` (renamed from `document_review_comments` in migration 025) holds the
+admin's review feedback on **exactly one target per row** — a project doc (`document_id`)
+or an asset (`asset_id`), enforced by CHECK. Doc rows keep their original shape: each
+anchors a `comment` to an exact `quote` + `occurrence` (nth match) over the document's
+rendered text stream, plus the `doc_updated_at` it was authored against (creates carry
+the client's `updated_at` and 409 on mismatch). Asset rows carry `asset_sha256` (the
+content hash at authoring time — the asset-side stale token) and follow a per-type anchor
+rule (`isTextReviewableAssetMime` in `@hezo/shared`): **text assets** (markdown,
+`text/plain`) anchor with `quote`/`occurrence` exactly like docs; **every other type**
+(images, SVG, HTML, PDF, audio, …) takes un-anchored whole-asset comments (`quote` NULL).
+Region (rect) anchors for visual types are deliberately future work: the sketch is
+normalized `[0,1]` rect columns on `review_comments` plus a pointer-capture drawing
+overlay, with the caveat that HTML assets render in a sandboxed opaque-origin iframe the
+parent can't read scroll/height from, so HTML rects would need a fixed design-frame
+render (e.g. 1280×2560). Review comments are **version-scoped**: any content-changing
+doc write — admin PUT, agent `write_project_doc`, or a revision restore — deletes all of
+that doc's comments inside the same transaction (`services/documents.ts`), and any
+`write_project_asset` overwrite deletes the asset's comments inside the upsert's
+transaction (`upsertProjectAsset` in `lib/asset-name.ts` — mandatory there, since the
+overwrite swaps the asset row's **id** and would otherwise trip the FK; hard deletes
+cascade via `ON DELETE CASCADE`). So anchors can never go stale; a no-op doc save keeps
+them, while an asset overwrite always wipes (the id swaps even for identical bytes).
+Agents read them via `read_project_doc` / `read_project_asset` (returned alongside the
+content); admin CRUD is REST-only (`services/review-comments.ts`), docs addressed by
+filename (`/docs/:filename/review-comments`), assets by **asset UUID**
+(`/assets/:assetId/review-comments` — asset paths contain `/`, and the id doubles as a
+stale token; archived assets 403 mutations while GET stays readable). Broadcasts keep
+per-target WS family names (`document_review_comments` / `asset_review_comments`) so
+each side prefix-invalidates only its own query keys. The web renders doc highlights as
+`<mark>` marks with margin icons on the three doc view surfaces (preview route,
 task-sidebar panel, Documents tab view mode) via a rehype plugin
-(`packages/web/src/lib/rehype-review-highlights.ts`). Each project-doc revision carries a
+(`packages/web/src/lib/rehype-review-highlights.ts`); the shared interaction core
+(selection pill, hover-line ghost, margin icons, editor) is extracted into
+`ReviewSurface` (`packages/web/src/components/document-review/review-surface.tsx`), which
+the asset viewer reuses for text assets (markdown through the same rehype plugin, plain
+text through `PlainTextWithHighlights`). Each project-doc revision carries a
 **changelog** (`change_summary`): the web PUT forwards `change_summary` and the MCP
 `write_project_doc` tool takes an optional `changelog`, both stored on the revision recorded for
 the *prior* content; `restoreRevision` writes `Restored content from revision N`. The single-doc
@@ -286,8 +311,17 @@ uploaded files (blobs in the configured **asset store** keyed by `projectId/asse
 § Asset storage below — served over HMAC-signed URLs with
 `nosniff` and a basename-only download filename); agents can also author text-based assets
 directly (`write_project_asset` — HTML, SVG, plain text/scripts, and markdown such as a blog
-post; script extensions like `.sh`/`.py`/`.js` store as inert `text/plain`), and the web app
-renders markdown assets with a rich preview plus a view-source toggle. **Folders are implicit
+post; script extensions like `.sh`/`.py`/`.js` store as inert `text/plain`). The web's
+**asset viewer** (`/projects/:slug/assets/view?file=<path>`, route file
+`assets_.view.tsx`) is the canonical in-app link target for an asset — grid cards, asset
+mentions (`assetPath` in `@hezo/shared`), comment-attachment thumbs, and chat attachment
+chips all navigate there; raw view stays reachable via its "Open raw" toolbar button. It
+is a split-pane page (`ResizableSplit`): the left pane renders the content per type
+(markdown with a rich preview + view-source toggle, plain text in a highlighted `<pre>`,
+images/SVG via `<img>`, HTML in the sandboxed iframe, everything else a metadata card)
+and the thin right pane lists the asset's review comments (see `review_comments` above) —
+a resizable sticky column at `lg+`, a chevron-toggled slide-in drawer below (the task
+page's side-panel pattern). **Folders are implicit
 path prefixes** inside `assets.original_filename` (up to 2 levels, e.g. `launch/hero.png`) —
 no folder table, `UNIQUE(project_id, original_filename)` keys the full path, and blobs never
 move on a rename. Task-thread attachment uploads (`POST …/tasks/:taskId/assets`) auto-file

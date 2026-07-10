@@ -230,6 +230,15 @@ export const queryKeys = {
 		// team / misc
 		team: (slug: string) => ['projects', slug, 'team'],
 		assets: (slug: string) => ['projects', slug, 'assets'],
+		// Keyed by the asset's file path (the `?file` route value), not its UUID —
+		// `assets(slug)` is the prefix, so assets-family WS invalidations reach it.
+		assetReviewComments: (slug: string, file: string | null) => [
+			'projects',
+			slug,
+			'assets',
+			file,
+			'review-comments',
+		],
 		costs: (slug: string, params: KeyParam) => ['projects', slug, 'costs', params],
 		budgetStatus: (slug: string) => ['projects', slug, 'budget-status'],
 		auditLog: (slug: string, filters: KeyParam) => ['projects', slug, 'audit-log', filters],
