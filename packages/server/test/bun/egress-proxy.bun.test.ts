@@ -50,7 +50,16 @@ beforeAll(async () => {
 	agentId = (await agentRes.json()).data.id;
 
 	ca = await loadOrCreateCA(dataDir);
-	proxy = new EgressProxy({ db, masterKeyManager, ca, extraUpstreamTrustedCAs: ca.cert });
+	// These tests exercise the Bun TLS MITM path, not caller auth, so the shared
+	// proxy runs with auth disabled. Authed CONNECT (407 without a token, a full
+	// MITM handshake with one) is covered in its own describe block below.
+	proxy = new EgressProxy({
+		db,
+		masterKeyManager,
+		ca,
+		extraUpstreamTrustedCAs: ca.cert,
+		authEnabled: false,
+	});
 }, 60_000);
 
 afterAll(async () => {
@@ -347,6 +356,49 @@ describe('EgressProxy under Bun', () => {
 	}, 30_000);
 });
 
+describe('EgressProxy per-run CONNECT auth under Bun', () => {
+	let authProxy: EgressProxy;
+
+	beforeAll(() => {
+		authProxy = new EgressProxy({
+			db,
+			masterKeyManager,
+			ca,
+			extraUpstreamTrustedCAs: ca.cert,
+		});
+	});
+	afterAll(() => authProxy.releaseAll());
+
+	test('rejects a CONNECT that omits the per-run token with 407', async () => {
+		const runId = `bun-auth-407-${teamId}`;
+		const allocated = await authProxy.allocateRunProxy(runId, { teamId, agentId });
+		try {
+			expect(allocated.token).toBeTruthy();
+			const statusLine = await connectStatusLine(allocated.proxyPort, 'hostx.egress-test', null);
+			expect(statusLine).toMatch(/^HTTP\/1\.[01] 407/);
+		} finally {
+			await authProxy.releaseRunProxy(runId);
+		}
+	}, 30_000);
+
+	test('completes the MITM handshake for a CONNECT bearing the correct token', async () => {
+		const runId = `bun-auth-ok-${teamId}`;
+		const allocated = await authProxy.allocateRunProxy(runId, { teamId, agentId });
+		try {
+			const host = 'hostx.egress-test';
+			const san = await strictHandshakeThroughProxy(
+				allocated.proxyPort,
+				host,
+				ca.cert,
+				allocated.token,
+			);
+			expect(san).toContain(host);
+		} finally {
+			await authProxy.releaseRunProxy(runId);
+		}
+	}, 30_000);
+});
+
 /** Reach into the proxy's per-run internal per-host server map for assertions. */
 function getHostServers(
 	p: EgressProxy,
@@ -494,8 +546,9 @@ async function strictHandshakeThroughProxy(
 	proxyPort: number,
 	targetHost: string,
 	caCert: string,
+	token?: string | null,
 ): Promise<string> {
-	const tunnel = await openConnectTunnel(proxyPort, targetHost);
+	const tunnel = await openConnectTunnel(proxyPort, targetHost, token);
 	return new Promise<string>((resolve, reject) => {
 		const tls = tlsConnect(
 			{ socket: tunnel, servername: targetHost, ca: [caCert], rejectUnauthorized: true },
@@ -513,6 +566,7 @@ async function strictHandshakeThroughProxy(
 async function openConnectTunnel(
 	proxyPort: number,
 	targetHost: string,
+	token?: string | null,
 ): Promise<ReturnType<typeof netConnect>> {
 	return new Promise<ReturnType<typeof netConnect>>((resolve, reject) => {
 		const sock = netConnect({ host: '127.0.0.1', port: proxyPort });
@@ -525,11 +579,39 @@ async function openConnectTunnel(
 				reject(new Error(`CONNECT failed: ${statusLine}`));
 			}
 		};
+		const auth = token
+			? `Proxy-Authorization: Basic ${Buffer.from(`run:${token}`).toString('base64')}\r\n`
+			: '';
 		sock.on('connect', () => {
-			sock.write(`CONNECT ${targetHost}:443 HTTP/1.1\r\nHost: ${targetHost}:443\r\n\r\n`);
+			sock.write(`CONNECT ${targetHost}:443 HTTP/1.1\r\nHost: ${targetHost}:443\r\n${auth}\r\n`);
 		});
 		sock.on('data', onData);
 		sock.on('error', reject);
 		sock.setTimeout(20_000, () => sock.destroy(new Error('CONNECT timed out')));
+	});
+}
+
+/** Raw CONNECT that resolves the proxy's HTTP status line (no TLS), for the
+ * 407 path. */
+async function connectStatusLine(
+	proxyPort: number,
+	targetHost: string,
+	token: string | null,
+): Promise<string> {
+	return new Promise<string>((resolve, reject) => {
+		const sock = netConnect({ host: '127.0.0.1', port: proxyPort });
+		const auth = token
+			? `Proxy-Authorization: Basic ${Buffer.from(`run:${token}`).toString('base64')}\r\n`
+			: '';
+		sock.on('connect', () => {
+			sock.write(`CONNECT ${targetHost}:443 HTTP/1.1\r\nHost: ${targetHost}:443\r\n${auth}\r\n`);
+		});
+		sock.once('data', (chunk: Buffer) => {
+			const statusLine = chunk.toString().split('\r\n')[0] ?? '';
+			sock.destroy();
+			resolve(statusLine);
+		});
+		sock.on('error', reject);
+		sock.setTimeout(20_000, () => sock.destroy(new Error('CONNECT status timed out')));
 	});
 }

@@ -10,6 +10,7 @@ export {
 	EgressProxy,
 	type EgressProxyDeps,
 	EgressProxyUnavailableError,
+	formatEgressProxyUrl,
 	type RunProxyScope,
 } from './proxy';
 export {

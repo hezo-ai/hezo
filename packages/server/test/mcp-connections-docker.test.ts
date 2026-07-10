@@ -149,7 +149,7 @@ describe.skipIf(skipReason !== null)('MCP connections — Docker integration', (
 					'sh',
 					'-c',
 					`update-ca-certificates > /dev/null 2>&1 && ` +
-						`curl -sS -w '\\nstatus=%{http_code}' --proxy http://host.docker.internal:${allocated.proxyPort} ` +
+						`curl -sS -w '\\nstatus=%{http_code}' --proxy http://run:${allocated.token}@host.docker.internal:${allocated.proxyPort} ` +
 						`-X POST -H 'content-type: application/json' ` +
 						`-H 'x-api-key: __HEZO_SECRET_TEST_MCP_KEY__' -d '${initBody}' ${echo.url}`,
 				],
@@ -210,7 +210,7 @@ describe.skipIf(skipReason !== null)('MCP connections — Docker integration', (
 					'sh',
 					'-c',
 					`update-ca-certificates > /dev/null 2>&1 && ` +
-						`curl -sS --proxy http://host.docker.internal:${allocated.proxyPort} ` +
+						`curl -sS --proxy http://run:${allocated.token}@host.docker.internal:${allocated.proxyPort} ` +
 						`-X POST -H 'content-type: application/json' -H 'x-environment: test' ` +
 						`-d '${callBody}' https://localhost:${mcp.port}/mcp`,
 				],

@@ -57,7 +57,11 @@ beforeAll(async () => {
 	upstreamUrl = `http://127.0.0.1:${(upstream.address() as { port: number }).port}`;
 
 	ca = await loadOrCreateCA(dataDir);
-	proxy = new EgressProxy({ db, masterKeyManager, ca });
+	// These tests exercise substitution/host-allowlist/body semantics, not caller
+	// auth, so the shared proxy runs with auth disabled. The authed path (407 on a
+	// missing/wrong token, and substitution succeeding *with* a token) has its own
+	// describe block below, which stands up a separate auth-enabled proxy.
+	proxy = new EgressProxy({ db, masterKeyManager, ca, authEnabled: false });
 }, 30_000);
 
 afterAll(async () => {
@@ -312,6 +316,7 @@ describe('EgressProxy', () => {
 			masterKeyManager,
 			ca,
 			extraUpstreamTrustedCAs: ca.cert,
+			authEnabled: false,
 		});
 		const httpsUpstream = await startHttpsUpstream(ca);
 		const httpsPort = (httpsUpstream.address() as { port: number }).port;
@@ -352,6 +357,12 @@ interface ProxyFetchOpts {
 	method?: string;
 	headers?: Record<string, string>;
 	body?: string;
+	/** Per-run token; sent as `Proxy-Authorization: Basic base64(run:<token>)`. */
+	token?: string | null;
+}
+
+function basicProxyAuth(token: string): string {
+	return `Basic ${Buffer.from(`run:${token}`).toString('base64')}`;
 }
 
 async function fetchThroughProxy(opts: ProxyFetchOpts): Promise<{ status: number; body: string }> {
@@ -361,6 +372,7 @@ async function fetchThroughProxy(opts: ProxyFetchOpts): Promise<{ status: number
 		`${opts.method ?? 'GET'} ${opts.url} HTTP/1.1`,
 		`Host: ${target.host}`,
 		'Connection: close',
+		...(opts.token ? [`Proxy-Authorization: ${basicProxyAuth(opts.token)}`] : []),
 		...Object.entries(opts.headers ?? {}).map(([k, v]) => `${k}: ${v}`),
 	];
 	if (opts.body !== undefined) {
@@ -606,6 +618,7 @@ describe('EgressProxy per-host cert routing', () => {
 			masterKeyManager,
 			ca,
 			extraUpstreamTrustedCAs: ca.cert,
+			authEnabled: false,
 		});
 		const runId = `run-${Date.now()}-multihost`;
 		const allocated = await httpsProxy.allocateRunProxy(runId, { teamId, agentId });
@@ -646,6 +659,7 @@ describe('EgressProxy per-host cert routing', () => {
 			masterKeyManager,
 			ca,
 			extraUpstreamTrustedCAs: ca.cert,
+			authEnabled: false,
 			hostPortAllocator: new SeqHostAllocator(),
 		});
 		const runId = `run-${Date.now()}-hostports`;
@@ -674,6 +688,7 @@ describe('EgressProxy per-host cert routing', () => {
 			masterKeyManager,
 			ca,
 			extraUpstreamTrustedCAs: ca.cert,
+			authEnabled: false,
 		});
 		const runId = `run-${Date.now()}-rebuild`;
 		const host = 'registry.egress-test';
@@ -738,5 +753,148 @@ function reserveFreePort(): Promise<number> {
 			const port = (s.address() as { port: number }).port;
 			s.close(() => resolve(port));
 		});
+	});
+}
+
+describe('EgressProxy per-run caller auth', () => {
+	let authProxy: EgressProxy;
+
+	beforeAll(() => {
+		authProxy = new EgressProxy({ db, masterKeyManager, ca });
+	});
+	afterAll(() => authProxy.releaseAll());
+
+	it('mints a per-run token and rejects a plain request that omits it with 407', async () => {
+		const runId = `auth-missing-${Date.now()}`;
+		await insertSecret('AUTH_KEY_MISSING', 'real-value', ['127.0.0.1']);
+		const allocated = await authProxy.allocateRunProxy(runId, { teamId, agentId });
+		try {
+			expect(allocated.token).toBeTruthy();
+			const res = await fetchThroughProxy({
+				proxyHost: '127.0.0.1',
+				proxyPort: allocated.proxyPort,
+				url: `${upstreamUrl}/echo`,
+				headers: { authorization: 'Bearer __HEZO_SECRET_AUTH_KEY_MISSING__' },
+				// no token
+			});
+			expect(res.status).toBe(407);
+			expect(JSON.parse(res.body).error).toBe('proxy_auth_required');
+			// The secret must never have been substituted or reached upstream.
+			for (const req of upstreamRequests) {
+				expect(req.headers.authorization?.toString().includes('real-value')).not.toBe(true);
+			}
+		} finally {
+			await authProxy.releaseRunProxy(runId);
+		}
+	}, 30_000);
+
+	it('rejects a plain request bearing a wrong token with 407', async () => {
+		const runId = `auth-wrong-${Date.now()}`;
+		const allocated = await authProxy.allocateRunProxy(runId, { teamId, agentId });
+		try {
+			const res = await fetchThroughProxy({
+				proxyHost: '127.0.0.1',
+				proxyPort: allocated.proxyPort,
+				url: `${upstreamUrl}/echo`,
+				token: 'deadbeefdeadbeefdeadbeefdeadbeef',
+			});
+			expect(res.status).toBe(407);
+		} finally {
+			await authProxy.releaseRunProxy(runId);
+		}
+	}, 30_000);
+
+	it('substitutes normally for a plain request bearing the correct token', async () => {
+		const runId = `auth-ok-${Date.now()}`;
+		await insertSecret('AUTH_KEY_OK', 'authed-secret-value', ['127.0.0.1']);
+		const allocated = await authProxy.allocateRunProxy(runId, { teamId, agentId });
+		try {
+			const res = await fetchThroughProxy({
+				proxyHost: '127.0.0.1',
+				proxyPort: allocated.proxyPort,
+				url: `${upstreamUrl}/echo`,
+				headers: { authorization: 'Bearer __HEZO_SECRET_AUTH_KEY_OK__' },
+				token: allocated.token,
+			});
+			expect(res.status).toBe(200);
+			const lastReq = upstreamRequests.at(-1);
+			expect(lastReq?.headers.authorization).toBe('Bearer authed-secret-value');
+			// The proxy strips Proxy-Authorization before forwarding upstream.
+			expect(lastReq?.headers['proxy-authorization']).toBeUndefined();
+		} finally {
+			await authProxy.releaseRunProxy(runId);
+		}
+	}, 30_000);
+
+	it('rejects a CONNECT tunnel that omits the token with 407', async () => {
+		const runId = `auth-connect-${Date.now()}`;
+		const allocated = await authProxy.allocateRunProxy(runId, { teamId, agentId });
+		try {
+			const statusLine = await connectStatusLine(allocated.proxyPort, 'example.com', null);
+			expect(statusLine).toMatch(/^HTTP\/1\.[01] 407/);
+		} finally {
+			await authProxy.releaseRunProxy(runId);
+		}
+	}, 30_000);
+
+	it('accepts a CONNECT tunnel bearing the correct token', async () => {
+		const runId = `auth-connect-ok-${Date.now()}`;
+		const allocated = await authProxy.allocateRunProxy(runId, { teamId, agentId });
+		try {
+			const statusLine = await connectStatusLine(
+				allocated.proxyPort,
+				'example.com',
+				allocated.token,
+			);
+			expect(statusLine).toMatch(/^HTTP\/1\.[01] 200/);
+		} finally {
+			await authProxy.releaseRunProxy(runId);
+		}
+	}, 30_000);
+
+	it('allocates a null token and skips auth when authEnabled is false', async () => {
+		const openProxy = new EgressProxy({ db, masterKeyManager, ca, authEnabled: false });
+		const runId = `auth-off-${Date.now()}`;
+		await insertSecret('AUTH_KEY_OFF', 'open-value', ['127.0.0.1']);
+		const allocated = await openProxy.allocateRunProxy(runId, { teamId, agentId });
+		try {
+			expect(allocated.token).toBeNull();
+			const res = await fetchThroughProxy({
+				proxyHost: '127.0.0.1',
+				proxyPort: allocated.proxyPort,
+				url: `${upstreamUrl}/echo`,
+				headers: { authorization: 'Bearer __HEZO_SECRET_AUTH_KEY_OFF__' },
+				// no token — accepted because auth is off
+			});
+			expect(res.status).toBe(200);
+			expect(upstreamRequests.at(-1)?.headers.authorization).toBe('Bearer open-value');
+		} finally {
+			await openProxy.releaseRunProxy(runId);
+			await openProxy.releaseAll();
+		}
+	}, 30_000);
+});
+
+/** Send a raw CONNECT (optionally with per-run creds) and resolve the proxy's
+ * HTTP status line, without completing any TLS handshake. */
+async function connectStatusLine(
+	proxyPort: number,
+	targetHost: string,
+	token: string | null,
+): Promise<string> {
+	const { connect: netConnect } = await import('node:net');
+	return new Promise<string>((resolve, reject) => {
+		const sock = netConnect({ host: '127.0.0.1', port: proxyPort });
+		const auth = token ? `Proxy-Authorization: ${basicProxyAuth(token)}\r\n` : '';
+		sock.on('connect', () => {
+			sock.write(`CONNECT ${targetHost}:443 HTTP/1.1\r\nHost: ${targetHost}:443\r\n${auth}\r\n`);
+		});
+		sock.once('data', (chunk: Buffer) => {
+			const statusLine = chunk.toString().split('\r\n')[0] ?? '';
+			sock.destroy();
+			resolve(statusLine);
+		});
+		sock.on('error', reject);
+		sock.setTimeout(20_000, () => sock.destroy(new Error('CONNECT status timed out')));
 	});
 }

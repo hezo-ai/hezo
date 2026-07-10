@@ -1,3 +1,4 @@
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import {
 	type ClientRequest,
 	createServer as createHttpServer,
@@ -59,6 +60,20 @@ const MAX_BODY_SUBSTITUTION_BYTES = 8192;
 const PROXY_HOST = 'host.docker.internal';
 const PROXY_BIND_HOST = '127.0.0.1';
 
+/** Bytes of per-run proxy token. Mirrors the SSH-agent bridge's TCP token
+ * (`ssh-agent/server.ts`) — 16 bytes of CSPRNG output, delivered to the run as
+ * the password half of the proxy URL's basic-auth userinfo and compared
+ * constant-time. The proxy authenticates the caller by nothing else: the run's
+ * container reaches it over `host.docker.internal`/the bridge gateway, an
+ * address any co-resident process shares, so without this token any such
+ * process could drive secret substitution for any allowed host. */
+const PROXY_TOKEN_BYTES = 16;
+/** Basic-auth username half of the proxy URL. Value is irrelevant — only the
+ * password (the token) is checked — but a stable, recognizable name keeps the
+ * userinfo readable in a `HTTP(S)_PROXY` value. */
+const PROXY_AUTH_USERNAME = 'run';
+const PROXY_AUTH_REALM = 'hezo-egress';
+
 /**
  * Thrown when the front proxy can't bind. Bubbled up to the agent runner so
  * the run aborts — never fall through to direct egress with real secrets.
@@ -95,6 +110,12 @@ export interface EgressProxyDeps {
 	 * same CA the proxy uses. Production keeps this empty so the proxy
 	 * relies on the runtime's system CA bundle. */
 	extraUpstreamTrustedCAs?: string | string[];
+	/** Require a per-run bearer token on every proxied request/CONNECT.
+	 * Defaults to `true`. Set `false` (via `HEZO_EGRESS_PROXY_AUTH=0`) only to
+	 * unblock a runtime whose HTTP client can't carry proxy credentials — the
+	 * secret-substitution red line still holds either way, since an
+	 * unauthenticated caller only ever ships unsubstituted placeholders. */
+	authEnabled?: boolean;
 }
 
 export interface RunProxyScope {
@@ -108,6 +129,21 @@ export interface RunProxyScope {
 export interface AllocatedRunProxy {
 	proxyHost: string;
 	proxyPort: number;
+	/** Per-run token, or `null` when auth is disabled. The caller embeds it as
+	 * the password half of the proxy URL userinfo (`http://run:<token>@host:port`)
+	 * so the run's HTTP client sends it as `Proxy-Authorization: Basic …`. */
+	token: string | null;
+}
+
+/**
+ * Build the `HTTP(S)_PROXY` URL a run's HTTP clients use. With a token, the
+ * userinfo (`run:<token>@`) makes every mainstream client emit
+ * `Proxy-Authorization: Basic base64(run:<token>)` on plain requests and
+ * CONNECT alike; without one it degrades to a bare `http://host:port`.
+ */
+export function formatEgressProxyUrl(host: string, port: number, token: string | null): string {
+	if (!token) return `http://${host}:${port}`;
+	return `http://${PROXY_AUTH_USERNAME}:${token}@${host}:${port}`;
 }
 
 /** How many ports to try binding before giving up allocating a run's proxy. */
@@ -122,6 +158,7 @@ export class EgressProxy {
 	private readonly hostPortAllocator: PortAllocator;
 	private readonly proxyHost: string;
 	private readonly proxyBindHost: string;
+	private readonly authEnabled: boolean;
 	private mintCa: Promise<CA> | null = null;
 
 	constructor(private readonly deps: EgressProxyDeps) {
@@ -131,6 +168,7 @@ export class EgressProxy {
 			new PortAllocator(EGRESS_HOST_PORT_RANGE_START, EGRESS_HOST_PORT_RANGE_END);
 		this.proxyHost = deps.proxyHost ?? PROXY_HOST;
 		this.proxyBindHost = deps.proxyBindHost ?? PROXY_BIND_HOST;
+		this.authEnabled = deps.authEnabled ?? true;
 	}
 
 	get caCertPath(): string {
@@ -157,6 +195,7 @@ export class EgressProxy {
 		// between probe and listen. Keep each failed port reserved so the next
 		// attempt lands on a different one, then release the losers once we've
 		// bound (or all of them if every attempt fails).
+		const tokenBytes = this.authEnabled ? randomBytes(PROXY_TOKEN_BYTES) : null;
 		const reserved: number[] = [];
 		let lastReason = 'no bindable port in egress range';
 		try {
@@ -169,6 +208,7 @@ export class EgressProxy {
 					scope,
 					port,
 					bindHost: this.deps.bindHostRef?.get() ?? this.proxyBindHost,
+					token: tokenBytes,
 					db: this.deps.db,
 					masterKeyManager: this.deps.masterKeyManager,
 					getMintCa: () => this.getMintCa(),
@@ -193,7 +233,11 @@ export class EgressProxy {
 					if (p !== port) this.portAllocator.release(p);
 				}
 				log.debug('egress proxy allocated', { run: ref(scope.label, runId), port });
-				return { proxyHost: this.proxyHost, proxyPort: port };
+				return {
+					proxyHost: this.proxyHost,
+					proxyPort: port,
+					token: tokenBytes ? tokenBytes.toString('hex') : null,
+				};
 			}
 		} catch (e) {
 			lastReason = (e as Error).message;
@@ -228,6 +272,8 @@ interface RunProxyConfig {
 	scope: RunProxyScope;
 	port: number;
 	bindHost: string;
+	/** Per-run auth token; `null` disables caller authentication. */
+	token: Buffer | null;
 	db: Db;
 	masterKeyManager: MasterKeyManager;
 	getMintCa: () => Promise<CA>;
@@ -354,6 +400,39 @@ class RunProxyInstance {
 		return this.cfg.scope;
 	}
 
+	/**
+	 * Constant-time check of the caller's `Proxy-Authorization: Basic …` against
+	 * this run's token. Returns `true` when auth is disabled (`token === null`).
+	 * The username half is ignored — only the password (the hex token) is
+	 * compared, and the comparison is length-safe (a wrong-length candidate is
+	 * still run through `timingSafeEqual` on equal-length buffers so it can't
+	 * short-circuit and leak length via timing).
+	 */
+	private isAuthorized(header: string | undefined): boolean {
+		const expected = this.cfg.token;
+		if (expected === null) return true;
+		if (!header) return false;
+		const match = /^Basic\s+(.+)$/i.exec(header.trim());
+		if (!match) return false;
+		let decoded: string;
+		try {
+			decoded = Buffer.from(match[1], 'base64').toString('utf8');
+		} catch {
+			return false;
+		}
+		const sep = decoded.indexOf(':');
+		if (sep === -1) return false;
+		const candidate = Buffer.from(decoded.slice(sep + 1), 'hex');
+		// Compare equal-length buffers regardless of candidate length: a
+		// length-mismatched candidate is compared against itself so the call
+		// takes constant time relative to the expected token, then rejected.
+		if (candidate.length !== expected.length) {
+			timingSafeEqual(expected, expected);
+			return false;
+		}
+		return timingSafeEqual(candidate, expected);
+	}
+
 	listen(): Promise<void> {
 		const front = createHttpServer();
 		this.front = front;
@@ -362,6 +441,14 @@ class RunProxyInstance {
 		// connection list under Bun.
 		front.on('connection', (socket) => this.trackSocket(socket as Socket, 'agent-front'));
 		front.on('request', (req, res) => {
+			// Authenticate the agent↔proxy hop here — this fires only for plain
+			// proxied requests. For CONNECT/HTTPS the auth check is in onConnect;
+			// the decrypted inner request (forwarded with isSSL=true) carries no
+			// Proxy-Authorization and must not be re-checked.
+			if (!this.isAuthorized(req.headers['proxy-authorization'])) {
+				respondProxyAuthRequired(res);
+				return;
+			}
 			this.forward(false, null, req, res).catch((e: Error) => this.onHandlerError(res, e));
 		});
 		front.on('connect', (req, socket, head) => this.onConnect(req, socket as Socket, head));
@@ -417,6 +504,20 @@ class RunProxyInstance {
 		const host = (sep === -1 ? target : target.slice(0, sep)).toLowerCase();
 
 		client.on('error', () => client.destroy());
+
+		// Authenticate the tunnel before establishing it. HTTPS clients send
+		// Proxy-Authorization on the CONNECT (never inside the TLS tunnel), so
+		// this is the only place to enforce it for HTTPS egress.
+		if (!this.isAuthorized(req.headers['proxy-authorization'])) {
+			client.write(
+				`HTTP/1.1 407 Proxy Authentication Required\r\n` +
+					`Proxy-Authenticate: Basic realm="${PROXY_AUTH_REALM}"\r\n` +
+					`Content-Length: 0\r\n\r\n`,
+			);
+			client.destroy();
+			return;
+		}
+
 		client.pause();
 
 		this.bridgeConnect(host, client, head).catch((e: Error) => {
@@ -952,6 +1053,24 @@ function respondEarly(
 	res.writeHead(statusCode, {
 		'content-type': 'application/json',
 		'content-length': Buffer.byteLength(body).toString(),
+	});
+	res.end(body);
+}
+
+/** 407 for a plain proxied request missing/failing per-run auth. */
+function respondProxyAuthRequired(res: ServerResponse): void {
+	if (res.headersSent) {
+		res.end();
+		return;
+	}
+	const body = JSON.stringify({
+		error: 'proxy_auth_required',
+		message: 'Missing or invalid per-run egress proxy credentials.',
+	});
+	res.writeHead(407, {
+		'content-type': 'application/json',
+		'content-length': Buffer.byteLength(body).toString(),
+		'proxy-authenticate': `Basic realm="${PROXY_AUTH_REALM}"`,
 	});
 	res.end(body);
 }

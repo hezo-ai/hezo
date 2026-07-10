@@ -804,8 +804,17 @@ describe('provisionContainer broadcasting', () => {
 		expect(binds.find((b) => b.includes('assets'))).toBeUndefined();
 		expect(binds.find((b) => b.endsWith(':/workspace:rw'))).toBeDefined();
 
-		expect(hostConfig.Memory).toBeUndefined();
-		expect(hostConfig.MemorySwap).toBeUndefined();
+		// The cgroup hard cap is set as a backstop (project ceiling + headroom,
+		// no swap); the sync-loop stats poller remains the graceful early-stop.
+		const limitGib = (
+			await db.query<{ memory_limit_gib: number }>(
+				'SELECT memory_limit_gib FROM projects WHERE id = $1',
+				[projectId],
+			)
+		).rows[0].memory_limit_gib;
+		const expectedCap = limitGib * 1024 ** 3 + 512 * 1024 ** 2;
+		expect(hostConfig.Memory).toBe(expectedCap);
+		expect(hostConfig.MemorySwap).toBe(expectedCap);
 	});
 
 	it('labels containers as test containers only when HEZO_TEST_CONTAINERS is set', async () => {

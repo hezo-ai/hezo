@@ -672,6 +672,20 @@ its abort handler on the *response* stream's end, never on the `ClientRequest`'s
 (which Bun emits prematurely, mid-body) — otherwise the timeout would fire against a handler
 that had already been detached.
 
+**Container hardening.** Each project container is created with a hardened `HostConfig`
+(`provisionContainer`): a cgroup memory cap (`Memory`=`MemorySwap`= the project's
+`memory_limit_gib` + 512 MiB headroom, so no swap escape valve) as a hard backstop *behind*
+the sync-loop stats poller that stays the graceful early-stop at the configured ceiling;
+`PidsLimit` (4096) as a fork-bomb guard; `Init: true` so a real init reaps zombies under the
+`sleep infinity` PID 1; and `CapDrop: ['ALL']` with a minimal add-back
+(`CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETUID`, `SETGID`, `KILL`, `AUDIT_WRITE`, plus the
+conditional `NET_ADMIN` for MTU pinning). Two hardenings are **deliberately omitted**:
+`no-new-privileges` (would break the run-user's passwordless-sudo setuid path that runtime
+`apt`/`npx` installs depend on) and `userns-remap` (daemon-global — it would remap every other
+container on the host and break the bind-mount ownership model below). The kernel remains the
+isolation boundary within a host; the tenant boundary for untrusted multi-tenant is the VM
+(see the hosted architecture), not the container.
+
 **Container run-user & host-file ownership.** The agent base image (`node:24-slim`) sets no
 `USER`, so the container runs as **root**; Hezo deprivileges individual `docker exec`s — the
 agent CLI and every git op — to a non-root **run-user** (the stock image's `node`, which has
@@ -941,7 +955,7 @@ per-run runtime config and subscription-credential files the server writes into 
 `/workspace` bind mount stay `0o600`/`0o700` and are instead **chowned to the container
 run-user** (see § Containers & worktrees) so the deprivileged agent CLI can read them
 without exposing secrets to other host users.
-Per run, the agent's container gets `HTTP(S)_PROXY=http://host.docker.internal:<port>`
+Per run, the agent's container gets `HTTP(S)_PROXY=http://run:<token>@host.docker.internal:<port>`
 with `NO_PROXY` carving out the Hezo backend and the LLM provider host (LLM traffic goes
 direct — credentials are env-injected, and MITM breaks some Anthropic-compatible APIs).
 The front proxy binds `127.0.0.1` by default — reachable from containers via
@@ -949,6 +963,18 @@ The front proxy binds `127.0.0.1` by default — reachable from containers via
 name maps to the bridge gateway IP. The bind interface for both the egress proxy and the
 ssh-agent TCP bridge is read **per-run** from a shared mutable holder (`EffectiveBindHost`),
 seeded from `HEZO_CONTAINER_BIND_HOST` / `--container-bind-host` (default `127.0.0.1`).
+
+**Per-run caller auth.** Because the proxy binds an address the run's container shares with
+any co-resident process (host loopback or the bridge gateway), each run's proxy also mints a
+16-byte token (mirroring the ssh-agent bridge) and requires it as `Proxy-Authorization: Basic
+run:<token>` on every plain request and CONNECT — verified constant-time (`timingSafeEqual`),
+missing/wrong ⇒ **407**, and stripped before the upstream re-request. The token rides the
+`HTTP(S)_PROXY` URL userinfo, so each runtime's standard proxy handling sends it with no
+per-runtime change. This closes the gap where any process reaching the proxy port could drive
+substitution for another run; it does not weaken the red line — an unauthenticated caller only
+ever ships the *unsubstituted* placeholder, which fails upstream, never a real secret. Auth is
+on by default and can be disabled with `--no-egress-proxy-auth` / `HEZO_EGRESS_PROXY_AUTH=0`
+for a runtime whose HTTP client can't carry proxy credentials.
 
 **Egress MTU.** Containers reach the internet through the host's default-route interface via
 NAT but otherwise inherit Docker's 1500-byte bridge MTU. On a host whose egress is a VPN/mesh

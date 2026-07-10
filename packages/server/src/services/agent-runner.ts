@@ -69,7 +69,7 @@ import { syncContainerStatus } from './containers';
 import type { DockerClient, ExecLogChunk } from './docker';
 import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
-import type { EgressProxy } from './egress';
+import { type EgressProxy, formatEgressProxyUrl } from './egress';
 import {
 	ensurePushHook,
 	ensureTaskWorktreeWithRetry,
@@ -351,6 +351,8 @@ export interface EgressEnvDescriptor {
 	host: string;
 	port: number;
 	containerCAPath: string;
+	/** Per-run proxy token, or `null` when egress-proxy auth is disabled. */
+	token: string | null;
 }
 
 export interface RuntimeInvocation {
@@ -512,7 +514,10 @@ export async function buildRuntimeInvocation(
 		})),
 	);
 	if (egress) {
-		const proxyUrl = `http://${egress.host}:${egress.port}`;
+		// Per-run token rides the userinfo so every client sends it as
+		// Proxy-Authorization; the proxy 407s any caller without it. A non-null
+		// token here means auth is on (the default).
+		const proxyUrl = formatEgressProxyUrl(egress.host, egress.port, egress.token);
 		const noProxyHosts = [
 			egress.host,
 			'localhost',
@@ -536,15 +541,21 @@ export async function buildRuntimeInvocation(
 			// placeholder (AGENTS.md red line — never a materialized token), so every
 			// runtime's MCP HTTP MUST traverse the proxy or the placeholder 401s. Each
 			// of the four coding CLIs already ensures this on its own, so this var is a
-			// safety net, not the load-bearing mechanism:
+			// safety net, not the load-bearing mechanism. The per-run token in the
+			// proxy URL userinfo is carried as Proxy-Authorization by each client's
+			// standard proxy handling (URL userinfo → Basic auth); a runtime that
+			// somehow omitted it would 407 loudly rather than silently egressing
+			// direct (auth failure ⊂ the same fail-closed posture as a missing proxy):
 			//   • Claude Code & Gemini (Node): install their own global undici
 			//     ProxyAgent/EnvHttpProxyAgent from HTTPS_PROXY at startup (this then
-			//     overrides NODE_USE_ENV_PROXY for them — fine); trust NODE_EXTRA_CA_CERTS.
+			//     overrides NODE_USE_ENV_PROXY for them — fine); undici sends userinfo
+			//     as Proxy-Authorization; trust NODE_EXTRA_CA_CERTS.
 			//   • OpenCode (bundled Bun, not Node): Bun's fetch reads HTTP(S)_PROXY
-			//     natively; trusts our single-cert NODE_EXTRA_CA_CERTS.
-			//   • Codex (Rust/reqwest): honors HTTP(S)_PROXY by default; ignores the
-			//     Node/curl CA vars but falls back to the system trust store, into which
-			//     the container's start-up `update-ca-certificates` installs the egress CA.
+			//     natively incl. userinfo; trusts our single-cert NODE_EXTRA_CA_CERTS.
+			//   • Codex & Grok (Rust/reqwest): honor HTTP(S)_PROXY incl. userinfo by
+			//     default; ignore the Node/curl CA vars but fall back to the system
+			//     trust store, into which the container's start-up
+			//     `update-ca-certificates` installs the egress CA.
 			`NODE_USE_ENV_PROXY=1`,
 			// Rely on update-ca-certificates for curl/git; do not set SSL_CERT_FILE to
 			// the egress CA alone — that replaces the system trust store and breaks TLS.
@@ -1120,6 +1131,7 @@ export async function runAgent(
 				host: allocated.proxyHost,
 				port: allocated.proxyPort,
 				containerCAPath: '/usr/local/share/ca-certificates/hezo-egress.crt',
+				token: allocated.token,
 			};
 		}
 

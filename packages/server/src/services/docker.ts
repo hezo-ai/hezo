@@ -29,6 +29,14 @@ interface ContainerConfig {
 		PortBindings?: Record<string, Array<{ HostPort: string }>>;
 		ExtraHosts?: string[];
 		CapAdd?: string[];
+		CapDrop?: string[];
+		/** Run docker-init as PID 1 so zombies are reaped under `sleep infinity`. */
+		Init?: boolean;
+		/** cgroup hard cap in bytes. */
+		Memory?: number;
+		/** Equal to Memory so the cap has no swap escape valve. */
+		MemorySwap?: number;
+		PidsLimit?: number;
 	};
 	ExposedPorts?: Record<string, object>;
 }

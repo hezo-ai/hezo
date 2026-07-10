@@ -49,7 +49,16 @@ beforeAll(async () => {
 	agentId = (await agentRes.json()).data.id;
 
 	ca = await loadOrCreateCA(dataDir);
-	proxy = new EgressProxy({ db, masterKeyManager, ca, extraUpstreamTrustedCAs: ca.cert });
+	// These tests exercise streaming/teardown behaviour, not caller auth, so the
+	// proxy runs with auth disabled (CONNECT auth has dedicated coverage in
+	// egress-proxy.bun.test.ts).
+	proxy = new EgressProxy({
+		db,
+		masterKeyManager,
+		ca,
+		extraUpstreamTrustedCAs: ca.cert,
+		authEnabled: false,
+	});
 }, 60_000);
 
 afterAll(async () => {
