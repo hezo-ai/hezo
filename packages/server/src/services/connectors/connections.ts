@@ -1,12 +1,12 @@
-import { McpConnectionKind, type McpInstallStatus } from '@hezo/shared';
-import type { Db } from '../db/database';
-import { credentialPlaceholder } from '../lib/credential-placeholder';
-import { logger } from '../logger';
-import type { McpDescriptor } from './mcp-injectors';
+import { ConnectorTransport, type McpInstallStatus } from '@hezo/shared';
+import type { Db } from '../../db/database';
+import { credentialPlaceholder } from '../../lib/credential-placeholder';
+import { logger } from '../../logger';
+import type { McpDescriptor } from '../mcp-injectors';
 
-const log = logger.child('mcp-connections');
+const log = logger.child('connectors');
 
-export interface SaasMcpConfig {
+export interface SaasConnectorConfig {
 	url: string;
 	headers?: Record<string, string>;
 	/**
@@ -34,20 +34,20 @@ export interface SaasMcpConfig {
 	};
 }
 
-export interface LocalMcpConfig {
+export interface LocalConnectorConfig {
 	command: string;
 	args?: string[];
 	env?: Record<string, string>;
 	package?: string;
 }
 
-export type McpConnectionConfig = SaasMcpConfig | LocalMcpConfig;
+export type ConnectorConfig = SaasConnectorConfig | LocalConnectorConfig;
 
-export interface McpConnectionRow {
+export interface ConnectorRow {
 	id: string;
 	name: string;
-	kind: McpConnectionKind;
-	config: McpConnectionConfig;
+	kind: ConnectorTransport;
+	config: ConnectorConfig;
 	oauth_connection_id: string | null;
 	api_key_secret_id: string | null;
 	install_status: McpInstallStatus;
@@ -63,10 +63,10 @@ export interface McpConnectionRow {
  * `ORDER BY … (project_id IS NULL) DESC` emits globals first so the last-write
  * Map keeps the project row.
  */
-export async function loadMcpConnectionsForRun(
+export async function loadConnectorsForRun(
 	db: Db,
 	projectId?: string | null,
-): Promise<McpConnectionRow[]> {
+): Promise<ConnectorRow[]> {
 	// Filters: skip revoked (user disconnected); skip saas rows that are known
 	// to want auth but haven't completed it — no oauth_connection_id AND no
 	// api_key_secret_id, plus any of: agent-requested via the connector flow,
@@ -78,7 +78,7 @@ export async function loadMcpConnectionsForRun(
 	// for public / header-authenticated MCPs).
 	const scopeClause = projectId != null ? `AND (project_id = $1 OR project_id IS NULL)` : '';
 	const params = projectId != null ? [projectId] : [];
-	const result = await db.query<McpConnectionRow>(
+	const result = await db.query<ConnectorRow>(
 		`SELECT id, name, kind::text AS kind,
 		        config, oauth_connection_id, api_key_secret_id,
 		        install_status::text AS install_status, install_error,
@@ -94,7 +94,7 @@ export async function loadMcpConnectionsForRun(
 		params,
 	);
 
-	const out = new Map<string, McpConnectionRow>();
+	const out = new Map<string, ConnectorRow>();
 	for (const row of result.rows) out.set(row.name, row);
 	return [...out.values()];
 }
@@ -147,16 +147,16 @@ async function loadConnectorSecretNames(db: Db): Promise<{
  * value (see {@link loadConnectorSecretNames} and the AGENTS.md red line). No
  * master key is needed at build time.
  */
-export async function loadMcpConnectionDescriptors(
+export async function loadConnectorDescriptors(
 	db: Db,
 	projectId?: string | null,
 ): Promise<McpDescriptor[]> {
-	const rows = await loadMcpConnectionsForRun(db, projectId);
+	const rows = await loadConnectorsForRun(db, projectId);
 	const secretNames = await loadConnectorSecretNames(db);
 	const descriptors: McpDescriptor[] = [];
 	for (const row of rows) {
-		if (row.kind === McpConnectionKind.Saas) {
-			const config = row.config as SaasMcpConfig;
+		if (row.kind === ConnectorTransport.Saas) {
+			const config = row.config as SaasConnectorConfig;
 			if (!config?.url) {
 				log.warn('skipping saas mcp connection with no url', { id: row.id, name: row.name });
 				continue;
@@ -228,7 +228,7 @@ export async function loadMcpConnectionDescriptors(
 				url: config.url,
 				headers,
 			});
-		} else if (row.kind === McpConnectionKind.Local) {
+		} else if (row.kind === ConnectorTransport.Local) {
 			if (row.install_status !== 'installed') {
 				log.warn('skipping local mcp connection that is not installed', {
 					id: row.id,
@@ -237,7 +237,7 @@ export async function loadMcpConnectionDescriptors(
 				});
 				continue;
 			}
-			const config = row.config as LocalMcpConfig;
+			const config = row.config as LocalConnectorConfig;
 			if (!config?.command) {
 				log.warn('skipping local mcp connection with no command', { id: row.id, name: row.name });
 				continue;

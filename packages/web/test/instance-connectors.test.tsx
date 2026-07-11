@@ -7,7 +7,7 @@ async function seedInstanceConnector(
 	ctx: { token: string; apiBase: (p: string, i?: RequestInit) => Promise<Response> },
 	body: Record<string, unknown>,
 ) {
-	const res = await ctx.apiBase('/api/mcp-connections', {
+	const res = await ctx.apiBase('/api/connectors', {
 		method: 'POST',
 		headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 		body: JSON.stringify(body),
@@ -92,7 +92,7 @@ function interceptAuthStart(body: { auth_url: string | null; reason?: string }):
 		const urlStr =
 			input instanceof Request ? input.url : typeof input === 'string' ? input : input.toString();
 		const path = new URL(urlStr, 'http://localhost').pathname;
-		if (/^\/api\/mcp-connections\/[^/]+\/auth-start$/.test(path)) {
+		if (/^\/api\/connectors\/[^/]+\/auth-start$/.test(path)) {
 			calls += 1;
 			return new Response(JSON.stringify({ data: body }), {
 				status: 200,

@@ -1,4 +1,4 @@
-import { getConnectorCapability, McpConnectionKind, wsRoom } from '@hezo/shared';
+import { ConnectorTransport, getConnectorCapability, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { encrypt } from '../crypto/encryption';
 import { trackBackground } from '../lib/background';
@@ -17,7 +17,7 @@ import {
 } from '../services/connectors/lifecycle';
 import { installLocalMcpById } from '../services/mcp-installer';
 
-const log = logger.child('mcp-connections-route');
+const log = logger.child('connectors-route');
 
 // Connectors are scoped by project_id (NULL = global "all projects" scope). The
 // project-scoped routes below read/write that project's own connectors plus
@@ -48,9 +48,9 @@ const connectorCredentialsJson = (alias: string): string =>
 		               WHERE oc2.id = ${alias}.oauth_connection_id)
 	), '[]'::json) AS credentials`;
 
-export const mcpConnectionsRoutes = new Hono<Env>();
+export const connectorsRoutes = new Hono<Env>();
 
-mcpConnectionsRoutes.get('/projects/:projectId/mcp-connections', async (c) => {
+connectorsRoutes.get('/projects/:projectId/connectors', async (c) => {
 	const db = c.get('db');
 	const projectId = c.get('projectId') as string;
 	const result = await db.query(
@@ -68,7 +68,7 @@ mcpConnectionsRoutes.get('/projects/:projectId/mcp-connections', async (c) => {
 // Admin surface: every connector across all projects, each annotated with its
 // owning project (null = global) so `/settings/connectors` can render + filter
 // by project.
-mcpConnectionsRoutes.get('/mcp-connections', async (c) => {
+connectorsRoutes.get('/connectors', async (c) => {
 	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 	const db = c.get('db');
@@ -84,7 +84,7 @@ mcpConnectionsRoutes.get('/mcp-connections', async (c) => {
 	return ok(c, result.rows);
 });
 
-mcpConnectionsRoutes.post('/mcp-connections', async (c) => {
+connectorsRoutes.post('/connectors', async (c) => {
 	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 	const db = c.get('db');
@@ -100,7 +100,7 @@ mcpConnectionsRoutes.post('/mcp-connections', async (c) => {
 	if (!body.name?.trim()) {
 		return err(c, 'INVALID_REQUEST', 'name is required', 400);
 	}
-	if (body.kind !== McpConnectionKind.Saas) {
+	if (body.kind !== ConnectorTransport.Saas) {
 		return err(c, 'INVALID_REQUEST', 'connectors must be "saas" (remote MCP url)', 400);
 	}
 	const url = body.config?.url;
@@ -163,7 +163,7 @@ mcpConnectionsRoutes.post('/mcp-connections', async (c) => {
 // Admin surface: re-scope a connector to a different project (or to the global
 // "all projects" scope, project_id null). Only the scope is editable here — the
 // per-row inline scope picker on `/settings/connectors` posts to this.
-mcpConnectionsRoutes.patch('/mcp-connections/:id', async (c) => {
+connectorsRoutes.patch('/connectors/:id', async (c) => {
 	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 	const db = c.get('db');
@@ -222,7 +222,7 @@ mcpConnectionsRoutes.patch('/mcp-connections/:id', async (c) => {
 	return ok(c, result.rows[0]);
 });
 
-mcpConnectionsRoutes.delete('/mcp-connections/:id', async (c) => {
+connectorsRoutes.delete('/connectors/:id', async (c) => {
 	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 	const db = c.get('db');
@@ -245,7 +245,7 @@ mcpConnectionsRoutes.delete('/mcp-connections/:id', async (c) => {
 	return c.json({ data: null }, 200);
 });
 
-mcpConnectionsRoutes.get('/projects/:projectId/mcp-connections/:id', async (c) => {
+connectorsRoutes.get('/projects/:projectId/connectors/:id', async (c) => {
 	const db = c.get('db');
 	const projectId = c.get('projectId') as string;
 	const id = c.req.param('id');
@@ -258,7 +258,7 @@ mcpConnectionsRoutes.get('/projects/:projectId/mcp-connections/:id', async (c) =
 	return ok(c, result.rows[0]);
 });
 
-mcpConnectionsRoutes.post('/projects/:projectId/mcp-connections/:id/revoke', async (c) => {
+connectorsRoutes.post('/projects/:projectId/connectors/:id/revoke', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const projectId = c.get('projectId') as string;
 	const db = c.get('db');
@@ -354,7 +354,7 @@ function apiKeySecretName(connectorName: string, projectId: string | null): stri
  * `__HEZO_SECRET_*__` placeholder and the egress proxy substitutes at request
  * time (AGENTS.md red line). Response-driven (security-sensitive).
  */
-mcpConnectionsRoutes.post('/projects/:projectId/mcp-connections/:id/api-key', async (c) => {
+connectorsRoutes.post('/projects/:projectId/connectors/:id/api-key', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const projectId = c.get('projectId') as string;
 	const db = c.get('db');
@@ -388,7 +388,7 @@ mcpConnectionsRoutes.post('/projects/:projectId/mcp-connections/:id/api-key', as
 	// A revoked connector is restored in place: pasting a key is a fresh reconnect
 	// rather than an error. markApiKeyActive below clears revoked_at and re-stamps
 	// activated_at as part of attaching the new key.
-	if (conn.kind !== McpConnectionKind.Saas) {
+	if (conn.kind !== ConnectorTransport.Saas) {
 		return err(c, 'INVALID_REQUEST', 'API-key auth applies to saas MCP connectors', 400);
 	}
 	const url = typeof conn.config?.url === 'string' ? (conn.config.url as string) : '';
@@ -460,7 +460,7 @@ mcpConnectionsRoutes.post('/projects/:projectId/mcp-connections/:id/api-key', as
 	return ok(c, updated);
 });
 
-mcpConnectionsRoutes.post('/projects/:projectId/mcp-connections', async (c) => {
+connectorsRoutes.post('/projects/:projectId/connectors', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const projectId = c.get('projectId') as string;
 	const db = c.get('db');
@@ -475,10 +475,10 @@ mcpConnectionsRoutes.post('/projects/:projectId/mcp-connections', async (c) => {
 	if (!body.name?.trim()) {
 		return err(c, 'INVALID_REQUEST', 'name is required', 400);
 	}
-	if (body.kind !== McpConnectionKind.Saas && body.kind !== McpConnectionKind.Local) {
+	if (body.kind !== ConnectorTransport.Saas && body.kind !== ConnectorTransport.Local) {
 		return err(c, 'INVALID_REQUEST', 'kind must be "saas" or "local"', 400);
 	}
-	if (body.kind === McpConnectionKind.Saas) {
+	if (body.kind === ConnectorTransport.Saas) {
 		const url = body.config?.url;
 		if (typeof url !== 'string' || !url) {
 			return err(c, 'INVALID_REQUEST', 'saas connections require config.url (string)', 400);
@@ -500,7 +500,7 @@ mcpConnectionsRoutes.post('/projects/:projectId/mcp-connections', async (c) => {
 		}
 	}
 
-	const initialStatus = body.kind === McpConnectionKind.Saas ? 'installed' : 'pending';
+	const initialStatus = body.kind === ConnectorTransport.Saas ? 'installed' : 'pending';
 	const result = await db.query(
 		`INSERT INTO mcp_connections (name, kind, config, oauth_connection_id, install_status, project_id)
 		 VALUES ($1, $2::mcp_connection_kind, $3::jsonb, $4, $5::mcp_install_status, $6)
@@ -537,7 +537,7 @@ mcpConnectionsRoutes.post('/projects/:projectId/mcp-connections', async (c) => {
 
 	// Kick off install for local MCPs against any running container of the
 	// team that created it. install_status is advisory under a global catalog.
-	if (body.kind === McpConnectionKind.Local) {
+	if (body.kind === ConnectorTransport.Local) {
 		trackBackground(
 			kickoffLocalInstall(c, teamId, inserted.id as string).catch((e) =>
 				log.warn('local mcp install kickoff failed', { error: (e as Error).message }),
@@ -592,7 +592,7 @@ async function kickoffLocalInstall(
  * starting auth. Same shape as the `register_connector` MCP tool, just
  * keyed on the registry id instead of free-form input.
  */
-mcpConnectionsRoutes.post('/projects/:projectId/connectors/ensure', async (c) => {
+connectorsRoutes.post('/projects/:projectId/connectors/ensure', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const projectId = c.get('projectId') as string;
 	const db = c.get('db');
@@ -629,7 +629,7 @@ mcpConnectionsRoutes.post('/projects/:projectId/connectors/ensure', async (c) =>
 	return ok(c, row);
 });
 
-mcpConnectionsRoutes.delete('/projects/:projectId/mcp-connections/:id', async (c) => {
+connectorsRoutes.delete('/projects/:projectId/connectors/:id', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const projectId = c.get('projectId') as string;
 	const db = c.get('db');

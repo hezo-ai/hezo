@@ -13,6 +13,7 @@ import {
 	SearchableSelect,
 	type SearchableSelectOption,
 } from '../../components/ui/searchable-select';
+import { type Connector, connectorStatus } from '../../hooks/use-connectors';
 import {
 	INSTANCE_CONNECTORS_KEY,
 	useCreateInstanceConnector,
@@ -21,7 +22,6 @@ import {
 	useInstanceConnectors,
 	useUpdateInstanceConnectorScope,
 } from '../../hooks/use-instance-connectors';
-import { connectorStatus, type McpConnection } from '../../hooks/use-mcp-connections';
 import { useMe } from '../../hooks/use-me';
 import { useAllVisibleProjects } from '../../hooks/use-projects';
 
@@ -98,7 +98,7 @@ function InstanceConnectorsPage() {
 			setError('Name and MCP server URL are required.');
 			return;
 		}
-		let created: McpConnection;
+		let created: Connector;
 		try {
 			created = await createConnector.mutateAsync({
 				name: name.trim(),
@@ -228,7 +228,7 @@ function InstanceConnectorsPage() {
 }
 
 interface InstanceConnectorRowProps {
-	connector: McpConnection;
+	connector: Connector;
 	scopeOptions: SearchableSelectOption[];
 	focused: boolean;
 	focusRef?: (el: HTMLDivElement | null) => void;

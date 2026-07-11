@@ -12,7 +12,7 @@ import {
 	Trash2,
 } from 'lucide-react';
 import { useState } from 'react';
-import { useMcpConnections } from '../hooks/use-mcp-connections';
+import { useConnectors } from '../hooks/use-connectors';
 import { useMe } from '../hooks/use-me';
 import {
 	useConnectionScopeStatus,
@@ -36,7 +36,7 @@ interface GitHubSectionProps {
 
 export function GitHubSection({ projectId }: GitHubSectionProps) {
 	const { data: connections = [], isLoading: connectionsLoading } = useOAuthConnections(projectId);
-	const { data: connectors = [] } = useMcpConnections(projectId);
+	const { data: connectors = [] } = useConnectors(projectId);
 	const { data: repos } = useRepos(projectId);
 	const deleteRepo = useDeleteRepo(projectId);
 	const retryRepo = useCreateRepo(projectId);
@@ -190,7 +190,7 @@ export function GitHubSection({ projectId }: GitHubSectionProps) {
 						queryClient.invalidateQueries({
 							queryKey: queryKeys.teams.oauthConnections(projectId),
 						});
-						queryClient.invalidateQueries({ queryKey: queryKeys.teams.mcpConnections(projectId) });
+						queryClient.invalidateQueries({ queryKey: queryKeys.teams.connectors(projectId) });
 					}}
 				/>
 			)}

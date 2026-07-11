@@ -5,12 +5,12 @@ import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { signAdminJwt } from '../src/middleware/auth';
+import { loadConnectorsForRun } from '../src/services/connectors/connections';
 import {
 	createOrFetchConnector,
 	getConnector,
 	statusOf,
 } from '../src/services/connectors/lifecycle';
-import { loadMcpConnectionsForRun } from '../src/services/mcp-connections';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 import { type FakeMcpServer, startFakeMcpServer } from './helpers/fake-mcp-server';
@@ -49,7 +49,7 @@ afterAll(async () => {
 
 describe('global connectors', () => {
 	it('a global saas connector is created, listed, and returned by the run loader', async () => {
-		const createRes = await app.request('/api/mcp-connections', {
+		const createRes = await app.request('/api/connectors', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -65,7 +65,7 @@ describe('global connectors', () => {
 		expect(conn.kind).toBe('saas');
 
 		// Listed under the global connectors.
-		const instRes = await app.request('/api/mcp-connections', { headers: authHeader(token) });
+		const instRes = await app.request('/api/connectors', { headers: authHeader(token) });
 		expect(
 			(await instRes.json()).data.some((r: { name: string }) => r.name === 'shared-docs'),
 		).toBe(true);
@@ -75,19 +75,19 @@ describe('global connectors', () => {
 		const projectSlug = 'connectors-project';
 		await makeProject(teamId, projectSlug);
 
-		const teamListRes = await app.request(`/api/projects/${projectSlug}/mcp-connections`, {
+		const teamListRes = await app.request(`/api/projects/${projectSlug}/connectors`, {
 			headers: authHeader(token),
 		});
 		const teamRows = (await teamListRes.json()).data as { name: string }[];
 		expect(teamRows.some((r) => r.name === 'shared-docs')).toBe(true);
 
 		// And the run-loader returns it (no team/project scope).
-		const forRun = await loadMcpConnectionsForRun(db);
+		const forRun = await loadConnectorsForRun(db);
 		expect(forRun.some((r) => r.name === 'shared-docs')).toBe(true);
 	});
 
 	it('rejects a local connector at the instance level', async () => {
-		const res = await app.request('/api/mcp-connections', {
+		const res = await app.request('/api/connectors', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -100,7 +100,7 @@ describe('global connectors', () => {
 	});
 
 	it('rejects a saas connector without config.url', async () => {
-		const res = await app.request('/api/mcp-connections', {
+		const res = await app.request('/api/connectors', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'no-url', kind: 'saas', config: {} }),
@@ -109,7 +109,7 @@ describe('global connectors', () => {
 	});
 
 	it('deletes an instance connector', async () => {
-		const createRes = await app.request('/api/mcp-connections', {
+		const createRes = await app.request('/api/connectors', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -120,17 +120,17 @@ describe('global connectors', () => {
 		});
 		const id = (await createRes.json()).data.id;
 
-		const del = await app.request(`/api/mcp-connections/${id}`, {
+		const del = await app.request(`/api/connectors/${id}`, {
 			method: 'DELETE',
 			headers: authHeader(token),
 		});
 		expect(del.status).toBe(200);
 
-		const instRes = await app.request('/api/mcp-connections', { headers: authHeader(token) });
+		const instRes = await app.request('/api/connectors', { headers: authHeader(token) });
 		expect((await instRes.json()).data.some((r: { id: string }) => r.id === id)).toBe(false);
 
 		// Deleting again is a 404.
-		const again = await app.request(`/api/mcp-connections/${id}`, {
+		const again = await app.request(`/api/connectors/${id}`, {
 			method: 'DELETE',
 			headers: authHeader(token),
 		});
@@ -143,12 +143,12 @@ describe('global connectors', () => {
 		);
 		const memberToken = await signAdminJwt(masterKeyManager, nonSuper.rows[0].id);
 
-		const listRes = await app.request('/api/mcp-connections', {
+		const listRes = await app.request('/api/connectors', {
 			headers: authHeader(memberToken),
 		});
 		expect(listRes.status).toBe(403);
 
-		const postRes = await app.request('/api/mcp-connections', {
+		const postRes = await app.request('/api/connectors', {
 			method: 'POST',
 			headers: { ...authHeader(memberToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -173,7 +173,7 @@ describe('instance connector OAuth (admin auth-start)', () => {
 	});
 
 	async function createSaasConnector(name: string, url: string): Promise<{ id: string }> {
-		const res = await app.request('/api/mcp-connections', {
+		const res = await app.request('/api/connectors', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name, kind: 'saas', config: { url } }),
@@ -198,7 +198,7 @@ describe('instance connector OAuth (admin auth-start)', () => {
 	it('performs DCR and completes the callback with no team context', async () => {
 		const conn = await createSaasConnector('higgsfield', `${fake.url}/mcp`);
 
-		const startRes = await app.request(`/api/mcp-connections/${conn.id}/auth-start`, {
+		const startRes = await app.request(`/api/connectors/${conn.id}/auth-start`, {
 			method: 'POST',
 			headers: authHeader(token),
 		});
@@ -214,9 +214,7 @@ describe('instance connector OAuth (admin auth-start)', () => {
 		expect(config.dcr?.client_id).toBe(fake.lastClientId());
 
 		// …which marks the row known-OAuth: excluded from runs until authorized.
-		expect((await loadMcpConnectionsForRun(db)).find((r) => r.name === 'higgsfield')).toBe(
-			undefined,
-		);
+		expect((await loadConnectorsForRun(db)).find((r) => r.name === 'higgsfield')).toBe(undefined);
 
 		const cbRes = await driveCallback(data.auth_url!);
 		expect(cbRes.status).toBe(200);
@@ -237,7 +235,7 @@ describe('instance connector OAuth (admin auth-start)', () => {
 		expect(secretRow.rows[0].name).toMatch(/^OAUTH_MCP_/);
 
 		// Authorized → injected into runs again.
-		const forRun = await loadMcpConnectionsForRun(db);
+		const forRun = await loadConnectorsForRun(db);
 		expect(forRun.find((r) => r.name === 'higgsfield')?.oauth_connection_id).toBeTruthy();
 	});
 
@@ -252,7 +250,7 @@ describe('instance connector OAuth (admin auth-start)', () => {
 		const port = (plain.address() as { port: number }).port;
 		try {
 			const conn = await createSaasConnector('header-auth-mcp', `http://127.0.0.1:${port}/mcp`);
-			const res = await app.request(`/api/mcp-connections/${conn.id}/auth-start`, {
+			const res = await app.request(`/api/connectors/${conn.id}/auth-start`, {
 				method: 'POST',
 				headers: authHeader(token),
 			});
@@ -268,7 +266,7 @@ describe('instance connector OAuth (admin auth-start)', () => {
 			expect(row?.auth_error).toBeNull();
 			expect(statusOf(row!)).toBe('pending');
 			expect(
-				(await loadMcpConnectionsForRun(db)).find((r) => r.name === 'header-auth-mcp'),
+				(await loadConnectorsForRun(db)).find((r) => r.name === 'header-auth-mcp'),
 			).toBeTruthy();
 		} finally {
 			await new Promise<void>((resolve, reject) => plain.close((e) => (e ? reject(e) : resolve())));
@@ -279,7 +277,7 @@ describe('instance connector OAuth (admin auth-start)', () => {
 		const noDcr = await startFakeMcpServer({ noRegistrationEndpoint: true });
 		try {
 			const conn = await createSaasConnector('no-dcr', `${noDcr.url}/mcp`);
-			const res = await app.request(`/api/mcp-connections/${conn.id}/auth-start`, {
+			const res = await app.request(`/api/connectors/${conn.id}/auth-start`, {
 				method: 'POST',
 				headers: authHeader(token),
 			});
@@ -291,7 +289,7 @@ describe('instance connector OAuth (admin auth-start)', () => {
 			const row = await getConnector(db, conn.id);
 			expect(statusOf(row!)).toBe('failed');
 			expect(row?.auth_error).toContain('registration_endpoint');
-			expect((await loadMcpConnectionsForRun(db)).find((r) => r.name === 'no-dcr')).toBe(undefined);
+			expect((await loadConnectorsForRun(db)).find((r) => r.name === 'no-dcr')).toBe(undefined);
 		} finally {
 			await noDcr.close();
 		}
@@ -301,7 +299,7 @@ describe('instance connector OAuth (admin auth-start)', () => {
 		const noDcr = await startFakeMcpServer({ noRegistrationEndpoint: true });
 		try {
 			const conn = await createSaasConnector('readd-me', `${noDcr.url}/mcp`);
-			await app.request(`/api/mcp-connections/${conn.id}/auth-start`, {
+			await app.request(`/api/connectors/${conn.id}/auth-start`, {
 				method: 'POST',
 				headers: authHeader(token),
 			});
@@ -324,14 +322,14 @@ describe('instance connector OAuth (admin auth-start)', () => {
 			"INSERT INTO users (display_name, is_superuser) VALUES ('Member2', false) RETURNING id",
 		);
 		const memberToken = await signAdminJwt(masterKeyManager, nonSuper.rows[0].id);
-		const forbidden = await app.request(`/api/mcp-connections/${conn.id}/auth-start`, {
+		const forbidden = await app.request(`/api/connectors/${conn.id}/auth-start`, {
 			method: 'POST',
 			headers: authHeader(memberToken),
 		});
 		expect(forbidden.status).toBe(403);
 
 		const missing = await app.request(
-			'/api/mcp-connections/00000000-0000-0000-0000-000000000000/auth-start',
+			'/api/connectors/00000000-0000-0000-0000-000000000000/auth-start',
 			{ method: 'POST', headers: authHeader(token) },
 		);
 		expect(missing.status).toBe(404);
@@ -342,7 +340,7 @@ describe('instance connector OAuth (admin auth-start)', () => {
 			 VALUES ('local-authz', 'local'::mcp_connection_kind, '{"command": "npx"}'::jsonb, 'installed'::mcp_install_status)
 			 RETURNING id`,
 		);
-		const localRes = await app.request(`/api/mcp-connections/${local.rows[0].id}/auth-start`, {
+		const localRes = await app.request(`/api/connectors/${local.rows[0].id}/auth-start`, {
 			method: 'POST',
 			headers: authHeader(token),
 		});
@@ -352,7 +350,7 @@ describe('instance connector OAuth (admin auth-start)', () => {
 	it('restores a revoked connector in place on auth-start (admin surface)', async () => {
 		const revoked = await createSaasConnector('revoked-authz', `${fake.url}/mcp`);
 		await db.query(`UPDATE mcp_connections SET revoked_at = now() WHERE id = $1`, [revoked.id]);
-		const revokedRes = await app.request(`/api/mcp-connections/${revoked.id}/auth-start`, {
+		const revokedRes = await app.request(`/api/connectors/${revoked.id}/auth-start`, {
 			method: 'POST',
 			headers: authHeader(token),
 		});
@@ -393,7 +391,7 @@ describe('instance connector OAuth (admin auth-start)', () => {
 			createdByTaskId: taskId,
 		});
 
-		const startRes = await app.request(`/api/mcp-connections/${row.id}/auth-start`, {
+		const startRes = await app.request(`/api/connectors/${row.id}/auth-start`, {
 			method: 'POST',
 			headers: authHeader(token),
 		});

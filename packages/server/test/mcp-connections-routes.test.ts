@@ -1,4 +1,4 @@
-import { McpConnectionKind } from '@hezo/shared';
+import { ConnectorTransport } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import { signAdminJwt } from '../src/middleware/auth';
@@ -7,8 +7,8 @@ import { authHeader, createTestApp, createTestTeam, projectSlugFor } from './hel
 
 /**
  * Route coverage for the MCP-connections surface that the existing
- * mcp-connections.test.ts doesn't reach: the instance-global Admin routes
- * (un-prefixed GET/POST/DELETE /mcp-connections), the project-scoped GET-by-id,
+ * connectors.test.ts doesn't reach: the instance-global Admin routes
+ * (un-prefixed GET/POST/DELETE /connectors), the project-scoped GET-by-id,
  * DELETE, and revoke, plus their not-found / authorization branches.
  *
  * Boots the in-process Hono app directly (createTestApp), so no live HTTP
@@ -42,18 +42,18 @@ afterAll(async () => {
 	await safeClose(ctx.db);
 });
 
-describe('admin (instance-global) /mcp-connections routes', () => {
+describe('admin (instance-global) /connectors routes', () => {
 	let createdId: string;
 
 	it('rejects a non-superuser from listing the global catalog', async () => {
-		const res = await ctx.app.request('/api/mcp-connections', {
+		const res = await ctx.app.request('/api/connectors', {
 			headers: authHeader(nonAdminToken),
 		});
 		expect(res.status).toBe(403);
 	});
 
 	it('creates a saas connector via the admin route and lists it', async () => {
-		const create = await ctx.app.request('/api/mcp-connections', {
+		const create = await ctx.app.request('/api/connectors', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -68,14 +68,14 @@ describe('admin (instance-global) /mcp-connections routes', () => {
 		expect(created.install_status).toBe('installed');
 		createdId = created.id;
 
-		const list = await ctx.app.request('/api/mcp-connections', { headers: authHeader(token) });
+		const list = await ctx.app.request('/api/connectors', { headers: authHeader(token) });
 		expect(list.status).toBe(200);
 		const rows = (await list.json()).data as Array<{ id: string; display_name: string }>;
 		expect(rows.find((r) => r.id === createdId)?.display_name).toBe('Admin Exa');
 	});
 
 	it('upserts on name conflict, updating config in place', async () => {
-		const res = await ctx.app.request('/api/mcp-connections', {
+		const res = await ctx.app.request('/api/connectors', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -97,7 +97,7 @@ describe('admin (instance-global) /mcp-connections routes', () => {
 	});
 
 	it('rejects an admin create with no name', async () => {
-		const res = await ctx.app.request('/api/mcp-connections', {
+		const res = await ctx.app.request('/api/connectors', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: '  ', kind: 'saas', config: { url: 'https://x/mcp' } }),
@@ -107,7 +107,7 @@ describe('admin (instance-global) /mcp-connections routes', () => {
 	});
 
 	it('rejects a non-saas kind on the admin route', async () => {
-		const res = await ctx.app.request('/api/mcp-connections', {
+		const res = await ctx.app.request('/api/connectors', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -121,7 +121,7 @@ describe('admin (instance-global) /mcp-connections routes', () => {
 	});
 
 	it('rejects a saas connector missing config.url', async () => {
-		const res = await ctx.app.request('/api/mcp-connections', {
+		const res = await ctx.app.request('/api/connectors', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'admin-nourl', kind: 'saas', config: {} }),
@@ -131,7 +131,7 @@ describe('admin (instance-global) /mcp-connections routes', () => {
 	});
 
 	it('rejects a non-superuser DELETE on the admin route', async () => {
-		const res = await ctx.app.request(`/api/mcp-connections/${createdId}`, {
+		const res = await ctx.app.request(`/api/connectors/${createdId}`, {
 			method: 'DELETE',
 			headers: authHeader(nonAdminToken),
 		});
@@ -139,7 +139,7 @@ describe('admin (instance-global) /mcp-connections routes', () => {
 	});
 
 	it('returns 404 deleting an unknown connector', async () => {
-		const res = await ctx.app.request('/api/mcp-connections/00000000-0000-0000-0000-000000000000', {
+		const res = await ctx.app.request('/api/connectors/00000000-0000-0000-0000-000000000000', {
 			method: 'DELETE',
 			headers: authHeader(token),
 		});
@@ -148,7 +148,7 @@ describe('admin (instance-global) /mcp-connections routes', () => {
 	});
 
 	it('deletes a connector and returns data:null', async () => {
-		const res = await ctx.app.request(`/api/mcp-connections/${createdId}`, {
+		const res = await ctx.app.request(`/api/connectors/${createdId}`, {
 			method: 'DELETE',
 			headers: authHeader(token),
 		});
@@ -160,9 +160,9 @@ describe('admin (instance-global) /mcp-connections routes', () => {
 	});
 });
 
-describe('admin PATCH /mcp-connections/:id (re-scope)', () => {
+describe('admin PATCH /connectors/:id (re-scope)', () => {
 	async function createGlobalConnector(name: string): Promise<string> {
-		const res = await ctx.app.request('/api/mcp-connections', {
+		const res = await ctx.app.request('/api/connectors', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name, kind: 'saas', config: { url: `https://${name}/mcp` } }),
@@ -178,7 +178,7 @@ describe('admin PATCH /mcp-connections/:id (re-scope)', () => {
 
 	it('rejects a non-superuser', async () => {
 		const id = await createGlobalConnector('rescope-forbidden');
-		const res = await ctx.app.request(`/api/mcp-connections/${id}`, {
+		const res = await ctx.app.request(`/api/connectors/${id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(nonAdminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ project_id: null }),
@@ -188,7 +188,7 @@ describe('admin PATCH /mcp-connections/:id (re-scope)', () => {
 
 	it('rejects a body without project_id', async () => {
 		const id = await createGlobalConnector('rescope-nobody');
-		const res = await ctx.app.request(`/api/mcp-connections/${id}`, {
+		const res = await ctx.app.request(`/api/connectors/${id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({}),
@@ -198,7 +198,7 @@ describe('admin PATCH /mcp-connections/:id (re-scope)', () => {
 	});
 
 	it('returns 404 for an unknown connector', async () => {
-		const res = await ctx.app.request('/api/mcp-connections/00000000-0000-0000-0000-000000000000', {
+		const res = await ctx.app.request('/api/connectors/00000000-0000-0000-0000-000000000000', {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ project_id: null }),
@@ -209,7 +209,7 @@ describe('admin PATCH /mcp-connections/:id (re-scope)', () => {
 
 	it('returns 404 for an unknown target project_id', async () => {
 		const id = await createGlobalConnector('rescope-badproj');
-		const res = await ctx.app.request(`/api/mcp-connections/${id}`, {
+		const res = await ctx.app.request(`/api/connectors/${id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ project_id: '00000000-0000-0000-0000-000000000000' }),
@@ -222,7 +222,7 @@ describe('admin PATCH /mcp-connections/:id (re-scope)', () => {
 		const id = await createGlobalConnector('rescope-move');
 		const projId = await projectIdForSlug(projectSlug);
 
-		const toProject = await ctx.app.request(`/api/mcp-connections/${id}`, {
+		const toProject = await ctx.app.request(`/api/connectors/${id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ project_id: projId }),
@@ -238,7 +238,7 @@ describe('admin PATCH /mcp-connections/:id (re-scope)', () => {
 		// The rest of the row is untouched by a scope change.
 		expect(scoped.name).toBe('rescope-move');
 
-		const toGlobal = await ctx.app.request(`/api/mcp-connections/${id}`, {
+		const toGlobal = await ctx.app.request(`/api/connectors/${id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ project_id: '  ' }), // whitespace collapses to global
@@ -263,7 +263,7 @@ describe('admin PATCH /mcp-connections/:id (re-scope)', () => {
 			[projId],
 		);
 
-		const res = await ctx.app.request(`/api/mcp-connections/${globalId}`, {
+		const res = await ctx.app.request(`/api/connectors/${globalId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ project_id: projId }),
@@ -279,7 +279,7 @@ describe('admin PATCH /mcp-connections/:id (re-scope)', () => {
 	});
 });
 
-describe('project-scoped /projects/:projectId/mcp-connections/:id', () => {
+describe('project-scoped /projects/:projectId/connectors/:id', () => {
 	async function seedSaasConnector(name: string): Promise<string> {
 		const project = await ctx.db.query<{ id: string }>(`SELECT id FROM projects WHERE slug = $1`, [
 			projectSlug,
@@ -288,14 +288,14 @@ describe('project-scoped /projects/:projectId/mcp-connections/:id', () => {
 			`INSERT INTO mcp_connections (name, kind, config, install_status, project_id)
 			 VALUES ($1, $2::mcp_connection_kind, '{"url": "https://svc/mcp"}'::jsonb, 'installed', $3)
 			 RETURNING id`,
-			[name, McpConnectionKind.Saas, project.rows[0].id],
+			[name, ConnectorTransport.Saas, project.rows[0].id],
 		);
 		return r.rows[0].id;
 	}
 
 	it('reads a single connector by id', async () => {
 		const id = await seedSaasConnector('proj-read');
-		const res = await ctx.app.request(`/api/projects/${projectSlug}/mcp-connections/${id}`, {
+		const res = await ctx.app.request(`/api/projects/${projectSlug}/connectors/${id}`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -306,7 +306,7 @@ describe('project-scoped /projects/:projectId/mcp-connections/:id', () => {
 
 	it('returns 404 reading an unknown connector', async () => {
 		const res = await ctx.app.request(
-			`/api/projects/${projectSlug}/mcp-connections/00000000-0000-0000-0000-000000000000`,
+			`/api/projects/${projectSlug}/connectors/00000000-0000-0000-0000-000000000000`,
 			{ headers: authHeader(token) },
 		);
 		expect(res.status).toBe(404);
@@ -314,7 +314,7 @@ describe('project-scoped /projects/:projectId/mcp-connections/:id', () => {
 
 	it('returns 404 deleting an unknown connector', async () => {
 		const res = await ctx.app.request(
-			`/api/projects/${projectSlug}/mcp-connections/00000000-0000-0000-0000-000000000000`,
+			`/api/projects/${projectSlug}/connectors/00000000-0000-0000-0000-000000000000`,
 			{ method: 'DELETE', headers: authHeader(token) },
 		);
 		expect(res.status).toBe(404);
@@ -323,7 +323,7 @@ describe('project-scoped /projects/:projectId/mcp-connections/:id', () => {
 
 	it('deletes a connector via the project-scoped route', async () => {
 		const id = await seedSaasConnector('proj-del');
-		const res = await ctx.app.request(`/api/projects/${projectSlug}/mcp-connections/${id}`, {
+		const res = await ctx.app.request(`/api/projects/${projectSlug}/connectors/${id}`, {
 			method: 'DELETE',
 			headers: authHeader(token),
 		});
@@ -335,7 +335,7 @@ describe('project-scoped /projects/:projectId/mcp-connections/:id', () => {
 
 	it('revokes a connector (no oauth connection attached)', async () => {
 		const id = await seedSaasConnector('proj-revoke');
-		const res = await ctx.app.request(`/api/projects/${projectSlug}/mcp-connections/${id}/revoke`, {
+		const res = await ctx.app.request(`/api/projects/${projectSlug}/connectors/${id}/revoke`, {
 			method: 'POST',
 			headers: authHeader(token),
 		});
@@ -347,16 +347,16 @@ describe('project-scoped /projects/:projectId/mcp-connections/:id', () => {
 
 	it('returns 404 revoking an unknown connector', async () => {
 		const res = await ctx.app.request(
-			`/api/projects/${projectSlug}/mcp-connections/00000000-0000-0000-0000-000000000000/revoke`,
+			`/api/projects/${projectSlug}/connectors/00000000-0000-0000-0000-000000000000/revoke`,
 			{ method: 'POST', headers: authHeader(token) },
 		);
 		expect(res.status).toBe(404);
 	});
 });
 
-describe('project-scoped POST /mcp-connections branches', () => {
+describe('project-scoped POST /connectors branches', () => {
 	it('rejects an unknown oauth_connection_id with 404', async () => {
-		const res = await ctx.app.request(`/api/projects/${projectSlug}/mcp-connections`, {
+		const res = await ctx.app.request(`/api/projects/${projectSlug}/connectors`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -371,7 +371,7 @@ describe('project-scoped POST /mcp-connections branches', () => {
 	});
 
 	it('rejects an unknown kind with 400', async () => {
-		const res = await ctx.app.request(`/api/projects/${projectSlug}/mcp-connections`, {
+		const res = await ctx.app.request(`/api/projects/${projectSlug}/connectors`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'weird', kind: 'grpc', config: {} }),
@@ -381,7 +381,7 @@ describe('project-scoped POST /mcp-connections branches', () => {
 	});
 
 	it('rejects a local connection missing config.command with 400', async () => {
-		const res = await ctx.app.request(`/api/projects/${projectSlug}/mcp-connections`, {
+		const res = await ctx.app.request(`/api/projects/${projectSlug}/connectors`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'local-nocmd', kind: 'local', config: { args: [] } }),
@@ -391,7 +391,7 @@ describe('project-scoped POST /mcp-connections branches', () => {
 	});
 
 	it('rejects a project-scoped create with no name', async () => {
-		const res = await ctx.app.request(`/api/projects/${projectSlug}/mcp-connections`, {
+		const res = await ctx.app.request(`/api/projects/${projectSlug}/connectors`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ kind: 'saas', config: { url: 'https://svc/mcp' } }),
@@ -441,7 +441,7 @@ describe('cross-project connector isolation', () => {
 		);
 
 		const listOf = async (slug: string) => {
-			const res = await ctx.app.request(`/api/projects/${slug}/mcp-connections`, {
+			const res = await ctx.app.request(`/api/projects/${slug}/connectors`, {
 				headers: authHeader(token),
 			});
 			expect(res.status).toBe(200);
@@ -460,7 +460,7 @@ describe('cross-project connector isolation', () => {
 
 		// The admin cross-project list spans everything and annotates each row's
 		// owning project (null for the global one).
-		const adminRes = await ctx.app.request('/api/mcp-connections', { headers: authHeader(token) });
+		const adminRes = await ctx.app.request('/api/connectors', { headers: authHeader(token) });
 		const adminRows = (await adminRes.json()).data as Array<{
 			name: string;
 			project_id: string | null;
@@ -487,10 +487,10 @@ describe('cross-project connector isolation', () => {
 			[projA.rows[0].id],
 		);
 		// Project B tries to delete project A's connector → 404, row still present.
-		const res = await ctx.app.request(
-			`/api/projects/${slugB}/mcp-connections/${inserted.rows[0].id}`,
-			{ method: 'DELETE', headers: authHeader(token) },
-		);
+		const res = await ctx.app.request(`/api/projects/${slugB}/connectors/${inserted.rows[0].id}`, {
+			method: 'DELETE',
+			headers: authHeader(token),
+		});
 		expect(res.status).toBe(404);
 		const still = await ctx.db.query('SELECT 1 FROM mcp_connections WHERE id = $1', [
 			inserted.rows[0].id,

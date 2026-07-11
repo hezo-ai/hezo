@@ -1123,7 +1123,7 @@ supports; once a token exists, both strategies finalize through one shared path.
 |---|---|---|---|
 | **DCR auth-code + PKCE** | PRM discovery (RFC 9728) → Dynamic Client Registration (RFC 7591) → redirect popup → `/api/oauth/mcp-callback`. Zero config — the AS mints a `client_id`. | the AS advertises a `registration_endpoint` | DatoCMS, Linear, Notion, Vercel, … |
 | **Device flow (RFC 8628)** | `connectors/:id/device/start` → user types a code → `…/device/poll`. Needs a pre-registered public `client_id`; no redirect, no secret. | the capability registry declares a `deviceAuth` descriptor | **GitHub** |
-| **API key** | human pastes a key on the connect_required card or the Connectors page → `POST /api/projects/:projectId/mcp-connections/:id/api-key` encrypts it into the vault (`allowed_hosts` = the MCP host) and links it via `mcp_connections.api_key_secret_id`. The generated secret name is `MCP_<CONNECTOR>_<PROJFRAG>` for a project-scoped connector (`PROJFRAG` = first 5 hex of the project UUID, uppercased) and `MCP_<CONNECTOR>` for a global one, so two same-type connectors in different projects get distinctly-named credentials. | the MCP server exposes no OAuth (no PRM) and authenticates with a bearer/API key | **Typefully**, header-auth MCPs |
+| **API key** | human pastes a key on the connect_required card or the Connectors page → `POST /api/projects/:projectId/connectors/:id/api-key` encrypts it into the vault (`allowed_hosts` = the MCP host) and links it via `mcp_connections.api_key_secret_id`. The generated secret name is `MCP_<CONNECTOR>_<PROJFRAG>` for a project-scoped connector (`PROJFRAG` = first 5 hex of the project UUID, uppercased) and `MCP_<CONNECTOR>` for a global one, so two same-type connectors in different projects get distinctly-named credentials. | the MCP server exposes no OAuth (no PRM) and authenticates with a bearer/API key | **Typefully**, header-auth MCPs |
 | **Paste / `request_credential`** | raw key pasted into the vault, referenced by placeholder from a tool call | an agent needs an arbitrary secret (not a whole connector) | `request_credential` |
 
 GitHub uses the device flow because its AS advertises no `registration_endpoint` (DCR
@@ -1155,10 +1155,10 @@ resolved from the task row — the connect can be completed from any surface).
 connectors plus global ones (each row carries its `project_id` + project name), with a
 **scope-filter dropdown** — `(All projects)` / a specific project — that filters the view
 and sets the create scope. The superuser adds a connector in the selected scope
-(`POST /api/mcp-connections` with an optional `project_id`; upsert-by-`(project_id, name)`;
+(`POST /api/connectors` with an optional `project_id`; upsert-by-`(project_id, name)`;
 re-adding a name in the same scope replaces `config` and clears `auth_error`). The page then
 auto-probes the new connector via
-`POST /api/mcp-connections/:id/auth-start` (superuser-gated) — the same PRM → DCR walk as
+`POST /api/connectors/:id/auth-start` (superuser-gated) — the same PRM → DCR walk as
 the project-scoped auth-start; the only difference is team context (the state
 envelope carries `teamId: null`, and the callback skips the team-room broadcasts and
 per-team provider hooks; the settings page refetches off the popup's
@@ -1170,7 +1170,7 @@ can add. When OAuth *is* advertised, the UI opens the authorize popup automatica
 and every non-active SaaS row keeps a **Connect**/Retry button.
 
 **User-added connectors (project page).** The per-project Connectors page has the same
-**Add** affordance (name + MCP URL → `POST /api/projects/:projectId/mcp-connections`,
+**Add** affordance (name + MCP URL → `POST /api/projects/:projectId/connectors`,
 implicitly this-project-scoped), then auto-probes via the project auth-start exactly as the
 admin page does, so an operator can register either an OAuth or a header-authenticated MCP
 without an agent having asked for one first.
@@ -1186,7 +1186,7 @@ restore `createOrFetchConnector` performs for a re-requested agent connector. Th
 that still needs delete-and-recreate is an instance-address change (the DCR client is bound
 to the old redirect URL).
 
-**Run exclusion.** `loadMcpConnectionsForRun(db, projectId)` returns the run's project's own
+**Run exclusion.** `loadConnectorsForRun(db, projectId)` returns the run's project's own
 connectors plus global ones (a project connector shadows a global of the same name). It
 skips revoked rows, plus SaaS rows that are known to want auth but haven't completed it —
 no `oauth_connection_id` **and** no `api_key_secret_id`, and any of: agent-requested
@@ -1208,7 +1208,7 @@ on-demand installer is a deferred phase); local servers authenticate via credent
 placeholders in their `env` (e.g. an npm MCP that reads an API key from the environment, or
 a username/password login that fetches a token), never OAuth. Because connections are
 project-scoped (§ 3), each project supplies its own env credential for the same tool under a
-per-project-unique vault secret name — an agent registers the tool with `add_mcp_connection`
+per-project-unique vault secret name — an agent registers the tool with `add_connector`
 (placeholder in `config.env`) and provides the value via `request_credential`, so two
 projects' credentials for one service never collide in the instance-global vault. The
 connectors UI treats a non-revoked, non-failed local row as **connected the
@@ -1226,7 +1226,7 @@ the container's start-up `update-ca-certificates` populates (Grok's own Hezo MCP
 HTTP to `host.docker.internal`, so it needs no CA trust regardless). The runner also sets
 `NODE_USE_ENV_PROXY=1` as a Node safety net for any spawned Node process without its own
 dispatcher.
-At run build, `loadMcpConnectionDescriptors` merges connectors after the built-in `hezo`
+At run build, `loadConnectorDescriptors` merges connectors after the built-in `hezo`
 MCP, and each of the five runtime adapters translates the descriptors into the spawn
 artifacts its CLI expects (Claude Code `--mcp-config`, Codex `config.toml`, Gemini
 `.gemini/settings.json`, etc.).
@@ -1609,9 +1609,9 @@ shapes.
   `comments`, `mentions`, `assets`, `inbox`, `search` (full-text).
 - **Money & governance** — `costs` (project-scoped, `group_by=day` for charts),
   `model-pricing`, `approvals`, `audit-log`.
-- **Integrations & secrets** — `ai-providers`, `secrets`, `mcp-connections`, `oauth`
+- **Integrations & secrets** — `ai-providers`, `secrets`, `connectors`, `oauth`
   (connectors: ensure / auth-start — project-scoped and instance-admin
-  (`/mcp-connections/:id/auth-start`) / device / callbacks), `skills`.
+  (`/connectors/:id/auth-start`) / device / callbacks), `skills`.
 - **Ops** — `health`, `updates`, `preview` (HMAC-signed file URLs), public assets.
 
 One non-REST surface shares the port: the **MCP endpoint** (`POST /mcp`, Streamable

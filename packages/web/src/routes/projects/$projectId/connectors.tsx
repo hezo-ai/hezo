@@ -11,12 +11,12 @@ import { ConfirmDialog } from '../../../components/ui/confirm-dialog';
 import { InPlaceForm } from '../../../components/ui/in-place-form';
 import { Input } from '../../../components/ui/input';
 import {
+	type Connector,
 	connectorStatus,
-	type McpConnection,
-	useCreateMcpConnection,
-	useMcpConnections,
+	useConnectors,
+	useCreateConnector,
 	useRevokeConnector,
-} from '../../../hooks/use-mcp-connections';
+} from '../../../hooks/use-connectors';
 import { useMe } from '../../../hooks/use-me';
 import {
 	type OAuthConnection,
@@ -40,7 +40,7 @@ export const Route = createFileRoute('/projects/$projectId/connectors')({
 function ConnectorsPage() {
 	const { projectId } = Route.useParams();
 	const { focus } = Route.useSearch();
-	const { data: connectors = [] } = useMcpConnections(projectId);
+	const { data: connectors = [] } = useConnectors(projectId);
 	const { data: oauthConnections = [] } = useOAuthConnections(projectId);
 
 	// Ref callback fires when the focused <li> mounts (which can happen after
@@ -121,7 +121,7 @@ interface AddConnectorFormProps {
  * resolves to a null auth_url and the new row just offers its API-key option.
  */
 function AddConnectorForm({ projectId, onClose }: AddConnectorFormProps) {
-	const create = useCreateMcpConnection(projectId);
+	const create = useCreateConnector(projectId);
 	const authStart = useAuthStart(projectId);
 	const [name, setName] = useState('');
 	const [url, setUrl] = useState('');
@@ -134,7 +134,7 @@ function AddConnectorForm({ projectId, onClose }: AddConnectorFormProps) {
 			setError('Name and MCP server URL are required.');
 			return;
 		}
-		let created: McpConnection;
+		let created: Connector;
 		try {
 			created = await create.mutateAsync({
 				name: name.trim(),
@@ -320,7 +320,7 @@ function GitHubRow({ projectId, connection }: GitHubRowProps) {
 }
 
 interface ConnectorRowProps {
-	connector: McpConnection;
+	connector: Connector;
 	projectId: string;
 	focused: boolean;
 	focusRef?: (el: HTMLLIElement | null) => void;

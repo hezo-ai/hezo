@@ -882,7 +882,7 @@ Fetch a remote agent skill file (Markdown describing how to use a third-party MC
 
 ## MCP connections
 
-### `list_mcp_connections`
+### `list_connectors`
 
 _Read-only._
 
@@ -907,11 +907,11 @@ Test an MCP connector end-to-end from the server side. Resolves the stored OAuth
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
-| `connector_id` | `string` | Yes | mcp_connections.id from list_mcp_connections |
+| `connector_id` | `string` | Yes | connector id from list_connectors |
 
 **Returns:** `{ ok, status, mcp_url, secret_name, token_prefix, token_length, www_authenticate, body_excerpt, hint }` from a direct server-side probe of the MCP URL. Returns `{ error }` if the connector is missing, not `saas`, or its token cannot be decrypted.
 
-### `add_mcp_connection`
+### `add_connector`
 
 _Write tool._
 
@@ -928,7 +928,7 @@ Register an MCP server (SaaS HTTP or local stdio) for your project. The connecti
 
 **Returns:** `{ id, install_status, note }`, or `{ error }` if `config.url` (saas) / `config.command` (local) is missing. Upserts by `name` within your project.
 
-### `remove_mcp_connection`
+### `remove_connector`
 
 _Write tool._
 
@@ -939,7 +939,7 @@ Remove one of your project's registered MCP connections. Only connectors owned b
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
-| `id` | `string` | Yes | mcp_connections.id (returned by add_mcp_connection or list_mcp_connections) |
+| `id` | `string` | Yes | connector id (returned by add_connector or list_connectors) |
 
 **Returns:** `{ removed: true, id }`, or `{ error }` if the connection is not found. Removes only your project's own connector (never a global or another project's).
 

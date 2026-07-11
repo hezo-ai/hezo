@@ -203,8 +203,8 @@ const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'update_chat_memory',
 	'propose_skill',
 	'create_skill',
-	'add_mcp_connection',
-	'remove_mcp_connection',
+	'add_connector',
+	'remove_connector',
 	'update_goal_progress',
 	'update_project_progress',
 ]);
@@ -4445,7 +4445,7 @@ export function registerTools(
 
 	tool(
 		server,
-		'list_mcp_connections',
+		'list_connectors',
 		'List the MCP server connections available to agent runs in your project (its own connectors plus global "all projects" ones; a project connector shadows a global one of the same name). Each row includes a derived `oauth_status` so you can tell whether a connector is usable: "active" means OAuth completed and the MCP tools should appear in your tool list on your next run; "pending" means waiting on the human to click Connect; "failed" means the OAuth flow errored (see auth_error); "revoked" means a human disconnected it; "none" means no OAuth needed (e.g., an env-var-token MCP or a public one). Do NOT confuse `install_status` (which tracks local-package install state and is meaningless for SaaS MCPs) with `oauth_status`. An active OAuth-backed connector also carries `rest_auth` = `{ placeholder, allowed_hosts, scopes }`: put `placeholder` (e.g. in an `Authorization: Bearer <placeholder>` header) on a raw HTTP request to authenticate the provider\'s REST API directly when no MCP tool covers what you need — the egress proxy substitutes the real token, but ONLY for requests to `allowed_hosts`; you never see the value. Use this instead of requesting a PAT (e.g. for GitHub repo-settings edits that the `github` MCP does not expose).',
 		{
 			project: projectArg(),
@@ -4495,7 +4495,7 @@ export function registerTools(
 				return !!c?.dcr;
 			};
 			// A project connector shadows a global one of the same name (the run sees
-			// the same set — see loadMcpConnectionsForRun). Rows are ordered project
+			// the same set — see loadConnectorsForRun). Rows are ordered project
 			// first, so keep the first occurrence per name.
 			const byName = new Map<string, (typeof r.rows)[number]>();
 			for (const row of r.rows) if (!byName.has(row.name)) byName.set(row.name, row);
@@ -4535,7 +4535,7 @@ export function registerTools(
 		'Test an MCP connector end-to-end from the server side. Resolves the stored OAuth token from the vault and makes a direct HTTP call to the MCP server (bypassing the agent container and its egress proxy entirely). Returns the upstream status code, response excerpt, and the secret name + masked-token-prefix used. Use this when oauth_status says "active" but the MCP\'s tools are absent from your tool list — it isolates "is the token still valid against the provider?" from "does the proxy chain in the container work?".',
 		{
 			project: projectArg(),
-			connector_id: z.string().describe('mcp_connections.id from list_mcp_connections'),
+			connector_id: z.string().describe('connector id from list_connectors'),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -4636,7 +4636,7 @@ export function registerTools(
 
 	tool(
 		server,
-		'add_mcp_connection',
+		'add_connector',
 		'Register an MCP server (SaaS HTTP or local stdio) for your project. The connection is scoped to your project — available to this project\'s agent runs, alongside any global "all projects" connectors. SaaS servers go into the agent\'s descriptor list immediately. Header values may include __HEZO_SECRET_<NAME>__ placeholders that the egress proxy substitutes at request time. Local servers must be installed before they take effect.',
 		{
 			project: projectArg(),
@@ -4698,13 +4698,11 @@ export function registerTools(
 
 	tool(
 		server,
-		'remove_mcp_connection',
+		'remove_connector',
 		'Remove one of your project\'s registered MCP connections. Only connectors owned by your project can be removed — global "all projects" connectors and other projects\' are managed elsewhere. The next agent run will not see it.',
 		{
 			project: projectArg(),
-			id: z
-				.string()
-				.describe('mcp_connections.id (returned by add_mcp_connection or list_mcp_connections)'),
+			id: z.string().describe('connector id (returned by add_connector or list_connectors)'),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);

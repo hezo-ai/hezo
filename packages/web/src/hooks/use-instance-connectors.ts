@@ -1,15 +1,15 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
-import type { McpConnection } from './use-mcp-connections';
+import type { Connector } from './use-connectors';
 
 // The admin (superuser) connectors surface. Its list spans EVERY project's
 // connectors plus global ("all projects") ones (project_id NULL), via the
-// un-prefixed /api/mcp-connections routes, so it can render a per-project scope
+// un-prefixed /api/connectors routes, so it can render a per-project scope
 // filter. Create targets the selected scope: a project_id, or none for a global
 // connector. SaaS (remote URL) only — local MCPs carry per-container install
 // state and are managed on the project.
-export const INSTANCE_CONNECTORS_KEY = ['instance', 'mcp-connections'] as const;
+export const INSTANCE_CONNECTORS_KEY = ['instance', 'connectors'] as const;
 
 export interface CreateInstanceConnectorPayload {
 	name: string;
@@ -23,14 +23,14 @@ export interface CreateInstanceConnectorPayload {
 export function useInstanceConnectors() {
 	return useQuery({
 		queryKey: INSTANCE_CONNECTORS_KEY,
-		queryFn: () => api.get<McpConnection[]>('/api/mcp-connections'),
+		queryFn: () => api.get<Connector[]>('/api/connectors'),
 	});
 }
 
 export function useCreateInstanceConnector() {
 	return useMutation({
 		mutationFn: (data: CreateInstanceConnectorPayload) =>
-			api.post<McpConnection>('/api/mcp-connections', data),
+			api.post<Connector>('/api/connectors', data),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: INSTANCE_CONNECTORS_KEY });
 		},
@@ -39,7 +39,7 @@ export function useCreateInstanceConnector() {
 
 export function useDeleteInstanceConnector() {
 	return useMutation({
-		mutationFn: (id: string) => api.delete(`/api/mcp-connections/${id}`),
+		mutationFn: (id: string) => api.delete(`/api/connectors/${id}`),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: INSTANCE_CONNECTORS_KEY });
 		},
@@ -55,7 +55,7 @@ export function useDeleteInstanceConnector() {
 export function useUpdateInstanceConnectorScope() {
 	return useMutation({
 		mutationFn: ({ id, project_id }: { id: string; project_id: string | null }) =>
-			api.patch<McpConnection>(`/api/mcp-connections/${id}`, { project_id }),
+			api.patch<Connector>(`/api/connectors/${id}`, { project_id }),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: INSTANCE_CONNECTORS_KEY });
 		},
@@ -79,7 +79,7 @@ export interface InstanceAuthStartResult {
 export function useInstanceAuthStart() {
 	return useMutation({
 		mutationFn: (id: string) =>
-			api.post<InstanceAuthStartResult>(`/api/mcp-connections/${id}/auth-start`, {}),
+			api.post<InstanceAuthStartResult>(`/api/connectors/${id}/auth-start`, {}),
 		onSettled: () => {
 			// auth-start mutates the row on both paths (persists config.dcr on
 			// success, auth_error on failure) — refresh statuses either way.

@@ -109,7 +109,7 @@ test('project connectors page links a connector to the credential it uses', asyn
 		seed: async (ctx) => {
 			const ws = await seedWorkspace();
 			slug = ws.internalSlug;
-			const created = await ctx.apiBase(`/api/projects/${ws.internalSlug}/mcp-connections`, {
+			const created = await ctx.apiBase(`/api/projects/${ws.internalSlug}/connectors`, {
 				method: 'POST',
 				headers: ws.headers,
 				body: JSON.stringify({
@@ -120,7 +120,7 @@ test('project connectors page links a connector to the credential it uses', asyn
 			});
 			const conn = (await created.json()).data as { id: string };
 			const keyed = await ctx.apiBase(
-				`/api/projects/${ws.internalSlug}/mcp-connections/${conn.id}/api-key`,
+				`/api/projects/${ws.internalSlug}/connectors/${conn.id}/api-key`,
 				{ method: 'POST', headers: ws.headers, body: JSON.stringify({ value: 'k' }) },
 			);
 			secretId = (await keyed.json()).data.api_key_secret_id as string;

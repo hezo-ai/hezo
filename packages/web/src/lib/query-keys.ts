@@ -38,7 +38,7 @@ export const queryKeys = {
 	search: (q: string, scope: string) => ['search', q, scope],
 
 	teams: {
-		mcpConnections: (teamId: string) => ['teams', teamId, 'mcp-connections'],
+		connectors: (teamId: string) => ['teams', teamId, 'connectors'],
 		oauthConnections: (teamId: string) => ['teams', teamId, 'oauth-connections'],
 	},
 
@@ -201,17 +201,17 @@ export const queryKeys = {
 		credentials: (slug: string) => ['projects', slug, 'credentials'],
 		repos: (slug: string) => ['projects', slug, 'repos'],
 		gitState: (slug: string, repoId: string) => ['projects', slug, 'repos', repoId, 'git-state'],
-		mcpConnections: (slug: string) => ['projects', slug, 'mcp-connections'],
-		mcpConnectionsFiltered: (slug: string, filterProjectId: string | null) => [
+		connectors: (slug: string) => ['projects', slug, 'connectors'],
+		connectorsFiltered: (slug: string, filterProjectId: string | null) => [
 			'projects',
 			slug,
-			'mcp-connections',
+			'connectors',
 			filterProjectId,
 		],
-		mcpConnectionDetail: (slug: string, connectorId: string | null) => [
+		connectorDetail: (slug: string, connectorId: string | null) => [
 			'projects',
 			slug,
-			'mcp-connections',
+			'connectors',
 			'detail',
 			connectorId,
 		],

@@ -52,6 +52,7 @@ import {
 } from './ai-provider-keys';
 import { checkOverBudget, recordRunCost } from './budget';
 import { postAgentComment } from './comment-wakeups';
+import { loadConnectorDescriptors } from './connectors/connections';
 import { formatContainerConnectivityMessage } from './container-connectivity-preflight';
 import {
 	CONNECTIVITY_STALE_MS,
@@ -85,7 +86,6 @@ import {
 import { ContainerGitExecutor, GIT_SSH_COMMAND_VALUE, type GitExecutor } from './git-executor';
 import { buildGitIdentityEnv } from './git-identity';
 import type { LogStreamBroker } from './log-stream-broker';
-import { loadMcpConnectionDescriptors } from './mcp-connections';
 import { MCP_ADAPTERS, type McpDescriptor, validateInjection } from './mcp-injectors';
 import type { PricingService } from './pricing';
 import { loadReactionsForTask, type ReactionGroup } from './reactions';
@@ -454,7 +454,7 @@ export async function buildRuntimeInvocation(
 			url: `http://host.docker.internal:${deps.serverPort}/mcp`,
 			bearerToken: agentJwt,
 		},
-		...(await loadMcpConnectionDescriptors(deps.db, projectId)),
+		...(await loadConnectorDescriptors(deps.db, projectId)),
 	];
 
 	const mcpInjection = adapter.build(mcpDescriptors, {

@@ -681,8 +681,8 @@ describe('skills branches', () => {
 });
 
 describe('mcp connection branches', () => {
-	it('add_mcp_connection saas requires config.url', async () => {
-		const r = await admin('add_mcp_connection', {
+	it('add_connector saas requires config.url', async () => {
+		const r = await admin('add_connector', {
 			project: projectSlug,
 			name: 'broken',
 			kind: 'saas',
@@ -691,8 +691,8 @@ describe('mcp connection branches', () => {
 		expect(r.error).toContain('config.url');
 	});
 
-	it('add_mcp_connection local requires config.command', async () => {
-		const r = await admin('add_mcp_connection', {
+	it('add_connector local requires config.command', async () => {
+		const r = await admin('add_connector', {
 			project: projectSlug,
 			name: 'broken-local',
 			kind: 'local',
@@ -701,8 +701,8 @@ describe('mcp connection branches', () => {
 		expect(r.error).toContain('config.command');
 	});
 
-	it('add_mcp_connection saas succeeds', async () => {
-		const r = await admin('add_mcp_connection', {
+	it('add_connector saas succeeds', async () => {
+		const r = await admin('add_connector', {
 			project: projectSlug,
 			name: 'cov-saas',
 			kind: 'saas',
@@ -712,30 +712,30 @@ describe('mcp connection branches', () => {
 		expect(r.install_status).toBe('installed');
 	});
 
-	it('remove_mcp_connection unknown id errors', async () => {
-		const r = await admin('remove_mcp_connection', {
+	it('remove_connector unknown id errors', async () => {
+		const r = await admin('remove_connector', {
 			project: projectSlug,
 			id: '00000000-0000-0000-0000-000000000000',
 		});
 		expect(r.error).toContain('not found');
 	});
 
-	it('remove_mcp_connection removes an existing connection', async () => {
-		const added = await admin('add_mcp_connection', {
+	it('remove_connector removes an existing connection', async () => {
+		const added = await admin('add_connector', {
 			project: projectSlug,
 			name: 'cov-saas-rm',
 			kind: 'saas',
 			config: { url: 'https://mcp2.example.com' },
 		});
-		const r = await admin('remove_mcp_connection', {
+		const r = await admin('remove_connector', {
 			project: projectSlug,
 			id: (added as { id: string }).id,
 		});
 		expect(r.removed).toBe(true);
 	});
 
-	it('list_mcp_connections derives oauth_status', async () => {
-		const r = (await admin('list_mcp_connections', { project: projectSlug })) as unknown as Array<{
+	it('list_connectors derives oauth_status', async () => {
+		const r = (await admin('list_connectors', { project: projectSlug })) as unknown as Array<{
 			oauth_status: string;
 		}>;
 		expect(Array.isArray(r)).toBe(true);

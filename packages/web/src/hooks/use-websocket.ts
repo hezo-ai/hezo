@@ -101,9 +101,9 @@ const TABLE_TO_QUERY_KEY: Record<
 	assets: (cid) => [queryKeys.projects.assets(cid)],
 	secrets: (cid) => [queryKeys.projects.secrets(cid)],
 	mcp_connections: (cid, row) => {
-		const keys: QueryKey[] = [queryKeys.projects.mcpConnections(cid)];
+		const keys: QueryKey[] = [queryKeys.projects.connectors(cid)];
 		if (row.id) {
-			keys.push(queryKeys.projects.mcpConnectionDetail(cid, row.id as string));
+			keys.push(queryKeys.projects.connectorDetail(cid, row.id as string));
 		}
 		return keys;
 	},

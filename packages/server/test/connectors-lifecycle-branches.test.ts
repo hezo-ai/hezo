@@ -1,4 +1,4 @@
-import { McpConnectionKind } from '@hezo/shared';
+import { ConnectorTransport } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
 import {
@@ -53,7 +53,7 @@ afterAll(async () => {
 
 describe('statusOf precedence', () => {
 	const base = {
-		kind: McpConnectionKind.Saas,
+		kind: ConnectorTransport.Saas,
 		oauth_connection_id: null,
 		activated_at: null,
 		revoked_at: null,
@@ -93,15 +93,19 @@ describe('statusOf precedence', () => {
 	it('active for a local connector with no oauth (credential-placeholder auth)', () => {
 		// Local (stdio) connectors log in via __HEZO_SECRET_*__ placeholders, not
 		// OAuth, so they are connected as soon as the row exists.
-		expect(statusOf({ ...base, kind: McpConnectionKind.Local })).toBe('active');
+		expect(statusOf({ ...base, kind: ConnectorTransport.Local })).toBe('active');
 	});
 
 	it('revoked still wins over a local connector', () => {
-		expect(statusOf({ ...base, kind: McpConnectionKind.Local, revoked_at: 'now' })).toBe('revoked');
+		expect(statusOf({ ...base, kind: ConnectorTransport.Local, revoked_at: 'now' })).toBe(
+			'revoked',
+		);
 	});
 
 	it('failed still wins over a local connector', () => {
-		expect(statusOf({ ...base, kind: McpConnectionKind.Local, auth_error: 'boom' })).toBe('failed');
+		expect(statusOf({ ...base, kind: ConnectorTransport.Local, auth_error: 'boom' })).toBe(
+			'failed',
+		);
 	});
 });
 
@@ -116,7 +120,7 @@ describe('createOrFetchConnector — config + restore branches', () => {
 			mcpTransport: 'stdio',
 		});
 		expect(alreadyExisted).toBe(false);
-		expect(row.kind).toBe(McpConnectionKind.Local);
+		expect(row.kind).toBe(ConnectorTransport.Local);
 		expect(row.config).toEqual({ command: 'my-mcp-server', args: ['--flag'], env: { TOKEN: 'x' } });
 	});
 
@@ -139,7 +143,7 @@ describe('createOrFetchConnector — config + restore branches', () => {
 			mcpEnv: { REGION: 'eu' },
 			mcpTransport: 'http',
 		});
-		expect(row.kind).toBe(McpConnectionKind.Saas);
+		expect(row.kind).toBe(ConnectorTransport.Saas);
 		expect(row.config).toEqual({
 			url: 'https://api.example/mcp',
 			headers: { Authorization: 'Bearer placeholder' },

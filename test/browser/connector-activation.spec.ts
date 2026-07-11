@@ -144,7 +144,7 @@ async function postAgentRegisterConnector(page: Page, token: string, mcpUrl: str
 	// shape we know the routes produce. (We bypass `register_connector` MCP
 	// because driving the MCP server inline in a Playwright test is fiddly;
 	// the server vitest already covers that path.)
-	const connectorRes = await page.request.post(`/api/projects/${project.slug}/mcp-connections`, {
+	const connectorRes = await page.request.post(`/api/projects/${project.slug}/connectors`, {
 		headers,
 		data: {
 			name: 'datocms',
@@ -200,9 +200,9 @@ test.describe('Connector activation', () => {
 
 		// Set created_by_task_id directly so the connector behaves as if our
 		// register_connector tool created it (so the wakeup fires on completion
-		// and the filter in loadMcpConnectionsForRun applies consistently).
+		// and the filter in loadConnectorsForRun applies consistently).
 		await page.request
-			.patch(`/api/projects/${project.slug}/mcp-connections/${connectorId}`, {
+			.patch(`/api/projects/${project.slug}/connectors/${connectorId}`, {
 				headers,
 				data: { created_by_task_id: task.id, display_name: 'DatoCMS' },
 			})
@@ -239,7 +239,7 @@ test.describe('Connector activation', () => {
 			.poll(
 				async () => {
 					const res = await page.request.get(
-						`/api/projects/${project.slug}/mcp-connections/${connectorId}`,
+						`/api/projects/${project.slug}/connectors/${connectorId}`,
 						{ headers },
 					);
 					const body = (await res.json()) as {

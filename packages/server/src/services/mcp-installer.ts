@@ -1,8 +1,8 @@
-import { McpConnectionKind, McpInstallStatus } from '@hezo/shared';
+import { ConnectorTransport, McpInstallStatus } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { logger } from '../logger';
+import type { LocalConnectorConfig } from './connectors/connections';
 import type { DockerClient } from './docker';
-import type { LocalMcpConfig } from './mcp-connections';
 
 const log = logger.child('mcp-installer');
 
@@ -19,7 +19,7 @@ export interface InstallResult {
 interface PendingRow {
 	id: string;
 	name: string;
-	config: LocalMcpConfig;
+	config: LocalConnectorConfig;
 }
 
 export interface InstallerDeps {
@@ -52,7 +52,7 @@ export async function installPendingLocalMcps(deps: InstallerDeps): Promise<Inst
 }
 
 /**
- * Install a single row by id. Used after `add_mcp_connection` to make the
+ * Install a single row by id. Used after `add_connector` to make the
  * MCP usable for the next agent run without waiting for the next provision
  * cycle. Returns the post-install row state.
  */
@@ -67,7 +67,7 @@ export async function installLocalMcpById(
 		[rowId],
 	);
 	const row = result.rows[0];
-	if (!row || row.kind !== McpConnectionKind.Local) return null;
+	if (!row || row.kind !== ConnectorTransport.Local) return null;
 	return installOne(deps, { id: row.id, name: row.name, config: row.config });
 }
 
@@ -81,7 +81,7 @@ async function loadPending(deps: InstallerDeps): Promise<PendingRow[]> {
 		 WHERE kind = $1::mcp_connection_kind
 		   AND install_status <> $2::mcp_install_status
 		   AND (project_id = $3 OR project_id IS NULL)`,
-		[McpConnectionKind.Local, McpInstallStatus.Installed, deps.projectId],
+		[ConnectorTransport.Local, McpInstallStatus.Installed, deps.projectId],
 	);
 	return result.rows;
 }

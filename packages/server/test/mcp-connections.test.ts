@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
-import { loadMcpConnectionDescriptors } from '../src/services/mcp-connections';
+import { loadConnectorDescriptors } from '../src/services/connectors/connections';
 import { safeClose } from './helpers';
 import { createTestApp, createTestTeam, projectSlugFor } from './helpers/app';
 
@@ -33,7 +33,7 @@ describe('mcp_connections REST routes', () => {
 		const co = await createTestTeam(ctx.db, { name: 'X' });
 		const team = (await co.json()).data;
 		const res = await ctx.app.request(
-			`/api/projects/${await projectSlugFor(ctx.db, team.id)}/mcp-connections`,
+			`/api/projects/${await projectSlugFor(ctx.db, team.id)}/connectors`,
 			{
 				method: 'POST',
 				headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
@@ -49,7 +49,7 @@ describe('mcp_connections REST routes', () => {
 		const co = await createTestTeam(ctx.db, { name: 'Y' });
 		const team = (await co.json()).data;
 		const projectSlug = await projectSlugFor(ctx.db, team.id);
-		const insert = await ctx.app.request(`/api/projects/${projectSlug}/mcp-connections`, {
+		const insert = await ctx.app.request(`/api/projects/${projectSlug}/connectors`, {
 			method: 'POST',
 			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -66,7 +66,7 @@ describe('mcp_connections REST routes', () => {
 		expect(inserted.data.install_status).toBe('installed');
 		expect(inserted.data.kind).toBe('saas');
 
-		const list = await ctx.app.request(`/api/projects/${projectSlug}/mcp-connections`, {
+		const list = await ctx.app.request(`/api/projects/${projectSlug}/connectors`, {
 			headers: { Authorization: `Bearer ${ctx.token}` },
 		});
 		expect(list.status).toBe(200);
@@ -81,7 +81,7 @@ describe('mcp_connections REST routes', () => {
 		const co = await createTestTeam(ctx.db, { name: 'Z' });
 		const team = (await co.json()).data;
 		const res = await ctx.app.request(
-			`/api/projects/${await projectSlugFor(ctx.db, team.id)}/mcp-connections`,
+			`/api/projects/${await projectSlugFor(ctx.db, team.id)}/connectors`,
 			{
 				method: 'POST',
 				headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
@@ -102,14 +102,14 @@ describe('mcp_connections REST routes', () => {
 	});
 });
 
-describe('POST /projects/:projectId/mcp-connections/:id/api-key', () => {
+describe('POST /projects/:projectId/connectors/:id/api-key', () => {
 	async function seedConnector(ctx: Awaited<ReturnType<typeof createTestApp>>) {
 		const co = await createTestTeam(ctx.db, {
 			name: `ApiKey ${Math.random().toString(36).slice(2)}`,
 		});
 		const team = (await co.json()).data;
 		const projectSlug = await projectSlugFor(ctx.db, team.id);
-		const insert = await ctx.app.request(`/api/projects/${projectSlug}/mcp-connections`, {
+		const insert = await ctx.app.request(`/api/projects/${projectSlug}/connectors`, {
 			method: 'POST',
 			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -127,7 +127,7 @@ describe('POST /projects/:projectId/mcp-connections/:id/api-key', () => {
 		const { projectSlug, connectorId } = await seedConnector(ctx);
 
 		const res = await ctx.app.request(
-			`/api/projects/${projectSlug}/mcp-connections/${connectorId}/api-key`,
+			`/api/projects/${projectSlug}/connectors/${connectorId}/api-key`,
 			{
 				method: 'POST',
 				headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
@@ -151,7 +151,7 @@ describe('POST /projects/:projectId/mcp-connections/:id/api-key', () => {
 		expect(secret.rows[0].allowed_hosts).toEqual(['mcp.typefully.com']);
 
 		// The descriptor emits a placeholder — never the raw key (red line).
-		const descriptors = await loadMcpConnectionDescriptors(ctx.db);
+		const descriptors = await loadConnectorDescriptors(ctx.db);
 		const tf = descriptors.find((d) => d.name === 'typefully');
 		if (tf?.kind !== 'http') throw new Error('expected http descriptor');
 		expect(tf.headers?.Authorization).toBe(`Bearer __HEZO_SECRET_${secret.rows[0].name}__`);
@@ -165,7 +165,7 @@ describe('POST /projects/:projectId/mcp-connections/:id/api-key', () => {
 		const { projectSlug, connectorId } = await seedConnector(ctx);
 
 		const res = await ctx.app.request(
-			`/api/projects/${projectSlug}/mcp-connections/${connectorId}/api-key`,
+			`/api/projects/${projectSlug}/connectors/${connectorId}/api-key`,
 			{
 				method: 'POST',
 				headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
@@ -179,7 +179,7 @@ describe('POST /projects/:projectId/mcp-connections/:id/api-key', () => {
 		const secret = await ctx.db.query<{ name: string }>(`SELECT name FROM secrets WHERE id = $1`, [
 			updated.api_key_secret_id,
 		]);
-		const descriptors = await loadMcpConnectionDescriptors(ctx.db);
+		const descriptors = await loadConnectorDescriptors(ctx.db);
 		const tf = descriptors.find((d) => d.name === 'typefully');
 		if (tf?.kind !== 'http') throw new Error('expected http descriptor');
 		expect(tf.headers?.['X-API-Key']).toBe(`__HEZO_SECRET_${secret.rows[0].name}__`);
@@ -191,7 +191,7 @@ describe('POST /projects/:projectId/mcp-connections/:id/api-key', () => {
 		const ctx = await createTestApp();
 		const { projectSlug, connectorId } = await seedConnector(ctx);
 		const res = await ctx.app.request(
-			`/api/projects/${projectSlug}/mcp-connections/${connectorId}/api-key`,
+			`/api/projects/${projectSlug}/connectors/${connectorId}/api-key`,
 			{
 				method: 'POST',
 				headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
@@ -206,7 +206,7 @@ describe('POST /projects/:projectId/mcp-connections/:id/api-key', () => {
 		const ctx = await createTestApp();
 		const { projectSlug, connectorId } = await seedConnector(ctx);
 		const set = await ctx.app.request(
-			`/api/projects/${projectSlug}/mcp-connections/${connectorId}/api-key`,
+			`/api/projects/${projectSlug}/connectors/${connectorId}/api-key`,
 			{
 				method: 'POST',
 				headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
@@ -216,7 +216,7 @@ describe('POST /projects/:projectId/mcp-connections/:id/api-key', () => {
 		const secretId = (await set.json()).data.api_key_secret_id as string;
 
 		const revoke = await ctx.app.request(
-			`/api/projects/${projectSlug}/mcp-connections/${connectorId}/revoke`,
+			`/api/projects/${projectSlug}/connectors/${connectorId}/revoke`,
 			{
 				method: 'POST',
 				headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
@@ -241,13 +241,13 @@ describe('POST /projects/:projectId/mcp-connections/:id/api-key', () => {
 		const { projectSlug, connectorId } = await seedConnector(ctx);
 
 		// Connect, then revoke — leaves the row revoked with no key.
-		const setUrl = `/api/projects/${projectSlug}/mcp-connections/${connectorId}/api-key`;
+		const setUrl = `/api/projects/${projectSlug}/connectors/${connectorId}/api-key`;
 		await ctx.app.request(setUrl, {
 			method: 'POST',
 			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 			body: JSON.stringify({ value: 'tf_old' }),
 		});
-		await ctx.app.request(`/api/projects/${projectSlug}/mcp-connections/${connectorId}/revoke`, {
+		await ctx.app.request(`/api/projects/${projectSlug}/connectors/${connectorId}/revoke`, {
 			method: 'POST',
 			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 			body: '{}',
@@ -270,7 +270,7 @@ describe('POST /projects/:projectId/mcp-connections/:id/api-key', () => {
 		expect(updated.api_key_secret_id).toBeTruthy();
 
 		// The descriptor now emits the new key's placeholder (never the raw value).
-		const descriptors = await loadMcpConnectionDescriptors(ctx.db);
+		const descriptors = await loadConnectorDescriptors(ctx.db);
 		const tf = descriptors.find((d) => d.name === 'typefully');
 		if (tf?.kind !== 'http') throw new Error('expected http descriptor');
 		expect(tf.headers?.Authorization).toContain('__HEZO_SECRET_');
@@ -296,7 +296,7 @@ describe('api-key credential naming + connector→credential relationship', () =
 		const proj = await ctx.db.query<{ id: string }>(`SELECT id FROM projects WHERE slug = $1`, [
 			projectSlug,
 		]);
-		const insert = await ctx.app.request(`/api/projects/${projectSlug}/mcp-connections`, {
+		const insert = await ctx.app.request(`/api/projects/${projectSlug}/connectors`, {
 			method: 'POST',
 			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name, kind: 'saas', config: { url: 'https://mcp.name.example/mcp' } }),
@@ -311,7 +311,7 @@ describe('api-key credential naming + connector→credential relationship', () =
 		connectorId: string,
 	): Promise<string> {
 		const res = await ctx.app.request(
-			`/api/projects/${projectSlug}/mcp-connections/${connectorId}/api-key`,
+			`/api/projects/${projectSlug}/connectors/${connectorId}/api-key`,
 			{
 				method: 'POST',
 				headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
@@ -359,7 +359,7 @@ describe('api-key credential naming + connector→credential relationship', () =
 		const ctx = await createTestApp();
 		// Admin surface creates a global (project_id null) connector; the api-key
 		// route accepts it (project_id IS NULL) via any project path.
-		const created = await ctx.app.request(`/api/mcp-connections`, {
+		const created = await ctx.app.request(`/api/connectors`, {
 			method: 'POST',
 			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -384,7 +384,7 @@ describe('api-key credential naming + connector→credential relationship', () =
 		const ctx = await createTestApp();
 		const { projectSlug, connectorId } = await seedProjectConnector(ctx, 'listcreds');
 		const secretId = await setApiKey(ctx, projectSlug, connectorId);
-		const list = await ctx.app.request(`/api/projects/${projectSlug}/mcp-connections`, {
+		const list = await ctx.app.request(`/api/projects/${projectSlug}/connectors`, {
 			headers: { Authorization: `Bearer ${ctx.token}` },
 		});
 		const row = ((await list.json()).data as { id: string; credentials: { id: string }[] }[]).find(
@@ -451,14 +451,14 @@ describe('POST /teams/:teamId/connectors/ensure', () => {
 	});
 });
 
-describe('loadMcpConnectionDescriptors', () => {
+describe('loadConnectorDescriptors', () => {
 	it('returns saas connections as http descriptors', async () => {
 		await db.query(
 			`INSERT INTO mcp_connections (name, kind, config, install_status)
 			 VALUES ('service-a', 'saas', $1::jsonb, 'installed')`,
 			[JSON.stringify({ url: 'https://service-a.example/mcp', headers: { 'x-key': 'v' } })],
 		);
-		const descriptors = await loadMcpConnectionDescriptors(db);
+		const descriptors = await loadConnectorDescriptors(db);
 		const a = descriptors.find((d) => d.name === 'service-a');
 		expect(a).toBeDefined();
 		expect(a?.kind).toBe('http');
@@ -479,7 +479,7 @@ describe('loadMcpConnectionDescriptors', () => {
 				}),
 			],
 		);
-		const descriptors = await loadMcpConnectionDescriptors(db);
+		const descriptors = await loadConnectorDescriptors(db);
 		const gh = descriptors.find((d) => d.name === 'github');
 		expect(gh?.kind).toBe('http');
 		if (gh?.kind === 'http') {
@@ -498,7 +498,7 @@ describe('loadMcpConnectionDescriptors', () => {
 			 VALUES ('pending-local', 'local', $1::jsonb, 'pending')`,
 			[JSON.stringify({ command: 'npx', args: ['-y', 'pkg'] })],
 		);
-		const descriptors = await loadMcpConnectionDescriptors(db);
+		const descriptors = await loadConnectorDescriptors(db);
 		expect(descriptors.find((d) => d.name === 'pending-local')).toBeUndefined();
 	});
 
@@ -508,7 +508,7 @@ describe('loadMcpConnectionDescriptors', () => {
 			 VALUES ('installed-local', 'local', $1::jsonb, 'installed')`,
 			[JSON.stringify({ command: '/usr/bin/foo', args: ['x'], env: { K: 'v' } })],
 		);
-		const descriptors = await loadMcpConnectionDescriptors(db);
+		const descriptors = await loadConnectorDescriptors(db);
 		const local = descriptors.find((d) => d.name === 'installed-local');
 		expect(local?.kind).toBe('stdio');
 		if (local?.kind === 'stdio') {
@@ -519,7 +519,7 @@ describe('loadMcpConnectionDescriptors', () => {
 	});
 });
 
-describe('loadMcpConnectionDescriptors project scoping', () => {
+describe('loadConnectorDescriptors project scoping', () => {
 	// The plan's core multi-project claim: two projects can each register their own
 	// project-scoped `local` MCP (same connection name, same env var) whose
 	// config.env references its OWN per-project secret placeholder. A run only
@@ -555,12 +555,12 @@ describe('loadMcpConnectionDescriptors project scoping', () => {
 			);
 		}
 
-		const alphaDescs = await loadMcpConnectionDescriptors(ctx.db, alpha);
+		const alphaDescs = await loadConnectorDescriptors(ctx.db, alpha);
 		const alphaYt = alphaDescs.find((d) => d.name === 'youtube');
 		if (alphaYt?.kind !== 'stdio') throw new Error('expected stdio descriptor for alpha');
 		expect(alphaYt.env?.YOUTUBE_API_KEY).toBe('__HEZO_SECRET_YOUTUBE_ALPHA__');
 
-		const bravoDescs = await loadMcpConnectionDescriptors(ctx.db, bravo);
+		const bravoDescs = await loadConnectorDescriptors(ctx.db, bravo);
 		const bravoYt = bravoDescs.find((d) => d.name === 'youtube');
 		if (bravoYt?.kind !== 'stdio') throw new Error('expected stdio descriptor for bravo');
 		expect(bravoYt.env?.YOUTUBE_API_KEY).toBe('__HEZO_SECRET_YOUTUBE_BRAVO__');

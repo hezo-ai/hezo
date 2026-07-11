@@ -1,4 +1,4 @@
-import { McpConnectionKind, type McpTransport, WakeupSource } from '@hezo/shared';
+import { ConnectorTransport, type McpTransport, WakeupSource } from '@hezo/shared';
 import type { Db } from '../../db/database';
 import { trackBackground } from '../../lib/background';
 import { logger } from '../../logger';
@@ -73,7 +73,7 @@ export function statusOf(
 	// (__HEZO_SECRET_*__ — e.g. a username/password login that fetches a token),
 	// not OAuth, so there is no oauth_connection_id/activated_at handshake. A
 	// non-revoked, non-failed local row is connected the moment it exists.
-	if (row.kind === McpConnectionKind.Local) return 'active';
+	if (row.kind === ConnectorTransport.Local) return 'active';
 	return 'pending';
 }
 
@@ -113,7 +113,7 @@ export async function createOrFetchConnector(
 				...(input.mcpEnv ? { env: input.mcpEnv } : {}),
 			}
 		: { command: input.mcpCmd, args: input.mcpArgs ?? [], env: input.mcpEnv ?? {} };
-	const kind = input.mcpUrl ? McpConnectionKind.Saas : McpConnectionKind.Local;
+	const kind = input.mcpUrl ? ConnectorTransport.Saas : ConnectorTransport.Local;
 
 	const inserted = await db.query<ConnectorRow>(
 		`INSERT INTO mcp_connections (

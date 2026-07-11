@@ -75,15 +75,15 @@ beforeAll(async () => {
 
 afterAll(() => destroyTestContext(ctx));
 
-describe('admin surface: /api/mcp-connections', () => {
+describe('admin surface: /api/connectors', () => {
 	it('rejects non-admin principals with 403', async () => {
-		const list = await ctx.app.request('/api/mcp-connections', {
+		const list = await ctx.app.request('/api/connectors', {
 			headers: authHeader(boardUserToken),
 		});
 		expect(list.status).toBe(403);
-		const create = await post('/api/mcp-connections', { name: 'x' }, boardUserToken);
+		const create = await post('/api/connectors', { name: 'x' }, boardUserToken);
 		expect(create.status).toBe(403);
-		const del = await ctx.app.request('/api/mcp-connections/00000000-0000-0000-0000-000000000000', {
+		const del = await ctx.app.request('/api/connectors/00000000-0000-0000-0000-000000000000', {
 			method: 'DELETE',
 			headers: authHeader(boardUserToken),
 		});
@@ -91,14 +91,14 @@ describe('admin surface: /api/mcp-connections', () => {
 	});
 
 	it('validates the create body', async () => {
-		const noName = await post('/api/mcp-connections', {
+		const noName = await post('/api/connectors', {
 			kind: 'saas',
 			config: { url: 'https://svc/mcp' },
 		});
 		expect(noName.status).toBe(400);
 		expect(await errorCode(noName)).toBe('INVALID_REQUEST');
 
-		const localKind = await post('/api/mcp-connections', {
+		const localKind = await post('/api/connectors', {
 			name: 'nope',
 			kind: 'local',
 			config: { command: 'npx' },
@@ -107,7 +107,7 @@ describe('admin surface: /api/mcp-connections', () => {
 		const body = (await localKind.json()) as { error: { message: string } };
 		expect(body.error.message).toContain('saas');
 
-		const noUrl = await post('/api/mcp-connections', {
+		const noUrl = await post('/api/connectors', {
 			name: 'nope',
 			kind: 'saas',
 			config: {},
@@ -117,7 +117,7 @@ describe('admin surface: /api/mcp-connections', () => {
 	});
 
 	it('creates a connector, reconfigures it on name conflict, and lists it', async () => {
-		const created = await post('/api/mcp-connections', {
+		const created = await post('/api/connectors', {
 			name: 'covfill-admin-conn',
 			display_name: 'Covfill Conn',
 			kind: 'saas',
@@ -137,7 +137,7 @@ describe('admin surface: /api/mcp-connections', () => {
 
 		// Re-adding the same name replaces config wholesale and clears auth_error.
 		await ctx.db.query(`UPDATE mcp_connections SET auth_error = 'stale' WHERE id = $1`, [row.id]);
-		const readd = await post('/api/mcp-connections', {
+		const readd = await post('/api/connectors', {
 			name: 'covfill-admin-conn',
 			kind: 'saas',
 			config: { url: 'https://two.example/mcp' },
@@ -152,28 +152,28 @@ describe('admin surface: /api/mcp-connections', () => {
 		expect(updated.config.url).toBe('https://two.example/mcp');
 		expect(updated.auth_error).toBeNull();
 
-		const list = await ctx.app.request('/api/mcp-connections', { headers: authHeader(ctx.token) });
+		const list = await ctx.app.request('/api/connectors', { headers: authHeader(ctx.token) });
 		expect(list.status).toBe(200);
 		const rows = (await list.json()).data as Array<{ name: string }>;
 		expect(rows.some((r) => r.name === 'covfill-admin-conn')).toBe(true);
 	});
 
 	it('deletes a connector and 404s on the second attempt', async () => {
-		const created = await post('/api/mcp-connections', {
+		const created = await post('/api/connectors', {
 			name: 'covfill-delete-me',
 			kind: 'saas',
 			config: { url: 'https://del.example/mcp' },
 		});
 		const id = ((await created.json()).data as { id: string }).id;
 
-		const del = await ctx.app.request(`/api/mcp-connections/${id}`, {
+		const del = await ctx.app.request(`/api/connectors/${id}`, {
 			method: 'DELETE',
 			headers: authHeader(ctx.token),
 		});
 		expect(del.status).toBe(200);
 		expect(((await del.json()) as { data: null }).data).toBeNull();
 
-		const again = await ctx.app.request(`/api/mcp-connections/${id}`, {
+		const again = await ctx.app.request(`/api/connectors/${id}`, {
 			method: 'DELETE',
 			headers: authHeader(ctx.token),
 		});
@@ -182,9 +182,9 @@ describe('admin surface: /api/mcp-connections', () => {
 	});
 });
 
-describe('project surface: /api/projects/:projectId/mcp-connections', () => {
+describe('project surface: /api/projects/:projectId/connectors', () => {
 	it('lists the global catalog and fetches a single row', async () => {
-		const created = await post(`/api/projects/${projectSlug}/mcp-connections`, {
+		const created = await post(`/api/projects/${projectSlug}/connectors`, {
 			name: 'covfill-proj-conn',
 			kind: 'saas',
 			config: { url: 'https://proj.example/mcp' },
@@ -192,20 +192,20 @@ describe('project surface: /api/projects/:projectId/mcp-connections', () => {
 		expect(created.status).toBe(201);
 		const id = ((await created.json()).data as { id: string }).id;
 
-		const list = await ctx.app.request(`/api/projects/${projectSlug}/mcp-connections`, {
+		const list = await ctx.app.request(`/api/projects/${projectSlug}/connectors`, {
 			headers: authHeader(ctx.token),
 		});
 		expect(list.status).toBe(200);
 		expect(((await list.json()).data as Array<{ id: string }>).some((r) => r.id === id)).toBe(true);
 
-		const one = await ctx.app.request(`/api/projects/${projectSlug}/mcp-connections/${id}`, {
+		const one = await ctx.app.request(`/api/projects/${projectSlug}/connectors/${id}`, {
 			headers: authHeader(ctx.token),
 		});
 		expect(one.status).toBe(200);
 		expect(((await one.json()).data as { name: string }).name).toBe('covfill-proj-conn');
 
 		const missing = await ctx.app.request(
-			`/api/projects/${projectSlug}/mcp-connections/00000000-0000-0000-0000-000000000000`,
+			`/api/projects/${projectSlug}/connectors/00000000-0000-0000-0000-000000000000`,
 			{ headers: authHeader(ctx.token) },
 		);
 		expect(missing.status).toBe(404);
@@ -219,7 +219,7 @@ describe('project surface: /api/projects/:projectId/mcp-connections', () => {
 			{ body: { name: 'x', kind: 'local', config: {} }, fragment: 'config.command' },
 		];
 		for (const { body, fragment } of cases) {
-			const res = await post(`/api/projects/${projectSlug}/mcp-connections`, body);
+			const res = await post(`/api/projects/${projectSlug}/connectors`, body);
 			expect(res.status).toBe(400);
 			const err = (await res.json()) as { error: { code: string; message: string } };
 			expect(err.error.code).toBe('INVALID_REQUEST');
@@ -228,7 +228,7 @@ describe('project surface: /api/projects/:projectId/mcp-connections', () => {
 	});
 
 	it('404s on an unknown oauth_connection_id', async () => {
-		const res = await post(`/api/projects/${projectSlug}/mcp-connections`, {
+		const res = await post(`/api/projects/${projectSlug}/connectors`, {
 			name: 'covfill-bad-oauth',
 			kind: 'saas',
 			config: { url: 'https://x/mcp' },
@@ -240,7 +240,7 @@ describe('project surface: /api/projects/:projectId/mcp-connections', () => {
 
 	it('accepts a valid oauth_connection_id', async () => {
 		const oauthId = await seedOauthConnection();
-		const res = await post(`/api/projects/${projectSlug}/mcp-connections`, {
+		const res = await post(`/api/projects/${projectSlug}/connectors`, {
 			name: 'covfill-with-oauth',
 			kind: 'saas',
 			config: { url: 'https://oauth.example/mcp' },
@@ -257,7 +257,7 @@ describe('project surface: /api/projects/:projectId/mcp-connections', () => {
 			`UPDATE projects SET container_id = 'covfill-mcp-container', container_status = 'running' WHERE id = $1`,
 			[projectId],
 		);
-		const res = await post(`/api/projects/${projectSlug}/mcp-connections`, {
+		const res = await post(`/api/projects/${projectSlug}/connectors`, {
 			name: 'covfill-local-conn',
 			kind: 'local',
 			config: { command: 'npx', args: ['-y', 'some-mcp'] },
@@ -279,14 +279,14 @@ describe('project surface: /api/projects/:projectId/mcp-connections', () => {
 	});
 
 	it('deletes a connection project-scoped and 404s when unknown', async () => {
-		const created = await post(`/api/projects/${projectSlug}/mcp-connections`, {
+		const created = await post(`/api/projects/${projectSlug}/connectors`, {
 			name: 'covfill-proj-delete',
 			kind: 'saas',
 			config: { url: 'https://projdel.example/mcp' },
 		});
 		const id = ((await created.json()).data as { id: string }).id;
 
-		const del = await ctx.app.request(`/api/projects/${projectSlug}/mcp-connections/${id}`, {
+		const del = await ctx.app.request(`/api/projects/${projectSlug}/connectors/${id}`, {
 			method: 'DELETE',
 			headers: authHeader(ctx.token),
 		});
@@ -294,7 +294,7 @@ describe('project surface: /api/projects/:projectId/mcp-connections', () => {
 		const gone = await ctx.db.query('SELECT id FROM mcp_connections WHERE id = $1', [id]);
 		expect(gone.rows).toHaveLength(0);
 
-		const again = await ctx.app.request(`/api/projects/${projectSlug}/mcp-connections/${id}`, {
+		const again = await ctx.app.request(`/api/projects/${projectSlug}/connectors/${id}`, {
 			method: 'DELETE',
 			headers: authHeader(ctx.token),
 		});
@@ -303,10 +303,10 @@ describe('project surface: /api/projects/:projectId/mcp-connections', () => {
 	});
 });
 
-describe('POST /projects/:projectId/mcp-connections/:id/revoke', () => {
+describe('POST /projects/:projectId/connectors/:id/revoke', () => {
 	it('404s on an unknown connector', async () => {
 		const res = await post(
-			`/api/projects/${projectSlug}/mcp-connections/00000000-0000-0000-0000-000000000000/revoke`,
+			`/api/projects/${projectSlug}/connectors/00000000-0000-0000-0000-000000000000/revoke`,
 			{},
 		);
 		expect(res.status).toBe(404);
@@ -314,7 +314,7 @@ describe('POST /projects/:projectId/mcp-connections/:id/revoke', () => {
 
 	it('marks the row revoked and deletes an attached oauth connection', async () => {
 		const oauthId = await seedOauthConnection();
-		const created = await post(`/api/projects/${projectSlug}/mcp-connections`, {
+		const created = await post(`/api/projects/${projectSlug}/connectors`, {
 			name: 'covfill-revoke-me',
 			kind: 'saas',
 			config: { url: 'https://revoke.example/mcp' },
@@ -322,7 +322,7 @@ describe('POST /projects/:projectId/mcp-connections/:id/revoke', () => {
 		});
 		const id = ((await created.json()).data as { id: string }).id;
 
-		const res = await post(`/api/projects/${projectSlug}/mcp-connections/${id}/revoke`, {});
+		const res = await post(`/api/projects/${projectSlug}/connectors/${id}/revoke`, {});
 		expect(res.status).toBe(200);
 		const row = (await res.json()).data as { revoked_at: string | null };
 		expect(row.revoked_at).not.toBeNull();
@@ -335,13 +335,13 @@ describe('POST /projects/:projectId/mcp-connections/:id/revoke', () => {
 	});
 
 	it('revokes a connector without an oauth connection', async () => {
-		const created = await post(`/api/projects/${projectSlug}/mcp-connections`, {
+		const created = await post(`/api/projects/${projectSlug}/connectors`, {
 			name: 'covfill-revoke-plain',
 			kind: 'saas',
 			config: { url: 'https://revoke2.example/mcp' },
 		});
 		const id = ((await created.json()).data as { id: string }).id;
-		const res = await post(`/api/projects/${projectSlug}/mcp-connections/${id}/revoke`, {});
+		const res = await post(`/api/projects/${projectSlug}/connectors/${id}/revoke`, {});
 		expect(res.status).toBe(200);
 		const dbRow = await ctx.db.query<{ revoked_at: string | null }>(
 			'SELECT revoked_at FROM mcp_connections WHERE id = $1',

@@ -1280,8 +1280,8 @@ describe('MCP skills (propose / list / get / create / full_text_search)', () => 
 });
 
 describe('MCP MCP-connection tools', () => {
-	it('add_mcp_connection (saas) then list and remove round-trip', async () => {
-		const added = (await callTool('add_mcp_connection', {
+	it('add_connector (saas) then list and remove round-trip', async () => {
+		const added = (await callTool('add_connector', {
 			project: projectId,
 			name: 'extra-saas',
 			kind: 'saas',
@@ -1291,7 +1291,7 @@ describe('MCP MCP-connection tools', () => {
 		expect(added.id).toBeTruthy();
 		expect(added.install_status).toBe('installed');
 
-		const listed = (await callTool('list_mcp_connections', { project: projectId })) as Array<{
+		const listed = (await callTool('list_connectors', { project: projectId })) as Array<{
 			id: string;
 			name: string;
 			oauth_status: string;
@@ -1300,15 +1300,15 @@ describe('MCP MCP-connection tools', () => {
 		expect(row).toBeDefined();
 		expect(row?.oauth_status).toBe('none');
 
-		const removed = (await callTool('remove_mcp_connection', {
+		const removed = (await callTool('remove_connector', {
 			project: projectId,
 			id: added.id,
 		})) as { removed?: boolean; error?: string };
 		expect(removed.removed).toBe(true);
 	});
 
-	it('add_mcp_connection (local) registers with pending status', async () => {
-		const added = (await callTool('add_mcp_connection', {
+	it('add_connector (local) registers with pending status', async () => {
+		const added = (await callTool('add_connector', {
 			project: projectId,
 			name: 'extra-local',
 			kind: 'local',
@@ -1318,8 +1318,8 @@ describe('MCP MCP-connection tools', () => {
 		expect(added.note).toContain('pending');
 	});
 
-	it('add_mcp_connection rejects a saas config without url', async () => {
-		const result = (await callTool('add_mcp_connection', {
+	it('add_connector rejects a saas config without url', async () => {
+		const result = (await callTool('add_connector', {
 			project: projectId,
 			name: 'bad-saas',
 			kind: 'saas',
@@ -1328,8 +1328,8 @@ describe('MCP MCP-connection tools', () => {
 		expect(result.error).toContain('config.url');
 	});
 
-	it('add_mcp_connection rejects a local config without command', async () => {
-		const result = (await callTool('add_mcp_connection', {
+	it('add_connector rejects a local config without command', async () => {
+		const result = (await callTool('add_connector', {
 			project: projectId,
 			name: 'bad-local',
 			kind: 'local',
@@ -1338,8 +1338,8 @@ describe('MCP MCP-connection tools', () => {
 		expect(result.error).toContain('config.command');
 	});
 
-	it('remove_mcp_connection errors for an unknown id', async () => {
-		const result = (await callTool('remove_mcp_connection', {
+	it('remove_connector errors for an unknown id', async () => {
+		const result = (await callTool('remove_connector', {
 			project: projectId,
 			id: '00000000-0000-0000-0000-000000000000',
 		})) as ToolResult;
@@ -1355,7 +1355,7 @@ describe('MCP MCP-connection tools', () => {
 	});
 
 	it('test_connector refuses a non-saas connector', async () => {
-		const added = (await callTool('add_mcp_connection', {
+		const added = (await callTool('add_connector', {
 			project: projectId,
 			name: 'local-for-test',
 			kind: 'local',
@@ -1369,7 +1369,7 @@ describe('MCP MCP-connection tools', () => {
 	});
 
 	it('test_connector reports a missing url on a saas connector with no url', async () => {
-		// add_mcp_connection enforces url for saas, so insert a urless saas row directly.
+		// add_connector enforces url for saas, so insert a urless saas row directly.
 		const r = await db.query<{ id: string }>(
 			`INSERT INTO mcp_connections (name, kind, config, install_status)
 			 VALUES ('urless-saas', 'saas'::mcp_connection_kind, '{}'::jsonb, 'installed'::mcp_install_status)
@@ -1464,13 +1464,13 @@ describe('MCP MCP-connection tools', () => {
 		expect(result.secret_name).toBe('BROKEN_TOKEN');
 	});
 
-	it('list_mcp_connections surfaces oauth_status=active and rest_auth for a host-scoped active connector', async () => {
+	it('list_connectors surfaces oauth_status=active and rest_auth for a host-scoped active connector', async () => {
 		await seedOauthConnector({
 			name: 'active-conn',
 			hosts: ['api.example.com'],
 			activated: true,
 		});
-		const rows = (await callTool('list_mcp_connections', { project: projectId })) as Array<{
+		const rows = (await callTool('list_connectors', { project: projectId })) as Array<{
 			name: string;
 			oauth_status: string;
 			rest_auth: { placeholder: string; allowed_hosts: string[] } | null;

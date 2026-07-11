@@ -327,7 +327,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	},
 
 	// MCP connections
-	list_mcp_connections: {
+	list_connectors: {
 		category: 'MCP connections',
 		returns:
 			'An array of connector rows with a derived `oauth_status` (`active` | `pending` | `failed` | `revoked` | `none`) and, for an active OAuth-backed connector, `rest_auth` = `{ placeholder, allowed_hosts, scopes }` (else `null`). Other fields include `id`, `name`, `display_name`, `kind`, `config`, `project_id`, `oauth_account_label`, `install_status`, `install_error`, `skill_id`, `created_by_task_id`, `activated_at`, `revoked_at`, `auth_error`. Scoped to your project: its own connectors plus global ("all projects") ones, with a project connector shadowing a global one of the same name.',
@@ -337,12 +337,12 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 		returns:
 			'`{ ok, status, mcp_url, secret_name, token_prefix, token_length, www_authenticate, body_excerpt, hint }` from a direct server-side probe of the MCP URL. Returns `{ error }` if the connector is missing, not `saas`, or its token cannot be decrypted.',
 	},
-	add_mcp_connection: {
+	add_connector: {
 		category: 'MCP connections',
 		returns:
 			'`{ id, install_status, note }`, or `{ error }` if `config.url` (saas) / `config.command` (local) is missing. Upserts by `name` within your project.',
 	},
-	remove_mcp_connection: {
+	remove_connector: {
 		category: 'MCP connections',
 		returns:
 			"`{ removed: true, id }`, or `{ error }` if the connection is not found. Removes only your project's own connector (never a global or another project's).",
