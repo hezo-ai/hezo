@@ -391,7 +391,9 @@ export function MarkdownProse({
 						<Tooltip
 							content={
 								<span className="flex flex-col gap-1">
-									<span>{taskTitle}</span>
+									<span>
+										<strong>{taskIdentifier.toUpperCase()}:</strong> {taskTitle}
+									</span>
 									{taskStatus ? (
 										<TaskStatusBadge
 											status={taskStatus}
