@@ -435,7 +435,7 @@ export function CommentsSection({
 														<a
 															href={`#comment-${parent.public_id}`}
 															onClick={jumpToComment(parent.public_id)}
-															className="flex items-center gap-1 text-[11px] text-text-3 hover:text-text-1"
+															className="flex shrink-0 items-center gap-1 whitespace-nowrap text-[11px] text-text-3 hover:text-text-1"
 															data-testid="replying-to"
 														>
 															<CornerDownRight className="w-3 h-3" />
