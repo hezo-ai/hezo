@@ -77,8 +77,13 @@ test.describe('Task mention — status pill tooltip & terminal strikethrough', (
 		// content. Scope to the role="tooltip" panel — Radix also renders a hidden
 		// aria duplicate of the content that carries the same testId.
 		await mention.hover();
-		const pill = page.getByRole('tooltip').getByTestId('task-mention-status-pill');
+		const tooltip = page.getByRole('tooltip');
+		const pill = tooltip.getByTestId('task-mention-status-pill');
 		await expect(pill).toBeVisible({ timeout: 20_000 });
 		await expect(pill).toHaveText('Cancelled');
+		// The tooltip prefixes the task title with the bold task identifier.
+		await expect(tooltip).toContainText(
+			`${target.identifier.toUpperCase()}: Cancelled target task`,
+		);
 	});
 });
