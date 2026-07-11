@@ -1,7 +1,11 @@
 import { generateMnemonic } from '@hezo/shared';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, expect, test } from 'vitest';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, expect, test, vi } from 'vitest';
 import { MasterKeyForm } from '../src/components/master-key-gate';
+
+// Mirror the timing constants in master-key-gate.tsx.
+const SAVE_COUNTDOWN_SECONDS = 5;
+const REGEN_ANIM_MS = 1200;
 
 /** Reveal the grid, then read the 12 words back (strip the leading position number). */
 function revealedPhrase(): string {
@@ -12,8 +16,26 @@ function revealedPhrase(): string {
 		.join(' ');
 }
 
+/**
+ * Copy the generated key, run out the save countdown, and click Continue to reach
+ * the confirm step. Requires fake timers (the countdown ticks via chained 1s
+ * timeouts, flushed one render at a time).
+ */
+async function copyAndContinue(): Promise<void> {
+	fireEvent.click(screen.getByRole('button', { name: /copy to clipboard/i }));
+	// Resolve the async clipboard write so Continue replaces the copy button.
+	await act(async () => {});
+	for (let i = 0; i <= SAVE_COUNTDOWN_SECONDS; i++) {
+		await act(async () => {
+			vi.advanceTimersByTime(1000);
+		});
+	}
+	fireEvent.click(screen.getByRole('button', { name: /^continue$/i }));
+}
+
 afterEach(() => {
 	cleanup();
+	vi.useRealTimers();
 	// Remove any clipboard stub so it doesn't leak to other specs in the worker.
 	Reflect.deleteProperty(navigator, 'clipboard');
 });
@@ -28,11 +50,12 @@ test('setup generates a 12-word master key in a numbered grid', async () => {
 	for (let i = 0; i < words.length; i++) {
 		expect(words[i].textContent).toContain(String(i + 1));
 	}
-	// Copy affordance is present once the phrase is shown.
+	// Copy affordance is present once the phrase is shown; Continue is gated on it.
 	expect(screen.getByRole('button', { name: /copy to clipboard/i })).toBeTruthy();
+	expect(screen.queryByRole('button', { name: /continue/i })).toBeNull();
 });
 
-test('copy writes the space-joined phrase and toggles the label', async () => {
+test('copy writes the space-joined phrase and reveals Continue', async () => {
 	const calls: string[] = [];
 	Object.defineProperty(navigator, 'clipboard', {
 		value: {
@@ -52,7 +75,10 @@ test('copy writes the space-joined phrase and toggles the label', async () => {
 
 	expect(calls).toHaveLength(1);
 	expect(calls[0].split(' ')).toHaveLength(12);
-	await screen.findByText('Copied!');
+	// Copying swaps the copy button out for Continue (initially disabled by the countdown).
+	const cont = (await screen.findByRole('button', { name: /continue/i })) as HTMLButtonElement;
+	expect(cont.disabled).toBe(true);
+	expect(screen.queryByRole('button', { name: /copy to clipboard/i })).toBeNull();
 });
 
 test('unlock rejects an invalid phrase inline without authenticating', async () => {
@@ -99,53 +125,63 @@ test('the eye toggle reveals and re-hides the words', async () => {
 });
 
 test('the confirm step shows a masked entry field with a toggle', async () => {
+	vi.useFakeTimers();
 	render(<MasterKeyForm state="unset" embedded />);
 	fireEvent.click(screen.getByRole('button', { name: /generate master key/i }));
-	await screen.findAllByTestId('mnemonic-word');
-	fireEvent.click(screen.getByRole('button', { name: /^continue$/i }));
+	screen.getAllByTestId('mnemonic-word');
+	await copyAndContinue();
 
-	const field = (await screen.findByLabelText(/master key/i)) as HTMLInputElement;
+	const field = screen.getByLabelText(/master key/i) as HTMLInputElement;
 	expect(field.type).toBe('password');
 	expect(screen.getByRole('button', { name: /^show key$/i })).toBeTruthy();
 });
 
 test('the confirm step rejects a phrase that does not match the generated key', async () => {
+	vi.useFakeTimers();
 	render(<MasterKeyForm state="unset" embedded />);
 	fireEvent.click(screen.getByRole('button', { name: /generate master key/i }));
-	await screen.findAllByTestId('mnemonic-word');
-	fireEvent.click(screen.getByRole('button', { name: /^continue$/i }));
+	screen.getAllByTestId('mnemonic-word');
+	await copyAndContinue();
 
 	// A different valid phrase must not satisfy the paste-back check (no network hit).
-	fireEvent.change(await screen.findByLabelText(/master key/i), {
+	fireEvent.change(screen.getByLabelText(/master key/i), {
 		target: { value: generateMnemonic() },
 	});
-	fireEvent.click(screen.getByRole('button', { name: /set key & continue/i }));
+	fireEvent.click(screen.getByRole('button', { name: /confirm key and continue/i }));
+	await act(async () => {});
 
-	await screen.findByText(/doesn't match your master key/i);
+	expect(screen.getByText(/doesn't match your master key/i)).toBeTruthy();
 });
 
 test('Back returns from confirm to the generated key', async () => {
+	vi.useFakeTimers();
 	render(<MasterKeyForm state="unset" embedded />);
 	fireEvent.click(screen.getByRole('button', { name: /generate master key/i }));
-	await screen.findAllByTestId('mnemonic-word');
-	fireEvent.click(screen.getByRole('button', { name: /^continue$/i }));
-	await screen.findByLabelText(/master key/i);
+	screen.getAllByTestId('mnemonic-word');
+	await copyAndContinue();
+	expect(screen.getByLabelText(/master key/i)).toBeTruthy();
 
 	fireEvent.click(screen.getByRole('button', { name: /^back$/i }));
 
-	expect(await screen.findAllByTestId('mnemonic-word')).toHaveLength(12);
+	expect(screen.getAllByTestId('mnemonic-word')).toHaveLength(12);
+	// Already copied earlier, so the save gate stays open — Continue is available again.
 	expect(screen.getByRole('button', { name: /^continue$/i })).toBeTruthy();
 });
 
-test('Generate a new key replaces the phrase and re-masks it', async () => {
+test('the refresh control replaces the phrase and re-masks it', async () => {
+	vi.useFakeTimers();
 	render(<MasterKeyForm state="unset" embedded />);
 	fireEvent.click(screen.getByRole('button', { name: /generate master key/i }));
-	await screen.findAllByTestId('mnemonic-word');
+	screen.getAllByTestId('mnemonic-word');
 	const first = revealedPhrase();
 
 	fireEvent.click(screen.getByRole('button', { name: /generate a new key/i }));
+	// The words shimmer as placeholders, then the fresh phrase swaps in after the animation.
+	await act(async () => {
+		vi.advanceTimersByTime(REGEN_ANIM_MS);
+	});
 
-	const words = await screen.findAllByTestId('mnemonic-word');
+	const words = screen.getAllByTestId('mnemonic-word');
 	expect(words).toHaveLength(12);
 	// Re-masked after regenerating.
 	expect(words.every((w) => (w.textContent ?? '').includes('•'))).toBe(true);

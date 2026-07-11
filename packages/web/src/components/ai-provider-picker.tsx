@@ -1,9 +1,9 @@
 import { AI_PROVIDER_INFO, type AiProvider } from '@hezo/shared';
-import { ArrowLeft } from 'lucide-react';
 import { useState } from 'react';
 import { ProviderCardGrid } from './provider-card-grid';
 import { ADD_PROVIDER_ORDER, ProviderConfigForm } from './provider-config-form';
 import { ProviderLogo } from './provider-logos';
+import { BackLink } from './ui/back-link';
 
 /**
  * Onboarding AI-provider setup: a grid of provider cards. Picking one drills
@@ -21,16 +21,11 @@ export function AiProviderPicker() {
 
 	const info = AI_PROVIDER_INFO[provider];
 	return (
-		<div className="flex flex-col gap-4">
+		// Keep the credential entry pane a comfortable reading width on desktop
+		// rather than stretching across the full onboarding card.
+		<div className="mx-auto flex w-full max-w-md flex-col gap-4">
+			<BackLink onClick={() => setProvider(null)} />
 			<div className="flex items-center gap-2">
-				<button
-					type="button"
-					onClick={() => setProvider(null)}
-					className="shrink-0 text-text-2 hover:text-text-1 p-2 -m-2"
-					aria-label="Back"
-				>
-					<ArrowLeft className="w-4 h-4" />
-				</button>
 				<span className="flex h-6 w-6 shrink-0 items-center justify-center text-text-1">
 					<ProviderLogo provider={provider} className="h-5 w-5" />
 				</span>

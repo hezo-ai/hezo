@@ -7,7 +7,7 @@ import { queryKeys } from '../lib/query-keys';
 import { MasterKeyForm, VaultShell } from './master-key-gate';
 import { PasswordSetForm } from './password-set-form';
 import { Button } from './ui/button';
-import { Logo } from './ui/logo';
+import { PageLogo } from './ui/page-logo';
 import { PasswordInput } from './ui/password-input';
 
 type Mode = 'login' | 'master-key' | 'reset';
@@ -70,7 +70,8 @@ export function PasswordLogin() {
 
 	if (mode === 'reset') {
 		return (
-			<div className="min-h-screen flex items-center justify-center bg-surface px-4">
+			<div className="relative min-h-screen flex items-center justify-center bg-surface px-4">
+				<PageLogo />
 				<div
 					data-testid="reset-password"
 					className="w-full max-w-sm rounded-lg border border-border bg-surface p-6 sm:p-8 shadow-sm"
@@ -86,13 +87,13 @@ export function PasswordLogin() {
 	}
 
 	return (
-		<div className="min-h-screen flex items-center justify-center bg-surface px-4">
+		<div className="relative min-h-screen flex items-center justify-center bg-surface px-4">
+			<PageLogo />
 			<div
 				data-testid="password-login"
 				className="w-full max-w-sm rounded-lg border border-border bg-surface p-6 sm:p-8 shadow-sm"
 			>
 				<div className="mb-6 flex flex-col items-center gap-2 text-center">
-					<Logo size="lg" wordmark className="mb-1" />
 					<h2 className="text-lg font-semibold text-text-1">Sign in</h2>
 					<p className="text-sm text-text-2">Enter your admin password to continue.</p>
 				</div>
