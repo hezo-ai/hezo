@@ -71,11 +71,13 @@ for (const { name, width, height } of [
 		await button.click();
 
 		// The pill hides once the scroller reaches the top, and the real scroll
-		// position confirms the content genuinely moved back up.
+		// position confirms the content genuinely moved back up. A *single* click
+		// must land at the very top (0), not merely within the button's hide
+		// threshold: the rAF-driven scroll always finishes at 0, where the old
+		// native `scrollTo({ behavior: 'smooth' })` could stall partway on mobile
+		// and need a second tap.
 		await expect(button).toBeHidden({ timeout: 10000 });
-		await expect
-			.poll(() => main.evaluate((el) => el.scrollTop), { timeout: 10000 })
-			.toBeLessThanOrEqual(200);
+		await expect.poll(() => main.evaluate((el) => el.scrollTop), { timeout: 10000 }).toBe(0);
 		await expect(page.getByRole('heading', { name: DOC })).toBeInViewport();
 	});
 }
