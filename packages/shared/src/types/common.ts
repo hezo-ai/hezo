@@ -1057,7 +1057,7 @@ export const AuditEntityType = {
 } as const;
 export type AuditEntityType = (typeof AuditEntityType)[keyof typeof AuditEntityType];
 
-export const ConnectorTransport = { Saas: 'saas', Local: 'local' } as const;
+export const ConnectorTransport = { Saas: 'saas', Local: 'local', Api: 'api' } as const;
 export type ConnectorTransport = (typeof ConnectorTransport)[keyof typeof ConnectorTransport];
 
 export const McpInstallStatus = {

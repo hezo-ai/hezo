@@ -1,0 +1,13 @@
+-- Add the `api` connector transport to the `mcp_connection_kind` enum. This is a
+-- third connector transport alongside `saas` (remote MCP HTTP) and `local` (stdio
+-- MCP): a credentialed REST API the agent calls directly through the egress proxy,
+-- with no MCP server. An `api` connector has no MCP descriptor — it is surfaced via
+-- `list_connectors` (as an `api_auth` block) and authenticated at egress only.
+--
+-- This is a purely additive enum extension. Postgres 12+ (PGlite is PG16) permits
+-- ALTER TYPE ... ADD VALUE inside a transaction as long as the new value is not
+-- *used* in the same transaction — this migration only adds it, so it is safe under
+-- the runner's per-migration BEGIN/COMMIT (same pattern as 007_add_xai_provider).
+-- Existing `mcp_connections` rows keep their `kind`; the new value simply becomes
+-- selectable for future inserts.
+ALTER TYPE mcp_connection_kind ADD VALUE IF NOT EXISTS 'api';
