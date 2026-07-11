@@ -98,10 +98,13 @@ test('setup → password → provider, then restart → unlock → password logi
 	const phrase = (await words.allTextContents())
 		.map((t) => t.replace(/^\s*\d+\s*/, '').trim())
 		.join(' ');
-	// Confirm step: paste the phrase back to prove it was captured, then commit.
+	// Continue only appears after copying the key, and stays disabled through a
+	// short save countdown; clicking with an exact "Continue" name waits it out.
+	await page.getByRole('button', { name: /copy to clipboard/i }).click();
 	await page.getByRole('button', { name: 'Continue', exact: true }).click();
+	// Confirm step: paste the phrase back to prove it was captured, then commit.
 	await page.getByLabel(/master key/i).fill(phrase);
-	await page.getByRole('button', { name: /set key & continue/i }).click();
+	await page.getByRole('button', { name: /confirm key and continue/i }).click();
 
 	// The unlock reveal plays, then the wizard advances to the dedicated
 	// create-password step (the mnemonic only unlocked — no session yet).

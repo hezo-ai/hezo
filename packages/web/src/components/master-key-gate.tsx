@@ -4,27 +4,44 @@ import {
 	normalizeMnemonic,
 	validateMnemonic,
 } from '@hezo/shared';
-import { AlertTriangle, Eye, EyeOff, KeyRound, Loader2, Lock, ShieldCheck } from 'lucide-react';
+import {
+	AlertTriangle,
+	Copy,
+	Eye,
+	EyeOff,
+	KeyRound,
+	Loader2,
+	Lock,
+	RefreshCw,
+	ShieldCheck,
+} from 'lucide-react';
 import type { ReactNode } from 'react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { authenticateWithMnemonic } from '../lib/auth';
 import { copyToClipboard } from '../lib/clipboard';
 import { queryClient } from '../lib/query-client';
 import { queryKeys } from '../lib/query-keys';
+import { BackLink } from './ui/back-link';
 import { Button } from './ui/button';
-import { Logo } from './ui/logo';
+import { PageLogo } from './ui/page-logo';
 import { PasswordInput } from './ui/password-input';
+import { Tooltip } from './ui/tooltip';
 
 const REVEAL_STRIPS = 11;
+/** How long the words shimmer as placeholders before a regenerated phrase appears. */
+const REGEN_ANIM_MS = 1200;
+/** Seconds Continue stays disabled after the key is copied, nudging the user to actually save it. */
+const SAVE_COUNTDOWN_SECONDS = 5;
 
 /**
- * Full-viewport "pre-active vault" chrome. Always dark (via `.vault-surface`),
- * visually distinct from the running app so it reads as "the instance is not
- * live yet". Used by the master-key setup + unlock + recovery screens.
+ * Full-viewport setup / unlock chrome. Follows the active theme (light or dark)
+ * like the rest of the app; the card sits centered under the brand logo. Used by
+ * the master-key setup + unlock + recovery screens.
  */
 export function VaultShell({ children }: { children: ReactNode }) {
 	return (
-		<div className="vault-surface min-h-screen flex flex-col items-center justify-center bg-bg px-4 py-10">
+		<div className="relative min-h-screen flex flex-col items-center justify-center bg-bg px-4 py-10">
+			<PageLogo />
 			<div className="w-full max-w-md">{children}</div>
 		</div>
 	);
@@ -65,21 +82,57 @@ export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFor
 	const [generatedKey, setGeneratedKey] = useState<string | null>(null);
 	const [error, setError] = useState('');
 	const [loading, setLoading] = useState(false);
-	const [copied, setCopied] = useState(false);
 	const [revealing, setRevealing] = useState(false);
 	// Setup is a two-step flow: generate + save the key, then paste it back to
 	// confirm before it's committed. `phase` only matters when `isUnset`.
 	const [phase, setPhase] = useState<'generate' | 'confirm'>('generate');
 	// The generated words start masked (password-style); the eye toggle reveals them.
 	const [revealed, setRevealed] = useState(false);
+	// The word grid shimmers as placeholders while a regenerated phrase is prepared.
+	const [regenerating, setRegenerating] = useState(false);
+	// Continue only appears once the user has copied the key, then stays disabled
+	// for a short countdown so they actually stash it before advancing.
+	const [copyClicked, setCopyClicked] = useState(false);
+	const [countdown, setCountdown] = useState(SAVE_COUNTDOWN_SECONDS);
+
+	const regenTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+	useEffect(
+		() => () => {
+			if (regenTimer.current) clearTimeout(regenTimer.current);
+		},
+		[],
+	);
 
 	const isUnset = state === 'unset';
 
+	// Tick the post-copy countdown down to zero, which enables Continue.
+	useEffect(() => {
+		if (!copyClicked || countdown <= 0) return;
+		const id = setTimeout(() => setCountdown((c) => c - 1), 1000);
+		return () => clearTimeout(id);
+	}, [copyClicked, countdown]);
+
+	function resetSaveGate() {
+		setCopyClicked(false);
+		setCountdown(SAVE_COUNTDOWN_SECONDS);
+	}
+
 	function handleGenerate() {
-		setGeneratedKey(generateMnemonic());
-		setRevealed(false);
-		setCopied(false);
 		setError('');
+		setRevealed(false);
+		resetSaveGate();
+		const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+		// First generation (nothing to animate) or reduced motion: swap instantly.
+		if (!generatedKey || reduceMotion) {
+			setGeneratedKey(generateMnemonic());
+			return;
+		}
+		// Regenerating: shimmer the existing grid, then reveal the fresh phrase.
+		setRegenerating(true);
+		regenTimer.current = setTimeout(() => {
+			setGeneratedKey(generateMnemonic());
+			setRegenerating(false);
+		}, REGEN_ANIM_MS);
 	}
 
 	function goToConfirm() {
@@ -138,10 +191,11 @@ export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFor
 	}
 
 	async function handleCopy() {
-		if (await copyToClipboard(generatedKey ?? '')) {
-			setCopied(true);
-			setTimeout(() => setCopied(false), 2000);
-		}
+		// Best-effort copy; the click itself opens the save gate either way so the
+		// user is never stranded if the clipboard API is unavailable.
+		await copyToClipboard(generatedKey ?? '');
+		setCopyClicked(true);
+		setCountdown(SAVE_COUNTDOWN_SECONDS);
 	}
 
 	const heading = !isUnset
@@ -152,24 +206,34 @@ export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFor
 	const subtitle = !isUnset
 		? 'The instance is locked. Enter your 12-word master key to bring it back online.'
 		: phase === 'confirm'
-			? 'Paste the 12 words back so we know you have the full phrase. You can go back and generate a new one.'
-			: 'The one key that encrypts your data and unlocks this instance.';
+			? 'Paste the 12 words back so we know you have the full phrase. You can always go back.'
+			: // Generate phase: the callout below the heading replaces a one-line subtitle.
+				null;
 
 	// The generate-phase word grid + the confirm/unlock entry field.
 	const showGenerated = isUnset && phase === 'generate' && generatedKey !== null;
 	const showEntry = !isUnset || phase === 'confirm';
 
+	// During regeneration the words are hidden behind shimmering placeholders.
+	const gridWords = regenerating
+		? Array.from({ length: 12 }, () => '')
+		: (generatedKey ?? '').split(' ');
+
 	return (
 		<>
 			{revealing && <UnlockReveal onDone={finishTransition} />}
+			{isUnset && phase === 'confirm' && (
+				<div className="mb-3">
+					<BackLink onClick={goBackToGenerate} />
+				</div>
+			)}
 			{!embedded && (
 				<div className="flex flex-col items-center gap-2 mb-6">
-					<Logo size="lg" wordmark className="mb-1" />
 					<div className="p-3 rounded-full bg-surface-2 border border-border-strong text-accent-soft-fg">
 						{isUnset ? <KeyRound className="w-6 h-6" /> : <ShieldCheck className="w-6 h-6" />}
 					</div>
 					<h2 className="text-lg font-semibold text-text-1">{heading}</h2>
-					<p className="text-sm text-text-2 text-center">{subtitle}</p>
+					{subtitle && <p className="text-sm text-text-2 text-center">{subtitle}</p>}
 				</div>
 			)}
 
@@ -182,14 +246,59 @@ export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFor
 				)}
 
 				{showGenerated && (
+					<div className="flex flex-col gap-2.5 rounded-md border border-warning-soft-fg/25 bg-warning-soft px-3 py-3 text-[12.5px] leading-relaxed text-warning-soft-fg">
+						<div className="flex gap-2.5 items-start">
+							<KeyRound className="w-4 h-4 shrink-0 mt-0.5" />
+							<span>
+								<span className="font-semibold text-text-1">
+									Encrypts everything, unlocks every restart.
+								</span>{' '}
+								This key protects all data in your instance and brings it back online after each
+								restart.
+							</span>
+						</div>
+						<div className="flex gap-2.5 items-start">
+							<AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+							<span>
+								<span className="font-semibold text-text-1">
+									No one can recover it — not even Hezo.
+								</span>{' '}
+								Lose these words and your data is locked away for good.
+							</span>
+						</div>
+						<div className="flex gap-2.5 items-start">
+							<Lock className="w-4 h-4 shrink-0 mt-0.5" />
+							<span>
+								<span className="font-semibold text-text-1">Save it now</span> in a password manager
+								or another safe place — you'll confirm it on the next step.
+							</span>
+						</div>
+					</div>
+				)}
+
+				{showGenerated && (
 					<div className="flex flex-col gap-3">
 						<div className="flex items-center justify-between">
-							<span className="text-eyebrow text-text-2">Your master key</span>
+							<div className="flex items-center gap-2">
+								<span className="text-eyebrow text-text-2">Your master key</span>
+								<Tooltip content="Generate a new master key">
+									<button
+										type="button"
+										onClick={handleGenerate}
+										disabled={regenerating}
+										aria-label="Generate a new key"
+										className="text-text-3 hover:text-text-1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+									>
+										<RefreshCw className={`w-3.5 h-3.5 ${regenerating ? 'animate-spin' : ''}`} />
+									</button>
+								</Tooltip>
+							</div>
 							<button
 								type="button"
 								onClick={() => setRevealed((v) => !v)}
+								disabled={regenerating}
 								aria-label={revealed ? 'Hide key' : 'Show key'}
-								className="flex items-center gap-1.5 text-xs text-text-3 hover:text-text-1"
+								className="flex items-center gap-1.5 text-xs text-text-3 hover:text-text-1 disabled:opacity-40"
 							>
 								{revealed ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
 								{revealed ? 'Hide' : 'Show'}
@@ -199,7 +308,7 @@ export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFor
 							className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2"
 							aria-label="Master key"
 						>
-							{(generatedKey ?? '').split(' ').map((word, index) => (
+							{gridWords.map((word, index) => (
 								<li
 									// biome-ignore lint/suspicious/noArrayIndexKey: fixed-length, never-reordered list with possibly-repeating words; position is the stable identity
 									key={index}
@@ -209,43 +318,19 @@ export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFor
 									<span className="w-4 text-right text-[10px] tabular-nums text-text-3 select-none">
 										{index + 1}
 									</span>
-									<span className="font-mono text-xs text-text-1">
-										{revealed ? word : '••••••'}
-									</span>
+									{regenerating ? (
+										<span
+											className="h-3 flex-1 rounded bg-surface-3 animate-pulse"
+											aria-hidden="true"
+										/>
+									) : (
+										<span className="font-mono text-xs text-text-1">
+											{revealed ? word : '••••••'}
+										</span>
+									)}
 								</li>
 							))}
 						</ol>
-						<Button type="button" variant="ghost" size="sm" onClick={handleCopy}>
-							{copied ? 'Copied!' : 'Copy to clipboard'}
-						</Button>
-						<div className="flex flex-col gap-2.5 rounded-md border border-warning-soft-fg/25 bg-warning-soft px-3 py-3 text-[12.5px] leading-relaxed text-warning-soft-fg">
-							<div className="flex gap-2.5 items-start">
-								<KeyRound className="w-4 h-4 shrink-0 mt-0.5" />
-								<span>
-									<span className="font-semibold text-text-1">
-										Encrypts everything, unlocks every restart.
-									</span>{' '}
-									This key protects all data in your instance and brings it back online after each
-									restart.
-								</span>
-							</div>
-							<div className="flex gap-2.5 items-start">
-								<AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-								<span>
-									<span className="font-semibold text-text-1">
-										No one can recover it — not even Hezo.
-									</span>{' '}
-									Lose these words and your data is locked away for good.
-								</span>
-							</div>
-							<div className="flex gap-2.5 items-start">
-								<Lock className="w-4 h-4 shrink-0 mt-0.5" />
-								<span>
-									<span className="font-semibold text-text-1">Save it now</span> in a password
-									manager or another safe place — you'll confirm it on the next step.
-								</span>
-							</div>
-						</div>
 					</div>
 				)}
 
@@ -272,27 +357,30 @@ export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFor
 
 				{error && <p className="text-sm text-danger">{error}</p>}
 
-				{showGenerated && (
-					<div className="flex flex-col gap-2">
-						<Button type="button" onClick={goToConfirm}>
-							Continue
+				{showGenerated &&
+					(copyClicked ? (
+						<div className="flex flex-col gap-1.5">
+							<Button type="button" onClick={goToConfirm} disabled={countdown > 0}>
+								{countdown > 0 ? `Continue (${countdown})` : 'Continue'}
+							</Button>
+							{countdown > 0 && (
+								<p className="text-center text-xs text-text-3">
+									Take a moment to save your key somewhere safe.
+								</p>
+							)}
+						</div>
+					) : (
+						<Button type="button" onClick={handleCopy} disabled={regenerating}>
+							<Copy className="w-4 h-4" />
+							Copy to clipboard
 						</Button>
-						<Button type="button" variant="ghost" size="sm" onClick={handleGenerate}>
-							Generate a new key
-						</Button>
-					</div>
-				)}
+					))}
 
 				{isUnset && phase === 'confirm' && (
-					<div className="flex flex-col gap-2">
-						<Button type="submit" disabled={loading || !key.trim()}>
-							{loading && <Loader2 className="w-4 h-4 animate-spin" />}
-							Set key & continue
-						</Button>
-						<Button type="button" variant="ghost" size="sm" onClick={goBackToGenerate}>
-							Back
-						</Button>
-					</div>
+					<Button type="submit" disabled={loading || !key.trim()}>
+						{loading && <Loader2 className="w-4 h-4 animate-spin" />}
+						Confirm key and continue
+					</Button>
 				)}
 
 				{!isUnset && (

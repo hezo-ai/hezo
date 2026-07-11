@@ -9,6 +9,7 @@ import { queryKeys } from '../../lib/query-keys';
 import { AiProviderPicker } from '../ai-provider-picker';
 import { MasterKeyForm, VaultShell } from '../master-key-gate';
 import { PasswordSetForm } from '../password-set-form';
+import { PageLogo } from '../ui/page-logo';
 import { Stepper, type StepStatus } from './stepper';
 
 export type WizardStep = 'password' | 'ai-provider' | 'done';
@@ -27,7 +28,8 @@ function WizardShell({ currentStep, children }: WizardShellProps) {
 	const passwordStatus: StepStatus = currentStep === 'password' ? 'current' : 'complete';
 	const aiProviderStatus: StepStatus = currentStep === 'ai-provider' ? 'current' : 'pending';
 	return (
-		<div className="min-h-screen flex flex-col items-center px-4 py-8 sm:py-16 bg-surface">
+		<div className="relative min-h-screen flex flex-col items-center px-4 py-8 sm:py-16 bg-surface">
+			<PageLogo />
 			<div className="w-full max-w-2xl">
 				<div className="text-center mb-6 sm:mb-10">
 					<h1 className="text-xl sm:text-2xl font-semibold mb-2">Welcome to Hezo</h1>
@@ -51,7 +53,7 @@ function WizardShell({ currentStep, children }: WizardShellProps) {
 /** Create/confirm the admin password. On success the session is stored and the gate advances. */
 function PasswordStep() {
 	return (
-		<div data-testid="setup-step-password">
+		<div data-testid="setup-step-password" className="mx-auto max-w-md">
 			<h2 className="text-base sm:text-lg font-semibold mb-1">Create an admin password</h2>
 			<p className="text-[13px] text-text-2 mb-5">
 				You'll sign in with this password from now on. If you forget it, you can reset it with your
