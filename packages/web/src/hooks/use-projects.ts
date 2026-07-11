@@ -42,6 +42,9 @@ export interface Project {
 	/** Most recent task update, falling back to the project's creation time. */
 	last_activity_at: string;
 	created_at: string;
+	/** When the project was archived (soft-deleted), or null/absent when active.
+	 * Archived projects are excluded from the default index that backs the rail. */
+	archived_at?: string | null;
 	/** Signed URL for the project's icon image, or null when none is set. */
 	icon_url?: string | null;
 	/** When the icon was last set (drives the `<img>` cache version), or null. */
@@ -206,6 +209,37 @@ export function useDeleteProject() {
 		mutationFn: (projectId: string) => api.delete(`/api/projects/${projectId}`),
 		onSuccess: () =>
 			queryClient.invalidateQueries({ queryKey: queryKeys.projects.all(), exact: true }),
+	});
+}
+
+/** Archived projects (global settings "Archived projects" page). Superuser-only. */
+export function useArchivedProjects() {
+	return useQuery({
+		queryKey: queryKeys.projects.archived(),
+		queryFn: () => api.get<Project[]>('/api/projects?filter=archived'),
+		staleTime: 0,
+		refetchOnMount: 'always',
+	});
+}
+
+/**
+ * Archive a project: soft-hides it from the rail and stops its container.
+ * Invalidate-driven (not optimistic) — the server has side effects (container
+ * teardown) and the project leaves the rail. Refetches both the rail index and
+ * the archived list (invalidating the `['projects']` prefix covers both).
+ */
+export function useArchiveProject(projectId: string) {
+	return useMutation({
+		mutationFn: () => api.post(`/api/projects/${projectId}/archive`, {}),
+		onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.projects.all() }),
+	});
+}
+
+/** Unarchive a project: restores it to the rail. Container stays stopped. */
+export function useUnarchiveProject(projectId: string) {
+	return useMutation({
+		mutationFn: () => api.post(`/api/projects/${projectId}/unarchive`, {}),
+		onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.projects.all() }),
 	});
 }
 

@@ -1,19 +1,24 @@
 import { HQ_PROJECT_SLUG } from '@hezo/shared';
-import { createFileRoute, redirect } from '@tanstack/react-router';
+import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router';
 import { ExternalLink, Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { ProjectBudgetPanel } from '../../../../components/budget/project-budget-panel';
 import { ProjectIconSection } from '../../../../components/project-icon-section';
 import { Button } from '../../../../components/ui/button';
+import { ConfirmDialog } from '../../../../components/ui/confirm-dialog';
 import { Input } from '../../../../components/ui/input';
 import { Textarea } from '../../../../components/ui/textarea';
-import { useProject, useUpdateProject } from '../../../../hooks/use-projects';
+import { useMe } from '../../../../hooks/use-me';
+import { useArchiveProject, useProject, useUpdateProject } from '../../../../hooks/use-projects';
 import { useScrollToHash } from '../../../../hooks/use-scroll-to-hash';
 
 function ProjectSettingsPage() {
 	const { projectId } = Route.useParams();
 	const { data: project } = useProject(projectId);
+	const { data: me } = useMe();
 	const updateProject = useUpdateProject(projectId);
+	const archiveProject = useArchiveProject(projectId);
+	const navigate = useNavigate();
 	// Deep link from the Budget page's "Edit" button lands on the budget section.
 	const budgetSectionRef = useScrollToHash('budget');
 
@@ -22,6 +27,7 @@ function ProjectSettingsPage() {
 	const [maxRuns, setMaxRuns] = useState('1');
 	const [memoryLimit, setMemoryLimit] = useState('16');
 	const [editing, setEditing] = useState(false);
+	const [archiveOpen, setArchiveOpen] = useState(false);
 
 	if (!project) return null;
 
@@ -149,6 +155,43 @@ function ProjectSettingsPage() {
 							</a>
 						))}
 					</div>
+				</section>
+			)}
+
+			{me?.is_superuser && (
+				<section className="border-t border-border pt-6">
+					<h2 className="text-sm font-medium text-danger mb-1">Danger zone</h2>
+					<p className="text-xs text-text-3 mb-3 max-w-prose">
+						Archiving removes this project from the project rail and stops its container. Its tasks
+						and history are kept — you can restore it later from{' '}
+						<span className="text-text-2">Settings → Archived projects</span>.
+					</p>
+					<Button
+						variant="destructive"
+						size="sm"
+						onClick={() => setArchiveOpen(true)}
+						data-testid="archive-project-button"
+					>
+						Archive this project
+					</Button>
+					<ConfirmDialog
+						open={archiveOpen}
+						onOpenChange={setArchiveOpen}
+						title="Archive this project?"
+						description={
+							<>
+								<strong>{project.name}</strong> will be hidden from the project rail and its
+								container will be stopped. You can unarchive it later from global Settings.
+							</>
+						}
+						confirmLabel="Archive"
+						variant="danger"
+						loading={archiveProject.isPending}
+						onConfirm={async () => {
+							await archiveProject.mutateAsync();
+							await navigate({ to: '/' });
+						}}
+					/>
 				</section>
 			)}
 		</div>

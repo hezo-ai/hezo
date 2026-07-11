@@ -242,6 +242,20 @@ export async function archiveSeededDocument(
 	});
 }
 
+/** Archive (or restore) a project via the real API (superuser-only endpoints). */
+export async function archiveSeededProject(
+	workspace: SeededWorkspace,
+	project: SeededProject,
+	archived = true,
+): Promise<void> {
+	const { apiBase } = getTestContext();
+	await apiBase(`/api/projects/${project.slug}/${archived ? 'archive' : 'unarchive'}`, {
+		method: 'POST',
+		headers: workspace.headers,
+		body: JSON.stringify({}),
+	});
+}
+
 /** Leave a review comment on an asset via the real API (no quote = whole-asset). */
 export async function seedAssetReviewComment(
 	workspace: SeededWorkspace,

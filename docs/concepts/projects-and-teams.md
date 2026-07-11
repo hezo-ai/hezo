@@ -23,6 +23,22 @@ appears as the project's thumbnail in the rail. Pick any common image (PNG, JPEG
 GIF, or SVG); Hezo crops it to a square and resizes it to 512×512. Use **Replace image**
 to swap it or **Remove** to go back to the initials.
 
+## Archiving a project
+
+When a project is finished or dormant, you can **archive** it to get it out of the way
+without losing anything. Open the project's **Settings**, scroll to the **Danger zone** at
+the bottom, and choose **Archive this project**. After you confirm:
+
+- The project disappears from the project rail on the left.
+- Its container is stopped, and any in-progress agent runs are cancelled.
+- Its tasks, documents, and history are all kept — archiving is reversible, not a delete.
+
+To bring a project back, open the global **Settings → Archived projects**, find it in the
+list, and choose **Unarchive**. It returns to the rail immediately; its container stays
+stopped until you start it again, just like any other stopped project.
+
+Archiving and unarchiving are admin (superuser) actions.
+
 ## Team templates
 
 When you create a project you choose a **template**, which decides the starting roster.

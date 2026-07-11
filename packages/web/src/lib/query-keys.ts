@@ -58,6 +58,10 @@ export const queryKeys = {
 	projects: {
 		all: () => ['projects'],
 		detail: (slug: string) => ['projects', slug],
+		// Archived-projects list (global settings). Length-3 key never collides
+		// with a detail (`['projects', slug]`) or tasks key, and stays under the
+		// `['projects']` prefix so `all()` invalidation refetches it too.
+		archived: () => ['projects', 'archived', 'list'],
 
 		// tasks
 		tasks: (slug: string) => ['projects', slug, 'tasks'],
