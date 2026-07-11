@@ -974,21 +974,6 @@ export const DocumentType = {
 } as const;
 export type DocumentType = (typeof DocumentType)[keyof typeof DocumentType];
 
-export const DocumentStatus = {
-	Planning: 'planning',
-	Approved: 'approved',
-} as const;
-export type DocumentStatus = (typeof DocumentStatus)[keyof typeof DocumentStatus];
-
-export const DOCUMENT_STATUS_LABELS: Record<DocumentStatus, string> = {
-	[DocumentStatus.Planning]: 'Planning',
-	[DocumentStatus.Approved]: 'Approved',
-};
-
-export function formatDocumentStatus(status: string): string {
-	return DOCUMENT_STATUS_LABELS[status as DocumentStatus] ?? status;
-}
-
 /**
  * List-view filter for archivable resources (project docs and assets).
  * Archiving is the soft-delete: agents archive via MCP, only admins

@@ -1,7 +1,5 @@
 import {
 	ArchiveFilter,
-	type DocumentStatus,
-	formatDocumentStatus,
 	isArchiveFilter,
 	isMarkdownDocSlug,
 	matchesArchiveFilter,
@@ -26,7 +24,6 @@ import {
 	useRestoreProjectDocRevision,
 	useUpdateProjectAgentsMd,
 	useUpdateProjectDoc,
-	useUpdateProjectDocStatus,
 } from '../../../hooks/use-project-docs';
 import { docPreviewPath } from '../../../lib/doc-preview';
 import { buildDocVersionHistory, type DocVersionEntry } from '../../../lib/doc-version-history';
@@ -63,7 +60,6 @@ function ProjectDocumentsPage() {
 	const { data: doc, isLoading: isLoadingDoc } = useProjectDoc(projectId, filenameForFetch);
 	const { data: revisions } = useProjectDocRevisions(projectId, filenameForFetch);
 	const restore = useRestoreProjectDocRevision(projectId, file ?? '');
-	const updateStatus = useUpdateProjectDocStatus(projectId, filenameForFetch);
 
 	// Which past version (if any) is being viewed, and whether the history dialog is open.
 	const [viewingRevision, setViewingRevision] = useState<DocVersionEntry | null>(null);
@@ -110,9 +106,7 @@ function ProjectDocumentsPage() {
 				key: d.filename,
 				label: d.filename,
 				archived: d.archived_at != null,
-				meta: d.status
-					? `${formatDocumentStatus(d.status)} · Updated ${new Date(d.updated_at).toLocaleDateString()}`
-					: `Updated ${new Date(d.updated_at).toLocaleDateString()}`,
+				meta: `Updated ${new Date(d.updated_at).toLocaleDateString()}`,
 			});
 		}
 		return list;
@@ -145,19 +139,12 @@ function ProjectDocumentsPage() {
 					updatedAt: viewingRevision.timestamp,
 					editorName: viewingRevision.authorName,
 					editorType: viewingRevision.authorType,
-					status: doc?.status,
 				}
 			: {
 					createdAt: doc?.created_at,
 					updatedAt: doc?.updated_at,
 					editorName: doc?.last_updated_by_name,
 					editorType: doc?.last_updated_by_type,
-					status: doc?.status,
-					// Archived docs are read-only — the server rejects status flips too.
-					onStatusChange:
-						file && !isArchivedDoc
-							? (status: DocumentStatus) => updateStatus.mutate({ status })
-							: undefined,
 				};
 
 	function selectFile(key: string | null) {

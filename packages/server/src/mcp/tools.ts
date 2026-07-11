@@ -21,7 +21,6 @@ import {
 	CredentialKind,
 	credentialKindRequiresAllowedHosts,
 	DEFAULT_TEAM_ID,
-	DocumentStatus,
 	DocumentType,
 	extensionOf,
 	extractBacktickedMentionCandidates,
@@ -105,7 +104,6 @@ import {
 	getDocument,
 	listDocuments,
 	setDocumentArchived,
-	setDocumentStatus,
 	upsertDocument,
 } from '../services/documents';
 import { listGoals, recordGoalProgress } from '../services/goals';
@@ -200,7 +198,6 @@ const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'archive_project_asset',
 	'unarchive_project_asset',
 	'write_project_doc',
-	'set_project_doc_status',
 	'archive_project_doc',
 	'unarchive_project_doc',
 	'update_chat_memory',
@@ -3567,7 +3564,6 @@ export function registerTools(
 						id: d.id,
 						filename: d.slug,
 						title: d.title,
-						status: d.status,
 						updated_at: d.updated_at,
 						...(filter !== ArchiveFilter.Active ? { archived: d.archived_at !== null } : {}),
 					})),
@@ -4066,11 +4062,10 @@ export function registerTools(
 				documentId: doc.id,
 			});
 			if (reviewComments.length === 0)
-				return { filename: doc.slug, content: doc.content, status: doc.status, ...archivedField };
+				return { filename: doc.slug, content: doc.content, ...archivedField };
 			return {
 				filename: doc.slug,
 				content: doc.content,
-				status: doc.status,
 				...archivedField,
 				review_comments: reviewComments.map((r) => ({
 					id: r.id,
@@ -4087,7 +4082,7 @@ export function registerTools(
 	tool(
 		server,
 		'write_project_doc',
-		"Write a project documentation file. Project docs are markdown only — the filename must end in .md. For high-level project context: PRD, spec, implementation plan, research. Make ALL desired edits in ONE consolidated write per run, for two reasons: (1) writing a doc deletes ALL of its pending review comments (the admin's highlight feedback returned by read_project_doc) — a single write clears the whole review, so capture every comment in your context before the first write; (2) docs are revisioned — every content-changing write records a revision, so many partial writes bury the history in noise. Pass a `changelog` summarizing what changed in this write and why — it becomes that revision's entry in the document's history; keep status headers and update/changelog logs OUT of the document body and put them in `changelog` instead. Non-markdown files (mockups, wireframes, images, PDFs) live in the project assets library instead — reference those as `assets/<filename>`. In content, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug — no @ prefix. Do not wrap any of these in backticks — that makes them inert.",
+		"Write a project documentation file. Project docs are markdown only — the filename must end in .md. For high-level project context: PRD, spec, implementation plan, research. Make ALL desired edits in ONE consolidated write per run, for two reasons: (1) writing a doc deletes ALL of its pending review comments (the admin's highlight feedback returned by read_project_doc) — a single write clears the whole review, so capture every comment in your context before the first write; (2) docs are revisioned — every content-changing write records a revision, so many partial writes bury the history in noise. Pass a `changelog` summarizing what changed in this write and why — it becomes that revision's entry in the document's history; keep update/changelog logs OUT of the document body and put them in `changelog` instead. Non-markdown files (mockups, wireframes, images, PDFs) live in the project assets library instead — reference those as `assets/<filename>`. In content, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug — no @ prefix. Do not wrap any of these in backticks — that makes them inert.",
 		{
 			project: projectArg(),
 			filename: z.string().describe('Markdown filename to write (e.g. "spec.md")'),
@@ -4140,52 +4135,6 @@ export function registerTools(
 				},
 			});
 			return { written: true, id: doc.id, filename: doc.slug };
-		},
-		db,
-	);
-
-	tool(
-		server,
-		'set_project_doc_status',
-		'Set the lifecycle status of a project doc: "planning" (still being drafted/iterated) or "approved" (signed off as the current source of truth). Status is metadata shown in the doc header — changing it does not touch the content and records no revision. New docs start in planning.',
-		{
-			project: projectArg(),
-			filename: z.string().describe('Doc filename (e.g. "spec.md")'),
-			status: z
-				.enum(Object.values(DocumentStatus) as [string, ...string[]])
-				.describe('New status: "planning" or "approved"'),
-		},
-		async (args, db, auth) => {
-			const scope = await resolveScope(db, auth, args);
-			if ('error' in scope) return scope;
-			const docScope = {
-				type: DocumentType.ProjectDoc,
-				teamId: scope.teamId,
-				projectId: scope.projectId,
-				slug: args.filename as string,
-			} as const;
-			const current = await getDocument(db, docScope);
-			if (!current) return { error: `File '${args.filename}' not found` };
-			if (current.archived_at) {
-				return {
-					error: `Doc '${current.slug}' is archived — unarchive_project_doc first to change its status.`,
-				};
-			}
-			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
-			const row = await setDocumentStatus(
-				db,
-				wsManager,
-				docScope,
-				args.status as DocumentStatus,
-				callerMemberId,
-				{
-					events,
-					actorType: actorTypeFromAuth(auth),
-					actorApiKeyId: apiKeyIdFromAuth(auth),
-				},
-			);
-			if (!row) return { error: `File '${args.filename}' not found` };
-			return { updated: true, filename: row.slug, status: row.status };
 		},
 		db,
 	);

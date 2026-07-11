@@ -301,7 +301,7 @@ describe('project assets', () => {
 });
 
 describe('project docs', () => {
-	it('write/read/status/archive lifecycle branches', async () => {
+	it('write/read/archive lifecycle branches', async () => {
 		const nonMd = await admin('write_project_doc', { filename: 'spec.txt', content: 'x' });
 		expect(String(nonMd.error)).toContain('markdown');
 
@@ -315,33 +315,15 @@ describe('project docs', () => {
 		const mismatch = await admin('read_project_doc', { filename: 'spec.md', filter: 'archived' });
 		expect(String(mismatch.error)).toContain("filter is 'archived'");
 
-		const status = await admin('set_project_doc_status', {
-			filename: 'spec.md',
-			status: 'approved',
-		});
-		expect(status.updated).toBe(true);
-		expect(status.status).toBe('approved');
-
-		const statusMissing = await admin('set_project_doc_status', {
-			filename: 'ghost.md',
-			status: 'approved',
-		});
-		expect(String(statusMissing.error)).toContain('not found');
-
 		const archived = await admin('archive_project_doc', { filename: 'spec.md' });
 		expect(archived.archived).toBe(true);
 
-		// An archived doc refuses writes and status changes.
+		// An archived doc refuses writes.
 		const writeArchived = await admin('write_project_doc', {
 			filename: 'spec.md',
 			content: 'new',
 		});
 		expect(String(writeArchived.error)).toContain('archived');
-		const statusArchived = await admin('set_project_doc_status', {
-			filename: 'spec.md',
-			status: 'planning',
-		});
-		expect(String(statusArchived.error)).toContain('archived');
 
 		// Default-filter read refuses; unarchive restores.
 		const blocked = await admin('read_project_doc', { filename: 'spec.md' });

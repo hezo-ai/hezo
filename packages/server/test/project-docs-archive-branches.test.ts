@@ -1,4 +1,3 @@
-import { DocumentStatus } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
@@ -55,19 +54,10 @@ afterAll(async () => {
 });
 
 describe('PATCH field validation', () => {
-	it('400s when both status and archived are provided', async () => {
-		const res = await docReq('guide.md', {
-			method: 'PATCH',
-			body: JSON.stringify({ status: DocumentStatus.Approved, archived: true }),
-		});
-		expect(res.status).toBe(400);
-		expect((await res.json()).error.message).toMatch(/exactly one/i);
-	});
-
-	it('400s when neither status nor archived is provided', async () => {
+	it('400s when archived is missing', async () => {
 		const res = await docReq('guide.md', { method: 'PATCH', body: JSON.stringify({}) });
 		expect(res.status).toBe(400);
-		expect((await res.json()).error.message).toMatch(/exactly one/i);
+		expect((await res.json()).error.message).toMatch(/boolean/);
 	});
 
 	it('400s when archived is not a boolean', async () => {
@@ -110,15 +100,6 @@ describe('archived docs are read-only until restored', () => {
 		// Content untouched.
 		const read = await docReq('guide.md');
 		expect((await read.json()).data.content).toBe('# Guide\n\nOriginal content.');
-	});
-
-	it('409s a status flip on the archived doc', async () => {
-		const res = await docReq('guide.md', {
-			method: 'PATCH',
-			body: JSON.stringify({ status: DocumentStatus.Approved }),
-		});
-		expect(res.status).toBe(409);
-		expect((await res.json()).error.code).toBe('CONFLICT');
 	});
 
 	it('409s a revision restore on the archived doc', async () => {

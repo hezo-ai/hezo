@@ -1,7 +1,6 @@
 import {
 	ApprovalType,
 	AuthType,
-	DocumentStatus,
 	DocumentType,
 	isMarkdownDocSlug,
 	repoNameFromIdentifier,
@@ -25,7 +24,6 @@ import {
 	listRevisions,
 	restoreRevision,
 	setDocumentArchived,
-	setDocumentStatus,
 	upsertDocument,
 } from '../services/documents';
 
@@ -37,7 +35,6 @@ function toDocResponse(d: DocumentRowWithAuthor) {
 		id: d.id,
 		filename: d.slug,
 		content: d.content,
-		status: d.status,
 		created_at: d.created_at,
 		updated_at: d.updated_at,
 		last_updated_by_name: d.last_updated_by_name,
@@ -68,7 +65,6 @@ projectDocsRoutes.get('/projects/:projectId/docs', async (c) => {
 		docs.map((d) => ({
 			id: d.id,
 			filename: d.slug,
-			status: d.status,
 			updated_at: d.updated_at,
 			archived_at: d.archived_at,
 		})),
@@ -194,7 +190,7 @@ projectDocsRoutes.patch('/projects/:projectId/docs/:filename', async (c) => {
 	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
-	const body = await c.req.json<{ status?: string; archived?: boolean }>();
+	const body = await c.req.json<{ archived?: boolean }>();
 	const scope = { type: DocumentType.ProjectDoc, teamId, projectId, slug: filename } as const;
 	const audit = {
 		events: c.get('events'),
@@ -203,51 +199,18 @@ projectDocsRoutes.patch('/projects/:projectId/docs/:filename', async (c) => {
 	};
 	const actorMemberId = await resolveActorMemberId(db, auth, teamId);
 
-	// Exactly one mutable field per call: a status flip and an archive flip are
-	// different actions with different guards.
-	const hasStatus = body.status !== undefined;
-	const hasArchived = body.archived !== undefined;
-	if (hasStatus === hasArchived) {
-		return err(c, 'INVALID_REQUEST', 'Provide exactly one of: status, archived', 400);
+	if (typeof body.archived !== 'boolean') {
+		return err(c, 'INVALID_REQUEST', 'archived must be a boolean', 400);
 	}
-
-	if (hasArchived) {
-		if (typeof body.archived !== 'boolean') {
-			return err(c, 'INVALID_REQUEST', 'archived must be a boolean', 400);
-		}
-		const result = await setDocumentArchived(
-			db,
-			c.get('wsManager'),
-			scope,
-			body.archived,
-			actorMemberId,
-			audit,
-		);
-		if (!result) return err(c, 'NOT_FOUND', `Document '${filename}' not found`, 404);
-	} else {
-		if (!Object.values(DocumentStatus).includes(body.status as DocumentStatus)) {
-			return err(
-				c,
-				'INVALID_REQUEST',
-				`status must be one of: ${Object.values(DocumentStatus).join(', ')}`,
-				400,
-			);
-		}
-		const current = await getDocument(db, scope);
-		if (!current) return err(c, 'NOT_FOUND', `Document '${filename}' not found`, 404);
-		if (current.archived_at) {
-			return err(c, 'CONFLICT', `Document '${filename}' is archived — restore it first`, 409);
-		}
-		const row = await setDocumentStatus(
-			db,
-			c.get('wsManager'),
-			scope,
-			body.status as DocumentStatus,
-			actorMemberId,
-			audit,
-		);
-		if (!row) return err(c, 'NOT_FOUND', `Document '${filename}' not found`, 404);
-	}
+	const result = await setDocumentArchived(
+		db,
+		c.get('wsManager'),
+		scope,
+		body.archived,
+		actorMemberId,
+		audit,
+	);
+	if (!result) return err(c, 'NOT_FOUND', `Document '${filename}' not found`, 404);
 
 	// Re-read WITH_AUTHOR so the response carries the resolved last editor.
 	const saved = await getDocument(db, scope);

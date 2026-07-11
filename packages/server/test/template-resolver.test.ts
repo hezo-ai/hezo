@@ -784,7 +784,7 @@ Current date: {{current_date}}
 		);
 	});
 
-	it('Product Lead prompt codifies the PRD metadata header and the post-approval stamp', async () => {
+	it('Product Lead prompt codifies the PRD metadata header and the post-approval changelog', async () => {
 		const agentsRes = await app.request(
 			`/api/projects/${await projectSlugForTeamSlug(db, agentTeamSlug)}/agents`,
 			{ headers: authHeader(token) },
@@ -793,12 +793,11 @@ Current date: {{current_date}}
 		const productLead = agents.find((a: any) => a.slug === 'product-lead');
 		const prompt = await getAgentPrompt(productLead.id);
 
-		// Step 5 — the draft metadata header, so the Status line is parseable for re-stamping.
-		expect(prompt).toContain('Status: Draft — awaiting admin approval');
+		// Step 5 — the metadata header attributes the PRD's author.
 		expect(prompt).toContain('Author: @@product-lead');
 
-		// Step 7 — on approval, flip the status and link back to the approval task + comment.
-		expect(prompt).toContain('Status: Approved');
+		// Step 7 — on approval, record the approval in the changelog, linking back
+		// to the approval task + comment.
 		expect(prompt).toContain('Approved in <TASK-ID>#comment-<uuid>');
 		// The linked comment is the triggering (admin approval) comment, never a fabricated id.
 		expect(prompt).toContain('the comment that triggered this run');
