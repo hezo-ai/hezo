@@ -13,7 +13,7 @@
 </div>
 
 <p align="center">
-  <strong>Your own AI workforce. Self-hosted and secure.</strong>
+  <strong>Your own AI workforce. Built to ship.</strong>
 </p>
 
 <p align="center">
