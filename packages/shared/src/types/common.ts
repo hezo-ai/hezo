@@ -1057,8 +1057,8 @@ export const AuditEntityType = {
 } as const;
 export type AuditEntityType = (typeof AuditEntityType)[keyof typeof AuditEntityType];
 
-export const McpConnectionKind = { Saas: 'saas', Local: 'local' } as const;
-export type McpConnectionKind = (typeof McpConnectionKind)[keyof typeof McpConnectionKind];
+export const ConnectorTransport = { Saas: 'saas', Local: 'local' } as const;
+export type ConnectorTransport = (typeof ConnectorTransport)[keyof typeof ConnectorTransport];
 
 export const McpInstallStatus = {
 	Pending: 'pending',

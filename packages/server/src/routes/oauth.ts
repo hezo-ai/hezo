@@ -497,7 +497,7 @@ oauthRoutes.post('/projects/:projectId/auth-start', async (c) => {
  * a failure — the admin page probes every manually-added connector, and
  * header-authenticated / public MCPs legitimately have no PRM.
  */
-oauthRoutes.post('/mcp-connections/:id/auth-start', async (c) => {
+oauthRoutes.post('/connectors/:id/auth-start', async (c) => {
 	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 	const connectorId = c.req.param('id');

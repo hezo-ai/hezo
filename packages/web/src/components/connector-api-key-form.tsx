@@ -1,6 +1,6 @@
 import type { FormEvent } from 'react';
 import { useState } from 'react';
-import { useSetConnectorApiKey } from '../hooks/use-mcp-connections';
+import { useSetConnectorApiKey } from '../hooks/use-connectors';
 import { Button } from './ui/button';
 
 interface Props {

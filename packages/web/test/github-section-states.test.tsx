@@ -2,7 +2,7 @@
 // project-settings.test.tsx already hits: the connected state, the repo list
 // (web link + designated lock + deletable rows), the reauth/needs-permissions
 // banner, and the startConnect error path. Rendered through the project's Git
-// settings page. The OAuth-connection / scope-status / repos / mcp-connections endpoints
+// settings page. The OAuth-connection / scope-status / repos / connectors endpoints
 // are fetch-mocked (matching agent-executions-project.test.tsx) because seeding a
 // realistic GitHub OAuth connection + repos against the real backend is heavy and
 // orthogonal to what this component renders. Component tier — no real layout/WS.
@@ -67,7 +67,7 @@ function installGitHubMock(opts: {
 				: [];
 			return jsonRes(data);
 		}
-		if (method === 'GET' && /\/api\/projects\/[^/]+\/mcp-connections/.test(url)) {
+		if (method === 'GET' && /\/api\/projects\/[^/]+\/connectors/.test(url)) {
 			return jsonRes([]);
 		}
 		if (

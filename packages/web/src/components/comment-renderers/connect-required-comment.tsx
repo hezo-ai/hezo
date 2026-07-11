@@ -2,7 +2,7 @@ import { getConnectorCapability } from '@hezo/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { Check, KeyRound, Plug } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { connectorStatus, useMcpConnection } from '../../hooks/use-mcp-connections';
+import { connectorStatus, useConnector } from '../../hooks/use-connectors';
 import { useAuthStart } from '../../hooks/use-oauth-connections';
 import { queryKeys } from '../../lib/query-keys';
 import { ConnectorApiKeyForm } from '../connector-api-key-form';
@@ -17,7 +17,7 @@ interface Props {
 
 export function ConnectRequiredComment({ comment, projectId }: Props) {
 	const { connector_id, display_name, provider_id } = comment.content;
-	const connectorQuery = useMcpConnection(projectId ?? '', connector_id);
+	const connectorQuery = useConnector(projectId ?? '', connector_id);
 	const authStart = useAuthStart(projectId ?? '');
 	const queryClient = useQueryClient();
 	const [error, setError] = useState<string | null>(null);
@@ -39,7 +39,7 @@ export function ConnectRequiredComment({ comment, projectId }: Props) {
 			if (!e.data || typeof e.data !== 'object') return;
 			if ((e.data as { type?: string }).type !== 'hezo-oauth-success') return;
 			queryClient.invalidateQueries({
-				queryKey: queryKeys.teams.mcpConnections(projectId),
+				queryKey: queryKeys.teams.connectors(projectId),
 			});
 		};
 		window.addEventListener('message', onMessage);
@@ -150,7 +150,7 @@ export function ConnectRequiredComment({ comment, projectId }: Props) {
 					connectorId={connector_id}
 					providerLabel={display_name ?? capability?.displayName ?? provider_id ?? 'provider'}
 					onSuccess={() =>
-						queryClient.invalidateQueries({ queryKey: queryKeys.teams.mcpConnections(projectId) })
+						queryClient.invalidateQueries({ queryKey: queryKeys.teams.connectors(projectId) })
 					}
 				/>
 			)}

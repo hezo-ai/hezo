@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
-import { loadMcpConnectionDescriptors } from '../src/services/mcp-connections';
+import { loadConnectorDescriptors } from '../src/services/connectors/connections';
 import { createConnection } from '../src/services/oauth/connection-store';
 import { safeClose } from './helpers';
 import { createTestApp } from './helpers/app';
@@ -73,7 +73,7 @@ describe('mcp connection descriptor auth is placeholder-only (AGENTS.md red line
 		);
 
 		const secretName = await oauthSecretName(conn.id);
-		const descriptors = await loadMcpConnectionDescriptors(db);
+		const descriptors = await loadConnectorDescriptors(db);
 		const dato = descriptors.find((d) => d.name === 'datocms');
 		expect(dato).toBeTruthy();
 		if (dato?.kind !== 'http') throw new Error('expected http descriptor');
@@ -110,7 +110,7 @@ describe('mcp connection descriptor auth is placeholder-only (AGENTS.md red line
 		);
 
 		const secretName = await oauthSecretName(conn.id);
-		const descriptors = await loadMcpConnectionDescriptors(db);
+		const descriptors = await loadConnectorDescriptors(db);
 		const linear = descriptors.find((d) => d.name === 'linear');
 		if (linear?.kind !== 'http') throw new Error('expected http descriptor');
 		expect(linear.headers?.authorization).toBeUndefined();
@@ -129,7 +129,7 @@ describe('mcp connection descriptor auth is placeholder-only (AGENTS.md red line
 			 VALUES ('typefully', 'saas', $1::jsonb, $2, now(), 'installed')`,
 			[JSON.stringify({ url: 'https://mcp.typefully.com/mcp' }), secret.rows[0].id],
 		);
-		const descriptors = await loadMcpConnectionDescriptors(db);
+		const descriptors = await loadConnectorDescriptors(db);
 		const tf = descriptors.find((d) => d.name === 'typefully');
 		if (tf?.kind !== 'http') throw new Error('expected http descriptor');
 		expect(tf.headers?.Authorization).toBe('Bearer __HEZO_SECRET_MCP_TYPEFULLY_ABCD1234__');
@@ -152,7 +152,7 @@ describe('mcp connection descriptor auth is placeholder-only (AGENTS.md red line
 				secret.rows[0].id,
 			],
 		);
-		const descriptors = await loadMcpConnectionDescriptors(db);
+		const descriptors = await loadConnectorDescriptors(db);
 		const raw = descriptors.find((d) => d.name === 'rawheader');
 		if (raw?.kind !== 'http') throw new Error('expected http descriptor');
 		expect(raw.headers?.['X-API-Key']).toBe('__HEZO_SECRET_MCP_RAWHEADER_EE11FF22__');
@@ -170,7 +170,7 @@ describe('mcp connection descriptor auth is placeholder-only (AGENTS.md red line
 				}),
 			],
 		);
-		const descriptors = await loadMcpConnectionDescriptors(db);
+		const descriptors = await loadConnectorDescriptors(db);
 		const plain = descriptors.find((d) => d.name === 'plain');
 		if (plain?.kind !== 'http') throw new Error('expected http descriptor');
 		expect(plain.headers?.authorization).toBe('Bearer __HEZO_SECRET_RAW_KEY__');

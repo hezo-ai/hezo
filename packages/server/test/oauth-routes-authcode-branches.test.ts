@@ -499,14 +499,14 @@ describe('POST /projects/:projectId/auth-start (connector DCR walk)', () => {
 	});
 });
 
-describe('POST /mcp-connections/:id/auth-start (instance-admin surface)', () => {
+describe('POST /connectors/:id/auth-start (instance-admin surface)', () => {
 	it('403s for a non-admin (agent) caller', async () => {
 		const agent = await db.query<{ id: string }>(
 			`SELECT id FROM members WHERE team_id = $1 AND member_type = 'agent' LIMIT 1`,
 			[teamId],
 		);
 		const minted = await mintAgentToken(db, masterKeyManager, agent.rows[0].id, teamId);
-		const res = await app.request(`/api/mcp-connections/${randomUUID()}/auth-start`, {
+		const res = await app.request(`/api/connectors/${randomUUID()}/auth-start`, {
 			method: 'POST',
 			headers: { ...authHeader(minted.token), 'Content-Type': 'application/json' },
 		});
@@ -520,7 +520,7 @@ describe('POST /mcp-connections/:id/auth-start (instance-admin surface)', () => 
 			mcpUrl: `${bare.baseUrl}/mcp`,
 			mcpTransport: 'http',
 		});
-		const res = await app.request(`/api/mcp-connections/${row.id}/auth-start`, {
+		const res = await app.request(`/api/connectors/${row.id}/auth-start`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		});
@@ -541,7 +541,7 @@ describe('POST /mcp-connections/:id/auth-start (instance-admin surface)', () => 
 				mcpUrl: `${fake.url}/mcp`,
 				mcpTransport: 'http',
 			});
-			const res = await app.request(`/api/mcp-connections/${row.id}/auth-start`, {
+			const res = await app.request(`/api/connectors/${row.id}/auth-start`, {
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			});

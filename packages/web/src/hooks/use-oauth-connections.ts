@@ -2,7 +2,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
 import { queryKeys } from '../lib/query-keys';
-import type { McpConnection } from './use-mcp-connections';
+import type { Connector } from './use-connectors';
 
 export interface OAuthConnection {
 	id: string;
@@ -74,7 +74,7 @@ export function useAuthStart(projectId: string) {
 			// auth-start mutates the row on every path — restores a revoked connector,
 			// persists config.dcr on a successful DCR walk, records auth_error on
 			// failure — so refresh the list to reflect the new status either way.
-			queryClient.invalidateQueries({ queryKey: queryKeys.projects.mcpConnections(projectId) });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.connectors(projectId) });
 		},
 	});
 }
@@ -121,7 +121,7 @@ export async function pollDeviceFlow(
 	}
 	if (json.data?.status === 'success') {
 		queryClient.invalidateQueries({ queryKey: queryKeys.projects.oauthConnections(projectId) });
-		queryClient.invalidateQueries({ queryKey: queryKeys.projects.mcpConnections(projectId) });
+		queryClient.invalidateQueries({ queryKey: queryKeys.projects.connectors(projectId) });
 	}
 	return json.data as DeviceFlowPollResult;
 }
@@ -136,11 +136,11 @@ export async function pollDeviceFlow(
 export function useEnsureConnector(projectId: string) {
 	return useMutation({
 		mutationFn: (providerId: string) =>
-			api.post<McpConnection>(`/api/projects/${projectId}/connectors/ensure`, {
+			api.post<Connector>(`/api/projects/${projectId}/connectors/ensure`, {
 				provider_id: providerId,
 			}),
 		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: queryKeys.projects.mcpConnections(projectId) });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.connectors(projectId) });
 		},
 	});
 }

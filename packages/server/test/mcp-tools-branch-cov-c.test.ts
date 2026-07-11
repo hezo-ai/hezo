@@ -422,29 +422,29 @@ describe('skills', () => {
 });
 
 describe('mcp connections', () => {
-	it('add_mcp_connection validates config per kind and upserts', async () => {
-		const saasNoUrl = await admin('add_mcp_connection', {
+	it('add_connector validates config per kind and upserts', async () => {
+		const saasNoUrl = await admin('add_connector', {
 			name: 'bad-saas',
 			kind: 'saas',
 			config: {},
 		});
 		expect(saasNoUrl.error).toBe('saas connections require config.url (string)');
 
-		const localNoCmd = await admin('add_mcp_connection', {
+		const localNoCmd = await admin('add_connector', {
 			name: 'bad-local',
 			kind: 'local',
 			config: {},
 		});
 		expect(localNoCmd.error).toBe('local connections require config.command (string)');
 
-		const saas = await admin('add_mcp_connection', {
+		const saas = await admin('add_connector', {
 			name: 'probe-saas',
 			kind: 'saas',
 			config: { url: `${httpUrl}/mcp` },
 		});
 		expect(saas.install_status).toBe('installed');
 
-		const local = await admin('add_mcp_connection', {
+		const local = await admin('add_connector', {
 			name: 'probe-local',
 			kind: 'local',
 			config: { command: 'echo' },
@@ -452,7 +452,7 @@ describe('mcp connections', () => {
 		expect(local.install_status).toBe('pending');
 
 		// Upsert on name.
-		const saasAgain = await admin('add_mcp_connection', {
+		const saasAgain = await admin('add_connector', {
 			name: 'probe-saas',
 			kind: 'saas',
 			config: { url: `${httpUrl}/mcp2` },
@@ -460,8 +460,8 @@ describe('mcp connections', () => {
 		expect(saasAgain.id).toBe(saas.id);
 	});
 
-	it('list_mcp_connections derives oauth_status', async () => {
-		const r = (await admin('list_mcp_connections', {})) as unknown as Array<{
+	it('list_connectors derives oauth_status', async () => {
+		const r = (await admin('list_connectors', {})) as unknown as Array<{
 			name: string;
 			kind: string;
 			oauth_status: string;
@@ -503,7 +503,7 @@ describe('mcp connections', () => {
 		expect(ok.ok).toBe(true);
 		expect(ok.hint).toContain('Token valid against upstream');
 
-		await admin('add_mcp_connection', {
+		await admin('add_connector', {
 			name: 'probe-401',
 			kind: 'saas',
 			config: { url: `${http401Url}/mcp` },
@@ -521,7 +521,7 @@ describe('mcp connections', () => {
 		expect(denied.hint).toContain('No token sent');
 		expect(denied.www_authenticate).toContain('Bearer');
 
-		await admin('add_mcp_connection', {
+		await admin('add_connector', {
 			name: 'probe-down',
 			kind: 'saas',
 			config: { url: `${closedPortUrl}/mcp` },
@@ -537,7 +537,7 @@ describe('mcp connections', () => {
 		expect(down.error).toContain('network probe failed');
 
 		// A non-401 upstream failure yields the generic status hint.
-		await admin('add_mcp_connection', {
+		await admin('add_connector', {
 			name: 'probe-500',
 			kind: 'saas',
 			config: { url: `${httpUrl}/boom` },
@@ -568,7 +568,7 @@ describe('mcp connections', () => {
 			 VALUES ('probe', 'acct-1', 'Probe Account', $1, '{read}') RETURNING id`,
 			[secret.rows[0].id],
 		);
-		await admin('add_mcp_connection', {
+		await admin('add_connector', {
 			name: 'probe-oauth',
 			kind: 'saas',
 			config: { url: `${http401Url}/mcp` },
@@ -594,14 +594,14 @@ describe('mcp connections', () => {
 		expect(r.hint).toContain('Token rejected by upstream');
 	});
 
-	it('remove_mcp_connection deletes or errors', async () => {
-		const gone = await admin('remove_mcp_connection', { id: crypto.randomUUID() });
+	it('remove_connector deletes or errors', async () => {
+		const gone = await admin('remove_connector', { id: crypto.randomUUID() });
 		expect(gone.error).toBe('MCP connection not found');
 
 		const row = await db.query<{ id: string }>(
 			`SELECT id FROM mcp_connections WHERE name = 'probe-down'`,
 		);
-		const removed = await admin('remove_mcp_connection', { id: row.rows[0].id });
+		const removed = await admin('remove_connector', { id: row.rows[0].id });
 		expect(removed.removed).toBe(true);
 		const check = await db.query(`SELECT id FROM mcp_connections WHERE name = 'probe-down'`);
 		expect(check.rows.length).toBe(0);

@@ -26,9 +26,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { encrypt } from '../src/crypto/encryption';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
+import { loadConnectorDescriptors } from '../src/services/connectors/connections';
 import { loadOrCreateCA } from '../src/services/egress/ca';
 import { EgressProxy } from '../src/services/egress/proxy';
-import { loadMcpConnectionDescriptors } from '../src/services/mcp-connections';
 import { safeClose } from './helpers';
 import { createTestApp, createTestProject, createTestTeam } from './helpers/app';
 import { mintCertFromCA } from './helpers/self-signed-cert';
@@ -124,7 +124,7 @@ describe.skipIf(skipReason !== null)('MCP connections — Docker integration', (
 		);
 		expect(insert.rows[0].install_status).toBe('installed');
 
-		const descriptors = await loadMcpConnectionDescriptors(db);
+		const descriptors = await loadConnectorDescriptors(db);
 		const echo = descriptors.find((d) => d.name === 'echo');
 		expect(echo?.kind).toBe('http');
 		if (echo?.kind !== 'http') throw new Error('expected http descriptor');

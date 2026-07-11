@@ -537,7 +537,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
 	return JSON.parse(body.result.content[0].text);
 }
 
-describe('list_mcp_connections rest_auth', () => {
+describe('list_connectors rest_auth', () => {
 	it('exposes an active OAuth connector REST placeholder scoped to its allowed hosts', async () => {
 		const conn = await createConnection(
 			{ db, masterKeyManager },
@@ -556,7 +556,7 @@ describe('list_mcp_connections rest_auth', () => {
 			[conn.id],
 		);
 
-		const rows = (await callTool('list_mcp_connections', { project: projectId })) as Array<{
+		const rows = (await callTool('list_connectors', { project: projectId })) as Array<{
 			name: string;
 			oauth_status: string;
 			rest_auth: { placeholder: string; allowed_hosts: string[]; scopes: string[] } | null;

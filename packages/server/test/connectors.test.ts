@@ -1,4 +1,4 @@
-import { CommentContentType, McpConnectionKind, WakeupSource } from '@hezo/shared';
+import { CommentContentType, ConnectorTransport, WakeupSource } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
@@ -555,7 +555,7 @@ describe('fetch_skill_file MCP tool', () => {
 	});
 });
 
-describe('loadMcpConnectionsForRun excludes pending/revoked', () => {
+describe('loadConnectorsForRun excludes pending/revoked', () => {
 	it('only returns active or operator-created connectors', async () => {
 		// Pending connector created via our flow — should be excluded (it has
 		// a created_by_task_id, no oauth_connection_id yet, kind='saas').
@@ -578,7 +578,7 @@ describe('loadMcpConnectionsForRun excludes pending/revoked', () => {
 		await db.query(
 			`INSERT INTO mcp_connections (name, kind, config, install_status)
 			 VALUES ('operator', $1::mcp_connection_kind, '{"url": "https://public.example/mcp"}'::jsonb, 'installed')`,
-			[McpConnectionKind.Saas],
+			[ConnectorTransport.Saas],
 		);
 		// Operator rows that are *known* to want OAuth but haven't completed it
 		// are excluded: discovery persisted config.dcr, or an attempt recorded
@@ -587,16 +587,16 @@ describe('loadMcpConnectionsForRun excludes pending/revoked', () => {
 			`INSERT INTO mcp_connections (name, kind, config, install_status)
 			 VALUES ('dcr-pending', $1::mcp_connection_kind,
 			         '{"url": "https://oauth.example/mcp", "dcr": {"client_id": "c1"}}'::jsonb, 'installed')`,
-			[McpConnectionKind.Saas],
+			[ConnectorTransport.Saas],
 		);
 		await db.query(
 			`INSERT INTO mcp_connections (name, kind, config, install_status, auth_error)
 			 VALUES ('oauth-failed', $1::mcp_connection_kind,
 			         '{"url": "https://broken.example/mcp"}'::jsonb, 'installed', 'discovery: boom')`,
-			[McpConnectionKind.Saas],
+			[ConnectorTransport.Saas],
 		);
-		const { loadMcpConnectionsForRun } = await import('../src/services/mcp-connections');
-		const rows = await loadMcpConnectionsForRun(db);
+		const { loadConnectorsForRun } = await import('../src/services/connectors/connections');
+		const rows = await loadConnectorsForRun(db);
 		expect(rows.find((r) => r.name === 'operator')).toBeTruthy();
 		expect(rows.find((r) => r.name === 'pending')).toBeUndefined();
 		expect(rows.find((r) => r.name === 'dcr-pending')).toBeUndefined();
@@ -604,7 +604,7 @@ describe('loadMcpConnectionsForRun excludes pending/revoked', () => {
 	});
 
 	it('scopes to the run project (own + global) and a project connector shadows a global one', async () => {
-		const { loadMcpConnectionsForRun } = await import('../src/services/mcp-connections');
+		const { loadConnectorsForRun } = await import('../src/services/connectors/connections');
 		// A second project (its own team — one project per team) whose connector
 		// must never appear for our project.
 		const otherTeam = await db.query<{ id: string }>(
@@ -635,7 +635,7 @@ describe('loadMcpConnectionsForRun excludes pending/revoked', () => {
 			 VALUES ('global-visible', 'saas', '{"url":"https://gv/mcp"}'::jsonb, 'installed', NULL)`,
 		);
 
-		const rows = await loadMcpConnectionsForRun(db, projectId);
+		const rows = await loadConnectorsForRun(db, projectId);
 		expect(rows.find((r) => r.name === 'other-only')).toBeUndefined();
 		expect(rows.find((r) => r.name === 'global-visible')).toBeTruthy();
 		const shared = rows.filter((r) => r.name === 'shared');

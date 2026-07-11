@@ -20,7 +20,7 @@ interface ConnectorRow {
 	auth_error: string | null;
 }
 
-/** Insert an mcp_connections row directly (the catalog the renderer reads via useMcpConnection). */
+/** Insert an mcp_connections row directly (the catalog the renderer reads via useConnector). */
 async function insertConnector(input: {
 	name: string;
 	displayName?: string | null;

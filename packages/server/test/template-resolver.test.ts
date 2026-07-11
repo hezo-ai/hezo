@@ -76,7 +76,7 @@ describe('template resolver', () => {
 		// In-container tools that read a credential from env ride a project-scoped
 		// local MCP connection (placeholder in config.env), not a hand-injected global
 		// secret — so two projects' credentials for the same service don't collide.
-		expect(result).toContain('add_mcp_connection');
+		expect(result).toContain('add_connector');
 		expect(result).toContain('config.env');
 	});
 
@@ -581,7 +581,7 @@ describe('template resolver', () => {
 		);
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId, projectId });
 		expect(result).toContain('GitHub auth is already provisioned by the project');
-		expect(result).toContain('list_mcp_connections');
+		expect(result).toContain('list_connectors');
 		expect(result).toContain('rest_auth.placeholder');
 		await db.query(`UPDATE projects SET designated_repo_id = NULL WHERE id = $1`, [projectId]);
 		await db.query(`DELETE FROM repos WHERE project_id = $1`, [projectId]);

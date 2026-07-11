@@ -1,4 +1,4 @@
-import { McpConnectionKind } from '@hezo/shared';
+import { ConnectorTransport } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
@@ -7,8 +7,8 @@ import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestTeam, projectSlugFor } from './helpers/app';
 
 /**
- * Remaining branch coverage for packages/server/src/routes/mcp-connections.ts
- * not reached by mcp-connections.test.ts / mcp-connections-routes.test.ts:
+ * Remaining branch coverage for packages/server/src/routes/connectors.ts
+ * not reached by connectors.test.ts / connectors-routes.test.ts:
  *   - project-scoped GET list
  *   - project-scoped POST success (saas), success with a valid oauth_connection_id,
  *     and local success (kickoffLocalInstall with no running containers)
@@ -56,14 +56,14 @@ async function seedOauthConnection(): Promise<string> {
 	return oauth.rows[0].id;
 }
 
-describe('GET /projects/:projectId/mcp-connections — project-scoped list', () => {
+describe('GET /projects/:projectId/connectors — project-scoped list', () => {
 	it('lists the global catalog ordered by name', async () => {
 		await db.query(
 			`INSERT INTO mcp_connections (name, kind, config, install_status)
 			 VALUES ('proj-list-a', $1::mcp_connection_kind, '{"url":"https://a/mcp"}'::jsonb, 'installed')`,
-			[McpConnectionKind.Saas],
+			[ConnectorTransport.Saas],
 		);
-		const res = await app.request(`/api/projects/${projectSlug}/mcp-connections`, {
+		const res = await app.request(`/api/projects/${projectSlug}/connectors`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -72,9 +72,9 @@ describe('GET /projects/:projectId/mcp-connections — project-scoped list', () 
 	});
 });
 
-describe('POST /projects/:projectId/mcp-connections — success arms', () => {
+describe('POST /projects/:projectId/connectors — success arms', () => {
 	it('inserts a saas connector (installed) and returns 201', async () => {
-		const res = await app.request(`/api/projects/${projectSlug}/mcp-connections`, {
+		const res = await app.request(`/api/projects/${projectSlug}/connectors`, {
 			method: 'POST',
 			headers: jsonHeaders(),
 			body: JSON.stringify({
@@ -91,7 +91,7 @@ describe('POST /projects/:projectId/mcp-connections — success arms', () => {
 
 	it('accepts a valid oauth_connection_id (ownership-present arm)', async () => {
 		const oauthId = await seedOauthConnection();
-		const res = await app.request(`/api/projects/${projectSlug}/mcp-connections`, {
+		const res = await app.request(`/api/projects/${projectSlug}/connectors`, {
 			method: 'POST',
 			headers: jsonHeaders(),
 			body: JSON.stringify({
@@ -107,7 +107,7 @@ describe('POST /projects/:projectId/mcp-connections — success arms', () => {
 	});
 
 	it('inserts a local connector (pending) and kicks off install with no running containers', async () => {
-		const res = await app.request(`/api/projects/${projectSlug}/mcp-connections`, {
+		const res = await app.request(`/api/projects/${projectSlug}/connectors`, {
 			method: 'POST',
 			headers: jsonHeaders(),
 			body: JSON.stringify({
@@ -122,17 +122,17 @@ describe('POST /projects/:projectId/mcp-connections — success arms', () => {
 	});
 });
 
-describe('POST /projects/:projectId/mcp-connections/:id/revoke — oauth-attached arm', () => {
+describe('POST /projects/:projectId/connectors/:id/revoke — oauth-attached arm', () => {
 	it('revokes a connector that has an oauth connection and deletes the oauth row', async () => {
 		const oauthId = await seedOauthConnection();
 		const conn = await db.query<{ id: string }>(
 			`INSERT INTO mcp_connections (name, kind, config, oauth_connection_id, install_status)
 			 VALUES ('proj-revoke-oauth', $1::mcp_connection_kind, '{"url":"https://r/mcp"}'::jsonb, $2, 'installed')
 			 RETURNING id`,
-			[McpConnectionKind.Saas, oauthId],
+			[ConnectorTransport.Saas, oauthId],
 		);
 		const res = await app.request(
-			`/api/projects/${projectSlug}/mcp-connections/${conn.rows[0].id}/revoke`,
+			`/api/projects/${projectSlug}/connectors/${conn.rows[0].id}/revoke`,
 			{ method: 'POST', headers: authHeader(token) },
 		);
 		expect(res.status).toBe(200);

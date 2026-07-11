@@ -55,8 +55,8 @@ describe('invalidateQueriesForRowChange uses the queryKeys factory', () => {
 	test('mcp_connections detail key is scoped to the row id', () => {
 		const { client, keys } = recordingClient();
 		invalidateQueriesForRowChange(client, SLUG, 'mcp_connections', { id: 'c1' });
-		expect(keys).toContainEqual(queryKeys.projects.mcpConnections(SLUG));
-		expect(keys).toContainEqual(queryKeys.projects.mcpConnectionDetail(SLUG, 'c1'));
+		expect(keys).toContainEqual(queryKeys.projects.connectors(SLUG));
+		expect(keys).toContainEqual(queryKeys.projects.connectorDetail(SLUG, 'c1'));
 	});
 
 	test('document row change branches on the document type', () => {

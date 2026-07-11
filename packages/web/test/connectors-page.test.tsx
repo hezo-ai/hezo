@@ -22,7 +22,7 @@ async function seedSaasConnector(
 			scopes_supported: ['read', 'write'],
 		};
 	}
-	const res = await apiBase(`/api/projects/${ws.internalSlug}/mcp-connections`, {
+	const res = await apiBase(`/api/projects/${ws.internalSlug}/connectors`, {
 		method: 'POST',
 		headers: ws.headers,
 		body: JSON.stringify({ name: input.name, kind: 'saas', config }),
@@ -39,7 +39,7 @@ async function seedLocalConnector(
 	input: { name: string; command: string },
 ): Promise<{ id: string; name: string }> {
 	const { apiBase } = getTestContext();
-	const res = await apiBase(`/api/projects/${ws.internalSlug}/mcp-connections`, {
+	const res = await apiBase(`/api/projects/${ws.internalSlug}/connectors`, {
 		method: 'POST',
 		headers: ws.headers,
 		body: JSON.stringify({
