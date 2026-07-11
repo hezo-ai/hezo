@@ -1,6 +1,6 @@
 import { AgentAdminStatus } from '@hezo/shared';
 import { Link, useNavigate } from '@tanstack/react-router';
-import { AlertTriangle, Globe, Info, Loader2 } from 'lucide-react';
+import { AlertTriangle, ChevronsLeft, Globe, Info, Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { useActiveProject } from '../hooks/use-active-project';
 import { useAgents } from '../hooks/use-agents';
@@ -19,7 +19,7 @@ import { Tooltip } from './ui/tooltip';
  * follow; the backing team's agents close it out under a Team section. The team
  * is presented as the project's own — there is no separate team-level view.
  */
-export function ProjectSidebar() {
+export function ProjectSidebar({ onCollapse }: { onCollapse?: () => void } = {}) {
 	const active = useActiveProject();
 	const navigate = useNavigate();
 	const projectId = active?.slug ?? '';
@@ -241,7 +241,7 @@ export function ProjectSidebar() {
 					to="/projects/$projectId"
 					params={projectParams}
 					data-testid="project-sidebar-name"
-					className="block text-[13px] font-semibold text-text-1 truncate"
+					className="min-w-0 flex-1 text-[13px] font-semibold text-text-1 truncate"
 				>
 					{project ? (
 						isInternal ? (
@@ -265,6 +265,19 @@ export function ProjectSidebar() {
 							className="shrink-0 text-text-3 hover:text-text-1 transition-colors"
 						>
 							<Info className="w-3.5 h-3.5" aria-hidden="true" />
+						</button>
+					</Tooltip>
+				)}
+				{onCollapse && (
+					<Tooltip content="Collapse menu" side="bottom">
+						<button
+							type="button"
+							aria-label="Collapse menu"
+							data-testid="project-sidebar-collapse"
+							onClick={onCollapse}
+							className="ml-auto shrink-0 inline-flex h-6 w-6 items-center justify-center rounded-md text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
+						>
+							<ChevronsLeft className="h-4 w-4" aria-hidden="true" />
 						</button>
 					</Tooltip>
 				)}

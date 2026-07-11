@@ -6,6 +6,7 @@ import {
 	useMatches,
 	useNavigate,
 } from '@tanstack/react-router';
+import { ChevronsRight } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppHeader } from '../components/app-header';
 import { ChatWidget } from '../components/chat/chat-widget';
@@ -19,10 +20,12 @@ import { ScrollToBottomButton } from '../components/scroll-to-bottom-button';
 import { ScrollToTopButton } from '../components/scroll-to-top-button';
 import { CreatePasswordFlow, SetupGate } from '../components/setup/setup-wizard';
 import { StartingScreen } from '../components/starting-screen';
+import { Tooltip } from '../components/ui/tooltip';
 import { UpdateBanner } from '../components/update-banner';
 import { SocketProvider } from '../contexts/socket-context';
 import { useActiveProject } from '../hooks/use-active-project';
 import { useMe } from '../hooks/use-me';
+import { useProjectMenuCollapsed } from '../hooks/use-project-menu-collapsed';
 import { useProjectsIndex } from '../hooks/use-projects';
 import { useScrollToBottom } from '../hooks/use-scroll-to-bottom';
 import { useScrollToTop } from '../hooks/use-scroll-to-top';
@@ -160,6 +163,7 @@ interface ShellChromeProps {
 function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
 	const [searchOpen, setSearchOpen] = useState(false);
 	const active = useActiveProject();
+	const [menuCollapsed, setMenuCollapsed] = useProjectMenuCollapsed();
 	const mainRef = useRef<HTMLElement>(null);
 	// The scroll-to-bottom hook needs the <main> element as state (a ref never
 	// re-runs its effect), so a stable callback ref feeds both. Stable identity
@@ -227,16 +231,32 @@ function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
 				{/* Rail + project sidebar + scrollable main span the full viewport so
 				    the main-panel scrollbar sits on the browser edge, not mid-screen. */}
 				<div
-					className="flex flex-row flex-1 min-w-0 w-full overflow-hidden"
+					className="relative flex flex-row flex-1 min-w-0 w-full overflow-hidden"
 					data-testid="content-well"
 				>
 					<div className="hidden md:flex h-full">
 						<ProjectRail />
 					</div>
-					{active && (
-						<div className="hidden lg:block w-[208px] shrink-0 h-full overflow-y-auto border-r border-border bg-surface py-2">
-							<ProjectSidebar />
+					{active && !menuCollapsed && (
+						<div className="hidden lg:block w-[208px] shrink-0 h-full overflow-y-auto border-r border-border bg-surface pb-2">
+							<ProjectSidebar onCollapse={() => setMenuCollapsed(true)} />
 						</div>
+					)}
+					{/* Collapsed: a slim expand tab docked to the project rail's right
+					    edge, flush under the app header. Desktop-only — below lg the
+					    project menu is a drawer, so there is nothing to collapse. */}
+					{active && menuCollapsed && (
+						<Tooltip content="Expand menu" side="right">
+							<button
+								type="button"
+								aria-label="Expand menu"
+								data-testid="project-sidebar-expand"
+								onClick={() => setMenuCollapsed(false)}
+								className="absolute left-[60px] top-0 z-20 hidden h-[22px] w-7 items-center justify-center rounded-br-[9px] border border-l-0 border-t-0 border-border bg-surface text-text-2 shadow-sm transition-colors hover:text-text-1 lg:flex"
+							>
+								<ChevronsRight className="h-4 w-4" aria-hidden="true" />
+							</button>
+						</Tooltip>
 					)}
 					{/* The relative wrapper hosts the scroll-to-bottom pill as a sibling
 					    of the scroller, so the pill stays pinned over the content area
