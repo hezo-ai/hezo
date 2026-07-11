@@ -7,7 +7,7 @@ export interface Connector {
 	id: string;
 	name: string;
 	display_name: string | null;
-	kind: 'saas' | 'local';
+	kind: 'saas' | 'local' | 'api';
 	config: Record<string, unknown>;
 	oauth_connection_id: string | null;
 	/** Vault secret holding a pasted API key, for connectors whose provider
@@ -116,7 +116,7 @@ export function useRevokeConnector(projectId: string) {
 
 export interface CreateConnectorPayload {
 	name: string;
-	kind: 'saas' | 'local';
+	kind: 'saas' | 'local' | 'api';
 	config: Record<string, unknown>;
 }
 

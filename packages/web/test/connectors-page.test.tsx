@@ -192,6 +192,42 @@ test('the Add form creates a project-scoped connector and auto-probes OAuth', as
 	}
 });
 
+test('the Add form creates a REST-API connector (base_url shown, no OAuth Connect, API-key attach)', async () => {
+	let slug = '';
+	const { findByText, findByTestId, getByTestId, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			slug = ws.internalSlug;
+		},
+	});
+	await router.navigate({ to: CONNECTORS_ROUTE, params: { projectId: slug } });
+	await findByText('Connectors', { selector: 'h1' });
+
+	// Open the Add form and switch to the REST API transport.
+	(await findByTestId('connector-add-toggle')).click();
+	(await findByTestId('connector-add-type-api')).click();
+
+	await user.type(await findByTestId('connector-add-name'), 'weather');
+	await user.type(await findByTestId('connector-add-base-url'), 'https://api.weather.example/v1');
+	await user.type(await findByTestId('connector-add-allowed-hosts'), 'api.weather.example');
+	// auth name defaults to "Authorization" — leave it. Submit (no OAuth probe for api).
+	(await findByTestId('connector-add-submit')).click();
+
+	// The created api connector renders with its base_url (create → refetch).
+	await findByText('weather');
+	await findByText('https://api.weather.example/v1');
+
+	// An api connector has no OAuth — its row offers the API-key attach only, never
+	// the OAuth Connect button.
+	const row = within(getByTestId('connectors-list'))
+		.getAllByTestId('connector-row')
+		.find((li) => li.getAttribute('data-connector-id'));
+	if (!row) throw new Error('api connector row not found');
+	expect(within(row).queryByTestId('connector-connect')).toBeNull();
+	within(row).getByTestId('connector-api-key-toggle');
+});
+
 test('a global connector is read-only on the project page (badge + manage link, no actions)', async () => {
 	let slug = '';
 	const { findByText, router } = await renderApp({

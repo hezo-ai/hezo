@@ -114,22 +114,31 @@ interface AddConnectorFormProps {
 }
 
 /**
- * Add a remote (SaaS) MCP connector directly to this project — the same
- * name+URL create the admin page offers, scoped implicitly to this project.
- * On submit it creates the row, then probes for OAuth: an OAuth-capable server
- * opens the authorize popup automatically; a public / header-authenticated one
- * resolves to a null auth_url and the new row just offers its API-key option.
+ * Add a connector directly to this project. Two transports:
+ *  - MCP server (`saas`): name + URL; on submit it creates the row then probes
+ *    for OAuth (OAuth-capable → authorize popup; public/header-auth → null
+ *    auth_url and the row offers its API-key option).
+ *  - REST API (`api`): a direct HTTP API the agent calls itself (no MCP server) —
+ *    base URL + allowed hosts + how the credential rides (header/query). No OAuth;
+ *    the human attaches the key from the new row and the egress proxy substitutes
+ *    it, scoped to the allowed hosts.
  */
 function AddConnectorForm({ projectId, onClose }: AddConnectorFormProps) {
 	const create = useCreateConnector(projectId);
 	const authStart = useAuthStart(projectId);
+	const [type, setType] = useState<'mcp' | 'api'>('mcp');
 	const [name, setName] = useState('');
 	const [url, setUrl] = useState('');
+	// REST-API-connector fields.
+	const [baseUrl, setBaseUrl] = useState('');
+	const [allowedHosts, setAllowedHosts] = useState('');
+	const [placement, setPlacement] = useState<'header' | 'query'>('header');
+	const [authName, setAuthName] = useState('Authorization');
+	const [scheme, setScheme] = useState('Bearer ');
+	const [docsUrl, setDocsUrl] = useState('');
 	const [error, setError] = useState<string | null>(null);
 
-	const submit = async (e: React.FormEvent) => {
-		e.preventDefault();
-		setError(null);
+	const submitMcp = async () => {
 		if (!name.trim() || !url.trim()) {
 			setError('Name and MCP server URL are required.');
 			return;
@@ -145,11 +154,10 @@ function AddConnectorForm({ projectId, onClose }: AddConnectorFormProps) {
 			setError(err instanceof Error ? err.message : 'Failed to add connector');
 			return;
 		}
-		// The row already shows in the list; probe the new connector for OAuth and
-		// pop the authorize window when it advertises any. Header-auth / public MCPs
-		// resolve to auth_url null and are connected later with a pasted API key from
-		// their row, so those just close the form. Keep the form open only to surface
-		// a blocked popup (its error can't render once the form unmounts).
+		// Probe the new connector for OAuth and pop the authorize window when it
+		// advertises any. Header-auth / public MCPs resolve to auth_url null and are
+		// connected later with a pasted API key from their row. Keep the form open
+		// only to surface a blocked popup (its error can't render once unmounted).
 		try {
 			const started = await authStart.mutateAsync(created.id);
 			if (started.auth_url) {
@@ -160,10 +168,59 @@ function AddConnectorForm({ projectId, onClose }: AddConnectorFormProps) {
 				}
 			}
 		} catch {
-			// The row exists regardless; any auth failure is recorded on it (Failed
-			// badge + Retry), so the user can connect from the row itself.
+			// The row exists regardless; any auth failure is recorded on it.
 		}
 		onClose();
+	};
+
+	const submitApi = async () => {
+		const hosts = allowedHosts
+			.split(/[\s,]+/)
+			.map((h) => h.trim())
+			.filter(Boolean);
+		if (!name.trim() || !baseUrl.trim()) {
+			setError('Name and base URL are required.');
+			return;
+		}
+		if (hosts.length === 0) {
+			setError('At least one allowed host is required (the egress proxy scope for the key).');
+			return;
+		}
+		if (!authName.trim()) {
+			setError(
+				placement === 'header' ? 'Header name is required.' : 'Query parameter is required.',
+			);
+			return;
+		}
+		try {
+			await create.mutateAsync({
+				name: name.trim(),
+				kind: 'api',
+				config: {
+					base_url: baseUrl.trim(),
+					allowed_hosts: hosts,
+					auth: {
+						placement,
+						name: authName.trim(),
+						...(placement === 'header' && scheme !== '' ? { scheme } : {}),
+					},
+					...(docsUrl.trim() ? { docs_url: docsUrl.trim() } : {}),
+				},
+			});
+		} catch (err) {
+			setError(err instanceof Error ? err.message : 'Failed to add API connector');
+			return;
+		}
+		// No OAuth for a direct-API connector — the human attaches the credential
+		// from the new row (API key), which scopes the vault secret to allowed_hosts.
+		onClose();
+	};
+
+	const submit = (e: React.FormEvent) => {
+		e.preventDefault();
+		setError(null);
+		if (type === 'mcp') void submitMcp();
+		else void submitApi();
 	};
 
 	return (
@@ -173,6 +230,26 @@ function AddConnectorForm({ projectId, onClose }: AddConnectorFormProps) {
 			onSubmit={submit}
 			data-testid="connector-add-form"
 		>
+			<div className="flex gap-2">
+				<Button
+					type="button"
+					size="sm"
+					variant={type === 'mcp' ? undefined : 'outline'}
+					onClick={() => setType('mcp')}
+					data-testid="connector-add-type-mcp"
+				>
+					MCP server
+				</Button>
+				<Button
+					type="button"
+					size="sm"
+					variant={type === 'api' ? undefined : 'outline'}
+					onClick={() => setType('api')}
+					data-testid="connector-add-type-api"
+				>
+					REST API
+				</Button>
+			</div>
 			<Input
 				placeholder="Name (e.g. linear)"
 				value={name}
@@ -180,13 +257,67 @@ function AddConnectorForm({ projectId, onClose }: AddConnectorFormProps) {
 				data-testid="connector-add-name"
 				required
 			/>
-			<Input
-				placeholder="MCP server URL (e.g. https://mcp.example.com/mcp)"
-				value={url}
-				onChange={(e) => setUrl(e.target.value)}
-				data-testid="connector-add-url"
-				required
-			/>
+			{type === 'mcp' ? (
+				<Input
+					placeholder="MCP server URL (e.g. https://mcp.example.com/mcp)"
+					value={url}
+					onChange={(e) => setUrl(e.target.value)}
+					data-testid="connector-add-url"
+				/>
+			) : (
+				<>
+					<Input
+						placeholder="Base URL (e.g. https://api.example.com/v1)"
+						value={baseUrl}
+						onChange={(e) => setBaseUrl(e.target.value)}
+						data-testid="connector-add-base-url"
+					/>
+					<Input
+						placeholder="Allowed hosts, comma/space separated (e.g. api.example.com)"
+						value={allowedHosts}
+						onChange={(e) => setAllowedHosts(e.target.value)}
+						data-testid="connector-add-allowed-hosts"
+					/>
+					<div className="flex flex-col gap-2 sm:flex-row">
+						<select
+							value={placement}
+							onChange={(e) => setPlacement(e.target.value as 'header' | 'query')}
+							data-testid="connector-add-placement"
+							className="rounded-md border border-border bg-transparent px-2 py-2 text-sm text-text-1 shrink-0"
+						>
+							<option value="header">Header</option>
+							<option value="query">Query param</option>
+						</select>
+						<Input
+							placeholder={
+								placement === 'header' ? 'Header name (Authorization)' : 'Query param (api_key)'
+							}
+							value={authName}
+							onChange={(e) => setAuthName(e.target.value)}
+							data-testid="connector-add-auth-name"
+						/>
+						{placement === 'header' && (
+							<Input
+								placeholder="Scheme prefix (e.g. 'Bearer ')"
+								value={scheme}
+								onChange={(e) => setScheme(e.target.value)}
+								data-testid="connector-add-scheme"
+							/>
+						)}
+					</div>
+					<Input
+						placeholder="API docs URL (optional)"
+						value={docsUrl}
+						onChange={(e) => setDocsUrl(e.target.value)}
+						data-testid="connector-add-docs-url"
+					/>
+					<p className="text-xs text-text-3">
+						A direct REST API the agent calls itself — no MCP server. After creating, attach the API
+						key from its row; agents get the placeholder + base URL via <code>list_connectors</code>{' '}
+						and the egress proxy substitutes the key, scoped to the allowed hosts.
+					</p>
+				</>
+			)}
 			{error && <p className="text-xs text-danger-soft-fg">{error}</p>}
 			<div className="flex gap-2">
 				<Button
@@ -348,12 +479,16 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 	// no connect/disconnect/api-key, just a "Global" badge and a link to manage.
 	const isGlobal = connector.project_id === null;
 
-	const url =
-		typeof connector.config === 'object' &&
-		connector.config !== null &&
-		typeof (connector.config as { url?: unknown }).url === 'string'
-			? (connector.config as { url: string }).url
-			: null;
+	const cfg = (connector.config ?? {}) as {
+		url?: unknown;
+		base_url?: unknown;
+		docs_url?: unknown;
+	};
+	const url = typeof cfg.url === 'string' ? cfg.url : null;
+	const baseUrl = typeof cfg.base_url === 'string' ? cfg.base_url : null;
+	const docsUrl = typeof cfg.docs_url === 'string' ? cfg.docs_url : null;
+	const isApi = connector.kind === 'api';
+	const displayUrl = url ?? baseUrl;
 
 	const openConnect = () => {
 		setError(null);
@@ -428,7 +563,20 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 							</Badge>
 						)}
 					</div>
-					{url && <p className="text-xs text-text-2 mt-1 truncate font-mono">{url}</p>}
+					{displayUrl && (
+						<p className="text-xs text-text-2 mt-1 truncate font-mono">{displayUrl}</p>
+					)}
+					{docsUrl && (
+						<a
+							href={docsUrl}
+							target="_blank"
+							rel="noopener noreferrer"
+							className="text-xs text-info hover:underline mt-1 inline-flex items-center gap-1"
+							data-testid="connector-docs-link"
+						>
+							<ExternalLink className="size-3" /> API docs
+						</a>
+					)}
 					{connector.oauth_account_label && (
 						<p className="text-xs text-text-2 mt-1">
 							Connected as <span className="font-mono">{connector.oauth_account_label}</span>
@@ -470,14 +618,16 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 						</Button>
 					) : (
 						<>
-							<Button
-								size="sm"
-								onClick={openConnect}
-								disabled={authStart.isPending}
-								data-testid="connector-connect"
-							>
-								{authStart.isPending ? 'Starting…' : status === 'failed' ? 'Retry' : 'Connect'}
-							</Button>
+							{!isApi && (
+								<Button
+									size="sm"
+									onClick={openConnect}
+									disabled={authStart.isPending}
+									data-testid="connector-connect"
+								>
+									{authStart.isPending ? 'Starting…' : status === 'failed' ? 'Retry' : 'Connect'}
+								</Button>
+							)}
 							<Button
 								size="sm"
 								variant="outline"
