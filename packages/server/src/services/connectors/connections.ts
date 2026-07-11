@@ -41,7 +41,90 @@ export interface LocalConnectorConfig {
 	package?: string;
 }
 
-export type ConnectorConfig = SaasConnectorConfig | LocalConnectorConfig;
+/**
+ * A credentialed REST API the agent calls **directly** through the egress proxy —
+ * no MCP server involved. Unlike saas/local there is no MCP descriptor: the agent
+ * gets the `base_url`, the auth `placement`/`name`, and a `__HEZO_SECRET_*__`
+ * placeholder (via {@link loadConnectorDescriptors}'s api_auth surfacing in
+ * `list_connectors`), puts the placeholder in the header/query named by `auth`,
+ * and calls `base_url`. The egress proxy substitutes the real key at request time,
+ * scoped to `allowed_hosts`. The credential itself is NOT stored in config — it is
+ * the `api_key_secret_id` vault link, same as an api-key-authenticated saas row.
+ */
+export interface ApiConnectorConfig {
+	base_url: string;
+	allowed_hosts: string[];
+	auth: {
+		/** Where the credential rides: an HTTP header, or a query-string parameter. */
+		placement: 'header' | 'query';
+		/** Header name (e.g. `Authorization`) or query param name (e.g. `api_key`). */
+		name: string;
+		/** Optional value prefix for a header placement (e.g. `Bearer `). */
+		scheme?: string;
+	};
+	/** Optional link to the provider's REST API docs, surfaced to the agent + UI. */
+	docs_url?: string;
+}
+
+export type ConnectorConfig = SaasConnectorConfig | LocalConnectorConfig | ApiConnectorConfig;
+
+/**
+ * Validate a raw `config` object as an {@link ApiConnectorConfig}. Shared by the
+ * `add_connector` MCP tool and the connector-create REST routes so the two surfaces
+ * enforce identical shape. Returns `{ ok: true, config }` with the normalized config
+ * (trimmed strings, deduped hosts) or `{ ok: false, error }` with a human message.
+ */
+export function validateApiConnectorConfig(
+	config: Record<string, unknown> | undefined,
+): { ok: true; config: ApiConnectorConfig } | { ok: false; error: string } {
+	const baseUrl = typeof config?.base_url === 'string' ? config.base_url.trim() : '';
+	if (!baseUrl) return { ok: false, error: 'api connectors require config.base_url (string)' };
+	let host = '';
+	try {
+		host = new URL(baseUrl).host;
+	} catch {
+		return { ok: false, error: 'config.base_url must be a valid URL' };
+	}
+	if (!host) return { ok: false, error: 'config.base_url must be a valid URL' };
+
+	const rawHosts = (config as { allowed_hosts?: unknown }).allowed_hosts;
+	if (
+		!Array.isArray(rawHosts) ||
+		rawHosts.length === 0 ||
+		!rawHosts.every((h) => typeof h === 'string' && h.trim().length > 0)
+	) {
+		return { ok: false, error: 'api connectors require config.allowed_hosts (non-empty string[])' };
+	}
+	const allowedHosts = [...new Set(rawHosts.map((h) => (h as string).trim().toLowerCase()))];
+
+	const auth = (config as { auth?: unknown }).auth;
+	if (typeof auth !== 'object' || auth === null) {
+		return { ok: false, error: 'api connectors require config.auth ({ placement, name })' };
+	}
+	const placement = (auth as { placement?: unknown }).placement;
+	if (placement !== 'header' && placement !== 'query') {
+		return { ok: false, error: "config.auth.placement must be 'header' or 'query'" };
+	}
+	const nameRaw = (auth as { name?: unknown }).name;
+	const name = typeof nameRaw === 'string' ? nameRaw.trim() : '';
+	if (!name) return { ok: false, error: 'config.auth.name is required' };
+	const schemeRaw = (auth as { scheme?: unknown }).scheme;
+	const scheme = typeof schemeRaw === 'string' ? schemeRaw : undefined;
+
+	const docsRaw = (config as { docs_url?: unknown }).docs_url;
+	const docsUrl =
+		typeof docsRaw === 'string' && docsRaw.trim().length > 0 ? docsRaw.trim() : undefined;
+
+	return {
+		ok: true,
+		config: {
+			base_url: baseUrl,
+			allowed_hosts: allowedHosts,
+			auth: { placement, name, ...(scheme !== undefined ? { scheme } : {}) },
+			...(docsUrl ? { docs_url: docsUrl } : {}),
+		},
+	};
+}
 
 export interface ConnectorRow {
 	id: string;
@@ -228,6 +311,7 @@ export async function loadConnectorDescriptors(
 				url: config.url,
 				headers,
 			});
+		} else if (row.kind === ConnectorTransport.Api) {
 		} else if (row.kind === ConnectorTransport.Local) {
 			if (row.install_status !== 'installed') {
 				log.warn('skipping local mcp connection that is not installed', {

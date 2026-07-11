@@ -1215,6 +1215,20 @@ connectors UI treats a non-revoked, non-failed local row as **connected the
 moment it exists** (`statusOf`/`connectorStatus` short-circuit `kind='local'` to `active`)
 rather than showing it a meaningless "Pending connect" OAuth affordance.
 
+`kind='api'` is a **direct-REST connector with no MCP server** — for backends that expose a
+plain HTTP API rather than MCP (e.g. Google's APIs). Its `config` carries
+`{ base_url, allowed_hosts, auth: { placement: 'header'|'query', name, scheme? }, docs_url? }`
+and it links a pasted credential via `api_key_secret_id` (the same vault link as an
+api-key saas row; the `/api-key` route scopes the secret's `allowed_hosts` to the config's
+hosts / `base_url` host). An `api` connector has **no MCP descriptor** — `loadConnectorDescriptors`
+skips it — and is instead surfaced to the agent through `list_connectors`, which emits an
+`api_auth = { base_url, placeholder, allowed_hosts, placement, name, docs_url }` block (the
+`placeholder` is null until a credential is attached). The agent puts the `__HEZO_SECRET_*__`
+placeholder in the named header/query and calls `base_url` directly; the egress proxy
+substitutes the real key at request time, scoped to `allowed_hosts` — the same red-line-safe
+path as any other placeholder, with the secret never entering the run. This is the most
+red-line-native transport: a credential only ever appears as a placeholder in a header/URL.
+
 **Connector auth must traverse the egress proxy.** Because connector auth is a placeholder,
 each coding CLI's MCP-startup HTTP MUST go through the per-run proxy or the placeholder ships
 unsubstituted and 401s (a fail-closed usability miss, never a leak — § 7). All five runtimes

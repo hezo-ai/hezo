@@ -10,6 +10,7 @@ import { isUniqueViolation, withTransaction } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireAdminEquivalent } from '../middleware/auth';
+import { validateApiConnectorConfig } from '../services/connectors/connections';
 import {
 	createOrFetchConnector,
 	fireCredentialProvidedWakeup,
@@ -92,7 +93,7 @@ connectorsRoutes.post('/connectors', async (c) => {
 	const body = await c.req.json<{
 		name: string;
 		display_name?: string;
-		kind: 'saas' | 'local';
+		kind: 'saas' | 'api';
 		config: Record<string, unknown>;
 		project_id?: string | null;
 	}>();
@@ -100,12 +101,22 @@ connectorsRoutes.post('/connectors', async (c) => {
 	if (!body.name?.trim()) {
 		return err(c, 'INVALID_REQUEST', 'name is required', 400);
 	}
-	if (body.kind !== ConnectorTransport.Saas) {
-		return err(c, 'INVALID_REQUEST', 'connectors must be "saas" (remote MCP url)', 400);
+	// The admin surface manages remote (`saas`) MCP servers and direct-REST (`api`)
+	// connectors — local (stdio) MCPs carry per-container install state and are
+	// managed on the project page only.
+	if (body.kind !== ConnectorTransport.Saas && body.kind !== ConnectorTransport.Api) {
+		return err(c, 'INVALID_REQUEST', 'connectors must be "saas" (remote MCP url) or "api"', 400);
 	}
-	const url = body.config?.url;
-	if (typeof url !== 'string' || !url) {
-		return err(c, 'INVALID_REQUEST', 'saas connections require config.url (string)', 400);
+	let config = body.config;
+	if (body.kind === ConnectorTransport.Api) {
+		const validated = validateApiConnectorConfig(config);
+		if (!validated.ok) return err(c, 'INVALID_REQUEST', validated.error, 400);
+		config = validated.config as unknown as Record<string, unknown>;
+	} else {
+		const url = body.config?.url;
+		if (typeof url !== 'string' || !url) {
+			return err(c, 'INVALID_REQUEST', 'saas connections require config.url (string)', 400);
+		}
 	}
 
 	// The admin surface may target a specific project (from the scope dropdown) or
@@ -143,7 +154,7 @@ connectorsRoutes.post('/connectors', async (c) => {
 			body.name.trim(),
 			body.display_name?.trim() ?? null,
 			body.kind,
-			JSON.stringify(body.config),
+			JSON.stringify(config),
 			projectId,
 		],
 	);
@@ -347,12 +358,16 @@ function apiKeySecretName(connectorName: string, projectId: string | null): stri
 }
 
 /**
- * Attach a pasted API key to a connector whose provider exposes no OAuth (e.g.
- * Typefully). The key is encrypted into the vault, scoped by allowed_hosts to
- * the MCP server host, and referenced from the connector via api_key_secret_id.
- * The raw key NEVER touches the agent run — the descriptor emits a
- * `__HEZO_SECRET_*__` placeholder and the egress proxy substitutes at request
- * time (AGENTS.md red line). Response-driven (security-sensitive).
+ * Attach a pasted API key to a connector whose provider exposes no OAuth. Covers
+ * both a `saas` MCP whose server takes a bearer/API key (e.g. Typefully) and an
+ * `api` connector (a direct REST API with no MCP server). The key is encrypted
+ * into the vault, scoped by allowed_hosts (the saas MCP host, or the api
+ * connector's `allowed_hosts` / `base_url` host), and referenced from the
+ * connector via api_key_secret_id. The raw key NEVER touches the agent run — a
+ * saas descriptor emits a `__HEZO_SECRET_*__` placeholder and an api connector
+ * surfaces the same placeholder via `list_connectors`; the egress proxy
+ * substitutes at request time (AGENTS.md red line). Response-driven
+ * (security-sensitive).
  */
 connectorsRoutes.post('/projects/:projectId/connectors/:id/api-key', async (c) => {
 	const teamId = c.get('teamId') as string;
@@ -367,8 +382,7 @@ connectorsRoutes.post('/projects/:projectId/connectors/:id/api-key', async (c) =
 	const value = typeof body.value === 'string' ? body.value.trim() : '';
 	if (!value) return err(c, 'INVALID_REQUEST', 'value is required', 400);
 
-	// Scoped load: the connector must belong to this project (or be global) and be
-	// a saas MCP with a url — API-key auth is an HTTP header on the MCP endpoint.
+	// Scoped load: the connector must belong to this project (or be global).
 	const existing = await db.query<{
 		id: string;
 		name: string;
@@ -388,28 +402,60 @@ connectorsRoutes.post('/projects/:projectId/connectors/:id/api-key', async (c) =
 	// A revoked connector is restored in place: pasting a key is a fresh reconnect
 	// rather than an error. markApiKeyActive below clears revoked_at and re-stamps
 	// activated_at as part of attaching the new key.
-	if (conn.kind !== ConnectorTransport.Saas) {
-		return err(c, 'INVALID_REQUEST', 'API-key auth applies to saas MCP connectors', 400);
-	}
-	const url = typeof conn.config?.url === 'string' ? (conn.config.url as string) : '';
-	let host = '';
-	try {
-		host = new URL(url).host.toLowerCase();
-	} catch {
-		return err(c, 'INVALID_REQUEST', 'connector has no valid MCP server url', 400);
+	//
+	// Determine the host(s) the pasted key is scoped to. For a `saas` MCP the key
+	// rides an HTTP header on the MCP endpoint, so it's scoped to that url's host.
+	// For an `api` connector (direct REST) it's scoped to the config's
+	// `allowed_hosts` (falling back to the `base_url` host). Local (stdio) rows
+	// authenticate via request_credential, not this route.
+	let allowedHosts: string[];
+	if (conn.kind === ConnectorTransport.Saas) {
+		const url = typeof conn.config?.url === 'string' ? (conn.config.url as string) : '';
+		try {
+			allowedHosts = [new URL(url).host.toLowerCase()];
+		} catch {
+			return err(c, 'INVALID_REQUEST', 'connector has no valid MCP server url', 400);
+		}
+	} else if (conn.kind === ConnectorTransport.Api) {
+		const cfgHosts = Array.isArray(conn.config?.allowed_hosts)
+			? (conn.config.allowed_hosts as unknown[]).filter(
+					(h): h is string => typeof h === 'string' && h.trim().length > 0,
+				)
+			: [];
+		if (cfgHosts.length > 0) {
+			allowedHosts = [...new Set(cfgHosts.map((h) => h.trim().toLowerCase()))];
+		} else {
+			const baseUrl =
+				typeof conn.config?.base_url === 'string' ? (conn.config.base_url as string) : '';
+			try {
+				allowedHosts = [new URL(baseUrl).host.toLowerCase()];
+			} catch {
+				return err(c, 'INVALID_REQUEST', 'connector has no valid base_url', 400);
+			}
+		}
+	} else {
+		return err(c, 'INVALID_REQUEST', 'API-key auth applies to saas or api connectors', 400);
 	}
 
 	const encryptionKey = masterKeyManager.getKey();
 	if (!encryptionKey) return err(c, 'LOCKED', 'Master key not available', 503);
 
-	// Header/scheme override (the form's "Advanced" disclosure). Default to
+	// Header/scheme override (the form's "Advanced" disclosure) — a saas concept:
+	// which header the placeholder rides in on the MCP descriptor. Default to
 	// `Authorization` / `Bearer ` — covers most MCP servers incl. Typefully. An
 	// explicit empty scheme lets a provider take the raw key (e.g. `X-API-Key`).
+	// An `api` connector already carries its placement/name/scheme in `config.auth`
+	// (there is no MCP descriptor), so no `config.apiKey` is written for it.
 	const header =
-		typeof body.header === 'string' && body.header.trim().length > 0
+		conn.kind === ConnectorTransport.Saas &&
+		typeof body.header === 'string' &&
+		body.header.trim().length > 0
 			? body.header.trim()
 			: undefined;
-	const scheme = typeof body.scheme === 'string' ? body.scheme : undefined;
+	const scheme =
+		conn.kind === ConnectorTransport.Saas && typeof body.scheme === 'string'
+			? body.scheme
+			: undefined;
 	const apiKeyConfig =
 		header !== undefined || scheme !== undefined
 			? { ...(header !== undefined ? { header } : {}), ...(scheme !== undefined ? { scheme } : {}) }
@@ -431,7 +477,7 @@ connectorsRoutes.post('/projects/:projectId/connectors/:id/api-key', async (c) =
 			       allowed_hosts = EXCLUDED.allowed_hosts,
 			       updated_at = now()
 			 RETURNING id`,
-			[secretName, encrypt(value, encryptionKey), [host]],
+			[secretName, encrypt(value, encryptionKey), allowedHosts],
 		);
 		return markApiKeyActive(db, conn.id, secret.rows[0].id, apiKeyConfig);
 	});
@@ -467,7 +513,7 @@ connectorsRoutes.post('/projects/:projectId/connectors', async (c) => {
 
 	const body = await c.req.json<{
 		name: string;
-		kind: 'saas' | 'local';
+		kind: 'saas' | 'local' | 'api';
 		config: Record<string, unknown>;
 		oauth_connection_id?: string | null;
 	}>();
@@ -475,14 +521,23 @@ connectorsRoutes.post('/projects/:projectId/connectors', async (c) => {
 	if (!body.name?.trim()) {
 		return err(c, 'INVALID_REQUEST', 'name is required', 400);
 	}
-	if (body.kind !== ConnectorTransport.Saas && body.kind !== ConnectorTransport.Local) {
-		return err(c, 'INVALID_REQUEST', 'kind must be "saas" or "local"', 400);
+	if (
+		body.kind !== ConnectorTransport.Saas &&
+		body.kind !== ConnectorTransport.Local &&
+		body.kind !== ConnectorTransport.Api
+	) {
+		return err(c, 'INVALID_REQUEST', 'kind must be "saas", "local", or "api"', 400);
 	}
+	let config = body.config;
 	if (body.kind === ConnectorTransport.Saas) {
 		const url = body.config?.url;
 		if (typeof url !== 'string' || !url) {
 			return err(c, 'INVALID_REQUEST', 'saas connections require config.url (string)', 400);
 		}
+	} else if (body.kind === ConnectorTransport.Api) {
+		const validated = validateApiConnectorConfig(config);
+		if (!validated.ok) return err(c, 'INVALID_REQUEST', validated.error, 400);
+		config = validated.config as unknown as Record<string, unknown>;
 	} else if (typeof body.config?.command !== 'string' || !body.config.command) {
 		return err(c, 'INVALID_REQUEST', 'local connections require config.command (string)', 400);
 	}
@@ -500,7 +555,9 @@ connectorsRoutes.post('/projects/:projectId/connectors', async (c) => {
 		}
 	}
 
-	const initialStatus = body.kind === ConnectorTransport.Saas ? 'installed' : 'pending';
+	// Only local (stdio) MCPs need an installer pass; saas and api are usable at
+	// once (api is a direct REST call — nothing to install).
+	const initialStatus = body.kind === ConnectorTransport.Local ? 'pending' : 'installed';
 	const result = await db.query(
 		`INSERT INTO mcp_connections (name, kind, config, oauth_connection_id, install_status, project_id)
 		 VALUES ($1, $2::mcp_connection_kind, $3::jsonb, $4, $5::mcp_install_status, $6)
@@ -515,7 +572,7 @@ connectorsRoutes.post('/projects/:projectId/connectors', async (c) => {
 		[
 			body.name.trim(),
 			body.kind,
-			JSON.stringify(body.config),
+			JSON.stringify(config),
 			body.oauth_connection_id ?? null,
 			initialStatus,
 			projectId,

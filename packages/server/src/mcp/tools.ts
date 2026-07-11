@@ -97,6 +97,7 @@ import { broadcastApprovalChange } from '../services/approval-broadcast';
 import { resolveApproval } from '../services/approval-resolve';
 import { upsertChatMemory } from '../services/chat-memory';
 import { fireCommentWakeups, postAgentComment } from '../services/comment-wakeups';
+import { validateApiConnectorConfig } from '../services/connectors/connections';
 import type { ContainerDeps } from '../services/containers';
 import { enqueueTeamCoherenceReviewTask } from '../services/description-tasks';
 import {
@@ -4446,7 +4447,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_connectors',
-		'List the MCP server connections available to agent runs in your project (its own connectors plus global "all projects" ones; a project connector shadows a global one of the same name). Each row includes a derived `oauth_status` so you can tell whether a connector is usable: "active" means OAuth completed and the MCP tools should appear in your tool list on your next run; "pending" means waiting on the human to click Connect; "failed" means the OAuth flow errored (see auth_error); "revoked" means a human disconnected it; "none" means no OAuth needed (e.g., an env-var-token MCP or a public one). Do NOT confuse `install_status` (which tracks local-package install state and is meaningless for SaaS MCPs) with `oauth_status`. An active OAuth-backed connector also carries `rest_auth` = `{ placeholder, allowed_hosts, scopes }`: put `placeholder` (e.g. in an `Authorization: Bearer <placeholder>` header) on a raw HTTP request to authenticate the provider\'s REST API directly when no MCP tool covers what you need — the egress proxy substitutes the real token, but ONLY for requests to `allowed_hosts`; you never see the value. Use this instead of requesting a PAT (e.g. for GitHub repo-settings edits that the `github` MCP does not expose).',
+		'List the connectors available to agent runs in your project (its own connectors plus global "all projects" ones; a project connector shadows a global one of the same name). Each row includes a derived `oauth_status` so you can tell whether a connector is usable: "active" means OAuth completed and the MCP tools should appear in your tool list on your next run; "pending" means waiting on the human to click Connect; "failed" means the OAuth flow errored (see auth_error); "revoked" means a human disconnected it; "none" means no OAuth needed (e.g., an env-var-token MCP or a public one). Do NOT confuse `install_status` (which tracks local-package install state and is meaningless for SaaS MCPs) with `oauth_status`. An active OAuth-backed connector also carries `rest_auth` = `{ placeholder, allowed_hosts, scopes }`: put `placeholder` (e.g. in an `Authorization: Bearer <placeholder>` header) on a raw HTTP request to authenticate the provider\'s REST API directly when no MCP tool covers what you need — the egress proxy substitutes the real token, but ONLY for requests to `allowed_hosts`; you never see the value. Use this instead of requesting a PAT (e.g. for GitHub repo-settings edits that the `github` MCP does not expose). A connector of kind `api` (a credentialed REST API with no MCP server) carries `api_auth` = `{ base_url, placeholder, allowed_hosts, placement, name, docs_url }` instead: put `placeholder` in the `name` header (when `placement` is "header", prefixed by any scheme) or `name` query parameter (when `placement` is "query") and send the request to `base_url` — the egress proxy substitutes the real key, scoped to `allowed_hosts`. `placeholder` is null until a human attaches the credential on the Connectors page; `api_auth` is null for non-api rows.',
 		{
 			project: projectArg(),
 		},
@@ -4460,6 +4461,7 @@ export function registerTools(
 				kind: string;
 				config: Record<string, unknown>;
 				oauth_connection_id: string | null;
+				api_key_secret_id: string | null;
 				install_status: string;
 				install_error: string | null;
 				skill_id: string | null;
@@ -4473,17 +4475,21 @@ export function registerTools(
 				oauth_allowed_hosts: string[] | null;
 				oauth_scopes: string[] | null;
 				oauth_account_label: string | null;
+				api_key_secret_name: string | null;
 			}>(
 				`SELECT mc.id, mc.name, mc.display_name, mc.kind::text AS kind,
-				        mc.config, mc.oauth_connection_id, mc.install_status::text AS install_status, mc.install_error,
+				        mc.config, mc.oauth_connection_id, mc.api_key_secret_id,
+				        mc.install_status::text AS install_status, mc.install_error,
 				        mc.skill_id, mc.created_by_task_id,
 				        mc.activated_at::text AS activated_at, mc.revoked_at::text AS revoked_at, mc.auth_error,
 				        mc.created_at::text, mc.updated_at::text,
 				        s.name AS oauth_secret_name, s.allowed_hosts AS oauth_allowed_hosts, oc.scopes AS oauth_scopes,
-				        oc.provider_account_label AS oauth_account_label
+				        oc.provider_account_label AS oauth_account_label,
+				        aks.name AS api_key_secret_name
 				 FROM mcp_connections mc
 				 LEFT JOIN oauth_connections oc ON oc.id = mc.oauth_connection_id
 				 LEFT JOIN secrets s ON s.id = oc.access_token_secret_id
+				 LEFT JOIN secrets aks ON aks.id = mc.api_key_secret_id
 				 WHERE mc.project_id = $1 OR mc.project_id IS NULL
 				 ORDER BY mc.name ASC, (mc.project_id IS NULL) ASC`,
 				[scope.projectId],
@@ -4514,7 +4520,13 @@ export function registerTools(
 				// agent can hit endpoints the MCP server doesn't cover without ever
 				// requesting a PAT. Omitted unless the token is scoped to at least one
 				// host, since an unscoped secret can never be substituted.
-				const { oauth_secret_name, oauth_allowed_hosts, oauth_scopes, ...rest } = row;
+				const {
+					oauth_secret_name,
+					oauth_allowed_hosts,
+					oauth_scopes,
+					api_key_secret_name,
+					...rest
+				} = row;
 				const rest_auth =
 					oauth_status === 'active' && oauth_secret_name && (oauth_allowed_hosts?.length ?? 0) > 0
 						? {
@@ -4523,7 +4535,36 @@ export function registerTools(
 								scopes: oauth_scopes ?? [],
 							}
 						: null;
-				return { ...rest, oauth_status, rest_auth };
+
+				// For an `api` connector (a direct REST API, no MCP server), surface how
+				// to call it: base_url + auth placement/name, and — once a credential is
+				// attached — the `__HEZO_SECRET_*__` placeholder to put in that
+				// header/query. The agent hits base_url directly and the egress proxy
+				// substitutes the real key, scoped to allowed_hosts. Null placeholder
+				// until a key is attached; the whole block is null for non-api rows.
+				const apiCfg = row.config as {
+					base_url?: unknown;
+					allowed_hosts?: unknown;
+					auth?: { placement?: unknown; name?: unknown };
+					docs_url?: unknown;
+				} | null;
+				const api_auth =
+					row.kind === 'api' && apiCfg
+						? {
+								base_url: typeof apiCfg.base_url === 'string' ? apiCfg.base_url : null,
+								placeholder: api_key_secret_name
+									? credentialPlaceholder(api_key_secret_name)
+									: null,
+								allowed_hosts: Array.isArray(apiCfg.allowed_hosts) ? apiCfg.allowed_hosts : [],
+								placement:
+									apiCfg.auth && typeof apiCfg.auth.placement === 'string'
+										? apiCfg.auth.placement
+										: null,
+								name: apiCfg.auth && typeof apiCfg.auth.name === 'string' ? apiCfg.auth.name : null,
+								docs_url: typeof apiCfg.docs_url === 'string' ? apiCfg.docs_url : null,
+							}
+						: null;
+				return { ...rest, oauth_status, rest_auth, api_auth };
 			});
 		},
 		db,
@@ -4637,7 +4678,7 @@ export function registerTools(
 	tool(
 		server,
 		'add_connector',
-		'Register an MCP server (SaaS HTTP or local stdio) for your project. The connection is scoped to your project — available to this project\'s agent runs, alongside any global "all projects" connectors. SaaS servers go into the agent\'s descriptor list immediately. Header values may include __HEZO_SECRET_<NAME>__ placeholders that the egress proxy substitutes at request time. Local servers must be installed before they take effect.',
+		'Register a connector for your project — a SaaS HTTP MCP server (`saas`), a local stdio MCP server (`local`), or a credentialed REST API you call directly with no MCP server (`api`). The connection is scoped to your project — available to this project\'s agent runs, alongside any global "all projects" connectors. SaaS servers go into the agent\'s descriptor list immediately. Header values may include __HEZO_SECRET_<NAME>__ placeholders that the egress proxy substitutes at request time. Local servers must be installed before they take effect. An `api` connector has no MCP server: attach a credential to it (Connectors page → API key) and it surfaces in `list_connectors` as an `api_auth` block whose placeholder you put in the auth header/query and send to `base_url` directly — the egress proxy substitutes, scoped to `allowed_hosts`.',
 		{
 			project: projectArg(),
 			name: z
@@ -4645,30 +4686,40 @@ export function registerTools(
 				.trim()
 				.min(1, 'name is required')
 				.describe('Server identifier — used as the MCP descriptor name and as the unique key.'),
-			kind: z.enum(['saas', 'local']).describe('saas = HTTP MCP, local = stdio MCP'),
+			kind: z
+				.enum(['saas', 'local', 'api'])
+				.describe('saas = HTTP MCP, local = stdio MCP, api = direct REST API (no MCP server)'),
 			config: z
 				.record(z.string(), z.unknown())
-				.describe('For saas: { url, headers? }. For local: { command, args?, env?, package? }.'),
+				.describe(
+					'For saas: { url, headers? }. For local: { command, args?, env?, package? }. For api: { base_url, allowed_hosts: string[], auth: { placement: "header"|"query", name, scheme? }, docs_url? }.',
+				),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
 			// name non-empty enforced by the schema; kind is a schema enum.
 			const name = (args.name as string).trim();
-			const kind = args.kind as 'saas' | 'local';
-			const config = args.config as Record<string, unknown>;
+			const kind = args.kind as 'saas' | 'local' | 'api';
+			let config = args.config as Record<string, unknown>;
 
 			if (kind === 'saas') {
 				if (!config?.url || typeof config.url !== 'string') {
 					return { error: 'saas connections require config.url (string)' };
 				}
+			} else if (kind === 'api') {
+				const validated = validateApiConnectorConfig(config);
+				if (!validated.ok) return { error: validated.error };
+				config = validated.config as unknown as Record<string, unknown>;
 			} else {
 				if (!config?.command || typeof config.command !== 'string') {
 					return { error: 'local connections require config.command (string)' };
 				}
 			}
 
-			const initialStatus = kind === 'saas' ? 'installed' : 'pending';
+			// api behaves like saas for install state (nothing to install — it's a
+			// direct REST call); only local needs an installer pass.
+			const initialStatus = kind === 'local' ? 'pending' : 'installed';
 			const r = await db.query<{
 				id: string;
 				install_status: string;
@@ -4684,13 +4735,16 @@ export function registerTools(
 				 RETURNING id, install_status::text AS install_status`,
 				[name, kind, JSON.stringify(config), initialStatus, scope.projectId],
 			);
+			const note =
+				kind === 'local'
+					? 'Local MCP registered with status pending. Install via the installer or container provision before agent runs can use it.'
+					: kind === 'api'
+						? 'API connector registered. Attach a credential (Connectors page → API key), then call list_connectors to get its api_auth placeholder + base_url.'
+						: 'SaaS MCP registered. Will be available to the next agent run in this scope.';
 			return {
 				id: r.rows[0].id,
 				install_status: r.rows[0].install_status,
-				note:
-					kind === 'local'
-						? 'Local MCP registered with status pending. Install via the installer or container provision before agent runs can use it.'
-						: 'SaaS MCP registered. Will be available to the next agent run in this scope.',
+				note,
 			};
 		},
 		db,
