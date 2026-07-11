@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.20.0 - 2026-07-11
+
+### Features
+
+- prefix task-mention tooltip title with bold task identifier ([#684](https://github.com/hezo-ai/hezo/pull/684))
+- **web:** rework master-key onboarding and auth panes UI ([#682](https://github.com/hezo-ai/hezo/pull/682))
+- **projects:** add archive/unarchive ([#678](https://github.com/hezo-ai/hezo/pull/678))
+- **server:** authenticate the egress proxy and harden agent containers ([#675](https://github.com/hezo-ai/hezo/pull/675))
+- **web:** combine database + asset storage into a split-view Storage section ([#674](https://github.com/hezo-ai/hezo/pull/674))
+
+### Bug Fixes
+
+- scroll-to-top stalling partway on mobile ([#681](https://github.com/hezo-ai/hezo/pull/681))
+- keep mobile comment header on one row via truncated timestamp ([#679](https://github.com/hezo-ai/hezo/pull/679))
+- **web:** show mobile review dialogs above the preview panel; tidy inbox mark-all button ([#677](https://github.com/hezo-ai/hezo/pull/677))
+- fail runs that abandon background work; relax premature CLI timeouts ([#676](https://github.com/hezo-ai/hezo/pull/676))
+
+### Refactors
+
+- remove the document status field ([#680](https://github.com/hezo-ai/hezo/pull/680))
+
+### Other
+
+- Update product tagline to "Built to ship" ([#683](https://github.com/hezo-ai/hezo/pull/683))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.19.0...0.20.0
+
 ## 0.19.0 - 2026-07-10
 
 ### Features
