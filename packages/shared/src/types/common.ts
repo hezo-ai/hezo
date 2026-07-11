@@ -1116,6 +1116,10 @@ export interface SkillRecord {
 export interface SkillListItemRecord extends Omit<SkillRecord, 'content'> {
 	project_name?: string | null;
 	project_slug?: string | null;
+	/** True for a built-in, generated skill (e.g. `connector-recipes`) that is
+	 * viewable but not editable — the UI hides edit/delete affordances and the
+	 * server rejects mutations. Absent/false for normal stored skills. */
+	readonly?: boolean;
 }
 
 /**

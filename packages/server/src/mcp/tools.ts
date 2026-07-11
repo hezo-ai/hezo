@@ -97,6 +97,11 @@ import { broadcastApprovalChange } from '../services/approval-broadcast';
 import { resolveApproval } from '../services/approval-resolve';
 import { upsertChatMemory } from '../services/chat-memory';
 import { fireCommentWakeups, postAgentComment } from '../services/comment-wakeups';
+import {
+	buildConnectorRecipesSkill,
+	CONNECTOR_RECIPES_SLUG,
+	isConnectorRecipesSlug,
+} from '../services/connector-registry';
 import { validateApiConnectorConfig } from '../services/connectors/connections';
 import type { ContainerDeps } from '../services/containers';
 import { enqueueTeamCoherenceReviewTask } from '../services/description-tasks';
@@ -4235,6 +4240,13 @@ export function registerTools(
 				),
 		},
 		async (args, db, auth) => {
+			// `connector-recipes` is a reserved built-in virtual skill — reject a
+			// proposal that would shadow it.
+			if (isConnectorRecipesSlug(args.skill_slug as string)) {
+				return {
+					error: `'${CONNECTOR_RECIPES_SLUG}' is a reserved built-in skill and cannot be proposed`,
+				};
+			}
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
 			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
@@ -4342,6 +4354,14 @@ export function registerTools(
 			slug: z.string().describe('Skill slug'),
 		},
 		async (args, db, auth) => {
+			// The built-in `connector-recipes` skill is generated from the connector
+			// registry, not a DB row — return it directly (no scope needed; it is a
+			// global read-only guide).
+			if (args.slug === CONNECTOR_RECIPES_SLUG) {
+				const s = buildConnectorRecipesSkill();
+				return { name: s.name, slug: s.slug, description: s.description, content: s.content };
+			}
+
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
 
@@ -4377,6 +4397,14 @@ export function registerTools(
 				),
 		},
 		async (args, db, auth) => {
+			// `connector-recipes` is a reserved built-in virtual skill (generated from
+			// the connector registry) — an agent may read it but not shadow it.
+			if (isConnectorRecipesSlug(args.slug as string)) {
+				return {
+					error: `'${CONNECTOR_RECIPES_SLUG}' is a reserved built-in skill and cannot be created or overwritten`,
+				};
+			}
+
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
 

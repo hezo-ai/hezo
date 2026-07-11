@@ -364,12 +364,16 @@ describe('template resolver {{skills_context}} (global)', () => {
 		expect(resolved).not.toContain('Do the thing.');
 	});
 
-	it('falls back to a placeholder when there are no skills', async () => {
+	it('still lists the built-in connector-recipes skill when there are no DB skills', async () => {
+		await db.query('DELETE FROM skills');
 		const resolved = await resolveSystemPrompt(db, '{{skills_context}}', {
 			teamId,
 			dataDir: tempDataDir,
 		});
-		expect(resolved).toContain('No skills');
+		// The empty-DB case no longer emits a placeholder — the built-in virtual
+		// skill always appears in the manifest.
+		expect(resolved).toContain('The team skills database holds reusable know-how.');
+		expect(resolved).toContain('(slug: connector-recipes)');
 	});
 
 	it('lists every active skill in the manifest', async () => {

@@ -8,6 +8,11 @@ import { isUniqueViolation } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { requireAdminEquivalent } from '../middleware/auth';
 import {
+	buildConnectorRecipesSkill,
+	CONNECTOR_RECIPES_SLUG,
+	isConnectorRecipesSlug,
+} from '../services/connector-registry';
+import {
 	listSkillRevisions,
 	recordSkillRevisionIfChanged,
 	restoreSkillRevision,
@@ -76,6 +81,35 @@ function buildSkillEdit(
 	return { sets, params };
 }
 
+// The virtual `connector-recipes` skill is generated from the connector
+// registry, not stored in the DB. It is surfaced read-only on the admin skills
+// surface (list + detail); the create/edit/delete paths reject its slug.
+// `readonly: true` lets the UI hide edit/delete affordances.
+function connectorRecipesSkillRow(includeContent: boolean): Record<string, unknown> {
+	const s = buildConnectorRecipesSkill();
+	const now = new Date().toISOString();
+	const row: Record<string, unknown> = {
+		id: CONNECTOR_RECIPES_SLUG,
+		name: s.name,
+		slug: s.slug,
+		description: s.description,
+		source_url: null,
+		content_hash: null,
+		created_by_member_id: null,
+		project_id: null,
+		project_name: null,
+		project_slug: null,
+		tags: [],
+		is_active: true,
+		auto_load: false,
+		created_at: now,
+		updated_at: now,
+		readonly: true,
+	};
+	if (includeContent) row.content = s.content;
+	return row;
+}
+
 // --------------------------------------------------------------------------
 // Admin surface (superuser): the global catalog + every project's skills, each
 // annotated with its owning project. Skills are scoped like MCP connectors —
@@ -94,7 +128,14 @@ skillsRoutes.get('/skills', async (c) => {
 		 WHERE s.is_active = true
 		 ORDER BY s.name`,
 	);
-	return ok(c, result.rows);
+	// Surface the built-in `connector-recipes` virtual skill read-only alongside
+	// the DB rows (annotate stored rows so the UI can tell them apart).
+	const rows: Record<string, unknown>[] = result.rows.map((r) => ({
+		...(r as Record<string, unknown>),
+		readonly: false,
+	}));
+	rows.push(connectorRecipesSkillRow(false));
+	return ok(c, rows);
 });
 
 skillsRoutes.post('/skills', async (c) => {
@@ -113,6 +154,14 @@ skillsRoutes.post('/skills', async (c) => {
 	if (!body.content?.trim()) return err(c, 'INVALID_REQUEST', 'content is required', 400);
 	const slug = body.slug?.trim() || toSlug(body.name);
 	if (!slug) return err(c, 'INVALID_REQUEST', 'slug could not be derived from name', 400);
+	if (isConnectorRecipesSlug(slug)) {
+		return err(
+			c,
+			'INVALID_REQUEST',
+			'connector-recipes is a reserved built-in skill and cannot be created',
+			400,
+		);
+	}
 
 	// The admin may create a global skill (project_id null) or scope it to a
 	// specific project via the create-form picker. Validate a named project.
@@ -267,6 +316,11 @@ skillsRoutes.post('/skills/registry/install', async (c) => {
 skillsRoutes.get('/skills/:id', async (c) => {
 	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
+	// The built-in virtual skill is generated, not a DB row (and its id is not a
+	// UUID, so it must be intercepted before the query).
+	if (c.req.param('id') === CONNECTOR_RECIPES_SLUG) {
+		return ok(c, connectorRecipesSkillRow(true));
+	}
 	const db = c.get('db');
 	const result = await db.query<SkillRecord>('SELECT * FROM skills WHERE id = $1', [
 		c.req.param('id'),
@@ -319,6 +373,14 @@ skillsRoutes.post('/skills/:id/restore', async (c) => {
 skillsRoutes.patch('/skills/:id', async (c) => {
 	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
+	if (c.req.param('id') === CONNECTOR_RECIPES_SLUG) {
+		return err(
+			c,
+			'INVALID_REQUEST',
+			'connector-recipes is a built-in skill and is not editable',
+			400,
+		);
+	}
 	const db = c.get('db');
 	const id = c.req.param('id');
 
@@ -401,6 +463,14 @@ skillsRoutes.patch('/skills/:id', async (c) => {
 skillsRoutes.delete('/skills/:id', async (c) => {
 	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
+	if (c.req.param('id') === CONNECTOR_RECIPES_SLUG) {
+		return err(
+			c,
+			'INVALID_REQUEST',
+			'connector-recipes is a built-in skill and is not deletable',
+			400,
+		);
+	}
 	const db = c.get('db');
 	const id = c.req.param('id');
 	const existing = await db.query<{ id: string; slug: string; name: string }>(

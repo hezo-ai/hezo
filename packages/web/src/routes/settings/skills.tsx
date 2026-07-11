@@ -344,15 +344,19 @@ function InstanceSkillRow({ skill, scopeOptions, onEdit, onDelete }: InstanceSki
 		>
 			<div className="flex items-center gap-2 min-w-0 flex-1">
 				<span className="font-medium">{skill.name}</span>
-				<SearchableSelect
-					options={scopeOptions}
-					value={scopeValue}
-					onChange={changeScope}
-					trigger={scopeTrigger}
-					searchPlaceholder="Search projects…"
-					emptyLabel="No projects"
-					testId="instance-skill-scope-select"
-				/>
+				{skill.readonly ? (
+					<Badge color="neutral">Built-in</Badge>
+				) : (
+					<SearchableSelect
+						options={scopeOptions}
+						value={scopeValue}
+						onChange={changeScope}
+						trigger={scopeTrigger}
+						searchPlaceholder="Search projects…"
+						emptyLabel="No projects"
+						testId="instance-skill-scope-select"
+					/>
+				)}
 				{skill.tags?.map((t) => (
 					<Badge key={t} color="neutral">
 						{t}
@@ -364,22 +368,26 @@ function InstanceSkillRow({ skill, scopeOptions, onEdit, onDelete }: InstanceSki
 			</div>
 			<span className="flex items-center gap-2 shrink-0">
 				{rowError && <span className="text-xs text-danger">{rowError}</span>}
-				<button
-					type="button"
-					onClick={onEdit}
-					aria-label={`Edit ${skill.name}`}
-					className="text-text-3 hover:text-text-1"
-				>
-					<Pencil className="w-3.5 h-3.5" />
-				</button>
-				<button
-					type="button"
-					onClick={onDelete}
-					aria-label={`Delete ${skill.name}`}
-					className="text-text-3 hover:text-danger"
-				>
-					<Trash2 className="w-3.5 h-3.5" />
-				</button>
+				{!skill.readonly && (
+					<>
+						<button
+							type="button"
+							onClick={onEdit}
+							aria-label={`Edit ${skill.name}`}
+							className="text-text-3 hover:text-text-1"
+						>
+							<Pencil className="w-3.5 h-3.5" />
+						</button>
+						<button
+							type="button"
+							onClick={onDelete}
+							aria-label={`Delete ${skill.name}`}
+							className="text-text-3 hover:text-danger"
+						>
+							<Trash2 className="w-3.5 h-3.5" />
+						</button>
+					</>
+				)}
 			</span>
 		</div>
 	);
