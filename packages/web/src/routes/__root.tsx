@@ -238,7 +238,10 @@ function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
 						<ProjectRail />
 					</div>
 					{active && !menuCollapsed && (
-						<div className="hidden lg:block w-[208px] shrink-0 h-full overflow-y-auto border-r border-border bg-surface pb-2">
+						<div
+							data-testid="project-menu"
+							className="hidden lg:block w-[208px] shrink-0 h-full overflow-y-auto border-r border-border bg-surface pb-2"
+						>
 							<ProjectSidebar onCollapse={() => setMenuCollapsed(true)} />
 						</div>
 					)}
