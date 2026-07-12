@@ -3,42 +3,27 @@
 		{
 			"id": "mcp-hosted",
 			"title": "Hosted MCP server (preferred)",
-			"description": "When the provider publishes a hosted (remote) MCP server, connect it with register_connector using the MCP URL. A human clicks Connect once to authorize; the OAuth token is stored in the vault by name and substituted at the egress proxy (kind: saas). No credential value ever enters the run — the descriptor carries only an Authorization: Bearer __HEZO_SECRET_<NAME>__ placeholder. This is the first choice for any external service: the tools appear as mcp__<connector>__<tool> on your next run with nothing to acquire by hand."
+			"description": "When the provider publishes a hosted (remote) MCP server, connect it with register_connector using the MCP URL. A human clicks Connect once to authorize; the OAuth token (or API key) is stored in the vault by name and substituted at the egress proxy (kind: saas). No credential value ever enters the run — the descriptor carries only an Authorization: Bearer __HEZO_SECRET_<NAME>__ placeholder. This is the first choice for any external service: the tools appear as mcp__<connector>__<tool> on your next run with nothing to acquire by hand."
 		},
 		{
 			"id": "direct-api",
 			"title": "Direct REST API via an `api` connector",
-			"description": "When no MCP server exists but the provider has an HTTP API, register it with add_connector(kind: 'api') giving base_url, auth placement (header or query), the header/param name, and allowed_hosts. Store the key with request_credential(kind: 'api_key', allowed_hosts: [...]). The connector's api_auth surfaces a __HEZO_SECRET_<NAME>__ placeholder you put in that header/param; the egress proxy substitutes the real key, scoped to allowed_hosts. Preferred over any desktop/CLI integration because the secret stays a placeholder."
+			"description": "When no MCP server exists but the provider has an HTTP API, register it with add_connector(kind: 'api') giving base_url, auth placement (header or query), the header/param name, and allowed_hosts. The connector's api_auth surfaces a __HEZO_SECRET_<NAME>__ placeholder you put in that header/param; the egress proxy substitutes the real key, scoped to allowed_hosts. Preferred over any desktop/CLI integration because the secret stays a placeholder. See static-credential for how the key is stored and placed."
 		},
 		{
-			"id": "api-key-header",
-			"title": "API key in a request header",
-			"description": "For a bearer/API-key service, call request_credential(kind: 'api_key', allowed_hosts: ['api.example.com']) and reference the value only as __HEZO_SECRET_<NAME>__ in an Authorization: Bearer __HEZO_SECRET_<NAME>__ (or X-API-Key) header. Header substitution always works at the egress proxy; scope allowed_hosts to the exact upstream API host(s)."
+			"id": "static-credential",
+			"title": "Static API key or token (header, query, or Basic auth)",
+			"description": "For a service authenticated by a static key/token, call request_credential(kind: 'api_key', allowed_hosts: ['api.example.com']) and reference it only as __HEZO_SECRET_<NAME>__ — the egress proxy substitutes the real value for the allowed_hosts and you never see it. Place it wherever the provider expects: (a) a header — Authorization: Bearer __HEZO_SECRET_<NAME>__, or a provider-specific header such as X-API-Key or Authorization: Bot; (b) a query parameter — e.g. ?appid=__HEZO_SECRET_<NAME>__ (use only when the API offers no header); (c) HTTP Basic — store the ALREADY-base64-encoded `username:password` (or `key:`) as the secret and send Authorization: Basic __HEZO_SECRET_<NAME>__, since the run cannot base64-encode a value it never sees. Prefer a header over a query parameter, and scope allowed_hosts to the exact upstream host(s)."
 		},
 		{
-			"id": "api-key-query",
-			"title": "API key in a query parameter",
-			"description": "Some APIs take the key as a query parameter (e.g. ?appid=... or ?api_key=...). Use request_credential(kind: 'api_key', allowed_hosts: [...]) and place __HEZO_SECRET_<NAME>__ in the query string. The egress proxy substitutes it in the URL for the allowed_hosts only. Prefer a header when the API supports one; use this only when the provider requires the key in the query."
-		},
-		{
-			"id": "device-flow",
-			"title": "OAuth device-authorization flow (no callback)",
-			"description": "For interactive OAuth where no hosted MCP exists, prefer the device flow: the device_code endpoint returns a short user code + verification URL the human enters on their own device — there is NO browser redirect or localhost callback inside the run. Hezo polls the token endpoint host-side and stores the access + refresh tokens in the vault; refresh happens host-side. Reference the token only by placeholder; scope allowed_hosts to the API host. This is how Google/YouTube connect (see the OAuth providers section)."
-		},
-		{
-			"id": "oauth-authcode-hostside",
-			"title": "OAuth authorization-code flow completed on the host",
-			"description": "For SaaS MCP connectors that require OAuth (Linear, DatoCMS, Notion, Sentry, Cloudflare, ...), the operator starts the auth-code flow from the connector form; the resulting oauth_connection is linked to the connection. The injector emits a placeholder Authorization header and the egress proxy substitutes the bearer at request time. The auth handshake completes on the host, never in the run — you only reference the token by name."
+			"id": "oauth-hostside",
+			"title": "OAuth completed on the host (device flow or authorization-code)",
+			"description": "For OAuth-backed services the handshake completes on the HOST, never in the run: Hezo stores the access + refresh tokens in the vault and refreshes them host-side, and you only reference the token by placeholder (Authorization: Bearer __HEZO_SECRET_<NAME>__, substituted at the egress proxy). Two acquisition methods. (1) Device flow (RFC 8628) — the device_code endpoint returns a short user code + verification URL the human enters on their own device; there is NO browser redirect or localhost callback in the run, so it works on any instance URL. This is how Google/YouTube connect (see the OAuth providers section). (2) Authorization-code — for hosted MCP connectors and OAuth REST APIs (Linear, Notion, Sentry, Salesforce, Slack, ...) the operator starts the flow from the connector form and a popup completes it host-side. Prefer the device flow where no hosted MCP exists."
 		},
 		{
 			"id": "userpass-token-body",
 			"title": "Username/password → token via egress body-substitution",
-			"description": "For APIs that exchange credentials in a JSON request body (e.g. a self-hosted /login POST that returns a token, like Umami), call request_credential(allow_body_substitution: true) and put __HEZO_SECRET_<NAME>__ in a small application/json POST body (< 8 KB, fixed Content-Length, no streaming). The egress proxy substitutes into the body. Read the returned token from the response and use Authorization: Bearer <token> on every subsequent call — do not re-send the password each request."
-		},
-		{
-			"id": "service-account-wif",
-			"title": "Service account / workload identity",
-			"description": "For providers authenticated by a service-account key or workload-identity federation, store the account JSON/config with request_credential and use it to mint short-lived access tokens, then send those as Authorization: Bearer __HEZO_SECRET_<NAME>__. Scope allowed_hosts to the token and API hosts. Prefer short-lived, narrowly-scoped tokens over a long-lived static key wherever the provider offers them."
+			"description": "For APIs that exchange credentials in a JSON request body (e.g. a self-hosted /login POST that returns a token, like Umami), call request_credential(allow_body_substitution: true) and put __HEZO_SECRET_<NAME>__ in a small application/json POST body (the proxy gates body substitution to application/json requests ≤ 8 KB). The egress proxy substitutes into the body. Read the returned token from the response and use Authorization: Bearer <token> on every subsequent call — do not re-send the password each request."
 		},
 		{
 			"id": "webhook-secret",
@@ -58,32 +43,6 @@
 	],
 	"services": [
 		{
-			"service": "Google / YouTube",
-			"category": "media",
-			"transport": "api",
-			"endpoint": "https://www.googleapis.com/youtube/v3",
-			"credentials": [
-				{
-					"name": "GOOGLE_OAUTH_TOKEN",
-					"kind": "oauth_token",
-					"allowed_hosts": ["*.googleapis.com", "oauth2.googleapis.com"]
-				}
-			],
-			"docs_url": "https://developers.google.com/youtube/v3",
-			"notes": "Connect via the OAuth device flow (see the Google/YouTube provider block). Send the token as Authorization: Bearer __HEZO_SECRET_<NAME>__."
-		},
-		{
-			"service": "Umami (self-hosted analytics)",
-			"category": "analytics",
-			"transport": "api",
-			"endpoint": "https://<your-umami-host>/api",
-			"credentials": [
-				{ "name": "UMAMI_TOKEN", "kind": "other", "allowed_hosts": ["<your-umami-host>"] }
-			],
-			"docs_url": "https://umami.is/docs/api",
-			"notes": "POST /api/auth/login with username/password using request_credential(allow_body_substitution: true) (userpass-token-body pattern); reuse the returned token as a bearer on subsequent calls."
-		},
-		{
 			"service": "GitHub",
 			"category": "dev",
 			"transport": "mcp",
@@ -92,26 +51,59 @@
 				{
 					"name": "GITHUB_OAUTH_TOKEN",
 					"kind": "oauth_token",
-					"allowed_hosts": ["api.github.com", "github.com"]
+					"allowed_hosts": ["api.githubcopilot.com", "api.github.com", "github.com"]
 				}
 			],
-			"docs_url": "https://github.com/github/github-mcp-server",
-			"notes": "Hosted MCP for the REST API; repo clone/fetch/push runs over SSH using the project's Ed25519 key, not the OAuth token (github-oauth-ssh pattern)."
+			"docs_url": "https://github.com/github/github-mcp-server/blob/main/docs/remote-server.md",
+			"notes": "Hosted MCP (mcp-hosted): OAuth or a PAT as Authorization: Bearer. Repo clone/fetch/push runs over SSH with the project's Ed25519 key, not this token (github-oauth-ssh)."
+		},
+		{
+			"service": "GitLab",
+			"category": "dev",
+			"transport": "mcp",
+			"endpoint": "https://gitlab.com/api/v4/mcp",
+			"credentials": [
+				{ "name": "GITLAB_OAUTH_TOKEN", "kind": "oauth_token", "allowed_hosts": ["gitlab.com"] }
+			],
+			"docs_url": "https://docs.gitlab.com/user/gitlab_duo/model_context_protocol/mcp_server/",
+			"notes": "Hosted MCP (mcp-hosted) with OAuth (oauth-hostside); a personal/project access token as Authorization: Bearer also works. Self-managed instances expose <instance>/api/v4/mcp."
+		},
+		{
+			"service": "Atlassian (Jira, Confluence, Bitbucket)",
+			"category": "project-management",
+			"transport": "mcp",
+			"endpoint": "https://mcp.atlassian.com/v1/mcp",
+			"credentials": [
+				{
+					"name": "ATLASSIAN_OAUTH_TOKEN",
+					"kind": "oauth_token",
+					"allowed_hosts": ["mcp.atlassian.com"]
+				}
+			],
+			"docs_url": "https://support.atlassian.com/atlassian-rovo-mcp-server/docs/getting-started-with-the-atlassian-remote-mcp-server/",
+			"notes": "One hosted Rovo MCP (mcp-hosted, OAuth 2.1 — oauth-hostside) covers Jira, Confluence, and Bitbucket Cloud."
 		},
 		{
 			"service": "Linear",
 			"category": "project-management",
 			"transport": "mcp",
-			"endpoint": "https://mcp.linear.app/sse",
+			"endpoint": "https://mcp.linear.app/mcp",
 			"credentials": [
-				{
-					"name": "LINEAR_OAUTH_TOKEN",
-					"kind": "oauth_token",
-					"allowed_hosts": ["mcp.linear.app", "api.linear.app"]
-				}
+				{ "name": "LINEAR_OAUTH_TOKEN", "kind": "oauth_token", "allowed_hosts": ["mcp.linear.app"] }
 			],
 			"docs_url": "https://linear.app/docs/mcp",
-			"notes": "Hosted MCP with OAuth (oauth-authcode-hostside)."
+			"notes": "Hosted MCP (mcp-hosted) with OAuth (oauth-hostside)."
+		},
+		{
+			"service": "Asana",
+			"category": "project-management",
+			"transport": "mcp",
+			"endpoint": "https://mcp.asana.com/v2/mcp",
+			"credentials": [
+				{ "name": "ASANA_OAUTH_TOKEN", "kind": "oauth_token", "allowed_hosts": ["mcp.asana.com"] }
+			],
+			"docs_url": "https://developers.asana.com/docs/using-asanas-mcp-server",
+			"notes": "Hosted MCP (mcp-hosted) with OAuth (oauth-hostside)."
 		},
 		{
 			"service": "Notion",
@@ -119,14 +111,163 @@
 			"transport": "mcp",
 			"endpoint": "https://mcp.notion.com/mcp",
 			"credentials": [
+				{ "name": "NOTION_OAUTH_TOKEN", "kind": "oauth_token", "allowed_hosts": ["mcp.notion.com"] }
+			],
+			"docs_url": "https://developers.notion.com/docs/get-started-with-mcp",
+			"notes": "Hosted MCP (mcp-hosted), user OAuth only (oauth-hostside)."
+		},
+		{
+			"service": "ClickUp",
+			"category": "project-management",
+			"transport": "mcp",
+			"endpoint": "https://mcp.clickup.com/mcp",
+			"credentials": [
 				{
-					"name": "NOTION_OAUTH_TOKEN",
+					"name": "CLICKUP_OAUTH_TOKEN",
 					"kind": "oauth_token",
-					"allowed_hosts": ["mcp.notion.com", "api.notion.com"]
+					"allowed_hosts": ["mcp.clickup.com"]
 				}
 			],
-			"docs_url": "https://developers.notion.com/docs/mcp",
-			"notes": "Hosted MCP with OAuth (oauth-authcode-hostside)."
+			"docs_url": "https://developer.clickup.com/docs/connect-an-ai-assistant-to-clickups-mcp-server",
+			"notes": "Hosted MCP (mcp-hosted) with OAuth 2.1 + PKCE (oauth-hostside)."
+		},
+		{
+			"service": "Monday.com",
+			"category": "project-management",
+			"transport": "mcp",
+			"endpoint": "https://mcp.monday.com/mcp",
+			"credentials": [
+				{ "name": "MONDAY_OAUTH_TOKEN", "kind": "oauth_token", "allowed_hosts": ["mcp.monday.com"] }
+			],
+			"docs_url": "https://developer.monday.com/apps/docs/monday-apps-mcp",
+			"notes": "Hosted MCP (mcp-hosted) with per-user OAuth (oauth-hostside)."
+		},
+		{
+			"service": "HubSpot",
+			"category": "crm",
+			"transport": "mcp",
+			"endpoint": "https://mcp.hubspot.com",
+			"credentials": [
+				{
+					"name": "HUBSPOT_OAUTH_TOKEN",
+					"kind": "oauth_token",
+					"allowed_hosts": ["mcp.hubspot.com"]
+				}
+			],
+			"docs_url": "https://developers.hubspot.com/docs/apps/developer-platform/build-apps/integrate-with-the-remote-hubspot-mcp-server",
+			"notes": "Hosted MCP (mcp-hosted) with OAuth 2.1 + PKCE (oauth-hostside)."
+		},
+		{
+			"service": "Intercom",
+			"category": "crm",
+			"transport": "mcp",
+			"endpoint": "https://mcp.intercom.com/mcp",
+			"credentials": [
+				{
+					"name": "INTERCOM_OAUTH_TOKEN",
+					"kind": "oauth_token",
+					"allowed_hosts": ["mcp.intercom.com"]
+				}
+			],
+			"docs_url": "https://developers.intercom.com/docs/guides/mcp",
+			"notes": "Hosted MCP (mcp-hosted, US-hosted workspaces) with OAuth (oauth-hostside)."
+		},
+		{
+			"service": "Vercel",
+			"category": "hosting",
+			"transport": "mcp",
+			"endpoint": "https://mcp.vercel.com",
+			"credentials": [
+				{ "name": "VERCEL_OAUTH_TOKEN", "kind": "oauth_token", "allowed_hosts": ["mcp.vercel.com"] }
+			],
+			"docs_url": "https://vercel.com/docs/mcp/vercel-mcp",
+			"notes": "Hosted MCP (mcp-hosted) with OAuth (oauth-hostside)."
+		},
+		{
+			"service": "Netlify",
+			"category": "hosting",
+			"transport": "mcp",
+			"endpoint": "https://netlify-mcp.netlify.app/mcp",
+			"credentials": [
+				{
+					"name": "NETLIFY_OAUTH_TOKEN",
+					"kind": "oauth_token",
+					"allowed_hosts": ["netlify-mcp.netlify.app"]
+				}
+			],
+			"docs_url": "https://docs.netlify.com/build/build-with-ai/netlify-mcp-server/",
+			"notes": "Hosted MCP (mcp-hosted) with OAuth (oauth-hostside); a Netlify personal access token also works."
+		},
+		{
+			"service": "Cloudflare",
+			"category": "infrastructure",
+			"transport": "mcp",
+			"endpoint": "https://mcp.cloudflare.com/mcp",
+			"credentials": [
+				{
+					"name": "CLOUDFLARE_OAUTH_TOKEN",
+					"kind": "oauth_token",
+					"allowed_hosts": ["mcp.cloudflare.com"]
+				}
+			],
+			"docs_url": "https://developers.cloudflare.com/agents/model-context-protocol/",
+			"notes": "Cloudflare publishes several hosted MCP servers (the API server at mcp.cloudflare.com, plus docs/observability/...); OAuth (oauth-hostside)."
+		},
+		{
+			"service": "DigitalOcean",
+			"category": "infrastructure",
+			"transport": "mcp",
+			"endpoint": "https://apps.mcp.digitalocean.com/mcp",
+			"credentials": [
+				{
+					"name": "DIGITALOCEAN_TOKEN",
+					"kind": "api_key",
+					"allowed_hosts": ["apps.mcp.digitalocean.com"]
+				}
+			],
+			"docs_url": "https://docs.digitalocean.com/reference/mcp/configure-mcp/",
+			"notes": "Hosted MCP (mcp-hosted): DO API token as Authorization: Bearer (static-credential). Per-service hosts live under *.mcp.digitalocean.com (App Platform, droplets, databases, ...)."
+		},
+		{
+			"service": "Railway",
+			"category": "hosting",
+			"transport": "mcp",
+			"endpoint": "https://mcp.railway.com",
+			"credentials": [
+				{
+					"name": "RAILWAY_OAUTH_TOKEN",
+					"kind": "oauth_token",
+					"allowed_hosts": ["mcp.railway.com"]
+				}
+			],
+			"docs_url": "https://docs.railway.com/ai/mcp-server",
+			"notes": "Hosted MCP (mcp-hosted) with OAuth (oauth-hostside)."
+		},
+		{
+			"service": "Neon",
+			"category": "database",
+			"transport": "mcp",
+			"endpoint": "https://mcp.neon.tech/mcp",
+			"credentials": [
+				{ "name": "NEON_OAUTH_TOKEN", "kind": "oauth_token", "allowed_hosts": ["mcp.neon.tech"] }
+			],
+			"docs_url": "https://neon.com/docs/ai/neon-mcp-server",
+			"notes": "Hosted MCP (mcp-hosted) with OAuth (oauth-hostside); a Neon API key also works."
+		},
+		{
+			"service": "Supabase",
+			"category": "database",
+			"transport": "mcp",
+			"endpoint": "https://mcp.supabase.com/mcp",
+			"credentials": [
+				{
+					"name": "SUPABASE_OAUTH_TOKEN",
+					"kind": "oauth_token",
+					"allowed_hosts": ["mcp.supabase.com"]
+				}
+			],
+			"docs_url": "https://supabase.com/docs/guides/ai-tools/mcp",
+			"notes": "Hosted MCP (mcp-hosted) with OAuth (oauth-hostside); ?project_ref= scopes it to one project."
 		},
 		{
 			"service": "Sentry",
@@ -141,7 +282,52 @@
 				}
 			],
 			"docs_url": "https://docs.sentry.io/product/sentry-mcp/",
-			"notes": "Hosted MCP with OAuth (oauth-authcode-hostside)."
+			"notes": "Hosted MCP (mcp-hosted) with OAuth (oauth-hostside)."
+		},
+		{
+			"service": "Datadog",
+			"category": "observability",
+			"transport": "mcp",
+			"endpoint": "https://mcp.datadoghq.com/api/unstable/mcp-server/mcp",
+			"credentials": [
+				{
+					"name": "DATADOG_OAUTH_TOKEN",
+					"kind": "oauth_token",
+					"allowed_hosts": ["mcp.datadoghq.com"]
+				}
+			],
+			"docs_url": "https://docs.datadoghq.com/mcp_server/",
+			"notes": "Hosted MCP (mcp-hosted) with OAuth (oauth-hostside). Host is region-specific (e.g. mcp.datadoghq.eu for the EU site)."
+		},
+		{
+			"service": "PagerDuty",
+			"category": "observability",
+			"transport": "mcp",
+			"endpoint": "https://mcp.pagerduty.com/mcp",
+			"credentials": [
+				{
+					"name": "PAGERDUTY_OAUTH_TOKEN",
+					"kind": "oauth_token",
+					"allowed_hosts": ["mcp.pagerduty.com"]
+				}
+			],
+			"docs_url": "https://developer.pagerduty.com/docs/mcp-tooling-remote-server",
+			"notes": "Hosted MCP (mcp-hosted) with OAuth (oauth-hostside)."
+		},
+		{
+			"service": "Grafana Cloud",
+			"category": "observability",
+			"transport": "mcp",
+			"endpoint": "https://mcp.grafana.com/mcp",
+			"credentials": [
+				{
+					"name": "GRAFANA_OAUTH_TOKEN",
+					"kind": "oauth_token",
+					"allowed_hosts": ["mcp.grafana.com"]
+				}
+			],
+			"docs_url": "https://grafana.com/docs/grafana-cloud/machine-learning/assistant/configure/cloud-mcp/",
+			"notes": "Fully hosted MCP (mcp-hosted) with OAuth 2.1 (oauth-hostside); an X-Grafana-URL header points at your <stack>.grafana.net."
 		},
 		{
 			"service": "Stripe",
@@ -156,37 +342,152 @@
 				}
 			],
 			"docs_url": "https://docs.stripe.com/mcp",
-			"notes": "Hosted MCP; authenticate with a restricted API key (Authorization: Bearer). A direct api connector against api.stripe.com is a valid fallback."
+			"notes": "Hosted MCP (mcp-hosted): a restricted API key as Authorization: Bearer (static-credential), or OAuth. A direct api connector against api.stripe.com is a valid fallback."
 		},
 		{
-			"service": "Cloudflare",
-			"category": "infrastructure",
+			"service": "PayPal",
+			"category": "payments",
 			"transport": "mcp",
-			"endpoint": "https://observability.mcp.cloudflare.com/sse",
+			"endpoint": "https://mcp.paypal.com/http",
+			"credentials": [
+				{ "name": "PAYPAL_OAUTH_TOKEN", "kind": "oauth_token", "allowed_hosts": ["mcp.paypal.com"] }
+			],
+			"docs_url": "https://www.paypal.ai/docs/tools/mcp-quickstart",
+			"notes": "Hosted MCP (mcp-hosted): a Bearer access token minted from the app's client id/secret (client_credentials); OAuth also supported (oauth-hostside)."
+		},
+		{
+			"service": "Square",
+			"category": "payments",
+			"transport": "mcp",
+			"endpoint": "https://mcp.squareup.com/sse",
 			"credentials": [
 				{
-					"name": "CLOUDFLARE_OAUTH_TOKEN",
+					"name": "SQUARE_OAUTH_TOKEN",
 					"kind": "oauth_token",
-					"allowed_hosts": ["*.mcp.cloudflare.com", "api.cloudflare.com"]
+					"allowed_hosts": ["mcp.squareup.com"]
 				}
 			],
-			"docs_url": "https://developers.cloudflare.com/agents/model-context-protocol/",
-			"notes": "Cloudflare publishes several hosted MCP servers (observability, docs, ...) with OAuth (oauth-authcode-hostside)."
+			"docs_url": "https://developer.squareup.com/docs/mcp",
+			"notes": "Hosted MCP (mcp-hosted, hosted by Block) with OAuth (oauth-hostside)."
+		},
+		{
+			"service": "Razorpay",
+			"category": "payments",
+			"transport": "mcp",
+			"endpoint": "https://mcp.razorpay.com/mcp",
+			"credentials": [
+				{ "name": "RAZORPAY_BASIC_AUTH", "kind": "api_key", "allowed_hosts": ["mcp.razorpay.com"] }
+			],
+			"docs_url": "https://razorpay.com/docs/mcp-server/remote/",
+			"notes": "Hosted MCP (mcp-hosted): Authorization: Basic with base64(key_id:key_secret) (static-credential); OAuth 2.0 also supported."
+		},
+		{
+			"service": "Hugging Face",
+			"category": "ai",
+			"transport": "mcp",
+			"endpoint": "https://huggingface.co/mcp",
+			"credentials": [
+				{ "name": "HF_TOKEN", "kind": "api_key", "allowed_hosts": ["huggingface.co"] }
+			],
+			"docs_url": "https://huggingface.co/settings/mcp",
+			"notes": "Hosted MCP (mcp-hosted): a static user access token as Authorization: Bearer (static-credential, not OAuth)."
+		},
+		{
+			"service": "PostHog",
+			"category": "analytics",
+			"transport": "mcp",
+			"endpoint": "https://mcp.posthog.com/mcp",
+			"credentials": [
+				{
+					"name": "POSTHOG_OAUTH_TOKEN",
+					"kind": "oauth_token",
+					"allowed_hosts": ["mcp.posthog.com"]
+				}
+			],
+			"docs_url": "https://posthog.com/docs/model-context-protocol",
+			"notes": "Hosted MCP (mcp-hosted) with OAuth (oauth-hostside); a personal API key (phx_...) as Authorization: Bearer also works."
+		},
+		{
+			"service": "Contentful",
+			"category": "cms",
+			"transport": "mcp",
+			"endpoint": "https://mcp.contentful.com/mcp",
+			"credentials": [
+				{
+					"name": "CONTENTFUL_OAUTH_TOKEN",
+					"kind": "oauth_token",
+					"allowed_hosts": ["mcp.contentful.com"]
+				}
+			],
+			"docs_url": "https://www.contentful.com/developers/docs/tools/mcp-server/",
+			"notes": "Hosted MCP (mcp-hosted) with OAuth 2.1 (oauth-hostside); EU host is mcp.eu.contentful.com."
+		},
+		{
+			"service": "Sanity",
+			"category": "cms",
+			"transport": "mcp",
+			"endpoint": "https://mcp.sanity.io",
+			"credentials": [
+				{ "name": "SANITY_OAUTH_TOKEN", "kind": "oauth_token", "allowed_hosts": ["mcp.sanity.io"] }
+			],
+			"docs_url": "https://www.sanity.io/docs/ai/mcp-server",
+			"notes": "Hosted MCP (mcp-hosted) with OAuth (oauth-hostside)."
 		},
 		{
 			"service": "DatoCMS",
 			"category": "cms",
 			"transport": "mcp",
-			"endpoint": "https://mcp.datocms.com/mcp",
+			"endpoint": "https://mcp.datocms.com",
 			"credentials": [
 				{
 					"name": "DATOCMS_OAUTH_TOKEN",
 					"kind": "oauth_token",
-					"allowed_hosts": ["mcp.datocms.com", "site-api.datocms.com"]
+					"allowed_hosts": ["mcp.datocms.com"]
 				}
 			],
-			"docs_url": "https://www.datocms.com/docs",
-			"notes": "Hosted MCP with OAuth (oauth-authcode-hostside)."
+			"docs_url": "https://www.datocms.com/docs/mcp-server",
+			"notes": "Hosted MCP (mcp-hosted) with OAuth (oauth-hostside)."
+		},
+		{
+			"service": "Webflow",
+			"category": "cms",
+			"transport": "mcp",
+			"endpoint": "https://mcp.webflow.com/sse",
+			"credentials": [
+				{
+					"name": "WEBFLOW_OAUTH_TOKEN",
+					"kind": "oauth_token",
+					"allowed_hosts": ["mcp.webflow.com"]
+				}
+			],
+			"docs_url": "https://developers.webflow.com/mcp/reference/getting-started",
+			"notes": "Hosted MCP (mcp-hosted) with OAuth (oauth-hostside)."
+		},
+		{
+			"service": "Typefully",
+			"category": "social",
+			"transport": "mcp",
+			"endpoint": "https://mcp.typefully.com/mcp",
+			"credentials": [
+				{ "name": "TYPEFULLY_API_KEY", "kind": "api_key", "allowed_hosts": ["mcp.typefully.com"] }
+			],
+			"docs_url": "https://support.typefully.com/en/articles/13128440-typefully-mcp-server",
+			"notes": "Hosted MCP (mcp-hosted): a Typefully API key as Authorization: Bearer (static-credential, not OAuth). Schedules and manages drafts across X, LinkedIn, Threads, Bluesky, and Mastodon."
+		},
+		{
+			"service": "Google APIs (YouTube, Gmail, Calendar, Drive, Sheets)",
+			"category": "google",
+			"transport": "api",
+			"endpoint": "https://www.googleapis.com",
+			"credentials": [
+				{
+					"name": "GOOGLE_OAUTH_TOKEN",
+					"kind": "oauth_token",
+					"allowed_hosts": ["*.googleapis.com", "oauth2.googleapis.com"]
+				}
+			],
+			"docs_url": "https://developers.google.com/apis-explorer",
+			"notes": "One Google OAuth token authenticates every Google API (all under *.googleapis.com, e.g. gmail.googleapis.com, sheets.googleapis.com); send it as Authorization: Bearer __HEZO_SECRET_<NAME>__. Acquire it host-side (oauth-hostside): YouTube connects via the device flow (see the google-youtube provider block); other Google APIs use the auth-code flow with their own scopes."
 		},
 		{
 			"service": "Slack",
@@ -200,30 +501,34 @@
 					"allowed_hosts": ["slack.com", "*.slack.com"]
 				}
 			],
-			"docs_url": "https://api.slack.com/web",
-			"notes": "Send the bot/user token as Authorization: Bearer __HEZO_SECRET_<NAME>__ against the Web API (api-key-header)."
+			"docs_url": "https://docs.slack.dev/apis/web-api/",
+			"notes": "Send the bot/user token (xoxb-...) as Authorization: Bearer __HEZO_SECRET_<NAME>__ against the Web API (static-credential); obtain it via the Slack OAuth install (oauth-hostside)."
 		},
 		{
-			"service": "GitLab",
-			"category": "dev",
+			"service": "Discord",
+			"category": "communication",
 			"transport": "api",
-			"endpoint": "https://gitlab.com/api/v4",
+			"endpoint": "https://discord.com/api/v10",
 			"credentials": [
-				{ "name": "GITLAB_TOKEN", "kind": "api_key", "allowed_hosts": ["gitlab.com"] }
+				{ "name": "DISCORD_BOT_TOKEN", "kind": "api_key", "allowed_hosts": ["discord.com"] }
 			],
-			"docs_url": "https://docs.gitlab.com/ee/api/",
-			"notes": "Project/personal access token in the Authorization: Bearer header (api-key-header)."
+			"docs_url": "https://discord.com/developers/docs/reference",
+			"notes": "Header Authorization: Bot __HEZO_SECRET_<NAME>__ — note the literal `Bot ` scheme prefix, not `Bearer` (static-credential)."
 		},
 		{
-			"service": "Airtable",
-			"category": "database",
+			"service": "Microsoft Graph (Teams, Outlook, OneDrive)",
+			"category": "communication",
 			"transport": "api",
-			"endpoint": "https://api.airtable.com/v0",
+			"endpoint": "https://graph.microsoft.com/v1.0",
 			"credentials": [
-				{ "name": "AIRTABLE_TOKEN", "kind": "api_key", "allowed_hosts": ["api.airtable.com"] }
+				{
+					"name": "MICROSOFT_GRAPH_TOKEN",
+					"kind": "oauth_token",
+					"allowed_hosts": ["graph.microsoft.com"]
+				}
 			],
-			"docs_url": "https://airtable.com/developers/web/api/introduction",
-			"notes": "Personal access token as Authorization: Bearer (api-key-header)."
+			"docs_url": "https://learn.microsoft.com/en-us/graph/use-the-api",
+			"notes": "OAuth access token as Authorization: Bearer (oauth-hostside); one Graph surface covers Teams, Outlook mail/calendar, OneDrive, and SharePoint."
 		},
 		{
 			"service": "OpenAI API",
@@ -233,19 +538,41 @@
 			"credentials": [
 				{ "name": "OPENAI_API_KEY", "kind": "api_key", "allowed_hosts": ["api.openai.com"] }
 			],
-			"docs_url": "https://platform.openai.com/docs/api-reference",
-			"notes": "Authorization: Bearer header (api-key-header). This is a tool credential; it is unrelated to the run's own model-provider key."
+			"docs_url": "https://platform.openai.com/docs/api-reference/authentication",
+			"notes": "Authorization: Bearer header (static-credential). This is a tool credential; it is unrelated to the run's own model-provider key."
 		},
 		{
-			"service": "Vercel",
-			"category": "hosting",
+			"service": "Anthropic API",
+			"category": "ai",
 			"transport": "api",
-			"endpoint": "https://api.vercel.com",
+			"endpoint": "https://api.anthropic.com/v1",
 			"credentials": [
-				{ "name": "VERCEL_TOKEN", "kind": "api_key", "allowed_hosts": ["api.vercel.com"] }
+				{ "name": "ANTHROPIC_API_KEY", "kind": "api_key", "allowed_hosts": ["api.anthropic.com"] }
 			],
-			"docs_url": "https://vercel.com/docs/rest-api",
-			"notes": "Authorization: Bearer header (api-key-header)."
+			"docs_url": "https://docs.anthropic.com/en/api/overview",
+			"notes": "Key rides the x-api-key header (NOT Authorization), plus an anthropic-version header (static-credential). This is a tool credential; it is unrelated to the run's own model-provider key."
+		},
+		{
+			"service": "Airtable",
+			"category": "productivity",
+			"transport": "api",
+			"endpoint": "https://api.airtable.com/v0",
+			"credentials": [
+				{ "name": "AIRTABLE_TOKEN", "kind": "api_key", "allowed_hosts": ["api.airtable.com"] }
+			],
+			"docs_url": "https://airtable.com/developers/web/api/authentication",
+			"notes": "Personal access token as Authorization: Bearer (static-credential)."
+		},
+		{
+			"service": "Twilio",
+			"category": "sms",
+			"transport": "api",
+			"endpoint": "https://api.twilio.com/2010-04-01",
+			"credentials": [
+				{ "name": "TWILIO_BASIC_AUTH", "kind": "api_key", "allowed_hosts": ["api.twilio.com"] }
+			],
+			"docs_url": "https://www.twilio.com/docs/iam/api",
+			"notes": "HTTP Basic (static-credential): store base64(AccountSID:AuthToken) as one secret and send Authorization: Basic __HEZO_SECRET_<NAME>__."
 		},
 		{
 			"service": "SendGrid",
@@ -256,7 +583,70 @@
 				{ "name": "SENDGRID_API_KEY", "kind": "api_key", "allowed_hosts": ["api.sendgrid.com"] }
 			],
 			"docs_url": "https://www.twilio.com/docs/sendgrid/api-reference",
-			"notes": "Authorization: Bearer header (api-key-header)."
+			"notes": "Authorization: Bearer header (static-credential)."
+		},
+		{
+			"service": "Salesforce",
+			"category": "crm",
+			"transport": "api",
+			"endpoint": "https://<your-domain>.my.salesforce.com/services/data/v66.0",
+			"credentials": [
+				{
+					"name": "SALESFORCE_OAUTH_TOKEN",
+					"kind": "oauth_token",
+					"allowed_hosts": ["*.my.salesforce.com"]
+				}
+			],
+			"docs_url": "https://developer.salesforce.com/docs/atlas.en-us.api_rest.meta/api_rest/intro_oauth_and_connected_apps.htm",
+			"notes": "Per-org host (<your-domain>.my.salesforce.com — resolve the real My Domain at connect time). OAuth access token as Authorization: Bearer (oauth-hostside)."
+		},
+		{
+			"service": "Zendesk",
+			"category": "crm",
+			"transport": "api",
+			"endpoint": "https://<your-subdomain>.zendesk.com/api/v2",
+			"credentials": [
+				{ "name": "ZENDESK_OAUTH_TOKEN", "kind": "oauth_token", "allowed_hosts": ["*.zendesk.com"] }
+			],
+			"docs_url": "https://developer.zendesk.com/api-reference/introduction/security-and-auth/",
+			"notes": "Per-subdomain host (resolve the real subdomain at connect time). OAuth access token as Authorization: Bearer (oauth-hostside)."
+		},
+		{
+			"service": "Calendly",
+			"category": "calendar",
+			"transport": "api",
+			"endpoint": "https://api.calendly.com",
+			"credentials": [
+				{
+					"name": "CALENDLY_OAUTH_TOKEN",
+					"kind": "oauth_token",
+					"allowed_hosts": ["api.calendly.com"]
+				}
+			],
+			"docs_url": "https://developer.calendly.com/getting-started",
+			"notes": "OAuth access token or personal access token as Authorization: Bearer (oauth-hostside)."
+		},
+		{
+			"service": "Figma",
+			"category": "design",
+			"transport": "api",
+			"endpoint": "https://api.figma.com/v1",
+			"credentials": [
+				{ "name": "FIGMA_API_TOKEN", "kind": "api_key", "allowed_hosts": ["api.figma.com"] }
+			],
+			"docs_url": "https://developers.figma.com/docs/rest-api/authentication/",
+			"notes": "Personal access token in the X-Figma-Token header (static-credential). Figma's Dev Mode MCP is local-only (127.0.0.1), so use the REST API from a run."
+		},
+		{
+			"service": "Shopify",
+			"category": "commerce",
+			"transport": "api",
+			"endpoint": "https://<your-store>.myshopify.com/admin/api",
+			"credentials": [
+				{ "name": "SHOPIFY_ADMIN_TOKEN", "kind": "api_key", "allowed_hosts": ["*.myshopify.com"] }
+			],
+			"docs_url": "https://shopify.dev/docs/api/admin",
+			"notes": "Per-store host (<your-store>.myshopify.com — resolve the real store subdomain at connect time). Admin API access token in the X-Shopify-Access-Token header (static-credential)."
 		},
 		{
 			"service": "OpenWeatherMap",
@@ -265,28 +655,24 @@
 			"endpoint": "https://api.openweathermap.org/data/2.5",
 			"credentials": [
 				{
-					"name": "OPENWEATHER_API_KEY",
+					"name": "OPENWEATHERMAP_API_KEY",
 					"kind": "api_key",
 					"allowed_hosts": ["api.openweathermap.org"]
 				}
 			],
-			"docs_url": "https://openweathermap.org/api",
-			"notes": "Key goes in the appid query parameter (api-key-query)."
+			"docs_url": "https://openweathermap.org/appid",
+			"notes": "Key goes in the appid query parameter (static-credential, query placement)."
 		},
 		{
-			"service": "Custom HTTP API",
-			"category": "generic",
+			"service": "Umami (self-hosted analytics)",
+			"category": "analytics",
 			"transport": "api",
-			"endpoint": "https://api.<your-service>.com",
+			"endpoint": "https://<your-umami-host>/api",
 			"credentials": [
-				{
-					"name": "SERVICE_API_KEY",
-					"kind": "api_key",
-					"allowed_hosts": ["api.<your-service>.com"]
-				}
+				{ "name": "UMAMI_PASSWORD", "kind": "other", "allowed_hosts": ["<your-umami-host>"] }
 			],
-			"docs_url": "",
-			"notes": "Template for any credentialed REST API with no MCP server: register with add_connector(kind: 'api') and follow the direct-api pattern."
+			"docs_url": "https://umami.is/docs/api/authentication",
+			"notes": "userpass-token-body: store the account password as UMAMI_PASSWORD with request_credential(allow_body_substitution: true), then POST /api/auth/login a JSON body with your username and \"password\": \"__HEZO_SECRET_UMAMI_PASSWORD__\". Read the token from the response and send it as Authorization: Bearer <token> on subsequent calls — do not re-send the password each request."
 		}
 	],
 	"oauthProviders": [
