@@ -1,6 +1,7 @@
 import { HEZO_DOCS_URL, repoNameFromIdentifier } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { terminalStatusParams } from '../lib/sql';
+import { buildConnectorRecipesSkill } from './connector-registry';
 import { buildHezoDocsBlock } from './docs-bundle';
 import { CONTAINER_WORKTREES_ROOT } from './workspace';
 
@@ -191,6 +192,8 @@ const SHARED_INSTRUCTIONS = `
 - Use it ONLY after genuinely concluding no action is needed this run. It does not exempt you from the completion rules above: if there is failing work, deferred work, or a thread awaiting your reply, handle it or route it structurally (a sub-task, a \`blocked_by\` dependency, or an \`@\`-mention) instead of declaring no work.
 
 ### Third-Party Credentials Always Land in the Hezo Vault
+- **Before connecting an external service or requesting a credential, call \`get_skill('connector-recipes')\` and follow the MCP-or-API-first recipe.** It is the curated guide to the connection pattern for each well-known service and the general fallbacks.
+- **Never choose an integration that needs an interactive browser/localhost OAuth flow or writes a credential/token file to disk inside the run — prefer a hosted MCP or a direct \`api\` connector so secrets stay \`__HEZO_SECRET_*__\` placeholders.** A host-side flow (device flow or host-completed auth-code) keeps the acquisition off the container entirely.
 - Whenever you need to authenticate with a third-party service — MCP server, REST API, CLI tool, anything — the credential must be stored in the Hezo vault. Never leave a token, API key, OAuth bearer, or password in code, ticket descriptions, comments, project docs, or environment files you write.
 - **The paste form is the only way a secret value reaches you — never ask a human to send it any other way.** Never ask anyone to type, paste, or "send you" a token, key, or password in a comment, the chat box, or a direct message. You must never see the plaintext; a value dropped into a thread is a leak that then has to be rotated. \`request_credential\` routes it straight to the encrypted vault without it ever passing through the conversation — if someone offers to share a secret in chat, point them at that form instead.
 - For services with an MCP server: call \`register_connector\` with the MCP URL and (if applicable) a \`skill_id\` from \`fetch_skill_file\`. This posts a connect_required comment with a Connect button for the human; once they authorize, the MCP becomes available across every team agent run with the token substituted at egress.
@@ -308,20 +311,21 @@ export async function resolveSystemPrompt(
 				return true;
 			})
 			.sort((a, b) => a.name.localeCompare(b.name));
-		let manifest: string;
-		if (skillRows.length > 0) {
-			const lines = skillRows
-				.map((s) => `- ${s.name} (slug: ${s.slug})${s.description ? `: ${s.description}` : ''}`)
-				.join('\n');
-			manifest = [
-				'The team skills database holds reusable know-how. Entries are listed below by name and slug.',
-				"Call get_skill(slug) to load a skill's full instructions when it is relevant to your task.",
-				'',
-				lines,
-			].join('\n');
-		} else {
-			manifest = 'No skills in the team skills database yet.';
-		}
+		// The built-in `connector-recipes` virtual skill (generated from the
+		// connector registry, not a DB row) is surfaced in every run's manifest so
+		// agents can get_skill('connector-recipes') before wiring up an external
+		// service. It always appears, even when the team has no DB skills yet.
+		const virtual = buildConnectorRecipesSkill();
+		const dbLines = skillRows.map(
+			(s) => `- ${s.name} (slug: ${s.slug})${s.description ? `: ${s.description}` : ''}`,
+		);
+		const virtualLine = `- ${virtual.name} (slug: ${virtual.slug}): ${virtual.description}`;
+		const manifest = [
+			'The team skills database holds reusable know-how. Entries are listed below by name and slug.',
+			"Call get_skill(slug) to load a skill's full instructions when it is relevant to your task.",
+			'',
+			[...dbLines, virtualLine].join('\n'),
+		].join('\n');
 		resolved = resolved.replace(/\{\{skills_context\}\}/g, manifest);
 	}
 

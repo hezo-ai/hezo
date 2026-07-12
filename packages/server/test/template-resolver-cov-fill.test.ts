@@ -121,13 +121,16 @@ describe('placeholder substitution', () => {
 		expect(result).toContain('before\nafter');
 	});
 
-	it('renders {{skills_context}} empty-state when no skills exist', async () => {
+	it('renders {{skills_context}} with only the built-in virtual skill when no DB skills exist', async () => {
 		await ctx.db.query('DELETE FROM skills');
 		const result = await resolveSystemPrompt(ctx.db, '{{skills_context}}', {
 			teamId,
 			mode: 'placeholders',
 		});
-		expect(result).toContain('No skills in the team skills database yet.');
+		// The empty-DB case is no longer an empty-state message: the built-in
+		// connector-recipes virtual skill always appears in the manifest.
+		expect(result).toContain('The team skills database holds reusable know-how.');
+		expect(result).toContain('(slug: connector-recipes)');
 	});
 
 	it('renders {{skills_context}} as a name+slug manifest pointing at get_skill', async () => {

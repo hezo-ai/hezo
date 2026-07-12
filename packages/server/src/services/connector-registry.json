@@ -1,0 +1,311 @@
+{
+	"patterns": [
+		{
+			"id": "mcp-hosted",
+			"title": "Hosted MCP server (preferred)",
+			"description": "When the provider publishes a hosted (remote) MCP server, connect it with register_connector using the MCP URL. A human clicks Connect once to authorize; the OAuth token is stored in the vault by name and substituted at the egress proxy (kind: saas). No credential value ever enters the run — the descriptor carries only an Authorization: Bearer __HEZO_SECRET_<NAME>__ placeholder. This is the first choice for any external service: the tools appear as mcp__<connector>__<tool> on your next run with nothing to acquire by hand."
+		},
+		{
+			"id": "direct-api",
+			"title": "Direct REST API via an `api` connector",
+			"description": "When no MCP server exists but the provider has an HTTP API, register it with add_connector(kind: 'api') giving base_url, auth placement (header or query), the header/param name, and allowed_hosts. Store the key with request_credential(kind: 'api_key', allowed_hosts: [...]). The connector's api_auth surfaces a __HEZO_SECRET_<NAME>__ placeholder you put in that header/param; the egress proxy substitutes the real key, scoped to allowed_hosts. Preferred over any desktop/CLI integration because the secret stays a placeholder."
+		},
+		{
+			"id": "api-key-header",
+			"title": "API key in a request header",
+			"description": "For a bearer/API-key service, call request_credential(kind: 'api_key', allowed_hosts: ['api.example.com']) and reference the value only as __HEZO_SECRET_<NAME>__ in an Authorization: Bearer __HEZO_SECRET_<NAME>__ (or X-API-Key) header. Header substitution always works at the egress proxy; scope allowed_hosts to the exact upstream API host(s)."
+		},
+		{
+			"id": "api-key-query",
+			"title": "API key in a query parameter",
+			"description": "Some APIs take the key as a query parameter (e.g. ?appid=... or ?api_key=...). Use request_credential(kind: 'api_key', allowed_hosts: [...]) and place __HEZO_SECRET_<NAME>__ in the query string. The egress proxy substitutes it in the URL for the allowed_hosts only. Prefer a header when the API supports one; use this only when the provider requires the key in the query."
+		},
+		{
+			"id": "device-flow",
+			"title": "OAuth device-authorization flow (no callback)",
+			"description": "For interactive OAuth where no hosted MCP exists, prefer the device flow: the device_code endpoint returns a short user code + verification URL the human enters on their own device — there is NO browser redirect or localhost callback inside the run. Hezo polls the token endpoint host-side and stores the access + refresh tokens in the vault; refresh happens host-side. Reference the token only by placeholder; scope allowed_hosts to the API host. This is how Google/YouTube connect (see the OAuth providers section)."
+		},
+		{
+			"id": "oauth-authcode-hostside",
+			"title": "OAuth authorization-code flow completed on the host",
+			"description": "For SaaS MCP connectors that require OAuth (Linear, DatoCMS, Notion, Sentry, Cloudflare, ...), the operator starts the auth-code flow from the connector form; the resulting oauth_connection is linked to the connection. The injector emits a placeholder Authorization header and the egress proxy substitutes the bearer at request time. The auth handshake completes on the host, never in the run — you only reference the token by name."
+		},
+		{
+			"id": "userpass-token-body",
+			"title": "Username/password → token via egress body-substitution",
+			"description": "For APIs that exchange credentials in a JSON request body (e.g. a self-hosted /login POST that returns a token, like Umami), call request_credential(allow_body_substitution: true) and put __HEZO_SECRET_<NAME>__ in a small application/json POST body (< 8 KB, fixed Content-Length, no streaming). The egress proxy substitutes into the body. Read the returned token from the response and use Authorization: Bearer <token> on every subsequent call — do not re-send the password each request."
+		},
+		{
+			"id": "service-account-wif",
+			"title": "Service account / workload identity",
+			"description": "For providers authenticated by a service-account key or workload-identity federation, store the account JSON/config with request_credential and use it to mint short-lived access tokens, then send those as Authorization: Bearer __HEZO_SECRET_<NAME>__. Scope allowed_hosts to the token and API hosts. Prefer short-lived, narrowly-scoped tokens over a long-lived static key wherever the provider offers them."
+		},
+		{
+			"id": "webhook-secret",
+			"title": "Webhook shared secret (inbound verification)",
+			"description": "For verifying inbound webhooks (HMAC signature check), store the shared secret with request_credential(kind: 'webhook_secret'). No allowed_hosts is required because the secret is used to verify a signature locally, not sent upstream. Reference it by placeholder; never log or echo the raw value."
+		},
+		{
+			"id": "github-oauth-ssh",
+			"title": "GitHub: OAuth for REST + SSH for git",
+			"description": "For GitHub repo access, the human connects a GitHub account once via the device flow on the project's Connections page. The OAuth token is used for REST API calls (listing orgs/repos, creating repos) only; repo clone/fetch/push runs over SSH (git@github.com:owner/repo.git) authenticated by the project's Ed25519 key, which is auto-registered as both a signing and an authentication key. Do not request a personal access token when the OAuth connection already covers the API surface you need."
+		},
+		{
+			"id": "local-mcp-env-var",
+			"title": "Local (stdio) MCP that reads a credential from an env var",
+			"description": "When a tool or MCP server runs inside the container and reads its credential from an environment variable, register it with add_connector(kind: 'local') giving command/args/package, and put the credential in the connection's config.env as a __HEZO_SECRET_<NAME>__ placeholder — never the value. Then call request_credential for that same NAME, scoping allowed_hosts to the upstream API host the tool calls (not the package registry). Name the secret uniquely to your project so another project can't overwrite it."
+		}
+	],
+	"services": [
+		{
+			"service": "Google / YouTube",
+			"category": "media",
+			"transport": "api",
+			"endpoint": "https://www.googleapis.com/youtube/v3",
+			"credentials": [
+				{
+					"name": "GOOGLE_OAUTH_TOKEN",
+					"kind": "oauth_token",
+					"allowed_hosts": ["*.googleapis.com", "oauth2.googleapis.com"]
+				}
+			],
+			"docs_url": "https://developers.google.com/youtube/v3",
+			"notes": "Connect via the OAuth device flow (see the Google/YouTube provider block). Send the token as Authorization: Bearer __HEZO_SECRET_<NAME>__."
+		},
+		{
+			"service": "Umami (self-hosted analytics)",
+			"category": "analytics",
+			"transport": "api",
+			"endpoint": "https://<your-umami-host>/api",
+			"credentials": [
+				{ "name": "UMAMI_TOKEN", "kind": "other", "allowed_hosts": ["<your-umami-host>"] }
+			],
+			"docs_url": "https://umami.is/docs/api",
+			"notes": "POST /api/auth/login with username/password using request_credential(allow_body_substitution: true) (userpass-token-body pattern); reuse the returned token as a bearer on subsequent calls."
+		},
+		{
+			"service": "GitHub",
+			"category": "dev",
+			"transport": "mcp",
+			"endpoint": "https://api.githubcopilot.com/mcp/",
+			"credentials": [
+				{
+					"name": "GITHUB_OAUTH_TOKEN",
+					"kind": "oauth_token",
+					"allowed_hosts": ["api.github.com", "github.com"]
+				}
+			],
+			"docs_url": "https://github.com/github/github-mcp-server",
+			"notes": "Hosted MCP for the REST API; repo clone/fetch/push runs over SSH using the project's Ed25519 key, not the OAuth token (github-oauth-ssh pattern)."
+		},
+		{
+			"service": "Linear",
+			"category": "project-management",
+			"transport": "mcp",
+			"endpoint": "https://mcp.linear.app/sse",
+			"credentials": [
+				{
+					"name": "LINEAR_OAUTH_TOKEN",
+					"kind": "oauth_token",
+					"allowed_hosts": ["mcp.linear.app", "api.linear.app"]
+				}
+			],
+			"docs_url": "https://linear.app/docs/mcp",
+			"notes": "Hosted MCP with OAuth (oauth-authcode-hostside)."
+		},
+		{
+			"service": "Notion",
+			"category": "docs",
+			"transport": "mcp",
+			"endpoint": "https://mcp.notion.com/mcp",
+			"credentials": [
+				{
+					"name": "NOTION_OAUTH_TOKEN",
+					"kind": "oauth_token",
+					"allowed_hosts": ["mcp.notion.com", "api.notion.com"]
+				}
+			],
+			"docs_url": "https://developers.notion.com/docs/mcp",
+			"notes": "Hosted MCP with OAuth (oauth-authcode-hostside)."
+		},
+		{
+			"service": "Sentry",
+			"category": "observability",
+			"transport": "mcp",
+			"endpoint": "https://mcp.sentry.dev/mcp",
+			"credentials": [
+				{
+					"name": "SENTRY_OAUTH_TOKEN",
+					"kind": "oauth_token",
+					"allowed_hosts": ["mcp.sentry.dev", "sentry.io"]
+				}
+			],
+			"docs_url": "https://docs.sentry.io/product/sentry-mcp/",
+			"notes": "Hosted MCP with OAuth (oauth-authcode-hostside)."
+		},
+		{
+			"service": "Stripe",
+			"category": "payments",
+			"transport": "mcp",
+			"endpoint": "https://mcp.stripe.com",
+			"credentials": [
+				{
+					"name": "STRIPE_API_KEY",
+					"kind": "api_key",
+					"allowed_hosts": ["mcp.stripe.com", "api.stripe.com"]
+				}
+			],
+			"docs_url": "https://docs.stripe.com/mcp",
+			"notes": "Hosted MCP; authenticate with a restricted API key (Authorization: Bearer). A direct api connector against api.stripe.com is a valid fallback."
+		},
+		{
+			"service": "Cloudflare",
+			"category": "infrastructure",
+			"transport": "mcp",
+			"endpoint": "https://observability.mcp.cloudflare.com/sse",
+			"credentials": [
+				{
+					"name": "CLOUDFLARE_OAUTH_TOKEN",
+					"kind": "oauth_token",
+					"allowed_hosts": ["*.mcp.cloudflare.com", "api.cloudflare.com"]
+				}
+			],
+			"docs_url": "https://developers.cloudflare.com/agents/model-context-protocol/",
+			"notes": "Cloudflare publishes several hosted MCP servers (observability, docs, ...) with OAuth (oauth-authcode-hostside)."
+		},
+		{
+			"service": "DatoCMS",
+			"category": "cms",
+			"transport": "mcp",
+			"endpoint": "https://mcp.datocms.com/mcp",
+			"credentials": [
+				{
+					"name": "DATOCMS_OAUTH_TOKEN",
+					"kind": "oauth_token",
+					"allowed_hosts": ["mcp.datocms.com", "site-api.datocms.com"]
+				}
+			],
+			"docs_url": "https://www.datocms.com/docs",
+			"notes": "Hosted MCP with OAuth (oauth-authcode-hostside)."
+		},
+		{
+			"service": "Slack",
+			"category": "communication",
+			"transport": "api",
+			"endpoint": "https://slack.com/api",
+			"credentials": [
+				{
+					"name": "SLACK_BOT_TOKEN",
+					"kind": "oauth_token",
+					"allowed_hosts": ["slack.com", "*.slack.com"]
+				}
+			],
+			"docs_url": "https://api.slack.com/web",
+			"notes": "Send the bot/user token as Authorization: Bearer __HEZO_SECRET_<NAME>__ against the Web API (api-key-header)."
+		},
+		{
+			"service": "GitLab",
+			"category": "dev",
+			"transport": "api",
+			"endpoint": "https://gitlab.com/api/v4",
+			"credentials": [
+				{ "name": "GITLAB_TOKEN", "kind": "api_key", "allowed_hosts": ["gitlab.com"] }
+			],
+			"docs_url": "https://docs.gitlab.com/ee/api/",
+			"notes": "Project/personal access token in the Authorization: Bearer header (api-key-header)."
+		},
+		{
+			"service": "Airtable",
+			"category": "database",
+			"transport": "api",
+			"endpoint": "https://api.airtable.com/v0",
+			"credentials": [
+				{ "name": "AIRTABLE_TOKEN", "kind": "api_key", "allowed_hosts": ["api.airtable.com"] }
+			],
+			"docs_url": "https://airtable.com/developers/web/api/introduction",
+			"notes": "Personal access token as Authorization: Bearer (api-key-header)."
+		},
+		{
+			"service": "OpenAI API",
+			"category": "ai",
+			"transport": "api",
+			"endpoint": "https://api.openai.com/v1",
+			"credentials": [
+				{ "name": "OPENAI_API_KEY", "kind": "api_key", "allowed_hosts": ["api.openai.com"] }
+			],
+			"docs_url": "https://platform.openai.com/docs/api-reference",
+			"notes": "Authorization: Bearer header (api-key-header). This is a tool credential; it is unrelated to the run's own model-provider key."
+		},
+		{
+			"service": "Vercel",
+			"category": "hosting",
+			"transport": "api",
+			"endpoint": "https://api.vercel.com",
+			"credentials": [
+				{ "name": "VERCEL_TOKEN", "kind": "api_key", "allowed_hosts": ["api.vercel.com"] }
+			],
+			"docs_url": "https://vercel.com/docs/rest-api",
+			"notes": "Authorization: Bearer header (api-key-header)."
+		},
+		{
+			"service": "SendGrid",
+			"category": "email",
+			"transport": "api",
+			"endpoint": "https://api.sendgrid.com/v3",
+			"credentials": [
+				{ "name": "SENDGRID_API_KEY", "kind": "api_key", "allowed_hosts": ["api.sendgrid.com"] }
+			],
+			"docs_url": "https://www.twilio.com/docs/sendgrid/api-reference",
+			"notes": "Authorization: Bearer header (api-key-header)."
+		},
+		{
+			"service": "OpenWeatherMap",
+			"category": "data",
+			"transport": "api",
+			"endpoint": "https://api.openweathermap.org/data/2.5",
+			"credentials": [
+				{
+					"name": "OPENWEATHER_API_KEY",
+					"kind": "api_key",
+					"allowed_hosts": ["api.openweathermap.org"]
+				}
+			],
+			"docs_url": "https://openweathermap.org/api",
+			"notes": "Key goes in the appid query parameter (api-key-query)."
+		},
+		{
+			"service": "Custom HTTP API",
+			"category": "generic",
+			"transport": "api",
+			"endpoint": "https://api.<your-service>.com",
+			"credentials": [
+				{
+					"name": "SERVICE_API_KEY",
+					"kind": "api_key",
+					"allowed_hosts": ["api.<your-service>.com"]
+				}
+			],
+			"docs_url": "",
+			"notes": "Template for any credentialed REST API with no MCP server: register with add_connector(kind: 'api') and follow the direct-api pattern."
+		}
+	],
+	"oauthProviders": [
+		{
+			"id": "google-youtube",
+			"device_code_url": "https://oauth2.googleapis.com/device/code",
+			"token_url": "https://oauth2.googleapis.com/token",
+			"scopes": ["https://www.googleapis.com/auth/youtube"],
+			"client_type": "TVs and Limited Input devices",
+			"allowed_hosts": ["*.googleapis.com", "oauth2.googleapis.com"]
+		},
+		{
+			"id": "github",
+			"authorize_url": "https://github.com/login/oauth/authorize",
+			"device_code_url": "https://github.com/login/device/code",
+			"token_url": "https://github.com/login/oauth/access_token",
+			"scopes": ["repo", "read:org", "admin:public_key"],
+			"client_type": "OAuth App (device flow)",
+			"allowed_hosts": ["github.com", "api.github.com"]
+		}
+	]
+}

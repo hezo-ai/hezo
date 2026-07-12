@@ -18,6 +18,17 @@ test('a created skill is editable and deletable (no built-in concept)', async ()
 	expect(r.queryByText('built-in')).toBeNull();
 });
 
+test('the built-in connector-recipes skill is read-only (Built-in badge, no edit/delete)', async () => {
+	const r = await renderApp({ initialPath: '/settings/skills' });
+
+	// The generated virtual skill is always present in the instance list.
+	await r.findByText('Connector Recipes');
+	await r.findByText('Built-in');
+	// It exposes no edit/delete affordances — the server also rejects mutations.
+	expect(r.queryByLabelText('Edit Connector Recipes')).toBeNull();
+	expect(r.queryByLabelText('Delete Connector Recipes')).toBeNull();
+});
+
 test('the skill content editor previews markdown', async () => {
 	const r = await renderApp({ initialPath: '/settings/skills' });
 
