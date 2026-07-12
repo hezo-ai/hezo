@@ -1,7 +1,7 @@
 ---
 title: Hezo's MCP server
 order: 24
-section: AI models & MCP
+section: AI models & connections
 ---
 
 # Hezo's MCP server

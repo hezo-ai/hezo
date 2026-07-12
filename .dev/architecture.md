@@ -170,10 +170,11 @@ update paths — only the admin can). A separate Captain-maintained **project pr
 (`projects.progress_summary` + `progress_summary_updated_at`, set via the `update_project_progress`
 MCP tool) is the markdown blurb shown at the top of the Progress page.
 
-**Secrets, OAuth, MCP connectors.** `secrets` stores AES-256-GCM ciphertext gated by
+**Secrets, OAuth, connectors.** `secrets` stores AES-256-GCM ciphertext gated by
 `allowed_hosts` (§ 7). `oauth_connections` records connected GitHub/SaaS accounts; their
 tokens *ride the `secrets` table* (no token column). `mcp_connections` is the catalog of
-SaaS/local MCP servers injected into runs (§ 9). `secrets` is **instance-global**
+connectors — SaaS/local MCP servers injected into runs, plus direct-REST `api`
+connectors that carry no MCP server (§ 9). `secrets` is **instance-global**
 (`secrets.name` globally unique). `oauth_connections` and `mcp_connections` are
 **scoped by project** via a nullable `project_id` (FK → `projects`, `ON DELETE CASCADE`):
 a non-NULL value makes the row private to that project (so two projects can connect
@@ -294,7 +295,9 @@ head's changelog is the newest revision's `change_summary`. Selecting an older r
 read-only with the review layer suppressed — review comments exist only for the latest content —
 under a "viewing revision N" banner. Restore stays admin-only (agents 403 on the REST route; no
 MCP restore tool). `skills` is the reusable-know-how reference store
-(manifest-injected into runs, full-text-searchable) with `skill_revisions` history. Each skill is
+(manifest-injected into runs, full-text-searchable) with `skill_revisions` history. One skill
+is **virtual**: the read-only `connector-recipes` skill is rendered from the bundled connector
+registry, not a DB row, and its slug is reserved on every mutation surface (§ 9). Each skill is
 **scoped** by a nullable `skills.project_id` (mirrors `mcp_connections`, migration 024): **NULL =
 global** (shared with every project), a **non-NULL project id = private to that project**. Slug
 uniqueness is partitioned into two partial unique indexes (`(slug) WHERE project_id IS NULL` +
@@ -1112,12 +1115,14 @@ the project's (team's) own key.
 
 ---
 
-## 9. OAuth, GitHub & MCP connectors
+## 9. OAuth, GitHub & connectors
 
-Every third-party connection is an **MCP connector**. There is **no central relay** — each
-Hezo instance is its own OAuth client and callbacks land on its own URL. Token
-acquisition is chosen per provider by what the provider's Authorization Server actually
-supports; once a token exists, both strategies finalize through one shared path.
+Every third-party connection is a **connector** (an `mcp_connections` row — the name is
+historical; kinds are `saas` = hosted HTTP MCP server, `local` = stdio MCP in the
+container, `api` = a direct REST API with no MCP server at all). There is **no central
+relay** — each Hezo instance is its own OAuth client and callbacks land on its own URL.
+Token acquisition is chosen per provider by what the provider's Authorization Server
+actually supports; once a token exists, both strategies finalize through one shared path.
 
 | Strategy | Mechanism | Selected when | Used by |
 |---|---|---|---|
@@ -1237,6 +1242,28 @@ placeholder in the named header/query and calls `base_url` directly; the egress 
 substitutes the real key at request time, scoped to `allowed_hosts` — the same red-line-safe
 path as any other placeholder, with the secret never entering the run. This is the most
 red-line-native transport: a credential only ever appears as a placeholder in a header/URL.
+
+**Connector registry & the virtual `connector-recipes` skill.** A curated, bundled
+registry (`services/connector-registry.json`, zod-validated in `connector-registry.ts`)
+holds connection **patterns** (hosted-MCP-first, direct-api, static-credential,
+oauth-hostside, …), per-service **recipes** (~48 documentation-verified providers, each
+with transport `mcp`|`api`, endpoint, credential kind(s) + `allowed_hosts`, docs URL),
+and the **`oauthProviders`** descriptors the generic OAuth broker's
+`resolveBrokerDescriptor` resolves (google-youtube, github). All consumers go through the
+single accessor `resolveConnectorRegistry()` — the seam a future fetched-registry
+override slots in behind. `buildConnectorRecipesSkill()` renders the registry into the
+**virtual, read-only `connector-recipes` skill**: a reserved slug that is *not* a DB row,
+surfaced at every skill surface — the `{{skills_context}}` run manifest,
+`get_skill('connector-recipes')`, and a read-only entry in `GET /skills` /
+`/skills/:id` (the web skills page shows it with a Built-in badge, no edit/delete).
+`create_skill` / `propose_skill` / `POST /skills` reject the slug, PATCH/DELETE reject it,
+and it auto-updates with the binary (nothing to seed or migrate). `SHARED_INSTRUCTIONS`
+steers every agent to consult it before wiring an external service (prefer hosted MCP,
+then a direct `api` connector; never a browser/localhost-OAuth or token-file-on-disk
+integration) and — once a connection works — to persist how to drive the service as a
+skill via `create_skill` (same-slug+scope upsert keeps it a living document), scoped to
+match the connector's reach, checking skills.sh / vendor skill files for an existing
+public skill first.
 
 **Connector auth must traverse the egress proxy.** Because connector auth is a placeholder,
 each coding CLI's MCP-startup HTTP MUST go through the per-run proxy or the placeholder ships

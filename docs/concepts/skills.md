@@ -9,8 +9,9 @@ section: Concepts
 **Skills** are reusable know-how you give your agents — a standard operating procedure
 written once and reached for whenever it's relevant. Where a
 [project document](/docs/concepts/documents-and-memory) is knowledge *about one project*,
-a skill is a *portable capability* an agent can draw on: how to use a particular MCP server,
-your commit conventions, a release checklist, a house style for research write-ups.
+a skill is a *portable capability* an agent can draw on: how to drive a particular
+connected service, your commit conventions, a release checklist, a house style for
+research write-ups.
 
 Each skill is a markdown document with a name, a short description, and optional tags. On
 every run agents are given a **manifest** of the skills available to that run — each one's
@@ -45,6 +46,11 @@ each project's manifest focused while still letting broadly-useful know-how reac
   (`propose_skill`) — the proposal lands in your inbox like any other approval. The agent
   chooses whether the new skill is global or project-scoped, and defaults to the current
   project when it doesn't say.
+- **Built in.** Hezo ships one skill of its own: **`connector-recipes`**, a curated
+  catalog of connection recipes agents consult before
+  [connecting an external service](/docs/mcp/connecting-mcp-servers). It appears in
+  **Settings → Skills** with a **Built-in** badge, is read-only — it can't be edited or
+  deleted — and updates automatically as Hezo does.
 
 Agents contribute proactively for connected services: once an agent gets a
 [connector](/docs/mcp/connecting-mcp-servers) to a third-party service working, it records

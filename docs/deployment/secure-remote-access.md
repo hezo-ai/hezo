@@ -23,12 +23,13 @@ TLS-terminating reverse proxy for HTTPS (see
 ## Why HTTPS is essential, even on a VPN
 
 - **OAuth-connected MCP servers won't finish connecting without it.** Connecting a SaaS
-  MCP server ([Connecting MCP servers](/docs/mcp/connecting-mcp-servers)) runs an OAuth
-  flow that redirects your browser back to your instance's callback URL. Providers and
-  browsers only accept **HTTPS** callbacks (plus `localhost`), so on a plain-HTTP
+  MCP server ([Connecting external services](/docs/mcp/connecting-mcp-servers)) runs an
+  OAuth flow that redirects your browser back to your instance's callback URL. Providers
+  and browsers only accept **HTTPS** callbacks (plus `localhost`), so on a plain-HTTP
   private address the consent popup's final **Allow** step is rejected or silently
   blocked. The instance doesn't need to be publicly reachable — the redirect happens in
-  your browser — it just needs an HTTPS address.
+  your browser — it just needs an HTTPS address. (REST API connectors authorized with
+  the device flow have no callback and work on any address.)
 - **Your phone needs a secure context.** Installing Hezo as an app (below) and other
   browser capabilities only work over HTTPS or `localhost`.
 - **Defense in depth.** Your admin password, agent output, and everything you paste

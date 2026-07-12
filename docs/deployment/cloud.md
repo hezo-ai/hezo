@@ -57,7 +57,9 @@ network:
 - **OAuth-connected MCP servers require it.** Connecting a SaaS MCP server runs an
   OAuth flow whose callback lands on your instance's URL, and providers and browsers
   only accept HTTPS (or `localhost`) callbacks — over plain HTTP the connect flow
-  fails. See [Connecting MCP servers](/docs/mcp/connecting-mcp-servers).
+  fails. (REST API connectors authorized with the device flow have no callback, so
+  they work without it.) See
+  [Connecting external services](/docs/mcp/connecting-mcp-servers).
 - **The phone experience requires it.** Installing Hezo as a home-screen app needs a
   secure context.
 - **Everything sensitive rides on every request** — your admin password, agent output,
