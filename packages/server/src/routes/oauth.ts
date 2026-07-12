@@ -848,6 +848,17 @@ oauthRoutes.post('/projects/:projectId/connectors/:connectorId/oauth-device/star
 		allowed_hosts?: string[];
 	};
 
+	// When the caller doesn't name a provider, fall back to the one the agent
+	// pre-selected at registration (persisted on the connector). This lets the
+	// inline completion panel start the flow with just a client id — the provider
+	// is already fixed. A body-supplied provider_id still wins (custom override).
+	if (!body.provider_id?.trim()) {
+		const persisted = (connector.config as { oauth_provider_id?: unknown }).oauth_provider_id;
+		if (typeof persisted === 'string' && persisted.trim()) {
+			body.provider_id = persisted.trim();
+		}
+	}
+
 	const resolved = resolveBrokerDescriptor(body);
 	if (!resolved.ok) return err(c, 'INVALID_REQUEST', resolved.error, 400);
 	const descriptor = resolved.descriptor;

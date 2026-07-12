@@ -96,7 +96,7 @@ Agents can also register a REST API connector themselves when they need one — 
 appears on the Connectors page, ready for you to attach the credential.
 
 For an API that authenticates with OAuth rather than a static key (Google/YouTube, for
-example), skip the API key and press **Connect OAuth** on the connector's row instead —
+example), skip the API key and press **Complete connection** on the connector's row instead —
 the device flow below.
 
 ### Connecting an OAuth API with the device flow (no callback)
@@ -106,12 +106,19 @@ browser callback at all. That means it works on any address — `localhost`, a p
 hostname, plain HTTP — with none of the HTTPS-callback requirements that apply to
 OAuth-connected MCP servers above.
 
-Add the REST API connector (name, base URL, allowed hosts), then press **Connect OAuth**
-on its row. Pick a bundled provider (Google/YouTube is built in) or choose **Custom…**
-and paste the device-code and token endpoints yourself, then enter the OAuth **client
-ID** (and **client secret**, if the provider's device-flow client needs one). Hezo shows
-a short code and a verification link: open the link on any device, enter the code, and
-approve. That's it — no redirect back to your instance.
+Add the REST API connector (name, base URL, allowed hosts), then press **Complete
+connection** on its row. Pick a bundled provider (Google/YouTube is built in) or choose
+**Custom…** and paste the device-code and token endpoints yourself, then enter the OAuth
+**client ID** (and **client secret**, if the provider's device-flow client needs one).
+Hezo shows a short code and a verification link: open the link on any device, enter the
+code, and approve. That's it — no redirect back to your instance.
+
+When an **agent** sets up the connector it pre-selects the provider for you, so there's
+no picker to choose — you just paste the client ID it asked for. The same completion
+panel appears in two places, and you can finish from either: **inline in the task
+comment** where the agent requested it, or on the project's **Connectors** page (where
+each pending request also names and links the task it came from). Completing on the
+Connectors page expands the panel in place — no separate dialog.
 
 Hezo keeps the durable pieces **host-side, never inside a run**: the refresh token and the
 client secret are stored encrypted in your vault and are never handed to an agent or sent

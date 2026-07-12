@@ -847,7 +847,11 @@ Ask the human assignee to provide a secret value (API key, SSH private key, OAut
 
 _Write tool._
 
-Register a third-party MCP server connector for the team and ask the human to authenticate. Posts a connect_required comment on the task with a Connect button; the human clicks it to run OAuth in their own browser. The agent never sees the token; subsequent runs receive the MCP via the egress proxy + placeholder substitution. Idempotent: re-registering an already-active connector returns its current state and fires the wakeup immediately. Auth mechanism is chosen automatically by what the provider supports: servers that advertise OAuth Dynamic Client Registration (most MCP servers) need only mcp_url and authorize with zero config. Providers whose Authorization Server cannot do DCR (e.g. GitHub) require a pre-registered client_id and use the device flow instead — these MUST be registered with provider_id set to a known registry key (e.g. "github"); passing only a raw mcp_url for such a provider will fail to authorize.
+Register a third-party connector for the team and ask the human to authenticate. Posts a connect_required comment on the task with a Connect button; the human completes it inline (in the task comment or on the Connectors page). The agent never sees the token; subsequent runs receive the connector via the egress proxy + placeholder substitution. Idempotent: re-registering an already-active connector returns its current state and fires the wakeup immediately.
+
+Two kinds:
+- kind "saas" (default): a hosted MCP server. Give mcp_url. Auth is chosen by what the provider supports: servers that advertise OAuth Dynamic Client Registration (most MCP servers) authorize with zero config; providers whose Authorization Server cannot do DCR (e.g. GitHub) require a pre-registered client_id and the device flow — register those with provider_id set to a known registry key (e.g. "github").
+- kind "api": a credentialed REST API the agent calls directly (no MCP server). Give base_url + allowed_hosts (+ optional auth placement). For an OAuth-backed API, also set oauth_provider_id to a bundled OAuth-broker provider (e.g. "google-youtube"): the human then completes the OAuth device flow by pasting just a client id, with the provider pre-selected and locked. For a plain static-key API, omit oauth_provider_id and the human attaches an API key.
 
 **Parameters:**
 
@@ -856,9 +860,14 @@ Register a third-party MCP server connector for the team and ask the human to au
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `task_id` | `string` | Yes | Task identifier or UUID where the connect_required comment is posted |
 | `display_name` | `string` | Yes | Human-readable connector name shown in the task chat and on the Connectors page (e.g. "DatoCMS", "Linear"). |
-| `mcp_url` | `string` | Yes | URL of the MCP server (HTTP / SSE). The OAuth dance is discovered by probing this URL for a 401 + WWW-Authenticate header. |
+| `kind` | `saas` \| `api` | No | Connector kind. 'saas' (default) = a hosted MCP server (needs mcp_url). 'api' = a credentialed REST API the agent calls directly with no MCP server (needs base_url + allowed_hosts) — use this for an OAuth-backed HTTP API like a Google API. |
+| `mcp_url` | `string` | No | URL of the MCP server (HTTP / SSE) — required for kind 'saas'. The OAuth dance is discovered by probing this URL for a 401 + WWW-Authenticate header. |
 | `mcp_transport` | `http` \| `sse` | No | Transport for the MCP server. Defaults to http. |
-| `provider_id` | `string` | No | Optional registry key (e.g. "datocms"). When set, capability defaults from the shared registry pre-fill display name and allowed hosts. |
+| `provider_id` | `string` | No | Optional MCP capability-registry key (e.g. "datocms", "github"). When set, capability defaults from the shared registry pre-fill display name and allowed hosts. This is the MCP-server registry namespace — not the OAuth-broker provider (see oauth_provider_id). |
+| `base_url` | `string` | No | For kind 'api' — the REST API base URL agents call (e.g. https://www.googleapis.com/youtube/v3). |
+| `allowed_hosts` | `string[]` | No | For kind 'api' — the hosts the credential may be sent to (e.g. ["*.googleapis.com"]). Required for api connectors. |
+| `auth` | `object` | No | For kind 'api' — where the credential rides. Defaults to an `Authorization: Bearer ` header when omitted (the right default for OAuth access tokens). |
+| `oauth_provider_id` | `string` | No | For kind 'api' only — a bundled OAuth-broker provider key (e.g. "google-youtube") to pre-select for the human. The provider is then LOCKED in the completion UI: the human finishes the OAuth device flow inline (in the task comment or on the Connectors page) by pasting only a client id — no provider picker. Omit for a plain API-key REST connector. |
 | `skill_id` | `string` | No | Optional ID of a previously-fetched skill document (see fetch_skill_file). When set, the skill file is exposed to every team agent run via the per-adapter skill path. |
 
 **Returns:** `{ connector_id, status, name, display_name, comment_id?, reused }`. `status` is `active` (OAuth already complete) or `pending` (a connect_required comment is posted for the human). Idempotent.

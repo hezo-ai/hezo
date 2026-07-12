@@ -17,6 +17,7 @@ import {
 	CEO_AGENT_SLUG,
 	COACH_AGENT_SLUG,
 	CommentContentType,
+	ConnectorTransport,
 	CredentialInputType,
 	CredentialKind,
 	credentialKindRequiresAllowedHosts,
@@ -101,6 +102,7 @@ import {
 	buildConnectorRecipesSkill,
 	CONNECTOR_RECIPES_SLUG,
 	isConnectorRecipesSlug,
+	resolveConnectorRegistry,
 } from '../services/connector-registry';
 import { validateApiConnectorConfig } from '../services/connectors/connections';
 import type { ContainerDeps } from '../services/containers';
@@ -2595,7 +2597,7 @@ export function registerTools(
 	tool(
 		server,
 		'register_connector',
-		'Register a third-party MCP server connector for the team and ask the human to authenticate. Posts a connect_required comment on the task with a Connect button; the human clicks it to run OAuth in their own browser. The agent never sees the token; subsequent runs receive the MCP via the egress proxy + placeholder substitution. Idempotent: re-registering an already-active connector returns its current state and fires the wakeup immediately. Auth mechanism is chosen automatically by what the provider supports: servers that advertise OAuth Dynamic Client Registration (most MCP servers) need only mcp_url and authorize with zero config. Providers whose Authorization Server cannot do DCR (e.g. GitHub) require a pre-registered client_id and use the device flow instead — these MUST be registered with provider_id set to a known registry key (e.g. "github"); passing only a raw mcp_url for such a provider will fail to authorize.',
+		'Register a third-party connector for the team and ask the human to authenticate. Posts a connect_required comment on the task with a Connect button; the human completes it inline (in the task comment or on the Connectors page). The agent never sees the token; subsequent runs receive the connector via the egress proxy + placeholder substitution. Idempotent: re-registering an already-active connector returns its current state and fires the wakeup immediately.\n\nTwo kinds:\n- kind "saas" (default): a hosted MCP server. Give mcp_url. Auth is chosen by what the provider supports: servers that advertise OAuth Dynamic Client Registration (most MCP servers) authorize with zero config; providers whose Authorization Server cannot do DCR (e.g. GitHub) require a pre-registered client_id and the device flow — register those with provider_id set to a known registry key (e.g. "github").\n- kind "api": a credentialed REST API the agent calls directly (no MCP server). Give base_url + allowed_hosts (+ optional auth placement). For an OAuth-backed API, also set oauth_provider_id to a bundled OAuth-broker provider (e.g. "google-youtube"): the human then completes the OAuth device flow by pasting just a client id, with the provider pre-selected and locked. For a plain static-key API, omit oauth_provider_id and the human attaches an API key.',
 		{
 			project: projectArg(),
 			task_id: z
@@ -2606,10 +2608,17 @@ export function registerTools(
 				.describe(
 					'Human-readable connector name shown in the task chat and on the Connectors page (e.g. "DatoCMS", "Linear").',
 				),
+			kind: z
+				.enum(['saas', 'api'])
+				.optional()
+				.describe(
+					"Connector kind. 'saas' (default) = a hosted MCP server (needs mcp_url). 'api' = a credentialed REST API the agent calls directly with no MCP server (needs base_url + allowed_hosts) — use this for an OAuth-backed HTTP API like a Google API.",
+				),
 			mcp_url: z
 				.string()
+				.optional()
 				.describe(
-					'URL of the MCP server (HTTP / SSE). The OAuth dance is discovered by probing this URL for a 401 + WWW-Authenticate header.',
+					"URL of the MCP server (HTTP / SSE) — required for kind 'saas'. The OAuth dance is discovered by probing this URL for a 401 + WWW-Authenticate header.",
 				),
 			mcp_transport: z
 				.enum(['http', 'sse'])
@@ -2619,7 +2628,35 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					'Optional registry key (e.g. "datocms"). When set, capability defaults from the shared registry pre-fill display name and allowed hosts.',
+					'Optional MCP capability-registry key (e.g. "datocms", "github"). When set, capability defaults from the shared registry pre-fill display name and allowed hosts. This is the MCP-server registry namespace — not the OAuth-broker provider (see oauth_provider_id).',
+				),
+			base_url: z
+				.string()
+				.optional()
+				.describe(
+					"For kind 'api' — the REST API base URL agents call (e.g. https://www.googleapis.com/youtube/v3).",
+				),
+			allowed_hosts: z
+				.array(z.string())
+				.optional()
+				.describe(
+					'For kind \'api\' — the hosts the credential may be sent to (e.g. ["*.googleapis.com"]). Required for api connectors.',
+				),
+			auth: z
+				.object({
+					placement: z.enum(['header', 'query']),
+					name: z.string(),
+					scheme: z.string().optional(),
+				})
+				.optional()
+				.describe(
+					"For kind 'api' — where the credential rides. Defaults to an `Authorization: Bearer ` header when omitted (the right default for OAuth access tokens).",
+				),
+			oauth_provider_id: z
+				.string()
+				.optional()
+				.describe(
+					'For kind \'api\' only — a bundled OAuth-broker provider key (e.g. "google-youtube") to pre-select for the human. The provider is then LOCKED in the completion UI: the human finishes the OAuth device flow inline (in the task comment or on the Connectors page) by pasting only a client id — no provider picker. Omit for a plain API-key REST connector.',
 				),
 			skill_id: z
 				.string()
@@ -2635,9 +2672,45 @@ export function registerTools(
 
 			const displayName = (args.display_name as string).trim();
 			const providerId = (args.provider_id as string | undefined)?.trim() || null;
-			const mcpUrl = (args.mcp_url as string).trim();
+			const kind = (args.kind as 'saas' | 'api' | undefined) ?? 'saas';
 			const mcpTransport = (args.mcp_transport as 'http' | 'sse' | undefined) ?? 'http';
 			const skillId = (args.skill_id as string | undefined) ?? null;
+
+			// For an OAuth REST-API connector, validate the api config and the
+			// bundled broker provider (if any) up front. The provider is persisted
+			// on the connector so the completion UI can lock it and the device-flow
+			// start resolves it without the client re-sending it.
+			let apiConfig: Record<string, unknown> | undefined;
+			if (kind === 'api') {
+				const oauthProviderId = (args.oauth_provider_id as string | undefined)?.trim();
+				if (oauthProviderId) {
+					const known = resolveConnectorRegistry().oauthProviders.some(
+						(p) => p.id === oauthProviderId,
+					);
+					if (!known) return { error: `unknown oauth_provider_id=${oauthProviderId}` };
+				}
+				const validated = validateApiConnectorConfig({
+					base_url: args.base_url,
+					allowed_hosts: args.allowed_hosts,
+					// Default to an Authorization: Bearer header — the right carrier for
+					// an OAuth access token when the caller doesn't specify.
+					auth: (args.auth as Record<string, unknown> | undefined) ?? {
+						placement: 'header',
+						name: 'Authorization',
+						scheme: 'Bearer ',
+					},
+				});
+				if (!validated.ok) return { error: validated.error };
+				// Merge the provider preset AFTER validation (the validator strips
+				// unknown keys, so oauth_provider_id must not pass through it).
+				apiConfig = {
+					...(validated.config as unknown as Record<string, unknown>),
+					...(oauthProviderId ? { oauth_provider_id: oauthProviderId } : {}),
+				};
+			} else if (!(args.mcp_url as string | undefined)?.trim()) {
+				return { error: "kind 'saas' requires mcp_url" };
+			}
+			const mcpUrl = kind === 'saas' ? (args.mcp_url as string).trim() : undefined;
 
 			// Slug from providerId if available, else from display_name. Connectors
 			// are scoped by project, so `(project_id, name)` is the idempotency key.
@@ -2659,9 +2732,10 @@ export function registerTools(
 				// X-MCP-Toolsets in its capability — apply them so an agent-registered
 				// connector matches the UI "Connect" path.
 				mcpHeaders: providerId ? getConnectorCapability(providerId)?.mcpServer.headers : undefined,
+				kind: kind === 'api' ? ConnectorTransport.Api : undefined,
+				apiConfig,
 				skillId,
 				createdByTaskId: taskId,
-				providerId,
 				projectId: scope.projectId,
 			});
 

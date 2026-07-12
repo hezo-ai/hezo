@@ -25,6 +25,18 @@ export interface CreateConnectorInput {
 	skillId?: string | null;
 	createdByTaskId?: string | null;
 	providerId?: string | null;
+	/**
+	 * Explicit transport. When `Api`, the row is created as a REST-API connector
+	 * from {@link apiConfig} instead of inferring saas/local from `mcpUrl`. Omit
+	 * for the default MCP-server path.
+	 */
+	kind?: ConnectorTransport;
+	/**
+	 * Full `config` for an `Api` connector — the validated {@link ApiConnectorConfig}
+	 * plus any `oauth_provider_id` preset (the bundled OAuth-broker provider the
+	 * completion UI locks onto). Only read when `kind === Api`.
+	 */
+	apiConfig?: Record<string, unknown>;
 	/** Owning project, or null for a global ("all projects") connector. */
 	projectId?: string | null;
 }
@@ -103,17 +115,48 @@ export async function createOrFetchConnector(
 			const restored = await restoreRevokedConnector(db, existingRow.id);
 			return { row: restored ?? existingRow, alreadyExisted: true };
 		}
+		// Re-registering an api connector with a broker provider preset the row
+		// doesn't yet carry: patch it onto the (still-pending) row so the preset
+		// isn't silently dropped. Never touch an already-active row's config.
+		const presetProvider =
+			input.kind === ConnectorTransport.Api
+				? (input.apiConfig?.oauth_provider_id as string | undefined)
+				: undefined;
+		const existingProvider = (existingRow.config as { oauth_provider_id?: unknown })
+			.oauth_provider_id;
+		if (presetProvider && existingProvider !== presetProvider && !existingRow.activated_at) {
+			const patched = await db.query<ConnectorRow>(
+				`UPDATE mcp_connections
+				 SET config = jsonb_set(config, '{oauth_provider_id}', $1::jsonb), updated_at = now()
+				 WHERE id = $2
+				 RETURNING ${CONNECTOR_COLS}`,
+				[JSON.stringify(presetProvider), existingRow.id],
+			);
+			return { row: patched.rows[0] ?? existingRow, alreadyExisted: true };
+		}
 		return { row: existingRow, alreadyExisted: true };
 	}
 
-	const config: Record<string, unknown> = input.mcpUrl
-		? {
-				url: input.mcpUrl,
-				...(input.mcpHeaders ? { headers: input.mcpHeaders } : {}),
-				...(input.mcpEnv ? { env: input.mcpEnv } : {}),
-			}
-		: { command: input.mcpCmd, args: input.mcpArgs ?? [], env: input.mcpEnv ?? {} };
-	const kind = input.mcpUrl ? ConnectorTransport.Saas : ConnectorTransport.Local;
+	// An explicit `Api` kind builds the row from the validated api config
+	// (base_url / allowed_hosts / auth, plus any oauth_provider_id preset). The
+	// default path still infers saas (mcpUrl) vs local (command) so the
+	// DCR/auth-start flow is unchanged.
+	const config: Record<string, unknown> =
+		input.kind === ConnectorTransport.Api
+			? (input.apiConfig ?? {})
+			: input.mcpUrl
+				? {
+						url: input.mcpUrl,
+						...(input.mcpHeaders ? { headers: input.mcpHeaders } : {}),
+						...(input.mcpEnv ? { env: input.mcpEnv } : {}),
+					}
+				: { command: input.mcpCmd, args: input.mcpArgs ?? [], env: input.mcpEnv ?? {} };
+	const kind =
+		input.kind === ConnectorTransport.Api
+			? ConnectorTransport.Api
+			: input.mcpUrl
+				? ConnectorTransport.Saas
+				: ConnectorTransport.Local;
 
 	const inserted = await db.query<ConnectorRow>(
 		`INSERT INTO mcp_connections (

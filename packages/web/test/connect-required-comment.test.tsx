@@ -49,6 +49,28 @@ async function insertConnector(input: {
 	return res.rows[0];
 }
 
+/** Insert a REST `api` connector, optionally with an agent-preset OAuth-broker provider. */
+async function insertApiConnector(input: {
+	name: string;
+	oauthProviderId?: string;
+}): Promise<ConnectorRow> {
+	const { db } = getTestContext();
+	const config: Record<string, unknown> = {
+		base_url: 'https://www.googleapis.com',
+		allowed_hosts: ['*.googleapis.com'],
+		auth: { placement: 'header', name: 'Authorization', scheme: 'Bearer ' },
+		...(input.oauthProviderId ? { oauth_provider_id: input.oauthProviderId } : {}),
+	};
+	const res = await db.query<ConnectorRow>(
+		`INSERT INTO mcp_connections
+		   (name, display_name, kind, config, install_status)
+		 VALUES ($1, $2, 'api'::mcp_connection_kind, $3::jsonb, 'installed'::mcp_install_status)
+		 RETURNING id, name, display_name, oauth_connection_id, activated_at, revoked_at, auth_error`,
+		[input.name, input.name, JSON.stringify(config)],
+	);
+	return res.rows[0];
+}
+
 /** A secret + oauth_connections row so a connector can be put in the "active" state (FK targets). */
 async function insertActiveOauthConnection(): Promise<string> {
 	const { db } = getTestContext();
@@ -315,6 +337,28 @@ test('a blocked popup surfaces the pop-up-blocked error', async () => {
 		window.open = originalOpen;
 		globalThis.fetch = original;
 	}
+});
+
+test('an api connector with a preset provider shows the broker form inline in the comment, provider locked', async () => {
+	const { findByTestId, queryByTestId } = await setup(async (_ws, taskId, agentId) => {
+		const connector = await insertApiConnector({
+			name: 'youtube',
+			oauthProviderId: 'google-youtube',
+		});
+		await insertConnectRequiredComment(taskId, agentId, {
+			connector_id: connector.id,
+			display_name: 'Google / YouTube',
+		});
+	});
+
+	await findByTestId('connect-required');
+	// The broker form is expanded inline in the comment (the agent asked for the
+	// client ID), with the provider locked — no picker to choose.
+	await findByTestId('broker-form');
+	const locked = await findByTestId('broker-locked-provider');
+	expect(locked.textContent).toContain('google-youtube');
+	expect(queryByTestId('broker-provider-select')).toBeNull();
+	await findByTestId('broker-client-id');
 });
 
 test('clicking Connect on a device-flow connector (github) opens the device-flow dialog instead of a popup', async () => {

@@ -66,9 +66,11 @@ connectorsRoutes.get('/projects/:projectId/connectors', async (c) => {
 	const projectId = c.get('projectId') as string;
 	const result = await db.query(
 		`SELECT ${CONNECTOR_COLUMNS_MC}, oc.provider_account_label AS oauth_account_label,
+		        LOWER(t.identifier) AS created_by_task_identifier, t.title AS created_by_task_title,
 		        ${connectorCredentialsJson('mc')}
 		 FROM mcp_connections mc
 		 LEFT JOIN oauth_connections oc ON oc.id = mc.oauth_connection_id
+		 LEFT JOIN tasks t ON t.id = mc.created_by_task_id
 		 WHERE mc.project_id = $1 OR mc.project_id IS NULL
 		 ORDER BY mc.name ASC`,
 		[projectId],
@@ -122,6 +124,17 @@ connectorsRoutes.post('/connectors', async (c) => {
 		const validated = validateApiConnectorConfig(config);
 		if (!validated.ok) return err(c, 'INVALID_REQUEST', validated.error, 400);
 		config = validated.config as unknown as Record<string, unknown>;
+		// Preserve an OAuth-broker provider preset (the completion UI locks onto it).
+		// Merged AFTER validation, which strips unknown keys. Validated against the
+		// bundled registry so a bad id can't be persisted.
+		const rawProvider = (body.config as { oauth_provider_id?: unknown }).oauth_provider_id;
+		if (typeof rawProvider === 'string' && rawProvider.trim()) {
+			const providerId = rawProvider.trim();
+			if (!resolveConnectorRegistry().oauthProviders.some((p) => p.id === providerId)) {
+				return err(c, 'INVALID_REQUEST', `unknown oauth_provider_id=${providerId}`, 400);
+			}
+			config.oauth_provider_id = providerId;
+		}
 	} else {
 		const url = body.config?.url;
 		if (typeof url !== 'string' || !url) {
@@ -548,6 +561,17 @@ connectorsRoutes.post('/projects/:projectId/connectors', async (c) => {
 		const validated = validateApiConnectorConfig(config);
 		if (!validated.ok) return err(c, 'INVALID_REQUEST', validated.error, 400);
 		config = validated.config as unknown as Record<string, unknown>;
+		// Preserve an OAuth-broker provider preset (the completion UI locks onto it).
+		// Merged AFTER validation, which strips unknown keys; validated against the
+		// bundled registry so a bad id can't be persisted.
+		const rawProvider = (body.config as { oauth_provider_id?: unknown }).oauth_provider_id;
+		if (typeof rawProvider === 'string' && rawProvider.trim()) {
+			const providerId = rawProvider.trim();
+			if (!resolveConnectorRegistry().oauthProviders.some((p) => p.id === providerId)) {
+				return err(c, 'INVALID_REQUEST', `unknown oauth_provider_id=${providerId}`, 400);
+			}
+			config.oauth_provider_id = providerId;
+		}
 	} else if (typeof body.config?.command !== 'string' || !body.config.command) {
 		return err(c, 'INVALID_REQUEST', 'local connections require config.command (string)', 400);
 	}
