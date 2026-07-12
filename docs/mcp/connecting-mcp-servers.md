@@ -1,18 +1,32 @@
 ---
-title: Connecting MCP servers
+title: Connecting external services
 order: 25
-section: AI models & MCP
+section: AI models & connections
 ---
 
-# Connecting MCP servers to your agents
+# Connecting your agents to external services
 
-The other side of [Hezo's MCP server](/docs/mcp/hezo-mcp-server): you can give Hezo's
-own agents access to **external MCP servers**, so they can use the tools you already
-rely on — web search, a project tracker, a CMS, a filesystem, and so on. Once a
-connection is registered it's available to your agents' runs and survives
-container rebuilds.
+The other side of [Hezo's MCP server](/docs/mcp/hezo-mcp-server): **connectors** give
+Hezo's own agents access to the external services you already rely on — web search, a
+project tracker, a CMS, a payments API, and so on. Once a connector is registered it's
+available to your agents' runs and survives container rebuilds.
 
-## Remote (HTTP) servers
+A connector comes in one of three kinds, depending on how the service is exposed:
+
+- A **hosted MCP server** — the service publishes an HTTP
+  [MCP](https://modelcontextprotocol.io) endpoint, and its tools appear directly in your
+  agents' tool list (GitHub, Linear, Notion, …).
+- A **REST API** — the service has no MCP server, just a credentialed plain HTTP API.
+  Agents call the API directly, and the credential is filled in on the way out.
+- A **local MCP server** — a process-based (stdio) server that runs inside the project
+  container.
+
+Whatever the kind, the credential handling is the same: agents only ever see a
+[placeholder](/docs/security/secret-protection), and the egress proxy substitutes the
+real value at request time, scoped to the hosts you allowed — the real key never enters
+an agent's environment in any form.
+
+## Hosted MCP servers
 
 Hosted, HTTP-based MCP servers connect by **URL plus any headers** they need. They're
 available to your agents as soon as you add them.
@@ -36,7 +50,7 @@ servers that expect something else (for example `X-API-Key: <key>`).
 
 ### OAuth connections need an HTTPS address
 
-For servers that authenticate with OAuth, completing the connection sends your browser
+For MCP servers that authenticate with OAuth, completing the connection sends your browser
 from the provider's consent page back to your instance's callback URL. Providers and
 browsers only accept **HTTPS** callback URLs (with `http://localhost` as the one
 exception), so your instance must be reached over HTTPS for the final **Allow** step to
@@ -45,6 +59,8 @@ popup fail with a blocked or rejected redirect. Your instance does **not** need 
 publicly reachable: the redirect happens in your browser, so a private HTTPS address
 works fine. See [Serve it over HTTPS](/docs/deployment/cloud#serve-it-over-https) and
 [Secure remote access](/docs/deployment/secure-remote-access) for setting that up.
+(REST API connectors authorized with the [device flow](#connecting-an-oauth-api-with-the-device-flow-no-callback)
+have no callback and no HTTPS requirement.)
 
 If your instance's address changes (for example you move from plain HTTP to HTTPS),
 remove the connector and add it again before reconnecting: the OAuth client Hezo
@@ -52,19 +68,49 @@ registered with the provider is tied to the address it was created on, and a sta
 registration is rejected with a "redirect_uri does not match" error. Re-adding the
 connector registers a fresh client on the current address.
 
-## Connecting an OAuth API with the device flow (no callback)
+## REST API connectors
 
-Some providers have a plain HTTP API but no hosted MCP server — Google/YouTube, for
-example. You can connect one to a **REST API connector** (kind `api`) and authorize it
-with the **OAuth device flow**, which needs no browser callback at all. That means it
-works on any address — `localhost`, a private hostname, plain HTTP — with none of the
-HTTPS-callback requirements above.
+Plenty of services have no MCP server at all — just a well-documented HTTP API
+(Google's APIs, Stripe, Cloudflare, …). A **REST API connector** covers those without
+any middleman: agents call the API directly through the
+[egress proxy](/docs/security/secret-protection), which substitutes the credential on
+the way out.
 
-Add the API connector (name, base URL, allowed hosts), then press **Connect OAuth** on
-its row. Pick a bundled provider (Google/YouTube is built in) or choose **Custom…** and
-paste the device-code and token endpoints yourself, then enter the OAuth **client ID**
-(and **client secret**, if the provider's device-flow client needs one). Hezo shows a
-short code and a verification link: open the link on any device, enter the code, and
+Add one from the project's **Connectors** page: press **Add**, switch the type from
+**MCP server** to **REST API**, and fill in:
+
+- the **base URL** agents should call (for example `https://api.example.com/v1`),
+- the **allowed hosts** the credential may be sent to,
+- where the credential goes — a **header** (with an optional scheme prefix such as
+  `Bearer `) or a **query parameter** — and its name,
+- an optional **API docs** link, shown on the connector's row and passed along to
+  agents.
+
+Then attach the credential from the connector's row with **API key**: it's stored
+encrypted in your vault, scoped to the allowed hosts, exactly like an MCP server's API
+key above. Agents discover the connector's base URL together with a placeholder, put the
+placeholder in the header or query parameter you named, and the egress proxy fills in
+the real key at request time.
+
+Agents can also register a REST API connector themselves when they need one — it
+appears on the Connectors page, ready for you to attach the credential.
+
+For an API that authenticates with OAuth rather than a static key (Google/YouTube, for
+example), skip the API key and press **Connect OAuth** on the connector's row instead —
+the device flow below.
+
+### Connecting an OAuth API with the device flow (no callback)
+
+A REST API connector can be authorized with the **OAuth device flow**, which needs no
+browser callback at all. That means it works on any address — `localhost`, a private
+hostname, plain HTTP — with none of the HTTPS-callback requirements that apply to
+OAuth-connected MCP servers above.
+
+Add the REST API connector (name, base URL, allowed hosts), then press **Connect OAuth**
+on its row. Pick a bundled provider (Google/YouTube is built in) or choose **Custom…**
+and paste the device-code and token endpoints yourself, then enter the OAuth **client
+ID** (and **client secret**, if the provider's device-flow client needs one). Hezo shows
+a short code and a verification link: open the link on any device, enter the code, and
 approve. That's it — no redirect back to your instance.
 
 Hezo keeps the durable pieces **host-side, never inside a run**: the refresh token and the
@@ -79,8 +125,8 @@ connection stays live without you re-authorizing.
 
 Hezo also supports **local, process-based** MCP servers that run inside the project
 container. The connection model is in place; automatic installation of local servers is
-still being rolled out, so prefer hosted (HTTP) servers for now where you have the
-choice.
+still being rolled out, so prefer a hosted (HTTP) server or a REST API connector for now
+where you have the choice.
 
 A local server that reaches an outside API usually reads its key from an **environment
 variable** (say a YouTube tool that reads `YOUTUBE_API_KEY`). You never put the real key in
@@ -91,19 +137,36 @@ server calls out, scoped to that API's host. Because connections are scoped per 
 (below), each project supplies its own key for the same tool without them ever colliding —
 each project's credential just gets its own name.
 
+## How agents pick the right connection
+
+Hezo ships a built-in **`connector-recipes`** [skill](/docs/concepts/skills) — a curated
+catalog of connection recipes for dozens of popular services (GitHub, GitLab, Linear,
+Notion, Stripe, Cloudflare, Google APIs, Slack, and many more), each verified against
+the provider's own documentation: whether the service has a hosted MCP server or a plain
+REST API, the endpoint to use, the credential it needs, and the hosts that credential
+should be scoped to.
+
+Agents consult it before wiring up a new service, so they reach straight for a hosted
+MCP server or a REST API connector — where secrets stay placeholders — rather than an
+integration designed for desktop use that would need an interactive browser login or a
+token file written to disk. The skill appears read-only in **Settings → Skills** with a
+**Built-in** badge; it can't be edited or deleted, and it updates automatically as Hezo
+does.
+
 ## Where a connection applies
 
-MCP connections are **scoped by project**. A connection you add to a project is private to
+Connections are **scoped by project**. A connection you add to a project is private to
 that project's agent runs, so two projects can each connect a *different* account for the
 same provider (for example, a separate GitHub account per project) without one bleeding
 into the other. Each project's runs see its own connections plus any connection scoped to
-**All projects** — the global scope for servers you want shared everywhere. When a project
+**All projects** — the global scope for services you want shared everywhere. When a project
 and the global scope both define a connection of the same name, the project's own wins.
 
 Manage connections two ways:
 
 - **Project → Settings → Connectors** shows just that project's connectors. **Add** a
-  connector here — give it a name and MCP server URL — and it's scoped to that project;
+  connector here — an MCP server (name + URL) or a REST API (base URL, allowed hosts,
+  and where the credential goes) — and it's scoped to that project. For an MCP server,
   Hezo probes it for OAuth and opens the connect popup automatically, or you attach an
   API key from its row if the server authenticates with a header instead.
 - The global **Settings → Connectors** page (admin) lists connectors across every project.

@@ -74,7 +74,8 @@ agent can't hurt you. A few guarantees sit underneath everything:
   [Assets & previews](/docs/concepts/assets).
 - **Connect your tools, both ways.** Drive your teams and tasks from any MCP client via
   Hezo's [built-in MCP server](/docs/mcp/hezo-mcp-server), and give your agents the tools
-  you already use by [connecting external MCP servers](/docs/mcp/connecting-mcp-servers).
+  you already use by [connecting external services](/docs/mcp/connecting-mcp-servers) —
+  hosted MCP servers or plain REST APIs.
 - **Own your data.** Hezo carries an embedded database by default — no external service
   to run (or bring your own Postgres, and keep asset files in your own S3-compatible
   bucket) — so your work lives in storage you control, with safe, data-preserving

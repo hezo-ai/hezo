@@ -32,7 +32,7 @@ A team's structure is more than a list of agents. It's:
   runs on.
 - **What the team shares** — its [skills](/docs/concepts/skills),
   [project documents and memory](/docs/concepts/documents-and-memory),
-  connected [MCP tools](/docs/mcp/connecting-mcp-servers), budgets, and the project
+  connected [external services](/docs/mcp/connecting-mcp-servers), budgets, and the project
   container they all work in.
 
 Change any of these and you've changed the team's structure.

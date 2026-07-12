@@ -1,7 +1,7 @@
 ---
 title: AI model support
 order: 23
-section: AI models & MCP
+section: AI models & connections
 ---
 
 # AI model support
