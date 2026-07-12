@@ -1,10 +1,11 @@
 import { getConnectorCapability } from '@hezo/shared';
+import { useQueryClient } from '@tanstack/react-query';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { Check, ExternalLink, Github, KeyRound, Plug, Plus, Trash2, X } from 'lucide-react';
 import { useCallback, useState } from 'react';
 import { ConnectorApiKeyForm } from '../../../components/connector-api-key-form';
 import { ConnectorDeviceFlowDialog } from '../../../components/connector-device-flow-dialog';
-import { ConnectorOAuthBrokerDialog } from '../../../components/connector-oauth-broker-dialog';
+import { ConnectorOAuthBrokerForm } from '../../../components/connector-oauth-broker-form';
 import { RelatedItemsList } from '../../../components/related-items-list';
 import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
@@ -26,6 +27,7 @@ import {
 	useEnsureConnector,
 	useOAuthConnections,
 } from '../../../hooks/use-oauth-connections';
+import { queryKeys } from '../../../lib/query-keys';
 
 interface ConnectorsSearch {
 	focus?: string;
@@ -460,6 +462,7 @@ interface ConnectorRowProps {
 
 function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowProps) {
 	const { data: me } = useMe();
+	const queryClient = useQueryClient();
 	const status = connectorStatus(connector);
 	const authStart = useAuthStart(projectId);
 	const revoke = useRevokeConnector(projectId);
@@ -485,10 +488,15 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 		url?: unknown;
 		base_url?: unknown;
 		docs_url?: unknown;
+		oauth_provider_id?: unknown;
 	};
 	const url = typeof cfg.url === 'string' ? cfg.url : null;
 	const baseUrl = typeof cfg.base_url === 'string' ? cfg.base_url : null;
 	const docsUrl = typeof cfg.docs_url === 'string' ? cfg.docs_url : null;
+	const oauthProviderId =
+		typeof cfg.oauth_provider_id === 'string' && cfg.oauth_provider_id
+			? cfg.oauth_provider_id
+			: undefined;
 	const isApi = connector.kind === 'api';
 	const displayUrl = url ?? baseUrl;
 
@@ -547,15 +555,6 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 					projectId={projectId}
 					connectorId={connector.id}
 					providerLabel={connector.display_name ?? capability?.displayName ?? connector.name}
-				/>
-			)}
-			{isApi && brokerOpen && (
-				<ConnectorOAuthBrokerDialog
-					open={brokerOpen}
-					onOpenChange={setBrokerOpen}
-					projectId={projectId}
-					connectorId={connector.id}
-					connectorLabel={connector.display_name ?? connector.name}
 				/>
 			)}
 			<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
@@ -642,14 +641,14 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 									{authStart.isPending ? 'Starting…' : status === 'failed' ? 'Retry' : 'Connect'}
 								</Button>
 							)}
-							{isApi && (
+							{isApi && !brokerOpen && (
 								<Button
 									size="sm"
 									onClick={() => setBrokerOpen(true)}
 									data-testid="connector-oauth-broker"
 								>
 									<Plug className="size-3.5 mr-1" />
-									Connect OAuth
+									Complete connection
 								</Button>
 							)}
 							<Button
@@ -677,6 +676,28 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 				</div>
 			)}
 
+			{/* Inline OAuth device-flow completion for an `api` connector — the same
+			    broker form the task comment shows, with the agent-preset provider
+			    locked (or a manual picker when none). Expanded in place, no modal. */}
+			{isApi && !isGlobal && status !== 'active' && brokerOpen && (
+				<div className="mt-3 pt-3 border-t border-border" data-testid="connector-complete-inline">
+					<ConnectorOAuthBrokerForm
+						projectId={projectId}
+						connectorId={connector.id}
+						connectorLabel={connector.display_name ?? connector.name}
+						lockedProviderId={oauthProviderId}
+						layout="inline"
+						onSuccess={() => {
+							setBrokerOpen(false);
+							queryClient.invalidateQueries({
+								queryKey: queryKeys.projects.connectors(projectId),
+							});
+						}}
+						onCancel={() => setBrokerOpen(false)}
+					/>
+				</div>
+			)}
+
 			{credentials.length > 0 && (
 				<div className="mt-3">
 					<RelatedItemsList
@@ -692,15 +713,18 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 				</div>
 			)}
 
-			{connector.created_by_task_id && (
+			{connector.created_by_task_identifier && (
 				<div className="mt-3 pt-3 border-t border-border text-xs text-text-2">
-					Requested by an agent.{' '}
+					Requested by an agent in{' '}
 					<Link
 						to="/projects/$projectId/tasks/$taskId"
-						params={{ projectId, taskId: connector.created_by_task_id }}
+						params={{ projectId, taskId: connector.created_by_task_identifier }}
 						className="underline hover:text-text-1"
 					>
-						View task
+						{connector.created_by_task_title ?? 'View task'}
+						<span className="ml-1.5 font-mono uppercase text-text-3">
+							{connector.created_by_task_identifier}
+						</span>
 					</Link>
 				</div>
 			)}

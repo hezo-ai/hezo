@@ -1128,7 +1128,7 @@ actually supports; once a token exists, both strategies finalize through one sha
 |---|---|---|---|
 | **DCR auth-code + PKCE** | PRM discovery (RFC 9728) → Dynamic Client Registration (RFC 7591) → redirect popup → `/api/oauth/mcp-callback`. Zero config — the AS mints a `client_id`. | the AS advertises a `registration_endpoint` | DatoCMS, Linear, Notion, Vercel, … |
 | **Device flow (RFC 8628)** | `connectors/:id/device/start` → user types a code → `…/device/poll`. Needs a pre-registered public `client_id`; no redirect, no secret. | the capability registry declares a `deviceAuth` descriptor | **GitHub** |
-| **Generic OAuth broker (device flow)** | `connectors/:id/oauth-device/start` → user types a code → `…/oauth-device/poll`. The operator brings the `client_id` (+ optional `client_secret`) and either picks a bundled `oauthProviders` descriptor or supplies the endpoints directly; `resolveBrokerDescriptor` (`services/oauth/broker.ts`) merges the two. Runs on an **`api`** connector, so no browser callback is needed on any instance URL. The durable refresh token + host-only client secret stay host-side; only the short-lived access token is surfaced (via the connector's `api_auth` placeholder), kept fresh by the generic host-side refresh. | an OAuth-backed REST API with no hosted MCP (BYO client) | **Google/YouTube**, any device-flow OAuth API |
+| **Generic OAuth broker (device flow)** | `connectors/:id/oauth-device/start` → user types a code → `…/oauth-device/poll`. The operator brings the `client_id` (+ optional `client_secret`) and either picks a bundled `oauthProviders` descriptor or supplies the endpoints directly; `resolveBrokerDescriptor` (`services/oauth/broker.ts`) merges the two. When the start body omits `provider_id`, the route falls back to the connector's persisted **`config.oauth_provider_id`** — an agent can pre-select the provider at `register_connector` time (`kind:'api'` + `oauth_provider_id`, validated against the bundled `oauthProviders`; merged into `config` **after** `validateApiConnectorConfig`, which strips unknown keys). The completion UI then locks the provider (no picker) and the human pastes only a client id. Runs on an **`api`** connector, so no browser callback is needed on any instance URL. The durable refresh token + host-only client secret stay host-side; only the short-lived access token is surfaced (via the connector's `api_auth` placeholder), kept fresh by the generic host-side refresh. The same completion panel renders both **inline in the `connect_required` task comment** and **expanded in the Connectors-page row** (`ConnectorOAuthBrokerForm` / `ConnectorCompletion`, web). | an OAuth-backed REST API with no hosted MCP (BYO client) | **Google/YouTube**, any device-flow OAuth API |
 | **API key** | human pastes a key on the connect_required card or the Connectors page → `POST /api/projects/:projectId/connectors/:id/api-key` encrypts it into the vault (`allowed_hosts` = the MCP host) and links it via `mcp_connections.api_key_secret_id`. The generated secret name is `MCP_<CONNECTOR>_<PROJFRAG>` for a project-scoped connector (`PROJFRAG` = first 5 hex of the project UUID, uppercased) and `MCP_<CONNECTOR>` for a global one, so two same-type connectors in different projects get distinctly-named credentials. | the MCP server exposes no OAuth (no PRM) and authenticates with a bearer/API key | **Typefully**, header-auth MCPs |
 | **Paste / `request_credential`** | raw key pasted into the vault, referenced by placeholder from a tool call | an agent needs an arbitrary secret (not a whole connector) | `request_credential` |
 
@@ -1159,11 +1159,15 @@ connections and their token secrets (access, refresh, and client secret) before 
 so no encrypted token orphans in the vault.
 
 **Agent connector flow.** An agent calls `register_connector` with an MCP URL (DCR is
-attempted) or a `provider_id` for a device-flow provider. The tool creates a pending
-`mcp_connections` row and posts a `connect_required` comment with a **Connect** button; a
-human completes the OAuth dance from the task chat or the Connectors page, and a
-`credential_provided` wakeup resumes the agent (scoped to the requesting task's own team,
-resolved from the task row — the connect can be completed from any surface).
+attempted) or a `provider_id` for a device-flow provider — or, for an OAuth-backed REST
+API, with `kind:'api'` + `base_url`/`allowed_hosts` and an `oauth_provider_id` to
+pre-select the device-flow broker provider. The tool creates a pending `mcp_connections`
+row and posts a `connect_required` comment; a human completes the connection from the
+task chat or the Connectors page, and a `credential_provided` wakeup resumes the agent
+(scoped to the requesting task's own team, resolved from the task row — the connect can
+be completed from any surface). The Connectors-page row also surfaces the originating
+task (`created_by_task_identifier` + title, joined into the project connectors list) as a
+link back to it.
 
 **Admin connector flow.** The global Settings → Connectors page lists **every project's**
 connectors plus global ones (each row carries its `project_id` + project name), with a

@@ -244,3 +244,61 @@ describe('oauth-device full acquisition', () => {
 		}
 	});
 });
+
+describe('oauth-device/start persisted provider fallback', () => {
+	it("resolves the connector's config.oauth_provider_id when the body omits provider_id", async () => {
+		// A broker connector the agent pre-set with a provider (register_connector
+		// persists this in config.oauth_provider_id).
+		const preset = await db.query<{ id: string }>(
+			`INSERT INTO mcp_connections (name, kind, config, install_status, project_id)
+			 VALUES ('yt-preset', 'api', $1::jsonb, 'installed', (SELECT id FROM projects WHERE slug = $2))
+			 RETURNING id`,
+			[JSON.stringify({ ...API_CONFIG, oauth_provider_id: 'google-youtube' }), projectSlug],
+		);
+		const presetId = preset.rows[0].id;
+
+		// Intercept the provider's device endpoint so no real network call fires;
+		// hitting it at all proves the google-youtube descriptor was resolved from
+		// the connector's config (the body carried no provider_id).
+		const originalFetch = globalThis.fetch;
+		let hitDeviceUrl = '';
+		globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+			const url = typeof input === 'string' ? input : input.toString();
+			if (url.includes('/device/code')) {
+				hitDeviceUrl = url;
+				return new Response(
+					JSON.stringify({
+						device_code: 'dev',
+						user_code: 'FALL-BACK',
+						verification_uri: 'https://www.google.com/device',
+						expires_in: 900,
+						interval: 5,
+					}),
+					{ status: 200, headers: { 'Content-Type': 'application/json' } },
+				);
+			}
+			return originalFetch(input, init);
+		}) as typeof fetch;
+
+		try {
+			// NB: no provider_id in the body — only a client id.
+			const res = await start(presetId, { client_id: 'my-client.apps.googleusercontent.com' });
+			expect(res.status).toBe(200);
+			const { data } = (await res.json()) as { data: { user_code: string } };
+			expect(data.user_code).toBe('FALL-BACK');
+			expect(hitDeviceUrl).toContain('oauth2.googleapis.com/device/code');
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	it('still 400s when neither the body nor the connector names a provider', async () => {
+		// apiConnectorId carries no oauth_provider_id, so a body with a client id but
+		// no provider (or endpoints) can't resolve a device endpoint.
+		const res = await start(apiConnectorId, { client_id: 'x' });
+		expect(res.status).toBe(400);
+		expect(((await res.json()) as { error: { message: string } }).error.message).toMatch(
+			/device_code_url is required/,
+		);
+	});
+});

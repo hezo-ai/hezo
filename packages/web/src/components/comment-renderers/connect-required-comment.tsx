@@ -1,13 +1,6 @@
-import { getConnectorCapability } from '@hezo/shared';
-import { useQueryClient } from '@tanstack/react-query';
-import { Check, KeyRound, Plug } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { Check, Plug } from 'lucide-react';
 import { connectorStatus, useConnector } from '../../hooks/use-connectors';
-import { useAuthStart } from '../../hooks/use-oauth-connections';
-import { queryKeys } from '../../lib/query-keys';
-import { ConnectorApiKeyForm } from '../connector-api-key-form';
-import { ConnectorDeviceFlowDialog } from '../connector-device-flow-dialog';
-import { Button } from '../ui/button';
+import { ConnectorCompletion } from '../connector-completion';
 import type { CommentDataOf } from './comment-data';
 
 interface Props {
@@ -18,33 +11,6 @@ interface Props {
 export function ConnectRequiredComment({ comment, projectId }: Props) {
 	const { connector_id, display_name, provider_id } = comment.content;
 	const connectorQuery = useConnector(projectId ?? '', connector_id);
-	const authStart = useAuthStart(projectId ?? '');
-	const queryClient = useQueryClient();
-	const [error, setError] = useState<string | null>(null);
-	const [info, setInfo] = useState<string | null>(null);
-	const [deviceOpen, setDeviceOpen] = useState(false);
-	const [showApiKey, setShowApiKey] = useState(false);
-
-	// Refetch the connector immediately when the OAuth popup signals success,
-	// without waiting for the WebSocket invalidation round-trip. The popup
-	// posts {type: 'hezo-oauth-success'} via window.opener.postMessage from
-	// the callback success page (see routes/oauth.ts:buildCallbackPage).
-	useEffect(() => {
-		if (!projectId) return;
-		// The callback page lives on the server origin (e.g. localhost:3101)
-		// while we're on the web origin (e.g. localhost:5174), so we can't
-		// require e.origin === window.location.origin. We gate on message type
-		// instead — the payload is just a type tag, not credentials.
-		const onMessage = (e: MessageEvent) => {
-			if (!e.data || typeof e.data !== 'object') return;
-			if ((e.data as { type?: string }).type !== 'hezo-oauth-success') return;
-			queryClient.invalidateQueries({
-				queryKey: queryKeys.teams.connectors(projectId),
-			});
-		};
-		window.addEventListener('message', onMessage);
-		return () => window.removeEventListener('message', onMessage);
-	}, [projectId, queryClient]);
 
 	if (!projectId) {
 		return <p className="text-xs text-text-3 italic">Connector setup unavailable in this view.</p>;
@@ -56,37 +22,6 @@ export function ConnectRequiredComment({ comment, projectId }: Props) {
 	// project's own Connectors page (which surfaces the same connector, project
 	// + global) rather than the global settings surface.
 	const focusedConnectorUrl = `/projects/${projectId}/connectors?focus=${connector_id}#${connector_id}`;
-
-	// Providers whose AS can't do DCR (declared via `deviceAuth`) authorize
-	// through the device flow; everything else uses the redirect popup.
-	const capability = getConnectorCapability(connector?.name ?? provider_id ?? '');
-	const usesDeviceFlow = !!capability?.deviceAuth;
-
-	const openConnect = () => {
-		setError(null);
-		setInfo(null);
-		if (usesDeviceFlow) {
-			setDeviceOpen(true);
-			return;
-		}
-		authStart.mutate(connector_id, {
-			onSuccess: ({ auth_url }) => {
-				// A null auth_url means the server advertises no OAuth (public /
-				// header-authenticated) — point the user at the Use API key button.
-				if (!auth_url) {
-					setInfo("This MCP server doesn't advertise OAuth — use the API key option below.");
-					return;
-				}
-				const popup = window.open(auth_url, 'hezo-connect', 'width=600,height=720');
-				if (!popup) {
-					setError('Pop-up blocked. Allow pop-ups for Hezo and try again.');
-				}
-			},
-			onError: (e: unknown) => {
-				setError(e instanceof Error ? e.message : 'Failed to start OAuth flow');
-			},
-		});
-	};
 
 	if (status === 'active') {
 		return (
@@ -140,55 +75,17 @@ export function ConnectRequiredComment({ comment, projectId }: Props) {
 					)}
 				</div>
 			</div>
-			{error && <p className="pl-6 text-xs text-danger-soft-fg">{error}</p>}
-			{info && <p className="pl-6 text-xs text-text-2">{info}</p>}
-			{usesDeviceFlow && deviceOpen && (
-				<ConnectorDeviceFlowDialog
-					open={deviceOpen}
-					onOpenChange={setDeviceOpen}
-					projectId={projectId}
-					connectorId={connector_id}
-					providerLabel={display_name ?? capability?.displayName ?? provider_id ?? 'provider'}
-					onSuccess={() =>
-						queryClient.invalidateQueries({ queryKey: queryKeys.teams.connectors(projectId) })
-					}
-				/>
-			)}
 			<div className="flex flex-col gap-2 pl-6">
-				<div className="flex items-center gap-2 flex-wrap">
-					<Button
-						size="sm"
-						onClick={openConnect}
-						disabled={authStart.isPending}
-						data-testid="connect-button"
-					>
-						{authStart.isPending ? 'Starting…' : 'Connect'}
-					</Button>
-					<Button
-						size="sm"
-						variant="outline"
-						onClick={() => setShowApiKey((v) => !v)}
-						data-testid="connect-required-api-key-toggle"
-					>
-						<KeyRound className="w-3.5 h-3.5 mr-1" />
-						Use API key
-					</Button>
-					<a
-						href={focusedConnectorUrl}
-						className="text-xs text-text-2 hover:text-text-1 underline"
-						data-testid="connect-required-link"
-					>
-						Open in Connectors
-					</a>
-				</div>
-				{showApiKey && (
-					<ConnectorApiKeyForm
-						projectId={projectId}
-						connectorId={connector_id}
-						onSuccess={() => setShowApiKey(false)}
-						onCancel={() => setShowApiKey(false)}
-					/>
+				{connector && (
+					<ConnectorCompletion connector={connector} projectId={projectId} variant="comment" />
 				)}
+				<a
+					href={focusedConnectorUrl}
+					className="text-xs text-text-2 hover:text-text-1 underline w-fit"
+					data-testid="connect-required-link"
+				>
+					Open in Connectors
+				</a>
 			</div>
 		</div>
 	);

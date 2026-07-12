@@ -20,6 +20,11 @@ export interface Connector {
 	install_error: string | null;
 	skill_id: string | null;
 	created_by_task_id: string | null;
+	/** Lowercased identifier + title of the task that requested this connector,
+	 * for linking back to it from the Connectors page. Populated by the project
+	 * connectors list route (null when not agent-requested). */
+	created_by_task_identifier?: string | null;
+	created_by_task_title?: string | null;
 	activated_at: string | null;
 	revoked_at: string | null;
 	auth_error: string | null;

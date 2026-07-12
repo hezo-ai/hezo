@@ -57,7 +57,7 @@ async function seedLocalConnector(
 // attaches its managed token to.
 async function seedApiConnector(
 	ws: SeededWorkspace,
-	input: { name: string; baseUrl: string; hosts: string[] },
+	input: { name: string; baseUrl: string; hosts: string[]; oauthProviderId?: string },
 ): Promise<{ id: string; name: string }> {
 	const { apiBase } = getTestContext();
 	const res = await apiBase(`/api/projects/${ws.internalSlug}/connectors`, {
@@ -70,6 +70,7 @@ async function seedApiConnector(
 				base_url: input.baseUrl,
 				allowed_hosts: input.hosts,
 				auth: { placement: 'header', name: 'Authorization', scheme: 'Bearer ' },
+				...(input.oauthProviderId ? { oauth_provider_id: input.oauthProviderId } : {}),
 			},
 		}),
 	});
@@ -275,20 +276,56 @@ test('an api connector offers Connect OAuth, opening the device-flow broker form
 		.find((li) => li.getAttribute('data-connector-id'));
 	if (!row) throw new Error('api connector row not found');
 
-	// The api row offers the OAuth-broker Connect (distinct from the saas
+	// The api row offers "Complete connection" (distinct from the saas
 	// `connector-connect`) alongside API-key attach.
 	const broker = within(row).getByTestId('connector-oauth-broker');
 	await user.click(broker);
 
-	// Step 1 of the broker dialog: the BYO form with a provider select (populated
-	// from GET /api/connectors/oauth-providers) and a client-id field.
-	await findByTestId('connector-oauth-broker-dialog');
+	// It expands the broker form INLINE (no modal). With no agent-preset provider,
+	// the manual provider picker (populated from GET /api/connectors/oauth-providers)
+	// is shown alongside the client-id / secret fields.
+	await findByTestId('connector-complete-inline');
 	await findByTestId('broker-form');
 	const providerSelect = await findByTestId('broker-provider-select');
 	// The bundled google-youtube descriptor is an option.
 	await waitFor(() => expect(within(providerSelect).queryByText('google-youtube')).toBeTruthy());
 	await findByTestId('broker-client-id');
 	await findByTestId('broker-client-secret');
+});
+
+test('an api connector with an agent-preset provider locks the picker on the Connectors page', async () => {
+	let slug = '';
+	const { getByTestId, findByText, findByTestId, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			slug = ws.internalSlug;
+			await seedApiConnector(ws, {
+				name: 'youtube',
+				baseUrl: 'https://www.googleapis.com',
+				hosts: ['*.googleapis.com'],
+				oauthProviderId: 'google-youtube',
+			});
+		},
+	});
+	await router.navigate({ to: CONNECTORS_ROUTE, params: { projectId: slug } });
+
+	await findByText('youtube');
+	const row = within(getByTestId('connectors-list'))
+		.getAllByTestId('connector-row')
+		.find((li) => li.getAttribute('data-connector-id'));
+	if (!row) throw new Error('api connector row not found');
+
+	await user.click(within(row).getByTestId('connector-oauth-broker'));
+	await findByTestId('connector-complete-inline');
+	await findByTestId('broker-form');
+	// Provider is fixed by the agent: the picker is hidden, shown read-only instead.
+	const locked = await findByTestId('broker-locked-provider');
+	expect(locked.textContent).toContain('google-youtube');
+	expect(
+		within(getByTestId('connector-complete-inline')).queryByTestId('broker-provider-select'),
+	).toBeNull();
+	await findByTestId('broker-client-id');
 });
 
 test('a global connector is read-only on the project page (badge + manage link, no actions)', async () => {

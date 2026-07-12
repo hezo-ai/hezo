@@ -454,6 +454,161 @@ describe('register_connector MCP tool', () => {
 		expect(second.comment_id).toBe(first.comment_id);
 		expect(second.reused).toBe(true);
 	});
+
+	it('registers an OAuth REST-API connector with a preset provider persisted in config', async () => {
+		const taskRes = await db.query<{ id: string }>(
+			`INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier, title)
+			 SELECT $1, $2, $3, COALESCE(MAX(number), 0) + 1, 'YTB-' || (COALESCE(MAX(number), 0) + 1)::text, 'upload recap to youtube'
+			 FROM tasks WHERE project_id = $2
+			 RETURNING id`,
+			[teamId, projectId, captainId],
+		);
+		const tId = taskRes.rows[0].id;
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			captainId,
+			teamId,
+			tId,
+		);
+
+		const res = await app.request('/mcp', {
+			method: 'POST',
+			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				id: 1,
+				method: 'tools/call',
+				params: {
+					name: 'register_connector',
+					arguments: {
+						project: projectId,
+						task_id: tId,
+						kind: 'api',
+						display_name: 'Google / YouTube',
+						base_url: 'https://www.googleapis.com/youtube/v3',
+						allowed_hosts: ['*.googleapis.com'],
+						oauth_provider_id: 'google-youtube',
+					},
+				},
+			}),
+		});
+		expect(res.status).toBe(200);
+		const payload = JSON.parse(
+			((await res.json()) as { result: { content: Array<{ text: string }> } }).result.content[0]
+				.text,
+		) as { connector_id: string; status: string; comment_id: string };
+		expect(payload.status).toBe('pending');
+		expect(payload.comment_id).toBeTruthy();
+
+		const row = await db.query<{ kind: string; config: Record<string, unknown> }>(
+			`SELECT kind::text AS kind, config FROM mcp_connections WHERE id = $1`,
+			[payload.connector_id],
+		);
+		expect(row.rows[0].kind).toBe('api');
+		expect(row.rows[0].config.oauth_provider_id).toBe('google-youtube');
+		expect(row.rows[0].config.base_url).toBe('https://www.googleapis.com/youtube/v3');
+		expect(row.rows[0].config.allowed_hosts).toEqual(['*.googleapis.com']);
+	});
+
+	it('rejects an unknown oauth_provider_id', async () => {
+		const taskRes = await db.query<{ id: string }>(
+			`INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier, title)
+			 SELECT $1, $2, $3, COALESCE(MAX(number), 0) + 1, 'BAD-' || (COALESCE(MAX(number), 0) + 1)::text, 'bad provider'
+			 FROM tasks WHERE project_id = $2
+			 RETURNING id`,
+			[teamId, projectId, captainId],
+		);
+		const tId = taskRes.rows[0].id;
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			captainId,
+			teamId,
+			tId,
+		);
+
+		const res = await app.request('/mcp', {
+			method: 'POST',
+			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				id: 1,
+				method: 'tools/call',
+				params: {
+					name: 'register_connector',
+					arguments: {
+						project: projectId,
+						task_id: tId,
+						kind: 'api',
+						display_name: 'Bogus',
+						base_url: 'https://api.bogus.example/v1',
+						allowed_hosts: ['api.bogus.example'],
+						oauth_provider_id: 'not-a-real-provider',
+					},
+				},
+			}),
+		});
+		const payload = JSON.parse(
+			((await res.json()) as { result: { content: Array<{ text: string }> } }).result.content[0]
+				.text,
+		) as { error?: string };
+		expect(payload.error).toContain('unknown oauth_provider_id');
+	});
+
+	it('surfaces the originating task identifier + title on the project connectors list', async () => {
+		const taskRes = await db.query<{ id: string; identifier: string }>(
+			`INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier, title)
+			 SELECT $1, $2, $3, COALESCE(MAX(number), 0) + 1, 'LNK-' || (COALESCE(MAX(number), 0) + 1)::text, 'connect linear'
+			 FROM tasks WHERE project_id = $2
+			 RETURNING id, identifier`,
+			[teamId, projectId, captainId],
+		);
+		const tId = taskRes.rows[0].id;
+		const identifier = taskRes.rows[0].identifier;
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			captainId,
+			teamId,
+			tId,
+		);
+
+		await app.request('/mcp', {
+			method: 'POST',
+			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				id: 1,
+				method: 'tools/call',
+				params: {
+					name: 'register_connector',
+					arguments: {
+						project: projectId,
+						task_id: tId,
+						display_name: 'Linear',
+						mcp_url: `${fake.url}/mcp`,
+						provider_id: 'linear',
+					},
+				},
+			}),
+		});
+
+		const slugRow = await db.query<{ slug: string }>(`SELECT slug FROM projects WHERE id = $1`, [
+			projectId,
+		]);
+		const listRes = await app.request(`/api/projects/${slugRow.rows[0].slug}/connectors`, {
+			headers: authHeader(token),
+		});
+		const rows = (await listRes.json()).data as Array<{
+			name: string;
+			created_by_task_identifier: string | null;
+			created_by_task_title: string | null;
+		}>;
+		const linear = rows.find((r) => r.name === 'linear');
+		expect(linear?.created_by_task_identifier).toBe(identifier.toLowerCase());
+		expect(linear?.created_by_task_title).toBe('connect linear');
+	});
 });
 
 describe('fetch_skill_file MCP tool', () => {
