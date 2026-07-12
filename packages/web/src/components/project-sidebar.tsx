@@ -236,7 +236,9 @@ export function ProjectSidebar({ onCollapse }: { onCollapse?: () => void } = {})
 
 	return (
 		<div className="flex flex-col h-full min-h-0">
-			<div className="px-2.5 pt-1.5 pb-1 flex items-center gap-1 min-w-0">
+			<div
+				className={`relative pl-2.5 ${onCollapse ? 'pr-7' : 'pr-2.5'} pt-1.5 pb-1 flex items-center gap-1 min-w-0`}
+			>
 				<Link
 					to="/projects/$projectId"
 					params={projectParams}
@@ -275,7 +277,7 @@ export function ProjectSidebar({ onCollapse }: { onCollapse?: () => void } = {})
 							aria-label="Collapse menu"
 							data-testid="project-sidebar-collapse"
 							onClick={onCollapse}
-							className="ml-auto shrink-0 inline-flex h-6 w-6 items-center justify-center rounded-md text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
+							className="absolute right-0.5 top-0.5 inline-flex h-6 w-6 items-center justify-center rounded-md text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
 						>
 							<ChevronsLeft className="h-4 w-4" aria-hidden="true" />
 						</button>
