@@ -86,6 +86,9 @@ describe('connector-recipes virtual skill: get_skill', () => {
 		expect(got.slug).toBe('connector-recipes');
 		expect(String(got.content)).toContain('## Connection patterns');
 		expect(String(got.content)).toContain('### google-youtube');
+		// The lead-in closes the loop: a working connector gets recorded (and kept
+		// current) as a skill.
+		expect(String(got.content)).toContain('persist what you learned as a skill');
 	});
 });
 
