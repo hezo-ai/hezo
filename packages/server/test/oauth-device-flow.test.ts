@@ -80,6 +80,40 @@ describe('startDeviceFlow', () => {
 		expect(captured!.body).toContain('scope=repo+read%3Aorg');
 	});
 
+	it("accepts Google's non-RFC verification_url field", async () => {
+		const fetchFn = async () =>
+			new Response(
+				JSON.stringify({
+					device_code: 'dc',
+					user_code: 'DDW-RSZ-GZHC',
+					// Google's device endpoint predates RFC 8628 and uses this name.
+					verification_url: 'https://www.google.com/device',
+					expires_in: 1800,
+					interval: 5,
+				}),
+				{ status: 200, headers: { 'Content-Type': 'application/json' } },
+			);
+		const start = await startDeviceFlow({
+			deviceCodeUrl: 'https://oauth2.googleapis.com/device/code',
+			clientId: 'gcid.apps.googleusercontent.com',
+			scopes: ['https://www.googleapis.com/auth/youtube'],
+			fetchFn,
+		});
+		expect(start.verificationUri).toBe('https://www.google.com/device');
+		expect(start.userCode).toBe('DDW-RSZ-GZHC');
+	});
+
+	it('throws when the response carries no verification URI under either name', async () => {
+		const fetchFn = async () =>
+			new Response(
+				JSON.stringify({ device_code: 'dc', user_code: 'UC-1', expires_in: 900, interval: 5 }),
+				{ status: 200, headers: { 'Content-Type': 'application/json' } },
+			);
+		await expect(
+			startDeviceFlow({ deviceCodeUrl: 'https://gh/x', clientId: 'c', scopes: [], fetchFn }),
+		).rejects.toThrow(/verification_uri/);
+	});
+
 	it('throws on a non-ok device-code response', async () => {
 		const fetchFn = async () => new Response('nope', { status: 422 });
 		await expect(
