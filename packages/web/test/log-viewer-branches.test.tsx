@@ -140,6 +140,22 @@ test('formattable viewer defaults to formatted view, hides [tool] prefix, toggle
 	expect(getByTestId('lv-body').textContent).not.toContain('[tool]');
 });
 
+test('expanding a formattable viewer focuses the dialog itself, not the Formatted-view button', async () => {
+	const user = userEvent.setup({ delay: null });
+	const { getByRole } = await renderViewer({
+		formattable: true,
+		lines: makeLines(['[tool] Bash(command=ls)', 'stdout']),
+	});
+	await user.click(getByRole('button', { name: 'Expand log viewer' }));
+	const dialog = document.body.querySelector('[data-testid="log-viewer-fullscreen"]');
+	expect(dialog).not.toBeNull();
+	// Radix's dialog would otherwise auto-focus the first tabbable element —
+	// the Formatted-view button — popping its tooltip open over the expanded
+	// viewer.
+	expect(document.activeElement).toBe(dialog);
+	expect(document.activeElement).not.toBe(getByRole('button', { name: 'Formatted view' }));
+});
+
 test('headerAction / headerActionLeading slots render in the header', async () => {
 	const { getByText } = await renderViewer({
 		lines: makeLines(['x', 'stdout']),

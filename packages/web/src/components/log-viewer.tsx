@@ -225,6 +225,13 @@ export function LogViewer({
 					<Dialog.Content
 						data-testid="log-viewer-fullscreen"
 						className="fixed inset-0 z-50 flex flex-col bg-surface outline-none"
+						onOpenAutoFocus={(event) => {
+							// The first tabbable element is a Tooltip trigger (the
+							// Formatted-view toggle); letting the dialog auto-focus it pops
+							// the tooltip open on expand. Focus the container instead.
+							event.preventDefault();
+							(event.target as HTMLElement | null)?.focus();
+						}}
 					>
 						<Dialog.Title className="sr-only">Log viewer (expanded)</Dialog.Title>
 						{content}
