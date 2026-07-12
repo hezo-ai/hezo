@@ -148,6 +148,9 @@ test.describe('Task detail — initial scroll and scroll-to-bottom button', () =
 		await expect.poll(() => main.evaluate((el) => el.scrollTop), { timeout: 10000 }).toBe(0);
 
 		const button = page.getByTestId('scroll-to-bottom');
+		// Landing at the top: the pill only surfaces once the reader scrolls down.
+		await expect(button).toBeHidden();
+		await main.evaluate((el) => el.scrollBy({ top: 400 }));
 		await expect(button).toBeVisible();
 
 		await button.click();
@@ -194,8 +197,11 @@ test.describe('Task detail — initial scroll and scroll-to-bottom button', () =
 		await expect.poll(() => main.evaluate((el) => el.scrollTop), { timeout: 10000 }).toBe(0);
 
 		// The same global pill pinned bottom-centre of the content area, clear of
-		// the CEO chat launcher in the corner.
+		// the CEO chat launcher in the corner. It surfaces once the reader scrolls
+		// down rather than sitting there permanently.
 		const button = page.getByTestId('scroll-to-bottom');
+		await expect(button).toBeHidden();
+		await main.evaluate((el) => el.scrollBy({ top: 400 }));
 		await expect(button).toBeVisible();
 		await button.click();
 

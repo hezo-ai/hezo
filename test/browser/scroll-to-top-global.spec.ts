@@ -1,8 +1,9 @@
 // Real clientHeight/scrollHeight/scrollTop comparisons (testing decision tree,
-// point 1): the global scroll-to-top pill only shows once the shell <main>
-// genuinely overflows AND has been scrolled down, and clicking it must move the
-// real scroll position back to the top — values happy-dom can't compute. Mirrors
-// scroll-to-bottom-global.spec.ts; also asserts the pill sits below the top nav.
+// point 1): the global scroll-to-top pill only surfaces while the shell <main>
+// is genuinely being scrolled up (never at the very top, never while scrolling
+// down), and clicking it must move the real scroll position back to the top —
+// values happy-dom can't compute. Mirrors scroll-to-bottom-global.spec.ts; also
+// asserts the pill sits below the top nav.
 
 import { expect, test } from './fixtures';
 import { waitForPageLoad } from './helpers';
@@ -35,7 +36,7 @@ for (const { name, width, height } of [
 	{ name: 'desktop', width: 1280, height: 800 },
 	{ name: 'mobile', width: 375, height: 800 },
 ]) {
-	test(`${name}: pill appears once scrolled down and jumps back to the top`, async ({
+	test(`${name}: pill surfaces on upward scroll and jumps back to the top`, async ({
 		page,
 		lightWorkspace,
 	}) => {
@@ -53,8 +54,13 @@ for (const { name, width, height } of [
 		// At the top there is nothing to jump to, so the pill stays hidden.
 		await expect(button).toBeHidden();
 
-		// Scroll to the bottom; the pill now offers a jump back to the top.
+		// Jump to the bottom (scrolling *down*): the up pill still stays hidden —
+		// it only serves an upward scroll.
 		await main.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
+		await expect(button).toBeHidden();
+
+		// Now scroll up a little: the pill appears, offering a jump back to the top.
+		await main.evaluate((el) => el.scrollBy({ top: -300 }));
 		await expect(button).toBeVisible();
 
 		// It sits just below the app header (the top nav bar), in the upper portion
@@ -81,6 +87,56 @@ for (const { name, width, height } of [
 		await expect(page.getByRole('heading', { name: DOC })).toBeInViewport();
 	});
 }
+
+test('pill fades out a couple seconds after upward scrolling stops', async ({
+	page,
+	lightWorkspace,
+}) => {
+	const { projectSlug, token } = lightWorkspace;
+	await page.setViewportSize({ width: 1280, height: 800 });
+	await seedDoc(page, projectSlug, token, LONG_CONTENT);
+
+	await page.goto(`/projects/${projectSlug}/documents?file=${DOC}`);
+	await waitForPageLoad(page);
+	await expect(page.getByRole('heading', { name: DOC })).toBeVisible({ timeout: 20000 });
+
+	const button = page.getByTestId('scroll-to-top');
+	const main = page.locator('main').first();
+
+	await main.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
+	await main.evaluate((el) => el.scrollBy({ top: -300 }));
+	await expect(button).toBeVisible();
+
+	// No further scrolling: the idle timer elapses and the pill hides on its own,
+	// well short of the top.
+	await expect(button).toBeHidden({ timeout: 6000 });
+	const scrollTop = await main.evaluate((el) => el.scrollTop);
+	expect(scrollTop).toBeGreaterThan(200);
+});
+
+test('scrolling back down hides the scroll-to-top pill immediately', async ({
+	page,
+	lightWorkspace,
+}) => {
+	const { projectSlug, token } = lightWorkspace;
+	await page.setViewportSize({ width: 1280, height: 800 });
+	await seedDoc(page, projectSlug, token, LONG_CONTENT);
+
+	await page.goto(`/projects/${projectSlug}/documents?file=${DOC}`);
+	await waitForPageLoad(page);
+	await expect(page.getByRole('heading', { name: DOC })).toBeVisible({ timeout: 20000 });
+
+	const button = page.getByTestId('scroll-to-top');
+	const main = page.locator('main').first();
+
+	await main.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
+	await main.evaluate((el) => el.scrollBy({ top: -300 }));
+	await expect(button).toBeVisible();
+
+	// Reversing direction is the opposite intent — the up pill goes away at once.
+	await main.evaluate((el) => el.scrollBy({ top: 150 }));
+	await expect(button).toBeHidden();
+});
 
 test('pill stays hidden when the page content does not overflow', async ({
 	page,

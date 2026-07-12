@@ -1,42 +1,59 @@
 import { useEffect, useState } from 'react';
 
+// How long the pill lingers after the last downward scroll before hiding.
+// Continuous scrolling keeps restarting this countdown; a pause fades it out.
+const HIDE_AFTER_IDLE_MS = 2000;
+// Within this many pixels of the bottom we treat the scroller as "at the very
+// bottom": there is nothing further to jump to, so the pill never shows.
+const AT_BOTTOM_THRESHOLD = 8;
+
 export function useScrollToBottom(scrollParent: HTMLElement | null): {
-	atBottom: boolean;
+	visible: boolean;
 	scrollToBottom: () => void;
 } {
-	// Start hidden (`atBottom: true`) so short pages never flash the button
-	// before the first measurement runs.
-	const [atBottom, setAtBottom] = useState(true);
+	// Start hidden: the pill only ever appears in response to a downward scroll.
+	const [visible, setVisible] = useState(false);
 	useEffect(() => {
 		if (!scrollParent) return;
-		const check = () => {
-			setAtBottom(
-				scrollParent.scrollTop + scrollParent.clientHeight >= scrollParent.scrollHeight - 200,
-			);
+		let lastScrollTop = scrollParent.scrollTop;
+		let hideTimer: ReturnType<typeof setTimeout> | null = null;
+		const clearHideTimer = () => {
+			if (hideTimer !== null) {
+				clearTimeout(hideTimer);
+				hideTimer = null;
+			}
 		};
-		check();
-		scrollParent.addEventListener('scroll', check, { passive: true });
-		const ro = new ResizeObserver(check);
-		ro.observe(scrollParent);
-		const observeChildren = () => {
-			for (const child of Array.from(scrollParent.children)) ro.observe(child);
+		const atBottom = () =>
+			scrollParent.scrollTop + scrollParent.clientHeight >=
+			scrollParent.scrollHeight - AT_BOTTOM_THRESHOLD;
+		const onScroll = () => {
+			const current = scrollParent.scrollTop;
+			const delta = current - lastScrollTop;
+			lastScrollTop = current;
+			// Already at the very bottom — nothing further to jump to, so never show.
+			if (atBottom()) {
+				clearHideTimer();
+				setVisible(false);
+				return;
+			}
+			if (delta > 0) {
+				// Scrolling down: reveal and (re)start the idle countdown.
+				setVisible(true);
+				clearHideTimer();
+				hideTimer = setTimeout(() => {
+					hideTimer = null;
+					setVisible(false);
+				}, HIDE_AFTER_IDLE_MS);
+			} else if (delta < 0) {
+				// Scrolling up is the opposite intent — hide immediately.
+				clearHideTimer();
+				setVisible(false);
+			}
 		};
-		observeChildren();
-		// The scroll parent can outlive its content: the shell <main> never
-		// unmounts across navigations — the route swap replaces its children. The
-		// ResizeObserver only tracks the elements it was handed, so re-observe (a
-		// no-op for already-observed nodes) and re-measure whenever the child list
-		// changes; otherwise the new page's async content growth goes unseen and
-		// the button state is stale until the next scroll.
-		const mo = new MutationObserver(() => {
-			observeChildren();
-			check();
-		});
-		mo.observe(scrollParent, { childList: true });
+		scrollParent.addEventListener('scroll', onScroll, { passive: true });
 		return () => {
-			scrollParent.removeEventListener('scroll', check);
-			mo.disconnect();
-			ro.disconnect();
+			scrollParent.removeEventListener('scroll', onScroll);
+			clearHideTimer();
 		};
 	}, [scrollParent]);
 
@@ -64,5 +81,5 @@ export function useScrollToBottom(scrollParent: HTMLElement | null): {
 		setTimeout(tick, 400);
 	};
 
-	return { atBottom, scrollToBottom };
+	return { visible, scrollToBottom };
 }
