@@ -70,6 +70,7 @@ export function ConnectorDeviceFlowDialog({
 			.mutateAsync(connectorIdRef.current)
 			.then((flow) => {
 				setDeviceFlow(flow);
+				if (!flow.verification_uri) return; // never open a blank tab
 				try {
 					window.open(flow.verification_uri, '_blank', 'noopener');
 				} catch {

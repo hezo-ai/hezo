@@ -96,14 +96,21 @@ export async function startDeviceFlow(opts: {
 	const data = (await res.json()) as {
 		device_code: string;
 		user_code: string;
-		verification_uri: string;
+		// RFC 8628 names the field `verification_uri`; Google's device endpoint
+		// predates the RFC and sends `verification_url` instead.
+		verification_uri?: string;
+		verification_url?: string;
 		expires_in: number;
 		interval: number;
 	};
+	const verificationUri = data.verification_uri || data.verification_url;
+	if (!data.device_code || !data.user_code || !verificationUri) {
+		throw new Error('device-code response is missing device_code, user_code, or verification_uri');
+	}
 	return {
 		deviceCode: data.device_code,
 		userCode: data.user_code,
-		verificationUri: data.verification_uri,
+		verificationUri,
 		expiresIn: data.expires_in,
 		interval: data.interval,
 	};
