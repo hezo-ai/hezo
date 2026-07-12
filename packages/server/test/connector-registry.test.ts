@@ -31,6 +31,22 @@ describe('connector registry', () => {
 		);
 	});
 
+	it('includes a read-only YouTube recipe that uses a plain API key, not OAuth', () => {
+		const yt = resolveConnectorRegistry().services.find((s) =>
+			s.service.startsWith('YouTube Data API'),
+		);
+		expect(yt).toBeDefined();
+		expect(yt?.transport).toBe('api');
+		// A single api_key credential (no oauth_token) — this is the light path.
+		expect(yt?.credentials).toHaveLength(1);
+		expect(yt?.credentials[0]).toMatchObject({ name: 'YOUTUBE_API_KEY', kind: 'api_key' });
+		expect(yt?.credentials[0].allowed_hosts).toContain('*.googleapis.com');
+		// The notes steer read-only use to the query-param key and reserve OAuth for writes.
+		expect(yt?.notes).toMatch(/api key/i);
+		expect(yt?.notes).toMatch(/query/i);
+		expect(yt?.notes).toMatch(/upload|user-scoped/i);
+	});
+
 	it('every service credential names a known kind and the transport is mcp|api', () => {
 		const kinds = new Set([
 			'api_key',

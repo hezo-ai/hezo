@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { Check, ExternalLink, Github, KeyRound, Plug, Plus, Trash2, X } from 'lucide-react';
 import { useCallback, useState } from 'react';
-import { ConnectorApiKeyForm } from '../../../components/connector-api-key-form';
+import { apiKeyGuideFor, ConnectorApiKeyForm } from '../../../components/connector-api-key-form';
 import { ConnectorDeviceFlowDialog } from '../../../components/connector-device-flow-dialog';
 import { ConnectorOAuthBrokerForm } from '../../../components/connector-oauth-broker-form';
 import { RelatedItemsList } from '../../../components/related-items-list';
@@ -470,7 +470,13 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 	const [info, setInfo] = useState<string | null>(null);
 	const [deviceOpen, setDeviceOpen] = useState(false);
 	const [brokerOpen, setBrokerOpen] = useState(false);
-	const [showApiKey, setShowApiKey] = useState(false);
+	// A static-key `api` connector (query-placement credential) leads with the
+	// API-key form — expand it by default so the paste field is the primary action.
+	const [showApiKey, setShowApiKey] = useState(
+		() =>
+			connector.kind === 'api' &&
+			(connector.config as { auth?: { placement?: unknown } } | null)?.auth?.placement === 'query',
+	);
 	const [confirmOpen, setConfirmOpen] = useState(false);
 	const credentials = connector.credentials ?? [];
 	// The credentials page is superuser-only, so link there only for a superuser;
@@ -489,6 +495,7 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 		base_url?: unknown;
 		docs_url?: unknown;
 		oauth_provider_id?: unknown;
+		auth?: { placement?: unknown };
 	};
 	const url = typeof cfg.url === 'string' ? cfg.url : null;
 	const baseUrl = typeof cfg.base_url === 'string' ? cfg.base_url : null;
@@ -498,6 +505,11 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 			? cfg.oauth_provider_id
 			: undefined;
 	const isApi = connector.kind === 'api';
+	// A query-string credential is never an OAuth access token (those ride a Bearer
+	// header), so a query-placement `api` connector is unambiguously a static-key
+	// REST API — lead with the API-key form and hide the OAuth broker for it.
+	const isStaticKeyApi = isApi && cfg.auth?.placement === 'query';
+	const apiKeyGuide = apiKeyGuideFor(connector.config);
 	const displayUrl = url ?? baseUrl;
 
 	const openConnect = () => {
@@ -641,7 +653,7 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 									{authStart.isPending ? 'Starting…' : status === 'failed' ? 'Retry' : 'Connect'}
 								</Button>
 							)}
-							{isApi && !brokerOpen && (
+							{isApi && !isStaticKeyApi && !brokerOpen && (
 								<Button
 									size="sm"
 									onClick={() => setBrokerOpen(true)}
@@ -670,16 +682,18 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 					<ConnectorApiKeyForm
 						projectId={projectId}
 						connectorId={connector.id}
+						guide={apiKeyGuide}
 						onSuccess={() => setShowApiKey(false)}
 						onCancel={() => setShowApiKey(false)}
 					/>
 				</div>
 			)}
 
-			{/* Inline OAuth device-flow completion for an `api` connector — the same
-			    broker form the task comment shows, with the agent-preset provider
-			    locked (or a manual picker when none). Expanded in place, no modal. */}
-			{isApi && !isGlobal && status !== 'active' && brokerOpen && (
+			{/* Inline OAuth device-flow completion for an OAuth-backed `api` connector —
+			    the same broker form the task comment shows, with the agent-preset
+			    provider locked (or a manual picker when none). A static-key api
+			    connector (query-placement) never shows this; it leads with the API key. */}
+			{isApi && !isStaticKeyApi && !isGlobal && status !== 'active' && brokerOpen && (
 				<div className="mt-3 pt-3 border-t border-border" data-testid="connector-complete-inline">
 					<ConnectorOAuthBrokerForm
 						projectId={projectId}
