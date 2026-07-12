@@ -25,19 +25,21 @@ export default defineConfig({
 			},
 		},
 		// Off by default so normal runs stay uninstrumented; scripts/test.ts
-		// flips `enabled` on with --coverage. CI uploads each tier's lcov to
-		// Coveralls as a parallel build; the uploads merge into one total.
+		// flips `enabled` on with --coverage. The `json` reporter writes the
+		// istanbul coverage-final.json that CI's merge job combines across shards
+		// (branches keyed by source location, not per-run ordinals — see
+		// scripts/coverage/). No per-tier `lcov` reporter: nothing consumes it.
 		coverage: {
 			provider: 'v8',
 			enabled: false,
-			reporter: ['text-summary', 'json', 'lcov'],
+			reporter: ['text-summary', 'json'],
 			reportsDirectory: './coverage',
-			// CI uploads with if:always(); a failing shard must still emit an lcov.
+			// CI uploads with if:always(); a failing shard must still emit a report.
 			reportOnFailure: true,
 			// MANDATORY under sharding: with `all`, each shard would emit synthetic
-			// 0% rows for files it never loaded, polluting the coverage service's
-			// cross-shard merge. With all:false the union across shards equals the
-			// full unsharded totals (file-sharding partitions files, no double-count).
+			// 0% rows for files it never loaded, polluting the cross-shard merge.
+			// With all:false the union across shards equals the full unsharded totals
+			// (file-sharding partitions files, no double-count).
 			all: false,
 			include: ['src/**/*.ts'],
 			exclude: [
