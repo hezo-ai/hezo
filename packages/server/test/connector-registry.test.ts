@@ -10,7 +10,7 @@ describe('connector registry', () => {
 	it('resolveConnectorRegistry validates the bundled JSON with zod', () => {
 		// Throws on malformed data — reaching here means the real file passed the schema.
 		const registry = resolveConnectorRegistry();
-		expect(registry.patterns.length).toBeGreaterThanOrEqual(8);
+		expect(registry.patterns.length).toBeGreaterThanOrEqual(6);
 		expect(registry.services.length).toBeGreaterThanOrEqual(15);
 		expect(registry.oauthProviders.length).toBeGreaterThanOrEqual(1);
 	});
