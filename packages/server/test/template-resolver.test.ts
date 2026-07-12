@@ -80,6 +80,25 @@ describe('template resolver', () => {
 		expect(result).toContain('config.env');
 	});
 
+	it('tells agents to record and maintain a skill for a connected service, scoped to the connector', async () => {
+		const result = await resolveSystemPrompt(db, 'Base prompt.', { teamId });
+		// After getting a connector working, the integration know-how is persisted
+		// as a skill for teammates.
+		expect(result).toContain('#### Record the service as a skill once the connector works');
+		expect(result).toContain('persist it as a skill before you move on');
+		// Skills are maintained, not write-once: same slug + scope upserts in place.
+		expect(result).toContain('Skills are living documents');
+		expect(result).toContain('same slug and scope');
+		// Public-first: search skills.sh / vendor skill files and persist rather
+		// than authoring a duplicate.
+		expect(result).toContain('Check for an existing public skill before authoring your own');
+		// Scope heuristic: the skill's scope follows the connector's reach.
+		expect(result).toContain("Match the skill's scope to the connector's reach");
+		// Layering: project specifics go in a project skill that references the
+		// general skill, not a fork of it.
+		expect(result).toContain('references the general skill by slug');
+	});
+
 	it('appends the ask-before-closing completion rule', async () => {
 		const result = await resolveSystemPrompt(db, 'Base prompt.', { teamId });
 		// Never mark done while an active mention you posted awaits an answer —

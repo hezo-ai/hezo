@@ -115,7 +115,7 @@ export function buildConnectorRecipesSkill(
 	lines.push('# Connecting external services — recipes');
 	lines.push('');
 	lines.push(
-		'Consult this before connecting an external service or requesting a credential. Prefer, in order: (1) a hosted MCP server via register_connector, (2) a direct REST API via an `api` connector, before anything else. Both keep every secret as a `__HEZO_SECRET_<NAME>__` placeholder that the egress proxy substitutes at request time, scoped to allowed_hosts — the raw value never enters the run. Avoid any integration that would need an interactive browser/localhost OAuth callback in the run or write a credential/token file to disk; use a host-side flow (device flow or host-completed auth-code) instead.',
+		"Consult this before connecting an external service or requesting a credential. Prefer, in order: (1) a hosted MCP server via register_connector, (2) a direct REST API via an `api` connector, before anything else. Both keep every secret as a `__HEZO_SECRET_<NAME>__` placeholder that the egress proxy substitutes at request time, scoped to allowed_hosts — the raw value never enters the run. Avoid any integration that would need an interactive browser/localhost OAuth callback in the run or write a credential/token file to disk; use a host-side flow (device flow or host-completed auth-code) instead. Once connected and you can drive the service, persist what you learned as a skill via create_skill — scoped to match the connector's reach — and update the same skill as you learn more, so teammates never re-derive the integration.",
 	);
 	lines.push('');
 

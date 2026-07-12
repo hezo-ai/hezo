@@ -46,6 +46,16 @@ each project's manifest focused while still letting broadly-useful know-how reac
   chooses whether the new skill is global or project-scoped, and defaults to the current
   project when it doesn't say.
 
+Agents contribute proactively for connected services: once an agent gets a
+[connector](/docs/mcp/connecting-mcp-servers) to a third-party service working, it records
+how to drive that service as a skill — and keeps the skill updated as it learns more — so
+teammates can use the connection without re-deriving the integration from vendor docs. The
+skill's scope follows the connector's: a connector shared with every project gets a global
+skill, a project's own connector a project skill. Where a good public skill already exists
+on [skills.sh](https://skills.sh), agents persist that one into your catalog instead of
+writing their own, and layer anything project-specific as a separate project skill that
+references it.
+
 ## Managing scope
 
 The global **Settings → Skills** page lists **every** skill — global and each project's —

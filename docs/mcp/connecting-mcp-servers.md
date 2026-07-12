@@ -146,3 +146,7 @@ first, then the credential can be revoked.
 Register connections from the web app, or let an agent add one itself when it needs a
 tool (subject to your approval). Either way the connection is scoped, stored, and made
 available to the relevant runs.
+
+When an agent adds a connection itself, it also records how to drive the service as a
+[skill](/docs/concepts/skills) once the connection works — and keeps that skill current —
+so future runs start from working knowledge rather than vendor docs.
