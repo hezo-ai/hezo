@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.22.0 - 2026-07-12
+
+### Features
+
+- **skills:** add view modal for all skills; show connector-recipes on project pages ([#697](https://github.com/hezo-ai/hezo/pull/697))
+- **connectors:** complete agent-requested connections in place ([#698](https://github.com/hezo-ai/hezo/pull/698))
+
+### Bug Fixes
+
+- stack connector row header on mobile ([#696](https://github.com/hezo-ai/hezo/pull/696))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.21.0...0.22.0
+
 ## 0.21.0 - 2026-07-12
 
 ### Features
