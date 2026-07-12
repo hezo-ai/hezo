@@ -118,33 +118,28 @@ jobs:
       # code (e.g. egress TLS) on the production Bun runtime. --coverage writes
       # lcov to packages/server/coverage (vitest) and coverage-bun (Bun tier).
       - run: bun run test --package server --shard ${{ matrix.shard }}/5 --coverage
-      # Coveralls parallel build: each shard/tier uploads its own lcov under a
-      # unique flag-name with parallel:true; the coverage-finished job below
-      # closes the build so Coveralls merges them into one total. if:always() so
-      # partial coverage still uploads when a shard's tests fail
-      # (reportOnFailure:true guarantees the lcov exists).
-      - name: Upload backend coverage (vitest)
+      # Upload this shard's istanbul coverage-final.json as an artifact for the
+      # coverage-merge job (which combines shards in JSON space, not by OR-ing
+      # per-shard lcovs — that double-counts branches whose coverage-v8 ordinals
+      # differ per run). if:always() + reportOnFailure:true so a failing shard
+      # still contributes its partial report.
+      - name: Upload backend coverage report
         if: always()
-        uses: coverallsapp/github-action@v2
+        uses: actions/upload-artifact@v4
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          file: packages/server/coverage/lcov.info
-          flag-name: backend-vitest-${{ matrix.shard }}
-          parallel: true
-          fail-on-error: false
-          allow-empty: true
-      # The Bun-native tier only runs on shard 1 (gated in scripts/test.ts), so
-      # its lcov only exists there.
+          name: backend-coverage-${{ matrix.shard }}
+          path: packages/server/coverage/coverage-final.json
+          if-no-files-found: ignore
+      # The Bun-native tier only runs on shard 1 (gated in scripts/test.ts) and
+      # writes only lcov (no branch data); the merge job reconciles it against the
+      # merged vitest line model.
       - name: Upload backend Bun-native coverage
         if: always() && matrix.shard == 1
-        uses: coverallsapp/github-action@v2
+        uses: actions/upload-artifact@v4
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          file: packages/server/coverage-bun/lcov.info
-          flag-name: backend-bun
-          parallel: true
-          fail-on-error: false
-          allow-empty: true
+          name: backend-bun-coverage
+          path: packages/server/coverage-bun/lcov.info
+          if-no-files-found: ignore
 
   test-integration:
     runs-on: ubuntu-latest
@@ -170,17 +165,14 @@ jobs:
       # ubuntu-latest is 4 cores; 10 forks each owning a PGlite + Hono boot
       # produces enough contention that random `findBy*` queries time out.
       - run: bun run test --package web --concurrency 4 --shard ${{ matrix.shard }}/5 --coverage
-      # Part of the same Coveralls parallel build; closed by coverage-finished.
-      - name: Upload web coverage
+      # This shard's coverage-final.json feeds the coverage-merge job.
+      - name: Upload web coverage report
         if: always()
-        uses: coverallsapp/github-action@v2
+        uses: actions/upload-artifact@v4
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          file: packages/web/coverage/lcov.info
-          flag-name: web-${{ matrix.shard }}
-          parallel: true
-          fail-on-error: false
-          allow-empty: true
+          name: web-coverage-${{ matrix.shard }}
+          path: packages/web/coverage/coverage-final.json
+          if-no-files-found: ignore
 
   # The pure-logic shared package (packages/shared) has no DB/DOM/browser
   # dependencies, so it runs as a single fast job (no sharding). Its coverage
@@ -200,16 +192,13 @@ jobs:
           restore-keys: bun-${{ runner.os }}-
       - run: bun install --frozen-lockfile
       - run: bun run test --package shared --coverage
-      - name: Upload shared coverage
+      - name: Upload shared coverage report
         if: always()
-        uses: coverallsapp/github-action@v2
+        uses: actions/upload-artifact@v4
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          file: packages/shared/coverage/lcov.info
-          flag-name: shared
-          parallel: true
-          fail-on-error: false
-          allow-empty: true
+          name: shared-coverage
+          path: packages/shared/coverage/coverage-final.json
+          if-no-files-found: ignore
 
   # External-Postgres driver conformance: the database-* suites run their
   # env-gated postgres legs against a real postgres:16 service, proving the
@@ -374,20 +363,48 @@ jobs:
     steps:
       - run: '[ "${{ needs.test-browser.result }}" = "success" ]'
 
-  # Closes the Coveralls parallel build once every shard/tier has uploaded, so
-  # Coveralls merges them into a single coverage total for the commit. Runs
-  # regardless of test outcome (if:always) so a failed shard still finalizes the
-  # partial coverage. Not a required check — coverage reports on the PR but never
-  # blocks a merge. Requires the repo to be enabled on Coveralls (see AGENTS.md).
-  coverage-finished:
+  # Combines every shard/tier's coverage into ONE report and uploads it to
+  # Coveralls as a single (non-parallel) build. Merging the shards' istanbul
+  # coverage-final.json in JSON space (scripts/coverage/merge.ts) numbers each
+  # branch once from the merged map, so — unlike OR-ing per-shard lcovs, which is
+  # what a Coveralls parallel build does — the same source branch isn't counted
+  # under different coverage-v8 ordinals across shards. That double-counting had
+  # inflated the branch denominator (~19.5k real → ~36k reported) and pushed the
+  # combined line+branch total ~6 points below its true value. Runs regardless of
+  # test outcome (if:always) so a failed shard still finalizes partial coverage.
+  # Not a required check — coverage reports on the PR but never blocks a merge.
+  # Requires the repo to be enabled on Coveralls (see AGENTS.md).
+  coverage-merge:
     if: always()
     needs: [test-backend, test-integration, test-shared]
     runs-on: ubuntu-latest
     steps:
-      - name: Close Coveralls parallel build
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
+      # Every per-shard artifact lands under its own subdir of coverage-artifacts/
+      # (backend-coverage-<n>/, web-coverage-<n>/, shared-coverage/,
+      # backend-bun-coverage/), which resolveArtifacts() in
+      # scripts/coverage/merge.ts globs. The `*coverage*` pattern skips unrelated
+      # artifacts (e.g. playwright-report-*).
+      - name: Download coverage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: coverage-artifacts
+          pattern: "*coverage*"
+      - name: Merge coverage into one lcov
+        run: bun run scripts/coverage/merge.ts --artifacts coverage-artifacts --out coverage/lcov.info
+      - name: Upload combined coverage to Coveralls
         uses: coverallsapp/github-action@v2
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          parallel-finished: true
-          carryforward: "backend-vitest-1,backend-vitest-2,backend-vitest-3,backend-vitest-4,backend-vitest-5,backend-bun,web-1,web-2,web-3,web-4,web-5,shared"
+          file: coverage/lcov.info
           fail-on-error: false
+          allow-empty: true

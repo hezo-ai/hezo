@@ -79,7 +79,9 @@ export default defineConfig({
 		coverage: {
 			provider: 'v8',
 			enabled: false,
-			reporter: ['text-summary', 'json', 'lcov'],
+			// `json` writes coverage-final.json for CI's cross-shard merge job; no
+			// per-tier lcov (nothing consumes it). See scripts/coverage/.
+			reporter: ['text-summary', 'json'],
 			reportsDirectory: './coverage',
 			reportOnFailure: true,
 			// See the server config for why all:false is mandatory under sharding.

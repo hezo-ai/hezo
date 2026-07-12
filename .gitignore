@@ -23,6 +23,9 @@ test-results/
 coverage/
 **/coverage/
 **/coverage-bun/
+# scripts/coverage/ is source (the cross-shard coverage merge), not a report dir.
+!scripts/coverage/
+!scripts/coverage/**
 
 # TSC build artifacts in src (output goes to dist/)
 packages/*/src/**/*.js

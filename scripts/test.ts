@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
 	TEST_CONTAINER_LABEL_KEY,
@@ -7,6 +7,7 @@ import {
 	TEST_CONTAINERS_ENV,
 } from '@hezo/shared';
 import { Command } from 'commander';
+import { buildCombinedLcov, formatStats } from './coverage/merge';
 import { ensureBundles } from './ensure-bundles';
 
 const ROOT = resolve(import.meta.dir, '..');
@@ -82,86 +83,32 @@ async function buildAgentBundle() {
 	}
 }
 
-// Both the vitest (coverage-v8) and Bun tiers write lcov `SF:` paths relative to
-// the spawn cwd (the package dir), e.g. `SF:src/logger.ts`. Normalize each report
-// before upload: (1) rewrite every SF path to be repo-root-relative
-// (`packages/<pkg>/src/...`) so Coveralls maps it across the monorepo without the
-// per-package `src/...` paths colliding, and (2) keep only records under the
-// package's `src/` tree. The vitest tier already scopes to src via `include`, but
-// `bun test --coverage` also instruments loaded test support (test/helpers/*, the
-// bun setup preload) — coverage must report source, not test code.
-function normalizeLcov(lcovPath: string, pkg: string): void {
-	if (!existsSync(lcovPath)) return;
-	const srcPrefix = `${pkg}/src/`;
-	const records = readFileSync(lcovPath, 'utf8')
-		.split(/^end_of_record$/m)
-		.map((rec) => rec.trim())
-		.filter(Boolean)
-		.map((rec) => rec.replace(/^SF:(?!\/|packages\/)(.+)$/m, (_m, rest) => `SF:${pkg}/${rest}`))
-		.filter((rec) => {
-			const sf = rec.match(/^SF:(.+)$/m);
-			return sf ? sf[1].startsWith(srcPrefix) : false;
-		});
-	writeFileSync(
-		lcovPath,
-		records.length ? `${records.join('\nend_of_record\n')}\nend_of_record\n` : '',
-	);
-}
-
-// `bun test --coverage` treats every line of a loaded file as executable —
-// comments, blank lines, SQL string continuations, type-only lines — and emits
-// `DA:<n>,0` for all of them in files its few specs load but never run. The
-// vitest tier (coverage-v8) maps through sourcemaps and only emits DA rows for
-// genuinely executable lines. Coveralls merges the parallel uploads by line
-// number, so the Bun tier's phantom rows count as "missed lines" for every file
-// both tiers load and depress the merged total (~6.5k lines repo-wide) in a way
-// no test can ever recover. Reconcile the models: for each file the vitest lcov
-// also reports, keep only the Bun DA rows whose line numbers exist in the vitest
-// line model (recomputing LF/LH); files only the Bun tier loads pass through
-// unchanged. The vitest lcov is always written and normalized before the Bun
-// tier runs in the same invocation (see main()), locally and in CI.
-function reconcileBunLcovLineModel(bunLcovPath: string, vitestLcovPath: string): void {
-	if (!existsSync(bunLcovPath) || !existsSync(vitestLcovPath)) return;
-	const vitestLines = new Map<string, Set<number>>();
-	let sf = '';
-	for (const line of readFileSync(vitestLcovPath, 'utf8').split('\n')) {
-		if (line.startsWith('SF:')) {
-			sf = line.slice(3).trim();
-			if (!vitestLines.has(sf)) vitestLines.set(sf, new Set());
-		} else if (line.startsWith('DA:')) {
-			vitestLines.get(sf)?.add(Number.parseInt(line.slice(3), 10));
-		}
-	}
-	const records = readFileSync(bunLcovPath, 'utf8')
-		.split(/^end_of_record$/m)
-		.map((rec) => rec.trim())
-		.filter(Boolean)
-		.map((rec) => {
-			const sfMatch = rec.match(/^SF:(.+)$/m);
-			const model = sfMatch ? vitestLines.get(sfMatch[1].trim()) : undefined;
-			if (!model) return rec;
-			let lf = 0;
-			let lh = 0;
-			const kept = rec.split('\n').filter((line) => {
-				if (!line.startsWith('DA:')) return true;
-				const [ln, hits] = line.slice(3).split(',');
-				if (!model.has(Number.parseInt(ln, 10))) return false;
-				lf++;
-				if (Number.parseInt(hits, 10) > 0) lh++;
-				return true;
-			});
-			return kept
-				.map((line) => {
-					if (line.startsWith('LF:')) return `LF:${lf}`;
-					if (line.startsWith('LH:')) return `LH:${lh}`;
-					return line;
-				})
-				.join('\n');
-		});
-	writeFileSync(
-		bunLcovPath,
-		records.length ? `${records.join('\nend_of_record\n')}\nend_of_record\n` : '',
-	);
+// The vitest and Bun coverage tiers write per-package reports (vitest also writes
+// an istanbul `coverage-final.json`; Bun writes only lcov). CI shards the vitest
+// tiers, so the shard reports are merged in JSON space — not by OR-ing per-shard
+// lcovs, which double-counts branches whose coverage-v8 ordinals differ per run —
+// then reconciled and combined. All that plumbing lives in scripts/coverage/
+// (lcov.ts + merge.ts); CI's merge job runs it on the downloaded artifacts and
+// the local full run below prints the same combined total.
+//
+// Reports each tier writes, consumed by buildCombinedLcov():
+//   packages/server/coverage/coverage-final.json   (vitest, istanbul JSON)
+//   packages/server/coverage-bun/lcov.info         (bun test --coverage)
+//   packages/web/coverage/coverage-final.json      (vitest)
+//   packages/shared/coverage/coverage-final.json   (vitest)
+function printCombinedCoverage(): void {
+	const finalJson = (pkg: string) => resolve(ROOT, pkg, 'coverage/coverage-final.json');
+	const result = buildCombinedLcov({
+		serverJson: [finalJson('packages/server')].filter(existsSync),
+		webJson: [finalJson('packages/web')].filter(existsSync),
+		sharedJson: [finalJson('packages/shared')].filter(existsSync),
+		bunLcov: resolve(ROOT, 'packages/server/coverage-bun/lcov.info'),
+	});
+	mkdirSync(resolve(ROOT, 'coverage'), { recursive: true });
+	writeFileSync(resolve(ROOT, 'coverage/lcov.info'), result.combined);
+	console.log('\n── Combined coverage (Coveralls-equivalent: lines + branches) ──');
+	console.log(formatStats(result.stats));
+	console.log('(wrote coverage/lcov.info)');
 }
 
 async function runVitestForPackage(pkg: string): Promise<boolean> {
@@ -194,8 +141,6 @@ async function runVitestForPackage(pkg: string): Promise<boolean> {
 	const exitCode = await proc.exited;
 	const duration = Date.now() - start;
 	const passed = exitCode === 0;
-	// reportOnFailure:true means an lcov exists even on failure — normalize either way.
-	if (coverage) normalizeLcov(resolve(ROOT, pkg, 'coverage/lcov.info'), pkg);
 	console.log(`\n${pkg}: ${passed ? 'passed' : 'FAILED'} (${(duration / 1000).toFixed(1)}s)`);
 	return passed;
 }
@@ -207,9 +152,9 @@ async function runBunNativeForPackage(pkg: string): Promise<boolean> {
 	console.log(`\n── Running ${pkg} Bun-native tier (bun test test/bun/) ──`);
 	const start = Date.now();
 	const bunArgs = ['test', 'test/bun/'];
-	// Separate dir from the vitest tier's './coverage' — both write lcov.info, so
-	// a shared dir would clobber. Paths are made repo-root-relative below via
-	// rewriteLcovToRepoRoot (same as the vitest tier).
+	// Bun writes only lcov (no istanbul JSON), to its own dir so it never clobbers
+	// the vitest tier's ./coverage. It carries no branch data and its line model is
+	// reconciled against the merged vitest model later, in buildCombinedLcov.
 	if (coverage) {
 		bunArgs.push('--coverage', '--coverage-reporter=lcov', '--coverage-dir=coverage-bun');
 	}
@@ -222,11 +167,6 @@ async function runBunNativeForPackage(pkg: string): Promise<boolean> {
 	const exitCode = await proc.exited;
 	const duration = Date.now() - start;
 	const passed = exitCode === 0;
-	if (coverage) {
-		const bunLcov = resolve(ROOT, pkg, 'coverage-bun/lcov.info');
-		normalizeLcov(bunLcov, pkg);
-		reconcileBunLcovLineModel(bunLcov, resolve(ROOT, pkg, 'coverage/lcov.info'));
-	}
 	console.log(
 		`\n${pkg} (Bun-native): ${passed ? 'passed' : 'FAILED'} (${(duration / 1000).toFixed(1)}s)`,
 	);
@@ -319,6 +259,11 @@ async function main() {
 				}
 			}
 		}
+
+		// A full local --coverage run (unsharded) prints the combined line+branch
+		// total the way Coveralls scores it. CI never reaches here — its shards run
+		// with --shard, and the dedicated merge job combines the shard artifacts.
+		if (coverage && shardIndex === undefined && !process.env.CI) printCombinedCoverage();
 	}
 
 	const runBrowser = !skipBrowser && (!packageFilter || browserOnly);
