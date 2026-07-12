@@ -1123,6 +1123,7 @@ supports; once a token exists, both strategies finalize through one shared path.
 |---|---|---|---|
 | **DCR auth-code + PKCE** | PRM discovery (RFC 9728) → Dynamic Client Registration (RFC 7591) → redirect popup → `/api/oauth/mcp-callback`. Zero config — the AS mints a `client_id`. | the AS advertises a `registration_endpoint` | DatoCMS, Linear, Notion, Vercel, … |
 | **Device flow (RFC 8628)** | `connectors/:id/device/start` → user types a code → `…/device/poll`. Needs a pre-registered public `client_id`; no redirect, no secret. | the capability registry declares a `deviceAuth` descriptor | **GitHub** |
+| **Generic OAuth broker (device flow)** | `connectors/:id/oauth-device/start` → user types a code → `…/oauth-device/poll`. The operator brings the `client_id` (+ optional `client_secret`) and either picks a bundled `oauthProviders` descriptor or supplies the endpoints directly; `resolveBrokerDescriptor` (`services/oauth/broker.ts`) merges the two. Runs on an **`api`** connector, so no browser callback is needed on any instance URL. The durable refresh token + host-only client secret stay host-side; only the short-lived access token is surfaced (via the connector's `api_auth` placeholder), kept fresh by the generic host-side refresh. | an OAuth-backed REST API with no hosted MCP (BYO client) | **Google/YouTube**, any device-flow OAuth API |
 | **API key** | human pastes a key on the connect_required card or the Connectors page → `POST /api/projects/:projectId/connectors/:id/api-key` encrypts it into the vault (`allowed_hosts` = the MCP host) and links it via `mcp_connections.api_key_secret_id`. The generated secret name is `MCP_<CONNECTOR>_<PROJFRAG>` for a project-scoped connector (`PROJFRAG` = first 5 hex of the project UUID, uppercased) and `MCP_<CONNECTOR>` for a global one, so two same-type connectors in different projects get distinctly-named credentials. | the MCP server exposes no OAuth (no PRM) and authenticates with a bearer/API key | **Typefully**, header-auth MCPs |
 | **Paste / `request_credential`** | raw key pasted into the vault, referenced by placeholder from a tool call | an agent needs an arbitrary secret (not a whole connector) | `request_credential` |
 
@@ -1135,14 +1136,22 @@ machinery is in `services/oauth/*`, GitHub REST helpers in `services/github.ts`.
 to that project so two projects hold separate accounts; NULL = the global "all projects"
 scope), keyed per-scope on `(project_id, provider, provider_account_id)`. Tokens have no
 column of their own — they ride the `secrets` table under name pattern
-`OAUTH_<PROVIDER>_<8 hex>` (`_REFRESH` suffix for refresh tokens), `allowed_hosts`
-auto-locked to the provider's hosts. So OAuth tokens flow through the same egress
-placeholder path as any secret; agents emit
-`Authorization: Bearer __HEZO_SECRET_OAUTH_GITHUB_AB12CD34__`. `refreshExpiringTokens`
-(called by the egress substitution path on every outbound request) refreshes tokens within
-60 s of expiry, coalescing concurrent refreshes per connection. Deleting a project (or its
-team) purges the project's connections and their token secrets before the cascade, so no
-encrypted token orphans in the vault.
+`OAUTH_<PROVIDER>_<8 hex>` (`_REFRESH` suffix for refresh tokens, `_CLIENT_SECRET` for a
+broker client secret), `allowed_hosts` auto-locked to the provider's hosts. So OAuth tokens
+flow through the same egress placeholder path as any secret; agents emit
+`Authorization: Bearer __HEZO_SECRET_OAUTH_GITHUB_AB12CD34__`. A broker connection's OAuth
+**client secret** is the exception: it is stored with **empty `allowed_hosts`** (`allow_all_hosts=false`),
+referenced from `oauth_connections.client_secret_secret_id`, so it is **never**
+egress-substitutable and never surfaced to a run — it is host-only refresh material.
+`refreshExpiringTokens` (called by the egress substitution path on every outbound request)
+refreshes tokens within 60 s of expiry, coalescing concurrent refreshes per connection. A
+single **generic** refresh fn is registered at startup (`registerGenericOAuthRefresh`) and
+handles any connection carrying `token_url` + `client_id` in its metadata (decrypting the
+host-only client secret when present), so refresh is now **real** for broker connections
+rather than the historically GitHub-inert no-op; a provider-specific fn still wins over the
+generic one where registered. Deleting a project (or its team) purges the project's
+connections and their token secrets (access, refresh, and client secret) before the cascade,
+so no encrypted token orphans in the vault.
 
 **Agent connector flow.** An agent calls `register_connector` with an MCP URL (DCR is
 attempted) or a `provider_id` for a device-flow provider. The tool creates a pending

@@ -10,6 +10,7 @@ import { isUniqueViolation, withTransaction } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireAdminEquivalent } from '../middleware/auth';
+import { resolveConnectorRegistry } from '../services/connector-registry';
 import { validateApiConnectorConfig } from '../services/connectors/connections';
 import {
 	createOrFetchConnector,
@@ -50,6 +51,15 @@ const connectorCredentialsJson = (alias: string): string =>
 	), '[]'::json) AS credentials`;
 
 export const connectorsRoutes = new Hono<Env>();
+
+// The bundled OAuth-provider descriptors (Google/YouTube, GitHub, …) used to
+// populate the generic OAuth-broker form's provider dropdown. Exposes only
+// public descriptor data (id, endpoints, scopes, allowed_hosts) — no secrets —
+// so any authenticated member may read it. Declared before `/connectors/:id`
+// (different verb anyway) so the literal path never falls through to a param.
+connectorsRoutes.get('/connectors/oauth-providers', async (c) => {
+	return ok(c, resolveConnectorRegistry().oauthProviders);
+});
 
 connectorsRoutes.get('/projects/:projectId/connectors', async (c) => {
 	const db = c.get('db');

@@ -87,6 +87,7 @@ import {
 } from './services/image-registry';
 import { JobManager } from './services/job-manager';
 import { LogStreamBroker } from './services/log-stream-broker';
+import { registerGenericOAuthRefresh } from './services/oauth/generic-refresh';
 import { adminPasswordIsSet } from './services/password';
 import { PricingService } from './services/pricing';
 import { SshAgentServer } from './services/ssh-agent';
@@ -181,6 +182,12 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	setStartupPhase('pricing');
 	const pricing = new PricingService(db);
 	await pricing.init({ refresh: !process.env.HEZO_SKIP_PRICING_REFRESH });
+
+	// Register the single generic host-side OAuth refresh fn. It makes
+	// `refreshExpiringTokens` real for any oauth_connection carrying token_url +
+	// client_id in metadata (broker connections), refreshing the short-lived
+	// access token from the durable refresh token + host-only client secret.
+	registerGenericOAuthRefresh();
 
 	const masterKeyManager = new MasterKeyManager();
 	const masterKeyState = await resolveMasterKeyState(db, masterKeyManager, config.masterKey);

@@ -112,12 +112,70 @@ describe('pollDeviceFlow', () => {
 		expect((await poll({ error: 'slow_down' })).status).toBe('pending');
 	});
 
-	it('maps an access token to success', async () => {
+	it('maps an access token to success (public client: no refresh/expiry)', async () => {
 		expect(await poll({ access_token: 'gho_x', scope: 'repo read:org' })).toEqual({
 			status: 'success',
 			accessToken: 'gho_x',
 			scope: 'repo read:org',
+			refreshToken: null,
+			expiresAt: null,
 		});
+	});
+
+	it('captures the refresh token and derives expiry when the provider issues them', async () => {
+		const before = Date.now();
+		const result = await poll({
+			access_token: 'ya29.access',
+			refresh_token: '1//refresh',
+			scope: 'https://www.googleapis.com/auth/youtube',
+			expires_in: 3600,
+		});
+		if (result.status !== 'success') throw new Error(`expected success, got ${result.status}`);
+		expect(result.accessToken).toBe('ya29.access');
+		expect(result.refreshToken).toBe('1//refresh');
+		expect(result.expiresAt).toBeInstanceOf(Date);
+		// ~1h out (allow slack for test execution time).
+		expect(result.expiresAt!.getTime()).toBeGreaterThanOrEqual(before + 3600 * 1000);
+		expect(result.expiresAt!.getTime()).toBeLessThan(before + 3600 * 1000 + 60_000);
+	});
+
+	it('sends client_secret in the token poll for a confidential (Google) client', async () => {
+		let capturedBody = '';
+		const result = await pollDeviceFlow({
+			tokenUrl: 'https://oauth2.googleapis.com/token',
+			clientId: 'gcid.apps.googleusercontent.com',
+			clientSecret: 'GOCSPX-secret',
+			deviceCode: 'dc',
+			fetchFn: async (_input, init) => {
+				capturedBody = String(init?.body);
+				return new Response(JSON.stringify({ access_token: 'ya29.x', expires_in: 3599 }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' },
+				});
+			},
+		});
+		expect(result.status).toBe('success');
+		expect(capturedBody).toContain('client_secret=GOCSPX-secret');
+		expect(capturedBody).toContain(
+			'grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code',
+		);
+	});
+
+	it('omits client_secret for a public client', async () => {
+		let capturedBody = '';
+		await pollDeviceFlow({
+			tokenUrl: 'https://gh/token',
+			clientId: 'c',
+			deviceCode: 'dc',
+			fetchFn: async (_input, init) => {
+				capturedBody = String(init?.body);
+				return new Response(JSON.stringify({ access_token: 'gho_x' }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' },
+				});
+			},
+		});
+		expect(capturedBody).not.toContain('client_secret');
 	});
 
 	it('maps any other error to failed', async () => {

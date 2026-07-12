@@ -4475,7 +4475,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_connectors',
-		'List the connectors available to agent runs in your project (its own connectors plus global "all projects" ones; a project connector shadows a global one of the same name). Each row includes a derived `oauth_status` so you can tell whether a connector is usable: "active" means OAuth completed and the MCP tools should appear in your tool list on your next run; "pending" means waiting on the human to click Connect; "failed" means the OAuth flow errored (see auth_error); "revoked" means a human disconnected it; "none" means no OAuth needed (e.g., an env-var-token MCP or a public one). Do NOT confuse `install_status` (which tracks local-package install state and is meaningless for SaaS MCPs) with `oauth_status`. An active OAuth-backed connector also carries `rest_auth` = `{ placeholder, allowed_hosts, scopes }`: put `placeholder` (e.g. in an `Authorization: Bearer <placeholder>` header) on a raw HTTP request to authenticate the provider\'s REST API directly when no MCP tool covers what you need — the egress proxy substitutes the real token, but ONLY for requests to `allowed_hosts`; you never see the value. Use this instead of requesting a PAT (e.g. for GitHub repo-settings edits that the `github` MCP does not expose). A connector of kind `api` (a credentialed REST API with no MCP server) carries `api_auth` = `{ base_url, placeholder, allowed_hosts, placement, name, docs_url }` instead: put `placeholder` in the `name` header (when `placement` is "header", prefixed by any scheme) or `name` query parameter (when `placement` is "query") and send the request to `base_url` — the egress proxy substitutes the real key, scoped to `allowed_hosts`. `placeholder` is null until a human attaches the credential on the Connectors page; `api_auth` is null for non-api rows.',
+		'List the connectors available to agent runs in your project (its own connectors plus global "all projects" ones; a project connector shadows a global one of the same name). Each row includes a derived `oauth_status` so you can tell whether a connector is usable: "active" means OAuth completed and the MCP tools should appear in your tool list on your next run; "pending" means waiting on the human to click Connect; "failed" means the OAuth flow errored (see auth_error); "revoked" means a human disconnected it; "none" means no OAuth needed (e.g., an env-var-token MCP or a public one). Do NOT confuse `install_status` (which tracks local-package install state and is meaningless for SaaS MCPs) with `oauth_status`. An active OAuth-backed connector also carries `rest_auth` = `{ placeholder, allowed_hosts, scopes }`: put `placeholder` (e.g. in an `Authorization: Bearer <placeholder>` header) on a raw HTTP request to authenticate the provider\'s REST API directly when no MCP tool covers what you need — the egress proxy substitutes the real token, but ONLY for requests to `allowed_hosts`; you never see the value. Use this instead of requesting a PAT (e.g. for GitHub repo-settings edits that the `github` MCP does not expose). A connector of kind `api` (a credentialed REST API with no MCP server) carries `api_auth` = `{ base_url, placeholder, allowed_hosts, placement, name, docs_url }` instead: put `placeholder` in the `name` header (when `placement` is "header", prefixed by any scheme) or `name` query parameter (when `placement` is "query") and send the request to `base_url` — the egress proxy substitutes the real key, scoped to `allowed_hosts`. `placeholder` is null until a human attaches the credential on the Connectors page; `api_auth` is null for non-api rows. An `api` connector may instead be OAuth-backed (a human connected it via the device flow): then `api_auth.placeholder` is a broker-managed OAuth access token that Hezo keeps refreshed host-side — use it exactly the same way.',
 		{
 			project: projectArg(),
 		},
@@ -4580,9 +4580,14 @@ export function registerTools(
 					row.kind === 'api' && apiCfg
 						? {
 								base_url: typeof apiCfg.base_url === 'string' ? apiCfg.base_url : null,
+								// An api connector may be OAuth-backed (broker-managed): its access
+								// token rides the same api_auth placeholder as a pasted key, so
+								// surface the OAuth access-token secret name when no pasted key is set.
 								placeholder: api_key_secret_name
 									? credentialPlaceholder(api_key_secret_name)
-									: null,
+									: oauth_secret_name
+										? credentialPlaceholder(oauth_secret_name)
+										: null,
 								allowed_hosts: Array.isArray(apiCfg.allowed_hosts) ? apiCfg.allowed_hosts : [],
 								placement:
 									apiCfg.auth && typeof apiCfg.auth.placement === 'string'

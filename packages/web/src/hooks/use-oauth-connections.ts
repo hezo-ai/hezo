@@ -46,6 +46,33 @@ export interface DeviceFlowPending {
 
 export type DeviceFlowPollResult = DeviceFlowSuccess | DeviceFlowPending;
 
+/**
+ * A bundled OAuth-provider descriptor exposed by GET /api/connectors/oauth-providers.
+ * Public data only (no secrets) — populates the generic OAuth-broker form's
+ * provider dropdown so an operator gets sane endpoint/scope defaults.
+ */
+export interface OAuthProviderDescriptor {
+	id: string;
+	authorize_url?: string;
+	device_code_url?: string;
+	token_url: string;
+	scopes: string[];
+	client_type?: string;
+	allowed_hosts: string[];
+}
+
+/** Form fields the broker device-flow start accepts. */
+export interface BrokerDeviceStartInput {
+	connectorId: string;
+	provider_id?: string;
+	client_id: string;
+	client_secret?: string;
+	device_code_url?: string;
+	token_url?: string;
+	scopes?: string[];
+	allowed_hosts?: string[];
+}
+
 export function useOAuthConnections(projectId: string) {
 	return useQuery({
 		queryKey: queryKeys.projects.oauthConnections(projectId),
@@ -115,6 +142,64 @@ export async function pollDeviceFlow(
 		},
 		body: JSON.stringify({ flow_id: flowId }),
 	});
+	const json = (await res.json()) as { data?: DeviceFlowPollResult; error?: { message: string } };
+	if (!res.ok && res.status !== 202) {
+		throw new Error(json.error?.message ?? `device poll failed (${res.status})`);
+	}
+	if (json.data?.status === 'success') {
+		queryClient.invalidateQueries({ queryKey: queryKeys.projects.oauthConnections(projectId) });
+		queryClient.invalidateQueries({ queryKey: queryKeys.projects.connectors(projectId) });
+	}
+	return json.data as DeviceFlowPollResult;
+}
+
+/** The bundled OAuth-provider descriptors used by the generic OAuth-broker form. */
+export function useOAuthProviders() {
+	return useQuery({
+		queryKey: queryKeys.oauthProviders(),
+		queryFn: () => api.get<OAuthProviderDescriptor[]>('/api/connectors/oauth-providers'),
+		staleTime: 60 * 60 * 1000, // bundled + static; effectively immutable per build
+	});
+}
+
+/**
+ * Start the generic OAuth device flow (RFC 8628) against an `api` connector: the
+ * operator picks a bundled provider descriptor (or supplies endpoints directly)
+ * plus a client id / secret. The refresh token + client secret stay host-side;
+ * only the short-lived access token is later surfaced to a run.
+ */
+export function useBrokerDeviceStart(projectId: string) {
+	return useMutation({
+		mutationFn: ({ connectorId, ...form }: BrokerDeviceStartInput) =>
+			api.post<DeviceFlowStart>(
+				`/api/projects/${projectId}/connectors/${connectorId}/oauth-device/start`,
+				form,
+			),
+	});
+}
+
+/**
+ * Poll a broker device flow once. Mirrors {@link pollDeviceFlow}: the server
+ * returns 202 with a pending status until the user authorizes, so it reads the
+ * envelope directly and surfaces the pending/success discriminant.
+ */
+export async function pollBrokerDeviceFlow(
+	projectId: string,
+	connectorId: string,
+	flowId: string,
+): Promise<DeviceFlowPollResult> {
+	const token = api.getToken();
+	const res = await fetch(
+		`/api/projects/${projectId}/connectors/${connectorId}/oauth-device/poll`,
+		{
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				...(token ? { Authorization: `Bearer ${token}` } : {}),
+			},
+			body: JSON.stringify({ flow_id: flowId }),
+		},
+	);
 	const json = (await res.json()) as { data?: DeviceFlowPollResult; error?: { message: string } };
 	if (!res.ok && res.status !== 202) {
 		throw new Error(json.error?.message ?? `device poll failed (${res.status})`);

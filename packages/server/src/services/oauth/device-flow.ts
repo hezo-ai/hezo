@@ -19,6 +19,13 @@ export interface DeviceFlowPollSuccess {
 	status: 'success';
 	accessToken: string;
 	scope: string;
+	/**
+	 * Durable refresh token, when the provider issues one (Google's device-flow
+	 * client does; GitHub's does not). Kept host-side; never surfaced to a run.
+	 */
+	refreshToken?: string | null;
+	/** Absolute access-token expiry, derived from the provider's `expires_in`. */
+	expiresAt?: Date | null;
 }
 
 export interface DeviceFlowPollFailure {
@@ -110,6 +117,12 @@ export async function pollDeviceFlow(opts: {
 	tokenUrl: string;
 	clientId: string;
 	deviceCode: string;
+	/**
+	 * Confidential-client secret, when the provider's device-flow client requires
+	 * it in the token poll (Google's "TVs and Limited Input devices" client does).
+	 * Omitted for public clients like GitHub.
+	 */
+	clientSecret?: string;
 	fetchFn?: FetchFn;
 }): Promise<DeviceFlowPollResult> {
 	const fetchFn = opts.fetchFn ?? globalThis.fetch;
@@ -118,6 +131,7 @@ export async function pollDeviceFlow(opts: {
 		device_code: opts.deviceCode,
 		grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
 	});
+	if (opts.clientSecret) body.set('client_secret', opts.clientSecret);
 
 	const res = await fetchFn(opts.tokenUrl, {
 		method: 'POST',
@@ -129,12 +143,20 @@ export async function pollDeviceFlow(opts: {
 		scope?: string;
 		error?: string;
 		interval?: number;
+		refresh_token?: string;
+		expires_in?: number;
 	};
 	if (data.error === 'authorization_pending' || data.error === 'slow_down') {
 		return { status: 'pending', retryAfter: data.interval ?? 5 };
 	}
 	if (data.access_token) {
-		return { status: 'success', accessToken: data.access_token, scope: data.scope ?? '' };
+		return {
+			status: 'success',
+			accessToken: data.access_token,
+			scope: data.scope ?? '',
+			refreshToken: data.refresh_token ?? null,
+			expiresAt: data.expires_in ? new Date(Date.now() + data.expires_in * 1000) : null,
+		};
 	}
 	return { status: 'failed', error: data.error ?? 'unknown_error' };
 }

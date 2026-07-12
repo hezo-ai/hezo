@@ -21,15 +21,33 @@ export type RefreshFn = (
 	currentRefreshToken: string,
 ) => Promise<RefreshResult>;
 
+/**
+ * Provider-agnostic fallback refresh: unlike {@link RefreshFn} it receives the
+ * store `deps` so it can decrypt host-only material (the client secret) and read
+ * the token endpoint / client id off the connection's own metadata. Registered
+ * once at startup; used for any connection whose provider has no bespoke fn.
+ */
+export type GenericRefreshFn = (
+	deps: ConnectionStoreDeps,
+	connection: OAuthConnectionRow,
+	currentRefreshToken: string,
+) => Promise<RefreshResult>;
+
 const refreshFns = new Map<string, RefreshFn>();
+let genericRefreshFn: GenericRefreshFn | null = null;
 const inflight = new Map<string, Promise<void>>();
 
 export function registerRefreshFn(provider: string, fn: RefreshFn): void {
 	refreshFns.set(provider, fn);
 }
 
+export function registerGenericRefreshFn(fn: GenericRefreshFn): void {
+	genericRefreshFn = fn;
+}
+
 export function clearRefreshFns(): void {
 	refreshFns.clear();
+	genericRefreshFn = null;
 }
 
 /**
@@ -67,7 +85,7 @@ export async function refreshExpiringTokens(deps: ConnectionStoreDeps): Promise<
 
 	await Promise.all(
 		candidates.rows
-			.filter((r) => r.has_refresh && refreshFns.has(r.provider))
+			.filter((r) => r.has_refresh && (refreshFns.has(r.provider) || genericRefreshFn != null))
 			.map((r) => refreshConnection(deps, r.id)),
 	);
 }
@@ -90,8 +108,8 @@ async function doRefresh(deps: ConnectionStoreDeps, connectionId: string): Promi
 		log.warn('refresh skipped — connection not found', { id: connectionId });
 		return;
 	}
-	const refreshFn = refreshFns.get(conn.provider);
-	if (!refreshFn) {
+	const providerFn = refreshFns.get(conn.provider);
+	if (!providerFn && !genericRefreshFn) {
 		log.debug('refresh skipped — no provider fn', { provider: conn.provider });
 		return;
 	}
@@ -107,7 +125,16 @@ async function doRefresh(deps: ConnectionStoreDeps, connectionId: string): Promi
 	}
 
 	try {
-		const result = await refreshFn(conn, refreshTokenValue);
+		// A provider-specific fn wins over the generic fallback; the generic fn
+		// reads token_url + client_id off the connection metadata (and decrypts the
+		// optional client secret) so a new device-flow provider needs no bespoke code.
+		let result: RefreshResult;
+		if (providerFn) result = await providerFn(conn, refreshTokenValue);
+		else if (genericRefreshFn) result = await genericRefreshFn(deps, conn, refreshTokenValue);
+		else {
+			log.debug('refresh skipped — no provider fn', { provider: conn.provider });
+			return;
+		}
 		await updateTokens(deps, {
 			connectionId: conn.id,
 			accessToken: result.accessToken,
@@ -124,7 +151,7 @@ async function doRefresh(deps: ConnectionStoreDeps, connectionId: string): Promi
 	}
 }
 
-async function loadSecretValue(
+export async function loadSecretValue(
 	deps: ConnectionStoreDeps,
 	secretId: string,
 ): Promise<string | null> {

@@ -36,6 +36,8 @@ export const queryKeys = {
 	chatConversation: () => ['chat', 'conversation'],
 	/** Global full-text search (Cmd/Ctrl+K palette), keyed by query + scope. */
 	search: (q: string, scope: string) => ['search', q, scope],
+	/** Bundled OAuth-provider descriptors for the generic OAuth-broker form. */
+	oauthProviders: () => ['connectors', 'oauth-providers'],
 
 	teams: {
 		connectors: (teamId: string) => ['teams', teamId, 'connectors'],

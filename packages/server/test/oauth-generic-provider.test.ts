@@ -5,6 +5,7 @@ import {
 	buildAuthorizationUrl,
 	discoverMetadata,
 	exchangeCode,
+	refreshAccessToken,
 } from '../src/services/oauth/provider-generic';
 
 interface ProviderSim {
@@ -158,6 +159,74 @@ describe('OAuth generic provider', () => {
 				codeVerifier: 'v',
 				redirectUri: 'http://127.0.0.1:3100/cb',
 			}),
+		).rejects.toThrow(/invalid_grant/);
+	});
+});
+
+describe('refreshAccessToken (refresh_token grant)', () => {
+	it('posts grant_type=refresh_token with client id/secret + refresh token', async () => {
+		let captured = '';
+		const t = await refreshAccessToken(
+			{
+				tokenUrl: 'https://oauth2.googleapis.com/token',
+				clientId: 'gcid',
+				clientSecret: 'GOCSPX-secret',
+				refreshToken: '1//refresh',
+			},
+			async (_input, init) => {
+				captured = String(init?.body);
+				return new Response(
+					JSON.stringify({ access_token: 'ya29.new', expires_in: 3600, scope: 'youtube' }),
+					{ status: 200, headers: { 'Content-Type': 'application/json' } },
+				);
+			},
+		);
+		expect(captured).toContain('grant_type=refresh_token');
+		expect(captured).toContain('client_id=gcid');
+		expect(captured).toContain('client_secret=GOCSPX-secret');
+		expect(captured).toContain('refresh_token=1%2F%2Frefresh');
+		expect(t.accessToken).toBe('ya29.new');
+		expect(t.expiresAt).toBeInstanceOf(Date);
+	});
+
+	it('yields refreshToken null when the provider omits it (Google does not rotate)', async () => {
+		const t = await refreshAccessToken(
+			{ tokenUrl: 'https://x/token', clientId: 'c', refreshToken: 'r' },
+			async () =>
+				new Response(JSON.stringify({ access_token: 'new-access', expires_in: 3599 }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' },
+				}),
+		);
+		expect(t.accessToken).toBe('new-access');
+		expect(t.refreshToken).toBeNull();
+	});
+
+	it('omits client_secret for a public client', async () => {
+		let captured = '';
+		await refreshAccessToken(
+			{ tokenUrl: 'https://x/token', clientId: 'c', refreshToken: 'r' },
+			async (_input, init) => {
+				captured = String(init?.body);
+				return new Response(JSON.stringify({ access_token: 'a' }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' },
+				});
+			},
+		);
+		expect(captured).not.toContain('client_secret');
+	});
+
+	it('throws with the provider error on a non-ok response', async () => {
+		await expect(
+			refreshAccessToken(
+				{ tokenUrl: 'https://x/token', clientId: 'c', refreshToken: 'bad' },
+				async () =>
+					new Response(JSON.stringify({ error: 'invalid_grant', error_description: 'expired' }), {
+						status: 400,
+						headers: { 'Content-Type': 'application/json' },
+					}),
+			),
 		).rejects.toThrow(/invalid_grant/);
 	});
 });

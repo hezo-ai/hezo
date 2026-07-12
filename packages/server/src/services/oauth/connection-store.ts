@@ -15,6 +15,13 @@ export interface OAuthConnectionRow {
 	accessTokenSecretId: string;
 	accessTokenSecretName: string;
 	refreshTokenSecretId: string | null;
+	/**
+	 * Vault secret holding the OAuth **client secret**, for a broker-managed
+	 * device-flow connection whose confidential client requires it on refresh.
+	 * Stored host-only (empty `allowed_hosts`, `allow_all_hosts=false`) — it is
+	 * NEVER egress-substitutable and never surfaced to a run (AGENTS.md red line).
+	 */
+	clientSecretSecretId: string | null;
 	scopes: string[];
 	expiresAt: Date | null;
 	metadata: Record<string, unknown>;
@@ -35,6 +42,12 @@ export interface CreateConnectionInput {
 	providerAccountLabel: string;
 	accessToken: string;
 	refreshToken?: string | null;
+	/**
+	 * OAuth client secret for a confidential device-flow client (Google). Stored
+	 * host-only — empty `allowed_hosts`, so it is never egress-substitutable and
+	 * never enters a run; used only by the host-side refresh grant.
+	 */
+	clientSecret?: string | null;
 	scopes: string[];
 	expiresAt?: Date | null;
 	metadata?: Record<string, unknown>;
@@ -63,10 +76,10 @@ export interface UpdateTokensInput {
 export function oauthSecretName(
 	provider: string,
 	connectionId: string,
-	kind: 'access' | 'refresh',
+	kind: 'access' | 'refresh' | 'client_secret',
 ): string {
 	const idPrefix = connectionId.replace(/-/g, '').slice(0, 8).toUpperCase();
-	const suffix = kind === 'access' ? '' : '_REFRESH';
+	const suffix = kind === 'access' ? '' : kind === 'refresh' ? '_REFRESH' : '_CLIENT_SECRET';
 	return `OAUTH_${provider.toUpperCase().replace(/[^A-Z0-9]/g, '_')}_${idPrefix}${suffix}`;
 }
 
@@ -81,6 +94,9 @@ export async function createConnection(
 	const accessName = oauthSecretName(input.provider, connectionId, 'access');
 	const refreshName = input.refreshToken
 		? oauthSecretName(input.provider, connectionId, 'refresh')
+		: null;
+	const clientSecretName = input.clientSecret
+		? oauthSecretName(input.provider, connectionId, 'client_secret')
 		: null;
 	const allowedHosts = input.allowedHosts.length > 0 ? input.allowedHosts : [];
 
@@ -104,6 +120,20 @@ export async function createConnection(
 			refreshSecretId = refreshSecret.rows[0].id;
 		}
 
+		// The client secret is host-only refresh material: empty allowed_hosts and
+		// allow_all_hosts=false make it NEVER egress-substitutable, so it can never
+		// enter a run or be surfaced to an agent (AGENTS.md red line).
+		let clientSecretSecretId: string | null = null;
+		if (input.clientSecret && clientSecretName) {
+			const clientSecret = await deps.db.query<{ id: string }>(
+				`INSERT INTO secrets (name, encrypted_value, category, allowed_hosts, allow_all_hosts)
+				 VALUES ($1, $2, 'api_token', '{}', false)
+				 RETURNING id`,
+				[clientSecretName, encrypt(input.clientSecret, key)],
+			);
+			clientSecretSecretId = clientSecret.rows[0].id;
+		}
+
 		// Reconnecting the same account within the same scope updates the existing
 		// row. Two partial unique indexes back the scoping (one for project_id
 		// NULL, one for non-NULL), so the conflict target must name the matching
@@ -115,8 +145,9 @@ export async function createConnection(
 		const conn = await deps.db.query<RawConnRow>(
 			`INSERT INTO oauth_connections
 				(id, provider, provider_account_id, provider_account_label,
-				 access_token_secret_id, refresh_token_secret_id, scopes, expires_at, metadata, project_id)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+				 access_token_secret_id, refresh_token_secret_id, scopes, expires_at, metadata, project_id,
+				 client_secret_secret_id)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 			 ON CONFLICT ${conflictTarget}
 			 DO UPDATE SET
 				provider_account_label = EXCLUDED.provider_account_label,
@@ -124,7 +155,8 @@ export async function createConnection(
 				refresh_token_secret_id = EXCLUDED.refresh_token_secret_id,
 				scopes = EXCLUDED.scopes,
 				expires_at = EXCLUDED.expires_at,
-				metadata = EXCLUDED.metadata
+				metadata = EXCLUDED.metadata,
+				client_secret_secret_id = EXCLUDED.client_secret_secret_id
 			 RETURNING *`,
 			[
 				connectionId,
@@ -137,6 +169,7 @@ export async function createConnection(
 				input.expiresAt ?? null,
 				JSON.stringify(input.metadata ?? {}),
 				projectId,
+				clientSecretSecretId,
 			],
 		);
 
@@ -221,13 +254,15 @@ export async function deleteConnection(
 		const conn = await deps.db.query<{
 			access_token_secret_id: string;
 			refresh_token_secret_id: string | null;
+			client_secret_secret_id: string | null;
 		}>(
-			`SELECT access_token_secret_id, refresh_token_secret_id
+			`SELECT access_token_secret_id, refresh_token_secret_id, client_secret_secret_id
 			 FROM oauth_connections WHERE id = $1`,
 			[connectionId],
 		);
 		if (conn.rows.length === 0) return false;
-		const { access_token_secret_id, refresh_token_secret_id } = conn.rows[0];
+		const { access_token_secret_id, refresh_token_secret_id, client_secret_secret_id } =
+			conn.rows[0];
 
 		await deps.db.query(
 			`UPDATE repos SET oauth_connection_id = NULL WHERE oauth_connection_id = $1`,
@@ -242,6 +277,9 @@ export async function deleteConnection(
 		await deps.db.query(`DELETE FROM secrets WHERE id = $1`, [access_token_secret_id]);
 		if (refresh_token_secret_id) {
 			await deps.db.query(`DELETE FROM secrets WHERE id = $1`, [refresh_token_secret_id]);
+		}
+		if (client_secret_secret_id) {
+			await deps.db.query(`DELETE FROM secrets WHERE id = $1`, [client_secret_secret_id]);
 		}
 
 		return true;
@@ -323,6 +361,7 @@ interface RawConnRow {
 	access_token_secret_id: string;
 	access_token_secret_name: string;
 	refresh_token_secret_id: string | null;
+	client_secret_secret_id: string | null;
 	scopes: string[];
 	expires_at: Date | null;
 	metadata: Record<string, unknown>;
@@ -340,6 +379,7 @@ function mapRow(row: RawConnRow, accessName: string): OAuthConnectionRow {
 		accessTokenSecretId: row.access_token_secret_id,
 		accessTokenSecretName: accessName,
 		refreshTokenSecretId: row.refresh_token_secret_id,
+		clientSecretSecretId: row.client_secret_secret_id ?? null,
 		scopes: row.scopes ?? [],
 		expiresAt: row.expires_at,
 		metadata: row.metadata ?? {},

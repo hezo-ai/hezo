@@ -9,8 +9,10 @@ import {
 } from '../src/services/oauth/connection-store';
 import {
 	clearRefreshFns,
+	type GenericRefreshFn,
 	type RefreshFn,
 	refreshExpiringTokens,
+	registerGenericRefreshFn,
 	registerRefreshFn,
 } from '../src/services/oauth/token-resolver';
 import { safeClose } from './helpers';
@@ -191,5 +193,62 @@ describe('refreshExpiringTokens', () => {
 		});
 
 		await expect(refreshExpiringTokens({ db, masterKeyManager })).resolves.toBeUndefined();
+	});
+
+	it('falls back to the generic fn for a provider with no specific fn', async () => {
+		const conn = await makeConnection({
+			provider: 'broker-x',
+			providerAccountId: 'ax',
+			expiresAt: new Date(Date.now() - 1_000),
+			withRefresh: true,
+		});
+		const generic: GenericRefreshFn = async () => ({
+			accessToken: 'via-generic',
+			refreshToken: 'refresh-new',
+			expiresAt: new Date(Date.now() + 3_600_000),
+		});
+		registerGenericRefreshFn(generic);
+
+		await refreshExpiringTokens({ db, masterKeyManager });
+
+		const key = masterKeyManager.getKey();
+		if (!key) throw new Error('master key locked');
+		const refreshed = await getConnection({ db, masterKeyManager }, conn.id);
+		const accessRow = await db.query<{ encrypted_value: string }>(
+			`SELECT encrypted_value FROM secrets WHERE id = $1`,
+			[refreshed?.accessTokenSecretId],
+		);
+		expect(decrypt(accessRow.rows[0].encrypted_value, key)).toBe('via-generic');
+	});
+
+	it('prefers a provider-specific fn over the generic fallback', async () => {
+		const conn = await makeConnection({
+			provider: 'p6',
+			providerAccountId: 'a6',
+			expiresAt: new Date(Date.now() - 1_000),
+			withRefresh: true,
+		});
+		let genericCalled = false;
+		registerGenericRefreshFn(async () => {
+			genericCalled = true;
+			return { accessToken: 'should-not-win' };
+		});
+		registerRefreshFn('p6', async () => ({
+			accessToken: 'via-provider',
+			refreshToken: 'refresh-new',
+			expiresAt: new Date(Date.now() + 3_600_000),
+		}));
+
+		await refreshExpiringTokens({ db, masterKeyManager });
+
+		expect(genericCalled).toBe(false);
+		const key = masterKeyManager.getKey();
+		if (!key) throw new Error('master key locked');
+		const refreshed = await getConnection({ db, masterKeyManager }, conn.id);
+		const accessRow = await db.query<{ encrypted_value: string }>(
+			`SELECT encrypted_value FROM secrets WHERE id = $1`,
+			[refreshed?.accessTokenSecretId],
+		);
+		expect(decrypt(accessRow.rows[0].encrypted_value, key)).toBe('via-provider');
 	});
 });
