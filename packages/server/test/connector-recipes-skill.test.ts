@@ -172,3 +172,30 @@ describe('connector-recipes virtual skill: read-only admin view', () => {
 		expect(JSON.stringify(await res.json())).toContain('built-in skill');
 	});
 });
+
+describe('connector-recipes virtual skill: per-project read-only view', () => {
+	it('GET /projects/:projectId/skills surfaces the built-in skill as a global read-only entry', async () => {
+		const res = await app.request(`/api/projects/${projectId}/skills`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		const rows = (await res.json()).data as Array<Record<string, unknown>>;
+		const virtual = rows.find((r) => r.id === 'connector-recipes');
+		expect(virtual).toBeDefined();
+		expect(virtual?.readonly).toBe(true);
+		// Global scope (project_id null) so it renders under "Global (all projects)".
+		expect(virtual?.project_id).toBeNull();
+		// Stored rows are annotated readonly:false so the UI can tell them apart.
+		expect(rows.every((r) => typeof r.readonly === 'boolean')).toBe(true);
+	});
+
+	it('GET /projects/:projectId/skills/connector-recipes returns generated content', async () => {
+		const res = await app.request(`/api/projects/${projectId}/skills/connector-recipes`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		const skill = (await res.json()).data as Record<string, unknown>;
+		expect(skill.readonly).toBe(true);
+		expect(String(skill.content)).toContain('## Service recipes');
+	});
+});

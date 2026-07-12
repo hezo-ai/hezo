@@ -1,14 +1,14 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
-import { BookOpen, ExternalLink, Pencil, Plus, Trash2 } from 'lucide-react';
+import { BookOpen, ExternalLink, Eye, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { MarkdownEditor } from '../../../components/markdown-editor';
 import { RevisionsPanel } from '../../../components/revisions-panel';
+import { SkillViewDialog } from '../../../components/skill-view-dialog';
 import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
 import { InPlaceForm } from '../../../components/ui/in-place-form';
 import { Input } from '../../../components/ui/input';
 import {
-	type ProjectSkillListItem,
 	useDeleteProjectSkill,
 	useProjectSkill,
 	useProjectSkillRevisions,
@@ -28,6 +28,8 @@ function ProjectSkillsPage() {
 	const deleteSkill = useDeleteProjectSkill(projectId);
 
 	const [editingId, setEditingId] = useState<string | null>(null);
+	// Independently of editing, `viewingId` drives the read-only view modal.
+	const [viewingId, setViewingId] = useState<string | null>(null);
 	const [name, setName] = useState('');
 	const [description, setDescription] = useState('');
 	const [content, setContent] = useState('');
@@ -35,6 +37,7 @@ function ProjectSkillsPage() {
 	const [error, setError] = useState<string | null>(null);
 
 	const { data: editingSkill } = useProjectSkill(projectId, editingId);
+	const { data: viewingSkill } = useProjectSkill(projectId, viewingId);
 	const { data: revisions } = useProjectSkillRevisions(projectId, editingId);
 	const restoreSkill = useRestoreProjectSkill(projectId, editingId);
 	useEffect(() => {
@@ -188,6 +191,14 @@ function ProjectSkillsPage() {
 								<span className="flex items-center gap-2 shrink-0">
 									<button
 										type="button"
+										onClick={() => setViewingId(s.id)}
+										aria-label={`View ${s.name}`}
+										className="text-text-3 hover:text-text-1"
+									>
+										<Eye className="w-3.5 h-3.5" />
+									</button>
+									<button
+										type="button"
 										onClick={() => {
 											setEditingId(s.id);
 											setError(null);
@@ -236,13 +247,23 @@ function ProjectSkillsPage() {
 										<span className="text-xs text-text-3 truncate">{s.description}</span>
 									)}
 								</div>
-								<Link
-									to="/settings/skills"
-									className="flex items-center gap-1 text-xs text-text-3 hover:text-text-1 shrink-0"
-									data-testid="global-skill-manage-link"
-								>
-									Manage <ExternalLink className="w-3 h-3" />
-								</Link>
+								<span className="flex items-center gap-3 shrink-0">
+									<button
+										type="button"
+										onClick={() => setViewingId(s.id)}
+										aria-label={`View ${s.name}`}
+										className="text-text-3 hover:text-text-1"
+									>
+										<Eye className="w-3.5 h-3.5" />
+									</button>
+									<Link
+										to="/settings/skills"
+										className="flex items-center gap-1 text-xs text-text-3 hover:text-text-1"
+										data-testid="global-skill-manage-link"
+									>
+										Manage <ExternalLink className="w-3 h-3" />
+									</Link>
+								</span>
 							</div>
 						))}
 					</div>
@@ -255,6 +276,13 @@ function ProjectSkillsPage() {
 					No skills available to this project yet.
 				</div>
 			)}
+
+			<SkillViewDialog
+				open={viewingId !== null}
+				onOpenChange={(o) => !o && setViewingId(null)}
+				skill={viewingSkill?.id === viewingId ? viewingSkill : undefined}
+				fallbackName={skills.find((s) => s.id === viewingId)?.name}
+			/>
 		</div>
 	);
 }

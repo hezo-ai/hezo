@@ -15,6 +15,7 @@ export const dialogContentClassName = {
 	md: `${base} sm:max-w-md`,
 	lg: `${base} sm:max-w-lg`,
 	xl: `${base} sm:max-w-xl`,
+	'2xl': `${base} sm:max-w-2xl`,
 } as const;
 
 export type DialogSize = keyof typeof dialogContentClassName;

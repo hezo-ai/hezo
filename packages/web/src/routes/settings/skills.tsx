@@ -1,8 +1,18 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { ChevronDown, ExternalLink, Loader2, Pencil, Plus, Search, Trash2 } from 'lucide-react';
+import {
+	ChevronDown,
+	ExternalLink,
+	Eye,
+	Loader2,
+	Pencil,
+	Plus,
+	Search,
+	Trash2,
+} from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { MarkdownEditor } from '../../components/markdown-editor';
 import { RevisionsPanel } from '../../components/revisions-panel';
+import { SkillViewDialog } from '../../components/skill-view-dialog';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { InPlaceForm } from '../../components/ui/in-place-form';
@@ -46,6 +56,8 @@ function InstanceSkillsPage() {
 	const [showSearch, setShowSearch] = useState(false);
 	// `editingId` null = the form (when open) creates; otherwise it edits.
 	const [editingId, setEditingId] = useState<string | null>(null);
+	// Independently of editing, `viewingId` drives the read-only view modal.
+	const [viewingId, setViewingId] = useState<string | null>(null);
 	const [createScope, setCreateScope] = useState<string>(ALL_PROJECTS);
 	const [name, setName] = useState('');
 	const [description, setDescription] = useState('');
@@ -70,6 +82,7 @@ function InstanceSkillsPage() {
 	// Editing needs the full row (content is omitted from the list endpoint), so
 	// fetch it by id and populate the form once it arrives.
 	const { data: editingSkill } = useInstanceSkill(editingId);
+	const { data: viewingSkill } = useInstanceSkill(viewingId);
 	const { data: revisions } = useInstanceSkillRevisions(editingId);
 	const restoreSkill = useRestoreInstanceSkill(editingId);
 	useEffect(() => {
@@ -280,6 +293,7 @@ function InstanceSkillsPage() {
 								key={s.id}
 								skill={s}
 								scopeOptions={scopeOptions}
+								onView={() => setViewingId(s.id)}
 								onEdit={() => openEdit(s.id)}
 								onDelete={() => {
 									if (confirm(`Delete skill "${s.name}"?`)) deleteSkill.mutate(s.id);
@@ -291,17 +305,34 @@ function InstanceSkillsPage() {
 			</>
 		);
 
-	return <div className="max-w-[900px]">{content_}</div>;
+	return (
+		<div className="max-w-[900px]">
+			{content_}
+			<SkillViewDialog
+				open={viewingId !== null}
+				onOpenChange={(o) => !o && setViewingId(null)}
+				skill={viewingSkill?.id === viewingId ? viewingSkill : undefined}
+				fallbackName={skills.find((s) => s.id === viewingId)?.name}
+			/>
+		</div>
+	);
 }
 
 interface InstanceSkillRowProps {
 	skill: SkillListItem;
 	scopeOptions: SearchableSelectOption[];
+	onView: () => void;
 	onEdit: () => void;
 	onDelete: () => void;
 }
 
-function InstanceSkillRow({ skill, scopeOptions, onEdit, onDelete }: InstanceSkillRowProps) {
+function InstanceSkillRow({
+	skill,
+	scopeOptions,
+	onView,
+	onEdit,
+	onDelete,
+}: InstanceSkillRowProps) {
 	const updateScope = useUpdateInstanceSkillScope();
 	const [rowError, setRowError] = useState<string | null>(null);
 
@@ -368,6 +399,14 @@ function InstanceSkillRow({ skill, scopeOptions, onEdit, onDelete }: InstanceSki
 			</div>
 			<span className="flex items-center gap-2 shrink-0">
 				{rowError && <span className="text-xs text-danger">{rowError}</span>}
+				<button
+					type="button"
+					onClick={onView}
+					aria-label={`View ${skill.name}`}
+					className="text-text-3 hover:text-text-1"
+				>
+					<Eye className="w-3.5 h-3.5" />
+				</button>
 				{!skill.readonly && (
 					<>
 						<button

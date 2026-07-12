@@ -17,21 +17,20 @@ async function seedSkill(
 
 test('the per-project Skills page shows project skills (editable) and globals (read-only)', async () => {
 	let projectSlug = '';
-	const { findByText, findByTestId, findByRole, findByLabelText, getByText, router, user } =
-		await renderApp({
-			initialPath: '/',
-			seed: async (ctx) => {
-				const ws = await seedWorkspace();
-				const project = await seedProject(ws, { name: 'Skills Proj' });
-				projectSlug = project.slug;
-				await seedSkill(ctx, { name: 'A Global Skill', content: '# global' });
-				await seedSkill(ctx, {
-					name: 'A Project Skill',
-					content: '# project v1',
-					project_id: project.id,
-				});
-			},
-		});
+	const { findByText, findByRole, findByLabelText, getByText, router, user } = await renderApp({
+		initialPath: '/',
+		seed: async (ctx) => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Skills Proj' });
+			projectSlug = project.slug;
+			await seedSkill(ctx, { name: 'A Global Skill', content: '# global' });
+			await seedSkill(ctx, {
+				name: 'A Project Skill',
+				content: '# project v1',
+				project_id: project.id,
+			});
+		},
+	});
 
 	await router.navigate({
 		to: '/projects/$projectId/skills',
@@ -65,4 +64,33 @@ test('the per-project Skills page shows project skills (editable) and globals (r
 	await user.type(content, '# project v2');
 	await user.click(await findByRole('button', { name: 'Save changes' }));
 	await findByText('A Project Skill');
+});
+
+test('the built-in connector-recipes skill shows on the project page as a global, viewable in a modal', async () => {
+	let projectSlug = '';
+	const { findByText, router, user } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Recipes Proj' });
+			projectSlug = project.slug;
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/skills',
+		params: { projectId: projectSlug },
+	});
+
+	// The built-in skill is global, so it renders under "Global (all projects)".
+	const globalRow = (await findByText('Connector Recipes')).closest(
+		'[data-testid="global-skill-row"]',
+	) as HTMLElement;
+	expect(within(globalRow).getByText('Global')).toBeTruthy();
+
+	// Open its read-only viewer and confirm the generated markdown renders.
+	await user.click(within(globalRow).getByLabelText('View Connector Recipes'));
+	const dialog = await within(document.body).findByTestId('skill-view-dialog');
+	const dialogContent = await within(dialog).findByTestId('skill-view-content');
+	expect(dialogContent.querySelector('h2')?.textContent).toContain('Connection patterns');
 });

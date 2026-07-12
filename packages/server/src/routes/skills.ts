@@ -513,10 +513,23 @@ skillsRoutes.get('/projects/:projectId/skills', async (c) => {
 		 ORDER BY s.name`,
 		[projectId],
 	);
-	return ok(c, result.rows);
+	// The built-in `connector-recipes` virtual skill is global (project_id null) —
+	// every project's runs see it — so surface it read-only alongside the stored
+	// rows here too, exactly as the admin /skills list does.
+	const rows: Record<string, unknown>[] = result.rows.map((r) => ({
+		...(r as Record<string, unknown>),
+		readonly: false,
+	}));
+	rows.push(connectorRecipesSkillRow(false));
+	return ok(c, rows);
 });
 
 skillsRoutes.get('/projects/:projectId/skills/:id', async (c) => {
+	// The built-in virtual skill is generated (global, not a DB row); serve it
+	// read-only here so the per-project viewer can render its content.
+	if (c.req.param('id') === CONNECTOR_RECIPES_SLUG) {
+		return ok(c, connectorRecipesSkillRow(true));
+	}
 	const db = c.get('db');
 	const projectId = c.get('projectId') as string;
 	const result = await db.query<SkillRecord>(
