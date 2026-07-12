@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.21.0 - 2026-07-12
+
+### Features
+
+- **agents:** guide agents to author and maintain skills for connected services ([#693](https://github.com/hezo-ai/hezo/pull/693))
+- **connectors:** curate, expand, and consolidate the connector registry ([#691](https://github.com/hezo-ai/hezo/pull/691))
+- **connectors:** generic OAuth credential broker (device flow + host-side refresh) ([#690](https://github.com/hezo-ai/hezo/pull/690))
+- **connectors:** add connector registry and virtual recipes skill ([#689](https://github.com/hezo-ai/hezo/pull/689))
+- **connectors:** add direct-API connector transport ([#688](https://github.com/hezo-ai/hezo/pull/688))
+- **web:** collapsible project side menu ([#686](https://github.com/hezo-ai/hezo/pull/686))
+
+### Refactors
+
+- **connectors:** rename MCP-connection surface to generic connector surface ([#687](https://github.com/hezo-ai/hezo/pull/687))
+
+### Documentation
+
+- reflect the connector architecture beyond MCP ([#694](https://github.com/hezo-ai/hezo/pull/694))
+
+### Other
+
+- fan test-backend and test-integration out to 5 shards ([#692](https://github.com/hezo-ai/hezo/pull/692))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.20.0...0.21.0
+
 ## 0.20.0 - 2026-07-11
 
 ### Features
