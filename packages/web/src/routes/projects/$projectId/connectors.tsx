@@ -379,9 +379,9 @@ function GitHubRow({ projectId, connection }: GitHubRowProps) {
 					providerLabel="GitHub"
 				/>
 			)}
-			<div className="flex items-start justify-between gap-4">
+			<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
 				<div className="flex-1 min-w-0">
-					<div className="flex items-center gap-2">
+					<div className="flex items-center gap-2 flex-wrap">
 						<Github className="size-4 shrink-0" />
 						<h2 className="text-base font-medium truncate">GitHub</h2>
 						<StatusBadge status={status} />
@@ -404,7 +404,7 @@ function GitHubRow({ projectId, connection }: GitHubRowProps) {
 					{error && <p className="text-xs text-danger-soft-fg mt-2">{error}</p>}
 				</div>
 
-				<div className="flex items-center gap-2 shrink-0">
+				<div className="flex flex-wrap items-center gap-2 sm:shrink-0">
 					{connection ? (
 						<Button
 							size="sm"
@@ -558,9 +558,9 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 					connectorLabel={connector.display_name ?? connector.name}
 				/>
 			)}
-			<div className="flex items-start justify-between gap-4">
+			<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
 				<div className="flex-1 min-w-0">
-					<div className="flex items-center gap-2">
+					<div className="flex items-center gap-2 flex-wrap">
 						<h2 className="text-base font-medium truncate">
 							{connector.display_name ?? connector.name}
 						</h2>
@@ -606,7 +606,10 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 					{info && <p className="text-xs text-text-3 mt-2">{info}</p>}
 				</div>
 
-				<div className="flex items-center gap-2 shrink-0">
+				<div
+					className="flex flex-wrap items-center gap-2 sm:shrink-0"
+					data-testid="connector-actions"
+				>
 					{isGlobal ? (
 						// Read-only here: manage global connectors on the global page.
 						<Link
