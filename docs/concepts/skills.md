@@ -48,9 +48,11 @@ each project's manifest focused while still letting broadly-useful know-how reac
   project when it doesn't say.
 - **Built in.** Hezo ships one skill of its own: **`connector-recipes`**, a curated
   catalog of connection recipes agents consult before
-  [connecting an external service](/docs/mcp/connecting-mcp-servers). It appears in
-  **Settings → Skills** with a **Built-in** badge, is read-only — it can't be edited or
-  deleted — and updates automatically as Hezo does.
+  [connecting an external service](/docs/mcp/connecting-mcp-servers). It appears with a
+  **Built-in** badge on **Settings → Skills** and — because it's global — on every
+  project's **Skills** page too, is read-only — it can't be edited or deleted — and
+  updates automatically as Hezo does. Open it (the **view** button on its row) to read the
+  full recipe catalog.
 
 Agents contribute proactively for connected services: once an agent gets a
 [connector](/docs/mcp/connecting-mcp-servers) to a third-party service working, it records
@@ -69,7 +71,9 @@ and each row has a scope drop-down so you can move a skill between global and an
 works just like the [Connectors](/docs/mcp/connecting-mcp-servers) page). Each project also has its
 own **Skills** page, under **Connectors** in the project's settings menu, showing that
 project's skills plus the globals; you can edit or remove the project's own skills there,
-while global ones are shown for reference and stay managed on the global page.
+while global ones are shown for reference and stay managed on the global page. Every row —
+on either page — has a **view** button that opens the skill and renders its full markdown so
+you can read exactly what your agents see, including read-only built-ins.
 
 Skills are part of what the [Coach](/docs/concepts/coach-and-self-improving-teams) can
 write to: when a retrospective surfaces a reusable procedure, it may capture it as a skill

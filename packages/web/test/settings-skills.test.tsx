@@ -18,15 +18,32 @@ test('a created skill is editable and deletable (no built-in concept)', async ()
 	expect(r.queryByText('built-in')).toBeNull();
 });
 
-test('the built-in connector-recipes skill is read-only (Built-in badge, no edit/delete)', async () => {
+test('the built-in connector-recipes skill is read-only (Built-in badge, no edit/delete) but viewable', async () => {
 	const r = await renderApp({ initialPath: '/settings/skills' });
 
 	// The generated virtual skill is always present in the instance list.
 	await r.findByText('Connector Recipes');
 	await r.findByText('Built-in');
-	// It exposes no edit/delete affordances — the server also rejects mutations.
+	// It exposes no edit/delete affordances — the server also rejects mutations…
 	expect(r.queryByLabelText('Edit Connector Recipes')).toBeNull();
 	expect(r.queryByLabelText('Delete Connector Recipes')).toBeNull();
+	// …but it can still be viewed via the read-only view modal.
+	expect(r.queryByLabelText('View Connector Recipes')).not.toBeNull();
+});
+
+test('the view button opens a modal rendering the skill content as markdown', async () => {
+	const r = await renderApp({ initialPath: '/settings/skills' });
+
+	// The built-in skill is always present; open its viewer.
+	await r.findByLabelText('View Connector Recipes');
+	await r.user.click(r.getByLabelText('View Connector Recipes'));
+
+	// The dialog renders into a body portal and shows the generated content.
+	const dialog = await within(document.body).findByTestId('skill-view-dialog');
+	expect(within(dialog).getByText('Connector Recipes')).toBeTruthy();
+	const content = await within(dialog).findByTestId('skill-view-content');
+	// The connector-recipes body has a "Connection patterns" markdown heading.
+	expect(content.querySelector('h2')?.textContent).toContain('Connection patterns');
 });
 
 test('the skill content editor previews markdown', async () => {
