@@ -78,14 +78,15 @@ jobs:
     permissions:
       contents: read
       packages: read
-    # Sharded across runners: each shard runs ~a third of the server files at the
+    # Sharded across runners: each shard runs ~a fifth of the server files at the
     # same per-runner fork concurrency, so the per-fork PGlite+Hono contention
     # ceiling (the reason we can't just raise --concurrency) is unchanged.
+    # 5 shards keeps every shard comfortably under 5 minutes wall time.
     # fail-fast off so one shard failing still lets the others report.
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4, 5]
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
@@ -116,7 +117,7 @@ jobs:
       # gated to shard 1 by scripts/test.ts), which exercises runtime-sensitive
       # code (e.g. egress TLS) on the production Bun runtime. --coverage writes
       # lcov to packages/server/coverage (vitest) and coverage-bun (Bun tier).
-      - run: bun run test --package server --shard ${{ matrix.shard }}/3 --coverage
+      - run: bun run test --package server --shard ${{ matrix.shard }}/5 --coverage
       # Coveralls parallel build: each shard/tier uploads its own lcov under a
       # unique flag-name with parallel:true; the coverage-finished job below
       # closes the build so Coveralls merges them into one total. if:always() so
@@ -149,11 +150,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # Sharded across runners; each shard stays at --concurrency 4. The 4-core
-    # contention budget below is per-runner, so adding runners is safe.
+    # contention budget below is per-runner, so adding runners is safe. 5 shards
+    # keeps every shard comfortably under 5 minutes wall time.
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4, 5]
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
@@ -167,7 +169,7 @@ jobs:
       - run: bun install --frozen-lockfile
       # ubuntu-latest is 4 cores; 10 forks each owning a PGlite + Hono boot
       # produces enough contention that random `findBy*` queries time out.
-      - run: bun run test --package web --concurrency 4 --shard ${{ matrix.shard }}/3 --coverage
+      - run: bun run test --package web --concurrency 4 --shard ${{ matrix.shard }}/5 --coverage
       # Part of the same Coveralls parallel build; closed by coverage-finished.
       - name: Upload web coverage
         if: always()
@@ -387,5 +389,5 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           parallel-finished: true
-          carryforward: "backend-vitest-1,backend-vitest-2,backend-vitest-3,backend-bun,web-1,web-2,web-3,shared"
+          carryforward: "backend-vitest-1,backend-vitest-2,backend-vitest-3,backend-vitest-4,backend-vitest-5,backend-bun,web-1,web-2,web-3,web-4,web-5,shared"
           fail-on-error: false
