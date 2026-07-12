@@ -19,7 +19,7 @@ function DocPreviewPage() {
 	// This bare route renders outside the app shell, so it carries its own
 	// scroll-to-bottom pill wired to its own full-viewport scroller.
 	const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
-	const { atBottom, scrollToBottom } = useScrollToBottom(scroller);
+	const { visible: bottomVisible, scrollToBottom } = useScrollToBottom(scroller);
 
 	if (isLoading) {
 		return <CenteredMessage>Loading…</CenteredMessage>;
@@ -30,7 +30,11 @@ function DocPreviewPage() {
 	}
 
 	return (
-		<div ref={setScroller} className="h-screen overflow-auto bg-surface">
+		<div
+			ref={setScroller}
+			data-testid="preview-scroller"
+			className="h-screen overflow-auto bg-surface"
+		>
 			{/* Full-width sticky bar spanning the content column: filename left,
 			    actions right. `border-b` + translucent blur lets the doc scroll
 			    cleanly underneath. */}
@@ -97,7 +101,7 @@ function DocPreviewPage() {
 			</div>
 			<ScrollToBottomButton
 				onClick={scrollToBottom}
-				atBottom={atBottom}
+				visible={bottomVisible}
 				testId="scroll-to-bottom"
 				positionClassName="fixed bottom-4 left-1/2 -translate-x-1/2 z-30"
 			/>

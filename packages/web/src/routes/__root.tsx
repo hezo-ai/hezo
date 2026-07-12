@@ -174,8 +174,8 @@ function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
 		mainRef.current = el;
 		setMainEl(el);
 	}, []);
-	const { atBottom, scrollToBottom } = useScrollToBottom(mainEl);
-	const { atTop, scrollToTop } = useScrollToTop(mainEl);
+	const { visible: bottomVisible, scrollToBottom } = useScrollToBottom(mainEl);
+	const { visible: topVisible, scrollToTop } = useScrollToTop(mainEl);
 	const pathname = useLocation({ select: (l) => l.pathname });
 	const hash = useLocation({ select: (l) => l.hash });
 	const lastPathnameRef = useRef(pathname);
@@ -272,7 +272,7 @@ function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
 						{/* Top-centre of the content area, just below the app header. */}
 						<ScrollToTopButton
 							onClick={scrollToTop}
-							atTop={atTop}
+							visible={topVisible}
 							testId="scroll-to-top"
 							positionClassName="absolute top-4 left-1/2 -translate-x-1/2 z-30"
 						/>
@@ -280,7 +280,7 @@ function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
 						    launcher (bottom-right) at every breakpoint. */}
 						<ScrollToBottomButton
 							onClick={scrollToBottom}
-							atBottom={atBottom}
+							visible={bottomVisible}
 							testId="scroll-to-bottom"
 							positionClassName="absolute bottom-4 left-1/2 -translate-x-1/2 z-30"
 						/>
