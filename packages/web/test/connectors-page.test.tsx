@@ -52,6 +52,31 @@ async function seedLocalConnector(
 	return (await res.json()).data;
 }
 
+// Seed a REST-API connector (kind `api`) via the project-scoped route — a
+// direct REST API with no MCP server, the transport the generic OAuth broker
+// attaches its managed token to.
+async function seedApiConnector(
+	ws: SeededWorkspace,
+	input: { name: string; baseUrl: string; hosts: string[] },
+): Promise<{ id: string; name: string }> {
+	const { apiBase } = getTestContext();
+	const res = await apiBase(`/api/projects/${ws.internalSlug}/connectors`, {
+		method: 'POST',
+		headers: ws.headers,
+		body: JSON.stringify({
+			name: input.name,
+			kind: 'api',
+			config: {
+				base_url: input.baseUrl,
+				allowed_hosts: input.hosts,
+				auth: { placement: 'header', name: 'Authorization', scheme: 'Bearer ' },
+			},
+		}),
+	});
+	if (res.status !== 201) throw new Error(`seedApiConnector failed: ${res.status}`);
+	return (await res.json()).data;
+}
+
 // Seed an "active" GitHub OAuth connection straight into the DB (the same shape
 // finalizeConnectorConnection produces) so the GitHub row renders its connected
 // state without driving the full device flow.
@@ -226,6 +251,44 @@ test('the Add form creates a REST-API connector (base_url shown, no OAuth Connec
 	if (!row) throw new Error('api connector row not found');
 	expect(within(row).queryByTestId('connector-connect')).toBeNull();
 	within(row).getByTestId('connector-api-key-toggle');
+});
+
+test('an api connector offers Connect OAuth, opening the device-flow broker form', async () => {
+	let slug = '';
+	const { findByText, getByTestId, findByTestId, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			slug = ws.internalSlug;
+			await seedApiConnector(ws, {
+				name: 'youtube',
+				baseUrl: 'https://www.googleapis.com',
+				hosts: ['*.googleapis.com'],
+			});
+		},
+	});
+	await router.navigate({ to: CONNECTORS_ROUTE, params: { projectId: slug } });
+
+	await findByText('youtube');
+	const row = within(getByTestId('connectors-list'))
+		.getAllByTestId('connector-row')
+		.find((li) => li.getAttribute('data-connector-id'));
+	if (!row) throw new Error('api connector row not found');
+
+	// The api row offers the OAuth-broker Connect (distinct from the saas
+	// `connector-connect`) alongside API-key attach.
+	const broker = within(row).getByTestId('connector-oauth-broker');
+	await user.click(broker);
+
+	// Step 1 of the broker dialog: the BYO form with a provider select (populated
+	// from GET /api/connectors/oauth-providers) and a client-id field.
+	await findByTestId('connector-oauth-broker-dialog');
+	await findByTestId('broker-form');
+	const providerSelect = await findByTestId('broker-provider-select');
+	// The bundled google-youtube descriptor is an option.
+	await waitFor(() => expect(within(providerSelect).queryByText('google-youtube')).toBeTruthy());
+	await findByTestId('broker-client-id');
+	await findByTestId('broker-client-secret');
 });
 
 test('a global connector is read-only on the project page (badge + manage link, no actions)', async () => {

@@ -1,5 +1,10 @@
 import { randomBytes } from 'node:crypto';
-import { type ConnectorCapability, getConnectorCapability, wsRoom } from '@hezo/shared';
+import {
+	type ConnectorCapability,
+	ConnectorTransport,
+	getConnectorCapability,
+	wsRoom,
+} from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { requestOrigin } from '../lib/request-origin';
@@ -22,6 +27,7 @@ import {
 	registerAuthKey,
 	registerSigningKey,
 } from '../services/github';
+import { resolveBrokerDescriptor } from '../services/oauth/broker';
 import {
 	createConnection,
 	deleteConnection,
@@ -72,6 +78,36 @@ function pruneDeviceFlows(): void {
 	const now = Date.now();
 	for (const [id, entry] of deviceFlows) {
 		if (entry.expiresAt < now) deviceFlows.delete(id);
+	}
+}
+
+/**
+ * In-flight generic-OAuth-broker device flows (BYO client on an `api` connector).
+ * Distinct from {@link deviceFlows}: a broker flow carries the client id/secret,
+ * token URL, scopes and allowed_hosts the descriptor resolved to, none of which
+ * live in the capability registry. The client secret stays host-side here and is
+ * only ever persisted host-only (empty allowed_hosts) on success.
+ */
+interface BrokerDeviceFlowEntry {
+	deviceCode: string;
+	teamId: string;
+	projectId: string;
+	connectorId: string;
+	clientId: string;
+	clientSecret?: string;
+	tokenUrl: string;
+	scopes: string[];
+	allowedHosts: string[];
+	provider: string;
+	expiresAt: number;
+}
+
+const brokerDeviceFlows = new Map<string, BrokerDeviceFlowEntry>();
+
+function pruneBrokerDeviceFlows(): void {
+	const now = Date.now();
+	for (const [id, entry] of brokerDeviceFlows) {
+		if (entry.expiresAt < now) brokerDeviceFlows.delete(id);
 	}
 }
 
@@ -778,6 +814,190 @@ oauthRoutes.post('/projects/:projectId/connectors/:connectorId/device/poll', asy
 	return ok(c, {
 		status: 'success',
 		connection: { id: finalized.connectionId, provider_account_label: finalized.label },
+	});
+});
+
+/**
+ * Generic OAuth device-flow broker: connect an OAuth-backed provider (Google/
+ * YouTube first, but provider-agnostic) to an `api` connector via RFC 8628 — no
+ * browser callback, so it works on any instance URL. Unlike the capability-driven
+ * `/device/start`, the operator supplies the client id (+ optional secret) and
+ * either picks a bundled provider descriptor or supplies the endpoints directly.
+ * The durable refresh token + host-only client secret stay host-side; only the
+ * short-lived access token is surfaced to a run (via the api connector's
+ * `api_auth` placeholder). Refresh is kept fresh host-side by the generic refresh
+ * fn registered at startup.
+ */
+oauthRoutes.post('/projects/:projectId/connectors/:connectorId/oauth-device/start', async (c) => {
+	const teamId = c.get('teamId') as string;
+	const connectorId = c.req.param('connectorId');
+	const db = c.get('db');
+
+	const connector = await getConnector(db, connectorId);
+	if (!connector) return err(c, 'NOT_FOUND', 'connector not found', 404);
+	if (connector.kind !== ConnectorTransport.Api)
+		return err(c, 'INVALID_REQUEST', 'OAuth device broker applies to api connectors', 400);
+
+	const body = (await c.req.json().catch(() => ({}))) as {
+		provider_id?: string;
+		client_id?: string;
+		client_secret?: string;
+		device_code_url?: string;
+		token_url?: string;
+		scopes?: string[];
+		allowed_hosts?: string[];
+	};
+
+	const resolved = resolveBrokerDescriptor(body);
+	if (!resolved.ok) return err(c, 'INVALID_REQUEST', resolved.error, 400);
+	const descriptor = resolved.descriptor;
+
+	pruneBrokerDeviceFlows();
+
+	let started: Awaited<ReturnType<typeof startDeviceFlow>>;
+	try {
+		started = await startDeviceFlow({
+			deviceCodeUrl: descriptor.deviceCodeUrl,
+			clientId: descriptor.clientId,
+			scopes: descriptor.scopes,
+		});
+	} catch (e) {
+		log.warn('broker device-flow start failed', {
+			connector: connectorId,
+			error: (e as Error).message,
+		});
+		return err(c, 'DEVICE_START_FAILED', (e as Error).message, 503);
+	}
+
+	const flowId = randomBytes(16).toString('hex');
+	brokerDeviceFlows.set(flowId, {
+		deviceCode: started.deviceCode,
+		teamId,
+		projectId: c.get('projectId') as string,
+		connectorId,
+		clientId: descriptor.clientId,
+		clientSecret: descriptor.clientSecret,
+		tokenUrl: descriptor.tokenUrl,
+		scopes: descriptor.scopes,
+		allowedHosts: descriptor.allowedHosts,
+		provider: descriptor.provider,
+		expiresAt: Date.now() + DEVICE_FLOW_TTL_MS,
+	});
+
+	return ok(c, {
+		flow_id: flowId,
+		user_code: started.userCode,
+		verification_uri: started.verificationUri,
+		expires_in: started.expiresIn,
+		interval: started.interval,
+	});
+});
+
+/**
+ * Poll a broker device flow. Returns 202 `pending` until the user authorizes; on
+ * success stores the access + refresh tokens (client secret host-only) in an
+ * `oauth_connections` row, links + activates the api connector, and wakes any
+ * agent waiting on it.
+ */
+oauthRoutes.post('/projects/:projectId/connectors/:connectorId/oauth-device/poll', async (c) => {
+	const teamId = c.get('teamId') as string;
+	const connectorId = c.req.param('connectorId');
+	const db = c.get('db');
+	const masterKeyManager = c.get('masterKeyManager');
+
+	const body = (await c.req.json().catch(() => ({}))) as { flow_id?: string };
+	const flowId = body.flow_id;
+	if (!flowId) return err(c, 'INVALID_REQUEST', 'flow_id is required', 400);
+
+	const entry = brokerDeviceFlows.get(flowId);
+	if (!entry) return err(c, 'NOT_FOUND', 'unknown or expired flow_id', 404);
+	if (entry.teamId !== teamId || entry.connectorId !== connectorId)
+		return err(c, 'FORBIDDEN', 'flow does not belong to this connector', 403);
+
+	const connector = await getConnector(db, connectorId);
+	if (!connector) return err(c, 'NOT_FOUND', 'connector not found', 404);
+
+	const result = await pollDeviceFlow({
+		tokenUrl: entry.tokenUrl,
+		clientId: entry.clientId,
+		clientSecret: entry.clientSecret,
+		deviceCode: entry.deviceCode,
+	});
+	if (result.status === 'pending') {
+		return c.json({ data: { status: 'pending', retry_after: result.retryAfter } }, 202);
+	}
+	if (result.status === 'failed') {
+		brokerDeviceFlows.delete(flowId);
+		return err(c, 'DEVICE_FAILED', result.error, 400);
+	}
+
+	brokerDeviceFlows.delete(flowId);
+
+	const scopes = result.scope ? result.scope.split(/[,\s]+/).filter(Boolean) : entry.scopes;
+	// Prefer the api connector's own allowed_hosts (that IS where the agent sends
+	// requests), so the surfaced api_auth.allowed_hosts and the access secret's
+	// allowed_hosts stay identical; fall back to the descriptor's hosts.
+	const cfgHosts = Array.isArray((connector.config as { allowed_hosts?: unknown }).allowed_hosts)
+		? ((connector.config as { allowed_hosts?: unknown[] }).allowed_hosts ?? []).filter(
+				(h): h is string => typeof h === 'string' && h.trim().length > 0,
+			)
+		: [];
+	const allowedHosts = cfgHosts.length > 0 ? cfgHosts : entry.allowedHosts;
+
+	let conn: Awaited<ReturnType<typeof createConnection>>;
+	try {
+		conn = await createConnection(
+			{ db, masterKeyManager },
+			{
+				provider: entry.provider,
+				providerAccountId: `${entry.provider}:${connector.name}`,
+				providerAccountLabel: connector.display_name ?? connector.name,
+				accessToken: result.accessToken,
+				refreshToken: result.refreshToken,
+				scopes,
+				expiresAt: result.expiresAt ?? null,
+				allowedHosts,
+				projectId: entry.projectId,
+				clientSecret: entry.clientSecret,
+				metadata: {
+					connector_id: connector.id,
+					token_url: entry.tokenUrl,
+					client_id: entry.clientId,
+				},
+			},
+		);
+	} catch (e) {
+		log.warn('broker device finalize failed', {
+			connector: connectorId,
+			error: (e as Error).message,
+		});
+		return err(c, 'DEVICE_FINALIZE_FAILED', (e as Error).message, 503);
+	}
+
+	await db.query(
+		`UPDATE mcp_connections
+		 SET oauth_connection_id = $1, activated_at = COALESCE(activated_at, now()),
+		     revoked_at = NULL, auth_error = NULL, updated_at = now()
+		 WHERE id = $2`,
+		[conn.id, connector.id],
+	);
+
+	broadcastChange(c, wsRoom.team(teamId), 'mcp_connections', 'UPDATE', {
+		id: connector.id,
+		oauth_connection_id: conn.id,
+		status: 'active',
+	});
+	broadcastChange(c, wsRoom.team(teamId), 'oauth_connections', 'INSERT', {
+		id: conn.id,
+		provider: conn.provider,
+		provider_account_label: conn.providerAccountLabel,
+	});
+
+	await fireCredentialProvidedWakeup(db, connector);
+
+	return ok(c, {
+		status: 'success',
+		connection: { id: conn.id, provider_account_label: conn.providerAccountLabel },
 	});
 });
 

@@ -52,6 +52,29 @@ registered with the provider is tied to the address it was created on, and a sta
 registration is rejected with a "redirect_uri does not match" error. Re-adding the
 connector registers a fresh client on the current address.
 
+## Connecting an OAuth API with the device flow (no callback)
+
+Some providers have a plain HTTP API but no hosted MCP server — Google/YouTube, for
+example. You can connect one to a **REST API connector** (kind `api`) and authorize it
+with the **OAuth device flow**, which needs no browser callback at all. That means it
+works on any address — `localhost`, a private hostname, plain HTTP — with none of the
+HTTPS-callback requirements above.
+
+Add the API connector (name, base URL, allowed hosts), then press **Connect OAuth** on
+its row. Pick a bundled provider (Google/YouTube is built in) or choose **Custom…** and
+paste the device-code and token endpoints yourself, then enter the OAuth **client ID**
+(and **client secret**, if the provider's device-flow client needs one). Hezo shows a
+short code and a verification link: open the link on any device, enter the code, and
+approve. That's it — no redirect back to your instance.
+
+Hezo keeps the durable pieces **host-side, never inside a run**: the refresh token and the
+client secret are stored encrypted in your vault and are never handed to an agent or sent
+anywhere except the provider's own token endpoint. Only the short-lived **access token** is
+exposed to a run, as a [placeholder](/docs/security/secret-protection) the agent puts in an
+`Authorization: Bearer` header; the [egress proxy](/docs/security/secret-protection)
+substitutes the real token and refreshes it automatically before it expires, so the
+connection stays live without you re-authorizing.
+
 ## Local (stdio) servers
 
 Hezo also supports **local, process-based** MCP servers that run inside the project

@@ -4,6 +4,7 @@ import { Check, ExternalLink, Github, KeyRound, Plug, Plus, Trash2, X } from 'lu
 import { useCallback, useState } from 'react';
 import { ConnectorApiKeyForm } from '../../../components/connector-api-key-form';
 import { ConnectorDeviceFlowDialog } from '../../../components/connector-device-flow-dialog';
+import { ConnectorOAuthBrokerDialog } from '../../../components/connector-oauth-broker-dialog';
 import { RelatedItemsList } from '../../../components/related-items-list';
 import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
@@ -465,6 +466,7 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 	const [error, setError] = useState<string | null>(null);
 	const [info, setInfo] = useState<string | null>(null);
 	const [deviceOpen, setDeviceOpen] = useState(false);
+	const [brokerOpen, setBrokerOpen] = useState(false);
 	const [showApiKey, setShowApiKey] = useState(false);
 	const [confirmOpen, setConfirmOpen] = useState(false);
 	const credentials = connector.credentials ?? [];
@@ -547,6 +549,15 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 					providerLabel={connector.display_name ?? capability?.displayName ?? connector.name}
 				/>
 			)}
+			{isApi && brokerOpen && (
+				<ConnectorOAuthBrokerDialog
+					open={brokerOpen}
+					onOpenChange={setBrokerOpen}
+					projectId={projectId}
+					connectorId={connector.id}
+					connectorLabel={connector.display_name ?? connector.name}
+				/>
+			)}
 			<div className="flex items-start justify-between gap-4">
 				<div className="flex-1 min-w-0">
 					<div className="flex items-center gap-2">
@@ -626,6 +637,16 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 									data-testid="connector-connect"
 								>
 									{authStart.isPending ? 'Starting…' : status === 'failed' ? 'Retry' : 'Connect'}
+								</Button>
+							)}
+							{isApi && (
+								<Button
+									size="sm"
+									onClick={() => setBrokerOpen(true)}
+									data-testid="connector-oauth-broker"
+								>
+									<Plug className="size-3.5 mr-1" />
+									Connect OAuth
 								</Button>
 							)}
 							<Button

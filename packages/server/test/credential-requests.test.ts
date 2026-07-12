@@ -569,4 +569,61 @@ describe('list_connectors rest_auth', () => {
 		// The raw token value is never returned anywhere in the payload.
 		expect(JSON.stringify(rows)).not.toContain('gho_realsecret');
 	});
+
+	it('surfaces a broker-managed OAuth token via api_auth for an OAuth-backed api connector', async () => {
+		// The generic OAuth broker links the fresh access token to an `api`
+		// connector; list_connectors must surface its placeholder via api_auth even
+		// though api rows report oauth_status="none".
+		const conn = await createConnection(
+			{ db, masterKeyManager },
+			{
+				provider: 'google-youtube',
+				providerAccountId: 'yt-acct',
+				providerAccountLabel: 'YouTube',
+				accessToken: 'ya29.brokersecret',
+				refreshToken: '1//refresh',
+				scopes: ['https://www.googleapis.com/auth/youtube'],
+				expiresAt: new Date(Date.now() + 3_600_000),
+				allowedHosts: ['*.googleapis.com'],
+				clientSecret: 'GOCSPX-secret',
+				metadata: { token_url: 'https://oauth2.googleapis.com/token', client_id: 'gcid' },
+			},
+		);
+		await db.query(
+			`INSERT INTO mcp_connections (name, kind, config, oauth_connection_id, activated_at, install_status)
+			 VALUES ('youtube', 'api', $1::jsonb, $2, now(), 'installed')`,
+			[
+				JSON.stringify({
+					base_url: 'https://www.googleapis.com',
+					allowed_hosts: ['*.googleapis.com'],
+					auth: { placement: 'header', name: 'Authorization', scheme: 'Bearer ' },
+					docs_url: 'https://developers.google.com/youtube/v3',
+				}),
+				conn.id,
+			],
+		);
+
+		const rows = (await callTool('list_connectors', { project: projectId })) as Array<{
+			name: string;
+			oauth_status: string;
+			api_auth: {
+				base_url: string | null;
+				placeholder: string | null;
+				allowed_hosts: string[];
+				placement: string | null;
+				name: string | null;
+			} | null;
+		}>;
+		const yt = rows.find((row) => row.name === 'youtube');
+		// api rows report oauth_status="none" (that field is saas-only) …
+		expect(yt?.oauth_status).toBe('none');
+		// … but the broker-managed OAuth access token surfaces via api_auth.
+		expect(yt?.api_auth?.placeholder).toBe(`__HEZO_SECRET_${conn.accessTokenSecretName}__`);
+		expect(yt?.api_auth?.base_url).toBe('https://www.googleapis.com');
+		expect(yt?.api_auth?.placement).toBe('header');
+		expect(yt?.api_auth?.name).toBe('Authorization');
+		// Neither the access token nor the host-only client secret ever appears.
+		expect(JSON.stringify(rows)).not.toContain('ya29.brokersecret');
+		expect(JSON.stringify(rows)).not.toContain('GOCSPX-secret');
+	});
 });

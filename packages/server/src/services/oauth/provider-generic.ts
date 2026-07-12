@@ -156,6 +156,71 @@ export async function exchangeCode(
 	};
 }
 
+export interface RefreshInput {
+	tokenUrl: string;
+	clientId: string;
+	clientSecret?: string;
+	refreshToken: string;
+	additionalParams?: Record<string, string>;
+}
+
+/**
+ * Run the OAuth 2.0 `refresh_token` grant against a provider's token endpoint,
+ * mirroring {@link exchangeCode}'s JSON-or-urlencoded parsing and error
+ * handling. Many providers (Google) do NOT return a new `refresh_token` on
+ * refresh, so `TokenResponse.refreshToken` may be null — the caller keeps the
+ * existing refresh token in that case.
+ */
+export async function refreshAccessToken(
+	input: RefreshInput,
+	fetchFn: FetchFn = globalThis.fetch,
+): Promise<TokenResponse> {
+	const params = new URLSearchParams({
+		grant_type: 'refresh_token',
+		client_id: input.clientId,
+		refresh_token: input.refreshToken,
+	});
+	if (input.clientSecret) params.set('client_secret', input.clientSecret);
+	if (input.additionalParams) {
+		for (const [k, v] of Object.entries(input.additionalParams)) {
+			params.set(k, v);
+		}
+	}
+
+	const res = await fetchFn(input.tokenUrl, {
+		method: 'POST',
+		headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
+		body: params,
+	});
+	const text = await res.text();
+	let raw: Record<string, unknown>;
+	try {
+		raw = JSON.parse(text) as Record<string, unknown>;
+	} catch {
+		raw = parseUrlEncoded(text);
+	}
+	if (!res.ok) {
+		const errorCode = typeof raw.error === 'string' ? raw.error : `${res.status}`;
+		const description = typeof raw.error_description === 'string' ? raw.error_description : '';
+		throw new Error(`token endpoint error: ${errorCode}${description ? ` — ${description}` : ''}`);
+	}
+	const accessToken = typeof raw.access_token === 'string' ? raw.access_token : null;
+	if (!accessToken) {
+		log.warn('refresh response missing access_token', { keys: Object.keys(raw) });
+		throw new Error('token endpoint response missing access_token');
+	}
+	const expiresIn = typeof raw.expires_in === 'number' ? raw.expires_in : null;
+	const expiresAt = expiresIn ? new Date(Date.now() + expiresIn * 1000) : null;
+	return {
+		accessToken,
+		refreshToken: typeof raw.refresh_token === 'string' ? raw.refresh_token : null,
+		expiresAt,
+		scope: typeof raw.scope === 'string' ? raw.scope : undefined,
+		tokenType: typeof raw.token_type === 'string' ? raw.token_type : undefined,
+		raw,
+	};
+}
+
 function parseUrlEncoded(text: string): Record<string, unknown> {
 	const out: Record<string, unknown> = {};
 	const sp = new URLSearchParams(text);
