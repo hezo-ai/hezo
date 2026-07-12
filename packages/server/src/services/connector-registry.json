@@ -475,7 +475,18 @@
 			"notes": "Hosted MCP (mcp-hosted): a Typefully API key as Authorization: Bearer (static-credential, not OAuth). Schedules and manages drafts across X, LinkedIn, Threads, Bluesky, and Mastodon."
 		},
 		{
-			"service": "Google APIs (YouTube, Gmail, Calendar, Drive, Sheets)",
+			"service": "YouTube Data API (read-only, public data)",
+			"category": "google",
+			"transport": "api",
+			"endpoint": "https://www.googleapis.com/youtube/v3",
+			"credentials": [
+				{ "name": "YOUTUBE_API_KEY", "kind": "api_key", "allowed_hosts": ["*.googleapis.com"] }
+			],
+			"docs_url": "https://developers.google.com/youtube/v3/getting-started",
+			"notes": "PREFER THIS for reading public YouTube data — search, video/channel/playlist metadata, public comments and statistics — which needs only an API key, NOT OAuth. Register a `kind:'api'` connector (base_url https://www.googleapis.com/youtube/v3, allowed_hosts *.googleapis.com) with auth placement=query, name=key; the human pastes an API key and you send it as the `?key=__HEZO_SECRET_YOUTUBE_API_KEY__` query parameter. Setup is one short pass with no OAuth consent screen: create/pick a Google Cloud project, enable the YouTube Data API v3, create an API key. Escalate to the google-youtube OAuth device flow (see the OAuth providers block) ONLY for user-scoped actions: uploading, editing a channel/playlists, private data, your own analytics, or posting comments. Caveats: caption/transcript download is owner-scoped (OAuth only; captions.list metadata is fine with a key), and search.list costs 100 units against the project's daily quota."
+		},
+		{
+			"service": "Google APIs (YouTube writes, Gmail, Calendar, Drive, Sheets)",
 			"category": "google",
 			"transport": "api",
 			"endpoint": "https://www.googleapis.com",
@@ -487,7 +498,7 @@
 				}
 			],
 			"docs_url": "https://developers.google.com/apis-explorer",
-			"notes": "One Google OAuth token authenticates every Google API (all under *.googleapis.com, e.g. gmail.googleapis.com, sheets.googleapis.com); send it as Authorization: Bearer __HEZO_SECRET_<NAME>__. Acquire it host-side (oauth-hostside): YouTube connects via the device flow (see the google-youtube provider block); other Google APIs use the auth-code flow with their own scopes."
+			"notes": "One Google OAuth token authenticates every Google API (all under *.googleapis.com, e.g. gmail.googleapis.com, sheets.googleapis.com); send it as Authorization: Bearer __HEZO_SECRET_<NAME>__. Acquire it host-side (oauth-hostside): user-scoped YouTube actions (upload, channel/playlist edits, private data, analytics) connect via the device flow (see the google-youtube provider block) — for read-only public YouTube data prefer the API-key recipe above instead; other Google APIs use the auth-code flow with their own scopes."
 		},
 		{
 			"service": "Slack",

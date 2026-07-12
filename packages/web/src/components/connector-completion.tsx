@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import type { Connector } from '../hooks/use-connectors';
 import { useAuthStart } from '../hooks/use-oauth-connections';
 import { queryKeys } from '../lib/query-keys';
-import { ConnectorApiKeyForm } from './connector-api-key-form';
+import { apiKeyGuideFor, ConnectorApiKeyForm } from './connector-api-key-form';
 import { ConnectorDeviceFlowDialog } from './connector-device-flow-dialog';
 import { ConnectorOAuthBrokerForm } from './connector-oauth-broker-form';
 import { Button } from './ui/button';
@@ -46,11 +46,19 @@ export function ConnectorCompletion({
 	const capability = getConnectorCapability(connector.name);
 	const usesDeviceFlow = !!capability?.deviceAuth;
 	const isApi = connector.kind === 'api';
-	const cfg = (connector.config ?? {}) as { oauth_provider_id?: unknown };
+	const cfg = (connector.config ?? {}) as {
+		oauth_provider_id?: unknown;
+		auth?: { placement?: unknown };
+	};
 	const lockedProviderId =
 		typeof cfg.oauth_provider_id === 'string' && cfg.oauth_provider_id
 			? cfg.oauth_provider_id
 			: undefined;
+	// A query-string credential is never an OAuth access token (those ride a Bearer
+	// header), so a query-placement `api` connector is unambiguously a static-key
+	// REST API — lead with the API-key form, not the OAuth broker.
+	const isStaticKeyApi = isApi && cfg.auth?.placement === 'query';
+	const apiKeyGuide = apiKeyGuideFor(connector.config);
 	const label = connector.display_name ?? capability?.displayName ?? connector.name;
 
 	const apiKeyTestId =
@@ -120,6 +128,7 @@ export function ConnectorCompletion({
 		<ConnectorApiKeyForm
 			projectId={projectId}
 			connectorId={connector.id}
+			guide={apiKeyGuide}
 			onSuccess={() => {
 				setShowApiKey(false);
 				invalidate();
@@ -133,7 +142,14 @@ export function ConnectorCompletion({
 			{error && <p className="text-xs text-danger-soft-fg">{error}</p>}
 			{info && <p className="text-xs text-text-2">{info}</p>}
 
-			{isApi && brokerOpen ? (
+			{isStaticKeyApi ? (
+				<ConnectorApiKeyForm
+					projectId={projectId}
+					connectorId={connector.id}
+					guide={apiKeyGuide}
+					onSuccess={invalidate}
+				/>
+			) : isApi && brokerOpen ? (
 				<>
 					<ConnectorOAuthBrokerForm
 						projectId={projectId}

@@ -53,12 +53,13 @@ async function insertConnector(input: {
 async function insertApiConnector(input: {
 	name: string;
 	oauthProviderId?: string;
+	auth?: { placement: 'header' | 'query'; name: string; scheme?: string };
 }): Promise<ConnectorRow> {
 	const { db } = getTestContext();
 	const config: Record<string, unknown> = {
 		base_url: 'https://www.googleapis.com',
 		allowed_hosts: ['*.googleapis.com'],
-		auth: { placement: 'header', name: 'Authorization', scheme: 'Bearer ' },
+		auth: input.auth ?? { placement: 'header', name: 'Authorization', scheme: 'Bearer ' },
 		...(input.oauthProviderId ? { oauth_provider_id: input.oauthProviderId } : {}),
 	};
 	const res = await db.query<ConnectorRow>(
@@ -359,6 +360,38 @@ test('an api connector with a preset provider shows the broker form inline in th
 	expect(locked.textContent).toContain('google-youtube');
 	expect(queryByTestId('broker-provider-select')).toBeNull();
 	await findByTestId('broker-client-id');
+});
+
+test('a static-key api connector (query-param key) leads with the API-key form, not the OAuth broker', async () => {
+	const { findByTestId, queryByTestId, user } = await setup(async (_ws, taskId, agentId) => {
+		// Read-only YouTube: a `key` query param, no oauth_provider_id. This is the
+		// light path — the human pastes an API key, no Google Cloud OAuth client.
+		const connector = await insertApiConnector({
+			name: 'youtube',
+			auth: { placement: 'query', name: 'key' },
+		});
+		await insertConnectRequiredComment(taskId, agentId, {
+			connector_id: connector.id,
+			display_name: 'YouTube',
+		});
+	});
+
+	await findByTestId('connect-required');
+	// The API-key form is the primary (and only) completion UI — no broker form,
+	// no provider picker, no client-id field.
+	await findByTestId('connector-api-key-form');
+	expect(queryByTestId('broker-form')).toBeNull();
+	expect(queryByTestId('broker-client-id')).toBeNull();
+	expect(queryByTestId('connector-oauth-broker')).toBeNull();
+
+	// The Google/YouTube key walkthrough is shown above the paste field.
+	const guide = await findByTestId('connector-api-key-guide');
+	expect(guide.textContent).toContain('YouTube Data API key');
+
+	// Pasting a key stores it and flips the card to connected (response-driven).
+	await user.type(await findByTestId('connector-api-key-input'), 'AIzaFAKEyoutubekey');
+	await user.click(await findByTestId('connector-api-key-save'));
+	await findByTestId('connect-required-active');
 });
 
 test('clicking Connect on a device-flow connector (github) opens the device-flow dialog instead of a popup', async () => {

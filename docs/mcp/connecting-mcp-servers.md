@@ -95,9 +95,18 @@ the real key at request time.
 Agents can also register a REST API connector themselves when they need one — it
 appears on the Connectors page, ready for you to attach the credential.
 
-For an API that authenticates with OAuth rather than a static key (Google/YouTube, for
-example), skip the API key and press **Complete connection** on the connector's row instead —
-the device flow below.
+Many REST APIs need only a static key for the common case, and **YouTube is a good
+example**: reading public data — searching, video and channel metadata, public comments and
+statistics — needs just a **YouTube Data API key**, not OAuth. Create or pick a Google Cloud
+project, enable the **YouTube Data API v3**, and create an API key (no OAuth consent screen);
+register a REST API connector with the key in the `key` **query parameter** and attach it with
+**API key**. Only reach for OAuth when an agent must act on a user's account — uploading,
+editing a channel or playlists, private data, or its own analytics — which uses the device flow
+below. When an agent registers the read-only connector for you, its row leads with the API-key
+field and a short "how to get a key" walkthrough instead of the OAuth form.
+
+For an API that genuinely authenticates with OAuth rather than a static key, skip the API key
+and press **Complete connection** on the connector's row instead — the device flow below.
 
 ### Connecting an OAuth API with the device flow (no callback)
 

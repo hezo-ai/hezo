@@ -57,7 +57,13 @@ async function seedLocalConnector(
 // attaches its managed token to.
 async function seedApiConnector(
 	ws: SeededWorkspace,
-	input: { name: string; baseUrl: string; hosts: string[]; oauthProviderId?: string },
+	input: {
+		name: string;
+		baseUrl: string;
+		hosts: string[];
+		oauthProviderId?: string;
+		auth?: { placement: 'header' | 'query'; name: string; scheme?: string };
+	},
 ): Promise<{ id: string; name: string }> {
 	const { apiBase } = getTestContext();
 	const res = await apiBase(`/api/projects/${ws.internalSlug}/connectors`, {
@@ -69,7 +75,7 @@ async function seedApiConnector(
 			config: {
 				base_url: input.baseUrl,
 				allowed_hosts: input.hosts,
-				auth: { placement: 'header', name: 'Authorization', scheme: 'Bearer ' },
+				auth: input.auth ?? { placement: 'header', name: 'Authorization', scheme: 'Bearer ' },
 				...(input.oauthProviderId ? { oauth_provider_id: input.oauthProviderId } : {}),
 			},
 		}),
@@ -326,6 +332,38 @@ test('an api connector with an agent-preset provider locks the picker on the Con
 		within(getByTestId('connector-complete-inline')).queryByTestId('broker-provider-select'),
 	).toBeNull();
 	await findByTestId('broker-client-id');
+});
+
+test('a static-key api connector (query-param key) leads with the API-key form, no OAuth broker', async () => {
+	let slug = '';
+	const { findByText, getByTestId, queryByTestId, findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			slug = ws.internalSlug;
+			await seedApiConnector(ws, {
+				name: 'youtube',
+				baseUrl: 'https://www.googleapis.com/youtube/v3',
+				hosts: ['*.googleapis.com'],
+				auth: { placement: 'query', name: 'key' },
+			});
+		},
+	});
+	await router.navigate({ to: CONNECTORS_ROUTE, params: { projectId: slug } });
+
+	await findByText('youtube');
+	const row = within(getByTestId('connectors-list'))
+		.getAllByTestId('connector-row')
+		.find((li) => li.getAttribute('data-connector-id'));
+	if (!row) throw new Error('api connector row not found');
+
+	// No "Complete connection" OAuth affordance — this is a plain API key.
+	expect(within(row).queryByTestId('connector-oauth-broker')).toBeNull();
+	// The API-key form is expanded by default (primary action) with the guide.
+	await findByTestId('connector-api-key-form');
+	const guide = await findByTestId('connector-api-key-guide');
+	expect(guide.textContent).toContain('YouTube Data API key');
+	expect(queryByTestId('broker-form')).toBeNull();
 });
 
 test('a global connector is read-only on the project page (badge + manage link, no actions)', async () => {
