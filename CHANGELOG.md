@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.22.1 - 2026-07-12
+
+### Bug Fixes
+
+- **ci:** merge shard coverage in JSON space so branch totals survive sharding ([#701](https://github.com/hezo-ai/hezo/pull/701))
+- **oauth:** accept Google's verification_url in the device flow ([#700](https://github.com/hezo-ai/hezo/pull/700))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.22.0...0.22.1
+
 ## 0.22.0 - 2026-07-12
 
 ### Features
