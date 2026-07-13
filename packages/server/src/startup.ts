@@ -744,6 +744,22 @@ async function runSeed(db: Db): Promise<void> {
 		}
 		log.error('Seed failed:', err);
 	}
+	// Default global skills get their own failure domain: a builtins problem must
+	// not suppress them and vice versa. seedDefaultSkills is hash-gated — it never
+	// overwrites operator edits and never resurrects deleted skills.
+	try {
+		const { loadDefaultSkills } = await import('./db/default-skills.js');
+		const { seedDefaultSkills } = await import('./db/seed-default-skills.js');
+		await seedDefaultSkills(db, await loadDefaultSkills());
+	} catch (err) {
+		if (
+			err instanceof Error &&
+			(err.message.includes('Cannot find module') || err.message.includes('Cannot find package'))
+		) {
+			return;
+		}
+		log.error('Skills seed failed:', err);
+	}
 }
 
 async function resolveMasterKeyState(

@@ -59,6 +59,7 @@
 			"!.turbo",
 			"!**/migrations-bundle.json",
 			"!**/agents-bundle.json",
+			"!**/skills-bundle.json",
 			"!**/docs-bundle.json",
 			"!**/docker-bundle.json",
 			"!**/static-bundle.json",

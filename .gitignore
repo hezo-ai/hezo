@@ -9,6 +9,7 @@ dist/
 .turbo/
 migrations-bundle.json
 agents-bundle.json
+skills-bundle.json
 docs-bundle.json
 static-bundle.json
 docker-bundle.json

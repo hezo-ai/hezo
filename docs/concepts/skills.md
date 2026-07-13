@@ -46,8 +46,18 @@ each project's manifest focused while still letting broadly-useful know-how reac
   (`propose_skill`) — the proposal lands in your inbox like any other approval. The agent
   chooses whether the new skill is global or project-scoped, and defaults to the current
   project when it doesn't say.
-- **Built in.** Hezo ships one skill of its own: **`connector-recipes`**, a curated
-  catalog of connection recipes agents consult before
+- **Built in.** Hezo ships a **starter library of global skills** — proven methods for
+  planning, brainstorming, debugging, test-driven development, code review, verification,
+  design, web app testing, research, data analysis, writing, and authoring new skills.
+  They appear on **Settings → Skills** like any skill you wrote yourself, and they're
+  **fully yours**: edit them, delete them, or re-scope them to a single project. Hezo
+  updates a starter skill in place only while you've never edited it — an edited copy
+  stays yours forever (with the shipped version still in its revision history), and a
+  deleted one never comes back. Several are adapted from well-known open-source skill
+  collections and link their source.
+
+  One built-in skill is special: **`connector-recipes`**, a curated catalog of connection
+  recipes agents consult before
   [connecting an external service](/docs/mcp/connecting-mcp-servers). It appears with a
   **Built-in** badge on **Settings → Skills** and — because it's global — on every
   project's **Skills** page too, is read-only — it can't be edited or deleted — and

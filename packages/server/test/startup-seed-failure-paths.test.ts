@@ -14,7 +14,19 @@ import { type HezoConfig, type StartupResult, startup } from '../src/startup';
 const state = vi.hoisted(() => ({
 	seedBuiltinsError: null as Error | null,
 	seedDefaultTeamError: null as Error | null,
+	seedDefaultSkillsError: null as Error | null,
 }));
+
+vi.mock('../src/db/seed-default-skills.js', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../src/db/seed-default-skills.js')>();
+	return {
+		...actual,
+		seedDefaultSkills: vi.fn(async (...args: Parameters<typeof actual.seedDefaultSkills>) => {
+			if (state.seedDefaultSkillsError) throw state.seedDefaultSkillsError;
+			return actual.seedDefaultSkills(...args);
+		}),
+	};
+});
 
 vi.mock('../src/db/seed.js', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('../src/db/seed.js')>();
@@ -88,6 +100,7 @@ describe('startup seed failure paths', () => {
 		const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 		state.seedBuiltinsError = new Error("Cannot find module './agents-bundle.json'");
 		state.seedDefaultTeamError = null;
+		state.seedDefaultSkillsError = null;
 		const dataDir = mkdtempSync(join(tmpdir(), 'hezo-seed-miss-'));
 		tempDirs.push(dataDir);
 
@@ -104,13 +117,15 @@ describe('startup seed failure paths', () => {
 		const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 		state.seedBuiltinsError = new Error('seed exploded');
 		state.seedDefaultTeamError = new Error('team seed exploded');
+		state.seedDefaultSkillsError = new Error('skills seed exploded');
 		const dataDir = mkdtempSync(join(tmpdir(), 'hezo-seed-fail-'));
 		tempDirs.push(dataDir);
 
 		result = await startup(makeConfig(dataDir));
 
-		// Both failures were logged, neither aborted the boot.
+		// All three failures were logged, none aborted the boot.
 		expect(logSpy.mock.calls.some((c) => String(c[0]).includes('Seed failed:'))).toBe(true);
+		expect(logSpy.mock.calls.some((c) => String(c[0]).includes('Skills seed failed:'))).toBe(true);
 		expect(
 			logSpy.mock.calls.some((c) => String(c[0]).includes('Failed to seed default team:')),
 		).toBe(true);
