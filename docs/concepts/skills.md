@@ -46,15 +46,16 @@ each project's manifest focused while still letting broadly-useful know-how reac
   (`propose_skill`) — the proposal lands in your inbox like any other approval. The agent
   chooses whether the new skill is global or project-scoped, and defaults to the current
   project when it doesn't say.
-- **Built in.** Hezo ships a **starter library of global skills** — proven methods for
-  planning, brainstorming, debugging, test-driven development, code review, verification,
-  design, web app testing, research, data analysis, writing, and authoring new skills.
-  They appear on **Settings → Skills** like any skill you wrote yourself, and they're
-  **fully yours**: edit them, delete them, or re-scope them to a single project. Hezo
-  updates a starter skill in place only while you've never edited it — an edited copy
-  stays yours forever (with the shipped version still in its revision history), and a
-  deleted one never comes back. Several are adapted from well-known open-source skill
-  collections and link their source.
+- **Add the starter library.** Hezo ships a **starter library of global skills** — proven
+  methods for planning, brainstorming, debugging, test-driven development, code review,
+  verification, design, web app testing, research, data analysis, writing, and authoring
+  new skills. They're **not added automatically**: whenever any of them is missing,
+  **Settings → Skills** shows an **Add default skills** button. Clicking it lists the ones
+  you don't have and asks you to confirm before adding them. Once added they're ordinary
+  global skills — **fully yours** to edit, delete, or re-scope to a single project — and
+  Hezo never re-adds one you've removed. Several are adapted from well-known open-source
+  skill collections and link their source. (On a brand-new instance the button is right
+  there on your first visit; on an existing instance it appears after you upgrade.)
 
   One built-in skill is special: **`connector-recipes`**, a curated catalog of connection
   recipes agents consult before

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { SkillRecord } from '@hezo/shared';
 import { Hono } from 'hono';
+import { installDefaultSkills, listMissingDefaultSkills } from '../db/default-skills';
 import { err, ok } from '../lib/response';
 import { deriveSkillSummary } from '../lib/skill-summary';
 import { toSlug } from '../lib/slug';
@@ -311,6 +312,40 @@ skillsRoutes.post('/skills/registry/install', async (c) => {
 		}
 		throw e;
 	}
+});
+
+// Default global skills that Hezo ships but this instance hasn't installed. Not
+// auto-seeded — the global Skills page shows a button when this list is
+// non-empty and installs behind a confirmation. Registered before `/skills/:id`
+// so the literal `defaults` segment isn't captured as an id.
+skillsRoutes.get('/skills/defaults', async (c) => {
+	const denied = requireAdminEquivalent(c);
+	if (denied) return denied;
+	const missing = await listMissingDefaultSkills(c.get('db'));
+	return ok(c, { missing });
+});
+
+skillsRoutes.post('/skills/defaults/install', async (c) => {
+	const denied = requireAdminEquivalent(c);
+	if (denied) return denied;
+	const body = await c.req.json<{ slugs?: string[] }>().catch(() => ({}) as { slugs?: string[] });
+	const slugs = Array.isArray(body.slugs)
+		? body.slugs.filter((s): s is string => typeof s === 'string')
+		: undefined;
+	const installed = await installDefaultSkills(c.get('db'), { slugs });
+	const events = c.get('events');
+	for (const skill of installed) {
+		events.emit({
+			type: 'skill.created',
+			teamId: null,
+			actorType: 'admin',
+			actorMemberId: null,
+			skillId: skill.id,
+			slug: skill.slug,
+			name: skill.name,
+		});
+	}
+	return ok(c, { installed });
 });
 
 skillsRoutes.get('/skills/:id', async (c) => {

@@ -61,6 +61,7 @@ export default defineConfig({
 		env: {
 			HEZO_MIGRATIONS_DIR: resolve(ROOT, 'packages/server/migrations'),
 			HEZO_AGENTS_DIR: resolve(ROOT, 'agents'),
+			HEZO_SKILLS_DIR: resolve(ROOT, 'skills'),
 			HEZO_E2E_SKIP_COHERENCE_REVIEW: '1',
 			HEZO_SKIP_DOCKER: '1',
 			SKIP_AI_KEY_VALIDATION: '1',
