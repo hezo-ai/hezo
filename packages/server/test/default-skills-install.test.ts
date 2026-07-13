@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DEFAULT_TEAM_ID } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { generateUnlockKey, MasterKeyManager } from '../src/crypto/master-key';
@@ -11,6 +12,7 @@ import {
 	DEFAULT_SKILL_MARKER_PREFIX,
 	type DefaultSkillDef,
 	installDefaultSkills,
+	installDefaultSkillsIfFreshInstance,
 	listMissingDefaultSkills,
 	loadDefaultSkills,
 } from '../src/db/default-skills';
@@ -198,6 +200,28 @@ describe('default-skills routes', () => {
 	it('rejects a non-admin caller', async () => {
 		const res = await app.request('/api/skills/defaults');
 		expect(res.status).toBe(401);
+	});
+});
+
+describe('installDefaultSkillsIfFreshInstance', () => {
+	it('installs the full catalog on a fresh instance (no HQ team yet)', async () => {
+		const installed = await installDefaultSkillsIfFreshInstance(db);
+		expect(installed.length).toBe(15);
+		expect(await getGlobalSkill('code-review')).toBeDefined();
+	});
+
+	it('is a no-op once the HQ team exists (an existing instance)', async () => {
+		await db.query(
+			`INSERT INTO teams (id, name, slug, description, summary) VALUES ($1, 'HQ', 'hq', '', '')`,
+			[DEFAULT_TEAM_ID],
+		);
+		try {
+			const installed = await installDefaultSkillsIfFreshInstance(db);
+			expect(installed).toEqual([]);
+			expect(await getGlobalSkill('code-review')).toBeUndefined();
+		} finally {
+			await db.query('DELETE FROM teams WHERE id = $1', [DEFAULT_TEAM_ID]);
+		}
 	});
 });
 

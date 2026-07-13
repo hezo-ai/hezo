@@ -309,12 +309,16 @@ wins. Skills authored during a run (`create_skill`/`fetch_skill_file`/`propose_s
 `scope` the agent chooses (`global`|`project`), defaulting to **project**. Hezo also ships a
 **default global-skills library**: the top-level `skills/` dir (one `<slug>.md` per skill, flat;
 `ATTRIBUTION.md` documents upstream licenses and is excluded) is bundled into the binary as
-`skills-bundle.json` (`build:skills`, same embed pattern as agents/docs). It is **not
-auto-seeded** — an existing instance upgrading must not have 15 global skills materialize unasked.
-Instead the admin installs them from `/settings/skills`: `GET /api/skills/defaults` returns the
-**missing** defaults and, when non-empty, the page shows an **Add default skills** button that
-opens a confirmation listing them; `POST /api/skills/defaults/install` (optional `slugs[]` for the
-confirmed subset) inserts them. "Missing" (`listMissingDefaultSkills`, `db/default-skills.ts`) =
+`skills-bundle.json` (`build:skills`, same embed pattern as agents/docs). A **fresh instance**
+installs the whole catalog automatically: `installDefaultSkillsIfFreshInstance` runs at startup
+just before `seedDefaultTeam` and installs when HQ (`DEFAULT_TEAM_ID`) doesn't exist yet (i.e.
+first boot), a no-op on every later boot. An **existing instance upgrading is NOT auto-seeded** —
+15 global skills must not materialize unasked — so the admin installs them from `/settings/skills`:
+`GET /api/skills/defaults` returns the **missing** defaults and, when non-empty, the page shows an
+**Add default skills** button that opens a confirmation listing them;
+`POST /api/skills/defaults/install` (optional `slugs[]` for the confirmed subset) inserts them.
+(The startup path is the only auto-install trigger; test harnesses call `seedDefaultTeam` directly
+and never install defaults, keeping fixtures clean.) "Missing" (`listMissingDefaultSkills`, `db/default-skills.ts`) =
 a bundled default whose slug is not currently a global skill **and** carries no per-slug
 `system_meta` marker (`default_skill_shipped_hash:<slug>`, set to the content sha256 on install).
 The marker means "handled here", so a default the operator installed and later deleted is never

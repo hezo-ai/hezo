@@ -46,16 +46,16 @@ each project's manifest focused while still letting broadly-useful know-how reac
   (`propose_skill`) — the proposal lands in your inbox like any other approval. The agent
   chooses whether the new skill is global or project-scoped, and defaults to the current
   project when it doesn't say.
-- **Add the starter library.** Hezo ships a **starter library of global skills** — proven
+- **The starter library.** Hezo ships a **starter library of global skills** — proven
   methods for planning, brainstorming, debugging, test-driven development, code review,
   verification, design, web app testing, research, data analysis, writing, and authoring
-  new skills. They're **not added automatically**: whenever any of them is missing,
-  **Settings → Skills** shows an **Add default skills** button. Clicking it lists the ones
-  you don't have and asks you to confirm before adding them. Once added they're ordinary
-  global skills — **fully yours** to edit, delete, or re-scope to a single project — and
-  Hezo never re-adds one you've removed. Several are adapted from well-known open-source
-  skill collections and link their source. (On a brand-new instance the button is right
-  there on your first visit; on an existing instance it appears after you upgrade.)
+  new skills. A **brand-new instance gets them automatically** on first start, so they're
+  there from day one. On an **existing instance** they're not added silently on upgrade —
+  instead **Settings → Skills** shows an **Add default skills** button that lists the ones
+  you don't have and asks you to confirm before adding them. Either way, once added they're
+  ordinary global skills — **fully yours** to edit, delete, or re-scope to a single project —
+  and Hezo never re-adds one you've removed. Several are adapted from well-known open-source
+  skill collections and link their source.
 
   One built-in skill is special: **`connector-recipes`**, a curated catalog of connection
   recipes agents consult before
