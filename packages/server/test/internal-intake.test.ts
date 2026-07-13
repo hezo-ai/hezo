@@ -46,6 +46,7 @@ describe('loadTeamCoordinationContext', () => {
 		const coord = await loadTeamCoordinationContext(db, teamId);
 		expect(coord).toEqual({
 			ceoMemberId: expect.any(String),
+			captainMemberId: expect.any(String),
 			teamProjectId,
 			teamId,
 		});
