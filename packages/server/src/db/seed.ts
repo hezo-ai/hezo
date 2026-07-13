@@ -307,33 +307,8 @@ Approval is conveyed via comment, not status. From **Review**, the ticket either
 - QA Engineer performs final review before approval
 `,
 		},
-		{
-			name: 'Code Review Standards',
-			slug: 'code-review-standards.md',
-			content: `# Code Review Standards
-
-## What Reviewers Check
-
-- **Correctness** — does it solve the stated problem?
-- **Security** — no injection vulnerabilities, proper input validation
-- **Performance** — no obvious bottlenecks or N+1 queries
-- **Readability** — clear naming, logical structure, minimal complexity
-- **Test coverage** — new behavior has corresponding tests
-
-## Quality Gates
-
-- All CI checks must pass
-- No unresolved review comments
-- Test coverage for new functionality
-- No known security vulnerabilities introduced
-
-## Testing Expectations
-
-- Unit tests for business logic
-- Integration tests for API endpoints and database queries
-- E2E tests for critical user flows
-`,
-		},
+		// Review standards ship as the global `code-review` default skill (see
+		// skills/code-review.md + seedDefaultSkills) — no per-template copy.
 	];
 
 	const startupResult = await db.query<{ id: string }>(

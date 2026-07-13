@@ -306,7 +306,20 @@ once per project, and a project skill **shadows** a global one of the same slug 
 Run-time reads (the `{{skills_context}}` manifest, `list_skills`/`get_skill`, full-text search,
 mention resolution) return the run's project skills plus globals, de-duped so the project's copy
 wins. Skills authored during a run (`create_skill`/`fetch_skill_file`/`propose_skill`) carry a
-`scope` the agent chooses (`global`|`project`), defaulting to **project**. The admin manages the
+`scope` the agent chooses (`global`|`project`), defaulting to **project**. Hezo also ships a
+**default global-skills library**: the top-level `skills/` dir (one `<slug>.md` per skill, flat;
+`ATTRIBUTION.md` documents upstream licenses and is excluded) is bundled into the binary as
+`skills-bundle.json` (`build:skills`, same embed pattern as agents/docs) and seeded at startup by
+`seedDefaultSkills` (`packages/server/src/db/seed-default-skills.ts`, invoked from `runSeed` in
+its own failure domain — deliberately *not* in `seedBuiltins`, which nearly every test harness
+calls). Seeding is **hash-gated** via per-slug `system_meta` markers
+(`default_skill_shipped_hash:<slug>` = sha256 of the last applied shipped content, or `foreign`
+when a user-authored global skill already owned the slug at first seed): a shipped update applies
+only while the row's `content_hash` still equals the marker (pristine), snapshotting the prior
+content as a `skill_revisions` entry ("Updated by Hezo upgrade"); a user edit detaches the skill
+forever; a deleted or project-re-scoped default is never resurrected; tags/is_active/auto_load
+are never touched. The seeded rows are ordinary editable skills (`readonly: false`) — unlike the
+virtual `connector-recipes`. The admin manages the
 whole catalog and re-scopes rows at `/settings/skills` (id-addressed `/api/skills` routes); a
 per-project page (`/projects/:projectId/skills`, any project member) lists that project's skills
 plus globals and edits/removes only the project's own. `assets` + `task_attachments`/`comment_attachments` handle

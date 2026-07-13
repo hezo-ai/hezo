@@ -58,7 +58,6 @@ describe('team provisioning (createTeam service)', () => {
 		});
 		const skillsBody = await skillsRes.json();
 		const slugs = skillsBody.data.map((d: any) => d.slug);
-		expect(slugs).toContain('code-review-standards.md');
 		expect(slugs).toContain('development-workflow.md');
 	});
 
