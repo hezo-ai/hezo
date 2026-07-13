@@ -124,9 +124,9 @@ test('automations section exposes the wake-mentioner toggle and persists the cha
 	await waitFor(() => expect(toggle.checked).toBe(true), { timeout: 15_000 });
 });
 
-test('can edit and save preferences', async () => {
+test('can edit and save the Custom Prompt', async () => {
 	let team!: CreatedTeam;
-	const { container, user, router } = await renderApp({
+	const { container, user, findByRole, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			team = await createTeam();
@@ -134,49 +134,41 @@ test('can edit and save preferences', async () => {
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/team-settings/general',
+		to: '/projects/$projectId/custom-prompt',
 		params: { projectId: team.projectSlug },
 	});
 
-	const prefs = await waitFor(
+	await findByRole('heading', { name: 'Custom Prompt' });
+	const textarea = await waitFor(
 		() => {
-			const el = container.querySelector('#settings-preferences') as HTMLElement;
+			const el = container.querySelector('textarea') as HTMLTextAreaElement | null;
 			expect(el).toBeTruthy();
-			return el;
+			return el as HTMLTextAreaElement;
 		},
 		{ timeout: 15_000 },
 	);
 
-	await within(prefs).findByRole('heading', { name: 'Preferences' });
-	await within(prefs).findByText('No preferences set.');
-
-	await user.click(within(prefs).getByRole('button', { name: 'Edit' }));
-	const textarea = prefs.querySelector('textarea') as HTMLTextAreaElement;
 	fireEvent.change(textarea, { target: { value: 'Always be concise.' } });
+	await user.click(await findByRole('button', { name: 'Save changes' }));
 
-	await user.click(within(prefs).getByRole('button', { name: 'Save' }));
-
-	await within(prefs).findByRole('button', { name: 'Edit' });
-	await within(prefs).findByText('Always be concise.', undefined, { timeout: 15_000 });
-
-	// Reload by re-navigating away and back.
+	// Persisted — re-navigate away and back; the editor reseeds from the saved value.
 	await router.navigate({ to: '/' });
 	await router.navigate({
-		to: '/projects/$projectId/team-settings/general',
+		to: '/projects/$projectId/custom-prompt',
 		params: { projectId: team.projectSlug },
 	});
 	await waitFor(
 		() => {
-			const el = container.querySelector('#settings-preferences') as HTMLElement;
-			expect(el?.textContent ?? '').toContain('Always be concise.');
+			const el = container.querySelector('textarea') as HTMLTextAreaElement | null;
+			expect(el?.value ?? '').toContain('Always be concise.');
 		},
 		{ timeout: 20_000 },
 	);
 });
 
-test('can restore a previous preferences revision', async () => {
+test('can restore a previous Custom Prompt revision', async () => {
 	let team!: CreatedTeam;
-	const { container, user, findByTestId, router } = await renderApp({
+	const { container, user, findByTestId, findByText, findByRole, router } = await renderApp({
 		initialPath: '/',
 		seed: async ({ apiBase, token }) => {
 			team = await createTeam();
@@ -198,29 +190,29 @@ test('can restore a previous preferences revision', async () => {
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/team-settings/general',
+		to: '/projects/$projectId/custom-prompt',
 		params: { projectId: team.projectSlug },
 	});
 
-	const prefs = await waitFor(
+	const textarea = await waitFor(
 		() => {
-			const el = container.querySelector('#settings-preferences') as HTMLElement;
-			expect(el).toBeTruthy();
-			return el;
+			const el = container.querySelector('textarea') as HTMLTextAreaElement | null;
+			expect(el?.value ?? '').toContain('Updated preferences body');
+			return el as HTMLTextAreaElement;
 		},
 		{ timeout: 15_000 },
 	);
 
-	await within(prefs).findByText('Updated preferences body', undefined, { timeout: 15_000 });
+	await user.click(await findByRole('button', { name: /show revision history/i }));
+	await findByText(/Rev 1/, undefined, { timeout: 15_000 });
 
-	await user.click(within(prefs).getByRole('button', { name: /show revision history/i }));
-	await within(prefs).findByText(/Rev 1/, undefined, { timeout: 15_000 });
-
-	const restoreButtons = within(prefs).getAllByRole('button', { name: /restore/i });
+	const restoreButtons = within(container).getAllByRole('button', { name: /restore/i });
 	fireEvent.click(restoreButtons[0]);
 
 	const confirmBtn = await findByTestId('confirm-dialog-confirm');
 	fireEvent.click(confirmBtn);
 
-	await within(prefs).findByText('Original preferences body', undefined, { timeout: 30_000 });
+	await waitFor(() => expect(textarea.value).toContain('Original preferences body'), {
+		timeout: 30_000,
+	});
 });

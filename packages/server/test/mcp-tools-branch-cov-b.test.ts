@@ -443,7 +443,7 @@ describe('agent system prompts', () => {
 			new_system_prompt: compliantPrompt('x'),
 			change_summary: 'test',
 		});
-		expect(String(denied.error)).toContain('only the Coach or the Captain');
+		expect(String(denied.error)).toContain('only the CEO, Coach, or Captain');
 
 		const cap = await agentToken(captainId, teamId, taskId);
 		const missingAgent = await call(cap, 'update_agent_system_prompt', {

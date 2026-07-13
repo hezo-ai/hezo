@@ -28,6 +28,7 @@ import { Route as HomeInboxIndexRouteImport } from './routes/home/inbox/index'
 import { Route as ProjectsProjectIdSkillsRouteImport } from './routes/projects/$projectId/skills'
 import { Route as ProjectsProjectIdGitRouteImport } from './routes/projects/$projectId/git'
 import { Route as ProjectsProjectIdDocumentsRouteImport } from './routes/projects/$projectId/documents'
+import { Route as ProjectsProjectIdCustomPromptRouteImport } from './routes/projects/$projectId/custom-prompt'
 import { Route as ProjectsProjectIdContainerRouteImport } from './routes/projects/$projectId/container'
 import { Route as ProjectsProjectIdConnectorsRouteImport } from './routes/projects/$projectId/connectors'
 import { Route as ProjectsProjectIdBudgetRouteImport } from './routes/projects/$projectId/budget'
@@ -146,6 +147,12 @@ const ProjectsProjectIdDocumentsRoute =
   ProjectsProjectIdDocumentsRouteImport.update({
     id: '/documents',
     path: '/documents',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
+  } as any)
+const ProjectsProjectIdCustomPromptRoute =
+  ProjectsProjectIdCustomPromptRouteImport.update({
+    id: '/custom-prompt',
+    path: '/custom-prompt',
     getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
 const ProjectsProjectIdContainerRoute =
@@ -300,6 +307,7 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId/budget': typeof ProjectsProjectIdBudgetRoute
   '/projects/$projectId/connectors': typeof ProjectsProjectIdConnectorsRoute
   '/projects/$projectId/container': typeof ProjectsProjectIdContainerRoute
+  '/projects/$projectId/custom-prompt': typeof ProjectsProjectIdCustomPromptRoute
   '/projects/$projectId/documents': typeof ProjectsProjectIdDocumentsRoute
   '/projects/$projectId/git': typeof ProjectsProjectIdGitRoute
   '/projects/$projectId/skills': typeof ProjectsProjectIdSkillsRoute
@@ -341,6 +349,7 @@ export interface FileRoutesByTo {
   '/projects/$projectId/budget': typeof ProjectsProjectIdBudgetRoute
   '/projects/$projectId/connectors': typeof ProjectsProjectIdConnectorsRoute
   '/projects/$projectId/container': typeof ProjectsProjectIdContainerRoute
+  '/projects/$projectId/custom-prompt': typeof ProjectsProjectIdCustomPromptRoute
   '/projects/$projectId/documents': typeof ProjectsProjectIdDocumentsRoute
   '/projects/$projectId/git': typeof ProjectsProjectIdGitRoute
   '/projects/$projectId/skills': typeof ProjectsProjectIdSkillsRoute
@@ -384,6 +393,7 @@ export interface FileRoutesById {
   '/projects/$projectId/budget': typeof ProjectsProjectIdBudgetRoute
   '/projects/$projectId/connectors': typeof ProjectsProjectIdConnectorsRoute
   '/projects/$projectId/container': typeof ProjectsProjectIdContainerRoute
+  '/projects/$projectId/custom-prompt': typeof ProjectsProjectIdCustomPromptRoute
   '/projects/$projectId/documents': typeof ProjectsProjectIdDocumentsRoute
   '/projects/$projectId/git': typeof ProjectsProjectIdGitRoute
   '/projects/$projectId/skills': typeof ProjectsProjectIdSkillsRoute
@@ -429,6 +439,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/budget'
     | '/projects/$projectId/connectors'
     | '/projects/$projectId/container'
+    | '/projects/$projectId/custom-prompt'
     | '/projects/$projectId/documents'
     | '/projects/$projectId/git'
     | '/projects/$projectId/skills'
@@ -470,6 +481,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/budget'
     | '/projects/$projectId/connectors'
     | '/projects/$projectId/container'
+    | '/projects/$projectId/custom-prompt'
     | '/projects/$projectId/documents'
     | '/projects/$projectId/git'
     | '/projects/$projectId/skills'
@@ -512,6 +524,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/budget'
     | '/projects/$projectId/connectors'
     | '/projects/$projectId/container'
+    | '/projects/$projectId/custom-prompt'
     | '/projects/$projectId/documents'
     | '/projects/$projectId/git'
     | '/projects/$projectId/skills'
@@ -677,6 +690,13 @@ declare module '@tanstack/react-router' {
       path: '/documents'
       fullPath: '/projects/$projectId/documents'
       preLoaderRoute: typeof ProjectsProjectIdDocumentsRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
+    '/projects/$projectId/custom-prompt': {
+      id: '/projects/$projectId/custom-prompt'
+      path: '/custom-prompt'
+      fullPath: '/projects/$projectId/custom-prompt'
+      preLoaderRoute: typeof ProjectsProjectIdCustomPromptRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
     '/projects/$projectId/container': {
@@ -899,6 +919,7 @@ interface ProjectsProjectIdRouteRouteChildren {
   ProjectsProjectIdBudgetRoute: typeof ProjectsProjectIdBudgetRoute
   ProjectsProjectIdConnectorsRoute: typeof ProjectsProjectIdConnectorsRoute
   ProjectsProjectIdContainerRoute: typeof ProjectsProjectIdContainerRoute
+  ProjectsProjectIdCustomPromptRoute: typeof ProjectsProjectIdCustomPromptRoute
   ProjectsProjectIdDocumentsRoute: typeof ProjectsProjectIdDocumentsRoute
   ProjectsProjectIdGitRoute: typeof ProjectsProjectIdGitRoute
   ProjectsProjectIdSkillsRoute: typeof ProjectsProjectIdSkillsRoute
@@ -923,6 +944,7 @@ const ProjectsProjectIdRouteRouteChildren: ProjectsProjectIdRouteRouteChildren =
     ProjectsProjectIdBudgetRoute: ProjectsProjectIdBudgetRoute,
     ProjectsProjectIdConnectorsRoute: ProjectsProjectIdConnectorsRoute,
     ProjectsProjectIdContainerRoute: ProjectsProjectIdContainerRoute,
+    ProjectsProjectIdCustomPromptRoute: ProjectsProjectIdCustomPromptRoute,
     ProjectsProjectIdDocumentsRoute: ProjectsProjectIdDocumentsRoute,
     ProjectsProjectIdGitRoute: ProjectsProjectIdGitRoute,
     ProjectsProjectIdSkillsRoute: ProjectsProjectIdSkillsRoute,

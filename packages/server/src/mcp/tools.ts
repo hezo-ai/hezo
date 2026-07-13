@@ -50,7 +50,7 @@ import type { MasterKeyManager } from '../crypto/master-key';
 import type { Db } from '../db/database';
 import type { DomainEventBus } from '../events/bus';
 import { assertNoActiveRun } from '../lib/active-run';
-import { isCoach, isHqInstanceAgent, isVirtualHqMemberInTeam } from '../lib/agent-roles';
+import { isHqInstanceAgent, isVirtualHqMemberInTeam } from '../lib/agent-roles';
 import { upsertProjectAsset } from '../lib/asset-name';
 import { signAgentAssetUrl } from '../lib/asset-urls';
 import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
@@ -215,6 +215,7 @@ const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'remove_connector',
 	'update_goal_progress',
 	'update_project_progress',
+	'update_project_preferences',
 ]);
 
 /** A handler result that signals failure rather than a persisted write. */
@@ -2119,6 +2120,84 @@ export function registerTools(
 		db,
 	);
 
+	tool(
+		server,
+		'list_task_runs',
+		"List the agent runs (container executions) recorded for a task, newest first (up to 50). Each row is one run: which agent ran, its status and exit code, when it started/finished, the invocation command, and the log length. Metadata only — fetch a run's actual container log with get_run_log(run_id). Useful for reviewing HOW a task was worked (e.g. the Coach checking what an agent actually did, beyond the comments it left).",
+		{
+			project: projectArg(),
+			task_id: z.string().describe('Task identifier or UUID'),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveTaskScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId, taskId } = scope;
+			const r = await db.query<Record<string, unknown>>(
+				`SELECT hr.id, hr.status, hr.exit_code, hr.started_at, hr.finished_at,
+				        hr.invocation_command, length(hr.log_text) AS log_length,
+				        ma.title AS agent_title, ma.slug AS agent_slug
+				 FROM heartbeat_runs hr
+				 LEFT JOIN member_agents ma ON ma.id = hr.member_id
+				 WHERE hr.task_id = $1 AND hr.team_id = $2
+				 ORDER BY hr.started_at DESC
+				 LIMIT 50`,
+				[taskId, teamId],
+			);
+			return r.rows;
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'get_run_log',
+		"Fetch the container log for a single agent run (a run_id from list_task_runs). Returns the run's log capped to the most recent excerpt_chars characters (default 12000 — the tail, where the outcome and any errors are) with truncated/length flags so you can tell when earlier output was dropped. Team-scoped: the run must belong to the project you're acting in.",
+		{
+			project: projectArg(),
+			run_id: z.string().describe('Run ID (UUID) from list_task_runs'),
+			excerpt_chars: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe('Max characters to return from the END of the log (default 12000).'),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const runId = args.run_id as string;
+			if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(runId)) {
+				return { error: `Invalid run_id: ${runId}` };
+			}
+			const r = await db.query<{
+				id: string;
+				status: string;
+				exit_code: number | null;
+				task_id: string | null;
+				log_text: string;
+			}>(
+				`SELECT id, status, exit_code, task_id, log_text
+				 FROM heartbeat_runs WHERE id = $1 AND team_id = $2`,
+				[runId, scope.teamId],
+			);
+			if (r.rows.length === 0) return { error: `Run not found in this project: ${runId}` };
+			const run = r.rows[0];
+			const full = run.log_text ?? '';
+			const max = (args.excerpt_chars as number | undefined) ?? 12_000;
+			const truncated = full.length > max;
+			return {
+				id: run.id,
+				status: run.status,
+				exit_code: run.exit_code,
+				task_id: run.task_id,
+				log: truncated ? full.slice(full.length - max) : full,
+				length: full.length,
+				truncated,
+			};
+		},
+		db,
+	);
+
 	const reactionKindSchema = z.enum(Object.values(ReactionKind) as [string, ...string[]]);
 
 	tool(
@@ -3174,7 +3253,7 @@ export function registerTools(
 	tool(
 		server,
 		'update_agent_system_prompt',
-		'Apply a system prompt change for an agent. Callable by the Coach agent (for after-task learned-rules updates) or by the Captain of the same team (during team-coherence reviews). The change is applied immediately and a revision snapshot is stored so the admin can restore previous versions.',
+		'Apply a system prompt change for an agent. Callable by the Coach agent (for after-task learned-rules updates), the CEO (during cross-project coherence, from anywhere including its live chat), or the Captain of the same team (during team-coherence reviews). The change is applied immediately and a revision snapshot is stored so the admin can restore previous versions.',
 		{
 			project: projectArg(),
 			agent_id: z.string().describe('Target agent — its slug (e.g. "engineer") or member ID'),
@@ -3190,10 +3269,11 @@ export function registerTools(
 			if ('error' in scope) return scope;
 			const { teamId } = scope;
 
-			const allowed = (await isCoach(db, auth)) || (await canCoordinateTeam(db, auth, teamId));
+			const allowed =
+				(await isHqInstanceAgent(db, auth)) || (await canCoordinateTeam(db, auth, teamId));
 			if (!allowed) {
 				return {
-					error: 'Access denied: only the Coach or the Captain can update system prompts',
+					error: 'Access denied: only the CEO, Coach, or Captain can update system prompts',
 				};
 			}
 
@@ -3238,6 +3318,69 @@ export function registerTools(
 			);
 
 			return { applied: true, document_id: doc.id };
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'get_project_preferences',
+		'Read this project\'s Custom Prompt — the project-wide instruction block (the project context / "preferences") that is injected verbatim into every agent\'s system prompt in this project. Returns the current content plus its length and last-updated time (empty content when none is set yet). Read this before update_project_preferences so you extend the existing guidance rather than overwrite it.',
+		{
+			project: projectArg(),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const doc = await getDocument(db, {
+				type: DocumentType.TeamPreferences,
+				teamId: scope.teamId,
+			});
+			const content = doc?.content ?? '';
+			return { content, length: content.length, updated_at: doc?.updated_at ?? null };
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'update_project_preferences',
+		"Replace this project's Custom Prompt — the project-wide instruction block (the project context / \"preferences\") injected verbatim into every agent's system prompt in this project. Reach for this when guidance should apply to ALL of the project's agents from the very start of every run (a shared convention, standard, or fact) — it saves editing each agent's prompt one by one. The content you pass REPLACES the whole value, so call get_project_preferences first and extend it. Applied immediately; a revision snapshot is stored so the admin can restore previous versions. Only callable by the CEO, Coach, or the project's Captain.",
+		{
+			project: projectArg(),
+			content: z
+				.string()
+				.describe(
+					'The full new Custom Prompt content (Markdown). Replaces the current value entirely — include the existing guidance you want to keep.',
+				),
+			change_summary: z
+				.string()
+				.optional()
+				.describe('Short summary of what changed and why (stored on the revision).'),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId } = scope;
+
+			const allowed =
+				(await canCoordinateTeam(db, auth, teamId)) || (await isHqInstanceAgent(db, auth));
+			if (!allowed) {
+				return {
+					error:
+						'Access denied: only the CEO, Coach, or Captain can update the project Custom Prompt',
+				};
+			}
+
+			const authorMemberId = await resolveActorMemberId(db, auth, teamId);
+			const doc = await upsertDocument(db, wsManager, {
+				scope: { type: DocumentType.TeamPreferences, teamId },
+				content: args.content as string,
+				changeSummary: args.change_summary as string | undefined,
+				authorMemberId,
+			});
+
+			return { applied: true, document_id: doc.id, length: (args.content as string).length };
 		},
 		db,
 	);

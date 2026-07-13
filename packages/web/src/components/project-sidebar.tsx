@@ -108,6 +108,14 @@ export function ProjectSidebar({ onCollapse }: { onCollapse?: () => void } = {})
 		label: 'Skills',
 		testId: 'project-sidebar-skills',
 	};
+	// Custom Prompt — the project-wide instruction block injected into every agent's
+	// prompt — discloses under Settings, alongside Skills.
+	const customPromptPage = {
+		to: '/projects/$projectId/custom-prompt',
+		params: projectParams,
+		label: 'Custom Prompt',
+		testId: 'project-sidebar-custom-prompt',
+	};
 
 	// Progress (the project's goals + Captain-maintained summary) leads under Inbox; it's a
 	// normal-project concept, so HQ (internal) has none.
@@ -175,7 +183,14 @@ export function ProjectSidebar({ onCollapse }: { onCollapse?: () => void } = {})
 						testId: 'project-sidebar-settings',
 						// Git, Connectors, Skills, Container and Activity disclose under Settings
 						// when it (or one of them) is the active route.
-						subItems: [gitPage, connectorsPage, skillsPage, containerPage, activityPage],
+						subItems: [
+							gitPage,
+							connectorsPage,
+							skillsPage,
+							customPromptPage,
+							containerPage,
+							activityPage,
+						],
 					},
 				]),
 	];

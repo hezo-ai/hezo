@@ -369,7 +369,7 @@ describe('update_agent_system_prompt authorization', () => {
 			new_system_prompt: 'x',
 			change_summary: 'y',
 		});
-		expect(r.error).toContain('only the Coach or the Captain');
+		expect(r.error).toContain('only the CEO, Coach, or Captain');
 	});
 
 	it('Captain updating with a prompt missing required vars is rejected', async () => {
