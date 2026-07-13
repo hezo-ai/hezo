@@ -7,6 +7,7 @@ import {
 	Pencil,
 	Plus,
 	Search,
+	Sparkles,
 	Trash2,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
@@ -15,6 +16,7 @@ import { RevisionsPanel } from '../../components/revisions-panel';
 import { SkillViewDialog } from '../../components/skill-view-dialog';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
+import { ConfirmDialog } from '../../components/ui/confirm-dialog';
 import { InPlaceForm } from '../../components/ui/in-place-form';
 import { InfoTooltip } from '../../components/ui/info-tooltip';
 import { Input } from '../../components/ui/input';
@@ -26,10 +28,12 @@ import {
 	type SkillListItem,
 	useCreateInstanceSkill,
 	useDeleteInstanceSkill,
+	useInstallDefaultSkills,
 	useInstallRegistrySkill,
 	useInstanceSkill,
 	useInstanceSkillRevisions,
 	useInstanceSkills,
+	useMissingDefaultSkills,
 	useRegistryTokenStatus,
 	useRestoreInstanceSkill,
 	useSearchRegistrySkills,
@@ -51,9 +55,13 @@ function InstanceSkillsPage() {
 	const createSkill = useCreateInstanceSkill();
 	const updateSkill = useUpdateInstanceSkill();
 	const deleteSkill = useDeleteInstanceSkill();
+	const { data: missingData } = useMissingDefaultSkills(!!me?.is_superuser);
+	const installDefaults = useInstallDefaultSkills();
+	const missingDefaults = missingData?.missing ?? [];
 
 	const [showForm, setShowForm] = useState(false);
 	const [showSearch, setShowSearch] = useState(false);
+	const [confirmDefaults, setConfirmDefaults] = useState(false);
 	// `editingId` null = the form (when open) creates; otherwise it edits.
 	const [editingId, setEditingId] = useState<string | null>(null);
 	// Independently of editing, `viewingId` drives the read-only view modal.
@@ -175,6 +183,15 @@ function InstanceSkillsPage() {
 						</p>
 					</div>
 					<div className="flex items-center gap-2 shrink-0">
+						{missingDefaults.length > 0 && (
+							<Button
+								size="sm"
+								onClick={() => setConfirmDefaults(true)}
+								data-testid="add-default-skills"
+							>
+								<Sparkles className="w-3 h-3" /> Add default skills ({missingDefaults.length})
+							</Button>
+						)}
 						<Button
 							variant="secondary"
 							size="sm"
@@ -313,6 +330,24 @@ function InstanceSkillsPage() {
 				onOpenChange={(o) => !o && setViewingId(null)}
 				skill={viewingSkill?.id === viewingId ? viewingSkill : undefined}
 				fallbackName={skills.find((s) => s.id === viewingId)?.name}
+			/>
+			<ConfirmDialog
+				open={confirmDefaults}
+				onOpenChange={setConfirmDefaults}
+				title={`Add ${missingDefaults.length} default skill${missingDefaults.length === 1 ? '' : 's'}?`}
+				confirmLabel="Add skills"
+				description={
+					<>
+						These recommended global skills will be added to this instance. They'll appear like any
+						skill you authored — edit, delete, or re-scope them freely.
+						<span className="mt-2 block font-medium text-text-1" data-testid="default-skill-names">
+							{missingDefaults.map((m) => m.name).join(', ')}
+						</span>
+					</>
+				}
+				onConfirm={async () => {
+					await installDefaults.mutateAsync(undefined);
+				}}
 			/>
 		</div>
 	);

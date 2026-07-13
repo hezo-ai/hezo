@@ -110,6 +110,38 @@ export function useRestoreInstanceSkill(id: string | null) {
 	});
 }
 
+// --- default skills (the starter library Hezo ships). Not auto-seeded; the
+// admin installs the missing ones from the global Skills page behind a confirm.
+
+export interface MissingDefaultSkill {
+	slug: string;
+	name: string;
+	description: string;
+}
+
+const MISSING_DEFAULTS_KEY = [...INSTANCE_SKILLS_KEY, 'defaults', 'missing'] as const;
+
+export function useMissingDefaultSkills(enabled = true) {
+	return useQuery({
+		queryKey: MISSING_DEFAULTS_KEY,
+		queryFn: () => api.get<{ missing: MissingDefaultSkill[] }>('/api/skills/defaults'),
+		enabled,
+	});
+}
+
+export function useInstallDefaultSkills() {
+	return useMutation({
+		mutationFn: (slugs?: string[]) =>
+			api.post<{ installed: Array<{ id: string; slug: string; name: string }> }>(
+				'/api/skills/defaults/install',
+				slugs ? { slugs } : {},
+			),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: INSTANCE_SKILLS_KEY });
+		},
+	});
+}
+
 // --- skills.sh registry (admin "search and add"). Token-gated; agents bypass
 // this entirely and discover skills with the `npx skills` CLI in the container.
 

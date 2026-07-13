@@ -744,22 +744,10 @@ async function runSeed(db: Db): Promise<void> {
 		}
 		log.error('Seed failed:', err);
 	}
-	// Default global skills get their own failure domain: a builtins problem must
-	// not suppress them and vice versa. seedDefaultSkills is hash-gated — it never
-	// overwrites operator edits and never resurrects deleted skills.
-	try {
-		const { loadDefaultSkills } = await import('./db/default-skills.js');
-		const { seedDefaultSkills } = await import('./db/seed-default-skills.js');
-		await seedDefaultSkills(db, await loadDefaultSkills());
-	} catch (err) {
-		if (
-			err instanceof Error &&
-			(err.message.includes('Cannot find module') || err.message.includes('Cannot find package'))
-		) {
-			return;
-		}
-		log.error('Skills seed failed:', err);
-	}
+	// Default global skills are NOT auto-seeded at boot — an existing instance
+	// upgrading shouldn't have 15 skills materialize unasked. The operator installs
+	// them from the global Skills page (a button offers the missing ones behind a
+	// confirmation); see db/default-skills.ts and routes/skills.ts.
 }
 
 async function resolveMasterKeyState(

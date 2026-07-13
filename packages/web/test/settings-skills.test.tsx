@@ -1,4 +1,4 @@
-import { within } from '@testing-library/react';
+import { waitFor, within } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
 
@@ -86,4 +86,25 @@ test('the add form and the registry search panel each close via their own close 
 	// …and the add form closes independently.
 	await r.user.click(within(addPanel).getByTestId('in-place-form-close'));
 	expect(r.queryByTestId('in-place-form')).toBeNull();
+});
+
+test('the "Add default skills" button installs the missing defaults behind a confirmation', async () => {
+	const r = await renderApp({ initialPath: '/settings/skills' });
+
+	// A fresh instance seeds no default skills, so the button offers all 15.
+	const button = await r.findByTestId('add-default-skills');
+	expect(button.textContent).toContain('(15)');
+	// None of the defaults are in the list yet.
+	expect(r.queryByText('Systematic Debugging')).toBeNull();
+
+	// Clicking opens a confirm modal listing the missing skill names.
+	await r.user.click(button);
+	const dialog = await within(document.body).findByTestId('confirm-dialog');
+	expect(within(dialog).getByTestId('default-skill-names').textContent).toContain('Code Review');
+
+	// Confirming installs them: they appear in the list and the button disappears
+	// once the missing-defaults query refetches empty.
+	await r.user.click(within(dialog).getByTestId('confirm-dialog-confirm'));
+	await r.findByText('Systematic Debugging');
+	await waitFor(() => expect(r.queryByTestId('add-default-skills')).toBeNull());
 });
