@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import {
 	DEFAULT_DATA_DIR,
 	DEFAULT_PORT,
@@ -181,65 +181,152 @@ function pickDatabaseUrl(
 	return undefined;
 }
 
+/** As `pickDatabaseUrl`, for the asset-storage URL on the backup/restore subcommands. */
+function pickAssetStorageUrl(
+	cliValue: unknown,
+	env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+	const e = env.HEZO_ASSET_STORAGE_URL;
+	if (e !== undefined && e !== '') return e;
+	if (typeof cliValue === 'string' && cliValue.length > 0) return cliValue;
+	return undefined;
+}
+
 /**
- * Handle the `hezo backup` subcommand: write a portable logical backup of the
- * database (either backend) and exit. Returns `true` when it handled the
- * invocation so the caller skips normal server startup.
+ * Handle the `hezo backup` subcommand and exit. By default it captures BOTH the
+ * database and every asset blob into a portable **backup bundle** directory
+ * (`hezo-<timestamp>/` — `database.backup.gz` + `assets/<projectId>/<assetId>` +
+ * a `manifest.json` written last). Either half is excluded with `--no-assets`
+ * (database only → the legacy single `.backup.gz` file) or `--no-database`
+ * (assets only). A bundle restores onto either backend, which is how an instance
+ * moves its database and assets between local and hosted storage. Returns `true`
+ * when it handled the invocation so the caller skips normal server startup.
  *
- * For the embedded database the server must be stopped first — the embedded
- * engine is single-process. An external database can be backed up any time.
+ * For the embedded database / local asset store the server must be stopped first
+ * (the embedded engine is single-process, and a live server races the asset
+ * directory). An external database + S3 storage can be backed up any time — the
+ * source is only ever read.
  */
 export async function runBackup(argv: string[] = process.argv): Promise<boolean> {
 	if (argv[2] !== 'backup') return false;
 
 	const program = new Command()
 		.name('hezo backup')
-		.description('Write a portable logical backup of the database (works for both backends)')
+		.description(
+			'Write a portable backup of the database and asset files (works for both backends)',
+		)
 		.option(
 			'--output <path>',
-			'Output file (default <data-dir>/backups/hezo-<timestamp>.backup.gz)',
+			'Output path: a bundle directory (default <data-dir>/backups/hezo-<timestamp>), or a .backup.gz file with --no-assets',
 		)
 		.option('--data-dir <path>', 'Data directory', DEFAULT_DATA_DIR)
 		.option('--database-url <url>', 'External Postgres connection string (env: HEZO_DATABASE_URL)')
+		.option(
+			'--asset-storage-url <url>',
+			'S3-compatible asset storage to read blobs from (env: HEZO_ASSET_STORAGE_URL)',
+		)
+		.option('--no-assets', 'Back up the database only — skip asset files')
+		.option('--no-database', 'Back up asset files only — skip the database')
 		.parse(argv.slice(3), { from: 'user' });
 
 	const opts = program.opts();
+	const withAssets = opts.assets !== false;
+	const withDatabase = opts.database !== false;
+	if (!withAssets && !withDatabase) {
+		throw new Error('Nothing to back up: --no-assets and --no-database cannot be combined.');
+	}
 	const dataDir = resolveDataDir(opts.dataDir as string);
 	const databaseUrl = pickDatabaseUrl(opts.databaseUrl);
+	const assetStorageUrl = pickAssetStorageUrl(opts.assetStorageUrl);
 
-	const { loadAllMigrations } = await import('./db/load-migrations.js');
-	const migrations = await loadAllMigrations();
-	if (!migrations) throw new Error('No migrations found — cannot determine the schema version.');
-
-	const { openDatabase } = await import('./db/open.js');
-	const { dumpLogicalBackup } = await import('./db/logical-backup.js');
 	const { mkdir, writeFile } = await import('node:fs/promises');
+	const { openDatabase } = await import('./db/open.js');
+	const stamp = new Date().toISOString().replace(/[:.]/g, '-');
 
+	const dumpDatabase = async (db: import('./db/database').Db): Promise<Buffer> => {
+		const { loadAllMigrations } = await import('./db/load-migrations.js');
+		const migrations = await loadAllMigrations();
+		if (!migrations) throw new Error('No migrations found — cannot determine the schema version.');
+		const { dumpLogicalBackup } = await import('./db/logical-backup.js');
+		return dumpLogicalBackup(db, { hezoVersion: HEZO_VERSION, migrations });
+	};
+
+	// --no-assets keeps the exact legacy single-file artifact (the DB-only
+	// .backup.gz that the auto/pre-migration and legacy-restore paths expect).
+	if (!withAssets) {
+		const opened = await openDatabase({ dataDir, databaseUrl });
+		try {
+			const bytes = await dumpDatabase(opened.db);
+			const output = resolve(
+				(opts.output as string | undefined) ?? `${dataDir}/backups/hezo-${stamp}.backup.gz`,
+			);
+			await mkdir(resolve(output, '..'), { recursive: true });
+			await writeFile(output, bytes);
+			console.log(`Wrote logical backup of ${opened.storage.backend} database → ${output}`);
+		} finally {
+			await opened.db.close();
+		}
+		return true;
+	}
+
+	// Bundle path: DB (unless --no-database) + asset blobs + manifest (last).
+	const bundleDir = resolve(
+		(opts.output as string | undefined) ?? `${dataDir}/backups/hezo-${stamp}`,
+	);
+	const blob = await import('./assets/blob-backup.js');
+	const { openAssetStorage } = await import('./assets/open.js');
+
+	await mkdir(bundleDir, { recursive: true });
 	const opened = await openDatabase({ dataDir, databaseUrl });
+	const openedStore = await openAssetStorage({ dataDir, assetStorageUrl });
 	try {
-		const bytes = await dumpLogicalBackup(opened.db, { hezoVersion: HEZO_VERSION, migrations });
-		const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-		const output = resolve(
-			(opts.output as string | undefined) ?? `${dataDir}/backups/hezo-${stamp}.backup.gz`,
+		let databaseFile: string | null = null;
+		if (withDatabase) {
+			await writeFile(join(bundleDir, blob.BUNDLE_DB_NAME), await dumpDatabase(opened.db));
+			databaseFile = blob.BUNDLE_DB_NAME;
+		}
+		const assets = await blob.dumpAssetBlobs(opened.db, openedStore.store, bundleDir);
+		await blob.writeBundleManifest(bundleDir, {
+			kind: blob.BUNDLE_KIND,
+			bundleFormatVersion: blob.BUNDLE_FORMAT_VERSION,
+			hezoVersion: HEZO_VERSION,
+			createdAt: new Date().toISOString(),
+			database: databaseFile ? { file: databaseFile } : null,
+			assets: {
+				backend: openedStore.store.kind,
+				count: assets.count,
+				totalBytes: assets.bytes,
+				missing: assets.missing,
+			},
+		});
+		const dbNote = withDatabase ? `${opened.storage.backend} database + ` : '';
+		const missingNote = assets.missing.length
+			? ` — ${assets.missing.length} asset blob(s) were missing at the source`
+			: '';
+		console.log(
+			`Wrote backup bundle → ${bundleDir} ` +
+				`(${dbNote}${assets.count} asset blob(s) from ${openedStore.info.backend} storage)${missingNote}`,
 		);
-		await mkdir(resolve(output, '..'), { recursive: true });
-		await writeFile(output, bytes);
-		console.log(`Wrote logical backup of ${opened.storage.backend} database → ${output}`);
 	} finally {
+		await openedStore.store.close();
 		await opened.db.close();
 	}
 	return true;
 }
 
 /**
- * Handle the `hezo restore <backup>` subcommand, then exit. Two formats:
+ * Handle the `hezo restore <backup>` subcommand, then exit. It accepts:
  *
- * - **Portable logical backup** (`hezo backup` output, `.backup.gz`) —
- *   restores onto EITHER backend, which is also how an instance moves between
- *   embedded and hosted Postgres. Requires an empty target or `--wipe`.
+ * - **Backup bundle** (a `hezo backup` directory) — restores the database
+ *   and/or asset blobs it contains into the target backends (`--database-url` /
+ *   `--asset-storage-url`), which is how an instance moves both between local
+ *   and hosted storage. `--no-assets` / `--no-database` restore only one half.
+ * - **Portable logical backup** (`.backup.gz`) — database only; restores onto
+ *   EITHER backend. Requires an empty target or `--wipe`.
  * - **Legacy pgdata tarball** (pre-logical snapshots) — embedded only; wipes
  *   `pgdata` and reloads the physical snapshot.
  *
+ * Asset blobs are verified by sha256 against the target rows when present.
  * Returns `true` when it handled the invocation so the caller skips normal
  * server startup.
  */
@@ -248,14 +335,26 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 
 	const program = new Command()
 		.name('hezo restore')
-		.description('Restore a database backup (logical .backup.gz, or a legacy pgdata .tar.gz)')
-		.argument('<backup>', 'path to a backup file')
+		.description(
+			'Restore a backup: a "hezo backup" bundle (database + assets), a logical .backup.gz, or a legacy pgdata .tar.gz',
+		)
+		.argument('<backup>', 'path to a backup bundle directory or file')
 		.option('--data-dir <path>', 'Data directory', DEFAULT_DATA_DIR)
 		.option(
 			'--database-url <url>',
 			'External Postgres connection string to restore into (env: HEZO_DATABASE_URL)',
 		)
+		.option(
+			'--asset-storage-url <url>',
+			'S3-compatible asset storage to restore blobs into (env: HEZO_ASSET_STORAGE_URL)',
+		)
 		.option('--wipe', 'Drop the existing schema in the target database before restoring')
+		.option('--no-assets', 'Restore the database only — skip asset files in a bundle')
+		.option('--no-database', 'Restore asset files only — skip the database in a bundle')
+		.option(
+			'--strict-assets',
+			'Fail if any restored asset blob has no matching database row to verify against',
+		)
 		// argv is [runtime, script, 'restore', <backup>, ...flags] in both dev and
 		// the compiled binary — parse only the tokens after the subcommand name.
 		.parse(argv.slice(3), { from: 'user' });
@@ -264,7 +363,67 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 	const backupPath = resolve(program.args[0]);
 	const dataDir = resolveDataDir(opts.dataDir as string);
 	const databaseUrl = pickDatabaseUrl(opts.databaseUrl);
+	const assetStorageUrl = pickAssetStorageUrl(opts.assetStorageUrl);
 
+	const { loadAllMigrations } = await import('./db/load-migrations.js');
+	const { openDatabase } = await import('./db/open.js');
+	const blob = await import('./assets/blob-backup.js');
+
+	// Backup bundle (a directory): restore the database and/or assets it holds.
+	if (await blob.isBundleDir(backupPath)) {
+		const withAssets = opts.assets !== false;
+		const withDatabase = opts.database !== false;
+		if (!withAssets && !withDatabase) {
+			throw new Error('Nothing to restore: --no-assets and --no-database cannot be combined.');
+		}
+		const manifest = await blob.readBundleManifest(backupPath);
+		const restoreDb = withDatabase && manifest.database !== null;
+		const restoreAssets = withAssets && manifest.assets !== null;
+
+		const { readFile } = await import('node:fs/promises');
+		const { openAssetStorage } = await import('./assets/open.js');
+
+		const opened = await openDatabase({ dataDir, databaseUrl });
+		// Preflight the target asset store BEFORE loading the DB so a bad bucket fails fast.
+		const openedStore = restoreAssets ? await openAssetStorage({ dataDir, assetStorageUrl }) : null;
+		try {
+			if (restoreDb) {
+				const migrations = await loadAllMigrations();
+				if (!migrations) {
+					throw new Error('No migrations found — cannot reproduce the backup schema.');
+				}
+				const { restoreLogicalBackup } = await import('./db/logical-backup.js');
+				const dbBytes = await readFile(join(backupPath, blob.BUNDLE_DB_NAME));
+				const summary = await restoreLogicalBackup(opened.db, dbBytes, migrations, {
+					wipe: opts.wipe === true,
+				});
+				console.log(
+					`Restored database (Hezo ${manifest.hezoVersion}, taken ${manifest.createdAt}) into the ` +
+						`${opened.storage.backend} backend: ${summary.rows} rows across ${summary.tables} tables.`,
+				);
+			}
+			if (restoreAssets && openedStore) {
+				const summary = await blob.restoreAssetBlobs(opened.db, openedStore.store, backupPath, {
+					strict: opts.strictAssets === true,
+				});
+				const unverifiedNote = summary.unverified
+					? ` (${summary.unverified} without a matching database row)`
+					: '';
+				console.log(
+					`Restored ${summary.count} asset blob(s) into the ${openedStore.info.backend} storage${unverifiedNote}.`,
+				);
+			}
+			if (!restoreDb && !restoreAssets) {
+				console.log('This bundle has nothing to restore for the given options.');
+			}
+		} finally {
+			if (openedStore) await openedStore.store.close();
+			await opened.db.close();
+		}
+		return true;
+	}
+
+	// Single-file backups (unchanged): logical .backup.gz, or a legacy pgdata tarball.
 	const { readFile } = await import('node:fs/promises');
 	const bytes = await readFile(backupPath);
 
@@ -286,11 +445,9 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 		return true;
 	}
 
-	const { loadAllMigrations } = await import('./db/load-migrations.js');
 	const migrations = await loadAllMigrations();
 	if (!migrations) throw new Error('No migrations found — cannot reproduce the backup schema.');
 
-	const { openDatabase } = await import('./db/open.js');
 	const opened = await openDatabase({ dataDir, databaseUrl });
 	try {
 		const summary = await restoreLogicalBackup(opened.db, bytes, migrations, {

@@ -6,10 +6,11 @@ section: Deployment
 
 # Backup & recovery
 
-Hezo's own backup format is a **portable logical backup**: one file that works for both
-storage backends — the embedded database *and* an
-[external Postgres](/docs/deployment/configuration) — which also makes it the way to
-**move an instance between them**. But there's one crucial pairing to understand first.
+`hezo backup` captures a **complete instance** — the database *and* every uploaded asset
+file — as a portable **backup bundle**. It works for both database backends (embedded and
+[external Postgres](/docs/deployment/configuration)) and both asset backends (local files
+and an [S3-compatible bucket](/docs/deployment/configuration)), which also makes it the way
+to **move an instance between them**. But there's one crucial pairing to understand first.
 
 ## You need the data *and* the master key
 
@@ -25,58 +26,70 @@ key separately and safely (see [Master key & encryption](/docs/security/master-k
 ## Backing up
 
 ```sh
-hezo backup                        # embedded database (stop the server first)
-hezo backup --output /safe/place/hezo.backup.gz
-HEZO_DATABASE_URL=postgres://… hezo backup   # external database, any time
+hezo backup                         # whole instance (database + assets) → a bundle directory; stop the server first
+hezo backup --output /safe/place/hezo-backup/   # choose where the bundle goes
+hezo backup --no-assets             # database only → a single .backup.gz file
+HEZO_DATABASE_URL=postgres://… HEZO_ASSET_STORAGE_URL="s3://…" hezo backup   # back up a hosted instance, any time
 ```
 
-`hezo backup` writes a gzipped logical backup (default
-`<data-dir>/backups/hezo-<timestamp>.backup.gz`) containing every row plus the exact
-schema version it was taken at. For the **embedded** database, run it while the server
-is stopped. For an **external** database it can run any time — and pairs well with your
-provider's own snapshots or point-in-time recovery.
+`hezo backup` writes a **backup bundle** (default `<data-dir>/backups/hezo-<timestamp>/`)
+containing `database.backup.gz` (every row plus the exact schema version it was taken at),
+an `assets/` tree of every uploaded file, and a `manifest.json`. Use `--no-assets` for a
+database-only single `.backup.gz` file, or `--no-database` for an assets-only bundle. For
+the **embedded** database and **local** assets, run it while the server is stopped. A
+**hosted** database and bucket can be backed up any time — and pair well with your
+provider's own snapshots or versioning.
 
-**Also back up the data directory.** Uploaded assets (under `<data-dir>/assets/`),
-project workspaces, and keys live under `<data-dir>` (not in the database), so a complete
-instance backup is the `hezo backup` file **plus** a copy of the data directory (a file
-backup or volume snapshot works; stopped-server copies are cleanest). If assets live in
-[S3-compatible object storage](/docs/deployment/configuration) instead, cover the bucket
-with your provider's versioning/replication — the data directory then holds no asset
-files.
+**The bundle does not cover the whole data directory.** Project workspaces (git worktrees)
+and the instance's keys live under `<data-dir>` and are **not** in a backup, so a full
+disaster-recovery copy is the bundle **plus** a copy of the data directory (a file backup
+or volume snapshot works; stopped-server copies are cleanest). If your assets already live
+in [S3-compatible object storage](/docs/deployment/configuration), `hezo backup` reads them
+straight from the bucket into the bundle — or rely on the bucket's own
+versioning/replication and take a `--no-assets` database backup.
 
 ## Restoring
 
 ```sh
-hezo restore <backup file>                     # into the embedded database
-HEZO_DATABASE_URL=postgres://… hezo restore <backup file>   # into an external database
+hezo restore <bundle-or-file>                              # into the embedded database + local assets
+HEZO_DATABASE_URL=postgres://… hezo restore <bundle>       # database into an external Postgres
+hezo restore <bundle> --asset-storage-url "s3://…"         # assets into an S3-compatible bucket
 ```
 
 Restore replays Hezo's own migrations up to exactly the version the backup recorded,
 then loads the data — so the target must be an **empty database** (pass `--wipe` to drop
-and restore over a non-empty one). A backup taken by a *newer* Hezo than the running
-binary is refused with instructions to upgrade first. On the next server start, normal
-migrations bring the restored database forward to the binary's current schema.
+and restore over a non-empty one). Asset blobs from a bundle are written into the target
+asset store and checksum-verified against the restored rows (`--strict-assets` fails on any
+blob with no matching row); use `--no-assets` / `--no-database` to restore only one half of
+a bundle. A backup taken by a *newer* Hezo than the running binary is refused with
+instructions to upgrade first. On the next server start, normal migrations bring the
+restored database forward to the binary's current schema.
 
 Legacy physical snapshots (`.tar.gz` files from older Hezo versions) still restore with
 the same command, into the embedded database only.
 
-## Moving between embedded and hosted Postgres
+## Moving between local and hosted storage
 
-The same two commands are the migration path, in either direction:
+The same two commands are the migration path for the database **and** assets, in either
+direction. Which backends you point `restore` at decides where the data lands; the source
+is only ever read, so nothing is removed until you do it yourself.
 
 ```sh
-# Embedded → hosted Postgres
-hezo backup --output move.backup.gz                      # server stopped
-HEZO_DATABASE_URL=postgres://… hezo restore move.backup.gz
-HEZO_DATABASE_URL=postgres://… hezo                      # start against the new backend
+# Local → hosted (external Postgres + S3 bucket)
+hezo backup --output move/                               # server stopped
+HEZO_DATABASE_URL=postgres://… HEZO_ASSET_STORAGE_URL="s3://…" hezo restore move/
+HEZO_DATABASE_URL=postgres://… HEZO_ASSET_STORAGE_URL="s3://…" hezo   # start against the new backends
 
-# Hosted Postgres → embedded
-HEZO_DATABASE_URL=postgres://… hezo backup --output back.backup.gz
-hezo restore back.backup.gz --data-dir ~/.hezo
+# Hosted → local
+HEZO_DATABASE_URL=postgres://… HEZO_ASSET_STORAGE_URL="s3://…" hezo backup --output back/
+hezo restore back/ --data-dir ~/.hezo
 hezo
 ```
 
-Your master key is unchanged by a move — the encrypted vault travels inside the backup.
+Migrate just one side by setting only that target on `restore` (e.g. only
+`HEZO_DATABASE_URL` to move the database while leaving assets where they are), or with
+`--no-assets` / `--no-database`. Your master key is unchanged by a move — the encrypted
+vault travels inside the backup.
 
 ## Upgrades are safe to roll back
 

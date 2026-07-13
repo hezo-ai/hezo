@@ -1514,7 +1514,9 @@ PutObject/GetObject/DeleteObject/ListObjectsV2/DeleteObjects; deliberately S3-co
 no provider-native drivers) with a ListObjectsV2 preflight + bounded retry at startup and a
 typed `AssetStorageError` printed verbatim + exit on failure. In S3 mode the host filesystem
 holds no asset bytes at all; both layouts share the same relative `<projectId>/<assetId>`
-shape so switching backends is a plain directory↔bucket sync. On local-driver open, a
+shape so switching backends is a plain directory↔bucket sync — which `hezo backup` /
+`hezo restore` perform built-in (see Backup/restore below), copying blobs through this
+interface into and out of a backup bundle. On local-driver open, a
 one-time idempotent fs-only relocation (`relocateLegacyAssetBlobs`) renames blobs written by
 pre-abstraction versions (`teams/<t>/projects/<p>/assets/<id>`) into the new layout. The raw
 URL never reaches request-reachable state (mirrors the DB posture): startup computes a
@@ -1532,19 +1534,31 @@ deletes, which also collects orphans). The in-process S3 sim
 (`test/helpers/s3-sim.ts`) backs the driver-conformance and integration suites; the
 `test-s3` CI job runs the env-gated leg against real MinIO.
 
-**Backup/restore.** The operator format is the **portable logical backup**
+**Backup/restore.** `hezo backup` captures the whole instance — database **and** asset
+blobs — as a **backup bundle** directory: `database.backup.gz` (the portable logical
+database backup) + `assets/<projectId>/<assetId>` blob files + a `manifest.json` written
+**last** as the completion marker. The database half is the **portable logical backup**
 (`src/db/logical-backup.ts`): gzipped JSONL carrying the applied-migration set plus every
 row (bytea → base64, generated tsvector columns excluded and recomputed on load).
 Restore replays the binary's own migrations up to exactly the recorded set, then loads
 data in one transaction with FK constraints dropped/re-added around the inserts (insert
 order and self-references never matter) and serial sequences resumed; migration-seeded
-rows are truncated first so the backup is authoritative. Because both drivers speak the
-same format, `hezo backup`/`hezo restore` also move an instance between embedded PGlite
-and hosted Postgres in either direction. External startup migrations write one of these
-into `<dataDir>/backups/` automatically before applying (last 5 kept; a failed backup
-aborts the migration); the embedded path keeps its stronger copy-swap instead. Legacy
-physical pgdata tarballs (`db/backup.ts` `dumpDataDir`/`restoreDataDir`) still restore
-via `hezo restore` (embedded only).
+rows are truncated first so the backup is authoritative. The asset half
+(`src/assets/blob-backup.ts`) enumerates the authoritative `assets` table on backup and
+the bundle's own `assets/` tree on restore, copying blobs one at a time with bounded
+concurrency through the `AssetStore` interface and verifying each restored blob's sha256
+against the target row. Because both the DB and asset drivers are backend-agnostic,
+`hezo backup` then `hezo restore` moves an instance's database **and** assets between local
+and hosted storage in either direction — direction is expressed purely by which of
+`--database-url` / `--asset-storage-url` each step sets, and the source is only ever read
+(copy-only). `--no-assets` writes the legacy database-only bare `.backup.gz` file (the
+artifact internal callers still use), `--no-database` an assets-only bundle, and
+`--strict-assets` fails restore on any blob with no verifying row. Restore auto-detects the
+input: a directory is a bundle, a file with a logical header is a `.backup.gz`, otherwise a
+legacy physical pgdata tarball (`db/backup.ts` `dumpDataDir`/`restoreDataDir`, embedded
+only). External startup migrations write a bare logical `.backup.gz` into `<dataDir>/backups/`
+automatically before applying (last 5 kept; a failed backup aborts the migration); the
+embedded path keeps its stronger copy-swap instead.
 
 **Releases & updates.** A PR flow (`.github/workflows/`): `release.yml` computes the next
 version from Conventional Commits and opens a `release/<version>` PR; merging fires

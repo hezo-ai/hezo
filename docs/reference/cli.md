@@ -60,28 +60,48 @@ ready. It skips this automatically in environments without a browser — CI, con
 SSH sessions, and headless Linux (no `DISPLAY`/`WAYLAND_DISPLAY`) — and logs where to
 point your browser instead. Use `--no-open` (or `HEZO_OPEN=0`) to turn it off.
 
-## Back up the database
+## Back up
 
 ```sh
-hezo backup [--output <path>] [--data-dir <path>] [--database-url <url>]
+hezo backup [--output <path>] [--data-dir <path>] \
+  [--database-url <url>] [--asset-storage-url <url>] [--no-assets] [--no-database]
 ```
 
-Writes a **portable logical backup** (default
-`<data-dir>/backups/hezo-<timestamp>.backup.gz`) that restores onto either storage
-backend — which also makes it the way to move an instance between the embedded database
-and an external Postgres. For the embedded database, stop the server first. See
+By default `hezo backup` captures a **complete instance** — the database *and* every
+uploaded asset file — as a **backup bundle** directory (default
+`<data-dir>/backups/hezo-<timestamp>/`), containing `database.backup.gz`, an `assets/`
+tree, and a `manifest.json`. The bundle restores onto either storage backend, which is
+how you move an instance's database and assets between local storage and hosted
+providers (external Postgres and an S3-compatible bucket). Point `--asset-storage-url`
+(or `HEZO_ASSET_STORAGE_URL`) at the source bucket when the instance already keeps its
+assets in S3.
+
+- `--no-assets` — database only. Writes the single portable `.backup.gz` file (default
+  `<data-dir>/backups/hezo-<timestamp>.backup.gz`) instead of a bundle.
+- `--no-database` — assets only. Writes a bundle with just the asset files.
+
+For the embedded database (and local asset files), stop the server first. See
 [Backup & recovery](/docs/deployment/backup-and-recovery).
 
 ## Restore a backup
 
 ```sh
-hezo restore <backup> [--wipe] [--data-dir <path>] [--database-url <url>]
+hezo restore <backup> [--wipe] [--data-dir <path>] \
+  [--database-url <url>] [--asset-storage-url <url>] \
+  [--no-assets] [--no-database] [--strict-assets]
 ```
 
-Restores a `hezo backup` file into the embedded database (default) or an external one
-(`--database-url`). The target must be empty unless `--wipe` is passed. Backups taken by
-a newer Hezo are refused — upgrade first. Legacy pre-upgrade `.tar.gz` snapshots restore
-with the same command (embedded only). See
+`<backup>` is a bundle directory (database + assets), a `.backup.gz` file (database
+only), or a legacy pre-upgrade `.tar.gz` snapshot (embedded only). Restore writes into
+whichever backends you point it at: the embedded database (default) or an external one
+(`--database-url`), and local asset files (default) or an S3-compatible bucket
+(`--asset-storage-url`). Setting different targets than the source is exactly how you
+migrate an instance between local and hosted storage.
+
+The target database must be empty unless `--wipe` is passed. Restored asset blobs are
+verified by checksum against the database rows; `--strict-assets` fails if any blob has
+no matching row. `--no-assets` / `--no-database` restore only one half of a bundle.
+Backups taken by a newer Hezo are refused — upgrade first. See
 [Backup & recovery](/docs/deployment/backup-and-recovery).
 
 ## Reset
