@@ -249,18 +249,24 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	update_agent_system_prompt: {
 		category: 'Agent prompts & context',
 		returns:
-			'`{ applied: true, document_id }`, or `{ error }` if denied or the agent is not in the team. A revision snapshot is stored so the admin can restore previous versions.',
+			'`{ applied: true, document_id }`, or `{ error }` if denied or the agent is not in the team. A revision snapshot is stored so the admin can restore previous versions, and a team-coherence review is filed.',
 		auth: "The CEO, the Coach, or the team's Captain.",
 	},
-	get_project_preferences: {
+	update_agent_system_prompts: {
+		category: 'Agent prompts & context',
+		returns:
+			'Batch form — `{ results, applied_count }`, where `results` is a per-item array (`{ index, agent_id, slug, ok: true, document_id }` or `{ index, agent_id, ok: false, error }`). Each applied change stores its own revision, and a SINGLE team-coherence review is filed summarising all of them. Up to 50 updates per call; prefer this over calling update_agent_system_prompt in a loop.',
+		auth: "The CEO, the Coach, or the team's Captain.",
+	},
+	get_project_custom_prompt: {
 		category: 'Agent prompts & context',
 		returns:
 			"`{ content, length, updated_at }` — the project's Custom Prompt (the project-wide instruction block injected verbatim into every agent's system prompt in the project). `content` is empty when none is set yet.",
 	},
-	update_project_preferences: {
+	update_project_custom_prompt: {
 		category: 'Agent prompts & context',
 		returns:
-			'`{ applied: true, document_id, length }`, or `{ error }` if denied. Replaces the project Custom Prompt wholesale; a revision snapshot is stored so the admin can restore previous versions.',
+			'`{ applied: true, document_id, length }`, or `{ error }` if denied. Replaces the project Custom Prompt wholesale; a revision snapshot is stored so the admin can restore previous versions, and a content change files a team-coherence review so it is reviewed against the roster.',
 		auth: "The CEO, the Coach, or the team's Captain.",
 	},
 	set_agent_summary: {

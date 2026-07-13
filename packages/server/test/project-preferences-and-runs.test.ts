@@ -155,13 +155,13 @@ afterAll(async () => {
 describe('project Custom Prompt tools', () => {
 	it('the Captain can set it and it reaches every agent prompt', async () => {
 		const body = 'TEAM RULE: always run the full test suite before pushing.';
-		const applied = (await callToolAs(captainToken, 'update_project_preferences', {
+		const applied = (await callToolAs(captainToken, 'update_project_custom_prompt', {
 			content: body,
 		})) as { applied?: boolean; error?: string };
 		expect(applied.error).toBeUndefined();
 		expect(applied.applied).toBe(true);
 
-		const read = (await callToolAs(captainToken, 'get_project_preferences', {})) as {
+		const read = (await callToolAs(captainToken, 'get_project_custom_prompt', {})) as {
 			content: string;
 			length: number;
 		};
@@ -177,7 +177,7 @@ describe('project Custom Prompt tools', () => {
 	});
 
 	it('the Coach (scoped into the team) can update it', async () => {
-		const res = (await callToolAs(coachToken, 'update_project_preferences', {
+		const res = (await callToolAs(coachToken, 'update_project_custom_prompt', {
 			content: 'Coach-added convention.',
 		})) as { applied?: boolean; error?: string };
 		expect(res.error).toBeUndefined();
@@ -185,7 +185,7 @@ describe('project Custom Prompt tools', () => {
 	});
 
 	it('the CEO (cross-team from HQ) can update it by naming the project', async () => {
-		const res = (await callToolAs(ceoToken, 'update_project_preferences', {
+		const res = (await callToolAs(ceoToken, 'update_project_custom_prompt', {
 			project: projectSlug,
 			content: 'CEO-added direction.',
 		})) as { applied?: boolean; error?: string };
@@ -194,7 +194,7 @@ describe('project Custom Prompt tools', () => {
 	});
 
 	it('a non-privileged worker is denied', async () => {
-		const res = (await callToolAs(engineerToken, 'update_project_preferences', {
+		const res = (await callToolAs(engineerToken, 'update_project_custom_prompt', {
 			content: 'engineer should not be able to set this',
 		})) as { applied?: boolean; error?: string };
 		expect(res.applied).toBeUndefined();
@@ -202,8 +202,8 @@ describe('project Custom Prompt tools', () => {
 	});
 
 	it('records a restorable revision on each content change', async () => {
-		await callToolAs(captainToken, 'update_project_preferences', { content: 'version one' });
-		await callToolAs(captainToken, 'update_project_preferences', {
+		await callToolAs(captainToken, 'update_project_custom_prompt', { content: 'version one' });
+		await callToolAs(captainToken, 'update_project_custom_prompt', {
 			content: 'version two',
 			change_summary: 'second pass',
 		});
@@ -227,6 +227,67 @@ describe('update_agent_system_prompt authorization', () => {
 		})) as { applied?: boolean; error?: string };
 		expect(res.error).toBeUndefined();
 		expect(res.applied).toBe(true);
+	});
+});
+
+describe('update_agent_system_prompts (batch)', () => {
+	it('applies several prompt updates in one call', async () => {
+		const res = (await callToolAs(captainToken, 'update_agent_system_prompts', {
+			updates: [
+				{
+					agent_id: 'engineer',
+					new_system_prompt: compliantPrompt('Engineer, revised.'),
+					change_summary: 'tidy engineer',
+				},
+				{
+					agent_id: 'architect',
+					new_system_prompt: compliantPrompt('Architect, revised.'),
+					change_summary: 'tidy architect',
+				},
+			],
+		})) as {
+			applied_count?: number;
+			results?: Array<{ ok: boolean; slug?: string }>;
+			error?: string;
+		};
+		expect(res.error).toBeUndefined();
+		expect(res.applied_count).toBe(2);
+		expect(res.results?.every((r) => r.ok)).toBe(true);
+	});
+
+	it('denies a non-privileged worker', async () => {
+		const res = (await callToolAs(engineerToken, 'update_agent_system_prompts', {
+			updates: [
+				{
+					agent_id: 'engineer',
+					new_system_prompt: compliantPrompt('x'),
+					change_summary: 'y',
+				},
+			],
+		})) as { error?: string };
+		expect(res.error).toMatch(/Access denied/i);
+	});
+
+	it('reports per-item errors (unknown agent, missing required vars) and applies the valid ones', async () => {
+		const res = (await callToolAs(captainToken, 'update_agent_system_prompts', {
+			updates: [
+				{
+					agent_id: 'engineer',
+					new_system_prompt: compliantPrompt('Engineer, ok.'),
+					change_summary: 'ok',
+				},
+				{ agent_id: 'nobody', new_system_prompt: compliantPrompt('x'), change_summary: 'y' },
+				{
+					agent_id: 'architect',
+					new_system_prompt: 'no required substitution variables here',
+					change_summary: 'bad',
+				},
+			],
+		})) as { applied_count?: number; results?: Array<{ ok: boolean; error?: string }> };
+		expect(res.applied_count).toBe(1);
+		expect(res.results?.[0].ok).toBe(true);
+		expect(res.results?.[1].ok).toBe(false);
+		expect(res.results?.[2].ok).toBe(false);
 	});
 });
 

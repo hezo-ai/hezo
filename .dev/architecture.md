@@ -244,9 +244,12 @@ interrupted run still counts against budgets.
 unique scoping and full revision history in `document_revisions`. The `team_preferences`
 document is the project's **Custom Prompt** — a per-team instruction block injected verbatim
 into every in-project agent's prompt via `{{team_preferences_context}}`; it is edited from the
-web **Settings → Custom Prompt** page (`PATCH /api/projects/:projectId/preferences`) and, for
-agents, via the `get_project_preferences` / `update_project_preferences` MCP tools (the write
-tool gated to the CEO, Coach, or the project's Captain).
+web **Settings → Custom Prompt** page (`PATCH /api/projects/:projectId/custom-prompt`) and, for
+agents, via the `get_project_custom_prompt` / `update_project_custom_prompt` MCP tools (the write
+tool gated to the CEO, Coach, or the project's Captain). The REST path and the MCP tool names are
+kept in parallel (`custom-prompt` ↔ `..._project_custom_prompt`) per the naming-parity rule in
+AGENTS.md; only the underlying `DocumentType.TeamPreferences` and `{{team_preferences_context}}`
+keep their historical names.
 `review_comments` (renamed from `document_review_comments` in migration 025) holds the
 admin's review feedback on **exactly one target per row** — a project doc (`document_id`)
 or an asset (`asset_id`), enforced by CHECK. Doc rows keep their original shape: each
@@ -623,7 +626,14 @@ singletons (CEO/Coach) are exempt — they have no in-team manager. `{{team_cont
 agent's stored prompt) is authorized for the **Coach**, the team's **Captain**, and the **CEO**: the
 CEO and Coach are recognized from any scope (including their cross-team chat/HQ session) via
 `isHqInstanceAgent`, and the Captain via `canCoordinateTeam` — the same set that may write the project
-Custom Prompt with `update_project_preferences`.
+Custom Prompt with `update_project_custom_prompt`. `update_agent_system_prompts` (plural) applies
+several prompt edits in one call for the same callers. **Coherence review on change.** Any edit that
+reaches agents' prompts — an agent system prompt (MCP singular/batch or the REST `PATCH /agents`) or
+the project Custom Prompt (MCP or REST) — files a team-coherence review via
+`enqueueTeamCoherenceReviewTask`, passing a `changeSummary` that is recorded on the ticket under a
+"Changes that triggered this review" section (accumulated across coalesced changes), so the reviewer
+knows what changed and why the review was triggered — regardless of who made the change (agent or
+admin).
 
 **Run logs to MCP.** A run's `log_text` is readable through the read-only `list_task_runs` (per-task
 run metadata) and `get_run_log` (one run's log tail, capped by `excerpt_chars`) MCP tools, team-scoped

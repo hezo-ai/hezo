@@ -195,6 +195,7 @@ const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'register_connector',
 	'resolve_approval',
 	'update_agent_system_prompt',
+	'update_agent_system_prompts',
 	'set_agent_status',
 	'set_agent_summary',
 	'set_team_summary',
@@ -215,7 +216,7 @@ const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'remove_connector',
 	'update_goal_progress',
 	'update_project_progress',
-	'update_project_preferences',
+	'update_project_custom_prompt',
 ]);
 
 /** A handler result that signals failure rather than a persisted write. */
@@ -3312,7 +3313,9 @@ export function registerTools(
 			});
 
 			trackBackground(
-				enqueueTeamCoherenceReviewTask(db, teamId, 'prompt_updated').catch((e) =>
+				enqueueTeamCoherenceReviewTask(db, teamId, 'prompt_updated', {
+					changeSummary: `Updated ${targetSlug}'s system prompt: ${args.change_summary as string}`,
+				}).catch((e) =>
 					log.error('Failed to enqueue team coherence review after prompt update:', e),
 				),
 			);
@@ -3324,8 +3327,108 @@ export function registerTools(
 
 	tool(
 		server,
-		'get_project_preferences',
-		'Read this project\'s Custom Prompt — the project-wide instruction block (the project context / "preferences") that is injected verbatim into every agent\'s system prompt in this project. Returns the current content plus its length and last-updated time (empty content when none is set yet). Read this before update_project_preferences so you extend the existing guidance rather than overwrite it.',
+		'update_agent_system_prompts',
+		`Apply system prompt changes to MULTIPLE agents in one call — the preferred way when a review touches several agents at once (e.g. the Coach applying learned rules across everyone in a feedback loop). Same callers and rules as update_agent_system_prompt (the CEO, the Coach, or the team's Captain); each change is applied immediately with its own revision snapshot. Files a SINGLE team-coherence review that summarises all the updates, so the Captain/CEO can account for them together. Prefer this over calling update_agent_system_prompt in a loop. Up to ${MAX_BATCH_AGENT_SYSTEM_PROMPTS} at once.`,
+		{
+			project: projectArg(),
+			updates: z
+				.array(
+					z.object({
+						agent_id: z.string().describe('Target agent — its slug (e.g. "engineer") or member ID'),
+						new_system_prompt: z
+							.string()
+							.describe(
+								`Full updated prompt for this agent; MUST keep every required substitution variable (${REQUIRED_SYSTEM_PROMPT_VARS.join(', ')}) unless the target is the CEO/Coach.`,
+							),
+						change_summary: z.string().describe('Summary of what changed and why for this agent'),
+					}),
+				)
+				.min(1)
+				.max(MAX_BATCH_AGENT_SYSTEM_PROMPTS)
+				.describe(`Up to ${MAX_BATCH_AGENT_SYSTEM_PROMPTS} prompt updates.`),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId } = scope;
+
+			const allowed =
+				(await isHqInstanceAgent(db, auth)) || (await canCoordinateTeam(db, auth, teamId));
+			if (!allowed) {
+				return {
+					error: 'Access denied: only the CEO, Coach, or Captain can update system prompts',
+				};
+			}
+
+			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+			const updates = args.updates as Array<{
+				agent_id: string;
+				new_system_prompt: string;
+				change_summary: string;
+			}>;
+
+			const results: Array<Record<string, unknown>> = [];
+			const applied: Array<{ slug: string; change_summary: string }> = [];
+			for (let i = 0; i < updates.length; i++) {
+				const u = updates[i];
+				const agentId = await resolveAgentId(db, teamId, u.agent_id);
+				const agentCheck = agentId
+					? await db.query<{ id: string; slug: string }>(
+							`SELECT ma.id, ma.slug FROM member_agents ma JOIN members m ON m.id = ma.id
+							 WHERE ma.id = $1 AND m.team_id = $2`,
+							[agentId, teamId],
+						)
+					: null;
+				if (!agentId || !agentCheck || agentCheck.rows.length === 0) {
+					results.push({
+						index: i,
+						agent_id: u.agent_id,
+						ok: false,
+						error: 'Agent not found in this team',
+					});
+					continue;
+				}
+				const slug = agentCheck.rows[0].slug;
+				const isInstanceSingleton = (INSTANCE_AGENT_SLUGS as readonly string[]).includes(slug);
+				if (!isInstanceSingleton) {
+					const promptError = requiredSystemPromptVarsError(u.new_system_prompt);
+					if (promptError) {
+						results.push({ index: i, agent_id: u.agent_id, ok: false, error: promptError });
+						continue;
+					}
+				}
+				const doc = await upsertDocument(db, undefined, {
+					scope: { type: DocumentType.AgentSystemPrompt, teamId, memberAgentId: agentId },
+					content: u.new_system_prompt,
+					changeSummary: u.change_summary,
+					authorMemberId: callerMemberId,
+				});
+				results.push({ index: i, agent_id: u.agent_id, slug, ok: true, document_id: doc.id });
+				applied.push({ slug, change_summary: u.change_summary });
+			}
+
+			if (applied.length > 0) {
+				const summary = `Updated ${applied.length} agent prompt(s): ${applied
+					.map((a) => `${a.slug} (${a.change_summary})`)
+					.join('; ')}`;
+				trackBackground(
+					enqueueTeamCoherenceReviewTask(db, teamId, 'prompt_updated', {
+						changeSummary: summary,
+					}).catch((e) =>
+						log.error('Failed to enqueue team coherence review after batch prompt update:', e),
+					),
+				);
+			}
+
+			return { results, applied_count: applied.length };
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'get_project_custom_prompt',
+		'Read this project\'s Custom Prompt — the project-wide instruction block (the project context / "preferences") that is injected verbatim into every agent\'s system prompt in this project. Returns the current content plus its length and last-updated time (empty content when none is set yet). Read this before update_project_custom_prompt so you extend the existing guidance rather than overwrite it.',
 		{
 			project: projectArg(),
 		},
@@ -3344,8 +3447,8 @@ export function registerTools(
 
 	tool(
 		server,
-		'update_project_preferences',
-		"Replace this project's Custom Prompt — the project-wide instruction block (the project context / \"preferences\") injected verbatim into every agent's system prompt in this project. Reach for this when guidance should apply to ALL of the project's agents from the very start of every run (a shared convention, standard, or fact) — it saves editing each agent's prompt one by one. The content you pass REPLACES the whole value, so call get_project_preferences first and extend it. Applied immediately; a revision snapshot is stored so the admin can restore previous versions. Only callable by the CEO, Coach, or the project's Captain.",
+		'update_project_custom_prompt',
+		"Replace this project's Custom Prompt — the project-wide instruction block (the project context / \"preferences\") injected verbatim into every agent's system prompt in this project. Reach for this when guidance should apply to ALL of the project's agents from the very start of every run (a shared convention, standard, or fact) — it saves editing each agent's prompt one by one. The content you pass REPLACES the whole value, so call get_project_custom_prompt first and extend it. Applied immediately; a revision snapshot is stored so the admin can restore previous versions. Only callable by the CEO, Coach, or the project's Captain.",
 		{
 			project: projectArg(),
 			content: z
@@ -3372,6 +3475,7 @@ export function registerTools(
 				};
 			}
 
+			const prior = await getDocument(db, { type: DocumentType.TeamPreferences, teamId });
 			const authorMemberId = await resolveActorMemberId(db, auth, teamId);
 			const doc = await upsertDocument(db, wsManager, {
 				scope: { type: DocumentType.TeamPreferences, teamId },
@@ -3379,6 +3483,21 @@ export function registerTools(
 				changeSummary: args.change_summary as string | undefined,
 				authorMemberId,
 			});
+
+			// The Custom Prompt reaches every agent's prompt, so a real change warrants
+			// a team coherence review (same as an agent-prompt edit).
+			if ((prior?.content ?? '') !== (args.content as string)) {
+				const summary = args.change_summary
+					? `Project Custom Prompt updated: ${args.change_summary as string}`
+					: 'The project Custom Prompt was updated.';
+				trackBackground(
+					enqueueTeamCoherenceReviewTask(db, teamId, 'custom_prompt_updated', {
+						changeSummary: summary,
+					}).catch((e) =>
+						log.error('Failed to enqueue coherence review after Custom Prompt update:', e),
+					),
+				);
+			}
 
 			return { applied: true, document_id: doc.id, length: (args.content as string).length };
 		},

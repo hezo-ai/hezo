@@ -86,7 +86,7 @@ const TABLE_TO_QUERY_KEY: Record<
 			case 'skill':
 				return [queryKeys.projects.skills(cid)];
 			case 'team_preferences':
-				return [queryKeys.projects.preferences(cid)];
+				return [queryKeys.projects.customPrompt(cid)];
 			default:
 				return [];
 		}

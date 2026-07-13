@@ -173,12 +173,12 @@ test('can restore a previous Custom Prompt revision', async () => {
 		seed: async ({ apiBase, token }) => {
 			team = await createTeam();
 			const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-			await apiBase(`/api/projects/${team.projectSlug}/preferences`, {
+			await apiBase(`/api/projects/${team.projectSlug}/custom-prompt`, {
 				method: 'PATCH',
 				headers,
 				body: JSON.stringify({ content: 'Original preferences body' }),
 			});
-			await apiBase(`/api/projects/${team.projectSlug}/preferences`, {
+			await apiBase(`/api/projects/${team.projectSlug}/custom-prompt`, {
 				method: 'PATCH',
 				headers,
 				body: JSON.stringify({

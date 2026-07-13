@@ -637,15 +637,32 @@ Apply a system prompt change for an agent. Callable by the Coach agent (for afte
 | `new_system_prompt` | `string` | Yes | The full updated system prompt. It MUST keep every required substitution variable ({{team_name}}, {{reports_to}}, {{skills_context}}, {{project_docs_context}}, {{team_preferences_context}}) — read the current prompt with get_agent_system_prompt(placeholders=false) first and preserve them, or the update is rejected. (The CEO and Coach are exempt.) |
 | `change_summary` | `string` | Yes | Summary of what changed and why |
 
-**Returns:** `{ applied: true, document_id }`, or `{ error }` if denied or the agent is not in the team. A revision snapshot is stored so the admin can restore previous versions.
+**Returns:** `{ applied: true, document_id }`, or `{ error }` if denied or the agent is not in the team. A revision snapshot is stored so the admin can restore previous versions, and a team-coherence review is filed.
 
 **Authorization:** The CEO, the Coach, or the team's Captain.
 
-### `get_project_preferences`
+### `update_agent_system_prompts`
+
+_Write tool._
+
+Apply system prompt changes to MULTIPLE agents in one call — the preferred way when a review touches several agents at once (e.g. the Coach applying learned rules across everyone in a feedback loop). Same callers and rules as update_agent_system_prompt (the CEO, the Coach, or the team's Captain); each change is applied immediately with its own revision snapshot. Files a SINGLE team-coherence review that summarises all the updates, so the Captain/CEO can account for them together. Prefer this over calling update_agent_system_prompt in a loop. Up to 50 at once.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `updates` | `object[]` | Yes | Up to 50 prompt updates. |
+
+**Returns:** Batch form — `{ results, applied_count }`, where `results` is a per-item array (`{ index, agent_id, slug, ok: true, document_id }` or `{ index, agent_id, ok: false, error }`). Each applied change stores its own revision, and a SINGLE team-coherence review is filed summarising all of them. Up to 50 updates per call; prefer this over calling update_agent_system_prompt in a loop.
+
+**Authorization:** The CEO, the Coach, or the team's Captain.
+
+### `get_project_custom_prompt`
 
 _Read-only._
 
-Read this project's Custom Prompt — the project-wide instruction block (the project context / "preferences") that is injected verbatim into every agent's system prompt in this project. Returns the current content plus its length and last-updated time (empty content when none is set yet). Read this before update_project_preferences so you extend the existing guidance rather than overwrite it.
+Read this project's Custom Prompt — the project-wide instruction block (the project context / "preferences") that is injected verbatim into every agent's system prompt in this project. Returns the current content plus its length and last-updated time (empty content when none is set yet). Read this before update_project_custom_prompt so you extend the existing guidance rather than overwrite it.
 
 **Parameters:**
 
@@ -655,11 +672,11 @@ Read this project's Custom Prompt — the project-wide instruction block (the pr
 
 **Returns:** `{ content, length, updated_at }` — the project's Custom Prompt (the project-wide instruction block injected verbatim into every agent's system prompt in the project). `content` is empty when none is set yet.
 
-### `update_project_preferences`
+### `update_project_custom_prompt`
 
 _Write tool._
 
-Replace this project's Custom Prompt — the project-wide instruction block (the project context / "preferences") injected verbatim into every agent's system prompt in this project. Reach for this when guidance should apply to ALL of the project's agents from the very start of every run (a shared convention, standard, or fact) — it saves editing each agent's prompt one by one. The content you pass REPLACES the whole value, so call get_project_preferences first and extend it. Applied immediately; a revision snapshot is stored so the admin can restore previous versions. Only callable by the CEO, Coach, or the project's Captain.
+Replace this project's Custom Prompt — the project-wide instruction block (the project context / "preferences") injected verbatim into every agent's system prompt in this project. Reach for this when guidance should apply to ALL of the project's agents from the very start of every run (a shared convention, standard, or fact) — it saves editing each agent's prompt one by one. The content you pass REPLACES the whole value, so call get_project_custom_prompt first and extend it. Applied immediately; a revision snapshot is stored so the admin can restore previous versions. Only callable by the CEO, Coach, or the project's Captain.
 
 **Parameters:**
 
@@ -669,7 +686,7 @@ Replace this project's Custom Prompt — the project-wide instruction block (the
 | `content` | `string` | Yes | The full new Custom Prompt content (Markdown). Replaces the current value entirely — include the existing guidance you want to keep. |
 | `change_summary` | `string` | No | Short summary of what changed and why (stored on the revision). |
 
-**Returns:** `{ applied: true, document_id, length }`, or `{ error }` if denied. Replaces the project Custom Prompt wholesale; a revision snapshot is stored so the admin can restore previous versions.
+**Returns:** `{ applied: true, document_id, length }`, or `{ error }` if denied. Replaces the project Custom Prompt wholesale; a revision snapshot is stored so the admin can restore previous versions, and a content change files a team-coherence review so it is reviewed against the roster.
 
 **Authorization:** The CEO, the Coach, or the team's Captain.
 

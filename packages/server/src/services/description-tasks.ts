@@ -1,5 +1,6 @@
 import { TaskPriority, TaskStatus, TERMINAL_TASK_STATUSES, WakeupSource } from '@hezo/shared';
 import type { Db } from '../db/database';
+import { withTransaction } from '../lib/sql';
 import { allocateTaskIdentifier } from '../lib/task-identifier';
 import { logger } from '../logger';
 import { loadTeamCoordinationContext, type TeamCoordinationContext } from './internal-intake';
@@ -8,6 +9,9 @@ import { createWakeup } from './wakeup';
 const log = logger.child('description-tasks');
 
 const COHERENCE_LABEL = 'team-coherence-review';
+
+/** Heading under which each triggering change is recorded on the coherence ticket. */
+const COHERENCE_CHANGES_HEADER = '## Changes that triggered this review';
 
 export type TeamCoherenceReviewReason =
 	| 'initial'
@@ -18,6 +22,7 @@ export type TeamCoherenceReviewReason =
 	| 'prompt_updated'
 	| 'role_updated'
 	| 'summary_updated'
+	| 'custom_prompt_updated'
 	| 'enabled_changed';
 
 /** Resolves the CEO + the team's own project — coherence/setup live in that project. */
@@ -36,6 +41,40 @@ async function findOpenLabeledTask(db: Db, teamId: string, label: string): Promi
 		[teamId, JSON.stringify([label]), ...TERMINAL_TASK_STATUSES],
 	);
 	return result.rows[0]?.id ?? null;
+}
+
+/** One bullet recording a change on the coherence ticket. */
+function coherenceChangeLine(reason: TeamCoherenceReviewReason, changeSummary: string): string {
+	return `- **${reason}:** ${changeSummary}`;
+}
+
+/**
+ * Append a triggering change to an already-open coherence ticket's description so
+ * the assignee sees every accumulated change (not just the first) when it runs.
+ * Race-safe: the read-modify-write runs under `FOR UPDATE`. Returns the ticket's
+ * current assignee so the caller can re-wake it. Adds the section header the first
+ * time (tickets opened by a summary-less trigger don't have it yet).
+ */
+async function appendCoherenceChange(
+	db: Db,
+	taskId: string,
+	reason: TeamCoherenceReviewReason,
+	changeSummary: string,
+): Promise<string | null> {
+	return withTransaction(db, async () => {
+		const r = await db.query<{ description: string | null; assignee_id: string | null }>(
+			'SELECT description, assignee_id FROM tasks WHERE id = $1 FOR UPDATE',
+			[taskId],
+		);
+		if (r.rows.length === 0) return null;
+		const desc = r.rows[0].description ?? '';
+		const line = coherenceChangeLine(reason, changeSummary);
+		const next = desc.includes(COHERENCE_CHANGES_HEADER)
+			? `${desc}\n${line}`
+			: `${desc}\n\n${COHERENCE_CHANGES_HEADER}\n\n${line}`;
+		await db.query('UPDATE tasks SET description = $1 WHERE id = $2', [next, taskId]);
+		return r.rows[0].assignee_id;
+	});
 }
 
 async function createLabeledInternalTask(
@@ -90,6 +129,7 @@ function buildTeamCoherenceReviewBody(
 	reason: TeamCoherenceReviewReason,
 	teamSlug: string,
 	autoStart = true,
+	changeSummary?: string,
 ): string {
 	const draftBanner = autoStart
 		? ''
@@ -97,6 +137,13 @@ function buildTeamCoherenceReviewBody(
 > You created this project from an intake conversation, so this setup ticket has **not** started yet and is currently unassigned. Replace the generic audit below with the concrete setup you settled with the operator: the specific roles to hire (and why), any system-prompt rewrites, and the reporting structure. Edit this description with \`update_task\`. When it reflects the agreed plan, call \`start_team_setup(project="${teamSlug}")\` to assign this ticket to yourself and begin the run. Until you do, the Captain's planning ticket stays blocked on it.
 
 `;
+	const changesSection = changeSummary
+		? `
+
+${COHERENCE_CHANGES_HEADER}
+
+${coherenceChangeLine(reason, changeSummary)}`
+		: '';
 	return `${draftBanner}## Team coherence review
 
 The **${teamSlug}** project-team changed (reason: ${reason}). Audit its roster — including whether every role's output gets verified by someone other than its author — then rewrite the descriptive blobs that other agents read so they stay accurate. Use \`team_id\` = \`${teamSlug}\` for the tool calls below.
@@ -122,14 +169,14 @@ The **${teamSlug}** project-team changed (reason: ${reason}). Audit its roster �
    - \`set_agent_team_context(agent_id, content="...")\` — write a relationships narrative addressed to that agent ("you"), up to ~30 lines, covering its manager (and how to escalate), direct reports (and how to delegate to each), peers (and typical handoffs), indirect reports / agents two+ levels away (and the correct routing path), and any humans on the admin (and when to involve them).
    - This blob is injected into the agent's own system prompt at the start of every run, so it doesn't need to derive its place in the org chart from scratch.
 6. \`set_team_summary(summary="...")\` — synthesise a team-level summary (≤20 lines, plain prose, may span paragraphs) covering reporting structure, handoffs, and escalation paths.
-7. Move this task to **done** once the audit and rewrites are complete.`;
+7. Move this task to **done** once the audit and rewrites are complete.${changesSection}`;
 }
 
 export async function enqueueTeamCoherenceReviewTask(
 	db: Db,
 	teamId: string,
 	reason: TeamCoherenceReviewReason,
-	opts: { autoStart?: boolean } = {},
+	opts: { autoStart?: boolean; changeSummary?: string } = {},
 ): Promise<string | null> {
 	if (process.env.HEZO_E2E_SKIP_COHERENCE_REVIEW) return null;
 	const ctx = await loadTeamContext(db, teamId);
@@ -137,7 +184,20 @@ export async function enqueueTeamCoherenceReviewTask(
 
 	const existing = await findOpenLabeledTask(db, teamId, COHERENCE_LABEL);
 	if (existing) {
-		log.debug(`Skipping duplicate team coherence review; open task ${existing}`);
+		// Coalesce onto the open ticket. Record this change on it so the review can
+		// account for every update that triggered it, and re-wake the assignee so the
+		// accumulated changes get picked up.
+		if (opts.changeSummary) {
+			const assignee = await appendCoherenceChange(db, existing, reason, opts.changeSummary);
+			if (assignee) {
+				try {
+					await createWakeup(db, assignee, teamId, WakeupSource.Assignment, { task_id: existing });
+				} catch (e) {
+					log.error('Failed to re-wake assignee for coalesced coherence change:', e);
+				}
+			}
+		}
+		log.debug(`Coalesced change onto open team coherence review ${existing}`);
 		return existing;
 	}
 
@@ -148,7 +208,12 @@ export async function enqueueTeamCoherenceReviewTask(
 	const teamSlug = await db.query<{ slug: string }>('SELECT slug FROM teams WHERE id = $1', [
 		teamId,
 	]);
-	const body = buildTeamCoherenceReviewBody(reason, teamSlug.rows[0]?.slug ?? teamId, autoStart);
+	const body = buildTeamCoherenceReviewBody(
+		reason,
+		teamSlug.rows[0]?.slug ?? teamId,
+		autoStart,
+		opts.changeSummary,
+	);
 	return createLabeledInternalTask(
 		db,
 		ctx,

@@ -5,11 +5,11 @@ import { MarkdownEditor } from '../../../components/markdown-editor';
 import { RevisionsPanel } from '../../../components/revisions-panel';
 import { Button } from '../../../components/ui/button';
 import {
-	usePreferenceRevisions,
-	usePreferences,
-	useRestorePreferenceRevision,
-	useUpdatePreferences,
-} from '../../../hooks/use-preferences';
+	useCustomPrompt,
+	useCustomPromptRevisions,
+	useRestoreCustomPromptRevision,
+	useUpdateCustomPrompt,
+} from '../../../hooks/use-custom-prompt';
 
 export const Route = createFileRoute('/projects/$projectId/custom-prompt')({
 	component: CustomPromptPage,
@@ -17,10 +17,10 @@ export const Route = createFileRoute('/projects/$projectId/custom-prompt')({
 
 function CustomPromptPage() {
 	const { projectId } = Route.useParams();
-	const { data: prefs } = usePreferences(projectId);
-	const { data: revisions } = usePreferenceRevisions(projectId);
-	const updatePrefs = useUpdatePreferences(projectId);
-	const restorePrefs = useRestorePreferenceRevision(projectId);
+	const { data: prefs } = useCustomPrompt(projectId);
+	const { data: revisions } = useCustomPromptRevisions(projectId);
+	const updatePrefs = useUpdateCustomPrompt(projectId);
+	const restorePrefs = useRestoreCustomPromptRevision(projectId);
 
 	const [content, setContent] = useState('');
 	const [mode, setMode] = useState<'edit' | 'preview'>('edit');

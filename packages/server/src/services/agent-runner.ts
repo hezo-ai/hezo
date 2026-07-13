@@ -2450,7 +2450,7 @@ export async function buildCoachReviewPrompt(
 		'(you need the `{{…}}` placeholders intact for a safe round-trip), then use `update_agent_system_prompt`',
 		'to add a specific rule to their `## Learned Rules` section. When a lesson applies to EVERY agent on the',
 		'team (a shared convention, standard, or fact), put it in the project Custom Prompt with',
-		'`update_project_preferences` instead of editing each prompt one by one. Updates apply immediately and a',
+		'`update_project_custom_prompt` instead of editing each prompt one by one. Updates apply immediately and a',
 		'revision snapshot is recorded so the admin can roll back if needed.',
 		'',
 		'If the ticket completed smoothly without significant rework or feedback, no changes are needed.',

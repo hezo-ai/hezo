@@ -187,6 +187,47 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 		);
 		expect(tasks.rows[0].n).toBe(0);
 	});
+
+	it('records the change summary under a "Changes that triggered this review" section', async () => {
+		const taskId = await enqueueTeamCoherenceReviewTask(db, teamId, 'custom_prompt_updated', {
+			changeSummary: 'Project Custom Prompt updated: added a house style rule',
+		});
+		const task = await db.query<{ description: string }>(
+			`SELECT description FROM tasks WHERE id = $1`,
+			[taskId],
+		);
+		const body = task.rows[0].description;
+		expect(body).toContain('## Changes that triggered this review');
+		expect(body).toContain('custom_prompt_updated');
+		expect(body).toContain('added a house style rule');
+	});
+
+	it('coalesces a later change onto the open ticket and appends it to the description', async () => {
+		const first = await enqueueTeamCoherenceReviewTask(db, teamId, 'prompt_updated', {
+			changeSummary: 'Updated the engineer prompt',
+		});
+		const second = await enqueueTeamCoherenceReviewTask(db, teamId, 'custom_prompt_updated', {
+			changeSummary: 'Updated the Custom Prompt',
+		});
+		expect(second).toBe(first);
+
+		const task = await db.query<{ description: string }>(
+			`SELECT description FROM tasks WHERE id = $1`,
+			[first],
+		);
+		const body = task.rows[0].description;
+		// Both changes are recorded on the single (coalesced) ticket.
+		expect(body).toContain('Updated the engineer prompt');
+		expect(body).toContain('Updated the Custom Prompt');
+
+		// The assignee is re-woken so the accumulated change gets reviewed.
+		const wakeups = await db.query<{ n: number }>(
+			`SELECT count(*)::int AS n FROM agent_wakeup_requests
+			 WHERE member_id = $1 AND payload->>'task_id' = $2 AND source = 'assignment'`,
+			[ceoMemberId, first],
+		);
+		expect(wakeups.rows[0].n).toBeGreaterThanOrEqual(1);
+	});
 });
 
 describe('project creation', () => {

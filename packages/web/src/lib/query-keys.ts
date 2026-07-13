@@ -175,7 +175,7 @@ export const queryKeys = {
 		inboxCount: (slug: string) => ['projects', slug, 'inbox-count'],
 		inboxMentions: (slug: string) => ['projects', slug, 'inbox-mentions'],
 
-		// docs / preferences / skills
+		// docs / custom prompt / skills
 		docs: (slug: string) => ['projects', slug, 'docs'],
 		doc: (slug: string, filename: string | null) => ['projects', slug, 'docs', filename],
 		docRevisions: (slug: string, filename: string | null) => [
@@ -193,8 +193,8 @@ export const queryKeys = {
 			'review-comments',
 		],
 		docsResolve: (slug: string, key: KeyParam) => ['projects', slug, 'docs', 'resolve', key],
-		preferences: (slug: string) => ['projects', slug, 'preferences'],
-		preferencesRevisions: (slug: string) => ['projects', slug, 'preferences', 'revisions'],
+		customPrompt: (slug: string) => ['projects', slug, 'custom-prompt'],
+		customPromptRevisions: (slug: string) => ['projects', slug, 'custom-prompt', 'revisions'],
 		skills: (slug: string) => ['projects', slug, 'skills'],
 		skill: (slug: string, skillSlug: string | null) => ['projects', slug, 'skills', skillSlug],
 
