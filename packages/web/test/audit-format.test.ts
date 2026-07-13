@@ -80,11 +80,11 @@ test('describes a secret creation by name', () => {
 test('falls back to a generic sentence for unmapped entities', () => {
 	const e = entry({
 		action: 'created',
-		entity_type: 'egress_request',
+		entity_type: 'team',
 		entity_identifier: null,
 		details: {},
 	});
-	expect(describeAuditEntry(e)).toBe('Created egress request');
+	expect(describeAuditEntry(e)).toBe('Created team');
 });
 
 test('links a task row to the task route with a lowercased identifier', () => {

@@ -21,7 +21,6 @@ import type { Db } from '../../db/database';
 import { ref } from '../../lib/log-ref';
 import { closeServerWithDeadline } from '../../lib/net';
 import { logger } from '../../logger';
-import { type EgressAuditEvent, recordEgressEvent } from './audit';
 import type { HezoCA } from './ca';
 import {
 	EGRESS_HOST_PORT_RANGE_END,
@@ -722,7 +721,6 @@ class RunProxyInstance {
 		if (bodyEligible) {
 			const read = await readBodyCapped(req, MAX_BODY_SUBSTITUTION_BYTES);
 			if (read.tooLarge) {
-				await this.audit(host, method, path, 413, 0, [], 'body_too_large');
 				respondEarly(
 					res,
 					413,
@@ -746,7 +744,6 @@ class RunProxyInstance {
 				});
 			} catch (e) {
 				if ((e as Error).name === 'MasterKeyLocked') {
-					await this.audit(host, method, path, 503, 0, [], 'secrets_unavailable');
 					respondEarly(res, 503, 'secrets_unavailable', 'Master key is locked.');
 					req.resume();
 					return;
@@ -766,7 +763,6 @@ class RunProxyInstance {
 			);
 			if (result.failure) {
 				const fail = describeFailure(result.failure);
-				await this.audit(host, method, path, fail.statusCode, 0, [], fail.code);
 				respondEarly(res, fail.statusCode, fail.code, fail.message);
 				req.resume();
 				return;
@@ -784,11 +780,6 @@ class RunProxyInstance {
 				} catch {
 					// pre-validated regex match — defensive only
 				}
-			}
-			if (result.secretsUsed.size > 0) {
-				await this.audit(host, method, path, null, result.secretsUsed.size, [
-					...result.secretsUsed,
-				]);
 			}
 			if (bufferedBody !== null) {
 				const outBody =
@@ -925,30 +916,6 @@ class RunProxyInstance {
 		} else {
 			res.end();
 		}
-	}
-
-	private async audit(
-		host: string,
-		method: string,
-		urlPath: string,
-		statusCode: number | null,
-		substitutionsCount: number,
-		secretNamesUsed: string[],
-		error: string | null = null,
-	): Promise<void> {
-		const event: EgressAuditEvent = {
-			teamId: this.cfg.scope.teamId,
-			agentId: this.cfg.scope.agentId,
-			runId: this.cfg.runId,
-			host,
-			method,
-			urlPath,
-			statusCode,
-			substitutionsCount,
-			secretNamesUsed,
-			error,
-		};
-		await recordEgressEvent(this.cfg.db, event);
 	}
 }
 

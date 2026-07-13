@@ -204,37 +204,6 @@ describe.skipIf(finalSkipReason !== null)('EgressProxy — Docker integration', 
 		}
 	}, 90_000);
 
-	it('writes an audit row identifying the run, host, and substituted secret name (never the value)', async () => {
-		const runId = `egress-docker-audit-${Date.now()}`;
-		await insertSecret('DOCKER_TEST_AUDIT', 'audit-secret-value', ['localhost']);
-		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
-		try {
-			await runInContainer({
-				caHostPath: `${dataDir}/ca/certs/ca.pem`,
-				command: [
-					'sh',
-					'-c',
-					`update-ca-certificates > /dev/null 2>&1 && ` +
-						`curl -sS -o /dev/null --proxy http://run:${allocated.token}@host.docker.internal:${allocated.proxyPort} ` +
-						`-H 'authorization: Bearer __HEZO_SECRET_DOCKER_TEST_AUDIT__' ` +
-						`https://localhost:${upstreamPort}/echo`,
-				],
-				timeoutMs: 60_000,
-			});
-		} finally {
-			await proxy.releaseRunProxy(runId);
-		}
-		const audit = await db.query<{ details: Record<string, unknown> }>(
-			`SELECT details FROM audit_log WHERE entity_type = 'egress_request' AND details->>'run_id' = $1 ORDER BY created_at DESC LIMIT 1`,
-			[runId],
-		);
-		expect(audit.rows.length).toBe(1);
-		const row = audit.rows[0].details;
-		expect(row.secret_names_used).toEqual(['DOCKER_TEST_AUDIT']);
-		const serialised = JSON.stringify(row);
-		expect(serialised).not.toContain('audit-secret-value');
-	}, 90_000);
-
 	it('rejects the CONNECT with 407 and never substitutes when the container omits the per-run token', async () => {
 		const runId = `egress-docker-noauth-${Date.now()}`;
 		await insertSecret('DOCKER_TEST_NOAUTH', 'must-not-leak', ['localhost']);

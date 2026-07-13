@@ -19,7 +19,9 @@ async function queryAuditLog(
 	scope: { kind: 'project'; projectId: string } | { kind: 'instance' },
 ): Promise<Response> {
 	const { page, perPage, offset } = parsePagination(c);
-	const conditions: string[] = [];
+	// Egress substitution events are no longer recorded; any rows left in older
+	// databases are excluded so the activity feed stays free of that noise.
+	const conditions: string[] = [`al.entity_type <> 'egress_request'`];
 	const params: unknown[] = [];
 	let idx = 1;
 

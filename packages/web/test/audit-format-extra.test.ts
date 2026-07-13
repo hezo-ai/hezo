@@ -297,6 +297,6 @@ describe('auditEntryLink — remaining targets', () => {
 	});
 
 	test('an unmapped entity type does not link', () => {
-		expect(auditEntryLink(entry({ entity_type: 'egress_request' }))).toBeNull();
+		expect(auditEntryLink(entry({ entity_type: 'team' }))).toBeNull();
 	});
 });

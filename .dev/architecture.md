@@ -1069,16 +1069,17 @@ through untouched, so long-lived connections are never held in memory. Body subs
 still enforces `allowed_hosts`, and a body placeholder for a secret without the opt-in is
 rejected, not leaked. This exists for APIs that take credentials in the body, such as a login
 POST that returns a token (the agent then uses that token via the `Authorization` header).
-Failures are explicit and audited: `unknown_secret` (400), `secret_not_allowed_for_host`
-(403), `secret_not_allowed_in_body` (403), `body_too_large` (413), `secrets_unavailable`
-(503, master key locked).
+Failures are explicit HTTP errors returned to the agent: `unknown_secret` (400),
+`secret_not_allowed_for_host` (403), `secret_not_allowed_in_body` (403), `body_too_large`
+(413), `secrets_unavailable` (503, master key locked).
 
-**Audit.** Every substitution attempt writes one `audit_log` row
-(`entity_type='egress_request'`) recording run id, host, method, path, status, count, and
-the secret **names** used — never the values. The row is project-scoped: `project_id` is
-resolved from the run's team (teams are 1:1 with projects), so it surfaces on the project
-Activity page's "Outbound traffic" tab. Pure pass-through requests (no placeholder
-anywhere) are not audited.
+**No egress audit.** The egress proxy does not record per-request audit rows, and secret
+values are never written to logs regardless. Earlier builds wrote one `egress_request`
+`audit_log` row per substitution (surfaced on an "Outbound traffic" tab, and the source of
+the per-credential "last used"/"use count" stats on the Credentials page); that logging was
+removed because it flooded the project Activity feed with per-request noise. The tab and the
+usage stats are gone, and any `egress_request` rows left in older databases are filtered out
+of the activity-log reads (`routes/audit-log.ts`) rather than deleted.
 
 **Bun & topology notes.** The proxy runs on Bun, whose TLS stack forces a
 **one-listening-`https.Server`-per-host** topology bridged from the CONNECT socket over an

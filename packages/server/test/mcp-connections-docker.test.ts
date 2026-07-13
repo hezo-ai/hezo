@@ -167,16 +167,6 @@ describe.skipIf(skipReason !== null)('MCP connections — Docker integration', (
 		} finally {
 			await proxy.releaseRunProxy(runId);
 		}
-
-		// Audit row records the substitution by name only — not the value
-		const audit = await db.query<{ details: Record<string, unknown> }>(
-			`SELECT details FROM audit_log
-			 WHERE entity_type = 'egress_request' AND details->>'host' = 'localhost'
-			 ORDER BY created_at DESC LIMIT 1`,
-		);
-		expect(audit.rows.length).toBe(1);
-		expect(audit.rows[0].details.secret_names_used).toEqual(['TEST_MCP_KEY']);
-		expect(JSON.stringify(audit.rows[0].details)).not.toContain('real-mcp-key-value');
 	}, 90_000);
 
 	it('SaaS MCP: forwards requests untouched when no placeholder is present', async () => {
@@ -223,15 +213,6 @@ describe.skipIf(skipReason !== null)('MCP connections — Docker integration', (
 		} finally {
 			await proxy.releaseRunProxy(runId);
 		}
-
-		// No substitutions happened — no audit row added for this run.
-		const newAudit = await db.query<{ count: string }>(
-			`SELECT count(*)::text AS count FROM audit_log
-			 WHERE entity_type = 'egress_request'
-			   AND details->>'run_id' = $1`,
-			[`mcp-docker-noop-${(insert.rows[0].id as unknown as string).slice(0, 0)}`],
-		);
-		expect(Number(newAudit.rows[0].count)).toBe(0);
 	}, 90_000);
 
 	it('Local stdio MCP: bind-mounted fixture spawns and answers initialize + tools/call', async () => {

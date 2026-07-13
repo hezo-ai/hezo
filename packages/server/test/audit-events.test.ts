@@ -5,7 +5,6 @@ import type { Db } from '../src/db/database';
 import { mapEventToAudit } from '../src/events/audit-observer';
 import { waitForBackground } from '../src/lib/background';
 import type { Env } from '../src/lib/types';
-import { recordEgressEvent } from '../src/services/egress/audit';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 
@@ -144,25 +143,6 @@ describe('audit observer (end-to-end)', () => {
 		const details = entry?.details as Record<string, unknown>;
 		expect(details.to).toBe('in_progress');
 		expect(entry?.entity_identifier).toBe(created.identifier);
-	});
-
-	it('attributes an egress request to the run team’s project', async () => {
-		await recordEgressEvent(db, {
-			teamId,
-			agentId: null as unknown as string,
-			runId: 'run-1',
-			host: 'api.example.com',
-			method: 'GET',
-			urlPath: '/v1/ping',
-			statusCode: 200,
-			substitutionsCount: 1,
-			secretNamesUsed: ['EXAMPLE_KEY'],
-		});
-
-		const rows = await auditRows({ entityType: 'egress_request' });
-		const entry = rows.find((e) => (e.details as Record<string, unknown>)?.run_id === 'run-1');
-		expect(entry).toBeDefined();
-		expect(entry?.project_id).toBe(projectId);
 	});
 
 	it('folds resolved assignee display names into the audit details', () => {

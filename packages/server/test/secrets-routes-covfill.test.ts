@@ -145,12 +145,7 @@ describe('POST /api/secrets', () => {
 });
 
 describe('GET /api/credentials', () => {
-	it('lists secrets with usage stats aggregated from the egress audit', async () => {
-		await ctx.db.query(
-			`INSERT INTO audit_log (actor_type, action, entity_type, details)
-			 VALUES ('system', 'egress.request', 'egress_request',
-			         '{"host": "api.example.com", "secret_names_used": ["COVFILL_API_KEY"]}'::jsonb)`,
-		);
+	it('lists secrets with constant (untracked) usage stats', async () => {
 		const res = await ctx.app.request('/api/credentials', { headers: authHeader(ctx.token) });
 		expect(res.status).toBe(200);
 		const rows = (await res.json()).data as Array<{
@@ -159,11 +154,12 @@ describe('GET /api/credentials', () => {
 			last_host: string | null;
 			last_used_at: string | null;
 		}>;
-		const used = rows.find((r) => r.name === 'COVFILL_API_KEY');
-		expect(used).toBeTruthy();
-		expect(used?.use_count).toBe(1);
-		expect(used?.last_host).toBe('api.example.com');
-		expect(used?.last_used_at).toBeTruthy();
+		const secret = rows.find((r) => r.name === 'COVFILL_API_KEY');
+		expect(secret).toBeTruthy();
+		// Egress requests are no longer audited, so per-secret usage is untracked.
+		expect(secret?.use_count).toBe(0);
+		expect(secret?.last_host).toBeNull();
+		expect(secret?.last_used_at).toBeNull();
 		// No encrypted material leaks into the listing.
 		expect(JSON.stringify(rows)).not.toContain('rotated-value');
 	});
