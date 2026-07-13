@@ -144,17 +144,27 @@ Recommendations:
 
 ### Switching an existing instance
 
-The local layout under `<data-dir>/assets/` and the bucket key layout are identical
-(`<project-id>/<asset-id>`), so moving is a plain sync with any S3 tool. To move to a
-bucket:
+`hezo backup` / `hezo restore` move an instance's assets between local storage and a bucket
+for you — they carry the database in the same backup bundle, so one pair of commands moves
+the whole instance (see [Backup & recovery](/docs/deployment/backup-and-recovery)). To move
+existing assets into a bucket:
 
-1. Stop the server (upgrade it and start it once first, if you're coming from an older
-   version — the first start moves any old-layout assets into `<data-dir>/assets/`).
-2. Copy the tree into the bucket, e.g.
-   `aws s3 sync /var/lib/hezo/assets/ s3://my-bucket/hezo-assets/` (or `rclone sync`).
-3. Start the server with `HEZO_ASSET_STORAGE_URL` set.
+1. Stop the server.
+2. Back up the instance: `hezo backup --output move/` (add `--data-dir` if yours isn't the
+   default). This writes the database and every asset file into `move/`.
+3. Restore into the bucket: `hezo restore move/ --asset-storage-url "s3://…"` — add
+   `--database-url` as well if you're also moving to hosted Postgres. Restored blobs are
+   checksum-verified against the database rows.
+4. Start the server with `HEZO_ASSET_STORAGE_URL` set.
 
-Moving back to local storage is the same sync in reverse, then start without the URL.
+Moving back to local storage is the same, restoring without `--asset-storage-url`. The
+backup only reads the source, so your original assets stay in place until you remove them
+yourself.
+
+Because the local `<data-dir>/assets/` layout and the bucket keys are identical
+(`<project-id>/<asset-id>`), you can alternatively sync the tree directly with any S3 tool
+while the server is stopped — `aws s3 sync /var/lib/hezo/assets/ s3://my-bucket/hezo-assets/`
+(or `rclone sync`).
 
 ## Anonymous usage telemetry
 
