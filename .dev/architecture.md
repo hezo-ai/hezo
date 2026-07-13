@@ -468,7 +468,11 @@ project.
   still retire one from the web UI. On a new team the CEO's initial coherence/setup pass **blocks** the Captain's
   planning task. It **auto-runs** on the direct (form) creation path; on the CEO-assisted
   path the CEO authors the concrete setup plan into it and then starts it with
-  `start_team_setup` (see Creation flows).
+  `start_team_setup` (see Creation flows). That initial pass (reasons `initial`/`template_applied`)
+  is the CEO's; **reactive** coherence reviews thereafter — triggered by a prompt, Custom Prompt,
+  role, `reports_to`, hire, or enable/disable change on the established team — are enqueued to that
+  team's own **Captain** (`enqueueTeamCoherenceReviewTask` picks the assignee by reason, falling
+  back to the CEO for HQ, which has no Captain). Coalescing and the change-summary section are unchanged.
 - **Coach** — reviews completed tickets across **every** project to improve agent system
   prompts; woken on any task completion.
 

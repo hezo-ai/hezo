@@ -17,6 +17,7 @@ let db: Db;
 let token: string;
 let teamId: string;
 let ceoMemberId: string;
+let captainMemberId: string;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
@@ -35,6 +36,12 @@ beforeAll(async () => {
 	await createTestProject(db, teamId, { name: 'Description Tasks Project' });
 
 	ceoMemberId = await instanceCeoId(db);
+	const captain = await db.query<{ id: string }>(
+		`SELECT ma.id FROM member_agents ma JOIN members m ON m.id = ma.id
+		 WHERE ma.slug = 'captain' AND m.team_id = $1 LIMIT 1`,
+		[teamId],
+	);
+	captainMemberId = captain.rows[0].id;
 });
 
 afterAll(async () => {
@@ -46,7 +53,7 @@ beforeEach(async () => {
 });
 
 describe('enqueueTeamCoherenceReviewTask', () => {
-	it("creates a task in the team's own project assigned to the CEO with the correct label and priority", async () => {
+	it("assigns a reactive coherence review to the team's Captain, in its own project, with the right label and priority", async () => {
 		const taskId = await enqueueTeamCoherenceReviewTask(db, teamId, 'agent_hired');
 		expect(taskId).toBeTruthy();
 
@@ -64,7 +71,7 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 			[taskId],
 		);
 		const row = task.rows[0];
-		expect(row.assignee_id).toBe(ceoMemberId);
+		expect(row.assignee_id).toBe(captainMemberId);
 
 		const opsProject = await db.query<{ id: string }>(
 			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = false`,
@@ -76,6 +83,22 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 		expect(row.priority).toBe('high');
 		expect(row.status).toBe('backlog');
 		expect(row.title).toContain('coherence');
+	});
+
+	it('assigns an INITIAL setup review to the CEO (auto-started) and wakes them', async () => {
+		const taskId = await enqueueTeamCoherenceReviewTask(db, teamId, 'initial');
+		const task = await db.query<{ assignee_id: string }>(
+			`SELECT assignee_id FROM tasks WHERE id = $1`,
+			[taskId],
+		);
+		expect(task.rows[0].assignee_id).toBe(ceoMemberId);
+
+		const wakeups = await db.query<{ n: number }>(
+			`SELECT count(*)::int AS n FROM agent_wakeup_requests
+			 WHERE member_id = $1 AND payload->>'task_id' = $2 AND source = 'assignment'`,
+			[ceoMemberId, taskId],
+		);
+		expect(wakeups.rows[0].n).toBe(1);
 	});
 
 	it('body covers org-chart audit AND the three descriptive-blob MCP tools', async () => {
@@ -108,12 +131,12 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 		expect(body).toContain('create_hire_proposal');
 	});
 
-	it('creates a wakeup for the CEO when enqueueing', async () => {
+	it('wakes the Captain when enqueueing a reactive review', async () => {
 		const taskId = await enqueueTeamCoherenceReviewTask(db, teamId, 'agent_hired');
 		const wakeups = await db.query<{ source: string; payload: Record<string, unknown> }>(
 			`SELECT source, payload FROM agent_wakeup_requests
 			 WHERE member_id = $1 AND payload->>'task_id' = $2`,
-			[ceoMemberId, taskId],
+			[captainMemberId, taskId],
 		);
 		expect(wakeups.rows.length).toBe(1);
 		expect(wakeups.rows[0].source).toBe('assignment');
@@ -220,11 +243,12 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 		expect(body).toContain('Updated the engineer prompt');
 		expect(body).toContain('Updated the Custom Prompt');
 
-		// The assignee is re-woken so the accumulated change gets reviewed.
+		// The assignee (the Captain, for a reactive review) is re-woken so the
+		// accumulated change gets reviewed.
 		const wakeups = await db.query<{ n: number }>(
 			`SELECT count(*)::int AS n FROM agent_wakeup_requests
 			 WHERE member_id = $1 AND payload->>'task_id' = $2 AND source = 'assignment'`,
-			[ceoMemberId, first],
+			[captainMemberId, first],
 		);
 		expect(wakeups.rows[0].n).toBeGreaterThanOrEqual(1);
 	});
