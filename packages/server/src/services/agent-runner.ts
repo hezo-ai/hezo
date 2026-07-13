@@ -2353,6 +2353,41 @@ export async function loadSpawnedFromTask(db: Db, task: TaskInfo): Promise<Spawn
 	};
 }
 
+/**
+ * Render a compact, chronological summary of the task's agent runs (container
+ * executions) for the Coach review prompt — metadata only, never the log text
+ * (which can be huge). The Coach pulls a specific run's log on demand with the
+ * `get_run_log` MCP tool. Returns '' when the task has no runs.
+ */
+async function loadRunSummaries(db: Db, taskId: string, teamId: string): Promise<string> {
+	const r = await db.query<{
+		id: string;
+		status: string;
+		exit_code: number | null;
+		started_at: string | null;
+		log_length: number;
+		agent_title: string | null;
+		agent_slug: string | null;
+	}>(
+		`SELECT hr.id, hr.status, hr.exit_code, hr.started_at,
+		        length(hr.log_text) AS log_length,
+		        ma.title AS agent_title, ma.slug AS agent_slug
+		 FROM heartbeat_runs hr
+		 LEFT JOIN member_agents ma ON ma.id = hr.member_id
+		 WHERE hr.task_id = $1 AND hr.team_id = $2
+		 ORDER BY hr.started_at ASC`,
+		[taskId, teamId],
+	);
+	return r.rows
+		.map((run) => {
+			const agent = run.agent_title ? `${run.agent_title} (${run.agent_slug})` : 'unknown agent';
+			const exit = run.exit_code === null ? '—' : String(run.exit_code);
+			const started = run.started_at ?? '—';
+			return `- ${agent} — status ${run.status}, exit ${exit}, started ${started}, log ${run.log_length} chars (run ${run.id})`;
+		})
+		.join('\n');
+}
+
 export async function buildCoachReviewPrompt(
 	db: Db,
 	systemPrompt: string,
@@ -2362,6 +2397,7 @@ export async function buildCoachReviewPrompt(
 	serverPort: number,
 ): Promise<string> {
 	const comments = await loadCommentHistory(db, task.id, masterKeyManager, serverPort);
+	const runLog = await loadRunSummaries(db, task.id, teamId);
 
 	const involvedAgents = await db.query<{
 		id: string;
@@ -2403,13 +2439,19 @@ export async function buildCoachReviewPrompt(
 		'### Comment History',
 		commentLog || 'No comments on this task.',
 		'',
+		...(runLog ? ['### Agent Runs', runLog, ''] : []),
 		'### Your Task',
 		'Review this completed ticket. Analyze the comment history for patterns where agents struggled,',
-		'received feedback, had work rejected, or needed multiple attempts. For each improvement opportunity,',
+		'received feedback, had work rejected, or needed multiple attempts. When the comments do not fully',
+		'explain what happened — a silent plan-vs-outcome gap, an unclear failure, an approach abandoned',
+		'without explanation — call `get_run_log(run_id)` on a run listed under Agent Runs to inspect what',
+		'the agent actually did in its container, not just what it reported. For each improvement opportunity,',
 		"use `get_agent_system_prompt` with `placeholders: false` to read the affected agent's raw prompt",
 		'(you need the `{{…}}` placeholders intact for a safe round-trip), then use `update_agent_system_prompt`',
-		'to add a specific rule to their `## Learned Rules` section. Updates apply immediately and a revision',
-		'snapshot is recorded so the admin can roll back from the agent settings page if needed.',
+		'to add a specific rule to their `## Learned Rules` section. When a lesson applies to EVERY agent on the',
+		'team (a shared convention, standard, or fact), put it in the project Custom Prompt with',
+		'`update_project_custom_prompt` instead of editing each prompt one by one. Updates apply immediately and a',
+		'revision snapshot is recorded so the admin can roll back if needed.',
 		'',
 		'If the ticket completed smoothly without significant rework or feedback, no changes are needed.',
 		'',

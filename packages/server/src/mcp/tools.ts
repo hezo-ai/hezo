@@ -50,7 +50,7 @@ import type { MasterKeyManager } from '../crypto/master-key';
 import type { Db } from '../db/database';
 import type { DomainEventBus } from '../events/bus';
 import { assertNoActiveRun } from '../lib/active-run';
-import { isCoach, isHqInstanceAgent, isVirtualHqMemberInTeam } from '../lib/agent-roles';
+import { isHqInstanceAgent, isVirtualHqMemberInTeam } from '../lib/agent-roles';
 import { upsertProjectAsset } from '../lib/asset-name';
 import { signAgentAssetUrl } from '../lib/asset-urls';
 import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
@@ -195,6 +195,7 @@ const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'register_connector',
 	'resolve_approval',
 	'update_agent_system_prompt',
+	'update_agent_system_prompts',
 	'set_agent_status',
 	'set_agent_summary',
 	'set_team_summary',
@@ -215,6 +216,7 @@ const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'remove_connector',
 	'update_goal_progress',
 	'update_project_progress',
+	'update_project_custom_prompt',
 ]);
 
 /** A handler result that signals failure rather than a persisted write. */
@@ -2119,6 +2121,84 @@ export function registerTools(
 		db,
 	);
 
+	tool(
+		server,
+		'list_task_runs',
+		"List the agent runs (container executions) recorded for a task, newest first (up to 50). Each row is one run: which agent ran, its status and exit code, when it started/finished, the invocation command, and the log length. Metadata only — fetch a run's actual container log with get_run_log(run_id). Useful for reviewing HOW a task was worked (e.g. the Coach checking what an agent actually did, beyond the comments it left).",
+		{
+			project: projectArg(),
+			task_id: z.string().describe('Task identifier or UUID'),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveTaskScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId, taskId } = scope;
+			const r = await db.query<Record<string, unknown>>(
+				`SELECT hr.id, hr.status, hr.exit_code, hr.started_at, hr.finished_at,
+				        hr.invocation_command, length(hr.log_text) AS log_length,
+				        ma.title AS agent_title, ma.slug AS agent_slug
+				 FROM heartbeat_runs hr
+				 LEFT JOIN member_agents ma ON ma.id = hr.member_id
+				 WHERE hr.task_id = $1 AND hr.team_id = $2
+				 ORDER BY hr.started_at DESC
+				 LIMIT 50`,
+				[taskId, teamId],
+			);
+			return r.rows;
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'get_run_log',
+		"Fetch the container log for a single agent run (a run_id from list_task_runs). Returns the run's log capped to the most recent excerpt_chars characters (default 12000 — the tail, where the outcome and any errors are) with truncated/length flags so you can tell when earlier output was dropped. Team-scoped: the run must belong to the project you're acting in.",
+		{
+			project: projectArg(),
+			run_id: z.string().describe('Run ID (UUID) from list_task_runs'),
+			excerpt_chars: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe('Max characters to return from the END of the log (default 12000).'),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const runId = args.run_id as string;
+			if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(runId)) {
+				return { error: `Invalid run_id: ${runId}` };
+			}
+			const r = await db.query<{
+				id: string;
+				status: string;
+				exit_code: number | null;
+				task_id: string | null;
+				log_text: string;
+			}>(
+				`SELECT id, status, exit_code, task_id, log_text
+				 FROM heartbeat_runs WHERE id = $1 AND team_id = $2`,
+				[runId, scope.teamId],
+			);
+			if (r.rows.length === 0) return { error: `Run not found in this project: ${runId}` };
+			const run = r.rows[0];
+			const full = run.log_text ?? '';
+			const max = (args.excerpt_chars as number | undefined) ?? 12_000;
+			const truncated = full.length > max;
+			return {
+				id: run.id,
+				status: run.status,
+				exit_code: run.exit_code,
+				task_id: run.task_id,
+				log: truncated ? full.slice(full.length - max) : full,
+				length: full.length,
+				truncated,
+			};
+		},
+		db,
+	);
+
 	const reactionKindSchema = z.enum(Object.values(ReactionKind) as [string, ...string[]]);
 
 	tool(
@@ -3174,7 +3254,7 @@ export function registerTools(
 	tool(
 		server,
 		'update_agent_system_prompt',
-		'Apply a system prompt change for an agent. Callable by the Coach agent (for after-task learned-rules updates) or by the Captain of the same team (during team-coherence reviews). The change is applied immediately and a revision snapshot is stored so the admin can restore previous versions.',
+		'Apply a system prompt change for an agent. Callable by the Coach agent (for after-task learned-rules updates), the CEO (during cross-project coherence, from anywhere including its live chat), or the Captain of the same team (during team-coherence reviews). The change is applied immediately and a revision snapshot is stored so the admin can restore previous versions.',
 		{
 			project: projectArg(),
 			agent_id: z.string().describe('Target agent — its slug (e.g. "engineer") or member ID'),
@@ -3190,10 +3270,11 @@ export function registerTools(
 			if ('error' in scope) return scope;
 			const { teamId } = scope;
 
-			const allowed = (await isCoach(db, auth)) || (await canCoordinateTeam(db, auth, teamId));
+			const allowed =
+				(await isHqInstanceAgent(db, auth)) || (await canCoordinateTeam(db, auth, teamId));
 			if (!allowed) {
 				return {
-					error: 'Access denied: only the Coach or the Captain can update system prompts',
+					error: 'Access denied: only the CEO, Coach, or Captain can update system prompts',
 				};
 			}
 
@@ -3232,12 +3313,193 @@ export function registerTools(
 			});
 
 			trackBackground(
-				enqueueTeamCoherenceReviewTask(db, teamId, 'prompt_updated').catch((e) =>
+				enqueueTeamCoherenceReviewTask(db, teamId, 'prompt_updated', {
+					changeSummary: `Updated ${targetSlug}'s system prompt: ${args.change_summary as string}`,
+				}).catch((e) =>
 					log.error('Failed to enqueue team coherence review after prompt update:', e),
 				),
 			);
 
 			return { applied: true, document_id: doc.id };
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'update_agent_system_prompts',
+		`Apply system prompt changes to MULTIPLE agents in one call — the preferred way when a review touches several agents at once (e.g. the Coach applying learned rules across everyone in a feedback loop). Same callers and rules as update_agent_system_prompt (the CEO, the Coach, or the team's Captain); each change is applied immediately with its own revision snapshot. Files a SINGLE team-coherence review that summarises all the updates, so the Captain/CEO can account for them together. Prefer this over calling update_agent_system_prompt in a loop. Up to ${MAX_BATCH_AGENT_SYSTEM_PROMPTS} at once.`,
+		{
+			project: projectArg(),
+			updates: z
+				.array(
+					z.object({
+						agent_id: z.string().describe('Target agent — its slug (e.g. "engineer") or member ID'),
+						new_system_prompt: z
+							.string()
+							.describe(
+								`Full updated prompt for this agent; MUST keep every required substitution variable (${REQUIRED_SYSTEM_PROMPT_VARS.join(', ')}) unless the target is the CEO/Coach.`,
+							),
+						change_summary: z.string().describe('Summary of what changed and why for this agent'),
+					}),
+				)
+				.min(1)
+				.max(MAX_BATCH_AGENT_SYSTEM_PROMPTS)
+				.describe(`Up to ${MAX_BATCH_AGENT_SYSTEM_PROMPTS} prompt updates.`),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId } = scope;
+
+			const allowed =
+				(await isHqInstanceAgent(db, auth)) || (await canCoordinateTeam(db, auth, teamId));
+			if (!allowed) {
+				return {
+					error: 'Access denied: only the CEO, Coach, or Captain can update system prompts',
+				};
+			}
+
+			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+			const updates = args.updates as Array<{
+				agent_id: string;
+				new_system_prompt: string;
+				change_summary: string;
+			}>;
+
+			const results: Array<Record<string, unknown>> = [];
+			const applied: Array<{ slug: string; change_summary: string }> = [];
+			for (let i = 0; i < updates.length; i++) {
+				const u = updates[i];
+				const agentId = await resolveAgentId(db, teamId, u.agent_id);
+				const agentCheck = agentId
+					? await db.query<{ id: string; slug: string }>(
+							`SELECT ma.id, ma.slug FROM member_agents ma JOIN members m ON m.id = ma.id
+							 WHERE ma.id = $1 AND m.team_id = $2`,
+							[agentId, teamId],
+						)
+					: null;
+				if (!agentId || !agentCheck || agentCheck.rows.length === 0) {
+					results.push({
+						index: i,
+						agent_id: u.agent_id,
+						ok: false,
+						error: 'Agent not found in this team',
+					});
+					continue;
+				}
+				const slug = agentCheck.rows[0].slug;
+				const isInstanceSingleton = (INSTANCE_AGENT_SLUGS as readonly string[]).includes(slug);
+				if (!isInstanceSingleton) {
+					const promptError = requiredSystemPromptVarsError(u.new_system_prompt);
+					if (promptError) {
+						results.push({ index: i, agent_id: u.agent_id, ok: false, error: promptError });
+						continue;
+					}
+				}
+				const doc = await upsertDocument(db, undefined, {
+					scope: { type: DocumentType.AgentSystemPrompt, teamId, memberAgentId: agentId },
+					content: u.new_system_prompt,
+					changeSummary: u.change_summary,
+					authorMemberId: callerMemberId,
+				});
+				results.push({ index: i, agent_id: u.agent_id, slug, ok: true, document_id: doc.id });
+				applied.push({ slug, change_summary: u.change_summary });
+			}
+
+			if (applied.length > 0) {
+				const summary = `Updated ${applied.length} agent prompt(s): ${applied
+					.map((a) => `${a.slug} (${a.change_summary})`)
+					.join('; ')}`;
+				trackBackground(
+					enqueueTeamCoherenceReviewTask(db, teamId, 'prompt_updated', {
+						changeSummary: summary,
+					}).catch((e) =>
+						log.error('Failed to enqueue team coherence review after batch prompt update:', e),
+					),
+				);
+			}
+
+			return { results, applied_count: applied.length };
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'get_project_custom_prompt',
+		'Read this project\'s Custom Prompt — the project-wide instruction block (the project context / "preferences") that is injected verbatim into every agent\'s system prompt in this project. Returns the current content plus its length and last-updated time (empty content when none is set yet). Read this before update_project_custom_prompt so you extend the existing guidance rather than overwrite it.',
+		{
+			project: projectArg(),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const doc = await getDocument(db, {
+				type: DocumentType.TeamPreferences,
+				teamId: scope.teamId,
+			});
+			const content = doc?.content ?? '';
+			return { content, length: content.length, updated_at: doc?.updated_at ?? null };
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'update_project_custom_prompt',
+		"Replace this project's Custom Prompt — the project-wide instruction block (the project context / \"preferences\") injected verbatim into every agent's system prompt in this project. Reach for this when guidance should apply to ALL of the project's agents from the very start of every run (a shared convention, standard, or fact) — it saves editing each agent's prompt one by one. The content you pass REPLACES the whole value, so call get_project_custom_prompt first and extend it. Applied immediately; a revision snapshot is stored so the admin can restore previous versions. Only callable by the CEO, Coach, or the project's Captain.",
+		{
+			project: projectArg(),
+			content: z
+				.string()
+				.describe(
+					'The full new Custom Prompt content (Markdown). Replaces the current value entirely — include the existing guidance you want to keep.',
+				),
+			change_summary: z
+				.string()
+				.optional()
+				.describe('Short summary of what changed and why (stored on the revision).'),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId } = scope;
+
+			const allowed =
+				(await canCoordinateTeam(db, auth, teamId)) || (await isHqInstanceAgent(db, auth));
+			if (!allowed) {
+				return {
+					error:
+						'Access denied: only the CEO, Coach, or Captain can update the project Custom Prompt',
+				};
+			}
+
+			const prior = await getDocument(db, { type: DocumentType.TeamPreferences, teamId });
+			const authorMemberId = await resolveActorMemberId(db, auth, teamId);
+			const doc = await upsertDocument(db, wsManager, {
+				scope: { type: DocumentType.TeamPreferences, teamId },
+				content: args.content as string,
+				changeSummary: args.change_summary as string | undefined,
+				authorMemberId,
+			});
+
+			// The Custom Prompt reaches every agent's prompt, so a real change warrants
+			// a team coherence review (same as an agent-prompt edit).
+			if ((prior?.content ?? '') !== (args.content as string)) {
+				const summary = args.change_summary
+					? `Project Custom Prompt updated: ${args.change_summary as string}`
+					: 'The project Custom Prompt was updated.';
+				trackBackground(
+					enqueueTeamCoherenceReviewTask(db, teamId, 'custom_prompt_updated', {
+						changeSummary: summary,
+					}).catch((e) =>
+						log.error('Failed to enqueue coherence review after Custom Prompt update:', e),
+					),
+				);
+			}
+
+			return { applied: true, document_id: doc.id, length: (args.content as string).length };
 		},
 		db,
 	);

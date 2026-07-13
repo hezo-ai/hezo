@@ -970,10 +970,18 @@ agentsRoutes.patch('/projects/:projectId/agents/:agentId', async (c) => {
 
 	broadcastChange(c, wsRoom.team(teamId), 'member_agents', 'UPDATE', updatedRow);
 
+	const agentName = (updatedRow.title as string) || (updatedRow.slug as string) || 'an agent';
+
 	if (body.system_prompt !== undefined || body.role_description !== undefined) {
 		const reason = body.system_prompt !== undefined ? 'prompt_updated' : 'role_updated';
+		const detail =
+			body.system_prompt !== undefined
+				? body.system_prompt_change_summary
+					? `Updated ${agentName}'s system prompt: ${body.system_prompt_change_summary}`
+					: `Updated ${agentName}'s system prompt.`
+				: `Updated ${agentName}'s role description.`;
 		trackBackground(
-			enqueueTeamCoherenceReviewTask(db, teamId, reason).catch((e) =>
+			enqueueTeamCoherenceReviewTask(db, teamId, reason, { changeSummary: detail }).catch((e) =>
 				log.error('Failed to enqueue team coherence review on prompt/role change:', e),
 			),
 		);
@@ -981,7 +989,9 @@ agentsRoutes.patch('/projects/:projectId/agents/:agentId', async (c) => {
 
 	if (body.reports_to !== undefined && (body.reports_to ?? null) !== (priorReportsTo ?? null)) {
 		trackBackground(
-			enqueueTeamCoherenceReviewTask(db, teamId, 'reports_to_changed').catch((e) =>
+			enqueueTeamCoherenceReviewTask(db, teamId, 'reports_to_changed', {
+				changeSummary: `Reporting line changed for ${agentName}.`,
+			}).catch((e) =>
 				log.error('Failed to enqueue team coherence review on reports_to change:', e),
 			),
 		);

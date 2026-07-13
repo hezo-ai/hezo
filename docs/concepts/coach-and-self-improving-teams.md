@@ -37,11 +37,15 @@ fact and mines it for patterns.
 2. **It reviews the whole thread.** The Coach reads the comments and the agents' work
    end to end, looking for the moments that matter: work that got sent back, an agent that
    received corrective feedback or made a wrong assumption, an approach that was tried and
-   abandoned, or a communication breakdown that cost time.
+   abandoned, or a communication breakdown that cost time. When the comments don't tell the
+   whole story, it can also read an agent's **run logs** — the actual output from the agent's
+   container — to see what really happened, not just what was reported.
 3. **It captures the lessons.** For each pattern worth learning from, the Coach figures
    out which agent (or agents) should learn from it and writes a concise, generalisable
    **learned rule** into their system prompt. It updates *everyone* involved in the
-   feedback loop, not just the agent that got the direct pushback.
+   feedback loop, not just the agent that got the direct pushback. When a lesson applies to
+   the whole roster, it can write it into the project's
+   [Custom Prompt](/docs/concepts/documents-and-memory#custom-prompt) instead of every agent's prompt.
 4. **It closes the loop.** The Coach leaves a short summary comment on the task noting
    what it changed (or that the task went smoothly and needed nothing). The task stays
    in its final **Done** state — the Coach reviews it but does not change its status.

@@ -21,8 +21,8 @@ the agents as they work:
   keeps coming back to.
 - **Global or per-project** — [skills](/docs/concepts/skills), reusable know-how that is
   either shared with every project or scoped to one.
-- **Per team** — [preferences](#team-preferences): custom instructions applied to every
-  agent on a team.
+- **Per project** — the [Custom Prompt](#custom-prompt): instructions applied to every
+  agent in the project.
 - **The CEO's** — its [long-term chat memory](#long-term-chat-memory) of your standing
   preferences and guidelines, kept automatically.
 
@@ -33,7 +33,7 @@ database — so an edit you or another agent made lands on the very next run, wi
 cached to go stale. Context reaches the agent in one of two ways:
 
 - **In full** — short, always-relevant text is injected verbatim: the current task's
-  **rules**, **description**, and **progress summary**; the team's **preferences**; and, for
+  **rules**, **description**, and **progress summary**; the project's **Custom Prompt**; and, for
   the CEO, its **long-term chat memory**. These are small and central, so the agent always has
   them in view.
 - **As a manifest** — larger libraries are surfaced as a *table of contents* rather than
@@ -50,7 +50,7 @@ cached to go stale. Context reaches the agent in one of two ways:
 | Comment thread | One task | Read by the agent at the start of a run | You and agents |
 | Project documents | One project | Manifest, full text on demand | You and agents |
 | Skills | Global or one project | Manifest, full text on demand | You and agents |
-| Team preferences | One team | In full, every run | You |
+| Custom Prompt | One project | In full, every run | You and agents |
 | Long-term chat memory | The CEO | In full, every chat turn | The CEO (automatically) and you |
 
 For how rules, the progress summary, and the thread work together on a single task — and
@@ -187,8 +187,8 @@ you can see how a spec evolved and roll back a bad edit without losing the threa
 This **versioned-and-reversible** guarantee isn't limited to project documents. The same
 applies to **agent system prompts** — every edit, including the
 [learned rules the Coach adds](/docs/concepts/coach-and-self-improving-teams#every-change-is-reversible),
-is snapshotted and restorable from the agent's settings — to a team's
-[preferences](#team-preferences), and to
+is snapshotted and restorable from the agent's settings — to a project's
+[Custom Prompt](#custom-prompt), and to
 [**skills**](/docs/concepts/skills#version-history--restore), your reusable cross-team
 know-how. Whatever your agents change, you can see what changed and put it back.
 
@@ -211,14 +211,16 @@ its agent page), so you can seed it with preferences up front or prune stale ent
 size of the live window — how much recent conversation is kept before it's compacted — is set
 under **Settings → Chatbox**. See [Roles & the CEO](/docs/concepts/roles-and-coordination).
 
-## Team preferences
+## Custom Prompt
 
-Where the CEO's long-term chat memory steers the CEO, a team's **preferences** steer that team's workers.
-Preferences are free-form **custom instructions applied to every agent on the team** —
-house conventions, tone, standing do's and don'ts — set from the team's settings and injected
-in full into each agent's prompt on every run. They're the lighter-weight choice when the
+Where the CEO's long-term chat memory steers the CEO, a project's **Custom Prompt** steers that project's workers.
+The Custom Prompt is free-form **custom instructions applied to every agent in the project** —
+house conventions, tone, standing do's and don'ts — set from the project's **Settings → Custom Prompt**
+page and injected in full into each agent's prompt on every run. It's the lighter-weight choice when the
 guidance applies to the whole roster rather than one role, and, like documents and system
-prompts, every edit is **versioned and restorable**.
+prompts, every edit is **versioned and restorable**. You maintain it yourself, and your coordinating
+agents — the CEO, the Coach, and the project's Captain — can update it too when a convention or lesson
+should reach the whole team at once.
 
 ## Where each kind of knowledge goes
 
@@ -233,7 +235,7 @@ right place is what keeps it findable and applied at the right moment:
   a **project document**.
 - **Reusable, project-independent know-how** (how to use an MCP server, a release
   checklist, a house style) → a **[skill](/docs/concepts/skills)**.
-- **A standing instruction for every agent on a team** → that team's **preferences**.
+- **A standing instruction for every agent in the project** → that project's **Custom Prompt**.
 - **Your durable preferences for how the CEO works with you** → the CEO's **long-term chat
   memory** (kept automatically).
 
