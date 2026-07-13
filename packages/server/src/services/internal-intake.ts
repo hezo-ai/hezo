@@ -1,4 +1,4 @@
-import { AgentAdminStatus, CEO_AGENT_SLUG } from '@hezo/shared';
+import { AgentAdminStatus, CAPTAIN_AGENT_SLUG, CEO_AGENT_SLUG } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { terminalStatusParams } from '../lib/sql';
 
@@ -14,12 +14,15 @@ export interface CoordinationContext {
 }
 
 /**
- * Per-team coordination context. Team setup, coherence review and hiring are tasks
- * in the team's **own** project, actioned by the instance CEO (who runs cross-team
- * inside that project). Only pre-project / cross-project work lives in HQ.
+ * Per-team coordination context. Coordination tasks live in the team's **own**
+ * project. Initial team setup is actioned by the instance CEO (who runs cross-team
+ * inside that project); reactive coherence reviews on an established team are
+ * actioned by the team's own Captain. Only pre-project / cross-project work lives in HQ.
  */
 export interface TeamCoordinationContext {
 	ceoMemberId: string;
+	/** The team's own Captain, or null for HQ / any team without one. */
+	captainMemberId: string | null;
 	teamProjectId: string;
 	teamId: string;
 }
@@ -37,7 +40,20 @@ export async function loadTeamCoordinationContext(
 		[teamId],
 	);
 	if (!ceo.rows[0] || !project.rows[0]) return null;
-	return { ceoMemberId: ceo.rows[0].id, teamProjectId: project.rows[0].id, teamId };
+	// The team's own Captain (scoped to this team) — null for HQ, which has none.
+	const captain = await db.query<{ id: string }>(
+		`SELECT ma.id FROM member_agents ma
+		 JOIN members m ON m.id = ma.id
+		 WHERE ma.slug = $1 AND m.team_id = $2
+		 LIMIT 1`,
+		[CAPTAIN_AGENT_SLUG, teamId],
+	);
+	return {
+		ceoMemberId: ceo.rows[0].id,
+		captainMemberId: captain.rows[0]?.id ?? null,
+		teamProjectId: project.rows[0].id,
+		teamId,
+	};
 }
 
 export async function loadCoordinationContext(db: Db): Promise<CoordinationContext | null> {

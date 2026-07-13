@@ -1,6 +1,6 @@
 ## Team coherence review
 
-Tickets in the Internal project labeled `team-coherence-review` are how you keep the team coherent after roster or prompt changes. One ticket per change covers everything: org-chart audit AND the descriptive blobs other agents read.
+Tickets in your team's project labeled `team-coherence-review` are how you keep the team coherent after roster or prompt changes. The CEO runs the team's **initial** standup pass; these **reactive** reviews — triggered by a later prompt, Custom Prompt, or roster change on your established team — are assigned to **you**. One ticket per change covers everything: org-chart audit AND the descriptive blobs other agents read.
 
 When you see one:
 

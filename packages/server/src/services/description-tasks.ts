@@ -25,6 +25,16 @@ export type TeamCoherenceReviewReason =
 	| 'custom_prompt_updated'
 	| 'enabled_changed';
 
+/**
+ * Reasons that represent **initial team setup** — created first on team creation, blocks
+ * the Captain's planning task, driven by the CEO-only `start_team_setup`. These stay owned
+ * by the CEO; every other (reactive) reason is owned by the team's own Captain.
+ */
+const INITIAL_SETUP_REASONS: ReadonlySet<TeamCoherenceReviewReason> = new Set([
+	'initial',
+	'template_applied',
+]);
+
 /** Resolves the CEO + the team's own project — coherence/setup live in that project. */
 async function loadTeamContext(db: Db, teamId: string): Promise<TeamCoordinationContext | null> {
 	return loadTeamCoordinationContext(db, teamId);
@@ -80,6 +90,7 @@ async function appendCoherenceChange(
 async function createLabeledInternalTask(
 	db: Db,
 	ctx: TeamCoordinationContext,
+	assigneeMemberId: string,
 	title: string,
 	body: string,
 	label: string,
@@ -96,7 +107,7 @@ async function createLabeledInternalTask(
 		[
 			ctx.teamId,
 			ctx.teamProjectId,
-			autoStart ? ctx.ceoMemberId : null,
+			autoStart ? assigneeMemberId : null,
 			taskNumber,
 			identifier,
 			title,
@@ -114,11 +125,11 @@ async function createLabeledInternalTask(
 	// it and then calls `start_team_setup` to assign it to itself and begin the run.
 	if (autoStart) {
 		try {
-			await createWakeup(db, ctx.ceoMemberId, ctx.teamId, WakeupSource.Assignment, {
+			await createWakeup(db, assigneeMemberId, ctx.teamId, WakeupSource.Assignment, {
 				task_id: taskId,
 			});
 		} catch (e) {
-			log.error(`Failed to wake CEO for ${label}:`, e);
+			log.error(`Failed to wake assignee for ${label}:`, e);
 		}
 	}
 
@@ -205,6 +216,11 @@ export async function enqueueTeamCoherenceReviewTask(
 	// default. Only the CEO's create_project path passes autoStart=false, leaving the
 	// ticket unassigned for the CEO to draft then kick off via `start_team_setup`.
 	const autoStart = opts.autoStart ?? true;
+	// Initial setup stays owned by the CEO; reactive coherence reviews are owned by the
+	// team's own Captain (falling back to the CEO for HQ / any team without a Captain).
+	const assigneeMemberId = INITIAL_SETUP_REASONS.has(reason)
+		? ctx.ceoMemberId
+		: (ctx.captainMemberId ?? ctx.ceoMemberId);
 	const teamSlug = await db.query<{ slug: string }>('SELECT slug FROM teams WHERE id = $1', [
 		teamId,
 	]);
@@ -217,6 +233,7 @@ export async function enqueueTeamCoherenceReviewTask(
 	return createLabeledInternalTask(
 		db,
 		ctx,
+		assigneeMemberId,
 		'Review team coherence after roster change',
 		body,
 		COHERENCE_LABEL,
