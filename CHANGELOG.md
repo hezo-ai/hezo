@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.23.0 - 2026-07-13
+
+### Features
+
+- assign reactive team-coherence reviews to the Captain ([#714](https://github.com/hezo-ai/hezo/pull/714))
+- project Custom Prompt tools, run-log MCP access, and a settings page ([#711](https://github.com/hezo-ai/hezo/pull/711))
+- **skills:** auto-install default skills on a fresh instance ([#712](https://github.com/hezo-ai/hezo/pull/712))
+- **egress:** stop logging egress requests to the activity feed ([#709](https://github.com/hezo-ai/hezo/pull/709))
+- **skills:** install default skills via opt-in button, not at boot ([#710](https://github.com/hezo-ai/hezo/pull/710))
+- **skills:** ship 15 default global skills with hash-gated seeding ([#708](https://github.com/hezo-ai/hezo/pull/708))
+- **backup:** carry asset blobs in hezo backup/restore bundles ([#707](https://github.com/hezo-ai/hezo/pull/707))
+- **web:** show scroll pills only while actively scrolling that direction ([#706](https://github.com/hezo-ai/hezo/pull/706))
+- **connectors:** first-class read-only YouTube via API key ([#705](https://github.com/hezo-ai/hezo/pull/705))
+
+### Bug Fixes
+
+- **web:** stop Formatted-view tooltip opening when log viewer expands ([#704](https://github.com/hezo-ai/hezo/pull/704))
+- **web:** move project menu collapse button into the top-right corner ([#703](https://github.com/hezo-ai/hezo/pull/703))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.22.1...0.23.0
+
 ## 0.22.1 - 2026-07-12
 
 ### Bug Fixes
