@@ -27,14 +27,15 @@ secretsRoutes.get('/credentials', async (c) => {
 	if (denied) return denied;
 	const db = c.get('db');
 
-	// Usage stats aggregate across every team's egress audit, since a global
-	// credential can be used by any team.
+	// Per-secret egress usage is no longer tracked (egress requests aren't
+	// audited), so the usage columns are constant placeholders kept only for
+	// response-shape stability.
 	const result = await db.query(
 		`SELECT s.id, s.name, s.category,
 		        s.allowed_hosts, s.allow_all_hosts, s.allow_body_substitution, s.created_at, s.updated_at,
-		        usage.last_used_at,
-		        usage.use_count,
-		        usage.last_host,
+		        NULL::timestamptz AS last_used_at,
+		        0 AS use_count,
+		        NULL::text AS last_host,
 		        COALESCE((
 		            SELECT json_agg(json_build_object(
 		                'id', mc.id, 'name', mc.name, 'display_name', mc.display_name,
@@ -48,19 +49,7 @@ secretsRoutes.get('/credentials', async (c) => {
 		               )
 		        ), '[]'::json) AS connectors
 		 FROM secrets s
-		 LEFT JOIN LATERAL (
-		     SELECT max(al.created_at) AS last_used_at,
-		            count(*)::int AS use_count,
-		            (SELECT al2.details->>'host'
-		             FROM audit_log al2
-		             WHERE al2.entity_type = 'egress_request'
-		               AND al2.details->'secret_names_used' ? s.name
-		             ORDER BY al2.created_at DESC LIMIT 1) AS last_host
-		     FROM audit_log al
-		     WHERE al.entity_type = 'egress_request'
-		       AND al.details->'secret_names_used' ? s.name
-		 ) usage ON TRUE
-		 ORDER BY usage.last_used_at DESC NULLS LAST, s.name ASC`,
+		 ORDER BY s.name ASC`,
 	);
 	return ok(c, result.rows);
 });

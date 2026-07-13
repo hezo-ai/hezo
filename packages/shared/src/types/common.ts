@@ -1052,7 +1052,6 @@ export const AuditEntityType = {
 	Connection: 'connection',
 	McpConnection: 'mcp_connection',
 	Skill: 'skill',
-	EgressRequest: 'egress_request',
 	ApiKey: 'api_key',
 } as const;
 export type AuditEntityType = (typeof AuditEntityType)[keyof typeof AuditEntityType];

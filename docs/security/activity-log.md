@@ -21,7 +21,6 @@ The log captures every state-changing action on the project:
 - **Assets** — files uploaded to the project or a task.
 - **Agents** — hired, updated, enabled, and disabled.
 - **Connectors** — MCP connections and OAuth account connections changing.
-- **Outbound traffic** — every request an agent made that used one of your secrets (see below).
 
 Each entry names the **actor** (you, an agent, the system, or an external MCP client),
 so a human action and an automated one are always told apart.
@@ -38,18 +37,6 @@ three columns:
   concern.
 
 You can narrow the view by entity type, action, and date range.
-
-## Outbound traffic (the egress audit)
-
-The **Outbound traffic** tab shows every outbound HTTPS request from an agent's container
-that Hezo's egress proxy substituted a secret into — or denied. Each row records the
-destination host, the request method and path, the response status, the **names** of the
-secrets used, and which agent made the call.
-
-The secret **values are never recorded** — only their names. This gives you a precise trail
-of which credential was used, against which host, by which agent, without ever writing the
-secret itself to disk. See [Secret protection & egress](/docs/security/secret-protection)
-for how the substitution works.
 
 ## Project and instance views
 

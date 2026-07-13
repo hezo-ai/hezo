@@ -1,4 +1,3 @@
-export { type EgressAuditEvent, recordEgressEvent } from './audit';
 export { type HezoCA, loadOrCreateCA } from './ca';
 export {
 	EGRESS_PORT_RANGE_END,

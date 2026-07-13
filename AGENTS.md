@@ -350,7 +350,7 @@ When you wire a new agent integration that needs a credential:
 - For GitHub repo access, the human connects a GitHub OAuth account once via device flow on the project's Connections page; subsequent repos pick that connection. The OAuth token is used for REST API calls only (listing orgs/repos, creating repos). Repo clone/fetch/push runs over **SSH** (`git@github.com:owner/repo.git`) authenticated by the project's Ed25519 key — the same key used for commit signing. On first OAuth connect the public key is auto-registered on the connecting user's GitHub account as both a *signing* key (commits land as Verified) and an *authentication* key (so SSH git ops work). Both host-side and in-container git ops go through the existing `SshAgentServer` — host via its Unix socket directly, container via the per-run socat bridge. Full design: `.dev/architecture.md` (§§ OAuth, GitHub & connectors; SSH signing & git).
 - For SaaS MCPs requiring OAuth (DatoCMS, Linear, …), the operator starts the auth-code flow from the MCP-connection form. The resulting `oauth_connection_id` is linked to the `mcp_connections` row; the injector emits a placeholder Authorization header and the egress proxy substitutes at request time.
 
-The egress audit log records substitution events by **secret name** only, never the value. No-op requests (no placeholder anywhere) are not audited.
+The egress proxy does not audit substitution events — no per-request `audit_log` row is written. Secret values are never logged regardless; substitution failures surface to the agent as explicit HTTP errors.
 
 ### Route authorization
 

@@ -58,12 +58,12 @@ Every secret carries an **allowed-hosts** list — the upstreams it may be used 
 rather than just discouraged: a secret can only ever reach the destinations you scoped
 it to.
 
-## Audited, never logged
+## Never logged
 
-Every substitution is recorded in an audit log **by secret name and destination only**
-— the value itself is never logged. Requests that contain no placeholder aren't
-audited at all. You get a clear trail of which secret was used, for which run, against
-which host.
+Substitution happens inside the egress proxy, and the secret's **value is never written
+anywhere** — not to a log line, a request record, or disk. Hezo does not keep a per-request
+trail of which secret was used against which host; the guarantee is simply that the value
+itself never leaves the vault except as a live substitution into the outbound request.
 
 ## How secrets get in
 

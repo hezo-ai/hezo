@@ -89,15 +89,6 @@ describe('EgressProxy', () => {
 		} finally {
 			await proxy.releaseRunProxy(runId);
 		}
-		const audit = await db.query(
-			`SELECT details FROM audit_log WHERE entity_type = 'egress_request' AND details->>'run_id' = $1 ORDER BY created_at DESC LIMIT 1`,
-			[runId],
-		);
-		expect(audit.rows.length).toBe(1);
-		const details = (audit.rows[0] as { details: Record<string, unknown> }).details;
-		expect(details.substitutions_count).toBe(1);
-		expect(details.secret_names_used).toEqual(['TEST_KEY_HEADER']);
-		expect(details.error).toBeNull();
 	}, 30_000);
 
 	it('blocks a placeholder for a host that is not on its allowlist with 403', async () => {
@@ -185,13 +176,6 @@ describe('EgressProxy', () => {
 		} finally {
 			await proxy.releaseRunProxy(runId);
 		}
-		const audit = await db.query(
-			`SELECT details FROM audit_log WHERE entity_type = 'egress_request' AND details->>'run_id' = $1 ORDER BY created_at DESC LIMIT 1`,
-			[runId],
-		);
-		const details = (audit.rows[0] as { details: Record<string, unknown> }).details;
-		expect(details.substitutions_count).toBe(1);
-		expect(details.secret_names_used).toEqual(['UMAMI_PW_OK']);
 	}, 30_000);
 
 	it('blocks a body placeholder for a secret without body opt-in with 403', async () => {
@@ -288,7 +272,7 @@ describe('EgressProxy', () => {
 		}
 	}, 30_000);
 
-	it('passes plain requests through untouched and writes a no-substitution audit row', async () => {
+	it('passes plain requests through untouched', async () => {
 		const runId = `run-${Date.now()}-5`;
 		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
 		try {
@@ -340,13 +324,6 @@ describe('EgressProxy', () => {
 			await httpsProxy.releaseRunProxy(runId);
 			await new Promise<void>((resolve) => httpsUpstream.close(() => resolve()));
 		}
-		const audit = await db.query(
-			`SELECT details FROM audit_log WHERE entity_type = 'egress_request' AND details->>'run_id' = $1 ORDER BY created_at DESC LIMIT 1`,
-			[runId],
-		);
-		expect(audit.rows.length).toBe(1);
-		const details = (audit.rows[0] as { details: Record<string, unknown> }).details;
-		expect(details.substitutions_count).toBe(1);
 	}, 30_000);
 });
 
