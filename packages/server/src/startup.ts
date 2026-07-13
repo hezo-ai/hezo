@@ -347,6 +347,16 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	});
 
 	setStartupPhase('workspace');
+	// On a genuinely fresh instance (HQ not yet seeded) install the default skills
+	// automatically — no opt-in. Must run before seedDefaultTeam creates HQ, so
+	// "HQ absent" reads as "first boot". An existing instance is a no-op and keeps
+	// the opt-in button on the Skills page.
+	try {
+		const { installDefaultSkillsIfFreshInstance } = await import('./db/default-skills.js');
+		await installDefaultSkillsIfFreshInstance(db);
+	} catch (err) {
+		log.error('Failed to install default skills on fresh instance:', err);
+	}
 	const { seedDefaultTeam } = await import('./services/teams.js');
 	try {
 		await seedDefaultTeam({

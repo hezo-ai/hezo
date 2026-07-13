@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { DEFAULT_TEAM_ID } from '@hezo/shared';
 import { parseFrontmatter } from '../lib/frontmatter';
 import { deriveSkillSummary } from '../lib/skill-summary';
 import { withTransaction } from '../lib/sql';
@@ -205,6 +206,27 @@ export async function installDefaultSkills(
 		} catch (err) {
 			log.error(`Failed to install default skill '${def.slug}':`, err);
 		}
+	}
+	return installed;
+}
+
+/**
+ * Install the default skills automatically **only on a genuinely fresh
+ * instance** — a fresh database whose HQ team hasn't been seeded yet. A fresh
+ * install shouldn't make the operator opt in; an upgrade of an existing instance
+ * must not (that's what the global Skills page button is for). Called at startup
+ * before `seedDefaultTeam` creates HQ, so "HQ absent" means "first boot". No-op
+ * (returns []) once HQ exists. Not run by test harnesses, which call
+ * `seedDefaultTeam` directly rather than through startup.
+ */
+export async function installDefaultSkillsIfFreshInstance(
+	db: Db,
+): Promise<Array<{ id: string; slug: string; name: string }>> {
+	const hq = await db.query('SELECT 1 FROM teams WHERE id = $1', [DEFAULT_TEAM_ID]);
+	if (hq.rows.length > 0) return []; // existing instance — opt-in via the Skills page
+	const installed = await installDefaultSkills(db);
+	if (installed.length > 0) {
+		log.info(`Installed ${installed.length} default skills on fresh instance`);
 	}
 	return installed;
 }
