@@ -405,29 +405,31 @@ function InstanceSkillRow({
 
 	return (
 		<div
-			className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-surface px-3 py-2 text-[13px]"
+			className="flex items-center justify-between gap-2 rounded-md border border-border bg-surface px-3 py-2 text-[13px]"
 			data-testid="instance-skill-row"
 		>
-			<div className="flex items-center gap-2 min-w-0 flex-1">
-				<span className="font-medium">{skill.name}</span>
-				{skill.readonly ? (
-					<Badge color="neutral">Built-in</Badge>
-				) : (
-					<SearchableSelect
-						options={scopeOptions}
-						value={scopeValue}
-						onChange={changeScope}
-						trigger={scopeTrigger}
-						searchPlaceholder="Search projects…"
-						emptyLabel="No projects"
-						testId="instance-skill-scope-select"
-					/>
-				)}
-				{skill.tags?.map((t) => (
-					<Badge key={t} color="neutral">
-						{t}
-					</Badge>
-				))}
+			<div className="flex flex-col gap-1 min-w-0 flex-1">
+				<div className="flex flex-wrap items-center gap-2">
+					<span className="font-medium">{skill.name}</span>
+					{skill.readonly ? (
+						<Badge color="neutral">Built-in</Badge>
+					) : (
+						<SearchableSelect
+							options={scopeOptions}
+							value={scopeValue}
+							onChange={changeScope}
+							trigger={scopeTrigger}
+							searchPlaceholder="Search projects…"
+							emptyLabel="No projects"
+							testId="instance-skill-scope-select"
+						/>
+					)}
+					{skill.tags?.map((t) => (
+						<Badge key={t} color="neutral">
+							{t}
+						</Badge>
+					))}
+				</div>
 				{skill.description && (
 					<span className="text-xs text-text-3 truncate">{skill.description}</span>
 				)}
