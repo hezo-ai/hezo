@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.24.0 - 2026-07-14
+
+### Features
+
+- allow removing a pending connector from the project Connectors page ([#721](https://github.com/hezo-ai/hezo/pull/721))
+- teach agents there is no cron; recurring work uses heartbeats and goals ([#719](https://github.com/hezo-ai/hezo/pull/719))
+- audit carried-over project specifics in team coherence review ([#717](https://github.com/hezo-ai/hezo/pull/717))
+
+### Bug Fixes
+
+- **oauth:** re-register a DCR client when the callback origin changed ([#720](https://github.com/hezo-ai/hezo/pull/720))
+- **web:** surface the PWA install banner when beforeinstallprompt fires before mount ([#718](https://github.com/hezo-ai/hezo/pull/718))
+- improve global skills page row readability ([#716](https://github.com/hezo-ai/hezo/pull/716))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.23.0...0.24.0
+
 ## 0.23.0 - 2026-07-13
 
 ### Features
