@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.24.1 - 2026-07-14
+
+### Features
+
+- **assets:** frame the assets library as a shared store agents reuse ([#725](https://github.com/hezo-ai/hezo/pull/725))
+- **assets:** let agents write binary assets and upload generated deliverables ([#724](https://github.com/hezo-ai/hezo/pull/724))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.24.0...0.24.1
+
 ## 0.24.0 - 2026-07-14
 
 ### Features
