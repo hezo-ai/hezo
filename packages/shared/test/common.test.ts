@@ -13,7 +13,6 @@ import {
 	credentialKindRequiresAllowedHosts,
 	extensionOf,
 	formatTaskStatus,
-	isAgentAuthorableAssetMime,
 	isAgentEffort,
 	isAllowedAttachmentExtension,
 	isAllowedAttachmentMime,
@@ -21,6 +20,7 @@ import {
 	isBudgetPauseStatus,
 	isMarkdownDocSlug,
 	isReactionKind,
+	isTextAssetMime,
 	matchesArchiveFilter,
 	normalizeAssetFilename,
 	normalizeAssetFolder,
@@ -109,9 +109,14 @@ describe('asset / attachment helpers', () => {
 		expect(assetServeCsp('image/png')).toBeNull();
 	});
 
-	it('classifies agent-authorable mime', () => {
-		expect(isAgentAuthorableAssetMime('text/html')).toBe(true);
-		expect(isAgentAuthorableAssetMime('image/png')).toBe(false);
+	it('classifies text vs binary asset mime', () => {
+		// Text assets round-trip inline (utf8); binary assets go through base64 / a signed URL.
+		expect(isTextAssetMime('text/html')).toBe(true);
+		expect(isTextAssetMime('text/plain')).toBe(true);
+		expect(isTextAssetMime('text/markdown')).toBe(true);
+		expect(isTextAssetMime('image/svg+xml')).toBe(true);
+		expect(isTextAssetMime('image/png')).toBe(false);
+		expect(isTextAssetMime('application/pdf')).toBe(false);
 	});
 
 	it('normalizeAssetFilename strips paths and unsafe chars', () => {

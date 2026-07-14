@@ -47,7 +47,10 @@ Agents don't just consume assets — they create them. An agent can write an int
 **HTML** mockup, an **SVG** diagram, a plain-text export, a **script**, or a **markdown**
 deliverable such as a blog post or report straight into the library (`write_project_asset`
 over Hezo's [MCP server](/docs/mcp/hezo-mcp-server)) and read any asset back later — folder
-paths included (`scripts/deploy-check.sh`). Generated deliverables live here rather than
+paths included (`scripts/deploy-check.sh`). Agents can also write **binary** deliverables the
+same way — a rendered **image**, chart, screenshot, **PDF**, or media file — so a picture an
+agent generates lands in the library and shows up inline, ready for you to review, without any
+manual download-and-re-upload step. Generated deliverables live here rather than
 being committed to the source repository, so they're easy to find and review, and re-saving
 the same path updates it in place so references stay stable.
 

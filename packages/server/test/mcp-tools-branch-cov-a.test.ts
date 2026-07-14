@@ -411,7 +411,7 @@ describe('comment advisory warnings', () => {
 			filename: 'noextension',
 			content: 'x',
 		});
-		expect(String(noExt.error)).toContain('text-based');
+		expect(String(noExt.error)).toContain('Unsupported asset type');
 
 		const at = await agentToken(captainId, teamId, taskId);
 		const r = await call(at, 'create_comment', {

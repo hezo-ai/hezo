@@ -318,7 +318,7 @@ describe('agent-authored assets (write_project_asset)', () => {
 		expect(existsSync(oldDisk)).toBe(false);
 	});
 
-	it('rejects a binary asset type', async () => {
+	it('rejects a binary asset written without base64 encoding', async () => {
 		const { token: agentToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
@@ -332,7 +332,7 @@ describe('agent-authored assets (write_project_asset)', () => {
 			content: 'not really a png',
 		});
 		expect(result.written).toBeUndefined();
-		expect(String(result.error)).toMatch(/text-based|\.html|\.svg|\.txt/i);
+		expect(String(result.error)).toContain('base64');
 	});
 });
 

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -153,7 +154,7 @@ describe('project assets', () => {
 			filename: 'binary.exe',
 			content: 'nope',
 		});
-		expect(String(badType.error)).toContain('text-based');
+		expect(String(badType.error)).toContain('Unsupported asset type');
 
 		const tooBig = await admin('write_project_asset', {
 			filename: 'big.txt',
@@ -228,6 +229,78 @@ describe('project assets', () => {
 		};
 		expect(binary.binary).toBe(true);
 		expect(binary.url).toContain('/api/assets/');
+	});
+
+	it('write_project_asset writes binary bytes from base64 and round-trips', async () => {
+		// A real 1x1 PNG. Base64 string is ~96 chars; the decoded PNG is 67 bytes,
+		// so byte_size proves the tool decoded the bytes rather than storing the text.
+		const pngBase64 =
+			'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+		const pngBytes = Buffer.from(pngBase64, 'base64');
+
+		const written = await admin('write_project_asset', {
+			filename: 'gen/thumbnail.png',
+			content: pngBase64,
+			encoding: 'base64',
+		});
+		expect(written.error).toBeUndefined();
+		expect(written.written).toBe(true);
+		expect(written.reference).toBe('assets/gen/thumbnail.png');
+
+		const row = await db.query<{ id: string; content_type: string; byte_size: string }>(
+			'SELECT id, content_type, byte_size FROM assets WHERE project_id = $1 AND original_filename = $2',
+			[projectId, 'gen/thumbnail.png'],
+		);
+		expect(row.rows.length).toBe(1);
+		expect(row.rows[0].content_type).toBe('image/png');
+		// Decoded bytes, not the (longer) base64 text.
+		expect(Number(row.rows[0].byte_size)).toBe(pngBytes.length);
+		expect(pngBytes.length).toBeLessThan(pngBase64.length);
+
+		// read_project_asset returns it as a binary asset (signed URL, not inline).
+		const read = (await admin('read_project_asset', { filename: 'gen/thumbnail.png' })) as {
+			binary: boolean;
+			url: string;
+			byte_size: number;
+		};
+		expect(read.binary).toBe(true);
+		expect(read.byte_size).toBe(pngBytes.length);
+
+		// Fetch the signed URL through the in-process app and confirm the bytes are byte-identical.
+		const served = await app.request(new URL(read.url).pathname + new URL(read.url).search);
+		expect(served.status).toBe(200);
+		expect(served.headers.get('content-type')).toBe('image/png');
+		const servedBytes = Buffer.from(await served.arrayBuffer());
+		expect(createHash('sha256').update(servedBytes).digest('hex')).toBe(
+			createHash('sha256').update(pngBytes).digest('hex'),
+		);
+	});
+
+	it('write_project_asset rejects binary types without base64 and invalid base64', async () => {
+		// A non-text type must declare base64 — utf8 (the default) is refused.
+		const noEncoding = await admin('write_project_asset', {
+			filename: 'gen/no-encoding.png',
+			content: 'iVBORw0KGgo=',
+		});
+		expect(String(noEncoding.error)).toContain('base64');
+		expect(String(noEncoding.error)).toContain('no-encoding.png');
+
+		// base64 that doesn't decode is rejected up front.
+		const badBase64 = await admin('write_project_asset', {
+			filename: 'gen/corrupt.png',
+			content: 'not valid base64 !!!',
+			encoding: 'base64',
+		});
+		expect(String(badBase64.error)).toContain('base64');
+
+		// Neither bad write created a row.
+		const rows = await db.query(
+			"SELECT original_filename FROM assets WHERE project_id = $1 AND original_filename LIKE 'gen/%'",
+			[projectId],
+		);
+		const names = rows.rows.map((r) => (r as { original_filename: string }).original_filename);
+		expect(names).not.toContain('gen/no-encoding.png');
+		expect(names).not.toContain('gen/corrupt.png');
 	});
 
 	it('move_project_asset renames and refuses collisions', async () => {
