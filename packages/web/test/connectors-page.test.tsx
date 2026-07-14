@@ -389,6 +389,7 @@ test('a global connector is read-only on the project page (badge + manage link, 
 	expect(within(row).queryByTestId('connector-connect')).toBeNull();
 	expect(within(row).queryByTestId('connector-revoke')).toBeNull();
 	expect(within(row).queryByTestId('connector-api-key-toggle')).toBeNull();
+	expect(within(row).queryByTestId('connector-remove')).toBeNull();
 });
 
 test('shows the empty-state hint when there are no connectors or OAuth connections', async () => {
@@ -508,6 +509,40 @@ test('an active non-GitHub connector renders Disconnect and revokes', async () =
 		expect(row?.getAttribute('data-status')).toBe('revoked');
 	});
 	await findByTestId('connector-connect');
+});
+
+test('a pending connector offers Remove, which deletes it from the project', async () => {
+	let slug = '';
+	const { findByText, getByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			slug = ws.internalSlug;
+			// A freshly-created saas connector has no oauth/api-key/activated_at, so
+			// connectorStatus → 'pending' ("Pending connect").
+			await seedSaasConnector(ws, { name: 'linear', url: 'https://mcp.linear.example/mcp' });
+		},
+	});
+	await router.navigate({ to: CONNECTORS_ROUTE, params: { projectId: slug } });
+
+	await findByText('linear');
+	const row = within(getByTestId('connectors-list'))
+		.getAllByTestId('connector-row')
+		.find((li) => li.getAttribute('data-connector-id'));
+	if (!row) throw new Error('pending connector row not found');
+	expect(row.getAttribute('data-status')).toBe('pending');
+
+	// Remove opens the shared confirm dialog; confirming calls DELETE
+	// /api/projects/:projectId/connectors/:id and drops the row from the list.
+	within(row).getByTestId('connector-remove').click();
+	(await screen.findByTestId('confirm-dialog-confirm')).click();
+
+	await waitFor(() => {
+		const remaining = within(getByTestId('connectors-list'))
+			.queryAllByTestId('connector-row')
+			.filter((li) => li.getAttribute('data-connector-id'));
+		expect(remaining.length).toBe(0);
+	});
 });
 
 test('a local (credential-auth) connector renders Connected, not a Connect button', async () => {

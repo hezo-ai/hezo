@@ -201,6 +201,12 @@ instance-address change — see [OAuth connections need an HTTPS address](#oauth
 above — where the OAuth client is tied to the old address and the connector must be removed
 and added again.)
 
+A connector that isn't connected — one still awaiting connection ("Pending connect"),
+failed, or revoked — can instead be dropped outright with **Remove** on its row: it deletes
+the connector from the project (an agent can request it again if it's still needed). A
+connected connector shows **Disconnect** instead; disconnect it first, then **Remove** the
+revoked row if you want it gone.
+
 ## Connectors and their credentials
 
 [Credentials](/docs/security/secret-protection) stay **global** — one shared vault, not
