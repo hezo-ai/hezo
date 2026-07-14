@@ -497,6 +497,65 @@ describe('POST /projects/:projectId/auth-start (connector DCR walk)', () => {
 			await fake.close();
 		}
 	});
+
+	it('re-registers a fresh DCR client when the callback origin changed (stale redirect_uri)', async () => {
+		const fake = await startFakeMcpServer();
+		try {
+			const { row } = await createOrFetchConnector(db, {
+				name: 'dcr-origin-change-conn',
+				displayName: 'DCR Origin Change',
+				mcpUrl: `${fake.url}/mcp`,
+				mcpTransport: 'http',
+			});
+
+			// First connect resolves the callback over http (no x-forwarded-proto),
+			// so the DCR client is registered against an http:// redirect_uri.
+			const first = await authStart(row.id);
+			expect(first.status).toBe(200);
+			const firstUrl = new URL(
+				((await first.json()) as { data: { auth_url: string } }).data.auth_url,
+			);
+			const firstClientId = firstUrl.searchParams.get('client_id');
+			const firstRedirect = firstUrl.searchParams.get('redirect_uri');
+			expect(firstRedirect).toMatch(/^http:\/\//);
+
+			// Second connect arrives over https (the reverse proxy now forwards
+			// x-forwarded-proto: https). The cached client is bound to the http
+			// callback, so reusing it would send the AS a redirect_uri it never
+			// registered — instead a fresh client is minted for the https origin.
+			const second = await app.request(`/api/projects/${projectSlug}/auth-start`, {
+				method: 'POST',
+				headers: {
+					...authHeader(token),
+					'Content-Type': 'application/json',
+					'x-forwarded-proto': 'https',
+				},
+				body: JSON.stringify({ connector_id: row.id }),
+			});
+			expect(second.status).toBe(200);
+			const secondUrl = new URL(
+				((await second.json()) as { data: { auth_url: string } }).data.auth_url,
+			);
+			const secondRedirect = secondUrl.searchParams.get('redirect_uri');
+			expect(secondRedirect).toMatch(/^https:\/\//);
+			expect(secondUrl.searchParams.get('client_id')).not.toBe(firstClientId);
+
+			// The re-registered client accepts the https redirect_uri: the fake AS
+			// 302s from /authorize instead of rejecting the redirect_uri (which is
+			// exactly what the stale-cache reuse would have triggered).
+			const authorize = await fetch(secondUrl.toString(), { redirect: 'manual' });
+			expect(authorize.status).toBe(302);
+
+			// The cache now records the origin the live client was registered against.
+			const after = await getConnector(db, row.id);
+			const cachedDcr = (after?.config as { dcr?: { redirect_uri?: string; client_id?: string } })
+				.dcr;
+			expect(cachedDcr?.redirect_uri).toBe(secondRedirect);
+			expect(cachedDcr?.client_id).toBe(secondUrl.searchParams.get('client_id'));
+		} finally {
+			await fake.close();
+		}
+	});
 });
 
 describe('POST /connectors/:id/auth-start (instance-admin surface)', () => {

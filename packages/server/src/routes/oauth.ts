@@ -382,6 +382,14 @@ async function startConnectorAuthCode(
 			authorization_endpoint: string;
 			token_endpoint: string;
 			scopes_supported?: string[];
+			/**
+			 * The exact callback URL this client_id was registered against. A public
+			 * OAuth client is bound at registration time to its redirect_uris, so the
+			 * cached client is only reusable while our callback origin is unchanged.
+			 * Absent on registrations cached before this field existed — treated as a
+			 * miss so they self-heal on the next connect.
+			 */
+			redirect_uri?: string;
 		};
 	};
 	if (!config.url)
@@ -396,8 +404,18 @@ async function startConnectorAuthCode(
 
 	const capability = getConnectorCapability(connector.name);
 
-	let dcr = config.dcr;
-	let scopesSupported: string[] = config.dcr?.scopes_supported ?? [];
+	// Reuse a cached DCR registration only when it was registered against THIS
+	// request's callback origin. The client_id is bound at the Authorization
+	// Server to the exact redirect_uri it registered; if the instance's public
+	// origin has changed since (a new hostname, an http↔https flip from the
+	// reverse proxy in front of it, or a first registration done from a different
+	// address), reusing the stale client sends the AS a redirect_uri it never
+	// registered and it rejects the authorize with "redirect_uri does not match
+	// any of the OAuth 2.0 Client's pre-registered redirect urls". Re-register a
+	// fresh client bound to the current origin instead — an instance-address
+	// change now self-heals rather than requiring delete-and-recreate.
+	let dcr = config.dcr?.redirect_uri === redirectUri ? config.dcr : undefined;
+	let scopesSupported: string[] = dcr?.scopes_supported ?? [];
 
 	if (!dcr) {
 		let discovery: Awaited<ReturnType<typeof discoverMcpAuthorization>>;
@@ -452,6 +470,7 @@ async function startConnectorAuthCode(
 			authorization_endpoint: discovery.asMetadata.authorization_endpoint,
 			token_endpoint: discovery.asMetadata.token_endpoint,
 			scopes_supported: discovery.asMetadata.scopes_supported,
+			redirect_uri: redirectUri,
 		};
 		scopesSupported = discovery.asMetadata.scopes_supported ?? [];
 		const newConfig = { ...config, dcr };
