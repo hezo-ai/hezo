@@ -43,6 +43,28 @@
 				}
 			})();
 		</script>
+		<script>
+			// Capture the PWA install signal at the earliest possible moment. Chrome
+			// fires `beforeinstallprompt` once, early in page load (and even earlier on
+			// repeat visits, when the service worker is already active) — often before
+			// the React bundle has mounted its own listener. The event isn't buffered by
+			// the browser, so we catch it here (before /src/main.tsx loads) and stash it
+			// for `useInstallPrompt` to read on mount.
+			(function () {
+				window.__hezoInstall = { event: null, installed: false };
+				addEventListener('beforeinstallprompt', function (e) {
+					// Suppress Chrome's default mini-infobar; we surface our own prompt.
+					e.preventDefault();
+					window.__hezoInstall.event = e;
+					dispatchEvent(new Event('hezo:installable'));
+				});
+				addEventListener('appinstalled', function () {
+					window.__hezoInstall.event = null;
+					window.__hezoInstall.installed = true;
+					dispatchEvent(new Event('hezo:installed'));
+				});
+			})();
+		</script>
 	</head>
 	<body>
 		<div id="root"></div>
