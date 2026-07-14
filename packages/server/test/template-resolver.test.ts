@@ -67,6 +67,19 @@ describe('template resolver', () => {
 		expect(result).toContain('already handed this ticket off');
 	});
 
+	it('tells every agent there is no cron and points recurring work at heartbeats/goals', async () => {
+		const result = await resolveSystemPrompt(db, 'Base prompt.', { teamId });
+		// Agents must not hallucinate a scheduling feature or block work on a
+		// non-existent "admin-level cron configuration".
+		expect(result).toContain('Recurring & Scheduled Work — There Is No Cron');
+		expect(result).toContain('no cron, scheduler, or timed trigger');
+		// The two real mechanisms for repeating work.
+		expect(result).toContain('Your heartbeat');
+		expect(result).toContain('Project goals');
+		// Agents can't create goals themselves — they recommend one to the admin.
+		expect(result).toContain('You cannot create a goal yourself');
+	});
+
 	it('appends the credential-handling guidance to every runtime prompt', async () => {
 		const result = await resolveSystemPrompt(db, 'Base prompt.', { teamId });
 		// The paste form is the only channel — never accept a plaintext secret in chat.
