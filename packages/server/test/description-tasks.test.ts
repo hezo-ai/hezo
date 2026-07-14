@@ -131,6 +131,20 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 		expect(body).toContain('create_hire_proposal');
 	});
 
+	it('body audits for project specifics carried over from a source template', async () => {
+		const taskId = await enqueueTeamCoherenceReviewTask(db, teamId, 'template_applied');
+		const task = await db.query<{ description: string }>(
+			`SELECT description FROM tasks WHERE id = $1`,
+			[taskId],
+		);
+		const body = task.rows[0].description;
+		// The audit list must flag prompts that still name a different project...
+		expect(body).toContain('Carried-over project specifics');
+		expect(body).toContain('cloned from another project');
+		// ...and the reconcile step must tell the reviewer to strip/replace them.
+		expect(body).toContain('strip or replace');
+	});
+
 	it('wakes the Captain when enqueueing a reactive review', async () => {
 		const taskId = await enqueueTeamCoherenceReviewTask(db, teamId, 'agent_hired');
 		const wakeups = await db.query<{ source: string; payload: Record<string, unknown> }>(
