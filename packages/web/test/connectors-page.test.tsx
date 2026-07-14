@@ -20,6 +20,11 @@ async function seedSaasConnector(
 			authorization_endpoint: 'https://as.example/authorize',
 			token_endpoint: 'https://as.example/token',
 			scopes_supported: ['read', 'write'],
+			// Must match the callback origin the in-process backend resolves
+			// (`${requestOrigin(c)}/api/oauth/mcp-callback`, host `localhost`), so
+			// auth-start reuses this cached registration instead of re-running live
+			// PRM discovery / DCR for a changed origin.
+			redirect_uri: 'http://localhost/api/oauth/mcp-callback',
 		};
 	}
 	const res = await apiBase(`/api/projects/${ws.internalSlug}/connectors`, {

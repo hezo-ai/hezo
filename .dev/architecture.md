@@ -1251,9 +1251,22 @@ call `restoreRevokedConnector` (equivalently, `markApiKeyActive` clears `revoked
 which nulls the revocation and every auth artifact (`oauth_connection_id`,
 `api_key_secret_id`, `activated_at`, `auth_error`) while preserving `config` — including any
 cached DCR client registration, so the reconnect reuses it. This is the same in-place
-restore `createOrFetchConnector` performs for a re-requested agent connector. The only case
-that still needs delete-and-recreate is an instance-address change (the DCR client is bound
-to the old redirect URL).
+restore `createOrFetchConnector` performs for a re-requested agent connector.
+
+**Instance-address change self-heals.** A DCR client is bound at the Authorization Server to
+the exact `redirect_uri` it registered, so the cached `config.dcr` also records the callback
+URL it was minted against (`redirect_uri`). `startConnectorAuthCode` reuses the cached client
+**only** while that stored URL equals the current request's callback origin
+(`${requestOrigin(c)}/api/oauth/mcp-callback`); if the instance's public origin has changed
+since — a new hostname, an `http`↔`https` flip from the reverse proxy in front of it, or a
+first registration done from a different address — it re-runs discovery + DCR to mint a fresh
+client bound to the current origin and overwrites the cache. Without this, the stale client
+sends the AS a redirect_uri it never registered and the authorize is rejected with
+"redirect_uri does not match any of the OAuth 2.0 Client's pre-registered redirect urls"
+(observed against Higgsfield, whose `mcp.higgsfield.ai` broker forwards the DCR client_id and
+redirect_uri straight through to upstream Clerk). Registrations cached before the
+`redirect_uri` field existed carry none, so they miss the reuse check and re-register on the
+next connect — an address change no longer needs delete-and-recreate.
 
 **Run exclusion.** `loadConnectorsForRun(db, projectId)` returns the run's project's own
 connectors plus global ones (a project connector shadows a global of the same name). It
