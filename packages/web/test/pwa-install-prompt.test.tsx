@@ -20,11 +20,23 @@ class FakeBeforeInstallPromptEvent extends Event {
 	}
 }
 
-/** Fire a synthetic `beforeinstallprompt` so the hook captures it (Android path). */
+/**
+ * Seed the install buffer the way the inline `index.html` script would, without
+ * dispatching the notify event — mirrors an event that fired before React mounted.
+ */
+function seedBuffer(evt: FakeBeforeInstallPromptEvent): void {
+	window.__hezoInstall = { event: evt, installed: false };
+}
+
+/**
+ * Buffer a synthetic install event and fire the `hezo:installable` signal the
+ * inline script emits, so the hook captures it (Android path).
+ */
 function fireBeforeInstallPrompt(): FakeBeforeInstallPromptEvent {
 	const evt = new FakeBeforeInstallPromptEvent();
+	seedBuffer(evt);
 	act(() => {
-		window.dispatchEvent(evt);
+		window.dispatchEvent(new Event('hezo:installable'));
 	});
 	return evt;
 }
@@ -51,6 +63,7 @@ afterEach(() => {
 	localStorage.clear();
 	vi.restoreAllMocks();
 	setUserAgent(REAL_UA);
+	window.__hezoInstall = undefined;
 });
 
 test('nothing renders until the app is installable', () => {
@@ -62,6 +75,16 @@ test('Android: shows an Install button once beforeinstallprompt fires', () => {
 	const { queryByTestId, getByTestId } = render(<PwaInstallPrompt />);
 	expect(queryByTestId('pwa-install-prompt')).toBeNull();
 	fireBeforeInstallPrompt();
+	expect(getByTestId('pwa-install-prompt')).toBeTruthy();
+	expect(getByTestId('pwa-install-button')).toBeTruthy();
+});
+
+// Regression: Chrome fires `beforeinstallprompt` once, early in page load — often
+// before React mounts. The inline capture script buffers it; the hook must read
+// that buffer on first render, with no post-mount dispatch at all.
+test('Android: shows the card when beforeinstallprompt fired before mount', () => {
+	seedBuffer(new FakeBeforeInstallPromptEvent());
+	const { getByTestId } = render(<PwaInstallPrompt />);
 	expect(getByTestId('pwa-install-prompt')).toBeTruthy();
 	expect(getByTestId('pwa-install-button')).toBeTruthy();
 });

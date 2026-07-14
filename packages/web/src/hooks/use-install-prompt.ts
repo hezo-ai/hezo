@@ -1,16 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
+import {
+	type BeforeInstallPromptEvent,
+	consumeInstallEvent,
+	getBufferedInstallEvent,
+	INSTALLABLE_EVENT,
+	INSTALLED_EVENT,
+	wasInstalled,
+} from '../lib/install-prompt-store';
 import { readStored, writeStored } from '../lib/safe-storage';
-
-/**
- * The `beforeinstallprompt` event isn't in lib.dom. Chrome/Android fires it when
- * the page is installable; we capture it, suppress the browser's default
- * mini-infobar, and replay it from our own UI via `prompt()`.
- */
-interface BeforeInstallPromptEvent extends Event {
-	readonly platforms: string[];
-	readonly userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
-	prompt(): Promise<void>;
-}
 
 const DISMISS_KEY = 'hezo:pwa-install-dismissed';
 /** Once dismissed, stay quiet for this many days before offering again. */
@@ -34,6 +31,8 @@ function isDismissed(): boolean {
 /** True when the app is already running as an installed/standalone PWA. */
 function isStandalone(): boolean {
 	if (typeof window === 'undefined') return false;
+	// The inline capture script may have already seen `appinstalled` this session.
+	if (wasInstalled()) return true;
 	const mql = window.matchMedia?.('(display-mode: standalone)');
 	if (mql?.matches) return true;
 	// iOS Safari exposes its own flag rather than the display-mode media query.
@@ -69,29 +68,33 @@ export interface InstallPromptState {
  * the app is installed or the user has dismissed it recently.
  */
 export function useInstallPrompt(): InstallPromptState {
-	const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
+	// Seed from the buffer captured by the inline script in index.html: Chrome may
+	// have fired `beforeinstallprompt` before this hook (or React itself) mounted.
+	const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(
+		getBufferedInstallEvent,
+	);
 	const [dismissed, setDismissed] = useState<boolean>(isDismissed);
 	const [standalone, setStandalone] = useState<boolean>(isStandalone);
 
 	useEffect(() => {
 		if (typeof window === 'undefined') return;
 
-		const onBeforeInstallPrompt = (e: Event) => {
-			// Suppress Chrome's default mini-infobar; we surface our own prompt.
-			e.preventDefault();
-			setDeferred(e as BeforeInstallPromptEvent);
-		};
+		// The inline script owns the raw `beforeinstallprompt`/`appinstalled`
+		// listeners (and has already called preventDefault); we react to its
+		// buffered state via these custom events, plus a mount-time re-read to
+		// close any gap between the buffer updating and this effect subscribing.
+		const onInstallable = () => setDeferred(getBufferedInstallEvent());
 		const onInstalled = () => {
-			// Once installed, drop the captured event and hide for good this session.
 			setDeferred(null);
 			setStandalone(true);
 		};
 
-		window.addEventListener('beforeinstallprompt', onBeforeInstallPrompt);
-		window.addEventListener('appinstalled', onInstalled);
+		window.addEventListener(INSTALLABLE_EVENT, onInstallable);
+		window.addEventListener(INSTALLED_EVENT, onInstalled);
+		setDeferred(getBufferedInstallEvent());
 		return () => {
-			window.removeEventListener('beforeinstallprompt', onBeforeInstallPrompt);
-			window.removeEventListener('appinstalled', onInstalled);
+			window.removeEventListener(INSTALLABLE_EVENT, onInstallable);
+			window.removeEventListener(INSTALLED_EVENT, onInstalled);
 		};
 	}, []);
 
@@ -101,15 +104,13 @@ export function useInstallPrompt(): InstallPromptState {
 	}, []);
 
 	const promptInstall = useCallback(async () => {
-		if (!deferred) return;
-		await deferred.prompt();
-		try {
-			await deferred.userChoice;
-		} finally {
-			// The event can only be used once.
-			setDeferred(null);
-		}
-	}, [deferred]);
+		// Consume the buffered event (single-use per the browser's contract).
+		const event = consumeInstallEvent();
+		setDeferred(null);
+		if (!event) return;
+		await event.prompt();
+		await event.userChoice;
+	}, []);
 
 	let platform: InstallPromptState['platform'] = null;
 	if (!standalone && !dismissed) {

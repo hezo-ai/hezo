@@ -50,4 +50,42 @@ test.describe('PWA install prompt (mobile)', () => {
 		// `lg:hidden` keeps the bottom card off desktop viewports.
 		await expect(page.getByTestId('pwa-install-prompt')).toBeHidden();
 	});
+
+	// Regression: Chrome fires `beforeinstallprompt` once, early in page load —
+	// often before React mounts. This fires it the instant the inline capture
+	// script in index.html has initialized its buffer (racing the app bundle), so
+	// it lands before/around mount rather than long after. The inline script must
+	// buffer it and the hook must read that buffer on first render.
+	test('mobile: an early beforeinstallprompt (pre-mount) still surfaces the card', async ({
+		authedPage: page,
+	}) => {
+		await page.setViewportSize({ width: 375, height: 800 });
+		// Runs before page scripts on every navigation; polls until the inline
+		// capture script has run, then dispatches the real event it listens for.
+		await page.addInitScript(() => {
+			const timer = setInterval(() => {
+				const w = window as Window & { __hezoInstall?: unknown; __installPromptCalled?: boolean };
+				if (!w.__hezoInstall) return;
+				clearInterval(timer);
+				const e = new Event('beforeinstallprompt') as Event & {
+					platforms?: string[];
+					userChoice?: Promise<{ outcome: string; platform: string }>;
+					prompt?: () => Promise<void>;
+				};
+				e.platforms = ['web'];
+				e.userChoice = Promise.resolve({ outcome: 'accepted', platform: 'web' });
+				e.prompt = () => {
+					w.__installPromptCalled = true;
+					return Promise.resolve();
+				};
+				window.dispatchEvent(e);
+			}, 0);
+		});
+
+		await page.goto('/home');
+		await expect(page.getByTestId('app-header')).toBeVisible({ timeout: 15000 });
+		// No post-mount dispatch here — the card must come from the buffered event.
+		await expect(page.getByTestId('pwa-install-prompt')).toBeVisible();
+		await expect(page.getByTestId('pwa-install-button')).toBeVisible();
+	});
 });
