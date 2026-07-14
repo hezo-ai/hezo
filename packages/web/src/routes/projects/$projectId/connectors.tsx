@@ -17,6 +17,7 @@ import {
 	connectorStatus,
 	useConnectors,
 	useCreateConnector,
+	useDeleteConnector,
 	useRevokeConnector,
 } from '../../../hooks/use-connectors';
 import { useMe } from '../../../hooks/use-me';
@@ -466,6 +467,7 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 	const status = connectorStatus(connector);
 	const authStart = useAuthStart(projectId);
 	const revoke = useRevokeConnector(projectId);
+	const del = useDeleteConnector(projectId);
 	const [error, setError] = useState<string | null>(null);
 	const [info, setInfo] = useState<string | null>(null);
 	const [deviceOpen, setDeviceOpen] = useState(false);
@@ -478,6 +480,7 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 			(connector.config as { auth?: { placement?: unknown } } | null)?.auth?.placement === 'query',
 	);
 	const [confirmOpen, setConfirmOpen] = useState(false);
+	const [removeConfirmOpen, setRemoveConfirmOpen] = useState(false);
 	const credentials = connector.credentials ?? [];
 	// The credentials page is superuser-only, so link there only for a superuser;
 	// members see the credential name as plain text.
@@ -546,6 +549,15 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 			await revoke.mutateAsync(connector.id);
 		} catch (e) {
 			setError(e instanceof Error ? e.message : 'Failed to revoke');
+		}
+	};
+
+	const doRemove = async () => {
+		setError(null);
+		try {
+			await del.mutateAsync(connector.id);
+		} catch (e) {
+			setError(e instanceof Error ? e.message : 'Failed to remove');
 		}
 	};
 
@@ -672,6 +684,16 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 								<KeyRound className="size-3.5 mr-1" />
 								API key
 							</Button>
+							<Button
+								size="sm"
+								variant="outline"
+								onClick={() => setRemoveConfirmOpen(true)}
+								disabled={del.isPending}
+								data-testid="connector-remove"
+							>
+								<Trash2 className="size-3.5 mr-1" />
+								{del.isPending ? 'Removing…' : 'Remove'}
+							</Button>
 						</>
 					)}
 				</div>
@@ -756,6 +778,21 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 				confirmLabel="Disconnect"
 				variant="danger"
 				onConfirm={doRevoke}
+			/>
+
+			<ConfirmDialog
+				open={removeConfirmOpen}
+				onOpenChange={setRemoveConfirmOpen}
+				title="Remove connector?"
+				description={
+					<>
+						Remove <span className="font-medium">{connector.display_name ?? connector.name}</span>?
+						This deletes it from this project. An agent can request it again if needed.
+					</>
+				}
+				confirmLabel="Remove"
+				variant="danger"
+				onConfirm={doRemove}
 			/>
 		</li>
 	);
