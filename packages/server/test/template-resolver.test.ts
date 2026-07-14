@@ -67,6 +67,21 @@ describe('template resolver', () => {
 		expect(result).toContain('already handed this ticket off');
 	});
 
+	it('points recurring work at the mechanisms that exist — heartbeats and goals', async () => {
+		const result = await resolveSystemPrompt(db, 'Base prompt.', { teamId });
+		// Positive framing: describe how scheduled work IS done rather than what's absent,
+		// so an agent routes a repeating need instead of asking for a cron feature.
+		expect(result).toContain('### Recurring & Scheduled Work');
+		expect(result).toContain('two mechanisms that are always in place');
+		// The two real mechanisms for repeating work.
+		expect(result).toContain('Your heartbeat');
+		expect(result).toContain('Project goals');
+		// Goals are admin-set, so an agent recommends one to the admin.
+		expect(result).toContain(
+			'Goals are set by the admin, so when a need is truly recurring, recommend one to them',
+		);
+	});
+
 	it('appends the credential-handling guidance to every runtime prompt', async () => {
 		const result = await resolveSystemPrompt(db, 'Base prompt.', { teamId });
 		// The paste form is the only channel — never accept a plaintext secret in chat.

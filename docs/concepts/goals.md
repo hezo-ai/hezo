@@ -15,6 +15,13 @@ You set the goals; the **Captain** keeps them up to date. You don't have to reme
 update a status or move a slider — the Captain re-checks each goal on a schedule and writes
 a fresh estimate, so the **Progress** page is always a current read on the project.
 
+> **There is no cron in Hezo.** Goals are how you schedule *recurring* work. Hezo has no
+> cron or timed-trigger system to configure — repeating work runs on two things instead:
+> agents wake on their own **heartbeat** to pick up whatever is assigned to them, and the
+> Captain acts on **goals** when their check frequency (daily/weekly/monthly) comes due. So
+> a standing "do this every day/week" objective becomes a goal, and its **suggested actions**
+> are how that recurring check turns into work on the board.
+
 ## The Progress page
 
 Open **Progress** in the project menu (just under **Inbox**). Top to bottom it shows:
@@ -37,8 +44,9 @@ goal has:
   "100 active paid subscriptions in Stripe"). This is the bar the Captain measures against, so
   the more concrete it is, the more honest its progress estimates.
 - **Suggested actions** *(optional)* — guidance on what the Captain should do or check toward
-  the goal: specific checks, or a standing instruction like "run a weekly cron-style review of
-  the signup funnel". Leave it blank to let the Captain decide.
+  the goal: specific checks, or a standing instruction like "review the signup funnel every
+  week" (the goal's **check frequency** *is* the schedule — there's no separate cron behind
+  it). Leave it blank to let the Captain decide.
 - **Deadline** *(optional)* — when the goal should be met. The Captain weighs progress against
   this date when it sets the goal's health, and once the deadline has passed an unmet goal is
   checked on every heartbeat — regardless of its check frequency — until it reaches 100% or is
