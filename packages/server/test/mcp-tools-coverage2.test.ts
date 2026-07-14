@@ -612,13 +612,13 @@ describe('project docs / assets branches', () => {
 		expect(r.files.map((f) => f.filename)).toContain('cov-spec.md');
 	});
 
-	it('write_project_asset rejects a non-text extension', async () => {
+	it('write_project_asset rejects a binary extension written without base64', async () => {
 		const r = await admin('write_project_asset', {
 			project: projectSlug,
 			filename: 'image.png',
 			content: 'x',
 		});
-		expect(r.error).toContain('text-based file');
+		expect(String(r.error)).toContain('base64');
 	});
 
 	it('write_project_asset writes an html asset and read_project_asset returns it', async () => {

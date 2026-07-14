@@ -29,8 +29,9 @@ import {
 	getConnectorCapability,
 	hasFixedReportsTo,
 	INSTANCE_AGENT_SLUGS,
-	isAgentAuthorableAssetMime,
+	isAllowedAttachmentMime,
 	isMarkdownDocSlug,
+	isTextAssetMime,
 	matchesArchiveFilter,
 	normalizeAssetPath,
 	REQUIRED_SYSTEM_PROMPT_VARS,
@@ -3921,7 +3922,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_project_assets',
-		"List the project's assets — files in the assets library (UI mockups, wireframes, diagrams, PDFs, scripts, and generated markdown such as blog posts or reports). Filenames may carry a folder prefix up to 2 levels deep (e.g. `launch/images/hero.png`); reference one in a comment or doc as `assets/<path>` exactly as returned here (e.g. assets/launch/images/hero.png), no backticks. You can author text-based assets with write_project_asset and reorganize with move_project_asset / copy_project_asset; obsolete assets are archived with archive_project_asset (hard deletion is admin-only). Archived assets are excluded by default — set filter: 'archived' or 'all' to see them (entries then carry an `archived` flag). Binary assets (images, PDFs, media) are human-uploaded.",
+		"List the project's assets — files in the assets library (UI mockups, wireframes, diagrams, images, PDFs, scripts, and generated markdown such as blog posts or reports). Filenames may carry a folder prefix up to 2 levels deep (e.g. `launch/images/hero.png`); reference one in a comment or doc as `assets/<path>` exactly as returned here (e.g. assets/launch/images/hero.png), no backticks. Author both text and binary assets with write_project_asset (binary via encoding: 'base64') and reorganize with move_project_asset / copy_project_asset; obsolete assets are archived with archive_project_asset (hard deletion is admin-only). Archived assets are excluded by default — set filter: 'archived' or 'all' to see them (entries then carry an `archived` flag).",
 		{
 			project: projectArg(),
 			filter: archiveFilterArg(),
@@ -3964,15 +3965,23 @@ export function registerTools(
 	tool(
 		server,
 		'write_project_asset',
-		'Save a text-based file to the project assets library so a human can open it (an interactive HTML mockup, an SVG diagram, a plain-text export, a script, or a markdown deliverable such as a blog post or report). Allowed extensions: .html, .svg, .txt, .md, plus script/text formats stored as plain text (.sh, .py, .js, .ts, .json, .csv, .yaml, .yml). The filename may include a folder path up to 2 levels deep (e.g. "scripts/deploy-check.sh" or "launch/images/hero.svg") — folders spring into existence with their first asset. Re-saving the same path overwrites it, so the reference stays stable; overwrite matching is PATH-EXACT ("x.html" and "blog/x.html" are different assets — after a move, write to the new full path or you will fork the file). IMPORTANT: any write to an existing path deletes ALL of its pending review comments (the admin\'s feedback returned by read_project_asset) — capture every comment in your context before the first write, and make all desired edits in one consolidated write. Returns the reference string to drop into a comment as `assets/<path>` (no backticks). HTML opens interactively in a new tab; markdown renders with a rich preview and a view-source toggle. Use a markdown asset for a standalone deliverable opened from the assets library; use write_project_doc for project context docs (specs, PRDs, research). Mockups and other deliverables belong here, never committed to the source repo.',
+		'Save a file to the project assets library so a human can open it — including a binary deliverable you generated (a rendered image, chart, diagram, screenshot, PDF, or media file), which is how you get such a file in front of the admin (a file left on the ephemeral container disk vanishes when the run ends). Text formats (.html, .svg, .txt, .md, plus script/text formats stored as plain text: .sh, .py, .js, .ts, .json, .csv, .yaml, .yml) are written with the default encoding "utf8". Binary formats — any type a human can upload (.png, .jpg, .jpeg, .gif, .webp, .pdf, .mp3, .mp4, .webm, …) — MUST pass encoding: "base64" with the file\'s bytes base64-encoded in `content`. The filename may include a folder path up to 2 levels deep (e.g. "scripts/deploy-check.sh" or "launch/images/hero.png") — folders spring into existence with their first asset. Re-saving the same path overwrites it, so the reference stays stable; overwrite matching is PATH-EXACT ("x.html" and "blog/x.html" are different assets — after a move, write to the new full path or you will fork the file). IMPORTANT: any write to an existing path deletes ALL of its pending review comments (the admin\'s feedback returned by read_project_asset) — capture every comment in your context before the first write, and make all desired edits in one consolidated write. Returns the reference string to drop into a comment as `assets/<path>` (no backticks). HTML opens interactively in a new tab; markdown renders with a rich preview and a view-source toggle; images render inline in the assets library. Use a markdown asset for a standalone deliverable opened from the assets library; use write_project_doc for project context docs (specs, PRDs, research). Mockups and other deliverables belong here, never committed to the source repo.',
 		{
 			project: projectArg(),
 			filename: z
 				.string()
 				.describe(
-					'Path to write, optionally foldered (e.g. "ui-mockups.html", "scripts/check.sh")',
+					'Path to write, optionally foldered (e.g. "ui-mockups.html", "launch/images/hero.png")',
 				),
-			content: z.string().describe('File content'),
+			content: z
+				.string()
+				.describe('File content — raw text for utf8, or base64-encoded bytes for base64'),
+			encoding: z
+				.enum(['utf8', 'base64'])
+				.optional()
+				.describe(
+					'utf8 (default) for text assets; base64 for binary assets (images, PDFs, media) — required for any non-text type',
+				),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -3985,14 +3994,38 @@ export function registerTools(
 			const contentType = ext
 				? ATTACHMENT_EXTENSIONS[ext as keyof typeof ATTACHMENT_EXTENSIONS]
 				: undefined;
-			if (!contentType || !isAgentAuthorableAssetMime(contentType)) {
+			if (!contentType || !isAllowedAttachmentMime(contentType)) {
 				return {
 					error:
-						'Asset must be a text-based file: .html, .svg, .txt, .md, or a script/text format (.sh, .py, .js, .ts, .json, .csv, .yaml, .yml). Other types are human-uploaded.',
+						'Unsupported asset type. Allowed: text formats (.html, .svg, .txt, .md, and .sh/.py/.js/.ts/.json/.csv/.yaml/.yml stored as plain text) written with encoding "utf8"; and binary formats (.png, .jpg, .jpeg, .gif, .webp, .pdf, .mp3, .mp4, .webm, …) written with encoding "base64".',
 				};
 			}
 
-			const blob = new Blob([args.content as string], { type: contentType });
+			const content = args.content as string;
+			const encoding = (args.encoding as 'utf8' | 'base64' | undefined) ?? 'utf8';
+			const isText = isTextAssetMime(contentType);
+			if (!isText && encoding !== 'base64') {
+				return {
+					error: `Binary asset '${filename}' (${contentType}) must be written with encoding: "base64" — base64-encode the file's bytes in \`content\`. Only text formats accept the default utf8 encoding.`,
+				};
+			}
+			let blob: Blob;
+			if (encoding === 'base64') {
+				// Buffer.from is lenient (it silently drops invalid chars), so validate
+				// first and surface a clear error rather than storing corrupt bytes.
+				const compact = content.replace(/\s+/g, '');
+				if (compact.length === 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(compact)) {
+					return {
+						error:
+							'`content` is not valid base64. Base64-encode the file bytes (standard alphabet, optional `=` padding) and pass them as `content` with encoding: "base64".',
+					};
+				}
+				blob = new Blob([new Uint8Array(Buffer.from(compact, 'base64'))], { type: contentType });
+			} else {
+				// Text stays a string BlobPart — Blob encodes it as UTF-8, byte-identical
+				// to the prior behaviour.
+				blob = new Blob([content], { type: contentType });
+			}
 			if (blob.size > ATTACHMENT_MAX_BYTES) {
 				return { error: 'Asset exceeds 10 MB.' };
 			}
@@ -4118,8 +4151,7 @@ export function registerTools(
 			// Text-based assets are returned inline; binary assets get a signed
 			// download URL the agent fetches itself (curl) — blobs are never on the
 			// container filesystem.
-			const isText =
-				asset.content_type.startsWith('text/') || asset.content_type === 'image/svg+xml';
+			const isText = isTextAssetMime(asset.content_type);
 			if (!isText) {
 				return {
 					filename: asset.original_filename,

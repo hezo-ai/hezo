@@ -1191,7 +1191,7 @@ describe('MCP project docs & assets', () => {
 			filename: 'evil.exe',
 			content: 'binary',
 		})) as ToolResult;
-		expect(result.error).toContain('text-based');
+		expect(result.error).toContain('Unsupported asset type');
 	});
 
 	it('read_project_asset reports a binary asset as a signed download url', async () => {

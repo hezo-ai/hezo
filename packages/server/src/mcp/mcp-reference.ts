@@ -415,7 +415,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	write_project_asset: {
 		category: 'Project docs & assets',
 		returns:
-			'`{ written: true, id, reference: "assets/<path>" }`, or `{ error }` if the type is not text-based (`.html`, `.svg`, `.txt`, `.md`, or a script/text format: `.sh`, `.py`, `.js`, `.ts`, `.json`, `.csv`, `.yaml`, `.yml`), the path is invalid (max 2 folder levels), the content exceeds 10 MB, or an archived asset holds the path (unarchive it first or pick another path). Re-saving the same path overwrites it; matching is path-exact. Overwriting deletes ALL pending review comments on the asset (the admin feedback returned by read_project_asset) — read them first and make all edits in one consolidated write.',
+			'`{ written: true, id, reference: "assets/<path>" }`, or `{ error }`. Accepts any type a human can upload: text formats (`.html`, `.svg`, `.txt`, `.md`, and `.sh`/`.py`/`.js`/`.ts`/`.json`/`.csv`/`.yaml`/`.yml` stored as plain text) with the default `encoding: "utf8"`, and binary formats (`.png`, `.jpg`, `.gif`, `.webp`, `.pdf`, media, …) with `encoding: "base64"` — a non-text type written without base64 is rejected, as is invalid base64. Also errors if the type is unsupported, the path is invalid (max 2 folder levels), the content exceeds 10 MB, or an archived asset holds the path (unarchive it first or pick another path). Re-saving the same path overwrites it; matching is path-exact. Overwriting deletes ALL pending review comments on the asset (the admin feedback returned by read_project_asset) — read them first and make all edits in one consolidated write.',
 	},
 	move_project_asset: {
 		category: 'Project docs & assets',

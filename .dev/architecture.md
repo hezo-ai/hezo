@@ -339,9 +339,13 @@ per-project page (`/projects/:projectId/skills`, any project member) lists that 
 plus globals and edits/removes only the project's own. `assets` + `task_attachments`/`comment_attachments` handle
 uploaded files (blobs in the configured **asset store** keyed by `projectId/assetId` — see
 § Asset storage below — served over HMAC-signed URLs with
-`nosniff` and a basename-only download filename); agents can also author text-based assets
-directly (`write_project_asset` — HTML, SVG, plain text/scripts, and markdown such as a blog
-post; script extensions like `.sh`/`.py`/`.js` store as inert `text/plain`). The web's
+`nosniff` and a basename-only download filename); agents can also author assets
+directly with `write_project_asset` — text formats (HTML, SVG, plain text/scripts, and markdown
+such as a blog post; script extensions like `.sh`/`.py`/`.js` store as inert `text/plain`) with
+the default `utf8` encoding, and **binary** formats (any type a human can upload: PNG/JPEG/GIF/WebP,
+PDF, media) by passing `encoding: 'base64'` with the file's bytes base64-encoded in `content`. The
+allowlist is the shared attachment allowlist (`isAllowedAttachmentMime`), a non-text type without
+base64 is rejected, and the 10 MB cap applies to the decoded bytes. The web's
 **asset viewer** (`/projects/:slug/assets/view?file=<path>`, route file
 `assets_.view.tsx`) is the canonical in-app link target for an asset — grid cards, asset
 mentions (`assetPath` in `@hezo/shared`), comment-attachment thumbs, and chat attachment

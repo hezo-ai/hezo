@@ -303,15 +303,6 @@ export function assetServeCsp(contentType: string): string | null {
 	return ASSET_SANDBOX_SERVE_MIME.has(contentType) ? ASSET_SANDBOX_CSP : null;
 }
 
-// File types an agent may author directly into the assets library (text-based,
-// reviewable). Binary assets (images, PDF, media) stay human-uploaded.
-export const AGENT_AUTHORABLE_ASSET_MIME: ReadonlySet<string> = new Set([
-	'text/html',
-	'image/svg+xml',
-	'text/plain',
-	'text/markdown',
-]);
-
 // Asset content types that the app renders as markdown (rich preview + a raw
 // "source" toggle) rather than downloading or framing. Project docs are a
 // separate store; this is for markdown that lives in the assets library, e.g. a
@@ -322,8 +313,12 @@ export function isMarkdownAssetMime(mime: string): boolean {
 	return ASSET_MARKDOWN_MIME.has(mime);
 }
 
-export function isAgentAuthorableAssetMime(mime: string): boolean {
-	return AGENT_AUTHORABLE_ASSET_MIME.has(mime);
+// An asset whose bytes are UTF-8 text the tools return/accept inline (as opposed
+// to binary assets that round-trip through a signed URL / base64). Keep this in
+// lockstep with read_project_asset's inline-vs-binary split and write_project_asset's
+// encoding requirement.
+export function isTextAssetMime(mime: string): boolean {
+	return mime.startsWith('text/') || mime === 'image/svg+xml';
 }
 
 // Asset content types whose review comments anchor to a text selection

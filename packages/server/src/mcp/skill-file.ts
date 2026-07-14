@@ -38,7 +38,7 @@ export function generateSkillFile(tools: SkillTool[], opts: { baseUrl?: string }
 		'',
 		'## File uploads',
 		'',
-		'Binary files (images, PDFs, …) cannot be sent as a JSON-RPC tool call. Upload them with a `multipart/form-data` POST to `' +
+		'Binary files (images, PDFs, …) can be written with the `write_project_asset` tool by passing `encoding: "base64"` and the file bytes base64-encoded in `content`. Base64 inflates the JSON-RPC payload ~33%, so for a large file prefer a `multipart/form-data` POST to `' +
 			base +
 			'/mcp/assets` (same Bearer auth) using a `file` field — add an optional `project` field to act across projects, and an optional `folder` field to place the asset inside a library folder (up to 2 levels, e.g. `launch/images`). The response returns the stored asset plus a signed read URL, and the file then shows up in `list_project_assets` / `read_project_asset` under its full path.',
 		'',
