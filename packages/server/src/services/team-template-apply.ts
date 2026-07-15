@@ -14,8 +14,6 @@ import { resolveAgentBudgets } from './agent-budget';
 import { enqueueTeamCoherenceReviewTask } from './description-tasks';
 import { initAgentSystemPrompt, upsertDocument } from './documents';
 import {
-	createInlineSkillsFromArray,
-	downloadSkillsFromArray,
 	insertRosterAgents,
 	type ProvisionTeamTemplateResult,
 	provisionTeamTemplate,
@@ -504,19 +502,18 @@ export async function ensureBuiltinCaptainFromDef(
 /**
  * Provisions a marketplace team def onto a team WITHOUT creating any
  * `team_templates` / `agent_types` rows: the Captain via the builtin path (with
- * the def's override), the rest of the roster as inline agents (`agent_type_id`
- * null, like hires), plus the def's inline/downloaded skills. Used by both
- * launch-a-project (fresh team) and add-a-team-to-a-project (existing team, skips
- * roles it already has). `enqueueReconcile` fires a coherence review only when the
- * roster actually changed (off for the launch path, which enqueues its own
- * initial review, and for the CEO add-team task, which reconciles in-task).
+ * the def's override) and the rest of the roster as inline agents (`agent_type_id`
+ * null, like hires). Used by both launch-a-project (fresh team) and
+ * add-a-team-to-a-project (existing team, skips roles it already has).
+ * `enqueueReconcile` fires a coherence review only when the roster actually
+ * changed (off for the launch path, which enqueues its own initial review, and
+ * for the CEO add-team task, which reconciles in-task).
  */
 export async function applyMarketplaceTeamToTeam(
 	db: Db,
 	teamId: string,
 	teamDef: MarketplaceTeamDef,
 	options: {
-		dataDir?: string;
 		wsManager?: WebSocketManager;
 		enqueueReconcile?: boolean;
 		/**
@@ -565,12 +562,7 @@ export async function applyMarketplaceTeamToTeam(
 		created = inserted.created_slugs;
 		updated = inserted.updated_slugs;
 		skipped = inserted.skipped_slugs;
-		await createInlineSkillsFromArray(db, teamDef.skills_config);
 	});
-
-	if (options.dataDir) {
-		await downloadSkillsFromArray(db, teamDef.skills_config);
-	}
 
 	const rosterChanged = created.length > 0 || updated.length > 0 || captainResult.updated;
 	if (options.enqueueReconcile && rosterChanged) {

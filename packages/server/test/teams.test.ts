@@ -39,7 +39,7 @@ afterAll(async () => {
 // tests exercise that service via the `createTestTeam` helper and read the result
 // back through the project-addressed team routes.
 describe('team provisioning (createTeam service)', () => {
-	it('creates a team from built-in template with auto-created agents and KB docs', async () => {
+	it('creates a team from built-in template with auto-created agents', async () => {
 		const res = await createTestTeam(db, {
 			name: 'NoteGenius AI',
 			description: 'Build the #1 AI note-taking app',
@@ -50,15 +50,6 @@ describe('team provisioning (createTeam service)', () => {
 		expect(body.data.name).toBe('NoteGenius AI');
 		expect(body.data.slug).toBe('notegenius-ai');
 		expect(body.data.agent_count).toBe(10);
-
-		// Skills are instance-global now; the template's KB docs land in the shared
-		// catalog. Assert presence (other tests may have seeded global skills too).
-		const skillsRes = await app.request('/api/skills', {
-			headers: authHeader(token),
-		});
-		const skillsBody = await skillsRes.json();
-		const slugs = skillsBody.data.map((d: any) => d.slug);
-		expect(slugs).toContain('development-workflow.md');
 	});
 
 	it('creates a team without a type and includes built-in agents', async () => {

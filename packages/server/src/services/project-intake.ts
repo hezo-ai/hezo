@@ -30,6 +30,8 @@ export interface CreateProjectIntakeInput {
 	baselineTemplateId?: string;
 	/** Set instead of baselineTemplateId when the admin chose to clone an existing team. */
 	baselineSourceTeamId?: string;
+	/** Set instead of baselineTemplateId when the admin chose a marketplace team. */
+	baselineMarketplaceSlug?: string;
 	/** Display name of the baseline team type, for the conversation. */
 	baselineTeamTypeName?: string;
 }
@@ -70,6 +72,9 @@ function buildGreetingText(input: CreateProjectIntakeInput): string {
 }
 
 function buildBaselineLine(input: CreateProjectIntakeInput): string {
+	if (input.baselineMarketplaceSlug) {
+		return `- **Baseline team type:** ${input.baselineTeamTypeName ?? 'a marketplace team'} (marketplace_slug: \`${input.baselineMarketplaceSlug}\`)`;
+	}
 	if (input.baselineSourceTeamId) {
 		return `- **Baseline team type:** clone of "${input.baselineTeamTypeName ?? 'an existing team'}" (source_team_id: \`${input.baselineSourceTeamId}\`)`;
 	}
@@ -99,9 +104,9 @@ ${input.description}
 ### Your task
 
 1. **Clarify scope.** Ask anything you need to understand the problem, the users, integrations, and constraints. Put an active \`@admin\` in any comment where you need them to answer — without it the question reaches no inbox and the ticket stalls.
-2. **Check team fit.** The admin's chosen team type above is your baseline. Call \`list_team_templates\` to review the built-in and saved team types, and recommend a different one if it fits the work better — the final call is the admin's.
+2. **Check team fit.** The admin's chosen team type above is your baseline. Call \`list_team_templates\` to review the local team types (Blank + saved), and — when the baseline is a marketplace team — \`get_marketplace_team\` to review its roster; recommend a different one if it fits the work better. The final call is the admin's.
 3. **Get the go-ahead.** Post a short summary of the agreed shape (name, description, team type), @-mention the admin, and ask them to confirm. A plain reply approving it is all you need — this is a normal conversation, not an inbox approval.
-4. **Create the project.** Once the admin approves in this thread, call \`create_project\` with the agreed \`name\`, \`description\`, and the chosen \`template_id\` (or \`source_team_id\`), passing this ticket's id as \`intake_task_id\`. That creates the project and its team, opens the Captain's planning ticket, and closes this ticket automatically.
+4. **Create the project.** Once the admin approves in this thread, call \`create_project\` with the agreed \`name\`, \`description\`, and the chosen team source — \`template_id\`, \`source_team_id\`, or \`marketplace_slug\` — passing this ticket's id as \`intake_task_id\`. That creates the project and its team, opens the Captain's planning ticket, and closes this ticket automatically.
 5. **Set up the team, then start it.** \`create_project\` returns the new project's planning **and** coherence ticket identifiers. Because you created this project, the coherence/setup ticket does **not** start on its own: open it (the returned \`coherence_task_identifier\`) and rewrite its description with \`update_task\` to capture the concrete setup you agreed here — the exact roles to hire, any system-prompt rewrites, and the reporting structure — then call \`start_team_setup(project)\` to begin the setup run. If the admin decides not to proceed, close this ticket as cancelled with a brief note.`;
 }
 

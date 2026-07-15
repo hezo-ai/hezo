@@ -138,17 +138,9 @@ export async function createTeam(
 		await applyTemplateToTeam(db, teamId, input.templateId, { dataDir, wsManager });
 	} else if (input.marketplaceDef) {
 		// Seed the plain builtin Captain, then apply the marketplace def (which
-		// overrides the Captain's prompt and adds the rest of the roster + skills).
+		// overrides the Captain's prompt and adds the rest of the roster).
 		await ensureBuiltinAgents(db, teamId);
-		await applyMarketplaceTeamToTeam(db, teamId, input.marketplaceDef, { dataDir, wsManager });
-		await db.query(
-			`UPDATE teams SET mcp_servers = $1::jsonb, mpp_config = $2::jsonb WHERE id = $3`,
-			[
-				JSON.stringify(input.marketplaceDef.mcp_servers ?? []),
-				JSON.stringify(input.marketplaceDef.mpp_config ?? { enabled: false }),
-				teamId,
-			],
-		);
+		await applyMarketplaceTeamToTeam(db, teamId, input.marketplaceDef, { wsManager });
 	} else {
 		await ensureBuiltinAgents(db, teamId);
 	}

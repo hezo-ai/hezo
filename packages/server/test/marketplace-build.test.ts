@@ -22,9 +22,6 @@ function manifest(overrides: Partial<TeamManifest> = {}): TeamManifest {
 		description: 'A demo team.',
 		summary: 'Demo summary.',
 		changelog: [{ version: 1, notes: 'Initial.' }],
-		skills_config: [],
-		mcp_servers: [],
-		mpp_config: { enabled: false },
 		captain: { team_context: 'captain ctx' },
 		roster: [
 			{

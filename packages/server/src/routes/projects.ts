@@ -260,6 +260,7 @@ projectsRoutes.post('/project-intakes', async (c) => {
 		description?: string;
 		template_id?: string;
 		source_team_id?: string;
+		marketplace_slug?: string;
 		initial_project_plan?: string;
 	}>();
 
@@ -276,12 +277,22 @@ projectsRoutes.post('/project-intakes', async (c) => {
 	// later by the CEO's create_project tool, once the admin approves in-thread.
 	const templateId = body.template_id?.trim() || undefined;
 	const sourceTeamId = body.source_team_id?.trim() || undefined;
-	if (templateId && sourceTeamId) {
-		return err(c, 'INVALID_REQUEST', 'Provide either template_id or source_team_id, not both', 400);
+	const marketplaceSlug = body.marketplace_slug?.trim() || undefined;
+	if ([templateId, sourceTeamId, marketplaceSlug].filter(Boolean).length > 1) {
+		return err(
+			c,
+			'INVALID_REQUEST',
+			'Provide only one of template_id, source_team_id, or marketplace_slug',
+			400,
+		);
 	}
 
 	let baselineTeamTypeName: string | undefined;
-	if (templateId) {
+	if (marketplaceSlug) {
+		const def = await getMarketplaceTeam(marketplaceSlug);
+		if (!def) return err(c, 'NOT_FOUND', `Marketplace team "${marketplaceSlug}" not found`, 404);
+		baselineTeamTypeName = def.name;
+	} else if (templateId) {
 		const tpl = await db.query<{ name: string }>('SELECT name FROM team_templates WHERE id = $1', [
 			templateId,
 		]);
@@ -311,6 +322,7 @@ projectsRoutes.post('/project-intakes', async (c) => {
 			initialProjectPlan: body.initial_project_plan?.trim() || null,
 			baselineTemplateId: templateId,
 			baselineSourceTeamId: sourceTeamId,
+			baselineMarketplaceSlug: marketplaceSlug,
 			baselineTeamTypeName,
 		},
 		c.get('wsManager'),

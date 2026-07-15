@@ -12,7 +12,6 @@ import {
 	type MarketplaceCaptainOverride,
 	type MarketplaceChangelogEntry,
 	type MarketplaceRosterAgent,
-	type MarketplaceSkillConfig,
 	type MarketplaceTeamDef,
 	RESERVED_ROSTER_SLUGS,
 	requiredSystemPromptVarsError,
@@ -32,9 +31,6 @@ export interface TeamManifest {
 	description: string;
 	summary: string;
 	changelog: MarketplaceChangelogEntry[];
-	skills_config: MarketplaceSkillConfig[];
-	mcp_servers: unknown[];
-	mpp_config: Record<string, unknown>;
 	captain: { team_context: string };
 	roster: Array<Omit<MarketplaceRosterAgent, 'system_prompt'>>;
 }
@@ -45,9 +41,6 @@ interface TeamContent {
 	name: string;
 	description: string;
 	summary: string;
-	skills_config: MarketplaceSkillConfig[];
-	mcp_servers: unknown[];
-	mpp_config: Record<string, unknown>;
 	captain: MarketplaceCaptainOverride;
 	roster: MarketplaceRosterAgent[];
 }
@@ -69,8 +62,8 @@ function canonicalize(value: unknown): unknown {
 /**
  * sha256 over the canonicalized content (keys sorted, arrays in a defined order,
  * `\n` line endings), excluding `version`/`changelog`/`content_hash`/`schema_version`.
- * Order-independent for `roster` (by sort_order then slug) and `skills_config`
- * (by slug) so authoring order never causes a spurious version bump.
+ * Order-independent for `roster` (by sort_order then slug) so authoring order never
+ * causes a spurious version bump.
  */
 export function computeContentHash(content: TeamContent): string {
 	const hashInput = {
@@ -78,12 +71,7 @@ export function computeContentHash(content: TeamContent): string {
 		name: content.name,
 		description: content.description,
 		summary: content.summary,
-		mcp_servers: content.mcp_servers,
-		mpp_config: content.mpp_config,
 		captain: content.captain,
-		skills_config: [...content.skills_config].sort((a, b) =>
-			(a.slug ?? a.name ?? '').localeCompare(b.slug ?? b.name ?? ''),
-		),
 		roster: [...content.roster].sort(
 			(a, b) => a.sort_order - b.sort_order || a.slug.localeCompare(b.slug),
 		),
@@ -160,9 +148,6 @@ export function buildTeamDef(
 		name: manifest.name,
 		description: manifest.description,
 		summary: manifest.summary,
-		skills_config: manifest.skills_config,
-		mcp_servers: manifest.mcp_servers,
-		mpp_config: manifest.mpp_config,
 		captain,
 		roster,
 	};
@@ -185,9 +170,6 @@ export function buildTeamDef(
 		version,
 		content_hash: contentHash,
 		changelog,
-		skills_config: content.skills_config,
-		mcp_servers: content.mcp_servers,
-		mpp_config: content.mpp_config,
 		captain: content.captain,
 		roster: content.roster,
 	};

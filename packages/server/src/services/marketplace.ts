@@ -35,17 +35,6 @@ const BASE_URL = process.env.HEZO_MARKETPLACE_BASE_URL ?? 'https://raw.githubuse
 const TTL_MS = 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 8000;
 
-const skillSchema = z
-	.object({
-		name: z.string().optional(),
-		title: z.string().optional(),
-		slug: z.string().optional(),
-		description: z.string().optional(),
-		content: z.string().optional(),
-		source_url: z.string().optional(),
-	})
-	.passthrough();
-
 const rosterAgentSchema = z.object({
 	slug: z.string().min(1),
 	title: z.string().min(1),
@@ -73,9 +62,6 @@ const teamDefSchema = z.object({
 	version: z.number(),
 	content_hash: z.string(),
 	changelog: z.array(z.object({ version: z.number(), notes: z.string() })),
-	skills_config: z.array(skillSchema),
-	mcp_servers: z.array(z.unknown()),
-	mpp_config: z.record(z.string(), z.unknown()),
 	captain: z.object({ system_prompt: z.string().min(1), team_context: z.string() }),
 	roster: z.array(rosterAgentSchema),
 });

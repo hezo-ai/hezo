@@ -4,11 +4,11 @@
 		{
 			"slug": "software-development",
 			"name": "Startup",
-			"description": "Full-stack software development team with 10 specialized agents and a starter skills database",
+			"description": "Full-stack software development team with 10 specialized agents",
 			"summary": "The Startup template provisions a full software-development team led by a Captain who reports to the CEO — the instance-level executive overseeing every team — who in turn reports to the human admin.\n\nStrategy flows top-down: the Captain translates direction from the CEO and admin into priorities and delegates them to the Product Lead, Architect, Marketing Lead, and Researcher. The Product Lead owns \"what to build\" and writes PRDs; the Architect owns \"how to build it\" and produces technical specs and implementation phases. Marketing Lead and Researcher work largely independently of the engineering pipeline, producing externally-facing content and feasibility studies respectively.\n\nImplementation happens via a three-stage planning loop run by the Architect: a research draft, a peer review where the QA Engineer, Security Engineer, and UI Designer add considerations from their specialty, and a final consolidated plan. The Engineer cannot start coding until that plan is approved.\n\nOnce code lands, the QA Engineer is the final approval gate for every ticket — reviewing correctness, test coverage, and quality. The Security Engineer applies a parallel gate for vulnerabilities and threat models. Findings from both flow back through the Architect, who consolidates them into a single set of actionable changes for the Engineer rather than passing fragmented feedback through.\n\nThe DevOps Engineer maintains shared infrastructure and the CI/CD pipeline, handling deployment concerns the Engineer should not own.\n\nDisputes between agents — typically Architect vs Engineer on implementation approach — are resolved in the ticket thread, with the Architect holding technical authority. If they cannot agree, the Captain mediates; if the Captain is unsure, they escalate to the CEO, and ultimately the human admin. The Coach observes the system as a whole, reviewing completed tickets to extract patterns and propose prompt updates that compound the team's effectiveness over time.",
-			"version": 1,
-			"roster_count": 9,
-			"latest_notes": "Initial marketplace release."
+			"version": 2,
+			"roster_count": 10,
+			"latest_notes": "Removed bundled skills and MCP/MPP config from the team template — skills and connections are configured per project, not shipped with the team."
 		}
 	]
 }

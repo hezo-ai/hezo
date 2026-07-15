@@ -1,9 +1,10 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import { useNavigate } from '@tanstack/react-router';
 import { Loader2, MessagesSquare, Sparkles } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { setActiveTeamSlug } from '../hooks/use-active-team-slug';
 import { useContainerHealth } from '../hooks/use-container-health';
+import { useMarketplaceTeams } from '../hooks/use-marketplace';
 import { useStartProjectIntake } from '../hooks/use-project-intake';
 import {
 	useAllVisibleProjects,
@@ -23,13 +24,23 @@ import { Textarea } from './ui/textarea';
 interface CreateProjectWithTeamDialogProps {
 	open: boolean;
 	onOpenChange: (v: boolean) => void;
+	/**
+	 * Preselect a marketplace team by slug (e.g. when opened from the marketplace's
+	 * "Launch new project" action). The dialog opens with that team selected.
+	 */
+	initialMarketplaceSlug?: string;
 }
 
 /**
- * Exactly one source backs the new team: either a catalog template or an
- * existing team to clone (snapshotted into a fresh template server-side).
+ * Exactly one source backs the new team: a marketplace team (provisioned directly
+ * from its def), a catalog template, or an existing team to clone (snapshotted
+ * into a fresh template server-side).
  */
-type Selection = { kind: 'template'; id: string } | { kind: 'team'; id: string } | null;
+type Selection =
+	| { kind: 'marketplace'; slug: string }
+	| { kind: 'template'; id: string }
+	| { kind: 'team'; id: string }
+	| null;
 
 /**
  * Card highlight for the picked team type / source team. A selected card gets the
@@ -52,14 +63,24 @@ function cardStateClass(selected: boolean): string {
 export function CreateProjectWithTeamDialog({
 	open,
 	onOpenChange,
+	initialMarketplaceSlug,
 }: CreateProjectWithTeamDialogProps) {
 	const { data: templates, isLoading } = useTeamTemplates();
+	const { data: marketplaceTeams } = useMarketplaceTeams();
 	const { projects } = useAllVisibleProjects();
 	const [name, setName] = useState('');
 	const [description, setDescription] = useState('');
 	const [projectPlan, setProjectPlan] = useState('');
 	const [projectPlanFilename, setProjectPlanFilename] = useState<string | null>(null);
 	const [selection, setSelection] = useState<Selection>(null);
+
+	// When opened from the marketplace, preselect that team so the dialog is the
+	// standard create-project flow with the choice already made.
+	useEffect(() => {
+		if (open && initialMarketplaceSlug) {
+			setSelection({ kind: 'marketplace', slug: initialMarketplaceSlug });
+		}
+	}, [open, initialMarketplaceSlug]);
 	const createProject = useCreateProjectWithTeam();
 	const startIntake = useStartProjectIntake();
 	const navigate = useNavigate();
@@ -84,13 +105,16 @@ export function CreateProjectWithTeamDialog({
 		name.trim().length > 0 && description.trim().length > 0 && !!selection && !pending;
 	const error = createProject.error || startIntake.error;
 
-	// The chosen source as request fields: a template id or a source-team id.
+	// The chosen source as request fields: a marketplace slug, a template id, or a
+	// source-team id. Every create path (Create now / Plan with the CEO) spreads these.
 	const sourceFields =
-		selection?.kind === 'template'
-			? { template_id: selection.id }
-			: selection?.kind === 'team'
-				? { source_team_id: selection.id }
-				: null;
+		selection?.kind === 'marketplace'
+			? { marketplace_slug: selection.slug }
+			: selection?.kind === 'template'
+				? { template_id: selection.id }
+				: selection?.kind === 'team'
+					? { source_team_id: selection.id }
+					: null;
 
 	function reset() {
 		setName('');
@@ -211,6 +235,34 @@ export function CreateProjectWithTeamDialog({
 									</div>
 								) : (
 									<div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
+										{(marketplaceTeams ?? []).map((mt) => {
+											const selected =
+												selection?.kind === 'marketplace' && selection.slug === mt.slug;
+											return (
+												<button
+													key={`mp-${mt.slug}`}
+													type="button"
+													onClick={() => setSelection({ kind: 'marketplace', slug: mt.slug })}
+													className="text-left"
+													data-testid={`marketplace-team-card-${mt.slug}`}
+													aria-pressed={selected}
+												>
+													<Card
+														className={`p-3 h-full transition-colors ${cardStateClass(selected)}`}
+													>
+														<h3 className="text-[14px] font-medium mb-1">{mt.name}</h3>
+														{mt.description && (
+															<p className="text-[12px] text-text-2 mb-2 line-clamp-2">
+																{mt.description}
+															</p>
+														)}
+														<p className="text-[11px] text-text-2">
+															{mt.roster_count} role{mt.roster_count === 1 ? '' : 's'}
+														</p>
+													</Card>
+												</button>
+											);
+										})}
 										{(templates ?? []).map((tpl) => {
 											const selected = selection?.kind === 'template' && selection.id === tpl.id;
 											return (

@@ -155,7 +155,9 @@ describe('project intakes', () => {
 			}),
 		});
 		expect(res.status).toBe(400);
-		expect((await res.json()).error.message).toContain('not both');
+		expect((await res.json()).error.message).toContain(
+			'only one of template_id, source_team_id, or marketplace_slug',
+		);
 	});
 
 	it('404s on an unknown template_id', async () => {
