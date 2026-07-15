@@ -555,6 +555,18 @@ describe('template resolver', () => {
 		expect(result).toContain('findings below for you to consolidate and route');
 	});
 
+	it('worked examples include a bare-vs-backticked doc/asset reference case', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		// The screenshot failure: an agent backticked a doc/asset reference in a comment,
+		// so it rendered as an inert code chip instead of a clickable link. The worked
+		// examples (previously all @-mention active/passive) now cover this failure too.
+		expect(result).toContain('Pointing a teammate or the admin at a project doc or asset');
+		expect(result).toContain(
+			'Hezo linkifies a document or asset reference **only** when it is bare',
+		);
+		expect(result).toContain('never backtick one you want opened');
+	});
+
 	it('requires verifying a wake exists before declaring you are waiting on a teammate', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		// The core discipline: don't assume the other agent will pick it up — confirm a
