@@ -1,9 +1,12 @@
 import {
 	ArchiveFilter,
 	ASSET_MAX_FOLDER_DEPTH,
+	AssetSortOrder,
 	assetBasename,
 	assetFolder,
+	compareAssetsForSort,
 	isArchiveFilter,
+	isAssetSortOrder,
 	matchesArchiveFilter,
 	normalizeAssetFolder,
 } from '@hezo/shared';
@@ -13,6 +16,7 @@ import { createFileRoute } from '@tanstack/react-router';
 import {
 	Archive,
 	ArchiveRestore,
+	ArrowDownWideNarrow,
 	Check,
 	ChevronDown,
 	Copy,
@@ -61,12 +65,20 @@ interface AssetsSearch {
 	folder?: string;
 	/** Archive filter — absent means the default Active view. */
 	filter?: ArchiveFilter;
+	/** Sort order — absent means the default Newest-first view. */
+	sort?: AssetSortOrder;
 }
 
 const FILTER_TEXT: Record<ArchiveFilter, string> = {
 	[ArchiveFilter.Active]: 'Showing active items',
 	[ArchiveFilter.Archived]: 'Showing archived items',
 	[ArchiveFilter.All]: 'Showing all items',
+};
+
+const SORT_TEXT: Record<AssetSortOrder, string> = {
+	[AssetSortOrder.Newest]: 'Newest first',
+	[AssetSortOrder.Oldest]: 'Oldest first',
+	[AssetSortOrder.Alphabetical]: 'Alphabetical',
 };
 
 /**
@@ -89,7 +101,7 @@ function AssetFilterControl({
 		{ value: ArchiveFilter.All, label: 'All' },
 	];
 	return (
-		<div className="mb-3 flex items-center gap-1.5">
+		<div className="flex items-center gap-1.5">
 			<span className="text-[12.5px] text-text-2" data-testid="asset-filter-text">
 				{FILTER_TEXT[filter]}
 			</span>
@@ -147,6 +159,82 @@ function AssetFilterControl({
 	);
 }
 
+/**
+ * "Newest first" caption + a button that opens a small popover listing the
+ * three sort orders. A sibling of AssetFilterControl; the sort is a client-side
+ * view concern (the full list is already fetched), persisted in the URL.
+ */
+function AssetSortControl({
+	sort,
+	onChange,
+}: {
+	sort: AssetSortOrder;
+	onChange: (next: AssetSortOrder) => void;
+}) {
+	const [open, setOpen] = useState(false);
+	const options = [
+		{ value: AssetSortOrder.Newest, label: 'Newest first' },
+		{ value: AssetSortOrder.Oldest, label: 'Oldest first' },
+		{ value: AssetSortOrder.Alphabetical, label: 'Alphabetical' },
+	];
+	return (
+		<div className="flex items-center gap-1.5">
+			<span className="text-[12.5px] text-text-2" data-testid="asset-sort-text">
+				{SORT_TEXT[sort]}
+			</span>
+			<Popover.Root open={open} onOpenChange={setOpen}>
+				<Popover.Trigger asChild>
+					<button
+						type="button"
+						aria-label="Sort assets"
+						data-testid="asset-sort-button"
+						className={`inline-flex items-center rounded-md border p-1.5 transition-colors cursor-pointer ${
+							sort === AssetSortOrder.Newest
+								? 'border-border bg-surface text-text-2 hover:border-border-strong hover:text-text-1'
+								: 'border-border-strong bg-surface-2 text-text-1'
+						}`}
+					>
+						<ArrowDownWideNarrow className="h-3.5 w-3.5" />
+					</button>
+				</Popover.Trigger>
+				<Popover.Portal>
+					<Popover.Content
+						align="start"
+						sideOffset={4}
+						className="z-50 min-w-[180px] rounded-md border border-border bg-surface p-1 shadow-md"
+						data-testid="asset-sort-popover"
+					>
+						{options.map((opt) => {
+							const selected = sort === opt.value;
+							return (
+								<button
+									key={opt.value}
+									type="button"
+									role="menuitemradio"
+									aria-checked={selected}
+									data-testid={`asset-sort-option-${opt.value}`}
+									onClick={() => {
+										onChange(opt.value);
+										setOpen(false);
+									}}
+									className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] transition-colors cursor-pointer text-left ${
+										selected
+											? 'bg-surface-2 text-text-1'
+											: 'text-text-2 hover:bg-surface-3 hover:text-text-1'
+									}`}
+								>
+									<span className="flex-1">{opt.label}</span>
+									{selected && <Check className="h-3.5 w-3.5 shrink-0 text-info" />}
+								</button>
+							);
+						})}
+					</Popover.Content>
+				</Popover.Portal>
+			</Popover.Root>
+		</div>
+	);
+}
+
 interface ErrorChip {
 	id: string;
 	filename: string;
@@ -155,7 +243,12 @@ interface ErrorChip {
 
 function ProjectAssetsPage() {
 	const { projectId } = Route.useParams();
-	const { file: focusFile, folder: folderParam, filter = ArchiveFilter.Active } = Route.useSearch();
+	const {
+		file: focusFile,
+		folder: folderParam,
+		filter = ArchiveFilter.Active,
+		sort = AssetSortOrder.Newest,
+	} = Route.useSearch();
 	const navigate = Route.useNavigate();
 	const { data: assets, isLoading } = useProjectAssets(projectId);
 	const upload = useUploadProjectAsset(projectId);
@@ -254,7 +347,11 @@ function ProjectAssetsPage() {
 	const deleteCount = pendingDelete?.comment_attachment_count ?? 0;
 	// Filter before grouping so folder cards and their file counts reflect the
 	// current view (a folder with only archived files disappears from Active).
-	const visibleAssets = (assets ?? []).filter((a) => matchesArchiveFilter(a.archived_at, filter));
+	// Sort client-side (the full list is already fetched) with the shared
+	// comparator the API mirrors; folder cards keep their own alphabetical order.
+	const visibleAssets = (assets ?? [])
+		.filter((a) => matchesArchiveFilter(a.archived_at, filter))
+		.sort((a, b) => compareAssetsForSort(a, b, sort));
 	const grouped = groupAssets(visibleAssets, currentFolder);
 	const filterCounts: Record<ArchiveFilter, number> = {
 		[ArchiveFilter.All]: assets?.length ?? 0,
@@ -277,6 +374,19 @@ function ProjectAssetsPage() {
 				search: (prev) => ({
 					...(prev as AssetsSearch),
 					filter: next === ArchiveFilter.Active ? undefined : next,
+				}),
+				replace: true,
+			});
+		},
+		[navigate],
+	);
+
+	const setSort = useCallback(
+		(next: AssetSortOrder) => {
+			navigate({
+				search: (prev) => ({
+					...(prev as AssetsSearch),
+					sort: next === AssetSortOrder.Newest ? undefined : next,
 				}),
 				replace: true,
 			});
@@ -366,7 +476,10 @@ function ProjectAssetsPage() {
 				</div>
 			)}
 
-			<AssetFilterControl filter={filter} counts={filterCounts} onChange={setFilter} />
+			<div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+				<AssetFilterControl filter={filter} counts={filterCounts} onChange={setFilter} />
+				<AssetSortControl sort={sort} onChange={setSort} />
+			</div>
 
 			{/* biome-ignore lint/a11y/noStaticElementInteractions: drag-and-drop upload zone; uploads also work via the Upload button */}
 			<div
@@ -1080,6 +1193,10 @@ export const Route = createFileRoute('/projects/$projectId/assets')({
 		filter:
 			isArchiveFilter(search.filter) && search.filter !== ArchiveFilter.Active
 				? search.filter
+				: undefined,
+		sort:
+			isAssetSortOrder(search.sort) && search.sort !== AssetSortOrder.Newest
+				? search.sort
 				: undefined,
 	}),
 	// HQ (the internal coordination project) exposes Assets too: it's where the

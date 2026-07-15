@@ -7,6 +7,7 @@ import {
 	ApprovalType,
 	ArchiveFilter,
 	ASSET_MAX_FOLDER_DEPTH,
+	AssetSortOrder,
 	ATTACHMENT_EXTENSIONS,
 	ATTACHMENT_MAX_BYTES,
 	AuditActorType,
@@ -53,6 +54,7 @@ import type { DomainEventBus } from '../events/bus';
 import { assertNoActiveRun } from '../lib/active-run';
 import { isHqInstanceAgent, isVirtualHqMemberInTeam } from '../lib/agent-roles';
 import { upsertProjectAsset } from '../lib/asset-name';
+import { assetSortOrderBy } from '../lib/asset-sort';
 import { signAgentAssetUrl } from '../lib/asset-urls';
 import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
 import { trackBackground } from '../lib/background';
@@ -806,6 +808,21 @@ const archiveFilterArg = () =>
 
 const toArchiveFilter = (value: unknown): ArchiveFilter =>
 	(value as ArchiveFilter | undefined) ?? ArchiveFilter.Active;
+
+/**
+ * Standard `sort` entry for the asset listing. Defaults to 'newest' (the
+ * historical `created_at DESC` order).
+ */
+const assetSortArg = () =>
+	z
+		.enum(Object.values(AssetSortOrder) as [string, ...string[]])
+		.optional()
+		.describe(
+			"Order of the returned assets: 'newest' (default — most recently created first), 'oldest', or 'alphabetical' (by filename, A→Z).",
+		);
+
+const toAssetSortOrder = (value: unknown): AssetSortOrder =>
+	(value as AssetSortOrder | undefined) ?? AssetSortOrder.Newest;
 
 export function registerTools(
 	server: McpServer,
@@ -3922,15 +3939,17 @@ export function registerTools(
 	tool(
 		server,
 		'list_project_assets',
-		"List the project's assets — files in the assets library (UI mockups, wireframes, diagrams, images, PDFs, scripts, and generated markdown such as blog posts or reports). Filenames may carry a folder prefix up to 2 levels deep (e.g. `launch/images/hero.png`); reference one in a comment or doc as `assets/<path>` exactly as returned here (e.g. assets/launch/images/hero.png), no backticks. Author both text and binary assets with write_project_asset (binary via encoding: 'base64') and reorganize with move_project_asset / copy_project_asset; obsolete assets are archived with archive_project_asset (hard deletion is admin-only). Archived assets are excluded by default — set filter: 'archived' or 'all' to see them (entries then carry an `archived` flag).",
+		"List the project's assets — files in the assets library (UI mockups, wireframes, diagrams, images, PDFs, scripts, and generated markdown such as blog posts or reports). Filenames may carry a folder prefix up to 2 levels deep (e.g. `launch/images/hero.png`); reference one in a comment or doc as `assets/<path>` exactly as returned here (e.g. assets/launch/images/hero.png), no backticks. Author both text and binary assets with write_project_asset (binary via encoding: 'base64') and reorganize with move_project_asset / copy_project_asset; obsolete assets are archived with archive_project_asset (hard deletion is admin-only). Archived assets are excluded by default — set filter: 'archived' or 'all' to see them (entries then carry an `archived` flag). Results are ordered newest-first by default; pass sort: 'oldest' or 'alphabetical' to change the order.",
 		{
 			project: projectArg(),
 			filter: archiveFilterArg(),
+			sort: assetSortArg(),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
 			const filter = toArchiveFilter(args.filter);
+			const sort = toAssetSortOrder(args.sort);
 			const where =
 				filter === ArchiveFilter.Active
 					? ' AND archived_at IS NULL'
@@ -3946,7 +3965,7 @@ export function registerTools(
 			}>(
 				`SELECT id, original_filename, content_type, created_at, archived_at
 				 FROM assets WHERE project_id = $1${where}
-				 ORDER BY created_at DESC`,
+				 ORDER BY ${assetSortOrderBy(sort)}`,
 				[scope.projectId],
 			);
 			return {
