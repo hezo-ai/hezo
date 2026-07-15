@@ -15,11 +15,12 @@ import {
 	Maximize2,
 	MessageSquare,
 	Minimize2,
+	Plus,
 	X,
 } from 'lucide-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { useAutoGrowTextarea } from '../../hooks/use-auto-grow-textarea';
-import { type ChatMessage, useChat } from '../../hooks/use-chat';
+import { type ChatMessage, useChat, useChatConversations } from '../../hooks/use-chat';
 import { useContainerHealth } from '../../hooks/use-container-health';
 import { useDraggableFab } from '../../hooks/use-draggable-fab';
 import { useFileAttachments } from '../../hooks/use-file-attachments';
@@ -58,7 +59,22 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 	// Draggable launcher on portrait mobile screens (the panel itself never
 	// moves). Must be called before the `if (!open)` early return below.
 	const fab = useDraggableFab('chat');
-	const { messages, send, streaming, sending, loaded, unread, compactedCount } = useChat(open);
+	// The selected thread (undefined = the default web thread). The switcher lets the
+	// operator create/switch/close parallel conversation threads.
+	const [selectedConversationId, setSelectedConversationId] = useState<string | undefined>(
+		undefined,
+	);
+	const {
+		messages,
+		send,
+		streaming,
+		sending,
+		loaded,
+		unread,
+		compactedCount,
+		conversationId: activeConversationId,
+	} = useChat(open, selectedConversationId);
+	const { conversations, createThread, closeThread } = useChatConversations(open);
 	const hq = useHqProject();
 	const hqHealth = useContainerHealth(hq);
 	// The CEO can only act while the HQ container is up. When it isn't, the chat
@@ -142,6 +158,25 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 		setDraft('');
 		setPendingAttachmentIds([]);
 		send(text, attachments).catch(() => undefined);
+	};
+
+	// Web conversation threads only (external threads are managed from their app).
+	const webThreads = conversations.filter((t) => t.channel === 'web');
+	const activeThread = webThreads.find((t) => t.id === activeConversationId);
+	const threadLabel = (t: (typeof webThreads)[number], i: number) =>
+		t.title?.trim() || (t.external_thread_id ? 'External' : i === 0 ? 'Main' : 'New thread');
+
+	const handleNewThread = async () => {
+		const res = (await createThread().catch(() => null)) as {
+			conversation?: { id: string };
+		} | null;
+		if (res?.conversation?.id) setSelectedConversationId(res.conversation.id);
+	};
+	// Close the active thread; fall back to the default web thread afterwards.
+	const handleCloseThread = async () => {
+		if (!activeConversationId) return;
+		await closeThread(activeConversationId).catch(() => undefined);
+		setSelectedConversationId(undefined);
 	};
 
 	// Copy the whole conversation as plain text, each turn labelled by speaker.
@@ -257,6 +292,45 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 						</button>
 					</div>
 				</header>
+
+				{/* Thread switcher: pick / create / close parallel conversation threads.
+				    Web threads only; external (Telegram) threads live in their own app. */}
+				<div className="flex items-center gap-1 border-b border-border px-3 py-1.5">
+					<select
+						data-testid="chat-thread-select"
+						aria-label="Conversation thread"
+						value={activeConversationId ?? ''}
+						onChange={(e) => setSelectedConversationId(e.target.value || undefined)}
+						className="min-w-0 flex-1 truncate rounded-md border border-border bg-surface px-2 py-1 text-xs text-text-1"
+					>
+						{webThreads.length === 0 && <option value="">Main</option>}
+						{webThreads.map((t, i) => (
+							<option key={t.id} value={t.id}>
+								{threadLabel(t, i)}
+							</option>
+						))}
+					</select>
+					<button
+						type="button"
+						onClick={handleNewThread}
+						aria-label="New thread"
+						data-testid="chat-thread-new"
+						className="flex h-7 w-7 items-center justify-center rounded-md text-text-2 hover:bg-surface-2 hover:text-text-1"
+					>
+						<Plus className="h-4 w-4" />
+					</button>
+					{activeThread && webThreads.length > 1 && (
+						<button
+							type="button"
+							onClick={handleCloseThread}
+							aria-label="Close thread"
+							data-testid="chat-thread-close"
+							className="flex h-7 w-7 items-center justify-center rounded-md text-text-2 hover:bg-surface-2 hover:text-text-1"
+						>
+							<X className="h-4 w-4" />
+						</button>
+					)}
+				</div>
 
 				{hq && blockedHealth ? (
 					<div

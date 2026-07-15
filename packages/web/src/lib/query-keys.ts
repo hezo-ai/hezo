@@ -32,8 +32,17 @@ export const queryKeys = {
 	assetStorageInfo: () => ['instance', 'asset-storage'],
 	/** Instance-wide mention resolution (global CEO chat), keyed by sorted candidates. */
 	instanceMentionsResolve: (key: KeyParam) => ['instance', 'mentions', 'resolve', key],
-	/** The single global CEO chat conversation (history + streamed messages). */
-	chatConversation: () => ['chat', 'conversation'],
+	/**
+	 * A CEO chat conversation thread (history + streamed messages), keyed by
+	 * conversation id. `'default'` is the default web thread (server-resolved).
+	 */
+	chatConversation: (conversationId: string = 'default') => [
+		'chat',
+		'conversation',
+		conversationId,
+	],
+	/** The list of CEO chat conversation threads (the switcher). */
+	chatConversations: () => ['chat', 'conversations'],
 	/** Global full-text search (Cmd/Ctrl+K palette), keyed by query + scope. */
 	search: (q: string, scope: string) => ['search', q, scope],
 	/** Bundled OAuth-provider descriptors for the generic OAuth-broker form. */

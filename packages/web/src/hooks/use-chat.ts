@@ -61,20 +61,64 @@ function writeStoredUnread(count: number): void {
 	}
 }
 
+/** A conversation thread in the switcher list. */
+export interface ChatConversationSummary {
+	id: string;
+	channel: ChatChannel;
+	external_thread_id: string | null;
+	title: string | null;
+	last_activity_at: string;
+	closed_at: string | null;
+}
+
 /**
- * Drives the single global CEO chat. The TanStack Query cache is the source of
- * truth for messages (keyed by {@link queryKeys.chatConversation}); the initial
- * history loads via `useQuery` and streamed start/delta/complete events from the
- * `chat:global` room are folded into the same cache entry via `setQueryData`.
- * Because every surface mirrors the one conversation, the user's own messages
- * (echoed back over the socket) arrive the same way. The query never refetches
- * on its own (`staleTime: Infinity`) so an in-flight reply's accumulated deltas
- * aren't clobbered by a server snapshot that only persists on completion.
+ * List the CEO chat conversation threads (open only) and expose create/close
+ * mutations for the switcher. Invalidated on new activity via the global room.
  */
-export function useChat(active: boolean) {
+export function useChatConversations(active: boolean) {
+	const queryClient = useQueryClient();
+	const query = useQuery({
+		queryKey: queryKeys.chatConversations(),
+		queryFn: () => api.get<{ conversations: ChatConversationSummary[] }>('/api/chat/conversations'),
+		enabled: active,
+	});
+	const create = useMutation({
+		mutationFn: (title?: string) =>
+			api.post<{ conversation: ChatConversationSummary }>('/api/chat/conversations', { title }),
+		onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.chatConversations() }),
+		onError: (e: { message?: string }) => toast.error(e?.message ?? 'Failed to create thread'),
+	});
+	const close = useMutation({
+		mutationFn: (id: string) => api.post(`/api/chat/conversations/${id}/close`, {}),
+		onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.chatConversations() }),
+		onError: (e: { message?: string }) => toast.error(e?.message ?? 'Failed to close thread'),
+	});
+	return {
+		conversations: query.data?.conversations ?? [],
+		loaded: !query.isPending,
+		createThread: (title?: string) => create.mutateAsync(title),
+		closeThread: (id: string) => close.mutateAsync(id),
+	};
+}
+
+/**
+ * Drives one CEO chat conversation thread (the default web thread when
+ * `conversationId` is omitted). The TanStack Query cache is the source of truth
+ * for messages (keyed by {@link queryKeys.chatConversation} + the thread id); the
+ * initial history loads via `useQuery` and streamed start/delta/complete events
+ * are folded into the same cache entry via `setQueryData`. Events carry their
+ * `conversationId`, so a message for another thread is ignored. The query never
+ * refetches on its own (`staleTime: Infinity`) so an in-flight reply's accumulated
+ * deltas aren't clobbered by a server snapshot that only persists on completion.
+ */
+export function useChat(active: boolean, conversationId?: string) {
 	const { subscribe, joinRoom, leaveRoom } = useSocket();
 	const queryClient = useQueryClient();
 	const [unread, setUnread] = useState<number>(readStoredUnread);
+	// The server-resolved id of the thread this hook is showing (the default web
+	// thread resolves to a concrete id in the query response). Used to filter WS
+	// events so another thread's stream never lands in this cache entry.
+	const resolvedIdRef = useRef<string | null>(conversationId ?? null);
 	// In-flight send: the user's text is shown optimistically (with a pending
 	// assistant placeholder) while the server warms the session / egress check, so
 	// the operator gets immediate feedback instead of a ~10s blank. Cleared when the
@@ -92,12 +136,19 @@ export function useChat(active: boolean) {
 	}, [active]);
 
 	const query = useQuery({
-		queryKey: queryKeys.chatConversation(),
-		queryFn: () => api.get<ConversationData>('/api/chat/conversation'),
+		queryKey: queryKeys.chatConversation(conversationId),
+		queryFn: () =>
+			api.get<ConversationData>(
+				conversationId
+					? `/api/chat/conversation?conversation_id=${encodeURIComponent(conversationId)}`
+					: '/api/chat/conversation',
+			),
 		enabled: active,
 		staleTime: Number.POSITIVE_INFINITY,
 		refetchOnWindowFocus: false,
 	});
+	// Track the server-resolved thread id so WS events can be filtered to this thread.
+	resolvedIdRef.current = query.data?.conversation_id ?? conversationId ?? null;
 
 	// Opening the chat means the operator is reading it — drop the unread badge.
 	useEffect(() => {
@@ -117,12 +168,18 @@ export function useChat(active: boolean) {
 
 	useEffect(() => {
 		const patch = (fn: (messages: ChatMessage[]) => ChatMessage[]) => {
-			queryClient.setQueryData<ConversationData>(queryKeys.chatConversation(), (prev) =>
-				prev ? { ...prev, messages: fn(prev.messages) } : prev,
+			queryClient.setQueryData<ConversationData>(
+				queryKeys.chatConversation(conversationId),
+				(prev) => (prev ? { ...prev, messages: fn(prev.messages) } : prev),
 			);
 		};
+		// A message belongs to this thread when its conversationId matches the
+		// resolved id (or either side is absent — back-compat / pre-resolution).
+		const forThisThread = (cid?: string): boolean =>
+			!cid || !resolvedIdRef.current || cid === resolvedIdRef.current;
 		const offStart = subscribe(WsMessageType.ChatMessageStart, (raw) => {
 			const m = raw as WsChatMessageStartMessage;
+			if (!forThisThread(m.conversationId)) return;
 			// The real user message landed — drop the optimistic placeholder so the
 			// server rows (user + streaming assistant) take over without duplicating.
 			if (m.role === 'user') setPending(null);
@@ -145,12 +202,14 @@ export function useChat(active: boolean) {
 		});
 		const offDelta = subscribe(WsMessageType.ChatMessageDelta, (raw) => {
 			const m = raw as WsChatMessageDeltaMessage;
+			if (!forThisThread(m.conversationId)) return;
 			patch((messages) =>
 				messages.map((x) => (x.id === m.messageId ? { ...x, content: x.content + m.text } : x)),
 			);
 		});
 		const offComplete = subscribe(WsMessageType.ChatMessageComplete, (raw) => {
 			const m = raw as WsChatMessageCompleteMessage;
+			if (!forThisThread(m.conversationId)) return;
 			patch((messages) =>
 				messages.map((x) =>
 					x.id === m.messageId ? { ...x, content: m.content, status: m.status } : x,
@@ -169,8 +228,10 @@ export function useChat(active: boolean) {
 		// Older messages were compacted into long-term memory and evicted. Refetch
 		// the conversation so the chatbox drops them (leaving the retained tail) and
 		// picks up the new compacted_count that drives the "chat compacted" marker.
-		const offCompacted = subscribe(WsMessageType.ChatCompacted, () => {
-			queryClient.invalidateQueries({ queryKey: queryKeys.chatConversation() });
+		const offCompacted = subscribe(WsMessageType.ChatCompacted, (raw) => {
+			const m = raw as { conversationId?: string };
+			if (!forThisThread(m.conversationId)) return;
+			queryClient.invalidateQueries({ queryKey: queryKeys.chatConversation(conversationId) });
 		});
 		return () => {
 			offStart();
@@ -178,11 +239,15 @@ export function useChat(active: boolean) {
 			offComplete();
 			offCompacted();
 		};
-	}, [subscribe, queryClient]);
+	}, [subscribe, queryClient, conversationId]);
 
 	const sendMutation = useMutation({
 		mutationFn: ({ text, attachmentIds }: { text: string; attachmentIds: string[] }) =>
-			api.post('/api/chat/messages', { text, attachment_ids: attachmentIds }),
+			api.post('/api/chat/messages', {
+				text,
+				attachment_ids: attachmentIds,
+				...(conversationId ? { conversation_id: conversationId } : {}),
+			}),
 		onError: (error: { message?: string }) => {
 			toast.error(error?.message ?? 'Failed to send message to the CEO');
 		},
@@ -235,6 +300,9 @@ export function useChat(active: boolean) {
 		sending: pending !== null,
 		loaded: !query.isPending,
 		unread,
+		// The server-resolved id of the active thread (the default web thread when
+		// no id was passed) — drives the switcher's selected value.
+		conversationId: query.data?.conversation_id,
 		// >0 once older messages have been compacted into long-term memory; drives
 		// the "chat compacted" marker at the top of the window.
 		compactedCount: query.data?.compacted_count ?? 0,
