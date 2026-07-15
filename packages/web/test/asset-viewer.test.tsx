@@ -189,6 +189,21 @@ test('an image takes whole-asset comments from the panel composer, with edit and
 	expect(queryByTestId('asset-review-row')).toBeNull();
 });
 
+test('an html asset renders in a sandboxed iframe that permits user-initiated downloads', async () => {
+	const { findByTestId } = await setupViewer({
+		filename: 'mockup.html',
+		contentType: 'text/html',
+		bytes: new TextEncoder().encode('<h1>hi</h1>'),
+	});
+
+	const frame = (await findByTestId('asset-viewer-html')) as HTMLIFrameElement;
+	const sandbox = frame.getAttribute('sandbox') ?? '';
+	expect(sandbox).toContain('allow-scripts');
+	// Without allow-downloads the browser silently blocks an in-page "Download"
+	// button; it must stay in lockstep with the serve-side sandbox CSP.
+	expect(sandbox).toContain('allow-downloads');
+});
+
 test('a PDF renders the metadata card with an open-raw link', async () => {
 	const { findByTestId } = await setupViewer({
 		filename: 'spec.pdf',
@@ -255,6 +270,14 @@ test('the viewer breadcrumb walks back to the grid folder and Open raw links the
 	// Each list fetch mints a fresh signature, so match the stable prefix only.
 	expect(raw.getAttribute('href')).toContain(`/api/assets/${asset.id}?exp=`);
 	expect(raw.getAttribute('target')).toBe('_blank');
+
+	// The Download button points at the same signed URL with `&download=1` (which
+	// makes the serve route force an attachment) and carries the basename so the
+	// browser saves it rather than opening it.
+	const download = (await findByTestId('asset-viewer-download')) as HTMLAnchorElement;
+	expect(download.getAttribute('href')).toContain(`/api/assets/${asset.id}?exp=`);
+	expect(download.getAttribute('href')).toContain('&download=1');
+	expect(download.getAttribute('download')).toBe('hero.png');
 
 	// Breadcrumb: Assets › launch › hero.png; the folder crumb returns to the grid.
 	const crumb = await findByTestId('asset-viewer-breadcrumb');

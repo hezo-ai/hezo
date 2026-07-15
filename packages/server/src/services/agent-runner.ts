@@ -522,6 +522,15 @@ export async function buildRuntimeInvocation(
 			egress.host,
 			'localhost',
 			'127.0.0.1',
+			// The Hezo MCP endpoint and agent asset URLs are served from the host at
+			// `host.docker.internal:<serverPort>`. MCP auth there is a real per-run JWT
+			// and asset URLs are HMAC-signed, so there is no `__HEZO_SECRET_*__`
+			// placeholder to substitute — routing them through the proxy buys nothing
+			// and adds a hop on every (potentially multi-MB) binary read. Keep them
+			// direct, matching the documented contract (`lib/asset-urls.ts`,
+			// architecture § Asset storage). Connector MCP servers live on their own
+			// remote hosts (reached via HTTPS CONNECT) and still traverse the proxy.
+			'host.docker.internal',
 			...providerDirectUpstreamHosts(provider),
 		];
 		const noProxy = [...new Set(noProxyHosts)].join(',');
@@ -539,7 +548,9 @@ export async function buildRuntimeInvocation(
 			//
 			// Connector auth rides an egress-substituted `__HEZO_SECRET_*__`
 			// placeholder (AGENTS.md red line — never a materialized token), so every
-			// runtime's MCP HTTP MUST traverse the proxy or the placeholder 401s. Each
+			// runtime's *connector* MCP HTTP MUST traverse the proxy or the placeholder
+			// 401s (the Hezo-local MCP on host.docker.internal is NO_PROXY-exempt above:
+			// it authenticates with a real JWT, not a placeholder). Each
 			// of the four coding CLIs already ensures this on its own, so this var is a
 			// safety net, not the load-bearing mechanism. The per-run token in the
 			// proxy URL userinfo is carried as Proxy-Authorization by each client's

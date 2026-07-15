@@ -296,14 +296,22 @@ describe('runAgent — egress proxy + ssh agent env injection', () => {
 		// Node ≥24 safety net so spawned Node processes without their own dispatcher
 		// route through the proxy (connector auth is a placeholder that MUST traverse it).
 		expect(capturedEnv).toContain('NODE_USE_ENV_PROXY=1');
-		// NO_PROXY excludes the proxy host itself + loopback (plus the provider's
-		// direct upstream hosts); host.docker.internal is NOT in it.
+		// NO_PROXY excludes the proxy host itself + loopback + the host origin that
+		// serves the Hezo MCP endpoint and signed asset URLs (host.docker.internal —
+		// real-JWT / signed, no secret to substitute), plus the provider's direct
+		// upstream hosts.
 		expect(
 			capturedEnv.some(
-				(e) => e.startsWith('NO_PROXY=') && e.includes('127.0.0.1') && e.includes('localhost'),
+				(e) =>
+					e.startsWith('NO_PROXY=') &&
+					e.includes('127.0.0.1') &&
+					e.includes('localhost') &&
+					e.includes('host.docker.internal'),
 			),
 		).toBe(true);
-		expect(capturedEnv.some((e) => e.startsWith('no_proxy='))).toBe(true);
+		expect(
+			capturedEnv.some((e) => e.startsWith('no_proxy=') && e.includes('host.docker.internal')),
+		).toBe(true);
 		expect(
 			capturedEnv.some(
 				(e) => e === 'NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/hezo-egress.crt',

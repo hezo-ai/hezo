@@ -45,11 +45,14 @@ export function AssetViewerBody({ projectId, asset, readOnly, review }: AssetVie
 		return (
 			// Interactive on purpose — the serve-side CSP (`sandbox allow-scripts …`)
 			// pins the page to an opaque origin; the attribute mirrors it for
-			// defense in depth. Height is viewport-bound; the page scrolls inside.
+			// defense in depth (keep the two token lists in lockstep — see
+			// ASSET_SANDBOX_CSP). `allow-downloads` lets an in-page button save a
+			// file; it grants no same-origin access. Height is viewport-bound; the
+			// page scrolls inside.
 			<iframe
 				src={asset.url}
 				title={asset.original_filename}
-				sandbox="allow-scripts allow-forms allow-popups allow-modals"
+				sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
 				data-testid="asset-viewer-html"
 				className="h-[75vh] w-full rounded-md border border-border bg-surface"
 			/>

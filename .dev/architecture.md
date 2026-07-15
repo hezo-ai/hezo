@@ -387,7 +387,11 @@ base64 is rejected, and the 10 MB cap applies to the decoded bytes. The web's
 **asset viewer** (`/projects/:slug/assets/view?file=<path>`, route file
 `assets_.view.tsx`) is the canonical in-app link target for an asset — grid cards, asset
 mentions (`assetPath` in `@hezo/shared`), comment-attachment thumbs, and chat attachment
-chips all navigate there; raw view stays reachable via its "Open raw" toolbar button. It
+chips all navigate there; raw view stays reachable via its "Open raw" toolbar button, and a
+"Download" toolbar button saves any asset to disk — it links the signed serve URL with
+`&download=1`, which makes `GET /api/assets/:id` send `Content-Disposition: attachment`
+(via `assetContentDisposition(contentType, forceDownload)`) regardless of the asset's default
+inline/attachment disposition. It
 is a split-pane page (`ResizableSplit`): the left pane renders the content per type
 (markdown with a rich preview + view-source toggle, plain text in a highlighted `<pre>`,
 images/SVG via `<img>`, HTML in the sandboxed iframe, everything else a metadata card)

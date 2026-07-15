@@ -287,7 +287,15 @@ export const ATTACHMENT_MIME_ALLOWLIST: ReadonlySet<string> = new Set(
 // for image-loaded SVGs.
 export const ASSET_INLINE_UNSAFE_MIME: ReadonlySet<string> = new Set(['image/svg+xml']);
 
-export function assetContentDisposition(contentType: string): 'inline' | 'attachment' {
+// `forceDownload` lets the serve route honor an explicit `?download=1` — the
+// "Download" affordance in the viewer — so any asset (a rendered-inline image,
+// an HTML mockup) can be saved to disk on demand, regardless of its default
+// inline/attachment disposition.
+export function assetContentDisposition(
+	contentType: string,
+	forceDownload = false,
+): 'inline' | 'attachment' {
+	if (forceDownload) return 'attachment';
 	return ASSET_INLINE_UNSAFE_MIME.has(contentType) ? 'attachment' : 'inline';
 }
 
@@ -295,8 +303,13 @@ export function assetContentDisposition(contentType: string): 'inline' | 'attach
 // interactive HTML mockup a human opens in a new tab). Serving them on our own
 // origin would let agent-authored script read the app's credentials, so they are
 // pinned to an opaque origin via a `sandbox` Content-Security-Policy: scripts run,
-// but they cannot reach same-origin cookies/storage.
-const ASSET_SANDBOX_CSP = 'sandbox allow-scripts allow-forms allow-popups allow-modals';
+// but they cannot reach same-origin cookies/storage. `allow-downloads` lets a
+// user-initiated in-page button (e.g. a "Download PNG" that builds a blob/data
+// URL) actually save the file — without it the sandbox silently blocks the
+// download in both the viewer iframe and a raw top-level tab. It grants no
+// same-origin access, so the credential isolation above is unaffected.
+const ASSET_SANDBOX_CSP =
+	'sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads';
 const ASSET_SANDBOX_SERVE_MIME: ReadonlySet<string> = new Set(['text/html']);
 
 export function assetServeCsp(contentType: string): string | null {
