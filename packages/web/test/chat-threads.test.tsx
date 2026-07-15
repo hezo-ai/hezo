@@ -24,6 +24,7 @@ function thread(id: string, title: string): ChatConversationSummary {
 		title,
 		last_activity_at: now(),
 		closed_at: null,
+		channels: ['web'],
 	};
 }
 

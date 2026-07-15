@@ -171,12 +171,26 @@ interface ConversationRuntime {
 	compactionAbort: AbortController | null;
 }
 
-/** Deliver a finalized assistant reply to an external channel (set by the channel layer). */
-export type ExternalDelivery = (
-	ctx: ConversationContext,
-	content: string,
-	status: ChatMessageStatus,
-) => Promise<void>;
+/**
+ * Registry-wide channel hooks the manager uses to mirror threads across channels.
+ * Every call names a `ChatChannel` enum value; the registry resolves the adapter,
+ * so the manager stays channel-agnostic. All are best-effort at the call site.
+ */
+export interface ChannelHooks {
+	/** Post a message to a channel's platform thread. */
+	deliver: (
+		channel: ChatChannel,
+		externalThreadId: string,
+		content: string,
+		status: ChatMessageStatus,
+	) => Promise<void>;
+	/** Close/archive a channel's platform thread. */
+	closeThread: (channel: ChatChannel, externalThreadId: string) => Promise<void>;
+	/** Create a channel's platform thread, returning its id (null if unsupported). */
+	createThread: (channel: ChatChannel, title: string) => Promise<string | null>;
+	/** Channels that can host mirrored threads right now (enabled + configured). */
+	mirrorableChannels: () => Promise<ChatChannel[]>;
+}
 
 /**
  * Owns the single persistent CEO chat session. Unlike a one-shot task run, the
@@ -199,24 +213,17 @@ export class ChatSessionManager {
 	// across every thread. Compaction rewrites the whole row, so all threads'
 	// compactions serialize here to avoid clobbering each other's memory write.
 	private memberCompactionLock: Promise<unknown> = Promise.resolve();
-	// Set by the channel layer to deliver a finalized reply out to an external
-	// channel (Telegram, …). Web replies stream over WebSocket and need no delivery.
-	private externalDelivery: ExternalDelivery | null = null;
-	// Set by the channel layer to close an external platform thread when the operator
-	// closes a conversation (e.g. Telegram closeForumTopic). No-op for web.
-	private onCloseThread:
-		| ((channel: ChatChannel, externalThreadId: string) => Promise<void>)
-		| null = null;
+	// Registry-wide channel hooks, set by the channel layer at wiring time. The
+	// manager reaches every channel generically through these — it only ever names
+	// the `ChatChannel` enum value; the registry resolves the adapter. This is the
+	// seam that keeps mirroring channel-agnostic (a new channel touches no manager code).
+	private channelHooks: ChannelHooks | null = null;
 
 	constructor(private readonly deps: CeoSessionDeps) {}
 
-	/** Register the external-channel hooks (called once at wiring time). */
-	setChannelHooks(hooks: {
-		delivery: ExternalDelivery;
-		closeThread: (channel: ChatChannel, externalThreadId: string) => Promise<void>;
-	}): void {
-		this.externalDelivery = hooks.delivery;
-		this.onCloseThread = hooks.closeThread;
+	/** Register the registry-wide channel hooks (called once at wiring time). */
+	setChannelHooks(hooks: ChannelHooks): void {
+		this.channelHooks = hooks;
 	}
 
 	/** Introspection (tests): is any thread's background compaction still in flight? */
@@ -375,6 +382,12 @@ export class ChatSessionManager {
 			input.text,
 			userAttachments,
 		);
+		// Mirror the operator's message to the thread's OTHER channels (not the one it
+		// arrived on), so the conversation reads the same on every surface. Background;
+		// best-effort.
+		trackBackground(
+			this.mirrorUserMessage(conversationId, channel, input.authorUserId ?? null, input.text),
+		);
 
 		const assistantMessageId = await this.insertMessage({
 			conversationId,
@@ -460,47 +473,162 @@ export class ChatSessionManager {
 		return { conversationId, channel, externalThreadId };
 	}
 
+	/** All channel bindings for a conversation (web = NULL external id). */
+	private async bindingsFor(
+		conversationId: string,
+	): Promise<Array<{ channel: ChatChannel; external_thread_id: string | null }>> {
+		const r = await this.deps.db.query<{
+			channel: ChatChannel;
+			external_thread_id: string | null;
+		}>(
+			`SELECT channel, external_thread_id FROM chat_conversation_bindings WHERE conversation_id = $1`,
+			[conversationId],
+		);
+		return r.rows;
+	}
+
+	/** Resolve an OPEN conversation by one of its channel bindings. */
+	private async findConversationByBinding(
+		channel: ChatChannel,
+		externalThreadId: string,
+	): Promise<string | null> {
+		const r = await this.deps.db.query<{ conversation_id: string }>(
+			`SELECT b.conversation_id FROM chat_conversation_bindings b
+			 JOIN chat_conversations c ON c.id = b.conversation_id
+			 WHERE b.channel = $1::chat_channel AND b.external_thread_id = $2 AND c.closed_at IS NULL`,
+			[channel, externalThreadId],
+		);
+		return r.rows[0]?.conversation_id ?? null;
+	}
+
+	private async insertBinding(
+		conversationId: string,
+		channel: ChatChannel,
+		externalThreadId: string | null,
+	): Promise<void> {
+		await this.deps.db.query(
+			`INSERT INTO chat_conversation_bindings (conversation_id, channel, external_thread_id)
+			 VALUES ($1, $2::chat_channel, $3) ON CONFLICT (conversation_id, channel) DO NOTHING`,
+			[conversationId, channel, externalThreadId],
+		);
+	}
+
 	/**
-	 * Resolve an open conversation by (member, channel, externalThreadId), creating
-	 * it if none. For web (externalThreadId=null) the earliest open web thread is the
-	 * default; for external channels each open thread id maps to one conversation.
+	 * Give a new conversation its channel bindings: the origin binding, a web binding
+	 * (so it's reachable from the web switcher), and — auto-mirror — a binding in every
+	 * other mirror-capable channel, creating that channel's platform thread. A channel
+	 * that can't host threads (unconfigured/DM-only) is simply skipped; mirroring is
+	 * never fatal.
+	 */
+	private async setupBindings(
+		conversationId: string,
+		title: string,
+		originChannel: ChatChannel,
+		originExternalThreadId: string | null,
+	): Promise<void> {
+		await this.insertBinding(conversationId, originChannel, originExternalThreadId);
+		await this.insertBinding(conversationId, ChatChannel.Web, null);
+		if (!this.channelHooks) return;
+		const mirrorable = await this.channelHooks.mirrorableChannels().catch(() => []);
+		for (const ch of mirrorable) {
+			if (ch === originChannel || ch === ChatChannel.Web) continue;
+			try {
+				const ext = await this.channelHooks.createThread(ch, title || 'New thread');
+				if (ext) await this.insertBinding(conversationId, ch, ext);
+			} catch (e) {
+				log.error(`failed to mirror conversation into ${ch}`, e);
+			}
+		}
+	}
+
+	/**
+	 * Resolve an open conversation for a turn, creating it (and mirroring it across
+	 * channels) if none. Resolution is by channel binding, so the same logical thread
+	 * is found whether the message arrived on web or an external channel. For web
+	 * (externalThreadId=null) the earliest open web thread is the default.
 	 */
 	private async resolveOrCreateConversation(opts: {
 		ceoMemberId: string;
 		projectId: string;
 		channel: ChatChannel;
 		externalThreadId: string | null;
+		title?: string;
 	}): Promise<string> {
-		const { ceoMemberId, projectId, channel, externalThreadId } = opts;
-		if (externalThreadId == null) {
-			const existing = await this.deps.db.query<{ id: string }>(
-				`SELECT id FROM chat_conversations
-				 WHERE member_id = $1 AND channel = $2::chat_channel
-				   AND external_thread_id IS NULL AND closed_at IS NULL
-				 ORDER BY created_at ASC LIMIT 1`,
-				[ceoMemberId, channel],
-			);
-			if (existing.rows[0]) return existing.rows[0].id;
+		const { ceoMemberId, projectId, channel, externalThreadId, title } = opts;
+		if (externalThreadId != null) {
+			const existing = await this.findConversationByBinding(channel, externalThreadId);
+			if (existing) return existing;
 			const created = await this.deps.db.query<{ id: string }>(
-				`INSERT INTO chat_conversations (member_id, team_id, project_id, channel)
-				 VALUES ($1, $2, $3, $4::chat_channel) RETURNING id`,
-				[ceoMemberId, DEFAULT_TEAM_ID, projectId, channel],
+				`INSERT INTO chat_conversations (member_id, team_id, project_id, channel, external_thread_id)
+				 VALUES ($1, $2, $3, $4::chat_channel, $5) RETURNING id`,
+				[ceoMemberId, DEFAULT_TEAM_ID, projectId, channel, externalThreadId],
 			);
+			await this.setupBindings(created.rows[0].id, title ?? '', channel, externalThreadId);
 			return created.rows[0].id;
 		}
 		const existing = await this.deps.db.query<{ id: string }>(
 			`SELECT id FROM chat_conversations
-			 WHERE member_id = $1 AND channel = $2::chat_channel
-			   AND external_thread_id = $3 AND closed_at IS NULL`,
-			[ceoMemberId, channel, externalThreadId],
+			 WHERE member_id = $1 AND channel = 'web'
+			   AND external_thread_id IS NULL AND closed_at IS NULL
+			 ORDER BY created_at ASC LIMIT 1`,
+			[ceoMemberId],
 		);
 		if (existing.rows[0]) return existing.rows[0].id;
 		const created = await this.deps.db.query<{ id: string }>(
-			`INSERT INTO chat_conversations (member_id, team_id, project_id, channel, external_thread_id)
-			 VALUES ($1, $2, $3, $4::chat_channel, $5) RETURNING id`,
-			[ceoMemberId, DEFAULT_TEAM_ID, projectId, channel, externalThreadId],
+			`INSERT INTO chat_conversations (member_id, team_id, project_id, channel, title)
+			 VALUES ($1, $2, $3, 'web', $4) RETURNING id`,
+			[ceoMemberId, DEFAULT_TEAM_ID, projectId, title ?? 'Main'],
 		);
+		await this.setupBindings(created.rows[0].id, title ?? 'Main', ChatChannel.Web, null);
 		return created.rows[0].id;
+	}
+
+	/**
+	 * Fan a message out to a conversation's external channel bindings. Web is handled
+	 * by the WebSocket broadcast, so it's skipped here. `toOrigin: false` (a user
+	 * message) skips the channel it came from — the sender already sees it there, and
+	 * re-posting would echo. `toOrigin: true` (an assistant reply) delivers everywhere,
+	 * so the reply lands wherever the operator is plus every mirror.
+	 */
+	private async mirrorMessage(
+		conversationId: string,
+		originChannel: ChatChannel,
+		content: string,
+		opts: { toOrigin: boolean },
+	): Promise<void> {
+		if (!this.channelHooks || content.trim() === '') return;
+		const bindings = await this.bindingsFor(conversationId);
+		for (const b of bindings) {
+			if (b.channel === ChatChannel.Web || !b.external_thread_id) continue;
+			if (!opts.toOrigin && b.channel === originChannel) continue;
+			await this.channelHooks
+				.deliver(b.channel, b.external_thread_id, content, ChatMessageStatus.Complete)
+				.catch((e) => log.error(`mirror deliver to ${b.channel} failed`, e));
+		}
+	}
+
+	/**
+	 * Mirror an operator message to the thread's other channels, labelled with the
+	 * sender so a bot-posted mirror reads correctly (Telegram shows every bot post the
+	 * same way). Skips the channel the message came from.
+	 */
+	private async mirrorUserMessage(
+		conversationId: string,
+		originChannel: ChatChannel,
+		authorUserId: string | null,
+		text: string,
+	): Promise<void> {
+		let label = 'Operator';
+		if (authorUserId) {
+			const r = await this.deps.db.query<{ display_name: string }>(
+				`SELECT display_name FROM users WHERE id = $1`,
+				[authorUserId],
+			);
+			if (r.rows[0]?.display_name?.trim()) label = r.rows[0].display_name;
+		}
+		await this.mirrorMessage(conversationId, originChannel, `${label}: ${text}`, {
+			toOrigin: false,
+		});
 	}
 
 	/** Fetch a conversation row (identity + lifecycle), or null if it doesn't exist. */
@@ -525,7 +653,11 @@ export class ChatSessionManager {
 		return r.rows[0] ?? null;
 	}
 
-	/** List conversations (open by default), newest activity first. */
+	/**
+	 * List conversations (open by default), newest activity first. Each carries the
+	 * set of channels it is bound to (`channels`), so the web switcher can show a
+	 * mirror indicator (e.g. a Telegram glyph on a mirrored thread).
+	 */
 	async listConversations(opts?: { includeClosed?: boolean }): Promise<
 		Array<{
 			id: string;
@@ -534,6 +666,7 @@ export class ChatSessionManager {
 			title: string | null;
 			last_activity_at: string;
 			closed_at: string | null;
+			channels: ChatChannel[];
 		}>
 	> {
 		const ceoMemberId = await this.resolveCeoMemberId();
@@ -544,17 +677,23 @@ export class ChatSessionManager {
 			title: string | null;
 			last_activity_at: string;
 			closed_at: string | null;
+			channels: ChatChannel[] | null;
 		}>(
-			`SELECT id, channel, external_thread_id, title, last_activity_at, closed_at
-			 FROM chat_conversations
-			 WHERE member_id = $1 ${opts?.includeClosed ? '' : 'AND closed_at IS NULL'}
-			 ORDER BY last_activity_at DESC, created_at DESC`,
+			`SELECT c.id, c.channel, c.external_thread_id, c.title, c.last_activity_at, c.closed_at,
+			        ARRAY(SELECT DISTINCT b.channel::text FROM chat_conversation_bindings b
+			              WHERE b.conversation_id = c.id ORDER BY b.channel::text) AS channels
+			 FROM chat_conversations c
+			 WHERE c.member_id = $1 ${opts?.includeClosed ? '' : 'AND c.closed_at IS NULL'}
+			 ORDER BY c.last_activity_at DESC, c.created_at DESC`,
 			[ceoMemberId],
 		);
-		return r.rows;
+		return r.rows.map((row) => ({ ...row, channels: row.channels ?? [] }));
 	}
 
-	/** Create a fresh web conversation thread (the new-thread button). */
+	/**
+	 * Create a fresh web conversation thread (the new-thread button) and — auto-mirror
+	 * — a matching thread in every mirror-capable channel (e.g. a Telegram topic).
+	 */
 	async createWebConversation(title?: string): Promise<string> {
 		const ceoMemberId = await this.resolveCeoMemberId();
 		const projectId = await this.resolveHqProjectId();
@@ -563,17 +702,20 @@ export class ChatSessionManager {
 			 VALUES ($1, $2, $3, 'web', $4) RETURNING id`,
 			[ceoMemberId, DEFAULT_TEAM_ID, projectId, title ?? null],
 		);
+		await this.setupBindings(created.rows[0].id, title ?? 'New thread', ChatChannel.Web, null);
 		return created.rows[0].id;
 	}
 
 	/**
-	 * Close a conversation: mark it closed, abort + evict its in-flight turn, and
-	 * (for an external thread) close the platform thread via the delivery hook's
-	 * owner. Idempotent — closing an already-closed thread is a no-op.
+	 * Close a conversation: mark it closed, abort + evict its in-flight turn, and close
+	 * the platform thread of **every** external binding (close parity — closing on one
+	 * surface closes it everywhere). Idempotent — closing an already-closed thread is a
+	 * no-op.
 	 */
 	async closeConversation(conversationId: string): Promise<void> {
 		const convo = await this.getConversation(conversationId);
 		if (!convo || convo.closed_at) return;
+		const bindings = await this.bindingsFor(conversationId);
 		const rt = this.convos.get(conversationId);
 		if (rt?.current) {
 			rt.current.abort.abort('closed');
@@ -587,11 +729,23 @@ export class ChatSessionManager {
 		await this.deps.db.query(`UPDATE chat_conversations SET closed_at = now() WHERE id = $1`, [
 			conversationId,
 		]);
-		if (convo.external_thread_id && this.onCloseThread) {
-			await this.onCloseThread(convo.channel, convo.external_thread_id).catch((e) =>
-				log.error('close external thread failed', e),
-			);
+		if (this.channelHooks) {
+			for (const b of bindings) {
+				if (b.channel === ChatChannel.Web || !b.external_thread_id) continue;
+				await this.channelHooks
+					.closeThread(b.channel, b.external_thread_id)
+					.catch((e) => log.error(`close ${b.channel} thread failed`, e));
+			}
 		}
+	}
+
+	/** Close the conversation an external thread is bound to (inbound topic-closed). */
+	async closeConversationByExternalThread(
+		channel: ChatChannel,
+		externalThreadId: string,
+	): Promise<void> {
+		const id = await this.findConversationByBinding(channel, externalThreadId);
+		if (id) await this.closeConversation(id);
 	}
 
 	/** Bump a conversation's last-activity timestamp (drives list ordering). */
@@ -896,13 +1050,14 @@ export class ChatSessionManager {
 				usage,
 				error,
 			);
-			// Deliver the finalized reply out to an external channel (Telegram, …).
-			// Web replies already streamed over WebSocket. Best-effort — a delivery
-			// failure must not fail the turn.
-			if (ctx.channel !== ChatChannel.Web && this.externalDelivery) {
-				await this.externalDelivery(ctx, accumulated.text, status).catch((e) =>
-					log.error('external chat delivery failed', e),
-				);
+			// Mirror the finalized reply to EVERY external binding — the origin channel
+			// (so the reply lands where the operator is) and every mirror. Web already
+			// streamed over WebSocket. Best-effort — a delivery failure must not fail the
+			// turn. Only completed replies mirror (an interrupted/failed partial doesn't).
+			if (status === ChatMessageStatus.Complete) {
+				await this.mirrorMessage(conversationId, ctx.channel, accumulated.text, {
+					toOrigin: true,
+				});
 			}
 		};
 

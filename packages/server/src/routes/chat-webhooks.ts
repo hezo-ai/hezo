@@ -62,7 +62,7 @@ chatWebhookRoutes.post('/webhooks/chat/:channel/:secret', async (c) => {
 
 	const raw = await c.req.json().catch(() => null);
 	const event = raw ? adapter.parseInbound(raw) : null;
-	// Ack quickly (platforms retry on non-2xx / slow responses); do the turn in the
+	// Ack quickly (platforms retry on non-2xx / slow responses); do the work in the
 	// background so a slow CEO reply never times out the webhook.
 	if (event) {
 		trackBackground(
@@ -70,6 +70,17 @@ chatWebhookRoutes.post('/webhooks/chat/:channel/:secret', async (c) => {
 				log.error('inbound chat ingest failed', e),
 			),
 		);
+	} else if (raw && adapter.parseClose) {
+		// A thread closed on the platform (e.g. a Telegram topic) closes the mirrored
+		// conversation everywhere — close parity in the inbound direction.
+		const closed = adapter.parseClose(raw);
+		if (closed) {
+			trackBackground(
+				manager
+					.closeConversationByExternalThread(channel, closed.externalThreadId)
+					.catch((e) => log.error('inbound thread close failed', e)),
+			);
+		}
 	}
 	return ok(c, { received: true });
 });

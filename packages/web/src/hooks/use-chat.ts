@@ -69,6 +69,8 @@ export interface ChatConversationSummary {
 	title: string | null;
 	last_activity_at: string;
 	closed_at: string | null;
+	/** Every channel this thread is bound to (mirrored into), e.g. ['web','telegram']. */
+	channels: ChatChannel[];
 }
 
 /**

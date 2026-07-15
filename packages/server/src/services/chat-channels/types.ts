@@ -61,6 +61,20 @@ export interface ChatChannelAdapter {
 	createThread?(title: string): Promise<string>;
 	/** Close/archive a native platform thread. No-op channels omit this. */
 	closeThread?(externalThreadId: string): Promise<void>;
+
+	/**
+	 * Whether this channel can host mirrored threads *right now* (enabled + configured
+	 * — e.g. Telegram with a Topics supergroup). Drives auto-mirroring: the manager
+	 * only creates a thread here when this is true. Default (absent) = false.
+	 */
+	supportsThreads?(): Promise<boolean>;
+
+	/**
+	 * Parse a raw event as a *thread close* (e.g. a Telegram `forum_topic_closed`
+	 * service message) → the external thread id that was closed, or null. Lets a topic
+	 * closed on the platform close the mirrored web thread. Optional.
+	 */
+	parseClose?(raw: unknown): { externalThreadId: string } | null;
 }
 
 /**
