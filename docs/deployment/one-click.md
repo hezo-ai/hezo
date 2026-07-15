@@ -19,19 +19,27 @@ Hezo runs each project's agents in a container on the host's Docker, so it needs
 **real VM** — not a managed-container service like Render, Railway, or Cloud Run.
 The buttons and snippet below all provision a VM for you.
 
-## Provider buttons
+## One-click provider buttons
 
-For some providers there's a purpose-built button that runs the whole thing:
+For **Google Cloud** and **AWS** there's a purpose-built button that runs the whole
+deploy for you — click it, answer a couple of prompts, and you land at the setup
+screen.
 
-- **Google Cloud** — one-click via Cloud Shell. See the
+[![Deploy on Google Cloud](https://img.shields.io/badge/Deploy_on-Google_Cloud-4285F4?style=for-the-badge&logo=googlecloud&logoColor=white)](https://ssh.cloud.google.com/cloudshell/editor?cloudshell_git_repo=https://github.com/hezo-ai/hezo&cloudshell_workspace=deploy/gcp&cloudshell_tutorial=tutorial.md)
+[![Deploy on AWS](https://img.shields.io/badge/Deploy_on-AWS-FF9900?style=for-the-badge&logo=amazonwebservices&logoColor=white)](https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create/review?templateURL=https://hezo-deploy.s3.us-east-1.amazonaws.com/hezo.cfn.yaml&stackName=hezo)
+
+- **Google Cloud** opens **Cloud Shell** and runs the deploy against a fresh
+  Compute Engine VM — no local tooling needed. Details:
   [Cloud Shell deploy guide](https://github.com/hezo-ai/hezo/blob/main/deploy/gcp/README.md).
-- **AWS** — a CloudFormation "Launch Stack" that creates an EC2 instance. See the
+- **AWS** opens a CloudFormation **Launch Stack** that creates an EC2 instance —
+  pick an instance size, then **Create stack**. Details:
   [AWS deploy guide](https://github.com/hezo-ai/hezo/blob/main/deploy/aws/README.md).
-- **DigitalOcean** — a Marketplace 1-Click Droplet image (in progress), or the
-  cloud-init snippet below today.
+- **DigitalOcean** — a Marketplace 1-Click Droplet is in the works; until it's
+  listed, use the [cloud-init snippet](#deploy-it) below (paste it into the
+  Droplet's user-data field).
 
-Everything else — Hetzner, Vultr, Linode, Lightsail, or any Ubuntu VM — uses the
-portable [cloud-init snippet](#deploy-it) below.
+Every other provider — Hetzner, Vultr, Linode, AWS Lightsail, or any Ubuntu VM —
+uses the portable [cloud-init snippet](#deploy-it) below.
 
 ## What it sets up
 
