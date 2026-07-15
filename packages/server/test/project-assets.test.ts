@@ -212,6 +212,21 @@ describe('asset serving disposition', () => {
 		expect(svgRes.headers.get('content-disposition')).toContain('attachment');
 	});
 
+	it('forces an attachment when ?download=1 is appended to the signed url', async () => {
+		const png = await (await uploadProjectAsset('grab.png', 'image/png', buildPng(9))).json();
+
+		// Default: inline.
+		const inline = await app.request(png.data.url);
+		expect(inline.headers.get('content-disposition')).toContain('inline');
+
+		// Same signed URL + download flag: attachment. The signature covers only
+		// `assetId|exp`, so the extra query param still verifies.
+		const download = await app.request(`${png.data.url}&download=1`);
+		expect(download.status).toBe(200);
+		expect(download.headers.get('content-disposition')).toContain('attachment');
+		expect(download.headers.get('content-disposition')).toContain('filename="grab.png"');
+	});
+
 	it('serves html inline pinned to an opaque origin via a sandbox CSP', async () => {
 		const html = await (
 			await uploadProjectAsset('page.html', 'text/html', new TextEncoder().encode('<h1>hi</h1>'))
@@ -333,6 +348,61 @@ describe('agent-authored assets (write_project_asset)', () => {
 		});
 		expect(result.written).toBeUndefined();
 		expect(String(result.error)).toContain('base64');
+	});
+
+	it('writes a valid base64 binary asset with bytes intact (aligned length passes the guard)', async () => {
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+			taskId,
+		);
+		const png = buildPng(51);
+		const result = await callToolViaMcp(agentToken, 'write_project_asset', {
+			project: projectId,
+			filename: 'valid.png',
+			content: Buffer.from(png).toString('base64'),
+			encoding: 'base64',
+		});
+		expect(result.written).toBe(true);
+		expect(result.reference).toBe('assets/valid.png');
+		const row = await db.query<{ byte_size: number }>(
+			'SELECT byte_size FROM assets WHERE project_id = $1 AND original_filename = $2',
+			[projectId, 'valid.png'],
+		);
+		expect(row.rows).toHaveLength(1);
+		expect(row.rows[0].byte_size).toBe(png.byteLength);
+	});
+
+	it('rejects base64 content truncated by a runtime arg cap and points at the multipart endpoint', async () => {
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+			taskId,
+		);
+		// Simulate a coding-CLI cutting the tool-call argument mid-stream: drop the
+		// padding and trim to a length ≡1 (mod 4), which valid base64 never has.
+		const body = Buffer.from(buildPng(52)).toString('base64').replace(/=+$/, '');
+		const truncated = body.slice(0, body.length - ((body.length + 3) % 4));
+		expect(truncated.length % 4).toBe(1);
+		const result = await callToolViaMcp(agentToken, 'write_project_asset', {
+			project: projectId,
+			filename: 'truncated.png',
+			content: truncated,
+			encoding: 'base64',
+		});
+		expect(result.written).toBeUndefined();
+		expect(String(result.error)).toContain('truncated');
+		expect(String(result.error)).toContain('/mcp/assets');
+		// Nothing corrupt was stored.
+		const row = await db.query(
+			'SELECT id FROM assets WHERE project_id = $1 AND original_filename = $2',
+			[projectId, 'truncated.png'],
+		);
+		expect(row.rows).toHaveLength(0);
 	});
 });
 

@@ -5,7 +5,13 @@ import {
 	isTextReviewableAssetMime,
 } from '@hezo/shared';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
-import { ChevronLeft, ChevronRight, ExternalLink, Image as ImageIcon } from 'lucide-react';
+import {
+	ChevronLeft,
+	ChevronRight,
+	Download,
+	ExternalLink,
+	Image as ImageIcon,
+} from 'lucide-react';
 import { useCallback, useState } from 'react';
 import { AssetReviewPanel } from '../../../components/asset-review/asset-review-panel';
 import { AssetViewerBody } from '../../../components/asset-review/asset-viewer-body';
@@ -109,6 +115,11 @@ function AssetViewerPage() {
 
 	const readOnly = asset.archived_at != null;
 	const textAnchored = isTextReviewableAssetMime(asset.content_type);
+	const basename = file.split('/').pop() ?? file;
+	// `?download=1` makes the serve route send `Content-Disposition: attachment`,
+	// so any asset (including an inline-rendered image) is saved rather than
+	// opened. The signed `asset.url` already carries `?exp&sig`, so append with `&`.
+	const downloadUrl = `${asset.url}${asset.url.includes('?') ? '&' : '?'}download=1`;
 	const folder = assetFolder(file);
 	const gridSearch = filter ? { filter } : {};
 	const crumbs: BreadcrumbSegment[] = [
@@ -138,19 +149,33 @@ function AssetViewerPage() {
 					<Breadcrumb segments={crumbs} data-testid="asset-viewer-breadcrumb" />
 					{readOnly && <ArchivedBadge />}
 				</div>
-				<Tooltip content="Open raw in new tab">
-					<a
-						href={asset.url}
-						target="_blank"
-						rel="noopener noreferrer"
-						className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-1 text-[12px] font-medium text-text-2 transition-colors hover:border-border-strong hover:text-text-1"
-						aria-label="Open raw in new tab"
-						data-testid="asset-viewer-raw"
-					>
-						<ExternalLink className="h-3.5 w-3.5" />
-						Open raw
-					</a>
-				</Tooltip>
+				<div className="flex shrink-0 items-center gap-2">
+					<Tooltip content="Download this file">
+						<a
+							href={downloadUrl}
+							download={basename}
+							className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-1 text-[12px] font-medium text-text-2 transition-colors hover:border-border-strong hover:text-text-1"
+							aria-label="Download this file"
+							data-testid="asset-viewer-download"
+						>
+							<Download className="h-3.5 w-3.5" />
+							Download
+						</a>
+					</Tooltip>
+					<Tooltip content="Open raw in new tab">
+						<a
+							href={asset.url}
+							target="_blank"
+							rel="noopener noreferrer"
+							className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-1 text-[12px] font-medium text-text-2 transition-colors hover:border-border-strong hover:text-text-1"
+							aria-label="Open raw in new tab"
+							data-testid="asset-viewer-raw"
+						>
+							<ExternalLink className="h-3.5 w-3.5" />
+							Open raw
+						</a>
+					</Tooltip>
+				</div>
 			</div>
 
 			<ResizableSplit

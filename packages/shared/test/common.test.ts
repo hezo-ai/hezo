@@ -104,8 +104,18 @@ describe('asset / attachment helpers', () => {
 		expect(assetContentDisposition('image/png')).toBe('inline');
 	});
 
+	it('forces an attachment for any mime when download is requested', () => {
+		expect(assetContentDisposition('image/png', true)).toBe('attachment');
+		expect(assetContentDisposition('text/html', true)).toBe('attachment');
+		// Default arg is unchanged from the single-arg behavior.
+		expect(assetContentDisposition('image/png', false)).toBe('inline');
+	});
+
 	it('emits a sandbox CSP only for html', () => {
-		expect(assetServeCsp('text/html')).toContain('sandbox');
+		const csp = assetServeCsp('text/html');
+		expect(csp).toContain('sandbox');
+		// A user-initiated in-page download must not be silently blocked.
+		expect(csp).toContain('allow-downloads');
 		expect(assetServeCsp('image/png')).toBeNull();
 	});
 

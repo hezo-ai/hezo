@@ -474,6 +474,11 @@ publicAssetsRoutes.get('/api/assets/:assetId', async (c) => {
 	}
 	const { content_type, original_filename, project_id } = row.rows[0];
 
+	// `?download=1` forces an attachment disposition so the viewer's "Download"
+	// button saves any asset (e.g. an inline-rendered image) to disk. The URL
+	// signature covers only `assetId|exp`, so the extra query param verifies fine.
+	const forceDownload = c.req.query('download') === '1';
+
 	let buf: Buffer;
 	try {
 		buf = await c.get('assetStore').read(project_id, assetId);
@@ -499,7 +504,7 @@ publicAssetsRoutes.get('/api/assets/:assetId', async (c) => {
 		'Content-Length': String(buf.byteLength),
 		// SVGs (and other active-content types) download instead of rendering as a
 		// top-level document on our origin — see `assetContentDisposition`.
-		'Content-Disposition': `${assetContentDisposition(content_type)}; filename="${filenameSafe}"`,
+		'Content-Disposition': `${assetContentDisposition(content_type, forceDownload)}; filename="${filenameSafe}"`,
 		'Cache-Control': 'private, max-age=3600',
 		// Script-ish text (.js/.ts/.sh/...) is stored as text/plain; nosniff stops
 		// a browser from re-interpreting it as executable script or anything else.
