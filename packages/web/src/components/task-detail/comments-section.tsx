@@ -1,8 +1,9 @@
 import { CommentContentType } from '@hezo/shared';
 import { useLocation } from '@tanstack/react-router';
 import { Check, Copy, CornerDownRight, Reply } from 'lucide-react';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
+import { useAdminMentions, useMarkMentionRead } from '../../hooks/use-admin-mentions';
 import { useAgents } from '../../hooks/use-agents';
 import { type Comment, useComments } from '../../hooks/use-comments';
 import type { Task } from '../../hooks/use-tasks';
@@ -112,6 +113,97 @@ export function CommentsSection({
 	onStartReply,
 }: CommentsSectionProps) {
 	const { data: comments } = useComments(projectId, taskId);
+
+	// --- Mark a pending @admin inbox notification read once its comment is seen ---
+	// A notification stays unread until the user actually views its comment. Only
+	// fetch the caller's mentions when this task has an unread one (a server-
+	// computed flag on the task), so ordinary task views make no extra request.
+	// Marking reuses the inbox card's mutation and is idempotent server-side, so
+	// the two paths never conflict.
+	const { data: adminMentions } = useAdminMentions(taskProjectSlug, task.has_unread_admin_mention);
+	const markMentionRead = useMarkMentionRead();
+	const markMentionReadRef = useRef(markMentionRead);
+	markMentionReadRef.current = markMentionRead;
+	// comment_id (a globally-unique UUID) -> mentionId for the caller's UNREAD
+	// mentions. public_id can't key this — it's only unique within one task.
+	const pendingMentionByCommentId = useMemo(() => {
+		const map = new Map<string, string>();
+		for (const mention of adminMentions ?? []) {
+			if (!mention.read_at) map.set(mention.comment_id, mention.id);
+		}
+		return map;
+	}, [adminMentions]);
+	// Fires once per comment, at most once (markedCommentsRef), and never while the
+	// tab is hidden. Reads the latest pending map, so a mention that loads after
+	// its comment is already on screen still marks it.
+	const markedCommentsRef = useRef<Set<string>>(new Set());
+	const markCommentReadIfPending = useCallback(
+		(commentId: string) => {
+			if (markedCommentsRef.current.has(commentId)) return;
+			const mentionId = pendingMentionByCommentId.get(commentId);
+			if (!mentionId) return;
+			if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+			markedCommentsRef.current.add(commentId);
+			markMentionReadRef.current.mutate({ projectSlug: taskProjectSlug, mentionId });
+		},
+		[pendingMentionByCommentId, taskProjectSlug],
+	);
+	// Stable handle to the latest marker for the (scroll-parent-stable) observer.
+	const markHandlerRef = useRef(markCommentReadIfPending);
+	markHandlerRef.current = markCommentReadIfPending;
+	// One IntersectionObserver over the thread's scroll parent is the source of
+	// truth for "seen": Virtuoso's 600px overscan mounts rows before they're
+	// visible, so mounting alone is not a view — only real viewport intersection.
+	const observerRef = useRef<IntersectionObserver | null>(null);
+	const mountedRowsRef = useRef<Map<string, HTMLElement>>(new Map());
+	const visibleCommentsRef = useRef<Set<string>>(new Set());
+	const observeCommentRow = useCallback((el: HTMLDivElement | null) => {
+		if (!el) return;
+		const commentId = el.dataset.commentId;
+		if (!commentId) return;
+		mountedRowsRef.current.set(commentId, el);
+		observerRef.current?.observe(el);
+		return () => {
+			observerRef.current?.unobserve(el);
+			mountedRowsRef.current.delete(commentId);
+			visibleCommentsRef.current.delete(commentId);
+		};
+	}, []);
+	useEffect(() => {
+		if (typeof IntersectionObserver === 'undefined') return;
+		const io = new IntersectionObserver(
+			(entries) => {
+				for (const entry of entries) {
+					const commentId = (entry.target as HTMLElement).dataset.commentId;
+					if (!commentId) continue;
+					if (entry.isIntersecting) {
+						visibleCommentsRef.current.add(commentId);
+						markHandlerRef.current(commentId);
+					} else {
+						visibleCommentsRef.current.delete(commentId);
+					}
+				}
+			},
+			{ root: scrollParent ?? null },
+		);
+		observerRef.current = io;
+		// Observe rows that mounted before the observer existed (first paint, or a
+		// scroll-parent swap once <main> resolves).
+		for (const el of mountedRowsRef.current.values()) io.observe(el);
+		return () => {
+			io.disconnect();
+			observerRef.current = null;
+			visibleCommentsRef.current.clear();
+		};
+	}, [scrollParent]);
+	// Both the comments and the mentions load asynchronously (and the stubbed
+	// observer in component tests fires on observe, before mentions resolve), so a
+	// mention can arrive after its comment is already visible. Re-check the
+	// on-screen rows whenever the pending set changes.
+	useEffect(() => {
+		for (const commentId of visibleCommentsRef.current) markCommentReadIfPending(commentId);
+	}, [markCommentReadIfPending]);
+
 	// Resolve agent comment authors to their slug so the avatar + name link to
 	// the agent's page. Reads the already-cached team roster; cross-team authors
 	// (CEO / Coach) aren't in it and stay unlinked.
@@ -352,6 +444,8 @@ export function CommentsSection({
 							return (
 								<div
 									id={`comment-${c.public_id}`}
+									ref={observeCommentRow}
+									data-comment-id={c.id}
 									className={`flex items-start gap-2.5 scroll-mt-20 pb-4 ${isHighlighted ? 'rounded-md ring-2 ring-info/60 transition-shadow' : ''}`}
 									data-testid="comment-item"
 									data-comment-highlighted={isHighlighted ? 'true' : undefined}
@@ -379,6 +473,8 @@ export function CommentsSection({
 						return (
 							<div
 								id={`comment-${c.public_id}`}
+								ref={observeCommentRow}
+								data-comment-id={c.id}
 								className={`flex gap-2.5 scroll-mt-20 pb-4 ${isHighlighted ? 'rounded-md ring-2 ring-info/60 transition-shadow' : ''}`}
 								data-testid="comment-item"
 								data-comment-highlighted={isHighlighted ? 'true' : undefined}

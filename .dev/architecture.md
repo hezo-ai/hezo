@@ -401,7 +401,9 @@ pending/approved — admin-minted keys are born approved, self-registered ones a
 approval), `invites`, `admin_mentions` (board inbox — one row per recipient for each
 active `@admin` text comment; recipients are the task team's `role='admin'` member_users
 plus **all superusers** — CEO-created teams have no human members, so the superuser leg is
-what guarantees delivery — author excluded, deduped by `(comment_id, user_id)`),
+what guarantees delivery — author excluded, deduped by `(comment_id, user_id)`; `read_at`
+marks an item read, set by the inbox card, a mark-all, or when the recipient scrolls the
+comment into view in its task thread),
 `instance_user_roles`, `notification_preferences`. `plugins`/`plugin_state`/`plugin_jobs`
 are scaffolding for a future plugin runtime — present but not yet exercised.
 
