@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
+	AssetSortOrder,
 	ATTACHMENT_EXTENSIONS,
 	ATTACHMENT_MAX_BYTES,
 	AuthType,
@@ -7,6 +8,7 @@ import {
 	assetContentDisposition,
 	assetServeCsp,
 	isAllowedAttachmentExtension,
+	isAssetSortOrder,
 	normalizeAssetFilename,
 	normalizeAssetFolder,
 	resolveAttachmentContentType,
@@ -17,6 +19,7 @@ import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { AssetNotFoundError, AttachmentTooLargeError } from '../assets/store';
 import { insertAssetWithUniqueName } from '../lib/asset-name';
+import { assetSortOrderBy } from '../lib/asset-sort';
 import { signAssetUrl, verifyAssetUrl } from '../lib/asset-urls';
 import { broadcastChange } from '../lib/broadcast';
 import { ref } from '../lib/log-ref';
@@ -229,6 +232,11 @@ assetsRoutes.get('/projects/:projectId/assets', async (c) => {
 	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
+	// The sort order is a view concern; an unknown/absent value falls back to
+	// Newest, preserving the historical `created_at DESC` default.
+	const sortParam = c.req.query('sort');
+	const sort = isAssetSortOrder(sortParam) ? sortParam : AssetSortOrder.Newest;
+
 	// Archived assets ride along: the web UI filters client-side (Active /
 	// Archived / All with counts) and `assets/<path>` references in comments
 	// and docs must keep resolving. Agent-facing listings (MCP) are active-only.
@@ -248,7 +256,7 @@ assetsRoutes.get('/projects/:projectId/assets', async (c) => {
 		 LEFT JOIN comment_attachments ca ON ca.asset_id = a.id
 		 WHERE a.project_id = $1
 		 GROUP BY a.id
-		 ORDER BY a.created_at DESC`,
+		 ORDER BY ${assetSortOrderBy(sort, 'a.')}`,
 		[projectId],
 	);
 

@@ -994,6 +994,58 @@ export function matchesArchiveFilter(
 	return filter === ArchiveFilter.Archived ? archivedAt != null : archivedAt == null;
 }
 
+/**
+ * Order for the assets grid. Newest is the default (matches the API's historical
+ * `created_at DESC`). The web sorts client-side and the REST route / MCP tool
+ * sort in SQL; both mirror `compareAssetsForSort`, the single source of truth.
+ */
+export const AssetSortOrder = {
+	Newest: 'newest',
+	Oldest: 'oldest',
+	Alphabetical: 'alphabetical',
+} as const;
+export type AssetSortOrder = (typeof AssetSortOrder)[keyof typeof AssetSortOrder];
+
+export function isAssetSortOrder(value: unknown): value is AssetSortOrder {
+	return typeof value === 'string' && (Object.values(AssetSortOrder) as string[]).includes(value);
+}
+
+/** The minimal asset shape the sort comparison reads. */
+export interface AssetSortFields {
+	created_at: string;
+	original_filename: string;
+}
+
+/**
+ * Compare two assets for the given sort order. The SQL `ORDER BY` on the REST
+ * route and MCP tool mirrors this exactly:
+ * - Newest:       created_at DESC, then original_filename ASC
+ * - Oldest:       created_at ASC,  then original_filename ASC
+ * - Alphabetical: LOWER(original_filename) ASC, then created_at DESC
+ * Every branch has a deterministic tiebreak so the order is stable.
+ */
+export function compareAssetsForSort(
+	a: AssetSortFields,
+	b: AssetSortFields,
+	order: AssetSortOrder,
+): number {
+	if (order === AssetSortOrder.Alphabetical) {
+		const byName = a.original_filename
+			.toLowerCase()
+			.localeCompare(b.original_filename.toLowerCase());
+		if (byName !== 0) return byName;
+		// Newest first as the tiebreak (created_at DESC).
+		return b.created_at.localeCompare(a.created_at);
+	}
+	// ISO-8601 timestamps sort chronologically as plain strings.
+	const byDate =
+		order === AssetSortOrder.Oldest
+			? a.created_at.localeCompare(b.created_at)
+			: b.created_at.localeCompare(a.created_at);
+	if (byDate !== 0) return byDate;
+	return a.original_filename.toLowerCase().localeCompare(b.original_filename.toLowerCase());
+}
+
 export const AuditActorType = {
 	Admin: 'admin',
 	Agent: 'agent',

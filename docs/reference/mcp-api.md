@@ -1053,7 +1053,7 @@ List project documentation files (PRD, spec, implementation plan, etc.). Archive
 
 _Read-only._
 
-List the project's assets — files in the assets library (UI mockups, wireframes, diagrams, images, PDFs, scripts, and generated markdown such as blog posts or reports). Filenames may carry a folder prefix up to 2 levels deep (e.g. `launch/images/hero.png`); reference one in a comment or doc as `assets/<path>` exactly as returned here (e.g. assets/launch/images/hero.png), no backticks. Author both text and binary assets with write_project_asset (binary via encoding: 'base64') and reorganize with move_project_asset / copy_project_asset; obsolete assets are archived with archive_project_asset (hard deletion is admin-only). Archived assets are excluded by default — set filter: 'archived' or 'all' to see them (entries then carry an `archived` flag).
+List the project's assets — files in the assets library (UI mockups, wireframes, diagrams, images, PDFs, scripts, and generated markdown such as blog posts or reports). Filenames may carry a folder prefix up to 2 levels deep (e.g. `launch/images/hero.png`); reference one in a comment or doc as `assets/<path>` exactly as returned here (e.g. assets/launch/images/hero.png), no backticks. Author both text and binary assets with write_project_asset (binary via encoding: 'base64') and reorganize with move_project_asset / copy_project_asset; obsolete assets are archived with archive_project_asset (hard deletion is admin-only). Archived assets are excluded by default — set filter: 'archived' or 'all' to see them (entries then carry an `archived` flag). Results are ordered newest-first by default; pass sort: 'oldest' or 'alphabetical' to change the order.
 
 **Parameters:**
 
@@ -1061,6 +1061,7 @@ List the project's assets — files in the assets library (UI mockups, wireframe
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `filter` | `active` \| `archived` \| `all` | No | Which archive states to consider: 'active' (default — archived items are excluded), 'archived' (only archived), or 'all'. |
+| `sort` | `newest` \| `oldest` \| `alphabetical` | No | Order of the returned assets: 'newest' (default — most recently created first), 'oldest', or 'alphabetical' (by filename, A→Z). |
 
 **Returns:** `{ files: [{ id, filename, content_type, created_at }] }` — the project asset files. `filename` is the full path and may carry a folder prefix up to 2 levels (e.g. `launch/images/hero.png`). The `filter` param defaults to `'active'` (archived assets excluded); with `'archived'` or `'all'` each entry also carries `archived: boolean`.
 

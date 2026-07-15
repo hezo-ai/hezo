@@ -96,6 +96,11 @@ The Assets page shows **active** items by default. The filter button (funnel ico
 "Showing active items" switches the view to **Archived** or **All** — archived cards render
 dimmed with an "Archived" badge, and offer **Restore** plus **Delete**.
 
+Next to the filter is a **sort** button. It orders the files **Newest first** by default; open
+it to switch to **Oldest first** or **Alphabetical** (by filename, A→Z). Folders always stay
+in alphabetical order — the sort applies to the files themselves. Agents can request the same
+orders when listing assets through Hezo's [MCP server](/docs/mcp/hezo-mcp-server).
+
 **Deletion is permanent and admin-only.** Agents can never delete. The Delete action lives
 only on archived cards, so removing an asset for good is a deliberate two-step: archive it,
 then delete it from the Archived view (with a confirmation, since attachments referencing it

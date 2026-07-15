@@ -909,3 +909,117 @@ describe('foldered asset mention resolution', () => {
 		expect(body.assets[0].signed_url).toMatch(/^\/api\/assets\//);
 	});
 });
+
+describe('asset sort order (REST + MCP)', () => {
+	// Own team/project so the fixed set isn't polluted by the shared project's
+	// accumulating uploads. Names + created_at are chosen so the three orders
+	// are all distinct: alpha ≠ newest ≠ oldest.
+	let sortProjectId: string;
+	let sortAgentToken: string;
+	const ids: Record<string, string> = {};
+
+	async function uploadTo(pid: string, filename: string, seed: number): Promise<string> {
+		const fd = new FormData();
+		const bytes = buildPng(seed);
+		fd.set('file', new File([bytes.buffer], filename, { type: 'image/png' }));
+		const res = await app.request(`/api/projects/${pid}/assets`, {
+			method: 'POST',
+			headers: { ...authHeader(token) },
+			body: fd,
+		});
+		expect(res.status).toBe(201);
+		return (await res.json()).data.id;
+	}
+
+	async function restList(query = ''): Promise<string[]> {
+		const res = await app.request(`/api/projects/${sortProjectId}/assets${query}`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		return ((await res.json()).data as Array<{ original_filename: string }>).map(
+			(a) => a.original_filename,
+		);
+	}
+
+	async function mcpList(args: Record<string, unknown>): Promise<string[]> {
+		const out = (await callToolViaMcp(sortAgentToken, 'list_project_assets', args)) as {
+			files: Array<{ filename: string }>;
+		};
+		return out.files.map((f) => f.filename);
+	}
+
+	beforeAll(async () => {
+		const teamRes = await createTestTeam(db, { name: 'Sort Co' });
+		const sortTeamId = (await teamRes.json()).data.id;
+		const projectRes = await createTestProject(db, sortTeamId, { name: 'Sortable' });
+		sortProjectId = (await projectRes.json()).data.id;
+
+		const agentRes = await app.request(`/api/projects/${sortProjectId}/agents`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Sort Bot' }),
+		});
+		const sortAgentId = (await agentRes.json()).data.id;
+		const taskRes = await app.request(`/api/projects/${sortProjectId}/tasks`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Sort task', assignee_id: sortAgentId }),
+		});
+		const sortTaskId = (await taskRes.json()).data.id;
+		sortAgentToken = (
+			await mintAgentToken(db, masterKeyManager, sortAgentId, sortTeamId, sortTaskId)
+		).token;
+
+		ids.banana = await uploadTo(sortProjectId, 'banana.png', 40);
+		ids.apple = await uploadTo(sortProjectId, 'apple.png', 41);
+		ids.cherry = await uploadTo(sortProjectId, 'cherry.png', 42);
+		// Pin created_at so date ordering is deterministic (uploads share now()).
+		await db.query(`UPDATE assets SET created_at = $1 WHERE id = $2`, [
+			'2026-01-03T00:00:00.000Z',
+			ids.banana,
+		]);
+		await db.query(`UPDATE assets SET created_at = $1 WHERE id = $2`, [
+			'2026-01-02T00:00:00.000Z',
+			ids.apple,
+		]);
+		await db.query(`UPDATE assets SET created_at = $1 WHERE id = $2`, [
+			'2026-01-01T00:00:00.000Z',
+			ids.cherry,
+		]);
+	});
+
+	it('REST defaults to newest-first', async () => {
+		expect(await restList()).toEqual(['banana.png', 'apple.png', 'cherry.png']);
+	});
+
+	it('REST honours ?sort=oldest and ?sort=alphabetical', async () => {
+		expect(await restList('?sort=oldest')).toEqual(['cherry.png', 'apple.png', 'banana.png']);
+		expect(await restList('?sort=alphabetical')).toEqual(['apple.png', 'banana.png', 'cherry.png']);
+	});
+
+	it('REST falls back to newest for an unknown sort value', async () => {
+		expect(await restList('?sort=bogus')).toEqual(['banana.png', 'apple.png', 'cherry.png']);
+	});
+
+	it('MCP list_project_assets defaults to newest and honours sort', async () => {
+		expect(await mcpList({})).toEqual(['banana.png', 'apple.png', 'cherry.png']);
+		expect(await mcpList({ sort: 'oldest' })).toEqual(['cherry.png', 'apple.png', 'banana.png']);
+		expect(await mcpList({ sort: 'alphabetical' })).toEqual([
+			'apple.png',
+			'banana.png',
+			'cherry.png',
+		]);
+	});
+
+	it('MCP composes filter and sort', async () => {
+		await db.query(`UPDATE assets SET archived_at = now() WHERE id = $1`, [ids.apple]);
+		// Active (default) excludes the archived apple, still newest-first.
+		expect(await mcpList({ sort: 'newest' })).toEqual(['banana.png', 'cherry.png']);
+		// 'all' brings it back, ordered alphabetically.
+		expect(await mcpList({ filter: 'all', sort: 'alphabetical' })).toEqual([
+			'apple.png',
+			'banana.png',
+			'cherry.png',
+		]);
+	});
+});
