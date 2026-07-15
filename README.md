@@ -13,6 +13,12 @@
 </div>
 
 <p align="center">
+  <a href="https://ssh.cloud.google.com/cloudshell/editor?cloudshell_git_repo=https://github.com/hezo-ai/hezo&cloudshell_workspace=deploy/gcp&cloudshell_tutorial=tutorial.md"><img src="https://img.shields.io/badge/Deploy_on-Google_Cloud-4285F4?style=for-the-badge&logo=googlecloud&logoColor=white" alt="Deploy on Google Cloud" height="28" /></a>
+  <a href="./deploy/aws/README.md"><img src="https://img.shields.io/badge/Deploy_on-AWS-FF9900?style=for-the-badge&logo=amazonwebservices&logoColor=white" alt="Deploy on AWS" height="28" /></a>
+  <a href="./docs/deployment/one-click.md"><img src="https://img.shields.io/badge/Deploy_on-DigitalOcean-0080FF?style=for-the-badge&logo=digitalocean&logoColor=white" alt="Deploy on DigitalOcean" height="28" /></a>
+</p>
+
+<p align="center">
   <strong>Your own AI workforce. Built to ship.</strong>
 </p>
 
@@ -87,7 +93,7 @@ VM in a couple of minutes. Each provisions Docker, the binary, automatic HTTPS
 firewall, and drops you at the in-browser setup.
 
 <p>
-  <a href="./deploy/gcp/README.md"><img src="https://img.shields.io/badge/Deploy_on-Google_Cloud-4285F4?style=for-the-badge&logo=googlecloud&logoColor=white" alt="Deploy on Google Cloud" height="34" /></a>
+  <a href="https://ssh.cloud.google.com/cloudshell/editor?cloudshell_git_repo=https://github.com/hezo-ai/hezo&cloudshell_workspace=deploy/gcp&cloudshell_tutorial=tutorial.md"><img src="https://img.shields.io/badge/Deploy_on-Google_Cloud-4285F4?style=for-the-badge&logo=googlecloud&logoColor=white" alt="Deploy on Google Cloud" height="34" /></a>
   <a href="./deploy/aws/README.md"><img src="https://img.shields.io/badge/Deploy_on-AWS-FF9900?style=for-the-badge&logo=amazonwebservices&logoColor=white" alt="Deploy on AWS" height="34" /></a>
   <a href="./docs/deployment/one-click.md"><img src="https://img.shields.io/badge/Deploy_on-DigitalOcean-0080FF?style=for-the-badge&logo=digitalocean&logoColor=white" alt="Deploy on DigitalOcean" height="34" /></a>
 </p>
