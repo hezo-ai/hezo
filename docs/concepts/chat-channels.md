@@ -44,11 +44,24 @@ Now message your bot and the CEO replies right in Telegram.
 
 - A **private chat** with your bot is a single conversation.
 - For **multiple threads** in Telegram, add the bot to a **Topics-enabled supergroup** as
-  an admin with the **Manage topics** permission. Each topic becomes its own conversation,
-  mirrored alongside your web threads.
+  an admin with the **Manage topics** permission. Each topic is one conversation.
 
-Everything you say from Telegram lands in the same CEO chat you see in the web app, so you
-can start a thread on your phone and pick it up later in the browser.
+### One thread, both places
+
+Once a Topics supergroup is connected, threads stay **mirrored** between the app and
+Telegram:
+
+- **Start a thread in the web chatbox** → a matching **topic appears in your Telegram
+  group** automatically, and vice versa — a new topic in Telegram shows up as a thread in
+  the app.
+- **Messages sync both ways** — what you say and the CEO's replies appear on *both*
+  surfaces, so it's genuinely the same conversation. Start it on your laptop, continue on
+  your phone.
+- **Close it anywhere, it closes everywhere** — closing a thread in the app archives its
+  Telegram topic, and closing the topic in Telegram closes the thread in the app.
+
+(Without a Topics supergroup — e.g. a plain DM — Telegram just has the one conversation, and
+web threads stay in the app.)
 
 > **Security.** Your bot token is stored encrypted and is never exposed to agents. Only the
 > identities you add to the allowlist can chat — an unknown sender gets no reply.

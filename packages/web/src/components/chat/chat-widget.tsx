@@ -160,11 +160,15 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 		send(text, attachments).catch(() => undefined);
 	};
 
-	// Web conversation threads only (external threads are managed from their app).
-	const webThreads = conversations.filter((t) => t.channel === 'web');
+	// Every thread is reachable from the web chatbox (all are web-bound), including
+	// ones that mirror to Telegram. The `channels` array drives the mirror indicator.
+	const webThreads = conversations;
 	const activeThread = webThreads.find((t) => t.id === activeConversationId);
-	const threadLabel = (t: (typeof webThreads)[number], i: number) =>
-		t.title?.trim() || (t.external_thread_id ? 'External' : i === 0 ? 'Main' : 'New thread');
+	const threadLabel = (t: (typeof webThreads)[number], i: number) => {
+		const base = t.title?.trim() || (i === 0 ? 'Main' : 'New thread');
+		// A thread mirrored into Telegram gets a small glyph so its reach is obvious.
+		return t.channels?.includes('telegram') ? `${base}  ↔ Telegram` : base;
+	};
 
 	const handleNewThread = async () => {
 		const res = (await createThread().catch(() => null)) as {

@@ -225,10 +225,21 @@ links files sent through the chatbox to their message (stored in the HQ asset li
 under `uploads/chat/`), and `chat_memories` holds each chat-enabled agent's
 automatically-maintained long-term memory (§ 4).
 
-**Multi-thread conversations & external channels.** The CEO chat is **multi-threaded**:
-`chat_conversations` is keyed by `(member_id, channel, external_thread_id)` (a partial
-unique index scoped to open threads via `closed_at`), so the web chatbox has a thread
-switcher and each external thread maps to its own conversation. The warm container
+**Multi-thread conversations, mirrored across channels.** The CEO chat is
+**multi-threaded**, and a thread is **one logical conversation mirrored across every
+real-time channel**. A conversation has a **binding per channel** in
+`chat_conversation_bindings` (`(channel, external_thread_id)`, unique per open external
+thread; `chat_conversations.channel`/`external_thread_id` are origin provenance only).
+Inbound routing resolves by binding, so the same thread is found whether a message arrives
+on web or Telegram. **Parity is symmetric and automatic:** creating a thread on any surface
+auto-creates it on every mirror-capable channel (`setupBindings` → `registry.mirrorableChannels()`
+→ each adapter's `createThread` — e.g. a Telegram forum topic); the operator's message and
+the CEO's reply **fan out** to every binding with **origin-exclusion** so no channel
+re-echoes what it just delivered (`mirrorMessage`/`mirrorUserMessage`; web is the WS
+broadcast); and closing on any surface closes every binding (`closeConversation`, plus the
+platform→app direction via each adapter's `parseClose` → `closeConversationByExternalThread`).
+A channel that can't host threads (a DM) degrades to a single thread without breaking parity
+for the rest. The warm container
 (`chat_sessions`) stays a **single shared lease** per CEO member — a thread is only
 message-grouping + rolling window + memory scope, and each turn is a stateless one-shot
 `docker exec` reading a per-turn prompt file, so N threads run as N independent execs into

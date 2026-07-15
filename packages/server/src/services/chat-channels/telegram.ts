@@ -34,6 +34,8 @@ interface TelegramUpdate {
 		is_topic_message?: boolean;
 		from?: { id?: number; username?: string; is_bot?: boolean };
 		chat?: { id?: number; type?: string };
+		// Service messages posted into a forum topic when it is closed/reopened.
+		forum_topic_closed?: Record<string, unknown>;
 	};
 }
 
@@ -90,6 +92,15 @@ export class TelegramAdapter implements ChatChannelAdapter {
 		return typeof gid === 'string' && gid.trim() !== '' ? gid : null;
 	}
 
+	/**
+	 * Telegram can host mirrored threads when it's enabled, has a bot token, and a
+	 * Topics supergroup is configured (`metadata.group_id`) — a DM can't hold topics.
+	 */
+	async supportsThreads(): Promise<boolean> {
+		const config = await loadChannelConfig(this.deps, this.channel);
+		return !!config?.enabled && !!config.botTokenSecret && (await this.groupId()) !== null;
+	}
+
 	async start(): Promise<void> {
 		const config = await loadChannelConfig(this.deps, this.channel);
 		if (!config?.enabled || !config.botTokenSecret || !config.webhookSecret) {
@@ -116,6 +127,14 @@ export class TelegramAdapter implements ChatChannelAdapter {
 		const config = await loadChannelConfig(this.deps, this.channel);
 		if (!config?.botTokenSecret) return;
 		await this.api('deleteWebhook', {}).catch(() => undefined);
+	}
+
+	/** A `forum_topic_closed` service message → the topic that was closed on Telegram. */
+	parseClose(raw: unknown): { externalThreadId: string } | null {
+		const update = raw as TelegramUpdate;
+		const msg = update?.message;
+		if (!msg?.forum_topic_closed || !msg.chat?.id || !msg.message_thread_id) return null;
+		return { externalThreadId: encodeThreadId(msg.chat.id, msg.message_thread_id) };
 	}
 
 	parseInbound(raw: unknown): InboundChatEvent | null {
