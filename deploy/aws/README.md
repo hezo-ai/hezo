@@ -20,29 +20,29 @@ first boot → open the `URL` in the stack **Outputs** → finish the short setu
 | Step | Where |
 |---|---|
 | CloudFormation template (`hezo.cfn.yaml`, reusing `provision.sh`) | **This repo** |
-| Hosting the template at a public URL CloudFormation accepts (see below) | **External** — one-time upload to an org-owned S3 bucket |
+| Hosting the template at a public URL CloudFormation accepts (see below) | **Done** — hosted at `hezo-deploy.s3.us-east-1.amazonaws.com/hezo.cfn.yaml`; re-upload on each release |
 | The end user running the stack (their AWS account, their bill) | **External** — they click the button |
 
 CloudFormation's quick-create ("Launch Stack") link requires `templateURL` to
 point at a template stored in **Amazon S3** — a `raw.githubusercontent.com` URL
-is rejected. So making the button live is one external step: upload
-`hezo.cfn.yaml` to a public S3 bucket the Hezo org controls, then set that URL in
-the button. Everything needed to *produce and test a valid template* is here, and
-the manual paths below work today with the in-repo file.
+is rejected. The template is hosted for this at
+`https://hezo-deploy.s3.us-east-1.amazonaws.com/hezo.cfn.yaml` (a public,
+org-owned bucket); keep that object in sync with this file on each release (see
+[Publishing](#publishing-the-button)). The manual paths below also work with the
+in-repo file directly.
 
 ## The Launch Stack button
 
-Once `hezo.cfn.yaml` is hosted (see [Publishing](#publishing-the-button) below),
-the README badge / button uses:
+The README's **Deploy on AWS** badge points at the hosted template. The button URL:
 
 ```
-https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create/review?templateURL=<PUBLIC_S3_URL>&stackName=hezo
+https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create/review?templateURL=https://hezo-deploy.s3.us-east-1.amazonaws.com/hezo.cfn.yaml&stackName=hezo
 ```
 
 Markdown for the button:
 
 ```md
-[![Launch Stack](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png)](https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create/review?templateURL=<PUBLIC_S3_URL>&stackName=hezo)
+[![Launch Stack](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png)](https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create/review?templateURL=https://hezo-deploy.s3.us-east-1.amazonaws.com/hezo.cfn.yaml&stackName=hezo)
 ```
 
 The user can switch region in the console before creating; the AMI resolves per
@@ -109,16 +109,19 @@ the IAM capability → Create.
 
 ## Publishing the button
 
-One-time, in an org-owned AWS account:
+The template is hosted in the org-owned `hezo-deploy` bucket (us-east-1). New
+buckets block public ACLs by default, so the object is made public with a
+**bucket policy** (not `--acl public-read`), then updated on each release:
 
 ```sh
-# A public-readable bucket (or a bucket fronted by a stable HTTPS URL):
-aws s3 cp deploy/aws/hezo.cfn.yaml s3://<hezo-bucket>/deploy/aws/hezo.cfn.yaml \
-  --acl public-read
-# Public URL to put in the Launch Stack button:
-#   https://<hezo-bucket>.s3.amazonaws.com/deploy/aws/hezo.cfn.yaml
+# Re-upload after any change to hezo.cfn.yaml:
+aws s3 cp deploy/aws/hezo.cfn.yaml s3://hezo-deploy/hezo.cfn.yaml \
+  --content-type text/yaml
+# Public URL wired into the Launch Stack button:
+#   https://hezo-deploy.s3.us-east-1.amazonaws.com/hezo.cfn.yaml
 ```
 
-Keep the S3 copy in sync with this file on each release (a `release-publish`
-workflow step can `aws s3 cp` it). Until it's hosted, the root README's AWS badge
-links here so users get the working manual paths above.
+**Keep the hosted object in sync with this file** — the button always serves
+whatever is in S3, so a stale copy ships a stale template. A `release-publish`
+workflow step can `aws s3 cp` it automatically (needs an AWS key scoped to
+`s3:PutObject` on that bucket, stored as a GitHub Actions secret).

@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://ssh.cloud.google.com/cloudshell/editor?cloudshell_git_repo=https://github.com/hezo-ai/hezo&cloudshell_workspace=deploy/gcp&cloudshell_tutorial=tutorial.md"><img src="https://img.shields.io/badge/Deploy_on-Google_Cloud-4285F4?style=for-the-badge&logo=googlecloud&logoColor=white" alt="Deploy on Google Cloud" height="28" /></a>
-  <a href="./deploy/aws/README.md"><img src="https://img.shields.io/badge/Deploy_on-AWS-FF9900?style=for-the-badge&logo=amazonwebservices&logoColor=white" alt="Deploy on AWS" height="28" /></a>
+  <a href="https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create/review?templateURL=https://hezo-deploy.s3.us-east-1.amazonaws.com/hezo.cfn.yaml&stackName=hezo"><img src="https://img.shields.io/badge/Deploy_on-AWS-FF9900?style=for-the-badge&logo=amazonwebservices&logoColor=white" alt="Deploy on AWS" height="28" /></a>
   <a href="./docs/deployment/one-click.md"><img src="https://img.shields.io/badge/Deploy_on-DigitalOcean-0080FF?style=for-the-badge&logo=digitalocean&logoColor=white" alt="Deploy on DigitalOcean" height="28" /></a>
 </p>
 
@@ -94,15 +94,15 @@ firewall, and drops you at the in-browser setup.
 
 <p>
   <a href="https://ssh.cloud.google.com/cloudshell/editor?cloudshell_git_repo=https://github.com/hezo-ai/hezo&cloudshell_workspace=deploy/gcp&cloudshell_tutorial=tutorial.md"><img src="https://img.shields.io/badge/Deploy_on-Google_Cloud-4285F4?style=for-the-badge&logo=googlecloud&logoColor=white" alt="Deploy on Google Cloud" height="34" /></a>
-  <a href="./deploy/aws/README.md"><img src="https://img.shields.io/badge/Deploy_on-AWS-FF9900?style=for-the-badge&logo=amazonwebservices&logoColor=white" alt="Deploy on AWS" height="34" /></a>
+  <a href="https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create/review?templateURL=https://hezo-deploy.s3.us-east-1.amazonaws.com/hezo.cfn.yaml&stackName=hezo"><img src="https://img.shields.io/badge/Deploy_on-AWS-FF9900?style=for-the-badge&logo=amazonwebservices&logoColor=white" alt="Deploy on AWS" height="34" /></a>
   <a href="./docs/deployment/one-click.md"><img src="https://img.shields.io/badge/Deploy_on-DigitalOcean-0080FF?style=for-the-badge&logo=digitalocean&logoColor=white" alt="Deploy on DigitalOcean" height="34" /></a>
 </p>
 
-**Google Cloud** is one-click today — the button opens Cloud Shell and runs the
-deploy for you. **AWS** (CloudFormation) and **DigitalOcean** open a short guide;
-their fully-hosted buttons land once the CloudFormation template is published to
-S3 and the [DigitalOcean Marketplace image](./deploy/marketplace/digitalocean/README.md)
-is listed. Any provider that takes cloud-init works too — see
+**Google Cloud** and **AWS** are one-click today — Google Cloud opens Cloud Shell
+and runs the deploy, and AWS opens a CloudFormation **Launch Stack** (pick a size,
+then **Create stack**). **DigitalOcean** opens a short guide until its
+[Marketplace image](./deploy/marketplace/digitalocean/README.md) is listed. Any
+provider that takes cloud-init works too — see
 [One-click deploy](./docs/deployment/one-click.md).
 
 > Hezo runs each project's agents in a container on the host Docker socket, so it
