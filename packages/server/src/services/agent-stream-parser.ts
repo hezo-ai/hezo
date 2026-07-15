@@ -122,8 +122,6 @@ function createPassthroughParser(): AgentStreamParser {
 	};
 }
 
-const MAX_LINE_LEN = 500;
-
 /**
  * Shared JSONL line processor. Buffers partial stdout bytes, splits on
  * newlines, and runs each complete line through `renderEvent`. Lines that
@@ -617,7 +615,7 @@ function createCodexParser(price: PriceModelFn): AgentStreamParser {
 
 		if (type === 'error') {
 			const msg = extractErrorMessage(event.error, event.message);
-			return msg ? [`[tool-error] ${truncate(msg.replace(/\s+/g, ' ').trim(), MAX_LINE_LEN)}`] : [];
+			return msg ? [`[tool-error] ${msg.replace(/\s+/g, ' ').trim()}`] : [];
 		}
 
 		return [];
@@ -647,11 +645,11 @@ function renderCodexItem(item: CodexItem): string[] {
 	if (kind === 'command_execution') {
 		const out: string[] = [];
 		const cmd = (item.command ?? '').replace(/\s+/g, ' ').trim();
-		if (cmd) out.push(`[tool] shell(${truncate(cmd, MAX_LINE_LEN)})`);
+		if (cmd) out.push(`[tool] shell(${cmd})`);
 		const output = (item.aggregated_output ?? item.output ?? '').replace(/\s+/g, ' ').trim();
 		if (output) {
 			const isError = typeof item.exit_code === 'number' && item.exit_code !== 0;
-			out.push(`${isError ? '[tool-error]' : '[tool-result]'} ${truncate(output, MAX_LINE_LEN)}`);
+			out.push(`${isError ? '[tool-error]' : '[tool-result]'} ${output}`);
 		}
 		return out;
 	}
@@ -729,7 +727,7 @@ function createGeminiParser(price: PriceModelFn): AgentStreamParser {
 				.replace(/\s+/g, ' ')
 				.trim();
 			const label = event.is_error ? '[tool-error]' : '[tool-result]';
-			return [body ? `${label} ${truncate(body, MAX_LINE_LEN)}` : label];
+			return [body ? `${label} ${body}` : label];
 		}
 
 		if (type === 'result') {
@@ -909,7 +907,7 @@ function createGenericJsonlParser(price: PriceModelFn): AgentStreamParser {
 			typeof event.message === 'string' ? event.message : undefined,
 		);
 		if (/error|fail/i.test(type) && errText) {
-			return [`[tool-error] ${truncate(errText.replace(/\s+/g, ' ').trim(), MAX_LINE_LEN)}`];
+			return [`[tool-error] ${errText.replace(/\s+/g, ' ').trim()}`];
 		}
 
 		if (/reason|think/i.test(type)) {
@@ -1021,7 +1019,7 @@ function createGrokParser(): AgentStreamParser {
 		if (type === 'error') {
 			const msg = extractErrorMessage(undefined, event.message);
 			if (msg) terminalError = classifyRuntimeError(msg) ?? terminalError;
-			return msg ? [`[tool-error] ${truncate(msg.replace(/\s+/g, ' ').trim(), MAX_LINE_LEN)}`] : [];
+			return msg ? [`[tool-error] ${msg.replace(/\s+/g, ' ').trim()}`] : [];
 		}
 		return [];
 	};
@@ -1109,6 +1107,13 @@ export function extractGrokUsageFromDebugLog(
 
 // ---------------------------------------------------------------------------
 // Shared rendering helpers
+//
+// Content (thinking, tool args, tool results, errors) is preserved in full — the
+// only transform is collapsing whitespace to a single space, which the persisted
+// log format requires: each event is stored as one newline-terminated line, so an
+// embedded newline would be mis-parsed as a separate line by the client parser
+// (`parse-agent-log.ts`). It is NOT truncated; the whole run log is recorded, with
+// only the overall byte cap in `log-stream-broker.ts` as a runaway-output backstop.
 // ---------------------------------------------------------------------------
 
 function normalizeContent(content: ClaudeMessage['content']): ClaudeContentBlock[] {
@@ -1120,7 +1125,7 @@ function normalizeContent(content: ClaudeMessage['content']): ClaudeContentBlock
 function formatThinking(text: string): string {
 	const collapsed = text.replace(/\s+/g, ' ').trim();
 	if (collapsed.length === 0) return '[thinking]';
-	return `[thinking] ${truncate(collapsed, MAX_LINE_LEN)}`;
+	return `[thinking] ${collapsed}`;
 }
 
 function formatToolUse(name: string, input: unknown): string {
@@ -1133,8 +1138,7 @@ function renderToolInput(input: unknown): string {
 	if (typeof input !== 'object') return String(input);
 	const entries = Object.entries(input as Record<string, unknown>);
 	if (entries.length === 0) return '';
-	const preview = entries.map(([k, v]) => `${k}=${truncate(stringifyArg(v), 80)}`).join(', ');
-	return truncate(preview, MAX_LINE_LEN);
+	return entries.map(([k, v]) => `${k}=${stringifyArg(v)}`).join(', ');
 }
 
 function stringifyArg(value: unknown): string {
@@ -1151,7 +1155,7 @@ function formatToolResult(block: ClaudeContentBlock): string {
 	const body = extractToolResultText(block.content);
 	const collapsed = body.replace(/\s+/g, ' ').trim();
 	if (collapsed === '') return label;
-	return `${label} ${truncate(collapsed, MAX_LINE_LEN)}`;
+	return `${label} ${collapsed}`;
 }
 
 function extractToolResultText(content: unknown): string {
@@ -1179,9 +1183,4 @@ function extractErrorMessage(
 	if (typeof error === 'string' && error) return error;
 	if (error && typeof error === 'object' && typeof error.message === 'string') return error.message;
 	return typeof fallback === 'string' ? fallback : '';
-}
-
-function truncate(s: string, max: number): string {
-	if (s.length <= max) return s;
-	return `${s.slice(0, max - 1)}…`;
 }

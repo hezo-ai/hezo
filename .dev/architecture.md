@@ -718,7 +718,8 @@ stay on fetch. Before that exec it
 the cached `container_status`: a container pruned externally or lost to a Docker restart is
 reconciled (status flipped, `container_id` nulled, project update broadcast) and the run
 fails fast with a clear message rather than tripping over a raw 404 mid-exec. It captures
-interleaved stdout/stderr into `log_text` (capped at 1 MB, `[stderr]`-prefixed) and
+interleaved stdout/stderr into `log_text` (recorded in full, `[stderr]`-prefixed, with a
+10 MB runaway-output backstop) and
 broadcasts the same stream live over the `project-runs:<projectId>` WebSocket room.
 
 **System prompt composition.** The agent's stored template (its `agent_system_prompt`

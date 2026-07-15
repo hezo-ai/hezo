@@ -234,7 +234,7 @@ test('task page renders completed run as a collapsed inline comment with summary
 	await expect(header).toHaveAttribute('aria-expanded', 'false');
 });
 
-async function mockCompletedRun(page: Page, token: string) {
+async function mockCompletedRun(page: Page, token: string, logTextOverride?: string) {
 	const headers = { Authorization: `Bearer ${token}` };
 
 	const projectRes = await createProjectAndClearPlanning(page, '', token, {
@@ -257,7 +257,8 @@ async function mockCompletedRun(page: Page, token: string) {
 	const runId = '77777777-7777-7777-7777-777777777777';
 	const startedAt = '2026-05-15T18:11:00Z';
 	const finishedAt = '2026-05-15T18:12:17Z';
-	const logText = Array.from({ length: 27 }, (_, i) => `[synthetic] line ${i + 1}`).join('\n');
+	const logText =
+		logTextOverride ?? Array.from({ length: 27 }, (_, i) => `[synthetic] line ${i + 1}`).join('\n');
 
 	const runComment = {
 		id: 'cccc0000-0000-0000-0000-000000000001',
@@ -499,4 +500,58 @@ test('task-page run log offers the formatted/raw switcher on a dark surface in l
 		.getByTestId('run-comment-log')
 		.evaluate((el) => getComputedStyle(el).backgroundColor);
 	expect(rawBg).toBe('rgb(13, 17, 23)');
+});
+
+// #1 (real CSS layout): the formatted view clamps a tall thinking block to 3
+// rendered lines and offers a Show more/less toggle. Whether the block overflows
+// the clamp is a line-box measurement (scrollHeight vs a `line-clamp-3`
+// clientHeight) — happy-dom reports 0 for both, so the toggle only ever appears
+// in a real browser. A single long run-on `[thinking]` line (the untruncated
+// server output — full reasoning is now recorded end-to-end) wraps well past 3
+// lines at any width.
+test('formatted view collapses a long thinking block behind a Show more/less toggle', async ({
+	page,
+}) => {
+	await authenticate(page);
+	const token = await getToken(page);
+
+	const thinking = `[thinking] ${Array.from({ length: 140 }, () => 'deliberating').join(' ')}`;
+	const logText = ['[session] model=claude-opus tools=3', thinking, '[done] success turns=1'].join(
+		'\n',
+	);
+
+	const { task, projectSlug } = await mockCompletedRun(page, token, logText);
+
+	await page.goto(`/projects/${projectSlug}/tasks/${task.id}`);
+
+	const runCommentEl = page.getByTestId('run-comment').first();
+	await expect(runCommentEl).toBeVisible({ timeout: 20_000 });
+	await runCommentEl.getByTestId('run-comment-header').click();
+
+	const log = runCommentEl.getByTestId('run-comment-log');
+	await expect(log).toBeVisible();
+
+	// Formatted view is the default; the thinking block renders inside it.
+	const thinkingBlock = log.getByTestId('thinking-block');
+	await expect(thinkingBlock).toBeVisible({ timeout: 15000 });
+
+	const content = thinkingBlock.getByTestId('thinking-content');
+	const toggle = thinkingBlock.getByTestId('thinking-toggle');
+
+	// Collapsed by default: clamped to 3 lines, offering "Show more".
+	await expect(toggle).toBeVisible();
+	await expect(toggle).toHaveText(/show more/i);
+	const clampedHeight = await content.evaluate((el) => el.clientHeight);
+
+	// Expand → full height, toggle flips to "Show less".
+	await toggle.click();
+	await expect(toggle).toHaveText(/show less/i);
+	const expandedHeight = await content.evaluate((el) => el.clientHeight);
+	expect(expandedHeight).toBeGreaterThan(clampedHeight);
+
+	// Collapse again restores the clamp exactly.
+	await toggle.click();
+	await expect(toggle).toHaveText(/show more/i);
+	const recollapsedHeight = await content.evaluate((el) => el.clientHeight);
+	expect(recollapsedHeight).toBe(clampedHeight);
 });
