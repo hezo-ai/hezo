@@ -714,7 +714,8 @@ describe('read tools', () => {
 			agent_types: Array<{ slug: string }>;
 		}>;
 		const startup = r.find((t) => t.name === 'Startup');
-		expect(startup?.is_builtin).toBe(true);
+		// Startup comes from the marketplace now (non-builtin fixture); Blank is builtin.
+		expect(startup?.is_builtin).toBe(false);
 		expect(startup?.agent_types.map((a) => a.slug)).toContain('engineer');
 	});
 

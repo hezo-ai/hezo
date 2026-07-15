@@ -28,6 +28,7 @@ import { ContainerLogStreamer } from '../../src/services/container-logs';
 import type { DockerClient } from '../../src/services/docker';
 import { JobManager } from '../../src/services/job-manager';
 import { LogStreamBroker } from '../../src/services/log-stream-broker';
+import { getMarketplaceTeam } from '../../src/services/marketplace';
 import {
 	createProjectWithPlanningTask,
 	resolveProjectTaskPrefix,
@@ -36,6 +37,7 @@ import { type CreatedTeamRow, createTeam, seedDefaultTeam } from '../../src/serv
 import { WebSocketManager } from '../../src/services/ws';
 import { buildApp } from '../../src/startup';
 import { createTestDbWithMigrations } from './db';
+import { seedTestStartupTemplate } from './startup-template';
 
 const STUB_DOCKER_METHODS = {
 	ping: async () => true,
@@ -85,6 +87,7 @@ export async function createTestApp(opts: { webUrl?: string; assetStore?: AssetS
 	await masterKeyManager.initialize(db, unlockKeyHex, authKeys.publicKeyHex);
 	const roleDocs = await loadAgentRoles();
 	await seedBuiltins(db, roleDocs);
+	await seedTestStartupTemplate(db);
 	const dataDir = mkdtempSync(join(tmpdir(), 'hezo-test-'));
 	const docker = createStubDocker();
 	const wsManager = new WebSocketManager();
@@ -176,6 +179,7 @@ export async function createUnsetTestApp() {
 	await masterKeyManager.initialize(db);
 	const roleDocs = await loadAgentRoles();
 	await seedBuiltins(db, roleDocs);
+	await seedTestStartupTemplate(db);
 	const dataDir = mkdtempSync(join(tmpdir(), 'hezo-test-'));
 	const docker = createStubDocker();
 	const wsManager = new WebSocketManager();
@@ -499,7 +503,14 @@ export async function createTestProject(
  */
 export async function createTestTeam(
 	db: Db,
-	input: { name: string; description?: string; template_id?: string; creatorUserId?: string },
+	input: {
+		name: string;
+		description?: string;
+		template_id?: string;
+		/** Provision a full roster from a marketplace team def (e.g. 'software-development'). */
+		marketplace_slug?: string;
+		creatorUserId?: string;
+	},
 ): Promise<{ status: 201; json: () => Promise<{ data: CreatedTeamRow }> }> {
 	let creatorUserId = input.creatorUserId;
 	if (creatorUserId === undefined) {
@@ -507,6 +518,12 @@ export async function createTestTeam(
 			'SELECT id FROM users WHERE is_superuser = true ORDER BY created_at LIMIT 1',
 		);
 		creatorUserId = admin.rows[0]?.id;
+	}
+	const marketplaceDef = input.marketplace_slug
+		? ((await getMarketplaceTeam(input.marketplace_slug)) ?? undefined)
+		: undefined;
+	if (input.marketplace_slug && !marketplaceDef) {
+		throw new Error(`Marketplace team "${input.marketplace_slug}" not found in test env`);
 	}
 	const team = await createTeam(
 		{
@@ -518,6 +535,7 @@ export async function createTestTeam(
 			name: input.name.trim(),
 			description: input.description,
 			templateId: input.template_id,
+			marketplaceDef,
 			creatorUserId,
 		},
 	);

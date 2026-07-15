@@ -97,7 +97,19 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_team_templates: {
 		category: 'Projects',
 		returns:
-			'An array of templates (`id`, `name`, `description`, `is_builtin`, `agent_types[]` where each entry has `slug`, `name`, `role_description`).',
+			'An array of local templates (`id`, `name`, `description`, `is_builtin`, `agent_types[]` where each entry has `slug`, `name`, `role_description`). Only the built-in Blank template and custom saved templates appear here — the default specialist rosters live in the marketplace (`get_marketplace_team`).',
+	},
+	get_marketplace_team: {
+		category: 'Projects',
+		returns:
+			'The marketplace team’s `slug`, `name`, `version`, `changelog[]`, `captain` (`system_prompt`, `team_context`), and `roster[]` (each with `slug`, `title`, `reports_to_slug`, `role_description`, `summary`, `team_context`, `system_prompt`). Returns `{ error }` if the slug is unknown.',
+		auth: 'CEO only.',
+	},
+	apply_marketplace_team: {
+		category: 'Projects',
+		returns:
+			'`{ added, refreshed, skipped, captain_updated, version }` — the roster slugs added, refreshed in place (with `refresh_existing`), and skipped. Provisions members directly (no approval flow). Returns `{ error }` if the slug is unknown.',
+		auth: 'CEO only — use only for a team the admin already chose; reconcile the merged roster afterwards.',
 	},
 	update_project_progress: {
 		category: 'Projects',

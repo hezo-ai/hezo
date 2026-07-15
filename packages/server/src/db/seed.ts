@@ -1,9 +1,4 @@
-import {
-	AgentEffort,
-	CEO_AGENT_SLUG,
-	DEFAULT_HEARTBEAT_INTERVAL_MIN,
-	INSTANCE_AGENT_SLUGS,
-} from '@hezo/shared';
+import { AgentEffort, CEO_AGENT_SLUG, DEFAULT_HEARTBEAT_INTERVAL_MIN } from '@hezo/shared';
 import type { Db } from './/database';
 
 interface AgentSummaries {
@@ -32,6 +27,15 @@ interface AgentTypeDef {
 	role_description: string;
 }
 
+/**
+ * The agent types seeded into the binary catalog. Trimmed to the roles that must
+ * always exist without the marketplace: the per-team **Captain** (BUILTIN_AGENT_SLUGS)
+ * and the instance-level **Coach**. The **CEO** is seeded separately below. Every
+ * specialist role (Engineer, Architect, …) now lives in the marketplace team
+ * templates (`marketplace/teams/*.json`) and is provisioned directly from there —
+ * no longer baked into the binary. The Captain's base prompt is the Blank
+ * captain; marketplace teams override it with their own.
+ */
 function buildAgentTypeDefs(): AgentTypeDef[] {
 	return [
 		{
@@ -47,128 +51,6 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			touches_code: false,
 			role_description:
 				'Translates team mission into actionable strategy, delegates work across leadership, and resolves disputes between agents.',
-		},
-		{
-			name: 'Architect',
-			slug: 'architect',
-			reports_to_slug: 'captain',
-			sort_order: 1,
-			// Planning is the core job — always ultrathink.
-			default_effort: AgentEffort.Max,
-			heartbeat_interval_min: DEFAULT_HEARTBEAT_INTERVAL_MIN,
-			run_timeout_min: 60,
-			monthly_budget_cents: 4000,
-			touches_code: false,
-			role_description:
-				'Owns technical vision, translates product requirements into technical specifications, and makes architecture decisions.',
-		},
-		{
-			name: 'Product Lead',
-			slug: 'product-lead',
-			reports_to_slug: 'captain',
-			sort_order: 2,
-			// Scoping/PRD work is planning-heavy.
-			default_effort: AgentEffort.High,
-			heartbeat_interval_min: DEFAULT_HEARTBEAT_INTERVAL_MIN,
-			run_timeout_min: 60,
-			monthly_budget_cents: 3000,
-			touches_code: false,
-			role_description:
-				'Owns product requirements, writes PRDs, manages scope, and ensures development aligns with team mission.',
-		},
-		{
-			name: 'Engineer',
-			slug: 'engineer',
-			reports_to_slug: 'architect',
-			sort_order: 3,
-			// Implementation default — callers/comments can bump to high for tricky work.
-			default_effort: AgentEffort.Medium,
-			heartbeat_interval_min: DEFAULT_HEARTBEAT_INTERVAL_MIN,
-			run_timeout_min: 60,
-			monthly_budget_cents: 5000,
-			touches_code: true,
-			role_description:
-				"Primary implementer who writes code, tests, and documentation based on the Architect's technical specification.",
-		},
-		{
-			name: 'QA Engineer',
-			slug: 'qa-engineer',
-			reports_to_slug: 'architect',
-			sort_order: 4,
-			// Review needs careful thought about correctness and coverage.
-			default_effort: AgentEffort.High,
-			heartbeat_interval_min: DEFAULT_HEARTBEAT_INTERVAL_MIN,
-			run_timeout_min: 60,
-			monthly_budget_cents: 4000,
-			touches_code: true,
-			role_description:
-				'Final approval gate for every ticket, responsible for test coverage, security audits, and code quality.',
-		},
-		{
-			name: 'Security Engineer',
-			slug: 'security-engineer',
-			reports_to_slug: 'architect',
-			sort_order: 5,
-			default_effort: AgentEffort.High,
-			heartbeat_interval_min: DEFAULT_HEARTBEAT_INTERVAL_MIN,
-			run_timeout_min: 60,
-			monthly_budget_cents: 3000,
-			touches_code: true,
-			role_description:
-				'Reviews implementation plans and code for security vulnerabilities, threat models new features, and escalates uncertainties to the admin.',
-		},
-		{
-			name: 'UI Designer',
-			slug: 'ui-designer',
-			reports_to_slug: 'architect',
-			sort_order: 6,
-			default_effort: AgentEffort.Medium,
-			heartbeat_interval_min: DEFAULT_HEARTBEAT_INTERVAL_MIN,
-			run_timeout_min: 60,
-			monthly_budget_cents: 3000,
-			touches_code: true,
-			role_description:
-				'Owns visual and interaction layer, defines component architecture, and creates HTML preview mockups.',
-		},
-		{
-			name: 'DevOps Engineer',
-			slug: 'devops-engineer',
-			reports_to_slug: 'architect',
-			sort_order: 7,
-			default_effort: AgentEffort.Medium,
-			heartbeat_interval_min: DEFAULT_HEARTBEAT_INTERVAL_MIN,
-			run_timeout_min: 60,
-			monthly_budget_cents: 3000,
-			touches_code: true,
-			role_description:
-				'Owns infrastructure and deployment pipeline, manages staging and production environments, and configures CI/CD.',
-		},
-		{
-			name: 'Marketing Lead',
-			slug: 'marketing-lead',
-			reports_to_slug: 'captain',
-			sort_order: 8,
-			default_effort: AgentEffort.Medium,
-			heartbeat_interval_min: DEFAULT_HEARTBEAT_INTERVAL_MIN,
-			run_timeout_min: 60,
-			monthly_budget_cents: 2000,
-			touches_code: false,
-			role_description:
-				'Owns marketing strategy and content creation including blog posts, social media, and public-facing documentation.',
-		},
-		{
-			name: 'Researcher',
-			slug: 'researcher',
-			reports_to_slug: 'captain',
-			sort_order: 9,
-			// Research benefits from deep thinking.
-			default_effort: AgentEffort.High,
-			heartbeat_interval_min: DEFAULT_HEARTBEAT_INTERVAL_MIN,
-			run_timeout_min: 60,
-			monthly_budget_cents: 3000,
-			touches_code: false,
-			role_description:
-				'Conducts competitive analysis, technical research, and feasibility studies to inform strategic decisions.',
 		},
 		{
 			name: 'Coach',
@@ -190,15 +72,18 @@ export async function seedBuiltins(db: Db, roleDocs: Record<string, string>): Pr
 	summaries = (await import('./agent-summaries.json')).default as AgentSummaries;
 	const defs = buildAgentTypeDefs();
 	// The Coach is an instance-level role (like the CEO), so its prompt lives under
-	// _instance/, not in any team template.
-	const role = (slug: string) =>
-		(slug === 'coach'
-			? roleDocs['_instance/coach.md']
-			: roleDocs[`software-development/${slug}.md`]) ?? '';
+	// _instance/. The Captain's base prompt is the Blank captain (the one captain
+	// prompt that stays in the binary); marketplace teams override it per-team.
+	const role = (slug: string) => {
+		if (slug === 'coach') return roleDocs['_instance/coach.md'] ?? '';
+		if (slug === 'captain') return roleDocs['blank/captain.md'] ?? '';
+		return '';
+	};
 
 	const defaultTeamContextFor = (slug: string): string => {
 		if (slug === 'coach') return summaries.team_contexts.builtin?.coach ?? '';
-		return summaries.team_contexts['software-development']?.[slug] ?? '';
+		if (slug === 'captain') return summaries.team_contexts.blank?.captain ?? '';
+		return '';
 	};
 
 	for (const def of defs) {
@@ -275,79 +160,11 @@ export async function seedBuiltins(db: Db, roleDocs: Record<string, string>): Pr
 		],
 	);
 
-	const skillsConfig = [
-		{
-			name: 'Development Workflow',
-			slug: 'development-workflow.md',
-			content: `# Development Workflow
-
-## Task Lifecycle
-
-Tasks progress through these statuses:
-1. **Backlog** — captured but not yet picked up
-2. **In Progress** — actively being worked on
-3. **Review** — implementation complete, awaiting QA review
-4. **Done** — QA-approved and landed, awaiting Coach post-mortem
-5. **Closed** — Coach review complete
-
-Approval is conveyed via comment, not status. From **Review**, the ticket either goes back to **In Progress** (more work needed) or forward to **Done** (work complete and approved). The **Blocked** status is reserved for explicit "I'm stuck" signals; agents and the system also use ticket dependencies to gate runs on prerequisites without setting this status.
-
-## Branching Strategy
-
-<!-- TODO: customize for your repository -->
-
-- Main branch: \`main\`
-- Feature branches: \`feat/<task-id>-short-description\`
-- Bug fix branches: \`fix/<task-id>-short-description\`
-
-## Pull Requests
-
-- Every change requires a PR with a clear description
-- PRs must pass CI checks before merge
-- QA Engineer performs final review before approval
-`,
-		},
-		// Review standards ship as the global `code-review` default skill (see
-		// skills/code-review.md + seedDefaultSkills) — no per-template copy.
-	];
-
-	const startupResult = await db.query<{ id: string }>(
-		`INSERT INTO team_templates (name, description, default_summary, is_builtin, source,
-		                             skills_config)
-		 VALUES ($1, $2, $3, true, 'builtin'::team_template_source, $4::jsonb)
-		 ON CONFLICT (name) DO UPDATE SET
-		     description = EXCLUDED.description,
-		     default_summary = EXCLUDED.default_summary,
-		     skills_config = EXCLUDED.skills_config,
-		     source = EXCLUDED.source
-		 RETURNING id`,
-		[
-			'Startup',
-			'Full-stack software development team with 10 specialized agents and a starter skills database',
-			summaries.teams.Startup ?? '',
-			JSON.stringify(skillsConfig),
-		],
-	);
-	const startupTemplateId = startupResult.rows[0].id;
-
-	// Instance-level agents (CEO, Coach) live in HQ and are never part of a team
-	// template's roster.
-	const templateDefs = defs.filter(
-		(d) => !(INSTANCE_AGENT_SLUGS as readonly string[]).includes(d.slug),
-	);
-	for (const def of templateDefs) {
-		await db.query(
-			`INSERT INTO team_template_agent_types (team_template_id, agent_type_id, reports_to_slug, sort_order)
-			 VALUES ($1, (SELECT id FROM agent_types WHERE slug = $2), $3, $4)
-			 ON CONFLICT (team_template_id, agent_type_id) DO UPDATE SET
-			     reports_to_slug = EXCLUDED.reports_to_slug,
-			     sort_order = EXCLUDED.sort_order`,
-			[startupTemplateId, def.slug, def.reports_to_slug, def.sort_order],
-		);
-	}
-
-	// Coach is an instance-level singleton (seeded in HQ), not part of any team
-	// template — templates carry only the per-team Captain override.
+	// The former built-in "Startup" team template + its specialist roster now live
+	// in the marketplace (`marketplace/teams/software-development.json`), fetched at
+	// runtime and provisioned directly — never seeded as team_templates/agent_types
+	// rows. Only the **Blank** template stays seeded as the always-available
+	// bootstrap fallback (Captain-only, no network required).
 	const blankBuiltinPrompts = {
 		captain: roleDocs['blank/captain.md'] ?? '',
 	};

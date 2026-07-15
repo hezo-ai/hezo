@@ -30,6 +30,11 @@ teamTemplatesRoutes.get('/team-templates', async (c) => {
 		 FROM team_templates ct
 		 LEFT JOIN team_template_agent_types ctat ON ctat.team_template_id = ct.id
 		 LEFT JOIN agent_types at ON at.id = ctat.agent_type_id
+		 -- Built-in team templates other than Blank now live in the marketplace and
+		 -- are never surfaced here. This hides any legacy "Startup" row that a
+		 -- pre-marketplace instance seeded (removing it is FK-unsafe — live agents
+		 -- reference its agent types — so we filter at the API layer instead).
+		 WHERE NOT (ct.is_builtin AND ct.name <> 'Blank')
 		 GROUP BY ct.id
 		 ORDER BY (ct.name = 'Blank') ASC, ct.is_builtin DESC, ct.name ASC`,
 	);

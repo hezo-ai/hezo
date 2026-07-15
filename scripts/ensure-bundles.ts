@@ -18,6 +18,7 @@ const BUNDLES = [
 	'packages/server/src/db/migrations-bundle.json',
 	'packages/server/src/db/agents-bundle.json',
 	'packages/server/src/db/skills-bundle.json',
+	'packages/server/src/db/teams-bundle.json',
 	'packages/server/src/services/docs-bundle.json',
 	'packages/server/src/static-bundle.json',
 	'packages/server/src/docker-bundle.json',

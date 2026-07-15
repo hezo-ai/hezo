@@ -5,6 +5,7 @@ import {
 	HQ_PROJECT_NAME,
 	HQ_PROJECT_SLUG,
 	HQ_PROJECT_TASK_PREFIX,
+	type MarketplaceTeamDef,
 	MemberType,
 } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
@@ -16,6 +17,7 @@ import type { ContainerLogStreamer } from './container-logs';
 import type { DockerClient } from './docker';
 import type { LogStreamBroker } from './log-stream-broker';
 import {
+	applyMarketplaceTeamToTeam,
 	applyTemplateToTeam,
 	ensureBuiltinAgents,
 	ensureInstanceCeo,
@@ -42,6 +44,12 @@ export interface CreateTeamInput {
 	name: string;
 	description?: string;
 	templateId?: string;
+	/**
+	 * A fetched marketplace team def to provision directly (roster + captain
+	 * override + skills) without creating any `team_templates`/`agent_types` rows.
+	 * Mutually exclusive with `templateId`.
+	 */
+	marketplaceDef?: MarketplaceTeamDef;
 	/** Fixed UUID to use as the team's primary key. Defaults to gen_random_uuid(). */
 	id?: string;
 	/** Fixed slug. Defaults to a unique slug derived from name. */
@@ -81,7 +89,8 @@ export async function createTeam(
 					[input.templateId],
 				)
 			: null;
-		const teamSummary = teamSummaryResult?.rows[0]?.default_summary ?? '';
+		const teamSummary =
+			input.marketplaceDef?.summary ?? teamSummaryResult?.rows[0]?.default_summary ?? '';
 
 		const teamResult = input.id
 			? await db.query<{ id: string }>(
@@ -127,6 +136,19 @@ export async function createTeam(
 
 	if (input.templateId) {
 		await applyTemplateToTeam(db, teamId, input.templateId, { dataDir, wsManager });
+	} else if (input.marketplaceDef) {
+		// Seed the plain builtin Captain, then apply the marketplace def (which
+		// overrides the Captain's prompt and adds the rest of the roster + skills).
+		await ensureBuiltinAgents(db, teamId);
+		await applyMarketplaceTeamToTeam(db, teamId, input.marketplaceDef, { dataDir, wsManager });
+		await db.query(
+			`UPDATE teams SET mcp_servers = $1::jsonb, mpp_config = $2::jsonb WHERE id = $3`,
+			[
+				JSON.stringify(input.marketplaceDef.mcp_servers ?? []),
+				JSON.stringify(input.marketplaceDef.mpp_config ?? { enabled: false }),
+				teamId,
+			],
+		);
 	} else {
 		await ensureBuiltinAgents(db, teamId);
 	}

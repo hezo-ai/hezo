@@ -28,10 +28,15 @@ describe('team types CRUD', () => {
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.data.length).toBeGreaterThanOrEqual(1);
-		const builtin = body.data.find((t: Record<string, unknown>) => t.name === 'Startup');
-		expect(builtin).toBeDefined();
-		expect(builtin.is_builtin).toBe(true);
-		expect(builtin.agent_types).toHaveLength(10);
+		// Blank is now the only built-in template surfaced by the API; the specialist
+		// roster ("Startup") comes from the marketplace (seeded here as a test fixture,
+		// non-builtin) rather than being baked into the binary seed.
+		const blank = body.data.find((t: Record<string, unknown>) => t.name === 'Blank');
+		expect(blank).toBeDefined();
+		expect(blank.is_builtin).toBe(true);
+		const startup = body.data.find((t: Record<string, unknown>) => t.name === 'Startup');
+		expect(startup).toBeDefined();
+		expect(startup.agent_types).toHaveLength(10);
 	});
 
 	it('builtin Startup type seeds every agent with a substantive system prompt', async () => {

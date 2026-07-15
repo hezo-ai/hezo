@@ -1,20 +1,21 @@
 import { createHash } from 'node:crypto';
-import { MemberType } from '@hezo/shared';
+import { DocumentType, MemberType } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { deriveSkillSummary } from '../lib/skill-summary';
 import { toSlug } from '../lib/slug';
 import { withTransaction } from '../lib/sql';
 import { logger } from '../logger';
 import { resolveAgentBudgets } from './agent-budget';
-import { initAgentSystemPrompt } from './documents';
+import { initAgentSystemPrompt, upsertDocument } from './documents';
 import { downloadSkillContent, SkillDownloadError } from './skill-downloader';
+import type { WebSocketManager } from './ws';
 
 /**
  * A template skill entry is either inline (carries `content`) or downloaded
  * (carries `source_url`). `name`/`title` are interchangeable for backwards
  * compatibility with older template configs.
  */
-interface TemplateSkillConfig {
+export interface TemplateSkillConfig {
 	name?: string;
 	title?: string;
 	slug?: string;
@@ -35,6 +36,7 @@ interface AgentTypeRow {
 	system_prompt_template: string;
 	default_effort: string;
 	heartbeat_interval_min: number;
+	run_timeout_min: number;
 	monthly_budget_cents: number;
 	touches_code: boolean;
 	reports_to_slug: string | null;
@@ -42,6 +44,32 @@ interface AgentTypeRow {
 	monthly_budget_override: number | null;
 	daily_budget_override: number | null;
 	weekly_budget_override: number | null;
+}
+
+/**
+ * A single roster agent to provision onto a team, with all its config already
+ * resolved. The neutral shape shared by both provisioning sources: DB team
+ * templates (mapped from `AgentTypeRow`, `agent_type_id` set) and marketplace
+ * teams (mapped from the fetched JSON, `agent_type_id` null — like a hired agent).
+ * Array order is the intended provisioning order; `reports_to_slug` references a
+ * sibling roster slug (wired in a second pass).
+ */
+export interface RosterAgentDef {
+	slug: string;
+	title: string;
+	role_description: string;
+	summary: string;
+	team_context: string;
+	system_prompt: string;
+	default_effort: string;
+	heartbeat_interval_min: number;
+	run_timeout_min: number;
+	monthly_budget_cents: number;
+	daily_budget_cents: number;
+	weekly_budget_cents: number;
+	touches_code: boolean;
+	reports_to_slug: string | null;
+	agent_type_id: string | null;
 }
 
 export interface ProvisionTeamTemplateResult {
@@ -55,8 +83,8 @@ async function loadTemplateAgentTypes(db: Db, templateIds: string[]): Promise<Ag
 		const joinRows = await db.query<AgentTypeRow>(
 			`SELECT at.id, at.name, at.slug, at.role_description, at.default_summary,
 			        at.default_team_context, at.system_prompt_template,
-			        at.default_effort, at.heartbeat_interval_min, at.monthly_budget_cents,
-			        at.touches_code,
+			        at.default_effort, at.heartbeat_interval_min, at.run_timeout_min,
+			        at.monthly_budget_cents, at.touches_code,
 			        ctat.reports_to_slug,
 			        ctat.heartbeat_interval_override, ctat.monthly_budget_override,
 				        ctat.daily_budget_override, ctat.weekly_budget_override
@@ -80,6 +108,166 @@ async function loadTemplateAgentTypes(db: Db, templateIds: string[]): Promise<Ag
 	return dedupedRows;
 }
 
+/** Map a DB agent-type join row to the neutral roster shape (budgets/heartbeat resolved). */
+function agentTypeRowToRosterDef(row: AgentTypeRow): RosterAgentDef {
+	const budgets = resolveAgentBudgets(row.monthly_budget_cents, row);
+	return {
+		slug: row.slug,
+		title: row.name,
+		role_description: row.role_description,
+		summary: row.default_summary ?? '',
+		team_context: row.default_team_context ?? '',
+		system_prompt: row.system_prompt_template,
+		default_effort: row.default_effort,
+		heartbeat_interval_min: row.heartbeat_interval_override ?? row.heartbeat_interval_min,
+		run_timeout_min: row.run_timeout_min,
+		monthly_budget_cents: budgets.monthlyBudgetCents,
+		daily_budget_cents: budgets.dailyBudgetCents,
+		weekly_budget_cents: budgets.weeklyBudgetCents,
+		touches_code: row.touches_code ?? false,
+		reports_to_slug: row.reports_to_slug,
+		agent_type_id: row.id,
+	};
+}
+
+/**
+ * Refresh an existing roster member's descriptive fields + system prompt from a
+ * def — used when re-importing a marketplace team the project already has (a
+ * version update). Deliberately leaves operational tuning (effort, budgets,
+ * heartbeat, run timeout, touches_code) as the admin set it; only the
+ * template-authored prose is refreshed.
+ */
+async function refreshRosterAgent(
+	db: Db,
+	teamId: string,
+	memberId: string,
+	def: RosterAgentDef,
+	wsManager?: WebSocketManager,
+): Promise<void> {
+	await db.query(
+		`UPDATE member_agents
+		 SET title = $1, role_description = $2, summary = $3, team_context = $4
+		 WHERE id = $5`,
+		[def.title, def.role_description, def.summary ?? '', def.team_context ?? '', memberId],
+	);
+	await db.query(`UPDATE members SET display_name = $1 WHERE id = $2`, [def.title, memberId]);
+	await upsertDocument(db, wsManager, {
+		scope: { type: DocumentType.AgentSystemPrompt, teamId, memberAgentId: memberId },
+		content: def.system_prompt,
+		changeSummary: 'Refreshed from marketplace team update',
+		authorMemberId: null,
+	});
+}
+
+/**
+ * Insert a roster of agents onto a team and wire their reporting lines. Shared by
+ * the DB-template and marketplace provisioning paths. For a slug the team already
+ * has: with `updateExisting` the member's prose + prompt are refreshed (a version
+ * update); otherwise it is skipped (when `skipExistingSlugs`, default true).
+ * Existing members always contribute their id to the reports_to map. MUST run
+ * inside the caller's transaction. Does not touch `team_template_assignments` or
+ * skills — those stay source-specific.
+ */
+export async function insertRosterAgents(
+	db: Db,
+	teamId: string,
+	roster: RosterAgentDef[],
+	options?: { skipExistingSlugs?: boolean; updateExisting?: boolean; wsManager?: WebSocketManager },
+): Promise<{
+	created_slugs: string[];
+	updated_slugs: string[];
+	skipped_slugs: string[];
+	slugToMemberId: Map<string, string>;
+}> {
+	const skipExistingSlugs = options?.skipExistingSlugs ?? true;
+	const updateExisting = options?.updateExisting ?? false;
+
+	const existingSlugRows = await db.query<{ slug: string; id: string }>(
+		`SELECT ma.slug, ma.id FROM member_agents ma
+		 JOIN members m ON m.id = ma.id
+		 WHERE m.team_id = $1`,
+		[teamId],
+	);
+	const existingSlugToId = new Map(existingSlugRows.rows.map((r) => [r.slug, r.id]));
+
+	const createdSlugs: string[] = [];
+	const updatedSlugs: string[] = [];
+	const skippedSlugs: string[] = [];
+	const slugToMemberId = new Map<string, string>();
+
+	for (const def of roster) {
+		const existingId = existingSlugToId.get(def.slug);
+		if (existingId && updateExisting) {
+			slugToMemberId.set(def.slug, existingId);
+			await refreshRosterAgent(db, teamId, existingId, def, options?.wsManager);
+			updatedSlugs.push(def.slug);
+			continue;
+		}
+		if (skipExistingSlugs && existingId) {
+			skippedSlugs.push(def.slug);
+			slugToMemberId.set(def.slug, existingId);
+			continue;
+		}
+
+		const memberResult = await db.query<{ id: string }>(
+			`INSERT INTO members (team_id, member_type, display_name)
+			 VALUES ($1, $2, $3)
+			 RETURNING id`,
+			[teamId, MemberType.Agent, def.title],
+		);
+		const memberId = memberResult.rows[0].id;
+		slugToMemberId.set(def.slug, memberId);
+		createdSlugs.push(def.slug);
+
+		await db.query(
+			`INSERT INTO member_agents (id, agent_type_id, title, slug, role_description, summary,
+			                            team_context,
+			                            default_effort, heartbeat_interval_min, run_timeout_min,
+			                            monthly_budget_cents, daily_budget_cents, weekly_budget_cents,
+			                            touches_code)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::agent_effort, $9, $10, $11, $12, $13, $14)`,
+			[
+				memberId,
+				def.agent_type_id,
+				def.title,
+				def.slug,
+				def.role_description,
+				def.summary ?? '',
+				def.team_context ?? '',
+				def.default_effort,
+				def.heartbeat_interval_min,
+				def.run_timeout_min,
+				def.monthly_budget_cents,
+				def.daily_budget_cents,
+				def.weekly_budget_cents,
+				def.touches_code ?? false,
+			],
+		);
+
+		await initAgentSystemPrompt(db, teamId, memberId, def.system_prompt, null);
+	}
+
+	for (const def of roster) {
+		if (def.reports_to_slug && def.reports_to_slug !== 'admin') {
+			const reportsToId = slugToMemberId.get(def.reports_to_slug);
+			const memberId = slugToMemberId.get(def.slug);
+			if (reportsToId && memberId) {
+				await db.query('UPDATE member_agents SET reports_to = $1 WHERE id = $2', [
+					reportsToId,
+					memberId,
+				]);
+			}
+		}
+	}
+
+	return {
+		created_slugs: createdSlugs,
+		updated_slugs: updatedSlugs,
+		skipped_slugs: skippedSlugs,
+		slugToMemberId,
+	};
+}
+
 async function loadTemplateSkills(db: Db, templateId: string): Promise<TemplateSkillConfig[]> {
 	const result = await db.query<{ skills_config: TemplateSkillConfig[] }>(
 		'SELECT skills_config FROM team_templates WHERE id = $1',
@@ -93,16 +281,13 @@ function templateSkillName(skill: TemplateSkillConfig): string {
 }
 
 /**
- * Provision the template's inline skills (those carrying `content`) directly
- * into the team's skills database. No network — safe to run inside the
- * provisioning transaction.
+ * Provision inline skills (those carrying `content`) directly into the global
+ * skills database. No network — safe to run inside a provisioning transaction.
  */
-async function createInlineSkillsFromTemplate(
+export async function createInlineSkillsFromArray(
 	db: Db,
-	teamId: string,
-	templateId: string,
+	skills: TemplateSkillConfig[],
 ): Promise<void> {
-	const skills = await loadTemplateSkills(db, templateId);
 	for (const skill of skills) {
 		if (!skill.content) continue;
 		const name = templateSkillName(skill);
@@ -120,16 +305,13 @@ async function createInlineSkillsFromTemplate(
 }
 
 /**
- * Provision the template's downloaded skills (those carrying `source_url`) by
- * fetching each from its source. Runs outside the transaction because it makes
- * network calls.
+ * Provision downloaded skills (those carrying `source_url`) by fetching each from
+ * its source. Runs outside the transaction because it makes network calls.
  */
-export async function createSkillsFromTemplate(
+export async function downloadSkillsFromArray(
 	db: Db,
-	teamId: string,
-	templateId: string,
+	skills: TemplateSkillConfig[],
 ): Promise<void> {
-	const skills = await loadTemplateSkills(db, templateId);
 	for (const skill of skills) {
 		if (!skill.source_url) continue;
 		const name = templateSkillName(skill);
@@ -154,6 +336,16 @@ export async function createSkillsFromTemplate(
 	}
 }
 
+/** Back-compat wrapper: provision a DB template's inline skills. */
+async function createInlineSkillsFromTemplate(db: Db, templateId: string): Promise<void> {
+	await createInlineSkillsFromArray(db, await loadTemplateSkills(db, templateId));
+}
+
+/** Provision a DB template's downloaded skills. Runs outside the transaction. */
+export async function createSkillsFromTemplate(db: Db, templateId: string): Promise<void> {
+	await downloadSkillsFromArray(db, await loadTemplateSkills(db, templateId));
+}
+
 /**
  * Adds agents (and optional inline/downloaded skills) from a team template onto an existing team.
  * Skips agent slugs that already exist when skipExistingSlugs is true (default).
@@ -166,99 +358,30 @@ export async function provisionTeamTemplate(
 ): Promise<ProvisionTeamTemplateResult> {
 	const skipExistingSlugs = options?.skipExistingSlugs ?? true;
 	const dedupedRows = await loadTemplateAgentTypes(db, [templateId]);
+	const roster = dedupedRows.map(agentTypeRowToRosterDef);
 
-	const existingSlugRows = await db.query<{ slug: string }>(
-		`SELECT ma.slug FROM member_agents ma
-		 JOIN members m ON m.id = ma.id
-		 WHERE m.team_id = $1`,
-		[teamId],
-	);
-	const existingSlugs = new Set(existingSlugRows.rows.map((r) => r.slug));
-
-	const createdSlugs: string[] = [];
-	const skippedSlugs: string[] = [];
-	const slugToMemberId = new Map<string, string>();
+	let result: { created_slugs: string[]; skipped_slugs: string[] } = {
+		created_slugs: [],
+		skipped_slugs: [],
+	};
 
 	await withTransaction(db, async () => {
-		for (const row of dedupedRows) {
-			if (skipExistingSlugs && existingSlugs.has(row.slug)) {
-				skippedSlugs.push(row.slug);
-				const existing = await db.query<{ id: string }>(
-					`SELECT ma.id FROM member_agents ma
-				 JOIN members m ON m.id = ma.id
-				 WHERE m.team_id = $1 AND ma.slug = $2`,
-					[teamId, row.slug],
-				);
-				if (existing.rows[0]) slugToMemberId.set(row.slug, existing.rows[0].id);
-				continue;
-			}
-
-			const heartbeat = row.heartbeat_interval_override ?? row.heartbeat_interval_min;
-			const budgets = resolveAgentBudgets(row.monthly_budget_cents, row);
-
-			const memberResult = await db.query<{ id: string }>(
-				`INSERT INTO members (team_id, member_type, display_name)
-			 VALUES ($1, $2, $3)
-			 RETURNING id`,
-				[teamId, MemberType.Agent, row.name],
-			);
-			const memberId = memberResult.rows[0].id;
-			slugToMemberId.set(row.slug, memberId);
-			createdSlugs.push(row.slug);
-
-			await db.query(
-				`INSERT INTO member_agents (id, agent_type_id, title, slug, role_description, summary,
-			                            team_context,
-			                            default_effort, heartbeat_interval_min, monthly_budget_cents,
-			                            daily_budget_cents, weekly_budget_cents,
-			                            touches_code)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::agent_effort, $9, $10, $11, $12, $13)`,
-				[
-					memberId,
-					row.id,
-					row.name,
-					row.slug,
-					row.role_description,
-					row.default_summary ?? '',
-					row.default_team_context ?? '',
-					row.default_effort,
-					heartbeat,
-					budgets.monthlyBudgetCents,
-					budgets.dailyBudgetCents,
-					budgets.weeklyBudgetCents,
-					row.touches_code ?? false,
-				],
-			);
-
-			await initAgentSystemPrompt(db, teamId, memberId, row.system_prompt_template, null);
-		}
-
-		for (const row of dedupedRows) {
-			if (row.reports_to_slug && row.reports_to_slug !== 'admin') {
-				const reportsToId = slugToMemberId.get(row.reports_to_slug);
-				const memberId = slugToMemberId.get(row.slug);
-				if (reportsToId && memberId) {
-					await db.query('UPDATE member_agents SET reports_to = $1 WHERE id = $2', [
-						reportsToId,
-						memberId,
-					]);
-				}
-			}
-		}
+		const inserted = await insertRosterAgents(db, teamId, roster, { skipExistingSlugs });
+		result = { created_slugs: inserted.created_slugs, skipped_slugs: inserted.skipped_slugs };
 
 		await db.query(
 			`INSERT INTO team_template_assignments (team_id, team_template_id)
-		 VALUES ($1, $2)
-		 ON CONFLICT DO NOTHING`,
+			 VALUES ($1, $2)
+			 ON CONFLICT DO NOTHING`,
 			[teamId, templateId],
 		);
 
-		await createInlineSkillsFromTemplate(db, teamId, templateId);
+		await createInlineSkillsFromTemplate(db, templateId);
 	});
 
 	if (options?.dataDir) {
-		await createSkillsFromTemplate(db, teamId, templateId);
+		await createSkillsFromTemplate(db, templateId);
 	}
 
-	return { created_slugs: createdSlugs, skipped_slugs: skippedSlugs };
+	return result;
 }

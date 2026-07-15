@@ -72,6 +72,10 @@ await Promise.all([
 		await run('packages/server', ['bun', 'run', 'build:migrations']);
 		await run('packages/server', ['bun', 'run', 'build:agents']);
 		await run('packages/server', ['bun', 'run', 'build:skills']);
+		// Embed the committed marketplace team templates as the offline snapshot
+		// (read-only bundle step; build:marketplace regenerates the committed JSONs
+		// and is run by authors / bun run dev, not in CI where it would dirty the tree).
+		await run('packages/server', ['bun', 'run', 'build:teams']);
 		await run('packages/server', ['bun', 'run', 'build:docs']);
 	})(),
 	run('packages/web', ['bun', 'run', 'build']),

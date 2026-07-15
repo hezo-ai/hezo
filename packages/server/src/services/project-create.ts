@@ -2,6 +2,7 @@ import {
 	AgentAdminStatus,
 	type AuditActorType,
 	CAPTAIN_AGENT_SLUG,
+	type MarketplaceTeamDef,
 	TaskPriority,
 	TaskStatus,
 	WakeupSource,
@@ -17,6 +18,7 @@ import { allocateTaskIdentifier } from '../lib/task-identifier';
 import { logger } from '../logger';
 import { type ContainerDeps, type ProjectRow, provisionContainer } from './containers';
 import { enqueueTeamCoherenceReviewTask } from './description-tasks';
+import { getMarketplaceTeam } from './marketplace';
 import { snapshotTeamAsTemplate } from './team-template-snapshot';
 import { type CreatedTeamRow, createTeam } from './teams';
 import { createWakeup } from './wakeup';
@@ -394,6 +396,11 @@ export interface CreateProjectWithTeamInput {
 	templateId?: string;
 	/** Existing team to clone (snapshotted into a fresh template); mutually exclusive with templateId. */
 	sourceTeamId?: string;
+	/**
+	 * A marketplace team slug to provision the roster from directly (no
+	 * `team_templates` row created); mutually exclusive with templateId/sourceTeamId.
+	 */
+	marketplaceSlug?: string;
 	taskPrefix?: string;
 	initialProjectPlan?: string | null;
 	dockerBaseImage?: string;
@@ -463,17 +470,41 @@ export async function createProjectWithTeam(
 		};
 	}
 
-	const templateResult = await resolveCreationTemplate(db, {
-		templateId: input.templateId,
-		sourceTeamId: input.sourceTeamId,
-		description,
-	});
-	if (!templateResult.ok) return templateResult;
+	let templateId: string | undefined;
+	let marketplaceDef: MarketplaceTeamDef | undefined;
+	if (input.marketplaceSlug?.trim()) {
+		if (input.templateId || input.sourceTeamId) {
+			return {
+				ok: false,
+				code: 'INVALID_REQUEST',
+				message: 'Provide only one of marketplace_slug, template_id, or source_team_id',
+				status: 400,
+			};
+		}
+		marketplaceDef = (await getMarketplaceTeam(input.marketplaceSlug.trim())) ?? undefined;
+		if (!marketplaceDef) {
+			return {
+				ok: false,
+				code: 'NOT_FOUND',
+				message: `Marketplace team "${input.marketplaceSlug.trim()}" not found`,
+				status: 404,
+			};
+		}
+	} else {
+		const templateResult = await resolveCreationTemplate(db, {
+			templateId: input.templateId,
+			sourceTeamId: input.sourceTeamId,
+			description,
+		});
+		if (!templateResult.ok) return templateResult;
+		templateId = templateResult.templateId;
+	}
 
 	const team = await createTeam(deps, {
 		name,
 		description,
-		templateId: templateResult.templateId,
+		templateId,
+		marketplaceDef,
 		creatorUserId: input.creatorUserId,
 	});
 

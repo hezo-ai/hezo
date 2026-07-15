@@ -126,6 +126,7 @@ import {
 	prepareHireProposal,
 } from '../services/hire-proposal';
 import { insertHireProposalComment } from '../services/hire-proposal-comment';
+import { getMarketplaceTeam } from '../services/marketplace';
 import { createProjectWithTeam } from '../services/project-create';
 import { completeProjectIntakeAfterProvisioning } from '../services/project-intake';
 import { ProjectProgressError, updateProjectProgress } from '../services/projects';
@@ -146,6 +147,7 @@ import {
 	createTaskBatch,
 	TASK_COLUMNS_BARE,
 } from '../services/tasks';
+import { applyMarketplaceTeamToTeam } from '../services/team-template-apply';
 import { resolveSystemPrompt } from '../services/template-resolver';
 import { createWakeup } from '../services/wakeup';
 import type { WebSocketManager } from '../services/ws';
@@ -1969,7 +1971,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_team_templates',
-		'List team templates (built-in Startup for software development, Blank, and custom). Use when recommending a team structure to hire.',
+		'List local team templates: the built-in Blank template plus any custom templates saved from existing teams. The default specialist rosters (e.g. the software-development "Startup" team) live in the marketplace, not here. Use when recommending a team structure to hire.',
 		{},
 		async (_args, db) => {
 			const r = await db.query<{
@@ -1991,10 +1993,96 @@ export function registerTools(
 				 FROM team_templates ct
 				 LEFT JOIN team_template_agent_types ctat ON ctat.team_template_id = ct.id
 				 LEFT JOIN agent_types at ON at.id = ctat.agent_type_id
+				 -- Built-in templates other than Blank now live in the marketplace and are
+				 -- never surfaced here (parallels GET /api/team-templates); a legacy seeded
+				 -- "Startup" row on a pre-marketplace instance is filtered out.
+				 WHERE NOT (ct.is_builtin AND ct.name <> 'Blank')
 				 GROUP BY ct.id
 				 ORDER BY ct.is_builtin DESC, ct.name ASC`,
 			);
 			return r.rows;
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'get_marketplace_team',
+		"Fetch one marketplace team's full definition: its version, changelog, and every role's title, reporting line, and CURRENT system prompt (including the Captain override). CEO-only. Use this when adding/updating a team so you can compare the marketplace's prompts to the agents you already have and decide what to refresh.",
+		{
+			slug: z.string().describe('The marketplace team slug (e.g. "software-development").'),
+		},
+		async (args, _db) => {
+			const slug = String(args.slug ?? '').trim();
+			if (!slug) return { error: '`slug` is required' };
+			const teamDef = await getMarketplaceTeam(slug);
+			if (!teamDef) return { error: `Marketplace team "${slug}" not found` };
+			return {
+				slug: teamDef.slug,
+				name: teamDef.name,
+				version: teamDef.version,
+				changelog: teamDef.changelog,
+				captain: teamDef.captain,
+				roster: teamDef.roster.map((r) => ({
+					slug: r.slug,
+					title: r.title,
+					reports_to_slug: r.reports_to_slug,
+					role_description: r.role_description,
+					summary: r.summary,
+					team_context: r.team_context,
+					system_prompt: r.system_prompt,
+				})),
+			};
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'apply_marketplace_team',
+		"Add or update a marketplace team's roster on a project's team. CEO-only. Fetches the named marketplace team and provisions its members directly onto the project's existing team — a direct add, not an approval-gated hire proposal, so use it only for a team the admin already chose. Roles the team already has are SKIPPED by default; pass refresh_existing=true to instead refresh those roles' descriptions and system prompts to this team's current versions (use this when the project was created from an earlier version of THIS SAME team — it is a version update, not a duplicate add). refresh_existing overwrites prompts, so before using it on roles that may carry local customizations, read them (get_agent_system_prompt) and the new versions (get_marketplace_team) and refresh selectively with update_agent_system_prompt instead. After it returns, reconcile the merged roster. Returns the roles added, refreshed, and skipped.",
+		{
+			project: projectArg(),
+			slug: z.string().describe('The marketplace team slug to add (e.g. "software-development").'),
+			refresh_existing: z
+				.boolean()
+				.optional()
+				.describe(
+					"When true, refresh roles the team already has to this team's current prompts/descriptions instead of skipping them. Default false. Use for a version update of the same team; prefer selective update_agent_system_prompt when roles carry customizations.",
+				),
+		},
+		async (args, db, auth) => {
+			// CEO-only: this is the tool the add-marketplace-team CEO task calls.
+			if (auth.type === AuthType.Agent) {
+				const caller = await db.query<{ slug: string }>(
+					'SELECT slug FROM member_agents WHERE id = $1',
+					[auth.memberId],
+				);
+				if (caller.rows[0]?.slug !== CEO_AGENT_SLUG) {
+					return { error: 'Only the CEO can add a marketplace team' };
+				}
+			}
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+
+			const slug = String(args.slug ?? '').trim();
+			if (!slug) return { error: '`slug` is required' };
+			const teamDef = await getMarketplaceTeam(slug);
+			if (!teamDef) return { error: `Marketplace team "${slug}" not found` };
+
+			const result = await applyMarketplaceTeamToTeam(db, scope.teamId, teamDef, {
+				dataDir,
+				wsManager,
+				enqueueReconcile: false,
+				refreshExisting: args.refresh_existing === true,
+			});
+			return {
+				added: result.created_slugs,
+				refreshed: result.updated_slugs ?? [],
+				skipped: result.skipped_slugs,
+				captain_updated: result.builtin_updated_slugs.length > 0,
+				version: teamDef.version,
+			};
 		},
 		db,
 	);

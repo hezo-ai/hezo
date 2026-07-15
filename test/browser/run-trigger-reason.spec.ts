@@ -2,7 +2,6 @@ import { expect, type Page, test } from '@playwright/test';
 import {
 	authenticate,
 	createProjectReadyForAgents,
-	getTemplateIdByName,
 	getToken,
 	waitForAgentIdle,
 	waitForCaptainIdle,
@@ -31,11 +30,10 @@ async function createStartupProject(
 	token: string,
 	name: string,
 ): Promise<ReadyProject> {
-	const templateId = await getTemplateIdByName(page, token, 'Startup');
 	return (await createProjectReadyForAgents(page, { id: '', slug: '' }, token, {
 		name,
 		description: 'Test project.',
-		template_id: templateId,
+		marketplace_slug: 'software-development',
 	})) as unknown as ReadyProject;
 }
 

@@ -3,6 +3,7 @@ export * from './constants.js';
 export * from './credentials/suggest-allowed-hosts.js';
 export * from './crypto/auth.js';
 export * from './crypto/mnemonic.js';
+export * from './marketplace.js';
 export * from './mentions/index.js';
 export * from './pricing.js';
 export * from './system-prompt-vars.js';
