@@ -27,7 +27,10 @@ interface LogStreamEntry {
 	ended: boolean;
 }
 
-const DEFAULT_CAP_BYTES = 1_000_000;
+// Backstop against a runaway run flooding memory/DB — not a content truncation.
+// Sized generously so a whole real run's log (full, untruncated thinking/tool
+// output; see agent-stream-parser.ts) is recorded end-to-end without the cap firing.
+const DEFAULT_CAP_BYTES = 10_000_000;
 const DEFAULT_DEBOUNCE_MS = 500;
 
 export class LogStreamBroker {

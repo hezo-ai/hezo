@@ -87,6 +87,21 @@ test('thinking block renders the Thinking header and reflowed prose', async () =
 	expect(item.closest('li')).not.toBeNull();
 });
 
+test('thinking block renders whole with no Show more toggle when it does not overflow', async () => {
+	// happy-dom reports 0 for scroll/clientHeight, so the clamp measurement never
+	// detects overflow — the block degrades to its full content with no toggle and
+	// no line-clamp. The clamp/expand behaviour itself is a real-browser concern
+	// (see agent-run-logs.spec.ts).
+	const long = Array.from({ length: 60 }, () => 'reasoning').join(' ');
+	const { getByText, queryByTestId, getByTestId } = await renderLog({
+		lines: lines(`[thinking] ${long}`),
+	});
+	expect(getByText('Thinking')).toBeTruthy();
+	expect(getByText(new RegExp(long.slice(0, 40)))).toBeTruthy();
+	expect(queryByTestId('thinking-toggle')).toBeNull();
+	expect(getByTestId('thinking-content').className).not.toContain('line-clamp-3');
+});
+
 test('command block: a short command is non-interactive (no chevron, cursor-default)', async () => {
 	const { getByRole, queryByText } = await renderLog({ lines: lines('$ ls -la') });
 	const btn = getByRole('button');

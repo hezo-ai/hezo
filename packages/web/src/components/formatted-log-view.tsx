@@ -1,5 +1,5 @@
 import { Boxes, ChevronDown, ChevronRight, Cpu, Sparkles, Terminal, Wrench } from 'lucide-react';
-import { type ComponentType, useMemo, useState } from 'react';
+import { type ComponentType, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
@@ -182,6 +182,9 @@ const THINKING_COMPONENTS: Components = {
 const THINKING_PROSE =
 	'text-xs italic leading-relaxed [&_ol]:list-decimal [&_ul]:list-disc [&_ol]:pl-5 [&_ul]:pl-5 [&_li]:my-0.5 [&_p]:my-1 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 [&_li]:marker:text-text-3';
 
+// Thinking blocks are often long run-on reasoning. Collapse anything taller than
+// 3 rendered lines (the `line-clamp-3` below) behind a Show more/less toggle so the
+// log stays scannable; blocks that fit in 3 lines are shown whole with no toggle.
 function ThinkingView({
 	block,
 	commentRefTask,
@@ -194,13 +197,57 @@ function ThinkingView({
 		() => (commentRefTask ? [remarkGfm, [remarkCommentRefs, commentRefTask]] : [remarkGfm]),
 		[commentRefTask],
 	);
+
+	const [expanded, setExpanded] = useState(false);
+	const [overflows, setOverflows] = useState(false);
+	const contentRef = useRef<HTMLDivElement>(null);
+
+	// Measure whether the block exceeds the clamp height. Clamp is applied
+	// transiently for the read so the result is independent of the current
+	// expanded state; a ResizeObserver re-measures on reflow (responsive widths).
+	// happy-dom reports 0 for scroll/clientHeight, so component tests see no
+	// overflow and render the block whole — the clamp is verified in a browser.
+	useLayoutEffect(() => {
+		const el = contentRef.current;
+		// Re-measure whenever the rendered content (`reflowed`) changes; empty
+		// thinking can never overflow, so it never gets a toggle.
+		if (!el || reflowed.trim() === '') {
+			setOverflows(false);
+			return;
+		}
+		const measure = () => {
+			const wasClamped = el.classList.contains('line-clamp-3');
+			if (!wasClamped) el.classList.add('line-clamp-3');
+			const isOverflowing = el.scrollHeight > el.clientHeight + 1;
+			if (!wasClamped) el.classList.remove('line-clamp-3');
+			setOverflows(isOverflowing);
+		};
+		measure();
+		if (typeof ResizeObserver === 'undefined') return;
+		const observer = new ResizeObserver(measure);
+		observer.observe(el);
+		return () => observer.disconnect();
+	}, [reflowed]);
+
+	// If the content shrinks below the clamp height (e.g. a narrower reflow), drop
+	// the now-meaningless expanded state so the toggle disappears cleanly.
+	useEffect(() => {
+		if (!overflows && expanded) setExpanded(false);
+	}, [overflows, expanded]);
+
+	const clamp = overflows && !expanded;
+
 	return (
-		<div className="border-l-2 border-border-subtle pl-3 text-text-3">
+		<div className="border-l-2 border-border-subtle pl-3 text-text-3" data-testid="thinking-block">
 			<div className="mb-0.5 flex items-center gap-1 text-[10px] uppercase tracking-wider">
 				<Sparkles className="w-3 h-3 shrink-0" />
 				Thinking
 			</div>
-			<div className={THINKING_PROSE}>
+			<div
+				ref={contentRef}
+				data-testid="thinking-content"
+				className={`${THINKING_PROSE} ${clamp ? 'line-clamp-3' : ''}`}
+			>
 				<Markdown
 					remarkPlugins={remarkPlugins}
 					components={commentRefTask ? THINKING_COMPONENTS : undefined}
@@ -208,6 +255,18 @@ function ThinkingView({
 					{reflowed}
 				</Markdown>
 			</div>
+			{overflows && (
+				<button
+					type="button"
+					onClick={() => setExpanded((v) => !v)}
+					aria-expanded={expanded}
+					data-testid="thinking-toggle"
+					className="mt-1 flex items-center gap-0.5 text-[10px] uppercase tracking-wider text-text-3 hover:text-text-2"
+				>
+					<ChevronDown className={`w-3 h-3 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+					{expanded ? 'Show less' : 'Show more'}
+				</button>
+			)}
 		</div>
 	);
 }

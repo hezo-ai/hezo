@@ -12,7 +12,7 @@ import {
  * agent-stream-parser-coverage.test.ts cover the happy paths; this file
  * targets the remaining conditional arms: ??/||/?: fallbacks, optional-chain
  * short-circuits, the loose generic-parser field probes, and the shared
- * rendering helpers (renderToolInput / stringifyArg / truncate / etc.) at
+ * rendering helpers (renderToolInput / stringifyArg / formatThinking / etc.) at
  * their edges. Pure functions — we feed crafted JSONL and assert exact output.
  */
 
@@ -556,19 +556,20 @@ describe('renderToolInput / stringifyArg arms', () => {
 		expect(out).toContain('nums=[1,2]');
 	});
 
-	it('truncates a long per-argument value to 80 chars with an ellipsis', () => {
+	it('keeps a long per-argument value in full (no truncation, no ellipsis)', () => {
 		const parser = createAgentStreamParser(AgentRuntime.Gemini);
-		const long = 'x'.repeat(200);
+		const long = 'x'.repeat(2000);
 		const out = feed(parser, [{ type: 'tool_use', name: 'big', input: { v: long } }]);
-		// value truncated to 79 chars + ellipsis.
-		expect(out).toContain(`v=${'x'.repeat(79)}…`);
+		// The whole value is recorded verbatim; nothing is clipped.
+		expect(out).toContain(`v=${long}`);
+		expect(out).not.toContain('…');
 	});
 });
 
-describe('truncate via the overall line cap (MAX_LINE_LEN)', () => {
-	it('truncates a long collapsed thinking line to 500 chars with an ellipsis', () => {
+describe('full-length lines (no per-line cap — the whole run log is recorded)', () => {
+	it('keeps a long collapsed thinking line in full without an ellipsis', () => {
 		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
-		const long = 'z'.repeat(800);
+		const long = 'z'.repeat(8000);
 		const out = feed(parser, [
 			{
 				type: 'assistant',
@@ -576,8 +577,17 @@ describe('truncate via the overall line cap (MAX_LINE_LEN)', () => {
 			},
 		]);
 		const body = out.replace('[thinking] ', '').trimEnd();
-		expect(body.length).toBe(500);
-		expect(body.endsWith('…')).toBe(true);
+		expect(body).toBe(long);
+		expect(body).not.toContain('…');
+	});
+
+	it('keeps a long tool result in full without an ellipsis', () => {
+		const parser = createAgentStreamParser(AgentRuntime.Gemini);
+		const long = 'result-'.repeat(1000);
+		const out = feed(parser, [{ type: 'tool_result', output: long, is_error: false }]);
+		const body = out.replace('[tool-result] ', '').trimEnd();
+		expect(body).toBe(long);
+		expect(body).not.toContain('…');
 	});
 });
 
