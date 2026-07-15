@@ -263,6 +263,7 @@ export async function createProjectAndClearPlanning(
 		initial_project_plan?: string;
 		task_prefix?: string;
 		template_id?: string;
+		marketplace_slug?: string;
 	},
 ) {
 	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
@@ -327,7 +328,7 @@ export async function createProjectReadyForAgents(
 	page: Page,
 	team: { id: string; slug: string },
 	token: string,
-	data: { name: string; description?: string; template_id?: string },
+	data: { name: string; description?: string; template_id?: string; marketplace_slug?: string },
 ) {
 	const project = await createProjectAndClearPlanning(page, team.slug, token, data);
 	await waitForProjectContainer(page, project.id, token);
@@ -407,9 +408,10 @@ type CreatedProject = {
 /**
  * Create a workspace: under 1:1 teams↔projects a "workspace" is a team WITH its
  * single project. We provision both in one shot via `POST /api/projects` (which
- * stands up a fresh team from the chosen template, plus its project + planning
- * task), then close the planning task so it doesn't race agent runs. The Startup
- * template seeds the full agent roster.
+ * stands up a fresh team, plus its project + planning task), then close the
+ * planning task so it doesn't race agent runs. The full "Startup" roster now
+ * comes from the marketplace (`software-development`); "Blank" is still a seeded
+ * template resolved by name.
  */
 async function createWorkspaceProject(
 	page: Page,
@@ -417,14 +419,17 @@ async function createWorkspaceProject(
 	opts: { templateName: string; namePrefix: string },
 ): Promise<CreatedProject> {
 	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-	const templateId = await getTemplateIdByName(page, token, opts.templateName);
 	const uid = `${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
+	const source =
+		opts.templateName === 'Startup'
+			? { marketplace_slug: 'software-development' }
+			: { template_id: await getTemplateIdByName(page, token, opts.templateName) };
 	const res = await page.request.post('/api/projects', {
 		headers,
 		data: {
 			name: `${opts.namePrefix} ${uid}`,
 			description: 'Created via e2e workspace helper.',
-			template_id: templateId,
+			...source,
 		},
 	});
 	if (!res.ok()) {
