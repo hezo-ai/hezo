@@ -152,11 +152,45 @@ Kick off the initial team-coherence/setup run for a project you created via crea
 
 _Read-only._
 
-List team templates (built-in Startup for software development, Blank, and custom). Use when recommending a team structure to hire.
+List local team templates: the built-in Blank template plus any custom templates saved from existing teams. The default specialist rosters (e.g. the software-development "Startup" team) live in the marketplace, not here. Use when recommending a team structure to hire.
 
 **Parameters:** none.
 
-**Returns:** An array of templates (`id`, `name`, `description`, `is_builtin`, `agent_types[]` where each entry has `slug`, `name`, `role_description`).
+**Returns:** An array of local templates (`id`, `name`, `description`, `is_builtin`, `agent_types[]` where each entry has `slug`, `name`, `role_description`). Only the built-in Blank template and custom saved templates appear here — the default specialist rosters live in the marketplace (`get_marketplace_team`).
+
+### `get_marketplace_team`
+
+_Read-only._
+
+Fetch one marketplace team's full definition: its version, changelog, and every role's title, reporting line, and CURRENT system prompt (including the Captain override). CEO-only. Use this when adding/updating a team so you can compare the marketplace's prompts to the agents you already have and decide what to refresh.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `slug` | `string` | Yes | The marketplace team slug (e.g. "software-development"). |
+
+**Returns:** The marketplace team’s `slug`, `name`, `version`, `changelog[]`, `captain` (`system_prompt`, `team_context`), and `roster[]` (each with `slug`, `title`, `reports_to_slug`, `role_description`, `summary`, `team_context`, `system_prompt`). Returns `{ error }` if the slug is unknown.
+
+**Authorization:** CEO only.
+
+### `apply_marketplace_team`
+
+_Read-only._
+
+Add or update a marketplace team's roster on a project's team. CEO-only. Fetches the named marketplace team and provisions its members directly onto the project's existing team — a direct add, not an approval-gated hire proposal, so use it only for a team the admin already chose. Roles the team already has are SKIPPED by default; pass refresh_existing=true to instead refresh those roles' descriptions and system prompts to this team's current versions (use this when the project was created from an earlier version of THIS SAME team — it is a version update, not a duplicate add). refresh_existing overwrites prompts, so before using it on roles that may carry local customizations, read them (get_agent_system_prompt) and the new versions (get_marketplace_team) and refresh selectively with update_agent_system_prompt instead. After it returns, reconcile the merged roster. Returns the roles added, refreshed, and skipped.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `slug` | `string` | Yes | The marketplace team slug to add (e.g. "software-development"). |
+| `refresh_existing` | `boolean` | No | When true, refresh roles the team already has to this team's current prompts/descriptions instead of skipping them. Default false. Use for a version update of the same team; prefer selective update_agent_system_prompt when roles carry customizations. |
+
+**Returns:** `{ added, refreshed, skipped, captain_updated, version }` — the roster slugs added, refreshed in place (with `refresh_existing`), and skipped. Provisions members directly (no approval flow). Returns `{ error }` if the slug is unknown.
+
+**Authorization:** CEO only — use only for a team the admin already chose; reconcile the merged roster afterwards.
 
 ### `list_projects`
 

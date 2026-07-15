@@ -39,7 +39,9 @@ describe('GET /api/team-templates', () => {
 
 		const startup = data.find((t) => t.name === 'Startup');
 		expect(startup).toBeDefined();
-		expect(startup?.is_builtin).toBe(true);
+		// Startup now comes from the marketplace (a non-builtin template); Blank is the
+		// only surviving built-in template.
+		expect(startup?.is_builtin).toBe(false);
 		const agentTypes = startup?.agent_types as Array<Record<string, unknown>>;
 		expect(agentTypes.length).toBeGreaterThanOrEqual(1);
 		expect(agentTypes[0]).toHaveProperty('agent_type_id');

@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteRouteImport } from './routes/settings/route'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SettingsIndexRouteImport } from './routes/settings/index'
+import { Route as MarketplaceIndexRouteImport } from './routes/marketplace/index'
 import { Route as HomeIndexRouteImport } from './routes/home/index'
 import { Route as SettingsSkillsRouteImport } from './routes/settings/skills'
 import { Route as SettingsCredentialsRouteImport } from './routes/settings/credentials'
@@ -23,6 +24,7 @@ import { Route as SettingsArchivedProjectsRouteImport } from './routes/settings/
 import { Route as SettingsApiKeysRouteImport } from './routes/settings/api-keys'
 import { Route as SettingsAiProvidersRouteImport } from './routes/settings/ai-providers'
 import { Route as SettingsAdminPasswordRouteImport } from './routes/settings/admin-password'
+import { Route as MarketplaceSlugRouteImport } from './routes/marketplace/$slug'
 import { Route as ProjectsProjectIdRouteRouteImport } from './routes/projects/$projectId/route'
 import { Route as ProjectsProjectIdIndexRouteImport } from './routes/projects/$projectId/index'
 import { Route as HomeInboxIndexRouteImport } from './routes/home/inbox/index'
@@ -67,6 +69,11 @@ const SettingsIndexRoute = SettingsIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => SettingsRouteRoute,
+} as any)
+const MarketplaceIndexRoute = MarketplaceIndexRouteImport.update({
+  id: '/marketplace/',
+  path: '/marketplace/',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const HomeIndexRoute = HomeIndexRouteImport.update({
   id: '/home/',
@@ -123,6 +130,11 @@ const SettingsAdminPasswordRoute = SettingsAdminPasswordRouteImport.update({
   id: '/admin-password',
   path: '/admin-password',
   getParentRoute: () => SettingsRouteRoute,
+} as any)
+const MarketplaceSlugRoute = MarketplaceSlugRouteImport.update({
+  id: '/marketplace/$slug',
+  path: '/marketplace/$slug',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const ProjectsProjectIdRouteRoute = ProjectsProjectIdRouteRouteImport.update({
   id: '/projects/$projectId',
@@ -296,6 +308,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/settings': typeof SettingsRouteRouteWithChildren
   '/projects/$projectId': typeof ProjectsProjectIdRouteRouteWithChildren
+  '/marketplace/$slug': typeof MarketplaceSlugRoute
   '/settings/admin-password': typeof SettingsAdminPasswordRoute
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
   '/settings/api-keys': typeof SettingsApiKeysRoute
@@ -307,6 +320,7 @@ export interface FileRoutesByFullPath {
   '/settings/credentials': typeof SettingsCredentialsRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/home/': typeof HomeIndexRoute
+  '/marketplace/': typeof MarketplaceIndexRoute
   '/settings/': typeof SettingsIndexRoute
   '/preview/$projectId/$filename': typeof PreviewProjectIdFilenameRoute
   '/projects/$projectId/assets': typeof ProjectsProjectIdAssetsRoute
@@ -339,6 +353,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/marketplace/$slug': typeof MarketplaceSlugRoute
   '/settings/admin-password': typeof SettingsAdminPasswordRoute
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
   '/settings/api-keys': typeof SettingsApiKeysRoute
@@ -350,6 +365,7 @@ export interface FileRoutesByTo {
   '/settings/credentials': typeof SettingsCredentialsRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/home': typeof HomeIndexRoute
+  '/marketplace': typeof MarketplaceIndexRoute
   '/settings': typeof SettingsIndexRoute
   '/preview/$projectId/$filename': typeof PreviewProjectIdFilenameRoute
   '/projects/$projectId/assets': typeof ProjectsProjectIdAssetsRoute
@@ -384,6 +400,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/settings': typeof SettingsRouteRouteWithChildren
   '/projects/$projectId': typeof ProjectsProjectIdRouteRouteWithChildren
+  '/marketplace/$slug': typeof MarketplaceSlugRoute
   '/settings/admin-password': typeof SettingsAdminPasswordRoute
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
   '/settings/api-keys': typeof SettingsApiKeysRoute
@@ -395,6 +412,7 @@ export interface FileRoutesById {
   '/settings/credentials': typeof SettingsCredentialsRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/home/': typeof HomeIndexRoute
+  '/marketplace/': typeof MarketplaceIndexRoute
   '/settings/': typeof SettingsIndexRoute
   '/preview/$projectId/$filename': typeof PreviewProjectIdFilenameRoute
   '/projects/$projectId/assets': typeof ProjectsProjectIdAssetsRoute
@@ -431,6 +449,7 @@ export interface FileRouteTypes {
     | '/'
     | '/settings'
     | '/projects/$projectId'
+    | '/marketplace/$slug'
     | '/settings/admin-password'
     | '/settings/ai-providers'
     | '/settings/api-keys'
@@ -442,6 +461,7 @@ export interface FileRouteTypes {
     | '/settings/credentials'
     | '/settings/skills'
     | '/home/'
+    | '/marketplace/'
     | '/settings/'
     | '/preview/$projectId/$filename'
     | '/projects/$projectId/assets'
@@ -474,6 +494,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/marketplace/$slug'
     | '/settings/admin-password'
     | '/settings/ai-providers'
     | '/settings/api-keys'
@@ -485,6 +506,7 @@ export interface FileRouteTypes {
     | '/settings/credentials'
     | '/settings/skills'
     | '/home'
+    | '/marketplace'
     | '/settings'
     | '/preview/$projectId/$filename'
     | '/projects/$projectId/assets'
@@ -518,6 +540,7 @@ export interface FileRouteTypes {
     | '/'
     | '/settings'
     | '/projects/$projectId'
+    | '/marketplace/$slug'
     | '/settings/admin-password'
     | '/settings/ai-providers'
     | '/settings/api-keys'
@@ -529,6 +552,7 @@ export interface FileRouteTypes {
     | '/settings/credentials'
     | '/settings/skills'
     | '/home/'
+    | '/marketplace/'
     | '/settings/'
     | '/preview/$projectId/$filename'
     | '/projects/$projectId/assets'
@@ -564,7 +588,9 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   SettingsRouteRoute: typeof SettingsRouteRouteWithChildren
   ProjectsProjectIdRouteRoute: typeof ProjectsProjectIdRouteRouteWithChildren
+  MarketplaceSlugRoute: typeof MarketplaceSlugRoute
   HomeIndexRoute: typeof HomeIndexRoute
+  MarketplaceIndexRoute: typeof MarketplaceIndexRoute
   PreviewProjectIdFilenameRoute: typeof PreviewProjectIdFilenameRoute
   HomeInboxIndexRoute: typeof HomeInboxIndexRoute
 }
@@ -591,6 +617,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/settings/'
       preLoaderRoute: typeof SettingsIndexRouteImport
       parentRoute: typeof SettingsRouteRoute
+    }
+    '/marketplace/': {
+      id: '/marketplace/'
+      path: '/marketplace'
+      fullPath: '/marketplace/'
+      preLoaderRoute: typeof MarketplaceIndexRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/home/': {
       id: '/home/'
@@ -668,6 +701,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/settings/admin-password'
       preLoaderRoute: typeof SettingsAdminPasswordRouteImport
       parentRoute: typeof SettingsRouteRoute
+    }
+    '/marketplace/$slug': {
+      id: '/marketplace/$slug'
+      path: '/marketplace/$slug'
+      fullPath: '/marketplace/$slug'
+      preLoaderRoute: typeof MarketplaceSlugRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/projects/$projectId': {
       id: '/projects/$projectId'
@@ -994,7 +1034,9 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   SettingsRouteRoute: SettingsRouteRouteWithChildren,
   ProjectsProjectIdRouteRoute: ProjectsProjectIdRouteRouteWithChildren,
+  MarketplaceSlugRoute: MarketplaceSlugRoute,
   HomeIndexRoute: HomeIndexRoute,
+  MarketplaceIndexRoute: MarketplaceIndexRoute,
   PreviewProjectIdFilenameRoute: PreviewProjectIdFilenameRoute,
   HomeInboxIndexRoute: HomeInboxIndexRoute,
 }

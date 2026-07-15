@@ -63,48 +63,25 @@ describe('resolvePartials', () => {
 });
 
 describe('loadAgentRoles integrates resolvePartials', () => {
-	it('seeds Captain prompts from both templates with the shared partials expanded', async () => {
+	it('seeds the binary Captain/instance prompts with the shared partials expanded', async () => {
+		// loadAgentRoles now only carries the roles that stay in the binary: the Blank
+		// Captain and the instance singletons (CEO/Coach). The specialist roster prompts
+		// (software-development/*) moved to the marketplace and are covered by the
+		// marketplace build test — see marketplace-build coverage.
 		const docs = await loadAgentRoles();
 
-		const sdCeo = docs['software-development/captain.md'];
-		expect(sdCeo).toBeDefined();
-		expect(sdCeo).toContain('Every run you take is at **max effort**');
-		expect(sdCeo).toContain('## Hire workflow');
-		expect(sdCeo).toContain('Ask before you write.');
-		// the captain.md fan-out body edit must reach the prompt
-		expect(sdCeo).toContain('Fan out only to your direct reports');
-		expect(sdCeo).not.toContain('{{> partials/');
+		const blankCaptain = docs['blank/captain.md'];
+		expect(blankCaptain).toBeDefined();
+		expect(blankCaptain).toContain('Every run you take is at **max effort**');
+		expect(blankCaptain).toContain('## Hire workflow');
+		expect(blankCaptain).toContain('Ask before you write.');
+		expect(blankCaptain).not.toContain('{{> partials/');
 
-		const blankCeo = docs['blank/captain.md'];
-		expect(blankCeo).toBeDefined();
-		expect(blankCeo).toContain('Every run you take is at **max effort**');
-		expect(blankCeo).toContain('## Hire workflow');
-		expect(blankCeo).toContain('Ask before you write.');
-		expect(blankCeo).not.toContain('{{> partials/');
-
-		for (const slug of [
-			'engineer',
-			'qa-engineer',
-			'security-engineer',
-			'ui-designer',
-			'devops-engineer',
-		]) {
-			const doc = docs[`software-development/${slug}.md`];
-			expect(doc, `${slug} should be loaded`).toBeDefined();
-			expect(doc, `${slug} should include no-designated-repo rule`).toContain(
-				'No designated repo means no run.',
-			);
-			expect(doc, `${slug} should have no unresolved directives`).not.toContain('{{> partials/');
-		}
-
-		// Architect is repo-optional and must not carry the no-designated-repo rule.
-		const architectDoc = docs['software-development/architect.md'];
-		expect(architectDoc).toBeDefined();
-		expect(architectDoc).not.toContain('No designated repo means no run.');
-		expect(architectDoc).toContain('You can run without a designated repo.');
-
-		// The planning-ticket-children partial still expands where it is used (Captain).
-		expect(sdCeo).toContain('## Draft execution plan tickets (`planning` label)');
+		// The instance CEO/Coach prompts are still bundled and partial-expanded.
+		expect(docs['_instance/ceo.md']).toBeDefined();
+		expect(docs['_instance/ceo.md']).not.toContain('{{> partials/');
+		expect(docs['_instance/coach.md']).toBeDefined();
+		expect(docs['_instance/coach.md']).not.toContain('{{> partials/');
 
 		// Partial files themselves are stripped from the returned map
 		expect(Object.keys(docs).some((k) => k.startsWith('_partials/'))).toBe(false);

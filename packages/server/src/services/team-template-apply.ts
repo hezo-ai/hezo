@@ -4,14 +4,23 @@ import {
 	CEO_AGENT_SLUG,
 	COACH_AGENT_SLUG,
 	DocumentType,
+	type MarketplaceTeamDef,
 	MemberType,
 } from '@hezo/shared';
 import type { Db } from '../db/database';
+import { withTransaction } from '../lib/sql';
 import { logger } from '../logger';
 import { resolveAgentBudgets } from './agent-budget';
 import { enqueueTeamCoherenceReviewTask } from './description-tasks';
 import { initAgentSystemPrompt, upsertDocument } from './documents';
-import { type ProvisionTeamTemplateResult, provisionTeamTemplate } from './team-template-provision';
+import {
+	createInlineSkillsFromArray,
+	downloadSkillsFromArray,
+	insertRosterAgents,
+	type ProvisionTeamTemplateResult,
+	provisionTeamTemplate,
+	type RosterAgentDef,
+} from './team-template-provision';
 import type { WebSocketManager } from './ws';
 
 const log = logger.child('team-template-apply');
@@ -24,6 +33,8 @@ export interface ApplyTemplateOptions {
 export interface ApplyTemplateResult extends ProvisionTeamTemplateResult {
 	builtin_inserted_slugs: string[];
 	builtin_updated_slugs: string[];
+	/** Roster roles the team already had that were refreshed to the new version. */
+	updated_slugs?: string[];
 }
 
 interface BuiltinEffectiveConfig {
@@ -453,4 +464,128 @@ async function updateBuiltinAgent(
 	}
 
 	return metadataChanged || !promptUnchanged;
+}
+
+/**
+ * Ensures the team's Captain exists with a marketplace team's Captain override
+ * applied. The Captain stays a builtin (its `agent_type_id` + reports-to-CEO link
+ * come from the catalog default); only its system prompt and team context are
+ * overridden by the def. Insert-or-update-in-place keeps the member id stable.
+ */
+export async function ensureBuiltinCaptainFromDef(
+	db: Db,
+	teamId: string,
+	override: { system_prompt?: string; team_context?: string } | null,
+	wsManager?: WebSocketManager,
+): Promise<{ inserted: boolean; updated: boolean }> {
+	const base = await loadBuiltinDefaults(db, CAPTAIN_AGENT_SLUG);
+	if (!base) return { inserted: false, updated: false };
+
+	const config: BuiltinEffectiveConfig = {
+		...base,
+		systemPrompt: override?.system_prompt?.trim() ? override.system_prompt : base.systemPrompt,
+		teamContext: override?.team_context?.trim() ? override.team_context : base.teamContext,
+	};
+
+	const existing = await db.query<{ id: string }>(
+		`SELECT ma.id FROM member_agents ma
+		 JOIN members m ON m.id = ma.id
+		 WHERE m.team_id = $1 AND ma.slug = $2`,
+		[teamId, CAPTAIN_AGENT_SLUG],
+	);
+	if (existing.rows[0]) {
+		const changed = await updateBuiltinAgent(db, teamId, existing.rows[0].id, config, wsManager);
+		return { inserted: false, updated: changed };
+	}
+	await insertBuiltinAgent(db, teamId, config);
+	return { inserted: true, updated: false };
+}
+
+/**
+ * Provisions a marketplace team def onto a team WITHOUT creating any
+ * `team_templates` / `agent_types` rows: the Captain via the builtin path (with
+ * the def's override), the rest of the roster as inline agents (`agent_type_id`
+ * null, like hires), plus the def's inline/downloaded skills. Used by both
+ * launch-a-project (fresh team) and add-a-team-to-a-project (existing team, skips
+ * roles it already has). `enqueueReconcile` fires a coherence review only when the
+ * roster actually changed (off for the launch path, which enqueues its own
+ * initial review, and for the CEO add-team task, which reconciles in-task).
+ */
+export async function applyMarketplaceTeamToTeam(
+	db: Db,
+	teamId: string,
+	teamDef: MarketplaceTeamDef,
+	options: {
+		dataDir?: string;
+		wsManager?: WebSocketManager;
+		enqueueReconcile?: boolean;
+		/**
+		 * Refresh the prose + system prompt of roles the team already has to this
+		 * def's versions (a version update), instead of skipping them. The Captain
+		 * override always applies in place regardless.
+		 */
+		refreshExisting?: boolean;
+	} = {},
+): Promise<ApplyTemplateResult> {
+	const captainResult = await ensureBuiltinCaptainFromDef(
+		db,
+		teamId,
+		teamDef.captain,
+		options.wsManager,
+	);
+
+	const roster: RosterAgentDef[] = teamDef.roster.map((a) => ({
+		slug: a.slug,
+		title: a.title,
+		role_description: a.role_description,
+		summary: a.summary,
+		team_context: a.team_context,
+		system_prompt: a.system_prompt,
+		default_effort: a.default_effort,
+		heartbeat_interval_min: a.heartbeat_interval_min,
+		run_timeout_min: a.run_timeout_min,
+		monthly_budget_cents: a.monthly_budget_cents,
+		daily_budget_cents: a.daily_budget_cents,
+		weekly_budget_cents: a.weekly_budget_cents,
+		touches_code: a.touches_code,
+		reports_to_slug: a.reports_to_slug,
+		// Marketplace roles are not catalog agent types — provisioned inline, like hires.
+		agent_type_id: null,
+	}));
+
+	let created: string[] = [];
+	let updated: string[] = [];
+	let skipped: string[] = [];
+	await withTransaction(db, async () => {
+		const inserted = await insertRosterAgents(db, teamId, roster, {
+			skipExistingSlugs: true,
+			updateExisting: options.refreshExisting ?? false,
+			wsManager: options.wsManager,
+		});
+		created = inserted.created_slugs;
+		updated = inserted.updated_slugs;
+		skipped = inserted.skipped_slugs;
+		await createInlineSkillsFromArray(db, teamDef.skills_config);
+	});
+
+	if (options.dataDir) {
+		await downloadSkillsFromArray(db, teamDef.skills_config);
+	}
+
+	const rosterChanged = created.length > 0 || updated.length > 0 || captainResult.updated;
+	if (options.enqueueReconcile && rosterChanged) {
+		try {
+			await enqueueTeamCoherenceReviewTask(db, teamId, 'template_applied');
+		} catch (e) {
+			log.error('Failed to enqueue team coherence review after marketplace apply:', e);
+		}
+	}
+
+	return {
+		created_slugs: created,
+		updated_slugs: updated,
+		skipped_slugs: skipped,
+		builtin_inserted_slugs: captainResult.inserted ? [CAPTAIN_AGENT_SLUG] : [],
+		builtin_updated_slugs: captainResult.updated ? [CAPTAIN_AGENT_SLUG] : [],
+	};
 }

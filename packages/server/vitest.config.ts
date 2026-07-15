@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { configDefaults, defineConfig } from 'vitest/config';
 
 export default defineConfig({
@@ -17,6 +18,9 @@ export default defineConfig({
 		// packages/shared/src/crypto/auth.ts.
 		env: {
 			HEZO_TEST_SCRYPT_LOG_N: '1',
+			// Read marketplace team templates from the committed repo folder (never the
+			// network) so provisioning tests are deterministic and offline.
+			HEZO_MARKETPLACE_DIR: fileURLToPath(new URL('../../marketplace', import.meta.url)),
 		},
 		pool: 'forks',
 		poolOptions: {

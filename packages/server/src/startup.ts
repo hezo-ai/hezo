@@ -52,6 +52,7 @@ import { goalsRoutes } from './routes/goals';
 import { healthRoutes } from './routes/health';
 import { inboxRoutes } from './routes/inbox';
 import { instanceSettingsRoutes } from './routes/instance-settings';
+import { marketplaceRoutes } from './routes/marketplace';
 import { meRoutes } from './routes/me';
 import { mentionsRoutes } from './routes/mentions';
 import { modelPricingRoutes } from './routes/model-pricing';
@@ -621,6 +622,7 @@ export function buildApp(
 	// CRUD routes
 	app.route('/api', agentTypesRoutes);
 	app.route('/api', teamTemplatesRoutes);
+	app.route('/api', marketplaceRoutes);
 	app.route('/api', teamsRoutes);
 	app.route('/api', meRoutes);
 	app.route('/api', agentsRoutes);

@@ -192,9 +192,13 @@ describe('MCP get_team / list_team_templates', () => {
 			agent_types: Array<{ slug: string }>;
 		}>;
 		expect(Array.isArray(rows)).toBe(true);
+		// Blank is the only surviving built-in template; the Startup roster comes from
+		// the marketplace (seeded as a non-builtin fixture in tests).
+		const blank = rows.find((r) => r.name === 'Blank');
+		expect(blank?.is_builtin).toBe(true);
 		const startup = rows.find((r) => r.name === 'Startup');
 		expect(startup).toBeDefined();
-		expect(startup?.is_builtin).toBe(true);
+		expect(startup?.is_builtin).toBe(false);
 		expect(startup?.agent_types.map((a) => a.slug)).toContain('engineer');
 	});
 });

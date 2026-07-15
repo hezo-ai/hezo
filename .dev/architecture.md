@@ -71,10 +71,12 @@ agents/       # Agent system-prompt markdown — the source of truth for seeded 
   budget/pricing math, and mention parsing. Add new status/type values here first —
   no raw status strings in `server`/`web` (see `AGENTS.md` › Conventions).
 - **`packages/server`** imports from `shared` and embeds `web` at build time.
-- **`agents/`** holds role prose by team template (`software-development/`, `blank/`),
-  the two instance roles (`_instance/ceo.md`, `_instance/coach.md`), and reusable
-  `_partials/`. The build bakes these into `agents-bundle.json`; the DB seed reads them
-  at startup. See `AGENTS.md` › Layout for which layer (`SHARED_INSTRUCTIONS`, a
+- **`agents/`** holds role prose by team (`software-development/`, `blank/`), the two
+  instance roles (`_instance/ceo.md`, `_instance/coach.md`), and reusable `_partials/`.
+  The build bakes only `blank/` + `_instance/` into `agents-bundle.json` (the DB seed reads
+  them at startup); marketplace team dirs (those with a `team.json`) are compiled into
+  committed `marketplace/teams/*.json` and **excluded from the binary** (see § Team
+  marketplace). See `AGENTS.md` › Layout for which layer (`SHARED_INSTRUCTIONS`, a
   `_partial`, or a role `.md`) new guidance belongs in.
 
 ---
@@ -551,10 +553,12 @@ falling back to HQ only for work tied to no project; its long-term chat memory a
 rough running summary of those off-project conversations, since they live nowhere else once the
 chat window scrolls.
 
-**Project teams** are provisioned from a team-type template (default **Blank** = Captain
-only; `software-development` = Captain + 9 worker roles). Templates never include the
-CEO/Coach. The roster prose lives in `agents/<template>/`, the instance roles in
-`agents/_instance/`, and shared snippets in `agents/_partials/`.
+**Project teams** are provisioned either from a DB team-type template (default **Blank** =
+Captain only) or directly from a **marketplace team** (`software-development` = Captain + 9
+worker roles). Templates/marketplace teams never include the CEO/Coach. Roster prose lives
+in `agents/<template>/`, the instance roles in `agents/_instance/`, shared snippets in
+`agents/_partials/`; the default specialist rosters ship from the **marketplace** (below),
+not the binary.
 
 **Cross-team execution (the run-team split).** CEO/Coach are HQ members but act inside
 other teams' projects. A run is scoped to the **task's project team** ("run team") — JWT,
@@ -589,9 +593,52 @@ immediately; the CEO-assisted path leaves it **unassigned and un-woken**.
 
 Both accept a `source_team_id` (mutually exclusive with `template_id`): the chosen team
 is snapshotted into a fresh, permanent team-type template and the new team provisioned
-from it, so cloning a team also seeds a reusable type. HQ is rejected as a source. The
-CEO's `create_project` tool is wired with `ContainerDeps` (threaded through
+from it, so cloning a team also seeds a reusable type. HQ is rejected as a source. `POST
+/api/projects` also accepts a **`marketplace_slug`** (mutually exclusive with the other
+two): the fetched marketplace def provisions the roster directly (see below). The CEO's
+`create_project` tool is wired with `ContainerDeps` (threaded through
 `initMcpServer`/`registerTools`) so a project it creates gets its container provisioned.
+
+### Team marketplace
+
+The default team templates ship from a **marketplace** — a `marketplace/` folder committed
+to this repo — rather than being baked into the binary, so a running instance picks up
+improved default teams from GitHub **without a binary upgrade**. Each team is one
+self-contained, committed JSON (`marketplace/teams/<slug>.json`): team metadata + `version`
+(unsigned int) + `changelog` + the full roster, where each role carries its partial-resolved
+`system_prompt` (with `{{…}}` intact, no `SHARED_INSTRUCTIONS`), plus a top-level `captain`
+override. `marketplace/index.json` is the catalog listing.
+
+- **Authoring → build.** Prompt bodies stay authored as `agents/<team>/*.md`; the structured
+  roster + team metadata live in a hand-authored `agents/<team>/team.json` manifest.
+  `build:marketplace` (`scripts/build-marketplace-teams.ts`, run by `bun run dev` and by
+  authors) resolves partials, validates required prompt vars, computes a content hash over the
+  meaningful content (excluding version/changelog), **auto-increments `version`** on a hash
+  change, and writes the committed JSONs. `build:teams` bundles them into the gitignored,
+  embedded `teams-bundle.json`. Pure logic in `services/marketplace-build.ts`; guarded by
+  `marketplace-build.test.ts` (determinism + a stale-source drift check).
+- **Runtime load.** `services/marketplace.ts` resolves the catalog from, in order: the repo
+  folder in dev (`HEZO_MARKETPLACE_DIR`, or the source-tree `marketplace/`), GitHub raw on
+  `main` (cached ~1h; the untrusted boundary — every def is zod-validated with a
+  `schema_version` guard), then the embedded bundle (offline fallback). Served read-only at
+  `GET /api/marketplace/teams[/:slug]`.
+- **Provisioning (no persisted rows).** Marketplace teams are **never** stored as
+  `team_templates`/`agent_types` rows — only Blank stays seeded. `applyMarketplaceTeamToTeam`
+  (`team-template-apply.ts`) provisions the Captain via the builtin path (with the def's
+  override) and the rest of the roster as **inline agents** (`member_agents.agent_type_id`
+  null, like hires) via the shared `insertRosterAgents` core, storing each prompt as an
+  `agent_system_prompt` document. Skills come from the def's `skills_config`. Launch a new
+  project from `POST /api/projects {marketplace_slug}`; the "copy an existing team" snapshot
+  path (`snapshotTeamAsTemplate`) materializes custom `agent_types` for those inline roles so
+  cloning still works.
+- **Add to an existing project (CEO-driven).** `POST /api/projects/:projectId/marketplace-team`
+  kicks off one CEO task that calls the **`apply_marketplace_team`** MCP tool (direct add, no
+  approval — the admin already opted in) and reconciles the merged roster. When the project was
+  created from the same team, the CEO recognizes it as a **version update**: `refresh_existing`
+  refreshes the existing roles' prose + prompts in place (via `get_marketplace_team` + selective
+  `update_agent_system_prompt` where roles carry local customizations) instead of adding
+  duplicates. Because instances always fetch the live catalog, a new team `version` reaches them
+  automatically.
 
 Key source: `services/teams.ts` (`seedDefaultTeam`), `team-template-apply.ts`
 (`ensureInstanceCeo`/`ensureInstanceCoach`), `services/internal-intake.ts` (coordination

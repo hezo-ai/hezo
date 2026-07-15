@@ -34,6 +34,8 @@ import {
 } from '../services/containers';
 import { loadCoordinationContext } from '../services/internal-intake';
 import type { JobManager } from '../services/job-manager';
+import { getMarketplaceTeam } from '../services/marketplace';
+import { enqueueAddMarketplaceTeamTask } from '../services/marketplace-add-team';
 import { createProjectWithTeam } from '../services/project-create';
 import { createProjectIntake, getOpenProjectIntakeForHome } from '../services/project-intake';
 import { getProjectProgress } from '../services/projects';
@@ -174,6 +176,7 @@ projectsRoutes.post('/projects', async (c) => {
 		description?: string;
 		template_id?: string;
 		source_team_id?: string;
+		marketplace_slug?: string;
 		task_prefix?: string;
 		initial_project_plan?: string;
 		docker_base_image?: string;
@@ -190,6 +193,7 @@ projectsRoutes.post('/projects', async (c) => {
 			description: body.description.trim(),
 			templateId: body.template_id,
 			sourceTeamId: body.source_team_id,
+			marketplaceSlug: body.marketplace_slug,
 			taskPrefix: body.task_prefix,
 			initialProjectPlan: body.initial_project_plan?.trim() || null,
 			dockerBaseImage: body.docker_base_image,
@@ -213,6 +217,31 @@ projectsRoutes.post('/projects', async (c) => {
 		},
 		201,
 	);
+});
+
+// Add a marketplace team's roster to an EXISTING project's team. Rather than
+// provisioning silently, this kicks off one CEO task in the project that fetches
+// the team, auto-hires its members (via the apply_marketplace_team tool — the admin
+// already opted in, so no per-hire approval), and reconciles the merged roster in
+// the same run. Admin-gated; project-scoped middleware resolves the team.
+projectsRoutes.post('/projects/:projectId/marketplace-team', async (c) => {
+	const denied = requireAdminEquivalent(c);
+	if (denied) return denied;
+
+	const teamId = c.get('teamId') as string;
+	const db = c.get('db');
+	const body = await c.req.json<{ slug?: string }>();
+	const slug = body.slug?.trim();
+	if (!slug) return err(c, 'INVALID_REQUEST', 'slug is required', 400);
+
+	const teamDef = await getMarketplaceTeam(slug);
+	if (!teamDef) return err(c, 'NOT_FOUND', `Marketplace team "${slug}" not found`, 404);
+
+	const result = await enqueueAddMarketplaceTeamTask(db, teamId, teamDef);
+	if (!result) {
+		return err(c, 'CONFLICT', 'This project cannot receive a team (no CEO or project found)', 409);
+	}
+	return ok(c, result, 201);
 });
 
 // CEO-assisted project creation: open a conversation in HQ where the CEO scopes

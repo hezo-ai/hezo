@@ -102,6 +102,19 @@ if (bundle.exitCode !== 0) {
 	process.exit(1);
 }
 
+// Regenerate the committed marketplace team templates from their authoring
+// sources (agents/<team>/team.json + prompts) so the dev server serves fresh
+// JSON and any version bump / prompt change shows up as a reviewable git diff.
+const marketplace = Bun.spawnSync(['bun', 'run', 'scripts/build-marketplace-teams.ts'], {
+	cwd: resolve(ROOT, 'packages/server'),
+	stdout: 'inherit',
+	stderr: 'inherit',
+});
+if (marketplace.exitCode !== 0) {
+	console.error('Failed to build marketplace team templates');
+	process.exit(1);
+}
+
 const procs = [
 	// --hot (not --watch) so import.meta.hot.dispose can close PGlite before reload.
 	Bun.spawn(['bun', 'run', '--hot', 'src/index.ts', ...serverArgs], {

@@ -1,5 +1,5 @@
 import { Link } from '@tanstack/react-router';
-import { Inbox, Plus, Search, Settings } from 'lucide-react';
+import { Inbox, Plus, Search, Settings, Store } from 'lucide-react';
 import { useState } from 'react';
 import { useActiveProject } from '../hooks/use-active-project';
 import { useGlobalInboxUnreadCount } from '../hooks/use-inbox-count';
@@ -103,6 +103,15 @@ export function AppHeader({
 						<Inbox className="w-4 h-4" />
 						<CountOverlayBadge count={inboxUnread} testId="app-header-inbox-badge" />
 					</span>
+				</Link>
+				<Link
+					to="/marketplace"
+					aria-label="Marketplace"
+					title="Team marketplace"
+					data-testid="app-header-marketplace"
+					className={iconLinkClass}
+				>
+					<Store className="w-4 h-4" />
 				</Link>
 				<Link
 					to="/settings"
