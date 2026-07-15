@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.25.0 - 2026-07-15
+
+### Features
+
+- **chat:** mirror conversation threads across channels (create/message/close parity) ([#737](https://github.com/hezo-ai/hezo/pull/737))
+- load default teams from a marketplace instead of the binary ([#733](https://github.com/hezo-ai/hezo/pull/733))
+- **deploy:** add AWS and GCP one-click deploy buttons ([#723](https://github.com/hezo-ai/hezo/pull/723))
+- **assets:** add sort control to the project Assets page ([#728](https://github.com/hezo-ai/hezo/pull/728))
+- mark an inbox notification read when its comment is viewed ([#727](https://github.com/hezo-ai/hezo/pull/727))
+
+### Bug Fixes
+
+- **deploy:** use ASCII in AWS CloudFormation template ([#731](https://github.com/hezo-ai/hezo/pull/731))
+
+### Documentation
+
+- **agents:** add worked example against backticking doc/asset references ([#735](https://github.com/hezo-ai/hezo/pull/735))
+- **readme:** wire the AWS Launch Stack button to the hosted template ([#732](https://github.com/hezo-ai/hezo/pull/732))
+- **readme:** add deploy buttons to the top and make GCP one-click ([#729](https://github.com/hezo-ai/hezo/pull/729))
+
+### Other
+
+- **release:** auto-publish the AWS CloudFormation template to S3 ([#734](https://github.com/hezo-ai/hezo/pull/734))
+- launch via the standard create-project dialog, count the Captain, drop bundled skills/MCP/MPP ([#738](https://github.com/hezo-ai/hezo/pull/738))
+- Fix mobile keyboard gap below the comment composer ([#736](https://github.com/hezo-ai/hezo/pull/736))
+- Telegram chat channel + multi-threaded CEO conversations (Discord deferred) ([#730](https://github.com/hezo-ai/hezo/pull/730))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.24.1...0.25.0
+
 ## 0.24.1 - 2026-07-14
 
 ### Features
