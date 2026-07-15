@@ -5,6 +5,8 @@ import { queryKeys } from '../lib/query-keys';
 export interface Me {
 	type: string;
 	is_superuser: boolean;
+	/** The human user's id (Admin only; null otherwise) — for identity linking. */
+	user_id: string | null;
 }
 
 /**

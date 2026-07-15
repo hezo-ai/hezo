@@ -17,6 +17,7 @@ import { Route as SettingsSkillsRouteImport } from './routes/settings/skills'
 import { Route as SettingsCredentialsRouteImport } from './routes/settings/credentials'
 import { Route as SettingsConnectorsRouteImport } from './routes/settings/connectors'
 import { Route as SettingsChatboxRouteImport } from './routes/settings/chatbox'
+import { Route as SettingsChatChannelsRouteImport } from './routes/settings/chat-channels'
 import { Route as SettingsAuditLogRouteImport } from './routes/settings/audit-log'
 import { Route as SettingsArchivedProjectsRouteImport } from './routes/settings/archived-projects'
 import { Route as SettingsApiKeysRouteImport } from './routes/settings/api-keys'
@@ -90,6 +91,11 @@ const SettingsConnectorsRoute = SettingsConnectorsRouteImport.update({
 const SettingsChatboxRoute = SettingsChatboxRouteImport.update({
   id: '/chatbox',
   path: '/chatbox',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsChatChannelsRoute = SettingsChatChannelsRouteImport.update({
+  id: '/chat-channels',
+  path: '/chat-channels',
   getParentRoute: () => SettingsRouteRoute,
 } as any)
 const SettingsAuditLogRoute = SettingsAuditLogRouteImport.update({
@@ -295,6 +301,7 @@ export interface FileRoutesByFullPath {
   '/settings/api-keys': typeof SettingsApiKeysRoute
   '/settings/archived-projects': typeof SettingsArchivedProjectsRoute
   '/settings/audit-log': typeof SettingsAuditLogRoute
+  '/settings/chat-channels': typeof SettingsChatChannelsRoute
   '/settings/chatbox': typeof SettingsChatboxRoute
   '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
@@ -337,6 +344,7 @@ export interface FileRoutesByTo {
   '/settings/api-keys': typeof SettingsApiKeysRoute
   '/settings/archived-projects': typeof SettingsArchivedProjectsRoute
   '/settings/audit-log': typeof SettingsAuditLogRoute
+  '/settings/chat-channels': typeof SettingsChatChannelsRoute
   '/settings/chatbox': typeof SettingsChatboxRoute
   '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
@@ -381,6 +389,7 @@ export interface FileRoutesById {
   '/settings/api-keys': typeof SettingsApiKeysRoute
   '/settings/archived-projects': typeof SettingsArchivedProjectsRoute
   '/settings/audit-log': typeof SettingsAuditLogRoute
+  '/settings/chat-channels': typeof SettingsChatChannelsRoute
   '/settings/chatbox': typeof SettingsChatboxRoute
   '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
@@ -427,6 +436,7 @@ export interface FileRouteTypes {
     | '/settings/api-keys'
     | '/settings/archived-projects'
     | '/settings/audit-log'
+    | '/settings/chat-channels'
     | '/settings/chatbox'
     | '/settings/connectors'
     | '/settings/credentials'
@@ -469,6 +479,7 @@ export interface FileRouteTypes {
     | '/settings/api-keys'
     | '/settings/archived-projects'
     | '/settings/audit-log'
+    | '/settings/chat-channels'
     | '/settings/chatbox'
     | '/settings/connectors'
     | '/settings/credentials'
@@ -512,6 +523,7 @@ export interface FileRouteTypes {
     | '/settings/api-keys'
     | '/settings/archived-projects'
     | '/settings/audit-log'
+    | '/settings/chat-channels'
     | '/settings/chatbox'
     | '/settings/connectors'
     | '/settings/credentials'
@@ -613,6 +625,13 @@ declare module '@tanstack/react-router' {
       path: '/chatbox'
       fullPath: '/settings/chatbox'
       preLoaderRoute: typeof SettingsChatboxRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/chat-channels': {
+      id: '/settings/chat-channels'
+      path: '/chat-channels'
+      fullPath: '/settings/chat-channels'
+      preLoaderRoute: typeof SettingsChatChannelsRouteImport
       parentRoute: typeof SettingsRouteRoute
     }
     '/settings/audit-log': {
@@ -862,6 +881,7 @@ interface SettingsRouteRouteChildren {
   SettingsApiKeysRoute: typeof SettingsApiKeysRoute
   SettingsArchivedProjectsRoute: typeof SettingsArchivedProjectsRoute
   SettingsAuditLogRoute: typeof SettingsAuditLogRoute
+  SettingsChatChannelsRoute: typeof SettingsChatChannelsRoute
   SettingsChatboxRoute: typeof SettingsChatboxRoute
   SettingsConnectorsRoute: typeof SettingsConnectorsRoute
   SettingsCredentialsRoute: typeof SettingsCredentialsRoute
@@ -875,6 +895,7 @@ const SettingsRouteRouteChildren: SettingsRouteRouteChildren = {
   SettingsApiKeysRoute: SettingsApiKeysRoute,
   SettingsArchivedProjectsRoute: SettingsArchivedProjectsRoute,
   SettingsAuditLogRoute: SettingsAuditLogRoute,
+  SettingsChatChannelsRoute: SettingsChatChannelsRoute,
   SettingsChatboxRoute: SettingsChatboxRoute,
   SettingsConnectorsRoute: SettingsConnectorsRoute,
   SettingsCredentialsRoute: SettingsCredentialsRoute,

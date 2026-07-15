@@ -22,6 +22,7 @@ const ADMIN_ITEMS: NavItem[] = [
 	{ to: '/settings/chatbox', label: 'Chatbox' },
 	{ to: '/settings/skills', label: 'Skills' },
 	{ to: '/settings/connectors', label: 'Connectors' },
+	{ to: '/settings/chat-channels', label: 'Chat channels' },
 	{ to: '/settings/credentials', label: 'Credentials' },
 	{ to: '/settings/api-keys', label: 'API keys' },
 	{ to: '/settings/archived-projects', label: 'Archived projects' },
