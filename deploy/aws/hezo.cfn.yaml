@@ -1,11 +1,11 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
-  Hezo — one-click deploy to a single EC2 instance. Launches an Ubuntu VM, opens
+  Hezo - one-click deploy to a single EC2 instance. Launches an Ubuntu VM, opens
   the web ports, and runs deploy/provision.sh on first boot (Docker + the hezo
   binary + Caddy automatic HTTPS via <ip>.sslip.io + systemd + firewall). After
   ~2 minutes, open the URL in the stack Outputs and finish the in-browser setup
   (master key, admin password, connect a model). Hezo runs each project's agents
-  in a container on the host Docker socket, so it needs a real VM — this template
+  in a container on the host Docker socket, so it needs a real VM - this template
   provisions exactly that.
 
 Metadata:
@@ -57,7 +57,7 @@ Parameters:
     Default: ''
     Description: >-
       Optional. Name of an existing EC2 key pair for SSH. Leave blank to launch
-      without one — you can still get a shell via AWS Systems Manager Session
+      without one - you can still get a shell via AWS Systems Manager Session
       Manager (this template attaches the required role).
 
   AllowedSshCidr:
@@ -73,7 +73,7 @@ Parameters:
     Default: ''
     Description: >-
       Optional. Use your own domain instead of <ip>.sslip.io. Point an A record
-      at the instance's public IP first — Caddy provisions a Let's Encrypt cert
+      at the instance's public IP first - Caddy provisions a Let's Encrypt cert
       for this name. Leave blank to use sslip.io (no domain required).
 
   HezoReleaseTag:
@@ -95,7 +95,7 @@ Resources:
   SecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Hezo — public web ports (80/443) and optional SSH
+      GroupDescription: Hezo - public web ports (80/443) and optional SSH
       SecurityGroupIngress:
         - { IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0, Description: HTTP (Caddy ACME + redirect) }
         - { IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0, Description: HTTPS (Hezo web app) }
@@ -156,7 +156,7 @@ Resources:
           #!/bin/bash
           set -eux
           export DEBIAN_FRONTEND=noninteractive
-          # Optional custom domain — provision.sh + hezo-firstboot read this.
+          # Optional custom domain - provision.sh + hezo-firstboot read this.
           DOMAIN='${DomainOverride}'
           if [ -n "$DOMAIN" ]; then
             echo "HEZO_DOMAIN_OVERRIDE=$DOMAIN" >> /etc/environment
@@ -183,4 +183,4 @@ Outputs:
     Value: !If
       - HasKeyName
       - !Sub 'ssh ubuntu@${Instance.PublicIp}'
-      - 'No key pair set — use AWS Systems Manager Session Manager to get a shell.'
+      - 'No key pair set - use AWS Systems Manager Session Manager to get a shell.'
