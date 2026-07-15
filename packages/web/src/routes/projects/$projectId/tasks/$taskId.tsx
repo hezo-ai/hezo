@@ -17,6 +17,7 @@ import { TaskHeader } from '../../../../components/task-detail/task-header';
 import { TaskSidebar } from '../../../../components/task-detail/task-sidebar';
 import { TaskSummary } from '../../../../components/task-detail/task-summary';
 import { ResizableSplit } from '../../../../components/ui/resizable-split';
+import { useRegisterScrollContent } from '../../../../contexts/scroll-content-context';
 import { useAgents } from '../../../../hooks/use-agents';
 import { type Comment, useComments, useCreateComment } from '../../../../hooks/use-comments';
 import { useExecutionLock } from '../../../../hooks/use-execution-locks';
@@ -91,6 +92,11 @@ function TaskDetailPage() {
 	// <main> — see __root.tsx); this hook instance only provides scrollToBottom
 	// for the sidebar's close/re-open actions.
 	const { scrollToBottom } = useScrollToBottom(scrollParent);
+
+	// This page's <main> holds a two-column grid at lg+ (content column + sticky
+	// meta rail). Register the content column so the global scroll pills centre
+	// over it, not over content + the non-scrolling rail.
+	const registerScrollContent = useRegisterScrollContent();
 
 	if (isLoading || !task)
 		return <div className="text-text-2 text-[13px] py-8 text-center">Loading...</div>;
@@ -173,7 +179,7 @@ function TaskDetailPage() {
 			}
 		>
 			<PreviewProvider value={openPreview}>
-				<div className="min-w-0">
+				<div ref={registerScrollContent} data-testid="task-content" className="min-w-0">
 					<LastRunFailedBanner task={task} />
 					<TaskHeader
 						task={task}
