@@ -133,3 +133,45 @@ jobs:
           bun run release --notes "$version" > /tmp/release-notes.md
           gh release create "$version" --title "$version" --notes-file /tmp/release-notes.md \
             dist/binaries/*
+
+  # Keep the AWS CloudFormation template the README's "Deploy on AWS" (Launch
+  # Stack) button points at in sync with the repo. The button serves whatever is
+  # hosted in S3, so a stale object ships a stale template; this re-uploads
+  # deploy/aws/hezo.cfn.yaml on every release. Runs after `publish` so S3 is only
+  # touched on a clean release, and skips cleanly when AWS credentials are not
+  # configured (e.g. forks). Bucket/region default to the org's setup and can be
+  # overridden with repo variables. Requires two repo secrets — AWS_ACCESS_KEY_ID
+  # and AWS_SECRET_ACCESS_KEY for an IAM identity scoped to s3:PutObject on the
+  # bucket.
+  publish-cfn-template:
+    runs-on: ubuntu-latest
+    needs: publish
+    if: >-
+      github.event.pull_request.merged == true &&
+      startsWith(github.event.pull_request.head.ref, 'release/')
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main # post-merge main, matching the published release
+      - name: Upload deploy/aws/hezo.cfn.yaml to S3
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ vars.HEZO_CFN_S3_REGION || 'us-east-1' }}
+          BUCKET: ${{ vars.HEZO_CFN_S3_BUCKET || 'hezo-deploy' }}
+        run: |
+          if [ -z "${AWS_ACCESS_KEY_ID}" ] || [ -z "${AWS_SECRET_ACCESS_KEY}" ]; then
+            echo "AWS credentials not configured (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY); skipping S3 upload of hezo.cfn.yaml."
+            exit 0
+          fi
+          # EC2 rejects non-ASCII in SecurityGroup GroupDescription, so refuse to
+          # ship a template that would fail the Launch Stack button (regression
+          # guard for the em-dash bug fixed in #731).
+          if LC_ALL=C grep -nP '[^\x00-\x7F]' deploy/aws/hezo.cfn.yaml; then
+            echo "::error file=deploy/aws/hezo.cfn.yaml::Template contains non-ASCII characters; CloudFormation/EC2 will reject it. Not uploading."
+            exit 1
+          fi
+          aws s3 cp deploy/aws/hezo.cfn.yaml "s3://${BUCKET}/hezo.cfn.yaml" --content-type text/yaml
+          echo "Uploaded deploy/aws/hezo.cfn.yaml to s3://${BUCKET}/hezo.cfn.yaml"
