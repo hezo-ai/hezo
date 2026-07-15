@@ -208,4 +208,73 @@ test.describe('Task detail — initial scroll and scroll-to-bottom button', () =
 		await expect(button).toBeHidden({ timeout: 10000 });
 		await expect(page.getByPlaceholder('Add a comment...')).toBeInViewport();
 	});
+
+	// boundingBox() centre comparison (testing decision tree, point 1): at lg+ the
+	// task <main> holds a two-column grid (content column + sticky meta rail). The
+	// global scroll pills must centre over the scrolled *content* column, not over
+	// content + the non-scrolling rail — which would drift them right, over the
+	// rail. Both pills read the same `--pill-center-x`, so proving the down pill is
+	// centred proves the mechanism.
+	test('scroll pill centres over the content column, not the content + side panel', async ({
+		page,
+		sharedWorkspace,
+	}) => {
+		const { token } = sharedWorkspace;
+		// Wide enough that the lg+ meta rail reserves a real right column.
+		await page.setViewportSize({ width: 1440, height: 900 });
+
+		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+		const project = await createProjectViaApi(
+			page,
+			token,
+			uniqueName('Pill Centre Project'),
+			'Pill centring test.',
+		);
+		const task = await createTaskViaApi(page, project.slug, token, {
+			project_id: project.id,
+			title: 'Pill Centre Task',
+			assignee_id: project.assigneeId,
+			description: 'A short description so the page header stays compact.',
+		});
+
+		for (let i = 0; i < 30; i++) {
+			await page.request.post(`/api/projects/${project.slug}/tasks/${task.id}/comments`, {
+				headers,
+				data: {
+					content_type: 'text',
+					content: { text: `Filler comment ${i}. ${'lorem ipsum '.repeat(30)}` },
+				},
+			});
+		}
+
+		await page.goto(`/projects/${project.slug}/tasks/${task.identifier.toLowerCase()}`);
+		await waitForPageLoad(page);
+		await expect(page.getByRole('heading', { name: 'Pill Centre Task' })).toBeInViewport();
+
+		const main = page.locator('main').first();
+		const button = page.getByTestId('scroll-to-bottom');
+		// The sticky meta rail must actually reserve a right column at this width.
+		await expect(page.getByTestId('task-rail')).toBeVisible();
+
+		// Reveal the pill with a downward scroll.
+		await main.evaluate((el) => el.scrollBy({ top: 400 }));
+		await expect(button).toBeVisible();
+
+		const contentBox = await page.getByTestId('task-content').boundingBox();
+		const pillBox = await button.boundingBox();
+		const mainBox = await main.boundingBox();
+		expect(contentBox).not.toBeNull();
+		expect(pillBox).not.toBeNull();
+		expect(mainBox).not.toBeNull();
+		if (contentBox && pillBox && mainBox) {
+			const pillCentre = pillBox.x + pillBox.width / 2;
+			const contentCentre = contentBox.x + contentBox.width / 2;
+			const mainCentre = mainBox.x + mainBox.width / 2;
+			// The pill centres over the content column…
+			expect(Math.abs(pillCentre - contentCentre)).toBeLessThan(3);
+			// …and that is meaningfully left of the full <main> centre (proving it is
+			// not centred over content + the reserved side-panel column).
+			expect(pillCentre).toBeLessThan(mainCentre - 100);
+		}
+	});
 });

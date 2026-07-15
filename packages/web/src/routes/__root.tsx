@@ -22,6 +22,7 @@ import { CreatePasswordFlow, SetupGate } from '../components/setup/setup-wizard'
 import { StartingScreen } from '../components/starting-screen';
 import { Tooltip } from '../components/ui/tooltip';
 import { UpdateBanner } from '../components/update-banner';
+import { ScrollContentContext } from '../contexts/scroll-content-context';
 import { SocketProvider } from '../contexts/socket-context';
 import { useActiveProject } from '../hooks/use-active-project';
 import { useMe } from '../hooks/use-me';
@@ -180,6 +181,15 @@ function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
 	const hash = useLocation({ select: (l) => l.hash });
 	const lastPathnameRef = useRef(pathname);
 
+	// A route with a non-scrolling side panel inside <main> (the task detail meta
+	// rail) registers its scrollable content column here, so the scroll pills
+	// centre over that column rather than over the full <main> width (which would
+	// drift them right, over the panel). The pill anchor is the pills' positioned
+	// ancestor, so the measured centre is relative to it.
+	const pillAnchorRef = useRef<HTMLDivElement>(null);
+	const [contentEl, setContentEl] = useState<HTMLElement | null>(null);
+	const registerScrollContent = useCallback((el: HTMLElement | null) => setContentEl(el), []);
+
 	// Global Cmd/Ctrl+K toggles the search palette from any route.
 	useEffect(() => {
 		const onKeyDown = (e: KeyboardEvent) => {
@@ -211,6 +221,37 @@ function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
 		if (hash) return;
 		mainRef.current?.scrollTo({ top: 0, left: 0, behavior: 'instant' });
 	}, [pathname, hash]);
+
+	// Expose the horizontal centre of the registered content column (relative to
+	// the pill anchor) as `--pill-center-x`, so the pills sit over the content the
+	// reader scrolls, not over content + a non-scrolling side panel. Unregistered
+	// routes leave the var unset and the pills fall back to `left: 50%` (centred
+	// over <main>). Re-measures on any layout change — resizable-panel drag,
+	// breakpoint switch, preview open/close, window resize — via a ResizeObserver
+	// on both the anchor and the content column.
+	useEffect(() => {
+		const anchor = pillAnchorRef.current;
+		if (!anchor) return;
+		if (!contentEl) {
+			anchor.style.removeProperty('--pill-center-x');
+			return;
+		}
+		const measure = () => {
+			const a = anchor.getBoundingClientRect();
+			const c = contentEl.getBoundingClientRect();
+			anchor.style.setProperty('--pill-center-x', `${c.left - a.left + c.width / 2}px`);
+		};
+		measure();
+		if (typeof ResizeObserver === 'undefined') return;
+		const ro = new ResizeObserver(measure);
+		ro.observe(anchor);
+		ro.observe(contentEl);
+		window.addEventListener('resize', measure);
+		return () => {
+			ro.disconnect();
+			window.removeEventListener('resize', measure);
+		};
+	}, [contentEl]);
 
 	return (
 		// dvh, not vh: on mobile, 100vh is the LARGE viewport (URL bar collapsed).
@@ -271,25 +312,35 @@ function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
 					{/* The relative wrapper hosts the scroll-to-bottom pill as a sibling
 					    of the scroller, so the pill stays pinned over the content area
 					    (never scrolling with it) on ANY page whose long-form content
-					    overflows <main> — task threads, documents, settings, etc. */}
-					<div className="relative flex flex-col flex-1 min-w-0 overflow-hidden">
+					    overflows <main> — task threads, documents, settings, etc. It is
+					    also the pills' positioning anchor: `--pill-center-x` (set above
+					    from a route's registered content column) is measured relative to
+					    it. */}
+					<div
+						ref={pillAnchorRef}
+						className="relative flex flex-col flex-1 min-w-0 overflow-hidden"
+					>
 						<main ref={attachMain} className="flex-1 min-w-0 overflow-auto relative">
-							<Outlet />
+							<ScrollContentContext.Provider value={registerScrollContent}>
+								<Outlet />
+							</ScrollContentContext.Provider>
 						</main>
-						{/* Top-centre of the content area, just below the app header. */}
+						{/* Top-centre of the scrolled content column, just below the app
+						    header. `--pill-center-x` centres over the reader's content pane
+						    on pages with a side panel; unset elsewhere → falls back to 50%. */}
 						<ScrollToTopButton
 							onClick={scrollToTop}
 							visible={topVisible}
 							testId="scroll-to-top"
-							positionClassName="absolute top-4 left-1/2 -translate-x-1/2 z-30"
+							positionClassName="absolute top-4 left-[var(--pill-center-x,50%)] -translate-x-1/2 z-30"
 						/>
-						{/* Bottom-centre of the content area: clear of the CEO chat
-						    launcher (bottom-right) at every breakpoint. */}
+						{/* Bottom-centre of the scrolled content column: clear of the CEO
+						    chat launcher (bottom-right) at every breakpoint. */}
 						<ScrollToBottomButton
 							onClick={scrollToBottom}
 							visible={bottomVisible}
 							testId="scroll-to-bottom"
-							positionClassName="absolute bottom-4 left-1/2 -translate-x-1/2 z-30"
+							positionClassName="absolute bottom-4 left-[var(--pill-center-x,50%)] -translate-x-1/2 z-30"
 						/>
 					</div>
 				</div>
