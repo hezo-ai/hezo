@@ -10,7 +10,7 @@ import { getMarketplaceTeam } from '../../src/services/marketplace';
  * every test, the harness materializes an equivalent `Startup` DB template from
  * the marketplace def: `agent_types` for each roster role, a non-builtin
  * `team_templates` row (so the API's builtin filter still surfaces it), the join
- * rows, the Captain override, and the skills config. Seeded right after
+ * rows, and the Captain override. Seeded right after
  * `seedBuiltins` in `createTestApp`.
  */
 export async function seedTestStartupTemplate(db: Db): Promise<void> {
@@ -67,7 +67,8 @@ export async function seedTestStartupTemplate(db: Db): Promise<void> {
 			'Startup',
 			def.description,
 			def.summary,
-			JSON.stringify(def.skills_config),
+			// Marketplace teams no longer bundle skills; the DB template column stays but is empty.
+			JSON.stringify([]),
 			JSON.stringify({ captain: def.captain.system_prompt }),
 			JSON.stringify({ captain: def.captain.team_context }),
 		],

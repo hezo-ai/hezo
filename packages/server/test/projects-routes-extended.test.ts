@@ -170,7 +170,7 @@ describe('POST /project-intakes — validation branches', () => {
 		return { status: res.status, body: (await res.json()) as Record<string, unknown> };
 	}
 
-	it('rejects supplying both template_id and source_team_id', async () => {
+	it('rejects supplying more than one team source', async () => {
 		const { status, body } = await startIntake({
 			name: 'Both',
 			description: 'desc',
@@ -179,7 +179,7 @@ describe('POST /project-intakes — validation branches', () => {
 		});
 		expect(status).toBe(400);
 		expect((body.error as { message: string }).message).toMatch(
-			/either template_id or source_team_id/,
+			/only one of template_id, source_team_id, or marketplace_slug/,
 		);
 	});
 

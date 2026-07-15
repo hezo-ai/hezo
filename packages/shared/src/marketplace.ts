@@ -40,19 +40,6 @@ export interface MarketplaceChangelogEntry {
 	notes: string;
 }
 
-/**
- * A skill shipped with a team template — inline (`content`) or downloaded
- * (`source_url`) at provision time. Mirrors the server's `TemplateSkillConfig`.
- */
-export interface MarketplaceSkillConfig {
-	name?: string;
-	title?: string;
-	slug?: string;
-	description?: string;
-	content?: string;
-	source_url?: string;
-}
-
 /** A single non-builtin roster role, fully self-contained. */
 export interface MarketplaceRosterAgent {
 	slug: string;
@@ -103,9 +90,6 @@ export interface MarketplaceTeamDef {
 	content_hash: string;
 	/** Newest-first version history; an entry per version is optional but recommended. */
 	changelog: MarketplaceChangelogEntry[];
-	skills_config: MarketplaceSkillConfig[];
-	mcp_servers: unknown[];
-	mpp_config: Record<string, unknown>;
 	captain: MarketplaceCaptainOverride;
 	/** Non-builtin roles only — never captain/coach/ceo (see RESERVED_ROSTER_SLUGS). */
 	roster: MarketplaceRosterAgent[];

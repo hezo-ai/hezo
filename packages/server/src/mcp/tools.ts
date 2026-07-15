@@ -2078,7 +2078,6 @@ export function registerTools(
 			if (!teamDef) return { error: `Marketplace team "${slug}" not found` };
 
 			const result = await applyMarketplaceTeamToTeam(db, scope.teamId, teamDef, {
-				dataDir,
 				wsManager,
 				enqueueReconcile: false,
 				refreshExisting: args.refresh_existing === true,

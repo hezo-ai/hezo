@@ -627,8 +627,9 @@ override. `marketplace/index.json` is the catalog listing.
   (`team-template-apply.ts`) provisions the Captain via the builtin path (with the def's
   override) and the rest of the roster as **inline agents** (`member_agents.agent_type_id`
   null, like hires) via the shared `insertRosterAgents` core, storing each prompt as an
-  `agent_system_prompt` document. Skills come from the def's `skills_config`; team-level
-  `mcp_servers`/`mpp_config` are applied on the new-project launch. A marketplace team is one
+  `agent_system_prompt` document. A marketplace team ships **only** its roster + prompts — no
+  skills, MCP servers, or MPP config (those are configured per project, not bundled with the
+  team). A marketplace team is one
   selectable source in the standard create-project dialog (alongside Blank, custom saved types,
   and copy-an-existing-team); the marketplace "Launch new project" action opens that same dialog
   preselected. Both create paths carry the choice: **direct** (`POST /api/projects

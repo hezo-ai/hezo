@@ -2,25 +2,18 @@
 	"schema_version": 1,
 	"slug": "software-development",
 	"name": "Startup",
-	"description": "Full-stack software development team with 10 specialized agents and a starter skills database",
+	"description": "Full-stack software development team with 10 specialized agents",
 	"summary": "The Startup template provisions a full software-development team led by a Captain who reports to the CEO — the instance-level executive overseeing every team — who in turn reports to the human admin.\n\nStrategy flows top-down: the Captain translates direction from the CEO and admin into priorities and delegates them to the Product Lead, Architect, Marketing Lead, and Researcher. The Product Lead owns \"what to build\" and writes PRDs; the Architect owns \"how to build it\" and produces technical specs and implementation phases. Marketing Lead and Researcher work largely independently of the engineering pipeline, producing externally-facing content and feasibility studies respectively.\n\nImplementation happens via a three-stage planning loop run by the Architect: a research draft, a peer review where the QA Engineer, Security Engineer, and UI Designer add considerations from their specialty, and a final consolidated plan. The Engineer cannot start coding until that plan is approved.\n\nOnce code lands, the QA Engineer is the final approval gate for every ticket — reviewing correctness, test coverage, and quality. The Security Engineer applies a parallel gate for vulnerabilities and threat models. Findings from both flow back through the Architect, who consolidates them into a single set of actionable changes for the Engineer rather than passing fragmented feedback through.\n\nThe DevOps Engineer maintains shared infrastructure and the CI/CD pipeline, handling deployment concerns the Engineer should not own.\n\nDisputes between agents — typically Architect vs Engineer on implementation approach — are resolved in the ticket thread, with the Architect holding technical authority. If they cannot agree, the Captain mediates; if the Captain is unsure, they escalate to the CEO, and ultimately the human admin. The Coach observes the system as a whole, reviewing completed tickets to extract patterns and propose prompt updates that compound the team's effectiveness over time.",
 	"changelog": [
+		{
+			"version": 2,
+			"notes": "Removed bundled skills and MCP/MPP config from the team template — skills and connections are configured per project, not shipped with the team."
+		},
 		{
 			"version": 1,
 			"notes": "Initial marketplace release."
 		}
 	],
-	"skills_config": [
-		{
-			"name": "Development Workflow",
-			"slug": "development-workflow.md",
-			"content": "# Development Workflow\n\n## Task Lifecycle\n\nTasks progress through these statuses:\n1. **Backlog** — captured but not yet picked up\n2. **In Progress** — actively being worked on\n3. **Review** — implementation complete, awaiting QA review\n4. **Done** — QA-approved and landed, awaiting Coach post-mortem\n5. **Closed** — Coach review complete\n\nApproval is conveyed via comment, not status. From **Review**, the ticket either goes back to **In Progress** (more work needed) or forward to **Done** (work complete and approved). The **Blocked** status is reserved for explicit \"I'm stuck\" signals; agents and the system also use ticket dependencies to gate runs on prerequisites without setting this status.\n\n## Branching Strategy\n\n<!-- TODO: customize for your repository -->\n\n- Main branch: `main`\n- Feature branches: `feat/<task-id>-short-description`\n- Bug fix branches: `fix/<task-id>-short-description`\n\n## Pull Requests\n\n- Every change requires a PR with a clear description\n- PRs must pass CI checks before merge\n- QA Engineer performs final review before approval\n"
-		}
-	],
-	"mcp_servers": [],
-	"mpp_config": {
-		"enabled": false
-	},
 	"captain": {
 		"team_context": "You report to the CEO — the instance-level executive who oversees every team's Captain and who in turn reports to the human admin (the human operators). Escalate cross-team matters and conflicts over shared priorities to the CEO; escalate directly to the admin when a decision changes strategic direction, when budget impact exceeds 20% of monthly, or when you are genuinely uncertain. The admin reaches you via the inbox; you reach them by requesting admin intervention.\n\nYour direct reports are @product-lead, @architect, @marketing-lead, and @researcher. Delegate to them by assignee_slug — never bypass them to assign work to anyone reporting to them.\n\n- @product-lead owns \"what to build\" — PRDs, scope, prioritisation. Hand them strategic direction; they translate it into product requirements.\n- @architect owns \"how to build it\" — technical design, implementation phases, and the engineering team. Delegate technical initiatives here and let them break them down.\n- @marketing-lead drives positioning, content, and public-facing comms. They operate largely independently of the engineering pipeline.\n- @researcher feeds upcoming product and architecture work with competitive analysis and feasibility studies.\n\nTwo levels below you, reporting to @architect: @engineer, @qa-engineer, @security-engineer, @ui-designer, @devops-engineer. Route all engineering execution through @architect — never assign tickets directly to these agents.\n\nThe @coach is a admin-level peer (not your report) who reviews completed tickets and proposes prompt improvements via approvals the admin reviews.\n\nResolve disputes between agents in the ticket thread; @architect holds technical authority for engineering disagreements. If peers cannot agree, you mediate. If the call is too significant for you, escalate to the admin."
 	},
