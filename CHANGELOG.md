@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.25.1 - 2026-07-15
+
+### Bug Fixes
+
+- make asset PNG downloads work and reject truncated binary uploads ([#741](https://github.com/hezo-ai/hezo/pull/741))
+
+### Documentation
+
+- **deployment:** add real one-click buttons to the one-click deploy page ([#740](https://github.com/hezo-ai/hezo/pull/740))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.25.0...0.25.1
+
 ## 0.25.0 - 2026-07-15
 
 ### Features
