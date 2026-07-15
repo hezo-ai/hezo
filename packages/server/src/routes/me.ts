@@ -12,5 +12,8 @@ export const meRoutes = new Hono<Env>();
 meRoutes.get('/me', (c) => {
 	const auth = c.get('auth');
 	const isSuperuser = auth.type === AuthType.Admin ? auth.isSuperuser : false;
-	return ok(c, { type: auth.type, is_superuser: isSuperuser });
+	// The human user's id (Admin only) — used to link an external chat identity to
+	// the current operator on the chat-channels settings page.
+	const userId = auth.type === AuthType.Admin ? auth.userId : null;
+	return ok(c, { type: auth.type, is_superuser: isSuperuser, user_id: userId });
 });

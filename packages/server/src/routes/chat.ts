@@ -36,6 +36,24 @@ async function resolveHqProjectId(db: Db): Promise<string | null> {
 	return r.rows[0]?.id ?? null;
 }
 
+/**
+ * Resolve the target conversation for a request: an explicit `conversation_id`
+ * (validated to exist), or the default web thread. Returns null when an explicit
+ * id doesn't resolve, so the caller can 404.
+ */
+async function resolveConversationId(
+	c: Context<Env>,
+	explicit: string | undefined,
+): Promise<string | null> {
+	const manager = c.get('chatSessionManager');
+	if (!manager) return null;
+	if (explicit) {
+		const convo = await manager.getConversation(explicit);
+		return convo ? convo.id : null;
+	}
+	return manager.getConversationId();
+}
+
 /** Merge each message's file attachments (signed URLs) onto the row for the client. */
 async function withAttachments(
 	c: Context<Env>,
@@ -52,7 +70,8 @@ chatRoutes.get('/chat/conversation', async (c) => {
 
 	const manager = c.get('chatSessionManager');
 	if (!manager) return err(c, 'UNAVAILABLE', 'CEO chat is not available', 503);
-	const conversationId = await manager.getConversationId();
+	const conversationId = await resolveConversationId(c, c.req.query('conversation_id'));
+	if (!conversationId) return err(c, 'NOT_FOUND', 'conversation not found', 404);
 
 	// The chatbox shows the active window — the non-compacted messages. Older
 	// messages have been summarized into long-term memory and dropped. The window
@@ -84,7 +103,8 @@ chatRoutes.get('/chat/messages', async (c) => {
 
 	const manager = c.get('chatSessionManager');
 	if (!manager) return err(c, 'UNAVAILABLE', 'CEO chat is not available', 503);
-	const conversationId = await manager.getConversationId();
+	const conversationId = await resolveConversationId(c, c.req.query('conversation_id'));
+	if (!conversationId) return err(c, 'NOT_FOUND', 'conversation not found', 404);
 
 	const limit = clampLimit(c.req.query('limit'));
 	const before = c.req.query('before');
@@ -168,22 +188,67 @@ chatRoutes.post('/chat/messages', async (c) => {
 
 	const auth = c.get('auth');
 	const authorUserId = auth.type === AuthType.Admin ? auth.userId : null;
+	// An explicit thread from the switcher; omit for the default web thread.
+	const conversationId =
+		typeof body.conversation_id === 'string' ? body.conversation_id : undefined;
 
 	try {
 		const result = await manager.sendTurn({
 			text,
 			channel: ChatChannel.Web,
+			conversationId,
 			authorUserId,
 			attachmentIds,
 		});
 		return ok(
 			c,
-			{ user_message_id: result.userMessageId, assistant_message_id: result.assistantMessageId },
+			{
+				user_message_id: result.userMessageId,
+				assistant_message_id: result.assistantMessageId,
+				conversation_id: result.conversationId,
+			},
 			201,
 		);
 	} catch (e) {
 		return err(c, 'CEO_UNAVAILABLE', (e as Error).message, 503);
 	}
+});
+
+// List conversation threads (open by default), newest activity first — drives the
+// web thread switcher.
+chatRoutes.get('/chat/conversations', async (c) => {
+	const access = await authorize(c);
+	if (access instanceof Response) return access;
+	const manager = c.get('chatSessionManager');
+	if (!manager) return err(c, 'UNAVAILABLE', 'CEO chat is not available', 503);
+	const includeClosed = c.req.query('include_closed') === 'true';
+	return ok(c, { conversations: await manager.listConversations({ includeClosed }) });
+});
+
+// Create a new web conversation thread (the new-thread button).
+chatRoutes.post('/chat/conversations', async (c) => {
+	const access = await authorize(c);
+	if (access instanceof Response) return access;
+	const manager = c.get('chatSessionManager');
+	if (!manager) return err(c, 'UNAVAILABLE', 'CEO chat is not available', 503);
+	const body = await c.req.json().catch(() => ({}));
+	const title = typeof body.title === 'string' && body.title.trim() ? body.title.trim() : undefined;
+	const id = await manager.createWebConversation(title);
+	const conversation = await manager.getConversation(id);
+	return ok(c, { conversation }, 201);
+});
+
+// Close a conversation thread.
+chatRoutes.post('/chat/conversations/:id/close', async (c) => {
+	const access = await authorize(c);
+	if (access instanceof Response) return access;
+	const manager = c.get('chatSessionManager');
+	if (!manager) return err(c, 'UNAVAILABLE', 'CEO chat is not available', 503);
+	const id = c.req.param('id');
+	const convo = await manager.getConversation(id);
+	if (!convo) return err(c, 'NOT_FOUND', 'conversation not found', 404);
+	await manager.closeConversation(id);
+	return ok(c, { closed: true });
 });
 
 chatRoutes.post('/chat/session/restart', async (c) => {

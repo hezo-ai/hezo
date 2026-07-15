@@ -277,6 +277,17 @@ Never commit `.js`/`.d.ts`/`.js.map`/`.d.ts.map` alongside source. Compiled outp
 - Use shared constants/enums from `@hezo/shared` (`packages/shared/src/types/common.ts`) — no raw status/type strings. Add new enum values to the shared package first.
 - `bunx`, not `npx`.
 
+### Adding a chat channel adapter
+
+External chat avenues to the CEO (Telegram now, Discord later) are built on a **channel-adapter abstraction + registry** so a new app is one file, not a core change. The `ChatChannelAdapter` interface and registry live in `packages/server/src/services/chat-channels/`; the manager (`chat-session-manager.ts`), the generic inbound webhook route (`routes/chat-webhooks.ts` → `ingestInboundEvent`), the conversation model, and the web thread switcher are all **channel-agnostic** — they resolve a channel only through the registry, never by branching on a platform name. To add a channel:
+
+1. Add a `ChatChannel` enum value in `packages/shared/src/types/common.ts` **and** an additive `ALTER TYPE chat_channel ADD VALUE` migration (with a data-preservation test). *Telegram needed none — it was already in the enum; Discord will need one.*
+2. Implement a `ChatChannelAdapter` (`chat-channels/<channel>.ts`): `parseInbound` (raw event → `InboundChatEvent`), `deliver` (finalized reply → platform), optional `start`/`stop` (webhook registration or a gateway), optional `createThread`/`closeThread`, optional `promptToLink`/`render`. Register it in `buildChatChannelRegistry` (`chat-channels/index.ts`).
+3. Store all channel-specific settings in `chat_channel_configs.metadata` (jsonb) — **never add per-channel columns**. The bot token goes in the `secrets` vault (referenced by name) and is decrypted **in-process** by trusted server code, NOT via the agent egress proxy (that mechanism is for agent runs).
+4. Ship a registry-contract test (parse → `InboundChatEvent` shape, thread create/close no-op safety) plus the channel's own unit tests.
+
+**Do not touch** the manager, `ingestInboundEvent`, the generic webhook route, or the conversation/identity schema — if a new channel forces a change there, close the gap in the abstraction instead. `.dev/discord-chat-adapter.md` is the worked example (the deferred Discord adapter).
+
 ### User-facing docs terminology
 
 These rules apply to **user-facing prose** — the `docs/` tree and anything a Hezo operator reads — because the audience is users, not engineers. They do **not** force renames of code identifiers, DB columns, route paths, or internal comments.

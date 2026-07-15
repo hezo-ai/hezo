@@ -917,9 +917,11 @@ export interface ProjectProgress {
 // --- CEO chat ---
 
 /**
- * Surface a CEO chat message arrived through. There is exactly one CEO
- * conversation; every channel (web today, Telegram/WhatsApp later) mirrors the
- * full thread, so `channel` is message *provenance* only, never a partition key.
+ * Surface a CEO chat message arrived through. Each conversation belongs to one
+ * channel: `web` conversations are the in-app chatbox threads; external channels
+ * (Telegram now, Discord later) map each external thread to its own conversation.
+ * The channel is both message provenance and — together with `external_thread_id`
+ * — part of the conversation's identity.
  */
 export const ChatChannel = {
 	Web: 'web',
@@ -927,6 +929,11 @@ export const ChatChannel = {
 	WhatsApp: 'whatsapp',
 } as const;
 export type ChatChannel = (typeof ChatChannel)[keyof typeof ChatChannel];
+
+/** Runtime guard: is a string one of the known chat channels? */
+export function isChatChannel(value: string): value is ChatChannel {
+	return (Object.values(ChatChannel) as string[]).includes(value);
+}
 
 export const ChatMessageRole = {
 	User: 'user',
