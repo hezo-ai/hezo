@@ -13,6 +13,7 @@ import {
 	type CommentAttachment,
 	DEFAULT_TEAM_ID,
 	PROVIDER_RUNTIME_ADAPTERS,
+	type WsChatServerMessage,
 	WsMessageType,
 	wsRoom,
 } from '@hezo/shared';
@@ -127,7 +128,6 @@ export interface CeoSessionDeps extends RunnerDeps {
 
 interface LiveSession {
 	sessionId: string;
-	conversationId: string;
 	ceoMemberId: string;
 	projectId: string;
 	containerId: string;
@@ -135,7 +135,6 @@ interface LiveSession {
 	runtimeType: AgentRuntime;
 	env: string[];
 	execCmd: string[];
-	promptHostPath: string;
 	promptDirective: string | null;
 	releaseEgress: () => Promise<void>;
 	releaseSsh: () => Promise<void>;
@@ -148,6 +147,38 @@ interface CurrentTurn {
 }
 
 /**
+ * Identity + channel of a conversation, resolved once per turn. The warm container
+ * is shared across all conversations; this is the per-turn scope threaded through
+ * prompt composition, streaming, and (for external channels) outbound delivery.
+ */
+export interface ConversationContext {
+	conversationId: string;
+	channel: ChatChannel;
+	/** Platform thread id for external channels (Telegram "<chat>:<topic>", …); null for web. */
+	externalThreadId: string | null;
+}
+
+/**
+ * Per-conversation turn bookkeeping. The warm session (`LiveSession`) is shared;
+ * this is what must be per-thread so two conversations can run concurrently while
+ * two messages in the *same* thread still serialize + interrupt.
+ */
+interface ConversationRuntime {
+	conversationId: string;
+	turnLock: Promise<unknown>;
+	current: CurrentTurn | null;
+	compaction: Promise<void> | null;
+	compactionAbort: AbortController | null;
+}
+
+/** Deliver a finalized assistant reply to an external channel (set by the channel layer). */
+export type ExternalDelivery = (
+	ctx: ConversationContext,
+	content: string,
+	status: ChatMessageStatus,
+) => Promise<void>;
+
+/**
  * Owns the single persistent CEO chat session. Unlike a one-shot task run, the
  * session keeps warm resources (egress proxy, ssh socket, MCP token, runtime
  * config) for the HQ container and runs each turn as a one-shot exec with the
@@ -157,20 +188,57 @@ interface CurrentTurn {
  */
 export class ChatSessionManager {
 	private live: LiveSession | null = null;
-	private current: CurrentTurn | null = null;
 	private ensuring: Promise<LiveSession> | null = null;
 	private healthTimer: ReturnType<typeof setInterval> | null = null;
-	// Serializes `sendTurn` so concurrent sends (e.g. an impatient double-click while
-	// the boot egress check is still warming up) can't each clear the gate together
-	// and spawn their own session/turn. With sends serialized, the interrupt guard in
-	// `sendTurn` correctly aborts the prior turn and only the latest one streams.
-	private turnLock: Promise<unknown> = Promise.resolve();
-	// An in-flight background compaction run (a headless exec that has the agent
-	// fold the window into long-term memory). A new user turn preempts it.
-	private compaction: Promise<void> | null = null;
-	private compactionAbort: AbortController | null = null;
+	// Per-conversation turn bookkeeping (lock + in-flight turn + compaction). Keyed
+	// by conversationId. Two conversations run concurrently; the per-conversation
+	// lock serializes sends within a thread so the interrupt guard aborts the prior
+	// turn and only the latest one streams.
+	private convos = new Map<string, ConversationRuntime>();
+	// Long-term memory (`chat_memories`) is keyed by the CEO member, so it is shared
+	// across every thread. Compaction rewrites the whole row, so all threads'
+	// compactions serialize here to avoid clobbering each other's memory write.
+	private memberCompactionLock: Promise<unknown> = Promise.resolve();
+	// Set by the channel layer to deliver a finalized reply out to an external
+	// channel (Telegram, …). Web replies stream over WebSocket and need no delivery.
+	private externalDelivery: ExternalDelivery | null = null;
+	// Set by the channel layer to close an external platform thread when the operator
+	// closes a conversation (e.g. Telegram closeForumTopic). No-op for web.
+	private onCloseThread:
+		| ((channel: ChatChannel, externalThreadId: string) => Promise<void>)
+		| null = null;
 
 	constructor(private readonly deps: CeoSessionDeps) {}
+
+	/** Register the external-channel hooks (called once at wiring time). */
+	setChannelHooks(hooks: {
+		delivery: ExternalDelivery;
+		closeThread: (channel: ChatChannel, externalThreadId: string) => Promise<void>;
+	}): void {
+		this.externalDelivery = hooks.delivery;
+		this.onCloseThread = hooks.closeThread;
+	}
+
+	/** Introspection (tests): is any thread's background compaction still in flight? */
+	hasInflightCompaction(): boolean {
+		for (const c of this.convos.values()) if (c.compaction) return true;
+		return false;
+	}
+
+	private getConvoRuntime(conversationId: string): ConversationRuntime {
+		let rt = this.convos.get(conversationId);
+		if (!rt) {
+			rt = {
+				conversationId,
+				turnLock: Promise.resolve(),
+				current: null,
+				compaction: null,
+				compactionAbort: null,
+			};
+			this.convos.set(conversationId, rt);
+		}
+		return rt;
+	}
 
 	start(): void {
 		if (this.healthTimer) return;
@@ -214,54 +282,64 @@ export class ChatSessionManager {
 	}
 
 	/**
-	 * Send a user turn. Persists the user message, interrupts any in-flight reply,
-	 * creates the streaming assistant row, and kicks the turn in the background.
-	 * Returns the two message ids so the client can correlate streamed deltas.
+	 * Send a user turn to a conversation. Resolves the conversation (web default,
+	 * an explicit thread, or an external thread), persists the user message,
+	 * interrupts any in-flight reply *for that thread*, creates the streaming
+	 * assistant row, and kicks the turn in the background. Returns the two message
+	 * ids so the client can correlate streamed deltas.
 	 */
 	async sendTurn(input: {
 		text: string;
 		channel?: ChatChannel;
+		conversationId?: string;
+		externalThreadId?: string | null;
 		authorUserId?: string | null;
 		attachmentIds?: string[];
-	}): Promise<{ userMessageId: string; assistantMessageId: string }> {
-		// Serialize turns: chain on the prior send so two overlapping requests run the
-		// body sequentially (the second only after the first has set `this.current`),
-		// letting the interrupt guard below abort the prior turn instead of racing it.
-		const run = this.turnLock.then(
-			() => this.runSendTurn(input),
-			() => this.runSendTurn(input),
+	}): Promise<{ userMessageId: string; assistantMessageId: string; conversationId: string }> {
+		const ctx = await this.resolveConversationForInput(input);
+		const convo = this.getConvoRuntime(ctx.conversationId);
+		// Serialize turns *within this conversation*: chain on the prior send so two
+		// overlapping requests to the same thread run sequentially (the second only
+		// after the first has set `current`), letting the interrupt guard abort the
+		// prior turn instead of racing it. Different threads run concurrently.
+		const run = convo.turnLock.then(
+			() => this.runSendTurn(input, ctx),
+			() => this.runSendTurn(input, ctx),
 		);
-		this.turnLock = run.catch(() => undefined);
+		convo.turnLock = run.catch(() => undefined);
 		return run;
 	}
 
-	private async runSendTurn(input: {
-		text: string;
-		channel?: ChatChannel;
-		authorUserId?: string | null;
-		attachmentIds?: string[];
-	}): Promise<{ userMessageId: string; assistantMessageId: string }> {
+	private async runSendTurn(
+		input: {
+			text: string;
+			authorUserId?: string | null;
+			attachmentIds?: string[];
+		},
+		ctx: ConversationContext,
+	): Promise<{ userMessageId: string; assistantMessageId: string; conversationId: string }> {
 		const session = await this.ensureSession();
-		const channel = input.channel ?? ChatChannel.Web;
+		const { conversationId, channel } = ctx;
+		const convo = this.getConvoRuntime(conversationId);
 
-		// A user turn preempts any in-flight background compaction so the shared
-		// prompt file and container exec are free, and so the new message is part
+		// A user turn preempts any in-flight background compaction for this thread so
+		// its prompt file and container exec are free, and so the new message is part
 		// of the window the next compaction summarizes.
-		if (this.compactionAbort) {
-			this.compactionAbort.abort('interrupted');
-			await this.compaction?.catch(() => undefined);
+		if (convo.compactionAbort) {
+			convo.compactionAbort.abort('interrupted');
+			await convo.compaction?.catch(() => undefined);
 		}
 
-		// Interrupt an in-flight reply: abort it and wait for it to finalize
-		// (the run loop persists the partial as `interrupted`) so the next turn's
-		// prompt includes it.
-		if (this.current) {
-			this.current.abort.abort('interrupted');
-			await this.current.promise.catch(() => undefined);
+		// Interrupt an in-flight reply in this thread: abort it and wait for it to
+		// finalize (the run loop persists the partial as `interrupted`) so the next
+		// turn's prompt includes it.
+		if (convo.current) {
+			convo.current.abort.abort('interrupted');
+			await convo.current.promise.catch(() => undefined);
 		}
 
 		const userMessageId = await this.insertMessage({
-			conversationId: session.conversationId,
+			conversationId,
 			role: ChatMessageRole.User,
 			channel,
 			status: ChatMessageStatus.Complete,
@@ -288,43 +366,241 @@ export class ChatSessionManager {
 					)
 				).get(userMessageId) ?? [];
 		}
-		this.broadcastStart(userMessageId, ChatMessageRole.User, channel, input.text, userAttachments);
+		await this.touchConversation(conversationId);
+		this.broadcastStart(
+			conversationId,
+			userMessageId,
+			ChatMessageRole.User,
+			channel,
+			input.text,
+			userAttachments,
+		);
 
 		const assistantMessageId = await this.insertMessage({
-			conversationId: session.conversationId,
+			conversationId,
 			role: ChatMessageRole.Assistant,
-			channel: ChatChannel.Web,
+			channel,
 			status: ChatMessageStatus.Streaming,
 			content: '',
 			authorMemberId: session.ceoMemberId,
 			sessionId: session.sessionId,
 			completed: false,
 		});
-		this.broadcastStart(assistantMessageId, ChatMessageRole.Assistant, ChatChannel.Web, '');
+		this.broadcastStart(conversationId, assistantMessageId, ChatMessageRole.Assistant, channel, '');
 
 		const abort = new AbortController();
-		const promise = this.runTurn(session, assistantMessageId, abort);
-		this.current = { assistantMessageId, abort, promise };
-		// After the reply settles, compact the window if it has grown past the cap.
-		trackBackground(promise.then(() => this.maybeCompact()));
+		const promise = this.runTurn(session, ctx, assistantMessageId, abort);
+		convo.current = { assistantMessageId, abort, promise };
+		// After the reply settles, compact this thread's window if it has grown past
+		// the cap (serialized against other threads' compactions).
+		trackBackground(promise.then(() => this.maybeCompact(ctx)));
 
-		return { userMessageId, assistantMessageId };
+		return { userMessageId, assistantMessageId, conversationId };
 	}
 
 	/** Tear the live session down; the next turn re-allocates a fresh one. */
 	async restart(): Promise<void> {
-		if (this.current) {
-			this.current.abort.abort('restart');
-			await this.current.promise.catch(() => undefined);
-		}
+		await this.abortAllCurrent('restart');
 		await this.teardown(ChatSessionStatus.Stopped);
 	}
 
-	/** Resolve the single global conversation row, creating it on first use. */
+	/** Abort every in-flight turn across all conversations and await them. */
+	private async abortAllCurrent(reason: string): Promise<void> {
+		const inflight: Promise<unknown>[] = [];
+		for (const convo of this.convos.values()) {
+			if (convo.current) {
+				convo.current.abort.abort(reason);
+				inflight.push(convo.current.promise.catch(() => undefined));
+			}
+		}
+		await Promise.all(inflight);
+	}
+
+	/**
+	 * Resolve the default web conversation (the earliest open web thread), creating
+	 * it on first use. Back-compat entry point for the web chatbox's default thread.
+	 */
 	async getConversationId(): Promise<string> {
 		const ceoMemberId = await this.resolveCeoMemberId();
 		const projectId = await this.resolveHqProjectId();
-		return this.ensureConversation(ceoMemberId, projectId);
+		return this.resolveOrCreateConversation({
+			ceoMemberId,
+			projectId,
+			channel: ChatChannel.Web,
+			externalThreadId: null,
+		});
+	}
+
+	/** Resolve the conversation for an inbound turn (explicit id, or resolve/create). */
+	private async resolveConversationForInput(input: {
+		channel?: ChatChannel;
+		conversationId?: string;
+		externalThreadId?: string | null;
+	}): Promise<ConversationContext> {
+		if (input.conversationId) {
+			const convo = await this.getConversation(input.conversationId);
+			if (!convo) throw new Error('conversation not found');
+			if (convo.closed_at) throw new Error('conversation is closed');
+			return {
+				conversationId: convo.id,
+				channel: convo.channel,
+				externalThreadId: convo.external_thread_id,
+			};
+		}
+		const channel = input.channel ?? ChatChannel.Web;
+		const externalThreadId = input.externalThreadId ?? null;
+		const ceoMemberId = await this.resolveCeoMemberId();
+		const projectId = await this.resolveHqProjectId();
+		const conversationId = await this.resolveOrCreateConversation({
+			ceoMemberId,
+			projectId,
+			channel,
+			externalThreadId,
+		});
+		return { conversationId, channel, externalThreadId };
+	}
+
+	/**
+	 * Resolve an open conversation by (member, channel, externalThreadId), creating
+	 * it if none. For web (externalThreadId=null) the earliest open web thread is the
+	 * default; for external channels each open thread id maps to one conversation.
+	 */
+	private async resolveOrCreateConversation(opts: {
+		ceoMemberId: string;
+		projectId: string;
+		channel: ChatChannel;
+		externalThreadId: string | null;
+	}): Promise<string> {
+		const { ceoMemberId, projectId, channel, externalThreadId } = opts;
+		if (externalThreadId == null) {
+			const existing = await this.deps.db.query<{ id: string }>(
+				`SELECT id FROM chat_conversations
+				 WHERE member_id = $1 AND channel = $2::chat_channel
+				   AND external_thread_id IS NULL AND closed_at IS NULL
+				 ORDER BY created_at ASC LIMIT 1`,
+				[ceoMemberId, channel],
+			);
+			if (existing.rows[0]) return existing.rows[0].id;
+			const created = await this.deps.db.query<{ id: string }>(
+				`INSERT INTO chat_conversations (member_id, team_id, project_id, channel)
+				 VALUES ($1, $2, $3, $4::chat_channel) RETURNING id`,
+				[ceoMemberId, DEFAULT_TEAM_ID, projectId, channel],
+			);
+			return created.rows[0].id;
+		}
+		const existing = await this.deps.db.query<{ id: string }>(
+			`SELECT id FROM chat_conversations
+			 WHERE member_id = $1 AND channel = $2::chat_channel
+			   AND external_thread_id = $3 AND closed_at IS NULL`,
+			[ceoMemberId, channel, externalThreadId],
+		);
+		if (existing.rows[0]) return existing.rows[0].id;
+		const created = await this.deps.db.query<{ id: string }>(
+			`INSERT INTO chat_conversations (member_id, team_id, project_id, channel, external_thread_id)
+			 VALUES ($1, $2, $3, $4::chat_channel, $5) RETURNING id`,
+			[ceoMemberId, DEFAULT_TEAM_ID, projectId, channel, externalThreadId],
+		);
+		return created.rows[0].id;
+	}
+
+	/** Fetch a conversation row (identity + lifecycle), or null if it doesn't exist. */
+	async getConversation(conversationId: string): Promise<{
+		id: string;
+		channel: ChatChannel;
+		external_thread_id: string | null;
+		title: string | null;
+		closed_at: string | null;
+	} | null> {
+		const r = await this.deps.db.query<{
+			id: string;
+			channel: ChatChannel;
+			external_thread_id: string | null;
+			title: string | null;
+			closed_at: string | null;
+		}>(
+			`SELECT id, channel, external_thread_id, title, closed_at
+			 FROM chat_conversations WHERE id = $1`,
+			[conversationId],
+		);
+		return r.rows[0] ?? null;
+	}
+
+	/** List conversations (open by default), newest activity first. */
+	async listConversations(opts?: { includeClosed?: boolean }): Promise<
+		Array<{
+			id: string;
+			channel: ChatChannel;
+			external_thread_id: string | null;
+			title: string | null;
+			last_activity_at: string;
+			closed_at: string | null;
+		}>
+	> {
+		const ceoMemberId = await this.resolveCeoMemberId();
+		const r = await this.deps.db.query<{
+			id: string;
+			channel: ChatChannel;
+			external_thread_id: string | null;
+			title: string | null;
+			last_activity_at: string;
+			closed_at: string | null;
+		}>(
+			`SELECT id, channel, external_thread_id, title, last_activity_at, closed_at
+			 FROM chat_conversations
+			 WHERE member_id = $1 ${opts?.includeClosed ? '' : 'AND closed_at IS NULL'}
+			 ORDER BY last_activity_at DESC, created_at DESC`,
+			[ceoMemberId],
+		);
+		return r.rows;
+	}
+
+	/** Create a fresh web conversation thread (the new-thread button). */
+	async createWebConversation(title?: string): Promise<string> {
+		const ceoMemberId = await this.resolveCeoMemberId();
+		const projectId = await this.resolveHqProjectId();
+		const created = await this.deps.db.query<{ id: string }>(
+			`INSERT INTO chat_conversations (member_id, team_id, project_id, channel, title)
+			 VALUES ($1, $2, $3, 'web', $4) RETURNING id`,
+			[ceoMemberId, DEFAULT_TEAM_ID, projectId, title ?? null],
+		);
+		return created.rows[0].id;
+	}
+
+	/**
+	 * Close a conversation: mark it closed, abort + evict its in-flight turn, and
+	 * (for an external thread) close the platform thread via the delivery hook's
+	 * owner. Idempotent — closing an already-closed thread is a no-op.
+	 */
+	async closeConversation(conversationId: string): Promise<void> {
+		const convo = await this.getConversation(conversationId);
+		if (!convo || convo.closed_at) return;
+		const rt = this.convos.get(conversationId);
+		if (rt?.current) {
+			rt.current.abort.abort('closed');
+			await rt.current.promise.catch(() => undefined);
+		}
+		if (rt?.compactionAbort) {
+			rt.compactionAbort.abort('closed');
+			await rt.compaction?.catch(() => undefined);
+		}
+		this.convos.delete(conversationId);
+		await this.deps.db.query(`UPDATE chat_conversations SET closed_at = now() WHERE id = $1`, [
+			conversationId,
+		]);
+		if (convo.external_thread_id && this.onCloseThread) {
+			await this.onCloseThread(convo.channel, convo.external_thread_id).catch((e) =>
+				log.error('close external thread failed', e),
+			);
+		}
+	}
+
+	/** Bump a conversation's last-activity timestamp (drives list ordering). */
+	private async touchConversation(conversationId: string): Promise<void> {
+		await this.deps.db
+			.query(`UPDATE chat_conversations SET last_activity_at = now() WHERE id = $1`, [
+				conversationId,
+			])
+			.catch(() => undefined);
 	}
 
 	private async ensureSession(): Promise<LiveSession> {
@@ -408,8 +684,6 @@ export class ChatSessionManager {
 		);
 		if (!credential) throw new Error(`No ${provider} credential configured`);
 		const modelOverride = override.rows[0]?.model ?? credential.defaultModel ?? null;
-
-		const conversationId = await this.ensureConversation(ceoMemberId, project.id);
 
 		// Reclaim any DB rows left live by a crash without an in-memory session, so
 		// the singleton insert below doesn't collide.
@@ -551,7 +825,6 @@ export class ChatSessionManager {
 
 			this.live = {
 				sessionId,
-				conversationId,
 				ceoMemberId,
 				projectId: project.id,
 				containerId,
@@ -559,12 +832,6 @@ export class ChatSessionManager {
 				runtimeType,
 				env: invocation.env,
 				execCmd: invocation.execCmd,
-				promptHostPath: getHostPromptPath(
-					this.deps.dataDir,
-					DEFAULT_TEAM_ID,
-					project.id,
-					sessionId,
-				),
 				promptDirective: effortApplication.promptDirective ?? null,
 				releaseEgress,
 				releaseSsh,
@@ -584,11 +851,34 @@ export class ChatSessionManager {
 		}
 	}
 
+	/**
+	 * Per-turn prompt file paths + the exec env pointing at them. The container
+	 * reads its prompt from `HEZO_PROMPT_FILE`; keying the file by conversation lets
+	 * concurrent threads exec without overwriting each other's prompt (same-thread
+	 * turns serialize via the per-conversation lock, so one file per thread is safe).
+	 */
+	private turnPrompt(
+		session: LiveSession,
+		conversationId: string,
+	): { hostPath: string; env: string[] } {
+		const key = `${session.sessionId}-${conversationId}`;
+		const hostPath = getHostPromptPath(this.deps.dataDir, DEFAULT_TEAM_ID, session.projectId, key);
+		const containerPath = getContainerPromptPath(key);
+		const env = session.env.map((e) =>
+			e.startsWith('HEZO_PROMPT_FILE=') ? `HEZO_PROMPT_FILE=${containerPath}` : e,
+		);
+		return { hostPath, env };
+	}
+
 	private async runTurn(
 		session: LiveSession,
+		ctx: ConversationContext,
 		assistantMessageId: string,
 		abort: AbortController,
 	): Promise<void> {
+		const { conversationId } = ctx;
+		const convo = this.getConvoRuntime(conversationId);
+		const { hostPath, env } = this.turnPrompt(session, conversationId);
 		const accumulated = { text: '' };
 		let finalized = false;
 		const finalize = async (
@@ -598,13 +888,28 @@ export class ChatSessionManager {
 		) => {
 			if (finalized) return;
 			finalized = true;
-			await this.finalizeMessage(assistantMessageId, status, accumulated.text, usage, error);
+			await this.finalizeMessage(
+				conversationId,
+				assistantMessageId,
+				status,
+				accumulated.text,
+				usage,
+				error,
+			);
+			// Deliver the finalized reply out to an external channel (Telegram, …).
+			// Web replies already streamed over WebSocket. Best-effort — a delivery
+			// failure must not fail the turn.
+			if (ctx.channel !== ChatChannel.Web && this.externalDelivery) {
+				await this.externalDelivery(ctx, accumulated.text, status).catch((e) =>
+					log.error('external chat delivery failed', e),
+				);
+			}
 		};
 
 		try {
-			const prompt = await this.composePrompt(session);
-			mkdirSync(dirname(session.promptHostPath), { recursive: true });
-			writeFileSync(session.promptHostPath, prompt);
+			const prompt = await this.composePrompt(session, conversationId);
+			mkdirSync(dirname(hostPath), { recursive: true });
+			writeFileSync(hostPath, prompt);
 
 			const pricing = this.deps.pricing;
 			const parser = createAgentChatParser(
@@ -615,14 +920,14 @@ export class ChatSessionManager {
 				for (const ev of events) {
 					if (ev.text) {
 						accumulated.text += ev.text;
-						this.broadcastDelta(assistantMessageId, ev.text);
+						this.broadcastDelta(conversationId, assistantMessageId, ev.text);
 					}
 				}
 			};
 
 			const execId = await this.deps.docker.execCreate(session.containerId, {
 				Cmd: session.execCmd,
-				Env: session.env,
+				Env: env,
 				WorkingDir: CHAT_WORKING_DIR,
 				User: session.runUser.name,
 				AttachStdout: true,
@@ -644,12 +949,12 @@ export class ChatSessionManager {
 				await finalize(ChatMessageStatus.Failed, null, (err as Error).message);
 			}
 		} finally {
-			rmSync(session.promptHostPath, { force: true });
-			if (this.current?.assistantMessageId === assistantMessageId) this.current = null;
+			rmSync(hostPath, { force: true });
+			if (convo.current?.assistantMessageId === assistantMessageId) convo.current = null;
 		}
 	}
 
-	private async composePrompt(session: LiveSession): Promise<string> {
+	private async composePrompt(session: LiveSession, conversationId: string): Promise<string> {
 		const stored = await getAgentSystemPrompt(this.deps.db, DEFAULT_TEAM_ID, session.ceoMemberId);
 		const resolved = await resolveSystemPrompt(this.deps.db, stored, {
 			teamId: DEFAULT_TEAM_ID,
@@ -667,7 +972,7 @@ export class ChatSessionManager {
 
 		// The full active (non-compacted) window IS the short-term memory — its size
 		// is bounded by compaction, so there's no per-turn message limit here.
-		const window = await loadActiveWindow(this.deps.db, session.conversationId);
+		const window = await loadActiveWindow(this.deps.db, conversationId);
 		const transcript = window.map(chatTranscriptLine).join('\n\n');
 
 		return [
@@ -684,26 +989,33 @@ export class ChatSessionManager {
 	}
 
 	/**
-	 * Compact the active window if it has grown past the byte cap. Runs in the
-	 * background after a reply settles; skipped when a newer turn is already in
-	 * flight (it will retry after that turn) or when a compaction is already
-	 * running. The agent does the summarization — this just orchestrates.
+	 * Compact a thread's active window if it has grown past the byte cap. Runs in
+	 * the background after a reply settles; skipped when a newer turn is in flight in
+	 * this thread (it retries later) or a compaction is already running for it.
+	 * Serialized across threads via `memberCompactionLock` because long-term memory
+	 * is shared per CEO member and each compaction rewrites the whole row.
 	 */
-	private async maybeCompact(): Promise<void> {
+	private async maybeCompact(ctx: ConversationContext): Promise<void> {
 		const session = this.live;
 		if (!session) return;
-		if (this.current || this.compaction) return;
+		const convo = this.getConvoRuntime(ctx.conversationId);
+		if (convo.current || convo.compaction) return;
 		const abort = new AbortController();
-		this.compactionAbort = abort;
-		const run = this.runCompaction(session, abort);
-		this.compaction = run;
+		convo.compactionAbort = abort;
+		// Serialize this thread's compaction behind any other thread's compaction so
+		// two threads never rewrite the shared memory row concurrently.
+		const run = this.memberCompactionLock
+			.catch(() => undefined)
+			.then(() => this.runCompaction(session, ctx.conversationId, abort));
+		convo.compaction = run;
+		this.memberCompactionLock = run.catch(() => undefined);
 		try {
 			await run;
 		} catch (e) {
 			log.error('CEO chat compaction failed', e);
 		} finally {
-			if (this.compactionAbort === abort) this.compactionAbort = null;
-			if (this.compaction === run) this.compaction = null;
+			if (convo.compactionAbort === abort) convo.compactionAbort = null;
+			if (convo.compaction === run) convo.compaction = null;
 		}
 	}
 
@@ -714,8 +1026,12 @@ export class ChatSessionManager {
 	 * operator sees nothing. Eviction is gated on the agent actually advancing its
 	 * memory this run, so a no-op (or aborted) run loses nothing.
 	 */
-	private async runCompaction(session: LiveSession, abort: AbortController): Promise<void> {
-		const window = await loadActiveWindow(this.deps.db, session.conversationId);
+	private async runCompaction(
+		session: LiveSession,
+		conversationId: string,
+		abort: AbortController,
+	): Promise<void> {
+		const window = await loadActiveWindow(this.deps.db, conversationId);
 		const maxBytes = await getMaxChatHistorySize(this.deps.db);
 		const flush = selectFlush(
 			window.map((m) => ({
@@ -731,12 +1047,13 @@ export class ChatSessionManager {
 		const memory = await getChatMemory(this.deps.db, session.ceoMemberId);
 		const before = memory?.updated_at ?? null;
 		const prompt = buildCompactionPrompt(memory?.content ?? '', flush.windowTranscript);
-		mkdirSync(dirname(session.promptHostPath), { recursive: true });
-		writeFileSync(session.promptHostPath, prompt);
+		const { hostPath, env } = this.turnPrompt(session, conversationId);
+		mkdirSync(dirname(hostPath), { recursive: true });
+		writeFileSync(hostPath, prompt);
 		try {
 			const execId = await this.deps.docker.execCreate(session.containerId, {
 				Cmd: session.execCmd,
-				Env: session.env,
+				Env: env,
 				WorkingDir: CHAT_WORKING_DIR,
 				User: session.runUser.name,
 				AttachStdout: true,
@@ -746,12 +1063,12 @@ export class ChatSessionManager {
 			// real product, landed via the update_chat_memory MCP tool.
 			await this.deps.docker.execStart(execId, { signal: abort.signal, onChunk: () => undefined });
 		} catch (e) {
-			// A new user turn preempts compaction (shared prompt file) — that's a
-			// clean stop, not a failure; nothing is evicted and it retries later.
+			// A new user turn preempts compaction — that's a clean stop, not a
+			// failure; nothing is evicted and it retries later.
 			if (abort.signal.aborted) return;
 			throw e;
 		} finally {
-			rmSync(session.promptHostPath, { force: true });
+			rmSync(hostPath, { force: true });
 		}
 		if (abort.signal.aborted) return;
 
@@ -762,11 +1079,12 @@ export class ChatSessionManager {
 		const advanced = after !== null && (before === null || after.updated_at !== before);
 		if (advanced) {
 			await markCompacted(this.deps.db, flush.evictIds);
-			// Tell every mirrored chatbox to drop the evicted messages and show the
-			// "chat compacted" marker — the conversation refetch returns just the tail.
-			this.deps.wsManager.broadcast(wsRoom.chat(), {
+			// Tell the mirrored chatbox(es) for this thread to drop the evicted
+			// messages and show the "chat compacted" marker — the conversation refetch
+			// returns just the tail.
+			this.broadcastChat(conversationId, {
 				type: WsMessageType.ChatCompacted,
-				conversationId: session.conversationId,
+				conversationId,
 			});
 		} else {
 			log.warn('CEO compaction did not update long-term memory; window left intact', {
@@ -789,10 +1107,7 @@ export class ChatSessionManager {
 	}
 
 	private async shutdown(): Promise<void> {
-		if (this.current) {
-			this.current.abort.abort('shutdown');
-			await this.current.promise.catch(() => undefined);
-		}
+		await this.abortAllCurrent('shutdown');
 		await this.teardown(ChatSessionStatus.Stopped);
 	}
 
@@ -833,19 +1148,6 @@ export class ChatSessionManager {
 		return id;
 	}
 
-	private async ensureConversation(ceoMemberId: string, projectId: string): Promise<string> {
-		const existing = await this.deps.db.query<{ id: string }>(
-			`SELECT id FROM chat_conversations WHERE member_id = $1 ORDER BY created_at ASC LIMIT 1`,
-			[ceoMemberId],
-		);
-		if (existing.rows[0]) return existing.rows[0].id;
-		const created = await this.deps.db.query<{ id: string }>(
-			`INSERT INTO chat_conversations (member_id, team_id, project_id) VALUES ($1, $2, $3) RETURNING id`,
-			[ceoMemberId, DEFAULT_TEAM_ID, projectId],
-		);
-		return created.rows[0].id;
-	}
-
 	private async insertMessage(input: {
 		conversationId: string;
 		role: ChatMessageRole;
@@ -877,6 +1179,7 @@ export class ChatSessionManager {
 	}
 
 	private async finalizeMessage(
+		conversationId: string,
 		messageId: string,
 		status: ChatMessageStatus,
 		content: string,
@@ -905,8 +1208,10 @@ export class ChatSessionManager {
 				])
 				.catch(() => undefined);
 		}
-		this.deps.wsManager.broadcast(wsRoom.chat(), {
+		await this.touchConversation(conversationId);
+		this.broadcastChat(conversationId, {
 			type: WsMessageType.ChatMessageComplete,
+			conversationId,
 			messageId,
 			status,
 			content,
@@ -917,14 +1222,16 @@ export class ChatSessionManager {
 	}
 
 	private broadcastStart(
+		conversationId: string,
 		messageId: string,
 		role: ChatMessageRole,
 		channel: ChatChannel,
 		content: string,
 		attachments?: CommentAttachment[],
 	): void {
-		this.deps.wsManager.broadcast(wsRoom.chat(), {
+		this.broadcastChat(conversationId, {
 			type: WsMessageType.ChatMessageStart,
+			conversationId,
 			messageId,
 			role,
 			channel,
@@ -934,12 +1241,24 @@ export class ChatSessionManager {
 		});
 	}
 
-	private broadcastDelta(messageId: string, text: string): void {
-		this.deps.wsManager.broadcast(wsRoom.chat(), {
+	private broadcastDelta(conversationId: string, messageId: string, text: string): void {
+		this.broadcastChat(conversationId, {
 			type: WsMessageType.ChatMessageDelta,
+			conversationId,
 			messageId,
 			text,
 		});
+	}
+
+	/**
+	 * Fan a chat event out to the thread's own room (the open chatbox for that
+	 * conversation) and the global signal room (the conversation list, for activity
+	 * badges). The web client subscribes to the per-conversation room for the thread
+	 * it's viewing and to the global room for the list.
+	 */
+	private broadcastChat(conversationId: string, message: WsChatServerMessage): void {
+		this.deps.wsManager.broadcast(wsRoom.chatConversation(conversationId), { ...message });
+		this.deps.wsManager.broadcast(wsRoom.chat(), { ...message });
 	}
 }
 

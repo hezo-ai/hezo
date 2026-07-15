@@ -222,7 +222,7 @@ async function waitComplete(ctx: ServerTestContext, messageId: string): Promise<
 	});
 }
 
-type ManagerInternals = { compaction: Promise<void> | null; current: unknown };
+type ManagerInternals = { hasInflightCompaction: () => boolean };
 
 describe('buildCompactionPrompt', () => {
 	test('renders the empty-memory placeholder and the window transcript', () => {
@@ -347,7 +347,7 @@ describe('ChatSessionManager — window compaction', () => {
 		await waitComplete(ctx, assistantMessageId);
 		await poll(async () => chat.flags.compactionEntered);
 		await poll(async () =>
-			Promise.resolve((manager as unknown as ManagerInternals).compaction === null),
+			Promise.resolve(!(manager as unknown as ManagerInternals).hasInflightCompaction()),
 		);
 
 		// Nothing evicted, no memory row appeared, no compaction broadcast. (The
@@ -380,7 +380,7 @@ describe('ChatSessionManager — window compaction', () => {
 		// maybeCompact swallows the failure (logged as an error — the asserted path)
 		// and clears the in-flight marker so a later reply can retry.
 		await poll(async () =>
-			Promise.resolve((manager as unknown as ManagerInternals).compaction === null),
+			Promise.resolve(!(manager as unknown as ManagerInternals).hasInflightCompaction()),
 		);
 
 		const compacted = await ctx.db.query<{ n: number }>(
@@ -435,7 +435,7 @@ describe('ChatSessionManager — window compaction', () => {
 		await waitComplete(ctx, assistantMessageId);
 		// The background maybeCompact settles (runCompaction returns before any exec).
 		await poll(async () =>
-			Promise.resolve((manager as unknown as ManagerInternals).compaction === null),
+			Promise.resolve(!(manager as unknown as ManagerInternals).hasInflightCompaction()),
 		);
 		expect(chat.flags.compactionEntered).toBe(false);
 		const compacted = await ctx.db.query<{ n: number }>(

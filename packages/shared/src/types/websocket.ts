@@ -105,6 +105,7 @@ export interface WsProjectsChangedMessage {
  */
 export interface WsChatMessageStartMessage {
 	type: WsMessageType.ChatMessageStart;
+	conversationId: string;
 	messageId: string;
 	role: ChatMessageRole;
 	channel: ChatChannel;
@@ -117,6 +118,7 @@ export interface WsChatMessageStartMessage {
 /** Incremental assistant text appended to the bubble keyed by `messageId`. */
 export interface WsChatMessageDeltaMessage {
 	type: WsMessageType.ChatMessageDelta;
+	conversationId: string;
 	messageId: string;
 	text: string;
 }
@@ -124,6 +126,7 @@ export interface WsChatMessageDeltaMessage {
 /** Terminal event for a CEO message: finalizes content, status, and usage. */
 export interface WsChatMessageCompleteMessage {
 	type: WsMessageType.ChatMessageComplete;
+	conversationId: string;
 	messageId: string;
 	status: ChatMessageStatus;
 	content: string;
@@ -143,6 +146,13 @@ export interface WsChatCompactedMessage {
 	type: WsMessageType.ChatCompacted;
 	conversationId: string;
 }
+
+/** Any CEO chat WebSocket event, all carrying `conversationId` for thread routing. */
+export type WsChatServerMessage =
+	| WsChatMessageStartMessage
+	| WsChatMessageDeltaMessage
+	| WsChatMessageCompleteMessage
+	| WsChatCompactedMessage;
 
 export type WsServerMessage =
 	| WsRowChangeMessage

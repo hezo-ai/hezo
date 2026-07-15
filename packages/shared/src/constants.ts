@@ -87,8 +87,16 @@ export const HEZO_DOCS_URL = 'https://hezo.ai/docs/introduction';
 export const wsRoom = {
 	team: (id: string) => `team:${id}`,
 	agent: (id: string) => `agent:${id}`,
-	/** The single global CEO chat room. Every mirrored surface subscribes here. */
+	/**
+	 * Global CEO chat signal room. Every chat surface subscribes here for
+	 * conversation-list level activity (a new thread, cross-thread badges).
+	 */
 	chat: () => 'chat:global',
+	/**
+	 * Per-conversation CEO chat room. Message start/delta/complete for a single
+	 * thread stream here, so an open thread only receives its own deltas.
+	 */
+	chatConversation: (conversationId: string) => `chat:${conversationId}`,
 	/**
 	 * The single global base-image build room. Base images (e.g.
 	 * `hezo/agent-base:latest`) are shared across all projects, so their build
