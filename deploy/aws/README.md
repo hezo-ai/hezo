@@ -121,7 +121,20 @@ aws s3 cp deploy/aws/hezo.cfn.yaml s3://hezo-deploy/hezo.cfn.yaml \
 #   https://hezo-deploy.s3.us-east-1.amazonaws.com/hezo.cfn.yaml
 ```
 
-**Keep the hosted object in sync with this file** — the button always serves
-whatever is in S3, so a stale copy ships a stale template. A `release-publish`
-workflow step can `aws s3 cp` it automatically (needs an AWS key scoped to
-`s3:PutObject` on that bucket, stored as a GitHub Actions secret).
+**The button always serves whatever is in S3, so a stale object ships a stale
+template.** To prevent drift, the `publish-cfn-template` job in
+[`.github/workflows/release-publish.yml`](../../.github/workflows/release-publish.yml)
+re-uploads this file to S3 on **every release** (after the GitHub Release is cut).
+It refuses to upload a template containing non-ASCII characters — a regression
+guard for the em-dash bug that broke `GroupDescription` — and skips cleanly when
+AWS credentials are absent.
+
+For that job to upload, configure in the repo:
+
+- **Secrets** `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` for an IAM identity
+  scoped to `s3:PutObject` on the bucket.
+- **Variables** (optional) `HEZO_CFN_S3_BUCKET` and `HEZO_CFN_S3_REGION` to
+  override the defaults (`hezo-deploy` / `us-east-1`).
+
+The command above is the manual equivalent — run it if you change `hezo.cfn.yaml`
+between releases and want the button updated immediately.

@@ -1726,7 +1726,11 @@ version from Conventional Commits and opens a `release/<version>` PR; merging fi
 succeeds** — tags the merge commit, cross-compiles, and publishes a GitHub Release (assets
 `hezo-{os}-{arch}[.exe]` + `SHA256SUMS`). Gating the Release on the image (the `publish`
 job `needs` `publish-agent-image`) means a published version never advertises binaries whose
-provisioning pull (`agent-base:<version>`) would 404. The running instance polls
+provisioning pull (`agent-base:<version>`) would 404. A final `publish-cfn-template` job then
+re-uploads the AWS CloudFormation deploy template (`deploy/aws/hezo.cfn.yaml`) to the public S3
+bucket the README's "Deploy on AWS" Launch Stack button serves, so the hosted copy never drifts
+from the repo (it asserts the template is ASCII-only first, and skips when AWS credentials aren't
+configured). The running instance polls
 `GET /api/updates/latest` (cached ~1 h, fails soft) and shows a bottom banner. The
 Settings → General page also renders a **Version** section (current version linked to its
 GitHub release, plus a **"Check for new version"** button that calls
