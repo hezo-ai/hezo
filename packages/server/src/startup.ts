@@ -39,6 +39,8 @@ import { assetsRoutes, publicAssetsRoutes } from './routes/assets';
 import { auditLogRoutes } from './routes/audit-log';
 import { authRoutes } from './routes/auth';
 import { chatRoutes } from './routes/chat';
+import { chatChannelRoutes } from './routes/chat-channels';
+import { chatWebhookRoutes } from './routes/chat-webhooks';
 import { commentsRoutes } from './routes/comments';
 import { connectorsRoutes } from './routes/connectors';
 import { costsRoutes } from './routes/costs';
@@ -68,6 +70,11 @@ import { teamsRoutes } from './routes/teams';
 import { uiStateRoutes } from './routes/ui-state';
 import { buildUpdatesRoutes } from './routes/updates';
 import { AuthChallengeStore } from './services/auth-challenges';
+import {
+	buildChatChannelRegistry,
+	type ChatChannelRegistry,
+	wireManagerToChannels,
+} from './services/chat-channels';
 import { ChatSessionManager } from './services/chat-session-manager';
 import { checkAndAutoRebindConnectivity } from './services/container-connectivity-preflight';
 import {
@@ -346,6 +353,12 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		containerLogStreamer,
 	});
 
+	// External chat channel adapters (Telegram now, Discord later). The registry is
+	// channel-agnostic; wiring the manager's delivery/close hooks routes external
+	// replies + thread closes through the right adapter without any platform branch.
+	const chatChannelRegistry = buildChatChannelRegistry({ db, masterKeyManager });
+	wireManagerToChannels(chatSessionManager, chatChannelRegistry);
+
 	setStartupPhase('workspace');
 	// On a genuinely fresh instance (HQ not yet seeded) install the default skills
 	// automatically — no opt-in. Must run before seedDefaultTeam creates HQ, so
@@ -393,6 +406,13 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 			.reconcileOnStartup()
 			.catch((err) => log.error('CEO session reconciliation failed:', err))
 			.finally(() => chatSessionManager.start());
+		// Bring enabled external chat channels online (register webhooks / open
+		// gateways). Needs the master key (bot tokens) — hence after unlock.
+		trackBackground(
+			chatChannelRegistry
+				.startAll()
+				.catch((err) => log.error('Failed to start chat channels:', err)),
+		);
 	});
 
 	const app = buildApp(
@@ -417,6 +437,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		chatSessionManager,
 		pricing,
 		assetStore,
+		chatChannelRegistry,
 	);
 
 	return {
@@ -452,6 +473,7 @@ export function buildApp(
 	chatSessionManager?: ChatSessionManager,
 	pricing?: PricingService,
 	assetStore?: AssetStore,
+	chatChannelRegistry?: ChatChannelRegistry,
 ): Hono<Env> {
 	const app = new Hono<Env>();
 	const authChallenges = new AuthChallengeStore();
@@ -477,6 +499,7 @@ export function buildApp(
 		c.set('events', events);
 		if (jobManager) c.set('jobManager', jobManager);
 		if (chatSessionManager) c.set('chatSessionManager', chatSessionManager);
+		if (chatChannelRegistry) c.set('chatChannelRegistry', chatChannelRegistry);
 		c.set('logs', logs);
 		c.set('containerLogStreamer', containerLogStreamer);
 		c.set('dataDir', config.dataDir);
@@ -580,6 +603,11 @@ export function buildApp(
 	// /api/* auth + project-access middleware so it bypasses the bearer check.
 	app.route('/', publicProjectsRoutes);
 
+	// Public inbound webhook surface for external chat channels. Mounted before the
+	// /api/* bearer-auth middleware — inbound platform requests carry no Hezo token
+	// and are authenticated by a per-channel shared secret in the URL/header.
+	app.route('/', chatWebhookRoutes);
+
 	// Auth middleware for all /api/* routes
 	app.use('/api/*', authMiddleware);
 
@@ -640,6 +668,7 @@ export function buildApp(
 	app.route('/api', searchRoutes);
 	app.route('/api', buildUpdatesRoutes({ autoUnlock: config.autoUnlock ?? false }));
 	app.route('/api', chatRoutes);
+	app.route('/api', chatChannelRoutes);
 
 	// Frontend (SPA) serving. The compiled binary serves from the in-memory
 	// bundle embedded at build time (`loadStaticBundle`); in dev that bundle is

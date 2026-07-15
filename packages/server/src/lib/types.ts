@@ -4,6 +4,7 @@ import type { MasterKeyManager } from '../crypto/master-key';
 import type { Db } from '../db/database';
 import type { DomainEventBus } from '../events/bus';
 import type { AuthChallengeStore } from '../services/auth-challenges';
+import type { ChatChannelRegistry } from '../services/chat-channels';
 import type { ChatSessionManager } from '../services/chat-session-manager';
 import type { ContainerLogStreamer } from '../services/container-logs';
 import type { DockerClient } from '../services/docker';
@@ -57,6 +58,7 @@ export type Env = {
 		events: DomainEventBus;
 		jobManager: JobManager;
 		chatSessionManager?: ChatSessionManager;
+		chatChannelRegistry?: ChatChannelRegistry;
 		logs: LogStreamBroker;
 		containerLogStreamer: ContainerLogStreamer;
 		auth: AuthInfo;

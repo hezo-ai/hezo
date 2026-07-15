@@ -930,6 +930,11 @@ export const ChatChannel = {
 } as const;
 export type ChatChannel = (typeof ChatChannel)[keyof typeof ChatChannel];
 
+/** Runtime guard: is a string one of the known chat channels? */
+export function isChatChannel(value: string): value is ChatChannel {
+	return (Object.values(ChatChannel) as string[]).includes(value);
+}
+
 export const ChatMessageRole = {
 	User: 'user',
 	Assistant: 'assistant',
