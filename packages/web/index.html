@@ -2,7 +2,15 @@
 <html lang="en">
 	<head>
 		<meta charset="UTF-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<!-- interactive-widget=resizes-content: let the on-screen keyboard shrink the
+		     LAYOUT viewport (and thus 100dvh), not just the visual viewport. Without it
+		     the default (resizes-visual) keeps the h-dvh shell full-height behind the
+		     keyboard, so focusing the bottom-of-page comment composer scrolls it above
+		     the keyboard and exposes empty scroller space as a gap. See __root.tsx. -->
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content"
+		/>
 		<title>Hezo — Your own AI workforce. Built to ship.</title>
 		<meta
 			name="description"

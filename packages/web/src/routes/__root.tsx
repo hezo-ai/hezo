@@ -220,6 +220,13 @@ function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
 		// off-screen, and it stays hidden until <main> is scrolled back to its very
 		// top. 100dvh tracks the URL bar, so the root never has overflow and the
 		// header can't leave the screen.
+		//
+		// The on-screen keyboard is a separate axis: dvh does NOT shrink for it
+		// unless the viewport meta opts in with interactive-widget=resizes-content
+		// (set in index.html). That opt-in makes this h-dvh shell shrink to the space
+		// above the keyboard, so <main> shrinks with it and a focused bottom-of-page
+		// input (the comment composer) sits flush on the keyboard instead of leaving
+		// dead space beneath it.
 		<div className="h-dvh flex flex-col overflow-hidden">
 			<AppHeader
 				onOpenDrawer={() => setDrawerOpen(true)}
