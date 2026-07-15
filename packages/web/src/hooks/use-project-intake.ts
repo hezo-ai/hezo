@@ -18,6 +18,7 @@ export interface StartProjectIntakeInput {
 	description: string;
 	template_id?: string;
 	source_team_id?: string;
+	marketplace_slug?: string;
 	task_prefix?: string;
 	initial_project_plan?: string;
 }

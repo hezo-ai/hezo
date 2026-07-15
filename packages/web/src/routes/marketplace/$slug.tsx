@@ -2,14 +2,12 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { ChevronRight, Loader2, Store } from 'lucide-react';
 import { useState } from 'react';
+import { CreateProjectWithTeamDialog } from '../../components/create-project-with-team-dialog';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { DialogContent } from '../../components/ui/dialog';
-import { Input } from '../../components/ui/input';
-import { Textarea } from '../../components/ui/textarea';
-import { setActiveTeamSlug } from '../../hooks/use-active-team-slug';
 import { useAddMarketplaceTeam, useMarketplaceTeam } from '../../hooks/use-marketplace';
-import { useAllVisibleProjects, useCreateProjectWithTeam } from '../../hooks/use-projects';
+import { useAllVisibleProjects } from '../../hooks/use-projects';
 import { toast } from '../../hooks/use-toast';
 
 function MarketplaceTeamDetail() {
@@ -103,11 +101,10 @@ function MarketplaceTeamDetail() {
 						</section>
 					)}
 
-					<LaunchProjectDialog
+					<CreateProjectWithTeamDialog
 						open={launchOpen}
 						onOpenChange={setLaunchOpen}
-						slug={slug}
-						teamName={team.name}
+						initialMarketplaceSlug={slug}
 					/>
 					<AddToProjectDialog
 						open={addOpen}
@@ -118,82 +115,6 @@ function MarketplaceTeamDetail() {
 				</>
 			)}
 		</div>
-	);
-}
-
-function LaunchProjectDialog({
-	open,
-	onOpenChange,
-	slug,
-	teamName,
-}: {
-	open: boolean;
-	onOpenChange: (v: boolean) => void;
-	slug: string;
-	teamName: string;
-}) {
-	const [name, setName] = useState('');
-	const [description, setDescription] = useState('');
-	const create = useCreateProjectWithTeam();
-	const navigate = useNavigate();
-	const canSubmit = name.trim().length > 0 && description.trim().length > 0 && !create.isPending;
-
-	async function submit() {
-		if (!canSubmit) return;
-		const res = await create.mutateAsync({
-			name: name.trim(),
-			description: description.trim(),
-			marketplace_slug: slug,
-		});
-		setActiveTeamSlug(res.team_slug);
-		onOpenChange(false);
-		navigate({
-			to: '/projects/$projectId/tasks/$taskId',
-			params: { projectId: res.slug, taskId: res.planning_task_identifier.toLowerCase() },
-		});
-	}
-
-	return (
-		<Dialog.Root open={open} onOpenChange={onOpenChange}>
-			<DialogContent size="md">
-				<Dialog.Title className="text-base font-medium mb-1">
-					Launch a project with the {teamName} team
-				</Dialog.Title>
-				<Dialog.Description className="text-[13px] text-text-2 mb-4">
-					A new project + team is provisioned from this marketplace team.
-				</Dialog.Description>
-				<div className="space-y-3">
-					<Input
-						label="Project name"
-						value={name}
-						onChange={(e) => setName(e.target.value)}
-						data-testid="launch-project-name"
-					/>
-					<div>
-						<span className="text-[13px] font-medium text-text-1">Description</span>
-						<Textarea
-							value={description}
-							onChange={(e) => setDescription(e.target.value)}
-							rows={3}
-							data-testid="launch-project-description"
-						/>
-					</div>
-				</div>
-				{create.error && (
-					<p className="text-[13px] text-danger mt-2">
-						{(create.error as { message?: string }).message || 'Failed to create project'}
-					</p>
-				)}
-				<div className="flex justify-end gap-2 mt-4">
-					<Button variant="ghost" onClick={() => onOpenChange(false)}>
-						Cancel
-					</Button>
-					<Button onClick={submit} disabled={!canSubmit} data-testid="launch-project-submit">
-						{create.isPending ? 'Creating…' : 'Create project'}
-					</Button>
-				</div>
-			</DialogContent>
-		</Dialog.Root>
 	);
 }
 

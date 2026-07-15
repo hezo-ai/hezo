@@ -627,10 +627,15 @@ override. `marketplace/index.json` is the catalog listing.
   (`team-template-apply.ts`) provisions the Captain via the builtin path (with the def's
   override) and the rest of the roster as **inline agents** (`member_agents.agent_type_id`
   null, like hires) via the shared `insertRosterAgents` core, storing each prompt as an
-  `agent_system_prompt` document. Skills come from the def's `skills_config`. Launch a new
-  project from `POST /api/projects {marketplace_slug}`; the "copy an existing team" snapshot
-  path (`snapshotTeamAsTemplate`) materializes custom `agent_types` for those inline roles so
-  cloning still works.
+  `agent_system_prompt` document. Skills come from the def's `skills_config`; team-level
+  `mcp_servers`/`mpp_config` are applied on the new-project launch. A marketplace team is one
+  selectable source in the standard create-project dialog (alongside Blank, custom saved types,
+  and copy-an-existing-team); the marketplace "Launch new project" action opens that same dialog
+  preselected. Both create paths carry the choice: **direct** (`POST /api/projects
+  {marketplace_slug}`) and **CEO-assisted intake** (`POST /api/project-intakes {marketplace_slug}`
+  → recorded as the CEO's baseline → the CEO's `create_project` tool takes a `marketplace_slug`).
+  The "copy an existing team" snapshot path (`snapshotTeamAsTemplate`) materializes custom
+  `agent_types` for those inline roles so cloning still works.
 - **Add to an existing project (CEO-driven).** `POST /api/projects/:projectId/marketplace-team`
   kicks off one CEO task that calls the **`apply_marketplace_team`** MCP tool (direct add, no
   approval — the admin already opted in) and reconciles the merged roster. When the project was

@@ -118,6 +118,7 @@ export interface MarketplaceIndexEntry {
 	description: string;
 	summary: string;
 	version: number;
+	/** Total number of roles in the team, INCLUDING the always-present Captain. */
 	roster_count: number;
 	/** The newest changelog entry's notes, for a one-line list-page hint. */
 	latest_notes: string;
@@ -138,7 +139,8 @@ export function toMarketplaceIndexEntry(def: MarketplaceTeamDef): MarketplaceInd
 		description: def.description,
 		summary: def.summary,
 		version: def.version,
-		roster_count: def.roster.length,
+		// +1 for the Captain, which every team has but which lives outside `roster`.
+		roster_count: def.roster.length + 1,
 		latest_notes: latest?.notes ?? '',
 	};
 }
