@@ -79,6 +79,30 @@ Prefer a manual download? Grab the binary for your platform straight from
 [GitHub Releases](https://github.com/hezo-ai/hezo/releases/latest). Full steps and the
 per-platform asset names are in [Installation](./docs/getting-started/installation.md).
 
+### Deploy to a cloud server
+
+Want an always-on instance instead of running it on your laptop? Deploy to a cloud
+VM in a couple of minutes. Each provisions Docker, the binary, automatic HTTPS
+(a real cert via `<ip>.sslip.io` — no domain needed), systemd, and a locked-down
+firewall, and drops you at the in-browser setup.
+
+<p>
+  <a href="./deploy/gcp/README.md"><img src="https://img.shields.io/badge/Deploy_on-Google_Cloud-4285F4?style=for-the-badge&logo=googlecloud&logoColor=white" alt="Deploy on Google Cloud" height="34" /></a>
+  <a href="./deploy/aws/README.md"><img src="https://img.shields.io/badge/Deploy_on-AWS-FF9900?style=for-the-badge&logo=amazonwebservices&logoColor=white" alt="Deploy on AWS" height="34" /></a>
+  <a href="./docs/deployment/one-click.md"><img src="https://img.shields.io/badge/Deploy_on-DigitalOcean-0080FF?style=for-the-badge&logo=digitalocean&logoColor=white" alt="Deploy on DigitalOcean" height="34" /></a>
+</p>
+
+**Google Cloud** is one-click today — the button opens Cloud Shell and runs the
+deploy for you. **AWS** (CloudFormation) and **DigitalOcean** open a short guide;
+their fully-hosted buttons land once the CloudFormation template is published to
+S3 and the [DigitalOcean Marketplace image](./deploy/marketplace/digitalocean/README.md)
+is listed. Any provider that takes cloud-init works too — see
+[One-click deploy](./docs/deployment/one-click.md).
+
+> Hezo runs each project's agents in a container on the host Docker socket, so it
+> needs a **real VM** — not a managed-container PaaS (Render, Railway, Cloud Run).
+> That's why these buttons target VM providers.
+
 ### Build from source
 
 Want to hack on Hezo or run an unreleased build? You'll need [Bun](https://bun.sh/)

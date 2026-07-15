@@ -12,6 +12,22 @@ host** — not to a managed-container PaaS. These artifacts automate that host s
 |---|---|
 | `provision.sh` | The canonical, self-contained installer. Installs Docker, downloads the `hezo` binary, sets up Caddy (automatic HTTPS + WebSocket passthrough), installs the systemd units, and locks the firewall down. Single source of truth — everything else runs it. |
 | `cloud-init/hezo.cloud-config.yaml` | Portable cloud-init user-data. Paste it into any VPS provider's "User data" field; it fetches and runs `provision.sh` on first boot. |
+| `aws/` | CloudFormation **Launch Stack** template (`hezo.cfn.yaml`) — an EC2 VM whose UserData runs `provision.sh`. See [`aws/README.md`](aws/README.md). |
+| `gcp/` | **Open in Cloud Shell** deploy — `deploy.sh` creates a Compute Engine VM (startup script runs `provision.sh`) with a guided `tutorial.md`. See [`gcp/README.md`](gcp/README.md). |
+| `marketplace/digitalocean/` | Packer template that bakes `provision.sh` into a DigitalOcean Marketplace 1-Click image. See [`marketplace/digitalocean/README.md`](marketplace/digitalocean/README.md). |
+
+Every per-provider button hands `provision.sh` (or the cloud-init) to a fresh VM —
+there is one installer, wrapped per provider. Hezo needs the **host Docker socket**
+(it launches a container per project), so all of these target a **real VM**; a
+managed-container PaaS (Render, Railway, Cloud Run) can't run it.
+
+### How one-click per provider stands today
+
+| Provider | Wrapper (in this repo) | Fully-hosted button needs |
+|---|---|---|
+| **Google Cloud** | `gcp/` Cloud Shell button | Nothing — Cloud Shell reads this repo directly; works on `main`. |
+| **AWS** | `aws/hezo.cfn.yaml` | A one-time upload of the template to a public S3 URL (CloudFormation quick-create requires S3). Manual `aws cloudformation deploy` works today. |
+| **DigitalOcean** | `marketplace/digitalocean/` Packer image | An external DO vendor account + DO's image review to publish the listing. The cloud-init path works today. |
 
 ## How it works
 

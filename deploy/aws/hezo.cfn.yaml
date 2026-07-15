@@ -1,0 +1,186 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Hezo — one-click deploy to a single EC2 instance. Launches an Ubuntu VM, opens
+  the web ports, and runs deploy/provision.sh on first boot (Docker + the hezo
+  binary + Caddy automatic HTTPS via <ip>.sslip.io + systemd + firewall). After
+  ~2 minutes, open the URL in the stack Outputs and finish the in-browser setup
+  (master key, admin password, connect a model). Hezo runs each project's agents
+  in a container on the host Docker socket, so it needs a real VM — this template
+  provisions exactly that.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: { default: Instance }
+        Parameters: [InstanceType, VolumeSize, LatestUbuntuAmi]
+      - Label: { default: Access }
+        Parameters: [KeyName, AllowedSshCidr]
+      - Label: { default: HTTPS (optional) }
+        Parameters: [DomainOverride]
+      - Label: { default: Source }
+        Parameters: [HezoReleaseTag, ProvisionScriptUrl]
+    ParameterLabels:
+      InstanceType: { default: Instance type }
+      VolumeSize: { default: Root disk size (GiB) }
+      LatestUbuntuAmi: { default: Ubuntu 24.04 AMI (leave as-is) }
+      KeyName: { default: SSH key pair (optional) }
+      AllowedSshCidr: { default: Allowed SSH source CIDR }
+      DomainOverride: { default: Custom domain (optional) }
+      HezoReleaseTag: { default: Hezo release tag }
+      ProvisionScriptUrl: { default: Provision script URL }
+
+Parameters:
+  InstanceType:
+    Type: String
+    Default: t3.small
+    AllowedValues: [t3.small, t3.medium, t3.large, t3.xlarge, m7i-flex.large, c7i.large]
+    Description: >-
+      A 2 GB box (t3.small) runs the install; agent containers are memory-hungry,
+      so t3.medium (4 GB) or larger is recommended for real work.
+
+  VolumeSize:
+    Type: Number
+    Default: 30
+    MinValue: 20
+    MaxValue: 1000
+    Description: Root EBS volume size in GiB. Hezo's data directory lives here.
+
+  LatestUbuntuAmi:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id
+    Description: >-
+      Resolved automatically from Canonical's public SSM parameter to the latest
+      Ubuntu 24.04 LTS AMI in this region. Leave the default.
+
+  KeyName:
+    Type: String
+    Default: ''
+    Description: >-
+      Optional. Name of an existing EC2 key pair for SSH. Leave blank to launch
+      without one — you can still get a shell via AWS Systems Manager Session
+      Manager (this template attaches the required role).
+
+  AllowedSshCidr:
+    Type: String
+    Default: 0.0.0.0/0
+    AllowedPattern: '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/\d{1,2}$'
+    Description: >-
+      CIDR allowed to reach SSH (port 22). Only used when a key pair is set.
+      Narrow this to your IP (e.g. 203.0.113.10/32) rather than the open internet.
+
+  DomainOverride:
+    Type: String
+    Default: ''
+    Description: >-
+      Optional. Use your own domain instead of <ip>.sslip.io. Point an A record
+      at the instance's public IP first — Caddy provisions a Let's Encrypt cert
+      for this name. Leave blank to use sslip.io (no domain required).
+
+  HezoReleaseTag:
+    Type: String
+    Default: latest
+    Description: Hezo release to install (default latest). In-app update upgrades it later.
+
+  ProvisionScriptUrl:
+    Type: String
+    Default: https://raw.githubusercontent.com/hezo-ai/hezo/main/deploy/provision.sh
+    Description: >-
+      URL of the canonical installer. Leave the default unless you are deploying
+      from a fork.
+
+Conditions:
+  HasKeyName: !Not [!Equals [!Ref KeyName, '']]
+
+Resources:
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Hezo — public web ports (80/443) and optional SSH
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0, Description: HTTP (Caddy ACME + redirect) }
+        - { IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0, Description: HTTPS (Hezo web app) }
+      Tags:
+        - { Key: Name, Value: !Sub '${AWS::StackName}-sg' }
+
+  # SSH is only opened when a key pair is provided.
+  SshIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: HasKeyName
+    Properties:
+      GroupId: !Ref SecurityGroup
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      CidrIp: !Ref AllowedSshCidr
+      Description: SSH
+
+  # Lets you open a shell via Session Manager even with no key pair.
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Tags:
+        - { Key: Name, Value: !Sub '${AWS::StackName}-role' }
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref InstanceRole]
+
+  Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestUbuntuAmi
+      InstanceType: !Ref InstanceType
+      KeyName: !If [HasKeyName, !Ref KeyName, !Ref 'AWS::NoValue']
+      IamInstanceProfile: !Ref InstanceProfile
+      SecurityGroupIds: [!Ref SecurityGroup]
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: !Ref VolumeSize
+            VolumeType: gp3
+            DeleteOnTermination: true
+            Encrypted: true
+      Tags:
+        - { Key: Name, Value: !Ref 'AWS::StackName' }
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -eux
+          export DEBIAN_FRONTEND=noninteractive
+          # Optional custom domain — provision.sh + hezo-firstboot read this.
+          DOMAIN='${DomainOverride}'
+          if [ -n "$DOMAIN" ]; then
+            echo "HEZO_DOMAIN_OVERRIDE=$DOMAIN" >> /etc/environment
+          fi
+          echo "HEZO_RELEASE_TAG=${HezoReleaseTag}" >> /etc/environment
+          curl -fsSL '${ProvisionScriptUrl}' -o /root/hezo-provision.sh
+          set -a; [ -f /etc/environment ] && . /etc/environment; set +a
+          bash /root/hezo-provision.sh
+
+Outputs:
+  URL:
+    Description: >-
+      Open this once first boot finishes (~2 min). If you set a custom domain,
+      use that instead. Complete the in-browser setup to finish.
+    Value: !Sub 'https://${Instance.PublicIp}.sslip.io'
+  PublicIp:
+    Description: The instance's public IPv4 address.
+    Value: !GetAtt Instance.PublicIp
+  InstanceId:
+    Description: EC2 instance ID (use it to open a Session Manager shell).
+    Value: !Ref Instance
+  SshCommand:
+    Description: SSH in (only if you provided a key pair).
+    Value: !If
+      - HasKeyName
+      - !Sub 'ssh ubuntu@${Instance.PublicIp}'
+      - 'No key pair set — use AWS Systems Manager Session Manager to get a shell.'

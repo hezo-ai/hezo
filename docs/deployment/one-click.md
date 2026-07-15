@@ -15,6 +15,24 @@ This works on any provider that runs Ubuntu and accepts **cloud-init user data**
 which is all of the common ones: DigitalOcean, Hetzner, Vultr, Linode, and AWS
 Lightsail.
 
+Hezo runs each project's agents in a container on the host's Docker, so it needs a
+**real VM** — not a managed-container service like Render, Railway, or Cloud Run.
+The buttons and snippet below all provision a VM for you.
+
+## Provider buttons
+
+For some providers there's a purpose-built button that runs the whole thing:
+
+- **Google Cloud** — one-click via Cloud Shell. See the
+  [Cloud Shell deploy guide](https://github.com/hezo-ai/hezo/blob/main/deploy/gcp/README.md).
+- **AWS** — a CloudFormation "Launch Stack" that creates an EC2 instance. See the
+  [AWS deploy guide](https://github.com/hezo-ai/hezo/blob/main/deploy/aws/README.md).
+- **DigitalOcean** — a Marketplace 1-Click Droplet image (in progress), or the
+  cloud-init snippet below today.
+
+Everything else — Hetzner, Vultr, Linode, Lightsail, or any Ubuntu VM — uses the
+portable [cloud-init snippet](#deploy-it) below.
+
 ## What it sets up
 
 On first boot the snippet:
