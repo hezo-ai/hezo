@@ -223,6 +223,31 @@ links files sent through the chatbox to their message (stored in the HQ asset li
 under `uploads/chat/`), and `chat_memories` holds each chat-enabled agent's
 automatically-maintained long-term memory (§ 4).
 
+**Multi-thread conversations & external channels.** The CEO chat is **multi-threaded**:
+`chat_conversations` is keyed by `(member_id, channel, external_thread_id)` (a partial
+unique index scoped to open threads via `closed_at`), so the web chatbox has a thread
+switcher and each external thread maps to its own conversation. The warm container
+(`chat_sessions`) stays a **single shared lease** per CEO member — a thread is only
+message-grouping + rolling window + memory scope, and each turn is a stateless one-shot
+`docker exec` reading a per-turn prompt file, so N threads run as N independent execs into
+the one container. Long-term memory (`chat_memories`) stays **per-agent** (shared across a
+member's threads); compaction serialises at the member level so concurrent threads never
+clobber the shared memory row. External channels (Telegram now, Discord later —
+`.dev/discord-chat-adapter.md`) are built on a **channel-adapter registry**
+(`services/chat-channels/`): a `ChatChannelAdapter` owns everything platform-specific
+(inbound parse, outbound deliver, thread create/close, transport lifecycle), and the
+manager/routes resolve a channel only through the registry — a new app is one adapter file.
+Inbound arrives at a generic public webhook `POST /webhooks/chat/:channel/:secret` (mounted
+before bearer auth; per-channel shared-secret, constant-time compared) → `parseInbound` →
+`ingestInboundEvent`, which enforces the **identity allowlist** (`chat_identity_links` maps
+`(channel, external_user_id)` → a Hezo user; unlinked senders are ignored/prompted to link)
+before routing the message to `ChatSessionManager.sendTurn`. Per-channel bot config lives in
+`chat_channel_configs` (fully generic — the bot token is a `secrets`-vault reference, all
+channel-specific settings in `metadata` jsonb). **The bot token is decrypted in-process by
+trusted server code and outbound bot API calls go direct** (`api.telegram.org`, …), NOT
+through the agent egress proxy — the `__HEZO_SECRET__`/proxy mechanism is for agent *runs*,
+whose threat model differs from the server authenticating its own calls.
+
 **Costs & budgets.** `cost_entries` is the immutable per-run spend ledger, attributed to
 the AI provider config that produced it — **never** team-scoped. `model_pricing` holds
 per-model token rates from a single source: the pricepertoken.com MCP catalog
