@@ -226,6 +226,47 @@ describe('per-project skills routes (/api/projects/:projectId/skills)', () => {
 		expect(own.id).toBeTruthy();
 	});
 
+	it('reads a global skill by id (so the per-project viewer can render it)', async () => {
+		const global = await createScoped({ name: 'Viewable', slug: 'viewable', content: '# g' });
+		const own = await createScoped({
+			name: 'Mine',
+			slug: 'mine',
+			content: '# o',
+			project_id: projectAId,
+		});
+
+		// A global skill (project_id IS NULL) must be readable through the project
+		// route — it appears in the project's list, and the read-only viewer fetches
+		// its full content by id. Restricting to project_id = :projectId used to 404
+		// it, leaving the view dialog stuck on "Loading…".
+		const readGlobal = await app.request(`/api/projects/${projectAId}/skills/${global.id}`, {
+			headers: authHeader(token),
+		});
+		expect(readGlobal.status).toBe(200);
+		const globalBody = (await readGlobal.json()).data as { content: string; project_id: null };
+		expect(globalBody.content).toBe('# g');
+		expect(globalBody.project_id).toBeNull();
+
+		// The project's own skill is still readable by id.
+		const readOwn = await app.request(`/api/projects/${projectAId}/skills/${own.id}`, {
+			headers: authHeader(token),
+		});
+		expect(readOwn.status).toBe(200);
+		expect((await readOwn.json()).data.content).toBe('# o');
+
+		// Another project's skill is not visible here → 404.
+		const other = await createScoped({
+			name: 'Theirs',
+			slug: 'theirs',
+			content: '# x',
+			project_id: projectBId,
+		});
+		const readOther = await app.request(`/api/projects/${projectAId}/skills/${other.id}`, {
+			headers: authHeader(token),
+		});
+		expect(readOther.status).toBe(404);
+	});
+
 	it('edits and removes the project’s own skill but not a global or another project’s', async () => {
 		const own = await createScoped({
 			name: 'Edit Me',
