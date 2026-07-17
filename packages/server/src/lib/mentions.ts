@@ -119,13 +119,13 @@ function passiveMentionParagraphs(stripped: string, escapedSlug: string): string
  * `__slug__`) or a leading-line address (`slug —` / `slug:`), no `@` prefix at
  * all — where the surrounding text reads like an ask, so an active `@slug` was
  * almost certainly intended yet the bare/bold name renders as inert text and
- * wakes no one, stranding the handoff silently. This is the auto-actionable
+ * wakes no one, stranding the handoff silently. This is the precise, ask-gated
  * subset of detectUnlinkedTeammateReferences: it adds the same directed-ask gate
  * detectPassiveTeammateAsks uses (see ASK_INTENT_RES) so a bold name written for
- * mere emphasis or attribution is never promoted. A slug also reached by an
+ * mere emphasis or attribution is never flagged. A slug also reached by an
  * active `@`-mention anywhere is skipped — it already notifies. The runner's
- * handoff-delivery net feeds these to promoteUnlinkedTeammateAsks so the named
- * teammate is actually woken.
+ * handoff-delivery net uses these to warn (in the run log) that a run ended with a
+ * stranded bold-name handoff, mirroring create_comment's interactive warning.
  */
 export function detectUnlinkedTeammateAsks(content: unknown, knownSlugs: string[]): string[] {
 	const text = flattenTextFields(content);
@@ -165,30 +165,6 @@ function unlinkedMentionParagraphs(stripped: string, escapedSlug: string): strin
 		.split(/\n\s*\n/)
 		.filter((p) => bold.test(p) || lead.test(p))
 		.join('\n');
-}
-
-/**
- * Upgrades the unlinked bold/leading-line ADDRESS forms of the given slugs to an
- * active `@`-mention so the teammate is woken when the text is posted as a
- * comment: `**slug**` → `**@slug**`, and a leading-line `slug —` → `@slug —`.
- * Only the addressing occurrences are rewritten — an ordinary mid-prose mention
- * of the same name (which never matched the address forms) is left untouched, and
- * emphasis is preserved. Pass exactly the slugs detectUnlinkedTeammateAsks
- * flagged; a name already carrying an `@` is never touched.
- */
-export function promoteUnlinkedTeammateAsks(text: string, slugs: string[]): string {
-	let out = text;
-	for (const rawSlug of slugs) {
-		const s = escapeRegExp(rawSlug.toLowerCase());
-		// Emphasised address: **slug**/__slug__ (not already @-prefixed) → **@slug**.
-		out = out.replace(new RegExp(String.raw`(?<!@)(\*\*|__)(${s})\1`, 'gi'), '$1@$2$1');
-		// Leading-line address: `slug —`/`slug:` at line start → `@slug —`.
-		out = out.replace(
-			new RegExp(String.raw`((?:^|\n)[ \t]*)(${s})(\s*[—–\-:,](?:\s|$))`, 'gi'),
-			'$1@$2$3',
-		);
-	}
-	return out;
 }
 
 function flattenTextFields(value: unknown): string {

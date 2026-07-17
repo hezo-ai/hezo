@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detectUnlinkedTeammateAsks, promoteUnlinkedTeammateAsks } from '../src/lib/mentions';
+import { detectUnlinkedTeammateAsks } from '../src/lib/mentions';
 
 const slugs = ['seo-distribution-specialist', 'architect', 'qa-engineer', 'admin'];
 
@@ -69,42 +69,5 @@ describe('detectUnlinkedTeammateAsks', () => {
 	it('returns [] for empty content', () => {
 		expect(detectUnlinkedTeammateAsks('', slugs)).toEqual([]);
 		expect(detectUnlinkedTeammateAsks(null, slugs)).toEqual([]);
-	});
-});
-
-describe('promoteUnlinkedTeammateAsks', () => {
-	it('upgrades a bold address to an active mention, preserving emphasis', () => {
-		expect(promoteUnlinkedTeammateAsks('**architect** — please review.', ['architect'])).toBe(
-			'**@architect** — please review.',
-		);
-	});
-
-	it('upgrades a leading-line address to an active mention', () => {
-		expect(promoteUnlinkedTeammateAsks('architect: please review.', ['architect'])).toBe(
-			'@architect: please review.',
-		);
-	});
-
-	it('leaves an ordinary mid-prose reference untouched', () => {
-		// Not an address form, so nothing is rewritten even though the slug appears.
-		expect(
-			promoteUnlinkedTeammateAsks('I think the architect decided to refactor.', ['architect']),
-		).toBe('I think the architect decided to refactor.');
-	});
-
-	it('does not double-prefix a name already carrying an @', () => {
-		expect(promoteUnlinkedTeammateAsks('**@architect** — please review.', ['architect'])).toBe(
-			'**@architect** — please review.',
-		);
-	});
-
-	it('promotes the exact slug in the screenshot handoff so it becomes an active mention', () => {
-		const promoted = promoteUnlinkedTeammateAsks(
-			'**seo-distribution-specialist** — the assessment is ready when you resume HM-167.',
-			['seo-distribution-specialist'],
-		);
-		expect(promoted).toBe(
-			'**@seo-distribution-specialist** — the assessment is ready when you resume HM-167.',
-		);
 	});
 });

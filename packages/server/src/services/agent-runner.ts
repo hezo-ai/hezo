@@ -36,11 +36,7 @@ import type { DomainEventBus } from '../events/bus';
 import { signAgentAssetUrl } from '../lib/asset-urls';
 import { broadcastProjectUpdate, broadcastRowChange } from '../lib/broadcast';
 import { withProjectGitLock } from '../lib/git-lock';
-import {
-	detectUnlinkedTeammateAsks,
-	extractMentionSlugs,
-	promoteUnlinkedTeammateAsks,
-} from '../lib/mentions';
+import { detectUnlinkedTeammateAsks, extractMentionSlugs } from '../lib/mentions';
 import { withTransaction } from '../lib/sql';
 import { logger } from '../logger';
 import { signAgentJwt } from '../middleware/auth';
@@ -1403,16 +1399,20 @@ export async function runAgent(
 			// Deterministic handoff-delivery net. An agent that ends its turn with a
 			// handoff in its FINAL MESSAGE rather than a create_comment call strands the
 			// work: a run's final message is logged, never posted, so it wakes nobody.
-			// Two stranded forms are caught here — (1) an active `@`-mention the run
-			// never posted as a comment, and (2) an UNLINKED bold/leading-line address
-			// that reads like an ask (`**slug** — … when you resume …`), the exact
-			// wakes-no-one trap create_comment only warns about. Both are delivered as a
-			// real comment so the mention fires (admin inbox / agent wakeup) — the
-			// unlinked form first promoted to an active `@`-mention so the named teammate
-			// is actually woken — flipping the run to a success. This is the deterministic
-			// backstop to the completeness stop-hook judge (best-effort, model-dependent),
-			// and it runs on every runtime, including OpenCode, which has no judge at all.
+			// Two stranded forms are handled here, differently:
+			//   (1) an active `@`-mention the run never posted as a comment — the agent
+			//       wrote an explicit, unambiguous wake, so deliver the message verbatim
+			//       via postAgentComment (admin inbox / agent wakeup), flipping the run
+			//       to a success. This is the deterministic backstop to the completeness
+			//       stop-hook judge (best-effort, model-dependent).
+			//   (2) an UNLINKED bold/leading-line address that reads like an ask
+			//       (`**slug** — … when you resume …`) — the wakes-no-one trap. We do NOT
+			//       auto-deliver or rewrite the agent's words to force a wake (that guesses
+			//       intent and overreaches). create_comment already warns the agent
+			//       interactively, but the final-message path skips that check, so surface
+			//       the same warning in the run log; the handoff is left undelivered.
 			// Best-effort: a failure here must never throw out of the run-completion path.
+			// Runs on every runtime, including OpenCode, which has no stop-hook judge.
 			if (exitedClean && task) {
 				try {
 					const finalMessage = parser.getFinalAssistantMessage();
@@ -1423,9 +1423,9 @@ export async function runAgent(
 						const roster = await resolveWarnableSlugs(deps.db, runTeamId, agent.id);
 						const unlinkedAsks = detectUnlinkedTeammateAsks(finalMessage, roster);
 						if (activeMentions.length > 0 || unlinkedAsks.length > 0) {
-							// Mentions this run already delivered as a comment (the same
-							// extractor fireCommentWakeups uses), so an agent that DID post the
-							// handoff and merely echoed it in the final message isn't double-posted.
+							// Slugs this run already delivered as an active mention in a comment
+							// (the same extractor fireCommentWakeups uses), so an agent that DID
+							// post/wake them and merely echoed it in the final message is skipped.
 							const posted = await deps.db.query<{ content: unknown }>(
 								`SELECT content FROM task_comments WHERE created_by_run_id = $1 AND content_type = 'text'`,
 								[heartbeatRunId],
@@ -1434,15 +1434,10 @@ export async function runAgent(
 							for (const c of posted.rows) {
 								for (const slug of extractMentionSlugs(c.content)) delivered.add(slug);
 							}
+
+							// (1) Deliver stranded active mentions verbatim.
 							const undeliveredActive = activeMentions.filter((slug) => !delivered.has(slug));
-							const undeliveredUnlinked = unlinkedAsks.filter((slug) => !delivered.has(slug));
-							if (undeliveredActive.length > 0 || undeliveredUnlinked.length > 0) {
-								// Promote the stranded unlinked addresses to active `@`-mentions so
-								// posting the message actually wakes them; active mentions post verbatim.
-								const text =
-									undeliveredUnlinked.length > 0
-										? promoteUnlinkedTeammateAsks(finalMessage, undeliveredUnlinked)
-										: finalMessage;
+							if (undeliveredActive.length > 0) {
 								await postAgentComment({
 									db: deps.db,
 									wsManager: deps.wsManager,
@@ -1451,7 +1446,7 @@ export async function runAgent(
 									taskId: task.id,
 									authorMemberId: agent.id,
 									createdByRunId: heartbeatRunId,
-									text,
+									text: finalMessage,
 								});
 								// The run delivered a real comment, so it is no longer a no-op:
 								// flip the local flag (drives `success` below) and the row column
@@ -1461,10 +1456,20 @@ export async function runAgent(
 									[heartbeatRunId],
 								);
 								producedOutput = true;
-								const woken = [...undeliveredActive, ...undeliveredUnlinked];
 								emit(
 									'stdout',
-									`\n[runner] auto-delivered stranded handoff (@${woken.join(', @')}) from the run's final message as a comment\n`,
+									`\n[runner] auto-delivered stranded handoff (@${undeliveredActive.join(', @')}) from the run's final message as a comment\n`,
+								);
+							}
+
+							// (2) Warn about a stranded bold-name ask — do NOT deliver or rewrite.
+							const strandedAsks = unlinkedAsks.filter((slug) => !delivered.has(slug));
+							if (strandedAsks.length > 0) {
+								const named = strandedAsks.map((s) => `**${s}**`).join(', ');
+								const fixes = strandedAsks.map((s) => `@${s}`).join(', ');
+								emit(
+									'stdout',
+									`\n[runner] WARNING: this run's final message addresses ${named} by bold/bare name — that renders as text and wakes no one, so the handoff was NOT delivered. Post a comment with an active mention (${fixes}) to reach them.\n`,
 								);
 							}
 						}
