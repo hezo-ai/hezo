@@ -70,7 +70,7 @@ describe('extractBacktickedMentionCandidates', () => {
 	});
 });
 
-describe('MCP tools warn when an existing entity is wrapped in backticks', () => {
+describe('MCP tools warn when a Hezo reference is wrapped in backticks', () => {
 	let app: Hono<Env>;
 	let db: Db;
 	let token: string;
@@ -222,18 +222,61 @@ describe('MCP tools warn when an existing entity is wrapped in backticks', () =>
 		expect(result.warning).toBeUndefined();
 	});
 
-	it('does not warn when a doc/asset does not exist in the project yet (deliverable stays in code syntax)', async () => {
-		// design.md and assets/wireframe.png are deliverables this task will *create* —
-		// they are not in the project yet, so backtick/code syntax is correct and must
-		// not be flagged. A reference links only once its target exists.
+	it('does not warn when a backticked project-doc does not exist in the project yet', async () => {
+		// design.md is a project doc this task will *create* — not in the project yet.
+		// A bare filename could equally be a repo file (README.md), so the doc branch
+		// stays resolve-gated and must not flag a non-existent one.
 		const result = await callTool(captainId, 'create_task', {
 			project: projectId,
 			title: 'Produce the design doc',
-			description: 'Deliverables: `design.md` and `assets/wireframe.png`.',
+			description: 'Deliverable: `design.md`.',
 			assignee_slug: 'architect',
 		});
 		expect(result.error).toBeUndefined();
 		expect(result.warning).toBeUndefined();
+	});
+
+	it('warns on a backticked asset even when it does not exist in the project yet', async () => {
+		// assets/wireframe.png is a deliverable this task will *create*. Unlike a bare
+		// doc filename, the `assets/` prefix is unambiguously a Hezo asset handle (never
+		// a repo path), so backticking it is always wrong — flag it before the asset row
+		// exists so the habit doesn't persist past creation.
+		const result = await callTool(captainId, 'create_task', {
+			project: projectId,
+			title: 'Produce the wireframe',
+			description: 'Deliverable: `assets/wireframe.png`.',
+			assignee_slug: 'architect',
+		});
+		expect(result.error).toBeUndefined();
+		expect(result.warning).toBeDefined();
+		expect(result.warning).toContain('assets/wireframe.png');
+	});
+
+	it('warns on create_comment for a not-yet-created backticked asset, and still persists the comment', async () => {
+		// The reported failure: an agent describes a tracker it is about to produce and
+		// backticks the (non-existent) asset path. The warning must fire, but the write
+		// is advisory/non-blocking — the comment is committed regardless.
+		const task = await insertTask(architectId, 'Tracker ticket');
+		const result = await callTool(
+			architectId,
+			'create_comment',
+			{
+				project: projectId,
+				task_id: task.id,
+				content: 'Will produce a tracker at `assets/startup-directories/submission-tracker.md`.',
+			},
+			task.id,
+		);
+		expect(result.error).toBeUndefined();
+		expect(result.warning).toBeDefined();
+		expect(result.warning).toContain('assets/startup-directories/submission-tracker.md');
+		// The comment persisted despite the advisory warning.
+		expect(result.id).toBeDefined();
+		const persisted = await db.query<{ c: number }>(
+			`SELECT COUNT(*)::int AS c FROM task_comments WHERE task_id = $1`,
+			[task.id],
+		);
+		expect(persisted.rows[0].c).toBe(1);
 	});
 
 	it('warns on update_task when a backticked doc is added to the description', async () => {

@@ -132,7 +132,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	create_task: {
 		category: 'Tasks',
 		returns:
-			'The created task row (it may carry an advisory `warning` string when the description backticked a real entity). Returns `{ error }` on a validation failure.',
+			'The created task row (it may carry an advisory `warning` string, e.g. when the description backticks a Hezo reference such as an `assets/<path>` — flagged even before that asset exists). Returns `{ error }` on a validation failure.',
 		auth: 'An agent caller may only assign to itself or a direct subordinate; sub-task depth is capped at 2.',
 	},
 	create_tasks: {
