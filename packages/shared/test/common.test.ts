@@ -10,6 +10,7 @@ import {
 	assetServeCsp,
 	CredentialKind,
 	claudeCodeModelArg,
+	claudeCodeProviderUsesCustomEndpoint,
 	credentialKindRequiresAllowedHosts,
 	extensionOf,
 	formatTaskStatus,
@@ -255,6 +256,22 @@ describe('provider helpers', () => {
 		);
 		expect(opencodeModelArg(AiProvider.OpenRouter, 'openrouter/x')).toBe('openrouter/x');
 		expect(opencodeModelArg(AiProvider.Anthropic, 'claude-opus-4')).toBe('claude-opus-4');
+	});
+
+	it('claudeCodeProviderUsesCustomEndpoint is true only for the third-party Claude Code providers', () => {
+		// DeepSeek/Z.ai/Kimi route Claude Code at a custom ANTHROPIC_BASE_URL — the
+		// run model is the single served model, so runtime-derived models track it.
+		expect(claudeCodeProviderUsesCustomEndpoint(AiProvider.DeepSeek)).toBe(true);
+		expect(claudeCodeProviderUsesCustomEndpoint(AiProvider.ZAi)).toBe(true);
+		expect(claudeCodeProviderUsesCustomEndpoint(AiProvider.Kimi)).toBe(true);
+		// Anthropic is a Claude Code provider but hits its own API (no base-url
+		// override), so it keeps its stable constant judge/subagent models.
+		expect(claudeCodeProviderUsesCustomEndpoint(AiProvider.Anthropic)).toBe(false);
+		// Non-Claude-Code runtimes are always false.
+		expect(claudeCodeProviderUsesCustomEndpoint(AiProvider.OpenAI)).toBe(false);
+		expect(claudeCodeProviderUsesCustomEndpoint(AiProvider.Google)).toBe(false);
+		expect(claudeCodeProviderUsesCustomEndpoint(AiProvider.OpenRouter)).toBe(false);
+		expect(claudeCodeProviderUsesCustomEndpoint(AiProvider.XAi)).toBe(false);
 	});
 });
 

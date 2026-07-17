@@ -81,6 +81,14 @@ export interface McpAdapterContext {
 	 * that don't need it; the Claude Code adapter falls back to the Anthropic judge.
 	 */
 	provider?: AiProvider;
+	/**
+	 * The run's resolved model (agent override or provider default), if any. The
+	 * Claude Code adapter uses it, for a third-party Anthropic-compatible
+	 * provider, to judge with the model the run actually uses instead of a
+	 * hardcoded constant — so a provider model upgrade needs no code change (see
+	 * {@link judgeModelForProvider}). Absent/null falls back to the constant.
+	 */
+	runModel?: string | null;
 }
 
 export interface RuntimeMcpAdapter {

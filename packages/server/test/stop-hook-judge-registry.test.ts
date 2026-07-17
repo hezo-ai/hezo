@@ -5,6 +5,8 @@ import {
 	buildCodexJudgeScript,
 	buildGeminiJudgeScript,
 	buildJudgeScriptForRuntime,
+	judgeModelForProvider,
+	STOP_HOOK_JUDGE_MODEL_ANTHROPIC,
 	STOP_HOOK_JUDGE_MODEL_KIMI,
 	STOP_HOOK_PROMPT,
 	STOP_HOOK_RULES,
@@ -43,9 +45,48 @@ describe('stop-hook judge spec registry', () => {
 		// registry and judges via buildClaudeCodeSettings with Moonshot's own model.
 		expect(buildJudgeScriptForRuntime(AgentRuntime.ClaudeCode)).toBeNull();
 		expect(STOP_HOOK_JUDGE_MODEL_KIMI).toBe('kimi-k2.7-code');
+		// No explicit run model → falls back to the per-provider constant.
 		expect(buildClaudeCodeSettings(AiProvider.Kimi).hooks.Stop[0].hooks[0].model).toBe(
 			STOP_HOOK_JUDGE_MODEL_KIMI,
 		);
+	});
+});
+
+/**
+ * The judge for a third-party Anthropic-compatible provider must be a model that
+ * provider's endpoint actually serves. Tracking the run's own selected model
+ * means a provider upgrade (Kimi k2.7-code → k3) needs no code change, while the
+ * per-provider constant stays the fallback when the run pins no model. Anthropic
+ * is excluded — its cheaper Sonnet judge must not scale with the run model.
+ */
+describe('judgeModelForProvider derives the judge from the run model', () => {
+	it('uses the selected model for third-party Claude Code providers (Kimi k3)', () => {
+		expect(judgeModelForProvider(AiProvider.Kimi, 'k3')).toBe('k3');
+		expect(judgeModelForProvider(AiProvider.Kimi, 'kimi-k3')).toBe('kimi-k3');
+		expect(judgeModelForProvider(AiProvider.ZAi, 'GLM-5')).toBe('GLM-5');
+	});
+
+	it('normalizes the DeepSeek [1m] suffix the endpoint would reject', () => {
+		expect(judgeModelForProvider(AiProvider.DeepSeek, 'deepseek-v5-pro[1m]')).toBe(
+			'deepseek-v5-pro',
+		);
+	});
+
+	it('falls back to the per-provider constant when no run model is selected', () => {
+		expect(judgeModelForProvider(AiProvider.Kimi, null)).toBe(STOP_HOOK_JUDGE_MODEL_KIMI);
+		expect(judgeModelForProvider(AiProvider.Kimi, '   ')).toBe(STOP_HOOK_JUDGE_MODEL_KIMI);
+		expect(judgeModelForProvider(AiProvider.Kimi, undefined)).toBe(STOP_HOOK_JUDGE_MODEL_KIMI);
+	});
+
+	it('never derives for Anthropic — its stable Sonnet judge must not scale with the run model', () => {
+		expect(judgeModelForProvider(AiProvider.Anthropic, 'claude-opus-4-8')).toBe(
+			STOP_HOOK_JUDGE_MODEL_ANTHROPIC,
+		);
+		// And the settings a run writes reflect the derived model end-to-end.
+		expect(buildClaudeCodeSettings(AiProvider.Kimi, 'k3').hooks.Stop[0].hooks[0].model).toBe('k3');
+		expect(
+			buildClaudeCodeSettings(AiProvider.Anthropic, 'claude-opus-4-8').hooks.Stop[0].hooks[0].model,
+		).toBe(STOP_HOOK_JUDGE_MODEL_ANTHROPIC);
 	});
 });
 

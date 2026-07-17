@@ -1066,11 +1066,16 @@ or a filed hire proposal / opened approval pending an admin decision — with th
 non-terminal; the admin's reply or resolution auto-wakes the agent (a hire resolution queues
 a `hire-resolved:<id>` wakeup for the requester), so it need not spin re-reporting no work.
 The rule body (`STOP_HOOK_RULES` in `stop-hook-prompt.ts`) is identical across runtimes;
-judge models are hardcoded per provider (Anthropic `claude-sonnet-4-6` / DeepSeek
+each provider has a judge-model constant (Anthropic `claude-sonnet-4-6` / DeepSeek
 `deepseek-v4-pro` / Z.ai `GLM-4.7` / Kimi `kimi-k2.7-code` / OpenAI `gpt-4o-mini` /
-Google `gemini-1.5-flash`). Wiring differs by runtime's native hook:
-Claude Code uses a `type: "prompt"` `Stop` hook (makes the judge call itself, picking the
-per-provider model via `CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER`);
+Google `gemini-1.5-flash`). For the third-party Anthropic-compatible Claude Code providers
+(DeepSeek/Z.ai/Kimi) the judge — and the Claude Code subagent default
+(`CLAUDE_CODE_SUBAGENT_MODEL`) — instead track the run's live-selected model
+(`judgeModelForProvider` / `claudeCodeProviderUsesCustomEndpoint`), falling back to the constant
+only when the run pins none, so a provider model upgrade (e.g. Kimi `kimi-k2.7-code` → `k3`)
+needs no code change; Anthropic keeps its stable, cheaper Sonnet constant. Wiring differs by
+runtime's native hook: Claude Code uses a `type: "prompt"` `Stop` hook (makes the judge call
+itself, resolving the model via `judgeModelForProvider` over `CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER`);
 Codex/Gemini use command scripts (`buildCodexJudgeScript`/`buildGeminiJudgeScript`) that
 call the provider API. Every runtime's judge short-circuits on `stop_hook_active` — allow
 the stop once the turn has already been continued once — so a persistent verdict can't loop
