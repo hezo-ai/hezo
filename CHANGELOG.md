@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.26.0 - 2026-07-17
+
+### Features
+
+- **runtime:** derive Claude Code judge + subagent models from the run's model ([#746](https://github.com/hezo-ai/hezo/pull/746))
+- load models dynamically on every model-selection surface ([#745](https://github.com/hezo-ai/hezo/pull/745))
+
+### Bug Fixes
+
+- let the per-project skill viewer read global skills by id ([#750](https://github.com/hezo-ai/hezo/pull/750))
+- prevent asset viewer scroll jump when adding a review comment ([#749](https://github.com/hezo-ai/hezo/pull/749))
+- warn on backticked asset paths even before the asset exists ([#747](https://github.com/hezo-ai/hezo/pull/747))
+- **web:** centre scroll pills over the scrolled content column ([#744](https://github.com/hezo-ai/hezo/pull/744))
+- **logs:** record whole agent run log without per-line truncation ([#743](https://github.com/hezo-ai/hezo/pull/743))
+
+### Other
+
+- Warn on stranded bold-name handoffs in a run's final message ([#748](https://github.com/hezo-ai/hezo/pull/748))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.25.1...0.26.0
+
 ## 0.25.1 - 2026-07-15
 
 ### Bug Fixes
