@@ -1448,6 +1448,33 @@ export function claudeCodeModelArg(provider: AiProvider, model: string): string 
 }
 
 /**
+ * True for the providers that route Claude Code at a THIRD-PARTY
+ * Anthropic-compatible endpoint (DeepSeek, Z.ai, Kimi) rather than Anthropic's
+ * own API — identified by a `staticEnv.ANTHROPIC_BASE_URL` override.
+ *
+ * For these, the run's selected model is the single model that endpoint serves,
+ * so the runtime's *derived* models — the Stop-hook completeness judge and the
+ * Claude Code subagent default — should track the selected model instead of a
+ * hardcoded constant. The constant goes stale the moment the provider ships a
+ * new flagship (e.g. Kimi `kimi-k2.7-code` → `k3`) or retires the pinned id: the
+ * judge call then 404s and the hook silently fails open, and subagents point at
+ * a model the endpoint no longer serves. Tracking the selected model keeps both
+ * alive with no code change — which is the whole reason the model list is
+ * fetched live from the provider (see the ai-providers models route).
+ *
+ * Anthropic (first-party, no custom base URL) is deliberately excluded: its
+ * judge is a stable, cheaper Sonnet that must NOT scale with the main model's
+ * cost (an Opus run should not judge with Opus), and Claude Code already owns a
+ * sensible native subagent default there.
+ */
+export function claudeCodeProviderUsesCustomEndpoint(provider: AiProvider): boolean {
+	const adapter = PROVIDER_RUNTIME_ADAPTERS[provider];
+	return (
+		adapter.runtime === AgentRuntime.ClaudeCode && Boolean(adapter.staticEnv?.ANTHROPIC_BASE_URL)
+	);
+}
+
+/**
  * OpenCode addresses every model as `<providerKey>/<model>` (e.g.
  * `openrouter/anthropic/claude-sonnet-4.5`). Maps a Hezo AI provider to the
  * OpenCode provider key its models live under, so the runner can prefix a bare

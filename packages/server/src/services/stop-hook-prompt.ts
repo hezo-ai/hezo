@@ -26,7 +26,12 @@
  * — and the agent stops normally.
  */
 
-import { AgentRuntime, AiProvider } from '@hezo/shared';
+import {
+	AgentRuntime,
+	AiProvider,
+	claudeCodeModelArg,
+	claudeCodeProviderUsesCustomEndpoint,
+} from '@hezo/shared';
 
 export const STOP_HOOK_JUDGE_MODEL_ANTHROPIC = 'claude-sonnet-4-6';
 export const STOP_HOOK_JUDGE_MODEL_DEEPSEEK = 'deepseek-v4-pro';
@@ -52,6 +57,33 @@ export const CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER: Partial<Record<AiProvider, str
 	[AiProvider.ZAi]: STOP_HOOK_JUDGE_MODEL_ZAI,
 	[AiProvider.Kimi]: STOP_HOOK_JUDGE_MODEL_KIMI,
 };
+
+/**
+ * Resolve the Stop-hook judge model for a Claude Code run.
+ *
+ * For the third-party Anthropic-compatible providers (DeepSeek/Z.ai/Kimi) the
+ * judge call hits the provider's own upstream, so the model MUST be one that
+ * endpoint serves — and the run's own selected model is guaranteed to be. So
+ * when the run pins an explicit model we judge with THAT model: a provider
+ * upgrade (e.g. Kimi `kimi-k2.7-code` → `k3`) or a retired pinned id then needs
+ * no code change, whereas the hardcoded constant would 404 and fail the hook
+ * open. The constant (mirrored from each provider's `ANTHROPIC_DEFAULT_*_MODEL`)
+ * remains the fallback for a run with no explicit model — Claude Code uses the
+ * staticEnv tier default there, and that same id is the safe judge.
+ *
+ * Anthropic is intentionally NOT derived: its judge is a stable, cheaper Sonnet
+ * that must not scale with the run's model (an Opus run should not judge with
+ * Opus), so it always uses the constant. `claudeCodeProviderUsesCustomEndpoint`
+ * encodes exactly that split.
+ */
+export function judgeModelForProvider(provider: AiProvider, runModel?: string | null): string {
+	const fallback = CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER[provider] ?? STOP_HOOK_JUDGE_MODEL_ANTHROPIC;
+	const trimmed = runModel?.trim();
+	if (trimmed && claudeCodeProviderUsesCustomEndpoint(provider)) {
+		return claudeCodeModelArg(provider, trimmed);
+	}
+	return fallback;
+}
 
 /**
  * The rule body the judge LLM evaluates against. Claude Code's `type:"prompt"`
@@ -108,8 +140,11 @@ export interface ClaudeCodeSettings {
 	};
 }
 
-export function buildClaudeCodeSettings(provider: AiProvider): ClaudeCodeSettings {
-	const model = CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER[provider] ?? STOP_HOOK_JUDGE_MODEL_ANTHROPIC;
+export function buildClaudeCodeSettings(
+	provider: AiProvider,
+	runModel?: string | null,
+): ClaudeCodeSettings {
+	const model = judgeModelForProvider(provider, runModel);
 	return {
 		hooks: {
 			Stop: [

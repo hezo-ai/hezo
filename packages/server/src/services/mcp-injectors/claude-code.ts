@@ -57,7 +57,7 @@ export const claudeCodeAdapter: RuntimeMcpAdapter = {
 
 		const settingsHostPath = join(ctx.hostHomeDir, 'settings.json');
 		const settingsContainerPath = join(ctx.containerHomeDir, 'settings.json');
-		const settingsContents = `${JSON.stringify(buildClaudeCodeSettings(ctx.provider ?? AiProvider.Anthropic), null, 2)}\n`;
+		const settingsContents = `${JSON.stringify(buildClaudeCodeSettings(ctx.provider ?? AiProvider.Anthropic, ctx.runModel), null, 2)}\n`;
 
 		const cliArgs: string[] = ['--settings', settingsContainerPath];
 		if (descriptors.length > 0) {

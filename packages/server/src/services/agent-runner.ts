@@ -9,6 +9,7 @@ import {
 	ContainerStatus,
 	type CostTokens,
 	claudeCodeModelArg,
+	claudeCodeProviderUsesCustomEndpoint,
 	GEMINI_RUNTIME_ENV,
 	HeartbeatRunKind,
 	HeartbeatRunStatus,
@@ -203,7 +204,11 @@ interface RepoRow {
  * since the credential is delivered via a file mount instead — see
  * {@link buildSubscriptionMount}.
  */
-export function buildProviderEnv(provider: AiProvider, credential: AiProviderCredential): string[] {
+export function buildProviderEnv(
+	provider: AiProvider,
+	credential: AiProviderCredential,
+	runModel?: string | null,
+): string[] {
 	const adapter = PROVIDER_RUNTIME_ADAPTERS[provider];
 	const out: string[] = [];
 	if (adapter.runtime === AgentRuntime.ClaudeCode) {
@@ -217,8 +222,24 @@ export function buildProviderEnv(provider: AiProvider, credential: AiProviderCre
 		}
 	}
 	if (adapter.staticEnv) {
+		// For a third-party Anthropic-compatible provider (DeepSeek/Z.ai/Kimi), the
+		// Claude Code subagent default should track the run's own selected model
+		// rather than the hardcoded `CLAUDE_CODE_SUBAGENT_MODEL` constant — so a
+		// provider model upgrade (e.g. Kimi `kimi-k2.7-code` → `k3`) or a retired id
+		// needs no code change. The constant stays the fallback when the run pins no
+		// explicit model. (A newly selected model still needs a `model_pricing` row,
+		// or its runs price to $0 — see the pricing table.)
+		const trimmedModel = runModel?.trim();
+		const subagentOverride =
+			trimmedModel && claudeCodeProviderUsesCustomEndpoint(provider)
+				? claudeCodeModelArg(provider, trimmedModel)
+				: null;
 		for (const [key, value] of Object.entries(adapter.staticEnv)) {
-			out.push(`${key}=${value}`);
+			if (subagentOverride && key === 'CLAUDE_CODE_SUBAGENT_MODEL') {
+				out.push(`${key}=${subagentOverride}`);
+			} else {
+				out.push(`${key}=${value}`);
+			}
 		}
 	}
 	const varName = adapter.credentialEnvByAuthMethod[credential.authMethod];
@@ -461,6 +482,7 @@ export async function buildRuntimeInvocation(
 		hostHomeDir: homeMount?.hostDir ?? null,
 		containerHomeDir: homeMount?.containerDir ?? null,
 		provider,
+		runModel: modelOverride,
 	});
 	validateInjection(adapter, mcpInjection);
 
@@ -492,7 +514,7 @@ export async function buildRuntimeInvocation(
 		`HEZO_PROMPT_MODE=${RUNTIME_PROMPT_DELIVERY[runtimeType]}`,
 		...extraEnv,
 		...effortApplication.extraEnv,
-		...buildProviderEnv(provider, credential),
+		...buildProviderEnv(provider, credential, modelOverride),
 		// Subscription mount sets the runtime HOME env var when present; otherwise
 		// fall through to the home-mount entry so the runtime CLI finds its
 		// per-run config dir even without a subscription credential.

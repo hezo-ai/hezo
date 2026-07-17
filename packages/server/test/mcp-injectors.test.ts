@@ -153,11 +153,12 @@ describe('claude-code adapter', () => {
 		expect(injection.cliArgs[settingsIndex + 1]).toBe(`${HOME}/settings.json`);
 	});
 
-	const judgeModelFor = (provider?: AiProvider): string => {
+	const judgeModelFor = (provider?: AiProvider, runModel?: string | null): string => {
 		const injection = adapter.build([HEZO_DESCRIPTOR], {
 			hostHomeDir: HOME,
 			containerHomeDir: HOME,
 			provider,
+			runModel,
 		});
 		const settings = JSON.parse(injection.files[0].contents) as {
 			hooks: { Stop: Array<{ hooks: Array<{ model: string }> }> };
@@ -176,6 +177,16 @@ describe('claude-code adapter', () => {
 
 	it('falls back to the Anthropic judge model when no provider is supplied', () => {
 		expect(judgeModelFor(undefined)).toBe(STOP_HOOK_JUDGE_MODEL_ANTHROPIC);
+	});
+
+	it('threads the run model into the judge for a third-party provider (no code change on upgrade)', () => {
+		// A run pinned to a newer Moonshot flagship judges with THAT model, so the
+		// hook survives a provider model upgrade without touching the constant.
+		expect(judgeModelFor(AiProvider.Kimi, 'kimi-k3')).toBe('kimi-k3');
+		// Anthropic still uses its stable Sonnet judge regardless of the run model.
+		expect(judgeModelFor(AiProvider.Anthropic, 'claude-opus-4-8')).toBe(
+			STOP_HOOK_JUDGE_MODEL_ANTHROPIC,
+		);
 	});
 });
 

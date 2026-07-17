@@ -2593,6 +2593,35 @@ describe('buildProviderEnv (Codex runtimes do not inherit Claude Code quiet env)
 	});
 });
 
+describe('buildProviderEnv derives the subagent model from the run model', () => {
+	const cred = { value: 'sk-x', authMethod: AiAuthMethod.ApiKey } as const;
+
+	it('points CLAUDE_CODE_SUBAGENT_MODEL at the selected model for Kimi (k3), not the constant', () => {
+		const env = buildProviderEnv(AiProvider.Kimi, cred, 'kimi-k3');
+		expect(env).toContain('CLAUDE_CODE_SUBAGENT_MODEL=kimi-k3');
+		expect(env).not.toContain('CLAUDE_CODE_SUBAGENT_MODEL=kimi-k2.7-code');
+	});
+
+	it('normalizes the DeepSeek [1m] suffix for the subagent model', () => {
+		const env = buildProviderEnv(AiProvider.DeepSeek, cred, 'deepseek-v5-pro[1m]');
+		expect(env).toContain('CLAUDE_CODE_SUBAGENT_MODEL=deepseek-v5-pro');
+	});
+
+	it('keeps the staticEnv constant when no run model is selected', () => {
+		expect(buildProviderEnv(AiProvider.Kimi, cred)).toContain(
+			'CLAUDE_CODE_SUBAGENT_MODEL=kimi-k2.7-code',
+		);
+		expect(buildProviderEnv(AiProvider.DeepSeek, cred, null)).toContain(
+			'CLAUDE_CODE_SUBAGENT_MODEL=deepseek-v4-flash',
+		);
+	});
+
+	it('does not add a subagent model for Anthropic (no staticEnv to override)', () => {
+		const env = buildProviderEnv(AiProvider.Anthropic, cred, 'claude-opus-4-8');
+		expect(env.some((e) => e.startsWith('CLAUDE_CODE_SUBAGENT_MODEL='))).toBe(false);
+	});
+});
+
 describe('shellQuoteArg', () => {
 	it('leaves simple flags and identifiers unquoted', () => {
 		expect(shellQuoteArg('-p')).toBe('-p');
