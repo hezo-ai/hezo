@@ -303,13 +303,16 @@ async function buildPassiveMentionWarning(
 }
 
 /**
- * Returns a warning when markdown wraps an *existing* Hezo reference in inline
- * backticks — which renders it as inert code instead of a link — or null when
- * nothing is amiss. Only references that would actually resolve (a real task in
- * this team, a project doc/skill, an asset in this project, or a teammate in
- * this team or HQ) are flagged, so genuine code spans — repo paths, package
- * names, `UTF-8` — never trip it. This mirrors the renderer, which links a
- * reference only when it resolves. Best-effort and non-blocking, exactly like
+ * Returns a warning when markdown wraps a Hezo reference in inline backticks —
+ * which renders it as inert code instead of a link — or null when nothing is
+ * amiss. Tasks, project docs/skills, and teammates are flagged only when they
+ * actually resolve (a real task in this team, a project doc/skill, or a teammate
+ * in this team or HQ), so genuine code spans — repo paths, package names,
+ * `UTF-8` — never trip those branches. An `assets/<path>` reference is the
+ * exception: the `assets/` prefix is unambiguously a Hezo asset handle (never a
+ * repo path), so a backticked one is flagged whether or not the asset exists
+ * yet — catching a deliverable an agent is about to create before the backtick
+ * habit sets. Best-effort and non-blocking, exactly like
  * buildUnlinkedMentionWarning.
  */
 async function buildBacktickedEntityWarning(
@@ -367,23 +370,23 @@ async function buildBacktickedEntityWarning(
 		for (const row of kb.rows) refs.push(row.slug);
 	}
 
-	if (candidates.assets.length > 0) {
-		const r = await db.query<{ original_filename: string }>(
-			`SELECT original_filename FROM assets
-			 WHERE project_id = $1 AND original_filename = ANY($2::text[])`,
-			[projectId, candidates.assets],
-		);
-		for (const row of r.rows) refs.push(`assets/${row.original_filename}`);
-	}
+	// The `assets/` prefix is unambiguously a Hezo asset handle, never a repo
+	// path, so a backticked asset reference is always wrong — flag every candidate
+	// without a DB existence check. This is what catches a deliverable an agent is
+	// about to create (the asset row doesn't exist yet), where the resolve-gated
+	// branches above would stay silent.
+	for (const a of candidates.assets) refs.push(`assets/${a}`);
 
 	if (refs.length === 0) return null;
 	const deduped = Array.from(new Set(refs));
 	const wrapped = deduped.map((ref) => `\`${ref}\``).join(', ');
 	const bare = deduped.join(', ');
 	return (
-		`You wrapped existing Hezo reference(s) in backticks — ${wrapped} — so they render as ` +
-		`inert code instead of links. Re-post with each written bare (no backticks) so it becomes ` +
-		`a clickable link, exactly as in a comment: ${bare}.` +
+		`You wrapped Hezo reference(s) in backticks — ${wrapped} — so they render as inert ` +
+		`code instead of links. Write each bare (no backticks): ${bare}. A bare reference links ` +
+		`as soon as its target exists — an \`assets/<path>\` you have not created yet renders as ` +
+		`plain text until then, then links automatically — whereas backticks keep it inert ` +
+		`permanently.` +
 		(hasAgents
 			? ' For a teammate, @<slug> also wakes them on this ticket; use @@<slug> to refer without notifying.'
 			: '')

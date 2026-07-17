@@ -265,7 +265,7 @@ Create a new task. Use parent_task_id for sub-tasks — prefer this over a top-l
 | `blocked_by_task_ids` | `string[]` | No | Task identifiers (e.g. ["BE-2", "BE-3"]) or UUIDs that must reach a terminal status before this ticket is started. The assignee will not be woken on this ticket until every blocker is satisfied. |
 | `goal_id` | `string` | No | UUID of the project goal this task advances. Links the task to the goal for traceability; it does not gate or change how the task runs. (Captain) set this when filing work to move a goal forward. |
 
-**Returns:** The created task row (it may carry an advisory `warning` string when the description backticked a real entity). Returns `{ error }` on a validation failure.
+**Returns:** The created task row (it may carry an advisory `warning` string, e.g. when the description backticks a Hezo reference such as an `assets/<path>` — flagged even before that asset exists). Returns `{ error }` on a validation failure.
 
 **Authorization:** An agent caller may only assign to itself or a direct subordinate; sub-task depth is capped at 2.
 
