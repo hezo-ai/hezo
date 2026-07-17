@@ -1,5 +1,25 @@
+import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
+
+/**
+ * Route the provider catalog call (a live fetch inside the `/models` route) to a
+ * fixed model list. Everything else keeps flowing through the harness fetch that
+ * proxies `/api` to the in-process app. Returns the models it will serve.
+ */
+function stubProviderCatalog(ids: string[]): void {
+	const harnessFetch = globalThis.fetch;
+	globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+		const url = input instanceof Request ? input.url : String(input);
+		if (url.includes('/v1/models') || url.includes('api.anthropic.com')) {
+			return new Response(JSON.stringify({ data: ids.map((id) => ({ id })) }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' },
+			});
+		}
+		return harnessFetch(input as RequestInfo | URL, init);
+	}) as typeof fetch;
+}
 
 async function seedOverride(
 	ctx: { token: string; apiBase: (p: string, i?: RequestInit) => Promise<Response> },
@@ -14,6 +34,9 @@ async function seedOverride(
 }
 
 test('model pricing lists the baked catalog plus overrides and creates an override', async () => {
+	// Opening the override form fetches provider catalogs for the id-suggestion
+	// datalist; stub it so the test doesn't reach the real network.
+	stubProviderCatalog(['claude-opus-4-8']);
 	const { findByText, findByRole, getByRole, getByPlaceholderText, user } = await renderApp({
 		initialPath: '/settings/ai-providers',
 		seed: async (ctx) => {
@@ -49,7 +72,38 @@ test('model pricing lists the baked catalog plus overrides and creates an overri
 	await findByText('my-fine-tune');
 });
 
+test('the override model-id field suggests models from configured providers via a datalist', async () => {
+	// The default seed leaves one verified anthropic (api_key) provider configured,
+	// whose live catalog we stub. Opening the form fans the catalog fetch out over
+	// verified providers and offers the results as datalist suggestions.
+	stubProviderCatalog(['claude-opus-4-8', 'claude-sonnet-4-6']);
+
+	const { findByRole, getByRole, container, user } = await renderApp({
+		initialPath: '/settings/ai-providers',
+	});
+
+	await findByRole('heading', { name: 'Model pricing' });
+	await user.click(getByRole('button', { name: 'Override' }));
+
+	// The input is wired to the datalist, and the datalist fills from the fetched
+	// catalog once the query resolves. The field itself stays free-text.
+	expect(container.querySelector('input[list="model-pricing-model-ids"]')).toBeTruthy();
+
+	await waitFor(
+		() => {
+			const datalist = container.querySelector('#model-pricing-model-ids');
+			const values = Array.from(datalist?.querySelectorAll('option') ?? []).map((o) =>
+				o.getAttribute('value'),
+			);
+			expect(values).toContain('claude-opus-4-8');
+			expect(values).toContain('claude-sonnet-4-6');
+		},
+		{ timeout: 10_000 },
+	);
+});
+
 test('the override form opens in a titled panel and closes via its close button', async () => {
+	stubProviderCatalog(['claude-opus-4-8']);
 	const { findByRole, getByRole, getByTestId, queryByTestId, user } = await renderApp({
 		initialPath: '/settings/ai-providers',
 	});

@@ -540,6 +540,86 @@ test('blocks the app when no provider is configured and drops once one is added'
 	);
 });
 
+/**
+ * Point the provider catalog call (a live fetch inside the `/models` route) at a
+ * fixed model list, so the default-model dropdown can be exercised without the
+ * real network. Other requests keep flowing through the harness fetch.
+ */
+function stubProviderCatalog(ids: string[]): void {
+	const harnessFetch = globalThis.fetch;
+	globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+		const url = input instanceof Request ? input.url : String(input);
+		if (url.includes('/v1/models') || url.includes('api.anthropic.com')) {
+			return new Response(JSON.stringify({ data: ids.map((id) => ({ id })) }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' },
+			});
+		}
+		return harnessFetch(input as RequestInfo | URL, init);
+	}) as typeof fetch;
+}
+
+test('the default-model dropdown loads models dynamically on hover intent', async () => {
+	stubProviderCatalog(['claude-opus-4-8', 'claude-sonnet-4-6']);
+
+	const { findByRole } = await renderApp({
+		initialPath: '/settings/ai-providers',
+		seed: async () => {
+			await clearAiProviders();
+			const res = await postProvider({
+				provider: 'anthropic',
+				api_key: 'sk-ant-models-dropdown',
+				label: 'anthropic-models',
+			});
+			expect(res.status).toBe(201);
+		},
+	});
+
+	await findByRole('heading', { name: 'AI providers' });
+	const select = (await findByRole('combobox', {
+		name: 'Default model for anthropic-models',
+	})) as HTMLSelectElement;
+
+	// A native <select> opens on the same click that focuses it, so the query is
+	// prefetched on pointer-enter — by the time the list opens, the fetched models
+	// are already mounted as options.
+	fireEvent.pointerEnter(select);
+
+	await waitFor(
+		() => {
+			const values = Array.from(select.querySelectorAll('option')).map((o) => o.value);
+			expect(values).toContain('claude-opus-4-8');
+			expect(values).toContain('claude-sonnet-4-6');
+		},
+		{ timeout: 10_000 },
+	);
+});
+
+test('a subscription provider shows a CLI-default note instead of a model list', async () => {
+	// No catalog stub: subscription auth must not attempt the live listing at all,
+	// so a real fetch would be the bug this asserts against.
+	const { findByRole, findByText, queryByText } = await renderApp({
+		initialPath: '/settings/ai-providers',
+		seed: async () => {
+			await clearAiProviders();
+			const res = await postProvider({
+				provider: 'anthropic',
+				api_key: 'sk-ant-oat01-subscription-note-token',
+				auth_method: 'subscription',
+				label: 'anthropic-sub',
+			});
+			expect(res.status).toBe(201);
+		},
+	});
+
+	await findByRole('heading', { name: 'AI providers' });
+	await findByText('anthropic-sub');
+
+	// The row degrades to a friendly note; no error is surfaced.
+	await findByText('CLI default (subscription)', undefined, { timeout: 10_000 });
+	expect(queryByText('Failed to load models')).toBeNull();
+});
+
 test('re-raises the gate after deleting the last provider', async () => {
 	const { findByRole } = await renderApp({
 		initialPath: '/settings/ai-providers',
