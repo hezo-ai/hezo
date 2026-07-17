@@ -567,8 +567,13 @@ skillsRoutes.get('/projects/:projectId/skills/:id', async (c) => {
 	}
 	const db = c.get('db');
 	const projectId = c.get('projectId') as string;
+	// Read-only scope mirrors the list route: this project's own skills PLUS
+	// globals (project_id IS NULL). The per-project Skills page renders global
+	// rows and lets them be viewed here; restricting to `project_id = $2` would
+	// 404 every global and leave the viewer stuck loading. Edit/delete/restore
+	// below stay strictly `project_id = $2` — globals are read-only here.
 	const result = await db.query<SkillRecord>(
-		'SELECT * FROM skills WHERE id = $1 AND project_id = $2',
+		'SELECT * FROM skills WHERE id = $1 AND (project_id = $2 OR project_id IS NULL)',
 		[c.req.param('id'), projectId],
 	);
 	if (result.rows.length === 0) return err(c, 'NOT_FOUND', 'Skill not found', 404);

@@ -66,6 +66,38 @@ test('the per-project Skills page shows project skills (editable) and globals (r
 	await findByText('A Project Skill');
 });
 
+test('a stored global skill is viewable in the read-only modal from the project page', async () => {
+	let projectSlug = '';
+	const { findByText, router, user } = await renderApp({
+		initialPath: '/',
+		seed: async (ctx) => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Viewer Proj' });
+			projectSlug = project.slug;
+			await seedSkill(ctx, { name: 'Executing Plans', content: '# How to execute plans' });
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/skills',
+		params: { projectId: projectSlug },
+	});
+
+	// The stored global skill renders under "Global (all projects)".
+	const globalRow = (await findByText('Executing Plans')).closest(
+		'[data-testid="global-skill-row"]',
+	) as HTMLElement;
+
+	// Opening its viewer fetches the full skill by id through the project route.
+	// That route used to require project_id = :projectId, so a global (project_id
+	// NULL) 404'd and the dialog was stuck on "Loading…". Assert the content
+	// actually renders now.
+	await user.click(within(globalRow).getByLabelText('View Executing Plans'));
+	const dialog = await within(document.body).findByTestId('skill-view-dialog');
+	const dialogContent = await within(dialog).findByTestId('skill-view-content');
+	expect(dialogContent.querySelector('h1')?.textContent).toContain('How to execute plans');
+});
+
 test('the built-in connector-recipes skill shows on the project page as a global, viewable in a modal', async () => {
 	let projectSlug = '';
 	const { findByText, router, user } = await renderApp({
