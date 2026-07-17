@@ -10,16 +10,28 @@ interface SignedUrlText {
 
 /**
  * Fetch a text asset's body from its signed URL (the public asset route serves
- * the stored bytes; no auth header — the signature is in the URL). Re-runs when
- * the URL changes: a list refetch hands out a fresh signature, and an agent
- * overwrite swaps the asset id inside the URL entirely.
+ * the stored bytes; no auth header — the signature is in the URL).
+ *
+ * The fetch is keyed on the asset's *identity* — the URL path (`/api/assets/
+ * <id>`) — not on the whole URL. The query string carries only a short-lived
+ * `exp`/`sig` that every assets-list refetch rotates (a fresh `Date.now()` per
+ * request), and re-fetching the same immutable bytes on a merely-rotated
+ * signature is wasted work. Worse, blanking `text` for a frame unmounts the
+ * asset viewer's prose, which collapses the page and yanks the reader back to
+ * the top mid-review — the bug this keying fixes. An asset overwrite swaps the
+ * id (and thus the path), so genuinely new content still triggers a refetch;
+ * `reload()` forces one with the latest signature after an error (e.g. the URL
+ * expired before the first load landed).
  */
 export function useSignedUrlText(url: string | undefined): SignedUrlText {
 	const [text, setText] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [nonce, setNonce] = useState(0);
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: `nonce` is the manual retry trigger — bumping it re-runs the fetch for the same URL
+	// The asset's stable identity: everything before the signing query string.
+	const identity = url ? url.split('?')[0] : undefined;
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: intentional — fetch the latest signed `url`, but re-run only when the asset `identity` (path) changes or `nonce` (the manual retry) bumps. A rotated signature for the same asset must NOT re-run, so `url` is deliberately excluded from the deps.
 	useEffect(() => {
 		if (!url) return;
 		let cancelled = false;
@@ -38,7 +50,7 @@ export function useSignedUrlText(url: string | undefined): SignedUrlText {
 		return () => {
 			cancelled = true;
 		};
-	}, [url, nonce]);
+	}, [identity, nonce]);
 
 	const reload = useCallback(() => setNonce((n) => n + 1), []);
 	return { text, error, reload };
