@@ -78,3 +78,8 @@ for any individual agent.** One agent can run on Claude while another on the sam
 runs on Gemini or DeepSeek — whatever fits its job. Set it when you hire
 the agent or any time afterward from its settings. See
 [Hiring & customizing agents](/docs/concepts/hiring-and-agents).
+
+Wherever you pick a specific model — a provider's default model, or an agent's override —
+Hezo loads the list of choices **live from that provider**, so you always see the models
+your key can actually use. Providers you signed in to with a subscription instead of an API
+key use the model their CLI selects, so there's no list to choose from there.

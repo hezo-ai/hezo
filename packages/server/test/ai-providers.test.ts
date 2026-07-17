@@ -757,6 +757,44 @@ describe('AI providers models endpoint', () => {
 		});
 		expect(res.status).toBe(503);
 	});
+
+	it('short-circuits subscription auth without a live provider call', async () => {
+		const codexBlob = JSON.stringify({
+			tokens: {
+				id_token: 'header.payload.sig',
+				access_token: 'header.payload.sig',
+				refresh_token: 'rt-test-token-1',
+				account_id: 'acct-123',
+			},
+		});
+		const created = await app.request('/api/ai-providers', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				provider: 'openai',
+				api_key: codexBlob,
+				auth_method: 'subscription',
+				label: 'openai-subscription-models',
+			}),
+		});
+		expect(created.status).toBe(201);
+		const subConfigId = (await created.json()).data.id;
+
+		// Even if the provider were reachable, subscription auth must not attempt a
+		// catalog call — a throwing fetch would surface as 503 if we didn't skip it.
+		const fetchSpy = vi
+			.fn()
+			.mockRejectedValue(new Error('should not be called')) as unknown as typeof fetch;
+		globalThis.fetch = fetchSpy;
+
+		const res = await app.request(`/api/ai-providers/${subConfigId}/models`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(400);
+		const body = await res.json();
+		expect(body.error.code).toBe('SUBSCRIPTION_UNSUPPORTED');
+		expect(fetchSpy).not.toHaveBeenCalled();
+	});
 });
 
 describe('AI providers single global default invariant', () => {

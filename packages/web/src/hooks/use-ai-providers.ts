@@ -1,5 +1,5 @@
 import type { AiProviderModel } from '@hezo/shared';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
 import { queryKeys } from '../lib/query-keys';
@@ -90,6 +90,39 @@ export function useAiProviderModels(configId: string, options: { enabled?: boole
 		enabled: options.enabled ?? true,
 		staleTime: 5 * 60 * 1000,
 	});
+}
+
+/**
+ * Aggregate the live model catalogs across several provider configs, deduped by
+ * model id. Used to offer dynamic suggestions where a single config isn't the
+ * subject (e.g. the pricing-override model-id field). Each config fetches through
+ * the same per-config query as `useAiProviderModels`, so the cache is shared.
+ */
+export function useAllProviderModels(
+	configIds: string[],
+	options: { enabled?: boolean } = {},
+): { models: AiProviderModel[]; isLoading: boolean } {
+	const enabled = options.enabled ?? true;
+	const results = useQueries({
+		queries: configIds.map((configId) => ({
+			queryKey: queryKeys.aiProviderModels(configId),
+			queryFn: () => api.get<AiProviderModel[]>(`/api/ai-providers/${configId}/models`),
+			enabled,
+			staleTime: 5 * 60 * 1000,
+		})),
+	});
+
+	const byId = new Map<string, AiProviderModel>();
+	for (const r of results) {
+		for (const m of r.data ?? []) {
+			if (!byId.has(m.id)) byId.set(m.id, m);
+		}
+	}
+
+	return {
+		models: Array.from(byId.values()),
+		isLoading: results.some((r) => r.isLoading),
+	};
 }
 
 export function useUpdateAiProviderConfig(configId: string) {

@@ -1,6 +1,7 @@
 import {
 	AgentAdminStatus,
 	AI_PROVIDER_INFO,
+	AiAuthMethod,
 	type AiProvider,
 	AiProviderStatus,
 	type BudgetWindowsCents,
@@ -351,19 +352,29 @@ function ModelOverride({ provider, model, onProviderChange, onModelChange }: Mod
 	const { data: configs } = useAiProviders();
 
 	const configByProvider = useMemo(() => {
-		const map = new Map<string, { id: string; default_model: string | null }>();
+		const map = new Map<
+			string,
+			{ id: string; default_model: string | null; auth_method: string }
+		>();
 		for (const c of configs ?? []) {
 			if (c.status !== AiProviderStatus.Verified) continue;
 			if (!map.has(c.provider)) {
-				map.set(c.provider, { id: c.id, default_model: c.default_model });
+				map.set(c.provider, {
+					id: c.id,
+					default_model: c.default_model,
+					auth_method: c.auth_method,
+				});
 			}
 		}
 		return map;
 	}, [configs]);
 
 	const activeConfig = provider ? configByProvider.get(provider) : undefined;
+	// Subscription sign-in has no API key the provider catalog accepts, so skip the
+	// listing call and let the agent fall back to the provider's default model.
+	const isSubscription = activeConfig?.auth_method === AiAuthMethod.Subscription;
 	const models = useAiProviderModels(activeConfig?.id ?? '', {
-		enabled: Boolean(activeConfig?.id),
+		enabled: Boolean(activeConfig?.id) && !isSubscription,
 	});
 
 	const availableProviders = Array.from(configByProvider.keys()) as AiProvider[];
@@ -400,7 +411,7 @@ function ModelOverride({ provider, model, onProviderChange, onModelChange }: Mod
 						aria-label="Model override model"
 						value={model}
 						onChange={(e) => onModelChange(e.target.value)}
-						disabled={!provider || models.isLoading}
+						disabled={!provider || isSubscription || models.isLoading}
 						className="rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-text-1 outline-none focus:border-border-strong disabled:opacity-60"
 					>
 						<option value="">
@@ -417,10 +428,16 @@ function ModelOverride({ provider, model, onProviderChange, onModelChange }: Mod
 							</option>
 						))}
 					</select>
-					{models.error && (
-						<span className="text-xs text-danger">
-							{(models.error as { message?: string }).message || 'Failed to load models'}
+					{isSubscription ? (
+						<span className="text-xs text-text-2">
+							Subscription sign-in — the provider's default model is used.
 						</span>
+					) : (
+						models.error && (
+							<span className="text-xs text-danger">
+								{(models.error as { message?: string }).message || 'Failed to load models'}
+							</span>
+						)
 					)}
 				</label>
 			</div>

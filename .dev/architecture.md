@@ -1004,6 +1004,17 @@ it, and `setDefaultAiProvider` moves it atomically. `resolveRuntimeForTask` filt
 for the chosen runtime, else the oldest verified config; an agent's `model_override_*`
 (or the config's `default_model`) sets the CLI `--model`.
 
+**Live model listing.** Every UI surface that picks a specific model — the provider
+`default_model` selector and the per-agent model override — populates its options from
+`GET /api/ai-providers/:configId/models`, which decrypts the stored key and fetches the
+provider's live catalog (`AI_PROVIDER_INFO[provider].verifyEndpoint`, the same URL the add
+flow verifies against, normalized by `parseProviderModels` in `@hezo/shared`). No model list
+is hardcoded. The call is server-initiated and goes **direct** (not through the agent egress
+proxy). Subscription-auth configs short-circuit with `SUBSCRIPTION_UNSUPPORTED` (their blob is
+not an API key the catalog endpoint accepts), and the pickers degrade to the CLI's default
+model; the pricing-override model-id field stays free-text but offers the aggregated live
+catalog as autocomplete suggestions.
+
 **Reasoning effort.** Each run resolves an `agent_effort` level
 (`minimal|low|medium|high|max`) from the wakeup payload → `member_agents.default_effort` →
 global `medium`. Each runtime maps it natively: `claude_code` appends

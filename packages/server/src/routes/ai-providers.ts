@@ -289,6 +289,19 @@ aiProvidersRoutes.get('/ai-providers/:configId/models', async (c) => {
 	}
 
 	const provider = cred.provider as AiProvider;
+
+	// Subscription sign-in stores an OAuth/CLI blob, not an API key the catalog
+	// endpoint accepts — a live listing call would only 401. Signal the caller to
+	// fall back to the CLI's default model instead of surfacing a spurious error.
+	if (cred.authMethod === AiAuthMethod.Subscription) {
+		return err(
+			c,
+			'SUBSCRIPTION_UNSUPPORTED',
+			'Model listing is unavailable for subscription sign-in; the CLI default model is used',
+			400,
+		);
+	}
+
 	const endpoint = AI_PROVIDER_INFO[provider]?.verifyEndpoint;
 	if (!endpoint) {
 		return err(c, 'UNSUPPORTED', `No models endpoint for provider "${provider}"`, 400);

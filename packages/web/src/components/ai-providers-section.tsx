@@ -281,8 +281,15 @@ function ProviderNameCell({ config }: { config: AiProviderConfig }) {
 }
 
 function DefaultModelSelector({ config }: { config: AiProviderConfig }) {
+	// Subscription sign-in has no API key the provider catalog accepts — the CLI
+	// picks the model, so listing is skipped and only "CLI default" is offered.
+	const isSubscription = config.auth_method === AiAuthMethod.Subscription;
+	// Lazy fetch so the settings page doesn't fire a live catalog call per row on
+	// mount. A native <select> opens on the same click that focuses it, so `onFocus`
+	// alone leaves the first open empty; `onPointerEnter` prefetches on hover intent
+	// so the models have arrived by the time the dropdown opens.
 	const [open, setOpen] = useState(false);
-	const models = useAiProviderModels(config.id, { enabled: open });
+	const models = useAiProviderModels(config.id, { enabled: open && !isSubscription });
 	const update = useUpdateAiProviderConfig(config.id);
 
 	async function handleChange(value: string) {
@@ -294,6 +301,7 @@ function DefaultModelSelector({ config }: { config: AiProviderConfig }) {
 			<select
 				aria-label={`Default model for ${config.label}`}
 				value={config.default_model ?? ''}
+				onPointerEnter={() => setOpen(true)}
 				onFocus={() => setOpen(true)}
 				onChange={(e) => handleChange(e.target.value)}
 				className="rounded-md border border-border bg-surface-2 px-2 py-1 text-xs text-text-1 outline-none focus:border-border-strong"
@@ -312,10 +320,14 @@ function DefaultModelSelector({ config }: { config: AiProviderConfig }) {
 			{(models.isFetching || update.isPending) && (
 				<Loader2 className="w-3 h-3 animate-spin text-text-3" />
 			)}
-			{models.error && (
-				<span className="text-danger text-xs">
-					{(models.error as { message?: string }).message || 'Failed to load models'}
-				</span>
+			{isSubscription ? (
+				<span className="text-text-3 text-xs">CLI default (subscription)</span>
+			) : (
+				models.error && (
+					<span className="text-danger text-xs">
+						{(models.error as { message?: string }).message || 'Failed to load models'}
+					</span>
+				)
 			)}
 		</div>
 	);

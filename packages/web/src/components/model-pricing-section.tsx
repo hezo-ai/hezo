@@ -1,5 +1,7 @@
+import { AiProviderStatus } from '@hezo/shared';
 import { Plus, RefreshCw, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useAiProviders, useAllProviderModels } from '../hooks/use-ai-providers';
 import { useMe } from '../hooks/use-me';
 import {
 	type CreateOverridePayload,
@@ -47,6 +49,20 @@ export function ModelPricingSection() {
 	const refresh = useRefreshModelPricing();
 
 	const [showForm, setShowForm] = useState(false);
+
+	// Dynamic model suggestions for the free-text id field, drawn from the live
+	// catalogs of every verified provider. Fetched only while the form is open so
+	// the page doesn't fan out live calls on mount. The field stays free-text —
+	// custom/self-hosted model ids that no catalog lists remain valid.
+	const { data: providers } = useAiProviders();
+	const verifiedConfigIds = useMemo(
+		() => (providers ?? []).filter((p) => p.status === AiProviderStatus.Verified).map((p) => p.id),
+		[providers],
+	);
+	const { models: suggestedModels } = useAllProviderModels(verifiedConfigIds, {
+		enabled: showForm,
+	});
+
 	const [modelId, setModelId] = useState('');
 	const [input, setInput] = useState('');
 	const [output, setOutput] = useState('');
@@ -235,8 +251,16 @@ export function ModelPricingSection() {
 						placeholder="Model id (e.g. my-custom-model)"
 						value={modelId}
 						onChange={(e) => setModelId(e.target.value)}
+						list="model-pricing-model-ids"
 						required
 					/>
+					<datalist id="model-pricing-model-ids">
+						{suggestedModels.map((m) => (
+							<option key={m.id} value={m.id}>
+								{m.label}
+							</option>
+						))}
+					</datalist>
 					<div className="flex flex-col sm:flex-row gap-2">
 						<Input
 							placeholder="Input $ / Mtok"
