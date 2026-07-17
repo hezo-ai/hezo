@@ -14,6 +14,27 @@ import type { WebSocketManager } from './ws';
 
 const log = logger.child('comment-wakeups');
 
+/**
+ * The teammate slugs a mention check on `teamId` may name: every agent in that
+ * team plus the HQ instance agents (CEO/Coach), which act inside every team's
+ * projects (mirroring the mention-wakeup scoping), excluding `selfMemberId` so a
+ * self-reference never counts, plus @admin. Shared by the create_comment
+ * unlinked/passive-mention warnings and the runner's handoff-delivery net.
+ */
+export async function resolveWarnableSlugs(
+	db: Db,
+	teamId: string,
+	selfMemberId: string,
+): Promise<string[]> {
+	const roster = await db.query<{ slug: string }>(
+		`SELECT ma.slug FROM member_agents ma
+		 JOIN members m ON m.id = ma.id
+		 WHERE (m.team_id = $1 OR m.team_id = $2) AND ma.id <> $3`,
+		[teamId, DEFAULT_TEAM_ID, selfMemberId],
+	);
+	return [...roster.rows.map((r) => r.slug), ADMIN_MENTION_SLUG];
+}
+
 export interface FireCommentWakeupsParams {
 	db: Db;
 	taskId: string;

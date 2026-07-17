@@ -114,6 +114,83 @@ function passiveMentionParagraphs(stripped: string, escapedSlug: string): string
 		.join('\n');
 }
 
+/**
+ * Flags teammate slugs addressed with the UNLINKED form — bold (`**slug**` /
+ * `__slug__`) or a leading-line address (`slug —` / `slug:`), no `@` prefix at
+ * all — where the surrounding text reads like an ask, so an active `@slug` was
+ * almost certainly intended yet the bare/bold name renders as inert text and
+ * wakes no one, stranding the handoff silently. This is the auto-actionable
+ * subset of detectUnlinkedTeammateReferences: it adds the same directed-ask gate
+ * detectPassiveTeammateAsks uses (see ASK_INTENT_RES) so a bold name written for
+ * mere emphasis or attribution is never promoted. A slug also reached by an
+ * active `@`-mention anywhere is skipped — it already notifies. The runner's
+ * handoff-delivery net feeds these to promoteUnlinkedTeammateAsks so the named
+ * teammate is actually woken.
+ */
+export function detectUnlinkedTeammateAsks(content: unknown, knownSlugs: string[]): string[] {
+	const text = flattenTextFields(content);
+	if (!text) return [];
+	const stripped = text.replace(FENCED_CODE_RE, ' ').replace(INLINE_CODE_RE, ' ');
+
+	// A slug reached by an active @mention already notifies, so it never warns.
+	const active = new Set(extractMentionSlugs(stripped));
+
+	const flagged = new Set<string>();
+	for (const rawSlug of knownSlugs) {
+		const slug = rawSlug.toLowerCase();
+		if (active.has(slug)) continue;
+		const s = escapeRegExp(slug);
+		// Emphasised name (**slug**/__slug__, not already @-prefixed) or a
+		// leading-line address (`slug —`/`slug:`) — mirrors the two unambiguous
+		// addressing forms detectUnlinkedTeammateReferences recognises.
+		const bold = new RegExp(String.raw`(?<!@)(\*\*|__)${s}\1`, 'i');
+		const lead = new RegExp(String.raw`(?:^|\n)\s*${s}\s*[—–\-:,](?:\s|$)`, 'i');
+		if (!bold.test(stripped) && !lead.test(stripped)) continue;
+		// Only warn when the paragraph(s) carrying this address read as an ask —
+		// scoped to those paragraphs so a `you` elsewhere never leaks in.
+		const block = unlinkedMentionParagraphs(stripped, s);
+		if (block && ASK_INTENT_RES.some((re) => re.test(block))) flagged.add(slug);
+	}
+	return Array.from(flagged);
+}
+
+/**
+ * The blank-line-delimited paragraph(s) of `stripped` that address `escapedSlug`
+ * by the unlinked bold or leading-line form (no `@` prefix).
+ */
+function unlinkedMentionParagraphs(stripped: string, escapedSlug: string): string {
+	const bold = new RegExp(String.raw`(?<!@)(\*\*|__)${escapedSlug}\1`, 'i');
+	const lead = new RegExp(String.raw`(?:^|\n)\s*${escapedSlug}\s*[—–\-:,](?:\s|$)`, 'i');
+	return stripped
+		.split(/\n\s*\n/)
+		.filter((p) => bold.test(p) || lead.test(p))
+		.join('\n');
+}
+
+/**
+ * Upgrades the unlinked bold/leading-line ADDRESS forms of the given slugs to an
+ * active `@`-mention so the teammate is woken when the text is posted as a
+ * comment: `**slug**` → `**@slug**`, and a leading-line `slug —` → `@slug —`.
+ * Only the addressing occurrences are rewritten — an ordinary mid-prose mention
+ * of the same name (which never matched the address forms) is left untouched, and
+ * emphasis is preserved. Pass exactly the slugs detectUnlinkedTeammateAsks
+ * flagged; a name already carrying an `@` is never touched.
+ */
+export function promoteUnlinkedTeammateAsks(text: string, slugs: string[]): string {
+	let out = text;
+	for (const rawSlug of slugs) {
+		const s = escapeRegExp(rawSlug.toLowerCase());
+		// Emphasised address: **slug**/__slug__ (not already @-prefixed) → **@slug**.
+		out = out.replace(new RegExp(String.raw`(?<!@)(\*\*|__)(${s})\1`, 'gi'), '$1@$2$1');
+		// Leading-line address: `slug —`/`slug:` at line start → `@slug —`.
+		out = out.replace(
+			new RegExp(String.raw`((?:^|\n)[ \t]*)(${s})(\s*[—–\-:,](?:\s|$))`, 'gi'),
+			'$1@$2$3',
+		);
+	}
+	return out;
+}
+
 function flattenTextFields(value: unknown): string {
 	if (value === null || value === undefined) return '';
 	if (typeof value === 'string') return value;

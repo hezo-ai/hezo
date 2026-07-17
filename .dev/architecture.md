@@ -1095,13 +1095,19 @@ detail is in `AGENTS.md` › AI runtime hooks.
 blocks at most once per run (the `stop_hook_active` ceiling) — so a stranded handoff is *also*
 caught **deterministically** at run completion, independent of any judge. In `agent-runner.ts`,
 when a run exits cleanly, the runner reads the run's final assistant message from the stream
-parser (`getFinalAssistantMessage()`); if it carries an active `@`-mention/handoff
-(`extractMentionSlugs`) that this run never actually posted as a comment, the runner delivers it
-as a real comment via `postAgentComment` — the same insert + broadcast + `fireCommentWakeups`
-path `create_comment` uses — so the mention fans out to the admin inbox / agent wakeup instead
-of vanishing (a run's final message is logged, posted to no one). It flips an otherwise no-op run
-to a success, runs on **every** runtime including OpenCode, and is why the one-block judge ceiling
-is acceptable: correctness no longer depends on the judge firing.
+parser (`getFinalAssistantMessage()`) and delivers it as a real comment via `postAgentComment`
+— the same insert + broadcast + `fireCommentWakeups` path `create_comment` uses — whenever it
+carries a handoff this run never actually posted as a comment. Two stranded forms are caught:
+(1) an **active `@`-mention** (`extractMentionSlugs`) delivered verbatim, and (2) an **unlinked
+bold/leading-line address that reads like an ask** (`**slug** — … when you resume …`, via
+`detectUnlinkedTeammateAsks` — the same wakes-no-one trap `create_comment` only warns about,
+gated on directed-ask intent so a bold name written for emphasis is never touched), which is
+first rewritten to an active `@`-mention (`promoteUnlinkedTeammateAsks`, preserving the emphasis
+as `**@slug**`) so posting it actually wakes the named teammate. Either way the mention fans out
+to the admin inbox / agent wakeup instead of vanishing (a run's final message is logged, posted
+to no one). It flips an otherwise no-op run to a success, runs on **every** runtime including
+OpenCode, and is why the one-block judge ceiling is acceptable: correctness no longer depends on
+the judge firing.
 
 ---
 

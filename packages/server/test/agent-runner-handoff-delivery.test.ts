@@ -11,12 +11,15 @@ import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 import { withRunUserStub } from './helpers/run-user-docker';
 
-// The handoff-delivery guardrail: when a run ends (clean exit) with an active
-// @-mention/handoff in its FINAL MESSAGE that it never posted as a comment, the
-// runner auto-delivers it as a real comment so the mention actually wakes its
-// target — the exact HM-103 failure (an @admin ask left only in the final
-// message, delivered to no one). These tests boot a real app + PGlite and drive
-// runAgent with a mock docker that streams a Claude Code `result` event.
+// The handoff-delivery guardrail: when a run ends (clean exit) with a handoff in
+// its FINAL MESSAGE that it never posted as a comment, the runner auto-delivers
+// it as a real comment so the mention actually wakes its target. Two stranded
+// forms are caught: an active @-mention (the HM-103 failure — an @admin ask left
+// only in the final message, delivered to no one), and an UNLINKED bold/leading
+// address that reads as an ask (`**slug** — … when you resume …`), which is
+// promoted to an active mention before delivery so the named teammate is woken.
+// These tests boot a real app + PGlite and drive runAgent with a mock docker that
+// streams a Claude Code `result` event.
 
 let app: Hono<Env>;
 let db: Db;
@@ -330,5 +333,65 @@ describe('runAgent handoff-delivery guardrail', () => {
 			[otherId],
 		);
 		expect(wakeups.rows.length).toBeGreaterThan(0);
+	});
+
+	it('promotes a stranded bold-name handoff to an active mention and wakes the teammate', async () => {
+		const other = await db.query<{ id: string; slug: string }>(
+			`SELECT ma.id, ma.slug FROM member_agents ma
+			 JOIN members m ON m.id = ma.id
+			 WHERE m.team_id = $1 AND ma.id <> $2 LIMIT 1`,
+			[teamId, agentId],
+		);
+		const { id: otherId, slug: otherSlug } = other.rows[0];
+
+		// The exact screenshot failure: a bold-name handoff that reads as an ask
+		// ("when you resume …") but carries no `@`, so it wakes no one as-is.
+		const deps = makeDeps(
+			createMockDocker({
+				producesOutput: true,
+				execStart: streamResult(
+					`Assessment complete. **${otherSlug}** — the tracker is ready for you to incorporate when you resume HC-1.`,
+				),
+			}),
+		);
+
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+		expect(result.success).toBe(true);
+
+		// The delivered comment carries the promoted active mention (**@slug**),
+		// preserving the emphasis, not the inert bold name.
+		const comments = await textComments(result.heartbeatRunId);
+		expect(comments.rows.length).toBe(1);
+		expect(JSON.stringify(comments.rows[0].content)).toContain(`@${otherSlug}`);
+
+		// The promotion made the mention real, so the teammate got a wakeup.
+		const wakeups = await db.query(
+			`SELECT 1 FROM agent_wakeup_requests WHERE member_id = $1 AND source = 'mention'`,
+			[otherId],
+		);
+		expect(wakeups.rows.length).toBeGreaterThan(0);
+	});
+
+	it('does not promote a bold teammate name used without ask intent', async () => {
+		const other = await db.query<{ slug: string }>(
+			`SELECT ma.slug FROM member_agents ma
+			 JOIN members m ON m.id = ma.id
+			 WHERE m.team_id = $1 AND ma.id <> $2 LIMIT 1`,
+			[teamId, agentId],
+		);
+		const { slug: otherSlug } = other.rows[0];
+
+		// Bold name used to credit/attribute, no directed ask → left alone.
+		const deps = makeDeps(
+			createMockDocker({
+				producesOutput: true,
+				execStart: streamResult(`Shipped. Credit to **${otherSlug}** for the earlier analysis.`),
+			}),
+		);
+
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+		expect(result.success).toBe(true);
+		const comments = await textComments(result.heartbeatRunId);
+		expect(comments.rows.length).toBe(0);
 	});
 });
