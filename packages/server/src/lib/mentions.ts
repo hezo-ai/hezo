@@ -114,6 +114,59 @@ function passiveMentionParagraphs(stripped: string, escapedSlug: string): string
 		.join('\n');
 }
 
+/**
+ * Flags teammate slugs addressed with the UNLINKED form — bold (`**slug**` /
+ * `__slug__`) or a leading-line address (`slug —` / `slug:`), no `@` prefix at
+ * all — where the surrounding text reads like an ask, so an active `@slug` was
+ * almost certainly intended yet the bare/bold name renders as inert text and
+ * wakes no one, stranding the handoff silently. This is the precise, ask-gated
+ * subset of detectUnlinkedTeammateReferences: it adds the same directed-ask gate
+ * detectPassiveTeammateAsks uses (see ASK_INTENT_RES) so a bold name written for
+ * mere emphasis or attribution is never flagged. A slug also reached by an
+ * active `@`-mention anywhere is skipped — it already notifies. The runner's
+ * handoff-delivery net uses these to warn (in the run log) that a run ended with a
+ * stranded bold-name handoff, mirroring create_comment's interactive warning.
+ */
+export function detectUnlinkedTeammateAsks(content: unknown, knownSlugs: string[]): string[] {
+	const text = flattenTextFields(content);
+	if (!text) return [];
+	const stripped = text.replace(FENCED_CODE_RE, ' ').replace(INLINE_CODE_RE, ' ');
+
+	// A slug reached by an active @mention already notifies, so it never warns.
+	const active = new Set(extractMentionSlugs(stripped));
+
+	const flagged = new Set<string>();
+	for (const rawSlug of knownSlugs) {
+		const slug = rawSlug.toLowerCase();
+		if (active.has(slug)) continue;
+		const s = escapeRegExp(slug);
+		// Emphasised name (**slug**/__slug__, not already @-prefixed) or a
+		// leading-line address (`slug —`/`slug:`) — mirrors the two unambiguous
+		// addressing forms detectUnlinkedTeammateReferences recognises.
+		const bold = new RegExp(String.raw`(?<!@)(\*\*|__)${s}\1`, 'i');
+		const lead = new RegExp(String.raw`(?:^|\n)\s*${s}\s*[—–\-:,](?:\s|$)`, 'i');
+		if (!bold.test(stripped) && !lead.test(stripped)) continue;
+		// Only warn when the paragraph(s) carrying this address read as an ask —
+		// scoped to those paragraphs so a `you` elsewhere never leaks in.
+		const block = unlinkedMentionParagraphs(stripped, s);
+		if (block && ASK_INTENT_RES.some((re) => re.test(block))) flagged.add(slug);
+	}
+	return Array.from(flagged);
+}
+
+/**
+ * The blank-line-delimited paragraph(s) of `stripped` that address `escapedSlug`
+ * by the unlinked bold or leading-line form (no `@` prefix).
+ */
+function unlinkedMentionParagraphs(stripped: string, escapedSlug: string): string {
+	const bold = new RegExp(String.raw`(?<!@)(\*\*|__)${escapedSlug}\1`, 'i');
+	const lead = new RegExp(String.raw`(?:^|\n)\s*${escapedSlug}\s*[—–\-:,](?:\s|$)`, 'i');
+	return stripped
+		.split(/\n\s*\n/)
+		.filter((p) => bold.test(p) || lead.test(p))
+		.join('\n');
+}
+
 function flattenTextFields(value: unknown): string {
 	if (value === null || value === undefined) return '';
 	if (typeof value === 'string') return value;

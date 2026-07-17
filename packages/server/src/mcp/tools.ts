@@ -1,7 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { SearchScope } from '@hezo/shared';
 import {
-	ADMIN_MENTION_SLUG,
 	AgentAdminStatus,
 	ApprovalStatus,
 	ApprovalType,
@@ -100,7 +99,11 @@ import {
 import { broadcastApprovalChange } from '../services/approval-broadcast';
 import { resolveApproval } from '../services/approval-resolve';
 import { upsertChatMemory } from '../services/chat-memory';
-import { fireCommentWakeups, postAgentComment } from '../services/comment-wakeups';
+import {
+	fireCommentWakeups,
+	postAgentComment,
+	resolveWarnableSlugs,
+} from '../services/comment-wakeups';
 import {
 	buildConnectorRecipesSkill,
 	CONNECTOR_RECIPES_SLUG,
@@ -227,26 +230,6 @@ const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 /** A handler result that signals failure rather than a persisted write. */
 function isErrorResult(result: unknown): boolean {
 	return typeof result === 'object' && result !== null && 'error' in result;
-}
-
-/**
- * The teammate slugs a comment warning may name: every agent in the task's team
- * plus the HQ instance agents (mirroring the mention-wakeup scoping), excluding
- * the author so a self-reference never warns, plus @admin. Shared by the
- * unlinked- and passive-mention warnings.
- */
-async function resolveWarnableSlugs(
-	db: Db,
-	teamId: string,
-	authorMemberId: string,
-): Promise<string[]> {
-	const roster = await db.query<{ slug: string }>(
-		`SELECT ma.slug FROM member_agents ma
-		 JOIN members m ON m.id = ma.id
-		 WHERE (m.team_id = $1 OR m.team_id = $2) AND ma.id <> $3`,
-		[teamId, DEFAULT_TEAM_ID, authorMemberId],
-	);
-	return [...roster.rows.map((r) => r.slug), ADMIN_MENTION_SLUG];
 }
 
 /**

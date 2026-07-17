@@ -11,12 +11,16 @@ import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 import { withRunUserStub } from './helpers/run-user-docker';
 
-// The handoff-delivery guardrail: when a run ends (clean exit) with an active
-// @-mention/handoff in its FINAL MESSAGE that it never posted as a comment, the
-// runner auto-delivers it as a real comment so the mention actually wakes its
-// target — the exact HM-103 failure (an @admin ask left only in the final
-// message, delivered to no one). These tests boot a real app + PGlite and drive
-// runAgent with a mock docker that streams a Claude Code `result` event.
+// The handoff-delivery guardrail: when a run ends (clean exit) with a handoff in
+// its FINAL MESSAGE that it never posted as a comment. Two stranded forms are
+// handled differently: an active @-mention (the HM-103 failure — an @admin ask
+// left only in the final message) is auto-delivered verbatim as a real comment so
+// it actually wakes its target; an UNLINKED bold/leading address that reads as an
+// ask (`**slug** — … when you resume …`) is NOT rewritten or delivered (that would
+// guess intent and force a wake) — instead the runner surfaces a warning in the
+// run log, matching create_comment's interactive warning for the path that skips
+// it. These tests boot a real app + PGlite and drive runAgent with a mock docker
+// that streams a Claude Code `result` event.
 
 let app: Hono<Env>;
 let db: Db;
@@ -330,5 +334,81 @@ describe('runAgent handoff-delivery guardrail', () => {
 			[otherId],
 		);
 		expect(wakeups.rows.length).toBeGreaterThan(0);
+	});
+
+	it('warns about a stranded bold-name handoff but does not deliver or wake', async () => {
+		const other = await db.query<{ id: string; slug: string }>(
+			`SELECT ma.id, ma.slug FROM member_agents ma
+			 JOIN members m ON m.id = ma.id
+			 WHERE m.team_id = $1 AND ma.id <> $2 LIMIT 1`,
+			[teamId, agentId],
+		);
+		const { id: otherId, slug: otherSlug } = other.rows[0];
+		// Clear any mention wakeups a prior test in this file left for this agent —
+		// tests share one db/task, so we assert on wakeups this run creates, not the
+		// accumulated total.
+		await db.query(`DELETE FROM agent_wakeup_requests WHERE member_id = $1`, [otherId]);
+
+		// The exact screenshot failure: a bold-name handoff that reads as an ask
+		// ("when you resume …") but carries no `@`, so it wakes no one as-is.
+		const deps = makeDeps(
+			createMockDocker({
+				producesOutput: true,
+				execStart: streamResult(
+					`Assessment complete. **${otherSlug}** — the tracker is ready for you to incorporate when you resume HC-1.`,
+				),
+			}),
+		);
+
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+		expect(result.success).toBe(true);
+
+		// The runner did NOT rewrite the message or auto-deliver it: no comment posted.
+		const comments = await textComments(result.heartbeatRunId);
+		expect(comments.rows.length).toBe(0);
+
+		// No teammate was force-woken.
+		const wakeups = await db.query(
+			`SELECT 1 FROM agent_wakeup_requests WHERE member_id = $1 AND source = 'mention'`,
+			[otherId],
+		);
+		expect(wakeups.rows.length).toBe(0);
+
+		// Instead, the stranded handoff is surfaced as a warning in the run log,
+		// naming the teammate and the active-mention fix.
+		const run = await db.query<{ log_text: string }>(
+			'SELECT log_text FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(run.rows[0].log_text).toContain('wakes no one');
+		expect(run.rows[0].log_text).toContain(`@${otherSlug}`);
+	});
+
+	it('does not warn on a bold teammate name used without ask intent', async () => {
+		const other = await db.query<{ slug: string }>(
+			`SELECT ma.slug FROM member_agents ma
+			 JOIN members m ON m.id = ma.id
+			 WHERE m.team_id = $1 AND ma.id <> $2 LIMIT 1`,
+			[teamId, agentId],
+		);
+		const { slug: otherSlug } = other.rows[0];
+
+		// Bold name used to credit/attribute, no directed ask → left alone entirely.
+		const deps = makeDeps(
+			createMockDocker({
+				producesOutput: true,
+				execStart: streamResult(`Shipped. Credit to **${otherSlug}** for the earlier analysis.`),
+			}),
+		);
+
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+		expect(result.success).toBe(true);
+		const comments = await textComments(result.heartbeatRunId);
+		expect(comments.rows.length).toBe(0);
+		const run = await db.query<{ log_text: string }>(
+			'SELECT log_text FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(run.rows[0].log_text).not.toContain('wakes no one');
 	});
 });

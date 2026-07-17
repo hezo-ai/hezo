@@ -36,7 +36,7 @@ import type { DomainEventBus } from '../events/bus';
 import { signAgentAssetUrl } from '../lib/asset-urls';
 import { broadcastProjectUpdate, broadcastRowChange } from '../lib/broadcast';
 import { withProjectGitLock } from '../lib/git-lock';
-import { extractMentionSlugs } from '../lib/mentions';
+import { detectUnlinkedTeammateAsks, extractMentionSlugs } from '../lib/mentions';
 import { withTransaction } from '../lib/sql';
 import { logger } from '../logger';
 import { signAgentJwt } from '../middleware/auth';
@@ -52,7 +52,7 @@ import {
 	updateAiProviderCredential,
 } from './ai-provider-keys';
 import { checkOverBudget, recordRunCost } from './budget';
-import { postAgentComment } from './comment-wakeups';
+import { postAgentComment, resolveWarnableSlugs } from './comment-wakeups';
 import { loadConnectorDescriptors } from './connectors/connections';
 import { formatContainerConnectivityMessage } from './container-connectivity-preflight';
 import {
@@ -1396,56 +1396,82 @@ export async function runAgent(
 				noWorkReason = flagged.rows[0]?.no_work_reason ?? null;
 			}
 
-			// Deterministic handoff-delivery net. An agent that ends its turn with an
-			// active @-mention/handoff in its FINAL MESSAGE rather than a create_comment
-			// call strands the work: a run's final message is logged, never posted, so
-			// no mention inside it is parsed and it wakes nobody. If the final message
-			// names someone this run never actually posted a comment to, deliver it as a
-			// real comment so the mention fires (admin inbox / agent wakeup) — flipping
-			// the run to a success. This is the deterministic backstop to the completeness
-			// stop-hook judge (which is best-effort and model-dependent), and it runs on
-			// every runtime, including OpenCode, which has no judge at all. Best-effort:
-			// a failure here must never throw out of the run-completion path.
+			// Deterministic handoff-delivery net. An agent that ends its turn with a
+			// handoff in its FINAL MESSAGE rather than a create_comment call strands the
+			// work: a run's final message is logged, never posted, so it wakes nobody.
+			// Two stranded forms are handled here, differently:
+			//   (1) an active `@`-mention the run never posted as a comment — the agent
+			//       wrote an explicit, unambiguous wake, so deliver the message verbatim
+			//       via postAgentComment (admin inbox / agent wakeup), flipping the run
+			//       to a success. This is the deterministic backstop to the completeness
+			//       stop-hook judge (best-effort, model-dependent).
+			//   (2) an UNLINKED bold/leading-line address that reads like an ask
+			//       (`**slug** — … when you resume …`) — the wakes-no-one trap. We do NOT
+			//       auto-deliver or rewrite the agent's words to force a wake (that guesses
+			//       intent and overreaches). create_comment already warns the agent
+			//       interactively, but the final-message path skips that check, so surface
+			//       the same warning in the run log; the handoff is left undelivered.
+			// Best-effort: a failure here must never throw out of the run-completion path.
+			// Runs on every runtime, including OpenCode, which has no stop-hook judge.
 			if (exitedClean && task) {
 				try {
 					const finalMessage = parser.getFinalAssistantMessage();
-					const finalMentions = finalMessage?.trim() ? extractMentionSlugs(finalMessage) : [];
-					if (finalMentions.length > 0) {
-						// Mentions this run already delivered as a comment (the same
-						// extractor fireCommentWakeups uses), so an agent that DID post the
-						// handoff and merely echoed it in the final message isn't double-posted.
-						const posted = await deps.db.query<{ content: unknown }>(
-							`SELECT content FROM task_comments WHERE created_by_run_id = $1 AND content_type = 'text'`,
-							[heartbeatRunId],
-						);
-						const delivered = new Set<string>();
-						for (const c of posted.rows) {
-							for (const slug of extractMentionSlugs(c.content)) delivered.add(slug);
-						}
-						const undelivered = finalMentions.filter((slug) => !delivered.has(slug));
-						if (undelivered.length > 0 && finalMessage) {
-							await postAgentComment({
-								db: deps.db,
-								wsManager: deps.wsManager,
-								teamId: runTeamId,
-								projectId: project.id,
-								taskId: task.id,
-								authorMemberId: agent.id,
-								createdByRunId: heartbeatRunId,
-								text: finalMessage,
-							});
-							// The run delivered a real comment, so it is no longer a no-op:
-							// flip the local flag (drives `success` below) and the row column
-							// (what the MCP write path sets) so status and produced_output agree.
-							await deps.db.query(
-								'UPDATE heartbeat_runs SET produced_output = true WHERE id = $1',
+					if (finalMessage?.trim()) {
+						const activeMentions = extractMentionSlugs(finalMessage);
+						// Unlinked bold/leading-line asks, scoped to the run team's roster +
+						// HQ instance agents + @admin (the slugs a mention here can wake).
+						const roster = await resolveWarnableSlugs(deps.db, runTeamId, agent.id);
+						const unlinkedAsks = detectUnlinkedTeammateAsks(finalMessage, roster);
+						if (activeMentions.length > 0 || unlinkedAsks.length > 0) {
+							// Slugs this run already delivered as an active mention in a comment
+							// (the same extractor fireCommentWakeups uses), so an agent that DID
+							// post/wake them and merely echoed it in the final message is skipped.
+							const posted = await deps.db.query<{ content: unknown }>(
+								`SELECT content FROM task_comments WHERE created_by_run_id = $1 AND content_type = 'text'`,
 								[heartbeatRunId],
 							);
-							producedOutput = true;
-							emit(
-								'stdout',
-								`\n[runner] auto-delivered stranded handoff (@${undelivered.join(', @')}) from the run's final message as a comment\n`,
-							);
+							const delivered = new Set<string>();
+							for (const c of posted.rows) {
+								for (const slug of extractMentionSlugs(c.content)) delivered.add(slug);
+							}
+
+							// (1) Deliver stranded active mentions verbatim.
+							const undeliveredActive = activeMentions.filter((slug) => !delivered.has(slug));
+							if (undeliveredActive.length > 0) {
+								await postAgentComment({
+									db: deps.db,
+									wsManager: deps.wsManager,
+									teamId: runTeamId,
+									projectId: project.id,
+									taskId: task.id,
+									authorMemberId: agent.id,
+									createdByRunId: heartbeatRunId,
+									text: finalMessage,
+								});
+								// The run delivered a real comment, so it is no longer a no-op:
+								// flip the local flag (drives `success` below) and the row column
+								// (what the MCP write path sets) so status and produced_output agree.
+								await deps.db.query(
+									'UPDATE heartbeat_runs SET produced_output = true WHERE id = $1',
+									[heartbeatRunId],
+								);
+								producedOutput = true;
+								emit(
+									'stdout',
+									`\n[runner] auto-delivered stranded handoff (@${undeliveredActive.join(', @')}) from the run's final message as a comment\n`,
+								);
+							}
+
+							// (2) Warn about a stranded bold-name ask — do NOT deliver or rewrite.
+							const strandedAsks = unlinkedAsks.filter((slug) => !delivered.has(slug));
+							if (strandedAsks.length > 0) {
+								const named = strandedAsks.map((s) => `**${s}**`).join(', ');
+								const fixes = strandedAsks.map((s) => `@${s}`).join(', ');
+								emit(
+									'stdout',
+									`\n[runner] WARNING: this run's final message addresses ${named} by bold/bare name — that renders as text and wakes no one, so the handoff was NOT delivered. Post a comment with an active mention (${fixes}) to reach them.\n`,
+								);
+							}
 						}
 					}
 				} catch (e) {

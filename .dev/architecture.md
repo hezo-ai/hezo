@@ -1095,13 +1095,19 @@ detail is in `AGENTS.md` › AI runtime hooks.
 blocks at most once per run (the `stop_hook_active` ceiling) — so a stranded handoff is *also*
 caught **deterministically** at run completion, independent of any judge. In `agent-runner.ts`,
 when a run exits cleanly, the runner reads the run's final assistant message from the stream
-parser (`getFinalAssistantMessage()`); if it carries an active `@`-mention/handoff
-(`extractMentionSlugs`) that this run never actually posted as a comment, the runner delivers it
-as a real comment via `postAgentComment` — the same insert + broadcast + `fireCommentWakeups`
-path `create_comment` uses — so the mention fans out to the admin inbox / agent wakeup instead
-of vanishing (a run's final message is logged, posted to no one). It flips an otherwise no-op run
-to a success, runs on **every** runtime including OpenCode, and is why the one-block judge ceiling
-is acceptable: correctness no longer depends on the judge firing.
+parser (`getFinalAssistantMessage()`). Two stranded forms are handled, differently:
+(1) an **active `@`-mention** (`extractMentionSlugs`) the run never posted as a comment is
+delivered verbatim via `postAgentComment` — the same insert + broadcast + `fireCommentWakeups`
+path `create_comment` uses — so it fans out to the admin inbox / agent wakeup instead of
+vanishing (the agent wrote an explicit, unambiguous wake; delivering it is safe). This flips an
+otherwise no-op run to a success and is why the one-block judge ceiling is acceptable.
+(2) an **unlinked bold/leading-line address that reads like an ask** (`**slug** — … when you
+resume …`, via `detectUnlinkedTeammateAsks`, gated on directed-ask intent so a bold name written
+for emphasis is never touched) is the wakes-no-one trap — but the net does **not** rewrite the
+agent's words or auto-deliver it (guessing intent to force a wake overreaches). `create_comment`
+already warns the agent interactively when it posts such a comment; the final-message path skips
+that check, so the runner surfaces the **same warning in the run log** and leaves the handoff
+undelivered. Runs on **every** runtime including OpenCode (which has no judge at all).
 
 ---
 
