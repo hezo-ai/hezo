@@ -116,7 +116,8 @@ in a **sandbox**, isolated from your instance and your data, so viewing an agent
 safe by default; **markdown** renders as formatted prose with a **view-source** toggle;
 images and SVGs display scaled to fit; other types show a summary card. **Open raw** in the
 viewer's toolbar still opens the underlying file in its own tab whenever you want the
-unwrapped thing.
+unwrapped thing. A **search icon** next to the breadcrumb opens a name search for jumping
+straight to another asset without returning to the library.
 
 ## Reviewing assets
 

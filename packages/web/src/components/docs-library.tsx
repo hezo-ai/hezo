@@ -24,6 +24,7 @@ import { Button } from './ui/button';
 import { ConfirmDialog } from './ui/confirm-dialog';
 import { EmptyState } from './ui/empty-state';
 import { Input } from './ui/input';
+import { NameSwitcherButton } from './ui/name-switcher-button';
 import { Tooltip } from './ui/tooltip';
 
 /** Remembers the doc-list collapse choice across documents and visits. */
@@ -41,6 +42,12 @@ export interface DocItem {
 
 interface DocsLibraryProps {
 	items: DocItem[];
+	/**
+	 * The full item list for the header "switch document" search — unfiltered by
+	 * the archive filter, so the switcher can jump to any document by name.
+	 * Defaults to `items` when omitted.
+	 */
+	allItems?: DocItem[];
 	isLoadingList?: boolean;
 	selectedKey: string | null;
 	onSelect: (key: string | null) => void;
@@ -112,6 +119,7 @@ interface DocsLibraryProps {
 
 export function DocsLibrary({
 	items,
+	allItems,
 	isLoadingList,
 	selectedKey,
 	onSelect,
@@ -207,6 +215,13 @@ export function DocsLibrary({
 				return text.toLowerCase().includes(query);
 			})
 		: items;
+
+	// Options for the header "switch document" search — the full (unfiltered) list
+	// so any document is reachable by name regardless of the archive filter.
+	const switchOptions = (allItems ?? items).map((item) => ({
+		value: item.key,
+		label: typeof item.label === 'string' ? item.label : item.key,
+	}));
 
 	async function handleSave() {
 		await onSave(draft);
@@ -384,9 +399,20 @@ export function DocsLibrary({
 										</Button>
 									</Tooltip>
 								</span>
-								<h2 className="text-base font-semibold text-text-1 truncate">
+								<h2 className="text-base font-semibold text-text-1 truncate min-w-0">
 									{docTitle ?? selectedItem?.label ?? selectedKey}
 								</h2>
+								{mode === 'view' && switchOptions.length > 1 && (
+									<NameSwitcherButton
+										label="Switch document"
+										testId="doc-switch"
+										value={selectedKey}
+										onSelect={(key) => onSelect(key)}
+										options={switchOptions}
+										searchPlaceholder="Search documents…"
+										emptyLabel="No documents"
+									/>
+								)}
 							</div>
 							<div className="flex items-center gap-2 shrink-0">
 								{mode === 'view' ? (

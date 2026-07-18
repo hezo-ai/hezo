@@ -112,6 +112,20 @@ function ProjectDocumentsPage() {
 		return list;
 	}, [agentsMd, docs, filter]);
 
+	// The full item list for the header "switch document" search — unfiltered by
+	// the archive filter, so the switcher can jump to any document (including
+	// archived ones) by name.
+	const allItems = useMemo<DocItem[]>(() => {
+		const list: DocItem[] = [];
+		if (agentsMd) {
+			list.push({ key: AGENTS_MD_KEY, label: 'AGENTS.md', pinned: true, canDelete: false });
+		}
+		for (const d of docs ?? []) {
+			list.push({ key: d.filename, label: d.filename, archived: d.archived_at != null });
+		}
+		return list;
+	}, [agentsMd, docs]);
+
 	const counts = useMemo(() => {
 		const all = docs?.length ?? 0;
 		const archived = docs?.filter((d) => d.archived_at != null).length ?? 0;
@@ -185,6 +199,7 @@ function ProjectDocumentsPage() {
 				projectId={projectId}
 				projectSlug={projectId}
 				items={items}
+				allItems={allItems}
 				isLoadingList={isLoadingList}
 				selectedKey={file ?? null}
 				onSelect={selectFile}
