@@ -223,6 +223,8 @@ export function CommentComposer({
 						<Button
 							type="submit"
 							size="sm"
+							shortcut="mod+Enter"
+							shortcutFire={false}
 							disabled={
 								(!commentText.trim() && pendingAttachmentIds.length === 0) ||
 								createComment.isPending

@@ -244,11 +244,18 @@ export function CreateTaskDialog({
 					)}
 
 					<div className="flex justify-end gap-2 mt-2">
-						<Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+						<Button
+							type="button"
+							variant="ghost"
+							shortcut="Escape"
+							shortcutFire={false}
+							onClick={() => onOpenChange(false)}
+						>
 							Cancel
 						</Button>
 						<Button
 							type="submit"
+							shortcut="mod+Enter"
 							disabled={
 								!effectiveProjectId || !title.trim() || !assigneeId || activeMutation.isPending
 							}

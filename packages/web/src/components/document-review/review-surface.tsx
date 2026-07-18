@@ -476,12 +476,21 @@ function ReviewEditor({
 					<span />
 				)}
 				<div className="flex items-center gap-1.5">
-					<Button variant="ghost" size="sm" onClick={onClose} data-testid="review-editor-cancel">
+					<Button
+						variant="ghost"
+						size="sm"
+						shortcut="Escape"
+						shortcutFire={false}
+						onClick={onClose}
+						data-testid="review-editor-cancel"
+					>
 						Cancel
 					</Button>
 					<Button
 						variant="primary"
 						size="sm"
+						shortcut="mod+Enter"
+						shortcutFire={false}
 						disabled={!canSave}
 						onClick={() => onSave(text)}
 						data-testid="review-editor-save"

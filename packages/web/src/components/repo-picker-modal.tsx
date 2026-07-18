@@ -262,10 +262,21 @@ export function RepoPickerModal({
 					)}
 
 					<div className="flex justify-end gap-2 mt-2">
-						<Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
+						<Button
+							type="button"
+							variant="secondary"
+							shortcut="Escape"
+							shortcutFire={false}
+							onClick={() => onOpenChange(false)}
+						>
 							Cancel
 						</Button>
-						<Button type="submit" disabled={!canSubmit} data-testid="repo-picker-submit">
+						<Button
+							type="submit"
+							shortcut="mod+Enter"
+							disabled={!canSubmit}
+							data-testid="repo-picker-submit"
+						>
 							{createRepo.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
 							{mode === 'link' ? 'Link repo' : 'Create repo'}
 						</Button>
