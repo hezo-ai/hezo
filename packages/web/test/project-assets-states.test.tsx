@@ -21,6 +21,8 @@ interface FakeAsset {
 	comment_attachment_count?: number;
 	/** Archived assets carry a stamp; the hard-delete action only shows on these. */
 	archived_at?: string | null;
+	/** Overwrite-bumped upload time; defaults to now. Drives the "updated" label. */
+	created_at?: string;
 }
 
 function asset(o: FakeAsset) {
@@ -29,7 +31,7 @@ function asset(o: FakeAsset) {
 		content_type: o.content_type,
 		byte_size: o.byte_size,
 		original_filename: o.original_filename,
-		created_at: new Date().toISOString(),
+		created_at: o.created_at ?? new Date().toISOString(),
 		archived_at: o.archived_at ?? null,
 		url: `/api/assets/${o.id}?exp=9999999999&sig=deadbeef`,
 		comment_attachment_count: o.comment_attachment_count ?? 0,
@@ -293,4 +295,30 @@ test('uploading a disallowed file type surfaces a transient error chip', async (
 
 	const chip = await findByTestId('asset-upload-error');
 	expect(chip.textContent).toContain('malware.exe');
+});
+
+test('the asset card shows the relative updated time after the size, with the exact timestamp in the <abbr> title', async () => {
+	const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+	const r = await renderAssetsWith([
+		asset({
+			id: 'a-dated',
+			content_type: 'image/png',
+			byte_size: 7987, // 7.8 KB
+			original_filename: 'hashnode-article.png',
+			created_at: twoDaysAgo,
+		}),
+	]);
+
+	await r.findByText('hashnode-article.png', undefined, { timeout: 20_000 });
+	const updated = await r.findByTestId('asset-updated');
+	// Relative label sits after the size, joined by a middot separator.
+	expect(updated.textContent).toBe('2 days ago');
+	const meta = updated.parentElement as HTMLElement;
+	expect(meta.textContent).toContain('7.8 KB');
+	expect(meta.textContent).toContain('·');
+	// Hovering surfaces the exact timestamp via the native <abbr> tooltip.
+	expect(updated.tagName).toBe('ABBR');
+	const title = updated.getAttribute('title') ?? '';
+	expect(title).not.toBe('');
+	expect(title).toContain(new Date(twoDaysAgo).getFullYear().toString());
 });
