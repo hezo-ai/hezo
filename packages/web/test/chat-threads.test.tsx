@@ -16,7 +16,7 @@ function msg(id: string, content: string): ChatMessage {
 	return { id, role: 'assistant', channel: 'web', status: 'complete', content, created_at: now() };
 }
 
-function thread(id: string, title: string): ChatConversationSummary {
+function thread(id: string, title: string | null): ChatConversationSummary {
 	return {
 		id,
 		channel: 'web',
@@ -67,4 +67,27 @@ test('the thread switcher re-keys the chatbox to the selected conversation', asy
 
 	// A new-thread affordance is present.
 	expect(getByTestId('chat-thread-new')).toBeTruthy();
+});
+
+test('an untitled thread renders as "New thread" (not "Main"); a titled thread shows its title', async () => {
+	// The first thread is untitled (title null) — it must read "New thread", not the
+	// old hardcoded "Main". The CEO fills the title in later.
+	queryClient.setQueryData(queryKeys.chatConversations(), {
+		conversations: [thread('thread-1', null), thread('thread-2', 'Roadmap planning')],
+	});
+	queryClient.setQueryData(queryKeys.chatConversation(), {
+		conversation_id: 'thread-1',
+		messages: [msg('m1', 'hi')],
+		compacted_count: 0,
+	});
+
+	const { findByTestId } = await renderApp({ initialPath: '/home' });
+	(await findByTestId('chat-launcher')).click();
+	await findByTestId('chat-panel');
+
+	const select = (await findByTestId('chat-thread-select')) as HTMLSelectElement;
+	const labels = Array.from(select.options).map((o) => o.textContent?.trim());
+	expect(labels).toContain('New thread');
+	expect(labels).toContain('Roadmap planning');
+	expect(labels).not.toContain('Main');
 });

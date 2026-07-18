@@ -558,6 +558,18 @@ response's `compacted_count`) where the oldest messages were. The store generali
 chat-enabled agent; the operator can review and edit it on the agent's **Chat history** tab
 (`GET/PUT /api/projects/:projectId/agents/:agentId/chat-memory`).
 
+**Automatic thread titling.** A web thread is created **untitled** (`chat_conversations.title`
+NULL — there is no hardcoded "Main" default) and rendered as a "New thread" placeholder. After a
+reply settles on an untitled thread that has a real exchange, `runTitleGeneration` runs a
+**headless exec** (like compaction — no `chat_message`, no reply broadcast) that hands the agent
+the active window and **captures a short title from its stdout** (`buildTitlePrompt` →
+`sanitizeChatTitle`); the agent does the naming, there is **no server-side LLM call**. It persists
+idempotently (`UPDATE … SET title WHERE title IS NULL`, so a manual/already-set title is never
+clobbered) and broadcasts `ChatConversationUpdated` on the `chat:global` room, so every open thread
+switcher/sidebar refetches and updates its label live. Titling runs **once** per thread (skipped
+once titled), is chained before compaction so the two never contend for the per-session prompt
+file, and its exec's tokens are not separately priced (matching compaction).
+
 HQ also exposes the standard **assets library** — the one internal-project surface that
 isn't hidden in the UI (Budget/Settings still are). Files the CEO produces for the operator
 in the live chat (a quick mockup, demo, or export) are saved via `write_project_asset` and

@@ -32,6 +32,10 @@ const resultEvent = (input: number, output: number, costUsd: number) =>
 		total_cost_usd: costUsd,
 	});
 
+// Reply turns are interleaved with background auto-title / compaction execs (each with
+// its own prompt), so filter captured prompts to the actual operator-reply turns.
+const isReplyPrompt = (p: string) => p.includes('Reply to the latest operator message as the CEO.');
+
 async function poll(fn: () => Promise<boolean>, timeoutMs = 4000): Promise<void> {
 	const start = Date.now();
 	while (Date.now() - start < timeoutMs) {
@@ -241,9 +245,10 @@ describe('ChatSessionManager', () => {
 		});
 
 		await manager.sendTurn({ text: 'And the next step?' });
-		await poll(async () => chat.prompts.length >= 2);
+		await poll(async () => chat.prompts.filter(isReplyPrompt).length >= 2);
 
-		const secondPrompt = chat.prompts[1];
+		const replyPrompts = chat.prompts.filter(isReplyPrompt);
+		const secondPrompt = replyPrompts[replyPrompts.length - 1];
 		expect(secondPrompt).toContain('What is the status?');
 		expect(secondPrompt).toContain('Hi there');
 		expect(secondPrompt).toContain('And the next step?');
@@ -429,6 +434,63 @@ describe('ChatSessionManager', () => {
 		);
 		expect(sessions.rows[0].n).toBe(1);
 
+		await manager.stop();
+	});
+
+	test('creates the default web thread untitled (no hardcoded title)', async () => {
+		const { docker } = makeChatDocker(ctx.dataDir, projectId);
+		const { manager } = makeManager(ctx, docker);
+		// Resolving the default web thread must store NULL, not a hardcoded "Main" — the
+		// frontend renders NULL as "New thread" and the CEO auto-titles it later.
+		const id = await manager.getConversationId();
+		const convo = await manager.getConversation(id);
+		expect(convo?.title).toBeNull();
+		await manager.stop();
+	});
+
+	test('auto-titles an untitled thread after the first exchange and broadcasts it', async () => {
+		const { docker } = makeChatDocker(ctx.dataDir, projectId);
+		const { manager, wsManager } = makeManager(ctx, docker);
+		const captured = captureCeoRoom(wsManager);
+
+		const { conversationId } = await manager.sendTurn({ text: 'Hello CEO' });
+
+		// The reply's own stream sets the title too (the stub replies "Hi there" to both
+		// the turn and the title run); poll until the background auto-title lands.
+		await poll(async () => {
+			const convo = await manager.getConversation(conversationId);
+			return convo?.title != null;
+		});
+		const convo = await manager.getConversation(conversationId);
+		expect(convo?.title).toBe('Hi there');
+		// The switcher/rail learns about it live via a broadcast.
+		expect(
+			captured.events.some((e) => e.type === 'chat_conversation_updated' && e.title === 'Hi there'),
+		).toBe(true);
+
+		await manager.stop();
+	});
+
+	test('does not overwrite an existing thread title', async () => {
+		const { docker } = makeChatDocker(ctx.dataDir, projectId);
+		const { manager } = makeManager(ctx, docker);
+		const titled = await manager.createWebConversation('Roadmap planning');
+
+		const { assistantMessageId } = await manager.sendTurn({
+			text: 'Hello',
+			conversationId: titled,
+		});
+		await poll(async () => {
+			const r = await ctx.db.query<{ status: string }>(
+				'SELECT status FROM chat_messages WHERE id = $1',
+				[assistantMessageId],
+			);
+			return r.rows[0]?.status === ChatMessageStatus.Complete;
+		});
+		// Auto-title is chained right after the reply and skips a thread that already has
+		// a title, so the title can only stay as set.
+		const convo = await manager.getConversation(titled);
+		expect(convo?.title).toBe('Roadmap planning');
 		await manager.stop();
 	});
 });

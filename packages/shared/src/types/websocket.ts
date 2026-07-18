@@ -17,6 +17,7 @@ export enum WsMessageType {
 	ChatMessageDelta = 'chat_message_delta',
 	ChatMessageComplete = 'chat_message_complete',
 	ChatCompacted = 'chat_compacted',
+	ChatConversationUpdated = 'chat_conversation_updated',
 	ProjectsChanged = 'projects_changed',
 	Error = 'error',
 }
@@ -147,12 +148,24 @@ export interface WsChatCompactedMessage {
 	conversationId: string;
 }
 
+/**
+ * A conversation's title changed (e.g. the CEO auto-titled a previously untitled
+ * thread from its content). Every mirrored surface reacts by refetching the thread
+ * list so the switcher/rail label updates live, without a reload.
+ */
+export interface WsChatConversationUpdatedMessage {
+	type: WsMessageType.ChatConversationUpdated;
+	conversationId: string;
+	title: string;
+}
+
 /** Any CEO chat WebSocket event, all carrying `conversationId` for thread routing. */
 export type WsChatServerMessage =
 	| WsChatMessageStartMessage
 	| WsChatMessageDeltaMessage
 	| WsChatMessageCompleteMessage
-	| WsChatCompactedMessage;
+	| WsChatCompactedMessage
+	| WsChatConversationUpdatedMessage;
 
 export type WsServerMessage =
 	| WsRowChangeMessage
@@ -164,6 +177,7 @@ export type WsServerMessage =
 	| WsChatMessageDeltaMessage
 	| WsChatMessageCompleteMessage
 	| WsChatCompactedMessage
+	| WsChatConversationUpdatedMessage
 	| WsProjectsChangedMessage
 	| WsConnectedMessage
 	| WsErrorMessage;

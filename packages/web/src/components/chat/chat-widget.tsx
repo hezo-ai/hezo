@@ -164,8 +164,10 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 	// ones that mirror to Telegram. The `channels` array drives the mirror indicator.
 	const webThreads = conversations;
 	const activeThread = webThreads.find((t) => t.id === activeConversationId);
-	const threadLabel = (t: (typeof webThreads)[number], i: number) => {
-		const base = t.title?.trim() || (i === 0 ? 'Main' : 'New thread');
+	// Untitled threads render as "New thread" until the CEO auto-titles them from the
+	// conversation; there is no special "Main" default anymore.
+	const threadLabel = (t: (typeof webThreads)[number]) => {
+		const base = t.title?.trim() || 'New thread';
 		// A thread mirrored into Telegram gets a small glyph so its reach is obvious.
 		return t.channels?.includes('telegram') ? `${base}  ↔ Telegram` : base;
 	};
@@ -176,11 +178,13 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 		} | null;
 		if (res?.conversation?.id) setSelectedConversationId(res.conversation.id);
 	};
-	// Close the active thread; fall back to the default web thread afterwards.
-	const handleCloseThread = async () => {
-		if (!activeConversationId) return;
-		await closeThread(activeConversationId).catch(() => undefined);
-		setSelectedConversationId(undefined);
+	// Close a thread (defaults to the active one). If it was the active thread, fall
+	// back to the default web thread afterwards.
+	const handleCloseThread = async (id?: string) => {
+		const target = id ?? activeConversationId;
+		if (!target) return;
+		await closeThread(target).catch(() => undefined);
+		if (target === activeConversationId) setSelectedConversationId(undefined);
 	};
 
 	// Copy the whole conversation as plain text, each turn labelled by speaker.
@@ -297,156 +301,230 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 					</div>
 				</header>
 
-				{/* Thread switcher: pick / create / close parallel conversation threads.
-				    Web threads only; external (Telegram) threads live in their own app. */}
-				<div className="flex items-center gap-1 border-b border-border px-3 py-1.5">
-					<select
-						data-testid="chat-thread-select"
-						aria-label="Conversation thread"
-						value={activeConversationId ?? ''}
-						onChange={(e) => setSelectedConversationId(e.target.value || undefined)}
-						className="min-w-0 flex-1 truncate rounded-md border border-border bg-surface px-2 py-1 text-xs text-text-1"
-					>
-						{webThreads.length === 0 && <option value="">Main</option>}
-						{webThreads.map((t, i) => (
-							<option key={t.id} value={t.id}>
-								{threadLabel(t, i)}
-							</option>
-						))}
-					</select>
-					<button
-						type="button"
-						onClick={handleNewThread}
-						aria-label="New thread"
-						data-testid="chat-thread-new"
-						className="flex h-7 w-7 items-center justify-center rounded-md text-text-2 hover:bg-surface-2 hover:text-text-1"
-					>
-						<Plus className="h-4 w-4" />
-					</button>
-					{activeThread && webThreads.length > 1 && (
-						<button
-							type="button"
-							onClick={handleCloseThread}
-							aria-label="Close thread"
-							data-testid="chat-thread-close"
-							className="flex h-7 w-7 items-center justify-center rounded-md text-text-2 hover:bg-surface-2 hover:text-text-1"
+				{/* Body: on desktop-expanded the thread switcher becomes a left rail
+				    alongside the conversation column; otherwise it's a single column with
+				    the top dropdown switcher. */}
+				<div className={`flex min-h-0 flex-1 ${expanded ? 'flex-col md:flex-row' : 'flex-col'}`}>
+					{/* Expanded desktop only: threads as a left sidebar (mobile/collapsed keep
+					    the dropdown below). */}
+					{expanded && (
+						<aside
+							data-testid="chat-thread-rail"
+							className="hidden w-56 shrink-0 flex-col border-r border-border md:flex"
 						>
-							<X className="h-4 w-4" />
-						</button>
-					)}
-				</div>
-
-				{hq && blockedHealth ? (
-					<div
-						data-testid="chat-messages"
-						className="flex flex-1 items-center justify-center overflow-y-auto"
-					>
-						<HqContainerNotice
-							health={blockedHealth}
-							slug={hq.slug}
-							description="The CEO is unavailable until the HQ container is running."
-						/>
-					</div>
-				) : (
-					<FileDropZone
-						isDragActive={isDragActive}
-						dropZoneProps={dropZoneProps}
-						className="flex flex-1 flex-col overflow-hidden"
-						data-testid="chat-drop"
-						overlayTestId="chat-drop-overlay"
-					>
-						<div
-							ref={scrollRef}
-							data-testid="chat-messages"
-							className="flex flex-1 flex-col gap-4 overflow-y-auto px-4 py-4 scroll-smooth"
-						>
-							{!loaded && (
-								<div className="flex items-center justify-center py-6 text-[13px] text-text-2">
-									<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-									Loading…
-								</div>
-							)}
-							{loaded && messages.length === 0 && compactedCount === 0 && (
-								<p className="px-1 py-6 text-center text-[13px] text-text-2">
-									Say hello to the CEO. Ask about anything, including active projects,
-									notifications, task blockers, etc
-								</p>
-							)}
-							{loaded && compactedCount > 0 && (
-								<div
-									data-testid="chat-compacted-banner"
-									className="flex items-center gap-2 px-1 pt-1 text-[11px] text-text-3"
-									title="Older messages were summarized into the CEO's long-term memory and removed from the live chat."
-								>
-									<span className="h-px flex-1 bg-border" />
-									<span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border bg-surface-2 px-2.5 py-0.5">
-										<History className="h-3 w-3" aria-hidden="true" />
-										Earlier messages compacted into memory
-									</span>
-									<span className="h-px flex-1 bg-border" />
-								</div>
-							)}
-							{messages.map((m) => (
-								<MessageBubble key={m.id} message={m} projectSlug={hq?.slug} />
-							))}
-						</div>
-
-						<div className="border-t border-border p-3">
-							{hasAnyChip && (
-								<AttachmentChips
-									attachments={visibleAttachments}
-									uploading={uploading}
-									errors={errors}
-									onRemove={removeAttachment}
-									projectId={hq?.slug}
-									rowTestId="chat-attachment-row"
-									chipTestId="chat-attachment-chip"
-									previewTestId="chat-attachment-preview"
-									errorTestId="chat-attachment-error"
-								/>
-							)}
-							<div className="flex items-end gap-1 rounded-2xl border border-border bg-surface px-1.5 py-1 transition-colors focus-within:border-border-strong">
-								<UploadButton
-									onFiles={handleFiles}
-									accept={ATTACHMENT_ACCEPT}
-									iconOnly
-									label="Attach files"
-									data-testid="chat-attach"
-								/>
-								<textarea
-									ref={inputRef}
-									value={draft}
-									onChange={(e) => setDraft(e.target.value)}
-									onKeyDown={(e) => {
-										if (e.key === 'Enter' && !e.shiftKey) {
-											e.preventDefault();
-											submit();
-										}
-									}}
-									rows={1}
-									placeholder="Ask the CEO anything, across every project…"
-									data-testid="chat-input"
-									className="max-h-32 min-h-[2.25rem] flex-1 resize-none overflow-y-auto bg-transparent px-2 py-2 text-[13px] leading-5 text-text-1 outline-none placeholder:text-text-3"
-								/>
+							<div className="flex items-center justify-between px-3 pb-2 pt-3">
+								<span className="text-eyebrow text-text-3">Threads</span>
 								<button
 									type="button"
-									onClick={submit}
-									disabled={
-										(!draft.trim() && visibleAttachments.length === 0) ||
-										uploading.length > 0 ||
-										sending ||
-										streaming
-									}
-									aria-label="Send message"
-									data-testid="chat-send"
-									className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-solid text-accent-solid-fg transition-colors hover:bg-accent-hover disabled:opacity-40"
+									onClick={handleNewThread}
+									aria-label="New thread"
+									data-testid="chat-thread-new-rail"
+									className="flex h-7 w-7 items-center justify-center rounded-md text-text-2 hover:bg-surface-2 hover:text-text-1"
 								>
-									<ArrowRight className="h-4 w-4" />
+									<Plus className="h-4 w-4" />
 								</button>
 							</div>
+							<div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-2">
+								{webThreads.length === 0 && (
+									<span className="px-2.5 py-2 text-[13px] italic text-text-3">New thread</span>
+								)}
+								{webThreads.map((t) => {
+									const isActive = t.id === activeConversationId;
+									return (
+										<div
+											key={t.id}
+											data-testid="chat-thread-row"
+											data-active={isActive}
+											className={`group/thread flex items-center gap-1 rounded-lg pl-2.5 pr-1 py-1.5 text-[13px] ${
+												isActive
+													? 'bg-surface-2 font-medium text-text-1'
+													: 'text-text-2 hover:bg-surface-2 hover:text-text-1'
+											}`}
+										>
+											<button
+												type="button"
+												onClick={() => setSelectedConversationId(t.id)}
+												className="min-w-0 flex-1 truncate text-left"
+											>
+												{threadLabel(t)}
+											</button>
+											{webThreads.length > 1 && (
+												<button
+													type="button"
+													onClick={() => handleCloseThread(t.id)}
+													aria-label="Close thread"
+													data-testid="chat-thread-close-rail"
+													className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-text-3 opacity-0 hover:bg-surface-3 hover:text-text-1 focus-visible:opacity-100 group-hover/thread:opacity-100"
+												>
+													<X className="h-3.5 w-3.5" />
+												</button>
+											)}
+										</div>
+									);
+								})}
+							</div>
+						</aside>
+					)}
+
+					{/* Conversation column: dropdown switcher (hidden when the rail shows it) +
+					    messages + composer. */}
+					<div className="flex min-h-0 min-w-0 flex-1 flex-col">
+						{/* Thread switcher: pick / create / close parallel conversation threads.
+						    Web threads only; external (Telegram) threads live in their own app. */}
+						<div
+							className={`flex items-center gap-1 border-b border-border px-3 py-1.5 ${
+								expanded ? 'md:hidden' : ''
+							}`}
+						>
+							<select
+								data-testid="chat-thread-select"
+								aria-label="Conversation thread"
+								value={activeConversationId ?? ''}
+								onChange={(e) => setSelectedConversationId(e.target.value || undefined)}
+								className="min-w-0 flex-1 truncate rounded-md border border-border bg-surface px-2 py-1 text-xs text-text-1"
+							>
+								{webThreads.length === 0 && <option value="">New thread</option>}
+								{webThreads.map((t) => (
+									<option key={t.id} value={t.id}>
+										{threadLabel(t)}
+									</option>
+								))}
+							</select>
+							<button
+								type="button"
+								onClick={handleNewThread}
+								aria-label="New thread"
+								data-testid="chat-thread-new"
+								className="flex h-7 w-7 items-center justify-center rounded-md text-text-2 hover:bg-surface-2 hover:text-text-1"
+							>
+								<Plus className="h-4 w-4" />
+							</button>
+							{activeThread && webThreads.length > 1 && (
+								<button
+									type="button"
+									onClick={() => handleCloseThread()}
+									aria-label="Close thread"
+									data-testid="chat-thread-close"
+									className="flex h-7 w-7 items-center justify-center rounded-md text-text-2 hover:bg-surface-2 hover:text-text-1"
+								>
+									<X className="h-4 w-4" />
+								</button>
+							)}
 						</div>
-					</FileDropZone>
-				)}
+
+						{hq && blockedHealth ? (
+							<div
+								data-testid="chat-messages"
+								className="flex flex-1 items-center justify-center overflow-y-auto"
+							>
+								<HqContainerNotice
+									health={blockedHealth}
+									slug={hq.slug}
+									description="The CEO is unavailable until the HQ container is running."
+								/>
+							</div>
+						) : (
+							<FileDropZone
+								isDragActive={isDragActive}
+								dropZoneProps={dropZoneProps}
+								className="flex flex-1 flex-col overflow-hidden"
+								data-testid="chat-drop"
+								overlayTestId="chat-drop-overlay"
+							>
+								<div
+									ref={scrollRef}
+									data-testid="chat-messages"
+									className="flex flex-1 flex-col gap-4 overflow-y-auto px-4 py-4 scroll-smooth"
+								>
+									{!loaded && (
+										<div className="flex items-center justify-center py-6 text-[13px] text-text-2">
+											<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+											Loading…
+										</div>
+									)}
+									{loaded && messages.length === 0 && compactedCount === 0 && (
+										<p className="px-1 py-6 text-center text-[13px] text-text-2">
+											Say hello to the CEO. Ask about anything, including active projects,
+											notifications, task blockers, etc
+										</p>
+									)}
+									{loaded && compactedCount > 0 && (
+										<div
+											data-testid="chat-compacted-banner"
+											className="flex items-center gap-2 px-1 pt-1 text-[11px] text-text-3"
+											title="Older messages were summarized into the CEO's long-term memory and removed from the live chat."
+										>
+											<span className="h-px flex-1 bg-border" />
+											<span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border bg-surface-2 px-2.5 py-0.5">
+												<History className="h-3 w-3" aria-hidden="true" />
+												Earlier messages compacted into memory
+											</span>
+											<span className="h-px flex-1 bg-border" />
+										</div>
+									)}
+									{messages.map((m) => (
+										<MessageBubble key={m.id} message={m} projectSlug={hq?.slug} />
+									))}
+								</div>
+
+								<div className="border-t border-border p-3">
+									{hasAnyChip && (
+										<AttachmentChips
+											attachments={visibleAttachments}
+											uploading={uploading}
+											errors={errors}
+											onRemove={removeAttachment}
+											projectId={hq?.slug}
+											rowTestId="chat-attachment-row"
+											chipTestId="chat-attachment-chip"
+											previewTestId="chat-attachment-preview"
+											errorTestId="chat-attachment-error"
+										/>
+									)}
+									<div className="flex items-end gap-1 rounded-2xl border border-border bg-surface px-1.5 py-1 transition-colors focus-within:border-border-strong">
+										<UploadButton
+											onFiles={handleFiles}
+											accept={ATTACHMENT_ACCEPT}
+											iconOnly
+											label="Attach files"
+											data-testid="chat-attach"
+										/>
+										<textarea
+											ref={inputRef}
+											value={draft}
+											onChange={(e) => setDraft(e.target.value)}
+											onKeyDown={(e) => {
+												if (e.key === 'Enter' && !e.shiftKey) {
+													e.preventDefault();
+													submit();
+												}
+											}}
+											rows={1}
+											placeholder="Ask the CEO anything, across every project…"
+											data-testid="chat-input"
+											className="max-h-32 min-h-[2.25rem] flex-1 resize-none overflow-y-auto bg-transparent px-2 py-2 text-[13px] leading-5 text-text-1 outline-none placeholder:text-text-3"
+										/>
+										<button
+											type="button"
+											onClick={submit}
+											disabled={
+												(!draft.trim() && visibleAttachments.length === 0) ||
+												uploading.length > 0 ||
+												sending ||
+												streaming
+											}
+											aria-label="Send message"
+											data-testid="chat-send"
+											className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-solid text-accent-solid-fg transition-colors hover:bg-accent-hover disabled:opacity-40"
+										>
+											<ArrowRight className="h-4 w-4" />
+										</button>
+									</div>
+								</div>
+							</FileDropZone>
+						)}
+					</div>
+				</div>
 			</div>
 		</>
 	);
