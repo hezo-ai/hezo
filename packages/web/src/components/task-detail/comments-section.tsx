@@ -1,63 +1,21 @@
-import { CommentContentType } from '@hezo/shared';
 import { useLocation } from '@tanstack/react-router';
-import { Check, Copy, CornerDownRight, Reply } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { useAdminMentions, useMarkMentionRead } from '../../hooks/use-admin-mentions';
 import { useAgents } from '../../hooks/use-agents';
-import { type Comment, useComments } from '../../hooks/use-comments';
-import type { Task } from '../../hooks/use-tasks';
-import { copyToClipboard } from '../../lib/clipboard';
-import { AgentLink } from '../agent-link';
 import {
-	type CommentData,
-	CommentReactions,
-	CommentRenderer,
-	CommentTimestampLink,
-	commentText,
-	inlineEventIcon,
-	isInlineEventType,
-	jumpToComment,
-} from '../comment-renderers';
-import { ActorBadge } from '../ui/actor-badge';
-import { Avatar, avatarColorFromString } from '../ui/avatar';
+	type Comment,
+	type CommentSkeleton,
+	ensureCommentBodies,
+	skeletonNeedsBody,
+	useCommentSkeletons,
+} from '../../hooks/use-comments';
+import type { Task } from '../../hooks/use-tasks';
+import { CommentRow } from './comment-row';
 
-/**
- * Copies a comment's markdown body to the clipboard, swapping its icon to a
- * check for 1.5s as confirmation (mirrors the log-viewer copy affordance). A
- * standalone component because each comment row renders inside Virtuoso's
- * `itemContent` callback, where per-row hooks can't live.
- */
-function CopyCommentButton({ text }: { text: string }) {
-	const [copied, setCopied] = useState(false);
-	const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-	useEffect(() => {
-		return () => {
-			if (timeoutRef.current) clearTimeout(timeoutRef.current);
-		};
-	}, []);
-
-	const handleCopy = async () => {
-		if (await copyToClipboard(text)) {
-			setCopied(true);
-			if (timeoutRef.current) clearTimeout(timeoutRef.current);
-			timeoutRef.current = setTimeout(() => setCopied(false), 1500);
-		}
-	};
-
-	return (
-		<button
-			type="button"
-			onClick={handleCopy}
-			className="text-text-3 hover:text-text-1 shrink-0 p-1 -m-1"
-			aria-label={copied ? 'Copied' : 'Copy comment'}
-			data-testid="comment-copy"
-		>
-			{copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-		</button>
-	);
-}
+/** How long the thread must stop scrolling before we load the bodies now on
+ *  screen. A fast fling never pauses this long, so it fetches nothing. */
+const DWELL_MS = 170;
 
 type HashScrollTarget = { idx: number; highlightId: string | null };
 
@@ -67,7 +25,7 @@ type HashScrollTarget = { idx: number; highlightId: string | null };
  * targets the unresolved setup-repo action card. `idx` is -1 when the hash
  * points at nothing here — no jump hash, or the row hasn't loaded yet.
  */
-function resolveHashTarget(hash: string, comments: Comment[]): HashScrollTarget {
+function resolveHashTarget(hash: string, comments: CommentSkeleton[]): HashScrollTarget {
 	if (hash.startsWith('#comment-')) {
 		const targetId = hash.slice('#comment-'.length);
 		// Match by public_id (the canonical anchor) first, but also accept a raw
@@ -112,7 +70,39 @@ export function CommentsSection({
 	scrollParent,
 	onStartReply,
 }: CommentsSectionProps) {
-	const { data: comments } = useComments(projectId, taskId);
+	const { data: comments } = useCommentSkeletons(projectId, taskId);
+	const skeletonById = useMemo(() => {
+		const m = new Map<string, CommentSkeleton>();
+		for (const c of comments ?? []) m.set(c.id, c);
+		return m;
+	}, [comments]);
+
+	// --- Lazy body loading on scroll-dwell ---
+	// The feed renders placeholders for every row up front; a row's body is fetched
+	// (batched by id) only once the thread *settles* on it. During a fast scroll the
+	// settle timer keeps resetting and never fires, so flinging past a section loads
+	// nothing — bodies load when the user stops or scrolls slowly enough to read.
+	const isScrollingRef = useRef(false);
+	const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const skeletonByIdRef = useRef(skeletonById);
+	skeletonByIdRef.current = skeletonById;
+	const loadVisibleBodies = useCallback(() => {
+		const ids: string[] = [];
+		for (const commentId of visibleCommentsRef.current) {
+			const c = skeletonByIdRef.current.get(commentId);
+			if (c && skeletonNeedsBody(c)) ids.push(commentId);
+		}
+		if (ids.length) ensureCommentBodies(projectId, taskId, ids);
+	}, [projectId, taskId]);
+	// Debounce a load so a burst of intersection callbacks coalesces into one flush.
+	const scheduleBodyFlush = useCallback(() => {
+		if (isScrollingRef.current) return;
+		if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
+		flushTimerRef.current = setTimeout(loadVisibleBodies, 60);
+	}, [loadVisibleBodies]);
+	const scheduleBodyFlushRef = useRef(scheduleBodyFlush);
+	scheduleBodyFlushRef.current = scheduleBodyFlush;
 
 	// --- Mark a pending @admin inbox notification read once its comment is seen ---
 	// A notification stays unread until the user actually views its comment. Only
@@ -183,6 +173,9 @@ export function CommentsSection({
 						visibleCommentsRef.current.delete(commentId);
 					}
 				}
+				// The visible set changed; load the on-screen bodies once bursts settle
+				// (skipped mid-scroll, so a fling loads nothing).
+				scheduleBodyFlushRef.current();
 			},
 			{ root: scrollParent ?? null },
 		);
@@ -196,6 +189,29 @@ export function CommentsSection({
 			visibleCommentsRef.current.clear();
 		};
 	}, [scrollParent]);
+
+	// Scroll-dwell gate. While the parent is actively scrolling we suppress body
+	// loads; DWELL_MS after the last scroll event we mark it settled and load the
+	// rows that ended up on screen. A continuous fast fling never pauses long
+	// enough to fire, so it fetches nothing until the user stops.
+	useEffect(() => {
+		if (!scrollParent) return;
+		const onScroll = () => {
+			isScrollingRef.current = true;
+			if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
+			if (settleTimerRef.current) clearTimeout(settleTimerRef.current);
+			settleTimerRef.current = setTimeout(() => {
+				isScrollingRef.current = false;
+				loadVisibleBodies();
+			}, DWELL_MS);
+		};
+		scrollParent.addEventListener('scroll', onScroll, { passive: true });
+		return () => {
+			scrollParent.removeEventListener('scroll', onScroll);
+			if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
+			if (settleTimerRef.current) clearTimeout(settleTimerRef.current);
+		};
+	}, [scrollParent, loadVisibleBodies]);
 	// Both the comments and the mentions load asynchronously (and the stubbed
 	// observer in component tests fires on observe, before mentions resolve), so a
 	// mention can arrive after its comment is already visible. Re-check the
@@ -300,6 +316,12 @@ export function CommentsSection({
 		// guard stops a WebSocket comments refetch (fresh array reference, same
 		// consumed hash) from re-yanking the viewport while the user reads.
 		if (idx < 0 || lastScrolledHashRef.current === hashTarget) return;
+
+		// A deep link jumps straight to a row the user hasn't dwelled on, so load its
+		// body eagerly — otherwise the placeholder→body height change lands mid-anchor
+		// and shifts the target out from under the viewport.
+		const target = comments[idx];
+		if (target && skeletonNeedsBody(target)) ensureCommentBodies(projectId, taskId, [target.id]);
 
 		const consumedHash = hashTarget;
 		const timers: ReturnType<typeof setTimeout>[] = [];
@@ -407,7 +429,7 @@ export function CommentsSection({
 			inputAbort.abort();
 			for (const t of timers) clearTimeout(t);
 		};
-	}, [comments, scrollParent, hashTarget]);
+	}, [comments, scrollParent, hashTarget, projectId, taskId]);
 
 	// Fade the deep-link highlight a couple seconds after it lands. Keyed on the
 	// highlighted id (not the scroll timers) so a comments refetch mid-scroll
@@ -428,154 +450,20 @@ export function CommentsSection({
 					computeItemKey={(_, c) => c.id}
 					defaultItemHeight={120}
 					increaseViewportBy={{ top: 600, bottom: 600 }}
-					itemContent={(_, c) => {
-						const commentData = c as unknown as CommentData;
-						const authorName = c.author_name ?? 'Admin';
-						const isAgent = c.author_type === 'agent';
-						const authorAgentSlug =
-							isAgent && c.author_member_id ? agentSlugById.get(c.author_member_id) : undefined;
-						const content = typeof c.content === 'object' ? (c.content as { kind?: string }) : null;
-						const isPendingSetupRepo =
-							c.content_type === 'action' && content?.kind === 'setup_repo' && !c.chosen_option;
-						const isHighlighted = highlightedCommentId === c.public_id;
-
-						if (isInlineEventType(c.content_type)) {
-							const Icon = inlineEventIcon(commentData);
-							return (
-								<div
-									id={`comment-${c.public_id}`}
-									ref={observeCommentRow}
-									data-comment-id={c.id}
-									className={`flex items-start gap-2.5 scroll-mt-20 pb-4 ${isHighlighted ? 'rounded-md ring-2 ring-info/60 transition-shadow' : ''}`}
-									data-testid="comment-item"
-									data-comment-highlighted={isHighlighted ? 'true' : undefined}
-								>
-									<div
-										data-testid="inline-event-icon"
-										className="w-[26px] h-[26px] flex items-center justify-center shrink-0 text-text-3"
-									>
-										<Icon className="w-3.5 h-3.5" />
-									</div>
-									<div className="flex-1 min-w-0">
-										<CommentRenderer
-											comment={commentData}
-											projectId={projectId}
-											projectSlug={taskProjectSlug}
-											taskId={taskId}
-											retryableRunId={retryableRunId}
-											inline
-										/>
-									</div>
-								</div>
-							);
-						}
-
-						return (
-							<div
-								id={`comment-${c.public_id}`}
-								ref={observeCommentRow}
-								data-comment-id={c.id}
-								className={`flex gap-2.5 scroll-mt-20 pb-4 ${isHighlighted ? 'rounded-md ring-2 ring-info/60 transition-shadow' : ''}`}
-								data-testid="comment-item"
-								data-comment-highlighted={isHighlighted ? 'true' : undefined}
-								{...(isPendingSetupRepo ? { 'data-setup-repo-anchor': '' } : {})}
-							>
-								{authorAgentSlug ? (
-									<AgentLink
-										projectId={projectId}
-										agentId={authorAgentSlug}
-										title={`View ${authorName}`}
-										testId="comment-author-avatar-link"
-										className="shrink-0 rounded-full"
-									>
-										<Avatar
-											initials={authorName.slice(0, 2)}
-											size="sm"
-											color={avatarColorFromString(authorName)}
-										/>
-									</AgentLink>
-								) : (
-									<Avatar
-										initials={authorName.slice(0, 2)}
-										size="sm"
-										color={avatarColorFromString(authorName)}
-									/>
-								)}
-								<div className="flex-1 min-w-0 rounded-md border border-border bg-surface overflow-hidden">
-									<div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-surface-3">
-										{authorAgentSlug ? (
-											<AgentLink
-												projectId={projectId}
-												agentId={authorAgentSlug}
-												className="text-xs font-medium text-text-1 hover:text-info-soft-fg transition-colors"
-												testId="comment-author"
-											>
-												{authorName}
-											</AgentLink>
-										) : (
-											<span
-												className={`text-xs font-medium ${isAgent ? 'text-text-1' : 'text-text-2'}`}
-												data-testid="comment-author"
-											>
-												{authorName}
-											</span>
-										)}
-										<ActorBadge actorType={c.author_type} name={authorName} />
-										<CommentTimestampLink publicId={c.public_id} createdAt={c.created_at} />
-										<div className="ml-auto flex items-center gap-2">
-											{c.parent_comment_id &&
-												(() => {
-													const parent = comments?.find((x) => x.id === c.parent_comment_id);
-													if (!parent) return null;
-													return (
-														<a
-															href={`#comment-${parent.public_id}`}
-															onClick={jumpToComment(parent.public_id)}
-															className="flex shrink-0 items-center gap-1 whitespace-nowrap text-[11px] text-text-3 hover:text-text-1"
-															data-testid="replying-to"
-														>
-															<CornerDownRight className="w-3 h-3" />
-															replying to {parent.author_name}
-														</a>
-													);
-												})()}
-											{c.content_type === CommentContentType.Text && (
-												<CopyCommentButton text={commentText(c.content)} />
-											)}
-										</div>
-									</div>
-									<div className="px-3 py-2.5">
-										<CommentRenderer
-											comment={commentData}
-											projectId={projectId}
-											projectSlug={taskProjectSlug}
-											taskId={taskId}
-											retryableRunId={retryableRunId}
-										/>
-										<div className="flex items-end justify-between gap-2">
-											<div className="min-w-0 flex-1">
-												<CommentReactions
-													comment={commentData}
-													projectId={projectId}
-													taskId={taskId}
-												/>
-											</div>
-											<button
-												type="button"
-												onClick={() => onStartReply(c)}
-												className="mt-2 flex items-center gap-1 text-[11px] text-text-3 hover:text-text-1 shrink-0 p-1 -m-1"
-												aria-label="Reply to comment"
-												data-testid="comment-reply"
-											>
-												<Reply className="w-3.5 h-3.5" />
-												Reply
-											</button>
-										</div>
-									</div>
-								</div>
-							</div>
-						);
-					}}
+					itemContent={(_, c) => (
+						<CommentRow
+							comment={c}
+							comments={comments ?? []}
+							projectId={projectId}
+							taskProjectSlug={taskProjectSlug}
+							taskId={taskId}
+							retryableRunId={retryableRunId}
+							isHighlighted={highlightedCommentId === c.public_id}
+							agentSlugById={agentSlugById}
+							observeCommentRow={observeCommentRow}
+							onStartReply={onStartReply}
+						/>
+					)}
 				/>
 			)}
 		</div>

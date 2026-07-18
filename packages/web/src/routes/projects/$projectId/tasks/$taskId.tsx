@@ -19,7 +19,11 @@ import { TaskSummary } from '../../../../components/task-detail/task-summary';
 import { ResizableSplit } from '../../../../components/ui/resizable-split';
 import { useRegisterScrollContent } from '../../../../contexts/scroll-content-context';
 import { useAgents } from '../../../../hooks/use-agents';
-import { type Comment, useComments, useCreateComment } from '../../../../hooks/use-comments';
+import {
+	type Comment,
+	useCommentSkeletons,
+	useCreateComment,
+} from '../../../../hooks/use-comments';
 import { useExecutionLock } from '../../../../hooks/use-execution-locks';
 import { useScrollToBottom } from '../../../../hooks/use-scroll-to-bottom';
 import { useTask, useUpdateTask } from '../../../../hooks/use-tasks';
@@ -53,7 +57,10 @@ function TaskDetailPage() {
 		}
 	}, [task?.identifier, task?.project_slug, taskId, projectId, navigate]);
 
-	const { data: comments } = useComments(projectId, taskId);
+	// The comments feed loads skeletons (metadata, no heavy bodies); this drives
+	// the count badge and the sidebar's run-comment lookup. Bodies load lazily
+	// inside CommentsSection as rows settle into view.
+	const { data: comments } = useCommentSkeletons(projectId, taskId);
 	const { data: agents } = useAgents(projectId);
 	const { data: lock } = useExecutionLock(projectId, taskId);
 	const updateTask = useUpdateTask(projectId, taskId);

@@ -91,6 +91,27 @@ export const queryKeys = {
 		tasksResolve: (slug: string, key: string[]) => ['projects', slug, 'tasks', 'resolve', key],
 		task: (slug: string, taskId: string) => ['projects', slug, 'tasks', taskId],
 		taskComments: (slug: string, taskId: string) => ['projects', slug, 'tasks', taskId, 'comments'],
+		// Lazy comments feed: the skeleton list (metadata + reactions, no heavy
+		// bodies) and the per-comment body loaded on scroll-dwell. Both sit under
+		// the `taskComments` prefix so the existing WS invalidation (which targets
+		// the `tasks(slug)` prefix) still cascades to them.
+		taskCommentSkeletons: (slug: string, taskId: string) => [
+			'projects',
+			slug,
+			'tasks',
+			taskId,
+			'comments',
+			'skeleton',
+		],
+		commentBody: (slug: string, taskId: string, commentId: string) => [
+			'projects',
+			slug,
+			'tasks',
+			taskId,
+			'comments',
+			commentId,
+			'body',
+		],
 		taskAncestors: (slug: string, taskId: string | undefined) => [
 			'projects',
 			slug,

@@ -1,8 +1,10 @@
 // Most task-comments coverage now lives in the component tier
-// (`packages/web/test/task-comments.test.tsx`). These two tests stay in
-// Playwright because they exercise behavior happy-dom doesn't model:
+// (`packages/web/test/task-comments.test.tsx`). These tests stay in Playwright
+// because they exercise behavior happy-dom doesn't model:
 //   1. Virtuoso virtualization (mount window) and scroll-to-comment via URL hash
 //   2. Reply flow at a mobile viewport width
+//   3. Lazy body loading on scroll — a real mount window + scroll are needed to
+//      prove off-screen bodies aren't fetched until the row is reached
 
 import { expect, test } from './fixtures';
 import {
@@ -85,6 +87,64 @@ test.describe('Task Comments', () => {
 		const anchored = page.locator(`#comment-${target.public_id}`);
 		await expect(anchored).toBeVisible({ timeout: 20_000 });
 		await expect(anchored).toContainText(`seeded-comment-${target.index}`);
+	});
+
+	test('loads comment bodies lazily as they scroll into view', async ({
+		sharedPage: page,
+		sharedWorkspace,
+	}) => {
+		test.setTimeout(60_000);
+		const { task, project, headers } = await createProjectAndTask(page, sharedWorkspace.token);
+
+		const TOTAL = 60;
+		const created: { id: string; public_id: string; index: number }[] = [];
+		const BATCH = 12;
+		for (let start = 0; start < TOTAL; start += BATCH) {
+			const batch = Array.from({ length: Math.min(BATCH, TOTAL - start) }, (_, i) => start + i);
+			const results = await Promise.all(
+				batch.map((i) =>
+					page.request.post(`/api/projects/${project.slug}/tasks/${task.id}/comments`, {
+						headers,
+						data: { content_type: 'text', content: { text: `lazy-comment-${i}` } },
+					}),
+				),
+			);
+			for (const [k, res] of results.entries()) {
+				const json = (await res.json()) as { data: { id: string; public_id: string } };
+				created.push({ id: json.data.id, public_id: json.data.public_id, index: batch[k] });
+			}
+		}
+
+		// Record every comment id whose body was fetched via a `?ids=` batch.
+		const requestedBodyIds = new Set<string>();
+		page.on('request', (req) => {
+			const m = req.url().match(/[?&]ids=([^&]+)/);
+			if (m) for (const id of decodeURIComponent(m[1]).split(',')) requestedBodyIds.add(id);
+		});
+
+		await page.goto(`/projects/${project.slug}/tasks/${task.id}`);
+		await waitForPageLoad(page);
+		await expect(page.getByTestId('comments-list')).toBeVisible({ timeout: 20_000 });
+		// The top of the thread loads and renders its bodies.
+		await expect(page.getByText('lazy-comment-0')).toBeVisible({ timeout: 20_000 });
+
+		const deep = created[TOTAL - 1];
+		// Only the on-screen slice was fetched — far fewer than the whole thread —
+		// and the last comment's body was neither fetched nor rendered.
+		await expect.poll(() => requestedBodyIds.size, { timeout: 10_000 }).toBeGreaterThan(0);
+		expect(requestedBodyIds.size).toBeLessThan(TOTAL);
+		expect(requestedBodyIds.has(deep.id)).toBe(false);
+		await expect(page.getByText(`lazy-comment-${deep.index}`)).toHaveCount(0);
+
+		// Jump to the last comment; its body now loads on demand and renders.
+		await page.goto(
+			`/projects/${project.slug}/tasks/${task.identifier.toLowerCase()}#comment-${deep.public_id}`,
+		);
+		await waitForPageLoad(page);
+		const anchored = page.locator(`#comment-${deep.public_id}`);
+		await expect(anchored).toBeVisible({ timeout: 20_000 });
+		await expect(anchored).toContainText(`lazy-comment-${deep.index}`);
+		await expect.poll(() => requestedBodyIds.has(deep.id), { timeout: 10_000 }).toBe(true);
 	});
 
 	test('reply flow works on mobile viewport', async ({ sharedPage: page, sharedWorkspace }) => {

@@ -12,7 +12,7 @@ import { Link } from '@tanstack/react-router';
 import { ChevronDown } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { Agent } from '../../hooks/use-agents';
-import type { Comment } from '../../hooks/use-comments';
+import type { CommentSkeleton } from '../../hooks/use-comments';
 import type { ExecutionLockState } from '../../hooks/use-execution-locks';
 import { useQueuedWakeups } from '../../hooks/use-queued-wakeups';
 import type { Task, useUpdateTask } from '../../hooks/use-tasks';
@@ -37,7 +37,7 @@ interface TaskSidebarProps {
 	projectId: string;
 	agents: Agent[] | undefined;
 	lock: ExecutionLockState | undefined;
-	comments: Comment[] | undefined;
+	comments: CommentSkeleton[] | undefined;
 	updateTask: ReturnType<typeof useUpdateTask>;
 	commentEffort: AgentEffort | null;
 	setCommentEffort: (v: AgentEffort | null) => void;
