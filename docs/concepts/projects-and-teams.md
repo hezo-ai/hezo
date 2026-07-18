@@ -23,6 +23,15 @@ appears as the project's thumbnail in the rail. Pick any common image (PNG, JPEG
 GIF, or SVG); Hezo crops it to a square and resizes it to 512×512. Use **Replace image**
 to swap it or **Remove** to go back to the initials.
 
+## Agent and admin avatars
+
+Agents and the admin user work the same way. Open an agent's **Settings** and upload an
+image under **Agent avatar** to give it a custom picture — it then shows on the team
+roster, the org chart, and the agent's own page in place of its initials. The admin can set
+a personal avatar from the global **Settings → Users** page. Both accept the same image
+formats and are cropped to a square 512×512, with **Replace image** / **Remove** to change
+or clear them.
+
 ## Archiving a project
 
 When a project is finished or dormant, you can **archive** it to get it out of the way

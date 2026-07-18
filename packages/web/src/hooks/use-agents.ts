@@ -1,6 +1,6 @@
 import { AgentAdminStatus, type AgentEffort } from '@hezo/shared';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { api } from '../lib/api';
+import { type ApiError, api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
 import { queryKeys } from '../lib/query-keys';
 import { useOptimisticMutation, useSimpleOptimisticUpdate } from './use-optimistic-mutation';
@@ -41,6 +41,9 @@ export interface Agent {
 	is_instance?: boolean;
 	/** True when the agent has a live chatbox (and thus a Chat history tab). CEO only today. */
 	chat_enabled?: boolean;
+	/** Optional custom avatar (signed URL); null/undefined when unset (falls back to initials). */
+	icon_url?: string | null;
+	icon_updated_at?: string | null;
 }
 
 export interface AgentSystemPromptDoc {
@@ -116,6 +119,52 @@ export function useUpdateAgent(projectId: string, agentId: string) {
 			errorMessage: 'Failed to update agent',
 		},
 	);
+}
+
+export interface AgentIconResponse {
+	icon_url: string | null;
+	icon_updated_at: string | null;
+}
+
+/**
+ * Seed an agent's icon fields into the detail cache from a server response and
+ * invalidate the roster/org-chart/agent queries so every surface that renders
+ * the avatar reflects the change. Response-driven (the server returns the signed
+ * `icon_url`), not optimistic.
+ */
+function applyAgentIconToCaches(projectId: string, agentId: string, icon: AgentIconResponse) {
+	queryClient.setQueryData<Agent>(queryKeys.projects.agent(projectId, agentId), (old) =>
+		old ? { ...old, icon_url: icon.icon_url, icon_updated_at: icon.icon_updated_at } : old,
+	);
+	// `agents(projectId)` is a prefix of every `agentsFiltered` key, so this
+	// invalidates the roster list regardless of the active admin_status filter.
+	queryClient.invalidateQueries({ queryKey: queryKeys.projects.agents(projectId) });
+	queryClient.invalidateQueries({ queryKey: queryKeys.projects.orgChart(projectId) });
+	queryClient.invalidateQueries({ queryKey: queryKeys.projects.agent(projectId, agentId) });
+}
+
+/** Upload (or replace) an agent's avatar. `blob` is the normalized square PNG. */
+export function useUploadAgentIcon(projectId: string, agentId: string) {
+	return useMutation<AgentIconResponse, ApiError, Blob>({
+		mutationFn: (blob) => {
+			const fd = new FormData();
+			fd.set('file', blob, 'icon.png');
+			return api.putForm<AgentIconResponse>(
+				`/api/projects/${projectId}/agents/${agentId}/icon`,
+				fd,
+			);
+		},
+		onSuccess: (data) => applyAgentIconToCaches(projectId, agentId, data),
+	});
+}
+
+export function useRemoveAgentIcon(projectId: string, agentId: string) {
+	return useMutation<AgentIconResponse, ApiError, void>({
+		mutationFn: () =>
+			api.delete<AgentIconResponse>(`/api/projects/${projectId}/agents/${agentId}/icon`),
+		onSuccess: () =>
+			applyAgentIconToCaches(projectId, agentId, { icon_url: null, icon_updated_at: null }),
+	});
 }
 
 export function useAgentSystemPrompt(projectId: string, agentId: string) {

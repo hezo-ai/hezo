@@ -14,20 +14,26 @@ import {
 	hasFixedReportsTo,
 	INSTANCE_AGENT_SLUGS,
 	isAgentEffort,
+	isAllowedProjectIconStoredMime,
 	isBudgetPauseStatus,
 	isReservedAgentSlug,
 	MemberType,
+	PROJECT_ICON_MAX_BYTES,
+	PROJECT_ICON_MAX_DIMENSION,
 	requiredSystemPromptVarsError,
 	TaskPriority,
 	TaskStatus,
 	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
-import { Hono } from 'hono';
+import { type Context, Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import type { Db } from '../db/database';
 import { trackBackground } from '../lib/background';
 import { broadcastChange, broadcastCommentFamilyChange } from '../lib/broadcast';
 import { budgetWindowsError } from '../lib/budget-validation';
+import { signEntityIconUrl, verifyEntityIconUrl } from '../lib/entity-icon-urls';
+import { readImageDimensions } from '../lib/image-dimensions';
 import {
 	actorTypeFromAuth,
 	resolveActor,
@@ -89,8 +95,50 @@ const AGENT_BASE_COLUMNS = `m.id, m.team_id, m.display_name, m.created_at,
 	ma.touches_code,
 	ma.runtime_status, ma.admin_status, ma.last_heartbeat_at, ma.reports_to,
 	ma.mcp_servers, ma.model_override_provider, ma.model_override_model, ma.updated_at,
+	(SELECT ai.updated_at FROM agent_icons ai WHERE ai.member_id = m.id) AS icon_updated_at,
 	${NEXT_HEARTBEAT_AT_SQL} AS next_heartbeat_at,
 	${HAS_ACTIONABLE_WORK_SQL} AS has_actionable_work`;
+
+// --- Agent avatar (icon) ------------------------------------------------------
+// An optional user-uploaded image shown for an agent in place of its initials.
+// Stored as bytes in the DB (agent_icons, 1:1 with member_agents). Served via an
+// HMAC-signed public URL (rendered in an <img>, which can't carry a bearer
+// token) — mirrors the project-icon feature, generalized in `entity-icon-urls`.
+const AGENT_ICON_KEY_PURPOSE = 'agent-icon-url';
+const AGENT_ICON_BASE_PATH = '/api/agents';
+
+/** Sign an agent's icon URL from its `icon_updated_at` version, or null when unset. */
+async function signAgentIcon(
+	c: Context<Env>,
+	id: string,
+	iconUpdatedAt: unknown,
+): Promise<string | null> {
+	if (typeof iconUpdatedAt === 'string' || iconUpdatedAt instanceof Date) {
+		const version = Math.floor(new Date(iconUpdatedAt).getTime() / 1000);
+		return signEntityIconUrl(
+			AGENT_ICON_BASE_PATH,
+			AGENT_ICON_KEY_PURPOSE,
+			id,
+			c.get('masterKeyManager'),
+			version,
+		);
+	}
+	return null;
+}
+
+/**
+ * Attach a freshly-signed `icon_url` to a serialized agent row (from the
+ * correlated `icon_updated_at` subselect in AGENT_BASE_COLUMNS). The icon bytes
+ * themselves are never selected onto the row.
+ */
+async function withAgentIconUrl(
+	c: Context<Env>,
+	row: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+	row.icon_url = await signAgentIcon(c, row.id as string, row.icon_updated_at);
+	if (!row.icon_url) row.icon_updated_at = null;
+	return row;
+}
 
 const HEARTBEAT_RUN_COLUMNS = `hr.id, hr.member_id, hr.team_id, hr.wakeup_id, hr.task_id, hr.kind,
 	hr.status, hr.queued_reason, hr.started_at, hr.finished_at, hr.exit_code, hr.error,
@@ -222,7 +270,10 @@ agentsRoutes.get('/projects/:projectId/agents', async (c) => {
 	query += ' ORDER BY is_instance ASC, ma.title ASC';
 
 	const result = await db.query(query, params);
-	return ok(c, result.rows);
+	const rows = await Promise.all(
+		result.rows.map((r) => withAgentIconUrl(c, r as Record<string, unknown>)),
+	);
+	return ok(c, rows);
 });
 
 agentsRoutes.post('/projects/:projectId/agents', async (c) => {
@@ -568,7 +619,103 @@ agentsRoutes.get('/projects/:projectId/agents/:agentId', async (c) => {
 		[agentId, teamId, ...ts2.values],
 	);
 
-	return ok(c, result.rows[0]);
+	const row = result.rows[0];
+	if (!row) return err(c, 'NOT_FOUND', 'Agent not found', 404);
+	return ok(c, await withAgentIconUrl(c, row as Record<string, unknown>));
+});
+
+// Upload (or replace) an agent's avatar. The client normalizes any picked image
+// to a square PNG ≤ PROJECT_ICON_MAX_DIMENSION before upload; the server
+// re-validates content-type, byte size, and pixel dimensions defensively.
+agentsRoutes.put(
+	'/projects/:projectId/agents/:agentId/icon',
+	bodyLimit({
+		maxSize: PROJECT_ICON_MAX_BYTES,
+		onError: (c) => err(c, 'TOO_LARGE', 'Image exceeds the size limit', 400),
+	}),
+	async (c) => {
+		const teamId = c.get('teamId') as string;
+		const db = c.get('db');
+		const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
+		if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
+
+		let form: Awaited<ReturnType<typeof c.req.parseBody>>;
+		try {
+			form = await c.req.parseBody({ all: false });
+		} catch (e) {
+			log.error('agent icon parseBody failed:', e);
+			return err(c, 'INVALID_REQUEST', 'Malformed upload', 400);
+		}
+		const file = form.file;
+		if (!(file instanceof Blob)) {
+			return err(c, 'INVALID_REQUEST', 'Missing file field', 400);
+		}
+
+		const contentType = file.type || 'application/octet-stream';
+		if (!isAllowedProjectIconStoredMime(contentType)) {
+			return err(c, 'INVALID_ATTACHMENT', `Unsupported content type: ${contentType}`, 400);
+		}
+		if (file.size > PROJECT_ICON_MAX_BYTES) {
+			return err(c, 'TOO_LARGE', 'Image exceeds the size limit', 400);
+		}
+
+		const buf = Buffer.from(await file.arrayBuffer());
+		const dims = readImageDimensions(buf);
+		if (!dims) {
+			return err(c, 'INVALID_ATTACHMENT', 'Could not read image dimensions', 400);
+		}
+		if (dims.width > PROJECT_ICON_MAX_DIMENSION || dims.height > PROJECT_ICON_MAX_DIMENSION) {
+			return err(
+				c,
+				'INVALID_ATTACHMENT',
+				`Image exceeds ${PROJECT_ICON_MAX_DIMENSION}×${PROJECT_ICON_MAX_DIMENSION} pixels`,
+				400,
+			);
+		}
+
+		const updated = await db.query<{ updated_at: string }>(
+			`INSERT INTO agent_icons (member_id, content_type, data, byte_size, width, height, updated_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, now())
+			 ON CONFLICT (member_id) DO UPDATE SET
+			   content_type = EXCLUDED.content_type,
+			   data         = EXCLUDED.data,
+			   byte_size    = EXCLUDED.byte_size,
+			   width        = EXCLUDED.width,
+			   height       = EXCLUDED.height,
+			   updated_at   = now()
+			 RETURNING updated_at`,
+			[agentId, contentType, buf, buf.byteLength, dims.width, dims.height],
+		);
+
+		broadcastChange(c, wsRoom.team(teamId), 'member_agents', 'UPDATE', {
+			id: agentId,
+			team_id: teamId,
+		});
+
+		const version = Math.floor(new Date(updated.rows[0].updated_at).getTime() / 1000);
+		const iconUrl = await signEntityIconUrl(
+			AGENT_ICON_BASE_PATH,
+			AGENT_ICON_KEY_PURPOSE,
+			agentId,
+			c.get('masterKeyManager'),
+			version,
+		);
+		return ok(c, { icon_url: iconUrl, icon_updated_at: updated.rows[0].updated_at });
+	},
+);
+
+agentsRoutes.delete('/projects/:projectId/agents/:agentId/icon', async (c) => {
+	const teamId = c.get('teamId') as string;
+	const db = c.get('db');
+	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
+	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
+
+	await db.query('DELETE FROM agent_icons WHERE member_id = $1', [agentId]);
+	broadcastChange(c, wsRoom.team(teamId), 'member_agents', 'UPDATE', {
+		id: agentId,
+		team_id: teamId,
+	});
+	return ok(c, { icon_url: null, icon_updated_at: null });
 });
 
 // The agent's long-term chat memory (the compacted history shown on the Chat
@@ -1081,7 +1228,8 @@ agentsRoutes.get('/projects/:projectId/org-chart', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 
-	const ORG_COLUMNS = `m.id, ma.title, ma.slug, ma.role_description, ma.runtime_status, ma.admin_status, ma.reports_to`;
+	const ORG_COLUMNS = `m.id, ma.title, ma.slug, ma.role_description, ma.runtime_status, ma.admin_status, ma.reports_to,
+     (SELECT ai.updated_at FROM agent_icons ai WHERE ai.member_id = m.id) AS icon_updated_at`;
 	const result = await db.query(
 		`SELECT ${ORG_COLUMNS}
      FROM members m
@@ -1098,8 +1246,12 @@ agentsRoutes.get('/projects/:projectId/org-chart', async (c) => {
 		runtime_status: string;
 		admin_status: string;
 		reports_to: string | null;
+		icon_updated_at: string | null;
+		icon_url?: string | null;
 	};
 	const agents = result.rows as OrgAgentRow[];
+	// Sign each node's avatar URL (null when the agent has no icon).
+	for (const a of agents) a.icon_url = await signAgentIcon(c, a.id, a.icon_updated_at);
 	type AgentNode = OrgAgentRow & { children: AgentNode[] };
 	const byId = new Map<string, AgentNode>(
 		agents.map((a) => [a.id, { ...a, children: [] as AgentNode[] }]),
@@ -1119,6 +1271,7 @@ agentsRoutes.get('/projects/:projectId/org-chart', async (c) => {
 	);
 	const ceoRow = ceoResult.rows[0] as OrgAgentRow | undefined;
 	if (ceoRow && !byId.has(ceoRow.id)) {
+		ceoRow.icon_url = await signAgentIcon(c, ceoRow.id, ceoRow.icon_updated_at);
 		byId.set(ceoRow.id, { ...ceoRow, children: [] });
 	}
 
@@ -1233,3 +1386,51 @@ agentsRoutes.post(
 		return ok(c, { ...row, terminated: result.terminated });
 	},
 );
+
+// Public signed-URL read endpoint for an agent avatar. Rendered in an `<img>`
+// tag, which can't carry a bearer token, so the HMAC `sig` query param is the
+// credential. Must be mounted before the `/api/*` auth middleware.
+export const publicAgentsRoutes = new Hono<Env>();
+
+publicAgentsRoutes.get('/api/agents/:agentId/icon', async (c) => {
+	const agentId = c.req.param('agentId');
+	const expRaw = c.req.query('exp');
+	const sig = c.req.query('sig');
+	if (!expRaw || !sig) {
+		return err(c, 'UNAUTHORIZED', 'Missing signature', 401);
+	}
+	const exp = Number.parseInt(expRaw, 10);
+	const masterKeyManager = c.get('masterKeyManager');
+	const valid = await verifyEntityIconUrl(
+		AGENT_ICON_KEY_PURPOSE,
+		agentId,
+		exp,
+		sig,
+		masterKeyManager,
+	);
+	if (!valid) {
+		return err(c, 'UNAUTHORIZED', 'Invalid or expired signature', 401);
+	}
+
+	const row = await c.get('db').query<{
+		content_type: string;
+		data: Uint8Array;
+		updated_at: string;
+	}>('SELECT content_type, data, updated_at FROM agent_icons WHERE member_id = $1', [agentId]);
+	if (row.rows.length === 0) {
+		return err(c, 'NOT_FOUND', 'Icon not found', 404);
+	}
+	const { content_type, data, updated_at } = row.rows[0];
+	const src = data instanceof Uint8Array ? data : new Uint8Array(data);
+	// Copy into a fresh ArrayBuffer so the body type is Uint8Array<ArrayBuffer>
+	// (PGlite hands back a Uint8Array<ArrayBufferLike>).
+	const ab = new ArrayBuffer(src.byteLength);
+	new Uint8Array(ab).set(src);
+
+	return c.body(new Uint8Array(ab), 200, {
+		'Content-Type': content_type,
+		'Content-Length': String(src.byteLength),
+		'Cache-Control': 'private, max-age=3600',
+		ETag: `"${new Date(updated_at).getTime()}"`,
+	});
+});

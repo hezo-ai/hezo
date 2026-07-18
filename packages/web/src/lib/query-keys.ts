@@ -19,6 +19,8 @@ type KeyParam = unknown;
 export const queryKeys = {
 	// ---- instance / global ----
 	me: () => ['me'],
+	/** Human users (today just the admin) for the global Settings → Users page. */
+	users: () => ['users'],
 	status: () => ['status'],
 	updateCheck: () => ['update-check'],
 	updateStatus: () => ['update-status'],

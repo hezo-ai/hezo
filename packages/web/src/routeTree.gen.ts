@@ -14,6 +14,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as SettingsIndexRouteImport } from './routes/settings/index'
 import { Route as MarketplaceIndexRouteImport } from './routes/marketplace/index'
 import { Route as HomeIndexRouteImport } from './routes/home/index'
+import { Route as SettingsUsersRouteImport } from './routes/settings/users'
 import { Route as SettingsSkillsRouteImport } from './routes/settings/skills'
 import { Route as SettingsCredentialsRouteImport } from './routes/settings/credentials'
 import { Route as SettingsConnectorsRouteImport } from './routes/settings/connectors'
@@ -79,6 +80,11 @@ const HomeIndexRoute = HomeIndexRouteImport.update({
   id: '/home/',
   path: '/home/',
   getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsUsersRoute = SettingsUsersRouteImport.update({
+  id: '/users',
+  path: '/users',
+  getParentRoute: () => SettingsRouteRoute,
 } as any)
 const SettingsSkillsRoute = SettingsSkillsRouteImport.update({
   id: '/skills',
@@ -319,6 +325,7 @@ export interface FileRoutesByFullPath {
   '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
   '/settings/skills': typeof SettingsSkillsRoute
+  '/settings/users': typeof SettingsUsersRoute
   '/home/': typeof HomeIndexRoute
   '/marketplace/': typeof MarketplaceIndexRoute
   '/settings/': typeof SettingsIndexRoute
@@ -364,6 +371,7 @@ export interface FileRoutesByTo {
   '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
   '/settings/skills': typeof SettingsSkillsRoute
+  '/settings/users': typeof SettingsUsersRoute
   '/home': typeof HomeIndexRoute
   '/marketplace': typeof MarketplaceIndexRoute
   '/settings': typeof SettingsIndexRoute
@@ -411,6 +419,7 @@ export interface FileRoutesById {
   '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
   '/settings/skills': typeof SettingsSkillsRoute
+  '/settings/users': typeof SettingsUsersRoute
   '/home/': typeof HomeIndexRoute
   '/marketplace/': typeof MarketplaceIndexRoute
   '/settings/': typeof SettingsIndexRoute
@@ -460,6 +469,7 @@ export interface FileRouteTypes {
     | '/settings/connectors'
     | '/settings/credentials'
     | '/settings/skills'
+    | '/settings/users'
     | '/home/'
     | '/marketplace/'
     | '/settings/'
@@ -505,6 +515,7 @@ export interface FileRouteTypes {
     | '/settings/connectors'
     | '/settings/credentials'
     | '/settings/skills'
+    | '/settings/users'
     | '/home'
     | '/marketplace'
     | '/settings'
@@ -551,6 +562,7 @@ export interface FileRouteTypes {
     | '/settings/connectors'
     | '/settings/credentials'
     | '/settings/skills'
+    | '/settings/users'
     | '/home/'
     | '/marketplace/'
     | '/settings/'
@@ -631,6 +643,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/home/'
       preLoaderRoute: typeof HomeIndexRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/settings/users': {
+      id: '/settings/users'
+      path: '/users'
+      fullPath: '/settings/users'
+      preLoaderRoute: typeof SettingsUsersRouteImport
+      parentRoute: typeof SettingsRouteRoute
     }
     '/settings/skills': {
       id: '/settings/skills'
@@ -926,6 +945,7 @@ interface SettingsRouteRouteChildren {
   SettingsConnectorsRoute: typeof SettingsConnectorsRoute
   SettingsCredentialsRoute: typeof SettingsCredentialsRoute
   SettingsSkillsRoute: typeof SettingsSkillsRoute
+  SettingsUsersRoute: typeof SettingsUsersRoute
   SettingsIndexRoute: typeof SettingsIndexRoute
 }
 
@@ -940,6 +960,7 @@ const SettingsRouteRouteChildren: SettingsRouteRouteChildren = {
   SettingsConnectorsRoute: SettingsConnectorsRoute,
   SettingsCredentialsRoute: SettingsCredentialsRoute,
   SettingsSkillsRoute: SettingsSkillsRoute,
+  SettingsUsersRoute: SettingsUsersRoute,
   SettingsIndexRoute: SettingsIndexRoute,
 }
 

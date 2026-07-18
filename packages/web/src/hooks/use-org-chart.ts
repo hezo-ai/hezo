@@ -10,6 +10,8 @@ export interface OrgNode {
 	runtime_status: string;
 	admin_status: string;
 	reports_to: string | null;
+	/** Optional custom avatar (signed URL); null when unset (falls back to initials). */
+	icon_url?: string | null;
 	children: OrgNode[];
 }
 

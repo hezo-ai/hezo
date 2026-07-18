@@ -13,8 +13,10 @@ import { createFileRoute, Link } from '@tanstack/react-router';
 import { Loader2, Power, PowerOff } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { BudgetWindowsEditor } from '../../../../../components/budget/budget-windows-editor';
+import { IconUploadSection } from '../../../../../components/icon-upload-section';
 import { MarkdownEditor } from '../../../../../components/markdown-editor';
 import { RevisionsPanel } from '../../../../../components/revisions-panel';
+import { getInitials } from '../../../../../components/ui/avatar';
 import { Button } from '../../../../../components/ui/button';
 import { ExpandableText } from '../../../../../components/ui/expandable-text';
 import { Input } from '../../../../../components/ui/input';
@@ -27,8 +29,10 @@ import {
 	useAgents,
 	useDisableAgent,
 	useEnableAgent,
+	useRemoveAgentIcon,
 	useRestoreAgentSystemPrompt,
 	useUpdateAgent,
+	useUploadAgentIcon,
 } from '../../../../../hooks/use-agents';
 import { useAiProviderModels, useAiProviders } from '../../../../../hooks/use-ai-providers';
 import { useBudgetStatus } from '../../../../../hooks/use-costs';
@@ -42,6 +46,8 @@ function AgentSettingsPage() {
 	const { data: revisions } = useAgentSystemPromptRevisions(projectId, agentId);
 	const restorePrompt = useRestoreAgentSystemPrompt(projectId, agentId);
 	const updateAgent = useUpdateAgent(projectId, agentId);
+	const uploadIcon = useUploadAgentIcon(projectId, agentId);
+	const removeIcon = useRemoveAgentIcon(projectId, agentId);
 	const disableAgent = useDisableAgent(projectId);
 	const enableAgent = useEnableAgent(projectId);
 	const { data: budgetStatus } = useBudgetStatus(projectId);
@@ -130,6 +136,20 @@ function AgentSettingsPage() {
 
 	return (
 		<div>
+			<div className="mb-6">
+				<IconUploadSection
+					label="Agent avatar"
+					helpText="Shown on the team roster, the agent header, and the org chart. Square images work best; we crop to a square and resize to 512×512. Leave unset to show the agent's initials."
+					initials={getInitials(agent.title)}
+					currentIconUrl={agent.icon_url}
+					onUpload={(blob) => uploadIcon.mutateAsync(blob)}
+					onRemove={() => removeIcon.mutateAsync()}
+					isUploading={uploadIcon.isPending}
+					isRemoving={removeIcon.isPending}
+					testIdPrefix="agent-icon"
+				/>
+			</div>
+
 			{/* Budget & Heartbeat */}
 			<div className="mb-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
 				<div className="rounded-lg border border-border-subtle bg-surface p-4">

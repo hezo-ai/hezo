@@ -2,6 +2,7 @@ import { AgentAdminStatus } from '@hezo/shared';
 import { createFileRoute, Link, Outlet } from '@tanstack/react-router';
 import { ArrowLeft } from 'lucide-react';
 import { NextHeartbeatIndicator } from '../../../../../components/next-heartbeat-indicator';
+import { Avatar, getInitials } from '../../../../../components/ui/avatar';
 import { Badge } from '../../../../../components/ui/badge';
 import { ExpandableText } from '../../../../../components/ui/expandable-text';
 import { Tabs } from '../../../../../components/ui/tabs';
@@ -45,6 +46,12 @@ function AgentLayout() {
 			</Link>
 
 			<div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 mb-4">
+				<Avatar
+					initials={getInitials(agent.title)}
+					imageUrl={agent.icon_url}
+					size="md"
+					running={agent.runtime_status === 'active'}
+				/>
 				<h1
 					className={`text-lg font-semibold${agent.admin_status === AgentAdminStatus.Disabled ? ' text-text-2' : ''}`}
 				>

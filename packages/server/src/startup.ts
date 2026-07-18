@@ -29,7 +29,7 @@ import { getToolDefs, handleMcpAssetUpload, handleMcpRequest, initMcpServer } fr
 import { generateSkillFile } from './mcp/skill-file';
 import { authMiddleware, requireProjectAccessMiddleware } from './middleware/auth';
 import { agentTypesRoutes } from './routes/agent-types';
-import { agentsRoutes } from './routes/agents';
+import { agentsRoutes, publicAgentsRoutes } from './routes/agents';
 import { aiProvidersRoutes } from './routes/ai-providers';
 import { apiKeysRoutes } from './routes/api-keys';
 import { approvalsRoutes } from './routes/approvals';
@@ -70,6 +70,7 @@ import { teamTemplatesRoutes } from './routes/team-templates';
 import { teamsRoutes } from './routes/teams';
 import { uiStateRoutes } from './routes/ui-state';
 import { buildUpdatesRoutes } from './routes/updates';
+import { publicUsersRoutes, usersRoutes } from './routes/users';
 import { AuthChallengeStore } from './services/auth-challenges';
 import {
 	buildChatChannelRegistry,
@@ -604,6 +605,14 @@ export function buildApp(
 	// /api/* auth + project-access middleware so it bypasses the bearer check.
 	app.route('/', publicProjectsRoutes);
 
+	// Public signed-URL agent-avatar read endpoint — same rationale as the
+	// project icon. Mounted before the /api/* auth middleware.
+	app.route('/', publicAgentsRoutes);
+
+	// Public signed-URL user-avatar read endpoint — same rationale as the
+	// project icon. Mounted before the /api/* auth middleware.
+	app.route('/', publicUsersRoutes);
+
 	// Public inbound webhook surface for external chat channels. Mounted before the
 	// /api/* bearer-auth middleware — inbound platform requests carry no Hezo token
 	// and are authenticated by a per-channel shared secret in the URL/header.
@@ -625,6 +634,7 @@ export function buildApp(
 	app.route('/api', marketplaceRoutes);
 	app.route('/api', teamsRoutes);
 	app.route('/api', meRoutes);
+	app.route('/api', usersRoutes);
 	app.route('/api', agentsRoutes);
 	app.route('/api', projectsRoutes);
 	app.route('/api', tasksRoutes);

@@ -434,6 +434,16 @@ served from a public HMAC-signed read route (`GET /api/projects/:projectId/icon`
 query param is the credential since an `<img>` carries no bearer token). The serialized
 project carries a freshly-signed `icon_url` (null when unset); the client normalizes any
 picked image to a square PNG ≤512×512 before upload (`PUT`/`DELETE` on the same path).
+`agent_icons` (1:1 with `member_agents`) and `user_icons` (1:1 with `users`, today just the
+admin) reuse the same mechanism for agent avatars and the admin's own avatar — a dedicated
+`BYTEA` table, a freshly-signed `icon_url` threaded onto the serialized agent/user row, and
+a public HMAC-signed read route (`GET /api/agents/:agentId/icon`, `GET /api/users/:userId/icon`).
+The signing/verification is generalized in `lib/entity-icon-urls.ts` (a `basePath` +
+per-entity `keyPurpose`), the client control in `components/icon-upload-section.tsx`; agent
+icons are edited on the agent Settings page (project-access-gated, like other agent config)
+and rendered on the roster/org-chart/agent header, user icons on the global Settings → Users
+page (superuser-gated). No MCP tool — icon upload is a human-only UI action (as for
+`project_icons`).
 
 **Governance & misc.** `approvals` (polymorphic board decisions), `audit_log`
 (append-only, project + instance scopes — `project_id` set scopes a row to one project,
