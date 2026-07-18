@@ -4762,7 +4762,7 @@ export function registerTools(
 	tool(
 		server,
 		'full_text_search',
-		'Full-text keyword search across the team skills database, tasks, project docs, and task comments. Returns results ranked by relevance (keyword + stemming match).',
+		'Full-text keyword search across the team skills database, tasks, project docs, and task comments. Returns results ranked by relevance (keyword + stemming match). A bare task number or full identifier (e.g. "169" or "HM-169") resolves directly to that task, ranked first.',
 		{
 			project: projectArg(),
 			query: z.string().describe('Search query (keywords)'),

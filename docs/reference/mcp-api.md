@@ -871,7 +871,7 @@ Propose a new skill for the team's skills database (reusable team know-how: MCP 
 
 _Read-only._
 
-Full-text keyword search across the team skills database, tasks, project docs, and task comments. Returns results ranked by relevance (keyword + stemming match).
+Full-text keyword search across the team skills database, tasks, project docs, and task comments. Returns results ranked by relevance (keyword + stemming match). A bare task number or full identifier (e.g. "169" or "HM-169") resolves directly to that task, ranked first.
 
 **Parameters:**
 
@@ -882,7 +882,7 @@ Full-text keyword search across the team skills database, tasks, project docs, a
 | `scope` | `all` \| `tasks` \| `skills` \| `project_docs` \| `comments` | No | Limit search to specific content type (default: all) |
 | `limit` | `number` | No | Max results per type (default: 10) |
 
-**Returns:** `{ results, count }` — full-text (keyword + stemming) matches ranked by relevance across skills, tasks, project docs, and comments.
+**Returns:** `{ results, count }` — full-text (keyword + stemming) matches ranked by relevance across skills, tasks, project docs, and comments. A bare task number or full identifier resolves directly to that task, ranked first.
 
 ### `list_skills`
 

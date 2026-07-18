@@ -123,6 +123,50 @@ describe('fullTextSearch', () => {
 		expect(results.some((r) => r.title.includes('Deploy pipeline'))).toBe(true);
 	});
 
+	it('finds and top-ranks a task by its number, over one that repeats it in its title', async () => {
+		// `target` owns number N; `decoy` crams N into its title three times so its
+		// raw ts_rank is higher. `to_tsvector` tokenizes "EP-N" to the lexeme `-N`, so
+		// the query `N:*` never full-text matches `target` — the WHERE must surface it
+		// on the exact number, and the boost must then float it above the decoy.
+		const targetNum = (
+			await db.query<{ number: number }>('SELECT next_project_task_number($1) AS number', [
+				projectId,
+			])
+		).rows[0].number;
+		const target = await db.query<{ identifier: string }>(
+			`INSERT INTO tasks (team_id, project_id, number, identifier, title, description)
+			 VALUES ($1, $2, $3, $4, 'Quiet target task', 'no digits here')
+			 RETURNING identifier`,
+			[teamId, projectId, targetNum, `EP-${targetNum}`],
+		);
+		const decoyNum = (
+			await db.query<{ number: number }>('SELECT next_project_task_number($1) AS number', [
+				projectId,
+			])
+		).rows[0].number;
+		await db.query(
+			`INSERT INTO tasks (team_id, project_id, number, identifier, title, description)
+			 VALUES ($1, $2, $3, $4, $5, 'body')`,
+			[
+				teamId,
+				projectId,
+				decoyNum,
+				`EP-${decoyNum}`,
+				`Report ${targetNum} ${targetNum} ${targetNum}`,
+			],
+		);
+
+		const byNumber = await fullTextSearch(db, [teamId], String(targetNum), { scope: 'tasks' });
+		expect(byNumber[0].taskIdentifier).toBe(target.rows[0].identifier);
+
+		// The whole identifier ("EP-N") also tokenizes past the `@@ q` filter, so it
+		// must resolve to that exact task too.
+		const byIdentifier = await fullTextSearch(db, [teamId], target.rows[0].identifier, {
+			scope: 'tasks',
+		});
+		expect(byIdentifier[0].taskIdentifier).toBe(target.rows[0].identifier);
+	});
+
 	it('finds an active skill and excludes inactive ones', async () => {
 		const results = await fullTextSearch(db, [teamId], 'deploy', { scope: 'skills' });
 		const names = results.map((r) => r.title);

@@ -93,15 +93,31 @@ export async function fullTextSearch(
 			project_slug: string;
 			score: number;
 		}>(
+			// `to_tsvector` mangles an identifier's number — "HM-169" tokenizes to the
+			// lexeme `-169`, not `169` — so neither "169" nor "HM-169" full-text matches
+			// the task it names, and the `@@ q` filter would drop it before scoring.
+			// So also surface a task on an exact number or whole-identifier match, and
+			// rank those first: ts_rank for these short queries is well under 1, so the
+			// identifier boost dominates deterministically and carries through the
+			// cross-type merge below. (The exact-only broadening avoids flooding results
+			// on a short substring like "e".)
 			`SELECT t.id, t.title, LEFT(t.description, 4000) AS description, t.identifier,
-			        p.slug AS project_slug, ts_rank(t.search_tsv, q) AS score
+			        p.slug AS project_slug,
+			        ts_rank(t.search_tsv, q)
+			          + CASE
+			              WHEN LOWER(t.identifier) = LOWER($4) THEN 1000
+			              WHEN t.number::text = $4 THEN 100
+			              WHEN t.identifier ILIKE $5 THEN 10
+			              ELSE 0
+			            END AS score
 			 FROM tasks t
 			 JOIN projects p ON p.id = t.project_id,
 			      to_tsquery('${TEXT_SEARCH_CONFIG}', $1) q
-			 WHERE t.team_id = ANY($2::uuid[]) AND t.search_tsv @@ q
+			 WHERE t.team_id = ANY($2::uuid[])
+			   AND (t.search_tsv @@ q OR t.number::text = $4 OR LOWER(t.identifier) = LOWER($4))
 			 ORDER BY score DESC
 			 LIMIT $3`,
-			[tsQuery, teamIds, limit],
+			[tsQuery, teamIds, limit, query, `%${query}%`],
 		);
 		for (const r of taskResults.rows) {
 			const title = `${r.identifier} — ${r.title}`;

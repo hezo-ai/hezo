@@ -24,7 +24,11 @@ import {
 	assertNoOutstandingActivity,
 	assertNoUnansweredAdminMentions,
 } from '../lib/task-relationships';
-import { buildTaskListOrderBy, parseTaskListSort } from '../lib/task-sort';
+import {
+	buildSearchRelevanceOrderSql,
+	buildTaskListOrderBy,
+	parseTaskListSort,
+} from '../lib/task-sort';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { cancelCoachWorkForTask, terminateRunsForTask } from '../services/run-termination';
@@ -164,6 +168,17 @@ tasksRoutes.get('/projects/:projectId/tasks', async (c) => {
 	);
 	const total = countResult.rows[0].count;
 
+	// When searching, rank exact identifier / task-number matches ahead of tasks
+	// that merely mention the term in their title or body, so "169" surfaces
+	// HM-169 first instead of leaving it wherever the sort field happens to put
+	// it. Relevance is the primary key; the chosen sort only breaks ties.
+	let relevancePrefix = '';
+	if (search) {
+		const rel = buildSearchRelevanceOrderSql(search, params, idx);
+		relevancePrefix = `${rel.sql} ASC, `;
+		idx = rel.nextIdx;
+	}
+
 	const orderBy = buildTaskListOrderBy(sortField, sortDirection, params, idx);
 	idx = orderBy.nextIdx;
 
@@ -219,7 +234,7 @@ tasksRoutes.get('/projects/:projectId/tasks', async (c) => {
        LIMIT 1
      ) lr ON true
      WHERE ${where}
-     ORDER BY ${orderBy.sql}
+     ORDER BY ${relevancePrefix}${orderBy.sql}
      LIMIT $${idx + 1} OFFSET $${idx + 2}`,
 		dataParams,
 	);

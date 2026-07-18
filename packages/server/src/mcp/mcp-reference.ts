@@ -345,7 +345,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	full_text_search: {
 		category: 'Skills & search',
 		returns:
-			'`{ results, count }` — full-text (keyword + stemming) matches ranked by relevance across skills, tasks, project docs, and comments.',
+			'`{ results, count }` — full-text (keyword + stemming) matches ranked by relevance across skills, tasks, project docs, and comments. A bare task number or full identifier resolves directly to that task, ranked first.',
 	},
 
 	// Credentials & connectors
