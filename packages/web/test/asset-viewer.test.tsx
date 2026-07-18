@@ -288,3 +288,52 @@ test('the viewer breadcrumb walks back to the grid folder and Open raw links the
 		expect(router.state.location.search).toMatchObject({ folder: 'launch' });
 	});
 });
+
+test('switches the viewed asset via the header name search', async () => {
+	let projectSlug = '';
+	let fileA = '';
+	let fileB = '';
+
+	const { findByTestId, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Asset Switcher Project' });
+			const a = await seedAsset(ws, project, {
+				filename: 'alpha.md',
+				contentType: 'text/markdown',
+				bytes: new TextEncoder().encode('# Alpha asset'),
+				folder: 'community-posts',
+			});
+			const b = await seedAsset(ws, project, {
+				filename: 'bravo.md',
+				contentType: 'text/markdown',
+				bytes: new TextEncoder().encode('# Bravo asset'),
+			});
+			projectSlug = project.slug;
+			fileA = a.original_filename;
+			fileB = b.original_filename;
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/assets/view',
+		params: { projectId: projectSlug },
+		search: { file: fileA },
+	});
+
+	const crumb = await findByTestId('asset-viewer-breadcrumb');
+	expect(crumb.textContent).toContain('alpha.md');
+
+	// Open the header switcher and jump to the other asset by name.
+	await user.click(await findByTestId('asset-switch-button'));
+	await user.type(await findByTestId('asset-switch-search'), 'bravo');
+	await user.click(await findByTestId(`asset-switch-option-${fileB}`));
+
+	await waitFor(() => {
+		expect(router.state.location.search).toMatchObject({ file: fileB });
+	});
+	await waitFor(async () => {
+		expect((await findByTestId('asset-viewer-breadcrumb')).textContent).toContain('bravo.md');
+	});
+});

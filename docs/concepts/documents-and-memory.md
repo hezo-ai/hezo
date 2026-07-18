@@ -74,7 +74,9 @@ work (`list_project_docs`, `read_project_doc`, and `write_project_doc` over Hezo
 for example `spec.md` — so links stay stable as the work evolves. The document list sits
 beside the reader, with a **search box** at the top that filters the list as you type and a
 **+** button next to it for creating a new document — both stay in view while you scroll
-the list.
+the list. A **search icon** next to the open document's title opens the same name search from
+inside the reader, so you can jump straight to another document without going back to the
+list; it's hidden while you're editing.
 
 Agents don't carry every document's full text on every run. Instead each run includes a
 **manifest** — a table of contents listing each document's filename, title, and when it

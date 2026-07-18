@@ -326,6 +326,49 @@ test('search input filters the document list as you type', async () => {
 	await findByText('content-calendar.md');
 });
 
+test('switches the viewed document via the header name search, hidden while editing', async () => {
+	let ws!: SeededWorkspace;
+	let projectSlug = '';
+	const fileA = `alpha-${Math.random().toString(36).slice(2, 8)}.md`;
+	const fileB = `bravo-${Math.random().toString(36).slice(2, 8)}.md`;
+
+	const { findByRole, findByTestId, findByText, queryByTestId, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async ({ apiBase, token }) => {
+			ws = await seedWorkspace();
+			const project = await seedProject(ws, {
+				name: uniqueName('Switcher Project'),
+				description: 'Tests the in-viewer document switcher.',
+			});
+			projectSlug = project.slug;
+			await seedDoc(apiBase, token, projectSlug, fileA, [{ content: 'Alpha body' }]);
+			await seedDoc(apiBase, token, projectSlug, fileB, [{ content: 'Bravo body' }]);
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/documents',
+		params: { projectId: projectSlug },
+		search: { file: fileA } as never,
+	});
+
+	await findByText('Alpha body', undefined, { timeout: 15_000 });
+
+	// Open the header switcher and jump to the other doc by name.
+	await user.click(await findByTestId('doc-switch-button'));
+	await user.type(await findByTestId('doc-switch-search'), 'bravo');
+	await user.click(await findByTestId(`doc-switch-option-${fileB}`));
+
+	// The viewer switched to the other document.
+	await findByRole('heading', { name: fileB, level: 2 }, { timeout: 15_000 });
+	await findByText('Bravo body', undefined, { timeout: 15_000 });
+
+	// Entering edit mode hides the switcher button.
+	await user.click(await findByRole('button', { name: 'Edit' }));
+	await findByRole('button', { name: 'Save' }, { timeout: 15_000 });
+	expect(queryByTestId('doc-switch-button')).toBeNull();
+});
+
 test('rejects invalid filename when creating a document', async () => {
 	let ws!: SeededWorkspace;
 	let projectSlug = '';

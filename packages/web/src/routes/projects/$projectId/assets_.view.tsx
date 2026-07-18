@@ -18,6 +18,7 @@ import { AssetViewerBody } from '../../../components/asset-review/asset-viewer-b
 import { ArchivedBadge } from '../../../components/ui/archived-badge';
 import { Breadcrumb, type BreadcrumbSegment } from '../../../components/ui/breadcrumb';
 import { EmptyState } from '../../../components/ui/empty-state';
+import { NameSwitcherButton } from '../../../components/ui/name-switcher-button';
 import { ResizableSplit } from '../../../components/ui/resizable-split';
 import { Tooltip } from '../../../components/ui/tooltip';
 import {
@@ -148,6 +149,27 @@ function AssetViewerPage() {
 				<div className="flex min-h-[26px] min-w-0 items-center gap-2">
 					<Breadcrumb segments={crumbs} data-testid="asset-viewer-breadcrumb" />
 					{readOnly && <ArchivedBadge />}
+					{assets && assets.length > 1 && (
+						<NameSwitcherButton
+							label="Switch asset"
+							testId="asset-switch"
+							value={file ?? null}
+							onSelect={(next) =>
+								navigate({
+									to: '/projects/$projectId/assets/view',
+									params: { projectId },
+									search: { file: next, ...(filter ? { filter } : {}) },
+								})
+							}
+							options={assets.map((a) => ({
+								value: a.original_filename,
+								label: a.original_filename.split('/').pop() ?? a.original_filename,
+								description: assetFolder(a.original_filename) || undefined,
+							}))}
+							searchPlaceholder="Search assets…"
+							emptyLabel="No assets"
+						/>
+					)}
 				</div>
 				<div className="flex shrink-0 items-center gap-2">
 					<Tooltip content="Download this file">
