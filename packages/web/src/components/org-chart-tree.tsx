@@ -3,6 +3,7 @@ import { Link } from '@tanstack/react-router';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import type { OrgNode } from '../hooks/use-org-chart';
 import { agentPageParams } from './agent-link';
+import { Avatar, getInitials } from './ui/avatar';
 import { StatusDot } from './ui/status-dot';
 import { Tooltip } from './ui/tooltip';
 
@@ -99,6 +100,13 @@ export function OrgChartTree({ roots, projectId, mode, hint, testId }: OrgChartT
 		const status = mode === 'interactive' ? orgDotStatus(node) : null;
 		const label = (
 			<>
+				{mode === 'interactive' && (
+					<Avatar
+						size="sm"
+						initials={getInitials(node.title)}
+						imageUrl={node.icon_url ?? undefined}
+					/>
+				)}
 				{status && <StatusDot status={status} />}
 				{node.title}
 			</>

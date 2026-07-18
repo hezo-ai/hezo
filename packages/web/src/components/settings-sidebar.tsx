@@ -19,6 +19,7 @@ const PUBLIC_ITEMS: NavItem[] = [
 
 const ADMIN_ITEMS: NavItem[] = [
 	{ to: '/settings/admin-password', label: 'Admin password' },
+	{ to: '/settings/users', label: 'Users' },
 	{ to: '/settings/chatbox', label: 'Chatbox' },
 	{ to: '/settings/skills', label: 'Skills' },
 	{ to: '/settings/connectors', label: 'Connectors' },
