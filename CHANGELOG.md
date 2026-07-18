@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.27.0 - 2026-07-18
+
+### Features
+
+- **agents:** make loading relevant skills mandatory before any write/edit ([#758](https://github.com/hezo-ai/hezo/pull/758))
+- **avatars:** custom avatars for agents and the admin user ([#756](https://github.com/hezo-ai/hezo/pull/756))
+- show updated time on asset cards with hover timestamp ([#755](https://github.com/hezo-ai/hezo/pull/755))
+- use a dropdown chevron for the in-viewer name switcher ([#754](https://github.com/hezo-ai/hezo/pull/754))
+- **chat:** "New thread" naming, CEO auto-titling, and expanded thread sidebar ([#753](https://github.com/hezo-ai/hezo/pull/753))
+- switch viewed document/asset via in-viewer name search ([#752](https://github.com/hezo-ai/hezo/pull/752))
+
+### Bug Fixes
+
+- rank exact identifier/number matches first in task search ([#757](https://github.com/hezo-ai/hezo/pull/757))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.26.0...0.27.0
+
 ## 0.26.0 - 2026-07-17
 
 ### Features
