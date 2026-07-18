@@ -1,7 +1,9 @@
 import * as AlertDialog from '@radix-ui/react-alert-dialog';
 import { Loader2, X } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { useShortcut } from '../../hooks/use-shortcut';
 import { dialogContentClassName, dialogOverlayClassName } from './dialog';
+import { kbdSizeClass, ShortcutKbd } from './shortcut-kbd';
 
 interface ConfirmDialogProps {
 	open: boolean;
@@ -33,6 +35,12 @@ export function ConfirmDialog({
 }: ConfirmDialogProps) {
 	const [internalLoading, setInternalLoading] = useState(false);
 	const loading = externalLoading ?? internalLoading;
+	const actionRef = useRef<HTMLButtonElement>(null);
+
+	// ⌘/Ctrl+Enter confirms; Escape is handled natively by AlertDialog (the Esc
+	// chip on Cancel is display-only). Gated on `open` since ConfirmDialog stays
+	// mounted while closed.
+	useShortcut('mod+Enter', () => actionRef.current?.click(), { enabled: open && !loading });
 
 	async function handleConfirm(e: React.MouseEvent) {
 		e.preventDefault();
@@ -70,11 +78,14 @@ export function ConfirmDialog({
 					<div className="flex justify-end gap-2">
 						<AlertDialog.Cancel
 							disabled={loading}
+							aria-keyshortcuts="Escape"
 							className="inline-flex items-center justify-center gap-2 font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none cursor-pointer bg-surface-2 text-text-2 border border-border hover:text-text-1 hover:bg-surface-3 px-2.5 py-1 text-xs rounded-md"
 						>
 							{cancelLabel}
+							<ShortcutKbd shortcut="Escape" sizeClassName={kbdSizeClass.sm} />
 						</AlertDialog.Cancel>
 						<AlertDialog.Action
+							ref={actionRef}
 							data-testid="confirm-dialog-confirm"
 							disabled={loading}
 							onClick={handleConfirm}
@@ -82,6 +93,7 @@ export function ConfirmDialog({
 						>
 							{loading && <Loader2 className="w-3 h-3 animate-spin" />}
 							{confirmLabel}
+							<ShortcutKbd shortcut="mod+Enter" sizeClassName={kbdSizeClass.sm} />
 						</AlertDialog.Action>
 					</div>
 				</AlertDialog.Content>

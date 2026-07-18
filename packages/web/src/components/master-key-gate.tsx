@@ -377,14 +377,24 @@ export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFor
 					))}
 
 				{isUnset && phase === 'confirm' && (
-					<Button type="submit" disabled={loading || !key.trim()}>
+					<Button
+						type="submit"
+						shortcut="Enter"
+						shortcutFire={false}
+						disabled={loading || !key.trim()}
+					>
 						{loading && <Loader2 className="w-4 h-4 animate-spin" />}
 						Confirm key and continue
 					</Button>
 				)}
 
 				{!isUnset && (
-					<Button type="submit" disabled={loading || !key.trim()}>
+					<Button
+						type="submit"
+						shortcut="Enter"
+						shortcutFire={false}
+						disabled={loading || !key.trim()}
+					>
 						{loading && <Loader2 className="w-4 h-4 animate-spin" />}
 						Unlock
 					</Button>

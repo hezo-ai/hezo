@@ -1,4 +1,7 @@
-import type { ButtonHTMLAttributes } from 'react';
+import { type ButtonHTMLAttributes, useRef } from 'react';
+import { useShortcut } from '../../hooks/use-shortcut';
+import { ariaKeyshortcuts, isMacPlatform } from '../../lib/shortcuts';
+import { kbdSizeClass, ShortcutKbd } from './shortcut-kbd';
 
 // Mirrors the Wire spec's `.hz-btn`: neutral `primary` (inverse), red `accent`
 // CTA, quiet `secondary`/`ghost`/`outline`, and `danger` variants. Focus shows
@@ -24,19 +27,46 @@ const sizes = {
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 	variant?: keyof typeof variants;
 	size?: keyof typeof sizes;
+	/**
+	 * Keyboard shortcut spec (e.g. `"mod+Enter"`, `"mod+k"`, `"Escape"`). Renders
+	 * an inset keycap chip after the label. Unless `shortcutFire` is false, it
+	 * also registers a guarded document-level binding that clicks the button.
+	 */
+	shortcut?: string;
+	/**
+	 * When false, the chip is shown but the button does NOT self-register the
+	 * key — for shortcuts already owned elsewhere (a global listener, Radix's
+	 * native Escape, a scoped textarea handler). Defaults to true.
+	 */
+	shortcutFire?: boolean;
 }
 
 export function Button({
 	variant = 'primary',
 	size = 'md',
 	className = '',
+	shortcut,
+	shortcutFire = true,
+	children,
 	...props
 }: ButtonProps) {
+	const ref = useRef<HTMLButtonElement>(null);
 	const sizeCls = variant === 'link' ? 'gap-1.5' : sizes[size];
+	const kbdCls = variant === 'link' ? kbdSizeClass.md : kbdSizeClass[size];
+
+	useShortcut(shortcut && shortcutFire ? shortcut : undefined, () => ref.current?.click(), {
+		enabled: !props.disabled,
+	});
+
 	return (
 		<button
+			ref={ref}
+			aria-keyshortcuts={shortcut ? ariaKeyshortcuts(shortcut, isMacPlatform()) : undefined}
 			className={`inline-flex items-center justify-center whitespace-nowrap border font-medium transition-colors cursor-pointer outline-none focus-visible:ring-[3px] focus-visible:ring-ring focus-visible:border-accent disabled:opacity-45 disabled:pointer-events-none ${variants[variant]} ${sizeCls} ${className}`}
 			{...props}
-		/>
+		>
+			{children}
+			{shortcut && <ShortcutKbd shortcut={shortcut} sizeClassName={kbdCls} />}
+		</button>
 	);
 }

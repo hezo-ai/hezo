@@ -352,7 +352,12 @@ export function CreateProjectWithTeamDialog({
 									)}
 									Plan with the CEO
 								</Button>
-								<Button type="submit" disabled={!canSubmit} data-testid="create-project-submit">
+								<Button
+									type="submit"
+									shortcut="mod+Enter"
+									disabled={!canSubmit}
+									data-testid="create-project-submit"
+								>
 									{createProject.isPending ? (
 										<Loader2 className="w-4 h-4 animate-spin" />
 									) : (

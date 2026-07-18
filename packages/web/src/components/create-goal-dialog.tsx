@@ -219,10 +219,16 @@ export function CreateGoalDialog({ projectId, open, onOpenChange, goal }: Create
 					{error && <p className="text-sm text-danger">{error.message}</p>}
 
 					<div className="flex justify-end gap-2 mt-2">
-						<Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+						<Button
+							type="button"
+							variant="ghost"
+							shortcut="Escape"
+							shortcutFire={false}
+							onClick={() => onOpenChange(false)}
+						>
 							Cancel
 						</Button>
-						<Button type="submit" disabled={!title.trim() || pending}>
+						<Button type="submit" shortcut="mod+Enter" disabled={!title.trim() || pending}>
 							{pending && <Loader2 className="w-4 h-4 animate-spin" />}
 							{isEdit ? 'Save' : 'Create'}
 						</Button>
