@@ -88,6 +88,52 @@ test.describe('CEO chat widget — responsive layout', () => {
 		expect(restored?.width ?? 0).toBeLessThan(440);
 	});
 
+	test('expanded desktop mode shows threads as a left sidebar; the dropdown is hidden', async ({
+		sharedPage,
+		sharedWorkspace,
+	}) => {
+		// Real CSS layout + viewport-conditional (decision-tree items 1 & 2): the thread
+		// rail is `hidden md:flex` and only appears in expanded desktop mode, so its
+		// presence and left-edge position must come from a real layout pass.
+		const page = sharedPage;
+
+		await page.setViewportSize({ width: 1280, height: 800 });
+		await page.goto(`/projects/${sharedWorkspace.projectSlug}/tasks`);
+		await waitForPageLoad(page);
+
+		const launcher = page.getByTestId('chat-launcher');
+		await expect(launcher).toBeVisible({ timeout: 15000 });
+		await launcher.click();
+
+		const panel = page.getByTestId('chat-panel');
+		await expect(panel).toBeVisible();
+
+		// Anchored/collapsed: the top dropdown switcher is the control; no rail.
+		await expect(page.getByTestId('chat-thread-select')).toBeVisible();
+		await expect(page.getByTestId('chat-thread-rail')).toBeHidden();
+
+		// Expand → the switcher becomes a left rail and the dropdown is hidden.
+		await page.getByTestId('chat-expand').click();
+		await expect(panel).toHaveAttribute('data-expanded', 'true');
+		const rail = page.getByTestId('chat-thread-rail');
+		await expect(rail).toBeVisible();
+		await expect(page.getByTestId('chat-thread-select')).toBeHidden();
+
+		// The rail hugs the panel's left edge and is a narrow column (not full width).
+		const panelBox = await panel.boundingBox();
+		const railBox = await rail.boundingBox();
+		expect(railBox).not.toBeNull();
+		expect(Math.abs((railBox?.x ?? 0) - (panelBox?.x ?? 0))).toBeLessThan(4);
+		expect(railBox?.width ?? 0).toBeLessThan(300);
+		expect(railBox?.width ?? 0).toBeGreaterThan(150);
+
+		// Collapse restores the dropdown and removes the rail.
+		await page.getByTestId('chat-expand').click();
+		await expect(panel).toHaveAttribute('data-expanded', 'false');
+		await expect(page.getByTestId('chat-thread-select')).toBeVisible();
+		await expect(rail).toBeHidden();
+	});
+
 	test('Escape closes the chat', async ({ sharedPage, sharedWorkspace }) => {
 		const page = sharedPage;
 

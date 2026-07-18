@@ -121,6 +121,52 @@ ${mem}
 ${windowTranscript}`;
 }
 
+/** Longest title we keep — anything past this is truncated when persisting. */
+const MAX_CHAT_TITLE_LENGTH = 60;
+
+/**
+ * Prompt for a headless auto-title run. The agent gets the conversation so far and
+ * must return ONLY a short topic title as plain text (no tools, no reply to the
+ * operator). Its stdout is captured and stored as the thread title. Deliberately
+ * omits the CEO system prompt — the file is the whole input, exactly like compaction.
+ */
+export function buildTitlePrompt(windowTranscript: string): string {
+	return `# Name this conversation
+
+This is a maintenance step, not a reply to the operator. Read the conversation below and produce a short, specific title that captures its topic.
+
+Rules:
+- 3–6 words, Title Case.
+- Output ONLY the title text — no quotes, no surrounding punctuation, no markdown, no preamble or explanation.
+- Do NOT call any tools and do NOT reply to the operator. Just print the title and stop.
+
+## Conversation
+
+${windowTranscript}`;
+}
+
+/**
+ * Reduce a raw title-generation output to a stored title: first non-empty line,
+ * stripped of surrounding quotes/backticks, whitespace collapsed, capped in length.
+ * Returns null when nothing usable remains (leave the thread untitled, retry later).
+ */
+export function sanitizeChatTitle(raw: string): string | null {
+	const firstLine = raw
+		.split('\n')
+		.map((l) => l.trim())
+		.find((l) => l.length > 0);
+	if (!firstLine) return null;
+	const cleaned = firstLine
+		.replace(/^['"`*_#\s]+/, '')
+		.replace(/['"`*_\s]+$/, '')
+		.replace(/\s+/g, ' ')
+		.trim();
+	if (!cleaned) return null;
+	return cleaned.length > MAX_CHAT_TITLE_LENGTH
+		? cleaned.slice(0, MAX_CHAT_TITLE_LENGTH).trim()
+		: cleaned;
+}
+
 export interface CeoSessionDeps extends RunnerDeps {
 	wsManager: WebSocketManager;
 	containerLogStreamer?: ContainerLogStreamer;
@@ -404,9 +450,12 @@ export class ChatSessionManager {
 		const abort = new AbortController();
 		const promise = this.runTurn(session, ctx, assistantMessageId, abort);
 		convo.current = { assistantMessageId, abort, promise };
-		// After the reply settles, compact this thread's window if it has grown past
-		// the cap (serialized against other threads' compactions).
-		trackBackground(promise.then(() => this.maybeCompact(ctx)));
+		// After the reply settles: first auto-title the thread if it's still untitled,
+		// then compact its window if it has grown past the cap. Chained (not parallel)
+		// so the two never exec against this thread's shared prompt file concurrently.
+		trackBackground(
+			promise.then(() => this.maybeAutoTitle(ctx)).then(() => this.maybeCompact(ctx)),
+		);
 
 		return { userMessageId, assistantMessageId, conversationId };
 	}
@@ -574,12 +623,15 @@ export class ChatSessionManager {
 			[ceoMemberId],
 		);
 		if (existing.rows[0]) return existing.rows[0].id;
+		// Store the default web thread untitled (NULL), not a hardcoded "Main": the
+		// frontend renders NULL as the "New thread" placeholder, and the CEO auto-titles
+		// it from the conversation on the first exchange (maybeAutoTitle).
 		const created = await this.deps.db.query<{ id: string }>(
 			`INSERT INTO chat_conversations (member_id, team_id, project_id, channel, title)
 			 VALUES ($1, $2, $3, 'web', $4) RETURNING id`,
-			[ceoMemberId, DEFAULT_TEAM_ID, projectId, title ?? 'Main'],
+			[ceoMemberId, DEFAULT_TEAM_ID, projectId, title ?? null],
 		);
-		await this.setupBindings(created.rows[0].id, title ?? 'Main', ChatChannel.Web, null);
+		await this.setupBindings(created.rows[0].id, title ?? 'New thread', ChatChannel.Web, null);
 		return created.rows[0].id;
 	}
 
@@ -1246,6 +1298,99 @@ export class ChatSessionManager {
 				session: session.sessionId,
 			});
 		}
+	}
+
+	/**
+	 * Auto-title a thread from its content once, after a reply settles, if it's still
+	 * untitled. Best-effort and gated like compaction: skipped when a newer turn is in
+	 * flight in this thread (it retries after that turn) or a compaction is running for
+	 * it. A generated title flips the thread from the "New thread" placeholder to a
+	 * meaningful name; a failure leaves it untitled and the next reply retries.
+	 */
+	private async maybeAutoTitle(ctx: ConversationContext): Promise<void> {
+		const session = this.live;
+		if (!session) return;
+		const convo = this.getConvoRuntime(ctx.conversationId);
+		if (convo.current || convo.compaction) return;
+		// Only untitled threads get auto-titled; a set title (manual or already
+		// generated) is never overwritten.
+		const existing = await this.getConversation(ctx.conversationId);
+		if (!existing || existing.closed_at || existing.title != null) return;
+		const abort = new AbortController();
+		try {
+			await this.runTitleGeneration(session, ctx.conversationId, abort);
+		} catch (e) {
+			log.error('CEO chat auto-title failed', e);
+		}
+	}
+
+	/**
+	 * Headless title run: hand the agent the active window and capture its stdout as a
+	 * short title, then persist it (only while the thread is still untitled) and tell
+	 * the mirrored chatbox(es) to refetch the thread list. No `chat_message`, no
+	 * broadcast of a reply — the operator sees only the switcher label update. The
+	 * exec's tokens are not separately priced (matches `runCompaction`).
+	 */
+	private async runTitleGeneration(
+		session: LiveSession,
+		conversationId: string,
+		abort: AbortController,
+	): Promise<void> {
+		const window = await loadActiveWindow(this.deps.db, conversationId);
+		// Only title once there's a real exchange to summarize — at least one assistant
+		// reply with content. A failed/empty/interrupted-empty reply is skipped so a
+		// later successful turn titles the thread (and a failed turn spends no exec here).
+		if (!window.some((m) => m.role === ChatMessageRole.Assistant && m.content.trim() !== '')) {
+			return;
+		}
+		const prompt = buildTitlePrompt(window.map(chatTranscriptLine).join('\n\n'));
+		const { hostPath, env } = this.turnPrompt(session, conversationId);
+		mkdirSync(dirname(hostPath), { recursive: true });
+		writeFileSync(hostPath, prompt);
+
+		const parser = createAgentChatParser(session.runtimeType);
+		let text = '';
+		try {
+			const execId = await this.deps.docker.execCreate(session.containerId, {
+				Cmd: session.execCmd,
+				Env: env,
+				WorkingDir: CHAT_WORKING_DIR,
+				User: session.runUser.name,
+				AttachStdout: true,
+				AttachStderr: true,
+			});
+			await this.deps.docker.execStart(execId, {
+				signal: abort.signal,
+				onChunk: (chunk) => {
+					if (chunk.stream === 'stdout') {
+						for (const ev of parser.onStdout(chunk.text)) if (ev.text) text += ev.text;
+					}
+				},
+			});
+			for (const ev of parser.flush()) if (ev.text) text += ev.text;
+		} catch (e) {
+			// A new user turn preempts title generation — a clean stop, retried later.
+			if (abort.signal.aborted) return;
+			throw e;
+		} finally {
+			rmSync(hostPath, { force: true });
+		}
+		if (abort.signal.aborted) return;
+
+		const title = sanitizeChatTitle(text);
+		if (!title) return;
+		// Persist only while still untitled, so a concurrent path (or a manual title)
+		// is never clobbered; RETURNING confirms we actually set it before broadcasting.
+		const updated = await this.deps.db.query<{ id: string }>(
+			`UPDATE chat_conversations SET title = $1 WHERE id = $2 AND title IS NULL RETURNING id`,
+			[title, conversationId],
+		);
+		if (updated.rows.length === 0) return;
+		this.broadcastChat(conversationId, {
+			type: WsMessageType.ChatConversationUpdated,
+			conversationId,
+			title,
+		});
 	}
 
 	private async checkHealth(): Promise<void> {

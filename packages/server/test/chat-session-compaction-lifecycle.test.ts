@@ -61,6 +61,17 @@ const replyHandler: ExecHandler = async (opts) => {
 
 const silentHandler: ExecHandler = async () => ({ stdout: '', stderr: '' });
 
+// Auto-title runs once after the first reply on an untitled thread; emit a short title
+// so the thread stops being untitled and doesn't re-title on later turns. Dispatched
+// independently of `handlers.turn` so a test that swaps in a blocking turn handler
+// doesn't accidentally block this exec too.
+const titleHandler: ExecHandler = async (opts) => {
+	const onChunk = opts.onChunk ?? (() => undefined);
+	await onChunk({ stream: 'stdout', text: assistantText('Auto Title') });
+	await onChunk({ stream: 'stdout', text: resultEvent(3, 2) });
+	return { stdout: '', stderr: '' };
+};
+
 /** Blocks until the exec's AbortSignal fires, then rejects like a real stream would. */
 const blockUntilAbort: ExecHandler = (opts) =>
 	new Promise((_resolve, reject) => {
@@ -87,7 +98,7 @@ function scriptedChatDocker(dataDir: string, projectId: string): ScriptedDocker 
 	const compactionPrompts: string[] = [];
 	const handlers = { turn: replyHandler, compaction: silentHandler };
 	const flags = { turnEntered: false, compactionEntered: false };
-	const kinds = new Map<string, 'turn' | 'compaction' | 'aux'>();
+	const kinds = new Map<string, 'turn' | 'compaction' | 'title' | 'aux'>();
 	const envByKind = new Map<string, string[]>();
 	let seq = 0;
 	const toHostPath = (containerPath: string) =>
@@ -112,6 +123,8 @@ function scriptedChatDocker(dataDir: string, projectId: string): ScriptedDocker 
 				kinds.set(execId, 'compaction');
 				compactionPrompts.push(prompt);
 				envByKind.set('compaction', config.Env ?? []);
+			} else if (prompt.startsWith('# Name this conversation')) {
+				kinds.set(execId, 'title');
 			} else {
 				kinds.set(execId, 'turn');
 				turnPrompts.push(prompt);
@@ -122,6 +135,7 @@ function scriptedChatDocker(dataDir: string, projectId: string): ScriptedDocker 
 		execStart: async (execId: string, opts: ExecOpts = {}) => {
 			const kind = kinds.get(execId) ?? 'aux';
 			if (kind === 'aux') return { stdout: '', stderr: '' };
+			if (kind === 'title') return titleHandler(opts);
 			if (kind === 'compaction') {
 				flags.compactionEntered = true;
 				return handlers.compaction(opts);
