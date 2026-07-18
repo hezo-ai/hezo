@@ -7,6 +7,7 @@ import {
 	compareAssetsForSort,
 	isArchiveFilter,
 	isAssetSortOrder,
+	isMarkdownAssetMime,
 	matchesArchiveFilter,
 	normalizeAssetFolder,
 } from '@hezo/shared';
@@ -33,6 +34,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AssetIcon, formatBytes } from '../../../components/asset-icon';
+import { MarkdownThumbnail } from '../../../components/markdown-thumbnail';
 import { ArchivedBadge } from '../../../components/ui/archived-badge';
 import { Breadcrumb, type BreadcrumbSegment } from '../../../components/ui/breadcrumb';
 import { Button } from '../../../components/ui/button';
@@ -1094,6 +1096,7 @@ function AssetCard({
 
 	const isImage = asset.content_type.startsWith('image/');
 	const isHtml = asset.content_type === 'text/html';
+	const isMarkdown = isMarkdownAssetMime(asset.content_type);
 	const isArchived = asset.archived_at != null;
 	const basename = assetBasename(asset.original_filename);
 	const thumbnail = isImage ? (
@@ -1105,6 +1108,8 @@ function AssetCard({
 			sandbox=""
 			className="pointer-events-none h-full w-full bg-surface"
 		/>
+	) : isMarkdown ? (
+		<MarkdownThumbnail url={asset.url} contentType={asset.content_type} />
 	) : (
 		<AssetIcon contentType={asset.content_type} />
 	);

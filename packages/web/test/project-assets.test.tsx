@@ -69,6 +69,35 @@ test('a markdown asset opens in the viewer with a view-source toggle', async () 
 	expect(source.textContent).toBe(md);
 });
 
+test('a markdown asset card shows a rendered-text thumbnail instead of a file glyph', async () => {
+	let ctx!: { projectSlug: string };
+	const md = '# Launch Post\n\nWe shipped **markdown assets**.';
+	const { findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Blog' });
+			await seedAsset(ws, project, {
+				filename: 'post.md',
+				contentType: 'text/markdown',
+				bytes: new TextEncoder().encode(md),
+			});
+			ctx = { projectSlug: project.slug };
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/assets',
+		params: { projectId: ctx.projectSlug },
+	});
+
+	// The thumbnail renders the markdown — the heading becomes an <h1> in the
+	// card media, not a literal `#` or a generic document icon.
+	const thumb = await findByTestId('asset-markdown-thumbnail');
+	await waitFor(() => expect(thumb.querySelector('h1')?.textContent).toBe('Launch Post'));
+	expect(thumb.querySelector('strong')?.textContent).toBe('markdown assets');
+});
+
 test('an asset is archived first, then deleted from the Archived view', async () => {
 	let ctx!: { projectSlug: string };
 	const { findByText, findByTestId, getByRole, queryByText, user, router } = await renderApp({
