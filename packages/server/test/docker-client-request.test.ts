@@ -442,6 +442,55 @@ describe('exec plumbing', () => {
 	});
 });
 
+describe('killRunProcesses', () => {
+	// Docker exposes no API to signal an exec'd process, so the run-kill is itself an
+	// exec that scans /proc for the run's HEZO_HEARTBEAT_RUN_ID env marker and SIGKILLs
+	// every match. Pin the generated script + exec config so the marker, the /proc
+	// scan, and the SIGKILL can't silently regress. execCreate/execStart are stubbed on
+	// the instance to capture args without any transport.
+	it('execs a root /proc-scan that SIGKILLs every process carrying the run marker', async () => {
+		const docker = client();
+		const created: Array<{ containerId: string; config: Record<string, unknown> }> = [];
+		const started: string[] = [];
+		docker.execCreate = async (containerId, config) => {
+			created.push({ containerId, config: config as unknown as Record<string, unknown> });
+			return 'exec-kill';
+		};
+		docker.execStart = async (execId) => {
+			started.push(execId);
+			return { stdout: '', stderr: '' };
+		};
+
+		await docker.killRunProcesses('cid-1', 'run-abc-123');
+
+		expect(created).toHaveLength(1);
+		expect(created[0].containerId).toBe('cid-1');
+		const cmd = created[0].config.Cmd as string[];
+		expect(cmd[0]).toBe('sh');
+		expect(cmd[1]).toBe('-c');
+		const script = cmd[2];
+		expect(script).toContain('/proc/[0-9]*/environ');
+		expect(script).toContain('HEZO_HEARTBEAT_RUN_ID=run-abc-123');
+		expect(script).toContain('kill -9');
+		// No User field → runs as the container's default user (root), so it can
+		// signal the deprivileged run-user's processes.
+		expect(created[0].config.User).toBeUndefined();
+		expect(created[0].config.AttachStdout).toBe(false);
+		expect(created[0].config.AttachStderr).toBe(false);
+		expect(started).toEqual(['exec-kill']);
+	});
+
+	it('propagates an exec failure to the caller (which treats it as best-effort)', async () => {
+		const docker = client();
+		docker.execCreate = async () => {
+			throw new Error('Docker execCreate failed (409): container not running');
+		};
+		await expect(docker.killRunProcesses('cid-1', 'run-abc-123')).rejects.toThrow(
+			'container not running',
+		);
+	});
+});
+
 describe('execStart demux over the real unix-socket transport', () => {
 	it('concatenates multiple buffered frames per stream', async () => {
 		const sim = await startDockerSockSim();

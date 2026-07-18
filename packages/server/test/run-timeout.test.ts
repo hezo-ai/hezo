@@ -50,6 +50,7 @@ function createMockDocker(overrides: Record<string, any> = {}): DockerClient {
 		containerLogs: async () => new ReadableStream(),
 		execCreate: async () => 'exec-123',
 		execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+		killRunProcesses: async () => {},
 		execStart: execStartOverride ?? (async () => ({ stdout: 'done', stderr: '' })),
 		...rest,
 	} as unknown as DockerClient;

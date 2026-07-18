@@ -964,6 +964,17 @@ may hold — and `discard_local`/`prune_worktrees` additionally require a runnin
 read and reset runs under the same per-project git lock (`withProjectGitLock`, extracted to
 `lib/git-lock.ts`) as run-time worktree prep, so they never interleave on the shared `.git`.
 
+**Aborting actually kills the process.** Docker exposes no API to signal an exec'd process, and
+disconnecting from the exec attach stream (what aborting the run's signal does) leaves the agent
+CLI **running** inside the container — it would keep burning tokens and writing to the workspace
+even though the run reads as cancelled. So on any abort where the container is still alive (a user
+terminate, a timeout — *not* `container_*`, where the process died with the container), the runner
+hard-kills the run's whole process tree: `DockerClient.killRunProcesses` execs a `/proc` scan (as
+root, so it can signal the deprivileged run-user) that `kill -9`s every process whose environment
+carries the run's `HEZO_HEARTBEAT_RUN_ID` marker (children inherit it). Best-effort and bounded by
+its own short timeout, so a kill failure never masks the run result or blocks finalization. This is
+what makes a terminate immediate — in-progress work is lost, as the confirmation dialog promises.
+
 **Timeout handling (graceful cut).** The `run_timeout_min` timer aborts the run's signal with a
 tagged `'run_timeout'` reason (`JobManager.launchTask`), so the runner finalizes it as `timed_out`
 — distinct from a bare abort (user cancel / shutdown → `cancelled`) and container death

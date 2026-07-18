@@ -148,6 +148,7 @@ function createMockDocker(overrides: Record<string, any> = {}): DockerClient {
 		containerLogs: async () => new ReadableStream(),
 		execCreate: async () => 'exec-123',
 		execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+		killRunProcesses: async () => {},
 		...rest,
 		execStart: async (...args: unknown[]) => {
 			if (producesOutput) {
@@ -1054,6 +1055,115 @@ describe('runAgent', () => {
 		);
 		expect(run.rows[0].status).toBe('failed');
 		expect(run.rows[0].error).toBe('container_error');
+	});
+
+	// Aborting a run only disconnects from the exec attach stream; Docker leaves the
+	// agent CLI running inside the container. The runner must hard-kill the run's
+	// process tree (keyed by the HEZO_HEARTBEAT_RUN_ID env marker) so a terminate is
+	// actually immediate rather than leaving the agent working in the background.
+	it('hard-kills the container process tree when a run is terminated mid-execution', async () => {
+		const ac = new AbortController();
+		const killed: Array<{ containerId: string; runId: string }> = [];
+		const docker = createMockDocker({
+			execCreate: async () => {
+				ac.abort();
+				throw new DOMException('Aborted', 'AbortError');
+			},
+			killRunProcesses: async (containerId: string, runId: string) => {
+				killed.push({ containerId, runId });
+			},
+		});
+		const deps: RunnerDeps = {
+			db,
+			docker,
+			masterKeyManager,
+			serverPort: 3000,
+			dataDir: '/tmp/test-data',
+			logs: new LogStreamBroker(),
+		};
+
+		const result = await runAgent(
+			deps,
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+			undefined,
+			ac.signal,
+		);
+
+		expect(result.heartbeatRunId).toBeDefined();
+		expect(killed).toEqual([{ containerId: 'container-123', runId: result.heartbeatRunId }]);
+	});
+
+	it('hard-kills the container process tree when a run times out', async () => {
+		const ac = new AbortController();
+		const killed: string[] = [];
+		const docker = createMockDocker({
+			producesOutput: false,
+			execStart: async () => {
+				ac.abort('run_timeout');
+				throw new DOMException('Aborted', 'AbortError');
+			},
+			killRunProcesses: async (_containerId: string, runId: string) => {
+				killed.push(runId);
+			},
+		});
+		const deps: RunnerDeps = {
+			db,
+			docker,
+			masterKeyManager,
+			serverPort: 3000,
+			dataDir: '/tmp/test-data',
+			logs: new LogStreamBroker(),
+		};
+
+		const result = await runAgent(
+			deps,
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+			undefined,
+			ac.signal,
+		);
+
+		expect(killed).toEqual([result.heartbeatRunId]);
+	});
+
+	// When the container itself died (container_stopped / container_error), the run's
+	// process is already gone with it, so there is nothing to kill — and exec'ing a
+	// dead container would only throw.
+	it('does not attempt a process kill when the container itself died', async () => {
+		const ac = new AbortController();
+		let killCalled = false;
+		const docker = createMockDocker({
+			execCreate: async () => {
+				ac.abort('container_stopped');
+				throw new DOMException('Aborted', 'AbortError');
+			},
+			killRunProcesses: async () => {
+				killCalled = true;
+			},
+		});
+		const deps: RunnerDeps = {
+			db,
+			docker,
+			masterKeyManager,
+			serverPort: 3000,
+			dataDir: '/tmp/test-data',
+			logs: new LogStreamBroker(),
+		};
+
+		const result = await runAgent(
+			deps,
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+			undefined,
+			ac.signal,
+		);
+
+		expect(result.success).toBe(false);
+		expect(killCalled).toBe(false);
 	});
 
 	it('invokes onRunRegistered with the heartbeat run id before exec begins', async () => {

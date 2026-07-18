@@ -1536,6 +1536,24 @@ export async function runAgent(
 			const errorMessage = abortErrorMessage(reason) ?? (error as Error).message;
 			const status = isAbort ? abortedRunStatus(reason) : HeartbeatRunStatus.Failed;
 
+			// Aborting the exec only tears down its attach stream — Docker leaves the
+			// agent CLI running in the container, so a user-terminated or timed-out run
+			// keeps burning tokens and writing to the workspace despite reading as
+			// cancelled. Hard-kill the run's whole process tree so the abort is what the
+			// UI promises: immediate, with in-progress work lost. Skipped when the
+			// container itself died (`container_*`) — the process is already gone with
+			// it — and best-effort so a kill failure never masks the run result.
+			if (isAbort && reason !== 'container_stopped' && reason !== 'container_error') {
+				try {
+					await deps.docker.killRunProcesses(project.container_id, heartbeatRunId);
+				} catch (killError) {
+					log.error(
+						`Run ${heartbeatRunId}: failed to kill container processes on abort:`,
+						killError,
+					);
+				}
+			}
+
 			emit('stderr', `\n[runner] ${errorMessage}\n`);
 
 			await deps.logs.end(streamId);

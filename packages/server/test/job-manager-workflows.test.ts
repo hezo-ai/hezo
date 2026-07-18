@@ -47,6 +47,7 @@ function createMockDocker(): DockerClient {
 		execCreate: async () => 'exec-123',
 		execStart: async () => ({ stdout: 'done', stderr: '' }),
 		execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+		killRunProcesses: async () => {},
 	} as unknown as DockerClient;
 }
 
