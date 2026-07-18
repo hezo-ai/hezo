@@ -2,6 +2,7 @@ import { TaskPriority, TaskStatus } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
+import { buildSearchRelevanceOrderSql } from '../src/lib/task-sort';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
@@ -103,5 +104,59 @@ describe('GET /projects/:projectId/tasks sort=work_order', () => {
 
 		const ids = await listIds('work_order:asc');
 		expect(ids.indexOf(urgent.id)).toBeLessThan(ids.indexOf(medium.id));
+	});
+});
+
+async function searchIds(term: string, sort?: string): Promise<string[]> {
+	const qs = new URLSearchParams({ search: term, per_page: '50' });
+	if (sort) qs.set('sort', sort);
+	const res = await app.request(`/api/projects/${projectSlug}/tasks?${qs.toString()}`, {
+		headers: authHeader(token),
+	});
+	expect(res.status).toBe(200);
+	const rows = (await res.json()).data as Array<{ id: string }>;
+	return rows.map((r) => r.id);
+}
+
+describe('GET /projects/:projectId/tasks search relevance', () => {
+	it('ranks an exact task-number match ahead of a more-recent title-only match', async () => {
+		// `target` owns the number; `decoy` only mentions it in its title and is
+		// created afterwards, so under the default updated_at ordering it would
+		// otherwise come first. The number match must win regardless of the sort.
+		const target = await insertTask('Draft community platform posts');
+		const decoy = await insertTask(`References ${target.number} in the title`);
+
+		const ids = await searchIds(String(target.number), 'updated_at:desc');
+		expect(ids[0]).toBe(target.id);
+		expect(ids.indexOf(target.id)).toBeLessThan(ids.indexOf(decoy.id));
+	});
+
+	it('ranks a whole-identifier match first even when the body of another task cites it', async () => {
+		const target = await insertTask('Ship the release notes');
+		const decoy = await insertTask(`Blocked on ${target.identifier}, see thread`);
+
+		// Searching the full identifier (e.g. "SORT-42") — the exact-identifier tier
+		// must outrank the task whose title merely references it.
+		const ids = await searchIds(target.identifier, 'updated_at:desc');
+		expect(ids[0]).toBe(target.id);
+		expect(ids.indexOf(target.id)).toBeLessThan(ids.indexOf(decoy.id));
+	});
+});
+
+describe('buildSearchRelevanceOrderSql', () => {
+	it('pushes the raw term and its ILIKE pattern, and tiers identifier > title > body', () => {
+		const params: unknown[] = ['existing'];
+		const { sql, nextIdx } = buildSearchRelevanceOrderSql('169', params, 2);
+
+		expect(params).toEqual(['existing', '169', '%169%']);
+		expect(nextIdx).toBe(4);
+		// Whole-identifier (0) beats number (1) beats identifier-substring (2) beats
+		// title (3) beats description-only (4); exact tiers read the raw term ($2),
+		// the substring tiers read the ILIKE pattern ($3).
+		expect(sql).toContain('LOWER(i.identifier) = LOWER($2) THEN 0');
+		expect(sql).toContain('i.number::text = $2 THEN 1');
+		expect(sql).toContain('i.identifier ILIKE $3 THEN 2');
+		expect(sql).toContain('i.title ILIKE $3 THEN 3');
+		expect(sql).toContain('ELSE 4');
 	});
 });
