@@ -80,6 +80,7 @@ function createMockDocker(taskId: string, overrides: Record<string, any> = {}): 
 		containerLogs: async () => new ReadableStream(),
 		execCreate: async () => 'exec-123',
 		execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+		killRunProcesses: async () => {},
 		...rest,
 		execStart: async (...args: unknown[]) => {
 			if (producesOutput) {

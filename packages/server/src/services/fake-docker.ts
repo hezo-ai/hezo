@@ -101,6 +101,7 @@ export function createFakeDockerClient(db?: Db): DockerClient {
 			return result;
 		},
 		execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+		killRunProcesses: async () => {},
 	};
 	return stub as unknown as DockerClient;
 }

@@ -18,6 +18,13 @@ const DOCKER_REQUEST_TIMEOUT_MS = (() => {
 	return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_DOCKER_REQUEST_TIMEOUT_MS;
 })();
 
+/**
+ * Upper bound on the run-process kill exec (`killRunProcesses`). The kill loop
+ * scans `/proc` once and returns in well under a second; this ceiling only
+ * guards against a wedged daemon so an abort's cleanup can never hang.
+ */
+const KILL_EXEC_TIMEOUT_MS = 5_000;
+
 interface ContainerConfig {
 	Image: string;
 	Cmd?: string[];
@@ -486,6 +493,48 @@ export class DockerClient {
 			throw new Error(`Docker execInspect failed (${res.status}): ${text}`);
 		}
 		return parseJsonOrThrow(res, 'execInspect');
+	}
+
+	/**
+	 * Hard-kill every process inside `containerId` whose environment carries
+	 * `HEZO_HEARTBEAT_RUN_ID=<runId>` — the marker every agent-run exec sets and
+	 * all its children inherit. Docker exposes no API to signal an exec'd process,
+	 * and disconnecting from the exec attach stream (what an abort does) leaves it
+	 * running: the agent CLI keeps burning tokens and writing to the workspace
+	 * even though the run is marked cancelled. This is the only way to actually
+	 * stop a terminated or timed-out run's process tree.
+	 *
+	 * The kill exec runs as the container's default user (root — no `User`), so it
+	 * can signal the deprivileged run-user's processes, and scans each process's
+	 * NUL-separated `/proc/<pid>/environ` for the marker. Bounded by its own short
+	 * timeout so a wedged kill can never block run finalization. Best-effort: the
+	 * caller swallows failures (a dead/gone container simply can't be exec'd).
+	 */
+	async killRunProcesses(containerId: string, runId: string): Promise<void> {
+		// runId is a DB UUID (`[0-9a-f-]`), so it needs no shell escaping inside the
+		// double-quoted grep pattern below — no metacharacters, word-splitting, or
+		// expansion is possible.
+		const marker = `HEZO_HEARTBEAT_RUN_ID=${runId}`;
+		// `/proc/<pid>/environ` is NUL-separated; `basename $(dirname …)` recovers the
+		// pid without relying on `${…}` shell parameter expansion (a JS-template
+		// look-alike). `|| true` keeps a since-exited pid from failing the loop.
+		const script =
+			'for e in /proc/[0-9]*/environ; do ' +
+			`grep -qFz "${marker}" "$e" 2>/dev/null || continue; ` +
+			'kill -9 "$(basename "$(dirname "$e")")" 2>/dev/null || true; ' +
+			'done';
+		const execId = await this.execCreate(containerId, {
+			Cmd: ['sh', '-c', script],
+			AttachStdout: false,
+			AttachStderr: false,
+		});
+		const ac = new AbortController();
+		const timer = setTimeout(() => ac.abort(), KILL_EXEC_TIMEOUT_MS);
+		try {
+			await this.execStart(execId, { signal: ac.signal });
+		} finally {
+			clearTimeout(timer);
+		}
 	}
 }
 
