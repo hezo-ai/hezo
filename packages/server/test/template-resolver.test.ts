@@ -114,6 +114,18 @@ describe('template resolver', () => {
 		expect(result).toContain('references the general skill by slug');
 	});
 
+	it('makes checking the skills manifest for a relevant skill mandatory before any write or edit', async () => {
+		const result = await resolveSystemPrompt(db, 'Base prompt.', { teamId });
+		// Every agent, every run, must scan the manifest and load an applicable
+		// skill BEFORE producing/modifying the deliverable — not after.
+		expect(result).toContain('MANDATORY, every run, before you write or edit anything');
+		expect(result).toContain('every agent on every run');
+		// Load the full body first, then work — don't consult it afterward.
+		expect(result).toContain('load its full body **first**');
+		// Err toward loading when relevance is uncertain.
+		expect(result).toContain('load it and see');
+	});
+
 	it('appends the ask-before-closing completion rule', async () => {
 		const result = await resolveSystemPrompt(db, 'Base prompt.', { teamId });
 		// Never mark done while an active mention you posted awaits an answer —
