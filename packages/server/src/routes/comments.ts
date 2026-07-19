@@ -28,12 +28,47 @@ const log = logger.child('routes');
 
 export const commentsRoutes = new Hono<Env>();
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MAX_BODY_IDS = 100;
+
+/**
+ * Comments feed. Three response shapes on the one endpoint so a long thread can
+ * render placeholders for every row up front and load the heavy bodies on demand
+ * as the user scrolls, while small callers (e.g. the intake chat) keep the
+ * one-shot full payload:
+ *
+ *  - **full mode** (default): the original payload — every comment with `content`,
+ *    `reactions` and `attachments`. Used by callers that render the whole thread
+ *    inline (intake chat) and by API clients.
+ *  - **skeleton mode** (`?view=skeleton`): one row per comment with metadata +
+ *    reactions (one cheap query, the single source of truth for reaction state).
+ *    Text comments omit their `content` body and `attachments` (the heavy parts —
+ *    large markdown and per-attachment signed URLs), carrying instead a
+ *    `text_length` hint (placeholder sizing) and an `attachment_count`. Non-text
+ *    comments keep their small structural `content` + `chosen_option`.
+ *  - **body mode** (`?ids=a,b,c`): the deferred heavy payload — `content` and
+ *    `attachments` for just the requested comments. Reactions stay on the skeleton
+ *    row, so a row merges body content over its skeleton entry.
+ */
 commentsRoutes.get('/projects/:projectId/tasks/:taskId/comments', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
 	if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 
+	const idsParam = c.req.query('ids');
+	if (idsParam !== undefined) return getCommentBodies(c, db, taskId, idsParam);
+	if (c.req.query('view') === 'skeleton') return getCommentSkeletons(c, db, teamId, taskId);
+	return getCommentsFull(c, db, teamId, taskId);
+});
+
+/** Full mode (default): every comment with content, reactions and attachments. */
+async function getCommentsFull(
+	c: import('hono').Context<Env>,
+	db: import('../db/database').Db,
+	teamId: string,
+	taskId: string,
+) {
 	const result = await db.query(
 		`SELECT ic.id, ic.public_id, ic.task_id, ic.content_type, ic.content, ic.chosen_option, ic.created_at,
             CASE WHEN ic.author_api_key_id IS NOT NULL THEN 'api_key' ELSE m.member_type::text END AS author_type,
@@ -67,7 +102,101 @@ commentsRoutes.get('/projects/:projectId/tasks/:taskId/comments', async (c) => {
 	}
 
 	return ok(c, result.rows);
-});
+}
+
+/**
+ * `?view=skeleton` mode: metadata + reactions for every comment, with text
+ * bodies and attachments omitted (replaced by `text_length` / `attachment_count`
+ * hints). Non-text comments keep their small `content` + `chosen_option`.
+ */
+async function getCommentSkeletons(
+	c: import('hono').Context<Env>,
+	db: import('../db/database').Db,
+	teamId: string,
+	taskId: string,
+) {
+	const result = await db.query(
+		`SELECT ic.id, ic.public_id, ic.task_id, ic.content_type,
+            CASE WHEN ic.content_type = 'text' THEN NULL ELSE ic.content END AS content,
+            ic.chosen_option, ic.created_at,
+            CASE WHEN ic.author_api_key_id IS NOT NULL THEN 'api_key' ELSE m.member_type::text END AS author_type,
+            COALESCE(ca.name, ma.title, m.display_name, 'Admin') AS author_name,
+            ic.author_member_id,
+            ic.author_api_key_id,
+            ic.parent_comment_id,
+            CASE WHEN ic.content_type = 'text'
+                 THEN COALESCE(length(ic.content->>'text'), 0) ELSE NULL END AS text_length,
+            (SELECT count(*)::int FROM comment_attachments cat WHERE cat.comment_id = ic.id) AS attachment_count
+     FROM task_comments ic
+     LEFT JOIN members m ON m.id = ic.author_member_id
+     LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
+     LEFT JOIN api_keys ca ON ca.id = ic.author_api_key_id
+     WHERE ic.task_id = $1
+     ORDER BY ic.created_at ASC`,
+		[taskId],
+	);
+
+	const viewerMemberId = await resolveReactorMemberId(db, c.get('auth'), teamId);
+	const reactionsByComment = await loadReactionsForTask(db, taskId, viewerMemberId);
+	for (const comment of result.rows as Record<string, unknown>[]) {
+		comment.reactions = reactionsByComment.get(comment.id as string) ?? [];
+	}
+
+	return ok(c, result.rows);
+}
+
+/**
+ * `?ids=` body mode: return `{ id, content, attachments }` for the requested
+ * comments only. Ids are validated to belong to this task, so body mode can
+ * never surface a comment from another task. Reactions are intentionally not
+ * returned here — they live on the skeleton row (one source of truth).
+ */
+async function getCommentBodies(
+	c: import('hono').Context<Env>,
+	db: import('../db/database').Db,
+	taskId: string,
+	idsParam: string,
+) {
+	const ids = idsParam
+		.split(',')
+		.map((s) => s.trim())
+		.filter((s) => s.length > 0);
+	if (ids.length === 0) return ok(c, []);
+	if (ids.length > MAX_BODY_IDS) {
+		return err(c, 'INVALID_REQUEST', `Too many ids (max ${MAX_BODY_IDS})`, 400);
+	}
+	if (ids.some((id) => !UUID_RE.test(id))) {
+		return err(c, 'INVALID_REQUEST', 'ids must be UUIDs', 400);
+	}
+
+	const result = await db.query<{ id: string; content: unknown; task_id: string }>(
+		`SELECT ic.id, ic.content, ic.task_id
+     FROM task_comments ic
+     WHERE ic.id = ANY($1::uuid[])`,
+		[ids],
+	);
+	// Security: never surface a comment from another task. An id that resolves to a
+	// different task is a cross-task request and is rejected outright. Ids that
+	// simply don't exist (deleted mid-scroll) are tolerated — omitted from the
+	// response — so a race doesn't fail the whole batch.
+	if (result.rows.some((row) => row.task_id !== taskId)) {
+		return err(c, 'NOT_FOUND', 'One or more comments do not belong to this task', 404);
+	}
+
+	const foundIds = result.rows.map((r) => r.id);
+	const attachmentsByComment = await loadAttachmentsForComments(
+		db,
+		foundIds,
+		c.get('masterKeyManager'),
+	);
+
+	const bodies = result.rows.map((row) => ({
+		id: row.id,
+		content: row.content,
+		attachments: attachmentsByComment.get(row.id) ?? [],
+	}));
+	return ok(c, bodies);
+}
 
 commentsRoutes.put(
 	'/projects/:projectId/tasks/:taskId/comments/:commentId/reactions/:kind',

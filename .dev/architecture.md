@@ -1621,6 +1621,23 @@ shell watches). Clients react by refetching the per-caller-authorized project in
 left project rail updates live — for the dialog, the CEO's `create_project`, and other
 sessions alike — without a row on the shared room leaking a project a user can't see.
 
+**Lazy comments feed.** A task's comment thread can be long, so the feed
+(`components/task-detail/comments-section.tsx`, virtualized with react-virtuoso) loads in
+two payloads off the one `GET …/tasks/:taskId/comments` route. On mount it fetches a
+**skeleton** (`?view=skeleton` → `useCommentSkeletons`): metadata + reactions for every
+comment, with text bodies and attachments omitted (a `text_length` hint sizes each row's
+placeholder). Non-text comments (system/run/action/…) keep their small `content` and render
+straight from the skeleton; inline-event rows (system/run) never need a body. A text row's
+**body** (`content` + attachments) loads on demand: an `IntersectionObserver` tracks which
+rows are on screen and, once the thread *settles* (a ~170ms scroll pause — a fast fling never
+pauses, so it fetches nothing), the visible rows' ids are handed to a batched loader that
+coalesces them into one `?ids=a,b,c` request (`ensureCommentBodies` → React-Query-per-id
+cache, `useCommentBody`). A `?view=skeleton` list is index-ordered by
+`idx_comments_task_created`; the intake chat and API clients still get the eager full payload
+(default mode). Deep-link (`#comment-<id>`) targets load their body eagerly so the anchor
+lands on stable height. Reactions stay on the skeleton row (one source of truth), so their
+optimistic mutation and WS invalidation are unchanged.
+
 **Mutations** (three strategies, by shape — see `AGENTS.md` › Web frontend mutations):
 **optimistic + rollback** (default for field edits/toggles/reactions, via
 `useOptimisticMutation`), **response-driven** (creates and server-validated fields like
