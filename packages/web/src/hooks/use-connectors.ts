@@ -1,5 +1,5 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
-import { api } from '../lib/api';
+import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
+import { api, nextOffsetPageParam } from '../lib/api';
 import { queryClient } from '../lib/query-client';
 import { queryKeys } from '../lib/query-keys';
 
@@ -125,11 +125,25 @@ export interface CreateConnectorPayload {
 	config: Record<string, unknown>;
 }
 
-export function useConnectors(projectId: string, filterProjectId?: string) {
-	const qs = filterProjectId ? `?project_id=${encodeURIComponent(filterProjectId)}` : '';
-	return useQuery({
-		queryKey: queryKeys.projects.connectorsFiltered(projectId, filterProjectId ?? null),
-		queryFn: () => api.get<Connector[]>(`/api/projects/${projectId}/connectors${qs}`),
+export function useConnectors(
+	projectId: string,
+	filterProjectId?: string,
+	options?: { perPage?: number },
+) {
+	const perPage = options?.perPage ?? 50;
+	return useInfiniteQuery({
+		queryKey: queryKeys.projects.connectorsInfinite(projectId, {
+			filter: filterProjectId ?? null,
+			per_page: String(perPage),
+		}),
+		initialPageParam: 1,
+		queryFn: ({ pageParam }) =>
+			api.getPaginated<Connector>(`/api/projects/${projectId}/connectors`, {
+				project_id: filterProjectId,
+				page: String(pageParam),
+				per_page: String(perPage),
+			}),
+		getNextPageParam: nextOffsetPageParam,
 	});
 }
 
@@ -137,11 +151,9 @@ export function useCreateConnector(projectId: string) {
 	return useMutation({
 		mutationFn: (data: CreateConnectorPayload) =>
 			api.post<Connector>(`/api/projects/${projectId}/connectors`, data),
-		onSuccess: (created) => {
-			queryClient.setQueryData<Connector[]>(
-				queryKeys.projects.connectorsFiltered(projectId, null),
-				(prev) => (prev ? [...prev.filter((c) => c.id !== created.id), created] : [created]),
-			);
+		// The list is a paginated infinite query; invalidate + refetch rather than
+		// splice a flat array into an InfiniteData cache.
+		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.projects.connectors(projectId) });
 		},
 	});
@@ -150,11 +162,7 @@ export function useCreateConnector(projectId: string) {
 export function useDeleteConnector(projectId: string) {
 	return useMutation({
 		mutationFn: (id: string) => api.delete(`/api/projects/${projectId}/connectors/${id}`),
-		onSuccess: (_, id) => {
-			queryClient.setQueriesData<Connector[]>(
-				{ queryKey: queryKeys.projects.connectors(projectId) },
-				(prev) => (prev ? prev.filter((c) => c.id !== id) : prev),
-			);
+		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.projects.connectors(projectId) });
 		},
 	});

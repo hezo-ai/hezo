@@ -5,12 +5,13 @@ import {
 } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
 import { Archive, ArchiveRestore, ChevronRight, Pencil } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useGoal, useGoalHistory, useGoalRunActivity, useUpdateGoal } from '../../hooks/use-goals';
 import { agentPageParams } from '../agent-link';
 import { CreateGoalDialog } from '../create-goal-dialog';
 import { GoalHealthPill } from '../goal-health-pill';
 import { GoalProgressChart } from '../goal-progress-chart';
+import { InfiniteScrollSentinel } from '../infinite-scroll-sentinel';
 import { MarkdownProse } from '../markdown-prose';
 import { Badge, type BadgeColor } from '../ui/badge';
 
@@ -149,7 +150,21 @@ function GoalRunRow({ projectId, run }: { projectId: string; run: GoalRunActivit
 }
 
 function GoalRunsFeed({ projectId, goalId }: { projectId: string; goalId: string }) {
-	const { data: runs, isLoading } = useGoalRunActivity(projectId, goalId);
+	const {
+		data: runPages,
+		isLoading,
+		hasNextPage,
+		isFetchingNextPage,
+		fetchNextPage,
+	} = useGoalRunActivity(projectId, goalId);
+	// Flatten accumulated pages, deduping by id (offset pagination can transiently
+	// overlap a page boundary when a new run prepends).
+	const runs = useMemo(() => {
+		const seen = new Set<string>();
+		return (runPages?.pages.flatMap((p) => p.data) ?? []).filter((run) =>
+			seen.has(run.id) ? false : (seen.add(run.id), true),
+		);
+	}, [runPages]);
 
 	return (
 		<section data-testid="goal-runs" className="mt-8">
@@ -158,7 +173,7 @@ function GoalRunsFeed({ projectId, goalId }: { projectId: string; goalId: string
 			</h2>
 			{isLoading ? (
 				<div className="py-6 text-center text-[13px] text-text-3">Loading...</div>
-			) : !runs || runs.length === 0 ? (
+			) : runs.length === 0 ? (
 				<div
 					data-testid="goal-runs-empty"
 					className="rounded-md border border-border bg-surface px-3 py-6 text-center text-[13px] text-text-3"
@@ -166,11 +181,19 @@ function GoalRunsFeed({ projectId, goalId }: { projectId: string; goalId: string
 					No progress-update activity yet.
 				</div>
 			) : (
-				<ul className="flex flex-col divide-y divide-border rounded-md border border-border bg-surface">
-					{runs.map((run) => (
-						<GoalRunRow key={run.id} projectId={projectId} run={run} />
-					))}
-				</ul>
+				<>
+					<ul className="flex flex-col divide-y divide-border rounded-md border border-border bg-surface">
+						{runs.map((run) => (
+							<GoalRunRow key={run.id} projectId={projectId} run={run} />
+						))}
+					</ul>
+					<InfiniteScrollSentinel
+						hasNextPage={hasNextPage}
+						isFetchingNextPage={isFetchingNextPage}
+						onLoadMore={fetchNextPage}
+						testId="goal-runs"
+					/>
+				</>
 			)}
 		</section>
 	);

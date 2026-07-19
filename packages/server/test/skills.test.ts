@@ -130,6 +130,29 @@ describe('global skills CRUD (/api/skills)', () => {
 		const read = await app.request(`/api/skills/${id}`, { headers: authHeader(token) });
 		expect((await read.json()).data.content).toBe('v2');
 	});
+
+	it('paginates the global list and pins the connector-recipes row to page 1', async () => {
+		for (const name of ['Skill A', 'Skill B', 'Skill C']) {
+			expect((await create({ name, content: `# ${name}` })).status).toBe(201);
+		}
+
+		const p1 = await app.request('/api/skills?page=1&per_page=2', { headers: authHeader(token) });
+		const b1 = await p1.json();
+		// total counts only the three DB rows (the virtual recipe row is not paged).
+		expect(b1.meta).toEqual({ page: 1, per_page: 2, total: 3 });
+		const slugs1 = b1.data.map((s: { slug: string }) => s.slug);
+		expect(slugs1).toContain('connector-recipes');
+		// recipe + first two DB rows by name.
+		expect(b1.data).toHaveLength(3);
+
+		const p2 = await app.request('/api/skills?page=2&per_page=2', { headers: authHeader(token) });
+		const b2 = await p2.json();
+		expect(b2.meta).toEqual({ page: 2, per_page: 2, total: 3 });
+		const slugs2 = b2.data.map((s: { slug: string }) => s.slug);
+		// the connector-recipes row appears once, on page 1 only.
+		expect(slugs2).not.toContain('connector-recipes');
+		expect(b2.data).toHaveLength(1);
+	});
 });
 
 describe('skill scope (create + re-scope on /api/skills)', () => {

@@ -34,6 +34,7 @@ import { broadcastChange, broadcastCommentFamilyChange } from '../lib/broadcast'
 import { budgetWindowsError } from '../lib/budget-validation';
 import { signEntityIconUrl, verifyEntityIconUrl } from '../lib/entity-icon-urls';
 import { readImageDimensions } from '../lib/image-dimensions';
+import { buildMeta, parsePagination } from '../lib/pagination';
 import {
 	actorTypeFromAuth,
 	resolveActor,
@@ -1310,6 +1311,12 @@ agentsRoutes.get('/projects/:projectId/agents/:agentId/heartbeat-runs', async (c
 	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
 	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 
+	const { page, perPage, offset } = parsePagination(c);
+	const countResult = await db.query<{ total: number }>(
+		`SELECT count(*)::int AS total FROM heartbeat_runs hr WHERE hr.member_id = $1`,
+		[agentId],
+	);
+	const total = countResult.rows[0]?.total ?? 0;
 	const result = await db.query(
 		`SELECT ${HEARTBEAT_RUN_COLUMNS}
 		 FROM heartbeat_runs hr
@@ -1318,11 +1325,11 @@ agentsRoutes.get('/projects/:projectId/agents/:agentId/heartbeat-runs', async (c
 		 ${HEARTBEAT_RUN_TRIGGER_JOINS}
 		 WHERE hr.member_id = $1
 		 ORDER BY hr.started_at DESC
-		 LIMIT 50`,
-		[agentId],
+		 LIMIT $2 OFFSET $3`,
+		[agentId, perPage, offset],
 	);
 
-	return ok(c, result.rows);
+	return c.json({ data: result.rows, meta: buildMeta(page, perPage, total) });
 });
 
 agentsRoutes.get('/projects/:projectId/agents/:agentId/heartbeat-runs/:runId', async (c) => {

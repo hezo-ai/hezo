@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { SkillRecord } from '@hezo/shared';
 import { Hono } from 'hono';
 import { installDefaultSkills, listMissingDefaultSkills } from '../db/default-skills';
+import { buildMeta, parsePagination } from '../lib/pagination';
 import { err, ok } from '../lib/response';
 import { deriveSkillSummary } from '../lib/skill-summary';
 import { toSlug } from '../lib/slug';
@@ -122,21 +123,28 @@ skillsRoutes.get('/skills', async (c) => {
 	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 	const db = c.get('db');
+	const { page, perPage, offset } = parsePagination(c);
+	const countResult = await db.query<{ total: number }>(
+		`SELECT count(*)::int AS total FROM skills s WHERE s.is_active = true`,
+	);
+	const total = countResult.rows[0]?.total ?? 0;
 	const result = await db.query(
 		`SELECT ${SKILL_LIST_COLUMNS_S}, p.name AS project_name, p.slug AS project_slug
 		 FROM skills s
 		 LEFT JOIN projects p ON p.id = s.project_id
 		 WHERE s.is_active = true
-		 ORDER BY s.name`,
+		 ORDER BY s.name
+		 LIMIT $1 OFFSET $2`,
+		[perPage, offset],
 	);
-	// Surface the built-in `connector-recipes` virtual skill read-only alongside
-	// the DB rows (annotate stored rows so the UI can tell them apart).
 	const rows: Record<string, unknown>[] = result.rows.map((r) => ({
 		...(r as Record<string, unknown>),
 		readonly: false,
 	}));
-	rows.push(connectorRecipesSkillRow(false));
-	return ok(c, rows);
+	// The built-in `connector-recipes` virtual skill isn't a DB row, so it sits
+	// outside the paginated set — surface it read-only on the first page only.
+	if (page === 1) rows.unshift(connectorRecipesSkillRow(false));
+	return c.json({ data: rows, meta: buildMeta(page, perPage, total) });
 });
 
 skillsRoutes.post('/skills', async (c) => {
@@ -540,23 +548,31 @@ skillsRoutes.delete('/skills/:id', async (c) => {
 skillsRoutes.get('/projects/:projectId/skills', async (c) => {
 	const db = c.get('db');
 	const projectId = c.get('projectId') as string;
+	const { page, perPage, offset } = parsePagination(c);
+	const countResult = await db.query<{ total: number }>(
+		`SELECT count(*)::int AS total FROM skills s
+		 WHERE s.is_active = true AND (s.project_id = $1 OR s.project_id IS NULL)`,
+		[projectId],
+	);
+	const total = countResult.rows[0]?.total ?? 0;
 	const result = await db.query(
 		`SELECT ${SKILL_LIST_COLUMNS_S}, p.name AS project_name, p.slug AS project_slug
 		 FROM skills s
 		 LEFT JOIN projects p ON p.id = s.project_id
 		 WHERE s.is_active = true AND (s.project_id = $1 OR s.project_id IS NULL)
-		 ORDER BY s.name`,
-		[projectId],
+		 ORDER BY s.name
+		 LIMIT $2 OFFSET $3`,
+		[projectId, perPage, offset],
 	);
-	// The built-in `connector-recipes` virtual skill is global (project_id null) —
-	// every project's runs see it — so surface it read-only alongside the stored
-	// rows here too, exactly as the admin /skills list does.
 	const rows: Record<string, unknown>[] = result.rows.map((r) => ({
 		...(r as Record<string, unknown>),
 		readonly: false,
 	}));
-	rows.push(connectorRecipesSkillRow(false));
-	return ok(c, rows);
+	// The built-in `connector-recipes` virtual skill is global (project_id null) —
+	// every project's runs see it — so surface it read-only on the first page only,
+	// outside the paginated DB set, exactly as the admin /skills list does.
+	if (page === 1) rows.unshift(connectorRecipesSkillRow(false));
+	return c.json({ data: rows, meta: buildMeta(page, perPage, total) });
 });
 
 skillsRoutes.get('/projects/:projectId/skills/:id', async (c) => {

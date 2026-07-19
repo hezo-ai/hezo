@@ -325,7 +325,7 @@ export async function recordGoalProgress(
 export async function listProgressUpdateRuns(
 	db: Db,
 	projectId: string,
-	limit = 50,
+	{ limit = 50, offset = 0 }: { limit?: number; offset?: number } = {},
 ): Promise<ProgressUpdateRunSummary[]> {
 	// Progress-update runs are team-scoped (Captain runs with no task); a project maps 1:1 to its
 	// team, so filter by the project's team. The title list is a correlated subquery — no join
@@ -345,10 +345,23 @@ export async function listProgressUpdateRuns(
 		   AND hr.task_id IS NULL
 		   AND hr.team_id = (SELECT team_id FROM projects WHERE id = $2)
 		 ORDER BY hr.created_at DESC
-		 LIMIT $3`,
-		[HeartbeatRunKind.ProgressUpdate, projectId, limit],
+		 LIMIT $3 OFFSET $4`,
+		[HeartbeatRunKind.ProgressUpdate, projectId, limit, offset],
 	);
 	return r.rows;
+}
+
+/** Total number of progress-update runs for a project (for pagination meta). */
+export async function countProgressUpdateRuns(db: Db, projectId: string): Promise<number> {
+	const r = await db.query<{ total: number }>(
+		`SELECT count(*)::int AS total
+		 FROM heartbeat_runs hr
+		 WHERE hr.kind = $1
+		   AND hr.task_id IS NULL
+		   AND hr.team_id = (SELECT team_id FROM projects WHERE id = $2)`,
+		[HeartbeatRunKind.ProgressUpdate, projectId],
+	);
+	return r.rows[0]?.total ?? 0;
 }
 
 /**
@@ -361,7 +374,7 @@ export async function listGoalRunActivity(
 	db: Db,
 	projectId: string,
 	goalId: string,
-	limit = 50,
+	{ limit = 50, offset = 0 }: { limit?: number; offset?: number } = {},
 ): Promise<GoalRunActivity[]> {
 	const r = await db.query<GoalRunActivity>(
 		`SELECT hr.id, hr.status, hr.created_at, hr.started_at, hr.finished_at,
@@ -406,8 +419,33 @@ export async function listGoalRunActivity(
 		     )
 		   )
 		 ORDER BY hr.created_at DESC
-		 LIMIT $4`,
-		[HeartbeatRunKind.ProgressUpdate, goalId, projectId, limit],
+		 LIMIT $4 OFFSET $5`,
+		[HeartbeatRunKind.ProgressUpdate, goalId, projectId, limit, offset],
 	);
 	return r.rows;
+}
+
+/** Total number of progress-update runs that touched one goal (for pagination meta). */
+export async function countGoalRunActivity(
+	db: Db,
+	projectId: string,
+	goalId: string,
+): Promise<number> {
+	const r = await db.query<{ total: number }>(
+		`SELECT count(*)::int AS total
+		 FROM heartbeat_runs hr
+		 WHERE hr.kind = $1
+		   AND hr.task_id IS NULL
+		   AND hr.team_id = (SELECT team_id FROM projects WHERE id = $3)
+		   AND (
+		     EXISTS (SELECT 1 FROM goal_run_updates gru WHERE gru.run_id = hr.id AND gru.goal_id = $2)
+		     OR EXISTS (SELECT 1 FROM tasks t WHERE t.goal_id = $2 AND t.created_by_run_id = hr.id)
+		     OR EXISTS (
+		       SELECT 1 FROM task_comments tc JOIN tasks t ON t.id = tc.task_id
+		       WHERE tc.created_by_run_id = hr.id AND t.goal_id = $2
+		     )
+		   )`,
+		[HeartbeatRunKind.ProgressUpdate, goalId, projectId],
+	);
+	return r.rows[0]?.total ?? 0;
 }

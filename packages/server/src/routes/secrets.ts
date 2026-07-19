@@ -1,6 +1,7 @@
 import { SecretCategory } from '@hezo/shared';
 import { Hono } from 'hono';
 import { validateSecretName } from '../lib/credential-placeholder';
+import { buildMeta, parsePagination } from '../lib/pagination';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireAdminEquivalent } from '../middleware/auth';
@@ -26,6 +27,12 @@ secretsRoutes.get('/credentials', async (c) => {
 	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 	const db = c.get('db');
+	const { page, perPage, offset } = parsePagination(c);
+
+	const countResult = await db.query<{ total: number }>(
+		`SELECT count(*)::int AS total FROM secrets`,
+	);
+	const total = countResult.rows[0]?.total ?? 0;
 
 	// Per-secret egress usage is no longer tracked (egress requests aren't
 	// audited), so the usage columns are constant placeholders kept only for
@@ -49,9 +56,11 @@ secretsRoutes.get('/credentials', async (c) => {
 		               )
 		        ), '[]'::json) AS connectors
 		 FROM secrets s
-		 ORDER BY s.name ASC`,
+		 ORDER BY s.name ASC
+		 LIMIT $1 OFFSET $2`,
+		[perPage, offset],
 	);
-	return ok(c, result.rows);
+	return c.json({ data: result.rows, meta: buildMeta(page, perPage, total) });
 });
 
 secretsRoutes.post('/secrets', async (c) => {

@@ -2,6 +2,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
 import { ChevronDown, Plus, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { InfiniteScrollSentinel } from '../../components/infinite-scroll-sentinel';
 import { RelatedItemsList } from '../../components/related-items-list';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -37,7 +38,16 @@ function openAuthPopup(authUrl: string): string | null {
 function InstanceConnectorsPage() {
 	const { data: me } = useMe();
 	const { focus } = Route.useSearch();
-	const { data: connectors = [] } = useInstanceConnectors();
+	const {
+		data: connectorPages,
+		hasNextPage,
+		isFetchingNextPage,
+		fetchNextPage,
+	} = useInstanceConnectors();
+	const connectors = useMemo(
+		() => connectorPages?.pages.flatMap((p) => p.data) ?? [],
+		[connectorPages],
+	);
 	const { projects } = useAllVisibleProjects();
 	const createConnector = useCreateInstanceConnector();
 	const authStart = useInstanceAuthStart();
@@ -219,6 +229,12 @@ function InstanceConnectorsPage() {
 								focusRef={c.id === focus ? focusRef : undefined}
 							/>
 						))}
+						<InfiniteScrollSentinel
+							hasNextPage={hasNextPage}
+							isFetchingNextPage={isFetchingNextPage}
+							onLoadMore={fetchNextPage}
+							testId="instance-connectors"
+						/>
 					</div>
 				)}
 			</>

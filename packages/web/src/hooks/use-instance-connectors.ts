@@ -1,5 +1,5 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
-import { api } from '../lib/api';
+import { useInfiniteQuery, useMutation } from '@tanstack/react-query';
+import { api, nextOffsetPageParam } from '../lib/api';
 import { queryClient } from '../lib/query-client';
 import type { Connector } from './use-connectors';
 
@@ -10,6 +10,8 @@ import type { Connector } from './use-connectors';
 // connector. SaaS (remote URL) only — local MCPs carry per-container install
 // state and are managed on the project.
 export const INSTANCE_CONNECTORS_KEY = ['instance', 'connectors'] as const;
+// Infinite-scroll key under the base key so mutation invalidations cascade.
+export const INSTANCE_CONNECTORS_INFINITE_KEY = ['instance', 'connectors', 'infinite'] as const;
 
 export interface CreateInstanceConnectorPayload {
 	name: string;
@@ -20,10 +22,17 @@ export interface CreateInstanceConnectorPayload {
 	project_id?: string | null;
 }
 
-export function useInstanceConnectors() {
-	return useQuery({
-		queryKey: INSTANCE_CONNECTORS_KEY,
-		queryFn: () => api.get<Connector[]>('/api/connectors'),
+export function useInstanceConnectors(options?: { perPage?: number }) {
+	const perPage = options?.perPage ?? 50;
+	return useInfiniteQuery({
+		queryKey: [...INSTANCE_CONNECTORS_INFINITE_KEY, { per_page: String(perPage) }],
+		initialPageParam: 1,
+		queryFn: ({ pageParam }) =>
+			api.getPaginated<Connector>('/api/connectors', {
+				page: String(pageParam),
+				per_page: String(perPage),
+			}),
+		getNextPageParam: nextOffsetPageParam,
 	});
 }
 

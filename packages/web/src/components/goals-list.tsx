@@ -10,7 +10,7 @@ import {
 	Target,
 	Trash2,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
 	useCancelQueuedProgressRun,
 	useGoalQueuedRun,
@@ -23,6 +23,7 @@ import { RunCommentBody } from './comment-renderers/run-comment';
 import { CreateGoalDialog } from './create-goal-dialog';
 import { GoalHealthPill } from './goal-health-pill';
 import { GoalSmartGuidance } from './goal-smart-guidance';
+import { InfiniteScrollSentinel } from './infinite-scroll-sentinel';
 import { LazyMount } from './lazy-mount';
 import { ProjectProgressSummary } from './project-progress-summary';
 import { Button } from './ui/button';
@@ -175,10 +176,18 @@ function QueuedProgressRunRow({ projectId, wakeupId }: { projectId: string; wake
 }
 
 function ProgressUpdatesFooter({ projectId }: { projectId: string }) {
-	const { data: runs } = useGoalRuns(projectId);
+	const { data: runPages, hasNextPage, isFetchingNextPage, fetchNextPage } = useGoalRuns(projectId);
 	const { data: queued } = useGoalQueuedRun(projectId);
 	const runNow = useRunProgressUpdateNow(projectId);
-	const hasRuns = !!runs && runs.length > 0;
+	// Flatten accumulated pages, deduping by id (offset pagination + new runs
+	// prepending can transiently overlap a page boundary).
+	const runs = useMemo(() => {
+		const seen = new Set<string>();
+		return (runPages?.pages.flatMap((p) => p.data) ?? []).filter((run) =>
+			seen.has(run.id) ? false : (seen.add(run.id), true),
+		);
+	}, [runPages]);
+	const hasRuns = runs.length > 0;
 	const queuedRun = queued?.queued ?? null;
 
 	return (
@@ -242,6 +251,14 @@ function ProgressUpdatesFooter({ projectId }: { projectId: string }) {
 						);
 					})}
 				</ul>
+			)}
+			{hasRuns && (
+				<InfiniteScrollSentinel
+					hasNextPage={hasNextPage}
+					isFetchingNextPage={isFetchingNextPage}
+					onLoadMore={fetchNextPage}
+					testId="progress-update-runs"
+				/>
 			)}
 		</section>
 	);

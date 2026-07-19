@@ -4,8 +4,8 @@ import type {
 	SkillRecord,
 	SkillRevisionRecord,
 } from '@hezo/shared';
-import { useMutation, useQuery } from '@tanstack/react-query';
-import { api } from '../lib/api';
+import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
+import { api, nextOffsetPageParam } from '../lib/api';
 import { queryClient } from '../lib/query-client';
 
 export type Skill = SkillRecord;
@@ -25,11 +25,21 @@ export interface CreateSkillInput {
 // (superuser) manages them and changes their scope, via the /api/skills routes.
 // Skills are addressed by id (slug is no longer globally unique once scoped).
 export const INSTANCE_SKILLS_KEY = ['instance', 'skills'] as const;
+// Infinite-scroll key sits UNDER the base key so the mutation invalidations
+// (which target INSTANCE_SKILLS_KEY) still cascade to the paged list.
+export const INSTANCE_SKILLS_INFINITE_KEY = ['instance', 'skills', 'infinite'] as const;
 
-export function useInstanceSkills() {
-	return useQuery({
-		queryKey: INSTANCE_SKILLS_KEY,
-		queryFn: () => api.get<SkillListItem[]>('/api/skills'),
+export function useInstanceSkills(options?: { perPage?: number }) {
+	const perPage = options?.perPage ?? 50;
+	return useInfiniteQuery({
+		queryKey: [...INSTANCE_SKILLS_INFINITE_KEY, { per_page: String(perPage) }],
+		initialPageParam: 1,
+		queryFn: ({ pageParam }) =>
+			api.getPaginated<SkillListItem>('/api/skills', {
+				page: String(pageParam),
+				per_page: String(perPage),
+			}),
+		getNextPageParam: nextOffsetPageParam,
 	});
 }
 

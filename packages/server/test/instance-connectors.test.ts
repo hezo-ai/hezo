@@ -86,6 +86,41 @@ describe('global connectors', () => {
 		expect(forRun.some((r) => r.name === 'shared-docs')).toBe(true);
 	});
 
+	it('paginates the global connectors list with offset + total meta', async () => {
+		for (const name of ['page-a', 'page-b', 'page-c']) {
+			const res = await app.request('/api/connectors', {
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					name,
+					kind: 'saas',
+					config: { url: `https://${name}.example.com/mcp` },
+				}),
+			});
+			expect(res.status).toBe(201);
+		}
+
+		const all = await app.request('/api/connectors?per_page=200', { headers: authHeader(token) });
+		const total = (await all.json()).meta.total as number;
+		expect(total).toBeGreaterThanOrEqual(3);
+
+		const p1 = await app.request('/api/connectors?page=1&per_page=2', {
+			headers: authHeader(token),
+		});
+		const b1 = await p1.json();
+		expect(b1.meta).toEqual({ page: 1, per_page: 2, total });
+		expect(b1.data).toHaveLength(2);
+
+		const p2 = await app.request('/api/connectors?page=2&per_page=2', {
+			headers: authHeader(token),
+		});
+		const b2 = await p2.json();
+		expect(b2.meta.page).toBe(2);
+		const ids1 = b1.data.map((r: { id: string }) => r.id);
+		const ids2 = b2.data.map((r: { id: string }) => r.id);
+		expect(ids1.some((id: string) => ids2.includes(id))).toBe(false);
+	});
+
 	it('rejects a local connector at the instance level', async () => {
 		const res = await app.request('/api/connectors', {
 			method: 'POST',

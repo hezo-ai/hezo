@@ -20,6 +20,7 @@ import {
 } from '../lib/task-filter-storage';
 import { AdminApprovalsBanner } from './admin-approvals-banner';
 import { CreateTaskDialog } from './create-task-dialog';
+import { InfiniteScrollSentinel } from './infinite-scroll-sentinel';
 import { TaskPriorityBadge } from './task-priority-badge';
 import { TaskRunDot } from './task-run-dot';
 import { TaskStatusBadge } from './task-status-badge';
@@ -429,23 +430,6 @@ export function TaskList({ projectId }: TaskListProps) {
 		[navigate, projectId],
 	);
 
-	// Auto-load the next page when the bottom sentinel scrolls into view. The
-	// component-test harness stubs IntersectionObserver, so the "Load more" button
-	// below is the deterministic fallback; this observer drives real scroll.
-	const sentinelRef = useRef<HTMLDivElement | null>(null);
-	useEffect(() => {
-		if (typeof IntersectionObserver === 'undefined') return;
-		const el = sentinelRef.current;
-		if (!el) return;
-		const observer = new IntersectionObserver((entries) => {
-			if (entries[0]?.isIntersecting && hasNextPage && !isFetchingNextPage) {
-				fetchNextPage();
-			}
-		});
-		observer.observe(el);
-		return () => observer.disconnect();
-	}, [hasNextPage, isFetchingNextPage, fetchNextPage]);
-
 	const filterBar = (
 		<div className="relative flex-1 min-w-0 h-10" data-testid="task-filter-bar">
 			<div className="h-full rounded-md border border-border bg-surface">
@@ -641,24 +625,11 @@ export function TaskList({ projectId }: TaskListProps) {
 							<span data-testid="task-list-count">
 								Showing {backlogTasks.length + doneTasks.length} of {totalCount}
 							</span>
-							{hasNextPage && (
-								<Button
-									variant="secondary"
-									size="sm"
-									disabled={isFetchingNextPage}
-									onClick={() => fetchNextPage()}
-									data-testid="task-list-load-more"
-								>
-									{isFetchingNextPage ? 'Loading…' : 'Load more'}
-								</Button>
-							)}
-							{/* Bottom sentinel: when it scrolls into view the observer
-							    auto-fetches the next page (see effect above). */}
-							<div
-								ref={sentinelRef}
-								data-testid="task-list-sentinel"
-								aria-hidden="true"
-								className="h-px w-full"
+							<InfiniteScrollSentinel
+								hasNextPage={hasNextPage}
+								isFetchingNextPage={isFetchingNextPage}
+								onLoadMore={() => fetchNextPage()}
+								testId="task-list"
 							/>
 						</div>
 					)}

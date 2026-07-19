@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { BookOpen, ExternalLink, Eye, Pencil, Plus, Trash2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { InfiniteScrollSentinel } from '../../../components/infinite-scroll-sentinel';
 import { MarkdownEditor } from '../../../components/markdown-editor';
 import { RevisionsPanel } from '../../../components/revisions-panel';
 import { SkillViewDialog } from '../../../components/skill-view-dialog';
@@ -23,7 +24,13 @@ export const Route = createFileRoute('/projects/$projectId/skills')({
 
 function ProjectSkillsPage() {
 	const { projectId } = Route.useParams();
-	const { data: skills = [] } = useProjectSkills(projectId);
+	const {
+		data: skillPages,
+		hasNextPage,
+		isFetchingNextPage,
+		fetchNextPage,
+	} = useProjectSkills(projectId);
+	const skills = useMemo(() => skillPages?.pages.flatMap((p) => p.data) ?? [], [skillPages]);
 	const updateSkill = useUpdateProjectSkill(projectId);
 	const deleteSkill = useDeleteProjectSkill(projectId);
 
@@ -276,6 +283,15 @@ function ProjectSkillsPage() {
 					No skills available to this project yet.
 				</div>
 			)}
+
+			{/* One sentinel for the combined project+global list; both sections grow
+			    as pages load (the list is paginated as a single name-ordered set). */}
+			<InfiniteScrollSentinel
+				hasNextPage={hasNextPage}
+				isFetchingNextPage={isFetchingNextPage}
+				onLoadMore={fetchNextPage}
+				testId="project-skills"
+			/>
 
 			<SkillViewDialog
 				open={viewingId !== null}

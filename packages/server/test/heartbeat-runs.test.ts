@@ -130,6 +130,45 @@ describe('heartbeat-runs API', () => {
 		expect(run.project_name).toBe('Main');
 	});
 
+	it('paginates the runs list with offset + total meta', async () => {
+		// A fresh agent so the count is exactly what this test inserts.
+		const agentRes = await app.request(`/api/projects/${projectSlug}/agents`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Paged Runner' }),
+		});
+		const pagedAgentId = (await agentRes.json()).data.id as string;
+
+		// Insert 5 runs with strictly increasing started_at so ORDER BY started_at
+		// DESC is deterministic (newest = run #5).
+		const ids: string[] = [];
+		for (let i = 0; i < 5; i++) {
+			const r = await db.query<{ id: string }>(
+				`INSERT INTO heartbeat_runs (member_id, team_id, status, started_at)
+				 VALUES ($1, $2, 'succeeded'::heartbeat_run_status, now() + ($3 || ' seconds')::interval)
+				 RETURNING id`,
+				[pagedAgentId, teamId, String(i)],
+			);
+			ids.push(r.rows[0].id);
+		}
+
+		const base = `/api/projects/${projectSlug}/agents/${pagedAgentId}/heartbeat-runs`;
+		const p1 = await app.request(`${base}?page=1&per_page=2`, { headers: authHeader(token) });
+		const b1 = await p1.json();
+		expect(b1.meta).toEqual({ page: 1, per_page: 2, total: 5 });
+		expect(b1.data).toHaveLength(2);
+		// Newest first: run #5 then #4.
+		expect(b1.data[0].id).toBe(ids[4]);
+		expect(b1.data[1].id).toBe(ids[3]);
+
+		const p3 = await app.request(`${base}?page=3&per_page=2`, { headers: authHeader(token) });
+		const b3 = await p3.json();
+		expect(b3.meta).toEqual({ page: 3, per_page: 2, total: 5 });
+		// Last page holds the single oldest run (#1) — previously unreachable past 50.
+		expect(b3.data).toHaveLength(1);
+		expect(b3.data[0].id).toBe(ids[0]);
+	});
+
 	it('gets a single run by id with task info', async () => {
 		const res = await app.request(
 			`/api/projects/${projectSlug}/agents/${agentId}/heartbeat-runs/${runId}`,

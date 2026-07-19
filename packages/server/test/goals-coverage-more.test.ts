@@ -8,6 +8,8 @@ import { GoalHealth } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { signAdminJwt } from '../src/middleware/auth';
 import {
+	countGoalRunActivity,
+	countProgressUpdateRuns,
 	createGoal,
 	getDueGoals,
 	getGoal,
@@ -371,6 +373,58 @@ describe('goal history and run activity routes', () => {
 		expect(await getGoal(ctx.db, crypto.randomUUID(), goalId)).toBeNull();
 		expect(await getGoalHistory(ctx.db, crypto.randomUUID(), goalId)).toBeNull();
 	});
+
+	it('GET /goals/runs paginates with offset + total meta', async () => {
+		// Ensure at least three project-wide progress-update runs exist.
+		await newProgressUpdateRun();
+		await newProgressUpdateRun();
+
+		const runsUrl = `/api/projects/${projectSlug}/goals/runs`;
+		const all = await ctx.app.request(`${runsUrl}?per_page=200`, { headers: authHeader(token) });
+		const allBody = await all.json();
+		const total = allBody.meta.total as number;
+		expect(total).toBeGreaterThanOrEqual(3);
+		expect(allBody.data).toHaveLength(total);
+
+		const p1 = await ctx.app.request(`${runsUrl}?page=1&per_page=2`, {
+			headers: authHeader(token),
+		});
+		const b1 = await p1.json();
+		expect(b1.meta).toEqual({ page: 1, per_page: 2, total });
+		expect(b1.data).toHaveLength(2);
+
+		const p2 = await ctx.app.request(`${runsUrl}?page=2&per_page=2`, {
+			headers: authHeader(token),
+		});
+		const b2 = await p2.json();
+		expect(b2.meta.page).toBe(2);
+		// Adjacent pages never overlap.
+		const ids1 = b1.data.map((r: { id: string }) => r.id);
+		const ids2 = b2.data.map((r: { id: string }) => r.id);
+		expect(ids1.some((id: string) => ids2.includes(id))).toBe(false);
+	});
+
+	it('GET /goals/:goalId/runs paginates with offset + total meta', async () => {
+		// Add two more runs that touch this goal so it has >1 activity row.
+		for (let i = 0; i < 2; i++) {
+			const r = await newProgressUpdateRun();
+			await recordGoalProgress(
+				ctx.db,
+				{ goalId, runId: r, progressPercent: 50 + i, health: GoalHealth.OnTrack, statusBlurb: 'x' },
+				undefined,
+			);
+		}
+
+		const url = `/api/projects/${projectSlug}/goals/${goalId}/runs`;
+		const all = await ctx.app.request(`${url}?per_page=200`, { headers: authHeader(token) });
+		const total = (await all.json()).meta.total as number;
+		expect(total).toBeGreaterThanOrEqual(3);
+
+		const p1 = await ctx.app.request(`${url}?page=1&per_page=2`, { headers: authHeader(token) });
+		const b1 = await p1.json();
+		expect(b1.meta).toEqual({ page: 1, per_page: 2, total });
+		expect(b1.data).toHaveLength(2);
+	});
 });
 
 describe('getDueGoals cadence branches', () => {
@@ -580,8 +634,49 @@ describe('listProgressUpdateRuns / listGoalRunActivity', () => {
 		expect(summary?.updated_goal_titles).toContain('Annotated goal');
 		expect(summary?.member_id).toBe(captainId);
 
-		const limited = await listProgressUpdateRuns(ctx.db, projectId, 1);
+		const limited = await listProgressUpdateRuns(ctx.db, projectId, { limit: 1 });
 		expect(limited).toHaveLength(1);
+	});
+
+	it('countProgressUpdateRuns matches the list and offset skips rows', async () => {
+		const total = await countProgressUpdateRuns(ctx.db, projectId);
+		const all = await listProgressUpdateRuns(ctx.db, projectId, { limit: total });
+		expect(all).toHaveLength(total);
+		expect(total).toBeGreaterThanOrEqual(2);
+
+		const firstTwo = await listProgressUpdateRuns(ctx.db, projectId, { limit: 2, offset: 0 });
+		const afterOne = await listProgressUpdateRuns(ctx.db, projectId, { limit: 2, offset: 1 });
+		// offset 1 drops the newest row and shares the second with the offset-0 page.
+		expect(firstTwo[1].id).toBe(afterOne[0].id);
+		expect(firstTwo[0].id).not.toBe(afterOne[0].id);
+	});
+
+	it('countGoalRunActivity matches the per-goal list and offset skips rows', async () => {
+		const goal = await createGoal(
+			ctx.db,
+			teamId,
+			{ project_id: projectId, title: 'Counted goal' },
+			{ actorMemberId: null },
+			undefined,
+		);
+		for (let i = 0; i < 3; i++) {
+			const runId = await newProgressUpdateRun();
+			await recordGoalProgress(
+				ctx.db,
+				{
+					goalId: goal.id,
+					runId,
+					progressPercent: 10 * i,
+					health: GoalHealth.OnTrack,
+					statusBlurb: 's',
+				},
+				undefined,
+			);
+		}
+		const total = await countGoalRunActivity(ctx.db, projectId, goal.id);
+		expect(total).toBe(3);
+		const paged = await listGoalRunActivity(ctx.db, projectId, goal.id, { limit: 2, offset: 2 });
+		expect(paged).toHaveLength(1);
 	});
 
 	it('collects estimate, created-task, and commented-task activity per goal', async () => {
@@ -638,7 +733,7 @@ describe('listProgressUpdateRuns / listGoalRunActivity', () => {
 		expect(b?.created_tasks.map((t) => t.identifier)).toContain(createdB.identifier);
 		expect(activityB.map((r) => r.id)).not.toContain(runA);
 
-		const limited = await listGoalRunActivity(ctx.db, projectId, goalA.id, 1);
+		const limited = await listGoalRunActivity(ctx.db, projectId, goalA.id, { limit: 1 });
 		expect(limited).toHaveLength(1);
 	});
 });
