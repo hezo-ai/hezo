@@ -29,6 +29,18 @@ describe('detectUnlinkedTeammateReferences', () => {
 		]);
 	});
 
+	it('flags a teammate addressed after a routing label (`**Next step:** architect —`)', () => {
+		expect(
+			detectUnlinkedTeammateReferences('**Next step:** architect — review complete.', slugs),
+		).toEqual(['architect']);
+	});
+
+	it('does not flag a teammate named after an unrelated label phrase', () => {
+		expect(
+			detectUnlinkedTeammateReferences('Status update: the architect finished the plan.', slugs),
+		).toEqual([]);
+	});
+
 	it('does not flag an active @mention', () => {
 		expect(detectUnlinkedTeammateReferences('@architect — please consolidate.', slugs)).toEqual([]);
 	});

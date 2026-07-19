@@ -15,6 +15,30 @@ const ASK_INTENT_RES: RegExp[] = [
 	/\?/,
 ];
 
+// A leading-line address may follow a short routing label — `Next step:`,
+// `Handoff:`, `Owner:` — so a handoff like `Next step: captain — …` addresses the
+// captain even though the name isn't the first token on the line. The label is a
+// bounded run of non-colon characters up to a colon, with optional trailing
+// markdown emphasis (`**`/`*`/`_`, so `**Next step:**` matches) before the
+// space(s) separating it from the name. Bounded (≤48 chars, single line) so a
+// sentence carrying an incidental colon can't reach across and swallow a
+// mid-sentence name.
+const ADDRESS_LABEL_PREFIX = String.raw`(?:[^\n:]{0,48}:[*_]*[ \t]+)?`;
+
+/**
+ * The "leading-line address" matcher for a name pattern (a bare `slug` or the
+ * passive `@@slug`): the name at the start of a line — optionally after a routing
+ * label (see ADDRESS_LABEL_PREFIX) — followed by an addressing separator (em/en
+ * dash, hyphen, colon, comma) then whitespace or EOL. Shared by every detector so
+ * the unlinked and passive forms recognise the same addressing shapes.
+ */
+function leadingAddressRegex(namePattern: string): RegExp {
+	return new RegExp(
+		String.raw`(?:^|\n)\s*${ADDRESS_LABEL_PREFIX}${namePattern}\s*[—–\-:,](?:\s|$)`,
+		'i',
+	);
+}
+
 export function extractMentionSlugs(content: unknown): string[] {
 	const text = flattenTextFields(content);
 	if (!text) return [];
@@ -61,9 +85,9 @@ export function detectUnlinkedTeammateReferences(content: unknown, knownSlugs: s
 		const s = escapeRegExp(slug);
 		// Emphasised name: **slug** or __slug__, not already @-prefixed.
 		const bold = new RegExp(String.raw`(?<!@)(\*\*|__)${s}\1`, 'i');
-		// Leading-line address: start of a line, the bare name, an addressing
-		// separator (em/en dash, hyphen, colon, comma), then whitespace or EOL.
-		const lead = new RegExp(String.raw`(?:^|\n)\s*${s}\s*[—–\-:,](?:\s|$)`, 'i');
+		// Leading-line address: start of a line (optionally after a routing label),
+		// the bare name, an addressing separator, then whitespace or EOL.
+		const lead = leadingAddressRegex(s);
 		if (bold.test(stripped) || lead.test(stripped)) flagged.add(slug);
 	}
 	return Array.from(flagged);
@@ -95,7 +119,7 @@ export function detectPassiveTeammateAsks(content: unknown, knownSlugs: string[]
 		// Addressed by the passive form: emphasised `**@@slug**`/`__@@slug__` or a
 		// leading-line `@@slug —` — the @@-prefixed analogue of the sibling's forms.
 		const bold = new RegExp(String.raw`(\*\*|__)@@${s}\1`, 'i');
-		const lead = new RegExp(String.raw`(?:^|\n)\s*@@${s}\s*[—–\-:,](?:\s|$)`, 'i');
+		const lead = leadingAddressRegex(`@@${s}`);
 		if (!bold.test(stripped) && !lead.test(stripped)) continue;
 		// Only warn when the paragraph(s) carrying this passive mention read as an
 		// ask — scoped to those paragraphs so a `you` elsewhere never leaks in.
@@ -141,10 +165,10 @@ export function detectUnlinkedTeammateAsks(content: unknown, knownSlugs: string[
 		if (active.has(slug)) continue;
 		const s = escapeRegExp(slug);
 		// Emphasised name (**slug**/__slug__, not already @-prefixed) or a
-		// leading-line address (`slug —`/`slug:`) — mirrors the two unambiguous
-		// addressing forms detectUnlinkedTeammateReferences recognises.
+		// leading-line address (`slug —`/`slug:`, optionally after a routing label)
+		// — mirrors the addressing forms detectUnlinkedTeammateReferences recognises.
 		const bold = new RegExp(String.raw`(?<!@)(\*\*|__)${s}\1`, 'i');
-		const lead = new RegExp(String.raw`(?:^|\n)\s*${s}\s*[—–\-:,](?:\s|$)`, 'i');
+		const lead = leadingAddressRegex(s);
 		if (!bold.test(stripped) && !lead.test(stripped)) continue;
 		// Only warn when the paragraph(s) carrying this address read as an ask —
 		// scoped to those paragraphs so a `you` elsewhere never leaks in.
@@ -160,7 +184,7 @@ export function detectUnlinkedTeammateAsks(content: unknown, knownSlugs: string[
  */
 function unlinkedMentionParagraphs(stripped: string, escapedSlug: string): string {
 	const bold = new RegExp(String.raw`(?<!@)(\*\*|__)${escapedSlug}\1`, 'i');
-	const lead = new RegExp(String.raw`(?:^|\n)\s*${escapedSlug}\s*[—–\-:,](?:\s|$)`, 'i');
+	const lead = leadingAddressRegex(escapedSlug);
 	return stripped
 		.split(/\n\s*\n/)
 		.filter((p) => bold.test(p) || lead.test(p))

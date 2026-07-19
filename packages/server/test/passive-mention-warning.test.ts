@@ -41,6 +41,40 @@ describe('detectPassiveTeammateAsks', () => {
 		expect(detectPassiveTeammateAsks('@@admin: can you approve?', slugs)).toEqual(['admin']);
 	});
 
+	it('flags the routing-label screenshot case: `**Next step:** @@captain — …your…`', () => {
+		// The exact stalled handoff: a passive @@captain sits after a `**Next step:**`
+		// label (not the first token on the line) with a second-person ask, while the
+		// only actively-mentioned name is @admin — so the captain was never woken.
+		expect(
+			detectPassiveTeammateAsks(
+				'**Next step:** @@captain — this X thread draft is reviewed and approved from my ' +
+					'side. Ready for your strategic review. After Captain sign-off, @admin will need to ' +
+					'attach screen recordings in Typefully before final approval and scheduling.',
+				['captain', 'admin', 'marketing-lead'],
+			),
+		).toEqual(['captain']);
+	});
+
+	it('flags a routing-label passive address without markdown emphasis', () => {
+		expect(detectPassiveTeammateAsks('Next step: @@architect — can you review?', slugs)).toEqual([
+			'architect',
+		]);
+	});
+
+	it('does not flag a routing-label passive handoff with no ask intent', () => {
+		expect(
+			detectPassiveTeammateAsks('**Next step:** @@architect — merged and shipped.', slugs),
+		).toEqual([]);
+	});
+
+	it('does not flag a teammate named after an unrelated label phrase', () => {
+		// The colon belongs to an unrelated lead-in; `architect` is mid-sentence, not
+		// addressed — the bounded, same-line label must sit immediately before the name.
+		expect(
+			detectPassiveTeammateAsks('Status update: the @@architect plan is ready, thanks.', slugs),
+		).toEqual([]);
+	});
+
 	it('does not flag a passive FYI with no ask intent', () => {
 		expect(detectPassiveTeammateAsks('@@admin — release is done.', slugs)).toEqual([]);
 	});
@@ -85,6 +119,7 @@ describe('MCP create_comment / update_comment warn on passive-mention asks', () 
 	let architectId: string;
 	let architectSlug: string;
 	let productLeadId: string;
+	let captainId: string;
 
 	async function insertTask(assigneeId: string, title: string): Promise<string> {
 		const meta = await db.query<{ task_prefix: string; number: number }>(
@@ -163,6 +198,7 @@ describe('MCP create_comment / update_comment warn on passive-mention asks', () 
 		architectId = architect.id;
 		architectSlug = architect.slug;
 		productLeadId = agents.find((a) => a.slug === 'product-lead')!.id;
+		captainId = agents.find((a) => a.slug === 'captain')!.id;
 	});
 
 	afterAll(async () => {
@@ -189,6 +225,28 @@ describe('MCP create_comment / update_comment warn on passive-mention asks', () 
 		expect(result.warning).toContain('active mention');
 		// The passive form genuinely notified no one.
 		expect(await adminMentionCount(result.id!)).toBe(0);
+	});
+
+	it('warns on the routing-label handoff `**Next step:** @@captain — …your…` (screenshot case)', async () => {
+		const taskId = await insertTask(captainId, 'Routing-label captain handoff');
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			productLeadId,
+			teamId,
+			taskId,
+			{ projectId },
+		);
+		const result = await callTool(agentToken, 'create_comment', {
+			project: projectId,
+			task_id: taskId,
+			content:
+				'**Next step:** @@captain — this draft is reviewed and approved from my side. Ready ' +
+				'for your strategic review before we schedule.',
+		});
+		expect(result.warning).toBeDefined();
+		expect(result.warning).toContain('captain');
+		expect(result.warning).toContain('active mention');
 	});
 
 	it('does not warn on a passive @@admin reference with no ask intent', async () => {

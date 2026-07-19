@@ -19,6 +19,30 @@ describe('detectUnlinkedTeammateAsks', () => {
 		]);
 	});
 
+	it('flags a routing-label handoff that reads as an ask (`**Next step:** architect —`)', () => {
+		expect(
+			detectUnlinkedTeammateAsks(
+				'**Next step:** architect — ready for your review before we ship.',
+				slugs,
+			),
+		).toEqual(['architect']);
+	});
+
+	it('does not flag a routing-label handoff without ask intent', () => {
+		expect(
+			detectUnlinkedTeammateAsks('**Next step:** architect — merged and shipped.', slugs),
+		).toEqual([]);
+	});
+
+	it('does not flag a teammate named after an unrelated label phrase', () => {
+		expect(
+			detectUnlinkedTeammateAsks(
+				'Status update: the architect finished, thanks for asking.',
+				slugs,
+			),
+		).toEqual([]);
+	});
+
 	it('does not flag a bold name used for emphasis/attribution (no ask intent)', () => {
 		expect(
 			detectUnlinkedTeammateAsks(
