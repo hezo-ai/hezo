@@ -1,17 +1,11 @@
 import { ArrowRight, History } from 'lucide-react';
+import { formatDateTime, formatRelativeTime } from '../../lib/format-date';
 
 interface ViewingRevisionBannerProps {
 	revisionNumber: number;
 	timestamp?: string;
 	authorName?: string | null;
 	onViewLatest: () => void;
-}
-
-function formatWhen(iso?: string): string {
-	if (!iso) return '';
-	const d = new Date(iso);
-	if (Number.isNaN(d.getTime())) return '';
-	return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 /**
@@ -25,10 +19,7 @@ export function ViewingRevisionBanner({
 	authorName,
 	onViewLatest,
 }: ViewingRevisionBannerProps) {
-	const when = formatWhen(timestamp);
-	const detail = [when && `created ${when}`, authorName && `by ${authorName}`]
-		.filter(Boolean)
-		.join(' ');
+	const relative = timestamp ? formatRelativeTime(timestamp) : '';
 	return (
 		<div
 			data-testid="viewing-revision-banner"
@@ -37,7 +28,21 @@ export function ViewingRevisionBanner({
 			<History className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
 			<span className="min-w-0 truncate">
 				<span className="font-semibold">You are viewing revision {revisionNumber}</span>
-				{detail && <span className="opacity-80"> · {detail}</span>}
+				{(relative || authorName) && (
+					<span className="opacity-80">
+						{' · '}
+						{relative && timestamp && (
+							<time dateTime={timestamp} title={formatDateTime(timestamp)}>
+								created {relative}
+							</time>
+						)}
+						{authorName && (
+							<>
+								{relative ? ' ' : ''}by {authorName}
+							</>
+						)}
+					</span>
+				)}
 			</span>
 			<button
 				type="button"

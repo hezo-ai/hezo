@@ -3,6 +3,7 @@ import type { AuditEntry } from '../hooks/use-audit-log';
 import { auditEntryLink, describeAuditEntry } from '../lib/audit-format';
 import { ActorBadge } from './ui/actor-badge';
 import { type Column, DataTable } from './ui/data-table';
+import { RelativeTime } from './ui/relative-time';
 
 /**
  * Shared renderer for the activity (audit) log, used by the per-project and
@@ -30,9 +31,7 @@ function buildColumns(showProject: boolean): Column<AuditEntry>[] {
 			key: 'time',
 			header: 'Time',
 			hideOnMobile: true,
-			render: (e) => (
-				<span className="text-xs text-text-3">{new Date(e.created_at).toLocaleString()}</span>
-			),
+			render: (e) => <RelativeTime iso={e.created_at} className="text-xs text-text-3" />,
 		},
 		{
 			key: 'actor',

@@ -1,6 +1,7 @@
 import type { AdminMentionItem } from '@hezo/shared';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { useMarkMentionRead } from '../hooks/use-admin-mentions';
+import { formatDateTime, formatRelativeTime } from '../lib/format-date';
 import { Badge } from './ui/badge';
 
 interface MentionCardProps {
@@ -10,16 +11,6 @@ interface MentionCardProps {
 
 const baseCardClass = 'block p-4 border border-border rounded-md text-left w-full';
 const linkCardClass = `${baseCardClass} hover:bg-surface-2 transition-colors`;
-
-function relativeTime(iso: string): string {
-	const then = new Date(iso).getTime();
-	if (Number.isNaN(then)) return '';
-	const diff = Date.now() - then;
-	if (diff < 60_000) return 'just now';
-	if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
-	if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
-	return `${Math.floor(diff / 86_400_000)}d ago`;
-}
 
 export function MentionCard({ mention, showTeam = false }: MentionCardProps) {
 	const navigate = useNavigate();
@@ -67,7 +58,13 @@ export function MentionCard({ mention, showTeam = false }: MentionCardProps) {
 					mention
 				</Badge>
 				{showTeam && <span className="text-xs text-text-2">{mention.team_slug}</span>}
-				<span className="text-xs text-text-2">{relativeTime(mention.created_at)}</span>
+				<time
+					dateTime={mention.created_at}
+					title={formatDateTime(mention.created_at)}
+					className="text-xs text-text-2"
+				>
+					{formatRelativeTime(mention.created_at)}
+				</time>
 			</div>
 			<p className={`text-xs mb-1 ${unread ? 'text-text-1' : 'text-text-2'}`}>
 				<span className={unread ? 'font-semibold' : 'font-medium'}>{author}</span> asked you on{' '}

@@ -3,17 +3,7 @@ import { useEffect, useId, useState } from 'react';
 import { useProjectProgress } from '../hooks/use-projects';
 import { MarkdownProse } from './markdown-prose';
 import { HelpDialog } from './ui/help-dialog';
-
-function formatUpdated(iso: string): string {
-	const d = new Date(iso);
-	if (Number.isNaN(d.getTime())) return iso;
-	return d.toLocaleString(undefined, {
-		month: 'short',
-		day: 'numeric',
-		hour: 'numeric',
-		minute: '2-digit',
-	});
-}
+import { RelativeTime } from './ui/relative-time';
 
 /**
  * Split the summary into its bold lead line (the key points the Captain leads with) and the rest
@@ -91,7 +81,9 @@ export function ProjectProgressSummary({ projectId }: { projectId: string }) {
 					<ProjectProgressHelp />
 				</div>
 				{data?.updated_at && (
-					<span className="text-[11px] text-text-3">Updated {formatUpdated(data.updated_at)}</span>
+					<span className="text-[11px] text-text-3">
+						Updated <RelativeTime iso={data.updated_at} />
+					</span>
 				)}
 			</div>
 			<div id={contentId}>

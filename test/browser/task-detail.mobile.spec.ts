@@ -267,7 +267,7 @@ test.describe('Comment header — mobile (narrow viewport)', () => {
 		if (!replyRes.ok()) throw new Error(`seed reply failed: ${replyRes.status()}`);
 	}
 
-	test('header stays on one row; timestamp truncates and reveals the full value on tap', async ({
+	test('header stays on one row; timestamp shows a relative label and reveals the full date on tap', async ({
 		page,
 		freshWorkspace,
 	}) => {
@@ -312,22 +312,26 @@ test.describe('Comment header — mobile (narrow viewport)', () => {
 		expect(sameRow(authorBox, tsBox)).toBe(true);
 		expect(sameRow(authorBox, replyBox)).toBe(true);
 
-		// The timestamp is the segment that gave way: it is clipped to an ellipsis
-		// (rendered narrower than its full text), yet its full value is intact in
-		// the DOM for the tooltip.
-		const truncated = await timestamp.evaluate((el) => el.scrollWidth > el.clientWidth);
-		expect(truncated).toBe(true);
+		// The timestamp is a short relative label ("… ago"), truncatable if needed
+		// (min-w-0 truncate), and it stays within the viewport.
 		expect(tsBox.x + tsBox.width).toBeLessThanOrEqual(320);
-		const full = ((await timestamp.textContent()) ?? '').trim();
-		expect(full.length).toBeGreaterThan(0);
+		const label = ((await timestamp.textContent()) ?? '').trim();
+		expect(label.length).toBeGreaterThan(0);
+		// A freshly-seeded comment reads as "… ago", not the absolute date.
+		expect(label).toMatch(/ago$/);
 
-		// Tapping the timestamp reveals the full date/time in a tooltip (Radix
-		// tooltips never open on tap, so the component drives `open` from its own
-		// touchstart handler).
+		// Tapping the timestamp reveals the full absolute date/time in a tooltip
+		// (Radix tooltips never open on tap, so the component drives `open` from its
+		// own touchstart handler). The tooltip shows the exact timestamp, which is
+		// distinct from the relative label.
 		await timestamp.dispatchEvent('touchstart');
 		const tooltip = page.getByRole('tooltip');
 		await expect(tooltip).toBeVisible({ timeout: 5000 });
-		expect(((await tooltip.textContent()) ?? '').trim()).toBe(full);
+		const tooltipText = ((await tooltip.textContent()) ?? '').trim();
+		expect(tooltipText).not.toBe(label);
+		// The absolute local date+time includes a clock component (e.g.
+		// "7/19/2026, 4:46:44 AM"); the relative label never does.
+		expect(tooltipText).toMatch(/\d:\d\d/);
 	});
 });
 

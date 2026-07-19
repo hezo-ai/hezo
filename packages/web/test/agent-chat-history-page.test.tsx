@@ -72,10 +72,11 @@ test('stored memory loads into the editor with its updated timestamp; edits save
 	})) as HTMLTextAreaElement;
 	await waitFor(() => expect(editor.value).toBe('Operator prefers concise updates.'));
 
-	// The header shows when the memory was last written (formatUpdated output —
-	// e.g. "Updated Jul 6, 10:00 AM" — always starts with "Updated" + month).
+	// The header shows when the memory was last written as a relative label
+	// (RelativeTime) — just-written memory reads "Updated <n> seconds ago".
 	const updated = await findByTestId('chat-history-updated');
-	expect(updated.textContent).toMatch(/^Updated \w{3} \d/);
+	expect(updated.textContent).toMatch(/^Updated /);
+	expect(updated.textContent).toContain('ago');
 
 	// Pristine editor → Save disabled.
 	const save = getByTestId('chat-history-save') as HTMLButtonElement;

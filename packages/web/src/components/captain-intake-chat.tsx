@@ -3,6 +3,7 @@ import { Loader2 } from 'lucide-react';
 import { useEffect, useMemo, useRef } from 'react';
 import { type Comment, useComments } from '../hooks/use-comments';
 import { CaptainAvatar, captainChatBubbleMinHClass } from './captain-avatar';
+import { RelativeTime } from './ui/relative-time';
 
 /** Indent name/timestamp to align with bubble column (avatar width + gap). */
 const captainChatMetaIndentClass = 'pl-[calc(2.625rem+0.625rem)]';
@@ -22,15 +23,6 @@ function getCommentText(content: Comment['content']): string {
 		return typeof text === 'string' ? text : '';
 	}
 	return '';
-}
-
-function formatMessageTime(iso: string): string {
-	return new Date(iso).toLocaleString(undefined, {
-		month: 'short',
-		day: 'numeric',
-		hour: 'numeric',
-		minute: '2-digit',
-	});
 }
 
 interface CaptainIntakeChatProps {
@@ -110,9 +102,10 @@ export function CaptainIntakeChat({
 									{text}
 								</div>
 							</div>
-							<span className={`text-[10px] text-text-3 ${captainChatMetaIndentClass}`}>
-								{formatMessageTime(comment.created_at)}
-							</span>
+							<RelativeTime
+								iso={comment.created_at}
+								className={`text-[10px] text-text-3 ${captainChatMetaIndentClass}`}
+							/>
 						</div>
 					);
 				}
@@ -128,9 +121,7 @@ export function CaptainIntakeChat({
 						<div className="max-w-[min(100%,42rem)] rounded-md rounded-br-sm bg-info-soft border border-info-soft-fg/20 px-3 py-2.5 text-[13px] md:text-sm text-text-1 leading-relaxed whitespace-pre-wrap">
 							{text}
 						</div>
-						<span className="text-[10px] text-text-3 pr-0.5">
-							{formatMessageTime(comment.created_at)}
-						</span>
+						<RelativeTime iso={comment.created_at} className="text-[10px] text-text-3 pr-0.5" />
 					</div>
 				);
 			})}

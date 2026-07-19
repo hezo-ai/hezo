@@ -20,6 +20,7 @@ import { getInitials } from '../../../../../components/ui/avatar';
 import { Button } from '../../../../../components/ui/button';
 import { ExpandableText } from '../../../../../components/ui/expandable-text';
 import { Input } from '../../../../../components/ui/input';
+import { RelativeTime } from '../../../../../components/ui/relative-time';
 import { Textarea } from '../../../../../components/ui/textarea';
 import {
 	useAgent,
@@ -189,7 +190,7 @@ function AgentSettingsPage() {
 					<div className="text-sm">Every {agent.heartbeat_interval_min} min</div>
 					{agent.last_heartbeat_at && (
 						<div className="text-xs text-text-3 mt-1">
-							Last: {new Date(agent.last_heartbeat_at).toLocaleString()}
+							Last: <RelativeTime iso={agent.last_heartbeat_at} />
 						</div>
 					)}
 				</div>

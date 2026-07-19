@@ -8,6 +8,7 @@ import { useAgents } from '../hooks/use-agents';
 import { useDocMentions, useInstanceMentions } from '../hooks/use-mentions';
 import { useTaskMentions } from '../hooks/use-tasks';
 import { docPreviewPath } from '../lib/doc-preview';
+import { formatRelativeTime } from '../lib/format-date';
 import { type ReviewAnnotation, rehypeReviewHighlights } from '../lib/rehype-review-highlights';
 import { type CommentRefTask, remarkCommentRefs } from '../lib/remark-comment-refs';
 import {
@@ -574,7 +575,7 @@ function DocTooltipContent({
 		<div className="flex flex-col gap-0.5">
 			<span className="font-semibold">{title}</span>
 			<span className="opacity-70">
-				{formatSize(size)} · updated {formatRelative(updatedAt)}
+				{formatSize(size)} · updated {formatRelativeTime(updatedAt)}
 			</span>
 		</div>
 	);
@@ -585,28 +586,4 @@ function formatSize(bytes: number): string {
 	if (bytes < 1024) return `${bytes} B`;
 	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
 	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-const RELATIVE_UNITS: Array<[Intl.RelativeTimeFormatUnit, number]> = [
-	['year', 60 * 60 * 24 * 365],
-	['month', 60 * 60 * 24 * 30],
-	['week', 60 * 60 * 24 * 7],
-	['day', 60 * 60 * 24],
-	['hour', 60 * 60],
-	['minute', 60],
-	['second', 1],
-];
-
-function formatRelative(iso: string): string {
-	if (!iso) return '';
-	const then = new Date(iso).getTime();
-	if (!Number.isFinite(then)) return '';
-	const deltaSeconds = Math.round((then - Date.now()) / 1000);
-	const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
-	for (const [unit, secondsPerUnit] of RELATIVE_UNITS) {
-		if (Math.abs(deltaSeconds) >= secondsPerUnit || unit === 'second') {
-			return rtf.format(Math.round(deltaSeconds / secondsPerUnit), unit);
-		}
-	}
-	return '';
 }

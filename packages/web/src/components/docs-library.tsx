@@ -25,6 +25,7 @@ import { ConfirmDialog } from './ui/confirm-dialog';
 import { EmptyState } from './ui/empty-state';
 import { Input } from './ui/input';
 import { NameSwitcherButton } from './ui/name-switcher-button';
+import { RelativeTime } from './ui/relative-time';
 import { Tooltip } from './ui/tooltip';
 
 /** Remembers the doc-list collapse choice across documents and visits. */
@@ -515,7 +516,7 @@ export function DocsLibrary({
 										{archivedInfo.archivedByName
 											? ` — archived by ${archivedInfo.archivedByName}`
 											: ''}{' '}
-										on {new Date(archivedInfo.archivedAt).toLocaleDateString()}.
+										<RelativeTime iso={archivedInfo.archivedAt} />.
 									</span>
 								</div>
 								{onRestore && (

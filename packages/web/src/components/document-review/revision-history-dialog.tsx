@@ -8,6 +8,7 @@ import { Avatar, getInitials } from '../ui/avatar';
 import { Button } from '../ui/button';
 import { ConfirmDialog } from '../ui/confirm-dialog';
 import { DialogContent } from '../ui/dialog';
+import { RelativeTime } from '../ui/relative-time';
 
 interface RevisionHistoryDialogProps {
 	open: boolean;
@@ -23,18 +24,6 @@ interface RevisionHistoryDialogProps {
 	/** Admins only — omit to hide the Restore action. */
 	onRestore?: (revisionNumber: number) => Promise<unknown>;
 	isRestoring?: boolean;
-}
-
-function formatWhen(iso: string): string {
-	const d = new Date(iso);
-	if (Number.isNaN(d.getTime())) return iso;
-	return d.toLocaleString(undefined, {
-		month: 'short',
-		day: 'numeric',
-		year: 'numeric',
-		hour: 'numeric',
-		minute: '2-digit',
-	});
 }
 
 /**
@@ -94,9 +83,10 @@ export function RevisionHistoryDialog({
 										>
 											{e.isCurrent ? 'Current' : `Rev ${e.revisionNumber}`}
 										</span>
-										<span className="ml-auto text-[11px] tabular-nums text-text-3">
-											{formatWhen(e.timestamp)}
-										</span>
+										<RelativeTime
+											iso={e.timestamp}
+											className="ml-auto text-[11px] tabular-nums text-text-3"
+										/>
 									</div>
 									<div className="px-3 py-2.5">
 										{e.isInitial || !e.changelog.trim() ? (

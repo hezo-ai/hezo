@@ -10,6 +10,7 @@ import { type Column, DataTable } from '../../components/ui/data-table';
 import { InPlaceForm } from '../../components/ui/in-place-form';
 import { InfoTooltip } from '../../components/ui/info-tooltip';
 import { Input } from '../../components/ui/input';
+import { RelativeTime } from '../../components/ui/relative-time';
 import { Tooltip } from '../../components/ui/tooltip';
 import {
 	type CredentialUsage,
@@ -20,18 +21,6 @@ import {
 } from '../../hooks/use-instance-credentials';
 import { useMe } from '../../hooks/use-me';
 import { toast } from '../../hooks/use-toast';
-
-function formatRelative(iso: string | null): string {
-	if (!iso) return 'never';
-	const ms = Date.now() - new Date(iso).getTime();
-	const min = 60 * 1000;
-	const hr = 60 * min;
-	const day = 24 * hr;
-	if (ms < min) return 'just now';
-	if (ms < hr) return `${Math.floor(ms / min)}m ago`;
-	if (ms < day) return `${Math.floor(ms / hr)}h ago`;
-	return `${Math.floor(ms / day)}d ago`;
-}
 
 function InstanceCredentialsPage() {
 	const { data: me } = useMe();
@@ -157,13 +146,7 @@ function InstanceCredentialsPage() {
 			header: 'Last used',
 			render: (r) => (
 				<span className="text-xs">
-					{r.last_used_at ? (
-						<Tooltip content={r.last_used_at}>
-							<span>{formatRelative(r.last_used_at)}</span>
-						</Tooltip>
-					) : (
-						<span>{formatRelative(r.last_used_at)}</span>
-					)}
+					{r.last_used_at ? <RelativeTime iso={r.last_used_at} /> : <span>never</span>}
 					{r.last_host && <span className="text-text-3 ml-2 font-mono">{r.last_host}</span>}
 				</span>
 			),

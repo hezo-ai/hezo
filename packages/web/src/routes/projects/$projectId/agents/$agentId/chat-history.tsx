@@ -4,22 +4,12 @@ import { useEffect, useState } from 'react';
 import { MarkdownEditor } from '../../../../../components/markdown-editor';
 import { Button } from '../../../../../components/ui/button';
 import { HelpDialog } from '../../../../../components/ui/help-dialog';
+import { RelativeTime } from '../../../../../components/ui/relative-time';
 import {
 	useAgentChatMemory,
 	useUpdateAgentChatMemory,
 } from '../../../../../hooks/use-agent-chat-memory';
 import type { ApiError } from '../../../../../lib/api';
-
-function formatUpdated(iso: string): string {
-	const d = new Date(iso);
-	if (Number.isNaN(d.getTime())) return iso;
-	return d.toLocaleString(undefined, {
-		month: 'short',
-		day: 'numeric',
-		hour: 'numeric',
-		minute: '2-digit',
-	});
-}
 
 function ChatHistoryHelp() {
 	return (
@@ -90,7 +80,7 @@ function ChatHistoryPage() {
 				</div>
 				{data?.updated_at && (
 					<span className="text-[11px] text-text-3" data-testid="chat-history-updated">
-						Updated {formatUpdated(data.updated_at)}
+						Updated <RelativeTime iso={data.updated_at} />
 					</span>
 				)}
 			</div>

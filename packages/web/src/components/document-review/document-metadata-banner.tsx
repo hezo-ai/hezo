@@ -2,6 +2,7 @@ import { Archive } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { ActorBadge } from '../ui/actor-badge';
 import { getInitials } from '../ui/avatar';
+import { RelativeTime } from '../ui/relative-time';
 
 export interface DocMetadata {
 	createdAt?: string;
@@ -12,24 +13,6 @@ export interface DocMetadata {
 	archivedAt?: string | null;
 	/** Resolved name of whoever archived it (single-doc responses only). */
 	archivedByName?: string | null;
-}
-
-function shortDate(iso: string): string {
-	const d = new Date(iso);
-	if (Number.isNaN(d.getTime())) return iso;
-	return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-}
-
-function fullDateTime(iso: string): string {
-	const d = new Date(iso);
-	if (Number.isNaN(d.getTime())) return iso;
-	return d.toLocaleString(undefined, {
-		month: 'short',
-		day: 'numeric',
-		year: 'numeric',
-		hour: 'numeric',
-		minute: '2-digit',
-	});
 }
 
 const K = 'text-[9.5px] font-semibold uppercase tracking-wide text-text-3';
@@ -59,7 +42,7 @@ export function DocumentMetadataBanner({
 			>
 				<Archive className="h-3.5 w-3.5 shrink-0" aria-hidden />
 				<span className="text-[9.5px] font-semibold uppercase tracking-wide">Archived</span>
-				<span title={fullDateTime(archivedAt)}>{shortDate(archivedAt)}</span>
+				<RelativeTime iso={archivedAt} />
 				{archivedByName && <span className="text-text-2">by {archivedByName}</span>}
 			</span>,
 		);
@@ -68,7 +51,7 @@ export function DocumentMetadataBanner({
 		items.push(
 			<span key="created" className="inline-flex items-center gap-1.5 tabular-nums">
 				<span className={K}>Created</span>
-				<span title={fullDateTime(createdAt)}>{shortDate(createdAt)}</span>
+				<RelativeTime iso={createdAt} />
 			</span>,
 		);
 	}
@@ -76,7 +59,7 @@ export function DocumentMetadataBanner({
 		items.push(
 			<span key="updated" className="inline-flex items-center gap-1.5 tabular-nums">
 				<span className={K}>Updated</span>
-				<span title={fullDateTime(updatedAt)}>{shortDate(updatedAt)}</span>
+				<RelativeTime iso={updatedAt} />
 			</span>,
 		);
 	}

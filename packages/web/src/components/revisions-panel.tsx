@@ -4,6 +4,7 @@ import { ActorBadge } from './ui/actor-badge';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { ConfirmDialog } from './ui/confirm-dialog';
+import { RelativeTime } from './ui/relative-time';
 
 export interface DocumentRevision {
 	id: string;
@@ -51,9 +52,7 @@ export function RevisionsPanel({ revisions, onRestore, isRestoring }: RevisionsP
 										{rev.author_name || 'Admin'}
 										<ActorBadge actorType={rev.author_type} name={rev.author_name} />
 									</span>
-									<span className="text-xs text-text-3 ml-auto">
-										{new Date(rev.created_at).toLocaleString()}
-									</span>
+									<RelativeTime iso={rev.created_at} className="text-xs text-text-3 ml-auto" />
 									<Button
 										variant="ghost"
 										size="sm"

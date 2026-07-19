@@ -9,6 +9,7 @@ import { Avatar, avatarColorFromString, getInitials } from '../../components/ui/
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
+import { RelativeTime } from '../../components/ui/relative-time';
 import { useAllAdminMentions } from '../../hooks/use-admin-mentions';
 import { type Approval, useAllApprovals } from '../../hooks/use-approvals';
 import { useContainerHealth } from '../../hooks/use-container-health';
@@ -18,26 +19,6 @@ import {
 	useAllVisibleProjects,
 	useHqProject,
 } from '../../hooks/use-projects';
-
-const RELATIVE_UNITS: Array<[Intl.RelativeTimeFormatUnit, number]> = [
-	['day', 86400],
-	['hour', 3600],
-	['minute', 60],
-];
-
-/** Compact "2h ago" / "3d ago" / "just now" from an ISO timestamp. */
-function relativeTime(iso: string): string {
-	const then = new Date(iso).getTime();
-	if (!Number.isFinite(then)) return '';
-	const deltaSec = Math.round((Date.now() - then) / 1000);
-	for (const [unit, per] of RELATIVE_UNITS) {
-		if (deltaSec >= per) {
-			const n = Math.floor(deltaSec / per);
-			return `${n}${unit[0]}`; // 2d / 3h / 5m
-		}
-	}
-	return 'now';
-}
 
 function formatMoney(cents: number): string {
 	return `$${(cents / 100).toFixed(2)}`;
@@ -158,7 +139,7 @@ function NeedsYouRowShell({
 			<span className="min-w-0 flex-1 truncate text-[13px] text-text-1">{children}</span>
 			<span className="shrink-0 font-mono text-[11px] text-text-3">
 				{project ? `${project} · ` : ''}
-				{relativeTime(createdAt)}
+				<RelativeTime iso={createdAt} compact />
 			</span>
 			{actionLink}
 		</div>
@@ -302,8 +283,6 @@ function ActiveProjectCard({
 
 function OtherProjectRow({ project }: { project: ProjectWithTeam }) {
 	const paused = project.container_status === 'stopped' || project.container_status === 'error';
-	const rel = relativeTime(project.last_activity_at);
-	const activity = rel === 'now' ? 'just now' : `last ${rel} ago`;
 	return (
 		<Link
 			to="/projects/$projectId"
@@ -321,7 +300,7 @@ function OtherProjectRow({ project }: { project: ProjectWithTeam }) {
 					{paused ? 'paused' : 'idle'}
 				</span>
 				<span className="shrink-0 font-mono text-[11px] text-text-3">
-					{project.open_task_count} tasks · {activity}
+					{project.open_task_count} tasks · <RelativeTime iso={project.last_activity_at} compact />
 				</span>
 			</div>
 		</Link>

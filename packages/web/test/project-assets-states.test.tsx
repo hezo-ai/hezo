@@ -297,7 +297,7 @@ test('uploading a disallowed file type surfaces a transient error chip', async (
 	expect(chip.textContent).toContain('malware.exe');
 });
 
-test('the asset card shows the relative updated time after the size, with the exact timestamp in the <abbr> title', async () => {
+test('the asset card shows the relative updated time after the size, as a <time> element carrying the exact timestamp', async () => {
 	const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
 	const r = await renderAssetsWith([
 		asset({
@@ -316,9 +316,8 @@ test('the asset card shows the relative updated time after the size, with the ex
 	const meta = updated.parentElement as HTMLElement;
 	expect(meta.textContent).toContain('7.8 KB');
 	expect(meta.textContent).toContain('·');
-	// Hovering surfaces the exact timestamp via the native <abbr> tooltip.
-	expect(updated.tagName).toBe('ABBR');
-	const title = updated.getAttribute('title') ?? '';
-	expect(title).not.toBe('');
-	expect(title).toContain(new Date(twoDaysAgo).getFullYear().toString());
+	// Rendered as a semantic <time> whose dateTime carries the exact timestamp;
+	// the full local date+time is surfaced on hover/tap via the RelativeTime tooltip.
+	expect(updated.tagName).toBe('TIME');
+	expect(updated.getAttribute('datetime')).toBe(twoDaysAgo);
 });
