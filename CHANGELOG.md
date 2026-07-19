@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.28.0 - 2026-07-19
+
+### Features
+
+- **comments:** lazy-load comment bodies on scroll-dwell ([#763](https://github.com/hezo-ai/hezo/pull/763))
+- **web:** show keyboard shortcuts as inset keycaps on buttons ([#761](https://github.com/hezo-ai/hezo/pull/761))
+- **web:** render markdown text preview in asset thumbnails ([#760](https://github.com/hezo-ai/hezo/pull/760))
+
+### Bug Fixes
+
+- **runs:** actually kill the agent process on terminate/timeout ([#762](https://github.com/hezo-ai/hezo/pull/762))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.27.0...0.28.0
+
 ## 0.27.0 - 2026-07-18
 
 ### Features
