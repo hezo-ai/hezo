@@ -451,13 +451,15 @@ test('expanded mode lays a modal backdrop that dismisses the chat when clicked',
 	(await findByTestId('chat-launcher')).click();
 	await findByTestId('chat-panel');
 
-	// Anchored: no backdrop — the rest of the page stays interactive.
-	expect(queryByTestId('chat-overlay')).toBeNull();
+	// Anchored: the scrim is rendered but scoped to mobile (`md:hidden`), so the
+	// desktop corner panel leaves the rest of the page interactive.
+	const anchoredOverlay = await findByTestId('chat-overlay');
+	expect(anchoredOverlay.className).toContain('md:hidden');
 
-	// Expanding makes it modal: a scrim appears behind the panel.
+	// Expanding makes it modal on desktop too: the scrim drops `md:hidden`.
 	getByTestId('chat-expand').click();
-	const overlay = await findByTestId('chat-overlay');
-	expect(overlay).toBeTruthy();
+	await waitFor(() => expect(getByTestId('chat-overlay').className).not.toContain('md:hidden'));
+	const overlay = getByTestId('chat-overlay');
 
 	// Clicking the backdrop dismisses the chat entirely.
 	overlay.click();
@@ -466,17 +468,18 @@ test('expanded mode lays a modal backdrop that dismisses the chat when clicked',
 	expect(queryByTestId('chat-overlay')).toBeNull();
 });
 
-test('collapsing out of expanded removes the backdrop but keeps the chat open', async () => {
-	const { findByTestId, queryByTestId, getByTestId } = await renderApp({ initialPath: '/home' });
+test('collapsing out of expanded reverts the backdrop to mobile-only but keeps the chat open', async () => {
+	const { findByTestId, getByTestId } = await renderApp({ initialPath: '/home' });
 	(await findByTestId('chat-launcher')).click();
 	await findByTestId('chat-panel');
 
 	getByTestId('chat-expand').click();
-	await findByTestId('chat-overlay');
+	await waitFor(() => expect(getByTestId('chat-overlay').className).not.toContain('md:hidden'));
 
-	// The collapse toggle exits modal mode: backdrop gone, panel still open.
+	// The collapse toggle exits desktop-modal mode: the scrim goes back to
+	// mobile-only (`md:hidden`), panel still open.
 	getByTestId('chat-expand').click();
-	await waitFor(() => expect(queryByTestId('chat-overlay')).toBeNull());
+	await waitFor(() => expect(getByTestId('chat-overlay').className).toContain('md:hidden'));
 	expect(getByTestId('chat-panel')).toBeTruthy();
 });
 
