@@ -29,6 +29,14 @@ test.describe('CEO chat widget — responsive layout', () => {
 		expect(mobileBox).not.toBeNull();
 		expect(mobileBox?.width ?? 0).toBeGreaterThan(340);
 
+		// Mobile: a dark scrim sits behind the floating sheet so the page content
+		// showing through its margins is dimmed and the panel reads clearly. It
+		// spans the full width below the nav bar.
+		const overlay = page.getByTestId('chat-overlay');
+		await expect(overlay).toBeVisible();
+		const overlayBox = await overlay.boundingBox();
+		expect(overlayBox?.width ?? 0).toBeGreaterThan(370);
+
 		// Desktop: the same open panel re-lays out to the anchored ~420px width.
 		await page.setViewportSize({ width: 1280, height: 800 });
 		await expect(panel).toBeVisible();
@@ -36,6 +44,9 @@ test.describe('CEO chat widget — responsive layout', () => {
 		expect(desktopBox).not.toBeNull();
 		expect(desktopBox?.width ?? 0).toBeGreaterThan(340);
 		expect(desktopBox?.width ?? 0).toBeLessThan(440);
+
+		// …and the anchored corner panel needs no scrim, so it's gone on desktop.
+		await expect(overlay).toBeHidden();
 	});
 
 	test('expanding fills the viewport but never covers the nav bar', async ({

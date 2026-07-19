@@ -231,18 +231,21 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 
 	return (
 		<>
-			{/* In expanded mode the chat is modal: a scrim dims and occludes the page
-			    content below the nav bar (the header stays clear and usable, matching
-			    the panel's own top-12 boundary). Clicking it dismisses the chat. */}
-			{expanded && (
-				<button
-					type="button"
-					aria-label="Close chat"
-					data-testid="chat-overlay"
-					onClick={() => setOpen(false)}
-					className="fixed inset-x-0 bottom-0 top-12 z-40 bg-[var(--overlay)] cursor-default"
-				/>
-			)}
+			{/* Modal scrim behind the panel: a dark translucent layer dims and occludes
+			    the page content below the nav bar (the header stays clear and usable,
+			    matching the panel's own top-12 boundary), so the panel reads clearly
+			    against the page. It always shows on mobile (where the panel floats over
+			    the page with margins around it) and, on desktop, only in expanded mode —
+			    the anchored corner panel doesn't need one. Clicking it dismisses the chat. */}
+			<button
+				type="button"
+				aria-label="Close chat"
+				data-testid="chat-overlay"
+				onClick={() => setOpen(false)}
+				className={`fixed inset-x-0 bottom-0 top-12 z-40 bg-[var(--overlay)] cursor-default ${
+					expanded ? '' : 'md:hidden'
+				}`}
+			/>
 			<div
 				data-testid="chat-panel"
 				data-expanded={expanded}
