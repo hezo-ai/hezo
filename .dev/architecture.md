@@ -1937,8 +1937,11 @@ interface agents drive — tasks, comments, approvals, credentials — and exter
 can drive it too, with an **API key** (minted by an admin, or obtained by
 **self-registration** — pending admin approval, then admin-equivalent across every
 project/team; § 10). It also exposes `POST /mcp/assets` (multipart) for binary uploads,
-since JSON-RPC can't carry a file — with optional `project` and `folder` fields (the
-latter placing the asset in a library folder, up to 2 levels). **API keys authenticate the MCP surface only**; REST is
+since JSON-RPC can't carry a file — with optional `project`, `path` (the full destination
+path, folders + basename, up to 2 levels, preserved verbatim — also honoured from the file
+part's `filename=`), `overwrite` (`true` replaces an existing asset at the path in place,
+like `write_project_asset`), and the legacy `folder` field (placing the basename in a
+library folder; ignored when `path` is given). **API keys authenticate the MCP surface only**; REST is
 the user-JWT (human/browser) surface. `GET /SKILL.md` serves the
 manifest that teaches an external agent how to use it — including the connect/register
 flow — and `GET /llms.txt` points to it. The matching **human** reference — a full

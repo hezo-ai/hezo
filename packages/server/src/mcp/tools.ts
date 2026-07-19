@@ -4064,7 +4064,7 @@ export function registerTools(
 	tool(
 		server,
 		'write_project_asset',
-		'Save a file to the project assets library so a human can open it AND other agents (your teammates and your own future runs) can read it back with read_project_asset — including a binary deliverable or generation output you produced (a rendered image, chart, diagram, screenshot, PDF, dataset, or media file). This is how such a file reaches both the admin and the next agent: a file left on the ephemeral container disk vanishes when the run ends and is invisible to everyone else, so anything a later step or teammate will reuse belongs here. Text formats (.html, .svg, .txt, .md, plus script/text formats stored as plain text: .sh, .py, .js, .ts, .json, .csv, .yaml, .yml) are written with the default encoding "utf8". Binary formats — any type a human can upload (.png, .jpg, .jpeg, .gif, .webp, .pdf, .mp3, .mp4, .webm, …) — MUST pass encoding: "base64" with the file\'s bytes base64-encoded in `content`. For a LARGE binary, upload it instead via a multipart/form-data POST to `/mcp/assets` (field `file`, same Bearer auth): base64 in a JSON-RPC tool call can be silently truncated by a runtime\'s argument-size cap, whereas the multipart endpoint streams the bytes; the result is identical and shows up in list_project_assets / read_project_asset. The filename may include a folder path up to 2 levels deep (e.g. "scripts/deploy-check.sh" or "launch/images/hero.png") — folders spring into existence with their first asset. Re-saving the same path overwrites it, so the reference stays stable; overwrite matching is PATH-EXACT ("x.html" and "blog/x.html" are different assets — after a move, write to the new full path or you will fork the file). IMPORTANT: any write to an existing path deletes ALL of its pending review comments (the admin\'s feedback returned by read_project_asset) — capture every comment in your context before the first write, and make all desired edits in one consolidated write. Returns the reference string to drop into a comment as `assets/<path>` (no backticks). HTML opens interactively in a new tab; markdown renders with a rich preview and a view-source toggle; images render inline in the assets library. Use a markdown asset for a standalone deliverable opened from the assets library; use write_project_doc for project context docs (specs, PRDs, research). Mockups and other deliverables belong here, never committed to the source repo.',
+		'Save a file to the project assets library so a human can open it AND other agents (your teammates and your own future runs) can read it back with read_project_asset — including a binary deliverable or generation output you produced (a rendered image, chart, diagram, screenshot, PDF, dataset, or media file). This is how such a file reaches both the admin and the next agent: a file left on the ephemeral container disk vanishes when the run ends and is invisible to everyone else, so anything a later step or teammate will reuse belongs here. Text formats (.html, .svg, .txt, .md, plus script/text formats stored as plain text: .sh, .py, .js, .ts, .json, .csv, .yaml, .yml) are written with the default encoding "utf8". Binary formats — any type a human can upload (.png, .jpg, .jpeg, .gif, .webp, .pdf, .mp3, .mp4, .webm, …) — MUST pass encoding: "base64" with the file\'s bytes base64-encoded in `content`. For a LARGE binary, upload it instead via a multipart/form-data POST to `/mcp/assets` (fields `file` and `path` for the full destination path, plus optional `overwrite=true` to replace an existing asset in place, same Bearer auth): base64 in a JSON-RPC tool call can be silently truncated by a runtime\'s argument-size cap, whereas the multipart endpoint streams the bytes; the result is identical and shows up in list_project_assets / read_project_asset. When you DO write a binary through this tool, pass `byte_size` (the file\'s exact byte length) so a truncated `content` is rejected instead of stored corrupt. The filename may include a folder path up to 2 levels deep (e.g. "scripts/deploy-check.sh" or "launch/images/hero.png") — folders spring into existence with their first asset. Re-saving the same path overwrites it, so the reference stays stable; overwrite matching is PATH-EXACT ("x.html" and "blog/x.html" are different assets — after a move, write to the new full path or you will fork the file). IMPORTANT: any write to an existing path deletes ALL of its pending review comments (the admin\'s feedback returned by read_project_asset) — capture every comment in your context before the first write, and make all desired edits in one consolidated write. Returns the reference string to drop into a comment as `assets/<path>` (no backticks). HTML opens interactively in a new tab; markdown renders with a rich preview and a view-source toggle; images render inline in the assets library. Use a markdown asset for a standalone deliverable opened from the assets library; use write_project_doc for project context docs (specs, PRDs, research). Mockups and other deliverables belong here, never committed to the source repo.',
 		{
 			project: projectArg(),
 			filename: z
@@ -4080,6 +4080,14 @@ export function registerTools(
 				.optional()
 				.describe(
 					'utf8 (default) for text assets; base64 for binary assets (images, PDFs, media) — required for any non-text type',
+				),
+			byte_size: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe(
+					"For a base64 binary: the file's exact byte length. When provided, the decoded content is checked against it and a truncated upload (a runtime capping the tool-call argument size, cutting `content` mid-stream) is rejected instead of silently stored. Strongly recommended for binaries.",
 				),
 		},
 		async (args, db, auth) => {
@@ -4134,6 +4142,15 @@ export function registerTools(
 					};
 				}
 				blob = new Blob([new Uint8Array(Buffer.from(compact, 'base64'))], { type: contentType });
+				// Deterministic truncation check: when the caller declares the file's
+				// byte length, a decode that comes up short means the base64 argument
+				// was cut before it reached us (the %4 heuristic above misses cuts that
+				// land on a 4-char boundary). Reject rather than store a corrupt file.
+				if (args.byte_size !== undefined && blob.size !== (args.byte_size as number)) {
+					return {
+						error: `\`content\` decoded to ${blob.size} bytes but byte_size=${args.byte_size} was declared — the base64 arrived truncated (a runtime can cap the tool-call argument size, cutting \`content\` mid-stream). Upload binaries via a multipart/form-data POST to \`/mcp/assets\` (fields \`file\`, \`path\`, optional \`overwrite=true\`); it streams the bytes and is not subject to the JSON-RPC argument limit.`,
+					};
+				}
 			} else {
 				// Text stays a string BlobPart — Blob encodes it as UTF-8, byte-identical
 				// to the prior behaviour.
@@ -4198,7 +4215,12 @@ export function registerTools(
 				project_id: projectId,
 				original_filename: result.original_filename,
 			});
-			return { written: true, id: result.id, reference: `assets/${result.original_filename}` };
+			return {
+				written: true,
+				id: result.id,
+				reference: `assets/${result.original_filename}`,
+				byte_size: result.byte_size,
+			};
 		},
 		db,
 	);

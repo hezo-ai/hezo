@@ -109,17 +109,32 @@ For a complete, tool-by-tool description of every parameter and return value, se
 
 A binary file (an image, a PDF, …) can't ride inside a JSON-RPC tool call. To upload one,
 POST it as `multipart/form-data` to `/mcp/assets` with the same `Authorization: Bearer`
-header and a `file` field — add an optional `project` field when you're acting across
-projects, and an optional `folder` field to place the asset inside a library folder (up to
-two levels deep):
+header and a `file` field. Optional fields:
+
+- `path` — the full destination path (folders + basename, up to two levels, e.g.
+  `launch/images/hero.png`); its folders are preserved. A folder embedded in the file
+  part's `filename=` is honoured the same way when no `path` field is sent.
+- `overwrite` — `true` replaces an existing asset at the path in place, keeping the
+  reference stable (the same behaviour as re-saving through `write_project_asset`);
+  otherwise a colliding name is auto-suffixed.
+- `project` — name the project when you're acting across projects.
+- `folder` — legacy: place the basename inside a library folder (up to two levels).
+  Ignored when `path` is given.
 
 ```sh
 curl -X POST http://localhost:3100/mcp/assets \
   -H "Authorization: Bearer hezo_your_api_key" \
   -F file=@diagram.png \
-  -F folder=launch/images
+  -F path=launch/images/diagram.png \
+  -F overwrite=true
 ```
 
-The response returns the stored asset and a signed read URL, and the file then shows up in
-the `list_project_assets` and `read_project_asset` tools under its full path
+The response returns the stored asset (including its `byte_size`, so you can confirm the
+full file landed) and a signed read URL, and the file then shows up in the
+`list_project_assets` and `read_project_asset` tools under its full path
 (`launch/images/diagram.png`).
+
+Prefer this streaming endpoint for any large binary: base64 in a `write_project_asset`
+call can be silently cut short by a runtime's tool-call argument-size cap. If you do write
+a binary through `write_project_asset`, pass `byte_size` (the file's exact byte length) so
+a truncated `content` is rejected instead of stored corrupt.
