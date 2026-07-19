@@ -213,6 +213,49 @@ export function extractBacktickedMentionCandidates(value: string): MentionCandid
 	};
 }
 
+// A folder-prefixed path carrying a file extension, WITHOUT the `assets/`
+// handle prefix (`diagrams/hero.svg`, `launch/images/hero.png`) — 1..
+// ASSET_MAX_FOLDER_DEPTH (2) folder levels deep. This is the shape an asset
+// reference takes when the author drops its `assets/` prefix: it reads as a bare
+// repo path and never linkifies. A bare filename with no folder segment is
+// excluded (that is the project-doc/`FILENAME_RE_SRC` case, matched exact-case
+// elsewhere), as is the `assets/`-prefixed form (a real asset handle, matched by
+// `ASSET_RE_SRC`). Because a prefix-less folder path is genuinely ambiguous with
+// a repo file, a candidate from this pattern MUST be resolve-gated against the
+// assets table before it is treated as a mis-written asset. Same trailing
+// boundary as filenames/assets: a sentence-ending `.` does not extend the match.
+export const LOOSE_ASSET_PATH_RE_SRC = String.raw`(?<![\w/.-])((?:[A-Za-z0-9][\w.-]*/){1,2}[A-Za-z0-9][\w.-]*\.[A-Za-z0-9]+)(?![\w/-]|\.[A-Za-z0-9])`;
+
+/**
+ * Pulls loose asset-path candidates — folder-prefixed, extension-bearing, and
+ * WITHOUT the `assets/` prefix — that are wrapped in *inline code*. This is the
+ * prefix-dropped sibling of {@link extractBacktickedMentionCandidates}: an author
+ * who both backticks an asset AND drops its `assets/` handle produces a reference
+ * the mention regex never sees (it requires the literal `assets/` prefix), so it
+ * links nowhere and warns nowhere. The returned paths map directly onto an
+ * asset's stored `original_filename` (which never carries the `assets/` prefix),
+ * so the caller resolve-gates each against the project's assets before warning.
+ * `assets/`-prefixed paths are excluded (already caught by `ASSET_RE_SRC`) to
+ * avoid double-flagging. Fenced/indented code blocks are skipped, exactly as the
+ * backticked-candidate extractor does; results are deduped, exact-case.
+ */
+export function extractBacktickedLooseAssetPaths(value: string): string[] {
+	const withoutFences = value.replace(/```[\s\S]*?```|~~~[\s\S]*?~~~/g, ' ');
+	const out = new Set<string>();
+	const spanRe = /`([^`]+)`/g;
+	let span = spanRe.exec(withoutFences);
+	while (span !== null) {
+		const re = new RegExp(LOOSE_ASSET_PATH_RE_SRC, 'g');
+		let m = re.exec(span[1]);
+		while (m !== null) {
+			if (!m[1].startsWith('assets/')) out.add(m[1]);
+			m = re.exec(span[1]);
+		}
+		span = spanRe.exec(withoutFences);
+	}
+	return Array.from(out);
+}
+
 export function extractTaskCandidates(value: string): string[] {
 	const stripped = stripCode(value);
 	const re = new RegExp(TASK_RE_SRC, 'g');

@@ -170,6 +170,13 @@ describe('MCP tools warn when a Hezo reference is wrapped in backticks', () => {
 			 VALUES ($1, $2, 'image/png', 4, 'deadbeef', 'login.png')`,
 			[teamId, projectId],
 		);
+		// A foldered asset, stored WITHOUT the `assets/` prefix in original_filename.
+		// Referencing it as `diagrams/…` (prefix dropped) is the prefix-drop failure.
+		await db.query(
+			`INSERT INTO assets (team_id, project_id, content_type, byte_size, sha256, original_filename)
+			 VALUES ($1, $2, 'image/svg+xml', 4, 'cafef00d', 'diagrams/hezo-architecture-diagram.svg')`,
+			[teamId, projectId],
+		);
 		existingTaskIdentifier = (await insertTask(captainId, 'An existing ticket')).identifier;
 	});
 
@@ -303,5 +310,43 @@ describe('MCP tools warn when a Hezo reference is wrapped in backticks', () => {
 		expect(result.error).toBeUndefined();
 		expect(result.warning).toBeDefined();
 		expect(result.warning).toContain('assets/login.png');
+	});
+
+	it('warns when a real asset is backticked AND written without the assets/ prefix', async () => {
+		// The reported failure: the Marketing Lead backticked `diagrams/…svg` — a real
+		// asset referenced by a folder path that dropped the `assets/` prefix. That form
+		// matches neither the mention regex nor a bare-filename branch, so previously it
+		// warned nowhere. The warning must fire and show the corrected, prefixed form.
+		const task = await insertTask(architectId, 'Prefix-drop ticket');
+		const result = await callTool(
+			architectId,
+			'create_comment',
+			{
+				project: projectId,
+				task_id: task.id,
+				content:
+					'The strongest fit is the architecture diagram (`diagrams/hezo-architecture-diagram.svg`).',
+			},
+			task.id,
+		);
+		expect(result.error).toBeUndefined();
+		expect(result.warning).toBeDefined();
+		// It surfaces both what was written and the corrected `assets/`-prefixed handle.
+		expect(result.warning).toContain('diagrams/hezo-architecture-diagram.svg');
+		expect(result.warning).toContain('assets/diagrams/hezo-architecture-diagram.svg');
+		expect(result.warning).toContain('assets/');
+	});
+
+	it('does not warn on a backticked prefix-dropped path that is not a real asset (repo path)', async () => {
+		// `src/index.ts` has the folder-path shape but is a genuine repo file — the
+		// resolve-gate must keep it out of the warning (no asset row matches it).
+		const result = await callTool(captainId, 'create_task', {
+			project: projectId,
+			title: 'Repo path in backticks',
+			description: 'Refactored `src/index.ts` and `packages/server/foo.ts`.',
+			assignee_slug: 'architect',
+		});
+		expect(result.error).toBeUndefined();
+		expect(result.warning).toBeUndefined();
 	});
 });

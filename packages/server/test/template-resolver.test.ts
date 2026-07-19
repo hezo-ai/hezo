@@ -579,6 +579,15 @@ describe('template resolver', () => {
 		expect(result).toContain('never backtick one you want opened');
 	});
 
+	it('warns agents that dropping the assets/ prefix also breaks the link and is flagged', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		// The screenshot failure: a real asset backticked AND written without the
+		// `assets/` prefix (`diagrams/hero.svg`). The Rules block must call out that
+		// the prefix-dropped form never links and that the server now warns on it.
+		expect(result).toContain('always keeps its `assets/` prefix');
+		expect(result).toContain('drop the `assets/` prefix on a real asset');
+	});
+
 	it('requires verifying a wake exists before declaring you are waiting on a teammate', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		// The core discipline: don't assume the other agent will pick it up — confirm a

@@ -24,6 +24,7 @@ import {
 	DEFAULT_TEAM_ID,
 	DocumentType,
 	extensionOf,
+	extractBacktickedLooseAssetPaths,
 	extractBacktickedMentionCandidates,
 	type GoalHealth,
 	getConnectorCapability,
@@ -295,8 +296,17 @@ async function buildPassiveMentionWarning(
  * exception: the `assets/` prefix is unambiguously a Hezo asset handle (never a
  * repo path), so a backticked one is flagged whether or not the asset exists
  * yet — catching a deliverable an agent is about to create before the backtick
- * habit sets. Best-effort and non-blocking, exactly like
- * buildUnlinkedMentionWarning.
+ * habit sets.
+ *
+ * A second asset failure is caught here too: an asset referenced by a
+ * folder-prefixed path that BOTH sits in backticks AND drops the `assets/`
+ * prefix (e.g. `` `diagrams/hero.svg` `` for `assets/diagrams/hero.svg`). That
+ * form matches neither the mention regex (it requires the literal `assets/`
+ * prefix) nor a bare-filename branch, so without this it linked nowhere and
+ * warned nowhere. Because a prefix-less folder path is genuinely ambiguous with
+ * a repo file, it is resolve-gated — flagged only when it matches a real asset's
+ * stored `original_filename` in this project — and the fix restores the prefix.
+ * Best-effort and non-blocking, exactly like buildUnlinkedMentionWarning.
  */
 async function buildBacktickedEntityWarning(
 	db: Db,
@@ -305,11 +315,13 @@ async function buildBacktickedEntityWarning(
 	content: string,
 ): Promise<string | null> {
 	const candidates = extractBacktickedMentionCandidates(content);
+	const looseAssetPaths = extractBacktickedLooseAssetPaths(content);
 	if (
 		candidates.tasks.length === 0 &&
 		candidates.filenames.length === 0 &&
 		candidates.assets.length === 0 &&
-		candidates.agents.length === 0
+		candidates.agents.length === 0 &&
+		looseAssetPaths.length === 0
 	) {
 		return null;
 	}
@@ -360,20 +372,51 @@ async function buildBacktickedEntityWarning(
 	// branches above would stay silent.
 	for (const a of candidates.assets) refs.push(`assets/${a}`);
 
-	if (refs.length === 0) return null;
-	const deduped = Array.from(new Set(refs));
-	const wrapped = deduped.map((ref) => `\`${ref}\``).join(', ');
-	const bare = deduped.join(', ');
-	return (
-		`You wrapped Hezo reference(s) in backticks — ${wrapped} — so they render as inert ` +
-		`code instead of links. Write each bare (no backticks): ${bare}. A bare reference links ` +
-		`as soon as its target exists — an \`assets/<path>\` you have not created yet renders as ` +
-		`plain text until then, then links automatically — whereas backticks keep it inert ` +
-		`permanently.` +
-		(hasAgents
-			? ' For a teammate, @<slug> also wakes them on this ticket; use @@<slug> to refer without notifying.'
-			: '')
-	);
+	// Backticked asset paths that ALSO dropped the `assets/` prefix. A prefix-less
+	// folder path is ambiguous with a real repo file, so resolve-gate it against
+	// the project's assets (matched on `original_filename`, which is stored without
+	// the prefix) and flag only genuine hits — the fix restores the prefix.
+	const looseAssetFixes: string[] = [];
+	if (looseAssetPaths.length > 0) {
+		const r = await db.query<{ original_filename: string }>(
+			`SELECT original_filename FROM assets WHERE project_id = $1 AND original_filename = ANY($2::text[])`,
+			[projectId, looseAssetPaths],
+		);
+		for (const row of r.rows) looseAssetFixes.push(row.original_filename);
+	}
+
+	if (refs.length === 0 && looseAssetFixes.length === 0) return null;
+
+	const parts: string[] = [];
+	if (refs.length > 0) {
+		const deduped = Array.from(new Set(refs));
+		const wrapped = deduped.map((ref) => `\`${ref}\``).join(', ');
+		const bare = deduped.join(', ');
+		parts.push(
+			`You wrapped Hezo reference(s) in backticks — ${wrapped} — so they render as inert ` +
+				`code instead of links. Write each bare (no backticks): ${bare}. A bare reference links ` +
+				`as soon as its target exists — an \`assets/<path>\` you have not created yet renders as ` +
+				`plain text until then, then links automatically — whereas backticks keep it inert ` +
+				`permanently.`,
+		);
+	}
+	if (looseAssetFixes.length > 0) {
+		const deduped = Array.from(new Set(looseAssetFixes));
+		const pairs = deduped.map((p) => `\`${p}\` → assets/${p}`).join(', ');
+		parts.push(
+			`Asset reference(s) wrapped in backticks AND missing the \`assets/\` prefix — ${pairs}. ` +
+				`An asset links only when it is written bare with its full \`assets/<path>\` handle; a ` +
+				`backticked or prefix-dropped path reads as inert code or a repo file and never links, ` +
+				`even after the asset lands. Write each exactly as \`list_project_assets\` returns it, ` +
+				`bare and prefixed.`,
+		);
+	}
+	if (hasAgents) {
+		parts.push(
+			'For a teammate, @<slug> also wakes them on this ticket; use @@<slug> to refer without notifying.',
+		);
+	}
+	return parts.join(' ');
 }
 
 /**
