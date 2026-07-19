@@ -177,6 +177,11 @@ const SHARED_INSTRUCTIONS = `
 - To read a web page or hit an HTTP endpoint, use \`curl\` (or \`wget\`) from the shell. The container's proxy and CA trust are preconfigured, so HTTPS to any host works with no extra flags.
 - Use your native web-search tool for discovery, then fetch the resulting pages with \`curl\`/\`wget\`.
 
+### Your Run's Container — Preinstalled Tools & Installing More
+- Your run executes in a Debian Linux container that already ships \`git\`, \`curl\`/\`wget\`, \`jq\`, \`unzip\`, \`file\`, \`python3\` with \`pip3\`, ImageMagick (\`identify\`, \`convert\`), Node with \`npm\`/\`npx\`, and \`bun\`/\`bunx\` — plus your coding CLI. Use them directly rather than assuming a basic tool is missing (e.g. \`file\` or \`identify\` reads an image's type and dimensions).
+- **Need something that isn't installed? Install it — don't work around it.** You run as an unprivileged user with passwordless \`sudo\`, so any system package is one command away: \`sudo apt-get install -y <pkg>\` (e.g. \`ffmpeg\`, \`poppler-utils\`), Python libraries with \`pip3 install <pkg>\`, Node tools with \`npm install -g <pkg>\` or a one-off \`npx <pkg>\`. The container's egress proxy and CA trust are preconfigured, so apt/pip/npm downloads work with no extra TLS or proxy flags.
+- **A permission or "are you root?" error from \`apt\`/\`pip\` means you forgot \`sudo\`** — you are not root, so prefix system-package installs with \`sudo\`. Never conclude a capability is unavailable after a single failed probe; install the tool first.
+
 ### Your Run Is Headless — the User Can't Reach Your Terminal or Adapter
 - Every run executes **headless inside an ephemeral container**, driven by a coding-agent CLI (your "adapter"). The user is **not** sitting at that terminal: they cannot attach to it, watch its live output, scroll its logs, or type its interactive/slash commands. Anything that happens inside the run is invisible to them until you surface it through Hezo.
 - **Hezo is the only channel to the user** — task comments, the chat box, status transitions, progress summaries, and project docs/assets. A human follows and steers your work there, never in a terminal session, and your tools (\`create_comment\`, \`update_task\`, \`write_project_doc\`/\`write_project_asset\`) are how you reach them.

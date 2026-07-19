@@ -66,6 +66,7 @@ import {
 	wakeIfReady,
 	wouldCreateCycle,
 } from '../lib/dependencies';
+import { readImageDimensions } from '../lib/image-dimensions';
 import {
 	detectPassiveTeammateAsks,
 	detectUnlinkedTeammateReferences,
@@ -514,6 +515,24 @@ export const MCP_RESULT_BYTE_LIMIT_OVERRIDES: Readonly<Record<string, number>> =
 	get_agent_system_prompts: 131_072,
 };
 
+// Inline-image cap for read_project_asset. A raster asset at or under this many
+// bytes is returned as an actual MCP image content block (base64) so a
+// vision-capable runtime can SEE it; a larger image falls back to a signed-URL
+// response the agent fetches itself. Kept well under a runtime's tool-result
+// ceiling so one image can't dominate the agent's context (~4 MB raw ≈ 5.3 MB
+// base64). The generic MCP_RESULT_BYTE_LIMIT guards text/JSON results only — the
+// image passthrough bypasses it and is bounded here instead.
+export const MCP_INLINE_IMAGE_MAX_BYTES = 4_000_000;
+
+/**
+ * True for raster image types (PNG/JPEG/GIF/WebP, …) — `image/*` except SVG,
+ * which `isTextAssetMime` classifies as text. These are the types
+ * `readImageDimensions` can measure and the runtime can render inline.
+ */
+function isRasterImageMime(mime: string): boolean {
+	return mime.startsWith('image/') && !isTextAssetMime(mime);
+}
+
 export interface Excerpt {
 	excerpt: string | null;
 	truncated: boolean;
@@ -578,6 +597,29 @@ function excerptApprovalPayload<T extends Record<string, unknown>>(row: T, maxCh
 	return { ...row, payload: next };
 }
 
+type McpTextContent = { type: 'text'; text: string };
+type McpImageContent = { type: 'image'; data: string; mimeType: string };
+type McpContentBlock = McpTextContent | McpImageContent;
+
+/**
+ * A tool handler normally returns a JSON-serializable value that the wrapper
+ * stringifies into one text block. To return richer MCP content — e.g. the
+ * actual image for a vision-capable runtime to review — a handler returns this
+ * marker instead and the wrapper passes the blocks through untouched (bounded by
+ * MCP_INLINE_IMAGE_MAX_BYTES at the call site, not the text-only byte guard).
+ */
+interface RawToolContent {
+	__mcpContent: McpContentBlock[];
+}
+
+function isRawToolContent(result: unknown): result is RawToolContent {
+	return (
+		typeof result === 'object' &&
+		result !== null &&
+		Array.isArray((result as { __mcpContent?: unknown }).__mcpContent)
+	);
+}
+
 function tool(
 	server: McpServer,
 	name: string,
@@ -613,6 +655,11 @@ function tool(
 			!isErrorResult(result)
 		) {
 			await markRunProducedOutput(db, auth.runId);
+		}
+		// A handler may return pre-shaped MCP content blocks (e.g. an image);
+		// pass them through untouched rather than JSON-stringifying.
+		if (isRawToolContent(result)) {
+			return { content: result.__mcpContent };
 		}
 		const text = JSON.stringify(result, null, 2);
 		const sizeBytes = Buffer.byteLength(text, 'utf8');
@@ -4062,7 +4109,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_project_assets',
-		"List the project's assets — files in the assets library (UI mockups, wireframes, diagrams, images, PDFs, scripts, and generated markdown such as blog posts or reports). Filenames may carry a folder prefix up to 2 levels deep (e.g. `launch/images/hero.png`); reference one in a comment or doc as `assets/<path>` exactly as returned here (e.g. assets/launch/images/hero.png), no backticks. Author both text and binary assets with write_project_asset (binary via encoding: 'base64') and reorganize with move_project_asset / copy_project_asset; obsolete assets are archived with archive_project_asset (hard deletion is admin-only). Archived assets are excluded by default — set filter: 'archived' or 'all' to see them (entries then carry an `archived` flag). Results are ordered newest-first by default; pass sort: 'oldest' or 'alphabetical' to change the order.",
+		"List the project's assets — files in the assets library (UI mockups, wireframes, diagrams, images, PDFs, scripts, and generated markdown such as blog posts or reports). Filenames may carry a folder prefix up to 2 levels deep (e.g. `launch/images/hero.png`); reference one in a comment or doc as `assets/<path>` exactly as returned here (e.g. assets/launch/images/hero.png), no backticks. Author both text and binary assets with write_project_asset (binary via encoding: 'base64') and reorganize with move_project_asset / copy_project_asset; obsolete assets are archived with archive_project_asset (hard deletion is admin-only). Archived assets are excluded by default — set filter: 'archived' or 'all' to see them (entries then carry an `archived` flag). Raster image entries (PNG/JPEG/GIF/WebP) also carry their pixel `width`/`height`. Results are ordered newest-first by default; pass sort: 'oldest' or 'alphabetical' to change the order.",
 		{
 			project: projectArg(),
 			filter: archiveFilterArg(),
@@ -4084,9 +4131,11 @@ export function registerTools(
 				original_filename: string;
 				content_type: string;
 				created_at: string;
+				width: number | null;
+				height: number | null;
 				archived_at: string | null;
 			}>(
-				`SELECT id, original_filename, content_type, created_at, archived_at
+				`SELECT id, original_filename, content_type, created_at, width, height, archived_at
 				 FROM assets WHERE project_id = $1${where}
 				 ORDER BY ${assetSortOrderBy(sort)}`,
 				[scope.projectId],
@@ -4097,6 +4146,7 @@ export function registerTools(
 					filename: a.original_filename,
 					content_type: a.content_type,
 					created_at: a.created_at,
+					...(a.width !== null && a.height !== null ? { width: a.width, height: a.height } : {}),
 					...(filter !== ArchiveFilter.Active ? { archived: a.archived_at !== null } : {}),
 				})),
 			};
@@ -4215,6 +4265,11 @@ export function registerTools(
 				};
 			}
 
+			// Capture raster-image pixel dimensions so read_project_asset /
+			// list_project_assets can report them without re-parsing the blob.
+			const dims = isRasterImageMime(contentType)
+				? readImageDimensions(Buffer.from(await blob.arrayBuffer()))
+				: null;
 			const assetId = crypto.randomUUID();
 			const { byteSize, sha256 } = await assets.write(projectId, assetId, blob);
 			const uploadedBy = auth.type === AuthType.Agent ? auth.memberId : null;
@@ -4229,6 +4284,8 @@ export function registerTools(
 					sha256,
 					desiredName: filename,
 					uploadedByMemberId: uploadedBy,
+					width: dims?.width ?? null,
+					height: dims?.height ?? null,
 				});
 			} catch (e) {
 				await assets.delete(projectId, assetId).catch(() => {});
@@ -4263,6 +4320,7 @@ export function registerTools(
 				id: result.id,
 				reference: `assets/${result.original_filename}`,
 				byte_size: result.byte_size,
+				...(dims ? { width: dims.width, height: dims.height } : {}),
 			};
 		},
 		db,
@@ -4271,13 +4329,19 @@ export function registerTools(
 	tool(
 		server,
 		'read_project_asset',
-		"Read a project asset's contents by path (e.g. \"ui-mockups.html\" or \"scripts/check.sh\") — the files that list_project_assets returns (UI mockups, wireframes, SVG diagrams, text exports, scripts, markdown deliverables). Use the full path exactly as listed, folder prefix included. Text-based assets (HTML, SVG, plain text, markdown) come back inline as `content`. Binary assets (images, PDFs, media) are not inlined; the response gives a signed download `url` — fetch it with a plain `curl -fsSL '<url>' -o /tmp/<filename>` (no auth header needed; the URL is valid for 24h, re-call this tool for a fresh one). If an admin has left review comments on the asset they come back as `review_comments`: for text assets (markdown, plain text) each anchors to an exact `quote` (with `occurrence` = 0-based Nth match of that snippet); a comment without a quote applies to the whole file. Capture them all before any write_project_asset to the path — overwriting deletes every review comment. Archived assets are not readable by default — set filter: 'archived' or 'all' to read one. For markdown project docs use read_project_doc instead.",
+		"Read a project asset's contents by path (e.g. \"ui-mockups.html\" or \"scripts/check.sh\") — the files that list_project_assets returns (UI mockups, wireframes, SVG diagrams, text exports, scripts, markdown deliverables). Use the full path exactly as listed, folder prefix included. Text-based assets (HTML, SVG, plain text, markdown) come back inline as `content`. Raster images (PNG/JPEG/GIF/WebP) come back with their pixel `width`/`height` AND the image itself inline, so a vision-capable model can see it to review it — pass `include_image: false` to skip the pixels and get metadata only, and images above ~4 MB return metadata + `url` only. Other binary assets (PDFs, media) are not inlined; the response gives a signed download `url` — fetch it with a plain `curl -fsSL '<url>' -o /tmp/<filename>` (no auth header needed; the URL is valid for 24h, re-call this tool for a fresh one). If an admin has left review comments on the asset they come back as `review_comments`: for text assets (markdown, plain text) each anchors to an exact `quote` (with `occurrence` = 0-based Nth match of that snippet); a comment without a quote applies to the whole file. Capture them all before any write_project_asset to the path — overwriting deletes every review comment. Archived assets are not readable by default — set filter: 'archived' or 'all' to read one. For markdown project docs use read_project_doc instead.",
 		{
 			project: projectArg(),
 			filename: z
 				.string()
 				.describe('Asset path to read (e.g. "ui-mockups.html", "launch/images/hero.png")'),
 			filter: archiveFilterArg(),
+			include_image: z
+				.boolean()
+				.optional()
+				.describe(
+					'For raster images (PNG/JPEG/GIF/WebP): when true (default) the image is returned inline so a vision-capable model can see it. Pass false to get metadata only (dimensions + download URL) and skip the pixels.',
+				),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -4292,9 +4356,11 @@ export function registerTools(
 				original_filename: string;
 				content_type: string;
 				byte_size: string;
+				width: number | null;
+				height: number | null;
 				archived_at: string | null;
 			}>(
-				`SELECT id, original_filename, content_type, byte_size, archived_at
+				`SELECT id, original_filename, content_type, byte_size, width, height, archived_at
 				 FROM assets WHERE project_id = $1 AND original_filename = $2`,
 				[projectId, filename],
 			);
@@ -4331,15 +4397,67 @@ export function registerTools(
 			// container filesystem.
 			const isText = isTextAssetMime(asset.content_type);
 			if (!isText) {
-				return {
+				const raster = isRasterImageMime(asset.content_type);
+				const byteSize = Number(asset.byte_size);
+				const includeImage = args.include_image !== false;
+				let width = asset.width;
+				let height = asset.height;
+				// A raster asset needs its bytes to backfill missing dimensions
+				// and/or to return the image inline for a vision runtime to see.
+				const wantInline = raster && includeImage && byteSize <= MCP_INLINE_IMAGE_MAX_BYTES;
+				const needBytes = wantInline || (raster && (width === null || height === null));
+				let buf: Buffer | null = null;
+				if (needBytes) {
+					// If the blob can't be read (e.g. a store hiccup or a row with no
+					// backing bytes) fall back to the URL-only metadata rather than
+					// failing the whole read.
+					try {
+						buf = await assets.read(projectId, asset.id);
+					} catch {
+						buf = null;
+					}
+					if (buf && raster && (width === null || height === null)) {
+						const dims = readImageDimensions(buf);
+						if (dims) {
+							width = dims.width;
+							height = dims.height;
+							// Self-heal: persist so future reads / list_project_assets
+							// don't re-parse this pre-existing asset's blob.
+							await db
+								.query('UPDATE assets SET width = $1, height = $2 WHERE id = $3', [
+									dims.width,
+									dims.height,
+									asset.id,
+								])
+								.catch(() => {});
+						}
+					}
+				}
+				const metadata = {
 					filename: asset.original_filename,
 					content_type: asset.content_type,
-					byte_size: Number(asset.byte_size),
+					byte_size: byteSize,
 					binary: true,
+					...(width !== null && height !== null ? { width, height } : {}),
 					url: await signAgentAssetUrl(asset.id, masterKeyManager, agentPort),
 					...(archived ? { archived: true } : {}),
 					...reviewField,
 				};
+				// Under the cap and not opted out: hand the runtime the actual
+				// pixels (as an MCP image block) alongside the metadata text.
+				if (wantInline && buf) {
+					return {
+						__mcpContent: [
+							{ type: 'text' as const, text: JSON.stringify(metadata, null, 2) },
+							{
+								type: 'image' as const,
+								data: buf.toString('base64'),
+								mimeType: asset.content_type,
+							},
+						],
+					};
+				}
+				return metadata;
 			}
 
 			const buf = await assets.read(projectId, asset.id);
