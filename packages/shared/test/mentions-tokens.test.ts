@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	buildMentionRegex,
 	extractActiveAgentMentionSlugs,
+	extractBacktickedLooseAssetPaths,
 	extractBacktickedMentionCandidates,
 	extractDocCandidates,
 	extractMentionCandidates,
@@ -216,6 +217,51 @@ describe('extractBacktickedMentionCandidates', () => {
 		expect(c.agents).toEqual(['bob']);
 		expect(c.filenames).toEqual(['spec.md']);
 		expect(c.assets).toEqual([]);
+	});
+});
+
+describe('extractBacktickedLooseAssetPaths', () => {
+	it('extracts folder-prefixed asset paths inside inline code that drop the assets/ prefix', () => {
+		expect(
+			sorted(
+				extractBacktickedLooseAssetPaths(
+					'use `diagrams/hero.svg` or the `startup-directories/banner-1200x630.png` card',
+				),
+			),
+		).toEqual(['diagrams/hero.svg', 'startup-directories/banner-1200x630.png']);
+	});
+
+	it('matches a two-level folder path', () => {
+		expect(extractBacktickedLooseAssetPaths('open `launch/images/hero.png` please')).toEqual([
+			'launch/images/hero.png',
+		]);
+	});
+
+	it('excludes the assets/-prefixed form (that is a real handle, matched elsewhere)', () => {
+		expect(extractBacktickedLooseAssetPaths('open `assets/diagrams/hero.svg`')).toEqual([]);
+	});
+
+	it('ignores a bare filename with no folder segment (the project-doc case)', () => {
+		expect(extractBacktickedLooseAssetPaths('read `prd.md` and `package.json`')).toEqual([]);
+	});
+
+	it('ignores paths written bare (only inline code is scanned)', () => {
+		expect(extractBacktickedLooseAssetPaths('see diagrams/hero.svg here')).toEqual([]);
+	});
+
+	it('ignores references inside fenced code blocks', () => {
+		expect(extractBacktickedLooseAssetPaths('```\n`diagrams/hero.svg`\n```')).toEqual([]);
+	});
+
+	it('emits repo-shaped paths too — resolve-gating against real assets is the caller’s job', () => {
+		// `src/index.ts` is ambiguous with a repo file; the extractor surfaces it and
+		// the server drops it unless a real asset matches. Verifying it is emitted
+		// documents why the DB resolve-gate in buildBacktickedEntityWarning matters.
+		expect(extractBacktickedLooseAssetPaths('edit `src/index.ts`')).toEqual(['src/index.ts']);
+	});
+
+	it('dedupes repeated paths', () => {
+		expect(extractBacktickedLooseAssetPaths('`a/b.png` and again `a/b.png`')).toEqual(['a/b.png']);
 	});
 });
 
