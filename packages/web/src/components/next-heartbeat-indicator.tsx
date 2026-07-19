@@ -1,5 +1,6 @@
 import { Activity } from 'lucide-react';
 import { useNextHeartbeatCountdown } from '../hooks/use-next-heartbeat';
+import { formatDateTime } from '../lib/format-date';
 
 /**
  * Live "Next heartbeat in …" countdown for an agent. Renders nothing when the
@@ -34,7 +35,7 @@ export function NextHeartbeatIndicator({
 			data-testid="next-heartbeat"
 			title={
 				hasActionableWork
-					? `Next heartbeat ${new Date(nextHeartbeatAt).toLocaleString()}`
+					? `Next heartbeat ${formatDateTime(nextHeartbeatAt)}`
 					: 'No tasks to work on yet'
 			}
 			className={`inline-flex items-center gap-1.5 text-xs text-text-2 ${className}`}

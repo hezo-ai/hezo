@@ -42,6 +42,7 @@ import { ConfirmDialog } from '../../../components/ui/confirm-dialog';
 import { DialogContent } from '../../../components/ui/dialog';
 import { EmptyState } from '../../../components/ui/empty-state';
 import { Input } from '../../../components/ui/input';
+import { RelativeTime } from '../../../components/ui/relative-time';
 import { Tooltip } from '../../../components/ui/tooltip';
 import {
 	type ProjectAsset,
@@ -1037,41 +1038,6 @@ function CopyReferenceButton({ reference }: { reference: string }) {
 	);
 }
 
-const RELATIVE_UNITS: Array<[Intl.RelativeTimeFormatUnit, number]> = [
-	['year', 60 * 60 * 24 * 365],
-	['month', 60 * 60 * 24 * 30],
-	['week', 60 * 60 * 24 * 7],
-	['day', 60 * 60 * 24],
-	['hour', 60 * 60],
-	['minute', 60],
-	['second', 1],
-];
-
-/**
- * Human "updated" label for an asset card, e.g. "2 days ago" / "yesterday" /
- * "now". `assets.created_at` is bumped to now() on every overwrite (see
- * `upsertProjectAsset`), so it reads as the last time the asset changed. The
- * exact timestamp stays available on hover via the card's <abbr> title.
- */
-function relativeUpdated(iso: string): string {
-	const then = new Date(iso).getTime();
-	if (!Number.isFinite(then)) return '';
-	const deltaSeconds = Math.round((then - Date.now()) / 1000);
-	const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
-	for (const [unit, secondsPerUnit] of RELATIVE_UNITS) {
-		if (Math.abs(deltaSeconds) >= secondsPerUnit || unit === 'second') {
-			return rtf.format(Math.round(deltaSeconds / secondsPerUnit), unit);
-		}
-	}
-	return '';
-}
-
-/** Full local datetime for the <abbr> tooltip; empty string when unparsable. */
-function fullTimestamp(iso: string): string {
-	const d = new Date(iso);
-	return Number.isNaN(d.getTime()) ? '' : d.toLocaleString();
-}
-
 function AssetCard({
 	asset,
 	highlighted,
@@ -1153,15 +1119,10 @@ function AssetCard({
 					</div>
 					<div className="text-[11px] text-text-3">
 						{formatBytes(asset.byte_size)} ·{' '}
-						{/* Native <abbr> tooltip shows the exact timestamp on hover; the
-						    dotted-underline "abbr" affordance signals it. */}
-						<abbr
-							title={fullTimestamp(asset.created_at)}
-							className="cursor-help"
-							data-testid="asset-updated"
-						>
-							{relativeUpdated(asset.created_at)}
-						</abbr>
+						{/* The exact timestamp is available on hover (desktop) / tap (touch)
+						    via the RelativeTime tooltip. `created_at` is bumped to now() on
+						    every overwrite, so this reads as the last time the asset changed. */}
+						<RelativeTime iso={asset.created_at} className="cursor-help" testId="asset-updated" />
 					</div>
 				</div>
 				<div className="flex shrink-0 items-center gap-0.5">

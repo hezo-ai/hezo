@@ -22,6 +22,7 @@ import { TaskStatusBadge } from '../task-status-badge';
 import { Button } from '../ui/button';
 import { ConfirmDialog } from '../ui/confirm-dialog';
 import { InfoTooltip } from '../ui/info-tooltip';
+import { RelativeTime } from '../ui/relative-time';
 import { AgentQueueSection } from './agent-queue-section';
 
 const EFFORT_LEVELS: { value: AgentEffort; label: string }[] = [
@@ -240,9 +241,7 @@ export function TaskSidebar({
 					<span className="text-text-3 block mb-1 uppercase tracking-wider font-medium">
 						Created
 					</span>
-					<span className="text-[13px] text-text-1">
-						{new Date(task.created_at).toLocaleDateString()}
-					</span>
+					<RelativeTime iso={task.created_at} className="text-[13px] text-text-1" />
 				</div>
 
 				<div>

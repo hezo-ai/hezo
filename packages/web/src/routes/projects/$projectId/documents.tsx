@@ -27,6 +27,7 @@ import {
 } from '../../../hooks/use-project-docs';
 import { docPreviewPath } from '../../../lib/doc-preview';
 import { buildDocVersionHistory, type DocVersionEntry } from '../../../lib/doc-version-history';
+import { formatDateTime, formatRelativeTime } from '../../../lib/format-date';
 
 const AGENTS_MD_KEY = '__agents_md__';
 
@@ -106,7 +107,14 @@ function ProjectDocumentsPage() {
 				key: d.filename,
 				label: d.filename,
 				archived: d.archived_at != null,
-				meta: `Updated ${new Date(d.updated_at).toLocaleDateString()}`,
+				meta: (
+					<>
+						Updated{' '}
+						<time dateTime={d.updated_at} title={formatDateTime(d.updated_at)}>
+							{formatRelativeTime(d.updated_at)}
+						</time>
+					</>
+				),
 			});
 		}
 		return list;

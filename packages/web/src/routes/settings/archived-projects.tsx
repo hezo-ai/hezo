@@ -1,17 +1,9 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { Loader2 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
+import { RelativeTime } from '../../components/ui/relative-time';
 import { useMe } from '../../hooks/use-me';
 import { type Project, useArchivedProjects, useUnarchiveProject } from '../../hooks/use-projects';
-
-function formatDate(iso: string | null | undefined): string {
-	if (!iso) return '';
-	return new Date(iso).toLocaleDateString(undefined, {
-		year: 'numeric',
-		month: 'short',
-		day: 'numeric',
-	});
-}
 
 function ArchivedProjectRow({ project }: { project: Project }) {
 	const unarchive = useUnarchiveProject(project.slug);
@@ -24,7 +16,12 @@ function ArchivedProjectRow({ project }: { project: Project }) {
 				<div className="text-[13px] font-medium text-text-1 truncate">{project.name}</div>
 				<div className="text-xs text-text-3 truncate">
 					{project.team_name}
-					{project.archived_at ? ` · archived ${formatDate(project.archived_at)}` : ''}
+					{project.archived_at && (
+						<>
+							{' · archived '}
+							<RelativeTime iso={project.archived_at} />
+						</>
+					)}
 				</div>
 			</div>
 			<Button

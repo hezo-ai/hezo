@@ -1,6 +1,7 @@
 import { INSTANCE_AGENT_SLUGS } from '@hezo/shared';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { Badge } from '../../../../../../components/ui/badge';
+import { RelativeTime } from '../../../../../../components/ui/relative-time';
 import { Tooltip } from '../../../../../../components/ui/tooltip';
 import { useAgent } from '../../../../../../hooks/use-agents';
 import { useElapsedDuration } from '../../../../../../hooks/use-elapsed-duration';
@@ -68,9 +69,11 @@ function ExecutionRow({
 				<span className="text-text-3 truncate">{trigger.text}</span>
 			</Tooltip>
 
-			<span className="text-text-2 ml-auto whitespace-nowrap">
-				{run.started_at ? new Date(run.started_at).toLocaleString() : 'queued'}
-			</span>
+			{run.started_at ? (
+				<RelativeTime iso={run.started_at} className="text-text-2 ml-auto whitespace-nowrap" />
+			) : (
+				<span className="text-text-2 ml-auto whitespace-nowrap">queued</span>
+			)}
 
 			<span className="text-text-3 whitespace-nowrap">{elapsed}</span>
 

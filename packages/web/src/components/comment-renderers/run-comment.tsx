@@ -17,6 +17,7 @@ import { LazyMount } from '../lazy-mount';
 import { LogViewer } from '../log-viewer';
 import { useOpenPreview } from '../task-detail/preview-context';
 import { TerminateRunButton } from '../terminate-run-button';
+import { RelativeTime } from '../ui/relative-time';
 import { Tooltip } from '../ui/tooltip';
 import type { CommentDataOf } from './comment-data';
 import { CommentTimestampLink } from './comment-timestamp-link';
@@ -252,9 +253,10 @@ export function RunCommentBody({
 					className="whitespace-nowrap max-w-full truncate"
 				/>
 			) : (
-				<span className="text-[11px] text-text-3 whitespace-nowrap max-w-full truncate">
-					{new Date(createdAt).toLocaleString()}
-				</span>
+				<RelativeTime
+					iso={createdAt}
+					className="text-[11px] text-text-3 whitespace-nowrap max-w-full truncate"
+				/>
 			)}
 		</span>
 	);

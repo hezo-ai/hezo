@@ -7,6 +7,7 @@ import { Link } from '@tanstack/react-router';
 import { Archive, ArchiveRestore, ChevronRight, Pencil } from 'lucide-react';
 import { useState } from 'react';
 import { useGoal, useGoalHistory, useGoalRunActivity, useUpdateGoal } from '../../hooks/use-goals';
+import { formatDateTime, formatRelativeTime } from '../../lib/format-date';
 import { agentPageParams } from '../agent-link';
 import { CreateGoalDialog } from '../create-goal-dialog';
 import { GoalHealthPill } from '../goal-health-pill';
@@ -25,16 +26,9 @@ function formatTargetDate(iso: string): string {
 	return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
-function formatRunTime(run: GoalRunActivity): string {
-	const iso = run.finished_at ?? run.started_at ?? run.created_at;
-	const d = new Date(iso);
-	if (Number.isNaN(d.getTime())) return iso;
-	return d.toLocaleString(undefined, {
-		month: 'short',
-		day: 'numeric',
-		hour: 'numeric',
-		minute: '2-digit',
-	});
+/** The timestamp a run row is labelled by: when it finished, else started, else was created. */
+function runActivityIso(run: GoalRunActivity): string {
+	return run.finished_at ?? run.started_at ?? run.created_at;
 }
 
 const RUN_STATUS_COLOR: Record<string, BadgeColor> = {
@@ -76,9 +70,10 @@ function GoalRunRow({ projectId, run }: { projectId: string; run: GoalRunActivit
 					params={runLinkParams}
 					data-testid="goal-run-open"
 					aria-label="Open run"
+					title={formatDateTime(runActivityIso(run))}
 					className="text-[13px] text-text-2 hover:underline before:absolute before:inset-0"
 				>
-					{formatRunTime(run)}
+					{formatRelativeTime(runActivityIso(run))}
 				</Link>
 				{run.status !== HeartbeatRunStatus.Succeeded && (
 					<Badge color={RUN_STATUS_COLOR[run.status] ?? 'neutral'}>{run.status}</Badge>

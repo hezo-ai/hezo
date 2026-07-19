@@ -8,6 +8,7 @@ import { type Column, DataTable } from '../../components/ui/data-table';
 import { InPlaceForm } from '../../components/ui/in-place-form';
 import { InfoTooltip } from '../../components/ui/info-tooltip';
 import { Input } from '../../components/ui/input';
+import { RelativeTime } from '../../components/ui/relative-time';
 import { Tooltip } from '../../components/ui/tooltip';
 import {
 	type ApiKey,
@@ -18,18 +19,6 @@ import {
 } from '../../hooks/use-api-keys';
 import { useMe } from '../../hooks/use-me';
 import { copyToClipboard } from '../../lib/clipboard';
-
-function formatRelative(iso: string | null): string {
-	if (!iso) return 'never';
-	const ms = Date.now() - new Date(iso).getTime();
-	const min = 60 * 1000;
-	const hr = 60 * min;
-	const day = 24 * hr;
-	if (ms < min) return 'just now';
-	if (ms < hr) return `${Math.floor(ms / min)}m ago`;
-	if (ms < day) return `${Math.floor(ms / hr)}h ago`;
-	return `${Math.floor(ms / day)}d ago`;
-}
 
 function clientLabel(info: Record<string, unknown>): string | null {
 	const name = typeof info.name === 'string' ? info.name : null;
@@ -85,7 +74,7 @@ function ApiKeysPage() {
 		{
 			key: 'requested',
 			header: 'Requested',
-			render: (r) => <span className="text-xs text-text-2">{formatRelative(r.created_at)}</span>,
+			render: (r) => <RelativeTime iso={r.created_at} className="text-xs text-text-2" />,
 		},
 		{
 			key: 'actions',
@@ -133,7 +122,12 @@ function ApiKeysPage() {
 		{
 			key: 'last_used',
 			header: 'Last used',
-			render: (r) => <span className="text-xs text-text-2">{formatRelative(r.last_used_at)}</span>,
+			render: (r) =>
+				r.last_used_at ? (
+					<RelativeTime iso={r.last_used_at} className="text-xs text-text-2" />
+				) : (
+					<span className="text-xs text-text-2">never</span>
+				),
 		},
 		{
 			key: 'actions',
