@@ -181,13 +181,23 @@ export async function handleMcpRequest(c: Context<Env>): Promise<Response> {
 /**
  * Multipart binary upload for the MCP surface. JSON-RPC can't carry a file, so
  * external callers (API key) and agent runs (run JWT) POST `multipart/form-data`
- * here with a `file` field — plus an optional `project` field for an instance
- * principal that must name the project it's acting in, and an optional `folder`
- * field to place the asset inside a library folder (up to 2 levels, e.g.
- * `scripts` or `launch/images`). The bytes are stored as a project asset through
- * the same path as the REST upload, so the result is retrievable via the
- * existing `list_project_assets` / `read_project_asset` tools (binary contents
- * come back as a signed download URL).
+ * here with a `file` field — plus optional fields:
+ *   - `project` — for an instance principal that must name the project it's
+ *     acting in.
+ *   - `path` — the full destination path (folders + basename, up to 2 levels,
+ *     e.g. `launch/images/hero.png`); its folders are preserved. A folder
+ *     embedded in the file part's `filename=` is honoured the same way when no
+ *     explicit `path` field is sent.
+ *   - `folder` — legacy: place the basename inside a library folder (up to 2
+ *     levels). Ignored when `path` is given.
+ *   - `overwrite` — `true`/`1` replaces an existing asset at the path in place
+ *     (stable reference), matching write_project_asset; otherwise a colliding
+ *     name is auto-suffixed.
+ * The bytes are stored as a project asset through the same path as the REST
+ * upload, so the result is retrievable via the existing `list_project_assets` /
+ * `read_project_asset` tools (binary contents come back as a signed download
+ * URL). The JSON response carries `byte_size`, so the caller can confirm the
+ * full file landed.
  */
 export async function handleMcpAssetUpload(c: Context<Env>): Promise<Response> {
 	const auth = await authenticateRequest(c);
@@ -211,6 +221,14 @@ export async function handleMcpAssetUpload(c: Context<Env>): Promise<Response> {
 			? form.project.trim()
 			: undefined;
 	const folder = typeof form.folder === 'string' ? form.folder : undefined;
+	const pathField =
+		typeof form.path === 'string' && form.path.trim().length > 0 ? form.path.trim() : undefined;
+	// A folder embedded in the file part's `filename=` (file.name carries a
+	// separator) is treated as the full destination path when no explicit `path`
+	// field is sent — so `-F filename=community-posts/hero.png` lands there
+	// instead of being stripped to its basename.
+	const path = pathField ?? (/[/\\]/.test(file.name) ? file.name : undefined);
+	const overwrite = form.overwrite === 'true' || form.overwrite === '1';
 
 	const scope = await resolveScope(c.get('db'), auth, { project });
 	if ('error' in scope) {
@@ -220,5 +238,8 @@ export async function handleMcpAssetUpload(c: Context<Env>): Promise<Response> {
 	// storeUploadedAsset reads c.get('auth'); /mcp isn't under authMiddleware, so
 	// seed the context from the MCP-authenticated principal.
 	c.set('auth', auth);
-	return storeUploadedAsset(c, scope.teamId, scope.projectId, file as File, null, folder);
+	return storeUploadedAsset(c, scope.teamId, scope.projectId, file as File, null, folder, {
+		path,
+		overwrite,
+	});
 }

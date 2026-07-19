@@ -11,6 +11,7 @@ import {
 	isAssetSortOrder,
 	normalizeAssetFilename,
 	normalizeAssetFolder,
+	normalizeAssetPath,
 	resolveAttachmentContentType,
 	taskUploadsFolder,
 	wsRoom,
@@ -18,10 +19,10 @@ import {
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { AssetNotFoundError, AttachmentTooLargeError } from '../assets/store';
-import { insertAssetWithUniqueName } from '../lib/asset-name';
+import { insertAssetWithUniqueName, upsertProjectAsset } from '../lib/asset-name';
 import { assetSortOrderBy } from '../lib/asset-sort';
 import { signAssetUrl, verifyAssetUrl } from '../lib/asset-urls';
-import { broadcastChange } from '../lib/broadcast';
+import { broadcastChange, broadcastCommentFamilyChange } from '../lib/broadcast';
 import { ref } from '../lib/log-ref';
 import {
 	actorTypeFromAuth,
@@ -40,12 +41,21 @@ const log = logger.child('routes');
 export const assetsRoutes = new Hono<Env>();
 
 /**
- * Validate an uploaded file, write its bytes to disk, and insert an `assets` row
- * under a project-unique path (auto-suffixed on collision). Shared by the
- * task-comment upload and the project Assets upload. `folder` places the asset
- * inside a library folder (up to 2 levels; '' or undefined = root). Returns a
- * `201` response with the stored asset + a freshly-signed read URL, or an error
- * response.
+ * Validate an uploaded file, write its bytes to disk, and insert an `assets` row.
+ * Shared by the task-comment upload, the project Assets upload, and the MCP
+ * multipart endpoint. Destination naming:
+ *   - `opts.path` — a full destination path (folders + basename, up to 2 levels)
+ *     that is preserved verbatim; used by the MCP endpoint so a large binary can
+ *     be streamed straight to an exact path.
+ *   - otherwise — the historical `folder` (up to 2 levels; '' or undefined =
+ *     root) combined with the uploaded file's basename.
+ * Collision handling:
+ *   - `opts.overwrite` — replace an existing asset at the exact path in place
+ *     (stable reference), matching `write_project_asset`; an archived holder is
+ *     rejected rather than silently resurrected.
+ *   - otherwise — a project-unique name (auto-suffixed on collision).
+ * Returns a `201` response with the stored asset + a freshly-signed read URL, or
+ * an error response.
  */
 export async function storeUploadedAsset(
 	c: Context<Env>,
@@ -54,32 +64,73 @@ export async function storeUploadedAsset(
 	file: File,
 	taskId?: string | null,
 	folder?: string,
+	opts?: { path?: string; overwrite?: boolean },
 ) {
-	if (!isAllowedAttachmentExtension(file.name)) {
+	// Resolve the destination name first — its extension governs the stored
+	// content type. An explicit full `path` preserves its folders; otherwise the
+	// `folder` field is combined with the uploaded file's basename.
+	let desiredName: string;
+	if (opts?.path !== undefined) {
+		const normalizedPath = normalizeAssetPath(opts.path);
+		if (normalizedPath === null) {
+			return err(
+				c,
+				'INVALID_PATH',
+				'Invalid path: at most 2 folder levels, each segment starting with a letter or digit',
+				400,
+			);
+		}
+		desiredName = normalizedPath;
+	} else {
+		const normalizedFolder = normalizeAssetFolder(folder ?? '');
+		if (normalizedFolder === null) {
+			return err(
+				c,
+				'INVALID_FOLDER',
+				'Invalid folder: at most 2 levels, each segment starting with a letter or digit',
+				400,
+			);
+		}
+		const base = normalizeAssetFilename(file.name);
+		desiredName = normalizedFolder ? `${normalizedFolder}/${base}` : base;
+	}
+
+	const destBasename = assetBasename(desiredName);
+	if (!isAllowedAttachmentExtension(destBasename)) {
 		return err(c, 'INVALID_ATTACHMENT', 'Unsupported file extension', 400);
 	}
 	// MIME resolution lives in the shared helper: extension-canonical for
 	// text/plain-mapped types (scripts), declared-wins / octet-stream-fallback /
 	// reject-mismatch for everything else.
-	const contentType = resolveAttachmentContentType(file.name, file.type);
+	const contentType = resolveAttachmentContentType(destBasename, file.type);
 	if (contentType === null) {
 		return err(c, 'INVALID_ATTACHMENT', `Unsupported content type: ${file.type}`, 400);
 	}
 	if (file.size > ATTACHMENT_MAX_BYTES) {
 		return err(c, 'TOO_LARGE', 'Attachment exceeds 10 MB', 400);
 	}
-	const normalizedFolder = normalizeAssetFolder(folder ?? '');
-	if (normalizedFolder === null) {
-		return err(
-			c,
-			'INVALID_FOLDER',
-			'Invalid folder: at most 2 levels, each segment starting with a letter or digit',
-			400,
-		);
-	}
 
 	const db = c.get('db');
 	const store = c.get('assetStore');
+
+	// An archived asset keeps its path reserved; overwriting it would silently
+	// resurrect (and clobber) soft-deleted content — reject before writing any
+	// bytes, matching write_project_asset.
+	if (opts?.overwrite) {
+		const archivedHolder = await db.query<{ id: string }>(
+			'SELECT id FROM assets WHERE project_id = $1 AND original_filename = $2 AND archived_at IS NOT NULL',
+			[projectId, desiredName],
+		);
+		if (archivedHolder.rows.length > 0) {
+			return err(
+				c,
+				'ASSET_ARCHIVED',
+				`Asset 'assets/${desiredName}' exists but is archived — unarchive it first to overwrite it, or upload under a different path.`,
+				409,
+			);
+		}
+	}
+
 	const assetId = randomUUID();
 	let byteSize: number;
 	let sha256: string;
@@ -97,19 +148,54 @@ export async function storeUploadedAsset(
 
 	const auth = c.get('auth');
 	const uploadedBy = await resolveActorMemberId(db, auth, teamId);
-	const base = normalizeAssetFilename(file.name);
-	let asset: Awaited<ReturnType<typeof insertAssetWithUniqueName>>;
+	let asset: { id: string; content_type: string; byte_size: number; original_filename: string };
 	try {
-		asset = await insertAssetWithUniqueName(db, {
-			assetId,
-			teamId,
-			projectId,
-			contentType,
-			byteSize,
-			sha256,
-			desiredName: normalizedFolder ? `${normalizedFolder}/${base}` : base,
-			uploadedByMemberId: uploadedBy,
-		});
+		if (opts?.overwrite) {
+			const result = await upsertProjectAsset(db, {
+				assetId,
+				teamId,
+				projectId,
+				contentType,
+				byteSize,
+				sha256,
+				desiredName,
+				uploadedByMemberId: uploadedBy,
+			});
+			// The prior blob at this path is now orphaned (the row points at the new
+			// assetId); drop it rather than leak it.
+			if (result.replacedAssetId) {
+				await store.delete(projectId, result.replacedAssetId).catch(() => {});
+			}
+			if (result.wipedReviewComments) {
+				// The overwrite consumed the pending review (wiped inside the upsert's
+				// transaction) — tell viewers so their comment panes clear live.
+				broadcastCommentFamilyChange(
+					c.get('wsManager'),
+					teamId,
+					projectId,
+					'asset_review_comments',
+					'DELETE',
+					{ asset_id: result.replacedAssetId, cleared: true },
+				);
+			}
+			asset = {
+				id: result.id,
+				content_type: result.content_type,
+				byte_size: result.byte_size,
+				original_filename: result.original_filename,
+			};
+		} else {
+			asset = await insertAssetWithUniqueName(db, {
+				assetId,
+				teamId,
+				projectId,
+				contentType,
+				byteSize,
+				sha256,
+				desiredName,
+				uploadedByMemberId: uploadedBy,
+			});
+		}
 	} catch (e) {
 		// The blob was already stored; without its row it is unreachable, so drop
 		// it rather than leave an orphan (matters more when the store is a bucket).

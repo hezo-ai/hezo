@@ -38,9 +38,9 @@ export function generateSkillFile(tools: SkillTool[], opts: { baseUrl?: string }
 		'',
 		'## File uploads',
 		'',
-		'Binary files (images, PDFs, …) can be written with the `write_project_asset` tool by passing `encoding: "base64"` and the file bytes base64-encoded in `content`. Base64 inflates the JSON-RPC payload ~33% and can be silently truncated by a runtime\'s tool-call argument-size cap, so for any large binary use a `multipart/form-data` POST to `' +
+		'Binary files (images, PDFs, …) can be written with the `write_project_asset` tool by passing `encoding: "base64"` and the file bytes base64-encoded in `content` (also pass `byte_size`, the file\'s exact byte length, so a truncated payload is rejected instead of stored corrupt). Base64 inflates the JSON-RPC payload ~33% and can be silently truncated by a runtime\'s tool-call argument-size cap, so for any large binary use a `multipart/form-data` POST to `' +
 			base +
-			'/mcp/assets` (same Bearer auth) using a `file` field — add an optional `project` field to act across projects, and an optional `folder` field to place the asset inside a library folder (up to 2 levels, e.g. `launch/images`). The response returns the stored asset plus a signed read URL, and the file then shows up in `list_project_assets` / `read_project_asset` under its full path.',
+			"/mcp/assets` (same Bearer auth) using a `file` field — add a `path` field for the full destination path (folders + basename, up to 2 levels, e.g. `launch/images/hero.png`; a folder embedded in the file part's `filename=` works the same way), an optional `overwrite=true` to replace an existing asset in place (like `write_project_asset`; otherwise a colliding name is auto-suffixed), an optional `project` field to act across projects, and the legacy `folder` field (basename placed in a folder; ignored when `path` is given). The JSON response returns the stored asset (including `byte_size`) plus a signed read URL, and the file then shows up in `list_project_assets` / `read_project_asset` under its full path.",
 		'',
 		'## Documentation',
 		'',

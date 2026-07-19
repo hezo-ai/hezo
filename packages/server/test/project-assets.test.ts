@@ -108,6 +108,25 @@ async function uploadAssetViaMcp(
 	});
 }
 
+async function uploadAssetViaMcpForm(
+	authToken: string,
+	filename: string,
+	mime: string,
+	bytes: Uint8Array,
+	fields: Record<string, string> = {},
+): Promise<Response> {
+	const fd = new FormData();
+	const copy = new Uint8Array(bytes.byteLength);
+	copy.set(bytes);
+	fd.set('file', new File([copy.buffer], filename, { type: mime }));
+	for (const [k, v] of Object.entries(fields)) fd.set(k, v);
+	return app.request('/mcp/assets', {
+		method: 'POST',
+		headers: { ...authHeader(authToken) },
+		body: fd,
+	});
+}
+
 beforeAll(async () => {
 	const ctx = await createTestApp();
 	app = ctx.app;
@@ -404,6 +423,57 @@ describe('agent-authored assets (write_project_asset)', () => {
 		);
 		expect(row.rows).toHaveLength(0);
 	});
+
+	it('returns byte_size on a successful write so the caller can verify the file landed', async () => {
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+			taskId,
+		);
+		const png = buildPng(70);
+		const result = await callToolViaMcp(agentToken, 'write_project_asset', {
+			project: projectId,
+			filename: 'sized.png',
+			content: Buffer.from(png).toString('base64'),
+			encoding: 'base64',
+		});
+		expect(result.written).toBe(true);
+		expect(result.byte_size).toBe(png.byteLength);
+	});
+
+	it('rejects base64 whose decoded size mismatches a declared byte_size (catches an aligned cut)', async () => {
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+			taskId,
+		);
+		const png = buildPng(71);
+		// A mid-stream cut that lands on a 4-char boundary and drops the padding —
+		// valid base64 that decodes short, so the %4 heuristic can't flag it; only
+		// the declared byte_size does.
+		const stripped = Buffer.from(png).toString('base64').replace(/=+$/, '');
+		const aligned = stripped.slice(0, stripped.length - (stripped.length % 4));
+		expect(aligned.length % 4).toBe(0);
+		const result = await callToolViaMcp(agentToken, 'write_project_asset', {
+			project: projectId,
+			filename: 'declared.png',
+			content: aligned,
+			encoding: 'base64',
+			byte_size: png.byteLength,
+		});
+		expect(result.written).toBeUndefined();
+		expect(String(result.error)).toContain('truncated');
+		expect(String(result.error)).toContain('/mcp/assets');
+		const row = await db.query(
+			'SELECT id FROM assets WHERE project_id = $1 AND original_filename = $2',
+			[projectId, 'declared.png'],
+		);
+		expect(row.rows).toHaveLength(0);
+	});
 });
 
 describe('project asset listing', () => {
@@ -611,6 +681,156 @@ describe('MCP asset upload (POST /mcp/assets)', () => {
 		});
 		expect(res.status).toBe(201);
 		expect((await res.json()).data.original_filename).toBe('reports/q3/chart.png');
+	});
+
+	it('preserves the full folder path from the `path` field and reports byte_size', async () => {
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+			taskId,
+			{
+				projectId,
+			},
+		);
+		const png = buildPng(60);
+		const res = await uploadAssetViaMcpForm(agentToken, 'hero.png', 'image/png', png, {
+			path: 'community-posts/indiehackers-header.png',
+		});
+		expect(res.status).toBe(201);
+		const body = await res.json();
+		expect(body.data.original_filename).toBe('community-posts/indiehackers-header.png');
+		expect(body.data.byte_size).toBe(png.byteLength);
+	});
+
+	it('derives the destination path from a foldered filename when no path field is sent', async () => {
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+			taskId,
+			{
+				projectId,
+			},
+		);
+		const res = await uploadAssetViaMcpForm(
+			agentToken,
+			'community-posts/from-filename.png',
+			'image/png',
+			buildPng(61),
+		);
+		expect(res.status).toBe(201);
+		expect((await res.json()).data.original_filename).toBe('community-posts/from-filename.png');
+	});
+
+	it('overwrites an existing asset in place with overwrite=true (no fork, old blob cleaned)', async () => {
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+			taskId,
+			{
+				projectId,
+			},
+		);
+		const first = await uploadAssetViaMcpForm(agentToken, 'hero.png', 'image/png', buildPng(62), {
+			path: 'over/hero.png',
+			overwrite: 'true',
+		});
+		expect(first.status).toBe(201);
+		const firstId = (await first.json()).data.id as string;
+		expect(existsSync(diskPath(firstId))).toBe(true);
+
+		const second = await uploadAssetViaMcpForm(agentToken, 'hero.png', 'image/png', buildPng(63), {
+			path: 'over/hero.png',
+			overwrite: 'true',
+		});
+		expect(second.status).toBe(201);
+		const secondBody = await second.json();
+		expect(secondBody.data.original_filename).toBe('over/hero.png');
+		expect(secondBody.data.id).not.toBe(firstId);
+
+		// Exactly one active row at the path — the overwrite replaced in place.
+		const rows = await db.query(
+			"SELECT original_filename FROM assets WHERE project_id = $1 AND original_filename LIKE 'over/%'",
+			[projectId],
+		);
+		expect(rows.rows).toHaveLength(1);
+		// The replaced blob is cleaned off disk; the new one is present.
+		expect(existsSync(diskPath(firstId))).toBe(false);
+		expect(existsSync(diskPath(secondBody.data.id as string))).toBe(true);
+	});
+
+	it('auto-suffixes a colliding path when overwrite is not set (backward compat)', async () => {
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+			taskId,
+			{
+				projectId,
+			},
+		);
+		const first = await uploadAssetViaMcpForm(agentToken, 'dup.png', 'image/png', buildPng(64), {
+			path: 'dupdir/dup.png',
+		});
+		const second = await uploadAssetViaMcpForm(agentToken, 'dup.png', 'image/png', buildPng(65), {
+			path: 'dupdir/dup.png',
+		});
+		expect((await first.json()).data.original_filename).toBe('dupdir/dup.png');
+		const secondName = (await second.json()).data.original_filename;
+		expect(secondName).not.toBe('dupdir/dup.png');
+		expect(secondName).toMatch(/^dupdir\/dup-[0-9a-z]+\.png$/);
+	});
+
+	it('rejects overwriting an archived asset — the holder must be unarchived first', async () => {
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+			taskId,
+			{
+				projectId,
+			},
+		);
+		const first = await uploadAssetViaMcpForm(agentToken, 'arch.png', 'image/png', buildPng(66), {
+			path: 'archdir/arch.png',
+			overwrite: 'true',
+		});
+		expect(first.status).toBe(201);
+		await db.query(
+			'UPDATE assets SET archived_at = now() WHERE project_id = $1 AND original_filename = $2',
+			[projectId, 'archdir/arch.png'],
+		);
+		const res = await uploadAssetViaMcpForm(agentToken, 'arch.png', 'image/png', buildPng(67), {
+			path: 'archdir/arch.png',
+			overwrite: 'true',
+		});
+		expect(res.status).toBe(409);
+		expect((await res.json()).error.code).toBe('ASSET_ARCHIVED');
+	});
+
+	it('rejects a path deeper than 2 folder levels', async () => {
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+			taskId,
+			{
+				projectId,
+			},
+		);
+		const res = await uploadAssetViaMcpForm(agentToken, 'deep.png', 'image/png', buildPng(68), {
+			path: 'a/b/c/deep.png',
+		});
+		expect(res.status).toBe(400);
+		expect((await res.json()).error.code).toBe('INVALID_PATH');
 	});
 });
 
