@@ -406,9 +406,9 @@ Per-run cost is computed in `agent-stream-parser.ts`, **always** from the `model
 
 **Grok is the one runtime that reports no token usage on its stdout stream.** Its usage is recovered from the per-run `--debug-file` (`extractGrokUsageFromDebugLog` parses the `process_conversation_turn` tracing spans for `input_tokens`/`output_tokens`/`cache_read_tokens`, keyed by `request_id` to dedup), then priced from the table exactly like every other runtime. The runner scrubs that debug file after parsing — it also contains the `XAI_API_KEY` in plaintext.
 
-## Browser automation inside the container
+## Container toolset & installing packages at runtime
 
-Playwright (and any other browser-driver) installs cleanly at runtime — nothing is pre-baked. Both `apt` and the binary download route through the per-run egress proxy; the Hezo CA is already trusted via `NODE_EXTRA_CA_CERTS` and the system bundle. Do not special-case TLS.
+The agent-run container (`docker/Dockerfile.agent-base`) pre-bakes the common toolset — `git`, `curl`/`wget`, `jq`, `unzip`, `file`, `python3` + `pip3`, ImageMagick, `openssh-client`, Node + `npm`/`bun`, and the AI coding CLIs. Anything not pre-baked installs cleanly at runtime: the container runs as the non-root `node` user with **passwordless `sudo`**, and both `apt` and binary/package downloads route through the per-run egress proxy with the Hezo CA already trusted via `NODE_EXTRA_CA_CERTS` and the system bundle — so `sudo apt-get install -y <pkg>`, `pip3 install <pkg>`, and `npm i -g <pkg>` all work with no TLS special-casing. Browser automation (Playwright) is the canonical worked example:
 
 ```sh
 mkdir -p /tmp/pw && cd /tmp/pw

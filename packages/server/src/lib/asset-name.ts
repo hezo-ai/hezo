@@ -53,6 +53,9 @@ export interface InsertAssetInput {
 	/** Already passed through `normalizeAssetFilename`. */
 	desiredName: string;
 	uploadedByMemberId: string | null;
+	/** Pixel dimensions for raster images (PNG/JPEG/GIF/WebP); null otherwise. */
+	width?: number | null;
+	height?: number | null;
 }
 
 export interface InsertedAsset {
@@ -60,6 +63,8 @@ export interface InsertedAsset {
 	content_type: string;
 	byte_size: number;
 	original_filename: string;
+	width: number | null;
+	height: number | null;
 }
 
 /**
@@ -77,9 +82,9 @@ export async function insertAssetWithUniqueName(
 		const name = await uniqueAssetName(db, input.projectId, input.desiredName);
 		try {
 			const r = await db.query<InsertedAsset>(
-				`INSERT INTO assets (id, team_id, project_id, content_type, byte_size, sha256, original_filename, uploaded_by_member_id)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-				 RETURNING id, content_type, byte_size, original_filename`,
+				`INSERT INTO assets (id, team_id, project_id, content_type, byte_size, sha256, original_filename, uploaded_by_member_id, width, height)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+				 RETURNING id, content_type, byte_size, original_filename, width, height`,
 				[
 					input.assetId,
 					input.teamId,
@@ -89,6 +94,8 @@ export async function insertAssetWithUniqueName(
 					input.sha256,
 					name,
 					input.uploadedByMemberId,
+					input.width ?? null,
+					input.height ?? null,
 				],
 			);
 			return r.rows[0];
@@ -134,15 +141,17 @@ export async function upsertProjectAsset(
 			const r = await tx.query<InsertedAsset>(
 				`UPDATE assets
 				 SET id = $1, content_type = $2, byte_size = $3, sha256 = $4,
-				     uploaded_by_member_id = $5, created_at = now()
-				 WHERE project_id = $6 AND original_filename = $7
-				 RETURNING id, content_type, byte_size, original_filename`,
+				     uploaded_by_member_id = $5, width = $6, height = $7, created_at = now()
+				 WHERE project_id = $8 AND original_filename = $9
+				 RETURNING id, content_type, byte_size, original_filename, width, height`,
 				[
 					input.assetId,
 					input.contentType,
 					input.byteSize,
 					input.sha256,
 					input.uploadedByMemberId,
+					input.width ?? null,
+					input.height ?? null,
 					input.projectId,
 					input.desiredName,
 				],
@@ -151,9 +160,9 @@ export async function upsertProjectAsset(
 		});
 	}
 	const r = await db.query<InsertedAsset>(
-		`INSERT INTO assets (id, team_id, project_id, content_type, byte_size, sha256, original_filename, uploaded_by_member_id)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		 RETURNING id, content_type, byte_size, original_filename`,
+		`INSERT INTO assets (id, team_id, project_id, content_type, byte_size, sha256, original_filename, uploaded_by_member_id, width, height)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		 RETURNING id, content_type, byte_size, original_filename, width, height`,
 		[
 			input.assetId,
 			input.teamId,
@@ -163,6 +172,8 @@ export async function upsertProjectAsset(
 			input.sha256,
 			input.desiredName,
 			input.uploadedByMemberId,
+			input.width ?? null,
+			input.height ?? null,
 		],
 	);
 	return { ...r.rows[0], replacedAssetId: null, wipedReviewComments: false };

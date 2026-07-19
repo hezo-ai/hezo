@@ -23,6 +23,7 @@ import { insertAssetWithUniqueName, upsertProjectAsset } from '../lib/asset-name
 import { assetSortOrderBy } from '../lib/asset-sort';
 import { signAssetUrl, verifyAssetUrl } from '../lib/asset-urls';
 import { broadcastChange, broadcastCommentFamilyChange } from '../lib/broadcast';
+import { readImageDimensions } from '../lib/image-dimensions';
 import { ref } from '../lib/log-ref';
 import {
 	actorTypeFromAuth,
@@ -110,6 +111,13 @@ export async function storeUploadedAsset(
 		return err(c, 'TOO_LARGE', 'Attachment exceeds 10 MB', 400);
 	}
 
+	// Capture raster-image pixel dimensions so the asset tools / UI can report
+	// them without re-parsing the blob (readImageDimensions returns null for
+	// non-raster types incl. SVG).
+	const dims = contentType.startsWith('image/')
+		? readImageDimensions(Buffer.from(await file.arrayBuffer()))
+		: null;
+
 	const db = c.get('db');
 	const store = c.get('assetStore');
 
@@ -160,6 +168,8 @@ export async function storeUploadedAsset(
 				sha256,
 				desiredName,
 				uploadedByMemberId: uploadedBy,
+				width: dims?.width ?? null,
+				height: dims?.height ?? null,
 			});
 			// The prior blob at this path is now orphaned (the row points at the new
 			// assetId); drop it rather than leak it.
@@ -194,6 +204,8 @@ export async function storeUploadedAsset(
 				sha256,
 				desiredName,
 				uploadedByMemberId: uploadedBy,
+				width: dims?.width ?? null,
+				height: dims?.height ?? null,
 			});
 		}
 	} catch (e) {

@@ -1773,7 +1773,15 @@ bind-mounted into containers. Binary contents come back from `read_project_asset
 task-thread attachment lines in run prompts / `list_comments`) as absolute signed download
 URLs on the `http://host.docker.internal:<serverPort>` origin (the same NO_PROXY'd origin as
 the MCP endpoint, so a plain in-container `curl` works), signed with the long agent TTL
-(`AGENT_ASSET_URL_TTL_SECONDS`, 24 h; `lib/asset-urls.ts:signAgentAssetUrl`). Project
+(`AGENT_ASSET_URL_TTL_SECONDS`, 24 h; `lib/asset-urls.ts:signAgentAssetUrl`). Raster images
+(PNG/JPEG/GIF/WebP) additionally carry pixel `width`/`height`: parsed once at write time by
+`readImageDimensions` (`lib/image-dimensions.ts`) into the nullable `assets.width`/`height`
+columns (migration `036_asset_dimensions.sql`), backfilled lazily on first `read_project_asset`
+for rows written before the feature. At or under `MCP_INLINE_IMAGE_MAX_BYTES` (~4 MB) the image
+itself is returned **inline** as an MCP image content block so a vision-capable runtime can review
+it (opt out with `include_image: false`; larger images fall back to the URL). The `tool()` wrapper
+(`mcp/tools.ts`) normally serialises a handler result to a single text block, but passes a
+handler's `{ __mcpContent: [...] }` marker through untouched to carry the image block. Project
 deletion sweeps blobs via `deleteProjectAssets` (S3: paginated list + 1000-key batch
 deletes, which also collects orphans). The in-process S3 sim
 (`test/helpers/s3-sim.ts`) backs the driver-conformance and integration suites; the
