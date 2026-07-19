@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.29.0 - 2026-07-19
+
+### Features
+
+- **web:** relative "X ago" timestamps via date-fns with date tooltip ([#765](https://github.com/hezo-ai/hezo/pull/765))
+- **web:** infinite scroll for skills, connectors, credentials & runs lists ([#766](https://github.com/hezo-ai/hezo/pull/766))
+
+### Bug Fixes
+
+- **web:** dim the page behind the mobile chat panel ([#767](https://github.com/hezo-ai/hezo/pull/767))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.28.0...0.29.0
+
 ## 0.28.0 - 2026-07-19
 
 ### Features
