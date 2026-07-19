@@ -1396,10 +1396,10 @@ export async function runAgent(
 				noWorkReason = flagged.rows[0]?.no_work_reason ?? null;
 			}
 
-			// Deterministic handoff-delivery net. An agent that ends its turn with a
-			// handoff in its FINAL MESSAGE rather than a create_comment call strands the
-			// work: a run's final message is logged, never posted, so it wakes nobody.
-			// Two stranded forms are handled here, differently:
+			// Deterministic handoff-delivery net. An agent that ends its turn with its
+			// reply in its FINAL MESSAGE rather than a create_comment call strands the
+			// work: a run's final message is logged, never posted, so it reaches nobody.
+			// Three stranded forms are handled here, differently:
 			//   (1) an active `@`-mention the run never posted as a comment — the agent
 			//       wrote an explicit, unambiguous wake, so deliver the message verbatim
 			//       via postAgentComment (admin inbox / agent wakeup), flipping the run
@@ -1411,6 +1411,13 @@ export async function runAgent(
 			//       intent and overreaches). create_comment already warns the agent
 			//       interactively, but the final-message path skips that check, so surface
 			//       the same warning in the run log; the handoff is left undelivered.
+			//   (3) a plain DIRECT ANSWER (no mention, no ask) to a human who addressed
+			//       this agent by replying to or @-mentioning it — the exact "give me the
+			//       link" case. The human asked and expects the answer in the thread, but
+			//       the agent left it only in its final message, so post it verbatim as a
+			//       reply to the waking comment. Scoped to human-originated reply/mention
+			//       wakes where the run posted no comment of its own, so it never turns a
+			//       routine work-summary into thread noise.
 			// Best-effort: a failure here must never throw out of the run-completion path.
 			// Runs on every runtime, including OpenCode, which has no stop-hook judge.
 			if (exitedClean && task) {
@@ -1422,12 +1429,22 @@ export async function runAgent(
 						// HQ instance agents + @admin (the slugs a mention here can wake).
 						const roster = await resolveWarnableSlugs(deps.db, runTeamId, agent.id);
 						const unlinkedAsks = detectUnlinkedTeammateAsks(finalMessage, roster);
-						if (activeMentions.length > 0 || unlinkedAsks.length > 0) {
-							// Slugs this run already delivered as an active mention in a comment
-							// (the same extractor fireCommentWakeups uses), so an agent that DID
-							// post/wake them and merely echoed it in the final message is skipped.
-							const posted = await deps.db.query<{ content: unknown }>(
-								`SELECT content FROM task_comments WHERE created_by_run_id = $1 AND content_type = 'text'`,
+						// A run woken by a human addressing this agent directly (reply to its
+						// comment / @-mention) is expected to answer in the thread. The waking
+						// comment id lets us both check its author is human (not an agent — we
+						// don't auto-deliver agent-to-agent chatter) and thread the reply under it.
+						const wakingCommentId =
+							typeof wakeupPayload?.comment_id === 'string' ? wakeupPayload.comment_id : null;
+						const directQuestionWake =
+							(wakeupPayload?.source === WakeupSource.Reply ||
+								wakeupPayload?.source === WakeupSource.Mention) &&
+							wakingCommentId !== null;
+						if (activeMentions.length > 0 || unlinkedAsks.length > 0 || directQuestionWake) {
+							// Text comments this run posted, with their task, used to skip a mention
+							// it already delivered (the same extractor fireCommentWakeups uses) and to
+							// tell whether it already answered this task's thread (case 3).
+							const posted = await deps.db.query<{ task_id: string; content: unknown }>(
+								`SELECT task_id, content FROM task_comments WHERE created_by_run_id = $1 AND content_type = 'text'`,
 								[heartbeatRunId],
 							);
 							const delivered = new Set<string>();
@@ -1435,42 +1452,78 @@ export async function runAgent(
 								for (const slug of extractMentionSlugs(c.content)) delivered.add(slug);
 							}
 
-							// (1) Deliver stranded active mentions verbatim.
-							const undeliveredActive = activeMentions.filter((slug) => !delivered.has(slug));
-							if (undeliveredActive.length > 0) {
-								await postAgentComment({
-									db: deps.db,
-									wsManager: deps.wsManager,
-									teamId: runTeamId,
-									projectId: project.id,
-									taskId: task.id,
-									authorMemberId: agent.id,
-									createdByRunId: heartbeatRunId,
-									text: finalMessage,
-								});
-								// The run delivered a real comment, so it is no longer a no-op:
-								// flip the local flag (drives `success` below) and the row column
-								// (what the MCP write path sets) so status and produced_output agree.
-								await deps.db.query(
-									'UPDATE heartbeat_runs SET produced_output = true WHERE id = $1',
-									[heartbeatRunId],
-								);
-								producedOutput = true;
-								emit(
-									'stdout',
-									`\n[runner] auto-delivered stranded handoff (@${undeliveredActive.join(', @')}) from the run's final message as a comment\n`,
-								);
-							}
+							if (activeMentions.length > 0 || unlinkedAsks.length > 0) {
+								// (1) Deliver stranded active mentions verbatim.
+								const undeliveredActive = activeMentions.filter((slug) => !delivered.has(slug));
+								if (undeliveredActive.length > 0) {
+									await postAgentComment({
+										db: deps.db,
+										wsManager: deps.wsManager,
+										teamId: runTeamId,
+										projectId: project.id,
+										taskId: task.id,
+										authorMemberId: agent.id,
+										createdByRunId: heartbeatRunId,
+										text: finalMessage,
+									});
+									// The run delivered a real comment, so it is no longer a no-op:
+									// flip the local flag (drives `success` below) and the row column
+									// (what the MCP write path sets) so status and produced_output agree.
+									await deps.db.query(
+										'UPDATE heartbeat_runs SET produced_output = true WHERE id = $1',
+										[heartbeatRunId],
+									);
+									producedOutput = true;
+									emit(
+										'stdout',
+										`\n[runner] auto-delivered stranded handoff (@${undeliveredActive.join(', @')}) from the run's final message as a comment\n`,
+									);
+								}
 
-							// (2) Warn about a stranded bold-name ask — do NOT deliver or rewrite.
-							const strandedAsks = unlinkedAsks.filter((slug) => !delivered.has(slug));
-							if (strandedAsks.length > 0) {
-								const named = strandedAsks.map((s) => `**${s}**`).join(', ');
-								const fixes = strandedAsks.map((s) => `@${s}`).join(', ');
-								emit(
-									'stdout',
-									`\n[runner] WARNING: this run's final message addresses ${named} by bold/bare name — that renders as text and wakes no one, so the handoff was NOT delivered. Post a comment with an active mention (${fixes}) to reach them.\n`,
+								// (2) Warn about a stranded bold-name ask — do NOT deliver or rewrite.
+								const strandedAsks = unlinkedAsks.filter((slug) => !delivered.has(slug));
+								if (strandedAsks.length > 0) {
+									const named = strandedAsks.map((s) => `**${s}**`).join(', ');
+									const fixes = strandedAsks.map((s) => `@${s}`).join(', ');
+									emit(
+										'stdout',
+										`\n[runner] WARNING: this run's final message addresses ${named} by bold/bare name — that renders as text and wakes no one, so the handoff was NOT delivered. Post a comment with an active mention (${fixes}) to reach them.\n`,
+									);
+								}
+							} else if (directQuestionWake && !posted.rows.some((c) => c.task_id === task.id)) {
+								// (3) A human asked directly and the run posted no comment on this task —
+								// the answer is stranded in the final message. Deliver it only when the
+								// waking comment was authored by a human/admin (author not in
+								// member_agents), never for agent-to-agent replies/mentions.
+								const asker = await deps.db.query<{ from_agent: boolean }>(
+									`SELECT EXISTS (
+										SELECT 1 FROM member_agents ma WHERE ma.id = tc.author_member_id
+									 ) AS from_agent
+									 FROM task_comments tc WHERE tc.id = $1`,
+									[wakingCommentId],
 								);
+								if (asker.rows.length > 0 && asker.rows[0].from_agent === false) {
+									await postAgentComment({
+										db: deps.db,
+										wsManager: deps.wsManager,
+										teamId: runTeamId,
+										projectId: project.id,
+										taskId: task.id,
+										authorMemberId: agent.id,
+										createdByRunId: heartbeatRunId,
+										parentCommentId: wakingCommentId ?? undefined,
+										text: finalMessage,
+									});
+									await deps.db.query(
+										'UPDATE heartbeat_runs SET produced_output = true WHERE id = $1',
+										[heartbeatRunId],
+									);
+									producedOutput = true;
+									emit(
+										'stdout',
+										`\n[runner] auto-delivered the run's final message as a reply — it answered a direct question but posted no comment\n`,
+									);
+								}
 							}
 						}
 					}

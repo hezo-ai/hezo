@@ -1128,7 +1128,7 @@ detail is in `AGENTS.md` › AI runtime hooks.
 blocks at most once per run (the `stop_hook_active` ceiling) — so a stranded handoff is *also*
 caught **deterministically** at run completion, independent of any judge. In `agent-runner.ts`,
 when a run exits cleanly, the runner reads the run's final assistant message from the stream
-parser (`getFinalAssistantMessage()`). Two stranded forms are handled, differently:
+parser (`getFinalAssistantMessage()`). Three stranded forms are handled, differently:
 (1) an **active `@`-mention** (`extractMentionSlugs`) the run never posted as a comment is
 delivered verbatim via `postAgentComment` — the same insert + broadcast + `fireCommentWakeups`
 path `create_comment` uses — so it fans out to the admin inbox / agent wakeup instead of
@@ -1141,7 +1141,15 @@ never touched) is the wakes-no-one trap — but the net does **not** rewrite the
 agent's words or auto-deliver it (guessing intent to force a wake overreaches). `create_comment`
 already warns the agent interactively when it posts such a comment; the final-message path skips
 that check, so the runner surfaces the **same warning in the run log** and leaves the handoff
-undelivered. Runs on **every** runtime including OpenCode (which has no judge at all).
+undelivered.
+(3) a **plain direct answer** (no mention, no ask) to a human who addressed this agent by
+**replying to** or **@-mentioning** it — the "give me the link" case, where the human asked and
+expects the answer in the thread but the agent left it only in its final message. When the run
+was woken by a `WakeupSource.Reply`/`Mention` whose waking comment was authored by a human/admin
+(author not in `member_agents`, so agent-to-agent chatter is excluded) and the run posted no
+comment of its own on the task, the final message is delivered verbatim as a reply threaded under
+the waking comment (`postAgentComment` with `parentCommentId`), flipping the no-op run to success.
+Runs on **every** runtime including OpenCode (which has no judge at all).
 
 ---
 
