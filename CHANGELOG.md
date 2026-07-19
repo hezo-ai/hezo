@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.29.0 - 2026-07-19
+
+### Features
+
+- **assets:** give agents image dimensions + inline image, and surface the run container toolset ([#774](https://github.com/hezo-ai/hezo/pull/774))
+- **agents:** capture discovered techniques as reusable skills ([#775](https://github.com/hezo-ai/hezo/pull/775))
+- **web:** add reconnecting connection toast and move toasts to top-right ([#772](https://github.com/hezo-ai/hezo/pull/772))
+- **web:** relative "X ago" timestamps via date-fns with date tooltip ([#765](https://github.com/hezo-ai/hezo/pull/765))
+- **web:** infinite scroll for skills, connectors, credentials & runs lists ([#766](https://github.com/hezo-ai/hezo/pull/766))
+
+### Bug Fixes
+
+- **assets:** stream large binary uploads to an exact path in one call ([#773](https://github.com/hezo-ai/hezo/pull/773))
+- **mcp:** warn on backticked asset links that drop the assets/ prefix ([#771](https://github.com/hezo-ai/hezo/pull/771))
+- **runner:** deliver a stranded direct answer to a human's reply/mention as a comment ([#770](https://github.com/hezo-ai/hezo/pull/770))
+- **mentions:** warn on routing-label handoffs like "Next step: captain —" ([#769](https://github.com/hezo-ai/hezo/pull/769))
+- **web:** dim the page behind the mobile chat panel ([#767](https://github.com/hezo-ai/hezo/pull/767))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.28.0...0.29.0
+
 ## 0.28.0 - 2026-07-19
 
 ### Features
