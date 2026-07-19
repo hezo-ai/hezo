@@ -1,4 +1,4 @@
-import { AiProvider, ContainerStatus, HeartbeatRunStatus } from '@hezo/shared';
+import { AiProvider, ContainerStatus, HeartbeatRunStatus, WakeupSource } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
@@ -11,16 +11,19 @@ import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 import { withRunUserStub } from './helpers/run-user-docker';
 
-// The handoff-delivery guardrail: when a run ends (clean exit) with a handoff in
-// its FINAL MESSAGE that it never posted as a comment. Two stranded forms are
+// The handoff-delivery guardrail: when a run ends (clean exit) with a reply in
+// its FINAL MESSAGE that it never posted as a comment. Three stranded forms are
 // handled differently: an active @-mention (the HM-103 failure — an @admin ask
 // left only in the final message) is auto-delivered verbatim as a real comment so
 // it actually wakes its target; an UNLINKED bold/leading address that reads as an
 // ask (`**slug** — … when you resume …`) is NOT rewritten or delivered (that would
 // guess intent and force a wake) — instead the runner surfaces a warning in the
 // run log, matching create_comment's interactive warning for the path that skips
-// it. These tests boot a real app + PGlite and drive runAgent with a mock docker
-// that streams a Claude Code `result` event.
+// it; and a plain DIRECT ANSWER to a human who replied to / @-mentioned the agent
+// (the "give me the link" case) is delivered as a reply threaded under the waking
+// comment, so the asker sees it in the thread. These tests boot a real app +
+// PGlite and drive runAgent with a mock docker that streams a Claude Code
+// `result` event.
 
 let app: Hono<Env>;
 let db: Db;
@@ -191,11 +194,44 @@ function makeDeps(docker: DockerClient): RunnerDeps {
 }
 
 async function textComments(runId: string) {
-	return db.query<{ id: string; author_member_id: string; content: unknown }>(
-		`SELECT id, author_member_id, content FROM task_comments
+	return db.query<{
+		id: string;
+		author_member_id: string;
+		content: unknown;
+		parent_comment_id: string | null;
+	}>(
+		`SELECT id, author_member_id, content, parent_comment_id FROM task_comments
 		 WHERE task_id = $1 AND content_type = 'text' AND created_by_run_id = $2`,
 		[taskId, runId],
 	);
+}
+
+/** Insert a text comment on the shared task, returning its id. `author` null = admin/human. */
+async function seedComment(
+	author: string | null,
+	text: string,
+	parentCommentId: string | null = null,
+): Promise<string> {
+	const r = await db.query<{ id: string }>(
+		`INSERT INTO task_comments (task_id, author_member_id, parent_comment_id, content_type, content)
+		 VALUES ($1, $2, $3, 'text', $4::jsonb) RETURNING id`,
+		[taskId, author, parentCommentId, JSON.stringify({ text })],
+	);
+	return r.rows[0].id;
+}
+
+/** Create a real wakeup row so runAgent has a valid wakeup_id to attach the run to. */
+async function createWakeupRow(
+	source: WakeupSource,
+	payload: Record<string, unknown>,
+	key: string,
+): Promise<string> {
+	const r = await db.query<{ id: string }>(
+		`INSERT INTO agent_wakeup_requests (member_id, team_id, source, payload, idempotency_key)
+		 VALUES ($1, $2, $3::wakeup_source, $4::jsonb, $5) RETURNING id`,
+		[agentId, teamId, source, JSON.stringify(payload), key],
+	);
+	return r.rows[0].id;
 }
 
 describe('runAgent handoff-delivery guardrail', () => {
@@ -383,6 +419,206 @@ describe('runAgent handoff-delivery guardrail', () => {
 		);
 		expect(run.rows[0].log_text).toContain('wakes no one');
 		expect(run.rows[0].log_text).toContain(`@${otherSlug}`);
+	});
+
+	it("delivers a stranded direct answer to a human's reply as a threaded reply comment", async () => {
+		// The screenshot case: admin replies asking for the link; the agent computes
+		// it but leaves it only in its final message. It must land in the thread.
+		const original = await seedComment(agentId, 'Draft is ready for the Indie Hackers launch.');
+		const adminReply = await seedComment(
+			null,
+			"i'm adding hezo to indiehackers — give me the hezo.ai link with utm tags",
+			original,
+		);
+		const wakeupPayload = {
+			source: WakeupSource.Reply,
+			task_id: taskId,
+			comment_id: adminReply,
+			triggering_comment_id: original,
+		};
+		const wakeupId = await createWakeupRow(
+			WakeupSource.Reply,
+			wakeupPayload,
+			`reply:${adminReply}`,
+		);
+
+		const link =
+			'https://hezo.ai/?utm_source=indiehackers&utm_medium=community&utm_campaign=launch';
+		const deps = makeDeps(
+			createMockDocker({
+				producesOutput: false,
+				execStart: streamResult(`Here's the link: ${link}`),
+			}),
+		);
+
+		const result = await runAgent(
+			deps,
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+			wakeupPayload,
+			undefined,
+			undefined,
+			wakeupId,
+		);
+		expect(result.success).toBe(true);
+
+		const comments = await textComments(result.heartbeatRunId);
+		expect(comments.rows.length).toBe(1);
+		expect(comments.rows[0].author_member_id).toBe(agentId);
+		expect(JSON.stringify(comments.rows[0].content)).toContain(link);
+		// Threaded under the admin's question, not posted top-level.
+		expect(comments.rows[0].parent_comment_id).toBe(adminReply);
+
+		const run = await db.query<{ produced_output: boolean; log_text: string }>(
+			'SELECT produced_output, log_text FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(run.rows[0].produced_output).toBe(true);
+		expect(run.rows[0].log_text).toContain('answered a direct question');
+	});
+
+	it('delivers a stranded direct answer to a human @-mention as a reply', async () => {
+		const mention = await seedComment(null, "what's the launch link?");
+		const wakeupPayload = {
+			source: WakeupSource.Mention,
+			task_id: taskId,
+			comment_id: mention,
+		};
+		const wakeupId = await createWakeupRow(
+			WakeupSource.Mention,
+			wakeupPayload,
+			`mention:${mention}`,
+		);
+
+		const deps = makeDeps(
+			createMockDocker({
+				producesOutput: false,
+				execStart: streamResult('The launch link is https://hezo.ai/?utm_campaign=launch'),
+			}),
+		);
+
+		const result = await runAgent(
+			deps,
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+			wakeupPayload,
+			undefined,
+			undefined,
+			wakeupId,
+		);
+		expect(result.success).toBe(true);
+		const comments = await textComments(result.heartbeatRunId);
+		expect(comments.rows.length).toBe(1);
+		expect(comments.rows[0].parent_comment_id).toBe(mention);
+	});
+
+	it('does not deliver a direct answer the run already posted itself', async () => {
+		const adminReply = await seedComment(null, 'give me the link again please');
+		const wakeupPayload = {
+			source: WakeupSource.Reply,
+			task_id: taskId,
+			comment_id: adminReply,
+			triggering_comment_id: adminReply,
+		};
+		const wakeupId = await createWakeupRow(
+			WakeupSource.Reply,
+			wakeupPayload,
+			`reply-posted:${adminReply}`,
+		);
+
+		const deps = makeDeps(
+			createMockDocker({
+				producesOutput: true,
+				execStart: async (
+					_execId: string,
+					opts: { onChunk?: (c: { stream: string; text: string }) => Promise<void> },
+				) => {
+					const runRow = await db.query<{ id: string }>(
+						`SELECT id FROM heartbeat_runs WHERE task_id = $1 AND status = 'running'`,
+						[taskId],
+					);
+					await db.query(
+						`INSERT INTO task_comments (task_id, author_member_id, content_type, content, created_by_run_id)
+						 VALUES ($1, $2, 'text', $3::jsonb, $4)`,
+						[
+							taskId,
+							agentId,
+							JSON.stringify({ text: 'Posted it here: https://hezo.ai/?utm_campaign=launch' }),
+							runRow.rows[0].id,
+						],
+					);
+					const event = JSON.stringify({
+						type: 'result',
+						is_error: false,
+						result: 'Sent the link.',
+						usage: {},
+					});
+					await opts.onChunk?.({ stream: 'stdout', text: `${event}\n` });
+					return { stdout: '', stderr: '' };
+				},
+			}),
+		);
+
+		const result = await runAgent(
+			deps,
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+			wakeupPayload,
+			undefined,
+			undefined,
+			wakeupId,
+		);
+		// Exactly the one comment the run posted itself — no auto-delivered echo.
+		const comments = await textComments(result.heartbeatRunId);
+		expect(comments.rows.length).toBe(1);
+		expect(JSON.stringify(comments.rows[0].content)).toContain('Posted it here');
+	});
+
+	it('does not auto-deliver a direct answer to an agent-to-agent reply', async () => {
+		const other = await db.query<{ id: string }>(
+			`SELECT ma.id FROM member_agents ma
+			 JOIN members m ON m.id = ma.id
+			 WHERE m.team_id = $1 AND ma.id <> $2 LIMIT 1`,
+			[teamId, agentId],
+		);
+		const otherId = other.rows[0].id;
+		const agentReply = await seedComment(otherId, 'can you resend the link?');
+		const wakeupPayload = {
+			source: WakeupSource.Reply,
+			task_id: taskId,
+			comment_id: agentReply,
+			triggering_comment_id: agentReply,
+		};
+		const wakeupId = await createWakeupRow(
+			WakeupSource.Reply,
+			wakeupPayload,
+			`reply-agent:${agentReply}`,
+		);
+
+		const deps = makeDeps(
+			createMockDocker({
+				producesOutput: true,
+				execStart: streamResult('The link is https://hezo.ai/?utm_campaign=launch'),
+			}),
+		);
+
+		const result = await runAgent(
+			deps,
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+			wakeupPayload,
+			undefined,
+			undefined,
+			wakeupId,
+		);
+		expect(result.success).toBe(true);
+		// Agent-to-agent chatter is not auto-posted — the run left no comment.
+		const comments = await textComments(result.heartbeatRunId);
+		expect(comments.rows.length).toBe(0);
 	});
 
 	it('does not warn on a bold teammate name used without ask intent', async () => {
