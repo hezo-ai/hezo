@@ -1,11 +1,14 @@
 import { WakeupStatus, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
+import { buildMeta, parsePagination } from '../lib/pagination';
 import { resolveActorMemberId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import {
 	type CreateGoalInput,
+	countGoalRunActivity,
+	countProgressUpdateRuns,
 	createGoal,
 	GoalError,
 	getGoal,
@@ -35,8 +38,11 @@ goalsRoutes.get('/projects/:projectId/goals', async (c) => {
 // Registered before /goals/:goalId so "runs" isn't captured as a goal id.
 goalsRoutes.get('/projects/:projectId/goals/runs', async (c) => {
 	const projectId = c.get('projectId') as string;
-	const runs = await listProgressUpdateRuns(c.get('db'), projectId);
-	return ok(c, runs);
+	const db = c.get('db');
+	const { page, perPage, offset } = parsePagination(c);
+	const total = await countProgressUpdateRuns(db, projectId);
+	const runs = await listProgressUpdateRuns(db, projectId, { limit: perPage, offset });
+	return c.json({ data: runs, meta: buildMeta(page, perPage, total) });
 });
 
 goalsRoutes.post('/projects/:projectId/goals', async (c) => {
@@ -192,10 +198,13 @@ goalsRoutes.get('/projects/:projectId/goals/:goalId/history', async (c) => {
 goalsRoutes.get('/projects/:projectId/goals/:goalId/runs', async (c) => {
 	const projectId = c.get('projectId') as string;
 	const goalId = c.req.param('goalId');
-	const goal = await getGoal(c.get('db'), projectId, goalId);
+	const db = c.get('db');
+	const goal = await getGoal(db, projectId, goalId);
 	if (!goal) return err(c, 'NOT_FOUND', 'Goal not found', 404);
-	const runs = await listGoalRunActivity(c.get('db'), projectId, goalId);
-	return ok(c, runs);
+	const { page, perPage, offset } = parsePagination(c);
+	const total = await countGoalRunActivity(db, projectId, goalId);
+	const runs = await listGoalRunActivity(db, projectId, goalId, { limit: perPage, offset });
+	return c.json({ data: runs, meta: buildMeta(page, perPage, total) });
 });
 
 goalsRoutes.patch('/projects/:projectId/goals/:goalId', async (c) => {

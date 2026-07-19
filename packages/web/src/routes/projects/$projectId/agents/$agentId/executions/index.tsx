@@ -1,5 +1,7 @@
 import { INSTANCE_AGENT_SLUGS } from '@hezo/shared';
 import { createFileRoute, Link } from '@tanstack/react-router';
+import { useMemo } from 'react';
+import { InfiniteScrollSentinel } from '../../../../../../components/infinite-scroll-sentinel';
 import { Badge } from '../../../../../../components/ui/badge';
 import { Tooltip } from '../../../../../../components/ui/tooltip';
 import { useAgent } from '../../../../../../hooks/use-agents';
@@ -43,6 +45,7 @@ function ExecutionRow({
 		<Link
 			to="/projects/$projectId/agents/$agentId/executions/$runId"
 			params={{ projectId, agentId, runId: run.id }}
+			data-testid="execution-row"
 			className="flex items-center gap-2 rounded-md border border-border-subtle bg-surface px-3 py-2.5 text-xs hover:bg-surface-2 transition-colors"
 		>
 			<Badge color={statusColor(run.status) as 'green'}>
@@ -87,8 +90,27 @@ function ExecutionRow({
 
 function ExecutionListPage() {
 	const { projectId, agentId } = Route.useParams();
-	const { data: runs, isLoading } = useHeartbeatRuns(projectId, agentId);
+	const {
+		data: runPages,
+		isLoading,
+		hasNextPage,
+		isFetchingNextPage,
+		fetchNextPage,
+	} = useHeartbeatRuns(projectId, agentId);
 	const { data: agent } = useAgent(projectId, agentId);
+
+	// Flatten the accumulated pages, deduping by id: offset pagination + the 10s
+	// poll can transiently overlap a page boundary when a new run prepends.
+	const runs = useMemo(() => {
+		const seen = new Set<string>();
+		const out: HeartbeatRun[] = [];
+		for (const run of runPages?.pages.flatMap((p) => p.data) ?? []) {
+			if (seen.has(run.id)) continue;
+			seen.add(run.id);
+			out.push(run);
+		}
+		return out;
+	}, [runPages]);
 
 	// CEO/Coach runs span many projects (the list is member-scoped), so show each
 	// row's project. Gate on the agent slug — see the run-detail page for why.
@@ -97,7 +119,7 @@ function ExecutionListPage() {
 
 	if (isLoading) return <div className="text-text-2 text-sm">Loading executions...</div>;
 
-	if (!runs || runs.length === 0) {
+	if (runs.length === 0) {
 		return <div className="text-text-2 text-sm py-4">No executions yet.</div>;
 	}
 
@@ -112,6 +134,12 @@ function ExecutionListPage() {
 					isInstanceAgent={isInstanceAgent}
 				/>
 			))}
+			<InfiniteScrollSentinel
+				hasNextPage={hasNextPage}
+				isFetchingNextPage={isFetchingNextPage}
+				onLoadMore={fetchNextPage}
+				testId="executions"
+			/>
 		</div>
 	);
 }

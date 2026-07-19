@@ -4,6 +4,7 @@ import { encrypt } from '../crypto/encryption';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
 import { validateSecretName } from '../lib/credential-placeholder';
+import { buildMeta, parsePagination } from '../lib/pagination';
 import { resolveActor } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import { isUniqueViolation, withTransaction } from '../lib/sql';
@@ -64,6 +65,13 @@ connectorsRoutes.get('/connectors/oauth-providers', async (c) => {
 connectorsRoutes.get('/projects/:projectId/connectors', async (c) => {
 	const db = c.get('db');
 	const projectId = c.get('projectId') as string;
+	const { page, perPage, offset } = parsePagination(c);
+	const countResult = await db.query<{ total: number }>(
+		`SELECT count(*)::int AS total FROM mcp_connections mc
+		 WHERE mc.project_id = $1 OR mc.project_id IS NULL`,
+		[projectId],
+	);
+	const total = countResult.rows[0]?.total ?? 0;
 	const result = await db.query(
 		`SELECT ${CONNECTOR_COLUMNS_MC}, oc.provider_account_label AS oauth_account_label,
 		        LOWER(t.identifier) AS created_by_task_identifier, t.title AS created_by_task_title,
@@ -72,10 +80,11 @@ connectorsRoutes.get('/projects/:projectId/connectors', async (c) => {
 		 LEFT JOIN oauth_connections oc ON oc.id = mc.oauth_connection_id
 		 LEFT JOIN tasks t ON t.id = mc.created_by_task_id
 		 WHERE mc.project_id = $1 OR mc.project_id IS NULL
-		 ORDER BY mc.name ASC`,
-		[projectId],
+		 ORDER BY mc.name ASC
+		 LIMIT $2 OFFSET $3`,
+		[projectId, perPage, offset],
 	);
-	return ok(c, result.rows);
+	return c.json({ data: result.rows, meta: buildMeta(page, perPage, total) });
 });
 
 // Admin surface: every connector across all projects, each annotated with its
@@ -85,6 +94,11 @@ connectorsRoutes.get('/connectors', async (c) => {
 	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 	const db = c.get('db');
+	const { page, perPage, offset } = parsePagination(c);
+	const countResult = await db.query<{ total: number }>(
+		`SELECT count(*)::int AS total FROM mcp_connections mc`,
+	);
+	const total = countResult.rows[0]?.total ?? 0;
 	const result = await db.query(
 		`SELECT ${CONNECTOR_COLUMNS_MC}, p.name AS project_name, p.slug AS project_slug,
 		        oc.provider_account_label AS oauth_account_label,
@@ -92,9 +106,11 @@ connectorsRoutes.get('/connectors', async (c) => {
 		 FROM mcp_connections mc
 		 LEFT JOIN projects p ON p.id = mc.project_id
 		 LEFT JOIN oauth_connections oc ON oc.id = mc.oauth_connection_id
-		 ORDER BY mc.name ASC`,
+		 ORDER BY mc.name ASC
+		 LIMIT $1 OFFSET $2`,
+		[perPage, offset],
 	);
-	return ok(c, result.rows);
+	return c.json({ data: result.rows, meta: buildMeta(page, perPage, total) });
 });
 
 connectorsRoutes.post('/connectors', async (c) => {

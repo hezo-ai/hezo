@@ -5,8 +5,8 @@ import type {
 	GoalWithProject,
 	ProgressUpdateRunSummary,
 } from '@hezo/shared';
-import { useMutation, useQuery } from '@tanstack/react-query';
-import { api } from '../lib/api';
+import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
+import { api, nextOffsetPageParam } from '../lib/api';
 import { queryClient } from '../lib/query-client';
 import { queryKeys } from '../lib/query-keys';
 import { useOptimisticMutation } from './use-optimistic-mutation';
@@ -52,10 +52,17 @@ export function useGoalHistory(projectId: string, goalId: string) {
 }
 
 /** The progress-update runs for this project (newest-first as returned by the server). */
-export function useGoalRuns(projectId: string) {
-	return useQuery({
-		queryKey: queryKeys.projects.goalRuns(projectId),
-		queryFn: () => api.get<ProgressUpdateRunSummary[]>(`/api/projects/${projectId}/goals/runs`),
+export function useGoalRuns(projectId: string, options?: { perPage?: number }) {
+	const perPage = options?.perPage ?? 50;
+	return useInfiniteQuery({
+		queryKey: queryKeys.projects.goalRunsInfinite(projectId, { per_page: String(perPage) }),
+		initialPageParam: 1,
+		queryFn: ({ pageParam }) =>
+			api.getPaginated<ProgressUpdateRunSummary>(`/api/projects/${projectId}/goals/runs`, {
+				page: String(pageParam),
+				per_page: String(perPage),
+			}),
+		getNextPageParam: nextOffsetPageParam,
 	});
 }
 
@@ -78,10 +85,23 @@ export function useGoalQueuedRun(projectId: string) {
 }
 
 /** The progress-update runs that did something for one goal — shown at the bottom of its detail page. */
-export function useGoalRunActivity(projectId: string, goalId: string) {
-	return useQuery({
-		queryKey: queryKeys.projects.goalRunsForGoal(projectId, goalId),
-		queryFn: () => api.get<GoalRunActivity[]>(`/api/projects/${projectId}/goals/${goalId}/runs`),
+export function useGoalRunActivity(
+	projectId: string,
+	goalId: string,
+	options?: { perPage?: number },
+) {
+	const perPage = options?.perPage ?? 50;
+	return useInfiniteQuery({
+		queryKey: queryKeys.projects.goalRunsForGoalInfinite(projectId, goalId, {
+			per_page: String(perPage),
+		}),
+		initialPageParam: 1,
+		queryFn: ({ pageParam }) =>
+			api.getPaginated<GoalRunActivity>(`/api/projects/${projectId}/goals/${goalId}/runs`, {
+				page: String(pageParam),
+				per_page: String(perPage),
+			}),
+		getNextPageParam: nextOffsetPageParam,
 	});
 }
 

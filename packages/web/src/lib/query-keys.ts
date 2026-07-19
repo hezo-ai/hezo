@@ -141,8 +141,27 @@ export const queryKeys = {
 		goal: (slug: string, goalId: string) => ['projects', slug, 'goals', goalId],
 		goalHistory: (slug: string, goalId: string) => ['projects', slug, 'goals', goalId, 'history'],
 		goalRuns: (slug: string) => ['projects', slug, 'goals', 'runs'],
+		// Infinite-scroll variants of the runs feeds, under their base prefixes so
+		// existing invalidations still cascade.
+		goalRunsInfinite: (slug: string, filters: KeyParam) => [
+			'projects',
+			slug,
+			'goals',
+			'runs',
+			'infinite',
+			filters,
+		],
 		goalQueuedRun: (slug: string) => ['projects', slug, 'goals', 'queued-run'],
 		goalRunsForGoal: (slug: string, goalId: string) => ['projects', slug, 'goals', goalId, 'runs'],
+		goalRunsForGoalInfinite: (slug: string, goalId: string, filters: KeyParam) => [
+			'projects',
+			slug,
+			'goals',
+			goalId,
+			'runs',
+			'infinite',
+			filters,
+		],
 		progress: (slug: string) => ['projects', slug, 'progress'],
 
 		// agents
@@ -155,6 +174,15 @@ export const queryKeys = {
 			'agents',
 			agentId,
 			'heartbeat-runs',
+		],
+		agentHeartbeatRunsInfinite: (slug: string, agentId: string, filters: KeyParam) => [
+			'projects',
+			slug,
+			'agents',
+			agentId,
+			'heartbeat-runs',
+			'infinite',
+			filters,
 		],
 		agentHeartbeatRun: (slug: string, agentId: string, runId: string) => [
 			'projects',
@@ -230,6 +258,15 @@ export const queryKeys = {
 		customPrompt: (slug: string) => ['projects', slug, 'custom-prompt'],
 		customPromptRevisions: (slug: string) => ['projects', slug, 'custom-prompt', 'revisions'],
 		skills: (slug: string) => ['projects', slug, 'skills'],
+		// Infinite-scroll variant. Sits under the `skills` prefix so mutation/WS
+		// invalidation of `skills(slug)` still refetches it (mirrors tasksInfinite).
+		skillsInfinite: (slug: string, filters: KeyParam) => [
+			'projects',
+			slug,
+			'skills',
+			'infinite',
+			filters,
+		],
 		skill: (slug: string, skillSlug: string | null) => ['projects', slug, 'skills', skillSlug],
 
 		// connections / credentials / repos
@@ -243,6 +280,13 @@ export const queryKeys = {
 			slug,
 			'connectors',
 			filterProjectId,
+		],
+		connectorsInfinite: (slug: string, filters: KeyParam) => [
+			'projects',
+			slug,
+			'connectors',
+			'infinite',
+			filters,
 		],
 		connectorDetail: (slug: string, connectorId: string | null) => [
 			'projects',

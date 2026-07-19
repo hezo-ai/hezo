@@ -19,6 +19,16 @@ export interface PaginationMeta {
 	total: number;
 }
 
+/**
+ * `getNextPageParam` for offset-paginated `useInfiniteQuery` lists: returns the
+ * next page number while more rows remain, or `undefined` once the accumulated
+ * pages cover `total`. Shared by every infinite list hook.
+ */
+export function nextOffsetPageParam(lastPage: { meta: PaginationMeta }): number | undefined {
+	const { page, per_page, total } = lastPage.meta;
+	return page * per_page < total ? page + 1 : undefined;
+}
+
 class ApiClient {
 	private token: string | null = readStored(TOKEN_KEY);
 

@@ -2,10 +2,11 @@ import { getConnectorCapability } from '@hezo/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { Check, ExternalLink, Github, KeyRound, Plug, Plus, Trash2, X } from 'lucide-react';
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { apiKeyGuideFor, ConnectorApiKeyForm } from '../../../components/connector-api-key-form';
 import { ConnectorDeviceFlowDialog } from '../../../components/connector-device-flow-dialog';
 import { ConnectorOAuthBrokerForm } from '../../../components/connector-oauth-broker-form';
+import { InfiniteScrollSentinel } from '../../../components/infinite-scroll-sentinel';
 import { RelatedItemsList } from '../../../components/related-items-list';
 import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
@@ -44,7 +45,16 @@ export const Route = createFileRoute('/projects/$projectId/connectors')({
 function ConnectorsPage() {
 	const { projectId } = Route.useParams();
 	const { focus } = Route.useSearch();
-	const { data: connectors = [] } = useConnectors(projectId);
+	const {
+		data: connectorPages,
+		hasNextPage,
+		isFetchingNextPage,
+		fetchNextPage,
+	} = useConnectors(projectId);
+	const connectors = useMemo(
+		() => connectorPages?.pages.flatMap((p) => p.data) ?? [],
+		[connectorPages],
+	);
 	const { data: oauthConnections = [] } = useOAuthConnections(projectId);
 
 	// Ref callback fires when the focused <li> mounts (which can happen after
@@ -100,6 +110,13 @@ function ConnectorsPage() {
 						/>
 					))}
 			</ul>
+
+			<InfiniteScrollSentinel
+				hasNextPage={hasNextPage}
+				isFetchingNextPage={isFetchingNextPage}
+				onLoadMore={fetchNextPage}
+				testId="connectors"
+			/>
 
 			{isEmpty && (
 				<p className="text-xs text-text-3 text-center">

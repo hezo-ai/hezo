@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { InfiniteScrollSentinel } from '../../components/infinite-scroll-sentinel';
 import { RelatedItemsList } from '../../components/related-items-list';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -35,7 +36,16 @@ function formatRelative(iso: string | null): string {
 function InstanceCredentialsPage() {
 	const { data: me } = useMe();
 	const { focus } = Route.useSearch();
-	const { data: rows = [] } = useInstanceCredentials();
+	const {
+		data: credentialPages,
+		hasNextPage,
+		isFetchingNextPage,
+		fetchNextPage,
+	} = useInstanceCredentials();
+	const rows = useMemo(
+		() => credentialPages?.pages.flatMap((p) => p.data) ?? [],
+		[credentialPages],
+	);
 	const createSecret = useCreateInstanceSecret();
 	const updateSecret = useUpdateInstanceSecret();
 	const deleteSecret = useDeleteInstanceSecret();
@@ -343,6 +353,14 @@ function InstanceCredentialsPage() {
 								/>
 							) : null
 						}
+					/>
+				)}
+				{rows.length > 0 && (
+					<InfiniteScrollSentinel
+						hasNextPage={hasNextPage}
+						isFetchingNextPage={isFetchingNextPage}
+						onLoadMore={fetchNextPage}
+						testId="instance-credentials"
 					/>
 				)}
 			</>

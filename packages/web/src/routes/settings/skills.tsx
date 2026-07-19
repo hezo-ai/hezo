@@ -11,6 +11,7 @@ import {
 	Trash2,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { InfiniteScrollSentinel } from '../../components/infinite-scroll-sentinel';
 import { MarkdownEditor } from '../../components/markdown-editor';
 import { RevisionsPanel } from '../../components/revisions-panel';
 import { SkillViewDialog } from '../../components/skill-view-dialog';
@@ -50,7 +51,8 @@ const ALL_PROJECTS = 'all';
 
 function InstanceSkillsPage() {
 	const { data: me } = useMe();
-	const { data: skills = [] } = useInstanceSkills();
+	const { data: skillPages, hasNextPage, isFetchingNextPage, fetchNextPage } = useInstanceSkills();
+	const skills = useMemo(() => skillPages?.pages.flatMap((p) => p.data) ?? [], [skillPages]);
 	const { projects } = useAllVisibleProjects();
 	const createSkill = useCreateInstanceSkill();
 	const updateSkill = useUpdateInstanceSkill();
@@ -317,6 +319,12 @@ function InstanceSkillsPage() {
 								}}
 							/>
 						))}
+						<InfiniteScrollSentinel
+							hasNextPage={hasNextPage}
+							isFetchingNextPage={isFetchingNextPage}
+							onLoadMore={fetchNextPage}
+							testId="instance-skills"
+						/>
 					</div>
 				)}
 			</>

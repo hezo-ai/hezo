@@ -57,6 +57,32 @@ describe('global credentials (secrets)', () => {
 		expect(resolved?.allowedHosts).toEqual(['api.shared.example']);
 	});
 
+	it('paginates the credentials list with offset + total meta', async () => {
+		for (const name of ['PAGE_1', 'PAGE_2', 'PAGE_3']) {
+			expect((await createSecret({ name, value: 'v', allow_all_hosts: true })).status).toBe(201);
+		}
+
+		const all = await app.request('/api/credentials?per_page=200', { headers: authHeader(token) });
+		const total = (await all.json()).meta.total as number;
+		expect(total).toBeGreaterThanOrEqual(3);
+
+		const p1 = await app.request('/api/credentials?page=1&per_page=2', {
+			headers: authHeader(token),
+		});
+		const b1 = await p1.json();
+		expect(b1.meta).toEqual({ page: 1, per_page: 2, total });
+		expect(b1.data).toHaveLength(2);
+
+		const p2 = await app.request('/api/credentials?page=2&per_page=2', {
+			headers: authHeader(token),
+		});
+		const b2 = await p2.json();
+		expect(b2.meta.page).toBe(2);
+		const ids1 = b1.data.map((s: { id: string }) => s.id);
+		const ids2 = b2.data.map((s: { id: string }) => s.id);
+		expect(ids1.some((id: string) => ids2.includes(id))).toBe(false);
+	});
+
 	it('secret names are unique instance-wide; re-POST rotates the value', async () => {
 		await createSecret({ name: 'ROTATE', value: 'v1', allow_all_hosts: true });
 		// Re-POST same name → upsert new value (no duplicate-key error).

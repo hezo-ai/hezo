@@ -1,5 +1,5 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
-import { api } from '../lib/api';
+import { useInfiniteQuery, useMutation } from '@tanstack/react-query';
+import { api, nextOffsetPageParam } from '../lib/api';
 import { queryClient } from '../lib/query-client';
 
 // Credentials are instance-global: one set of secrets shared with every team's
@@ -7,6 +7,8 @@ import { queryClient } from '../lib/query-client';
 // /api/credentials + /api/secrets routes. Mutations are security-sensitive, so
 // they invalidate + refetch — never optimistic.
 export const INSTANCE_CREDENTIALS_KEY = ['instance', 'credentials'] as const;
+// Infinite-scroll key under the base key so mutation invalidations cascade.
+export const INSTANCE_CREDENTIALS_INFINITE_KEY = ['instance', 'credentials', 'infinite'] as const;
 
 // A connector that references a credential (its pasted API key, or the access
 // token of its OAuth connection). `project_id`/`project_slug` are null for a
@@ -65,10 +67,17 @@ export interface UpdateInstanceSecretPayload {
 	allow_body_substitution?: boolean;
 }
 
-export function useInstanceCredentials() {
-	return useQuery({
-		queryKey: INSTANCE_CREDENTIALS_KEY,
-		queryFn: () => api.get<CredentialUsage[]>('/api/credentials'),
+export function useInstanceCredentials(options?: { perPage?: number }) {
+	const perPage = options?.perPage ?? 50;
+	return useInfiniteQuery({
+		queryKey: [...INSTANCE_CREDENTIALS_INFINITE_KEY, { per_page: String(perPage) }],
+		initialPageParam: 1,
+		queryFn: ({ pageParam }) =>
+			api.getPaginated<CredentialUsage>('/api/credentials', {
+				page: String(pageParam),
+				per_page: String(perPage),
+			}),
+		getNextPageParam: nextOffsetPageParam,
 	});
 }
 

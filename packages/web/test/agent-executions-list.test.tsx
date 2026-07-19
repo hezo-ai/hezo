@@ -115,6 +115,37 @@ function installRunsListMock(opts: {
 	}) as typeof globalThis.fetch;
 }
 
+/**
+ * Serve the heartbeat-runs list as two offset pages ({ data, meta }). The web
+ * IntersectionObserver stub reports the sentinel as intersecting on observe, so
+ * the infinite-scroll sentinel auto-fetches page 2 — asserting a page-2 row
+ * renders proves the pagination loop is wired end-to-end.
+ */
+function installPagedRunsMock(opts: { agentId: string; pages: HeartbeatRun[][]; total: number }) {
+	const original = globalThis.fetch;
+	restoreFetch = () => {
+		globalThis.fetch = original;
+	};
+	globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+		const url = typeof input === 'string' ? input : (input as Request).url;
+		const method = init?.method ?? (input instanceof Request ? input.method : 'GET');
+		if (
+			method === 'GET' &&
+			new RegExp(`/api/projects/[^/]+/agents/${opts.agentId}/heartbeat-runs(\\?.*)?$`).test(url)
+		) {
+			const params = new URL(url, 'http://localhost').searchParams;
+			const page = Number(params.get('page') ?? '1');
+			const perPage = Number(params.get('per_page') ?? '50');
+			const data = opts.pages[page - 1] ?? [];
+			return new Response(
+				JSON.stringify({ data, meta: { page, per_page: perPage, total: opts.total } }),
+				{ status: 200, headers: { 'Content-Type': 'application/json' } },
+			);
+		}
+		return original(input as RequestInfo, init);
+	}) as typeof globalThis.fetch;
+}
+
 async function renderExecutions(runs: HeartbeatRun[], opts?: { agentSlugOverride?: string }) {
 	const seeded = { projectSlug: '', agentId: '' };
 	const helpers = await renderApp({
@@ -226,6 +257,45 @@ test('a non-instance agent omits the project suffix even when the run carries a 
 test('shows the empty state when the agent has no runs', async () => {
 	const { findByText } = await renderExecutions([]);
 	await findByText('No executions yet.', undefined, { timeout: 20_000 });
+});
+
+test('infinite-scroll auto-loads the second page of runs via the sentinel', async () => {
+	const seeded = { projectSlug: '', agentId: '' };
+	// 50 first-page runs + 1 on page 2 (identifier RUN2-51). Before infinite
+	// scroll the page capped at 50 and RUN2-51 was unreachable.
+	const pageOne = Array.from({ length: 50 }, (_, i) =>
+		makeRun({ id: `p1-${i}`, task_identifier: `P1-${i}`, task_title: `First ${i}` }),
+	);
+	const pageTwo = [
+		makeRun({ id: 'p2-0', task_identifier: 'RUN2-51', task_title: 'Second page run' }),
+	];
+
+	const helpers = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const captain = ws.agents.find((a) => a.slug === 'captain') ?? ws.agents[0];
+			const project = await seedProject(ws, { name: 'Paged Exec Project' });
+			seeded.projectSlug = project.slug;
+			seeded.agentId = captain.id;
+			installPagedRunsMock({
+				agentId: captain.id,
+				pages: [
+					pageOne.map((r) => ({ ...r, member_id: captain.id })),
+					pageTwo.map((r) => ({ ...r, member_id: captain.id })),
+				],
+				total: 51,
+			});
+		},
+	});
+	await helpers.router.navigate({
+		to: '/projects/$projectId/agents/$agentId/executions',
+		params: { projectId: seeded.projectSlug, agentId: seeded.agentId },
+	});
+
+	// The page-2 row only exists once the sentinel triggered fetchNextPage.
+	await helpers.findByRole('link', { name: /RUN2-51/ }, { timeout: 20_000 });
+	expect(helpers.getAllByTestId('execution-row').length).toBe(51);
 });
 
 test('a cancelled run renders with the neutral status (no exit/cost suffixes)', async () => {

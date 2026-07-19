@@ -36,7 +36,8 @@ interface GitHubSectionProps {
 
 export function GitHubSection({ projectId }: GitHubSectionProps) {
 	const { data: connections = [], isLoading: connectionsLoading } = useOAuthConnections(projectId);
-	const { data: connectors = [] } = useConnectors(projectId);
+	const { data: connectorPages } = useConnectors(projectId);
+	const connectors = connectorPages?.pages.flatMap((p) => p.data) ?? [];
 	const { data: repos } = useRepos(projectId);
 	const deleteRepo = useDeleteRepo(projectId);
 	const retryRepo = useCreateRepo(projectId);

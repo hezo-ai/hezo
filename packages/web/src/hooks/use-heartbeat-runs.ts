@@ -1,6 +1,6 @@
 import type { HeartbeatRunKind, WakeupSource } from '@hezo/shared';
-import { useQuery } from '@tanstack/react-query';
-import { api } from '../lib/api';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { api, nextOffsetPageParam } from '../lib/api';
 import { queryKeys } from '../lib/query-keys';
 
 export interface HeartbeatRun {
@@ -68,11 +68,24 @@ export function getRunWaitingMessage(status: RunStatus, queuedReason?: string | 
 	return 'No output.';
 }
 
-export function useHeartbeatRuns(projectId: string, agentId: string) {
-	return useQuery({
-		queryKey: queryKeys.projects.agentHeartbeatRuns(projectId, agentId),
-		queryFn: () =>
-			api.get<HeartbeatRun[]>(`/api/projects/${projectId}/agents/${agentId}/heartbeat-runs`),
+export function useHeartbeatRuns(
+	projectId: string,
+	agentId: string,
+	options?: { perPage?: number },
+) {
+	const perPage = options?.perPage ?? 50;
+	return useInfiniteQuery({
+		queryKey: queryKeys.projects.agentHeartbeatRunsInfinite(projectId, agentId, {
+			per_page: String(perPage),
+		}),
+		initialPageParam: 1,
+		queryFn: ({ pageParam }) =>
+			api.getPaginated<HeartbeatRun>(
+				`/api/projects/${projectId}/agents/${agentId}/heartbeat-runs`,
+				{ page: String(pageParam), per_page: String(perPage) },
+			),
+		getNextPageParam: nextOffsetPageParam,
+		// Poll for new runs / status changes; refetches every loaded page.
 		refetchInterval: 10_000,
 	});
 }
