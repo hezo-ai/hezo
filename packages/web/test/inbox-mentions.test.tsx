@@ -189,12 +189,17 @@ test('clicking a mention deep-links to and highlights the source comment', async
 	// history the harness uses) and flags the resolved row via
 	// data-comment-highlighted — the signal the deep-link landed on the right
 	// comment instead of dumping the user at the top of the page.
+	// The feed loads comment bodies lazily; a deep-link eagerly fetches its target's
+	// body, so wait for both the highlight AND the body text to land on the row.
 	const highlighted = await waitFor(
 		() => {
 			const el = document.querySelector(
 				`#comment-${ctx!.commentPublicId}[data-comment-highlighted="true"]`,
 			);
 			if (!el) throw new Error('source comment not highlighted yet');
+			if (!el.textContent?.includes('please review the source comment')) {
+				throw new Error('source comment body not loaded yet');
+			}
 			return el as HTMLElement;
 		},
 		{ timeout: 10_000 },
