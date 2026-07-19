@@ -355,4 +355,57 @@ describe('WebSocketClient', () => {
 			expect((client as unknown as { ws: unknown }).ws).toBeNull();
 		});
 	});
+
+	describe('reconnect', () => {
+		// reconnect() must recreate the underlying RWS (a fresh instance dials with a
+		// zero retry delay, bypassing the backoff wait — unlike RWS's own reconnect(),
+		// which no-ops while a backoff dial is pending). Capture constructions by
+		// spying the global WebSocket ctor, exactly like captureUrl above.
+		test('redials with a brand-new socket and preserves subscribed rooms', async () => {
+			const urls: string[] = [];
+			const Real = globalThis.WebSocket;
+			class Capturing extends (Real as unknown as { new (...a: unknown[]): object }) {
+				constructor(...args: unknown[]) {
+					super(...args);
+					urls.push(String(args[0]));
+				}
+			}
+			(globalThis as unknown as { WebSocket: unknown }).WebSocket = Capturing;
+			const client = new WebSocketClient();
+			try {
+				client.connect('tok');
+				await new Promise((r) => setTimeout(r, 5));
+				expect(urls.length).toBe(1);
+
+				// Rooms buffered while the underlying socket is still CONNECTING.
+				client.subscribe('team:1');
+				client.subscribe('task:2');
+
+				client.reconnect();
+				await new Promise((r) => setTimeout(r, 5));
+
+				// A second underlying socket was constructed → it re-dialed.
+				expect(urls.length).toBe(2);
+				expect(urls[1]).toBe('wss://app.example.com/ws?token=tok');
+				// Rooms survive (unlike disconnect(), which clears them) so onopen replays them.
+				const rooms = (client as unknown as { subscribedRooms: Set<string> }).subscribedRooms;
+				expect([...rooms]).toEqual(['team:1', 'task:2']);
+			} finally {
+				client.disconnect();
+				(globalThis as unknown as { WebSocket: unknown }).WebSocket = Real;
+			}
+		});
+
+		test('closes the previous socket before redialing', () => {
+			const client = new WebSocketClient();
+			client.connect('tok'); // retains the token for the redial
+			const fake = makeFakeSocket(OPEN);
+			injectSocket(client, fake);
+
+			client.reconnect();
+
+			expect(fake.closed).toBe(1);
+			client.disconnect();
+		});
+	});
 });

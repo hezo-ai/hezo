@@ -12,9 +12,11 @@ export class WebSocketClient {
 	private ws: ReconnectingWebSocket | null = null;
 	private handlers = new Map<WsMessageType, Set<MessageHandler>>();
 	private subscribedRooms = new Set<string>();
+	private token: string | null = null;
 	onStatusChange?: (connected: boolean) => void;
 
 	connect(token: string | null): void {
+		this.token = token;
 		const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
 		const query = token ? `?token=${encodeURIComponent(token)}` : '';
 		const url = `${protocol}//${window.location.host}/ws${query}`;
@@ -57,6 +59,23 @@ export class WebSocketClient {
 		this.ws?.close();
 		this.ws = null;
 		this.subscribedRooms.clear();
+	}
+
+	/**
+	 * Force an immediate reconnection, bypassing the exponential-backoff wait.
+	 *
+	 * We recreate the underlying `ReconnectingWebSocket` rather than call its
+	 * `reconnect()`: during the backoff-wait window (exactly when a user clicks
+	 * "Retry now") RWS holds an internal connect-lock and its `reconnect()`
+	 * early-returns without pulling the pending dial earlier — a no-op precisely
+	 * when it's needed. A fresh instance has a zero retry delay, so it dials at
+	 * once. Unlike `disconnect()`, this preserves `subscribedRooms` and handlers,
+	 * so `connect()`'s `onopen` replay loop re-subscribes to every joined room.
+	 */
+	reconnect(): void {
+		this.ws?.close();
+		this.ws = null;
+		this.connect(this.token);
 	}
 
 	subscribe(room: string): void {

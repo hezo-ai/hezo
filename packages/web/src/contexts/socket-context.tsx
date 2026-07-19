@@ -1,5 +1,6 @@
 import type { WsMessageType, WsServerMessage } from '@hezo/shared';
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { useConnectionMonitor } from '../hooks/use-connection-status';
 import { type MessageHandler, WebSocketClient } from '../lib/ws';
 
 interface SocketContextValue {
@@ -7,6 +8,8 @@ interface SocketContextValue {
 	subscribe: (type: WsMessageType, handler: MessageHandler) => () => void;
 	joinRoom: (room: string) => void;
 	leaveRoom: (room: string) => void;
+	/** Force an immediate reconnect, bypassing the exponential-backoff wait. */
+	reconnect: () => void;
 }
 
 const SocketContext = createContext<SocketContextValue | null>(null);
@@ -46,9 +49,33 @@ export function SocketProvider({
 		clientRef.current.unsubscribe(room);
 	}, []);
 
+	const reconnect = useCallback(() => {
+		clientRef.current.reconnect();
+	}, []);
+
 	return (
-		<SocketContext value={{ connected, subscribe, joinRoom, leaveRoom }}>{children}</SocketContext>
+		<SocketContext value={{ connected, subscribe, joinRoom, leaveRoom, reconnect }}>
+			<ConnectionMonitor connected={connected} reconnect={reconnect} />
+			{children}
+		</SocketContext>
 	);
+}
+
+/**
+ * Bridges the socket's `connected` flag into the module-level connection store
+ * that the global `<Toaster />` reads (it's mounted outside this provider, so it
+ * can't consume the context). Rendered here — not in `ShellLayout` — so it covers
+ * the whole authenticated session, including the onboarding wizard above the shell.
+ */
+function ConnectionMonitor({
+	connected,
+	reconnect,
+}: {
+	connected: boolean;
+	reconnect: () => void;
+}) {
+	useConnectionMonitor(connected, reconnect);
+	return null;
 }
 
 export function useSocket(): SocketContextValue {

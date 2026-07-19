@@ -21,8 +21,18 @@ export function useStatus() {
 		refetchOnMount: 'always',
 		retry: (failureCount, error) => isRetryableStatusError(error) && failureCount < 40,
 		retryDelay: 500,
-		// While the server reports it's still booting, keep polling so the loading
-		// screen advances through phases and flips to the app the moment it's ready.
-		refetchInterval: (query) => (query.state.data?.starting ? 500 : false),
+		// Keep polling in two cases so the gate self-heals without user action:
+		//   - while the server reports it's still booting, so the loading screen
+		//     advances through phases and flips to the app the moment it's ready;
+		//   - while the last fetch errored (e.g. a cold load with the server
+		//     unreachable — a network "Failed to fetch" isn't retryable above and
+		//     fails fast to `error`), so the moment the server comes back a poll
+		//     succeeds and the shell renders, instead of stranding the user on the
+		//     full-screen error. Healthy operation still never polls.
+		refetchInterval: (query) => {
+			if (query.state.data?.starting) return 500;
+			if (query.state.status === 'error') return 2000;
+			return false;
+		},
 	});
 }

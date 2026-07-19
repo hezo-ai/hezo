@@ -79,12 +79,21 @@ function AppShell() {
 	if (isPending) return <Spinner />;
 
 	if (isError || !status || !status.masterKeyState) {
-		const message =
-			(error as { message?: string } | null)?.message ??
-			'Could not reach the server. If you just reset the database, wait a few seconds and retry.';
+		const raw = (error as { message?: string } | null)?.message;
+		// A bare `fetch` network failure surfaces as the browser's technical
+		// "Failed to fetch" / "Load failed" / "NetworkError". Show friendly copy for
+		// that (the query keeps auto-retrying every 2s, so it self-heals when the
+		// server returns); pass through any real server-sent message unchanged.
+		const isNetwork = !raw || /failed to fetch|load failed|networkerror/i.test(raw);
+		const message = isNetwork ? "Can't reach the server. Retrying…" : raw;
 		return (
 			<div className="flex flex-col items-center justify-center h-screen gap-4 px-4 text-center">
-				<p className="text-[13px] text-danger max-w-md">{message}</p>
+				<div className="flex items-center gap-2 text-danger">
+					{isNetwork && (
+						<div className="w-3.5 h-3.5 border-2 border-danger border-t-transparent rounded-full animate-spin" />
+					)}
+					<p className="text-[13px] max-w-md">{message}</p>
+				</div>
 				<button
 					type="button"
 					onClick={() => refetch()}
