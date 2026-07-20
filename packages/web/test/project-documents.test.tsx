@@ -369,6 +369,65 @@ test('switches the viewed document via the header name search, hidden while edit
 	expect(queryByTestId('doc-switch-button')).toBeNull();
 });
 
+test('shows a document description in the list and header, and lets you edit it', async () => {
+	let ws!: SeededWorkspace;
+	let projectSlug = '';
+	const filename = `analytics-${Math.random().toString(36).slice(2, 8)}.md`;
+
+	const { findByText, findAllByText, findByRole, findByTestId, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async ({ apiBase, token }) => {
+			ws = await seedWorkspace();
+			const project = await seedProject(ws, {
+				name: uniqueName('Description Project'),
+				description: 'Tests the per-doc description surfaces.',
+			});
+			projectSlug = project.slug;
+			const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+			const res = await apiBase(`/api/projects/${projectSlug}/docs/${filename}`, {
+				method: 'PUT',
+				headers,
+				body: JSON.stringify({
+					content: '# Analytics\n\nBody.',
+					description: 'How we track campaign analytics weekly.',
+				}),
+			});
+			if (!res.ok) throw new Error(`seed failed: ${res.status}`);
+		},
+	});
+
+	// List view: the section header frames Documents as long-term memory, and the
+	// description shows under the filename row (surfaces 1 + 2).
+	await router.navigate({
+		to: '/projects/$projectId/documents',
+		params: { projectId: projectSlug },
+	});
+	await findByText(/long-term memory/i, undefined, { timeout: 15_000 });
+	await findByText('How we track campaign analytics weekly.', undefined, { timeout: 15_000 });
+
+	// Open the doc: the description renders as the header block (surface 3).
+	await router.navigate({
+		to: '/projects/$projectId/documents',
+		params: { projectId: projectSlug },
+		search: { file: filename } as never,
+	});
+	const descBlock = await findByTestId('doc-description', undefined, { timeout: 15_000 });
+	expect(descBlock.textContent).toContain('How we track campaign analytics weekly.');
+
+	// Edit the description inline and save; the new text replaces the old.
+	await user.click(await findByRole('button', { name: 'Edit' }));
+	const descInput = (await findByTestId('doc-description-input')) as HTMLInputElement;
+	await user.clear(descInput);
+	await user.type(descInput, 'Updated: weekly analytics workflow.');
+	await user.click(await findByRole('button', { name: 'Save' }));
+
+	// Appears in both the header block and the list row after the refetch.
+	const updated = await findAllByText('Updated: weekly analytics workflow.', undefined, {
+		timeout: 15_000,
+	});
+	expect(updated.length).toBeGreaterThanOrEqual(1);
+});
+
 test('rejects invalid filename when creating a document', async () => {
 	let ws!: SeededWorkspace;
 	let projectSlug = '';

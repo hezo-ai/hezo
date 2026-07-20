@@ -4072,7 +4072,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_project_docs',
-		"List project documentation files (PRD, spec, implementation plan, etc.). Archived (soft-deleted) docs are excluded by default — set filter: 'archived' or 'all' to see them (entries then carry an `archived` flag).",
+		"List project documentation files (PRD, spec, implementation plan, etc.). Each entry carries its `filename` and a one-line `description` (what the doc is / when to read it, '' if unset). Archived (soft-deleted) docs are excluded by default — set filter: 'archived' or 'all' to see them (entries then carry an `archived` flag).",
 		{
 			project: projectArg(),
 			filter: archiveFilterArg(),
@@ -4093,7 +4093,7 @@ export function registerTools(
 					.map((d) => ({
 						id: d.id,
 						filename: d.slug,
-						title: d.title,
+						description: d.description,
 						updated_at: d.updated_at,
 						...(filter !== ArchiveFilter.Active ? { archived: d.archived_at !== null } : {}),
 					})),
@@ -4731,10 +4731,17 @@ export function registerTools(
 				kind: 'document',
 				documentId: doc.id,
 			});
+			const descriptionField = doc.description ? { description: doc.description } : {};
 			if (reviewComments.length === 0)
-				return { filename: doc.slug, content: doc.content, ...archivedField };
+				return {
+					filename: doc.slug,
+					...descriptionField,
+					content: doc.content,
+					...archivedField,
+				};
 			return {
 				filename: doc.slug,
+				...descriptionField,
 				content: doc.content,
 				...archivedField,
 				review_comments: reviewComments.map((r) => ({
@@ -4752,11 +4759,17 @@ export function registerTools(
 	tool(
 		server,
 		'write_project_doc',
-		"Write a project documentation file. Project docs are markdown only — the filename must end in .md. For high-level project context: PRD, spec, implementation plan, research. Make ALL desired edits in ONE consolidated write per run, for two reasons: (1) writing a doc deletes ALL of its pending review comments (the admin's highlight feedback returned by read_project_doc) — a single write clears the whole review, so capture every comment in your context before the first write; (2) docs are revisioned — every content-changing write records a revision, so many partial writes bury the history in noise. Pass a `changelog` summarizing what changed in this write and why — it becomes that revision's entry in the document's history; keep update/changelog logs OUT of the document body and put them in `changelog` instead. Non-markdown files (mockups, wireframes, images, PDFs) live in the project assets library instead — reference those as `assets/<filename>`. In content, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug — no @ prefix. Do not wrap any of these in backticks — that makes them inert.",
+		"Write a project documentation file. Project docs are markdown only — the filename must end in .md. For high-level project context: PRD, spec, implementation plan, research. Make ALL desired edits in ONE consolidated write per run, for two reasons: (1) writing a doc deletes ALL of its pending review comments (the admin's highlight feedback returned by read_project_doc) — a single write clears the whole review, so capture every comment in your context before the first write; (2) docs are revisioned — every content-changing write records a revision, so many partial writes bury the history in noise. Pass a `changelog` summarizing what changed in this write and why — it becomes that revision's entry in the document's history; keep update/changelog logs OUT of the document body and put them in `changelog` instead. Also pass a one-line `description` of what the doc is and when to read it — it shows next to the filename in the Documents list and the doc header so teammates and future runs can tell what the doc holds at a glance; keep it short and out of the body. Non-markdown files (mockups, wireframes, images, PDFs) live in the project assets library instead — reference those as `assets/<filename>`. In content, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug — no @ prefix. Do not wrap any of these in backticks — that makes them inert.",
 		{
 			project: projectArg(),
 			filename: z.string().describe('Markdown filename to write (e.g. "spec.md")'),
 			content: z.string().describe('File content (markdown)'),
+			description: z
+				.string()
+				.optional()
+				.describe(
+					'One-line summary of what this doc is and when to read it (e.g. "How we track and report campaign analytics each week"). Shown next to the filename in the Documents list and the doc header, so teammates and future runs can tell what the doc holds without opening it. Keep it to a sentence; it is NOT the changelog and NOT part of the body. Omit to leave any existing description unchanged.',
+				),
 			changelog: z
 				.string()
 				.optional()
@@ -4795,6 +4808,7 @@ export function registerTools(
 					slug: args.filename as string,
 				},
 				content: args.content as string,
+				description: args.description as string | undefined,
 				changeSummary: args.changelog as string | undefined,
 				authorMemberId: callerMemberId,
 				authorApiKeyId: callerApiKeyId,

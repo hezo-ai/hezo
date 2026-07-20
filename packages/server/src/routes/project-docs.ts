@@ -34,6 +34,7 @@ function toDocResponse(d: DocumentRowWithAuthor) {
 	return {
 		id: d.id,
 		filename: d.slug,
+		description: d.description,
 		content: d.content,
 		created_at: d.created_at,
 		updated_at: d.updated_at,
@@ -65,6 +66,7 @@ projectDocsRoutes.get('/projects/:projectId/docs', async (c) => {
 		docs.map((d) => ({
 			id: d.id,
 			filename: d.slug,
+			description: d.description,
 			updated_at: d.updated_at,
 			archived_at: d.archived_at,
 		})),
@@ -101,7 +103,11 @@ projectDocsRoutes.put('/projects/:projectId/docs/:filename', async (c) => {
 		return err(c, 'INVALID_REQUEST', 'Project docs must be markdown (.md)', 400);
 	}
 
-	const body = await c.req.json<{ content: string; change_summary?: string }>();
+	const body = await c.req.json<{
+		content: string;
+		description?: string;
+		change_summary?: string;
+	}>();
 	if (body.content === undefined) {
 		return err(c, 'INVALID_REQUEST', 'content is required', 400);
 	}
@@ -152,6 +158,7 @@ projectDocsRoutes.put('/projects/:projectId/docs/:filename', async (c) => {
 			slug: filename,
 		},
 		content: body.content,
+		description: body.description,
 		changeSummary: body.change_summary,
 		authorMemberId: memberId,
 		authorApiKeyId: apiKeyIdFromAuth(auth),

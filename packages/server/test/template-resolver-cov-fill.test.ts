@@ -182,10 +182,11 @@ describe('placeholder substitution', () => {
 		expect(result).toContain('write_project_doc');
 	});
 
-	it('renders {{project_docs_context}} as a manifest with title and title-less lines', async () => {
+	it('renders {{project_docs_context}} as a manifest with described and description-less lines', async () => {
 		await ctx.db.query(
-			`INSERT INTO documents (team_id, project_id, type, slug, title, content)
-			 VALUES ($1, $2, 'project_doc', 'bare-notes.md', '', 'note body')`,
+			`INSERT INTO documents (team_id, project_id, type, slug, description, content)
+			 VALUES ($1, $2, 'project_doc', 'described.md', 'What this doc covers.', 'note body'),
+			        ($1, $2, 'project_doc', 'bare-notes.md', '', 'scratch')`,
 			[teamId, projectId],
 		);
 		const result = await resolveSystemPrompt(ctx.db, '{{project_docs_context}}', {
@@ -194,11 +195,13 @@ describe('placeholder substitution', () => {
 			mode: 'placeholders',
 		});
 		expect(result).toContain('read_project_doc(filename)');
-		// createTestProject seeds architecture-guidelines.md with a title.
+		// A doc with a description renders "filename — description (updated date)".
 		expect(result).toMatch(
-			/- architecture-guidelines\.md — Architecture Guidelines \(updated \d{4}-\d{2}-\d{2}\)/,
+			/- described\.md — What this doc covers\. \(updated \d{4}-\d{2}-\d{2}\)/,
 		);
+		// A description-less doc renders bare — no em-dash.
 		expect(result).toMatch(/- bare-notes\.md \(updated \d{4}-\d{2}-\d{2}\)/);
+		expect(result).not.toContain('bare-notes.md —');
 		expect(result).not.toContain('note body');
 	});
 

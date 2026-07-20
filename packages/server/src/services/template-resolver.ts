@@ -360,26 +360,30 @@ export async function resolveSystemPrompt(
 		resolved = resolved.replace(/\{\{team_preferences_context\}\}/g, prefsText);
 	}
 
-	// Project docs are injected as a manifest (filename + optional title + updated date),
-	// not full bodies. The agent calls read_project_doc(filename) to load a doc on demand.
-	// Hand-rolled SQL (vs listDocuments) avoids pulling the content column, which is
-	// the whole point of switching away from full-body injection.
+	// Project docs are injected as a manifest (filename + optional description + updated
+	// date), not full bodies. The agent calls read_project_doc(filename) to load a doc on
+	// demand. Hand-rolled SQL (vs listDocuments) avoids pulling the content column, which
+	// is the whole point of switching away from full-body injection.
 	if (resolved.includes('{{project_docs_context}}')) {
 		let docsText =
 			'No project documentation available yet. Project docs live in the database, not the filesystem — there is no /workspace/.hezo/project-docs path. Author project context with write_project_doc rather than writing a file to disk.';
 		if (ctx.projectId) {
 			// Active docs only — archived (soft-deleted) docs never enter run
 			// context; read_project_doc(filter: 'archived') can still fetch one.
-			const docs = await db.query<{ filename: string; title: string; updated_at: string }>(
-				"SELECT slug AS filename, title, updated_at FROM documents WHERE type = 'project_doc' AND project_id = $1 AND archived_at IS NULL ORDER BY slug",
+			const docs = await db.query<{
+				filename: string;
+				description: string;
+				updated_at: string;
+			}>(
+				"SELECT slug AS filename, description, updated_at FROM documents WHERE type = 'project_doc' AND project_id = $1 AND archived_at IS NULL ORDER BY slug",
 				[ctx.projectId],
 			);
 			if (docs.rows.length > 0) {
 				const lines = docs.rows
 					.map((d) => {
 						const date = new Date(d.updated_at).toISOString().slice(0, 10);
-						const titlePart = d.title ? ` — ${d.title}` : '';
-						return `- ${d.filename}${titlePart} (updated ${date})`;
+						const descPart = d.description ? ` — ${d.description}` : '';
+						return `- ${d.filename}${descPart} (updated ${date})`;
 					})
 					.join('\n');
 				docsText = [

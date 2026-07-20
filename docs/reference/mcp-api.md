@@ -1073,7 +1073,7 @@ Remove one of your project's registered MCP connections. Only connectors owned b
 
 _Read-only._
 
-List project documentation files (PRD, spec, implementation plan, etc.). Archived (soft-deleted) docs are excluded by default — set filter: 'archived' or 'all' to see them (entries then carry an `archived` flag).
+List project documentation files (PRD, spec, implementation plan, etc.). Each entry carries its `filename` and a one-line `description` (what the doc is / when to read it, '' if unset). Archived (soft-deleted) docs are excluded by default — set filter: 'archived' or 'all' to see them (entries then carry an `archived` flag).
 
 **Parameters:**
 
@@ -1082,7 +1082,7 @@ List project documentation files (PRD, spec, implementation plan, etc.). Archive
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `filter` | `active` \| `archived` \| `all` | No | Which archive states to consider: 'active' (default — archived items are excluded), 'archived' (only archived), or 'all'. |
 
-**Returns:** `{ files: [{ id, filename, title, updated_at }] }` — the markdown project docs. The `filter` param defaults to `'active'` (archived docs excluded); with `'archived'` or `'all'` each entry also carries `archived: boolean`.
+**Returns:** `{ files: [{ id, filename, description, updated_at }] }` — the markdown project docs, where `description` is the one-line "what this is" summary (`''` if unset). The `filter` param defaults to `'active'` (archived docs excluded); with `'archived'` or `'all'` each entry also carries `archived: boolean`.
 
 ### `list_project_assets`
 
@@ -1213,13 +1213,13 @@ Read a markdown project doc by filename (e.g. "spec.md") — the high-level proj
 | `filename` | `string` | Yes | Filename to read (e.g. "spec.md") |
 | `filter` | `active` \| `archived` \| `all` | No | Which archive states to consider: 'active' (default — archived items are excluded), 'archived' (only archived), or 'all'. |
 
-**Returns:** `{ filename, content }` (the full markdown body), plus `review_comments: [{ id, quote, occurrence, comment, created_at }]` when the admin has left pending review feedback on the doc (each comment anchors to an exact `quote` snippet; `occurrence` disambiguates repeats). Any write to the doc deletes all of its review comments, so capture them before writing. Returns `{ error }` if the file is not found or its archive state doesn't match `filter` (default `'active'`, so archived docs need `filter: 'archived'` or `'all'`; an archived read carries `archived: true`).
+**Returns:** `{ filename, content }` (the full markdown body), plus `description` when the doc has a one-line summary set, plus `review_comments: [{ id, quote, occurrence, comment, created_at }]` when the admin has left pending review feedback on the doc (each comment anchors to an exact `quote` snippet; `occurrence` disambiguates repeats). Any write to the doc deletes all of its review comments, so capture them before writing. Returns `{ error }` if the file is not found or its archive state doesn't match `filter` (default `'active'`, so archived docs need `filter: 'archived'` or `'all'`; an archived read carries `archived: true`).
 
 ### `write_project_doc`
 
 _Write tool._
 
-Write a project documentation file. Project docs are markdown only — the filename must end in .md. For high-level project context: PRD, spec, implementation plan, research. Make ALL desired edits in ONE consolidated write per run, for two reasons: (1) writing a doc deletes ALL of its pending review comments (the admin's highlight feedback returned by read_project_doc) — a single write clears the whole review, so capture every comment in your context before the first write; (2) docs are revisioned — every content-changing write records a revision, so many partial writes bury the history in noise. Pass a `changelog` summarizing what changed in this write and why — it becomes that revision's entry in the document's history; keep update/changelog logs OUT of the document body and put them in `changelog` instead. Non-markdown files (mockups, wireframes, images, PDFs) live in the project assets library instead — reference those as `assets/<filename>`. In content, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug — no @ prefix. Do not wrap any of these in backticks — that makes them inert.
+Write a project documentation file. Project docs are markdown only — the filename must end in .md. For high-level project context: PRD, spec, implementation plan, research. Make ALL desired edits in ONE consolidated write per run, for two reasons: (1) writing a doc deletes ALL of its pending review comments (the admin's highlight feedback returned by read_project_doc) — a single write clears the whole review, so capture every comment in your context before the first write; (2) docs are revisioned — every content-changing write records a revision, so many partial writes bury the history in noise. Pass a `changelog` summarizing what changed in this write and why — it becomes that revision's entry in the document's history; keep update/changelog logs OUT of the document body and put them in `changelog` instead. Also pass a one-line `description` of what the doc is and when to read it — it shows next to the filename in the Documents list and the doc header so teammates and future runs can tell what the doc holds at a glance; keep it short and out of the body. Non-markdown files (mockups, wireframes, images, PDFs) live in the project assets library instead — reference those as `assets/<filename>`. In content, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug — no @ prefix. Do not wrap any of these in backticks — that makes them inert.
 
 **Parameters:**
 
@@ -1228,9 +1228,10 @@ Write a project documentation file. Project docs are markdown only — the filen
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `filename` | `string` | Yes | Markdown filename to write (e.g. "spec.md") |
 | `content` | `string` | Yes | File content (markdown) |
+| `description` | `string` | No | One-line summary of what this doc is and when to read it (e.g. "How we track and report campaign analytics each week"). Shown next to the filename in the Documents list and the doc header, so teammates and future runs can tell what the doc holds without opening it. Keep it to a sentence; it is NOT the changelog and NOT part of the body. Omit to leave any existing description unchanged. |
 | `changelog` | `string` | No | Markdown summary of what changed in THIS update and why — recorded as the revision's changelog and shown in the document's revision history. Put update/status notes here, never in the document body. Reference tickets/docs/agents by bare identifier as in content. |
 
-**Returns:** `{ written: true, id, filename }`, or `{ error }` if the filename is not `.md` or the doc is archived (unarchive first — archived docs are read-only). Make all edits in one consolidated write: a content-changing write deletes ALL pending review comments on the doc (read them first) and records a document revision, so many partial writes lose review context and bury the revision history. The optional `changelog` is stored as that revision's changelog and shown in the document's history — put update/status notes there, not in the document body.
+**Returns:** `{ written: true, id, filename }`, or `{ error }` if the filename is not `.md` or the doc is archived (unarchive first — archived docs are read-only). Make all edits in one consolidated write: a content-changing write deletes ALL pending review comments on the doc (read them first) and records a document revision, so many partial writes lose review context and bury the revision history. The optional `description` sets the doc's one-line "what this is" summary (shown in the Documents list and doc header; omit to leave it unchanged). The optional `changelog` is stored as that revision's changelog and shown in the document's history — put update/status notes there, not in the document body.
 
 ### `archive_project_doc`
 
