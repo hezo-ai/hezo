@@ -41,6 +41,8 @@ export interface Comment {
 	author_name: string;
 	author_member_id: string | null;
 	author_api_key_id: string | null;
+	/** Signed avatar URL for the author (human user or agent); null → initials. */
+	author_icon_url?: string | null;
 	parent_comment_id: string | null;
 	reactions?: ReactionGroup[];
 	attachments?: CommentAttachment[];
@@ -76,6 +78,8 @@ export interface CommentSkeleton {
 	author_name: string;
 	author_member_id: string | null;
 	author_api_key_id: string | null;
+	/** Signed avatar URL for the author (human user or agent); null → initials. */
+	author_icon_url?: string | null;
 	parent_comment_id: string | null;
 	/** Character length of a text comment's body — sizes its placeholder. Null for non-text. */
 	text_length: number | null;
@@ -257,6 +261,10 @@ function toSkeletonRow(created: Comment, attachmentCount: number): CommentSkelet
 		author_name: created.author_name ?? 'Admin',
 		author_member_id: created.author_member_id,
 		author_api_key_id: created.author_api_key_id,
+		// The create response has no signed avatar URL; the invalidate-driven
+		// skeleton refetch (below) fills it in, so a new comment briefly shows
+		// initials before the author's avatar lands.
+		author_icon_url: created.author_icon_url ?? null,
 		parent_comment_id: created.parent_comment_id,
 		text_length: isText && typeof textVal === 'string' ? textVal.length : null,
 		attachment_count: attachmentCount,

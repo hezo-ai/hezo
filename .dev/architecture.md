@@ -132,9 +132,13 @@ an agent-maintained `progress_summary`. Numbering is atomic via `project_task_co
 `system` (timeline entries like `status_change`/`task_link`), `run` (auto-written
 on run completion), `preview`, `action`,
 `connect_required`, `credential_request`. Each comment carries a `public_id` slug for
-`#comment-<id>` deep-links. `comment_reactions` holds emoji reactions, keyed by a
-non-null `member_id` (unlike a comment's nullable `author_member_id`, which lets an admin
-author as a null-member "Admin"). Because a reaction needs a real member, a human acting in
+`#comment-<id>` deep-links. A human-authored comment keeps `author_member_id` null by
+convention but records **which** human in `author_user_id` (nullable FK to `users`), so the
+author's uploaded avatar (`user_icons`) resolves alongside their comments; the comments feed
+returns a signed `author_icon_url` per row (a human's `user_icons` image, or an agent's
+`agent_icons` image via `author_member_id`, else null → initials). `comment_reactions` holds
+emoji reactions, keyed by a non-null `member_id` (unlike a comment's nullable
+`author_member_id`, which lets an admin author as a null-member "Admin"). Because a reaction needs a real member, a human acting in
 a team they can access but aren't a member of resolves to their **HQ (default-team)**
 membership (`resolveReactorMemberId`) — the same cross-team identity HQ agents use to act in
 other teams' projects — so a superuser can react anywhere, not only in HQ or teams they created.

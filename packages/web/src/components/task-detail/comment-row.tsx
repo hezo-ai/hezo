@@ -188,6 +188,7 @@ export function CommentRow({
 						initials={authorName.slice(0, 2)}
 						size="sm"
 						color={avatarColorFromString(authorName)}
+						imageUrl={c.author_icon_url}
 					/>
 				</AgentLink>
 			) : (
@@ -195,6 +196,7 @@ export function CommentRow({
 					initials={authorName.slice(0, 2)}
 					size="sm"
 					color={avatarColorFromString(authorName)}
+					imageUrl={c.author_icon_url}
 				/>
 			)}
 			<div className="flex-1 min-w-0 rounded-md border border-border bg-surface overflow-hidden">
