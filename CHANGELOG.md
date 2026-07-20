@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.30.0 - 2026-07-20
+
+### Features
+
+- **avatars:** built-in CEO/Coach defaults + show agent avatars everywhere ([#784](https://github.com/hezo-ai/hezo/pull/784))
+- **chat:** title new chat threads from the first message, in parallel with the reply ([#783](https://github.com/hezo-ai/hezo/pull/783))
+- **documents:** give project docs a description ("what this is") ([#781](https://github.com/hezo-ai/hezo/pull/781))
+- restyle mobile top-nav Add Task button as outlined icon ([#777](https://github.com/hezo-ai/hezo/pull/777))
+- **logs:** preserve thinking line breaks in the formatted log view ([#778](https://github.com/hezo-ai/hezo/pull/778))
+
+### Bug Fixes
+
+- move PWA install banner to top of viewport ([#782](https://github.com/hezo-ai/hezo/pull/782))
+- **comments:** show the author's avatar in the task thread ([#779](https://github.com/hezo-ai/hezo/pull/779))
+
+### Documentation
+
+- define skills vs docs by kind, not scope ([#780](https://github.com/hezo-ai/hezo/pull/780))
+
+### Chores
+
+- update images
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.29.0...0.30.0
+
 ## 0.29.0 - 2026-07-19
 
 ### Features
