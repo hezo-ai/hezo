@@ -5,8 +5,9 @@ import { Logo } from './ui/logo';
 
 /**
  * Mobile-only, dismissible "install Hezo to your home screen" card pinned to the
- * bottom of the viewport. Hidden on `lg` and up (desktop), mirroring the rest of
- * the app's mobile-gating convention (rail/drawer all use `lg:hidden`).
+ * top of the viewport, just below the app header (so it floats above content
+ * without covering the nav). Hidden on `lg` and up (desktop), mirroring the rest
+ * of the app's mobile-gating convention (rail/drawer all use `lg:hidden`).
  *
  * On Chrome/Android it offers a one-tap **Install** button backed by the
  * captured `beforeinstallprompt` event; on iOS Safari — which has no
@@ -21,7 +22,7 @@ export function PwaInstallPrompt() {
 	return (
 		<div
 			data-testid="pwa-install-prompt"
-			className="lg:hidden fixed inset-x-3 bottom-3 z-40 flex items-start gap-3 rounded-lg border border-border bg-surface p-3 shadow-lg"
+			className="lg:hidden fixed inset-x-3 top-14 z-40 flex items-start gap-3 rounded-lg border border-border bg-surface p-3 shadow-lg"
 		>
 			<Logo size="md" className="mt-0.5 shrink-0" />
 			<div className="min-w-0 flex-1">

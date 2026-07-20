@@ -47,7 +47,7 @@ test.describe('PWA install prompt (mobile)', () => {
 		await expect(page.getByTestId('app-header')).toBeVisible({ timeout: 15000 });
 
 		await page.evaluate(FIRE_BEFORE_INSTALL_PROMPT);
-		// `lg:hidden` keeps the bottom card off desktop viewports.
+		// `lg:hidden` keeps the top card off desktop viewports.
 		await expect(page.getByTestId('pwa-install-prompt')).toBeHidden();
 	});
 
