@@ -1,9 +1,17 @@
-import { resolve } from 'node:path';
+import { createRequire } from 'node:module';
+import { dirname, resolve } from 'node:path';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
 
 const __dir = resolve(import.meta.dirname ?? '.');
 const ROOT = resolve(__dir, '../..');
+
+// Bun may hoist react to the repo root or leave it under packages/web — and a
+// render() that pulls in two copies blows up on useState. Resolve once from this
+// config's location and force every import through that path.
+const requireFromWeb = createRequire(import.meta.url);
+const reactDir = dirname(requireFromWeb.resolve('react/package.json'));
+const reactDomDir = dirname(requireFromWeb.resolve('react-dom/package.json'));
 
 // Component-tier test config. Tests render the React tree against an
 // in-process Hono + PGlite backend in happy-dom, so they exercise the same
@@ -23,12 +31,8 @@ export default defineConfig({
 			'@hezo/server': resolve(ROOT, 'packages/server/src'),
 			'@hezo/web': resolve(__dir, 'src'),
 			'@hezo/shared': resolve(ROOT, 'packages/shared/src/index.ts'),
-			// Bun keeps multiple react installs around (different peer requesters
-			// pull different patch versions) and a render() that pulls in two
-			// copies blows up on useState. Force every import through one path so
-			// React's hook dispatcher is shared.
-			react: resolve(ROOT, 'node_modules/react'),
-			'react-dom': resolve(ROOT, 'node_modules/react-dom'),
+			react: reactDir,
+			'react-dom': reactDomDir,
 		},
 	},
 	test: {
