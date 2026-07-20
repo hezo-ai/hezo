@@ -5,6 +5,7 @@ import {
 	type ResultBlock,
 	type SystemBlock,
 	type TextBlock,
+	type ThinkingBlock,
 	type ToolBlock,
 } from '@hezo/web/lib/parse-agent-log';
 import { expect, test } from 'vitest';
@@ -80,6 +81,34 @@ test('coalesces consecutive prose lines and preserves a markdown list', () => {
 	const texts = blocks.filter((b): b is TextBlock => b.type === 'text');
 	expect(texts).toHaveLength(1);
 	expect(texts[0].text).toBe('Here is the plan to follow:\n- first item\n- second item');
+});
+
+test('coalesces consecutive [thinking] lines into one block, blank line → paragraph break', () => {
+	const blocks = parseAgentLog(
+		makeLines([
+			'[thinking] First, understand the picture.',
+			'[thinking]',
+			'[thinking] Then read the thread.',
+			'[thinking] 1. check status',
+			'[thinking] 2. verify the draft',
+		]),
+	);
+	const thinking = blocks.filter((b): b is ThinkingBlock => b.type === 'thinking');
+	expect(thinking).toHaveLength(1);
+	// A bare `[thinking]` line is a blank line the model wrote — it round-trips to a
+	// `\n\n` paragraph break; non-blank lines join on a single `\n`.
+	expect(thinking[0].text).toBe(
+		'First, understand the picture.\n\nThen read the thread.\n1. check status\n2. verify the draft',
+	);
+});
+
+test('a [thinking] run broken by another event stays two separate blocks', () => {
+	const blocks = parseAgentLog(
+		makeLines(['[thinking] weighing options', '[tool] Bash(command=ls)', '[thinking] decided']),
+	);
+	const thinking = blocks.filter((b): b is ThinkingBlock => b.type === 'thinking');
+	expect(thinking).toHaveLength(2);
+	expect(thinking.map((b) => b.text)).toEqual(['weighing options', 'decided']);
 });
 
 test('splits prose into separate blocks across an interrupting event', () => {

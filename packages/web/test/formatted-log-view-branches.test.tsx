@@ -87,6 +87,25 @@ test('thinking block renders the Thinking header and reflowed prose', async () =
 	expect(item.closest('li')).not.toBeNull();
 });
 
+test('consecutive [thinking] lines coalesce into one block rendered as separate paragraphs', async () => {
+	const { getByText, container } = await renderLog({
+		lines: lines(
+			'[thinking] First, understand the picture.',
+			'[thinking]',
+			'[thinking] Then read the thread and decide.',
+		),
+	});
+	// One Thinking header (a single coalesced block), not one per line.
+	expect(container.querySelectorAll('[data-testid="thinking-block"]')).toHaveLength(1);
+	// The bare `[thinking]` blank line becomes a paragraph break: two <p> elements,
+	// each carrying one of the model's paragraphs, rather than one run-on line.
+	const first = getByText('First, understand the picture.');
+	const second = getByText('Then read the thread and decide.');
+	expect(first.tagName.toLowerCase()).toBe('p');
+	expect(second.tagName.toLowerCase()).toBe('p');
+	expect(first).not.toBe(second);
+});
+
 test('thinking block renders whole with no Show more toggle when it does not overflow', async () => {
 	// happy-dom reports 0 for scroll/clientHeight, so the clamp measurement never
 	// detects overflow — the block degrades to its full content with no toggle and

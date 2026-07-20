@@ -591,6 +591,48 @@ describe('full-length lines (no per-line cap — the whole run log is recorded)'
 	});
 });
 
+describe('thinking preserves the model line breaks (multi-line [thinking] block)', () => {
+	const think = (thinking: string) =>
+		feed(createAgentStreamParser(AgentRuntime.ClaudeCode), [
+			{
+				type: 'assistant',
+				message: { role: 'assistant', content: [{ type: 'thinking', thinking }] },
+			},
+		]);
+
+	it('emits one [thinking] line per physical line, a blank line kept as a bare [thinking]', () => {
+		const out = think(
+			'First, understand the picture.\n\nThen:\n1. read the thread\n2. check state',
+		);
+		expect(out).toBe(
+			[
+				'[thinking] First, understand the picture.',
+				'[thinking]',
+				'[thinking] Then:',
+				'[thinking] 1. read the thread',
+				'[thinking] 2. check state',
+				'',
+			].join('\n'),
+		);
+	});
+
+	it('collapses only horizontal whitespace and caps a blank run at one blank line', () => {
+		expect(think('  spaced   out  \n\n\n\nnext   thought  ')).toBe(
+			'[thinking] spaced out\n[thinking]\n[thinking] next thought\n',
+		);
+	});
+
+	it('leaves single-line thinking as exactly one [thinking] line', () => {
+		const out = think('just one line');
+		expect(out).toBe('[thinking] just one line\n');
+		expect(out.match(/\[thinking\]/g)).toHaveLength(1);
+	});
+
+	it('renders empty thinking as a bare [thinking] line', () => {
+		expect(think('   \n  \n')).toBe('[thinking]\n');
+	});
+});
+
 describe('extractToolResultText arms (Claude tool_result content shapes)', () => {
 	it('renders a string-content tool_result directly', () => {
 		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);

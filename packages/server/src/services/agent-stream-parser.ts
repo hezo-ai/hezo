@@ -1108,12 +1108,19 @@ export function extractGrokUsageFromDebugLog(
 // ---------------------------------------------------------------------------
 // Shared rendering helpers
 //
-// Content (thinking, tool args, tool results, errors) is preserved in full — the
-// only transform is collapsing whitespace to a single space, which the persisted
-// log format requires: each event is stored as one newline-terminated line, so an
-// embedded newline would be mis-parsed as a separate line by the client parser
-// (`parse-agent-log.ts`). It is NOT truncated; the whole run log is recorded, with
-// only the overall byte cap in `log-stream-broker.ts` as a runaway-output backstop.
+// Content (thinking, tool args, tool results, errors) is preserved in full and
+// never truncated; the whole run log is recorded, with only the overall byte cap
+// in `log-stream-broker.ts` as a runaway-output backstop.
+//
+// The persisted log is line-based — each physical line is one event — so tool args
+// and tool results collapse all whitespace (newlines included) to a single space;
+// an embedded newline there would be mis-parsed as a separate line by the client
+// parser (`parse-agent-log.ts`). Thinking is the exception: to keep long reasoning
+// readable it KEEPS the model's own line breaks, emitting one `[thinking]`-prefixed
+// line per physical line (a blank line becomes a bare `[thinking]`, since
+// `splitLogLines` drops empty lines and the prefix keeps them alive). The client
+// parser coalesces that consecutive run back into one block, exactly as it already
+// does for `[system]` lines. Only horizontal whitespace is collapsed.
 // ---------------------------------------------------------------------------
 
 function normalizeContent(content: ClaudeMessage['content']): ClaudeContentBlock[] {
@@ -1123,9 +1130,20 @@ function normalizeContent(content: ClaudeMessage['content']): ClaudeContentBlock
 }
 
 function formatThinking(text: string): string {
-	const collapsed = text.replace(/\s+/g, ' ').trim();
-	if (collapsed.length === 0) return '[thinking]';
-	return `[thinking] ${collapsed}`;
+	const normalized = text
+		.replace(/\r\n?/g, '\n') // CRLF / lone CR → LF
+		.replace(/[^\S\n]+/g, ' ') // collapse spaces/tabs but keep newlines
+		.replace(/ *\n */g, '\n') // drop spaces hugging a line break
+		.replace(/\n{3,}/g, '\n\n') // cap blank runs at a single blank line
+		.trim();
+	if (normalized === '') return '[thinking]';
+	// One `[thinking]`-prefixed line per physical line (blank lines included) so the
+	// model's paragraph/list structure survives the line-based log; the client parser
+	// coalesces the consecutive run back into a single block.
+	return normalized
+		.split('\n')
+		.map((line) => (line === '' ? '[thinking]' : `[thinking] ${line}`))
+		.join('\n');
 }
 
 function formatToolUse(name: string, input: unknown): string {
