@@ -2,6 +2,7 @@ import { isBudgetPauseStatus } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import type { OrgNode } from '../hooks/use-org-chart';
+import { defaultAvatarForSlug } from '../lib/default-avatars';
 import { agentPageParams } from './agent-link';
 import { Avatar, getInitials } from './ui/avatar';
 import { StatusDot } from './ui/status-dot';
@@ -104,7 +105,7 @@ export function OrgChartTree({ roots, projectId, mode, hint, testId }: OrgChartT
 					<Avatar
 						size="sm"
 						initials={getInitials(node.title)}
-						imageUrl={node.icon_url ?? undefined}
+						imageUrl={node.icon_url ?? defaultAvatarForSlug(node.slug)}
 					/>
 				)}
 				{status && <StatusDot status={status} />}

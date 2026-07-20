@@ -453,7 +453,14 @@ per-entity `keyPurpose`), the client control in `components/icon-upload-section.
 icons are edited on the agent Settings page (project-access-gated, like other agent config)
 and rendered on the roster/org-chart/agent header, user icons on the global Settings → Users
 page (superuser-gated). No MCP tool — icon upload is a human-only UI action (as for
-`project_icons`).
+`project_icons`). The **CEO and Coach** — the HQ singletons that are identical across every
+project — ship a **built-in default avatar** (a committed image under
+`packages/web/public/avatars/`, bundled into the web app); the client resolves an agent's
+effective avatar as `uploaded icon_url ?? defaultAvatarForSlug(slug) ?? initials`
+(`web/src/lib/default-avatars.ts`), so a user upload always overrides the built-in default and
+per-project roles (e.g. the Captain) get no shared default — they show initials until an avatar
+is uploaded. Every agent-avatar surface (org chart, agent header, budget rows, agent-authored
+comments) applies this resolution.
 
 **Governance & misc.** `approvals` (polymorphic board decisions), `audit_log`
 (append-only, project + instance scopes — `project_id` set scopes a row to one project,

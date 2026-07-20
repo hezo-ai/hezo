@@ -237,4 +237,28 @@ describe('budget-status API', () => {
 		// One cost entry was recorded this month for the project → one "run".
 		expect(data.runsThisMonth).toBe(1);
 	});
+
+	it("carries an agent's uploaded avatar as a signed agent_icon_url", async () => {
+		await db.query(
+			`INSERT INTO agent_icons (member_id, content_type, data, byte_size, width, height)
+			 VALUES ($1, 'image/png', $2, 3, 512, 512)
+			 ON CONFLICT (member_id) DO UPDATE SET updated_at = now()`,
+			[agentId, Buffer.from([0x89, 0x50, 0x4e])],
+		);
+
+		const res = await app.request(`/api/projects/${projectSlug}/budget-status`, {
+			headers: authHeader(token),
+		});
+		const { data } = await res.json();
+		// biome-ignore lint/suspicious/noExplicitAny: test JSON
+		const engineer = data.agents.find((a: any) => a.agent_id === agentId);
+		expect(engineer.agent_icon_url).toMatch(
+			new RegExp(`^/api/agents/${agentId}/icon\\?exp=\\d+&sig=[^&]+&v=\\d+$`),
+		);
+		// An agent with no uploaded icon returns null (its built-in default, if any,
+		// is resolved client-side from the slug).
+		// biome-ignore lint/suspicious/noExplicitAny: test JSON
+		const withoutIcon = data.agents.find((a: any) => a.agent_id !== agentId);
+		if (withoutIcon) expect(withoutIcon.agent_icon_url).toBeNull();
+	});
 });

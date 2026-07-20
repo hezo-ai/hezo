@@ -2,9 +2,11 @@ import { CommentContentType } from '@hezo/shared';
 import { Loader2 } from 'lucide-react';
 import { useEffect, useMemo, useRef } from 'react';
 import { type Comment, useComments } from '../hooks/use-comments';
-import { CaptainAvatar, captainChatBubbleMinHClass } from './captain-avatar';
+import { Avatar, getInitials } from './ui/avatar';
 import { RelativeTime } from './ui/relative-time';
 
+/** Intake bubble min-height (py-2.5 + one line); the `chat` avatar size matches it. */
+const captainChatBubbleMinHClass = 'min-h-[2.625rem]';
 /** Indent name/timestamp to align with bubble column (avatar width + gap). */
 const captainChatMetaIndentClass = 'pl-[calc(2.625rem+0.625rem)]';
 
@@ -95,7 +97,7 @@ export function CaptainIntakeChat({
 								{comment.author_name ?? captainTitle}
 							</span>
 							<div className="flex gap-2.5 items-center">
-								<CaptainAvatar size="chat" />
+								<Avatar size="chat" initials={getInitials(comment.author_name ?? captainTitle)} />
 								<div
 									className={`flex-1 min-w-0 rounded-md rounded-bl-sm bg-surface-2 border border-border px-3 py-2.5 ${captainChatBubbleMinHClass} text-[13px] md:text-sm text-text-1 leading-relaxed whitespace-pre-wrap`}
 								>
@@ -132,7 +134,7 @@ export function CaptainIntakeChat({
 					data-testid="home-captain-chat-typing"
 					aria-live="polite"
 				>
-					<CaptainAvatar size="chat" className="opacity-80" />
+					<Avatar size="chat" initials={getInitials(captainTitle)} className="opacity-80" />
 					<div
 						className={`flex-1 min-w-0 rounded-md rounded-bl-sm bg-surface-2 border border-border px-3 py-2.5 ${captainChatBubbleMinHClass} flex items-center`}
 					>

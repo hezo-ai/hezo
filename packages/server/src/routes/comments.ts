@@ -5,7 +5,7 @@ import type { MasterKeyManager } from '../crypto/master-key';
 import { signAssetUrl } from '../lib/asset-urls';
 import { broadcastChange, broadcastCommentFamilyChange } from '../lib/broadcast';
 import { validateCredentialValue } from '../lib/credential-validator';
-import { signEntityIconUrl } from '../lib/entity-icon-urls';
+import { AGENT_ICON_URL, signVersionedIconUrl, USER_ICON_URL } from '../lib/entity-icon-urls';
 import {
 	apiKeyIdFromAuth,
 	resolveActor,
@@ -33,29 +33,14 @@ export const commentsRoutes = new Hono<Env>();
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_BODY_IDS = 100;
 
-// A comment author's avatar. Human authors resolve to their user_icons image
-// (keyed by author_user_id), agent authors to their agent_icons image (keyed by
-// author_member_id). These base-path / key-purpose pairs MUST match the /api/users
-// and /api/agents icon endpoints that serve the bytes (routes/users.ts,
-// routes/agents.ts) — a mismatch produces a signature the <img> can't verify.
-// API-key authors have no avatar.
-const USER_ICON_URL = { basePath: '/api/users', keyPurpose: 'user-icon-url' } as const;
-const AGENT_ICON_URL = { basePath: '/api/agents', keyPurpose: 'agent-icon-url' } as const;
-
-/** Icon `updated_at` → the epoch-second version the signed URL cache-busts on. */
-function iconVersion(updatedAt: unknown): number | null {
-	if (typeof updatedAt === 'string' || updatedAt instanceof Date) {
-		return Math.floor(new Date(updatedAt).getTime() / 1000);
-	}
-	return null;
-}
-
 /**
  * Resolve each comment row's `author_icon_url` (a freshly-signed avatar URL) from
  * the icon-version subselects the author queries carry, then strip those
- * intermediate fields from the row. Best-effort: a signing failure (e.g. the
- * master key being unavailable) degrades the row to its initials fallback rather
- * than failing the whole thread — the avatar is purely cosmetic.
+ * intermediate fields from the row. A human author resolves to their `user_icons`
+ * image (keyed by `author_user_id`), an agent to its `agent_icons` image (keyed by
+ * `author_member_id`); an API-key author has neither. Best-effort: a signing
+ * failure (e.g. the master key being unavailable) degrades the row to its initials
+ * fallback rather than failing the whole thread — the avatar is purely cosmetic.
  */
 async function attachAuthorIcons(
 	masterKeyManager: MasterKeyManager,
@@ -64,23 +49,19 @@ async function attachAuthorIcons(
 	for (const row of rows) {
 		let url: string | null = null;
 		try {
-			const userVer = iconVersion(row.author_user_icon_updated_at);
-			const agentVer = iconVersion(row.author_agent_icon_updated_at);
-			if (row.author_user_id && userVer !== null) {
-				url = await signEntityIconUrl(
-					USER_ICON_URL.basePath,
-					USER_ICON_URL.keyPurpose,
+			if (row.author_user_id) {
+				url = await signVersionedIconUrl(
+					USER_ICON_URL,
 					row.author_user_id as string,
+					row.author_user_icon_updated_at,
 					masterKeyManager,
-					userVer,
 				);
-			} else if (row.author_member_id && agentVer !== null) {
-				url = await signEntityIconUrl(
-					AGENT_ICON_URL.basePath,
-					AGENT_ICON_URL.keyPurpose,
+			} else if (row.author_member_id) {
+				url = await signVersionedIconUrl(
+					AGENT_ICON_URL,
 					row.author_member_id as string,
+					row.author_agent_icon_updated_at,
 					masterKeyManager,
-					agentVer,
 				);
 			}
 		} catch {

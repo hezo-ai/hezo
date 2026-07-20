@@ -7,6 +7,7 @@ import { Badge } from '../../../../../components/ui/badge';
 import { ExpandableText } from '../../../../../components/ui/expandable-text';
 import { Tabs } from '../../../../../components/ui/tabs';
 import { useAgent } from '../../../../../hooks/use-agents';
+import { defaultAvatarForSlug } from '../../../../../lib/default-avatars';
 import { agentRuntimeStatusMeta } from '../../../../../lib/status-meta';
 
 const executionsTab = {
@@ -48,7 +49,7 @@ function AgentLayout() {
 			<div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 mb-4">
 				<Avatar
 					initials={getInitials(agent.title)}
-					imageUrl={agent.icon_url}
+					imageUrl={agent.icon_url ?? defaultAvatarForSlug(agent.slug)}
 					size="md"
 					running={agent.runtime_status === 'active'}
 				/>
