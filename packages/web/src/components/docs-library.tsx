@@ -323,7 +323,7 @@ export function DocsLibrary({
 						{listExtras && <div className="mt-2">{listExtras}</div>}
 					</div>
 
-					<div className="md:overflow-y-auto md:min-h-0">
+					<div className="md:overflow-y-auto md:min-h-0" data-testid="doc-list-scroller">
 						{isLoadingList ? (
 							<div className="text-text-2 text-[13px] py-4">Loading...</div>
 						) : items.length === 0 ? (

@@ -52,12 +52,11 @@ test('documents sidebar stays pinned while the page scrolls on desktop', async (
 		expect(after.y).toBeGreaterThanOrEqual(0);
 		// Pinned: it did not drift down from its starting position.
 		expect(after.y).toBeLessThanOrEqual(before.y + 1);
-		// And it did not drift up either. The sticky offset mirrors the project
-		// layout's vertical padding so the breathing room above the button when
-		// unscrolled is preserved when the sidebar sticks; without it the button
-		// would slide flush against the app header.
-		expect(after.y).toBeGreaterThanOrEqual(before.y - 1);
-		// And it sits within the app header + a small offset of the top.
+		// It pins near the top with the sticky offset holding it just below the app
+		// header (not flush against it). The page's "Documents" section header sits
+		// above the two-pane and scrolls away, so the pinned sidebar ends up higher
+		// than its unscrolled start — hence we bound the pinned position absolutely
+		// rather than against `before.y`.
 		expect(after.y).toBeLessThan(120);
 	}
 });
@@ -94,9 +93,13 @@ test('sidebar search header stays fixed while the doc list itself scrolls', asyn
 	const before = await searchInput.boundingBox();
 	expect(before).not.toBeNull();
 
-	// Scroll the last doc into view — with 40 rows this must scroll the list's
-	// own overflow-y-auto container.
-	await page.getByText(`doc-${count - 1}.md`).scrollIntoViewIfNeeded();
+	// Scroll the list's own overflow-y-auto container to the bottom — the "doc
+	// list itself scrolls" case. Scrolling this inner scroller directly (rather
+	// than scrollIntoView, which can bubble to the shell <main> once the page's
+	// section header pushes the list below the fold) isolates the invariant under
+	// test: the search header lives above this scroller and must not move.
+	const listScroller = page.getByTestId('doc-list-scroller');
+	await listScroller.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
 	await expect(page.getByText(`doc-${count - 1}.md`)).toBeVisible();
 
 	// The search header did not move: it lives above the list's scroller.
