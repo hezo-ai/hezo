@@ -9,7 +9,7 @@ function getNav(container: HTMLElement): HTMLElement {
 	return nav as HTMLElement;
 }
 
-test('the project menu leads with Inbox, lists the project pages, and has a Team section of agents', async () => {
+test('the project menu leads with Dashboard, lists the project pages, and has a Team section of agents', async () => {
 	let ws!: SeededWorkspace;
 	let projectSlug = '';
 	const { container, findByTestId, queryByTestId, router } = await renderApp({
@@ -29,7 +29,8 @@ test('the project menu leads with Inbox, lists the project pages, and has a Team
 	await findByTestId('project-sidebar-name', undefined, { timeout: 15_000 });
 	const nav = getNav(container);
 
-	// Inbox leads; the project pages follow.
+	// Dashboard leads, then Inbox; the project pages follow.
+	expect(within(nav).getByRole('link', { name: 'Dashboard' })).toBeTruthy();
 	expect(within(nav).getByRole('link', { name: 'Inbox' })).toBeTruthy();
 	expect(within(nav).getByRole('link', { name: 'Documents' })).toBeTruthy();
 	expect(within(nav).getByRole('link', { name: 'Assets' })).toBeTruthy();

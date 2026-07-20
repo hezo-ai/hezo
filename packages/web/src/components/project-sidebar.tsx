@@ -15,7 +15,7 @@ import { Tooltip } from './ui/tooltip';
 
 /**
  * The project menu: the persistent panel shown beside the project rail whenever
- * a project is active. Inbox leads as its own section; the project's pages
+ * a project is active. Dashboard leads, then Inbox; the project's pages
  * follow; the backing team's agents close it out under a Team section. The team
  * is presented as the project's own — there is no separate team-level view.
  */
@@ -198,6 +198,12 @@ export function ProjectSidebar({ onCollapse }: { onCollapse?: () => void } = {})
 	const sections: SidebarNavSection[] = [
 		{
 			items: [
+				{
+					to: '/projects/$projectId/dashboard',
+					params: projectParams,
+					label: 'Dashboard',
+					testId: 'project-sidebar-dashboard',
+				},
 				{
 					to: '/projects/$projectId/inbox',
 					params: projectParams,

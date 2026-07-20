@@ -24,7 +24,7 @@ a fresh estimate, so the **Progress** page is always a current read on the proje
 
 ## The Progress page
 
-Open **Progress** in the project menu (just under **Inbox**). Top to bottom it shows:
+Open **Progress** in the project sidebar (below **Dashboard** and **Inbox**). Top to bottom it shows:
 
 - a **project progress summary** the Captain keeps current — a short blurb of what's done,
   what's in progress, and what's still to do. It opens collapsed (showing the Captain's

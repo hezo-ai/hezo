@@ -15,6 +15,7 @@ import type { Db } from '../db/database';
 import { trackBackground } from '../lib/background';
 import { broadcastChange, broadcastProjectUpdate } from '../lib/broadcast';
 import { budgetWindowsError } from '../lib/budget-validation';
+import { signEntityIconUrl } from '../lib/entity-icon-urls';
 import { readImageDimensions } from '../lib/image-dimensions';
 import { ref } from '../lib/log-ref';
 import { signProjectIconUrl, verifyProjectIconUrl } from '../lib/project-icon-urls';
@@ -37,6 +38,7 @@ import type { JobManager } from '../services/job-manager';
 import { getMarketplaceTeam } from '../services/marketplace';
 import { enqueueAddMarketplaceTeamTask } from '../services/marketplace-add-team';
 import { createProjectWithTeam } from '../services/project-create';
+import { getProjectDashboard } from '../services/project-dashboard';
 import { createProjectIntake, getOpenProjectIntakeForHome } from '../services/project-intake';
 import { getProjectProgress } from '../services/projects';
 
@@ -386,6 +388,36 @@ projectsRoutes.get('/projects/:projectId/progress', async (c) => {
 	const progress = await getProjectProgress(c.get('db'), projectId);
 	if (!progress) return err(c, 'NOT_FOUND', 'Project not found', 404);
 	return ok(c, progress);
+});
+
+// Aggregated at-a-glance payload for the per-project Dashboard page.
+projectsRoutes.get('/projects/:projectId/dashboard', async (c) => {
+	const teamId = c.get('teamId') as string;
+	const projectId = c.get('projectId') as string;
+	const auth = c.get('auth');
+	const adminUserId = auth.type === AuthType.Admin ? auth.userId : null;
+
+	const signAgentIcon = async (agentId: string, iconUpdatedAt: string | null) => {
+		if (!iconUpdatedAt) return null;
+		const version = Math.floor(new Date(iconUpdatedAt).getTime() / 1000);
+		return signEntityIconUrl(
+			'/api/agents',
+			'agent-icon-url',
+			agentId,
+			c.get('masterKeyManager'),
+			version,
+		);
+	};
+
+	const dashboard = await getProjectDashboard(
+		c.get('db'),
+		projectId,
+		teamId,
+		adminUserId,
+		signAgentIcon,
+	);
+	if (!dashboard) return err(c, 'NOT_FOUND', 'Project not found', 404);
+	return ok(c, dashboard);
 });
 
 projectsRoutes.patch('/projects/:projectId', async (c) => {

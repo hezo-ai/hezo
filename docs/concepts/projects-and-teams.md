@@ -15,6 +15,25 @@ project. You don't manage teams separately; you reach a team through its project
 This keeps things clean: a project's agents, tasks, budget, container, and connections
 all belong to that project and nothing leaks between them.
 
+## Project dashboard
+
+Opening a project — from the rail or its URL — lands on the **Dashboard**. It is the
+at-a-glance home for that project, listed first in the project sidebar (above **Inbox**).
+
+A normal project dashboard shows:
+
+- **Action items** — pending approvals, unread @admin mentions, and credential requests
+  that need you.
+- **Spend** — Today / This week / This month / All time, with the same calendar budget
+  windows and caps as the [budget page](/docs/concepts/budgets-and-costs).
+- **In progress** — tasks currently in progress or review.
+- **Progress** and **Goals** previews — the Captain's latest project summary and the top
+  goals by health (see [Goals & progress](/docs/concepts/goals)).
+- **Team snapshot** — open-task count, last activity, and any agents currently running.
+
+**HQ** gets a minimal dashboard: action items, in-progress work, and the team snapshot —
+no spend, progress summary, or goals (those belong to ordinary projects).
+
 ## Project icon
 
 By default a project shows its initials in the project rail. To give it a distinct look,

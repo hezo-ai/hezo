@@ -19,11 +19,12 @@ const TABLE_TO_QUERY_KEY: Record<
 > = {
 	tasks: (cid) => [
 		queryKeys.projects.tasks(cid),
+		queryKeys.projects.dashboard(cid),
 		queryKeys.projects.all(),
 		queryKeys.projectIntakes(),
 	],
 	heartbeat_runs: (cid, row) => {
-		const keys: QueryKey[] = [queryKeys.projects.tasks(cid)];
+		const keys: QueryKey[] = [queryKeys.projects.tasks(cid), queryKeys.projects.dashboard(cid)];
 		// A run starting/finishing flips the task's run-now availability (task_busy),
 		// so refresh that task's queued-wakeups (and their dispatch state).
 		if (row.task_id) {
@@ -45,7 +46,7 @@ const TABLE_TO_QUERY_KEY: Record<
 		return keys;
 	},
 	agent_wakeup_requests: (cid, row) => {
-		const keys: QueryKey[] = [queryKeys.projects.tasks(cid)];
+		const keys: QueryKey[] = [queryKeys.projects.tasks(cid), queryKeys.projects.dashboard(cid)];
 		if (row.task_id) {
 			keys.push(queryKeys.projects.taskQueuedWakeups(cid, row.task_id as string));
 		} else {
@@ -55,28 +56,35 @@ const TABLE_TO_QUERY_KEY: Record<
 		}
 		return keys;
 	},
-	task_comments: (cid) => [queryKeys.projects.tasks(cid)],
+	task_comments: (cid) => [queryKeys.projects.tasks(cid), queryKeys.projects.dashboard(cid)],
 	comment_reactions: (cid) => [queryKeys.projects.tasks(cid)],
 	comment_attachments: (cid) => [queryKeys.projects.tasks(cid)],
 	// Agent rows carry the per-agent budget caps, so an update (e.g. a cap edit
 	// or a budget pause) must also refresh the Budget page's status query.
-	member_agents: (cid) => [queryKeys.projects.agents(cid), queryKeys.projects.budgetStatus(cid)],
+	member_agents: (cid) => [
+		queryKeys.projects.agents(cid),
+		queryKeys.projects.budgetStatus(cid),
+		queryKeys.projects.dashboard(cid),
+	],
 	projects: (cid) => [
 		queryKeys.projects.all(),
 		queryKeys.projectIntakes(),
 		// The Captain refreshing the progress summary broadcasts a projects UPDATE.
 		queryKeys.projects.progress(cid),
 		queryKeys.projects.detail(cid),
+		queryKeys.projects.dashboard(cid),
 	],
 	approvals: (cid) => [
 		queryKeys.projects.approvals(cid),
 		queryKeys.projects.inboxCount(cid),
+		queryKeys.projects.dashboard(cid),
 		queryKeys.approvals.root(),
 	],
 	admin_mentions: (cid) => [
 		queryKeys.projects.tasks(cid),
 		queryKeys.projects.inboxMentions(cid),
 		queryKeys.projects.inboxCount(cid),
+		queryKeys.projects.dashboard(cid),
 		queryKeys.inboxMentions.root(),
 	],
 	documents: (cid, row) => {
@@ -108,12 +116,21 @@ const TABLE_TO_QUERY_KEY: Record<
 		return keys;
 	},
 	// New spend moves both the cost charts and the spend-vs-cap status.
-	cost_entries: (cid) => [['projects', cid, 'costs'], queryKeys.projects.budgetStatus(cid)],
+	cost_entries: (cid) => [
+		['projects', cid, 'costs'],
+		queryKeys.projects.budgetStatus(cid),
+		queryKeys.projects.dashboard(cid),
+		queryKeys.projects.all(),
+	],
 	execution_locks: (cid) => [['projects', cid, 'execution-locks']],
 	repos: (cid) => [queryKeys.projects.repos(cid), queryKeys.projects.all()],
 	// `goals(cid)` = ['projects', slug, 'goals'] is a prefix of goalsFiltered /
 	// goal / goalHistory / goalRuns, so it invalidates every goal query at once.
-	goals: (cid) => [queryKeys.projects.goals(cid), queryKeys.projects.all()],
+	goals: (cid) => [
+		queryKeys.projects.goals(cid),
+		queryKeys.projects.dashboard(cid),
+		queryKeys.projects.all(),
+	],
 };
 
 /** Invalidate TanStack Query caches for a realtime row_change event. */

@@ -32,6 +32,7 @@ import { Route as HomeInboxIndexRouteImport } from './routes/home/inbox/index'
 import { Route as ProjectsProjectIdSkillsRouteImport } from './routes/projects/$projectId/skills'
 import { Route as ProjectsProjectIdGitRouteImport } from './routes/projects/$projectId/git'
 import { Route as ProjectsProjectIdDocumentsRouteImport } from './routes/projects/$projectId/documents'
+import { Route as ProjectsProjectIdDashboardRouteImport } from './routes/projects/$projectId/dashboard'
 import { Route as ProjectsProjectIdCustomPromptRouteImport } from './routes/projects/$projectId/custom-prompt'
 import { Route as ProjectsProjectIdContainerRouteImport } from './routes/projects/$projectId/container'
 import { Route as ProjectsProjectIdConnectorsRouteImport } from './routes/projects/$projectId/connectors'
@@ -171,6 +172,12 @@ const ProjectsProjectIdDocumentsRoute =
   ProjectsProjectIdDocumentsRouteImport.update({
     id: '/documents',
     path: '/documents',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
+  } as any)
+const ProjectsProjectIdDashboardRoute =
+  ProjectsProjectIdDashboardRouteImport.update({
+    id: '/dashboard',
+    path: '/dashboard',
     getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
 const ProjectsProjectIdCustomPromptRoute =
@@ -336,6 +343,7 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId/connectors': typeof ProjectsProjectIdConnectorsRoute
   '/projects/$projectId/container': typeof ProjectsProjectIdContainerRoute
   '/projects/$projectId/custom-prompt': typeof ProjectsProjectIdCustomPromptRoute
+  '/projects/$projectId/dashboard': typeof ProjectsProjectIdDashboardRoute
   '/projects/$projectId/documents': typeof ProjectsProjectIdDocumentsRoute
   '/projects/$projectId/git': typeof ProjectsProjectIdGitRoute
   '/projects/$projectId/skills': typeof ProjectsProjectIdSkillsRoute
@@ -382,6 +390,7 @@ export interface FileRoutesByTo {
   '/projects/$projectId/connectors': typeof ProjectsProjectIdConnectorsRoute
   '/projects/$projectId/container': typeof ProjectsProjectIdContainerRoute
   '/projects/$projectId/custom-prompt': typeof ProjectsProjectIdCustomPromptRoute
+  '/projects/$projectId/dashboard': typeof ProjectsProjectIdDashboardRoute
   '/projects/$projectId/documents': typeof ProjectsProjectIdDocumentsRoute
   '/projects/$projectId/git': typeof ProjectsProjectIdGitRoute
   '/projects/$projectId/skills': typeof ProjectsProjectIdSkillsRoute
@@ -430,6 +439,7 @@ export interface FileRoutesById {
   '/projects/$projectId/connectors': typeof ProjectsProjectIdConnectorsRoute
   '/projects/$projectId/container': typeof ProjectsProjectIdContainerRoute
   '/projects/$projectId/custom-prompt': typeof ProjectsProjectIdCustomPromptRoute
+  '/projects/$projectId/dashboard': typeof ProjectsProjectIdDashboardRoute
   '/projects/$projectId/documents': typeof ProjectsProjectIdDocumentsRoute
   '/projects/$projectId/git': typeof ProjectsProjectIdGitRoute
   '/projects/$projectId/skills': typeof ProjectsProjectIdSkillsRoute
@@ -480,6 +490,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/connectors'
     | '/projects/$projectId/container'
     | '/projects/$projectId/custom-prompt'
+    | '/projects/$projectId/dashboard'
     | '/projects/$projectId/documents'
     | '/projects/$projectId/git'
     | '/projects/$projectId/skills'
@@ -526,6 +537,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/connectors'
     | '/projects/$projectId/container'
     | '/projects/$projectId/custom-prompt'
+    | '/projects/$projectId/dashboard'
     | '/projects/$projectId/documents'
     | '/projects/$projectId/git'
     | '/projects/$projectId/skills'
@@ -573,6 +585,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/connectors'
     | '/projects/$projectId/container'
     | '/projects/$projectId/custom-prompt'
+    | '/projects/$projectId/dashboard'
     | '/projects/$projectId/documents'
     | '/projects/$projectId/git'
     | '/projects/$projectId/skills'
@@ -768,6 +781,13 @@ declare module '@tanstack/react-router' {
       path: '/documents'
       fullPath: '/projects/$projectId/documents'
       preLoaderRoute: typeof ProjectsProjectIdDocumentsRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
+    '/projects/$projectId/dashboard': {
+      id: '/projects/$projectId/dashboard'
+      path: '/dashboard'
+      fullPath: '/projects/$projectId/dashboard'
+      preLoaderRoute: typeof ProjectsProjectIdDashboardRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
     '/projects/$projectId/custom-prompt': {
@@ -1002,6 +1022,7 @@ interface ProjectsProjectIdRouteRouteChildren {
   ProjectsProjectIdConnectorsRoute: typeof ProjectsProjectIdConnectorsRoute
   ProjectsProjectIdContainerRoute: typeof ProjectsProjectIdContainerRoute
   ProjectsProjectIdCustomPromptRoute: typeof ProjectsProjectIdCustomPromptRoute
+  ProjectsProjectIdDashboardRoute: typeof ProjectsProjectIdDashboardRoute
   ProjectsProjectIdDocumentsRoute: typeof ProjectsProjectIdDocumentsRoute
   ProjectsProjectIdGitRoute: typeof ProjectsProjectIdGitRoute
   ProjectsProjectIdSkillsRoute: typeof ProjectsProjectIdSkillsRoute
@@ -1027,6 +1048,7 @@ const ProjectsProjectIdRouteRouteChildren: ProjectsProjectIdRouteRouteChildren =
     ProjectsProjectIdConnectorsRoute: ProjectsProjectIdConnectorsRoute,
     ProjectsProjectIdContainerRoute: ProjectsProjectIdContainerRoute,
     ProjectsProjectIdCustomPromptRoute: ProjectsProjectIdCustomPromptRoute,
+    ProjectsProjectIdDashboardRoute: ProjectsProjectIdDashboardRoute,
     ProjectsProjectIdDocumentsRoute: ProjectsProjectIdDocumentsRoute,
     ProjectsProjectIdGitRoute: ProjectsProjectIdGitRoute,
     ProjectsProjectIdSkillsRoute: ProjectsProjectIdSkillsRoute,

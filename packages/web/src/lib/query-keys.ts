@@ -163,6 +163,7 @@ export const queryKeys = {
 			filters,
 		],
 		progress: (slug: string) => ['projects', slug, 'progress'],
+		dashboard: (slug: string) => ['projects', slug, 'dashboard'],
 
 		// agents
 		agents: (slug: string) => ['projects', slug, 'agents'],

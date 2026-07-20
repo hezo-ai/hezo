@@ -1680,6 +1680,15 @@ on rollback; successes are confirmed by the UI change itself.
 Every UI change must work at all three, and its browser test must verify mobile
 (`AGENTS.md` › UX).
 
+**Project Dashboard.** Opening a project (`/projects/:slug` or a rail click) redirects to
+`/projects/:slug/dashboard`, which is also the first item in the project sidebar. The page
+loads a single aggregate payload from `GET /api/projects/:projectId/dashboard`
+(`services/project-dashboard.ts`): action items (approvals, unread @admin mentions,
+pending credential requests), calendar-window spend + budget caps, in-progress/review
+tasks, progress summary + goals preview, and a team snapshot including running agents.
+HQ (`is_internal`) omits spend, progress, and goals. Query keys use the route-param slug;
+WebSocket invalidation covers the tables that feed the aggregate.
+
 **PWA / installability.** The SPA ships a web manifest (`packages/web/public/manifest.webmanifest`,
 `display: standalone`, brand icons under `public/icons/`) and a deliberately **network-only**
 service worker (`public/sw.js`, registered from `main.tsx` via `lib/register-sw.ts`). The worker
@@ -1947,7 +1956,8 @@ shapes.
 - **Auth & identity** — `auth` (challenge-response, § 10), `me`, `api-keys`,
   `instance-settings`, `preferences`, `ui-state`.
 - **Projects & teams** — `projects` (creation/intake, the 1:1 team reached *through* the
-  project — there is no bare `GET /teams`), `team-templates`, `agent-types`, `repos`,
+  project — there is no bare `GET /teams`; includes `GET …/dashboard` for the per-project
+  at-a-glance aggregate), `team-templates`, `agent-types`, `repos`,
   `project-docs`.
 - **Agents & runs** — `agents` (hire/fire/pause/resume, system-prompt revisions),
   `execution-locks`, `queued-wakeups`, `chat` (live realtime chat session — today the CEO).

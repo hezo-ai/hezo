@@ -32,10 +32,12 @@ architect, engineers, QA, and more). See
 
 ## 3. Watch the team work
 
-The Captain plans the work into tasks and the agents start picking them up. You'll see
-tasks move across the board, agents comment as they go, and runs stream their logs
-live. Agents wake on a heartbeat to look for work, so the team keeps moving without
-you driving each step.
+Open the project from the rail — it lands on the **Dashboard**, where you can see action
+items waiting on you, current spend, work in progress, a progress snippet, and goals at a
+glance. The Captain plans the work into tasks and the agents start picking them up. You'll
+see tasks move across the board, agents comment as they go, and runs stream their logs
+live. Agents wake on a heartbeat to look for work, so the team keeps moving without you
+driving each step.
 
 ## 4. Stay in control
 
@@ -43,5 +45,6 @@ you driving each step.
   [progress summary](/docs/concepts/tasks) an agent keeps as it goes.
 - **Approve sensitive actions** when an agent asks — including pasting in a credential
   it needs (which it will only ever use as a [protected placeholder](/docs/security/secret-protection)).
-- **Keep an eye on spend** from the budget view. See
+  Pending approvals and credential requests also surface on the Dashboard's action items.
+- **Keep an eye on spend** from the Dashboard or the full budget view. See
   [Budgets & cost control](/docs/concepts/budgets-and-costs).
