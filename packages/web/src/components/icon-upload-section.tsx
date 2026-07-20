@@ -20,6 +20,11 @@ interface IconUploadSectionProps {
 	initials: string;
 	/** Current signed icon URL, or null/undefined when unset. */
 	currentIconUrl?: string | null;
+	/** Built-in default shown in the preview when no custom icon is set (e.g. the
+	 *  CEO/Coach default avatar). Purely a preview fallback — it does NOT count as a
+	 *  removable custom icon, so "Remove" and the "Replace" wording stay gated on
+	 *  `currentIconUrl` alone. */
+	fallbackImageUrl?: string | null;
 	/** Upload the normalized square-PNG blob. Resolves on success. */
 	onUpload: (blob: Blob) => Promise<unknown>;
 	/** Remove the current icon. Resolves on success. */
@@ -44,6 +49,7 @@ export function IconUploadSection({
 	helpText,
 	initials,
 	currentIconUrl,
+	fallbackImageUrl,
 	onUpload,
 	onRemove,
 	isUploading,
@@ -98,7 +104,7 @@ export function IconUploadSection({
 		}
 	}
 
-	const shownUrl = preview?.url ?? currentIconUrl ?? undefined;
+	const shownUrl = preview?.url ?? currentIconUrl ?? fallbackImageUrl ?? undefined;
 
 	return (
 		<section>

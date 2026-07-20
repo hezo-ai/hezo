@@ -1,6 +1,7 @@
 import { wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
+import { AGENT_ICON_URL, signVersionedIconUrl } from '../lib/entity-icon-urls';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { pauseAgentForBudget } from '../services/agent-runtime-status';
@@ -209,6 +210,7 @@ costsRoutes.get('/projects/:projectId/budget-status', async (c) => {
 		title: string;
 		slug: string;
 		runtime_status: string;
+		icon_updated_at: string | null;
 		daily_budget_cents: number;
 		weekly_budget_cents: number;
 		monthly_budget_cents: number;
@@ -217,6 +219,7 @@ costsRoutes.get('/projects/:projectId/budget-status', async (c) => {
 		monthly_spent: number;
 	}>(
 		`SELECT ma.id, ma.title, ma.slug, ma.runtime_status,
+		        (SELECT ai.updated_at FROM agent_icons ai WHERE ai.member_id = ma.id) AS icon_updated_at,
 		        ma.daily_budget_cents, ma.weekly_budget_cents, ma.monthly_budget_cents,
 		        COALESCE(SUM(ce.amount_cents) FILTER (WHERE ce.created_at >= date_trunc('day',   now() AT TIME ZONE 'UTC')), 0)::int AS daily_spent,
 		        COALESCE(SUM(ce.amount_cents) FILTER (WHERE ce.created_at >= date_trunc('week',  now() AT TIME ZONE 'UTC')), 0)::int AS weekly_spent,
@@ -231,28 +234,39 @@ costsRoutes.get('/projects/:projectId/budget-status', async (c) => {
 		[teamId],
 	);
 
-	const agentStatuses = agents.rows.map((a) => {
-		const status = toEntityBudgetStatus(
-			{ daily: a.daily_spent, weekly: a.weekly_spent, monthly: a.monthly_spent },
-			{
-				daily_budget_cents: a.daily_budget_cents,
-				weekly_budget_cents: a.weekly_budget_cents,
-				monthly_budget_cents: a.monthly_budget_cents,
-			},
-		);
-		return {
-			agent_id: a.id,
-			agent_title: a.title,
-			agent_slug: a.slug,
-			runtime_status: a.runtime_status,
-			daily: status.daily,
-			weekly: status.weekly,
-			monthly: status.monthly,
-			agent_over_budget: status.overBudget,
-			project_over_budget: projectStatus.overBudget,
-			overBudget: status.overBudget || projectStatus.overBudget,
-		};
-	});
+	const masterKeyManager = c.get('masterKeyManager');
+	const agentStatuses = await Promise.all(
+		agents.rows.map(async (a) => {
+			const status = toEntityBudgetStatus(
+				{ daily: a.daily_spent, weekly: a.weekly_spent, monthly: a.monthly_spent },
+				{
+					daily_budget_cents: a.daily_budget_cents,
+					weekly_budget_cents: a.weekly_budget_cents,
+					monthly_budget_cents: a.monthly_budget_cents,
+				},
+			);
+			return {
+				agent_id: a.id,
+				agent_title: a.title,
+				agent_slug: a.slug,
+				runtime_status: a.runtime_status,
+				// The uploaded avatar (if any). The built-in CEO/Coach default is
+				// resolved client-side from the slug; this only carries the upload.
+				agent_icon_url: await signVersionedIconUrl(
+					AGENT_ICON_URL,
+					a.id,
+					a.icon_updated_at,
+					masterKeyManager,
+				),
+				daily: status.daily,
+				weekly: status.weekly,
+				monthly: status.monthly,
+				agent_over_budget: status.overBudget,
+				project_over_budget: projectStatus.overBudget,
+				overBudget: status.overBudget || projectStatus.overBudget,
+			};
+		}),
+	);
 
 	return ok(c, { project: projectStatus, agents: agentStatuses, runsThisMonth });
 });

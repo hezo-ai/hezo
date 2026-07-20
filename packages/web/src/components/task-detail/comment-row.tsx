@@ -8,6 +8,7 @@ import {
 	useCommentBody,
 } from '../../hooks/use-comments';
 import { copyToClipboard } from '../../lib/clipboard';
+import { defaultAvatarForSlug } from '../../lib/default-avatars';
 import { AgentLink } from '../agent-link';
 import {
 	type CommentData,
@@ -188,7 +189,7 @@ export function CommentRow({
 						initials={authorName.slice(0, 2)}
 						size="sm"
 						color={avatarColorFromString(authorName)}
-						imageUrl={c.author_icon_url}
+						imageUrl={c.author_icon_url ?? defaultAvatarForSlug(authorAgentSlug)}
 					/>
 				</AgentLink>
 			) : (

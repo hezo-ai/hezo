@@ -41,6 +41,44 @@ export async function signEntityIconUrl(
 	return `${basePath}/${id}/icon?exp=${exp}&sig=${sig}&v=${version}`;
 }
 
+export interface EntityIconUrlConfig {
+	/** Collection path the icon is served from, e.g. `/api/agents`. */
+	basePath: string;
+	/** Per-entity signing-key label, e.g. `agent-icon-url`. */
+	keyPurpose: string;
+}
+
+// The two entity kinds that carry an uploaded avatar. These MUST match the
+// constants the serving endpoints verify against (routes/agents.ts,
+// routes/users.ts) — a mismatch yields a signature the `<img>` can't verify.
+export const AGENT_ICON_URL: EntityIconUrlConfig = {
+	basePath: '/api/agents',
+	keyPurpose: 'agent-icon-url',
+};
+export const USER_ICON_URL: EntityIconUrlConfig = {
+	basePath: '/api/users',
+	keyPurpose: 'user-icon-url',
+};
+
+/**
+ * Sign an entity's icon URL from its icon-table `updated_at` (the cache-busting
+ * version), or return null when the entity has no icon (`updated_at` absent).
+ * The single place every list/feed query turns an `icon_updated_at` column into a
+ * signed avatar URL, so the signing scheme lives in one spot.
+ */
+export async function signVersionedIconUrl(
+	config: EntityIconUrlConfig,
+	id: string,
+	iconUpdatedAt: unknown,
+	masterKeyManager: MasterKeyManager,
+): Promise<string | null> {
+	if (typeof iconUpdatedAt === 'string' || iconUpdatedAt instanceof Date) {
+		const version = Math.floor(new Date(iconUpdatedAt).getTime() / 1000);
+		return signEntityIconUrl(config.basePath, config.keyPurpose, id, masterKeyManager, version);
+	}
+	return null;
+}
+
 export async function verifyEntityIconUrl(
 	keyPurpose: string,
 	id: string,

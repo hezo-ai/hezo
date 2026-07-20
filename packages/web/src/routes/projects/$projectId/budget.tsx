@@ -18,6 +18,7 @@ import {
 	useBudgetStatus,
 	type WindowStatus,
 } from '../../../hooks/use-costs';
+import { defaultAvatarForSlug } from '../../../lib/default-avatars';
 
 function dollars(cents: number): string {
 	return `$${centsToDollars(cents)}`;
@@ -144,6 +145,7 @@ function BudgetPage() {
 										<div className="flex min-w-0 items-center gap-2.5">
 											<Avatar
 												initials={getInitials(agent.agent_title)}
+												imageUrl={agent.agent_icon_url ?? defaultAvatarForSlug(agent.agent_slug)}
 												size="sm"
 												running={agent.runtime_status === 'running'}
 											/>

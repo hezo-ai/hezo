@@ -4,6 +4,8 @@ import { useState } from 'react';
 // the initials; state (a running agent) is shown by a cyan `--live` ring.
 const sizeMap = {
 	sm: 'w-[26px] h-[26px] text-[10px]',
+	// Matches the intake-chat bubble min-height (avatar aligns with one text line).
+	chat: 'w-[2.625rem] h-[2.625rem] text-[13px]',
 	md: 'w-[36px] h-[36px] text-[13px]',
 	lg: 'w-[56px] h-[56px] text-[20px]',
 } as const;

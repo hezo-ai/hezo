@@ -38,6 +38,7 @@ import {
 import { useAiProviderModels, useAiProviders } from '../../../../../hooks/use-ai-providers';
 import { useBudgetStatus } from '../../../../../hooks/use-costs';
 import { useScrollToHash } from '../../../../../hooks/use-scroll-to-hash';
+import { defaultAvatarForSlug } from '../../../../../lib/default-avatars';
 
 function AgentSettingsPage() {
 	const { projectId, agentId } = Route.useParams();
@@ -143,6 +144,7 @@ function AgentSettingsPage() {
 					helpText="Shown on the team roster, the agent header, and the org chart. Square images work best; we crop to a square and resize to 512×512. Leave unset to show the agent's initials."
 					initials={getInitials(agent.title)}
 					currentIconUrl={agent.icon_url}
+					fallbackImageUrl={defaultAvatarForSlug(agent.slug)}
 					onUpload={(blob) => uploadIcon.mutateAsync(blob)}
 					onRemove={() => removeIcon.mutateAsync()}
 					isUploading={uploadIcon.isPending}
