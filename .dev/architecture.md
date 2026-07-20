@@ -579,16 +579,20 @@ chat-enabled agent; the operator can review and edit it on the agent's **Chat hi
 (`GET/PUT /api/projects/:projectId/agents/:agentId/chat-memory`).
 
 **Automatic thread titling.** A web thread is created **untitled** (`chat_conversations.title`
-NULL — there is no hardcoded "Main" default) and rendered as a "New thread" placeholder. After a
-reply settles on an untitled thread that has a real exchange, `runTitleGeneration` runs a
-**headless exec** (like compaction — no `chat_message`, no reply broadcast) that hands the agent
-the active window and **captures a short title from its stdout** (`buildTitlePrompt` →
-`sanitizeChatTitle`); the agent does the naming, there is **no server-side LLM call**. It persists
-idempotently (`UPDATE … SET title WHERE title IS NULL`, so a manual/already-set title is never
-clobbered) and broadcasts `ChatConversationUpdated` on the `chat:global` room, so every open thread
-switcher/sidebar refetches and updates its label live. Titling runs **once** per thread (skipped
-once titled), is chained before compaction so the two never contend for the per-session prompt
-file, and its exec's tokens are not separately priced (matching compaction).
+NULL — there is no hardcoded "Main" default) and rendered as a "New thread" placeholder. On an
+untitled thread, `runTitleGeneration` is kicked off **as soon as the first operator message lands,
+in parallel with the reply** (not chained after it), so the label flips from "New thread" while the
+CEO is still typing. It runs a **headless exec** (like compaction — no `chat_message`, no reply
+broadcast) that hands the agent the active window and **captures a short title from its stdout**
+(`buildTitlePrompt` → `sanitizeChatTitle`); the agent does the naming, there is **no server-side
+LLM call**. It titles from the operator's first message alone — it doesn't wait for a settled
+assistant reply — off its **own prompt file** (the `title` slot in `turnPrompt`) so it never
+contends with the reply's exec. It persists idempotently (`UPDATE … SET title WHERE title IS NULL`,
+so a manual/already-set title is never clobbered) and broadcasts `ChatConversationUpdated` on the
+`chat:global` room, so every open thread switcher/sidebar refetches and updates its label live. One
+title run is in flight per thread at a time (`ConversationRuntime.titling`); a new turn or a close
+preempts it (`titlingAbort`) and — while still untitled — the next turn re-kicks it. Its exec's
+tokens are not separately priced (matching compaction).
 
 HQ also exposes the standard **assets library** — the one internal-project surface that
 isn't hidden in the UI (Budget/Settings still are). Files the CEO produces for the operator

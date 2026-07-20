@@ -86,9 +86,10 @@ export function useChatConversations(active: boolean) {
 		enabled: active,
 	});
 	// A thread's title can change server-side (the CEO auto-titles an untitled thread
-	// after the first exchange). Refetch the list when that lands so the switcher/rail
-	// label updates live. The widget's `useChat` already joins the `chat:global` room
-	// for its lifetime, so the broadcast reaches us without a separate join here.
+	// from its first message, in parallel with the reply — so it can land while the
+	// reply is still streaming). Refetch the list when that broadcast arrives so the
+	// switcher/rail label updates live. The widget's `useChat` already joins the
+	// `chat:global` room for its lifetime, so the broadcast reaches us without a separate join here.
 	useEffect(() => {
 		if (!active) return;
 		return subscribe(WsMessageType.ChatConversationUpdated, () => {

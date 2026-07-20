@@ -215,6 +215,11 @@ interface ConversationRuntime {
 	current: CurrentTurn | null;
 	compaction: Promise<void> | null;
 	compactionAbort: AbortController | null;
+	// In-flight auto-title run for this thread (runs in parallel with the reply,
+	// off its own prompt file). Tracked so a second one never runs concurrently and
+	// so a new turn / close can preempt it.
+	titling: Promise<void> | null;
+	titlingAbort: AbortController | null;
 }
 
 /**
@@ -287,6 +292,8 @@ export class ChatSessionManager {
 				current: null,
 				compaction: null,
 				compactionAbort: null,
+				titling: null,
+				titlingAbort: null,
 			};
 			this.convos.set(conversationId, rt);
 		}
@@ -383,6 +390,14 @@ export class ChatSessionManager {
 			await convo.compaction?.catch(() => undefined);
 		}
 
+		// Preempt an in-flight auto-title run too: this turn re-kicks titling from the
+		// richer window below (if the thread is still untitled), so drop the stale one
+		// and free its exec. Awaited so `convo.titling` is cleared before the re-kick.
+		if (convo.titlingAbort) {
+			convo.titlingAbort.abort('interrupted');
+			await convo.titling?.catch(() => undefined);
+		}
+
 		// Interrupt an in-flight reply in this thread: abort it and wait for it to
 		// finalize (the run loop persists the partial as `interrupted`) so the next
 		// turn's prompt includes it.
@@ -450,12 +465,13 @@ export class ChatSessionManager {
 		const abort = new AbortController();
 		const promise = this.runTurn(session, ctx, assistantMessageId, abort);
 		convo.current = { assistantMessageId, abort, promise };
-		// After the reply settles: first auto-title the thread if it's still untitled,
-		// then compact its window if it has grown past the cap. Chained (not parallel)
-		// so the two never exec against this thread's shared prompt file concurrently.
-		trackBackground(
-			promise.then(() => this.maybeAutoTitle(ctx)).then(() => this.maybeCompact(ctx)),
-		);
+		// Title the thread as early as possible: kick off title generation from the
+		// first user message *in parallel* with the reply (off its own prompt file, so
+		// the two execs never collide), so the switcher/rail label flips from "New
+		// thread" while the CEO is still typing instead of only after the reply settles.
+		// Compaction still waits for the reply — it rewrites the window this turn feeds.
+		trackBackground(this.maybeAutoTitle(ctx));
+		trackBackground(promise.then(() => this.maybeCompact(ctx)));
 
 		return { userMessageId, assistantMessageId, conversationId };
 	}
@@ -466,13 +482,18 @@ export class ChatSessionManager {
 		await this.teardown(ChatSessionStatus.Stopped);
 	}
 
-	/** Abort every in-flight turn across all conversations and await them. */
+	/** Abort every in-flight turn (and parallel auto-title run) across all
+	 * conversations and await them, so no exec outlives a restart/shutdown. */
 	private async abortAllCurrent(reason: string): Promise<void> {
 		const inflight: Promise<unknown>[] = [];
 		for (const convo of this.convos.values()) {
 			if (convo.current) {
 				convo.current.abort.abort(reason);
 				inflight.push(convo.current.promise.catch(() => undefined));
+			}
+			if (convo.titlingAbort) {
+				convo.titlingAbort.abort(reason);
+				inflight.push(convo.titling?.catch(() => undefined) ?? Promise.resolve());
 			}
 		}
 		await Promise.all(inflight);
@@ -777,6 +798,10 @@ export class ChatSessionManager {
 			rt.compactionAbort.abort('closed');
 			await rt.compaction?.catch(() => undefined);
 		}
+		if (rt?.titlingAbort) {
+			rt.titlingAbort.abort('closed');
+			await rt.titling?.catch(() => undefined);
+		}
 		this.convos.delete(conversationId);
 		await this.deps.db.query(`UPDATE chat_conversations SET closed_at = now() WHERE id = $1`, [
 			conversationId,
@@ -1062,12 +1087,17 @@ export class ChatSessionManager {
 	 * reads its prompt from `HEZO_PROMPT_FILE`; keying the file by conversation lets
 	 * concurrent threads exec without overwriting each other's prompt (same-thread
 	 * turns serialize via the per-conversation lock, so one file per thread is safe).
+	 * Pass a `slot` suffix for a side exec that must run alongside the reply — the
+	 * auto-title run uses its own file so it never overwrites the reply's prompt.
 	 */
 	private turnPrompt(
 		session: LiveSession,
 		conversationId: string,
+		slot?: string,
 	): { hostPath: string; env: string[] } {
-		const key = `${session.sessionId}-${conversationId}`;
+		const key = slot
+			? `${session.sessionId}-${conversationId}-${slot}`
+			: `${session.sessionId}-${conversationId}`;
 		const hostPath = getHostPromptPath(this.deps.dataDir, DEFAULT_TEAM_ID, session.projectId, key);
 		const containerPath = getContainerPromptPath(key);
 		const env = session.env.map((e) =>
@@ -1301,26 +1331,35 @@ export class ChatSessionManager {
 	}
 
 	/**
-	 * Auto-title a thread from its content once, after a reply settles, if it's still
-	 * untitled. Best-effort and gated like compaction: skipped when a newer turn is in
-	 * flight in this thread (it retries after that turn) or a compaction is running for
-	 * it. A generated title flips the thread from the "New thread" placeholder to a
-	 * meaningful name; a failure leaves it untitled and the next reply retries.
+	 * Auto-title a thread from its first message as early as possible, if it's still
+	 * untitled — kicked off in parallel with the reply so the label updates on-the-go
+	 * rather than only after the reply settles. Best-effort: skipped when a title run
+	 * is already in flight for this thread (one at a time; a new turn re-kicks). A
+	 * generated title flips the thread from the "New thread" placeholder to a
+	 * meaningful name; a failure leaves it untitled and the next turn retries.
 	 */
 	private async maybeAutoTitle(ctx: ConversationContext): Promise<void> {
 		const session = this.live;
 		if (!session) return;
 		const convo = this.getConvoRuntime(ctx.conversationId);
-		if (convo.current || convo.compaction) return;
+		// One title run per thread at a time; the reply may still be streaming (that's
+		// the point — title in parallel), so only a concurrent title run is a conflict.
+		if (convo.titling) return;
 		// Only untitled threads get auto-titled; a set title (manual or already
 		// generated) is never overwritten.
 		const existing = await this.getConversation(ctx.conversationId);
 		if (!existing || existing.closed_at || existing.title != null) return;
 		const abort = new AbortController();
+		convo.titlingAbort = abort;
+		const run = this.runTitleGeneration(session, ctx.conversationId, abort).catch((e) => {
+			if (!abort.signal.aborted) log.error('CEO chat auto-title failed', e);
+		});
+		convo.titling = run;
 		try {
-			await this.runTitleGeneration(session, ctx.conversationId, abort);
-		} catch (e) {
-			log.error('CEO chat auto-title failed', e);
+			await run;
+		} finally {
+			if (convo.titlingAbort === abort) convo.titlingAbort = null;
+			if (convo.titling === run) convo.titling = null;
 		}
 	}
 
@@ -1337,14 +1376,18 @@ export class ChatSessionManager {
 		abort: AbortController,
 	): Promise<void> {
 		const window = await loadActiveWindow(this.deps.db, conversationId);
-		// Only title once there's a real exchange to summarize — at least one assistant
-		// reply with content. A failed/empty/interrupted-empty reply is skipped so a
-		// later successful turn titles the thread (and a failed turn spends no exec here).
-		if (!window.some((m) => m.role === ChatMessageRole.Assistant && m.content.trim() !== '')) {
+		// Title from the first operator message — it's enough to name the topic, and
+		// titling from it (rather than waiting for a settled assistant reply) is what
+		// lets the label update while the reply is still streaming. An empty window
+		// (attachment-only opener with no text, or nothing persisted yet) is skipped so
+		// a later turn with real text titles the thread.
+		if (!window.some((m) => m.role === ChatMessageRole.User && m.content.trim() !== '')) {
 			return;
 		}
 		const prompt = buildTitlePrompt(window.map(chatTranscriptLine).join('\n\n'));
-		const { hostPath, env } = this.turnPrompt(session, conversationId);
+		// A dedicated prompt file (the `title` slot) so this exec can run concurrently
+		// with the reply's exec without either overwriting the other's prompt.
+		const { hostPath, env } = this.turnPrompt(session, conversationId, 'title');
 		mkdirSync(dirname(hostPath), { recursive: true });
 		writeFileSync(hostPath, prompt);
 
