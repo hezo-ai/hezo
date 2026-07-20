@@ -99,6 +99,57 @@ function makeChatDocker(dataDir: string, projectId: string): ChatDocker {
 	return { docker, prompts, scenario };
 }
 
+/**
+ * Docker stub that routes by prompt type (title exec vs reply exec), so a test can
+ * hold the reply open while the parallel auto-title exec still returns a title. The
+ * reply streams a partial then blocks until aborted; the title exec streams
+ * `titleText` and exits. Used to prove titling doesn't wait for the reply to settle.
+ */
+function makeTitleRoutingDocker(
+	dataDir: string,
+	projectId: string,
+	titleText: string,
+): { docker: ReturnType<typeof createStubDocker>; prompts: string[] } {
+	const prompts: string[] = [];
+	const toHostPath = (containerPath: string) =>
+		join(
+			getWorkspacePath(dataDir, DEFAULT_TEAM_ID, projectId),
+			containerPath.replace(/^\/workspace\//, ''),
+		);
+	const docker = createStubDocker({
+		execCreate: async (_id: string, config: { Env?: string[] }) => {
+			const promptEntry = (config.Env ?? []).find((e) => e.startsWith('HEZO_PROMPT_FILE='));
+			if (!promptEntry) return 'exec-reply';
+			const prompt = readFileSync(
+				toHostPath(promptEntry.slice('HEZO_PROMPT_FILE='.length)),
+				'utf8',
+			);
+			prompts.push(prompt);
+			// The title prompt is buildTitlePrompt's header; everything else is a reply.
+			return prompt.includes('# Name this conversation') ? 'exec-title' : 'exec-reply';
+		},
+		execStart: async (
+			execId: string,
+			opts: { signal?: AbortSignal; onChunk?: (c: ExecLogChunk) => void | Promise<void> },
+		) => {
+			const onChunk = opts.onChunk ?? (() => undefined);
+			if (execId === 'exec-title') {
+				await onChunk({ stream: 'stdout', text: assistantText(titleText) });
+				return { stdout: '', stderr: '' };
+			}
+			// Reply: emit a partial, then block until the turn is interrupted/torn down.
+			await onChunk({ stream: 'stdout', text: assistantText('working on it') });
+			await new Promise<void>((_resolve, reject) => {
+				opts.signal?.addEventListener('abort', () =>
+					reject(new DOMException('Aborted', 'AbortError')),
+				);
+			});
+			return { stdout: '', stderr: '' };
+		},
+	});
+	return { docker, prompts };
+}
+
 function captureCeoRoom(wsManager: WebSocketManager): { events: Array<Record<string, unknown>> } {
 	const events: Array<Record<string, unknown>> = [];
 	const socket: WsSocket = {
@@ -267,9 +318,10 @@ describe('ChatSessionManager', () => {
 		const { manager } = makeManager(ctx, chat.docker);
 
 		await manager.sendTurn({ text: 'whip up a quick demo for me' });
-		await poll(async () => chat.prompts.length >= 1);
+		// The parallel auto-title exec also records a prompt; select the reply turn.
+		await poll(async () => chat.prompts.some(isReplyPrompt));
 
-		const prompt = chat.prompts[0];
+		const prompt = chat.prompts.find(isReplyPrompt) as string;
 		// Persist operator-facing deliverables to an assets library and link them,
 		// instead of dropping a loose /workspace file the operator can't reach.
 		expect(prompt).toContain('write_project_asset');
@@ -289,9 +341,10 @@ describe('ChatSessionManager', () => {
 		const { manager } = makeManager(ctx, chat.docker);
 
 		await manager.sendTurn({ text: 'how does Hezo work?' });
-		await poll(async () => chat.prompts.length >= 1);
+		// The parallel auto-title exec also records a prompt; select the reply turn.
+		await poll(async () => chat.prompts.some(isReplyPrompt));
 
-		const prompt = chat.prompts[0];
+		const prompt = chat.prompts.find(isReplyPrompt) as string;
 		// The live chat resolves embedDocs:true, so the bundled docs are injected
 		// at the CEO prompt's HEZO_DOCS marker — not the inert marker comment.
 		expect(prompt).toContain('# Hezo documentation');
@@ -448,15 +501,15 @@ describe('ChatSessionManager', () => {
 		await manager.stop();
 	});
 
-	test('auto-titles an untitled thread after the first exchange and broadcasts it', async () => {
+	test('auto-titles an untitled thread from the first message and broadcasts it', async () => {
 		const { docker } = makeChatDocker(ctx.dataDir, projectId);
 		const { manager, wsManager } = makeManager(ctx, docker);
 		const captured = captureCeoRoom(wsManager);
 
 		const { conversationId } = await manager.sendTurn({ text: 'Hello CEO' });
 
-		// The reply's own stream sets the title too (the stub replies "Hi there" to both
-		// the turn and the title run); poll until the background auto-title lands.
+		// The title exec streams "Hi there" (the stub replies the same to every exec);
+		// poll until the background auto-title lands.
 		await poll(async () => {
 			const convo = await manager.getConversation(conversationId);
 			return convo?.title != null;
@@ -466,6 +519,38 @@ describe('ChatSessionManager', () => {
 		// The switcher/rail learns about it live via a broadcast.
 		expect(
 			captured.events.some((e) => e.type === 'chat_conversation_updated' && e.title === 'Hi there'),
+		).toBe(true);
+
+		await manager.stop();
+	});
+
+	test('titles a new thread from the first message while the reply is still streaming', async () => {
+		// The reply exec blocks (never completes); only the parallel title exec returns.
+		// If titling still waited for the reply to settle, the thread would stay untitled.
+		const { docker } = makeTitleRoutingDocker(ctx.dataDir, projectId, 'Deploy Pipeline Setup');
+		const { manager, wsManager } = makeManager(ctx, docker);
+		const captured = captureCeoRoom(wsManager);
+
+		const { conversationId, assistantMessageId } = await manager.sendTurn({
+			text: 'How do I set up the deploy pipeline?',
+		});
+
+		await poll(async () => {
+			const convo = await manager.getConversation(conversationId);
+			return convo?.title != null;
+		});
+		const convo = await manager.getConversation(conversationId);
+		expect(convo?.title).toBe('Deploy Pipeline Setup');
+		// The reply is still streaming when the title lands — titling ran in parallel.
+		const reply = await ctx.db.query<{ status: string }>(
+			'SELECT status FROM chat_messages WHERE id = $1',
+			[assistantMessageId],
+		);
+		expect(reply.rows[0].status).toBe(ChatMessageStatus.Streaming);
+		expect(
+			captured.events.some(
+				(e) => e.type === 'chat_conversation_updated' && e.title === 'Deploy Pipeline Setup',
+			),
 		).toBe(true);
 
 		await manager.stop();
