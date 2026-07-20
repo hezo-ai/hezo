@@ -64,17 +64,22 @@ export function AppHeader({
 			</div>
 
 			<div className="flex items-center gap-0.5">
-				{/* Leftmost of the action group; keeps the accent (primary CTA) fill so
-				    it reads as the create action, not another quiet nav icon. */}
+				{/* Leftmost of the action group. Styled as a quiet outlined button —
+				    transparent fill, primary-red border and "+" — so it sits with the
+				    other nav icons while the accent still marks it as the create action.
+				    The 32px tap target matches its neighbours; the bordered box inside is
+				    a compact 22px with an edge-to-edge plus. */}
 				<button
 					type="button"
 					onClick={() => setNewTaskOpen(true)}
 					aria-label="New task"
 					title="New task"
 					data-testid="app-header-new-task"
-					className="lg:hidden w-8 h-8 rounded-md flex items-center justify-center bg-accent-solid text-accent-solid-fg hover:bg-accent-hover transition-colors"
+					className={`${iconLinkClass} lg:hidden`}
 				>
-					<Plus className="w-4 h-4" />
+					<span className="flex h-[22px] w-[22px] items-center justify-center rounded-md border border-accent text-accent">
+						<Plus className="h-[22px] w-[22px]" />
+					</span>
 				</button>
 				<CreateTaskDialog
 					selectProject
