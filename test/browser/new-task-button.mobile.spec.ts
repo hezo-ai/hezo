@@ -34,9 +34,16 @@ test.describe('Header new-task button responsiveness', () => {
 		expect(buttonBox.x + buttonBox.width).toBeLessThanOrEqual(searchBox.x + 1);
 		expect(Math.abs(buttonBox.y - searchBox.y)).toBeLessThan(buttonBox.height);
 
-		// The accent (primary CTA) fill, not the quiet icon treatment.
+		// Quiet, outlined treatment: the button fill is transparent (matching the
+		// other nav icons) with a primary-red bordered "+" box marking the create
+		// action — not the old solid-accent fill.
 		const background = await headerButton.evaluate((el) => getComputedStyle(el).backgroundColor);
-		expect(background).not.toBe('rgba(0, 0, 0, 0)');
+		expect(background).toBe('rgba(0, 0, 0, 0)');
+		const borderColor = await headerButton.evaluate((el) => {
+			const box = el.querySelector('span');
+			return box ? getComputedStyle(box).borderTopColor : '';
+		});
+		expect(borderColor).not.toBe('rgba(0, 0, 0, 0)');
 
 		// Opening it pops the create-task dialog with the current project preselected.
 		await headerButton.click();
