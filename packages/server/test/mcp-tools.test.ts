@@ -959,6 +959,43 @@ describe('MCP tool handlers: additional data queries via DB', () => {
 		expect(filenames).toContain('test-doc.md');
 	});
 
+	it('round-trips a description through write/read/list_project_doc via MCP', async () => {
+		const written = (await callToolViaMcp('write_project_doc', {
+			project: projectId,
+			filename: 'mcp-described.md',
+			content: '# Analytics',
+			description: 'How we track and report campaign analytics each week.',
+		})) as { written?: boolean; error?: string };
+		expect(written.error).toBeUndefined();
+		expect(written.written).toBe(true);
+
+		const read = (await callToolViaMcp('read_project_doc', {
+			project: projectId,
+			filename: 'mcp-described.md',
+		})) as { description?: string };
+		expect(read.description).toBe('How we track and report campaign analytics each week.');
+
+		const listed = (await callToolViaMcp('list_project_docs', {
+			project: projectId,
+		})) as { files: Array<{ filename: string; description?: string }> };
+		const entry = listed.files.find((f) => f.filename === 'mcp-described.md');
+		expect(entry?.description).toBe('How we track and report campaign analytics each week.');
+	});
+
+	it('omits description from read_project_doc when unset', async () => {
+		await callToolViaMcp('write_project_doc', {
+			project: projectId,
+			filename: 'mcp-plain.md',
+			content: '# Plain',
+		});
+		const read = (await callToolViaMcp('read_project_doc', {
+			project: projectId,
+			filename: 'mcp-plain.md',
+		})) as { description?: string; content?: string };
+		expect(read.content).toContain('Plain');
+		expect(read.description).toBeUndefined();
+	});
+
 	it('create_skill inserts correctly', async () => {
 		const r = await db.query(
 			`INSERT INTO skills (name, slug, content, is_active)

@@ -38,8 +38,8 @@ cached to go stale. Context reaches the agent in one of two ways:
   them in view.
 - **As a manifest** — larger libraries are surfaced as a *table of contents* rather than
   pasted in whole. The agent sees an index of what exists and pulls the full item only when
-  it's relevant: **project documents** are listed by filename, title, and last-updated date
-  (the agent opens one with `read_project_doc`), and **skills** are listed by name and
+  it's relevant: **project documents** are listed by filename, a one-line description, and
+  last-updated date (the agent opens one with `read_project_doc`), and **skills** are listed by name and
   description (the agent loads one with `get_skill`). This keeps prompts lean while still
   putting the entire library within reach.
 
@@ -71,7 +71,11 @@ every agent can reach them without cluttering the codebase. You read and edit an
 from the **Documents** page in the web app, and agents read and write the same files as they
 work (`list_project_docs`, `read_project_doc`, and `write_project_doc` over Hezo's
 [MCP server](/docs/mcp/hezo-mcp-server)). A document is referenced by its plain filename —
-for example `spec.md` — so links stay stable as the work evolves. The document list sits
+for example `spec.md` — so links stay stable as the work evolves. Each document also carries
+a short **description** — a one-line "what this is" shown under its filename in the list and
+at the top of the document — so you (and the next agent) can tell what a document holds
+without opening it. Agents write the description when they create or update a document; you
+can edit it inline from the document's **Edit** view. The document list sits
 beside the reader, with a **search box** at the top that filters the list as you type and a
 **+** button next to it for creating a new document — both stay in view while you scroll
 the list. A **dropdown** next to the open document's title opens a name search from
@@ -79,8 +83,9 @@ inside the reader, so you can jump straight to another document without going ba
 list; it's hidden while you're editing.
 
 Agents don't carry every document's full text on every run. Instead each run includes a
-**manifest** — a table of contents listing each document's filename, title, and when it
-last changed — and the agent opens the ones it needs with `read_project_doc`. So adding or
+**manifest** — a table of contents listing each document's filename, its one-line
+description, and when it last changed — and the agent opens the ones it needs with
+`read_project_doc`. So adding or
 updating a document immediately makes it discoverable to the whole team, without bloating
 anyone's prompt. (Archived documents are left out of the manifest — see
 [Archiving & deleting documents](#archiving--deleting-documents).)

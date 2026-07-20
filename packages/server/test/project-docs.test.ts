@@ -185,6 +185,85 @@ describe('Project docs (DB-backed)', () => {
 	});
 });
 
+describe('Project doc descriptions', () => {
+	const filename = 'described.md';
+
+	it('stores the description on PUT and returns it from GET + list', async () => {
+		const putRes = await app.request(`/api/projects/${projectId}/docs/${filename}`, {
+			method: 'PUT',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				content: '# Analytics',
+				description: 'How we track and report campaign analytics each week.',
+			}),
+		});
+		expect(putRes.status).toBe(200);
+		expect((await putRes.json()).data.description).toBe(
+			'How we track and report campaign analytics each week.',
+		);
+
+		const getRes = await app.request(`/api/projects/${projectId}/docs/${filename}`, {
+			headers: authHeader(token),
+		});
+		expect((await getRes.json()).data.description).toBe(
+			'How we track and report campaign analytics each week.',
+		);
+
+		const listRes = await app.request(`/api/projects/${projectId}/docs`, {
+			headers: authHeader(token),
+		});
+		const entry = (await listRes.json()).data.find((d: any) => d.filename === filename);
+		expect(entry.description).toBe('How we track and report campaign analytics each week.');
+	});
+
+	it('leaves the description untouched when a later PUT omits it', async () => {
+		const res = await app.request(`/api/projects/${projectId}/docs/${filename}`, {
+			method: 'PUT',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ content: '# Analytics v2' }),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.data.content).toContain('v2');
+		expect(body.data.description).toBe('How we track and report campaign analytics each week.');
+	});
+
+	it('updates the description without changing content (no new revision)', async () => {
+		const before = await app.request(`/api/projects/${projectId}/docs/${filename}/revisions`, {
+			headers: authHeader(token),
+		});
+		const beforeCount = (await before.json()).data.length;
+
+		const res = await app.request(`/api/projects/${projectId}/docs/${filename}`, {
+			method: 'PUT',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				content: '# Analytics v2',
+				description: 'Weekly analytics workflow.',
+			}),
+		});
+		expect(res.status).toBe(200);
+		expect((await res.json()).data.description).toBe('Weekly analytics workflow.');
+
+		const after = await app.request(`/api/projects/${projectId}/docs/${filename}/revisions`, {
+			headers: authHeader(token),
+		});
+		expect((await after.json()).data.length).toBe(beforeCount);
+	});
+
+	it('defaults description to empty string when never set', async () => {
+		await app.request(`/api/projects/${projectId}/docs/no-desc.md`, {
+			method: 'PUT',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ content: '# No description' }),
+		});
+		const res = await app.request(`/api/projects/${projectId}/docs/no-desc.md`, {
+			headers: authHeader(token),
+		});
+		expect((await res.json()).data.description).toBe('');
+	});
+});
+
 describe('Project doc revisions and restore', () => {
 	const filename = 'revisioned.md';
 

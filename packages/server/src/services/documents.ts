@@ -43,6 +43,8 @@ export interface DocumentRow {
 	type: DocumentType;
 	slug: string;
 	title: string;
+	/** A short "what this is" line for project docs — surfaced in the list + doc header. '' when unset. */
+	description: string;
 	content: string;
 	last_updated_by_member_id: string | null;
 	/** Soft-delete stamp — null = active. Only project docs are ever archived. */
@@ -123,7 +125,7 @@ function scopeWhere(scope: DocumentScope, alias = ''): { sql: string; params: un
 // Explicit column list — the generated search_tsv column (full-text index) is
 // server-internal and never serialized to API responses.
 const SELECT_WITH_AUTHOR = `SELECT d.id, d.team_id, d.project_id, d.member_agent_id,
-	        d.type, d.slug, d.title, d.content,
+	        d.type, d.slug, d.title, d.description, d.content,
 	        d.last_updated_by_member_id, d.archived_at, d.archived_by_member_id,
 	        d.created_at, d.updated_at,
 	        COALESCE(ma.title, m.display_name) AS last_updated_by_name,
@@ -182,6 +184,8 @@ export async function listDocuments(
 export interface UpsertDocumentInput {
 	scope: DocumentScope;
 	title?: string;
+	/** Optional "what this is" line for project docs. Undefined leaves an existing value untouched. */
+	description?: string;
 	content: string;
 	changeSummary?: string;
 	authorMemberId: string | null;
@@ -225,10 +229,17 @@ export async function upsertDocument(
 			`UPDATE documents
 			 SET content = $1,
 			     title = COALESCE($2, title),
-			     last_updated_by_member_id = $3
-			 WHERE id = $4
+			     description = COALESCE($3, description),
+			     last_updated_by_member_id = $4
+			 WHERE id = $5
 			 RETURNING *`,
-			[input.content, input.title ?? null, input.authorMemberId, prior.id],
+			[
+				input.content,
+				input.title ?? null,
+				input.description ?? null,
+				input.authorMemberId,
+				prior.id,
+			],
 		);
 		return updateResult.rows[0];
 	});
@@ -332,8 +343,8 @@ async function insertDocument(db: Db, input: UpsertDocumentInput): Promise<Docum
 	const memberAgentId = scope.type === DocumentType.AgentSystemPrompt ? scope.memberAgentId : null;
 	const slug = resolveSlug(scope);
 	const result = await db.query<DocumentRow>(
-		`INSERT INTO documents (team_id, project_id, member_agent_id, type, slug, title, content, last_updated_by_member_id)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		`INSERT INTO documents (team_id, project_id, member_agent_id, type, slug, title, description, content, last_updated_by_member_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		 RETURNING *`,
 		[
 			scope.teamId,
@@ -342,6 +353,7 @@ async function insertDocument(db: Db, input: UpsertDocumentInput): Promise<Docum
 			scope.type,
 			slug,
 			input.title ?? '',
+			input.description ?? '',
 			input.content,
 			input.authorMemberId,
 		],

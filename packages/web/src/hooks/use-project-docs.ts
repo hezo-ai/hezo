@@ -7,6 +7,8 @@ import { queryKeys } from '../lib/query-keys';
 export interface ProjectDoc {
 	id: string;
 	filename: string;
+	/** One-line "what this is" summary; '' when unset. Present in the list and the single-doc GET. */
+	description?: string;
 	updated_at: string;
 	content?: string;
 	/** Set when the doc is archived (soft-deleted); null = active. */
@@ -47,14 +49,17 @@ export function useUpdateProjectDoc(projectId: string) {
 		mutationFn: ({
 			filename,
 			content,
+			description,
 			changeSummary,
 		}: {
 			filename: string;
 			content: string;
+			description?: string;
 			changeSummary?: string;
 		}) =>
 			api.put<ProjectDoc>(`/api/projects/${projectId}/docs/${filename}`, {
 				content,
+				description,
 				change_summary: changeSummary,
 			}),
 		onSuccess: (saved, { filename }) => {

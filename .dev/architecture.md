@@ -279,7 +279,13 @@ interrupted run still counts against budgets.
 
 **Docs, skills, assets.** `documents` is one table backing three Markdown kinds by
 `type` (`project_doc`, `team_preferences`, `agent_system_prompt`), each with partial
-unique scoping and full revision history in `document_revisions`. The `team_preferences`
+unique scoping and full revision history in `document_revisions`. Project docs additionally
+carry a `description` (a one-line "what this is", migration 037) surfaced in the Documents
+list/header, in `list_project_docs` / `read_project_doc`, and — in place of the long-unused
+`title` column — in the `{{project_docs_context}}` run manifest; agents set it via
+`write_project_doc`, admins via the doc PUT, both threaded through `upsertDocument` with a
+`COALESCE` so an omitted value leaves the existing description untouched (a description-only
+edit records no revision). The `team_preferences`
 document is the project's **Custom Prompt** — a per-team instruction block injected verbatim
 into every in-project agent's prompt via `{{team_preferences_context}}`; it is edited from the
 web **Settings → Custom Prompt** page (`PATCH /api/projects/:projectId/custom-prompt`) and, for

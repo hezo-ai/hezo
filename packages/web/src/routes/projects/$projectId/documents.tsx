@@ -106,6 +106,7 @@ function ProjectDocumentsPage() {
 			list.push({
 				key: d.filename,
 				label: d.filename,
+				description: d.description || undefined,
 				archived: d.archived_at != null,
 				meta: (
 					<>
@@ -177,12 +178,12 @@ function ProjectDocumentsPage() {
 		setIsCreating(false);
 	}
 
-	async function handleSave(content: string) {
+	async function handleSave(content: string, description?: string) {
 		if (!file) return;
 		if (isAgentsMd) {
 			await updateAgentsMd.mutateAsync(content);
 		} else {
-			await updateDoc.mutateAsync({ filename: file, content });
+			await updateDoc.mutateAsync({ filename: file, content, description });
 		}
 	}
 
@@ -203,6 +204,17 @@ function ProjectDocumentsPage() {
 
 	return (
 		<>
+			{/* Section header — frames Documents as the team's long-term memory,
+			    mirroring the Assets page header. On mobile it hides once a doc is
+			    open or the new-doc form is up (single-pane), staying visible on md+
+			    where the two-pane layout always shows the list. */}
+			<div className={`mb-4 ${!file && !isCreating ? '' : 'hidden md:block'}`}>
+				<h1 className="text-base font-semibold text-text-1">Documents</h1>
+				<p className="text-[13px] text-text-2">
+					Your team's long-term memory — the guidelines, research, and reference material the team
+					builds up and returns to across the project.
+				</p>
+			</div>
 			<DocsLibrary
 				projectId={projectId}
 				projectSlug={projectId}
@@ -214,6 +226,7 @@ function ProjectDocumentsPage() {
 				docContent={displayContent}
 				isLoadingDoc={isLoadingDoc}
 				docTitle={isAgentsMd ? 'AGENTS.md' : (file ?? undefined)}
+				docDescription={isAgentsMd ? undefined : (doc?.description ?? '')}
 				onSave={handleSave}
 				isSaving={updateDoc.isPending || updateAgentsMd.isPending}
 				onDelete={handleDelete}
@@ -260,8 +273,8 @@ function ProjectDocumentsPage() {
 						projectId={projectId}
 						projectSlug={projectId}
 						onCancel={() => setIsCreating(false)}
-						onCreate={async (filename, content) => {
-							await updateDoc.mutateAsync({ filename, content });
+						onCreate={async (filename, content, description) => {
+							await updateDoc.mutateAsync({ filename, content, description });
 							setIsCreating(false);
 							navigate({
 								search: (prev) => ({ ...(prev as DocumentsSearch), file: filename }),
@@ -322,10 +335,11 @@ function NewProjectDocForm({
 	projectId: string;
 	projectSlug: string;
 	onCancel: () => void;
-	onCreate: (filename: string, content: string) => Promise<void>;
+	onCreate: (filename: string, content: string, description: string) => Promise<void>;
 	isPending: boolean;
 }) {
 	const [filename, setFilename] = useState('');
+	const [description, setDescription] = useState('');
 	const [content, setContent] = useState('');
 	const [error, setError] = useState<string | null>(null);
 
@@ -339,7 +353,7 @@ function NewProjectDocForm({
 			return;
 		}
 		setError(null);
-		await onCreate(name, content);
+		await onCreate(name, content, description.trim());
 	}
 
 	return (
@@ -351,6 +365,12 @@ function NewProjectDocForm({
 				value={filename}
 				onChange={(e) => setFilename(e.target.value)}
 				required
+			/>
+			<Input
+				label="Description"
+				placeholder="What this doc is and when to read it"
+				value={description}
+				onChange={(e) => setDescription(e.target.value)}
 			/>
 			<MarkdownEditor
 				projectId={projectId}

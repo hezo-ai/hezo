@@ -391,17 +391,17 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_project_docs: {
 		category: 'Project docs & assets',
 		returns:
-			"`{ files: [{ id, filename, title, updated_at }] }` — the markdown project docs. The `filter` param defaults to `'active'` (archived docs excluded); with `'archived'` or `'all'` each entry also carries `archived: boolean`.",
+			"`{ files: [{ id, filename, description, updated_at }] }` — the markdown project docs, where `description` is the one-line \"what this is\" summary (`''` if unset). The `filter` param defaults to `'active'` (archived docs excluded); with `'archived'` or `'all'` each entry also carries `archived: boolean`.",
 	},
 	read_project_doc: {
 		category: 'Project docs & assets',
 		returns:
-			"`{ filename, content }` (the full markdown body), plus `review_comments: [{ id, quote, occurrence, comment, created_at }]` when the admin has left pending review feedback on the doc (each comment anchors to an exact `quote` snippet; `occurrence` disambiguates repeats). Any write to the doc deletes all of its review comments, so capture them before writing. Returns `{ error }` if the file is not found or its archive state doesn't match `filter` (default `'active'`, so archived docs need `filter: 'archived'` or `'all'`; an archived read carries `archived: true`).",
+			"`{ filename, content }` (the full markdown body), plus `description` when the doc has a one-line summary set, plus `review_comments: [{ id, quote, occurrence, comment, created_at }]` when the admin has left pending review feedback on the doc (each comment anchors to an exact `quote` snippet; `occurrence` disambiguates repeats). Any write to the doc deletes all of its review comments, so capture them before writing. Returns `{ error }` if the file is not found or its archive state doesn't match `filter` (default `'active'`, so archived docs need `filter: 'archived'` or `'all'`; an archived read carries `archived: true`).",
 	},
 	write_project_doc: {
 		category: 'Project docs & assets',
 		returns:
-			"`{ written: true, id, filename }`, or `{ error }` if the filename is not `.md` or the doc is archived (unarchive first — archived docs are read-only). Make all edits in one consolidated write: a content-changing write deletes ALL pending review comments on the doc (read them first) and records a document revision, so many partial writes lose review context and bury the revision history. The optional `changelog` is stored as that revision's changelog and shown in the document's history — put update/status notes there, not in the document body.",
+			"`{ written: true, id, filename }`, or `{ error }` if the filename is not `.md` or the doc is archived (unarchive first — archived docs are read-only). Make all edits in one consolidated write: a content-changing write deletes ALL pending review comments on the doc (read them first) and records a document revision, so many partial writes lose review context and bury the revision history. The optional `description` sets the doc's one-line \"what this is\" summary (shown in the Documents list and doc header; omit to leave it unchanged). The optional `changelog` is stored as that revision's changelog and shown in the document's history — put update/status notes there, not in the document body.",
 	},
 	archive_project_doc: {
 		category: 'Project docs & assets',

@@ -1,0 +1,12 @@
+-- A short, human-readable description of what a project doc is — surfaced in the
+-- Documents list and the doc header so the section reads as legible long-term
+-- project memory instead of a wall of raw filenames. The filename (slug) stays
+-- the document's label/identity; this is purely the "what this is" one-liner.
+-- Agents set it when they write a doc (write_project_doc); humans can edit it in
+-- the UI. Only project docs surface it, but the column lives on the shared
+-- `documents` table alongside the (separate, unused-for-project-docs) `title`.
+--
+-- Purely additive: existing rows backfill to '' (no description yet), so nothing
+-- changes for current data. NOT NULL DEFAULT '' mirrors `title` and `content`, so
+-- the service can COALESCE updates the same way it already does for `title`.
+ALTER TABLE documents ADD COLUMN description TEXT NOT NULL DEFAULT '';

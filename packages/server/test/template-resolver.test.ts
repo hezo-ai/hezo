@@ -205,7 +205,10 @@ describe('template resolver', () => {
 		const docRes = await app.request(`/api/projects/${projectId}/docs/spec.md`, {
 			method: 'PUT',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ content: 'Detailed spec.' }),
+			body: JSON.stringify({
+				content: 'Detailed spec.',
+				description: 'The technical spec for the build.',
+			}),
 		});
 		expect(docRes.status).toBe(200);
 
@@ -226,14 +229,15 @@ describe('template resolver', () => {
 		expect(result).toContain('write_project_doc(filename, content)');
 		expect(result).toContain('will not touch these');
 
-		// Titled doc (architecture-guidelines.md is seeded by createTestProject with a non-empty title).
+		// Described doc — the manifest shows "filename — description (updated date)".
 		expect(result).toMatch(
-			/- architecture-guidelines\.md — Architecture Guidelines \(updated \d{4}-\d{2}-\d{2}\)/,
+			/- spec\.md — The technical spec for the build\. \(updated \d{4}-\d{2}-\d{2}\)/,
 		);
 
-		// Title-less doc (created via PUT, which leaves title empty) — no em-dash, no "undefined".
-		expect(result).toMatch(/- spec\.md \(updated \d{4}-\d{2}-\d{2}\)/);
-		expect(result).not.toContain('spec.md —');
+		// Description-less doc (architecture-guidelines.md is seeded with no description) —
+		// no em-dash, no "undefined".
+		expect(result).toMatch(/- architecture-guidelines\.md \(updated \d{4}-\d{2}-\d{2}\)/);
+		expect(result).not.toContain('architecture-guidelines.md —');
 		expect(result).not.toContain('undefined');
 
 		// Doc bodies and the old warning copy are gone — the whole point of the manifest.

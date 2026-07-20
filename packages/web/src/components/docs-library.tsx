@@ -5,6 +5,7 @@ import {
 	ExternalLink,
 	FileText,
 	History,
+	Info,
 	Loader2,
 	PanelLeftClose,
 	PanelLeftOpen,
@@ -34,6 +35,8 @@ const LIST_COLLAPSED_KEY = 'hezo:doc-list-collapsed';
 export interface DocItem {
 	key: string;
 	label: ReactNode;
+	/** One-line "what this is" summary, shown under the label. Omit for none. */
+	description?: ReactNode;
 	meta?: ReactNode;
 	pinned?: boolean;
 	canDelete?: boolean;
@@ -58,7 +61,15 @@ interface DocsLibraryProps {
 	/** Heading shown for the loaded doc; falls back to the items entry or selectedKey. */
 	docTitle?: ReactNode;
 
-	onSave: (content: string) => Promise<void> | void;
+	/**
+	 * The selected doc's one-line description. `undefined` means the doc type has
+	 * no description (e.g. the repo-backed AGENTS.md) — the description block and
+	 * its editor are hidden. `''` is a project doc with none set yet: view mode
+	 * shows nothing, edit mode shows the input with a placeholder.
+	 */
+	docDescription?: string;
+
+	onSave: (content: string, description?: string) => Promise<void> | void;
 	isSaving?: boolean;
 	onDelete?: () => Promise<void> | void;
 
@@ -127,6 +138,7 @@ export function DocsLibrary({
 	docContent,
 	isLoadingDoc,
 	docTitle,
+	docDescription,
 	onSave,
 	isSaving,
 	onDelete,
@@ -155,6 +167,7 @@ export function DocsLibrary({
 	const [mode, setMode] = useState<'view' | 'edit'>('view');
 	const [modeKey, setModeKey] = useState<string | null>(selectedKey);
 	const [draft, setDraft] = useState('');
+	const [descDraft, setDescDraft] = useState('');
 	const [deleteOpen, setDeleteOpen] = useState(false);
 	const [search, setSearch] = useState('');
 	const [listCollapsed, setListCollapsed] = useState(() => readStored(LIST_COLLAPSED_KEY) === '1');
@@ -169,9 +182,10 @@ export function DocsLibrary({
 	useEffect(() => {
 		if (mode === 'edit' && prevModeRef.current !== 'edit') {
 			setDraft(docContent ?? '');
+			setDescDraft(docDescription ?? '');
 		}
 		prevModeRef.current = mode;
-	}, [mode, docContent]);
+	}, [mode, docContent, docDescription]);
 
 	// Honour a deep-linked `?edit=1` once the doc content has loaded: flip into
 	// edit mode a single time. Waiting for content (rather than starting in edit)
@@ -224,8 +238,13 @@ export function DocsLibrary({
 		label: typeof item.label === 'string' ? item.label : item.key,
 	}));
 
+	// A project doc always has a description string (possibly ''); AGENTS.md and
+	// other description-less doc types pass `undefined`, which hides the block +
+	// editor and omits the field from the save.
+	const supportsDescription = docDescription !== undefined;
+
 	async function handleSave() {
-		await onSave(draft);
+		await onSave(draft, supportsDescription ? descDraft.trim() : undefined);
 		setMode('view');
 	}
 
@@ -331,6 +350,11 @@ export function DocsLibrary({
 												>
 													{item.label}
 												</div>
+												{item.description && (
+													<div className="text-[11.5px] text-text-2 mt-0.5 truncate">
+														{item.description}
+													</div>
+												)}
 												{(item.meta || item.archived) && (
 													<div className="text-[11px] text-text-3 mt-0.5 flex items-center gap-1.5 min-w-0">
 														{item.archived && <ArchivedBadge />}
@@ -538,6 +562,17 @@ export function DocsLibrary({
 							</div>
 						)}
 
+						{/* The doc's "what this is" line, above the metadata banner. Only
+						    shown when set — an empty description reads as no subtitle. */}
+						{mode === 'view' && supportsDescription && docDescription && (
+							<p
+								className="text-[13px] leading-relaxed text-text-2 mb-4"
+								data-testid="doc-description"
+							>
+								{docDescription}
+							</p>
+						)}
+
 						{mode === 'view' ? (
 							<DocumentBody
 								content={docContent || '_(empty)_'}
@@ -548,13 +583,40 @@ export function DocsLibrary({
 								topSlot={bodyBanner}
 							/>
 						) : (
-							<MentionTextarea
-								projectId={projectId}
-								projectSlug={projectSlug}
-								value={draft}
-								onChange={(e) => setDraft(e.target.value)}
-								className="min-h-[400px] font-mono text-xs"
-							/>
+							<div className="flex flex-col gap-3">
+								{supportsDescription && (
+									<div className="flex flex-col gap-1">
+										<div className="flex items-center gap-1.5">
+											<label
+												htmlFor="doc-description-input"
+												className="text-[11px] font-medium uppercase tracking-wide text-text-3"
+											>
+												Description
+											</label>
+											<Tooltip content="Agents fill this in when they write the doc — you can edit it here anytime.">
+												<Info
+													className="w-3.5 h-3.5 text-text-3"
+													aria-label="Agents set the description when they write the doc; you can edit it here anytime."
+												/>
+											</Tooltip>
+										</div>
+										<Input
+											id="doc-description-input"
+											value={descDraft}
+											onChange={(e) => setDescDraft(e.target.value)}
+											placeholder="What this doc is and when to read it"
+											data-testid="doc-description-input"
+										/>
+									</div>
+								)}
+								<MentionTextarea
+									projectId={projectId}
+									projectSlug={projectSlug}
+									value={draft}
+									onChange={(e) => setDraft(e.target.value)}
+									className="min-h-[400px] font-mono text-xs"
+								/>
+							</div>
 						)}
 
 						{mode === 'view' && viewerExtras}
