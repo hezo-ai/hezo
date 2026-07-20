@@ -3,12 +3,15 @@
  * (produced server-side by `agent-stream-parser.ts`) into structured blocks the
  * Formatted log view can render.
  *
- * The server discards the original stream-json and persists only single-line,
- * prefixed text (`[session]`, `[thinking]`, `[tool] Name(args)`, `[tool-result]`,
- * `[tool-error]`, `[done]`, plus bare prose and `$ command` lines). There is no
- * correlation id between a tool call and its result — Claude emits N parallel
- * `[tool]` lines and then N `[tool-result]`/`[tool-error]` lines in the same
- * order, so we pair them FIFO via a queue of pending tool blocks.
+ * The server discards the original stream-json and persists prefixed, per-line
+ * text (`[session]`, `[thinking]`, `[tool] Name(args)`, `[tool-result]`,
+ * `[tool-error]`, `[done]`, plus bare prose and `$ command` lines). A single
+ * thinking block spans several consecutive `[thinking]` lines — the server keeps
+ * the model's own line breaks for readability — which we coalesce back into one
+ * block (as we do for `[system]`). There is no correlation id between a tool call
+ * and its result — Claude emits N parallel `[tool]` lines and then N
+ * `[tool-result]`/`[tool-error]` lines in the same order, so we pair them FIFO via
+ * a queue of pending tool blocks.
  */
 
 /** Minimal shape of a log line; structurally compatible with `LogViewerLine`. */
@@ -168,7 +171,16 @@ export function parseAgentLog(lines: AgentLogLine[]): LogBlock[] {
 		}
 		if (text.startsWith('[thinking]')) {
 			flushText();
-			blocks.push({ type: 'thinking', id: line.id, text: stripPrefix(text, '[thinking]') });
+			const body = stripPrefix(text, '[thinking]');
+			// The server emits one `[thinking]` line per physical line of the model's
+			// reasoning (blank lines included) to preserve its paragraph/list structure;
+			// coalesce a consecutive run back into a single block, joined on newlines.
+			const tail = blocks[blocks.length - 1];
+			if (tail && tail.type === 'thinking') {
+				tail.text += `\n${body}`;
+			} else {
+				blocks.push({ type: 'thinking', id: line.id, text: body });
+			}
 			continue;
 		}
 		if (text.startsWith('[tool] ')) {
