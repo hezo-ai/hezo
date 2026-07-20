@@ -191,8 +191,8 @@ applies to **agent system prompts** — every edit, including the
 [learned rules the Coach adds](/docs/concepts/coach-and-self-improving-teams#every-change-is-reversible),
 is snapshotted and restorable from the agent's settings — to a project's
 [Custom Prompt](#custom-prompt), and to
-[**skills**](/docs/concepts/skills#version-history--restore), your reusable cross-team
-know-how. Whatever your agents change, you can see what changed and put it back.
+[**skills**](/docs/concepts/skills#version-history--restore), your reusable how-to
+(global or scoped to one project). Whatever your agents change, you can see what changed and put it back.
 
 ## Long-term chat memory
 
@@ -235,8 +235,9 @@ right place is what keeps it findable and applied at the right moment:
 - **What a task is and the domain context to do it** → that task's **description**.
 - **Project-wide knowledge many tasks draw on** (the spec, the plan, the research) →
   a **project document**.
-- **Reusable, project-independent know-how** (how to use an MCP server, a release
-  checklist, a house style) → a **[skill](/docs/concepts/skills)**.
+- **Reusable how-to** — a procedure an agent runs, not project state (how to use an MCP
+  server, a release checklist, a house style); global or scoped to one project → a
+  **[skill](/docs/concepts/skills)**.
 - **A standing instruction for every agent in the project** → that project's **Custom Prompt**.
 - **Your durable preferences for how the CEO works with you** → the CEO's **long-term chat
   memory** (kept automatically).
