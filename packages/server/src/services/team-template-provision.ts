@@ -52,7 +52,8 @@ interface AgentTypeRow {
  * templates (mapped from `AgentTypeRow`, `agent_type_id` set) and marketplace
  * teams (mapped from the fetched JSON, `agent_type_id` null — like a hired agent).
  * Array order is the intended provisioning order; `reports_to_slug` references a
- * sibling roster slug (wired in a second pass).
+ * sibling roster slug or an agent already on the team (e.g. the Captain, which
+ * the marketplace path provisions separately as a builtin) — wired in a second pass.
  */
 export interface RosterAgentDef {
 	slug: string;
@@ -249,7 +250,12 @@ export async function insertRosterAgents(
 
 	for (const def of roster) {
 		if (def.reports_to_slug && def.reports_to_slug !== 'admin') {
-			const reportsToId = slugToMemberId.get(def.reports_to_slug);
+			// Resolve against the roster first, then any agent already on the team —
+			// the Captain is provisioned as a builtin before the roster (never inside
+			// it on the marketplace path), so a `reports_to_slug: "captain"` must fall
+			// back to the existing-members map or the reporting line is silently lost.
+			const reportsToId =
+				slugToMemberId.get(def.reports_to_slug) ?? existingSlugToId.get(def.reports_to_slug);
 			const memberId = slugToMemberId.get(def.slug);
 			if (reportsToId && memberId) {
 				await db.query('UPDATE member_agents SET reports_to = $1 WHERE id = $2', [
