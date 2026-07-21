@@ -4,6 +4,7 @@ import type { IngestDeps } from './ingest';
 import { ingestInboundEvent } from './ingest';
 import { ingestGroupMentionEvent } from './ingest-group';
 import { ChatChannelRegistry } from './registry';
+import { SlackAdapter } from './slack';
 import { TelegramAdapter } from './telegram';
 import type { ChatChannelAdapterDeps, InboundEventSink } from './types';
 
@@ -37,6 +38,7 @@ export function buildInboundEventSink(deps: IngestDeps): InboundEventSink {
 export function buildChatChannelRegistry(deps: ChatChannelAdapterDeps): ChatChannelRegistry {
 	const registry = new ChatChannelRegistry();
 	registry.register(new TelegramAdapter(deps));
+	registry.register(new SlackAdapter(deps));
 	return registry;
 }
 
