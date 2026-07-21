@@ -90,8 +90,10 @@ describe('POST /api/projects with marketplace_slug', () => {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data as Array<{
+			id: string;
 			slug: string;
 			agent_type_id: string | null;
+			reports_to: string | null;
 		}>;
 		const slugs = agents.map((a) => a.slug);
 		expect(slugs).toContain('captain');
@@ -105,6 +107,30 @@ describe('POST /api/projects with marketplace_slug', () => {
 		expect(engineer?.agent_type_id).toBeNull();
 		const captain = agents.find((a) => a.slug === 'captain');
 		expect(captain?.agent_type_id).not.toBeNull();
+
+		// The full reporting structure from the manifest is wired: the Captain leads
+		// the team (the def's `reports_to_slug: "captain"` entries resolve even though
+		// the Captain is provisioned as a builtin, outside the roster array), the
+		// Architect leads the engineering roles, and the Captain reports to the CEO.
+		const bySlug = new Map(agents.map((a) => [a.slug, a]));
+		const architect = bySlug.get('architect');
+		expect(architect?.reports_to).toBe(captain?.id);
+		for (const lead of ['product-lead', 'marketing-lead', 'researcher']) {
+			expect(bySlug.get(lead)?.reports_to).toBe(captain?.id);
+		}
+		for (const eng of [
+			'engineer',
+			'qa-engineer',
+			'security-engineer',
+			'ui-designer',
+			'devops-engineer',
+		]) {
+			expect(bySlug.get(eng)?.reports_to).toBe(architect?.id);
+		}
+		const ceo = await db.query<{ id: string }>(
+			`SELECT id FROM member_agents WHERE slug = 'ceo' LIMIT 1`,
+		);
+		expect(captain?.reports_to).toBe(ceo.rows[0].id);
 	});
 
 	it('rejects combining marketplace_slug with template_id', async () => {
