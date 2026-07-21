@@ -66,11 +66,12 @@ Docs are part of the contract, not an afterthought. **Every code change ships wi
 
 **Verify, don't assume.** The *generated* surfaces have drift tests that fail on mismatch — `packages/server/test/{mcp-reference,llms-txt,docs-bundle}.test.ts` (run them after any tool/route/docs change). Hand-written prose (`docs/**`, `.dev/architecture.md`, the READMEs) has **no** automated guard, so re-read the page(s) describing the area you changed and confirm every concrete claim — flags, defaults, ports, type/enum names, file paths, behaviours — still matches the code you just wrote.
 
-**The acknowledgment is enforced at commit time.** The `commit-msg` hook (`.husky/commit-msg` → `scripts/check-docs-ack.ts`) rejects any commit that stages doc-bearing code — anything under `packages/*/src/`, `packages/*/migrations/`, `agents/`, `skills/`, `docker/`, `deploy/`, `marketplace/`, or `scripts/` — unless the commit message carries a **`Docs-Checked:` trailer** recording the docs-alignment pass you actually did. Write what you checked, not a rubber stamp — bare values (`yes`, `n/a`, `done`, anything under 10 characters) are rejected:
+**The acknowledgment is enforced at commit time.** The `commit-msg` hook (`.husky/commit-msg` → `scripts/check-docs-ack.ts`) rejects any commit that stages doc-bearing code — anything under `packages/*/src/`, `packages/*/migrations/`, `agents/`, `skills/`, `docker/`, `deploy/`, `marketplace/`, or `scripts/` — unless the commit message carries a **`Docs-Checked:` trailer** recording the docs-alignment pass you actually did. The pass covers **both audiences**: the user-facing `docs/` tree **and** the internal `.dev/` docs — an architecture-altering change must update `.dev/architecture.md` in the same PR, and the trailer is the record that you checked it. Write what you checked, not a rubber stamp — bare values (`yes`, `n/a`, `done`, anything under 10 characters) are rejected:
 
 ```
 Docs-Checked: updated docs/reference/cli.md + configuration.md for the new --foo flag
-Docs-Checked: verified docs/concepts/tasks.md still matches; no other doc surface affected
+Docs-Checked: updated .dev/architecture.md § Agent execution for the new run phase
+Docs-Checked: verified docs/concepts/tasks.md and .dev/architecture.md still match; no other doc surface affected
 Docs-Checked: internal refactor, no user-visible behaviour or documented surface changed
 ```
 

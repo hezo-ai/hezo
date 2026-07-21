@@ -1,9 +1,12 @@
 // Commit-msg guard: every commit that touches a doc-bearing surface must carry
 // a `Docs-Checked:` trailer acknowledging the docs-alignment pass (AGENTS.md
 // § Keeping docs in sync with code). Hand-written prose (docs/**, READMEs,
-// .dev/architecture.md) has no drift test, so the acknowledgment is the record
-// that a human or agent actually re-read the affected pages — a commit without
-// it is rejected by .husky/commit-msg.
+// and the internal `.dev/` docs — architecture.md and the design notes) has no
+// drift test, so the acknowledgment is the record that a human or agent
+// actually re-read the affected pages — a commit without it is rejected by
+// .husky/commit-msg. The pass covers BOTH audiences: the user-facing docs/
+// tree and the internal `.dev/` docs (an architecture-altering change must
+// update .dev/architecture.md in the same PR).
 //
 // Pure functions here are unit-tested in packages/server/test/docs-ack-hook.test.ts
 // (same pattern as scripts/coverage — no DB/DOM needed).
@@ -85,7 +88,8 @@ export function checkCommitMessage(
 			ok: false,
 			error:
 				`This commit touches doc-bearing code (${bearing[0]}${bearing.length > 1 ? ` and ${bearing.length - 1} more` : ''}) ` +
-				'but has no Docs-Checked: trailer.',
+				'but has no Docs-Checked: trailer. The docs pass covers docs/**, the READMEs, ' +
+				'AND the internal .dev/ docs (.dev/architecture.md for anything architecture-altering).',
 		};
 	}
 	if (value.length < MIN_ACK_LENGTH || BARE_VALUES.has(value.toLowerCase())) {
@@ -115,11 +119,18 @@ function main(): void {
 			'Every code commit must acknowledge the docs-alignment pass (AGENTS.md § Keeping docs in sync with code).',
 		);
 		console.error(
-			'Re-read the docs pages describing what you changed, then add a trailer, e.g.:\n',
+			'Re-read the doc pages describing what you changed — the user-facing docs/ tree AND the',
 		);
+		console.error(
+			'internal .dev/ docs (.dev/architecture.md must be updated in the same PR for any',
+		);
+		console.error('architecture-altering change) — then add a trailer, e.g.:\n');
 		console.error('  Docs-Checked: updated docs/reference/cli.md for the new --foo flag');
 		console.error(
-			'  Docs-Checked: verified docs/concepts/tasks.md still matches; no other doc surface affected',
+			'  Docs-Checked: updated .dev/architecture.md § Agent execution for the new run phase',
+		);
+		console.error(
+			'  Docs-Checked: verified docs/concepts/tasks.md and .dev/architecture.md still match; no other doc surface affected',
 		);
 		console.error(
 			'  Docs-Checked: internal refactor, no user-visible behaviour or documented surface changed\n',
