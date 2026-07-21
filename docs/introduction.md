@@ -31,7 +31,7 @@ agent can't hurt you. A few guarantees sit underneath everything:
   [Secret protection & egress](/docs/security/secret-protection).
 - **Everything sensitive is encrypted at rest** behind a master key that only you
   hold. See [Master key & encryption](/docs/security/master-key).
-- **Every agent runs in its own container.** A compromised agent is confined to its
+- **Each project's agents run in their own container.** A compromised agent is confined to its
   project's sandbox — it can't reach your host or the rest of your system. See
   [Container isolation](/docs/security/container-isolation).
 - **Agents work in real repos without holding the keys.** Git signing and SSH happen
@@ -53,10 +53,11 @@ agent can't hurt you. A few guarantees sit underneath everything:
   how it went and writes durable lessons back onto the agents, so they get better the more
   they ship — without you hand-tuning prompts. See
   [The Coach & self-improving teams](/docs/concepts/coach-and-self-improving-teams).
-- **Bring your own models, each via its native runtime.** Claude, ChatGPT, Gemini,
-  Grok, DeepSeek, Z.ai, and Kimi are all supported — each driven through its own
-  first-party command-line tooling, not a lowest-common-denominator wrapper — and you can
-  give any individual agent its own model. See [AI model support](/docs/ai-models).
+- **Bring your own models, each via a real agentic runtime.** Claude, ChatGPT, Gemini,
+  Grok, DeepSeek, Z.ai, and Kimi are all supported — Claude, ChatGPT, Gemini, and Grok
+  through their own first-party command-line tooling, and DeepSeek, Z.ai, and Kimi through
+  Claude Code against their Anthropic-compatible endpoints — not a lowest-common-denominator
+  wrapper. You can give any individual agent its own model. See [AI model support](/docs/ai-models).
 - **Put a hard ceiling on spend.** Per-agent and per-project budgets with live cost
   tracking *pause* runs when a limit is hit and *auto-resume* when the window rolls over —
   control without babysitting. See [Budgets & cost control](/docs/concepts/budgets-and-costs).
