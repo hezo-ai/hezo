@@ -53,6 +53,6 @@ There are two scopes:
 ## Why it matters
 
 The activity log makes Hezo's autonomy accountable. Agents act on their own, but every
-action they take — and every secret they use — is on the record, attributed, and impossible
+state-changing action they take is on the record, attributed, and impossible
 to rewrite. When something looks off, you can trace exactly what happened and roll back from
 a position of knowledge.

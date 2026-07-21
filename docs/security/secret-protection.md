@@ -79,5 +79,5 @@ You're always the one who provides a secret:
 ## Why this matters
 
 The net effect: a buggy, jailbroken, or outright malicious agent **cannot exfiltrate
-your secrets.** It never sees them, it can only use them against hosts you allowed, and
-every use is on the record.
+your secrets.** It never sees them, and it can only use them against the hosts you
+allowed.
