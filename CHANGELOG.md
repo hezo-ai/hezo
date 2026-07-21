@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.30.1 - 2026-07-21
+
+### Bug Fixes
+
+- **runtime:** never strand in-container process trees; sweep leftovers at boot ([#790](https://github.com/hezo-ai/hezo/pull/790))
+- **cli:** honor HEZO_DATA_DIR in `hezo backup` / `hezo restore` ([#788](https://github.com/hezo-ai/hezo/pull/788))
+
+### Documentation
+
+- accuracy audit + enforced docs-alignment acknowledgment on commits ([#789](https://github.com/hezo-ai/hezo/pull/789))
+- **deploy:** step-by-step managed Postgres + object storage for cloud deploys ([#787](https://github.com/hezo-ai/hezo/pull/787))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.30.0...0.30.1
+
 ## 0.30.0 - 2026-07-20
 
 ### Features
