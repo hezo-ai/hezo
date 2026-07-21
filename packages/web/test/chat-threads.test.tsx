@@ -91,3 +91,28 @@ test('an untitled thread renders as "New thread" (not "Main"); a titled thread s
 	expect(labels).toContain('Roadmap planning');
 	expect(labels).not.toContain('Main');
 });
+
+test('a thread mirrored into an external chat app shows its mirror glyph', async () => {
+	queryClient.setQueryData(queryKeys.chatConversations(), {
+		conversations: [
+			{ ...thread('thread-1', 'Ops'), channels: ['telegram', 'web'] },
+			{ ...thread('thread-2', 'Launch'), channels: ['slack', 'web'] },
+			thread('thread-3', 'Local only'),
+		],
+	});
+	queryClient.setQueryData(queryKeys.chatConversation(), {
+		conversation_id: 'thread-1',
+		messages: [msg('m1', 'hi')],
+		compacted_count: 0,
+	});
+
+	const { findByTestId } = await renderApp({ initialPath: '/home' });
+	(await findByTestId('chat-launcher')).click();
+	await findByTestId('chat-panel');
+
+	const select = (await findByTestId('chat-thread-select')) as HTMLSelectElement;
+	const labels = Array.from(select.options).map((o) => o.textContent?.trim());
+	expect(labels).toContain('Ops  ↔ Telegram');
+	expect(labels).toContain('Launch  ↔ Slack');
+	expect(labels).toContain('Local only');
+});

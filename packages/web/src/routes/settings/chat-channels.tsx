@@ -29,18 +29,21 @@ function ChatChannelsSettingsPage() {
 					<h1 className="text-[22px] font-medium">Chat channels</h1>
 					<InfoTooltip
 						label="About chat channels"
-						content="Connect external chat apps (Telegram) so you can talk to the CEO from outside the web app. Only linked identities may chat."
+						content="Connect external chat apps (Telegram, Slack) so the CEO is reachable outside the web app — as a personal assistant over DM, or as a coworker in your team's channels."
 					/>
 				</div>
 				<p className="text-[13px] text-text-2 mt-1 max-w-[680px]">
-					Talk to the CEO from Telegram. Paste your bot token, then link the accounts allowed to
-					chat. For multiple threads, add the bot to a Topics-enabled supergroup as an admin with
-					the “Manage topics” permission — each topic becomes its own conversation. A private DM is
-					a single conversation.
+					Chat apps connect in two modes. <span className="font-medium">Assistant (DM)</span>: DM
+					the bot and the conversation is a real-time CEO chat thread, mirrored with the chatbox
+					here — only linked identities may chat.{' '}
+					<span className="font-medium">Coworker (channels)</span>: invite the bot to a channel and
+					anyone there can @-mention it; it reads the channel history for context and replies
+					in-thread. Those conversations stay in the chat app and never appear in the web chatbox.
 				</p>
 			</div>
 
 			<TelegramSection />
+			<SlackSection />
 			<IdentitiesSection />
 		</div>
 	);
@@ -54,12 +57,135 @@ function TelegramSection() {
 			className="border border-border rounded-md p-4 bg-surface mb-4"
 			data-testid="telegram-channel"
 		>
-			<h2 className="text-[15px] font-medium mb-1">Telegram</h2>
+			<h2 className="text-[15px] font-medium mb-1">
+				Telegram <span className="text-text-2 font-normal text-[13px]">— assistant (DM) mode</span>
+			</h2>
 			<p className="text-[13px] text-text-2 mb-3 max-w-[680px]">
 				Create a bot with @BotFather, then paste its token. Saving registers the inbound webhook
-				automatically.
+				automatically. A private DM is a single conversation; for multiple threads, add the bot to a
+				Topics-enabled supergroup as an admin with the “Manage topics” permission — each topic
+				becomes its own conversation, mirrored with the web chatbox.
 			</p>
 			<ChannelForm channel="telegram" config={telegram} onSave={saveChannel} saving={saving} />
+		</section>
+	);
+}
+
+function SlackSection() {
+	const { channels, saveChannel, saving } = useChatChannels();
+	const slack = channels.find((c) => c.channel === 'slack');
+	const [botToken, setBotToken] = useState('');
+	const [appToken, setAppToken] = useState('');
+	const [enabled, setEnabled] = useState(slack?.enabled ?? false);
+	const [dmMode, setDmMode] = useState(slack?.metadata?.dm_mode_enabled !== false);
+	const [groupMode, setGroupMode] = useState(slack?.metadata?.group_mode_enabled !== false);
+	const [validationErrors, setValidationErrors] = useState<string[]>([]);
+
+	const handleSave = async () => {
+		const result = await saveChannel({
+			channel: 'slack',
+			enabled,
+			bot_token: botToken.trim() || undefined,
+			app_token: appToken.trim() || undefined,
+			metadata: { dm_mode_enabled: dmMode, group_mode_enabled: groupMode },
+		});
+		setBotToken('');
+		setAppToken('');
+		setValidationErrors(
+			result?.validation && !result.validation.ok ? result.validation.errors : [],
+		);
+	};
+
+	return (
+		<section
+			className="border border-border rounded-md p-4 bg-surface mb-4"
+			data-testid="slack-channel"
+		>
+			<h2 className="text-[15px] font-medium mb-1">
+				Slack{' '}
+				<span className="text-text-2 font-normal text-[13px]">— assistant + coworker modes</span>
+			</h2>
+			<p className="text-[13px] text-text-2 mb-3 max-w-[680px]">
+				The CEO joins your Slack workspace as a coworker: invite it to a channel, @-mention it, and
+				it reads the conversation for context and replies in the thread. It also answers DMs as a
+				personal assistant (linked identities only). Create the Slack app from the manifest in the
+				docs, install it, then paste both tokens — no public URL needed (Socket Mode).
+			</p>
+			<div className="flex flex-col gap-3">
+				<label className="flex items-center gap-2 text-[13px]">
+					<input
+						type="checkbox"
+						data-testid="slack-enabled"
+						checked={enabled}
+						onChange={(e) => setEnabled(e.target.checked)}
+					/>
+					Enabled
+				</label>
+				<div>
+					<label className="block text-[13px] font-medium mb-1" htmlFor="slack-token">
+						Bot token <span className="text-text-2">(xoxb-…)</span>{' '}
+						{slack?.has_token && <span className="text-text-2">(set — paste to replace)</span>}
+					</label>
+					<Input
+						id="slack-token"
+						data-testid="slack-token"
+						type="password"
+						autoComplete="off"
+						placeholder={slack?.has_token ? '••••••••' : 'Paste bot token'}
+						value={botToken}
+						onChange={(e) => setBotToken(e.target.value)}
+						className="sm:w-96"
+					/>
+				</div>
+				<div>
+					<label className="block text-[13px] font-medium mb-1" htmlFor="slack-app-token">
+						App-level token <span className="text-text-2">(xapp-…, Socket Mode)</span>{' '}
+						{slack?.has_app_token && <span className="text-text-2">(set — paste to replace)</span>}
+					</label>
+					<Input
+						id="slack-app-token"
+						data-testid="slack-app-token"
+						type="password"
+						autoComplete="off"
+						placeholder={slack?.has_app_token ? '••••••••' : 'Paste app-level token'}
+						value={appToken}
+						onChange={(e) => setAppToken(e.target.value)}
+						className="sm:w-96"
+					/>
+				</div>
+				<div className="flex flex-col gap-1.5">
+					<label className="flex items-center gap-2 text-[13px]">
+						<input
+							type="checkbox"
+							data-testid="slack-group-mode"
+							checked={groupMode}
+							onChange={(e) => setGroupMode(e.target.checked)}
+						/>
+						Coworker mode — respond to @-mentions in channels the bot is invited to
+					</label>
+					<label className="flex items-center gap-2 text-[13px]">
+						<input
+							type="checkbox"
+							data-testid="slack-dm-mode"
+							checked={dmMode}
+							onChange={(e) => setDmMode(e.target.checked)}
+						/>
+						Assistant mode — answer DMs from linked identities (mirrored to the web chatbox)
+					</label>
+				</div>
+				{validationErrors.length > 0 && (
+					<ul className="text-[13px] text-danger" data-testid="slack-validation-errors">
+						{validationErrors.map((err) => (
+							<li key={err}>{err}</li>
+						))}
+					</ul>
+				)}
+				<div>
+					<Button size="sm" data-testid="slack-save" onClick={handleSave} disabled={saving}>
+						{saving && <Loader2 className="w-3 h-3 animate-spin" />} Save
+					</Button>
+				</div>
+			</div>
 		</section>
 	);
 }
@@ -164,8 +290,10 @@ function IdentitiesSection() {
 		<section className="border border-border rounded-md p-4 bg-surface" data-testid="identities">
 			<h2 className="text-[15px] font-medium mb-1">Allowed identities</h2>
 			<p className="text-[13px] text-text-2 mb-3 max-w-[680px]">
-				Only these external accounts may chat with the CEO. Add your Telegram numeric user id (send
-				a message to @userinfobot to find it); it links to your Hezo account.
+				Only these external accounts may DM the CEO (assistant mode). Telegram: your numeric user id
+				(message @userinfobot to find it). Slack: your member ID (profile → ⋯ → Copy member ID,
+				starts with U). Coworker mode doesn't use this list — inviting the bot to a channel is the
+				authorization there.
 			</p>
 
 			<div className="flex flex-col gap-2 sm:flex-row sm:items-end mb-4">
@@ -181,6 +309,7 @@ function IdentitiesSection() {
 						className="rounded-md border border-border bg-surface px-2 py-1.5 text-[13px]"
 					>
 						<option value="telegram">Telegram</option>
+						<option value="slack">Slack</option>
 					</select>
 				</div>
 				<div>

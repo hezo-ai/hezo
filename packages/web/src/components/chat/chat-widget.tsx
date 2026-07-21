@@ -168,8 +168,13 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 	// conversation; there is no special "Main" default anymore.
 	const threadLabel = (t: (typeof webThreads)[number]) => {
 		const base = t.title?.trim() || 'New thread';
-		// A thread mirrored into Telegram gets a small glyph so its reach is obvious.
-		return t.channels?.includes('telegram') ? `${base}  ↔ Telegram` : base;
+		// A thread mirrored into an external chat app gets a small glyph so its reach
+		// is obvious. (Coworker/group threads never appear here — the server filters
+		// them out of the conversation list; this only ever labels mirrored threads.)
+		const mirrors: string[] = [];
+		if (t.channels?.includes('telegram')) mirrors.push('Telegram');
+		if (t.channels?.includes('slack')) mirrors.push('Slack');
+		return mirrors.length > 0 ? `${base}  ↔ ${mirrors.join(' + ')}` : base;
 	};
 
 	const handleNewThread = async () => {

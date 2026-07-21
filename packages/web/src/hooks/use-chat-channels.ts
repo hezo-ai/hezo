@@ -6,9 +6,25 @@ export interface ChatChannelConfigView {
 	channel: string;
 	enabled: boolean;
 	has_token: boolean;
+	/** Whether a secondary app-level token is stored (Slack Socket Mode). */
+	has_app_token: boolean;
 	has_webhook: boolean;
 	metadata: Record<string, unknown>;
 	updated_at: string;
+}
+
+/** Save-time credential check result (returned when enabling a channel). */
+export interface ChannelValidation {
+	ok: boolean;
+	errors: string[];
+}
+
+export interface SaveChannelResult {
+	channel: string;
+	enabled: boolean;
+	has_token: boolean;
+	has_app_token: boolean;
+	validation?: ChannelValidation;
 }
 
 export interface ChatIdentityLink {
@@ -36,11 +52,13 @@ export function useChatChannels() {
 			channel: string;
 			enabled: boolean;
 			bot_token?: string;
+			app_token?: string;
 			metadata?: Record<string, unknown>;
 		}) =>
-			api.put(`/api/chat/channels/${input.channel}`, {
+			api.put<SaveChannelResult>(`/api/chat/channels/${input.channel}`, {
 				enabled: input.enabled,
 				bot_token: input.bot_token,
+				app_token: input.app_token,
 				metadata: input.metadata,
 			}),
 		onSuccess: () => queryClient.invalidateQueries({ queryKey: channelsKey() }),
