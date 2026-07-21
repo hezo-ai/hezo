@@ -65,7 +65,11 @@ that. See [Master key & encryption](/docs/security/master-key).
 
 By default Hezo embeds its database inside the single binary and stores it under the data
 directory — no external database to run. If you'd rather use a managed/hosted Postgres
-(for managed backups, more headroom, or your own operational tooling), point Hezo at it:
+(for managed backups, more headroom, or your own operational tooling), point Hezo at it
+(this section is the reference; for a walkthrough on a cloud server see
+[Managed database & asset storage](/docs/deployment/cloud#managed-database--asset-storage)
+or, for the cloud-init deploy,
+[Using managed data hosting](/docs/deployment/one-click#using-managed-data-hosting)):
 
 ```sh
 HEZO_DATABASE_URL="postgres://hezo:••••@db.internal:5432/hezo?sslmode=verify-full" \
@@ -103,7 +107,9 @@ Requirements and recommendations:
 By default, uploaded [asset](/docs/concepts/assets) files (task attachments and the
 project assets library) live on the local filesystem under `<data-dir>/assets/`. To keep
 them in a bucket instead — for managed durability, or to keep the host closer to
-stateless — point Hezo at any **S3-compatible** store:
+stateless — point Hezo at any **S3-compatible** store (deployment walkthroughs:
+[Managed database & asset storage](/docs/deployment/cloud#managed-database--asset-storage)
+and [Using managed data hosting](/docs/deployment/one-click#using-managed-data-hosting)):
 
 ```sh
 HEZO_ASSET_STORAGE_URL="s3://ACCESS_KEY:SECRET@s3.eu-west-1.amazonaws.com/my-bucket/hezo-assets?region=eu-west-1" \

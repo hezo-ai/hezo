@@ -25,11 +25,16 @@ Everything Hezo keeps lives in one place — the **data directory** (default `~/
 - your **encrypted** secrets and signing keys, and
 - project assets (under `assets/`).
 
-There's no separate database server to run by default (an
-[external Postgres](/docs/deployment/configuration) is optional, as is keeping assets in
-[S3-compatible object storage](/docs/deployment/configuration); the data directory is
-still required for workspaces and keys). Because this directory holds everything, it's
-the one thing to back up — see [Backup & recovery](/docs/deployment/backup-and-recovery).
+There's no separate database server to run by default — but both data stores can be
+handed to managed services: an
+[external Postgres](/docs/deployment/configuration#using-an-external-postgres) for the
+database, and
+[S3-compatible object storage](/docs/deployment/configuration#storing-assets-in-s3-compatible-object-storage)
+for assets (step-by-step:
+[Managed database & asset storage](/docs/deployment/cloud#managed-database--asset-storage)).
+The data directory is still required for workspaces and keys either way. Because this
+directory holds everything by default, it's the one thing to back up — see
+[Backup & recovery](/docs/deployment/backup-and-recovery).
 
 ## Running it
 
