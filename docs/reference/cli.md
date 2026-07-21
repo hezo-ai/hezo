@@ -86,7 +86,10 @@ runs with. The env var is read exactly as the server reads it, so a deployment t
 targets the running instance's embedded database. Pointing at a directory with no Hezo
 database is refused with a clear error rather than silently backing up an empty one.
 
-For the embedded database (and local asset files), stop the server first. See
+For the embedded database (and local asset files), stop the server first — backup opens a
+second database over the same single-process files, so it **refuses while the server is
+running** (checked via an advisory `<data-dir>/hezo.lock` the live instance holds). A hosted
+database + bucket can be backed up with the server running. See
 [Backup & recovery](/docs/deployment/backup-and-recovery).
 
 ## Restore a backup

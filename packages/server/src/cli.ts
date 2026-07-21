@@ -213,6 +213,36 @@ function pickDataDir(cliValue: unknown, env: NodeJS.ProcessEnv = process.env): s
 }
 
 /**
+ * Refuse an embedded backup/restore while a Hezo server is live on `dataDir`.
+ *
+ * Embedded PGlite is single-process: backup opens a *second* Postgres cluster
+ * over the same `pgdata` files (and restore writes those files directly), so
+ * running either against a live server races its writes and can corrupt the
+ * data. The running server drops an advisory PID lock; this reads it and only
+ * refuses when the recorded process is actually alive, so a stale lock left by a
+ * crash (dead PID) does not block anything. Embedded target only — external
+ * Postgres handles its own concurrency and is safe to back up live.
+ */
+async function assertNoLiveEmbeddedServer(
+	dataDir: string,
+	action: 'backup' | 'restore',
+): Promise<void> {
+	const { readLiveInstanceLock, instanceLockPath } = await import('./db/instance-lock.js');
+	const live = readLiveInstanceLock(dataDir);
+	if (!live) return;
+	const verb = action === 'backup' ? 'back up' : 'restore';
+	const risk =
+		action === 'backup'
+			? 'the backup opens a second database over the same files, which races the live server and can corrupt them'
+			: 'the restore writes over files the live server is using, which can corrupt them';
+	throw new Error(
+		`A Hezo server appears to be running against ${dataDir} (PID ${live.pid}). ` +
+			`Stop it before you ${verb} the embedded database — ${risk}. ` +
+			`If you are certain no server is running, delete ${instanceLockPath(dataDir)} and retry.`,
+	);
+}
+
+/**
  * Handle the `hezo backup` subcommand and exit. By default it captures BOTH the
  * database and every asset blob into a portable **backup bundle** directory
  * (`hezo-<timestamp>/` — `database.backup.gz` + `assets/<projectId>/<assetId>` +
@@ -258,6 +288,9 @@ export async function runBackup(argv: string[] = process.argv): Promise<boolean>
 	const dataDir = pickDataDir(opts.dataDir);
 	const databaseUrl = pickDatabaseUrl(opts.databaseUrl);
 	const assetStorageUrl = pickAssetStorageUrl(opts.assetStorageUrl);
+
+	// Embedded backend: never open a second cluster over a live server's files.
+	if (!databaseUrl) await assertNoLiveEmbeddedServer(dataDir, 'backup');
 
 	const { mkdir, writeFile } = await import('node:fs/promises');
 	const { openDatabase } = await import('./db/open.js');
@@ -408,6 +441,9 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 	const dataDir = pickDataDir(opts.dataDir);
 	const databaseUrl = pickDatabaseUrl(opts.databaseUrl);
 	const assetStorageUrl = pickAssetStorageUrl(opts.assetStorageUrl);
+
+	// Embedded target: refuse to write over the files of a live server.
+	if (!databaseUrl) await assertNoLiveEmbeddedServer(dataDir, 'restore');
 
 	const { loadAllMigrations } = await import('./db/load-migrations.js');
 	const { openDatabase } = await import('./db/open.js');

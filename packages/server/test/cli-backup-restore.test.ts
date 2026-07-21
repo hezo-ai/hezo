@@ -10,6 +10,7 @@ import { runBackup, runRestore } from '../src/cli';
 import { backupDataDir } from '../src/db/backup';
 import type { Db } from '../src/db/database';
 import type { PgliteDb } from '../src/db/drivers/pglite';
+import { instanceLockPath, removeInstanceLock, writeInstanceLock } from '../src/db/instance-lock';
 import { readLogicalBackupHeader } from '../src/db/logical-backup';
 import { runMigrations } from '../src/db/migrate';
 import { openDatabase } from '../src/db/open';
@@ -363,5 +364,65 @@ describe('hezo backup / hezo restore subcommands', () => {
 		await expect(
 			runBackup(argv('backup', '--data-dir', emptyDir, '--no-assets')),
 		).rejects.not.toThrow(/relation "_migrations" does not exist/);
+	}, 120_000);
+
+	it('refuses an embedded backup while a server holds the data dir, then proceeds once it stops', async () => {
+		// PGlite is single-process — backing up a live embedded instance opens a
+		// second cluster over the same files. The running server drops an advisory
+		// PID lock; the preflight must refuse while it's live.
+		const sourceDir = makeTempDir();
+		await seedMigratedDataDir(sourceDir);
+
+		// Simulate a live server: the lock carries this (alive) process's PID.
+		writeInstanceLock(sourceDir);
+		const output = join(makeTempDir(), 'locked.backup.gz');
+		await expect(
+			runBackup(argv('backup', '--data-dir', sourceDir, '--no-assets', '--output', output)),
+		).rejects.toThrow(/server appears to be running/);
+		// The message names the live PID and the lock file to delete as the escape hatch.
+		await expect(
+			runBackup(argv('backup', '--data-dir', sourceDir, '--no-assets', '--output', output)),
+		).rejects.toThrow(new RegExp(`PID ${process.pid}\\b`));
+		expect(existsSync(output)).toBe(false);
+
+		// Stop the "server" → the same backup now succeeds, proving it was the lock,
+		// not the data, that blocked it.
+		removeInstanceLock(sourceDir);
+		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		expect(
+			await runBackup(argv('backup', '--data-dir', sourceDir, '--no-assets', '--output', output)),
+		).toBe(true);
+		expect(existsSync(output)).toBe(true);
+	}, 120_000);
+
+	it('ignores a stale lock left by a crash (dead PID) and backs up normally', async () => {
+		const sourceDir = makeTempDir();
+		await seedMigratedDataDir(sourceDir);
+		// A PID no process could hold → liveness returns ESRCH → treated as stale.
+		writeFileSync(instanceLockPath(sourceDir), '2147483646\n', 'utf8');
+		const output = join(makeTempDir(), 'stale.backup.gz');
+		expect(
+			await runBackup(argv('backup', '--data-dir', sourceDir, '--no-assets', '--output', output)),
+		).toBe(true);
+		expect(existsSync(output)).toBe(true);
+	}, 120_000);
+
+	it('refuses an embedded restore while a server holds the target data dir', async () => {
+		// Take a valid backup from an unlocked source first.
+		const sourceDir = makeTempDir();
+		await seedMigratedDataDir(sourceDir);
+		const output = join(makeTempDir(), 'for-restore.backup.gz');
+		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		expect(
+			await runBackup(argv('backup', '--data-dir', sourceDir, '--no-assets', '--output', output)),
+		).toBe(true);
+
+		// The restore target is "in use" by a live server → refuse before writing.
+		const targetDir = makeTempDir();
+		writeInstanceLock(targetDir);
+		await expect(runRestore(argv('restore', output, '--data-dir', targetDir))).rejects.toThrow(
+			/server appears to be running/,
+		);
+		removeInstanceLock(targetDir);
 	}, 120_000);
 });

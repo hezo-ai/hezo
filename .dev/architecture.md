@@ -1832,7 +1832,18 @@ input: a directory is a bundle, a file with a logical header is a `.backup.gz`, 
 legacy physical pgdata tarball (`db/backup.ts` `dumpDataDir`/`restoreDataDir`, embedded
 only). External startup migrations write a bare logical `.backup.gz` into `<dataDir>/backups/`
 automatically before applying (last 5 kept; a failed backup aborts the migration); the
-embedded path keeps its stronger copy-swap instead.
+embedded path keeps its stronger copy-swap instead. The `hezo backup`/`hezo restore`
+subcommands resolve the data dir with the same precedence as the server (`HEZO_DATA_DIR` >
+`--data-dir` > `~/.hezo`, via `pickDataDir` in `cli.ts`), so a deployment that starts the
+server with `HEZO_DATA_DIR` set needs no extra flag; backup also refuses (with an actionable
+message) if the target holds no `_migrations` bookkeeping. Embedded is single-process, so
+backup/restore against the embedded backend are gated by an **advisory instance lock**
+(`db/instance-lock.ts`): the running server writes its OS PID to `<dataDir>/hezo.lock`
+(embedded only, removed on graceful exit), and the subcommands refuse while that PID is
+*alive* — `process.kill(pid, 0)` is a portable liveness probe across the Linux/macOS/Windows
+binaries, and only a definitive `ESRCH` counts as dead, so a stale lock from a crash never
+blocks (the next start overwrites it) and a live server is never mistaken for gone. External
+Postgres manages its own concurrency and writes no lock.
 
 **Releases & updates.** A PR flow (`.github/workflows/`): `release.yml` computes the next
 version from Conventional Commits and opens a `release/<version>` PR; merging fires

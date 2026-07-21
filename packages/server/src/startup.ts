@@ -169,6 +169,16 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	// no request handler can reach it.
 	const storageInfo = opened.storage;
 
+	// Embedded PGlite is single-process. Drop an advisory PID lock so the
+	// `hezo backup` / `hezo restore` preflight refuses while this server is live
+	// (opening a second cluster over the same pgdata files can corrupt them).
+	// Overwrites any stale lock from a prior crash; removed on graceful exit.
+	// External Postgres manages its own concurrency and needs no lock.
+	if (storageInfo.backend === 'embedded') {
+		const { writeInstanceLock } = await import('./db/instance-lock.js');
+		writeInstanceLock(config.dataDir);
+	}
+
 	await db.exec(BASE_SCHEMA);
 	setStartupPhase('migrations');
 	db = await runAvailableMigrations(db, config.dataDir);
