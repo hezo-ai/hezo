@@ -5,14 +5,20 @@
  * scan script's shell plumbing (environ parsing, stat-field age math, cmdline
  * matching) can only regress for real on a real runtime.
  *
+ * Bun-native tier: `DockerClient.request` rides Bun's `fetch` unix-socket
+ * option, which Node's undici ignores (a vitest run would dial localhost:80
+ * instead of the docker socket) — so this must run under `bun test`, the
+ * production runtime, like docker-stream.bun.test.ts.
+ *
  * Skipped automatically when Docker is unavailable, HEZO_SKIP_DOCKER is set,
  * or the agent-base image isn't built locally — same gating as
  * ssh-agent-docker.test.ts.
  */
+
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { type ContainerProcessInfo, DockerClient } from '../src/services/docker';
+import { type ContainerProcessInfo, DockerClient } from '../../src/services/docker';
 
 const dockerAvailable = await checkDocker();
 const skipReason =
@@ -37,7 +43,7 @@ beforeAll(async () => {
 	expect(run.exitCode).toBe(0);
 	containerId = run.stdout.trim();
 	docker = new DockerClient();
-}, 60_000);
+});
 
 afterAll(async () => {
 	if (finalSkipReason || !containerId) return;
