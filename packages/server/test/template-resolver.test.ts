@@ -124,6 +124,11 @@ describe('template resolver', () => {
 		expect(result).toContain('load its full body **first**');
 		// Err toward loading when relevance is uncertain.
 		expect(result).toContain('load it and see');
+		// get_skill is the ONLY loader — agents must not reach for the coding
+		// CLI's own skill feature (a Skill tool, /skill command, or file read),
+		// which doesn't know these DB-backed slugs and fails with "unknown skill".
+		expect(result).toContain('`get_skill` is the only way to load a Hezo skill');
+		expect(result).toContain('never try to load one with the CLI');
 	});
 
 	it('appends the ask-before-closing completion rule', async () => {
