@@ -133,7 +133,10 @@ the other.
 
 **HQ** is the one special, global team. It's the permanent home of the two roles
 that work across every project — the **CEO** and the **Coach** — and it's where
-instance-level settings live (model providers, shared connections, and the like). HQ is
+meta-level work happens: tasks that don't fit into any particular project run in HQ,
+and the CEO keeps non-project documents and assets there. (Global settings — model
+providers, shared connections, and the like — are not part of HQ; they apply to your
+whole Hezo install and are managed from the global Settings pages.) HQ is
 also where you [chat with the CEO](/docs/concepts/roles-and-coordination#chatting-with-the-ceo):
 when you talk to it to create a new project or check in on any team, you're talking to the
 CEO in HQ. See [Roles & the CEO](/docs/concepts/roles-and-coordination).
