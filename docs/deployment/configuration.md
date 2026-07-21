@@ -156,8 +156,10 @@ the whole instance (see [Backup & recovery](/docs/deployment/backup-and-recovery
 existing assets into a bucket:
 
 1. Stop the server.
-2. Back up the instance: `hezo backup --output move/` (add `--data-dir` if yours isn't the
-   default). This writes the database and every asset file into `move/`.
+2. Back up the instance: `hezo backup --output move/`. If your data directory isn't the
+   default, point the command at it — `hezo backup` reads `HEZO_DATA_DIR` (so a deployment
+   that already sets it needs nothing extra), or pass `--data-dir`. This writes the
+   database and every asset file into `move/`.
 3. Restore into the bucket: `hezo restore move/ --asset-storage-url "s3://…"` — add
    `--database-url` as well if you're also moving to hosted Postgres. Restored blobs are
    checksum-verified against the database rows.

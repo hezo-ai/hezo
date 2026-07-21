@@ -193,6 +193,26 @@ function pickAssetStorageUrl(
 }
 
 /**
+ * Resolve the data directory for the backup/restore subcommands, honouring
+ * `HEZO_DATA_DIR` (env wins over `--data-dir`, then the default) exactly as
+ * `parseConfig` does for the server — and mirroring `pickDatabaseUrl` /
+ * `pickAssetStorageUrl` in these same commands, which already read their env.
+ *
+ * Without this, a production instance started with `HEZO_DATA_DIR=/var/lib/hezo`
+ * (a systemd/docker deployment that never passes `--data-dir`) would make
+ * `hezo backup` fall back to the default `~/.hezo`; `openPersistentDb` then
+ * silently creates a fresh, empty database there, and the dump crashes with a
+ * bare `relation "_migrations" does not exist`. Reading the env var keeps the
+ * subcommand pointed at the same embedded database the server uses.
+ */
+function pickDataDir(cliValue: unknown, env: NodeJS.ProcessEnv = process.env): string {
+	const e = env.HEZO_DATA_DIR;
+	if (e !== undefined && e !== '') return resolveDataDir(e);
+	if (typeof cliValue === 'string' && cliValue.length > 0) return resolveDataDir(cliValue);
+	return resolveDataDir(DEFAULT_DATA_DIR);
+}
+
+/**
  * Handle the `hezo backup` subcommand and exit. By default it captures BOTH the
  * database and every asset blob into a portable **backup bundle** directory
  * (`hezo-<timestamp>/` — `database.backup.gz` + `assets/<projectId>/<assetId>` +
@@ -219,7 +239,7 @@ export async function runBackup(argv: string[] = process.argv): Promise<boolean>
 			'--output <path>',
 			'Output path: a bundle directory (default <data-dir>/backups/hezo-<timestamp>), or a .backup.gz file with --no-assets',
 		)
-		.option('--data-dir <path>', 'Data directory', DEFAULT_DATA_DIR)
+		.option('--data-dir <path>', 'Data directory (env: HEZO_DATA_DIR)', DEFAULT_DATA_DIR)
 		.option('--database-url <url>', 'External Postgres connection string (env: HEZO_DATABASE_URL)')
 		.option(
 			'--asset-storage-url <url>',
@@ -235,7 +255,7 @@ export async function runBackup(argv: string[] = process.argv): Promise<boolean>
 	if (!withAssets && !withDatabase) {
 		throw new Error('Nothing to back up: --no-assets and --no-database cannot be combined.');
 	}
-	const dataDir = resolveDataDir(opts.dataDir as string);
+	const dataDir = pickDataDir(opts.dataDir);
 	const databaseUrl = pickDatabaseUrl(opts.databaseUrl);
 	const assetStorageUrl = pickAssetStorageUrl(opts.assetStorageUrl);
 
@@ -243,7 +263,28 @@ export async function runBackup(argv: string[] = process.argv): Promise<boolean>
 	const { openDatabase } = await import('./db/open.js');
 	const stamp = new Date().toISOString().replace(/[:.]/g, '-');
 
-	const dumpDatabase = async (db: import('./db/database').Db): Promise<Buffer> => {
+	const dumpDatabase = async (
+		db: import('./db/database').Db,
+		sourceLabel: string,
+	): Promise<Buffer> => {
+		// A data dir (or external database) that isn't a Hezo instance has no
+		// `_migrations` bookkeeping. For embedded storage `openPersistentDb` happily
+		// creates an empty database on open, so without this guard the dump would
+		// crash with a bare `relation "_migrations" does not exist`. Fail with an
+		// actionable message instead — the usual cause is a `--data-dir` /
+		// `HEZO_DATA_DIR` that doesn't point at the running instance's data.
+		const probe = await db.query<{ reg: string | null }>(
+			`SELECT to_regclass('public._migrations')::text AS reg`,
+		);
+		if (probe.rows[0]?.reg == null) {
+			throw new Error(
+				`No Hezo database found at ${sourceLabel}: its migration bookkeeping (the _migrations ` +
+					`table) is missing, so there is nothing to back up. Check that --data-dir / ` +
+					`HEZO_DATA_DIR points at your instance's data directory (an external database is ` +
+					`selected with --database-url / HEZO_DATABASE_URL). A brand-new instance has no ` +
+					`database until the server has started at least once.`,
+			);
+		}
 		const { loadAllMigrations } = await import('./db/load-migrations.js');
 		const migrations = await loadAllMigrations();
 		if (!migrations) throw new Error('No migrations found — cannot determine the schema version.');
@@ -256,7 +297,7 @@ export async function runBackup(argv: string[] = process.argv): Promise<boolean>
 	if (!withAssets) {
 		const opened = await openDatabase({ dataDir, databaseUrl });
 		try {
-			const bytes = await dumpDatabase(opened.db);
+			const bytes = await dumpDatabase(opened.db, opened.storage.display);
 			const output = resolve(
 				(opts.output as string | undefined) ?? `${dataDir}/backups/hezo-${stamp}.backup.gz`,
 			);
@@ -282,7 +323,10 @@ export async function runBackup(argv: string[] = process.argv): Promise<boolean>
 	try {
 		let databaseFile: string | null = null;
 		if (withDatabase) {
-			await writeFile(join(bundleDir, blob.BUNDLE_DB_NAME), await dumpDatabase(opened.db));
+			await writeFile(
+				join(bundleDir, blob.BUNDLE_DB_NAME),
+				await dumpDatabase(opened.db, opened.storage.display),
+			);
 			databaseFile = blob.BUNDLE_DB_NAME;
 		}
 		const assets = await blob.dumpAssetBlobs(opened.db, openedStore.store, bundleDir);
@@ -339,7 +383,7 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 			'Restore a backup: a "hezo backup" bundle (database + assets), a logical .backup.gz, or a legacy pgdata .tar.gz',
 		)
 		.argument('<backup>', 'path to a backup bundle directory or file')
-		.option('--data-dir <path>', 'Data directory', DEFAULT_DATA_DIR)
+		.option('--data-dir <path>', 'Data directory (env: HEZO_DATA_DIR)', DEFAULT_DATA_DIR)
 		.option(
 			'--database-url <url>',
 			'External Postgres connection string to restore into (env: HEZO_DATABASE_URL)',
@@ -361,7 +405,7 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 
 	const opts = program.opts();
 	const backupPath = resolve(program.args[0]);
-	const dataDir = resolveDataDir(opts.dataDir as string);
+	const dataDir = pickDataDir(opts.dataDir);
 	const databaseUrl = pickDatabaseUrl(opts.databaseUrl);
 	const assetStorageUrl = pickAssetStorageUrl(opts.assetStorageUrl);
 

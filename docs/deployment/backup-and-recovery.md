@@ -40,6 +40,12 @@ the **embedded** database and **local** assets, run it while the server is stopp
 **hosted** database and bucket can be backed up any time — and pair well with your
 provider's own snapshots or versioning.
 
+`hezo backup` finds the **embedded** database the same way the server does: it reads
+`HEZO_DATA_DIR` (falling back to `--data-dir`, then `~/.hezo`). A deployment that starts
+the server with `HEZO_DATA_DIR` set therefore needs no extra flag — keep it set and run
+`hezo backup`. Pointed at a directory that holds no Hezo database, the command stops with
+a clear error instead of writing a backup of an empty one.
+
 **The bundle does not cover the whole data directory.** Project workspaces (git worktrees)
 and the instance's keys live under `<data-dir>` and are **not** in a backup, so a full
 disaster-recovery copy is the bundle **plus** a copy of the data directory (a file backup

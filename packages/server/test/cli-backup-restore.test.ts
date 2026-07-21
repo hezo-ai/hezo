@@ -91,12 +91,15 @@ describe('hezo backup / hezo restore subcommands', () => {
 	let logSpy: ReturnType<typeof vi.spyOn>;
 	let prevDatabaseUrl: string | undefined;
 	let prevAssetStorageUrl: string | undefined;
+	let prevDataDir: string | undefined;
 
 	beforeAll(() => {
 		prevDatabaseUrl = process.env.HEZO_DATABASE_URL;
 		prevAssetStorageUrl = process.env.HEZO_ASSET_STORAGE_URL;
+		prevDataDir = process.env.HEZO_DATA_DIR;
 		delete process.env.HEZO_DATABASE_URL;
 		delete process.env.HEZO_ASSET_STORAGE_URL;
+		delete process.env.HEZO_DATA_DIR;
 	});
 
 	afterAll(async () => {
@@ -104,6 +107,8 @@ describe('hezo backup / hezo restore subcommands', () => {
 		else process.env.HEZO_DATABASE_URL = prevDatabaseUrl;
 		if (prevAssetStorageUrl === undefined) delete process.env.HEZO_ASSET_STORAGE_URL;
 		else process.env.HEZO_ASSET_STORAGE_URL = prevAssetStorageUrl;
+		if (prevDataDir === undefined) delete process.env.HEZO_DATA_DIR;
+		else process.env.HEZO_DATA_DIR = prevDataDir;
 		for (const sim of sims) await sim.destroy();
 		for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
 	});
@@ -112,6 +117,7 @@ describe('hezo backup / hezo restore subcommands', () => {
 		vi.restoreAllMocks();
 		delete process.env.HEZO_DATABASE_URL;
 		delete process.env.HEZO_ASSET_STORAGE_URL;
+		delete process.env.HEZO_DATA_DIR;
 	});
 
 	it('runBackup/runRestore return false when another (or no) subcommand is invoked', async () => {
@@ -317,4 +323,45 @@ describe('hezo backup / hezo restore subcommands', () => {
 			runBackup(argv('backup', '--data-dir', sourceDir, '--no-assets', '--no-database')),
 		).rejects.toThrow(/Nothing to back up/);
 	});
+
+	it('resolves the data dir from HEZO_DATA_DIR when --data-dir is not passed', async () => {
+		// Reproduces the production report: an instance started with
+		// HEZO_DATA_DIR (systemd/docker) never passes --data-dir, so backup must
+		// read the env var rather than fall back to the default ~/.hezo and crash
+		// on a freshly-created empty database (`relation "_migrations" does not exist`).
+		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		const sourceDir = makeTempDir();
+		await seedMigratedDataDir(sourceDir);
+		process.env.HEZO_DATA_DIR = sourceDir;
+
+		const output = join(makeTempDir(), 'env-datadir.backup.gz');
+		expect(await runBackup(argv('backup', '--no-assets', '--output', output))).toBe(true);
+		const header = readLogicalBackupHeader(await readFile(output));
+		expect(header?.formatVersion).toBe(1);
+		expect(header?.migrations.length).toBeGreaterThan(0);
+
+		// Restore also honours HEZO_DATA_DIR (no --data-dir flag) into a fresh dir.
+		const targetDir = makeTempDir();
+		process.env.HEZO_DATA_DIR = targetDir;
+		expect(await runRestore(argv('restore', output))).toBe(true);
+		const restored = await openDatabase({ dataDir: targetDir });
+		try {
+			expect(await teamSlugs(restored.db)).toContain('backup-probe');
+		} finally {
+			await safeClose(restored.db as { close: () => Promise<void> });
+		}
+	}, 120_000);
+
+	it('fails with an actionable error (not a bare _migrations error) on a data dir with no Hezo database', async () => {
+		// A wrong --data-dir / HEZO_DATA_DIR (or a never-started instance) opens an
+		// empty PGlite database; backup must explain that rather than surface the raw
+		// `relation "_migrations" does not exist`.
+		const emptyDir = makeTempDir();
+		await expect(runBackup(argv('backup', '--data-dir', emptyDir, '--no-assets'))).rejects.toThrow(
+			/No Hezo database found/,
+		);
+		await expect(
+			runBackup(argv('backup', '--data-dir', emptyDir, '--no-assets')),
+		).rejects.not.toThrow(/relation "_migrations" does not exist/);
+	}, 120_000);
 });
