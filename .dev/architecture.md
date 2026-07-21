@@ -922,6 +922,18 @@ on `mkdirSync`'s `mode` — that mode is masked by the **process umask**, so a h
 `0o027`/`0o077` under systemd `UMask=`) would silently strip the other-execute bit and the agent
 CLI would die with `EACCES` opening its `settings.json` (again only on native-Linux production).
 
+**Removing the data directory (macOS deny-delete ACL).** The `.previews` bind mount targets
+`/workspace/.previews` — a path *inside* the `/workspace` bind — so Docker Desktop on macOS has
+to materialize a mountpoint directory (`<project>/workspace/.previews`) inside the shared
+workspace folder and tags it with a `deny delete` ACL that a plain `rm -rf ~/.hezo` cannot
+override (it fails with a bare "Permission denied", leaving the whole tree undeletable). Hezo's
+own teardown paths already strip these — `forceRmRecursive` (`services/workspace.ts`) retries
+after `chmod -RN` on darwin — but a user deleting the data directory by hand has no such relief,
+so the **`hezo uninstall`** subcommand (`runUninstall`, `cli.ts`) is the supported removal path:
+it refuses while a live server holds the instance lock, requires an explicit `--yes`, best-effort
+stops+removes every `hezo.team`-labelled container (their ids live in the DB it is about to
+delete), then `forceRmRecursive`s the data dir and the per-run socket dir.
+
 Repo sync (`ensureProjectRepos`, `services/repo-sync.ts`) does **not trust a bare `.git`
 marker** in a repo's reserved workspace directory: an agent may have run `git init` there
 before the repo was connected, leaving a repo with no origin (every fetch then silently

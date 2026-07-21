@@ -341,6 +341,34 @@ describe('findContainerByNamePrefix', () => {
 	});
 });
 
+describe('listContainersByLabel', () => {
+	it('filters by label and returns the raw list', async () => {
+		const list = [
+			{ Id: 'cid-1', Names: ['/hezo-app-abcd1234-deadbeef'] },
+			{ Id: 'cid-2', Names: ['/hezo-web-11112222-cafebabe'] },
+		];
+		const calls = stubFetch(() => json(list));
+		await expect(client().listContainersByLabel('hezo.team')).resolves.toEqual(list);
+		const listUrl = calls[0].url;
+		expect(listUrl).toContain('/containers/json?all=true&filters=');
+		expect(decodeURIComponent(listUrl.split('filters=')[1])).toBe(
+			JSON.stringify({ label: ['hezo.team'] }),
+		);
+	});
+
+	it('returns an empty array when nothing carries the label', async () => {
+		stubFetch(() => json([]));
+		await expect(client().listContainersByLabel('hezo.team')).resolves.toEqual([]);
+	});
+
+	it('throws when the list call fails', async () => {
+		stubFetch(() => text('daemon busy', 500));
+		await expect(client().listContainersByLabel('hezo.team')).rejects.toThrow(
+			'Docker listContainers failed (500): daemon busy',
+		);
+	});
+});
+
 describe('containerStats', () => {
 	const statsUrl = (url: string) => url.includes('/stats?stream=false');
 

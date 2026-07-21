@@ -128,6 +128,28 @@ this is effectively the only path forward once the master key is lost.
 exits with an error. To start an external database fresh, drop and recreate it with your
 provider's tools.
 
+## Uninstall
+
+```sh
+hezo uninstall [--data-dir <path>] [--yes]
+```
+
+Removes Hezo's **data directory** (default `~/.hezo/`) — every project workspace, the
+embedded database, backups, and settings — and best-effort removes the Docker containers
+Hezo created. It does **not** remove the `hezo` binary itself.
+
+Prefer this over `rm -rf ~/.hezo`. On macOS, Docker Desktop tags Hezo's nested
+`.previews` mount point with a *deny delete* ACL that a plain `rm -rf` can't override, so
+the folder is left behind with a "Permission denied" error. `hezo uninstall` strips those
+ACLs and deletes the tree cleanly.
+
+Stop the server first — uninstall **refuses while a server is running** against the data
+directory (removing it under a live server corrupts the database). Deletion is
+irreversible, so it requires an explicit `--yes`; without it, the command prints exactly
+what would be removed and deletes nothing. Like `hezo backup`, it reads `--data-dir` from
+`HEZO_DATA_DIR` when the flag is omitted. Back up anything you want to keep with
+`hezo backup` first — see [Backup & recovery](/docs/deployment/backup-and-recovery).
+
 ## Info
 
 ```sh

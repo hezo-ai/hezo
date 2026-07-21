@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { AuthType } from '@hezo/shared';
 import { app } from './app';
 import { AssetStorageError } from './assets/errors';
-import { parseConfig, runBackup, runRestore, runVersion } from './cli';
+import { parseConfig, runBackup, runRestore, runUninstall, runVersion } from './cli';
 import type { MasterKeyManager } from './crypto/master-key';
 import { PgDataCorruptError } from './db/client';
 import type { Db } from './db/database';
@@ -100,6 +100,11 @@ if (await runBackup()) {
 	process.exit(0);
 }
 if (await runRestore()) {
+	process.exit(0);
+}
+
+// `hezo uninstall` removes the data directory (ACL-aware) and exits before startup.
+if (await runUninstall()) {
 	process.exit(0);
 }
 

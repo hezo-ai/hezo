@@ -543,6 +543,132 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 	return true;
 }
 
+/** Injectable seams for {@link runUninstall} — real Docker cleanup by default. */
+export interface UninstallDeps {
+	/**
+	 * Remove the Docker containers Hezo provisioned. Returns the count removed, or
+	 * `null` when Docker was unreachable. Defaults to the real Docker path;
+	 * overridden in tests so they never touch a live daemon.
+	 */
+	removeContainers?: () => Promise<number | null>;
+}
+
+async function defaultRemoveProvisionedContainers(): Promise<number | null> {
+	const { DockerClient } = await import('./services/docker.js');
+	const { removeProvisionedContainers } = await import('./services/uninstall.js');
+	return removeProvisionedContainers(new DockerClient());
+}
+
+/**
+ * Handle the `hezo uninstall` subcommand and exit. Removes Hezo's **data
+ * directory** (default `~/.hezo`) — every project workspace, the embedded
+ * database, backups, and settings — and best-effort removes the containers Hezo
+ * provisioned. It does not touch the `hezo` binary itself.
+ *
+ * This exists because a plain `rm -rf ~/.hezo` fails on macOS: Docker Desktop
+ * tags the nested `.previews` bind-mount point (`<project>/workspace/.previews`,
+ * a mount target inside the `/workspace` bind) with a `deny delete` ACL that
+ * `rm` cannot override, so the tree is left undeletable with a bare "Permission
+ * denied". `forceRmRecursive` strips those ACLs (`chmod -RN`) and retries, so
+ * `hezo uninstall` is the supported, ACL-aware way to fully remove an instance.
+ *
+ * Guards: refuses while a live embedded server holds the instance lock (stop it
+ * first — deleting the data dir under a live server corrupts its database), and
+ * requires an explicit `--yes`. Without `--yes` it prints exactly what would be
+ * removed and exits without deleting anything.
+ *
+ * Returns `true` when it handled the invocation so the caller skips normal
+ * server startup.
+ */
+export async function runUninstall(
+	argv: string[] = process.argv,
+	deps: UninstallDeps = {},
+): Promise<boolean> {
+	if (argv[2] !== 'uninstall') return false;
+
+	const program = new Command()
+		.name('hezo uninstall')
+		.description(
+			"Remove Hezo's data directory (all projects, the database, backups, settings) and the containers it created",
+		)
+		.option('--data-dir <path>', 'Data directory to remove (env: HEZO_DATA_DIR)', DEFAULT_DATA_DIR)
+		.option('--yes', 'Confirm removal — required; without it nothing is deleted')
+		.parse(argv.slice(3), { from: 'user' });
+
+	const opts = program.opts();
+	const dataDir = pickDataDir(opts.dataDir);
+
+	const { existsSync } = await import('node:fs');
+	if (!existsSync(dataDir)) {
+		console.log(`Nothing to remove: no Hezo data directory at ${dataDir}.`);
+		return true;
+	}
+
+	// Refuse while a live embedded server is using this data dir — removing it
+	// under a running server corrupts the database and leaves containers with
+	// dangling mounts. A stale lock from a crash (dead PID) does not block.
+	const { readLiveInstanceLock, instanceLockPath } = await import('./db/instance-lock.js');
+	const live = readLiveInstanceLock(dataDir);
+	if (live) {
+		throw new Error(
+			`A Hezo server appears to be running against ${dataDir} (PID ${live.pid}). ` +
+				`Stop it before uninstalling. If you are certain no server is running, ` +
+				`delete ${instanceLockPath(dataDir)} and retry.`,
+		);
+	}
+
+	// A destructive, irreversible delete requires an explicit opt-in. Without it,
+	// show exactly what would go and how to confirm — deleting nothing.
+	if (opts.yes !== true) {
+		const dataDirArg =
+			typeof opts.dataDir === 'string' && opts.dataDir !== DEFAULT_DATA_DIR
+				? ` --data-dir ${opts.dataDir}`
+				: '';
+		console.log(
+			`This permanently deletes Hezo's data directory and everything in it:\n` +
+				`  ${dataDir}\n` +
+				`That includes every project workspace, the embedded database, backups, and ` +
+				`settings. The hezo binary itself is not affected.\n\n` +
+				`Re-run with --yes to confirm:\n` +
+				`  hezo uninstall --yes${dataDirArg}`,
+		);
+		return true;
+	}
+
+	// Best-effort container cleanup before the data dir goes: their ids live in
+	// the database we are about to delete, so skipping this orphans them. Never
+	// fatal — Docker may already be stopped.
+	const removeContainers = deps.removeContainers ?? defaultRemoveProvisionedContainers;
+	try {
+		const removed = await removeContainers();
+		if (removed === null) {
+			console.log(
+				'→ Docker not reachable; skipping container cleanup. Remove any leftovers with: ' +
+					'docker rm -f $(docker ps -aq --filter label=hezo.team)',
+			);
+		} else if (removed > 0) {
+			console.log(`→ Removed ${removed} Hezo container(s).`);
+		}
+	} catch (err) {
+		const msg = err instanceof Error ? err.message : String(err);
+		console.log(
+			`→ Could not clean up Hezo containers (${msg}); continuing. Remove any leftovers with: ` +
+				'docker rm -f $(docker ps -aq --filter label=hezo.team)',
+		);
+	}
+
+	// ACL-aware removal: forceRmRecursive strips the macOS Docker Desktop
+	// deny-delete ACLs a plain `rm -rf` chokes on, then retries.
+	const { forceRmRecursive, getRunSocketDir } = await import('./services/workspace.js');
+	forceRmRecursive(dataDir);
+	// Per-run ssh/egress sockets live under the OS temp dir, keyed by a hash of
+	// the data dir — clean those too so nothing is left behind.
+	forceRmRecursive(getRunSocketDir(dataDir));
+
+	console.log(`Removed Hezo data directory: ${dataDir}`);
+	return true;
+}
+
 /**
  * Central configuration resolution. Each option can be set via either a CLI
  * flag or an env var; the env var takes precedence when both are present. The
