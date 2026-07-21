@@ -128,12 +128,12 @@ describe('agent types CRUD', () => {
 			headers: authHeader(token),
 		});
 		const _body = await res.json();
-		// Get the Startup team type to check sort_orders
+		// Get the App Team team type to check sort_orders
 		const ctRes = await app.request('/api/team-templates', {
 			headers: authHeader(token),
 		});
 		const ctBody = await ctRes.json();
-		const startup = ctBody.data.find((t: any) => t.name === 'Startup');
+		const startup = ctBody.data.find((t: any) => t.name === 'App Team');
 		const sortOrders = startup.agent_types
 			.map((a: any) => a.sort_order)
 			.sort((a: number, b: number) => a - b);
@@ -290,7 +290,7 @@ describe('team types with agent types', () => {
 			headers: authHeader(token),
 		});
 		const body = await res.json();
-		const builtin = body.data.find((t: any) => t.name === 'Startup');
+		const builtin = body.data.find((t: any) => t.name === 'App Team');
 		expect(builtin.agent_types).toHaveLength(10);
 		expect(builtin.agent_types[0]).toHaveProperty('agent_type_id');
 		expect(builtin.agent_types[0]).toHaveProperty('name');
@@ -328,7 +328,7 @@ describe('team creation with agent types', () => {
 		const typesRes = await app.request('/api/team-templates', {
 			headers: authHeader(token),
 		});
-		const builtinType = (await typesRes.json()).data.find((t: any) => t.name === 'Startup');
+		const builtinType = (await typesRes.json()).data.find((t: any) => t.name === 'App Team');
 
 		const teamRes = await createTestTeam(db, {
 			name: 'Agent Type Test Co',

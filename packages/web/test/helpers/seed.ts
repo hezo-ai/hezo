@@ -28,7 +28,7 @@ export interface SeededWorkspace {
 }
 
 /**
- * Create a Startup-templated team with the full agent roster and its single
+ * Create a App Team-templated team with the full agent roster and its single
  * project. Cheap inside the component tier because
  * HEZO_E2E_SKIP_COHERENCE_REVIEW skips Captain's coherence-review run and the
  * synthetic exec finishes in milliseconds.
@@ -40,8 +40,8 @@ export async function seedWorkspace(): Promise<SeededWorkspace> {
 	const tmplsRes = await apiBase('/api/team-templates', { headers });
 	const startup = (
 		(await tmplsRes.json()) as { data: Array<{ id: string; name: string }> }
-	).data.find((t) => t.name === 'Startup');
-	if (!startup) throw new Error('seedWorkspace: Startup template missing');
+	).data.find((t) => t.name === 'App Team');
+	if (!startup) throw new Error('seedWorkspace: App Team template missing');
 
 	const teamRes = await createTestTeam(db, { name: 'Demo Team', template_id: startup.id });
 	const team = (await teamRes.json()).data;

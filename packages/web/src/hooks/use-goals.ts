@@ -14,6 +14,42 @@ import { toast } from './use-toast';
 
 export type { GoalRunActivity, GoalWithProject, ProgressUpdateRunSummary };
 
+/** A pending goal suggestion (a Captain/CEO proposal awaiting admin approval). */
+export interface GoalSuggestion {
+	approval_id: string;
+	created_at: string;
+	title: string;
+	measurement: string | null;
+	actions: string | null;
+	check_frequency: string;
+	target_date: string | null;
+	task_id: string | null;
+	suggested_by_slug: string | null;
+	suggested_by_name: string | null;
+}
+
+/** Pending goal suggestions for the project — rendered as an Approve/Deny section. */
+export function useGoalSuggestions(projectId: string) {
+	return useQuery({
+		queryKey: queryKeys.projects.goalSuggestions(projectId),
+		queryFn: () => api.get<GoalSuggestion[]>(`/api/projects/${projectId}/goals/suggestions`),
+	});
+}
+
+/** Approve or deny a goal suggestion; on approval the real goal is created server-side. */
+export function useResolveGoalSuggestion(projectId: string) {
+	return useMutation({
+		mutationFn: ({ approvalId, status }: { approvalId: string; status: 'approved' | 'denied' }) =>
+			api.post(`/api/approvals/${approvalId}/resolve`, { status }),
+		onSuccess: () => {
+			// `goals(projectId)` is a prefix of the suggestions key, so this refreshes
+			// both the suggestions list and the goals list (a new goal on approval).
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.goals(projectId) });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(projectId) });
+		},
+	});
+}
+
 interface UseGoalsOptions {
 	includeArchived?: boolean;
 	enabled?: boolean;

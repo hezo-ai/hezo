@@ -101,7 +101,7 @@ describe('project intake (CEO-assisted)', () => {
 	it('records the admin-chosen team type as the CEO baseline on the intake ticket', async () => {
 		const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 		const startup = (await typesRes.json()).data.find(
-			(t: { name: string }) => t.name === 'Startup',
+			(t: { name: string }) => t.name === 'App Team',
 		) as { id: string };
 
 		const res = await startIntake({
@@ -116,7 +116,7 @@ describe('project intake (CEO-assisted)', () => {
 			'SELECT description FROM tasks WHERE id = $1',
 			[intake.intake_task_id],
 		);
-		expect(taskRow.rows[0].description).toContain('Startup');
+		expect(taskRow.rows[0].description).toContain('App Team');
 		expect(taskRow.rows[0].description).toContain(startup.id);
 
 		// Still nothing materialised — the team type is only a baseline suggestion.

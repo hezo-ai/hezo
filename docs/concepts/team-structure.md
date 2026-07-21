@@ -39,15 +39,17 @@ Change any of these and you've changed the team's structure.
 
 ## Choosing a starting structure
 
-Every project starts from a **template**, which decides the team's initial structure. Hezo
-ships with a minimal **Blank** team (just a Captain) and a full software-development
-**Startup** team, and you can add your own. For the built-in rosters and a link to every
-role's prompt, see
-[Team templates](/docs/concepts/projects-and-teams#team-templates).
+Every project starts from a **team** — the minimal **Blank** team (just a Captain) or one
+of the ready-made teams in the [marketplace](/docs/concepts/marketplace): a full
+software-development **App Team**, an **Influencer Marketing** team, or an **Investment**
+team. You can also save and add your own. For the built-in rosters and a link to every
+role's prompt, see [Team templates](/docs/concepts/projects-and-teams#team-templates).
 
-A template is just a convenient starting point — it's not a cage. The Blank team is
-designed to be grown into whatever the work needs; the Startup team is a fully-staffed
-structure for building software. Pick whichever is closest and adjust from there.
+A starting team is just a convenient starting point — it's not a cage. The Blank team is
+designed to be grown into whatever the work needs; the App Team is a fully-staffed
+structure for building software, and the Influencer Marketing and Investment teams are
+staffed for content and stock research respectively. Pick whichever is closest and adjust
+from there.
 
 ## Changing a team's structure while it runs
 

@@ -226,7 +226,7 @@ describe('project intakes', () => {
 
 	it('opens an intake with a template baseline', async () => {
 		const tpl = await ctx.db.query<{ id: string; name: string }>(
-			"SELECT id, name FROM team_templates WHERE name = 'Startup' LIMIT 1",
+			"SELECT id, name FROM team_templates WHERE name = 'App Team' LIMIT 1",
 		);
 		const res = await ctx.app.request('/api/project-intakes', {
 			method: 'POST',
@@ -243,7 +243,7 @@ describe('project intakes', () => {
 			'SELECT description FROM tasks WHERE id = $1',
 			[data.intake_task_id],
 		);
-		expect(task.rows[0].description).toContain('Startup');
+		expect(task.rows[0].description).toContain('App Team');
 	});
 
 	it('opens an intake from a source team baseline', async () => {

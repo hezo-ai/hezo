@@ -56,7 +56,7 @@ beforeAll(async () => {
 
 	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 	const typeId = (await typesRes.json()).data.find(
-		(t: Record<string, unknown>) => t.name === 'Startup',
+		(t: Record<string, unknown>) => t.name === 'App Team',
 	).id;
 
 	const teamRes = await createTestTeam(db, {
@@ -191,7 +191,7 @@ describe('mention handoff prompt (integration)', () => {
 		// Fresh team to isolate state — the architect in this team has no tickets.
 		const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 		const typeId = (await typesRes.json()).data.find(
-			(t: Record<string, unknown>) => t.name === 'Startup',
+			(t: Record<string, unknown>) => t.name === 'App Team',
 		).id;
 		const teamRes = await createTestTeam(db, {
 			name: 'No Tickets Co',

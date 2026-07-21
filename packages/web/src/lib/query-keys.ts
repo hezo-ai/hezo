@@ -141,6 +141,7 @@ export const queryKeys = {
 		goal: (slug: string, goalId: string) => ['projects', slug, 'goals', goalId],
 		goalHistory: (slug: string, goalId: string) => ['projects', slug, 'goals', goalId, 'history'],
 		goalRuns: (slug: string) => ['projects', slug, 'goals', 'runs'],
+		goalSuggestions: (slug: string) => ['projects', slug, 'goals', 'suggestions'],
 		// Infinite-scroll variants of the runs feeds, under their base prefixes so
 		// existing invalidations still cascade.
 		goalRunsInfinite: (slug: string, filters: KeyParam) => [

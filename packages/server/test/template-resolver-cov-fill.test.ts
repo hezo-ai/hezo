@@ -21,7 +21,7 @@ beforeAll(async () => {
 		headers: authHeader(ctx.token),
 	});
 	const startup = ((await typesRes.json()).data as Array<{ id: string; name: string }>).find(
-		(t) => t.name === 'Startup',
+		(t) => t.name === 'App Team',
 	);
 	expect(startup).toBeDefined();
 

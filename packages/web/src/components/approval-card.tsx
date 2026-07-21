@@ -129,6 +129,21 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 				</>
 			);
 		}
+		case ApprovalType.GoalSuggestion: {
+			const title = (p.title as string) ?? 'a goal';
+			return (
+				<>
+					<span>
+						Suggesting goal <span className="font-medium">{title}</span> — approving creates it
+					</span>
+					{p.measurement && (
+						<span className="block text-xs text-text-2 mt-1">
+							Measure: {p.measurement as string}
+						</span>
+					)}
+				</>
+			);
+		}
 		default:
 			return <span>{approval.type.replace(/_/g, ' ')}</span>;
 	}

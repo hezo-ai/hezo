@@ -96,6 +96,11 @@ export interface ActionContent {
 	monthly_budget_cents?: number;
 	heartbeat_interval_min?: number | null;
 	touches_code?: boolean;
+	// goal_suggestion snapshot (kind === 'goal_suggestion')
+	measurement?: string;
+	actions?: string;
+	check_frequency?: string;
+	target_date?: string | null;
 }
 
 export interface CredentialRequestContent {

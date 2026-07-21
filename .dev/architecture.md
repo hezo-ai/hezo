@@ -703,6 +703,22 @@ override. `marketplace/index.json` is the catalog listing.
   `update_agent_system_prompt` where roles carry local customizations) instead of adding
   duplicates. Because instances always fetch the live catalog, a new team `version` reaches them
   automatically.
+- **Shipped teams.** Three: **App Team** (`software-development`, the full app-building roster;
+  display name was "Startup"), **Influencer Marketing** (`influencer` — brand-strategist,
+  trend-researcher, content-writer, media-producer, content-editor, distribution-manager), and
+  **Investment** (`investment` — market-researcher, equity-analyst, catalyst-monitor,
+  risk-verifier, report-writer). The Influencer/Investment Captains run a structured onboarding
+  Q&A on their planning task and **suggest goals** (below); the Influencer team gates outbound
+  content on admin approval (prompt-level, toggled via team preferences), and the Investment
+  team maintains a living per-stock document (with revision history) monitored ~daily.
+
+**Goal suggestions.** The Captain/CEO can propose goals the admin approves, reusing the
+approvals machinery. `suggest_goal` (MCP, Captain/CEO-only) files a pending `goal_suggestion`
+approval (`approval_type` enum extended by `038_goal_suggestion_approval.sql`) plus a
+`goal_suggestion` action comment on the task; approving it runs `goalSuggestionHandler`
+(`approval-handlers/goal-suggestion.ts`), which creates the real `goals` row via `createGoal`
+and flips the comment. Pending suggestions surface on the task thread and the project Goals page
+(`GET /projects/:projectId/goals/suggestions`), each with inline Approve/Deny.
 
 Key source: `services/teams.ts` (`seedDefaultTeam`), `team-template-apply.ts`
 (`ensureInstanceCeo`/`ensureInstanceCoach`), `services/internal-intake.ts` (coordination

@@ -36,8 +36,8 @@ import {
 import { type CreatedTeamRow, createTeam, seedDefaultTeam } from '../../src/services/teams';
 import { WebSocketManager } from '../../src/services/ws';
 import { buildApp } from '../../src/startup';
+import { seedTestAppTeamTemplate } from './app-team-template';
 import { createTestDbWithMigrations } from './db';
-import { seedTestStartupTemplate } from './startup-template';
 
 const STUB_DOCKER_METHODS = {
 	ping: async () => true,
@@ -91,7 +91,7 @@ export async function createTestApp(opts: { webUrl?: string; assetStore?: AssetS
 	await masterKeyManager.initialize(db, unlockKeyHex, authKeys.publicKeyHex);
 	const roleDocs = await loadAgentRoles();
 	await seedBuiltins(db, roleDocs);
-	await seedTestStartupTemplate(db);
+	await seedTestAppTeamTemplate(db);
 	const dataDir = mkdtempSync(join(tmpdir(), 'hezo-test-'));
 	const docker = createStubDocker();
 	const wsManager = new WebSocketManager();
@@ -183,7 +183,7 @@ export async function createUnsetTestApp() {
 	await masterKeyManager.initialize(db);
 	const roleDocs = await loadAgentRoles();
 	await seedBuiltins(db, roleDocs);
-	await seedTestStartupTemplate(db);
+	await seedTestAppTeamTemplate(db);
 	const dataDir = mkdtempSync(join(tmpdir(), 'hezo-test-'));
 	const docker = createStubDocker();
 	const wsManager = new WebSocketManager();

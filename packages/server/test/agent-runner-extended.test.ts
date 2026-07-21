@@ -121,7 +121,7 @@ beforeAll(async () => {
 	masterKeyManager = ctx.masterKeyManager;
 
 	const typesRes = await app.request('/api/team-templates', { headers: authHeader(adminToken) });
-	const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
+	const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'App Team').id;
 
 	const teamRes = await createTestTeam(db, { name: 'Ext Co', template_id: typeId });
 	teamId = (await teamRes.json()).data.id;
@@ -505,7 +505,7 @@ describe('runAgent — provider/credential resolution failures', () => {
 			const typesRes = await isoCtx.app.request('/api/team-templates', {
 				headers: authHeader(isoCtx.token),
 			});
-			const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
+			const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'App Team').id;
 			const teamRes = await createTestTeam(isoCtx.db, { name: 'No Prov', template_id: typeId });
 			const isoTeamId = (await teamRes.json()).data.id;
 			const projRes = await createTestProject(isoCtx.db, isoTeamId, { name: 'No Prov Proj' });

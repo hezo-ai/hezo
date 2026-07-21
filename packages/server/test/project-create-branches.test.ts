@@ -34,7 +34,7 @@ beforeAll(async () => {
 
 	const typesRes = await ctx.app.request('/api/team-templates', { headers: authHeader(ctx.token) });
 	startupTemplateId = (await typesRes.json()).data.find(
-		(t: { name: string }) => t.name === 'Startup',
+		(t: { name: string }) => t.name === 'App Team',
 	).id;
 
 	const u = await db.query<{ id: string }>(

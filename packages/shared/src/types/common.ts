@@ -587,6 +587,7 @@ export type CredentialInputType = (typeof CredentialInputType)[keyof typeof Cred
 export const ActionCommentKind = {
 	SetupRepo: 'setup_repo',
 	HireProposal: 'hire_proposal',
+	GoalSuggestion: 'goal_suggestion',
 } as const;
 export type ActionCommentKind = (typeof ActionCommentKind)[keyof typeof ActionCommentKind];
 
@@ -645,6 +646,7 @@ export const ApprovalType = {
 	DeployProduction: 'deploy_production',
 	DesignatedRepoRequest: 'designated_repo_request',
 	SkillProposal: 'skill_proposal',
+	GoalSuggestion: 'goal_suggestion',
 } as const;
 export type ApprovalType = (typeof ApprovalType)[keyof typeof ApprovalType];
 

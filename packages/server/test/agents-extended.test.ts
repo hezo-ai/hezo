@@ -23,7 +23,7 @@ beforeAll(async () => {
 		headers: authHeader(token),
 	});
 	const typeId = (await typesRes.json()).data.find(
-		(t: Record<string, unknown>) => t.name === 'Startup',
+		(t: Record<string, unknown>) => t.name === 'App Team',
 	).id;
 
 	const teamRes = await createTestTeam(db, {
@@ -245,7 +245,7 @@ describe('POST /teams/:teamId/agents/onboard', () => {
 	});
 
 	it('rejects onboard with duplicate slug against existing agent', async () => {
-		// Captain slug already exists from the Startup template
+		// Captain slug already exists from the App Team template
 		const res = await app.request(`/api/projects/${projectSlug}/agents/onboard`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -258,7 +258,7 @@ describe('POST /teams/:teamId/agents/onboard', () => {
 });
 
 describe('seeded agent system prompts', () => {
-	it('every Startup-template agent gets a non-empty system prompt with templating preserved', async () => {
+	it('every App Team-template agent gets a non-empty system prompt with templating preserved', async () => {
 		const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			headers: authHeader(token),
 		});

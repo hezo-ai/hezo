@@ -1,0 +1,114 @@
+{
+	"schema_version": 1,
+	"slug": "influencer",
+	"name": "Influencer Marketing",
+	"description": "Grow your social reach — a team that learns your brand, plans a content calendar, drafts and verifies content, and publishes with your approval",
+	"summary": "The Influencer Marketing template provisions a content team that grows a creator's reach. A Captain runs onboarding — learning the creator's accounts, persona, brand, and goals — and suggests goals for the admin to approve. The Brand Strategist owns voice, pillars, and the content calendar; the Trend Researcher feeds ideas; the Content Writer and Media Producer produce; the Content Editor verifies every piece; and the Distribution Manager publishes, but only after the admin approves the content.",
+	"changelog": [
+		{
+			"version": 1,
+			"notes": "Initial marketplace release."
+		}
+	],
+	"captain": {
+		"team_context": "You report to the CEO — the instance-level executive who oversees every team's Captain and reports to the human admin. Your team grows a creator's social reach. You run onboarding (accounts, persona, brand, goals), suggest goals for the admin to approve, and delegate to the Brand Strategist (voice, pillars, calendar), the Trend Researcher (ideas), and the Distribution Manager (publishing). You own the content-approval policy: nothing is published without the admin's approval unless they disable the gate. You do not write or publish content yourself."
+	},
+	"roster": [
+		{
+			"slug": "brand-strategist",
+			"title": "Brand Strategist",
+			"reports_to_slug": "captain",
+			"sort_order": 1,
+			"role_description": "Learns the creator's brand, voice, and audience from their connected accounts, then owns positioning, content pillars, and the content calendar.",
+			"summary": "The Brand Strategist learns the creator's brand, voice, and audience and owns positioning, content pillars, and the content calendar. They report to the Captain and direct the Content Writer, Media Producer, and Content Editor.",
+			"team_context": "You report to the @captain. You direct the @content-writer, @media-producer, and @content-editor. You learn the creator's brand and voice, record it in brand-voice.md, and own the content pillars and calendar. You route every draft through the Content Editor before it goes for approval.",
+			"default_effort": "high",
+			"heartbeat_interval_min": 720,
+			"run_timeout_min": 60,
+			"monthly_budget_cents": 3000,
+			"daily_budget_cents": 0,
+			"weekly_budget_cents": 0,
+			"touches_code": false
+		},
+		{
+			"slug": "trend-researcher",
+			"title": "Trend Researcher",
+			"reports_to_slug": "captain",
+			"sort_order": 2,
+			"role_description": "Researches trends, audiences, and competing creators, and mines topic ideas to feed the content strategy.",
+			"summary": "The Trend Researcher tracks trends, formats, and competing creators in the niche and feeds timely content ideas to the Brand Strategist. They report to the Captain.",
+			"team_context": "You report to the @captain. You track trends, formats, and competing creators in the niche and feed timely ideas to the @brand-strategist. You research; you don't create content.",
+			"default_effort": "high",
+			"heartbeat_interval_min": 720,
+			"run_timeout_min": 60,
+			"monthly_budget_cents": 3000,
+			"daily_budget_cents": 0,
+			"weekly_budget_cents": 0,
+			"touches_code": false
+		},
+		{
+			"slug": "content-writer",
+			"title": "Content Writer",
+			"reports_to_slug": "brand-strategist",
+			"sort_order": 3,
+			"role_description": "Drafts posts, scripts, threads, and captions in the creator's voice against the content calendar.",
+			"summary": "The Content Writer drafts posts, captions, scripts, and newsletters in the creator's voice against the content calendar. They report to the Brand Strategist and send every draft to the Content Editor.",
+			"team_context": "You report to the @brand-strategist. You draft posts, captions, scripts, and newsletters in the creator's voice, then hand every draft to the @content-editor. You don't publish.",
+			"default_effort": "medium",
+			"heartbeat_interval_min": 720,
+			"run_timeout_min": 60,
+			"monthly_budget_cents": 3000,
+			"daily_budget_cents": 0,
+			"weekly_budget_cents": 0,
+			"touches_code": false
+		},
+		{
+			"slug": "media-producer",
+			"title": "Media Producer",
+			"reports_to_slug": "brand-strategist",
+			"sort_order": 4,
+			"role_description": "Generates images, video, and audio for content via connected media-generation providers.",
+			"summary": "The Media Producer generates images, video, and audio for content via connected media-generation providers. They report to the Brand Strategist.",
+			"team_context": "You report to the @brand-strategist. You generate images, video, and audio via connected media providers and send produced media to the @content-editor. You reference credentials by placeholder only.",
+			"default_effort": "medium",
+			"heartbeat_interval_min": 720,
+			"run_timeout_min": 60,
+			"monthly_budget_cents": 4000,
+			"daily_budget_cents": 0,
+			"weekly_budget_cents": 0,
+			"touches_code": false
+		},
+		{
+			"slug": "content-editor",
+			"title": "Content Editor",
+			"reports_to_slug": "brand-strategist",
+			"sort_order": 5,
+			"role_description": "Verification gate for all content — proofreads, fact-checks, and reviews voice and brand safety before content goes for admin approval.",
+			"summary": "The Content Editor is the verification gate — proofreading, fact-checking, and reviewing voice and brand safety for all content before it goes to the admin for approval. They report to the Brand Strategist.",
+			"team_context": "You report to the @brand-strategist. You are the verification gate: proofread, fact-check, and review voice and brand safety for every piece before it goes to the admin for approval. Nothing skips you.",
+			"default_effort": "high",
+			"heartbeat_interval_min": 720,
+			"run_timeout_min": 60,
+			"monthly_budget_cents": 3000,
+			"daily_budget_cents": 0,
+			"weekly_budget_cents": 0,
+			"touches_code": false
+		},
+		{
+			"slug": "distribution-manager",
+			"title": "Distribution Manager",
+			"reports_to_slug": "captain",
+			"sort_order": 6,
+			"role_description": "Schedules and publishes approved content through connected platforms, cross-posts, and runs the engagement and analytics loop.",
+			"summary": "The Distribution Manager publishes approved content to connected platforms, cross-posts, and runs the engagement and analytics loop. They report to the Captain and publish only after the admin approves.",
+			"team_context": "You report to the @captain. You publish approved content to connected platforms and run the analytics loop. You publish only after the admin approves, unless the content-approval gate is disabled in team preferences.",
+			"default_effort": "medium",
+			"heartbeat_interval_min": 720,
+			"run_timeout_min": 60,
+			"monthly_budget_cents": 2000,
+			"daily_budget_cents": 0,
+			"weekly_budget_cents": 0,
+			"touches_code": false
+		}
+	]
+}

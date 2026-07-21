@@ -27,7 +27,7 @@ describe('marketplace loader', () => {
 	it('reads the committed software-development team from the local folder', async () => {
 		const def = await getMarketplaceTeam('software-development');
 		expect(def).toBeTruthy();
-		expect(def?.name).toBe('Startup');
+		expect(def?.name).toBe('App Team');
 		expect(def?.version).toBeGreaterThanOrEqual(1);
 		expect(def?.roster.length).toBe(9);
 		// Prompts are partial-resolved but keep the runtime placeholders.
@@ -51,7 +51,7 @@ describe('GET /api/marketplace/teams', () => {
 		const data = (await res.json()).data as Array<Record<string, unknown>>;
 		const sd = data.find((t) => t.slug === 'software-development');
 		expect(sd).toBeDefined();
-		expect(sd?.name).toBe('Startup');
+		expect(sd?.name).toBe('App Team');
 		expect(sd?.roster_count).toBe(10);
 	});
 

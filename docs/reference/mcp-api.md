@@ -377,6 +377,28 @@ Fetch the container log for a single agent run (a run_id from list_task_runs). R
 
 ## Goals
 
+### `suggest_goal`
+
+_Write tool._
+
+Suggest a project goal for the admin to approve. Callable only by the team Captain (or the CEO targeting a team via `project`), typically during initial project onboarding after you've asked the admin what they want to achieve. This does NOT create a goal directly — it files a suggestion the admin reviews and approves, at which point the real goal is created. A goal is a high-level objective the team works toward: pass a `title`, a `measurement` (the precise definition of when it is achieved — the bar to judge against; write it SMART), optional `actions` (guidance on what to do/check toward it), a `check_frequency` (daily/weekly/monthly — how often it is re-assessed once created), and an optional `target_date` (deadline, ISO YYYY-MM-DD). Pass `task_id` (recommended — usually your planning task) to surface the suggestion as an Approve/Deny card in that task's thread; it also appears on the project's Goals page. Suggest goals from the admin's stated objectives — do not invent goals the admin did not ask for.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `title` | `string` | Yes | Short goal title. |
+| `measurement` | `string` | No | The precise, measurable definition of when the goal is achieved. |
+| `actions` | `string` | No | Optional guidance on what to do or check toward the goal. |
+| `check_frequency` | `daily` \| `weekly` \| `monthly` | No | How often the goal is re-assessed once created (default daily). |
+| `target_date` | `string` | No | Optional deadline as an ISO date (YYYY-MM-DD). |
+| `task_id` | `string` | No | Optional originating task to attach the suggestion card to — a task identifier (e.g. "HM-1") or UUID. |
+
+**Returns:** `{ approval_id, status: "pending", payload }`. Files a goal *suggestion* the admin must approve — no goal exists until then. On approval the real goal is created and appears on the Goals page. Surfaces as an Approve/Deny card on the `task_id` thread (when given) and on the project Goals page. Returns `{ error }` if the caller is not the Captain/CEO, the project is HQ/internal, or the inputs are invalid.
+
+**Authorization:** Captain (its own team) or CEO (any team via `project`), and only from within an agent run.
+
 ### `list_goals`
 
 _Read-only._

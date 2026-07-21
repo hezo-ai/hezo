@@ -1,4 +1,5 @@
 import { ApprovalType } from '@hezo/shared';
+import { goalSuggestionHandler } from './goal-suggestion';
 import { hireHandler } from './hire';
 import { skillProposalHandler } from './skill-proposal';
 import { strategyHandler } from './strategy';
@@ -19,4 +20,5 @@ export const APPROVAL_HANDLERS: Partial<Record<ApprovalType, ApprovalHandler>> =
 	[ApprovalType.Hire]: hireHandler,
 	[ApprovalType.Strategy]: strategyHandler,
 	[ApprovalType.SkillProposal]: skillProposalHandler,
+	[ApprovalType.GoalSuggestion]: goalSuggestionHandler,
 };

@@ -27,7 +27,7 @@ beforeAll(async () => {
 
 	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 	const typeId = (await typesRes.json()).data.find(
-		(t: Record<string, unknown>) => t.name === 'Startup',
+		(t: Record<string, unknown>) => t.name === 'App Team',
 	).id;
 
 	const teamRes = await createTestTeam(db, { name: 'Description Tasks Co', template_id: typeId });
@@ -272,7 +272,7 @@ describe('project creation', () => {
 	it('produces exactly one team-coherence task on a fresh project (no per-agent duplicates)', async () => {
 		const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 		const typeId = (await typesRes.json()).data.find(
-			(t: Record<string, unknown>) => t.name === 'Startup',
+			(t: Record<string, unknown>) => t.name === 'App Team',
 		).id;
 
 		const projectRes = await app.request('/api/projects', {
@@ -304,7 +304,7 @@ describe('project creation', () => {
 	it('direct POST /api/projects auto-runs coherence: the ticket is assigned to the CEO with a wakeup', async () => {
 		const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 		const typeId = (await typesRes.json()).data.find(
-			(t: Record<string, unknown>) => t.name === 'Startup',
+			(t: Record<string, unknown>) => t.name === 'App Team',
 		).id;
 
 		const projectRes = await app.request('/api/projects', {
