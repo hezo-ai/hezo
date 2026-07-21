@@ -10,6 +10,19 @@ Telegram (webhook transport) was shipped first because it needs no long-lived
 connection and no single-instance ownership. Discord validates the same
 `ChatChannelAdapter` interface against the hard case: a persistent gateway.
 
+> **Since this was written, Slack shipped** (`chat-channels/slack.ts` +
+> `slack-socket.ts`) and is now the worked persistent-transport example — a
+> WHATWG-WebSocket Socket Mode client owned by the adapter's `start()`/`stop()`,
+> feeding parsed events through the `InboundEventSink`. One crucial difference
+> remains: Slack **load-balances** events across an app's open Socket Mode
+> connections, so a duplicate process never double-delivers and no ownership lease
+> is needed. Discord's gateway is **true fanout** (every connection receives every
+> event), so the single-instance lease below still applies to Discord. Slack also
+> added the **group/coworker mode** capability trio
+> (`parseGroupMention`/`supportsGroupMode`/`fetchThreadContext`, see AGENTS.md) —
+> a Discord adapter could implement it too (mention in a server channel → coworker
+> conversation) on top of the plan below.
+
 ## What building it entails
 
 1. **Enum migration (additive).** Add `discord` to the `chat_channel` enum — take the

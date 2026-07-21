@@ -243,13 +243,14 @@ re-echoes what it just delivered (`mirrorMessage`/`mirrorUserMessage`; web is th
 broadcast); and closing on any surface closes every binding (`closeConversation`, plus the
 platform→app direction via each adapter's `parseClose` → `closeConversationByExternalThread`).
 A channel that can't host threads (a DM) degrades to a single thread without breaking parity
-for the rest. The warm container
+for the rest. **The parity invariant is scoped to `chat_conversations.kind = 'mirror'`** —
+see the coworker mode paragraph below for the deliberately-unmirrored second kind. The warm container
 (`chat_sessions`) stays a **single shared lease** per CEO member — a thread is only
 message-grouping + rolling window + memory scope, and each turn is a stateless one-shot
 `docker exec` reading a per-turn prompt file, so N threads run as N independent execs into
 the one container. Long-term memory (`chat_memories`) stays **per-agent** (shared across a
 member's threads); compaction serialises at the member level so concurrent threads never
-clobber the shared memory row. External channels (Telegram now, Discord later —
+clobber the shared memory row. External channels (Telegram + Slack now, Discord later —
 `.dev/discord-chat-adapter.md`) are built on a **channel-adapter registry**
 (`services/chat-channels/`): a `ChatChannelAdapter` owns everything platform-specific
 (inbound parse, outbound deliver, thread create/close, transport lifecycle), and the
@@ -258,12 +259,43 @@ Inbound arrives at a generic public webhook `POST /webhooks/chat/:channel/:secre
 before bearer auth; per-channel shared-secret, constant-time compared) → `parseInbound` →
 `ingestInboundEvent`, which enforces the **identity allowlist** (`chat_identity_links` maps
 `(channel, external_user_id)` → a Hezo user; unlinked senders are ignored/prompted to link)
-before routing the message to `ChatSessionManager.sendTurn`. Per-channel bot config lives in
+before routing the message to `ChatSessionManager.sendTurn`. A **socket-transport** adapter
+(Slack Socket Mode) has no webhook: its transport pushes parsed events through the
+`InboundEventSink` wired at startup (`buildInboundEventSink` → the same ingest functions the
+webhook route calls). Per-channel bot config lives in
 `chat_channel_configs` (fully generic — the bot token is a `secrets`-vault reference, all
-channel-specific settings in `metadata` jsonb). **The bot token is decrypted in-process by
-trusted server code and outbound bot API calls go direct** (`api.telegram.org`, …), NOT
+channel-specific settings in `metadata` jsonb; a channel needing a **second** secret stores
+its vault name in metadata, e.g. Slack's `app_token_secret` → `SLACK_APP_TOKEN`). **Bot
+tokens are decrypted in-process by
+trusted server code and outbound bot API calls go direct** (`api.telegram.org`, `slack.com`, …), NOT
 through the agent egress proxy — the `__HEZO_SECRET__`/proxy mechanism is for agent *runs*,
 whose threat model differs from the server authenticating its own calls.
+
+**Group/coworker mode (`kind = 'coworker'`).** Every chat app can support two integration
+modes, discriminated by `chat_conversations.kind`: **mirror** (assistant/DM mode — the
+parity model above) and **coworker** — the CEO invited into an external group channel
+(a Slack channel; later a WhatsApp group) as a teammate. A group-capable adapter implements
+the optional capability trio `parseGroupMention` / `supportsGroupMode` / `fetchThreadContext`,
+and mentions flow through a **second ingest path**, `ingestGroupMentionEvent`
+(`chat-channels/ingest-group.ts`) — never through `ingestInboundEvent`. Coworker semantics,
+all keyed off `kind` in `ChatSessionManager`: **channel invite is the authorization** (no
+identity-link gate; a link only enriches attribution); the conversation gets **only its
+origin binding** (no web binding, no mirror fan-out — the generic reply fan-out then
+delivers to exactly the origin thread); it is **filtered out of `listConversations`** (so
+invisible in the web chatbox) and **broadcasts nothing** over WS; concurrent turns **queue
+instead of interrupting** (two mentions = two answers; an aborted partial would post nothing
+to the platform); prompts swap in a group-chat guide, label transcript lines with the
+platform sender (`chat_messages.author_label`), omit the operator's long-term memory, and
+carry the adapter-fetched platform history as an **ephemeral `injectedContext` prompt
+section** that is never persisted as a message; and coworker threads **never compact or
+auto-title** (a bounded replay window caps the prompt instead — compaction would fold group
+chatter into the operator's shared memory). The Slack adapter (`chat-channels/slack.ts` +
+`slack-socket.ts`) runs both modes over **Socket Mode**: a zero-dependency WHATWG-WebSocket
+client (`apps.connections.open` mints single-use tickets; envelopes are acked before
+dispatch; Slack-initiated `disconnect` refreshes reconnect with backoff; a rejected app
+token stops the client). Slack **load-balances events across an app's open Socket Mode
+connections**, so no cross-instance ownership lease is needed — unlike a true-fanout
+gateway (Discord), where the lease plan in `.dev/discord-chat-adapter.md` still applies.
 
 **Costs & budgets.** `cost_entries` is the immutable per-run spend ledger, attributed to
 the AI provider config that produced it — **never** team-scoped. `model_pricing` holds
