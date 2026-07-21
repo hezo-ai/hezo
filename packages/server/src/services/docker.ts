@@ -359,6 +359,23 @@ export class DockerClient {
 		}
 	}
 
+	/**
+	 * List containers (running and stopped) carrying the given label key. Used by
+	 * `hezo uninstall` to find every container Hezo provisioned — they are all
+	 * labelled `hezo.team` (see `provisionContainer`) — so they can be removed
+	 * before the data directory is deleted, since the DB rows that otherwise track
+	 * their ids go away with it.
+	 */
+	async listContainersByLabel(label: string): Promise<Array<{ Id: string; Names: string[] }>> {
+		const filters = encodeURIComponent(JSON.stringify({ label: [label] }));
+		const res = await this.request('GET', `/containers/json?all=true&filters=${filters}`);
+		if (!res.ok) {
+			const text = await res.text();
+			throw new Error(`Docker listContainers failed (${res.status}): ${text}`);
+		}
+		return parseJsonOrThrow<Array<{ Id: string; Names: string[] }>>(res, 'listContainers');
+	}
+
 	async inspectContainer(containerId: string): Promise<ContainerInfo | null> {
 		const res = await this.request(
 			'GET',
