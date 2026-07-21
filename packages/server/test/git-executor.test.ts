@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ContainerRunUser } from '../src/services/container-user';
 import { ContainerGitExecutor, GIT_SSH_COMMAND_VALUE } from '../src/services/git-executor';
 import {
@@ -27,6 +27,7 @@ interface RecordedExec {
 
 function recordingDocker(opts: { exitCode?: number; throwOnStart?: boolean } = {}) {
 	const calls: RecordedExec[] = [];
+	const kills: Array<{ containerId: string; runId: string }> = [];
 	const docker = createStubDocker({
 		execCreate: async (_id: string, config: RecordedExec) => {
 			calls.push(config);
@@ -37,8 +38,11 @@ function recordingDocker(opts: { exitCode?: number; throwOnStart?: boolean } = {
 			return { stdout: 'out', stderr: 'err' };
 		},
 		execInspect: async () => ({ ExitCode: opts.exitCode ?? 0, Running: false, Pid: 1 }),
+		killRunProcesses: async (containerId: string, runId: string) => {
+			kills.push({ containerId, runId });
+		},
 	});
-	return { docker, calls };
+	return { docker, calls, kills };
 }
 
 const abortErrorOf = (s: AbortSignal): Error =>
@@ -50,7 +54,8 @@ const abortErrorOf = (s: AbortSignal): Error =>
 // modelling a black-holed in-container command (e.g. a stalled `git fetch`), the
 // production failure this executor's timeout/run-signal handling must survive.
 function hangingDocker() {
-	return createStubDocker({
+	const kills: Array<{ containerId: string; runId: string }> = [];
+	const docker = createStubDocker({
 		execCreate: async () => 'exec-1',
 		execStart: (_id: string, opts?: { signal?: AbortSignal }) =>
 			new Promise<{ stdout: string; stderr: string }>((_resolve, reject) => {
@@ -60,7 +65,11 @@ function hangingDocker() {
 				signal.addEventListener('abort', () => reject(abortErrorOf(signal)), { once: true });
 			}),
 		execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 1 }),
+		killRunProcesses: async (containerId: string, runId: string) => {
+			kills.push({ containerId, runId });
+		},
 	});
+	return { docker, kills };
 }
 
 describe('ContainerGitExecutor', () => {
@@ -69,6 +78,7 @@ describe('ContainerGitExecutor', () => {
 		const exec = new ContainerGitExecutor(docker, 'cid', {
 			baseEnv: ['GIT_CONFIG_COUNT=0'],
 			runUser,
+			scopeId: 'gitop-0000000000000000',
 		});
 
 		const res = await exec.exec(['status', '--porcelain'], { cwd: '/worktrees/T-1/repo' });
@@ -85,6 +95,7 @@ describe('ContainerGitExecutor', () => {
 		const exec = new ContainerGitExecutor(docker, 'cid', {
 			baseEnv: [],
 			runUser: { name: 'appuser', uid: 1001, gid: 1001 },
+			scopeId: 'gitop-0000000000000000',
 		});
 
 		await exec.exec(['status'], { cwd: '/w' });
@@ -94,7 +105,12 @@ describe('ContainerGitExecutor', () => {
 
 	it('wraps SSH-transport ops with the bridge runner', async () => {
 		const { docker, calls } = recordingDocker();
-		const exec = new ContainerGitExecutor(docker, 'cid', { baseEnv: [], bridge, runUser });
+		const exec = new ContainerGitExecutor(docker, 'cid', {
+			baseEnv: [],
+			bridge,
+			runUser,
+			scopeId: 'gitop-0000000000000000',
+		});
 
 		await exec.exec(['fetch', '--all', '--prune'], { cwd: '/workspace/repo', needsSsh: true });
 
@@ -110,7 +126,12 @@ describe('ContainerGitExecutor', () => {
 
 	it('does not wrap when needsSsh but no bridge is available', async () => {
 		const { docker, calls } = recordingDocker();
-		const exec = new ContainerGitExecutor(docker, 'cid', { baseEnv: [], bridge: null, runUser });
+		const exec = new ContainerGitExecutor(docker, 'cid', {
+			baseEnv: [],
+			bridge: null,
+			runUser,
+			scopeId: 'gitop-0000000000000000',
+		});
 
 		await exec.exec(['fetch'], { cwd: '/workspace/repo', needsSsh: true });
 
@@ -126,6 +147,7 @@ describe('ContainerGitExecutor', () => {
 				'HEZO_PROMPT_FILE=/tmp/prompt.txt',
 			],
 			runUser,
+			scopeId: 'gitop-0000000000000000',
 		});
 
 		await exec.exec(['status'], { cwd: '/w' });
@@ -137,7 +159,7 @@ describe('ContainerGitExecutor', () => {
 
 	it('forPrep threads the run-user + extraEnv (git identity) alongside the prep defaults', async () => {
 		const { docker, calls } = recordingDocker();
-		const exec = ContainerGitExecutor.forPrep(docker, 'cid', bridge, runUser, [
+		const exec = ContainerGitExecutor.forPrep(docker, 'cid', bridge, runUser, 'run-scope-1', [
 			'GIT_CONFIG_COUNT=2',
 			'GIT_CONFIG_KEY_0=user.name',
 			'GIT_CONFIG_VALUE_0=octocat',
@@ -165,7 +187,11 @@ describe('ContainerGitExecutor', () => {
 
 	it('surfaces a non-zero exit code from execInspect', async () => {
 		const { docker } = recordingDocker({ exitCode: 128 });
-		const exec = new ContainerGitExecutor(docker, 'cid', { baseEnv: [], runUser });
+		const exec = new ContainerGitExecutor(docker, 'cid', {
+			baseEnv: [],
+			runUser,
+			scopeId: 'gitop-0000000000000000',
+		});
 
 		const res = await exec.exec(['rev-parse', '--git-dir'], { cwd: '/w' });
 
@@ -174,7 +200,11 @@ describe('ContainerGitExecutor', () => {
 
 	it('returns exitCode 1 instead of throwing when docker fails', async () => {
 		const { docker } = recordingDocker({ throwOnStart: true });
-		const exec = new ContainerGitExecutor(docker, 'cid', { baseEnv: [], runUser });
+		const exec = new ContainerGitExecutor(docker, 'cid', {
+			baseEnv: [],
+			runUser,
+			scopeId: 'gitop-0000000000000000',
+		});
 
 		const res = await exec.exec(['status'], { cwd: '/w' });
 
@@ -182,8 +212,35 @@ describe('ContainerGitExecutor', () => {
 		expect(res.stderr).toContain('docker daemon unreachable');
 	});
 
-	it('times out a hung exec at the per-op deadline instead of hanging', async () => {
-		const exec = ContainerGitExecutor.forPrep(hangingDocker(), 'cid', bridge, runUser);
+	it('stamps every exec env with the HEZO_HEARTBEAT_RUN_ID scope marker', async () => {
+		const { docker, calls } = recordingDocker();
+		const exec = ContainerGitExecutor.forPrep(docker, 'cid', bridge, runUser, 'run-scope-1');
+
+		await exec.exec(['status'], { cwd: '/w' });
+		await exec.exec(['fetch', '--prune', 'origin'], { cwd: '/w', needsSsh: true, timeout: 60_000 });
+
+		// Both plain and bridge-wrapped ops carry the marker, so an abandoned tree
+		// (git, ssh, socat, the bridge wrapper) is killable by env scan.
+		expect(calls[0].Env).toContain('HEZO_HEARTBEAT_RUN_ID=run-scope-1');
+		expect(calls[1].Env).toContain('HEZO_HEARTBEAT_RUN_ID=run-scope-1');
+	});
+
+	it('sets a self-deadline env only for bridge-wrapped ops with a timeout', async () => {
+		const { docker, calls } = recordingDocker();
+		const exec = ContainerGitExecutor.forPrep(docker, 'cid', bridge, runUser, 'run-scope-1');
+
+		await exec.exec(['fetch', '--prune', 'origin'], { cwd: '/w', needsSsh: true, timeout: 60_000 });
+		await exec.exec(['status'], { cwd: '/w', timeout: 30_000 });
+
+		// 60s op cap + 15s slack, so the host-side abort always fires first and the
+		// in-container `timeout` only matters when the server itself is gone.
+		expect(calls[0].Env).toContain('HEZO_EXEC_DEADLINE_SECS=75');
+		expect(calls[1].Env?.some((e) => e.startsWith('HEZO_EXEC_DEADLINE_SECS='))).toBe(false);
+	});
+
+	it('times out a hung exec at the per-op deadline and reaps the abandoned tree', async () => {
+		const { docker, kills } = hangingDocker();
+		const exec = ContainerGitExecutor.forPrep(docker, 'cid', bridge, runUser, 'run-scope-1');
 
 		const res = await exec.exec(['fetch', '--prune', 'origin'], {
 			cwd: '/workspace/repo',
@@ -193,15 +250,22 @@ describe('ContainerGitExecutor', () => {
 
 		expect(res.exitCode).toBe(1);
 		expect(res.stderr).toContain('timed out');
+		// The abandoned in-container tree is killed by its scope marker — aborting
+		// the exec stream alone would leave git/ssh/socat running in the container.
+		await vi.waitFor(() => {
+			expect(kills).toEqual([{ containerId: 'cid', runId: 'run-scope-1' }]);
+		});
 	});
 
-	it('interrupts an in-flight exec when the run signal aborts', async () => {
+	it('interrupts an in-flight exec when the run signal aborts and reaps the tree', async () => {
 		const ac = new AbortController();
+		const { docker, kills } = hangingDocker();
 		const exec = ContainerGitExecutor.forPrep(
-			hangingDocker(),
+			docker,
 			'cid',
 			bridge,
 			runUser,
+			'run-scope-1',
 			[],
 			ac.signal,
 		);
@@ -216,5 +280,29 @@ describe('ContainerGitExecutor', () => {
 
 		expect(res.exitCode).toBe(1);
 		expect(res.stderr).toBe('run aborted');
+		await vi.waitFor(() => {
+			expect(kills).toEqual([{ containerId: 'cid', runId: 'run-scope-1' }]);
+		});
+	});
+
+	it('does not fire the marker kill on success or on a docker transport error', async () => {
+		const ok = recordingDocker();
+		const okExec = ContainerGitExecutor.forPrep(ok.docker, 'cid', bridge, runUser, 'run-scope-1');
+		await okExec.exec(['fetch', '--prune', 'origin'], { cwd: '/w', needsSsh: true, timeout: 50 });
+
+		// Transport error (daemon unreachable): the container is likely gone, so no
+		// kill is attempted — the startup sweep is the backstop.
+		const broken = recordingDocker({ throwOnStart: true });
+		const brokenExec = ContainerGitExecutor.forPrep(
+			broken.docker,
+			'cid',
+			bridge,
+			runUser,
+			'run-scope-1',
+		);
+		await brokenExec.exec(['fetch', '--prune', 'origin'], { cwd: '/w', needsSsh: true });
+
+		expect(ok.kills).toEqual([]);
+		expect(broken.kills).toEqual([]);
 	});
 });

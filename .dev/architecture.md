@@ -996,6 +996,56 @@ carries the run's `HEZO_HEARTBEAT_RUN_ID` marker (children inherit it). Best-eff
 its own short timeout, so a kill failure never masks the run result or blocks finalization. This is
 what makes a terminate immediate — in-progress work is lost, as the confirmation dialog promises.
 
+**Process-tree lifecycle & dangling-process cleanup.** The abort-kill above is one instance of a
+system-wide invariant: **every abandonable exec carries a scope marker in its env, and every
+abandonment path reaps by that marker**, because a docker-exec'd process the server merely stops
+attending to would otherwise run in the (deliberately warm-surviving) project container forever.
+`HEZO_HEARTBEAT_RUN_ID=<scopeId>` is the universal marker — the heartbeat run id on the agent CLI
+exec and run-time git prep (`ContainerGitExecutor.forPrep` takes a required `scopeId`), the
+`provision-<hex>` id `withProvisionBridge` mints for provisioning/repo-link/reset git ops, a
+`gitop-<hex>` tag for bridge-less route git ops, an `mcp-install-<hex>` tag on the local-MCP
+`npm install` exec, and the chat `sessionId` on CEO chat execs. Kills are generalized as
+`DockerClient.killProcessesByEnvMarker` (marker-value validated against a shell-safe character
+class before interpolation; `killRunProcesses` is its run-id specialization). The reap points:
+
+- **Per-op timeout / run abort** (`ContainerGitExecutor.exec`): on the timeout or run-signal
+  branch the executor fires a tracked, best-effort marker kill for its scope — a generic docker
+  transport error skips it (container likely gone). The MCP installer does the same when its
+  install timeout fires.
+- **Chat interrupt/preempt**: every chat exec (turn, compaction, titling) additionally carries a
+  per-exec `HEZO_EXEC_SCOPE_ID=<uuid>` and an abort reaps by **that**, never the session id —
+  a session's execs run concurrently across conversations, so a session-wide kill would murder a
+  sibling conversation's live turn. Session-wide reaping by `sessionId` happens only at session
+  teardown (manager stop/restart/health teardown), when everything has already been aborted.
+- **Clean shutdown** (`shutdownRuntime`): before `jobManager.shutdown()` aborts the runs, an
+  awaited `JobManager.killLiveRunProcesses()` reaps every live run's tree (per-kill bounded,
+  whole pass raced against its own timer) — the runner's own abort-kill would race
+  `process.exit`. Chat teardown then reaps its session trees.
+- **Orphan tick**: when the ~30 s orphan detector marks a `running` run whose process vanished as
+  failed, it also fires `killRunProcesses` against the task's project container (task-less runs
+  skipped — the boot sweep is their backstop).
+- **Boot sweep** (crash backstop): `reconcileOnStartup`'s fourth container pass
+  (`sweepDanglingContainerProcesses`) scans each running container's `/proc`
+  (`DockerClient.listHezoProcesses` — emits only pids carrying a marker, an
+  `SSH_AUTH_SOCK=/run/hezo/…` env, or a bridge/socat cmdline) and applies the pure policy in
+  `services/process-sweeper.ts` (`decideSweepKills`): bridge infrastructure
+  (`hezo-run-with-bridge`/`hezo-ssh-bridge`/socat on `/run/hezo/`) always dies; a marker-carrying
+  process dies unless its id is a **succeeded** `heartbeat_runs` row — so a background process a
+  successful run intentionally left (e.g. a dev server on the project's dev port) survives a
+  restart, while failed/cancelled-run trees, previous-lifetime chat sessions, and
+  provision/gitop/mcp-install ops (never succeeded-run rows) die; a marker-less process dies only
+  when bridge-socket-scoped (legacy trees from versions predating the marker). PID 1 and anything
+  younger than 120 s (`SWEEP_MIN_AGE_SECS` — routes are live during reconcile, so a just-started
+  op's marker isn't in the DB yet) are never touched. Kills go through `DockerClient.killPids`
+  (validated pid list). The pass runs after the stranded-run repair (which flips previous-lifetime
+  `running` rows to `failed`), is per-container best-effort, and skips cleanly when Docker is
+  unreachable.
+
+Independently, `hezo-run-with-bridge` itself is hardened (see § SSH signing & git): the exit trap
+kills socat's whole process group, and bounded git ops carry an in-container
+`HEZO_EXEC_DEADLINE_SECS` self-deadline so the tree dies on its own even if the server process is
+gone mid-op.
+
 **Timeout handling (graceful cut).** The `run_timeout_min` timer aborts the run's signal with a
 tagged `'run_timeout'` reason (`JobManager.launchTask`), so the runner finalizes it as `timed_out`
 — distinct from a bare abort (user cancel / shutdown → `cancelled`) and container death
@@ -1331,15 +1381,24 @@ runtime), every git transport — including repo prep (clone/fetch) — reaches 
 the TCP listener via the bridge; nothing on the host runs git.
 
 **Per-run socat bridge.** The agent base image ships `hezo-run-with-bridge` (the runner's
-`argv[0]`): it spawns a `socat UNIX-LISTEN…EXEC:hezo-ssh-bridge` that forwards each
-in-container connection (prefixing the token) to the host TCP listener, then execs the
-agent CLI. The container sees a normal `SSH_AUTH_SOCK` Unix socket and is unaware of the
-relay. The same socket serves both commit signing and `git@github.com:` clone/fetch/push —
-including the per-commit auto-push fired by the durability `post-commit` hook (§ Agent runtime,
-Commit durability), which is why that hook keys off a live `SSH_AUTH_SOCK`.
+`argv[0]`): it spawns a `socat UNIX-LISTEN…EXEC:hezo-ssh-bridge` (under `setsid` where
+available, so the exit trap can `kill -- -<pgid>` the whole socat process group — socat's
+`fork` spawns a bridge child per connection, and killing only the listener would leave a
+blocked child behind) that forwards each in-container connection (prefixing the token) to
+the host TCP listener, then runs the wrapped command. When the server sets
+`HEZO_EXEC_DEADLINE_SECS` (bounded git ops — `ContainerGitExecutor` sets it to the per-op
+timeout plus slack for bridge-wrapped ops), the wrapper runs the command under `timeout`,
+so the tree self-destructs even if the server process died mid-op; the env is ignored by
+older images and absent for the agent CLI run, keeping every old/new image × server
+combination compatible. The container sees a normal `SSH_AUTH_SOCK` Unix socket and is
+unaware of the relay. The same socket serves both commit signing and `git@github.com:`
+clone/fetch/push — including the per-commit auto-push fired by the durability `post-commit`
+hook (§ Agent runtime, Commit durability), which is why that hook keys off a live
+`SSH_AUTH_SOCK`.
 Repo/worktree prep wraps individual git commands with the same `hezo-run-with-bridge` runner;
 cloning outside a run (provision, repo link) allocates a short-lived bridge via
-`withProvisionBridge`.
+`withProvisionBridge`, whose per-op `provision-<hex>` id doubles as the exec scope marker
+(§ Agent execution, Process-tree lifecycle).
 
 **Verified-on-GitHub bootstrap.** On every successful GitHub OAuth connect the project's
 public key is auto-registered on the connecting user's account as **both** a signing key

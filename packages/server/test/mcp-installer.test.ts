@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Db } from '../src/db/database';
 import type { DockerClient } from '../src/services/docker';
 import { installLocalMcpById, installPendingLocalMcps } from '../src/services/mcp-installer';
@@ -193,6 +193,81 @@ describe('installPendingLocalMcps', () => {
 		});
 		expect(results.find((r) => r.name === 'already-done')).toBeUndefined();
 		expect(calls.find((c) => c.cmd[2]?.includes('already-done'))).toBeUndefined();
+	});
+});
+
+describe('install exec process scoping', () => {
+	it('stamps the npm exec env with an mcp-install scope marker', async () => {
+		const { id } = (
+			await db.query<{ id: string }>(
+				`INSERT INTO mcp_connections (name, kind, config, install_status)
+				 VALUES ('fs-marker', 'local', $1::jsonb, 'pending') RETURNING id`,
+				[JSON.stringify({ command: 'x', package: '@scope/pkg' })],
+			)
+		).rows[0];
+
+		const envs: string[][] = [];
+		const docker = {
+			execCreate: async (_id: string, cfg: { Env?: string[] }): Promise<string> => {
+				envs.push(cfg.Env ?? []);
+				return 'exec-id';
+			},
+			execStart: async () => ({ stdout: '', stderr: '' }),
+			execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+		} as unknown as DockerClient;
+
+		await installLocalMcpById({ db, docker, containerId: 'c', teamId, projectId }, id);
+
+		expect(envs).toHaveLength(1);
+		const marker = envs[0].find((e) => e.startsWith('HEZO_HEARTBEAT_RUN_ID='));
+		expect(marker).toMatch(/^HEZO_HEARTBEAT_RUN_ID=mcp-install-[0-9a-f]{16}$/);
+	});
+
+	it('reaps the abandoned npm tree by its scope marker when the install times out', async () => {
+		vi.useFakeTimers();
+		try {
+			const { id } = (
+				await db.query<{ id: string }>(
+					`INSERT INTO mcp_connections (name, kind, config, install_status)
+					 VALUES ('fs-hang', 'local', $1::jsonb, 'pending') RETURNING id`,
+					[JSON.stringify({ command: 'x', package: '@scope/pkg' })],
+				)
+			).rows[0];
+
+			const kills: Array<{ containerId: string; runId: string }> = [];
+			let markedEnv: string[] = [];
+			const docker = {
+				execCreate: async (_id: string, cfg: { Env?: string[] }): Promise<string> => {
+					markedEnv = cfg.Env ?? [];
+					return 'exec-id';
+				},
+				// Hangs (npm black-holed on the network) until the timeout aborts it.
+				execStart: (_id: string, opts?: { signal?: AbortSignal }) =>
+					new Promise((_resolve, reject) => {
+						opts?.signal?.addEventListener(
+							'abort',
+							() => reject(new DOMException('Aborted', 'AbortError')),
+							{ once: true },
+						);
+					}),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+				killRunProcesses: async (containerId: string, runId: string) => {
+					kills.push({ containerId, runId });
+				},
+			} as unknown as DockerClient;
+
+			const install = installLocalMcpById({ db, docker, containerId: 'c', teamId, projectId }, id);
+			await vi.advanceTimersByTimeAsync(5 * 60 * 1000 + 1);
+			const result = await install;
+
+			expect(result?.status).toBe('failed');
+			const scopeId = markedEnv
+				.find((e) => e.startsWith('HEZO_HEARTBEAT_RUN_ID='))
+				?.slice('HEZO_HEARTBEAT_RUN_ID='.length);
+			expect(kills).toEqual([{ containerId: 'c', runId: scopeId }]);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });
 

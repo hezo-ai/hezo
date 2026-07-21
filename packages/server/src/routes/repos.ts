@@ -27,7 +27,7 @@ import {
 	resetCloneToOrigin,
 	type WorktreeLoc,
 } from '../services/git';
-import { ContainerGitExecutor } from '../services/git-executor';
+import { ContainerGitExecutor, mintGitOpScopeId } from '../services/git-executor';
 import { createGitHubRepo, parseGitHubUrl, validateRepoAccess } from '../services/github';
 import { getConnection } from '../services/oauth/connection-store';
 import { performRepoSetup } from '../services/repo-provisioning';
@@ -330,7 +330,13 @@ reposRoutes.get('/projects/:projectId/repos/:repoId/git-state', async (c) => {
 
 	const docker = c.get('docker');
 	const runUser = await resolveContainerRunUser(docker, containerId);
-	const executor = ContainerGitExecutor.forPrep(docker, containerId, null, runUser);
+	const executor = ContainerGitExecutor.forPrep(
+		docker,
+		containerId,
+		null,
+		runUser,
+		mintGitOpScopeId(),
+	);
 	const worktreesPath = getWorktreesPath(dataDir, teamId, projectId);
 	const wtPrefix = `${CONTAINER_WORKTREES_ROOT}/`;
 
@@ -492,7 +498,13 @@ reposRoutes.post('/projects/:projectId/repos/:repoId/reset', async (c) => {
 			removed?: string[];
 		}> => {
 			if (action === 'prune_worktrees') {
-				const executor = ContainerGitExecutor.forPrep(docker, containerId, null, runUser);
+				const executor = ContainerGitExecutor.forPrep(
+					docker,
+					containerId,
+					null,
+					runUser,
+					mintGitOpScopeId(),
+				);
 				// Remove worktrees whose task is closed (terminal) or no longer exists —
 				// finished tickets plus leftovers from crashed/interrupted runs. Open
 				// tasks' worktrees are left intact; reset is already 409-gated on active
@@ -520,16 +532,20 @@ reposRoutes.post('/projects/:projectId/repos/:repoId/reset', async (c) => {
 			}
 			// discard_local: the best-effort fetch needs the SSH bridge.
 			const sshAgentServer = c.get('sshAgentServer');
-			const runReset = (bridge: BridgeRunnerArgs | null) =>
+			const runReset = (bridge: BridgeRunnerArgs | null, scopeId: string) =>
 				resetCloneToOrigin(
-					ContainerGitExecutor.forPrep(docker, containerId, bridge, runUser),
+					ContainerGitExecutor.forPrep(docker, containerId, bridge, runUser, scopeId),
 					repo.repoLoc,
 				);
 			return sshAgentServer
-				? withProvisionBridge(sshAgentServer, teamId, dataDir, runUser.name, ({ bridge }) =>
-						runReset(bridge),
+				? withProvisionBridge(
+						sshAgentServer,
+						teamId,
+						dataDir,
+						runUser.name,
+						({ bridge, scopeId }) => runReset(bridge, scopeId),
 					)
-				: runReset(null);
+				: runReset(null, mintGitOpScopeId());
 		},
 	);
 

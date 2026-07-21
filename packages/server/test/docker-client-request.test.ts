@@ -491,6 +491,132 @@ describe('killRunProcesses', () => {
 	});
 });
 
+describe('killProcessesByEnvMarker', () => {
+	it('rejects a shell-active marker value before any exec is created', async () => {
+		const docker = client();
+		let created = 0;
+		docker.execCreate = async () => {
+			created++;
+			return 'exec-kill';
+		};
+		for (const value of ['a b', 'a"b', "a'b", 'a$b', 'a`b`', 'a;b', '', 'x'.repeat(65)]) {
+			await expect(
+				docker.killProcessesByEnvMarker('cid-1', 'HEZO_EXEC_SCOPE_ID', value),
+			).rejects.toThrow('unsafe env marker value');
+		}
+		expect(created).toBe(0);
+	});
+
+	it('greps for the exact <name>=<value> marker', async () => {
+		const docker = client();
+		const scripts: string[] = [];
+		docker.execCreate = async (_cid, config) => {
+			scripts.push((config.Cmd as string[])[2]);
+			return 'exec-kill';
+		};
+		docker.execStart = async () => ({ stdout: '', stderr: '' });
+
+		await docker.killProcessesByEnvMarker('cid-1', 'HEZO_EXEC_SCOPE_ID', 'scope-42');
+
+		expect(scripts[0]).toContain('HEZO_EXEC_SCOPE_ID=scope-42');
+		expect(scripts[0]).toContain('kill -9');
+	});
+});
+
+describe('listHezoProcesses', () => {
+	it('execs a root /proc scan that emits marker/sock/bridge matches with age', async () => {
+		const docker = client();
+		const created: Array<{ containerId: string; config: Record<string, unknown> }> = [];
+		docker.execCreate = async (containerId, config) => {
+			created.push({ containerId, config: config as unknown as Record<string, unknown> });
+			return 'exec-scan';
+		};
+		docker.execStart = async () => ({ stdout: '', stderr: '' });
+
+		await docker.listHezoProcesses('cid-1');
+
+		expect(created).toHaveLength(1);
+		const cmd = created[0].config.Cmd as string[];
+		expect(cmd[0]).toBe('sh');
+		const script = cmd[2];
+		expect(script).toContain('HEZO_HEARTBEAT_RUN_ID=');
+		expect(script).toContain('SSH_AUTH_SOCK=/run/hezo/');
+		expect(script).toContain('hezo-run-with-bridge');
+		expect(script).toContain('/proc/uptime');
+		// Root exec, stdout only (the parseable scan lines).
+		expect(created[0].config.User).toBeUndefined();
+		expect(created[0].config.AttachStdout).toBe(true);
+	});
+
+	it('parses scan output, keeps tab-bearing cmdlines whole, and drops malformed lines', async () => {
+		const docker = client();
+		docker.execCreate = async () => 'exec-scan';
+		docker.execStart = async () => ({
+			stdout: [
+				'42\trun-uuid-1\t1\t500\tnode /some/cli',
+				'43\t\t1\t900\t/bin/sh /usr/local/bin/hezo-ssh-bridge abc host 123',
+				// cmdline containing a tab stays one field
+				'44\trun-uuid-1\t0\t50\tsh -c echo\thello',
+				'45\tbad-age\t0\tnot-a-number\tx',
+				'garbage line',
+				'',
+			].join('\n'),
+			stderr: '',
+		});
+
+		const procs = await docker.listHezoProcesses('cid-1');
+
+		expect(procs).toEqual([
+			{ pid: 42, runId: 'run-uuid-1', hasHezoSock: true, ageSecs: 500, cmdline: 'node /some/cli' },
+			{
+				pid: 43,
+				runId: null,
+				hasHezoSock: true,
+				ageSecs: 900,
+				cmdline: '/bin/sh /usr/local/bin/hezo-ssh-bridge abc host 123',
+			},
+			{
+				pid: 44,
+				runId: 'run-uuid-1',
+				hasHezoSock: false,
+				ageSecs: 50,
+				cmdline: 'sh -c echo\thello',
+			},
+		]);
+	});
+});
+
+describe('killPids', () => {
+	it('SIGKILLs the validated pid list in one exec and no-ops on an empty list', async () => {
+		const docker = client();
+		const scripts: string[] = [];
+		docker.execCreate = async (_cid, config) => {
+			scripts.push((config.Cmd as string[])[2]);
+			return 'exec-kill';
+		};
+		docker.execStart = async () => ({ stdout: '', stderr: '' });
+
+		await docker.killPids('cid-1', []);
+		expect(scripts).toHaveLength(0);
+
+		await docker.killPids('cid-1', [42, 137, 4096]);
+		expect(scripts).toEqual(['kill -9 42 137 4096 2>/dev/null || true']);
+	});
+
+	it('rejects non-integer, negative, and PID-1 targets before any exec', async () => {
+		const docker = client();
+		let created = 0;
+		docker.execCreate = async () => {
+			created++;
+			return 'exec-kill';
+		};
+		for (const pids of [[1.5], [-1], [Number.NaN], [0], [1]]) {
+			await expect(docker.killPids('cid-1', pids)).rejects.toThrow('unsafe pid');
+		}
+		expect(created).toBe(0);
+	});
+});
+
 describe('execStart demux over the real unix-socket transport', () => {
 	it('concatenates multiple buffered frames per stream', async () => {
 		const sim = await startDockerSockSim();

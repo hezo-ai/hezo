@@ -79,10 +79,12 @@ describe('findDocsAckValue', () => {
 });
 
 describe('checkCommitMessage', () => {
-	it('rejects a code commit with no trailer', () => {
+	it('rejects a code commit with no trailer, pointing at both docs/ and .dev/', () => {
 		const r = checkCommitMessage('feat: add flag', ['packages/server/src/cli.ts']);
 		expect(r.ok).toBe(false);
 		expect(r.error).toContain('Docs-Checked');
+		// The pass covers the internal .dev/ docs too, not just user-facing docs/.
+		expect(r.error).toContain('.dev/');
 	});
 
 	it('rejects bare and too-short acknowledgments', () => {

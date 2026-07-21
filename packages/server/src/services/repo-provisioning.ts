@@ -5,7 +5,7 @@ import { withTransaction } from '../lib/sql';
 import { logger } from '../logger';
 import { resolveContainerRunUser } from './container-user';
 import { type ContainerDeps, ensureProjectContainerRunning } from './containers';
-import { ContainerGitExecutor } from './git-executor';
+import { ContainerGitExecutor, mintGitOpScopeId } from './git-executor';
 import {
 	enqueueRepoSetupResumeWakeups,
 	finalizePendingRepoSetup,
@@ -90,12 +90,12 @@ export async function performRepoSetup(
 				// Git runs inside the project container; the host runs no git. The
 				// provisioning bridge carries the project SSH key into the exec.
 				const runUser = await resolveContainerRunUser(docker, containerId);
-				const syncRepos = (bridge: BridgeRunnerArgs | null) =>
+				const syncRepos = (bridge: BridgeRunnerArgs | null, scopeId: string) =>
 					ensureProjectRepos(
 						db,
 						{ id: input.projectId, team_id: input.teamId },
 						dataDir,
-						ContainerGitExecutor.forPrep(docker, containerId, bridge, runUser),
+						ContainerGitExecutor.forPrep(docker, containerId, bridge, runUser, scopeId),
 					);
 				const syncRes = deps.sshAgentServer
 					? await withProvisionBridge(
@@ -103,9 +103,9 @@ export async function performRepoSetup(
 							input.teamId,
 							dataDir,
 							runUser.name,
-							({ bridge }) => syncRepos(bridge),
+							({ bridge, scopeId }) => syncRepos(bridge, scopeId),
 						)
-					: await syncRepos(null);
+					: await syncRepos(null, mintGitOpScopeId());
 				const failed = syncRes.failed.find((f) => f.name === repoName);
 				if (failed) {
 					setupError = failed.error;

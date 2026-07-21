@@ -29,6 +29,13 @@ export function getActiveRuntime(): StartupResult | null {
 export async function shutdownRuntime(result: StartupResult): Promise<void> {
 	if (shuttingDown) return;
 	shuttingDown = true;
+	// Reap live runs' in-container process trees BEFORE aborting them: the abort
+	// path's own kill is fire-and-forget and would race process.exit, stranding
+	// the agent CLIs in the warm containers until the next boot sweep. Bounded
+	// internally so a dead Docker socket can't wedge shutdown.
+	await result.jobManager
+		.killLiveRunProcesses()
+		.catch((err) => log.warn('live-run process reap during shutdown failed', err));
 	result.jobManager.shutdown();
 	await result.chatSessionManager.stop();
 	await result.egressProxy.releaseAll();

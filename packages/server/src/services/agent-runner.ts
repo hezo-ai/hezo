@@ -1306,7 +1306,7 @@ export async function runAgent(
 
 			// Progress-update runs only call MCP tools; they need no code worktree.
 			const prep = task
-				? await prepareWorktrees(deps, project, task, bridge, runUser, emit, signal)
+				? await prepareWorktrees(deps, project, task, heartbeatRunId, bridge, runUser, emit, signal)
 				: {
 						workingDir: '/workspace',
 						designatedRepo: null as RepoRow | null,
@@ -1675,6 +1675,7 @@ async function prepareWorktrees(
 	deps: RunnerDeps,
 	project: ProjectInfo,
 	task: TaskInfo,
+	heartbeatRunId: string,
 	bridge: BridgeRunnerArgs | null,
 	runUser: ContainerRunUser,
 	emit: (stream: 'stdout' | 'stderr', text: string) => void,
@@ -1709,11 +1710,15 @@ async function prepareWorktrees(
 			projectId: project.id,
 			teamId: project.team_id,
 		});
+		// The run id doubles as the exec scope marker so an abandoned prep op's
+		// git/ssh/bridge tree stays killable; the agent CLI hasn't started yet, so
+		// a prep-abort marker kill can only hit prep's own processes.
 		const executor = ContainerGitExecutor.forPrep(
 			deps.docker,
 			project.container_id,
 			bridge,
 			runUser,
+			heartbeatRunId,
 			gitIdentityEnv,
 			signal,
 		);
