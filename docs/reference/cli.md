@@ -80,7 +80,16 @@ assets in S3.
   `<data-dir>/backups/hezo-<timestamp>.backup.gz`) instead of a bundle.
 - `--no-database` — assets only. Writes a bundle with just the asset files.
 
-For the embedded database (and local asset files), stop the server first. See
+`--data-dir` (or `HEZO_DATA_DIR`) must point at the same data directory the instance
+runs with. The env var is read exactly as the server reads it, so a deployment that sets
+`HEZO_DATA_DIR` (systemd, Docker) needs no extra flag — omit `--data-dir` and the backup
+targets the running instance's embedded database. Pointing at a directory with no Hezo
+database is refused with a clear error rather than silently backing up an empty one.
+
+For the embedded database (and local asset files), stop the server first — backup opens a
+second database over the same single-process files, so it **refuses while the server is
+running** (checked via an advisory `<data-dir>/hezo.lock` the live instance holds). A hosted
+database + bucket can be backed up with the server running. See
 [Backup & recovery](/docs/deployment/backup-and-recovery).
 
 ## Restore a backup
@@ -101,7 +110,8 @@ migrate an instance between local and hosted storage.
 The target database must be empty unless `--wipe` is passed. Restored asset blobs are
 verified by checksum against the database rows; `--strict-assets` fails if any blob has
 no matching row. `--no-assets` / `--no-database` restore only one half of a bundle.
-Backups taken by a newer Hezo are refused — upgrade first. See
+Backups taken by a newer Hezo are refused — upgrade first. Like `hezo backup`, restore
+reads `--data-dir` from `HEZO_DATA_DIR` when the flag is omitted. See
 [Backup & recovery](/docs/deployment/backup-and-recovery).
 
 ## Reset
