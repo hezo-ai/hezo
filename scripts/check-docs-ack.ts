@@ -114,12 +114,16 @@ function main(): void {
 		console.error(
 			'Every code commit must acknowledge the docs-alignment pass (AGENTS.md § Keeping docs in sync with code).',
 		);
-		console.error('Re-read the docs pages describing what you changed, then add a trailer, e.g.:\n');
+		console.error(
+			'Re-read the docs pages describing what you changed, then add a trailer, e.g.:\n',
+		);
 		console.error('  Docs-Checked: updated docs/reference/cli.md for the new --foo flag');
 		console.error(
 			'  Docs-Checked: verified docs/concepts/tasks.md still matches; no other doc surface affected',
 		);
-		console.error('  Docs-Checked: internal refactor, no user-visible behaviour or documented surface changed\n');
+		console.error(
+			'  Docs-Checked: internal refactor, no user-visible behaviour or documented surface changed\n',
+		);
 		process.exit(1);
 	}
 }
