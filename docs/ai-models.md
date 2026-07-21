@@ -22,10 +22,11 @@ and your agents run on the models you choose.
 | **DeepSeek** | DeepSeek | Claude Code | API key |
 | **Z.ai** | GLM | Claude Code | API key |
 
-Each provider is driven through its **native command-line runtime** inside the agent's
-container — so you get each model's first-party agentic tooling, not a lowest-common-
-denominator wrapper. (xAI runs on its own **Grok Build** CLI, on the `grok-4.5` model;
-Kimi runs through Claude Code against Moonshot's Anthropic-compatible endpoint.)
+Each provider is driven through a **first-party agentic command-line runtime** inside the
+agent's container — not a lowest-common-denominator wrapper. Anthropic, OpenAI, Google, and
+xAI each use their own CLI (xAI runs on its **Grok Build** CLI, on the `grok-4.5` model);
+Kimi, DeepSeek, and Z.ai run through Claude Code against their Anthropic-compatible
+endpoints.
 
 ## Local models (on the roadmap)
 

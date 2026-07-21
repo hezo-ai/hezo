@@ -63,10 +63,9 @@ works fine. See [Serve it over HTTPS](/docs/deployment/cloud#serve-it-over-https
 have no callback and no HTTPS requirement.)
 
 If your instance's address changes (for example you move from plain HTTP to HTTPS),
-remove the connector and add it again before reconnecting: the OAuth client Hezo
-registered with the provider is tied to the address it was created on, and a stale
-registration is rejected with a "redirect_uri does not match" error. Re-adding the
-connector registers a fresh client on the current address.
+just press **Connect** on the connector again — Hezo detects that its callback address
+changed and automatically registers a fresh OAuth client with the provider on the
+current address, so you don't have to remove and re-add the connector.
 
 ## REST API connectors
 
@@ -196,10 +195,10 @@ Manage connections two ways:
 Revoking a connector clears its stored token or API key so agents lose access immediately,
 but the connector stays on the page marked **Revoked**. To reconnect, just press **Connect**
 (or **API key**) on it again — Hezo restores the connector in place and runs a fresh
-authorization, so you never have to delete and recreate it. (The exception is an
-instance-address change — see [OAuth connections need an HTTPS address](#oauth-connections-need-an-https-address)
-above — where the OAuth client is tied to the old address and the connector must be removed
-and added again.)
+authorization, so you never have to delete and recreate it. (An instance-address change
+is handled the same way: pressing **Connect** re-registers the OAuth client on the new
+address automatically — see
+[OAuth connections need an HTTPS address](#oauth-connections-need-an-https-address).)
 
 A connector that isn't connected — one still awaiting connection ("Pending connect"),
 failed, or revoked — can instead be dropped outright with **Remove** on its row: it deletes

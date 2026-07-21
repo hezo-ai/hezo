@@ -66,6 +66,16 @@ Docs are part of the contract, not an afterthought. **Every code change ships wi
 
 **Verify, don't assume.** The *generated* surfaces have drift tests that fail on mismatch — `packages/server/test/{mcp-reference,llms-txt,docs-bundle}.test.ts` (run them after any tool/route/docs change). Hand-written prose (`docs/**`, `.dev/architecture.md`, the READMEs) has **no** automated guard, so re-read the page(s) describing the area you changed and confirm every concrete claim — flags, defaults, ports, type/enum names, file paths, behaviours — still matches the code you just wrote.
 
+**The acknowledgment is enforced at commit time.** The `commit-msg` hook (`.husky/commit-msg` → `scripts/check-docs-ack.ts`) rejects any commit that stages doc-bearing code — anything under `packages/*/src/`, `packages/*/migrations/`, `agents/`, `skills/`, `docker/`, `deploy/`, `marketplace/`, or `scripts/` — unless the commit message carries a **`Docs-Checked:` trailer** recording the docs-alignment pass you actually did. Write what you checked, not a rubber stamp — bare values (`yes`, `n/a`, `done`, anything under 10 characters) are rejected:
+
+```
+Docs-Checked: updated docs/reference/cli.md + configuration.md for the new --foo flag
+Docs-Checked: verified docs/concepts/tasks.md still matches; no other doc surface affected
+Docs-Checked: internal refactor, no user-visible behaviour or documented surface changed
+```
+
+The trailer must be true — it is the audit record that the pass in this section happened. Never write it without doing the pass, and **never bypass the hook with `--no-verify`**. Docs-only, test-only, merge, revert, and fixup commits are exempt (no trailer needed). The hook's classification rules are unit-tested in `packages/server/test/docs-ack-hook.test.ts`; if you add a new doc-bearing top-level directory, add it to `DOC_BEARING_PATTERNS` in `scripts/check-docs-ack.ts` in the same change.
+
 ## Project / team model (1:1)
 
 Hezo is **project-centric**: a **project** is the primary unit and **owns exactly one team** (its agent roster). The relationship is **1:1** — a team backs exactly one project, enforced by `UNIQUE(projects.team_id)`. In the DB the FK runs `projects.team_id → teams.id`, but conceptually "teams belong to projects." Reach a team *through* its project; all project work is addressed by **project slug** (`/api/projects/:projectId/...`).
