@@ -14,8 +14,10 @@ export interface IngestDeps {
 /**
  * Resolve an external sender to a linked Hezo user, or null if not on the
  * allowlist. `(channel, external_user_id)` is unique, so at most one row.
+ * Exported for the group ingest path, where a link is optional enrichment
+ * (attribution), never a gate.
  */
-async function resolveLinkedUser(
+export async function resolveLinkedUser(
 	db: Db,
 	channel: ChatChannel,
 	externalUserId: string,

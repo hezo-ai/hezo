@@ -74,6 +74,7 @@ import { publicUsersRoutes, usersRoutes } from './routes/users';
 import { AuthChallengeStore } from './services/auth-challenges';
 import {
 	buildChatChannelRegistry,
+	buildInboundEventSink,
 	type ChatChannelRegistry,
 	wireManagerToChannels,
 } from './services/chat-channels';
@@ -365,10 +366,17 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		containerLogStreamer,
 	});
 
-	// External chat channel adapters (Telegram now, Discord later). The registry is
-	// channel-agnostic; wiring the manager's delivery/close hooks routes external
-	// replies + thread closes through the right adapter without any platform branch.
-	const chatChannelRegistry = buildChatChannelRegistry({ db, masterKeyManager });
+	// External chat channel adapters (Telegram + Slack now, Discord later). The
+	// registry is channel-agnostic; wiring the manager's delivery/close hooks routes
+	// external replies + thread closes through the right adapter without any
+	// platform branch. The sink is the reverse seam: socket-transport adapters
+	// (Slack Socket Mode) push inbound events through it into the same ingest
+	// functions the webhook route uses.
+	const chatChannelRegistry = buildChatChannelRegistry({
+		db,
+		masterKeyManager,
+		sink: buildInboundEventSink({ db, manager: chatSessionManager }),
+	});
 	wireManagerToChannels(chatSessionManager, chatChannelRegistry);
 
 	setStartupPhase('workspace');

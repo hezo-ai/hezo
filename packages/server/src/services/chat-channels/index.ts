@@ -1,12 +1,34 @@
 import type { ChatChannel } from '@hezo/shared';
 import type { ChatSessionManager } from '../chat-session-manager';
+import type { IngestDeps } from './ingest';
+import { ingestInboundEvent } from './ingest';
+import { ingestGroupMentionEvent } from './ingest-group';
 import { ChatChannelRegistry } from './registry';
 import { TelegramAdapter } from './telegram';
-import type { ChatChannelAdapterDeps } from './types';
+import type { ChatChannelAdapterDeps, InboundEventSink } from './types';
 
 export { type IngestDeps, ingestInboundEvent } from './ingest';
+export { formatGroupContextBlock, ingestGroupMentionEvent } from './ingest-group';
 export { ChatChannelRegistry } from './registry';
-export type { ChatChannelAdapter, InboundChatEvent } from './types';
+export type {
+	ChatChannelAdapter,
+	InboundChatEvent,
+	InboundEventSink,
+	InboundGroupMentionEvent,
+	ThreadContextMessage,
+} from './types';
+
+/**
+ * Build the adapter-side ingest sink for socket-transport adapters (a webhook
+ * channel keeps flowing through `routes/chat-webhooks.ts`). Both paths resolve
+ * through the same ingest functions the webhook route uses.
+ */
+export function buildInboundEventSink(deps: IngestDeps): InboundEventSink {
+	return {
+		ingestDm: (adapter, event) => ingestInboundEvent(deps, adapter, event),
+		ingestGroupMention: (adapter, event) => ingestGroupMentionEvent(deps, adapter, event),
+	};
+}
 
 /**
  * Build the channel-adapter registry with every shipped adapter registered.

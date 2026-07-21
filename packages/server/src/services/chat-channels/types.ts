@@ -17,6 +17,36 @@ export interface InboundChatEvent {
 	text: string;
 }
 
+/**
+ * A group/channel @-mention of the bot — the coworker-mode inbound event. Produced
+ * by `parseGroupMention` on group-capable adapters and consumed by
+ * `ingestGroupMentionEvent` (never by the DM ingest path).
+ */
+export interface InboundGroupMentionEvent extends InboundChatEvent {
+	/** Human display name of the sender (falls back to externalHandle/externalUserId). */
+	senderDisplayName?: string;
+	/** Platform channel name for titles/labels, e.g. "#general". */
+	channelName?: string;
+	/** True when the mention arrived inside an existing platform thread. */
+	isThreadReply: boolean;
+	/** Platform message id (Slack ts), for logging/dedupe. */
+	messageTs?: string;
+}
+
+/**
+ * One message of ephemeral platform history an adapter fetched for a coworker-mode
+ * turn. The adapter owns the platform fetch and its filtering; the core owns
+ * formatting the list into the prompt (`formatGroupContextBlock`), so the prompt
+ * shape is identical across channels.
+ */
+export interface ThreadContextMessage {
+	/** Sender display name or handle. */
+	sender: string;
+	text: string;
+	/** Human-readable timestamp, if the platform provides one. */
+	timestamp?: string;
+}
+
 /** A finalized assistant reply to deliver back out to an external channel. */
 export interface OutboundReply {
 	externalThreadId: string;
@@ -75,6 +105,43 @@ export interface ChatChannelAdapter {
 	 * closed on the platform close the mirrored web thread. Optional.
 	 */
 	parseClose?(raw: unknown): { externalThreadId: string } | null;
+
+	// --- Group / coworker mode (optional capability trio) ---
+	// A channel that can host the CEO as a coworker in an existing group
+	// channel/thread implements all three; a DM-only channel omits them and group
+	// mode simply doesn't exist for it. These feed `ingestGroupMentionEvent`, never
+	// the DM ingest path.
+
+	/**
+	 * Normalize a raw platform event into a group @-mention of the bot, or null to
+	 * ignore (not a mention, the bot's own message, …). Pure — mention tokens are
+	 * already stripped from `text`.
+	 */
+	parseGroupMention?(raw: unknown): InboundGroupMentionEvent | null;
+
+	/**
+	 * Whether group/coworker mode is live *right now* (enabled + configured + the
+	 * mode not switched off in channel metadata). Mirrors the `supportsThreads`
+	 * capability-discovery pattern. Default (absent) = false.
+	 */
+	supportsGroupMode?(): Promise<boolean>;
+
+	/**
+	 * Fetch the platform history surrounding a group mention as ephemeral context
+	 * for this one turn (full thread when the mention is a thread reply, recent
+	 * channel messages when top-level). The adapter filters out the bot's own posts
+	 * and prior bot-mention posts — those already live in the persisted conversation
+	 * window. Oldest-first. Best-effort: the caller proceeds without context on
+	 * failure.
+	 */
+	fetchThreadContext?(event: InboundGroupMentionEvent): Promise<ThreadContextMessage[]>;
+
+	/**
+	 * Validate the saved credentials against the platform (e.g. Slack `auth.test`).
+	 * Called by the config route after save when enabling, so the operator sees a
+	 * broken token immediately instead of a silent dead channel. Optional.
+	 */
+	validateConfig?(): Promise<{ ok: boolean; errors: string[] }>;
 }
 
 /**
@@ -89,10 +156,25 @@ export interface ChatChannelConfig {
 	metadata: Record<string, unknown>;
 }
 
+/**
+ * The adapter-side path into the ingest layer, for adapters whose transport is a
+ * persistent connection (a Slack Socket Mode client, a gateway) rather than the
+ * generic webhook route. Webhook channels keep flowing through
+ * `routes/chat-webhooks.ts`, which calls the ingest functions directly.
+ */
+export interface InboundEventSink {
+	/** DM/assistant-mode message → the allowlisted mirror ingest path. */
+	ingestDm(adapter: ChatChannelAdapter, event: InboundChatEvent): Promise<void>;
+	/** Group @-mention → the coworker ingest path. */
+	ingestGroupMention(adapter: ChatChannelAdapter, event: InboundGroupMentionEvent): Promise<void>;
+}
+
 /** Shared dependencies handed to every adapter at construction. */
 export interface ChatChannelAdapterDeps {
 	db: Db;
 	masterKeyManager: MasterKeyManager;
+	/** Present once the manager is wired; socket-transport adapters ingest through it. */
+	sink?: InboundEventSink;
 }
 
 /** Decrypt a bot token from the secrets vault in-process (trusted server code). */

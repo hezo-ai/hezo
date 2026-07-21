@@ -8,6 +8,7 @@ import {
 	CEO_AGENT_SLUG,
 	CHAT_WINDOW_RETAIN_MESSAGES,
 	ChatChannel,
+	ChatConversationKind,
 	ChatMessageRole,
 	ChatMessageStatus,
 	ChatSessionStatus,
@@ -78,6 +79,35 @@ When the operator asks you to produce a file directly in this chat — an HTML d
 **Save it to the project the work belongs to.** If the conversation is about a specific project — or you're doing something for one — pass that project's slug, so the deliverable lives with its project (the same goes for any markdown you write with \`write_project_doc\`). Only when the work is **not** tied to any project — ad-hoc research, a one-off demo, instance-level help — save it to **hq** (project: hq). When unsure which project something belongs to, ask the operator rather than defaulting to hq.
 
 Do **NOT** write the file loose into the workspace (e.g. \`/workspace/demo.html\`) and hand the operator that path — \`/workspace\` lives inside the agent container, not on their machine, so they cannot open it and the file is invisible to them. The asset library is the only durable, operator-reachable home for files you produce here. For a binary deliverable the library can't author (a generated image or PDF), say so rather than pointing at a container path.`;
+
+/**
+ * Guide for group/coworker-mode turns — the CEO @-mentioned inside an external
+ * group channel it was invited to (a Slack channel, later a WhatsApp group).
+ * Replaces CHAT_GUIDE for `kind='coworker'` conversations: multi-party framing,
+ * ephemeral fetched context, replies posted into the platform thread. No
+ * long-term-memory section — that memory belongs to the operator's assistant
+ * chat, and coworker windows never compact into it.
+ */
+const GROUP_CHAT_GUIDE = `# Group Channel Chat
+
+You were @-mentioned in an external group channel (e.g. a Slack channel) that you — the Hezo CEO — joined as a coworker. This is a **multi-party conversation between humans**; you are one participant, not a private assistant. Your reply is posted into the channel thread where you were mentioned, visible to everyone there.
+
+- Transcript lines are labelled with each sender's name. Address people by name when it helps, and pay attention to who asked what.
+- A **Channel context** section (when present, above the conversation) is the surrounding channel history fetched live from the platform for THIS reply only. It is ephemeral — not part of your stored conversation — so treat it as background reading: use it to understand what the humans were discussing, but don't assume you'll see it again next turn.
+- The **Conversation so far** section contains only the exchanges that directly involved you in this thread (mentions of you and your replies).
+- People will often discuss something among themselves and then mention you to act on it — "make a plan from our chat", "document this", "create tasks for what we agreed". Read the channel context, then do the work with your tools and report back in the thread.
+- You hold the same cross-team privileges as everywhere: \`list_projects\`, \`list_tasks\`, \`create_task\`, \`write_project_doc\`, and the rest all work here. Refer to projects, tasks, teams, and docs by bare slug/identifier — never raw UUIDs.
+- Keep replies chat-app-sized: concise, plain markdown (the platform's formatting is limited), no ceremony. For substantial output (a plan, a document), write it with \`write_project_doc\`/\`write_project_asset\` into the right project and reply with a short summary naming where it landed.
+- This conversation lives in the external channel only — it does not appear in the Hezo web chatbox. If someone asks for something that needs the operator's private attention, say so and suggest they raise it with the operator directly.`;
+
+/**
+ * Hard cap on how many window messages a coworker-mode prompt replays. Coworker
+ * conversations never compact (compaction would fold group chatter into the
+ * operator's shared long-term memory), so this cap bounds the prompt instead —
+ * older mention exchanges simply age out of the replayed window. Companion to
+ * CHAT_WINDOW_RETAIN_MESSAGES, which governs the mirror-mode compaction tail.
+ */
+const COWORKER_WINDOW_MAX_MESSAGES = 40;
 
 /**
  * Render the long-term memory data block injected into every turn. The curation
@@ -203,6 +233,12 @@ export interface ConversationContext {
 	channel: ChatChannel;
 	/** Platform thread id for external channels (Telegram "<chat>:<topic>", …); null for web. */
 	externalThreadId: string | null;
+	/**
+	 * Which integration mode this conversation belongs to. `mirror` = today's
+	 * cross-channel thread parity; `coworker` = a group-mode thread with a single
+	 * origin binding, no web presence, no broadcasts, no compaction/auto-title.
+	 */
+	kind: ChatConversationKind;
 }
 
 /**
@@ -356,6 +392,18 @@ export class ChatSessionManager {
 		externalThreadId?: string | null;
 		authorUserId?: string | null;
 		attachmentIds?: string[];
+		/** Conversation mode when creating (default mirror). Existing rows keep their kind. */
+		kind?: ChatConversationKind;
+		/** External sender display label for multi-party (coworker) transcripts. */
+		authorLabel?: string | null;
+		/**
+		 * Ephemeral context (e.g. fetched Slack channel history) composed into THIS
+		 * turn's prompt only — never persisted as a chat message, so it doesn't ride
+		 * the window or compaction.
+		 */
+		injectedContext?: string;
+		/** Title when creating the conversation (coworker threads are titled at birth). */
+		title?: string;
 	}): Promise<{ userMessageId: string; assistantMessageId: string; conversationId: string }> {
 		const ctx = await this.resolveConversationForInput(input);
 		const convo = this.getConvoRuntime(ctx.conversationId);
@@ -376,11 +424,14 @@ export class ChatSessionManager {
 			text: string;
 			authorUserId?: string | null;
 			attachmentIds?: string[];
+			authorLabel?: string | null;
+			injectedContext?: string;
 		},
 		ctx: ConversationContext,
 	): Promise<{ userMessageId: string; assistantMessageId: string; conversationId: string }> {
 		const session = await this.ensureSession();
 		const { conversationId, channel } = ctx;
+		const isCoworker = ctx.kind === ChatConversationKind.Coworker;
 		const convo = this.getConvoRuntime(conversationId);
 
 		// A user turn preempts any in-flight background compaction for this thread so
@@ -399,11 +450,13 @@ export class ChatSessionManager {
 			await convo.titling?.catch(() => undefined);
 		}
 
-		// Interrupt an in-flight reply in this thread: abort it and wait for it to
-		// finalize (the run loop persists the partial as `interrupted`) so the next
-		// turn's prompt includes it.
+		// An in-flight reply in this thread: mirror threads interrupt it (abort, keep
+		// the partial as `interrupted`) so only the latest turn streams to the
+		// operator. Coworker threads QUEUE instead — in a group channel two quick
+		// mentions are two people expecting two answers, and an aborted partial would
+		// silently post nothing to the platform (only completed replies deliver).
 		if (convo.current) {
-			convo.current.abort.abort('interrupted');
+			if (!isCoworker) convo.current.abort.abort('interrupted');
 			await convo.current.promise.catch(() => undefined);
 		}
 
@@ -414,6 +467,7 @@ export class ChatSessionManager {
 			status: ChatMessageStatus.Complete,
 			content: input.text,
 			authorUserId: input.authorUserId ?? null,
+			authorLabel: input.authorLabel ?? null,
 			completed: true,
 		});
 		// Link any uploaded files to the user message, then resolve their metadata so
@@ -436,20 +490,26 @@ export class ChatSessionManager {
 				).get(userMessageId) ?? [];
 		}
 		await this.touchConversation(conversationId);
-		this.broadcastStart(
-			conversationId,
-			userMessageId,
-			ChatMessageRole.User,
-			channel,
-			input.text,
-			userAttachments,
-		);
-		// Mirror the operator's message to the thread's OTHER channels (not the one it
-		// arrived on), so the conversation reads the same on every surface. Background;
-		// best-effort.
-		trackBackground(
-			this.mirrorUserMessage(conversationId, channel, input.authorUserId ?? null, input.text),
-		);
+		// Coworker turns broadcast nothing: the conversation is invisible in the web
+		// chatbox, and a global-room broadcast would tick the unread badge for a
+		// thread the operator can never open.
+		if (!isCoworker) {
+			this.broadcastStart(
+				conversationId,
+				userMessageId,
+				ChatMessageRole.User,
+				channel,
+				input.text,
+				userAttachments,
+			);
+			// Mirror the operator's message to the thread's OTHER channels (not the one
+			// it arrived on), so the conversation reads the same on every surface.
+			// Background; best-effort. (A coworker thread has only its origin binding,
+			// so there is nothing to mirror to — skipped above.)
+			trackBackground(
+				this.mirrorUserMessage(conversationId, channel, input.authorUserId ?? null, input.text),
+			);
+		}
 
 		const assistantMessageId = await this.insertMessage({
 			conversationId,
@@ -461,18 +521,31 @@ export class ChatSessionManager {
 			sessionId: session.sessionId,
 			completed: false,
 		});
-		this.broadcastStart(conversationId, assistantMessageId, ChatMessageRole.Assistant, channel, '');
+		if (!isCoworker) {
+			this.broadcastStart(
+				conversationId,
+				assistantMessageId,
+				ChatMessageRole.Assistant,
+				channel,
+				'',
+			);
+		}
 
 		const abort = new AbortController();
-		const promise = this.runTurn(session, ctx, assistantMessageId, abort);
+		const promise = this.runTurn(session, ctx, assistantMessageId, abort, input.injectedContext);
 		convo.current = { assistantMessageId, abort, promise };
 		// Title the thread as early as possible: kick off title generation from the
 		// first user message *in parallel* with the reply (off its own prompt file, so
 		// the two execs never collide), so the switcher/rail label flips from "New
 		// thread" while the CEO is still typing instead of only after the reply settles.
 		// Compaction still waits for the reply — it rewrites the window this turn feeds.
-		trackBackground(this.maybeAutoTitle(ctx));
-		trackBackground(promise.then(() => this.maybeCompact(ctx)));
+		// Coworker threads skip both: they're titled at creation and never compact
+		// (compaction would fold group chatter into the operator's shared memory —
+		// COWORKER_WINDOW_MAX_MESSAGES bounds their prompt instead).
+		if (!isCoworker) {
+			trackBackground(this.maybeAutoTitle(ctx));
+			trackBackground(promise.then(() => this.maybeCompact(ctx)));
+		}
 
 		return { userMessageId, assistantMessageId, conversationId };
 	}
@@ -507,12 +580,13 @@ export class ChatSessionManager {
 	async getConversationId(): Promise<string> {
 		const ceoMemberId = await this.resolveCeoMemberId();
 		const projectId = await this.resolveHqProjectId();
-		return this.resolveOrCreateConversation({
+		const resolved = await this.resolveOrCreateConversation({
 			ceoMemberId,
 			projectId,
 			channel: ChatChannel.Web,
 			externalThreadId: null,
 		});
+		return resolved.id;
 	}
 
 	/** Resolve the conversation for an inbound turn (explicit id, or resolve/create). */
@@ -520,6 +594,8 @@ export class ChatSessionManager {
 		channel?: ChatChannel;
 		conversationId?: string;
 		externalThreadId?: string | null;
+		kind?: ChatConversationKind;
+		title?: string;
 	}): Promise<ConversationContext> {
 		if (input.conversationId) {
 			const convo = await this.getConversation(input.conversationId);
@@ -529,19 +605,24 @@ export class ChatSessionManager {
 				conversationId: convo.id,
 				channel: convo.channel,
 				externalThreadId: convo.external_thread_id,
+				kind: convo.kind,
 			};
 		}
 		const channel = input.channel ?? ChatChannel.Web;
 		const externalThreadId = input.externalThreadId ?? null;
 		const ceoMemberId = await this.resolveCeoMemberId();
 		const projectId = await this.resolveHqProjectId();
-		const conversationId = await this.resolveOrCreateConversation({
+		const resolved = await this.resolveOrCreateConversation({
 			ceoMemberId,
 			projectId,
 			channel,
 			externalThreadId,
+			kind: input.kind,
+			title: input.title,
 		});
-		return { conversationId, channel, externalThreadId };
+		// The row's kind wins over the requested one: an existing thread keeps the
+		// mode it was born with, whatever a later caller passes.
+		return { conversationId: resolved.id, channel, externalThreadId, kind: resolved.kind };
 	}
 
 	/** All channel bindings for a conversation (web = NULL external id). */
@@ -558,18 +639,19 @@ export class ChatSessionManager {
 		return r.rows;
 	}
 
-	/** Resolve an OPEN conversation by one of its channel bindings. */
+	/** Resolve an OPEN conversation (id + kind) by one of its channel bindings. */
 	private async findConversationByBinding(
 		channel: ChatChannel,
 		externalThreadId: string,
-	): Promise<string | null> {
-		const r = await this.deps.db.query<{ conversation_id: string }>(
-			`SELECT b.conversation_id FROM chat_conversation_bindings b
+	): Promise<{ id: string; kind: ChatConversationKind } | null> {
+		const r = await this.deps.db.query<{ conversation_id: string; kind: ChatConversationKind }>(
+			`SELECT b.conversation_id, c.kind FROM chat_conversation_bindings b
 			 JOIN chat_conversations c ON c.id = b.conversation_id
 			 WHERE b.channel = $1::chat_channel AND b.external_thread_id = $2 AND c.closed_at IS NULL`,
 			[channel, externalThreadId],
 		);
-		return r.rows[0]?.conversation_id ?? null;
+		const row = r.rows[0];
+		return row ? { id: row.conversation_id, kind: row.kind } : null;
 	}
 
 	private async insertBinding(
@@ -585,19 +667,26 @@ export class ChatSessionManager {
 	}
 
 	/**
-	 * Give a new conversation its channel bindings: the origin binding, a web binding
-	 * (so it's reachable from the web switcher), and — auto-mirror — a binding in every
-	 * other mirror-capable channel, creating that channel's platform thread. A channel
-	 * that can't host threads (unconfigured/DM-only) is simply skipped; mirroring is
-	 * never fatal.
+	 * Give a new conversation its channel bindings. A `mirror` conversation gets the
+	 * origin binding, a web binding (so it's reachable from the web switcher), and —
+	 * auto-mirror — a binding in every other mirror-capable channel, creating that
+	 * channel's platform thread. A channel that can't host threads
+	 * (unconfigured/DM-only) is simply skipped; mirroring is never fatal.
+	 *
+	 * A `coworker` conversation gets ONLY its origin binding: it lives in the
+	 * external group thread it was born in, is never mirrored anywhere (no web
+	 * binding — invisible in the chatbox), and the single binding is what makes the
+	 * generic fan-out deliver replies to exactly that thread.
 	 */
 	private async setupBindings(
 		conversationId: string,
 		title: string,
 		originChannel: ChatChannel,
 		originExternalThreadId: string | null,
+		kind: ChatConversationKind = ChatConversationKind.Mirror,
 	): Promise<void> {
 		await this.insertBinding(conversationId, originChannel, originExternalThreadId);
+		if (kind === ChatConversationKind.Coworker) return;
 		await this.insertBinding(conversationId, ChatChannel.Web, null);
 		if (!this.channelHooks) return;
 		const mirrorable = await this.channelHooks.mirrorableChannels().catch(() => []);
@@ -623,19 +712,23 @@ export class ChatSessionManager {
 		projectId: string;
 		channel: ChatChannel;
 		externalThreadId: string | null;
+		kind?: ChatConversationKind;
 		title?: string;
-	}): Promise<string> {
+	}): Promise<{ id: string; kind: ChatConversationKind }> {
 		const { ceoMemberId, projectId, channel, externalThreadId, title } = opts;
+		const kind = opts.kind ?? ChatConversationKind.Mirror;
 		if (externalThreadId != null) {
 			const existing = await this.findConversationByBinding(channel, externalThreadId);
 			if (existing) return existing;
+			// Coworker threads are titled at creation (from the platform channel name)
+			// because they skip auto-title; mirror threads stay NULL and auto-title.
 			const created = await this.deps.db.query<{ id: string }>(
-				`INSERT INTO chat_conversations (member_id, team_id, project_id, channel, external_thread_id)
-				 VALUES ($1, $2, $3, $4::chat_channel, $5) RETURNING id`,
-				[ceoMemberId, DEFAULT_TEAM_ID, projectId, channel, externalThreadId],
+				`INSERT INTO chat_conversations (member_id, team_id, project_id, channel, external_thread_id, kind, title)
+				 VALUES ($1, $2, $3, $4::chat_channel, $5, $6::chat_conversation_kind, $7) RETURNING id`,
+				[ceoMemberId, DEFAULT_TEAM_ID, projectId, channel, externalThreadId, kind, title ?? null],
 			);
-			await this.setupBindings(created.rows[0].id, title ?? '', channel, externalThreadId);
-			return created.rows[0].id;
+			await this.setupBindings(created.rows[0].id, title ?? '', channel, externalThreadId, kind);
+			return { id: created.rows[0].id, kind };
 		}
 		const existing = await this.deps.db.query<{ id: string }>(
 			`SELECT id FROM chat_conversations
@@ -644,7 +737,7 @@ export class ChatSessionManager {
 			 ORDER BY created_at ASC LIMIT 1`,
 			[ceoMemberId],
 		);
-		if (existing.rows[0]) return existing.rows[0].id;
+		if (existing.rows[0]) return { id: existing.rows[0].id, kind: ChatConversationKind.Mirror };
 		// Store the default web thread untitled (NULL), not a hardcoded "Main": the
 		// frontend renders NULL as the "New thread" placeholder, and the CEO auto-titles
 		// it from the conversation on the first exchange (maybeAutoTitle).
@@ -654,7 +747,7 @@ export class ChatSessionManager {
 			[ceoMemberId, DEFAULT_TEAM_ID, projectId, title ?? null],
 		);
 		await this.setupBindings(created.rows[0].id, title ?? 'New thread', ChatChannel.Web, null);
-		return created.rows[0].id;
+		return { id: created.rows[0].id, kind: ChatConversationKind.Mirror };
 	}
 
 	/**
@@ -710,6 +803,7 @@ export class ChatSessionManager {
 		id: string;
 		channel: ChatChannel;
 		external_thread_id: string | null;
+		kind: ChatConversationKind;
 		title: string | null;
 		closed_at: string | null;
 	} | null> {
@@ -717,10 +811,11 @@ export class ChatSessionManager {
 			id: string;
 			channel: ChatChannel;
 			external_thread_id: string | null;
+			kind: ChatConversationKind;
 			title: string | null;
 			closed_at: string | null;
 		}>(
-			`SELECT id, channel, external_thread_id, title, closed_at
+			`SELECT id, channel, external_thread_id, kind, title, closed_at
 			 FROM chat_conversations WHERE id = $1`,
 			[conversationId],
 		);
@@ -731,6 +826,10 @@ export class ChatSessionManager {
 	 * List conversations (open by default), newest activity first. Each carries the
 	 * set of channels it is bound to (`channels`), so the web switcher can show a
 	 * mirror indicator (e.g. a Telegram glyph on a mirrored thread).
+	 *
+	 * Mirror conversations only: coworker (group-mode) threads live in their
+	 * external channel and are deliberately invisible in the web chatbox — this
+	 * server-side filter is what keeps them out of the thread switcher.
 	 */
 	async listConversations(opts?: { includeClosed?: boolean }): Promise<
 		Array<{
@@ -757,7 +856,7 @@ export class ChatSessionManager {
 			        ARRAY(SELECT DISTINCT b.channel::text FROM chat_conversation_bindings b
 			              WHERE b.conversation_id = c.id ORDER BY b.channel::text) AS channels
 			 FROM chat_conversations c
-			 WHERE c.member_id = $1 ${opts?.includeClosed ? '' : 'AND c.closed_at IS NULL'}
+			 WHERE c.member_id = $1 AND c.kind = 'mirror' ${opts?.includeClosed ? '' : 'AND c.closed_at IS NULL'}
 			 ORDER BY c.last_activity_at DESC, c.created_at DESC`,
 			[ceoMemberId],
 		);
@@ -822,8 +921,8 @@ export class ChatSessionManager {
 		channel: ChatChannel,
 		externalThreadId: string,
 	): Promise<void> {
-		const id = await this.findConversationByBinding(channel, externalThreadId);
-		if (id) await this.closeConversation(id);
+		const found = await this.findConversationByBinding(channel, externalThreadId);
+		if (found) await this.closeConversation(found.id);
 	}
 
 	/** Bump a conversation's last-activity timestamp (drives list ordering). */
@@ -1112,8 +1211,10 @@ export class ChatSessionManager {
 		ctx: ConversationContext,
 		assistantMessageId: string,
 		abort: AbortController,
+		injectedContext?: string,
 	): Promise<void> {
 		const { conversationId } = ctx;
+		const isCoworker = ctx.kind === ChatConversationKind.Coworker;
 		const convo = this.getConvoRuntime(conversationId);
 		const { hostPath, env } = this.turnPrompt(session, conversationId);
 		// Per-exec scope marker: session-level HEZO_HEARTBEAT_RUN_ID is shared by
@@ -1138,6 +1239,7 @@ export class ChatSessionManager {
 				accumulated.text,
 				usage,
 				error,
+				{ broadcast: !isCoworker },
 			);
 			// Mirror the finalized reply to EVERY external binding — the origin channel
 			// (so the reply lands where the operator is) and every mirror. Web already
@@ -1151,7 +1253,10 @@ export class ChatSessionManager {
 		};
 
 		try {
-			const prompt = await this.composePrompt(session, conversationId);
+			const prompt = await this.composePrompt(session, conversationId, {
+				kind: ctx.kind,
+				injectedContext,
+			});
 			mkdirSync(dirname(hostPath), { recursive: true });
 			writeFileSync(hostPath, prompt);
 
@@ -1164,7 +1269,9 @@ export class ChatSessionManager {
 				for (const ev of events) {
 					if (ev.text) {
 						accumulated.text += ev.text;
-						this.broadcastDelta(conversationId, assistantMessageId, ev.text);
+						// Coworker turns don't stream to the web — the thread is invisible
+						// there; the finalized reply is delivered to the platform instead.
+						if (!isCoworker) this.broadcastDelta(conversationId, assistantMessageId, ev.text);
 					}
 				}
 			};
@@ -1214,7 +1321,12 @@ export class ChatSessionManager {
 		);
 	}
 
-	private async composePrompt(session: LiveSession, conversationId: string): Promise<string> {
+	private async composePrompt(
+		session: LiveSession,
+		conversationId: string,
+		opts: { kind: ChatConversationKind; injectedContext?: string },
+	): Promise<string> {
+		const isCoworker = opts.kind === ChatConversationKind.Coworker;
 		const stored = await getAgentSystemPrompt(this.deps.db, DEFAULT_TEAM_ID, session.ceoMemberId);
 		const resolved = await resolveSystemPrompt(this.deps.db, stored, {
 			teamId: DEFAULT_TEAM_ID,
@@ -1228,21 +1340,33 @@ export class ChatSessionManager {
 			embedDocs: true,
 		});
 
-		const memory = await getChatMemory(this.deps.db, session.ceoMemberId);
+		// The operator's long-term chat memory stays out of coworker prompts: it
+		// belongs to the private assistant chat, not to a group channel of third
+		// parties (and coworker windows never compact into it).
+		const memory = isCoworker ? null : await getChatMemory(this.deps.db, session.ceoMemberId);
 
-		// The full active (non-compacted) window IS the short-term memory — its size
-		// is bounded by compaction, so there's no per-turn message limit here.
-		const window = await loadActiveWindow(this.deps.db, conversationId);
+		// The full active (non-compacted) window IS the short-term memory — for
+		// mirror threads its size is bounded by compaction. Coworker threads never
+		// compact, so their replayed window is capped here instead.
+		let window = await loadActiveWindow(this.deps.db, conversationId);
+		if (isCoworker && window.length > COWORKER_WINDOW_MAX_MESSAGES) {
+			window = window.slice(-COWORKER_WINDOW_MAX_MESSAGES);
+		}
 		const transcript = window.map(chatTranscriptLine).join('\n\n');
 
 		return [
 			resolved,
 			session.promptDirective ?? '',
-			CHAT_GUIDE,
-			formatLongTermMemoryBlock(memory?.content ?? ''),
+			isCoworker ? GROUP_CHAT_GUIDE : CHAT_GUIDE,
+			isCoworker ? '' : formatLongTermMemoryBlock(memory?.content ?? ''),
+			// Ephemeral, per-turn context (e.g. fetched Slack channel history). Never
+			// persisted as a chat message, so it can't ride the window or compaction.
+			opts.injectedContext ?? '',
 			'## Conversation so far',
 			transcript,
-			'Reply to the latest operator message as the CEO.',
+			isCoworker
+				? 'Reply to the latest message that mentioned you, as the CEO.'
+				: 'Reply to the latest operator message as the CEO.',
 		]
 			.filter((s) => s.trim() !== '')
 			.join('\n\n');
@@ -1256,6 +1380,10 @@ export class ChatSessionManager {
 	 * is shared per CEO member and each compaction rewrites the whole row.
 	 */
 	private async maybeCompact(ctx: ConversationContext): Promise<void> {
+		// Coworker threads never compact — compaction rewrites the CEO's shared
+		// long-term memory, which belongs to the operator's assistant chat. Their
+		// window is bounded by COWORKER_WINDOW_MAX_MESSAGES at prompt time instead.
+		if (ctx.kind === ChatConversationKind.Coworker) return;
 		const session = this.live;
 		if (!session) return;
 		const convo = this.getConvoRuntime(ctx.conversationId);
@@ -1367,6 +1495,9 @@ export class ChatSessionManager {
 	 * meaningful name; a failure leaves it untitled and the next turn retries.
 	 */
 	private async maybeAutoTitle(ctx: ConversationContext): Promise<void> {
+		// Coworker threads are titled at creation (from the platform channel) and
+		// never appear in the web switcher — no auto-title exec for them.
+		if (ctx.kind === ChatConversationKind.Coworker) return;
 		const session = this.live;
 		if (!session) return;
 		const convo = this.getConvoRuntime(ctx.conversationId);
@@ -1540,13 +1671,14 @@ export class ChatSessionManager {
 		content: string;
 		authorUserId?: string | null;
 		authorMemberId?: string | null;
+		authorLabel?: string | null;
 		sessionId?: string | null;
 		completed: boolean;
 	}): Promise<string> {
 		const r = await this.deps.db.query<{ id: string }>(
 			`INSERT INTO chat_messages
-			   (conversation_id, role, channel, status, content, author_user_id, author_member_id, session_id, completed_at)
-			 VALUES ($1, $2::chat_message_role, $3::chat_channel, $4::chat_message_status, $5, $6, $7, $8, ${input.completed ? 'now()' : 'NULL'})
+			   (conversation_id, role, channel, status, content, author_user_id, author_member_id, author_label, session_id, completed_at)
+			 VALUES ($1, $2::chat_message_role, $3::chat_channel, $4::chat_message_status, $5, $6, $7, $8, $9, ${input.completed ? 'now()' : 'NULL'})
 			 RETURNING id`,
 			[
 				input.conversationId,
@@ -1556,6 +1688,7 @@ export class ChatSessionManager {
 				input.content,
 				input.authorUserId ?? null,
 				input.authorMemberId ?? null,
+				input.authorLabel ?? null,
 				input.sessionId ?? null,
 			],
 		);
@@ -1569,6 +1702,7 @@ export class ChatSessionManager {
 		content: string,
 		usage: AgentRunUsage | null,
 		error?: string,
+		opts: { broadcast?: boolean } = {},
 	): Promise<void> {
 		await this.deps.db.query(
 			`UPDATE chat_messages
@@ -1593,6 +1727,9 @@ export class ChatSessionManager {
 				.catch(() => undefined);
 		}
 		await this.touchConversation(conversationId);
+		// Coworker turns pass broadcast:false — their thread is invisible in the web
+		// chatbox, so a broadcast would only tick phantom unread badges.
+		if (opts.broadcast === false) return;
 		this.broadcastChat(conversationId, {
 			type: WsMessageType.ChatMessageComplete,
 			conversationId,
@@ -1656,13 +1793,17 @@ function roleLabel(role: string): string {
  * One transcript line for a windowed message, appending a bare-reference list of
  * any attached files (`assets/<library-path>`) so the CEO can open them from the
  * HQ asset library. An attachment-only message (empty text) still gets its files.
+ * A message carrying an external sender label (coworker/group turns) is labelled
+ * with the sender's name ("Alice: …") instead of the generic role label.
  */
 function chatTranscriptLine(msg: {
 	role: string;
 	content: string;
+	authorLabel?: string | null;
 	attachmentNames: string[];
 }): string {
-	const base = `${roleLabel(msg.role)}: ${msg.content}`;
+	const label = msg.authorLabel?.trim() ? msg.authorLabel.trim() : roleLabel(msg.role);
+	const base = `${label}: ${msg.content}`;
 	if (msg.attachmentNames.length === 0) return base;
 	const refs = `[Attached files: ${msg.attachmentNames.map((n) => `assets/${n}`).join(', ')}]`;
 	return msg.content ? `${base}\n${refs}` : `${base}${refs}`;
