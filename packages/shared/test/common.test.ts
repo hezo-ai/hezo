@@ -8,6 +8,8 @@ import {
 	assetContentDisposition,
 	assetFolder,
 	assetServeCsp,
+	ChatChannel,
+	ChatConversationKind,
 	CredentialKind,
 	claudeCodeModelArg,
 	claudeCodeProviderUsesCustomEndpoint,
@@ -19,6 +21,8 @@ import {
 	isAllowedAttachmentMime,
 	isArchiveFilter,
 	isBudgetPauseStatus,
+	isChatChannel,
+	isChatConversationKind,
 	isMarkdownDocSlug,
 	isReactionKind,
 	isTextAssetMime,
@@ -55,6 +59,25 @@ describe('enum guards', () => {
 		expect(isReactionKind(ReactionKind.Ack)).toBe(true);
 		expect(isReactionKind('nope')).toBe(false);
 		expect(isReactionKind(42)).toBe(false);
+	});
+
+	it('isChatChannel covers every channel including slack', () => {
+		expect(isChatChannel(ChatChannel.Web)).toBe(true);
+		expect(isChatChannel(ChatChannel.Telegram)).toBe(true);
+		expect(isChatChannel(ChatChannel.WhatsApp)).toBe(true);
+		expect(isChatChannel(ChatChannel.Slack)).toBe(true);
+		expect(isChatChannel('slack')).toBe(true);
+		expect(isChatChannel('discord')).toBe(false);
+		expect(isChatChannel('')).toBe(false);
+	});
+
+	it('isChatConversationKind accepts exactly the two modes', () => {
+		expect(isChatConversationKind(ChatConversationKind.Mirror)).toBe(true);
+		expect(isChatConversationKind(ChatConversationKind.Coworker)).toBe(true);
+		expect(isChatConversationKind('mirror')).toBe(true);
+		expect(isChatConversationKind('coworker')).toBe(true);
+		expect(isChatConversationKind('broadcast')).toBe(false);
+		expect(isChatConversationKind('')).toBe(false);
 	});
 
 	it('credentialKindRequiresAllowedHosts', () => {

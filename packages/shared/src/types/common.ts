@@ -932,20 +932,45 @@ export interface ProjectProgress {
 /**
  * Surface a CEO chat message arrived through. Each conversation belongs to one
  * channel: `web` conversations are the in-app chatbox threads; external channels
- * (Telegram now, Discord later) map each external thread to its own conversation.
- * The channel is both message provenance and — together with `external_thread_id`
- * — part of the conversation's identity.
+ * (Telegram and Slack now, WhatsApp/Discord later) map each external thread to its
+ * own conversation. The channel is both message provenance and — together with
+ * `external_thread_id` — part of the conversation's identity.
  */
 export const ChatChannel = {
 	Web: 'web',
 	Telegram: 'telegram',
 	WhatsApp: 'whatsapp',
+	Slack: 'slack',
 } as const;
 export type ChatChannel = (typeof ChatChannel)[keyof typeof ChatChannel];
 
 /** Runtime guard: is a string one of the known chat channels? */
 export function isChatChannel(value: string): value is ChatChannel {
 	return (Object.values(ChatChannel) as string[]).includes(value);
+}
+
+/**
+ * What kind of conversation a CEO chat thread is — the two integration modes an
+ * external chat app can support.
+ *
+ * - `mirror` (assistant/DM mode): one logical thread mirrored across every
+ *   real-time channel binding (web chatbox ↔ Telegram DM/topic ↔ Slack DM). The
+ *   channel-parity invariant applies: create/sync/close everywhere.
+ * - `coworker` (group mode): the CEO participates in an external group
+ *   channel/thread it was invited to (a Slack channel, later a WhatsApp group).
+ *   The conversation has exactly one binding — its origin thread — is never
+ *   mirrored into the web chatbox or any other channel, and replies post only
+ *   back to that origin thread.
+ */
+export const ChatConversationKind = {
+	Mirror: 'mirror',
+	Coworker: 'coworker',
+} as const;
+export type ChatConversationKind = (typeof ChatConversationKind)[keyof typeof ChatConversationKind];
+
+/** Runtime guard: is a string one of the known chat conversation kinds? */
+export function isChatConversationKind(value: string): value is ChatConversationKind {
+	return (Object.values(ChatConversationKind) as string[]).includes(value);
 }
 
 export const ChatMessageRole = {
