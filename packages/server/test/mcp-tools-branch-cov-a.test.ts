@@ -46,7 +46,7 @@ beforeAll(async () => {
 
 	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 	const typeId = (await typesRes.json()).data.find(
-		(t: Record<string, unknown>) => t.name === 'Startup',
+		(t: Record<string, unknown>) => t.name === 'App Team',
 	).id;
 
 	const teamRes = await createTestTeam(db, { name: 'Branch Cov A', template_id: typeId });
@@ -713,8 +713,8 @@ describe('read tools', () => {
 			is_builtin: boolean;
 			agent_types: Array<{ slug: string }>;
 		}>;
-		const startup = r.find((t) => t.name === 'Startup');
-		// Startup comes from the marketplace now (non-builtin fixture); Blank is builtin.
+		const startup = r.find((t) => t.name === 'App Team');
+		// The App Team (formerly Startup) comes from the marketplace now (non-builtin fixture); Blank is builtin.
 		expect(startup?.is_builtin).toBe(false);
 		expect(startup?.agent_types.map((a) => a.slug)).toContain('engineer');
 	});

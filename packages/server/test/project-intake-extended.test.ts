@@ -36,7 +36,7 @@ describe('createProjectIntake (service)', () => {
 			name: 'Planned App',
 			description: 'An app with a plan',
 			initialProjectPlan: '# The Plan\n\nDo the thing.',
-			baselineTeamTypeName: 'Startup',
+			baselineTeamTypeName: 'App Team',
 			baselineTemplateId: '00000000-0000-0000-0000-0000000000aa',
 		});
 		expect(result).not.toBeNull();
@@ -52,7 +52,7 @@ describe('createProjectIntake (service)', () => {
 		expect(comments.rows[1].content.text).toContain('Do the thing.');
 
 		// The greeting mentions the suggested team type and the plan attachment.
-		expect(comments.rows[0].content.text).toContain('Startup');
+		expect(comments.rows[0].content.text).toContain('App Team');
 		expect(comments.rows[0].content.text).toContain("I'll attach your project plan");
 
 		// An Assignment wakeup fired for the CEO.

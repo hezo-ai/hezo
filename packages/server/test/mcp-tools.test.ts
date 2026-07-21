@@ -41,7 +41,7 @@ beforeAll(async () => {
 		headers: authHeader(token),
 	});
 	const typeId = (await typesRes.json()).data.find(
-		(t: Record<string, unknown>) => t.name === 'Startup',
+		(t: Record<string, unknown>) => t.name === 'App Team',
 	).id;
 
 	// Create Team A
@@ -1186,7 +1186,7 @@ describe('MCP create_project (CEO creates a project + team on approval)', () => 
 
 	async function startupTemplateId(): Promise<string> {
 		const res = await app.request('/api/team-templates', { headers: authHeader(token) });
-		return (await res.json()).data.find((t: { name: string }) => t.name === 'Startup').id;
+		return (await res.json()).data.find((t: { name: string }) => t.name === 'App Team').id;
 	}
 
 	it('creates the project + team + planning task and closes the intake', async () => {
@@ -1217,7 +1217,7 @@ describe('MCP create_project (CEO creates a project + team on approval)', () => 
 		);
 		expect(project.rows[0]).toBeDefined();
 
-		// The new team carries a Captain (from the Startup template) and a planning task.
+		// The new team carries a Captain (from the App Team template) and a planning task.
 		const captain = await db.query<{ n: number }>(
 			`SELECT count(*)::int AS n FROM member_agents ma JOIN members m ON m.id = ma.id
 			 WHERE m.team_id = $1 AND ma.slug = 'captain'`,
@@ -1468,7 +1468,7 @@ describe('MCP tool: set_agent_team_context and get_agent_team_context', () => {
 		expect(row.rows[0].team_context).toBe('You report to the Architect.');
 	});
 
-	it('default_team_context defaults are populated for Startup template agents', async () => {
+	it('default_team_context defaults are populated for App Team template agents', async () => {
 		// Use roles the earlier set_agent_summary test doesn't mutate.
 		const agents = await db.query<{ slug: string; team_context: string }>(
 			`SELECT ma.slug, ma.team_context FROM member_agents ma

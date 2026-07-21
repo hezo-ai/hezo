@@ -56,7 +56,10 @@ are never part of a template — they live in HQ (below). A template is only the
 point — you change the team's structure freely from there; see
 [Team structure](/docs/concepts/team-structure) for the bigger picture.
 
-Hezo ships with two built-in templates. Each agent's behaviour comes from a **system
+Hezo ships with the minimal **Blank** template plus a set of ready-made teams in the
+[team marketplace](/docs/concepts/marketplace) — an **App Team** that builds software, an
+**Influencer Marketing** team that grows a creator's reach, and an **Investment** team that
+researches and tracks stocks. Each agent's behaviour comes from a **system
 prompt** that you can read (and, once hired, customise — see
 [Hiring & customizing agents](/docs/concepts/hiring-and-agents)). The links below point
 at the source prompt for each role.
@@ -71,10 +74,12 @@ Just a **Captain** — the minimal baseline. Hire roles as you need them.
   Captain, this Captain produces a plain **project plan** rather than a formal product
   requirements document (PRD).
 
-### Startup team
+### App Team
 
-Named **Startup** in the template picker, this is a **Captain** plus a full
-software-development roster:
+Named **App Team** in the marketplace, this is a **Captain** plus a full
+software-development roster — the team that builds your app. Its Captain asks you a few
+scoping questions first (what to build, where it deploys, constraints) rather than
+assuming, and can suggest project goals for you to approve.
 
 - [Captain](https://github.com/hezo-ai/hezo/blob/main/agents/software-development/captain.md) —
   leads the team, breaks the goal into tasks, and coordinates delivery.
@@ -97,6 +102,50 @@ software-development roster:
   marketing strategy, content, public documentation, and launch.
 - [Researcher](https://github.com/hezo-ai/hezo/blob/main/agents/software-development/researcher.md) —
   competitive analysis, technical research, and feasibility studies.
+
+### Influencer Marketing team
+
+A content team that grows a creator's social reach. Its Captain onboards you first —
+asking which accounts to work on (connect them on the project's Connections page), your
+persona and brand, and your goals for the next 3, 6, and 12 months — and suggests goals for
+you to approve. **By default no content is published until you approve it** (you can turn
+that off in the team's preferences).
+
+- [Captain](https://github.com/hezo-ai/hezo/blob/main/agents/influencer/captain.md) —
+  runs onboarding, sets the content strategy, and owns the content-approval policy.
+- [Brand Strategist](https://github.com/hezo-ai/hezo/blob/main/agents/influencer/brand-strategist.md) —
+  learns your brand and voice, owns the content pillars and the content calendar.
+- [Trend Researcher](https://github.com/hezo-ai/hezo/blob/main/agents/influencer/trend-researcher.md) —
+  tracks trends and competing creators and feeds ideas to the strategy.
+- [Content Writer](https://github.com/hezo-ai/hezo/blob/main/agents/influencer/content-writer.md) —
+  drafts posts, scripts, threads, and captions in your voice.
+- [Media Producer](https://github.com/hezo-ai/hezo/blob/main/agents/influencer/media-producer.md) —
+  generates images, video, and audio via connected media providers.
+- [Content Editor](https://github.com/hezo-ai/hezo/blob/main/agents/influencer/content-editor.md) —
+  the verification gate: proofreads, fact-checks, and reviews voice and brand safety.
+- [Distribution Manager](https://github.com/hezo-ai/hezo/blob/main/agents/influencer/distribution-manager.md) —
+  publishes approved content, cross-posts, and runs the engagement/analytics loop.
+
+### Investment team
+
+A research team that tracks stocks and produces research-grade analysis (**not financial
+advice**). Its Captain onboards you first — which stocks and categories to watch, your
+objective and risk appetite, and your time horizon — and suggests goals for you to approve.
+It maintains a living document per stock (with full revision history) and monitors filings
+and news day to day.
+
+- [Captain](https://github.com/hezo-ai/hezo/blob/main/agents/investment/captain.md) —
+  runs onboarding, sets the research agenda and watchlist, and tracks goals.
+- [Market Researcher](https://github.com/hezo-ai/hezo/blob/main/agents/investment/market-researcher.md) —
+  screens the market and sources candidate stocks and sectors to watch.
+- [Equity Analyst](https://github.com/hezo-ai/hezo/blob/main/agents/investment/equity-analyst.md) —
+  runs fundamental deep-dives and maintains the per-stock analysis document.
+- [Catalyst Monitor](https://github.com/hezo-ai/hezo/blob/main/agents/investment/catalyst-monitor.md) —
+  sweeps SEC/EDGAR filings, news, and industry trends daily and notifies you of anything material.
+- [Risk Verifier](https://github.com/hezo-ai/hezo/blob/main/agents/investment/risk-verifier.md) —
+  the verification gate: challenges every thesis and verifies claims and citations.
+- [Report Writer](https://github.com/hezo-ai/hezo/blob/main/agents/investment/report-writer.md) —
+  produces the periodic portfolio and watchlist reviews.
 
 ## The project plan document
 

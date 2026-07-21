@@ -150,7 +150,7 @@ describe('notifyParentOfOAuthVerification — label and platform branches', () =
 
 describe('notifyParentOfOAuthVerification — Captain-authored comment + wakeup', () => {
 	it('authors the confirmation as the team Captain and queues a wakeup when one exists', async () => {
-		// A real project team (Startup template) so a Captain exists in the team.
+		// A real project team (App Team template) so a Captain exists in the team.
 		const ctx2 = await createTestApp();
 		const db2 = ctx2.db;
 		try {
@@ -158,7 +158,7 @@ describe('notifyParentOfOAuthVerification — Captain-authored comment + wakeup'
 				headers: authHeader(ctx2.token),
 			});
 			const typeId = (await typesRes.json()).data.find(
-				(t: { name: string }) => t.name === 'Startup',
+				(t: { name: string }) => t.name === 'App Team',
 			).id;
 			const teamRes = await createTestTeam(db2, { name: 'Verif Cap Co', template_id: typeId });
 			const teamId = (await teamRes.json()).data.id;

@@ -35,9 +35,9 @@ async function startupTemplateId(): Promise<string> {
 		headers: { Authorization: `Bearer ${token}` },
 	});
 	const startup = ((await res.json()) as { data: Array<{ id: string; name: string }> }).data.find(
-		(t) => t.name === 'Startup',
+		(t) => t.name === 'App Team',
 	);
-	if (!startup) throw new Error('createTeam: Startup template missing');
+	if (!startup) throw new Error('createTeam: App Team template missing');
 	return startup.id;
 }
 

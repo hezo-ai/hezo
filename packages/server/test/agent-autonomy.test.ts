@@ -21,7 +21,7 @@ beforeAll(async () => {
 		headers: authHeader(ctx.token),
 	});
 	const types = (await typesRes.json()) as any;
-	const softDevType = types.data.find((t: any) => t.name === 'Startup');
+	const softDevType = types.data.find((t: any) => t.name === 'App Team');
 
 	// Create a team with auto-created agents
 	const teamRes = await createTestTeam(ctx.db, {

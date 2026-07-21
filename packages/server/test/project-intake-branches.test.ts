@@ -73,7 +73,7 @@ describe('createProjectIntake — baseline / plan branches', () => {
 			description: 'Has a template baseline',
 			initialProjectPlan: null,
 			baselineTemplateId: '00000000-0000-0000-0000-0000000000aa',
-			baselineTeamTypeName: 'Startup',
+			baselineTeamTypeName: 'App Team',
 		});
 		const task = await db.query<{ description: string }>(
 			'SELECT description FROM tasks WHERE id = $1',
@@ -82,7 +82,7 @@ describe('createProjectIntake — baseline / plan branches', () => {
 		expect(task.rows[0].description).toContain(
 			'template_id: `00000000-0000-0000-0000-0000000000aa`',
 		);
-		expect(task.rows[0].description).toContain('Startup');
+		expect(task.rows[0].description).toContain('App Team');
 	});
 
 	it('broadcasts the new intake task when a wsManager is supplied', async () => {

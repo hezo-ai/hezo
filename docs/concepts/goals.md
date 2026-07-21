@@ -15,6 +15,12 @@ You set the goals; the **Captain** keeps them up to date. You don't have to reme
 update a status or move a slider — the Captain re-checks each goal on a schedule and writes
 a fresh estimate, so the **Progress** page is always a current read on the project.
 
+The Captain (or the CEO) can also **suggest goals** — for example during a project's initial
+onboarding, drawn from what you tell it you want to achieve. A suggestion isn't a goal yet:
+it appears as an **Approve / Deny** card on the task thread and on the **Progress** page, and
+only becomes a real goal once you approve it. Deny it and it's dismissed. You stay in control
+of which goals the team actually tracks.
+
 > **There is no cron in Hezo.** Goals are how you schedule *recurring* work. Hezo has no
 > cron or timed-trigger system to configure — repeating work runs on two things instead:
 > agents wake on their own **heartbeat** to pick up whatever is assigned to them, and the

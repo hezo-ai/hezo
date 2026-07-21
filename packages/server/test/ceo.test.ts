@@ -55,15 +55,15 @@ describe('instance CEO agent type', () => {
 		expect(body.data).toHaveLength(11);
 	});
 
-	it('is not part of the Startup team template roster', async () => {
+	it('is not part of the App Team team template roster', async () => {
 		const res = await app.request('/api/team-templates', { headers: authHeader(token) });
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		const startup = body.data.find((t: { name: string }) => t.name === 'Startup');
+		const startup = body.data.find((t: { name: string }) => t.name === 'App Team');
 		expect(startup.agent_types.some((a: { slug: string }) => a.slug === CEO_AGENT_SLUG)).toBe(
 			false,
 		);
-		// Coach is instance-level too, so the Startup roster is 10 (was 11 with Coach).
+		// Coach is instance-level too, so the App Team roster is 10 (was 11 with Coach).
 		expect(startup.agent_types).toHaveLength(10);
 	});
 

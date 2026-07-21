@@ -5,8 +5,8 @@ import { renderApp } from './helpers/render';
 test('marketplace list renders the available teams', async () => {
 	const { findByTestId, findByText } = await renderApp({ initialPath: '/marketplace' });
 	await findByTestId('marketplace-page');
-	// The software-development team ("Startup") is served from the committed folder.
-	await findByText('Startup');
+	// The software-development team ("App Team") is served from the committed folder.
+	await findByText('App Team');
 	await findByTestId('marketplace-card-software-development');
 });
 

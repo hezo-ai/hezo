@@ -174,6 +174,12 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 		returns:
 			"An array of the project's goal rows, each with `project_name`/`project_slug` and an embedded `history[]` of recent progress snapshots (`{ t, percent, health }`). Archived goals are excluded unless `include_archived` is true.",
 	},
+	suggest_goal: {
+		category: 'Goals',
+		returns:
+			'`{ approval_id, status: "pending", payload }`. Files a goal *suggestion* the admin must approve — no goal exists until then. On approval the real goal is created and appears on the Goals page. Surfaces as an Approve/Deny card on the `task_id` thread (when given) and on the project Goals page. Returns `{ error }` if the caller is not the Captain/CEO, the project is HQ/internal, or the inputs are invalid.',
+		auth: 'Captain (its own team) or CEO (any team via `project`), and only from within an agent run.',
+	},
 	update_goal_progress: {
 		category: 'Goals',
 		returns:

@@ -25,7 +25,7 @@ beforeAll(async () => {
 	db = ctx.db;
 	token = ctx.token;
 	const res = await app.request('/api/team-templates', { headers: authHeader(token) });
-	const startup = (await res.json()).data.find((t: { name: string }) => t.name === 'Startup');
+	const startup = (await res.json()).data.find((t: { name: string }) => t.name === 'App Team');
 	startupTemplateId = startup.id;
 });
 

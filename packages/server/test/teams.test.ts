@@ -27,7 +27,7 @@ beforeAll(async () => {
 		headers: authHeader(token),
 	});
 	const types = (await res.json()).data;
-	builtinTypeId = types.find((t: any) => t.name === 'Startup').id;
+	builtinTypeId = types.find((t: any) => t.name === 'App Team').id;
 });
 
 afterAll(async () => {
@@ -81,7 +81,7 @@ describe('team provisioning (createTeam service)', () => {
 		const getRes = await app.request(`/api/projects/${createdSlug}/team`, {
 			headers: authHeader(token),
 		});
-		expect((await getRes.json()).data.primary_template_name).toBe('Startup');
+		expect((await getRes.json()).data.primary_template_name).toBe('App Team');
 
 		// A team created without a template has no type.
 		const blankRes = await createTestTeam(db, { name: 'Typeless Team Co' });
@@ -233,7 +233,7 @@ describe('template-based team creation', () => {
 		expect(slugs).toEqual(['captain']);
 	});
 
-	it('does not duplicate the Captain when the Startup template already includes it', async () => {
+	it('does not duplicate the Captain when the App Team template already includes it', async () => {
 		const res = await createTestTeam(db, { name: 'Full Template Co', template_id: builtinTypeId });
 		expect(res.status).toBe(201);
 		const body = await res.json();

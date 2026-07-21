@@ -3,6 +3,7 @@ import { Link } from '@tanstack/react-router';
 import { Check, GitBranch } from 'lucide-react';
 import { Button } from '../ui/button';
 import type { CommentDataOf } from './comment-data';
+import { GoalSuggestionComment } from './goal-suggestion-comment';
 import { HireProposalComment } from './hire-proposal-comment';
 
 interface Props {
@@ -16,6 +17,10 @@ export function ActionComment({ comment, projectId }: Props) {
 
 	if (kind === ActionCommentKind.HireProposal) {
 		return <HireProposalComment comment={comment} projectId={projectId} />;
+	}
+
+	if (kind === ActionCommentKind.GoalSuggestion) {
+		return <GoalSuggestionComment comment={comment} projectId={projectId} />;
 	}
 
 	if (kind !== ActionCommentKind.SetupRepo) {

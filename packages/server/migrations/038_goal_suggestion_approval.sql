@@ -1,0 +1,14 @@
+-- Add the `goal_suggestion` value to the `approval_type` enum. A goal suggestion
+-- is a Captain/CEO proposal that becomes a real goal only once the admin approves
+-- it (mirroring the `hire` proposal flow). The suggestion lives as a pending
+-- `approvals` row (with the goal fields in its `payload`) and surfaces both as an
+-- action comment on the originating task and on the project's Goals page; on
+-- approval the goal-suggestion side-effect handler creates the actual `goals` row.
+--
+-- Purely additive enum extension. Postgres 12+ (PGlite is PG16) permits
+-- ALTER TYPE ... ADD VALUE inside a transaction as long as the new value is not
+-- *used* in the same transaction — this migration only adds it, so it is safe under
+-- the runner's per-migration BEGIN/COMMIT (same pattern as 027_add_api_connector_transport).
+-- Existing `approvals` rows keep their `type`; the new value simply becomes
+-- selectable for future inserts.
+ALTER TYPE approval_type ADD VALUE IF NOT EXISTS 'goal_suggestion';

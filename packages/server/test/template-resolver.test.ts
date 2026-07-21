@@ -704,7 +704,7 @@ describe('template resolver with agents', () => {
 			headers: authHeader(token),
 		});
 		const types = (await typesRes.json()) as any;
-		const softDevType = types.data.find((t: any) => t.name === 'Startup');
+		const softDevType = types.data.find((t: any) => t.name === 'App Team');
 
 		// Create a team with the software dev team type to auto-create agents
 		const teamRes = await createTestTeam(db, {
@@ -934,7 +934,7 @@ describe('teammates block', () => {
 
 	beforeAll(async () => {
 		const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
-		const startup = ((await typesRes.json()) as any).data.find((t: any) => t.name === 'Startup');
+		const startup = ((await typesRes.json()) as any).data.find((t: any) => t.name === 'App Team');
 
 		const teamRes = await createTestTeam(db, {
 			name: 'Teammates Co',
@@ -1019,7 +1019,7 @@ describe('teammates block', () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId: otherId });
 		expect(result).toContain('## Teammates');
 		// The builtin Captain is seeded for every team (Coach now lives only in HQ),
-		// but the startup-template-only roles from the other test team must not bleed in.
+		// but the app-team-template-only roles from the other test team must not bleed in.
 		expect(result).toContain('- @captain — Captain');
 		expect(result).not.toContain('- @coach — Coach');
 		expect(result).not.toContain('- @architect — Architect');
@@ -1045,7 +1045,7 @@ describe('team context block', () => {
 
 	beforeAll(async () => {
 		const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
-		const startup = ((await typesRes.json()) as any).data.find((t: any) => t.name === 'Startup');
+		const startup = ((await typesRes.json()) as any).data.find((t: any) => t.name === 'App Team');
 
 		const teamRes = await createTestTeam(db, {
 			name: 'Team Context Co',
@@ -1076,7 +1076,7 @@ describe('team context block', () => {
 		expect(result).toContain('precomputed so you don');
 	});
 
-	it("renders the engineer's stored team_context content (Startup template default)", async () => {
+	it("renders the engineer's stored team_context content (App Team template default)", async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', {
 			teamId: tcTeamId,
 			agentId: tcEngineerMemberId,
@@ -1142,7 +1142,7 @@ describe('project state block', () => {
 
 	beforeAll(async () => {
 		const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
-		const startup = ((await typesRes.json()) as any).data.find((t: any) => t.name === 'Startup');
+		const startup = ((await typesRes.json()) as any).data.find((t: any) => t.name === 'App Team');
 
 		const teamRes = await createTestTeam(db, {
 			name: 'Project State Co',
@@ -1186,7 +1186,7 @@ describe('project state block', () => {
 		});
 		expect(result).toContain('## Project State');
 		expect(result).toContain('### Active tickets');
-		// Startup-template projects auto-create a planning ticket assigned to the Captain.
+		// App Team-template projects auto-create a planning ticket assigned to the Captain.
 		expect(result).toMatch(/- PP-\d+ — Draft execution plan/);
 		expect(result).toContain('assigned to Captain');
 	});

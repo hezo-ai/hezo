@@ -49,7 +49,7 @@ beforeAll(async () => {
 
 	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 	const typeId = (await typesRes.json()).data.find(
-		(t: { name: string }) => t.name === 'Startup',
+		(t: { name: string }) => t.name === 'App Team',
 	).id;
 
 	// Team A — the team-under-test.
@@ -192,11 +192,11 @@ describe('MCP get_team / list_team_templates', () => {
 			agent_types: Array<{ slug: string }>;
 		}>;
 		expect(Array.isArray(rows)).toBe(true);
-		// Blank is the only surviving built-in template; the Startup roster comes from
+		// Blank is the only surviving built-in template; the App Team roster comes from
 		// the marketplace (seeded as a non-builtin fixture in tests).
 		const blank = rows.find((r) => r.name === 'Blank');
 		expect(blank?.is_builtin).toBe(true);
-		const startup = rows.find((r) => r.name === 'Startup');
+		const startup = rows.find((r) => r.name === 'App Team');
 		expect(startup).toBeDefined();
 		expect(startup?.is_builtin).toBe(false);
 		expect(startup?.agent_types.map((a) => a.slug)).toContain('engineer');
@@ -1054,7 +1054,7 @@ describe('MCP set_agent_status', () => {
 			name: 'Retire Co',
 			template_id: (
 				await (await app.request('/api/team-templates', { headers: authHeader(token) })).json()
-			).data.find((t: { name: string }) => t.name === 'Startup').id,
+			).data.find((t: { name: string }) => t.name === 'App Team').id,
 		});
 		const retireTeamId = (await teamRes.json()).data.id;
 		const retireProjectRes = await createTestProject(db, retireTeamId, {

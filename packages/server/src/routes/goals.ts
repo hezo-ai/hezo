@@ -45,6 +45,38 @@ goalsRoutes.get('/projects/:projectId/goals/runs', async (c) => {
 	return c.json({ data: runs, meta: buildMeta(page, perPage, total) });
 });
 
+// Pending goal *suggestions* for the project — Captain/CEO proposals awaiting admin
+// approval. They are not goals yet (they live as pending `goal_suggestion` approvals);
+// the Goals page renders them as an Approve/Deny section. Registered before
+// /goals/:goalId so "suggestions" isn't captured as a goal id.
+goalsRoutes.get('/projects/:projectId/goals/suggestions', async (c) => {
+	const teamId = c.get('teamId') as string;
+	const projectId = c.get('projectId') as string;
+	const rows = await c.get('db').query<Record<string, unknown>>(
+		`SELECT a.id AS approval_id,
+		        a.created_at,
+		        a.payload->>'title' AS title,
+		        a.payload->>'measurement' AS measurement,
+		        a.payload->>'actions' AS actions,
+		        COALESCE(a.payload->>'check_frequency', 'daily') AS check_frequency,
+		        a.payload->>'target_date' AS target_date,
+		        a.payload->>'task_id' AS task_id,
+		        ma.slug AS suggested_by_slug,
+		        m.display_name AS suggested_by_name
+		 FROM approvals a
+		 LEFT JOIN members m ON m.id = a.requested_by_member_id
+		 LEFT JOIN member_agents ma ON ma.id = a.requested_by_member_id
+		 WHERE a.team_id = $1
+		   AND a.type = 'goal_suggestion'::approval_type
+		   AND a.status = 'pending'::approval_status
+		   AND a.archived_at IS NULL
+		   AND a.payload->>'project_id' = $2
+		 ORDER BY a.created_at DESC`,
+		[teamId, projectId],
+	);
+	return ok(c, rows.rows);
+});
+
 goalsRoutes.post('/projects/:projectId/goals', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const projectId = c.get('projectId') as string;

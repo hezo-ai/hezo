@@ -65,7 +65,7 @@ beforeAll(async () => {
 		headers: authHeader(ctx.token),
 	});
 	const typeId = (await typesRes.json()).data.find(
-		(t: Record<string, unknown>) => t.name === 'Startup',
+		(t: Record<string, unknown>) => t.name === 'App Team',
 	).id;
 
 	const teamRes = await createTestTeam(ctx.db, {

@@ -122,6 +122,11 @@ import {
 	setDocumentArchived,
 	upsertDocument,
 } from '../services/documents';
+import {
+	type GoalSuggestionPayload,
+	insertGoalSuggestionApproval,
+	insertGoalSuggestionComment,
+} from '../services/goal-suggestion';
 import { listGoals, recordGoalProgress } from '../services/goals';
 import {
 	buildHirePayloadPatch,
@@ -224,6 +229,7 @@ const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'create_skill',
 	'add_connector',
 	'remove_connector',
+	'suggest_goal',
 	'update_goal_progress',
 	'update_project_progress',
 	'update_project_custom_prompt',
@@ -1177,6 +1183,103 @@ export function registerTools(
 				args.description as string | undefined,
 				created,
 			);
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'suggest_goal',
+		"Suggest a project goal for the admin to approve. Callable only by the team Captain (or the CEO targeting a team via `project`), typically during initial project onboarding after you've asked the admin what they want to achieve. This does NOT create a goal directly — it files a suggestion the admin reviews and approves, at which point the real goal is created. A goal is a high-level objective the team works toward: pass a `title`, a `measurement` (the precise definition of when it is achieved — the bar to judge against; write it SMART), optional `actions` (guidance on what to do/check toward it), a `check_frequency` (daily/weekly/monthly — how often it is re-assessed once created), and an optional `target_date` (deadline, ISO YYYY-MM-DD). Pass `task_id` (recommended — usually your planning task) to surface the suggestion as an Approve/Deny card in that task's thread; it also appears on the project's Goals page. Suggest goals from the admin's stated objectives — do not invent goals the admin did not ask for.",
+		{
+			project: projectArg(),
+			title: z.string().describe('Short goal title.'),
+			measurement: z
+				.string()
+				.optional()
+				.describe('The precise, measurable definition of when the goal is achieved.'),
+			actions: z
+				.string()
+				.optional()
+				.describe('Optional guidance on what to do or check toward the goal.'),
+			check_frequency: z
+				.enum(['daily', 'weekly', 'monthly'])
+				.optional()
+				.describe('How often the goal is re-assessed once created (default daily).'),
+			target_date: z.string().optional().describe('Optional deadline as an ISO date (YYYY-MM-DD).'),
+			task_id: z
+				.string()
+				.optional()
+				.describe(
+					'Optional originating task to attach the suggestion card to — a task identifier (e.g. "HM-1") or UUID.',
+				),
+		},
+		async (args, db, auth) => {
+			if (auth.type !== AuthType.Agent || !auth.memberId) {
+				return { error: 'suggest_goal is only callable by agents' };
+			}
+			const caller = await db.query<{ slug: string }>(
+				'SELECT slug FROM member_agents WHERE id = $1',
+				[auth.memberId],
+			);
+			const callerSlug = caller.rows[0]?.slug;
+			if (callerSlug !== CAPTAIN_AGENT_SLUG && callerSlug !== CEO_AGENT_SLUG) {
+				return { error: 'Only the Captain or CEO can suggest goals' };
+			}
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const teamId = scope.teamId;
+
+			const proj = await db.query<{ is_internal: boolean }>(
+				`SELECT is_internal FROM projects WHERE id = $1 AND team_id = $2`,
+				[scope.projectId, teamId],
+			);
+			if (proj.rows.length === 0) return { error: 'Project not found' };
+			if (proj.rows[0].is_internal) return { error: 'The HQ project does not support goals' };
+
+			const title = (args.title as string)?.trim();
+			if (!title) return { error: 'title is required' };
+
+			let taskId: string | null = null;
+			if (args.task_id !== undefined) {
+				const resolved = await resolveTaskId(db, teamId, args.task_id as string);
+				const taskCheck = resolved
+					? await db.query<{ id: string }>('SELECT id FROM tasks WHERE id = $1 AND team_id = $2', [
+							resolved,
+							teamId,
+						])
+					: null;
+				if (!resolved || !taskCheck || taskCheck.rows.length === 0) {
+					return { error: 'task_id not found on this team' };
+				}
+				taskId = resolved;
+			}
+
+			const payload: GoalSuggestionPayload = {
+				project_id: scope.projectId,
+				title,
+				measurement: args.measurement as string | undefined,
+				actions: args.actions as string | undefined,
+				check_frequency: args.check_frequency as string | undefined,
+				target_date: (args.target_date as string | undefined) ?? null,
+				task_id: taskId,
+			};
+			const row = await insertGoalSuggestionApproval(db, teamId, payload, auth.memberId);
+			broadcastApprovalChange(wsManager, teamId, 'INSERT', row);
+			if (taskId) {
+				await insertGoalSuggestionComment(
+					db,
+					{
+						taskId,
+						approvalId: row.id as string,
+						payload: payload as unknown as Record<string, unknown>,
+						teamId,
+						projectId: scope.projectId,
+					},
+					wsManager,
+				);
+			}
+			return { approval_id: row.id, status: row.status, payload: row.payload };
 		},
 		db,
 	);

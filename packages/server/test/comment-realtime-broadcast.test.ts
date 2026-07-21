@@ -41,7 +41,7 @@ describe('comment-family realtime broadcasts carry project_id', () => {
 			headers: authHeader(ctx.token),
 		});
 		const typeId = (await typesRes.json()).data.find(
-			(t: { name: string }) => t.name === 'Startup',
+			(t: { name: string }) => t.name === 'App Team',
 		).id;
 
 		const teamRes = await createTestTeam(ctx.db, {
