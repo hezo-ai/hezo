@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import {
@@ -1115,6 +1116,12 @@ export class ChatSessionManager {
 		const { conversationId } = ctx;
 		const convo = this.getConvoRuntime(conversationId);
 		const { hostPath, env } = this.turnPrompt(session, conversationId);
+		// Per-exec scope marker: session-level HEZO_HEARTBEAT_RUN_ID is shared by
+		// every exec of this session (turns in other conversations, compaction,
+		// titling), so an interrupt must kill by a marker unique to THIS exec or it
+		// would murder a sibling conversation's live reply.
+		const execScopeId = randomUUID();
+		env.push(`HEZO_EXEC_SCOPE_ID=${execScopeId}`);
 		const accumulated = { text: '' };
 		let finalized = false;
 		const finalize = async (
@@ -1180,6 +1187,9 @@ export class ChatSessionManager {
 			await finalize(ChatMessageStatus.Complete, parser.getUsage());
 		} catch (err) {
 			if (abort.signal.aborted) {
+				// Aborting only tears down the attach stream — reap the abandoned
+				// in-container CLI by this exec's own scope marker.
+				this.killAbandonedExec(session, execScopeId);
 				await finalize(ChatMessageStatus.Interrupted, null);
 			} else {
 				log.error('CEO chat turn failed', err);
@@ -1189,6 +1199,19 @@ export class ChatSessionManager {
 			rmSync(hostPath, { force: true });
 			if (convo.current?.assistantMessageId === assistantMessageId) convo.current = null;
 		}
+	}
+
+	/**
+	 * Best-effort fire-and-forget kill of one abandoned chat exec's process tree
+	 * by its per-exec scope marker. Docker can't signal an exec'd process, so an
+	 * interrupted/preempted exec would otherwise keep running in the HQ container.
+	 */
+	private killAbandonedExec(session: LiveSession, execScopeId: string): void {
+		trackBackground(
+			this.deps.docker
+				.killProcessesByEnvMarker(session.containerId, 'HEZO_EXEC_SCOPE_ID', execScopeId)
+				.catch(() => undefined),
+		);
 	}
 
 	private async composePrompt(session: LiveSession, conversationId: string): Promise<string> {
@@ -1285,6 +1308,8 @@ export class ChatSessionManager {
 		const before = memory?.updated_at ?? null;
 		const prompt = buildCompactionPrompt(memory?.content ?? '', flush.windowTranscript);
 		const { hostPath, env } = this.turnPrompt(session, conversationId);
+		const execScopeId = randomUUID();
+		env.push(`HEZO_EXEC_SCOPE_ID=${execScopeId}`);
 		mkdirSync(dirname(hostPath), { recursive: true });
 		writeFileSync(hostPath, prompt);
 		try {
@@ -1302,7 +1327,10 @@ export class ChatSessionManager {
 		} catch (e) {
 			// A new user turn preempts compaction — that's a clean stop, not a
 			// failure; nothing is evicted and it retries later.
-			if (abort.signal.aborted) return;
+			if (abort.signal.aborted) {
+				this.killAbandonedExec(session, execScopeId);
+				return;
+			}
 			throw e;
 		} finally {
 			rmSync(hostPath, { force: true });
@@ -1388,6 +1416,8 @@ export class ChatSessionManager {
 		// A dedicated prompt file (the `title` slot) so this exec can run concurrently
 		// with the reply's exec without either overwriting the other's prompt.
 		const { hostPath, env } = this.turnPrompt(session, conversationId, 'title');
+		const execScopeId = randomUUID();
+		env.push(`HEZO_EXEC_SCOPE_ID=${execScopeId}`);
 		mkdirSync(dirname(hostPath), { recursive: true });
 		writeFileSync(hostPath, prompt);
 
@@ -1413,7 +1443,10 @@ export class ChatSessionManager {
 			for (const ev of parser.flush()) if (ev.text) text += ev.text;
 		} catch (e) {
 			// A new user turn preempts title generation — a clean stop, retried later.
-			if (abort.signal.aborted) return;
+			if (abort.signal.aborted) {
+				this.killAbandonedExec(session, execScopeId);
+				return;
+			}
 			throw e;
 		} finally {
 			rmSync(hostPath, { force: true });
@@ -1458,6 +1491,14 @@ export class ChatSessionManager {
 		const live = this.live;
 		if (!live) return;
 		this.live = null;
+		// Session-wide reap: every exec of this session (and its children) carries
+		// HEZO_HEARTBEAT_RUN_ID=<sessionId>, and by teardown they have all been
+		// aborted — nothing live shares the marker, so the broad kill is safe here
+		// (unlike per-turn interrupts, which must use the per-exec scope id).
+		// Bounded + best-effort: a stopped/gone container just fails the exec.
+		await this.deps.docker
+			.killProcessesByEnvMarker(live.containerId, 'HEZO_HEARTBEAT_RUN_ID', live.sessionId)
+			.catch(() => undefined);
 		await live.releaseSsh().catch(() => undefined);
 		await live.releaseEgress().catch(() => undefined);
 		await this.deps.db

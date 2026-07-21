@@ -22,10 +22,21 @@ const SAFETY_WINDOW_SECONDS = 30;
  * flips active before the run row lands) and normal completion bookkeeping. */
 export const STALE_STATE_GRACE_SECONDS = 120;
 
+export interface DetectOrphansOpts {
+	/**
+	 * Best-effort reaper for the orphaned run's in-container process tree
+	 * (`DockerClient.killRunProcesses`). A run row can outlive its host-side
+	 * driver while the exec'd agent CLI keeps running in the container — when
+	 * the detector declares the run orphaned, the tree must die with it.
+	 */
+	killProcesses?: (containerId: string, runId: string) => Promise<void>;
+}
+
 export async function detectOrphans(
 	db: Db,
 	liveRunIds: Set<string>,
 	wsManager?: WebSocketManager,
+	opts?: DetectOrphansOpts,
 ): Promise<number> {
 	const orphans = await db.query<{
 		id: string;
@@ -33,10 +44,13 @@ export async function detectOrphans(
 		team_id: string;
 		task_id: string | null;
 		project_id: string | null;
+		container_id: string | null;
 		process_loss_retry_count: number;
 	}>(
 		`SELECT hr.id, hr.member_id, hr.team_id, hr.task_id, hr.process_loss_retry_count,
-		        (SELECT t.project_id FROM tasks t WHERE t.id = hr.task_id) AS project_id
+		        (SELECT t.project_id FROM tasks t WHERE t.id = hr.task_id) AS project_id,
+		        (SELECT p.container_id FROM projects p JOIN tasks t ON t.project_id = p.id
+		         WHERE t.id = hr.task_id) AS container_id
 		 FROM heartbeat_runs hr
 		 WHERE hr.status = $1::heartbeat_run_status
 		   AND hr.started_at < now() - ($2 || ' seconds')::interval`,
@@ -59,6 +73,14 @@ export async function detectOrphans(
 			 WHERE id = $1`,
 			[run.id, HeartbeatRunStatus.Failed],
 		);
+
+		// Task-less runs can't resolve a container here; the startup sweep is
+		// their backstop.
+		if (opts?.killProcesses && run.container_id) {
+			await opts
+				.killProcesses(run.container_id, run.id)
+				.catch((e) => log.warn(`Failed to kill orphaned run ${run.id} processes:`, e));
+		}
 
 		await db.query(
 			'UPDATE execution_locks SET released_at = now() WHERE member_id = $1 AND released_at IS NULL',

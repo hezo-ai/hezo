@@ -384,6 +384,66 @@ describe('ChatSessionManager', () => {
 		await manager.stop();
 	});
 
+	test('an interrupted turn is reaped by its per-exec scope, never the shared session id', async () => {
+		const chat = makeChatDocker(ctx.dataDir, projectId);
+		chat.scenario.mode = 'block';
+
+		// Capture each exec's per-exec scope id and every marker kill fired.
+		const execScopeIds: string[] = [];
+		const kills: Array<{ containerId: string; name: string; value: string }> = [];
+		const innerCreate = chat.docker.execCreate.bind(chat.docker);
+		chat.docker.execCreate = async (id: string, config: { Env?: string[] }) => {
+			const scope = (config.Env ?? []).find((e) => e.startsWith('HEZO_EXEC_SCOPE_ID='));
+			if (scope) execScopeIds.push(scope.slice('HEZO_EXEC_SCOPE_ID='.length));
+			return innerCreate(id, config as never);
+		};
+		chat.docker.killProcessesByEnvMarker = async (
+			containerId: string,
+			name: 'HEZO_HEARTBEAT_RUN_ID' | 'HEZO_EXEC_SCOPE_ID',
+			value: string,
+		) => {
+			kills.push({ containerId, name, value });
+		};
+
+		const { manager } = makeManager(ctx, chat.docker);
+		const first = await manager.sendTurn({ text: 'Long question' });
+		await poll(async () => chat.scenario.entered);
+
+		chat.scenario.mode = 'reply';
+		await manager.sendTurn({ text: 'Actually, never mind' });
+		await poll(async () => {
+			const r = await ctx.db.query<{ status: string }>(
+				'SELECT status FROM chat_messages WHERE id = $1',
+				[first.assistantMessageId],
+			);
+			return r.rows[0]?.status === ChatMessageStatus.Interrupted;
+		});
+
+		const session = await ctx.db.query<{ id: string }>(
+			`SELECT id FROM chat_sessions WHERE status IN ($1, $2) ORDER BY started_at DESC LIMIT 1`,
+			[ChatSessionStatus.Starting, ChatSessionStatus.Running],
+		);
+		const sessionId = session.rows[0].id;
+
+		// The interrupt reaps by the aborted exec's own scope id — a session-wide
+		// kill here would murder the second conversation-turn's live exec.
+		await poll(async () => kills.some((k) => k.name === 'HEZO_EXEC_SCOPE_ID'));
+		for (const kill of kills.filter((k) => k.name === 'HEZO_EXEC_SCOPE_ID')) {
+			expect(kill.containerId).toBe('hq-container');
+			expect(kill.value).not.toBe(sessionId);
+			expect(execScopeIds).toContain(kill.value);
+		}
+
+		// Stopping the manager tears the session down and reaps session-wide: every
+		// exec of this session carried HEZO_HEARTBEAT_RUN_ID=<sessionId>.
+		await manager.stop();
+		expect(kills).toContainEqual({
+			containerId: 'hq-container',
+			name: 'HEZO_HEARTBEAT_RUN_ID',
+			value: sessionId,
+		});
+	});
+
 	test('ensureSession is idempotent (one live session per CEO)', async () => {
 		const chat = makeChatDocker(ctx.dataDir, projectId);
 		const { manager } = makeManager(ctx, chat.docker);

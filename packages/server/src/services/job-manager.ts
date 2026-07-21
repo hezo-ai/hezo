@@ -57,13 +57,14 @@ import {
 	verifyContainerWorkspace,
 	wakeAgentsWithPendingWork,
 } from './containers';
-import type { DockerClient } from './docker';
+import type { ContainerProcessInfo, DockerClient } from './docker';
 import type { EgressProxy } from './egress';
 import { getDueGoals } from './goals';
 import { HEARTBEAT_INTERVAL_FLOOR_MIN } from './heartbeat-schedule';
 import type { LogStreamBroker } from './log-stream-broker';
 import { detectOrphans, healStaleRunState, STALE_STATE_GRACE_SECONDS } from './orphan-detector';
 import type { PricingService } from './pricing';
+import { collectCandidateRunIds, decideSweepKills } from './process-sweeper';
 import { ensureRepoSetupAction } from './repo-setup';
 import { getProjectConcurrency, isTaskBusyInDb } from './run-concurrency';
 import type { SshAgentServer } from './ssh-agent';
@@ -592,6 +593,41 @@ export class JobManager {
 	}
 
 	/**
+	 * Reap every live run's in-container process tree by its run-id marker.
+	 * Called from `shutdownRuntime` BEFORE `shutdown()` aborts the runs: the
+	 * abort path's own kill (agent-runner) races `process.exit`, so a clean
+	 * SIGTERM (an update restart) would otherwise strand the agent CLIs in the
+	 * warm containers. Bounded — each marker kill is individually timed out and
+	 * the whole pass races an 8s timer — so shutdown can never wedge on a dead
+	 * Docker socket. Best-effort; the startup sweep is the crash-path backstop.
+	 */
+	async killLiveRunProcesses(): Promise<void> {
+		const runs = [...this.liveRuns.values()];
+		if (runs.length === 0) return;
+		const projectIds = [...new Set(runs.map((r) => r.projectId))];
+		const containers = await this.deps.db.query<{ id: string; container_id: string }>(
+			`SELECT id, container_id FROM projects WHERE id = ANY($1::uuid[]) AND container_id IS NOT NULL`,
+			[projectIds],
+		);
+		const containerByProject = new Map(containers.rows.map((r) => [r.id, r.container_id]));
+		const kills = runs.flatMap((run) => {
+			const containerId = containerByProject.get(run.projectId);
+			if (!containerId) return [];
+			return [
+				this.deps.docker
+					.killRunProcesses(containerId, run.runId)
+					.catch((e) => log.warn(`Shutdown kill failed for run ${run.runId}:`, e)),
+			];
+		});
+		if (kills.length === 0) return;
+		await Promise.race([
+			Promise.allSettled(kills),
+			new Promise((resolve) => setTimeout(resolve, 8_000)),
+		]);
+		log.info(`Shutdown: reaped in-container processes for ${kills.length} live run(s)`);
+	}
+
+	/**
 	 * Reconcile DB state with the (now-empty) in-process run registry. Runs in
 	 * `running` or `queued` state from the previous process were necessarily lost
 	 * with that process — fail them, reset their agents to idle, release locks,
@@ -728,6 +764,7 @@ export class JobManager {
 		await this.selfHealErroredContainers(docker);
 		await this.restartStoppedRunningContainers(docker);
 		await this.repairStaleContainerMounts(docker);
+		await this.sweepDanglingContainerProcesses(docker);
 	}
 
 	/**
@@ -907,6 +944,76 @@ export class JobManager {
 				);
 			} catch (err) {
 				log.error(`Failed to rebuild stale container for project ${ref(row.slug, row.id)}:`, err);
+			}
+		}
+	}
+
+	/**
+	 * Fourth startup reconcile pass: reap dangling processes previous server
+	 * lifetimes left inside the (deliberately warm-surviving) project containers.
+	 * Docker can't kill an exec'd process, so any exec in flight when the server
+	 * stopped — an agent CLI, a git fetch and its SSH-bridge tree, an npm install
+	 * — keeps running in the container forever unless swept here.
+	 *
+	 * Runs after the stranded-run repair has already flipped previous-lifetime
+	 * `running` runs to `failed`, so the status-aware policy in
+	 * `decideSweepKills` sees them as non-succeeded and kills their trees, while
+	 * background processes a *succeeded* run intentionally left (e.g. a dev
+	 * server) are preserved. Legacy trees from versions predating the scope
+	 * marker are caught by their bridge cmdline / `SSH_AUTH_SOCK=/run/hezo/` env.
+	 * Best-effort per container: a container stopping mid-sweep just logs.
+	 */
+	private async sweepDanglingContainerProcesses(docker: DockerClient): Promise<void> {
+		const { db } = this.deps;
+
+		const reachable = await docker.ping();
+		if (!reachable) {
+			log.warn('Docker not reachable at startup; skipping dangling-process sweep');
+			return;
+		}
+
+		const running = await db.query<{ id: string; slug: string; container_id: string }>(
+			`SELECT p.id, p.slug, p.container_id
+			 FROM projects p
+			 WHERE p.container_status = $1::container_status AND p.container_id IS NOT NULL`,
+			[ContainerStatus.Running],
+		);
+		if (running.rows.length === 0) return;
+
+		const scans: Array<{ row: (typeof running.rows)[number]; procs: ContainerProcessInfo[] }> = [];
+		for (const row of running.rows) {
+			try {
+				const procs = await docker.listHezoProcesses(row.container_id);
+				if (procs.length > 0) scans.push({ row, procs });
+			} catch (err) {
+				log.warn(`Dangling-process scan failed for project ${ref(row.slug, row.id)}:`, err);
+			}
+		}
+		if (scans.length === 0) return;
+
+		// One batched lookup across every container: which scanned run ids belong
+		// to runs that completed successfully (their leftovers are intentional).
+		const candidateIds = collectCandidateRunIds(scans.flatMap((s) => s.procs));
+		let succeeded = new Set<string>();
+		if (candidateIds.length > 0) {
+			const rows = await db.query<{ id: string }>(
+				`SELECT id FROM heartbeat_runs
+				 WHERE status = $1::heartbeat_run_status AND id = ANY($2::uuid[])`,
+				[HeartbeatRunStatus.Succeeded, candidateIds],
+			);
+			succeeded = new Set(rows.rows.map((r) => r.id));
+		}
+
+		for (const { row, procs } of scans) {
+			const kills = decideSweepKills(procs, succeeded);
+			if (kills.length === 0) continue;
+			try {
+				await docker.killPids(row.container_id, kills);
+				log.info(
+					`Swept ${kills.length} dangling process(es) in container for project ${ref(row.slug, row.id)} (${procs.length - kills.length} preserved)`,
+				);
+			} catch (err) {
+				log.warn(`Dangling-process kill failed for project ${ref(row.slug, row.id)}:`, err);
 			}
 		}
 	}
@@ -2507,7 +2614,9 @@ export class JobManager {
 	}
 
 	private async detectOrphanedRuns(): Promise<void> {
-		await detectOrphans(this.deps.db, this.getLiveRunIds(), this.deps.wsManager);
+		await detectOrphans(this.deps.db, this.getLiveRunIds(), this.deps.wsManager, {
+			killProcesses: (containerId, runId) => this.deps.docker.killRunProcesses(containerId, runId),
+		});
 		await this.sweepStaleDispatches();
 		await healStaleRunState(this.deps.db, this.deps.wsManager);
 	}

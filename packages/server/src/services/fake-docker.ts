@@ -102,6 +102,11 @@ export function createFakeDockerClient(db?: Db): DockerClient {
 		},
 		execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
 		killRunProcesses: async () => {},
+		killProcessesByEnvMarker: async () => {},
+		// Empty scan = the startup dangling-process sweep is a clean no-op in
+		// every HEZO_SKIP_DOCKER harness.
+		listHezoProcesses: async () => [],
+		killPids: async () => {},
 	};
 	return stub as unknown as DockerClient;
 }

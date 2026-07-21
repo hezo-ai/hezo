@@ -62,6 +62,9 @@ const STUB_DOCKER_METHODS = {
 	execStart: async () => ({ stdout: '', stderr: '' }),
 	execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
 	killRunProcesses: async () => {},
+	killProcessesByEnvMarker: async () => {},
+	listHezoProcesses: async () => [],
+	killPids: async () => {},
 };
 
 export function createStubDocker<T extends Record<string, unknown>>(

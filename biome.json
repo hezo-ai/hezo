@@ -64,7 +64,7 @@
 			"!**/docs-bundle.json",
 			"!**/docker-bundle.json",
 			"!**/static-bundle.json",
-			"!marketplace/**",
+			"!marketplace",
 			"!test/test-run-order.json",
 			"!test-results",
 			"!playwright-report",

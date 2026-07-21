@@ -1,5 +1,7 @@
+import { randomBytes } from 'node:crypto';
 import { ConnectorTransport, McpInstallStatus } from '@hezo/shared';
 import type { Db } from '../db/database';
+import { trackBackground } from '../lib/background';
 import { logger } from '../logger';
 import type { LocalConnectorConfig } from './connectors/connections';
 import type { DockerClient } from './docker';
@@ -112,6 +114,12 @@ async function installOne(deps: InstallerDeps, row: PendingRow): Promise<Install
 	deps.emit?.('stdout', `→ Installing MCP "${row.name}" (${pkg}) to ${dir}\n`);
 	log.info('installing local mcp', { id: row.id, name: row.name, pkg });
 
+	// Scope marker so an abandoned npm tree stays killable — Docker can't signal
+	// an exec'd process, so a timed-out install would otherwise keep running in
+	// the container. Never a heartbeat_runs row, so the startup sweep also reaps
+	// it unconditionally.
+	const scopeId = `mcp-install-${randomBytes(8).toString('hex')}`;
+
 	try {
 		const exec = await deps.docker.execCreate(deps.containerId, {
 			Cmd: [
@@ -119,11 +127,12 @@ async function installOne(deps: InstallerDeps, row: PendingRow): Promise<Install
 				'-c',
 				`mkdir -p ${shQuote(dir)} && cd ${shQuote(dir)} && npm install --no-audit --no-fund --silent ${shQuote(pkg)} 2>&1`,
 			],
+			Env: [`HEZO_HEARTBEAT_RUN_ID=${scopeId}`],
 			AttachStdout: true,
 			AttachStderr: true,
 		});
 
-		const { stdout, stderr } = await runWithTimeout(deps, exec, INSTALL_TIMEOUT_MS);
+		const { stdout, stderr } = await runWithTimeout(deps, exec, INSTALL_TIMEOUT_MS, scopeId);
 		const info = await deps.docker.execInspect(exec);
 		if (info.ExitCode !== 0) {
 			const tail = `${stdout}\n${stderr}`.trim().slice(-1000);
@@ -147,9 +156,15 @@ async function runWithTimeout(
 	deps: InstallerDeps,
 	execId: string,
 	timeoutMs: number,
+	scopeId: string,
 ): Promise<{ stdout: string; stderr: string }> {
 	const ac = new AbortController();
-	const timer = setTimeout(() => ac.abort(), timeoutMs);
+	const timer = setTimeout(() => {
+		ac.abort();
+		// Aborting only tears down the attach stream — reap the in-container npm
+		// tree by its scope marker. Best-effort; the startup sweep is the backstop.
+		trackBackground(deps.docker.killRunProcesses(deps.containerId, scopeId).catch(() => {}));
+	}, timeoutMs);
 	try {
 		return await deps.docker.execStart(execId, { signal: ac.signal });
 	} finally {

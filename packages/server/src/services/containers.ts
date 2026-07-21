@@ -28,7 +28,7 @@ import {
 } from './container-user';
 import type { DockerClient } from './docker';
 import { ensureImage } from './ensure-image';
-import { ContainerGitExecutor } from './git-executor';
+import { ContainerGitExecutor, mintGitOpScopeId } from './git-executor';
 import { resolveAgentBaseImage } from './image-registry';
 import type { LogStreamBroker } from './log-stream-broker';
 import { ensureProjectRepos } from './repo-sync';
@@ -487,12 +487,12 @@ export async function provisionContainer(
 			// needs a bridge back to the host ssh-agent — provisioning isn't a run, so
 			// allocate a short-lived one. No agent → no bridge → clone fails and is
 			// reported (same as a missing key today).
-			const syncRepos = (bridge: BridgeRunnerArgs | null) =>
+			const syncRepos = (bridge: BridgeRunnerArgs | null, scopeId: string) =>
 				ensureProjectRepos(
 					db,
 					{ id: project.id, team_id: teamId },
 					dataDir,
-					ContainerGitExecutor.forPrep(docker, Id, bridge, runUser),
+					ContainerGitExecutor.forPrep(docker, Id, bridge, runUser, scopeId),
 					(stream, text) => emit(stream, text),
 				);
 			const syncRes = deps.sshAgentServer
@@ -501,9 +501,9 @@ export async function provisionContainer(
 						teamId,
 						dataDir,
 						runUser.name,
-						({ bridge }) => syncRepos(bridge),
+						({ bridge, scopeId }) => syncRepos(bridge, scopeId),
 					)
-				: await syncRepos(null);
+				: await syncRepos(null, mintGitOpScopeId());
 			if (syncRes.failed.length > 0) {
 				emit(
 					'stderr',
