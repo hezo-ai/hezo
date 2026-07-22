@@ -142,6 +142,15 @@ describe('template resolver', () => {
 		expect(result).toContain('the only correct state to wait in');
 	});
 
+	it('tells agents the admin has no mark-done control and completion is the agent action', async () => {
+		const result = await resolveSystemPrompt(db, 'Base prompt.', { teamId });
+		// The admin cannot mark a ticket done from the UI — Close cancels — so the
+		// agent must complete it itself or ask the admin to approve, never delegate
+		// the done-transition.
+		expect(result).toContain('the admin has no "mark done" button');
+		expect(result).toContain('Asking the admin to **approve** completion is correct');
+	});
+
 	it('appends the cancellation hand-back rule with the admin/CEO carve-out', async () => {
 		const result = await resolveSystemPrompt(db, 'Base prompt.', { teamId });
 		// A manager must hand an active task back to wind down, not cancel it out from under
