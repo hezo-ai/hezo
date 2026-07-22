@@ -1,4 +1,4 @@
-import { GOAL_SMART_GUIDANCE } from '@hezo/shared';
+import { GOAL_ONGOING_NOTE, GOAL_SMART_GUIDANCE } from '@hezo/shared';
 
 /**
  * Compact SMART-goal reminder shown on the goal create/edit surfaces and the Goals page, so the
@@ -24,6 +24,7 @@ export function GoalSmartGuidance({ className = '' }: { className?: string }) {
 					</li>
 				))}
 			</ul>
+			<p className="text-xs text-text-3 leading-relaxed mt-2">{GOAL_ONGOING_NOTE}</p>
 		</div>
 	);
 }

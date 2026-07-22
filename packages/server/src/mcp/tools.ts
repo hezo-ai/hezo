@@ -1190,7 +1190,7 @@ export function registerTools(
 	tool(
 		server,
 		'suggest_goal',
-		"Suggest a project goal for the admin to approve. Callable only by the team Captain (or the CEO targeting a team via `project`), typically during initial project onboarding after you've asked the admin what they want to achieve. This does NOT create a goal directly — it files a suggestion the admin reviews and approves, at which point the real goal is created. A goal is a high-level objective the team works toward: pass a `title`, a `measurement` (the precise definition of when it is achieved — the bar to judge against; write it SMART), optional `actions` (guidance on what to do/check toward it), a `check_frequency` (daily/weekly/monthly — how often it is re-assessed once created), and an optional `target_date` (deadline, ISO YYYY-MM-DD). Pass `task_id` (recommended — usually your planning task) to surface the suggestion as an Approve/Deny card in that task's thread; it also appears on the project's Goals page. Suggest goals from the admin's stated objectives — do not invent goals the admin did not ask for.",
+		"Suggest a project goal for the admin to approve. Callable only by the team Captain (or the CEO targeting a team via `project`), typically during initial project onboarding after you've asked the admin what they want to achieve. This does NOT create a goal directly — it files a suggestion the admin reviews and approves, at which point the real goal is created. Only suggest a goal for a STANDING outcome — one whose measurement stays meaningful every time it is re-checked (a level to hold or keep improving, e.g. \"every watched item's document stays current\", \"grow monthly reach\"). Goals are re-assessed on their cadence indefinitely and are never finished at 100%, so a finite deliverable with a fixed done state — a document to produce, a one-time analysis, a feature to ship — is a task, not a goal: file it with `create_task` (optionally linked via `goal_id`) instead. Pass a `title`, a `measurement` (the precise definition of when it is achieved — the bar to judge against; write it SMART), optional `actions` (guidance on what to do/check toward it), a `check_frequency` (daily/weekly/monthly — pick by how often the measurement meaningfully changes), and an optional `target_date` (deadline, ISO YYYY-MM-DD). Pass `task_id` (recommended — usually your planning task) to surface the suggestion as an Approve/Deny card in that task's thread; it also appears on the project's Goals page. Suggest goals from the admin's stated objectives — do not invent goals the admin did not ask for.",
 		{
 			project: projectArg(),
 			title: z.string().describe('Short goal title.'),
@@ -1205,7 +1205,9 @@ export function registerTools(
 			check_frequency: z
 				.enum(['daily', 'weekly', 'monthly'])
 				.optional()
-				.describe('How often the goal is re-assessed once created (default daily).'),
+				.describe(
+					'How often the goal is re-assessed once created (default daily). Pick by how often the measurement meaningfully changes: daily for fast-moving monitoring, weekly for steady work streams, monthly for slow-moving outcomes. Checks recur indefinitely — this is a cadence, not a deadline.',
+				),
 			target_date: z.string().optional().describe('Optional deadline as an ISO date (YYYY-MM-DD).'),
 			task_id: z
 				.string()

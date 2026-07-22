@@ -826,8 +826,19 @@ export const GOAL_SMART_GUIDANCE: ReadonlyArray<{ letter: string; label: string;
 	{ letter: 'M', label: 'Measurable', hint: 'Define exactly how you will know it is achieved.' },
 	{ letter: 'A', label: 'Achievable', hint: 'Realistic for the team given its resources.' },
 	{ letter: 'R', label: 'Relevant', hint: "Matters to the project's mission right now." },
-	{ letter: 'T', label: 'Time-bound', hint: 'Give it a deadline to work toward.' },
+	{
+		letter: 'T',
+		label: 'Time-bound',
+		hint: 'Give it a deadline to work toward — standing goals can rely on their check cadence instead.',
+	},
 ];
+
+/**
+ * Ongoing-vs-one-off note shown alongside the SMART card: a goal is a standing outcome the
+ * Captain re-checks on its cadence; a finite deliverable belongs on the board as a task.
+ */
+export const GOAL_ONGOING_NOTE =
+	'A goal is a standing outcome the Captain re-checks on its cadence indefinitely — it is never "finished" at 100%. A one-off deliverable with a fixed done state belongs on the board as a task instead.';
 
 /** One point in a goal's progress history — a snapshot recorded by a progress-update run. */
 export interface GoalHistoryPoint {

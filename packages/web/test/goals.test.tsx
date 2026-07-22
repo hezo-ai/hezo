@@ -148,6 +148,8 @@ test('the Goals header help button opens the SMART guidance modal', async () => 
 	// The modal renders its title and the SMART guidance body.
 	await findByText('What makes a good goal?');
 	await findByText(/Goals are the outcomes the Captain steers/);
+	// The ongoing-vs-one-off note (GOAL_ONGOING_NOTE) renders below the SMART list.
+	await findByText(/standing outcome/);
 });
 
 test('the goal create form renders an info tooltip for every field', async () => {
