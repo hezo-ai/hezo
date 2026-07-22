@@ -1999,7 +1999,18 @@ provisioning pull (`agent-base:<version>`) would 404. A final `publish-cfn-templ
 re-uploads the AWS CloudFormation deploy template (`deploy/aws/hezo.cfn.yaml`) to the public S3
 bucket the README's "Deploy on AWS" Launch Stack button serves, so the hosted copy never drifts
 from the repo (it asserts the template is ASCII-only first, and skips when AWS credentials aren't
-configured). The running instance polls
+configured). A last `notify-website` job announces the release to the marketing site:
+hezo.ai/docs is rendered by the separate `hezo-ai/website` repo (Gatsby on Cloudflare Pages)
+from this repo's `docs/` tree via a `vendor/hezo` git submodule **pinned to the latest release
+tag** — the job mints a token via the hezo-release-bot app and sends a `repository_dispatch`
+(`hezo-release-published`, `client_payload.tag`) that the website's `update-hezo-submodule.yml`
+handles by checking the submodule out at that tag and pushing (Cloudflare redeploys on push).
+The website deliberately tracks **releases, not main**, so the public docs always describe the
+version users can download; the dispatch must be sent from `release-publish.yml` itself because
+the Release is created with the workflow's own `GITHUB_TOKEN`, whose events GitHub suppresses
+(a `release: published` trigger elsewhere would never fire). The website workflow also keeps a
+manual `workflow_dispatch` (optional `tag` input, defaulting to the latest release) as the
+re-pin escape hatch. The running instance polls
 `GET /api/updates/latest` (cached ~1 h, fails soft) and shows a bottom banner. The
 Settings → General page also renders a **Version** section (current version linked to its
 GitHub release, plus a **"Check for new version"** button that calls

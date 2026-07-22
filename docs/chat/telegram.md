@@ -1,13 +1,13 @@
 ---
 title: Telegram
-order: 18.3
-section: Concepts
+order: 17.2
+section: Chat & messaging apps
 ---
 
 # Telegram: the CEO in your pocket
 
 The Telegram integration connects the Hezo **CEO** to Telegram in both modes (see
-[Chat & messaging apps](/docs/concepts/chat-channels)):
+[Chat & messaging apps](/docs/chat/overview)):
 
 - **Assistant (DM) mode** — DM your bot for a private CEO chat, with optional parallel
   threads via a Topics supergroup. Allowlisted identities only.

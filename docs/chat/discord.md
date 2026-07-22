@@ -1,7 +1,7 @@
 ---
 title: Discord
-order: 18.7
-section: Concepts
+order: 17.4
+section: Chat & messaging apps
 ---
 
 # Discord: the CEO on your server
@@ -12,7 +12,7 @@ work with its usual tools, and replies right there. It also answers DMs as a per
 assistant.
 
 Both integration modes are supported (see
-[Chat & messaging apps](/docs/concepts/chat-channels)):
+[Chat & messaging apps](/docs/chat/overview)):
 
 - **Coworker mode** — @-mention the bot in any channel on a server it has joined.
   Replies land in the channel; the conversation also shows up read-only in the web

@@ -1,7 +1,7 @@
 ---
 title: Slack
-order: 18.5
-section: Concepts
+order: 17.3
+section: Chat & messaging apps
 ---
 
 # Slack: the CEO as a coworker
@@ -17,7 +17,7 @@ channel history, reads what you agreed, creates the tasks in the right project, 
 posts a summary back into the thread.
 
 Both integration modes are supported (see
-[Chat & messaging apps](/docs/concepts/chat-channels)):
+[Chat & messaging apps](/docs/chat/overview)):
 
 - **Coworker mode** — @-mention the bot in any channel it was invited to. Replies stay
   in the Slack thread; the conversation also shows up read-only in the web chatbox
