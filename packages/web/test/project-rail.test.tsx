@@ -163,8 +163,9 @@ test('superuser creates a new project from the rail create button', async () => 
 		screen.getByPlaceholderText(/What is this project/),
 		'A research project for the launch.',
 	);
+	await user.click(await screen.findByTestId('view-all-teams'));
 	await user.click(await screen.findByTestId('team-type-card-Blank'));
-	await user.click(screen.getByTestId('create-project-submit'));
+	await user.click(await screen.findByTestId('create-project-submit'));
 
 	// "Create now" provisions the team + project directly and navigates to the
 	// new project's Captain planning task (project slug derived from the name).

@@ -1,4 +1,4 @@
-import { waitFor } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
 
@@ -15,11 +15,17 @@ test('the welcome card opens the dialog exposing both creation flows', async () 
 	const create = await findByTestId('home-welcome-create', undefined, { timeout: 15_000 });
 	await user.click(create);
 
-	// The dialog renders into a Radix portal with a team-type picker and the two
-	// submit buttons (direct vs CEO-assisted).
-	await findByTestId('create-project-submit', undefined, { timeout: 15_000 });
+	// The dialog opens on its entry step: the two submit buttons are gated behind a
+	// team selection, reached via "View all teams".
+	await findByTestId('view-all-teams', undefined, { timeout: 15_000 });
+	expect(screen.queryByTestId('create-project-submit')).toBeNull();
+
+	await user.click(await findByTestId('view-all-teams'));
+	await user.click(await findByTestId('team-type-card-Blank'));
+
+	// Both creation flows are now available (direct vs CEO-assisted).
+	await findByTestId('create-project-submit');
 	await findByTestId('plan-with-ceo-submit');
-	await findByTestId('team-type-card-Blank');
 });
 
 // Direct flow: filling the dialog and clicking "Create now" stands up a brand-new
@@ -41,6 +47,7 @@ test('the direct flow creates a project in its own new team and opens the planni
 		await findByPlaceholderText(/What is this project/),
 		'A direct-flow project with its own dedicated team.',
 	);
+	await user.click(await findByTestId('view-all-teams'));
 	await user.click(await findByTestId('team-type-card-Blank'));
 	await user.click(await findByTestId('create-project-submit'));
 
@@ -81,6 +88,7 @@ test('the CEO-assisted flow opens the HQ intake thread instead of creating immed
 		await findByPlaceholderText(/What is this project/),
 		'A project we want the CEO to scope with us first.',
 	);
+	await user.click(await findByTestId('view-all-teams'));
 	await user.click(await findByTestId('team-type-card-Blank'));
 	await user.click(await findByTestId('plan-with-ceo-submit'));
 

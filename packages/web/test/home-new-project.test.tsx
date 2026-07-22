@@ -22,10 +22,17 @@ test('home "New project" opens the create-project-with-team dialog (type picker)
 	const section = await findByTestId('home-projects', undefined, { timeout: 15_000 });
 	await user.click(within(section).getByTestId('home-new-project'));
 
-	// The project-with-team dialog (not the old team-scoped one) has a type picker.
-	await screen.findByTestId('create-project-submit');
-	expect(screen.getByText('Team type')).toBeTruthy();
-	expect(screen.getByPlaceholderText('e.g. Marketing Site')).toBeTruthy();
+	// The project-with-team dialog (not the old team-scoped one) opens on its entry
+	// step: name + description + a "View all teams" affordance. The action buttons
+	// stay hidden until a team is picked.
+	await screen.findByPlaceholderText('e.g. Marketing Site');
+	expect(screen.getByTestId('view-all-teams')).toBeTruthy();
+	expect(
+		screen.getByPlaceholderText(
+			'What is this project? Domain, users, and the core problem it solves.',
+		),
+	).toBeTruthy();
+	expect(screen.queryByTestId('create-project-submit')).toBeNull();
 });
 
 test('the create-project dialog blocks on the container state when HQ is down', async () => {
