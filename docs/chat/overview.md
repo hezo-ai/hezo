@@ -1,7 +1,7 @@
 ---
-title: Chat & messaging apps
-order: 18
-section: Concepts
+title: Overview
+order: 17.1
+section: Chat & messaging apps
 ---
 
 # Chatting with the CEO
@@ -27,8 +27,8 @@ Each thread keeps its own recent history and streams independently.
 ## How threads work across chat apps
 
 The CEO is also reachable from external chat apps —
-[Telegram](/docs/concepts/chat-telegram), [Slack](/docs/concepts/chat-slack), and
-[Discord](/docs/concepts/chat-discord). The model is simple:
+[Telegram](/docs/chat/telegram), [Slack](/docs/chat/slack), and
+[Discord](/docs/chat/discord). The model is simple:
 
 - **Every surface owns its own threads.** A Telegram DM is one thread. A Slack DM is a
   different thread. A topic in your Telegram Topics group, a Slack channel, a Discord
@@ -74,9 +74,9 @@ the same brain for work, not for your private conversation history.
 
 | App | Assistant (DM) mode | Coworker (channel) mode | Setup |
 |---|---|---|---|
-| [Telegram](/docs/concepts/chat-telegram) | Private DM + optional Topics supergroup (parallel personal threads) | Groups the bot is added to (privacy mode off) | Bot token from @BotFather |
-| [Slack](/docs/concepts/chat-slack) | DMs with the bot | Channels the bot is invited to | App manifest + two tokens (Socket Mode) |
-| [Discord](/docs/concepts/chat-discord) | DMs with the bot | Server channels, on @-mention | Bot token + Message Content intent |
+| [Telegram](/docs/chat/telegram) | Private DM + optional Topics supergroup (parallel personal threads) | Groups the bot is added to (privacy mode off) | Bot token from @BotFather |
+| [Slack](/docs/chat/slack) | DMs with the bot | Channels the bot is invited to | App manifest + two tokens (Socket Mode) |
+| [Discord](/docs/chat/discord) | DMs with the bot | Server channels, on @-mention | Bot token + Message Content intent |
 
 > **Security.** Bot tokens are stored encrypted in the global secrets vault and are
 > never exposed to agents or agent runs — the trusted Hezo server talks to each platform

@@ -1,6 +1,6 @@
 import { HEZO_DOCS_URL } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
-import { buildHezoDocsBlock, parseDoc } from '../src/services/docs-bundle';
+import { buildHezoDocsBlock, loadDocs, parseDoc } from '../src/services/docs-bundle';
 
 describe('parseDoc', () => {
 	it('strips frontmatter and reads title/order/section', () => {
@@ -45,6 +45,7 @@ describe('buildHezoDocsBlock', () => {
 		// Real doc sections + content are present (frontmatter stripped).
 		expect(block).toContain('## Getting started');
 		expect(block).toContain('## Concepts');
+		expect(block).toContain('## Chat & messaging apps');
 		expect(block).toContain('### Installation');
 		expect(block).not.toContain('order:');
 
@@ -56,5 +57,24 @@ describe('buildHezoDocsBlock', () => {
 		expect(intro).toBeGreaterThanOrEqual(0);
 		expect(install).toBeGreaterThan(intro);
 		expect(cli).toBeGreaterThan(install);
+	});
+
+	it('emits every section header exactly once', async () => {
+		// A section header repeats when two sections' `order` values interleave
+		// (the header is re-emitted whenever the section changes across the global
+		// order sort) — an order collision between pages of different sections.
+		// Only frontmatter-derived sections count: page bodies carry their own H2s.
+		const docs = await loadDocs();
+		const sections = new Set(
+			Object.values(docs)
+				.map((raw) => parseDoc(raw).section)
+				.filter((s) => s !== ''),
+		);
+		const block = await buildHezoDocsBlock();
+		const headers = block.split('\n').filter((line) => line.startsWith('## '));
+		for (const section of sections) {
+			const count = headers.filter((h) => h === `## ${section}`).length;
+			expect(count, `section "${section}" header emitted ${count}×`).toBe(1);
+		}
 	});
 });

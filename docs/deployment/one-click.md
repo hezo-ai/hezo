@@ -1,6 +1,6 @@
 ---
 title: One-click deploy
-order: 25
+order: 25.5
 section: Deployment
 ---
 
