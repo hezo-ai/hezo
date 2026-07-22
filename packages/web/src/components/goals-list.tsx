@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import {
+	GOAL_EXPLAINER_TOOLTIP,
 	type GoalSuggestion,
 	useCancelQueuedProgressRun,
 	useGoalQueuedRun,
@@ -33,6 +34,7 @@ import { Button } from './ui/button';
 import { ConfirmDialog } from './ui/confirm-dialog';
 import { EmptyState } from './ui/empty-state';
 import { HelpDialog } from './ui/help-dialog';
+import { InfoTooltip } from './ui/info-tooltip';
 import { Tooltip } from './ui/tooltip';
 
 interface GoalsListProps {
@@ -307,7 +309,14 @@ function SuggestedGoals({
 
 	return (
 		<div className="mb-4" data-testid="goal-suggestions">
-			<h2 className="mb-2 text-sm font-semibold text-text-2">Suggested goals</h2>
+			<div className="mb-2 flex items-center gap-1.5">
+				<h2 className="text-sm font-semibold text-text-2">Suggested goals</h2>
+				<InfoTooltip
+					label="What is a goal?"
+					content={GOAL_EXPLAINER_TOOLTIP}
+					data-testid="suggested-goals-info"
+				/>
+			</div>
 			<div className="flex flex-col gap-2">
 				{suggestions.map((s) => (
 					<div

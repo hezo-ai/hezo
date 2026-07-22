@@ -1,7 +1,8 @@
 import { ApprovalStatus } from '@hezo/shared';
 import { Check, Target, X } from 'lucide-react';
-import { useResolveGoalSuggestion } from '../../hooks/use-goals';
+import { GOAL_EXPLAINER_TOOLTIP, useResolveGoalSuggestion } from '../../hooks/use-goals';
 import { Button } from '../ui/button';
+import { InfoTooltip } from '../ui/info-tooltip';
 import type { CommentDataOf } from './comment-data';
 
 interface Props {
@@ -62,9 +63,17 @@ export function GoalSuggestionComment({ comment, projectId }: Props) {
 			<div className="flex items-start gap-2">
 				<Target className="w-4 h-4 text-warning-soft-fg shrink-0 mt-0.5" />
 				<div className="flex-1">
-					<p className="text-sm font-medium text-text-1">
-						Suggested goal: <span className="font-semibold">{title}</span>
-					</p>
+					<div className="flex items-start gap-1.5">
+						<p className="text-sm font-medium text-text-1">
+							Suggested goal: <span className="font-semibold">{title}</span>
+						</p>
+						<InfoTooltip
+							label="What is a goal?"
+							content={GOAL_EXPLAINER_TOOLTIP}
+							data-testid="goal-suggestion-info"
+							className="mt-0.5"
+						/>
+					</div>
 					{measurement && <p className="text-xs text-text-2 mt-0.5">Measure: {measurement}</p>}
 					<p className="text-xs text-text-2 mt-0.5">
 						Checked {frequency}

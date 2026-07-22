@@ -14,6 +14,15 @@ import { toast } from './use-toast';
 
 export type { GoalRunActivity, GoalWithProject, ProgressUpdateRunSummary };
 
+/**
+ * One-liner explaining what a goal is and where it surfaces. Shown in the info
+ * tooltip next to a suggested goal's title on both surfaces that render a
+ * suggestion — the task thread card and the Goals page — so the copy stays in
+ * lockstep.
+ */
+export const GOAL_EXPLAINER_TOOLTIP =
+	"A goal is a high-level objective your team works toward. Approve it to create the goal — it then appears on this project's Goals page, where the Captain tracks progress and re-checks it on the schedule shown.";
+
 /** A pending goal suggestion (a Captain/CEO proposal awaiting admin approval). */
 export interface GoalSuggestion {
 	approval_id: string;

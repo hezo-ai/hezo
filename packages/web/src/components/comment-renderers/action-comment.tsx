@@ -24,7 +24,20 @@ export function ActionComment({ comment, projectId }: Props) {
 	}
 
 	if (kind !== ActionCommentKind.SetupRepo) {
-		return <p className="text-xs text-text-3 italic">Unknown action: {kind}</p>;
+		// An action kind this bundle doesn't recognize — almost always version skew:
+		// the server was updated to emit a new kind while this tab still runs older
+		// JS (the shell surfaces a "refresh" prompt for exactly this). Degrade to a
+		// neutral, actionable message rather than a raw "Unknown action: <kind>"
+		// string that reads as broken; keep the kind in `title` for debugging.
+		return (
+			<p
+				className="text-xs text-text-3 italic"
+				data-testid="action-unknown"
+				title={kind ? `Unrecognized action: ${kind}` : undefined}
+			>
+				This item needs a newer version to display — refresh the page.
+			</p>
+		);
 	}
 
 	const resolved = comment.chosen_option?.status === 'complete';
