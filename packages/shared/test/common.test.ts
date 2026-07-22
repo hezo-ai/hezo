@@ -61,22 +61,23 @@ describe('enum guards', () => {
 		expect(isReactionKind(42)).toBe(false);
 	});
 
-	it('isChatChannel covers every channel including slack', () => {
+	it('isChatChannel covers every channel including slack and discord', () => {
 		expect(isChatChannel(ChatChannel.Web)).toBe(true);
 		expect(isChatChannel(ChatChannel.Telegram)).toBe(true);
 		expect(isChatChannel(ChatChannel.WhatsApp)).toBe(true);
 		expect(isChatChannel(ChatChannel.Slack)).toBe(true);
+		expect(isChatChannel(ChatChannel.Discord)).toBe(true);
 		expect(isChatChannel('slack')).toBe(true);
-		expect(isChatChannel('discord')).toBe(false);
+		expect(isChatChannel('matrix')).toBe(false);
 		expect(isChatChannel('')).toBe(false);
 	});
 
-	it('isChatConversationKind accepts exactly the two modes', () => {
-		expect(isChatConversationKind(ChatConversationKind.Mirror)).toBe(true);
+	it('isChatConversationKind accepts exactly the two kinds', () => {
+		expect(isChatConversationKind(ChatConversationKind.Assistant)).toBe(true);
 		expect(isChatConversationKind(ChatConversationKind.Coworker)).toBe(true);
-		expect(isChatConversationKind('mirror')).toBe(true);
+		expect(isChatConversationKind('assistant')).toBe(true);
 		expect(isChatConversationKind('coworker')).toBe(true);
-		expect(isChatConversationKind('broadcast')).toBe(false);
+		expect(isChatConversationKind('mirror')).toBe(false);
 		expect(isChatConversationKind('')).toBe(false);
 	});
 

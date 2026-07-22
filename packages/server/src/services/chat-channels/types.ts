@@ -56,11 +56,12 @@ export interface OutboundReply {
 
 /**
  * A chat channel adapter owns *everything* platform-specific: inbound parsing,
- * outbound delivery, optional thread create/close, and any long-lived transport
- * (a webhook registration or a persistent gateway). The manager, webhook route,
- * config routes, and web core are all channel-agnostic and reach a channel only
- * through the adapter registered here — so a new chat app (Discord, Slack, …) is
- * one new adapter file, with no changes to the core.
+ * outbound delivery, and any long-lived transport (a webhook registration or a
+ * persistent gateway). The manager, webhook route, config routes, and web core
+ * are all channel-agnostic and reach a channel only through the adapter
+ * registered here — so a new chat app is one new adapter file, with no changes
+ * to the core. There is no thread mirroring: every conversation lives on one
+ * surface, and replies are delivered to the surface each turn came from.
  */
 export interface ChatChannelAdapter {
 	readonly channel: ChatChannel;
@@ -87,17 +88,12 @@ export interface ChatChannelAdapter {
 	/** Prompt an unlinked sender to link their identity (best-effort, optional). */
 	promptToLink?(event: InboundChatEvent): Promise<void>;
 
-	/** Create a native platform thread, returning its id. No-op channels omit this. */
-	createThread?(title: string): Promise<string>;
-	/** Close/archive a native platform thread. No-op channels omit this. */
-	closeThread?(externalThreadId: string): Promise<void>;
-
 	/**
-	 * Whether this channel can host mirrored threads *right now* (enabled + configured
-	 * — e.g. Telegram with a Topics supergroup). Drives auto-mirroring: the manager
-	 * only creates a thread here when this is true. Default (absent) = false.
+	 * Close/archive a native platform thread when the operator closes its
+	 * conversation from the web view (e.g. a Telegram forum topic). Channels with
+	 * nothing to close (DMs, Slack threads) omit this.
 	 */
-	supportsThreads?(): Promise<boolean>;
+	closeThread?(externalThreadId: string): Promise<void>;
 
 	/**
 	 * Parse a raw event as a *thread close* (e.g. a Telegram `forum_topic_closed`
@@ -121,8 +117,7 @@ export interface ChatChannelAdapter {
 
 	/**
 	 * Whether group/coworker mode is live *right now* (enabled + configured + the
-	 * mode not switched off in channel metadata). Mirrors the `supportsThreads`
-	 * capability-discovery pattern. Default (absent) = false.
+	 * mode not switched off in channel metadata). Default (absent) = false.
 	 */
 	supportsGroupMode?(): Promise<boolean>;
 

@@ -74,24 +74,16 @@ function promptCapturingDocker(dataDir: string, projectId: string) {
 	return { docker, prompts, gate };
 }
 
-/** Spy hooks standing in for the registry; Telegram is a live mirror-capable channel. */
+/** Spy hooks standing in for the registry: records reply deliveries and closes. */
 function spyHooks() {
-	const created: Array<{ channel: string; title: string }> = [];
 	const delivered: Array<{ channel: string; ext: string; content: string }> = [];
-	let topicSeq = 0;
 	return {
-		created,
 		delivered,
 		hooks: {
 			deliver: async (channel: string, ext: string, content: string) => {
 				delivered.push({ channel, ext, content });
 			},
 			closeThread: async () => undefined,
-			createThread: async (channel: string, title: string) => {
-				created.push({ channel, title });
-				return `-100:${++topicSeq}`;
-			},
-			mirrorableChannels: async () => ['telegram'] as const,
 		},
 	};
 }
@@ -172,15 +164,14 @@ describe('group/coworker ingest path', () => {
 
 	async function conversationFor(externalThreadId: string) {
 		const r = await ctx.db.query<{ id: string; kind: string; title: string | null }>(
-			`SELECT c.id, c.kind::text AS kind, c.title FROM chat_conversation_bindings b
-			 JOIN chat_conversations c ON c.id = b.conversation_id
-			 WHERE b.channel = 'slack' AND b.external_thread_id = $1`,
+			`SELECT id, kind::text AS kind, title FROM chat_conversations
+			 WHERE channel = 'slack' AND external_thread_id = $1`,
 			[externalThreadId],
 		);
 		return r.rows[0];
 	}
 
-	it('creates a coworker conversation bound ONLY to its origin thread — never mirrored', async () => {
+	it('creates a coworker conversation living on its channel thread, listed in the web hub', async () => {
 		const { docker } = promptCapturingDocker(ctx.dataDir, hqProjectId);
 		const { manager } = makeManager(docker);
 		const spy = spyHooks();
@@ -192,25 +183,20 @@ describe('group/coworker ingest path', () => {
 		expect(convo.title).toBe('#product');
 		await waitForCompleteReplies(convo.id, 1);
 
-		// Exactly one binding — the Slack origin. No web binding, and the
-		// mirror-capable Telegram channel was never asked for a topic.
-		const bindings = await ctx.db.query<{ channel: string; external_thread_id: string | null }>(
-			`SELECT channel::text AS channel, external_thread_id FROM chat_conversation_bindings
-			 WHERE conversation_id = $1`,
-			[convo.id],
-		);
-		expect(bindings.rows).toEqual([{ channel: 'slack', external_thread_id: 'C42:1721.0001' }]);
-		expect(spy.created).toEqual([]);
-
-		// Invisible in the web switcher; a mirror thread still lists.
-		const mirrorId = await manager.createWebConversation('Ops sync');
+		// The conversation's home is the Slack thread — its own row is the routing
+		// key. The web hub lists it alongside ordinary threads, badged by kind.
+		const webId = await manager.createWebConversation('Ops sync');
 		const listed = await manager.listConversations({ includeClosed: true });
-		expect(listed.some((c) => c.id === convo.id)).toBe(false);
-		expect(listed.some((c) => c.id === mirrorId)).toBe(true);
+		const coworkerRow = listed.find((c) => c.id === convo.id);
+		expect(coworkerRow?.kind).toBe('coworker');
+		expect(coworkerRow?.channel).toBe('slack');
+		expect(coworkerRow?.external_thread_id).toBe('C42:1721.0001');
+		expect(listed.some((c) => c.id === webId)).toBe(true);
+		expect(spy.delivered.every((d) => d.channel === 'slack')).toBe(true);
 		await manager.stop();
 	});
 
-	it('delivers the reply only to the origin thread and broadcasts nothing to the web', async () => {
+	it('delivers the reply only to the channel thread while the web view streams it', async () => {
 		const { docker } = promptCapturingDocker(ctx.dataDir, hqProjectId);
 		const { manager, wsManager } = makeManager(docker);
 		const spy = spyHooks();
@@ -227,12 +213,12 @@ describe('group/coworker ingest path', () => {
 		expect(spy.delivered).toEqual([
 			{ channel: 'slack', ext: 'C42:1721.0001', content: 'On it — plan incoming' },
 		]);
-		// No chat-room WebSocket traffic — the thread is invisible in the web chatbox
-		// and must not tick its unread badge.
+		// The web view renders every thread live: this coworker turn broadcast to
+		// its conversation room (and the global list room) like any other thread.
 		const chatRooms = broadcast.mock.calls.filter(
 			([room]) => room === wsRoom.chat() || room === wsRoom.chatConversation(convo.id),
 		);
-		expect(chatRooms).toEqual([]);
+		expect(chatRooms.length).toBeGreaterThan(0);
 		await manager.stop();
 	});
 

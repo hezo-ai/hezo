@@ -60,8 +60,9 @@ function decodeThreadId(externalThreadId: string): { chatId: string; messageThre
 /**
  * Telegram chat channel adapter (webhook transport). Threading maps to Telegram's
  * one native primitive, forum topics: a private DM is a single conversation per
- * user; a Topics-enabled supergroup gives one conversation per topic. Creating and
- * closing topics needs the bot to be a group admin with `can_manage_topics`.
+ * user; a Topics-enabled supergroup gives one conversation per topic. Closing a
+ * topic from the web view needs the bot to be a group admin with
+ * `can_manage_topics`.
  */
 export class TelegramAdapter implements ChatChannelAdapter {
 	readonly channel = ChatChannel.Telegram;
@@ -83,22 +84,6 @@ export class TelegramAdapter implements ChatChannelAdapter {
 			return null;
 		}
 		return json.result ?? null;
-	}
-
-	/** The configured Topics supergroup id (in `metadata.group_id`), if any. */
-	private async groupId(): Promise<string | null> {
-		const config = await loadChannelConfig(this.deps, this.channel);
-		const gid = config?.metadata?.group_id;
-		return typeof gid === 'string' && gid.trim() !== '' ? gid : null;
-	}
-
-	/**
-	 * Telegram can host mirrored threads when it's enabled, has a bot token, and a
-	 * Topics supergroup is configured (`metadata.group_id`) — a DM can't hold topics.
-	 */
-	async supportsThreads(): Promise<boolean> {
-		const config = await loadChannelConfig(this.deps, this.channel);
-		return !!config?.enabled && !!config.botTokenSecret && (await this.groupId()) !== null;
 	}
 
 	async start(): Promise<void> {
@@ -157,17 +142,6 @@ export class TelegramAdapter implements ChatChannelAdapter {
 			parse_mode: 'MarkdownV2',
 			...(messageThreadId ? { message_thread_id: messageThreadId } : {}),
 		});
-	}
-
-	async createThread(title: string): Promise<string> {
-		const gid = await this.groupId();
-		if (!gid) throw new Error('telegram: no Topics supergroup configured (metadata.group_id)');
-		const result = await this.api<{ message_thread_id: number }>('createForumTopic', {
-			chat_id: gid,
-			name: title || 'New thread',
-		});
-		if (!result?.message_thread_id) throw new Error('telegram: createForumTopic returned no id');
-		return encodeThreadId(Number(gid), result.message_thread_id);
 	}
 
 	async closeThread(externalThreadId: string): Promise<void> {

@@ -930,17 +930,19 @@ export interface ProjectProgress {
 // --- CEO chat ---
 
 /**
- * Surface a CEO chat message arrived through. Each conversation belongs to one
- * channel: `web` conversations are the in-app chatbox threads; external channels
- * (Telegram and Slack now, WhatsApp/Discord later) map each external thread to its
- * own conversation. The channel is both message provenance and — together with
- * `external_thread_id` — part of the conversation's identity.
+ * Surface a CEO chat conversation lives on — its one home. `web` conversations
+ * are in-app chatbox threads; external channels (Telegram + Slack now, Discord
+ * next, WhatsApp later) map each external DM/topic/channel-thread to its own
+ * conversation. There is no mirroring: `channel` + `external_thread_id` on the
+ * conversation row ARE the inbound routing key, and every reply is delivered to
+ * the surface the triggering message came from. The web view lists all threads.
  */
 export const ChatChannel = {
 	Web: 'web',
 	Telegram: 'telegram',
 	WhatsApp: 'whatsapp',
 	Slack: 'slack',
+	Discord: 'discord',
 } as const;
 export type ChatChannel = (typeof ChatChannel)[keyof typeof ChatChannel];
 
@@ -950,20 +952,18 @@ export function isChatChannel(value: string): value is ChatChannel {
 }
 
 /**
- * What kind of conversation a CEO chat thread is — the two integration modes an
- * external chat app can support.
+ * What kind of conversation a CEO chat thread is.
  *
- * - `mirror` (assistant/DM mode): one logical thread mirrored across every
- *   real-time channel binding (web chatbox ↔ Telegram DM/topic ↔ Slack DM). The
- *   channel-parity invariant applies: create/sync/close everywhere.
- * - `coworker` (group mode): the CEO participates in an external group
- *   channel/thread it was invited to (a Slack channel, later a WhatsApp group).
- *   The conversation has exactly one binding — its origin thread — is never
- *   mirrored into the web chatbox or any other channel, and replies post only
- *   back to that origin thread.
+ * - `assistant`: the operator's own line to the CEO — a web chatbox thread, an
+ *   app DM, or a designated-supergroup topic. Interactive from the web view;
+ *   identity-allowlist gated on external surfaces.
+ * - `coworker`: the CEO participating in a team channel/group it was invited to
+ *   (a Slack channel, a Telegram group, a Discord channel). Mention-driven,
+ *   platform history as ephemeral context, replies only into the platform
+ *   thread; visible read-only in the web view.
  */
 export const ChatConversationKind = {
-	Mirror: 'mirror',
+	Assistant: 'assistant',
 	Coworker: 'coworker',
 } as const;
 export type ChatConversationKind = (typeof ChatConversationKind)[keyof typeof ChatConversationKind];

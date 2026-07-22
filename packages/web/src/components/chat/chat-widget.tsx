@@ -12,6 +12,7 @@ import {
 	History,
 	Image as ImageIcon,
 	Loader2,
+	Lock,
 	Maximize2,
 	MessageSquare,
 	Minimize2,
@@ -20,7 +21,12 @@ import {
 } from 'lucide-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { useAutoGrowTextarea } from '../../hooks/use-auto-grow-textarea';
-import { type ChatMessage, useChat, useChatConversations } from '../../hooks/use-chat';
+import {
+	type ChatConversationSummary,
+	type ChatMessage,
+	useChat,
+	useChatConversations,
+} from '../../hooks/use-chat';
 import { useContainerHealth } from '../../hooks/use-container-health';
 import { useDraggableFab } from '../../hooks/use-draggable-fab';
 import { useFileAttachments } from '../../hooks/use-file-attachments';
@@ -140,13 +146,26 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 		};
 	}, []);
 
+	// The web view is the hub: it lists every thread from every surface. Assistant
+	// threads (web + app DMs/topics) are interactive; coworker (team-channel)
+	// threads are read-only here — their write surface is the channel itself.
+	const assistantThreads = conversations.filter((t) => t.kind !== 'coworker');
+	const coworkerThreads = conversations.filter((t) => t.kind === 'coworker');
+	const activeThread = conversations.find((t) => t.id === activeConversationId);
+	const activeReadOnly = activeThread?.kind === 'coworker';
+	// Untitled threads render as "New thread" until the CEO auto-titles them from the
+	// conversation; there is no special "Main" default anymore.
+	const threadLabel = (t: (typeof conversations)[number]) => t.title?.trim() || 'New thread';
+
 	const submit = () => {
 		const text = draft.trim();
 		// A message needs text or at least one attachment. Block while a send is in
 		// flight or a reply is streaming — prevents the impatient double-click
 		// (seeing the optimistic bubble "stuck" during the egress check) that used
 		// to spawn duplicate CEO turns. Files still uploading also block the send.
+		// Coworker (team-channel) threads are read-only here — never send.
 		if (
+			activeReadOnly ||
 			(!text && visibleAttachments.length === 0) ||
 			uploading.length > 0 ||
 			sending ||
@@ -158,23 +177,6 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 		setDraft('');
 		setPendingAttachmentIds([]);
 		send(text, attachments).catch(() => undefined);
-	};
-
-	// Every thread is reachable from the web chatbox (all are web-bound), including
-	// ones that mirror to Telegram. The `channels` array drives the mirror indicator.
-	const webThreads = conversations;
-	const activeThread = webThreads.find((t) => t.id === activeConversationId);
-	// Untitled threads render as "New thread" until the CEO auto-titles them from the
-	// conversation; there is no special "Main" default anymore.
-	const threadLabel = (t: (typeof webThreads)[number]) => {
-		const base = t.title?.trim() || 'New thread';
-		// A thread mirrored into an external chat app gets a small glyph so its reach
-		// is obvious. (Coworker/group threads never appear here — the server filters
-		// them out of the conversation list; this only ever labels mirrored threads.)
-		const mirrors: string[] = [];
-		if (t.channels?.includes('telegram')) mirrors.push('Telegram');
-		if (t.channels?.includes('slack')) mirrors.push('Slack');
-		return mirrors.length > 0 ? `${base}  ↔ ${mirrors.join(' + ')}` : base;
 	};
 
 	const handleNewThread = async () => {
@@ -318,10 +320,10 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 					{expanded && (
 						<aside
 							data-testid="chat-thread-rail"
-							className="hidden w-56 shrink-0 flex-col border-r border-border md:flex"
+							className="hidden w-60 shrink-0 flex-col border-r border-border md:flex"
 						>
 							<div className="flex items-center justify-between px-3 pb-2 pt-3">
-								<span className="text-eyebrow text-text-3">Threads</span>
+								<span className="text-eyebrow text-text-3">Your chats</span>
 								<button
 									type="button"
 									onClick={handleNewThread}
@@ -333,11 +335,12 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 								</button>
 							</div>
 							<div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-2">
-								{webThreads.length === 0 && (
+								{assistantThreads.length === 0 && (
 									<span className="px-2.5 py-2 text-[13px] italic text-text-3">New thread</span>
 								)}
-								{webThreads.map((t) => {
+								{assistantThreads.map((t) => {
 									const isActive = t.id === activeConversationId;
+									const chip = channelChip(t);
 									return (
 										<div
 											key={t.id}
@@ -356,7 +359,12 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 											>
 												{threadLabel(t)}
 											</button>
-											{webThreads.length > 1 && (
+											{chip && (
+												<span className="shrink-0 rounded-sm border border-border px-1 text-[9px] font-semibold tracking-wide text-text-3">
+													{chip}
+												</span>
+											)}
+											{conversations.length > 1 && (
 												<button
 													type="button"
 													onClick={() => handleCloseThread(t.id)}
@@ -370,6 +378,43 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 										</div>
 									);
 								})}
+								{coworkerThreads.length > 0 && (
+									<>
+										<span className="text-eyebrow px-1 pb-1 pt-3 text-text-3">Team channels</span>
+										{coworkerThreads.map((t) => {
+											const isActive = t.id === activeConversationId;
+											const chip = channelChip(t);
+											return (
+												<div
+													key={t.id}
+													data-testid="chat-thread-row"
+													data-active={isActive}
+													data-kind="coworker"
+													className={`group/thread flex items-center gap-1 rounded-lg pl-2.5 pr-1 py-1.5 text-[13px] ${
+														isActive
+															? 'bg-surface-2 font-medium text-text-1'
+															: 'text-text-2 hover:bg-surface-2 hover:text-text-1'
+													}`}
+												>
+													<button
+														type="button"
+														onClick={() => setSelectedConversationId(t.id)}
+														className="flex min-w-0 flex-1 items-center gap-1 truncate text-left"
+													>
+														<span className="truncate">{threadLabel(t)}</span>
+														{/* Read-only marker as a suffix to the name (approved design). */}
+														<Lock aria-label="read-only" className="h-3 w-3 shrink-0 text-text-3" />
+													</button>
+													{chip && (
+														<span className="shrink-0 rounded-sm border border-border px-1 text-[9px] font-semibold tracking-wide text-text-3">
+															{chip}
+														</span>
+													)}
+												</div>
+											);
+										})}
+									</>
+								)}
 							</div>
 						</aside>
 					)}
@@ -377,8 +422,8 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 					{/* Conversation column: dropdown switcher (hidden when the rail shows it) +
 					    messages + composer. */}
 					<div className="flex min-h-0 min-w-0 flex-1 flex-col">
-						{/* Thread switcher: pick / create / close parallel conversation threads.
-						    Web threads only; external (Telegram) threads live in their own app. */}
+						{/* Thread switcher: every thread from every surface, grouped like the
+						    rail — your own chats first, then team channels (read-only). */}
 						<div
 							className={`flex items-center gap-1 border-b border-border px-3 py-1.5 ${
 								expanded ? 'md:hidden' : ''
@@ -391,12 +436,28 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 								onChange={(e) => setSelectedConversationId(e.target.value || undefined)}
 								className="min-w-0 flex-1 truncate rounded-md border border-border bg-surface px-2 py-1 text-xs text-text-1"
 							>
-								{webThreads.length === 0 && <option value="">New thread</option>}
-								{webThreads.map((t) => (
-									<option key={t.id} value={t.id}>
-										{threadLabel(t)}
-									</option>
-								))}
+								{conversations.length === 0 && <option value="">New thread</option>}
+								{assistantThreads.map((t) => {
+									const chip = channelChip(t);
+									return (
+										<option key={t.id} value={t.id}>
+											{threadLabel(t)}
+											{chip ? ` · ${chip}` : ''}
+										</option>
+									);
+								})}
+								{coworkerThreads.length > 0 && (
+									<optgroup label="Team channels">
+										{coworkerThreads.map((t) => {
+											const chip = channelChip(t);
+											return (
+												<option key={t.id} value={t.id}>
+													{threadLabel(t)} 🔒{chip ? ` · ${chip}` : ''}
+												</option>
+											);
+										})}
+									</optgroup>
+								)}
 							</select>
 							<button
 								type="button"
@@ -407,7 +468,7 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 							>
 								<Plus className="h-4 w-4" />
 							</button>
-							{activeThread && webThreads.length > 1 && (
+							{activeThread && conversations.length > 1 && (
 								<button
 									type="button"
 									onClick={() => handleCloseThread()}
@@ -476,6 +537,21 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 								</div>
 
 								<div className="border-t border-border p-3">
+									{/* Coworker threads are read-only here: the channel is the write
+									    surface, so the composer locks and points people back there. */}
+									{activeReadOnly && activeThread && (
+										<div
+											data-testid="chat-readonly-banner"
+											className="mb-2 flex items-start gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2 text-[12px] text-text-2"
+										>
+											<Lock aria-hidden className="mt-0.5 h-3.5 w-3.5 shrink-0 text-text-3" />
+											<span>
+												This conversation lives in <b>{threadLabel(activeThread)}</b> on{' '}
+												{channelDisplayName(activeThread.channel)}. Hezo replies there when
+												mentioned — continue it by mentioning Hezo in the channel.
+											</span>
+										</div>
+									)}
 									{hasAnyChip && (
 										<AttachmentChips
 											attachments={visibleAttachments}
@@ -489,7 +565,11 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 											errorTestId="chat-attachment-error"
 										/>
 									)}
-									<div className="flex items-end gap-1 rounded-2xl border border-border bg-surface px-1.5 py-1 transition-colors focus-within:border-border-strong">
+									<div
+										className={`flex items-end gap-1 rounded-2xl border border-border bg-surface px-1.5 py-1 transition-colors focus-within:border-border-strong ${
+											activeReadOnly ? 'opacity-50' : ''
+										}`}
+									>
 										<UploadButton
 											onFiles={handleFiles}
 											accept={ATTACHMENT_ACCEPT}
@@ -508,7 +588,12 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 												}
 											}}
 											rows={1}
-											placeholder="Ask the CEO anything, across every project…"
+											disabled={activeReadOnly}
+											placeholder={
+												activeReadOnly
+													? `Read-only — reply from ${channelDisplayName(activeThread?.channel ?? '')}`
+													: 'Ask the CEO anything, across every project…'
+											}
 											data-testid="chat-input"
 											className="max-h-32 min-h-[2.25rem] flex-1 resize-none overflow-y-auto bg-transparent px-2 py-2 text-[13px] leading-5 text-text-1 outline-none placeholder:text-text-3"
 										/>
@@ -516,6 +601,7 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 											type="button"
 											onClick={submit}
 											disabled={
+												activeReadOnly ||
 												(!draft.trim() && visibleAttachments.length === 0) ||
 												uploading.length > 0 ||
 												sending ||
@@ -536,6 +622,27 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 			</div>
 		</>
 	);
+}
+
+/** Human name of an external chat channel ("Telegram", "Slack", …). */
+function channelDisplayName(channel: string): string {
+	if (channel === 'telegram') return 'Telegram';
+	if (channel === 'slack') return 'Slack';
+	if (channel === 'discord') return 'Discord';
+	if (channel === 'whatsapp') return 'WhatsApp';
+	return channel;
+}
+
+/**
+ * Short origin chip for a thread's home surface ("TG DM", "TG TOPIC",
+ * "SLACK DM", "SLACK", …); null for web threads, which need no badge.
+ */
+function channelChip(t: ChatConversationSummary): string | null {
+	if (t.channel === 'web') return null;
+	if (t.kind === 'coworker') return t.channel.toUpperCase();
+	const inTopic = t.external_thread_id?.includes(':') ?? false;
+	if (t.channel === 'telegram') return inTopic ? 'TG TOPIC' : 'TG DM';
+	return `${t.channel.toUpperCase()} DM`;
 }
 
 /** The small uppercase eyebrow above each bubble ("YOU" / "CEO · HQ"). */

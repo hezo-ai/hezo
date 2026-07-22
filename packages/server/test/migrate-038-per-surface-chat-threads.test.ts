@@ -1,14 +1,16 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDataPreservationHarness, type DataPreservationHarness } from './helpers/migrate';
 
-const TARGET = '038_slack_channel_and_conversation_kind.sql';
+const TARGET = '038_per_surface_chat_threads.sql';
 
-// Seeds a mirror-era conversation + message + telegram channel config + binding at
-// schema 037, applies the migration, and asserts: 'slack' joined the chat_channel
-// enum (and is usable), chat_conversations.kind exists and defaults pre-existing
-// rows to 'mirror', chat_messages.author_label exists and is NULL on old rows, and
-// every seeded row survived.
-describe('038_slack_channel_and_conversation_kind migration', () => {
+// Seeds mirror-era data at schema 037 (a telegram-origin conversation with a
+// bindings row, a message, a channel config), applies the de-mirroring
+// migration, and asserts: 'slack'/'discord' joined the chat_channel enum and are
+// usable, chat_conversations.kind exists defaulting pre-existing rows to
+// 'assistant', chat_messages.author_label exists, the bindings table is GONE
+// while the conversation row's own (channel, external_thread_id) routing key
+// survived, and the observed-message buffer table exists.
+describe('038_per_surface_chat_threads migration', () => {
 	let h: DataPreservationHarness;
 	let convoId: string;
 	let messageId: string;
@@ -39,6 +41,7 @@ describe('038_slack_channel_and_conversation_kind migration', () => {
 			[ceoId, teamId, projectId],
 		);
 		convoId = convo.rows[0].id;
+		// Mirror-era binding row — the migration drops the whole table.
 		await h.db.query(
 			`INSERT INTO chat_conversation_bindings (conversation_id, channel, external_thread_id)
 			 VALUES ($1, 'telegram', '-100:7')`,
@@ -59,15 +62,15 @@ describe('038_slack_channel_and_conversation_kind migration', () => {
 	});
 	afterAll(() => h.close());
 
-	it("adds 'slack' to the chat_channel enum and makes it usable", async () => {
-		const e = await h.db.query<{ c: number }>(
-			`SELECT COUNT(*)::int AS c FROM pg_enum
+	it("adds 'slack' and 'discord' to the chat_channel enum, usable post-migration", async () => {
+		const e = await h.db.query<{ enumlabel: string }>(
+			`SELECT enumlabel FROM pg_enum
 			 JOIN pg_type ON pg_type.oid = pg_enum.enumtypid
-			 WHERE pg_type.typname = 'chat_channel' AND pg_enum.enumlabel = 'slack'`,
+			 WHERE pg_type.typname = 'chat_channel' ORDER BY enumlabel`,
 		);
-		expect(e.rows[0].c).toBe(1);
-		// The new value is actually usable post-migration (it must not be used
-		// *inside* 038's own transaction, but is fine afterwards).
+		const labels = e.rows.map((r) => r.enumlabel);
+		expect(labels).toContain('slack');
+		expect(labels).toContain('discord');
 		const inserted = await h.db.query<{ channel: string }>(
 			`INSERT INTO chat_channel_configs (channel, enabled) VALUES ('slack', false)
 			 RETURNING channel::text AS channel`,
@@ -75,47 +78,53 @@ describe('038_slack_channel_and_conversation_kind migration', () => {
 		expect(inserted.rows[0].channel).toBe('slack');
 	});
 
-	it("adds chat_conversations.kind defaulting pre-existing rows to 'mirror'", async () => {
-		const col = await h.db.query<{ c: number }>(
-			`SELECT COUNT(*)::int AS c FROM information_schema.columns
-			 WHERE table_name = 'chat_conversations' AND column_name = 'kind'`,
-		);
-		expect(col.rows[0].c).toBe(1);
+	it("adds chat_conversations.kind defaulting pre-existing rows to 'assistant'", async () => {
 		const row = await h.db.query<{ kind: string }>(
 			`SELECT kind::text AS kind FROM chat_conversations WHERE id = $1`,
 			[convoId],
 		);
-		expect(row.rows[0].kind).toBe('mirror');
-		// The coworker kind is insertable.
+		expect(row.rows[0].kind).toBe('assistant');
 		const coworker = await h.db.query<{ kind: string }>(
 			`INSERT INTO chat_conversations (member_id, team_id, project_id, channel, external_thread_id, kind)
-			 SELECT member_id, team_id, project_id, 'telegram', 'C42:1.2', 'coworker' FROM chat_conversations WHERE id = $1
+			 SELECT member_id, team_id, project_id, 'telegram', '-200:1', 'coworker' FROM chat_conversations WHERE id = $1
 			 RETURNING kind::text AS kind`,
 			[convoId],
 		);
 		expect(coworker.rows[0].kind).toBe('coworker');
 	});
 
-	it('adds chat_messages.author_label, NULL on pre-existing rows', async () => {
+	it('drops the mirror-era bindings table; the conversation row keeps the routing key', async () => {
+		const t = await h.db.query<{ c: number }>(
+			`SELECT COUNT(*)::int AS c FROM information_schema.tables
+			 WHERE table_name = 'chat_conversation_bindings'`,
+		);
+		expect(t.rows[0].c).toBe(0);
+		// Inbound routing resolves off the conversation row itself.
+		const byKey = await h.db.query<{ id: string }>(
+			`SELECT id FROM chat_conversations
+			 WHERE channel = 'telegram' AND external_thread_id = '-100:7' AND closed_at IS NULL`,
+		);
+		expect(byKey.rows[0]?.id).toBe(convoId);
+	});
+
+	it('creates the observed-message buffer table', async () => {
+		await h.db.query(
+			`INSERT INTO chat_observed_messages (channel, external_chat_id, thread_scope, sender_label, content, message_ts)
+			 VALUES ('telegram', '-300', NULL, 'Alice', 'we ship friday', '42')`,
+		);
+		const r = await h.db.query<{ sender_label: string }>(
+			`SELECT sender_label FROM chat_observed_messages WHERE external_chat_id = '-300'`,
+		);
+		expect(r.rows[0].sender_label).toBe('Alice');
+	});
+
+	it('adds chat_messages.author_label (NULL on pre-existing rows) and preserves data', async () => {
 		const row = await h.db.query<{ author_label: string | null; content: string }>(
 			`SELECT author_label, content FROM chat_messages WHERE id = $1`,
 			[messageId],
 		);
 		expect(row.rows[0].author_label).toBeNull();
 		expect(row.rows[0].content).toBe('hello');
-	});
-
-	it('preserves pre-existing rows', async () => {
-		const convo = await h.db.query<{ external_thread_id: string }>(
-			`SELECT external_thread_id FROM chat_conversations WHERE id = $1`,
-			[convoId],
-		);
-		expect(convo.rows[0].external_thread_id).toBe('-100:7');
-		const binding = await h.db.query(
-			`SELECT 1 FROM chat_conversation_bindings WHERE conversation_id = $1 AND channel = 'telegram'`,
-			[convoId],
-		);
-		expect(binding.rows.length).toBe(1);
 		const config = await h.db.query<{ metadata: { group_id?: string } }>(
 			`SELECT metadata FROM chat_channel_configs WHERE channel = 'telegram'`,
 		);

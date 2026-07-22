@@ -43,11 +43,10 @@ export function buildChatChannelRegistry(deps: ChatChannelAdapterDeps): ChatChan
 }
 
 /**
- * Wire the manager's registry-wide channel hooks: deliver a message to any channel's
- * thread, create/close a channel's thread, and enumerate mirror-capable channels. The
- * manager stays channel-agnostic — it names only the `ChatChannel` enum value; the
- * registry resolves the adapter. This is what makes thread mirroring generic across
- * every channel (a new channel touches no manager code).
+ * Wire the manager's registry-wide channel hooks: deliver a reply to a channel's
+ * thread (reply-where-asked) and close a channel's thread. The manager stays
+ * channel-agnostic — it names only the `ChatChannel` enum value; the registry
+ * resolves the adapter (a new channel touches no manager code).
  */
 export function wireManagerToChannels(
 	manager: ChatSessionManager,
@@ -62,10 +61,5 @@ export function wireManagerToChannels(
 			const adapter = registry.get(channel);
 			if (adapter?.closeThread) await adapter.closeThread(externalThreadId);
 		},
-		createThread: async (channel: ChatChannel, title: string) => {
-			const adapter = registry.get(channel);
-			return adapter?.createThread ? adapter.createThread(title) : null;
-		},
-		mirrorableChannels: () => registry.mirrorableChannels(),
 	});
 }
