@@ -58,13 +58,16 @@ function TelegramSection() {
 			data-testid="telegram-channel"
 		>
 			<h2 className="text-[15px] font-medium mb-1">
-				Telegram <span className="text-text-2 font-normal text-[13px]">— assistant (DM) mode</span>
+				Telegram{' '}
+				<span className="text-text-2 font-normal text-[13px]">— assistant + coworker modes</span>
 			</h2>
 			<p className="text-[13px] text-text-2 mb-3 max-w-[680px]">
 				Create a bot with @BotFather, then paste its token. Saving registers the inbound webhook
-				automatically. A private DM is a single conversation; for multiple threads, add the bot to a
-				Topics-enabled supergroup as an admin with the “Manage topics” permission — each topic
-				becomes its own conversation, mirrored with the web chatbox.
+				automatically. A private DM is one thread; the Topics supergroup you designate below gives
+				you parallel personal threads (one per topic). For coworker mode, add the bot to any other
+				group and disable BotFather privacy mode (/setprivacy → Disable) so it can see mentions —
+				anyone there can then @-mention it, and it answers with the group’s recent messages as
+				context.
 			</p>
 			<ChannelForm channel="telegram" config={telegram} onSave={saveChannel} saving={saving} />
 		</section>
@@ -208,6 +211,7 @@ function ChannelForm({
 }) {
 	const [token, setToken] = useState('');
 	const [groupId, setGroupId] = useState(String((config?.metadata?.group_id as string) ?? ''));
+	const [groupMode, setGroupMode] = useState(config?.metadata?.group_mode_enabled !== false);
 	const [enabled, setEnabled] = useState(config?.enabled ?? false);
 
 	const handleSave = () =>
@@ -215,7 +219,7 @@ function ChannelForm({
 			channel,
 			enabled,
 			bot_token: token.trim() || undefined,
-			metadata: { group_id: groupId.trim() },
+			metadata: { group_id: groupId.trim(), group_mode_enabled: groupMode },
 		}).then(() => setToken(''));
 
 	return (
@@ -247,7 +251,8 @@ function ChannelForm({
 			</div>
 			<div>
 				<label className="block text-[13px] font-medium mb-1" htmlFor={`${channel}-group`}>
-					Topics supergroup id <span className="text-text-2">(optional, for threads)</span>
+					Your Topics supergroup id{' '}
+					<span className="text-text-2">(optional — your personal parallel threads)</span>
 				</label>
 				<Input
 					id={`${channel}-group`}
@@ -258,6 +263,15 @@ function ChannelForm({
 					className="sm:w-96"
 				/>
 			</div>
+			<label className="flex items-center gap-2 text-[13px]">
+				<input
+					type="checkbox"
+					data-testid={`${channel}-group-mode`}
+					checked={groupMode}
+					onChange={(e) => setGroupMode(e.target.checked)}
+				/>
+				Coworker mode — respond to mentions in other groups the bot is added to
+			</label>
 			<div>
 				<Button size="sm" data-testid={`${channel}-save`} onClick={handleSave} disabled={saving}>
 					{saving && <Loader2 className="w-3 h-3 animate-spin" />} Save

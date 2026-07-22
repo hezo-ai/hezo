@@ -29,8 +29,14 @@ export interface InboundGroupMentionEvent extends InboundChatEvent {
 	channelName?: string;
 	/** True when the mention arrived inside an existing platform thread. */
 	isThreadReply: boolean;
-	/** Platform message id (Slack ts), for logging/dedupe. */
+	/** Platform message id (Slack ts / Telegram message_id), for logging/dedupe. */
 	messageTs?: string;
+	/**
+	 * Context that arrived WITH the event itself — e.g. Telegram's one-hop quote
+	 * of the message the mention replied to. The group ingest merges it ahead of
+	 * any `fetchThreadContext` history into the same ephemeral prompt block.
+	 */
+	inlineContext?: ThreadContextMessage[];
 }
 
 /**
@@ -124,12 +130,22 @@ export interface ChatChannelAdapter {
 	/**
 	 * Fetch the platform history surrounding a group mention as ephemeral context
 	 * for this one turn (full thread when the mention is a thread reply, recent
-	 * channel messages when top-level). The adapter filters out the bot's own posts
-	 * and prior bot-mention posts — those already live in the persisted conversation
-	 * window. Oldest-first. Best-effort: the caller proceeds without context on
-	 * failure.
+	 * channel messages when top-level). Platforms with a history API (Slack,
+	 * Discord) fetch on demand; platforms without one (Telegram) read the
+	 * observed-message buffer their `observeMessage` hook accumulated. The adapter
+	 * filters out the bot's own posts and prior bot-mention posts — those already
+	 * live in the persisted conversation window. Oldest-first. Best-effort: the
+	 * caller proceeds without context on failure.
 	 */
 	fetchThreadContext?(event: InboundGroupMentionEvent): Promise<ThreadContextMessage[]>;
+
+	/**
+	 * Record a group message the bot merely witnessed (no mention, no DM) into the
+	 * bounded observed-message buffer, for platforms whose history can't be
+	 * fetched retroactively. The webhook route calls this for raw updates no
+	 * parser claimed; the adapter decides what (if anything) to store. Optional.
+	 */
+	observeMessage?(raw: unknown): Promise<void>;
 
 	/**
 	 * Validate the saved credentials against the platform (e.g. Slack `auth.test`).

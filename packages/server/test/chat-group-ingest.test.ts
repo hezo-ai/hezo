@@ -257,6 +257,36 @@ describe('group/coworker ingest path', () => {
 		await manager.stop();
 	});
 
+	it('merges inline reply-quote context ahead of fetched history', async () => {
+		const { docker, prompts } = promptCapturingDocker(ctx.dataDir, hqProjectId);
+		const { manager } = makeManager(docker);
+		manager.setChannelHooks(spyHooks().hooks);
+		const adapter: ChatChannelAdapter = {
+			...stubGroupAdapter([{ sender: 'Alice', text: 'we ship friday' }]),
+		};
+
+		await ingestGroupMentionEvent(
+			{ db: ctx.db, manager },
+			adapter,
+			mention({
+				text: 'what do you think about this?',
+				isThreadReply: true,
+				inlineContext: [{ sender: 'Bob', text: 'the auth fix is risky' }],
+			}),
+		);
+		const convo = await conversationFor('C42:1721.0001');
+		await waitForCompleteReplies(convo.id, 1);
+
+		const prompt = prompts.find((p) => p.includes('## Channel context'));
+		expect(prompt).toBeDefined();
+		// Fetched/observed history first, then the quote that rode in with the event.
+		const alice = prompt?.indexOf('Alice: we ship friday') ?? -1;
+		const bob = prompt?.indexOf('Bob: the auth fix is risky') ?? -1;
+		expect(alice).toBeGreaterThanOrEqual(0);
+		expect(bob).toBeGreaterThan(alice);
+		await manager.stop();
+	});
+
 	it('labels transcript lines with sender names on later turns', async () => {
 		const { docker, prompts } = promptCapturingDocker(ctx.dataDir, hqProjectId);
 		const { manager } = makeManager(docker);

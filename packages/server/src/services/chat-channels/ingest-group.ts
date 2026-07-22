@@ -63,12 +63,14 @@ export async function ingestGroupMentionEvent(
 
 	const authorUserId = await resolveLinkedUser(deps.db, adapter.channel, event.externalUserId);
 
-	// Ephemeral platform history for this one turn. Best-effort: a fetch failure
-	// degrades to answering from the mention text alone, never drops the turn.
-	let context: ThreadContextMessage[] = [];
+	// Ephemeral platform history for this one turn: context that rode in with the
+	// event (a reply-quote hop) ahead of fetched/observed history. Best-effort: a
+	// fetch failure degrades to answering from the mention text alone, never
+	// drops the turn.
+	let context: ThreadContextMessage[] = [...(event.inlineContext ?? [])];
 	if (adapter.fetchThreadContext) {
 		try {
-			context = await adapter.fetchThreadContext(event);
+			context = [...(await adapter.fetchThreadContext(event)), ...context];
 		} catch (e) {
 			log.warn(`fetching ${adapter.channel} thread context failed; replying without it`, e);
 		}
