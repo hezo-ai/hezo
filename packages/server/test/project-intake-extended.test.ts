@@ -55,6 +55,10 @@ describe('createProjectIntake (service)', () => {
 		expect(comments.rows[0].content.text).toContain('App Team');
 		expect(comments.rows[0].content.text).toContain("I'll attach your project plan");
 
+		// The greeting must NOT echo the description back — it already lives in the
+		// ticket description, so re-posting it as a comment is pure duplication.
+		expect(comments.rows[0].content.text).not.toContain('An app with a plan');
+
 		// An Assignment wakeup fired for the CEO.
 		const wakeup = await db.query<{ c: number }>(
 			`SELECT count(*)::int AS c FROM agent_wakeup_requests
