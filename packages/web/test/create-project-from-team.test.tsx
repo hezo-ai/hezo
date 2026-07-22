@@ -16,27 +16,22 @@ async function openNewProjectDialog() {
 	});
 	const section = await utils.findByTestId('home-projects', undefined, { timeout: 15_000 });
 	await utils.user.click(within(section).getByTestId('home-new-project'));
-	await screen.findByTestId('create-project-submit');
+	// The dialog opens on its entry step (name + description); the submit button is
+	// gated behind a team selection now, so wait on the name field instead.
+	await screen.findByPlaceholderText('e.g. Marketing Site');
 	return { ...utils, ws };
 }
 
 test('the header close button dismisses the dialog (mobile has no Escape key)', async () => {
 	const { user } = await openNewProjectDialog();
 	await user.click(screen.getByRole('button', { name: 'Close' }));
-	await waitFor(() => expect(screen.queryByTestId('create-project-submit')).toBeNull());
+	await waitFor(() => expect(screen.queryByPlaceholderText('e.g. Marketing Site')).toBeNull());
 });
 
 test('lists existing teams (not HQ) as cloneable sources and submits source_team_id', async () => {
 	const { user, ws } = await openNewProjectDialog();
 
-	// The seeded project-team is offered as a source; the internal HQ team is not.
-	const sourceCard = await screen.findByTestId(`source-team-card-${ws.team.slug}`);
-	expect(screen.queryByTestId(`source-team-card-${DEFAULT_TEAM_SLUG}`)).toBeNull();
-
-	const submit = screen.getByTestId('create-project-submit') as HTMLButtonElement;
-	// Disabled until name + description + a source selection are all present.
-	expect(submit.disabled).toBe(true);
-
+	// Name + description first (the fields live on the entry step).
 	await user.type(screen.getByPlaceholderText('e.g. Marketing Site'), 'Cloned From Team');
 	await user.type(
 		screen.getByPlaceholderText(
@@ -44,10 +39,20 @@ test('lists existing teams (not HQ) as cloneable sources and submits source_team
 		),
 		'A project cloned from an existing team.',
 	);
-	// Still disabled with no source picked.
-	expect(submit.disabled).toBe(true);
+
+	// Existing teams to clone live on the "Copy existing team" tab of the full catalog.
+	await user.click(screen.getByTestId('view-all-teams'));
+	await user.click(await screen.findByTestId('team-tab-copy'));
+
+	// The seeded project-team is offered as a source; the internal HQ team is not.
+	const sourceCard = await screen.findByTestId(`source-team-card-${ws.team.slug}`);
+	expect(screen.queryByTestId(`source-team-card-${DEFAULT_TEAM_SLUG}`)).toBeNull();
+
+	// No action buttons until a team is picked.
+	expect(screen.queryByTestId('create-project-submit')).toBeNull();
 
 	await user.click(sourceCard);
+	const submit = (await screen.findByTestId('create-project-submit')) as HTMLButtonElement;
 	expect(submit.disabled).toBe(false);
 
 	await user.click(submit);
