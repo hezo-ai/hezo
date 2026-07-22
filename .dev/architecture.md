@@ -1989,7 +1989,14 @@ blocks (the next start overwrites it) and a live server is never mistaken for go
 Postgres manages its own concurrency and writes no lock.
 
 **Releases & updates.** A PR flow (`.github/workflows/`): `release.yml` computes the next
-version from Conventional Commits and opens a `release/<version>` PR; merging fires
+version from Conventional Commits and opens a `release/<version>` PR. The auto bump
+(`scripts/release.ts` → `computeBump`) is derived **purely from commit type** — `feat` →
+minor, any other conventional type → patch — and **never returns `major`**: a breaking-change
+marker (`feat!:` / `BREAKING CHANGE:`) does not escalate the version (pre-1.0 the API is
+explicitly unstable, and major releases are a deliberate human decision, never automated).
+Breaking changes are still listed in the changelog's "Breaking Changes" section so a reviewer
+can choose to cut a major by hand via the workflow's explicit `release-type: major` dispatch
+input. Merging the release PR fires
 `release-publish.yml`, which first builds and publishes the agent-base image to GHCR
 (`ghcr.io/hezo-ai/agent-base:<version>` + `:latest`) and then — **only once that push
 succeeds** — tags the merge commit, cross-compiles, and publishes a GitHub Release (assets
