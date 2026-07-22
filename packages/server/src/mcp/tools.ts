@@ -77,6 +77,7 @@ import {
 	apiKeyIdFromAuth,
 	resolveActorMemberId,
 	resolveAgentId,
+	resolveAssigneeId,
 	resolveProject,
 	resolveReactorMemberId,
 	resolveTaskId,
@@ -1014,7 +1015,10 @@ export function registerTools(
 		{
 			project: projectArg(),
 			status: z.string().optional().describe('Filter by status (comma-separated)'),
-			assignee_id: z.string().optional().describe('Filter by assignee member ID'),
+			assignee_id: z
+				.string()
+				.optional()
+				.describe('Filter by assignee — an agent slug (e.g. "engineer") or a member UUID'),
 			assignee_slug: z
 				.string()
 				.optional()
@@ -1041,7 +1045,11 @@ export function registerTools(
 				params.push(...statuses);
 				idx += statuses.length;
 			}
-			let assigneeId = args.assignee_id as string | undefined;
+			let assigneeId = args.assignee_id
+				? ((await resolveAssigneeId(db, scope.teamId, args.assignee_id as string)) ?? undefined)
+				: undefined;
+			// An assignee_id that resolves to nobody (unknown slug/id) matches nothing.
+			if (args.assignee_id && !assigneeId) return [];
 			if (!assigneeId && args.assignee_slug) {
 				const agent = await db.query<{ id: string }>(
 					`SELECT ma.id FROM member_agents ma
@@ -1482,7 +1490,10 @@ export function registerTools(
 					'New status (backlog, in_progress, review, blocked, done, cancelled). `done` = completed (final); marking a ticket `done` wakes Coach to review it for prompt-learning but leaves it `done`. `cancelled` = abandoned. Re-opening a completed task (done/cancelled) is admin-only.',
 				),
 			priority: z.string().optional().describe('New priority'),
-			assignee_id: z.string().optional().describe('New assignee ID'),
+			assignee_id: z
+				.string()
+				.optional()
+				.describe('New assignee — an agent slug (e.g. "engineer") or a member UUID'),
 			progress_summary: z.string().optional().describe('Progress summary update'),
 			rules: z
 				.string()
@@ -1514,6 +1525,14 @@ export function registerTools(
 
 			const currentStatus = currentRow?.status;
 			const previousAssigneeId = currentRow?.assignee_id ?? null;
+
+			// Accept a teammate slug (what an agent holds) or a member UUID; every
+			// downstream check + the UPDATE below consumes the resolved member id.
+			if (typeof args.assignee_id === 'string' && args.assignee_id) {
+				const resolvedAssignee = await resolveAssigneeId(db, teamId, args.assignee_id);
+				if (!resolvedAssignee) return { error: `Assignee not found: ${args.assignee_id}` };
+				args.assignee_id = resolvedAssignee;
+			}
 
 			// `done` and `cancelled` are the only terminal states; once a task is
 			// terminal only the admin can re-open it (move it back to active).
@@ -1976,7 +1995,7 @@ export function registerTools(
 			.string()
 			.optional()
 			.describe(
-				'The HQ project-intake ticket this fulfils; it is closed with a completion note on success.',
+				'The HQ project-intake ticket this fulfils (its identifier, e.g. "HQ-1", or its UUID); it is closed with a completion note on success.',
 			),
 	} satisfies z.ZodRawShape;
 	tool(
@@ -2008,9 +2027,15 @@ export function registerTools(
 			// Idempotency: if this fulfils an intake ticket, that ticket must still be
 			// open — otherwise a re-run (e.g. after a timeout) would create a second
 			// project + team. Check before creating anything.
-			const intakeTaskId = input.intake_task_id?.trim() || undefined;
+			const rawIntakeTaskId = input.intake_task_id?.trim() || undefined;
+			let intakeTaskId: string | undefined;
 			let intakeTeamId: string | undefined;
-			if (intakeTaskId) {
+			if (rawIntakeTaskId) {
+				// Accept either the intake ticket's identifier (e.g. "HQ-1") or its
+				// UUID, like every other task reference on the MCP surface. Intake
+				// tickets always live in HQ, so resolve within the default team.
+				intakeTaskId = (await resolveTaskId(db, DEFAULT_TEAM_ID, rawIntakeTaskId)) ?? undefined;
+				if (!intakeTaskId) return { error: 'Intake task not found' };
 				const intake = await db.query<{ status: string; team_id: string }>(
 					'SELECT status::text AS status, team_id FROM tasks WHERE id = $1',
 					[intakeTaskId],
@@ -2343,7 +2368,9 @@ export function registerTools(
 			before: z
 				.string()
 				.optional()
-				.describe('Comment ID — return only comments created before this one'),
+				.describe(
+					'A comment id (UUID) or public_id — return only comments created before that one',
+				),
 			excerpt_chars: z
 				.number()
 				.int()
@@ -2362,7 +2389,7 @@ export function registerTools(
 			if (args.before) {
 				params.push(args.before);
 				conditions.push(
-					`(ic.created_at, ic.id) < (SELECT created_at, id FROM task_comments WHERE id = $${params.length})`,
+					`(ic.created_at, ic.id) < (SELECT created_at, id FROM task_comments WHERE (id::text = $${params.length} OR public_id = $${params.length}) AND task_id = $1 LIMIT 1)`,
 				);
 			}
 			const r = await db.query<Record<string, unknown>>(
@@ -2612,7 +2639,7 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					'UUID of the comment you are replying to. Setting this wakes that comment\'s author with source=reply and renders this comment as "replying to ..." in the UI.',
+					'The comment you are replying to — its id (UUID) or its public_id. Setting this wakes that comment\'s author with source=reply and renders this comment as "replying to ..." in the UI.',
 				),
 		},
 		async (args, db, auth) => {
@@ -2621,14 +2648,17 @@ export function registerTools(
 			const { teamId, taskId } = scope;
 			let parentCommentId: string | null = null;
 			if (args.parent_comment_id) {
-				const parentCheck = await db.query(
-					'SELECT 1 FROM task_comments WHERE id = $1 AND task_id = $2',
+				// Accept the parent's id (UUID) or its public_id; store the resolved
+				// UUID as the reply FK. `id::text = $1` avoids the uuid-cast error a
+				// raw `id = $1` throws when a public_id is passed.
+				const parentCheck = await db.query<{ id: string }>(
+					'SELECT id FROM task_comments WHERE (id::text = $1 OR public_id = $1) AND task_id = $2 LIMIT 1',
 					[args.parent_comment_id, taskId],
 				);
 				if (parentCheck.rows.length === 0) {
 					return { error: 'parent_comment_id does not belong to this task' };
 				}
-				parentCommentId = args.parent_comment_id as string;
+				parentCommentId = parentCheck.rows[0].id;
 			}
 			const authorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 			const authorApiKeyId = apiKeyIdFromAuth(auth);
@@ -5390,7 +5420,7 @@ export function registerTools(
 		'Test an MCP connector end-to-end from the server side. Resolves the stored OAuth token from the vault and makes a direct HTTP call to the MCP server (bypassing the agent container and its egress proxy entirely). Returns the upstream status code, response excerpt, and the secret name + masked-token-prefix used. Use this when oauth_status says "active" but the MCP\'s tools are absent from your tool list — it isolates "is the token still valid against the provider?" from "does the proxy chain in the container work?".',
 		{
 			project: projectArg(),
-			connector_id: z.string().describe('connector id from list_connectors'),
+			connector_id: z.string().describe('connector id or name (both shown by list_connectors)'),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -5406,7 +5436,9 @@ export function registerTools(
 			}>(
 				`SELECT id, name, kind::text AS kind, config, oauth_connection_id
 				 FROM mcp_connections
-				 WHERE id = $1 AND (project_id = $2 OR project_id IS NULL)`,
+				 WHERE (id::text = $1 OR name = $1) AND (project_id = $2 OR project_id IS NULL)
+					 ORDER BY (project_id IS NOT NULL) DESC
+					 LIMIT 1`,
 				[connectorId, scope.projectId],
 			);
 			if (row.rows.length === 0) return { error: 'connector not found' };
@@ -5570,13 +5602,15 @@ export function registerTools(
 		'Remove one of your project\'s registered MCP connections. Only connectors owned by your project can be removed — global "all projects" connectors and other projects\' are managed elsewhere. The next agent run will not see it.',
 		{
 			project: projectArg(),
-			id: z.string().describe('connector id (returned by add_connector or list_connectors)'),
+			id: z
+				.string()
+				.describe('connector id or name (returned by add_connector or list_connectors)'),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
 			const r = await db.query<{ id: string }>(
-				'DELETE FROM mcp_connections WHERE id = $1 AND project_id = $2 RETURNING id',
+				'DELETE FROM mcp_connections WHERE (id::text = $1 OR name = $1) AND project_id = $2 RETURNING id',
 				[args.id as string, scope.projectId],
 			);
 			if (r.rows.length === 0) return { error: 'MCP connection not found' };
