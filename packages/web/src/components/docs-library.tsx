@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { readStored, writeStored } from '../lib/safe-storage';
+import { DocumentDownloadMenu } from './document-download-menu';
 import { DocumentBody } from './document-review/document-body';
 import type { DocMetadata } from './document-review/document-metadata-banner';
 import { ReviewToolbarActions } from './document-review/review-toolbar-actions';
@@ -467,6 +468,14 @@ export function DocsLibrary({
 												<History className="w-3.5 h-3.5" />
 												<span className="hidden sm:inline">History</span>
 											</Button>
+										)}
+										{typeof docContent === 'string' && (
+											<DocumentDownloadMenu
+												filename={
+													typeof docTitle === 'string' ? docTitle : (selectedKey ?? 'document.md')
+												}
+												content={docContent}
+											/>
 										)}
 										{popOutUrl && (
 											<Button
