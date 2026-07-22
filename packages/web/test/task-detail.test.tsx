@@ -290,3 +290,55 @@ test('Progress Summary and Rules cards expose info icons with help text', async 
 	);
 	expect(rulesEdit).toBeTruthy();
 });
+
+test('Progress Summary and Rules cards are collapsed by default and toggle open', async () => {
+	let projectSlug = '';
+	let taskIdentifier = '';
+
+	const { findByTestId, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Collapse Project' });
+			const task = await seedTask(ws, project, { title: 'Collapse Test Task' });
+			projectSlug = project.slug;
+			taskIdentifier = task.identifier;
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: projectSlug, taskId: taskIdentifier.toLowerCase() },
+	});
+
+	// Collapsed by default: header/label is visible but the body content is not.
+	const progressCard = await findByTestId('pinned-progress-summary', undefined, {
+		timeout: 10_000,
+	});
+	const progressToggle = await findByTestId('progress-summary-toggle');
+	expect(progressToggle.getAttribute('aria-expanded')).toBe('false');
+	expect(progressCard.textContent).not.toContain('No progress summary yet.');
+
+	const rulesCard = await findByTestId('pinned-rules');
+	const rulesToggle = await findByTestId('rules-toggle');
+	expect(rulesToggle.getAttribute('aria-expanded')).toBe('false');
+	expect(rulesCard.textContent).not.toContain('No rules set.');
+
+	// Clicking the toggle expands the body.
+	await user.click(progressToggle);
+	expect(progressToggle.getAttribute('aria-expanded')).toBe('true');
+	expect((await findByTestId('pinned-progress-summary')).textContent).toContain(
+		'No progress summary yet.',
+	);
+
+	await user.click(rulesToggle);
+	expect(rulesToggle.getAttribute('aria-expanded')).toBe('true');
+	expect((await findByTestId('pinned-rules')).textContent).toContain('No rules set.');
+
+	// Clicking again collapses it back.
+	await user.click(progressToggle);
+	expect(progressToggle.getAttribute('aria-expanded')).toBe('false');
+	expect((await findByTestId('pinned-progress-summary')).textContent).not.toContain(
+		'No progress summary yet.',
+	);
+});
