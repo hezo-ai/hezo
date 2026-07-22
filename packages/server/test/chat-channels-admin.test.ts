@@ -52,6 +52,58 @@ describe('chat channel + identity admin routes', () => {
 		expect(after.rows[0].enabled).toBe(false);
 	});
 
+	it('stores both slack tokens in the vault and preserves them across re-saves', async () => {
+		// enabled:false keeps the adapter offline — no slack.com traffic in tests.
+		const put = await ctx.app.request('/api/chat/channels/slack', {
+			method: 'PUT',
+			headers: auth,
+			body: JSON.stringify({
+				enabled: false,
+				bot_token: 'xoxb-secret',
+				app_token: 'xapp-secret',
+				metadata: { dm_mode_enabled: true, group_mode_enabled: true },
+			}),
+		});
+		expect(put.status).toBe(200);
+		const putBody = (await put.json()) as { data: Record<string, unknown> };
+		expect(putBody.data).toMatchObject({ has_token: true, has_app_token: true });
+
+		const list = await ctx.app.request('/api/chat/channels', { headers: auth });
+		const body = (await list.json()) as { data: { channels: Array<Record<string, unknown>> } };
+		const slack = body.data.channels.find((ch) => ch.channel === 'slack');
+		expect(slack).toMatchObject({ enabled: false, has_token: true, has_app_token: true });
+		// Raw tokens never come back.
+		expect(JSON.stringify(slack)).not.toContain('xoxb-secret');
+		expect(JSON.stringify(slack)).not.toContain('xapp-secret');
+		expect(slack?.metadata).toMatchObject({ app_token_secret: 'SLACK_APP_TOKEN' });
+
+		// Both tokens landed in the vault, scoped to slack.com.
+		const secrets = await ctx.db.query<{ name: string; allowed_hosts: string[] }>(
+			`SELECT name, allowed_hosts FROM secrets WHERE name IN ('SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN') ORDER BY name`,
+		);
+		expect(secrets.rows.map((r) => r.name)).toEqual(['SLACK_APP_TOKEN', 'SLACK_BOT_TOKEN']);
+		for (const row of secrets.rows) expect(row.allowed_hosts).toContain('slack.com');
+
+		// A token-less re-save (metadata omitting the vault reference) keeps both
+		// tokens: bot via the config column, app via the carried-forward reference.
+		const resave = await ctx.app.request('/api/chat/channels/slack', {
+			method: 'PUT',
+			headers: auth,
+			body: JSON.stringify({ enabled: false, metadata: { group_mode_enabled: false } }),
+		});
+		expect(resave.status).toBe(200);
+		const after = await ctx.app.request('/api/chat/channels', { headers: auth });
+		const afterBody = (await after.json()) as {
+			data: { channels: Array<Record<string, unknown>> };
+		};
+		const slackAfter = afterBody.data.channels.find((ch) => ch.channel === 'slack');
+		expect(slackAfter).toMatchObject({ has_token: true, has_app_token: true });
+		expect(slackAfter?.metadata).toMatchObject({
+			app_token_secret: 'SLACK_APP_TOKEN',
+			group_mode_enabled: false,
+		});
+	});
+
 	it('links, lists, and unlinks an external identity', async () => {
 		const u = await ctx.db.query<{ id: string }>(
 			`INSERT INTO users (display_name) VALUES ('Linked') RETURNING id`,

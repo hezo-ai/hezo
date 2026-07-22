@@ -24,21 +24,6 @@ export class ChatChannelRegistry {
 		return [...this.adapters.values()];
 	}
 
-	/**
-	 * Channels that can host mirrored threads right now — an adapter with thread
-	 * support that reports itself enabled + configured. Drives auto-mirroring.
-	 */
-	async mirrorableChannels(): Promise<ChatChannel[]> {
-		const out: ChatChannel[] = [];
-		for (const a of this.adapters.values()) {
-			if (a.createThread && a.supportsThreads) {
-				const ok = await a.supportsThreads().catch(() => false);
-				if (ok) out.push(a.channel);
-			}
-		}
-		return out;
-	}
-
 	/** Start every registered adapter (called on server unlock). Failures are logged, not fatal. */
 	async startAll(): Promise<void> {
 		for (const adapter of this.adapters.values()) {

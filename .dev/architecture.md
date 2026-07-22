@@ -229,41 +229,97 @@ links files sent through the chatbox to their message (stored in the HQ asset li
 under `uploads/chat/`), and `chat_memories` holds each chat-enabled agent's
 automatically-maintained long-term memory (§ 4).
 
-**Multi-thread conversations, mirrored across channels.** The CEO chat is
-**multi-threaded**, and a thread is **one logical conversation mirrored across every
-real-time channel**. A conversation has a **binding per channel** in
-`chat_conversation_bindings` (`(channel, external_thread_id)`, unique per open external
-thread; `chat_conversations.channel`/`external_thread_id` are origin provenance only).
-Inbound routing resolves by binding, so the same thread is found whether a message arrives
-on web or Telegram. **Parity is symmetric and automatic:** creating a thread on any surface
-auto-creates it on every mirror-capable channel (`setupBindings` → `registry.mirrorableChannels()`
-→ each adapter's `createThread` — e.g. a Telegram forum topic); the operator's message and
-the CEO's reply **fan out** to every binding with **origin-exclusion** so no channel
-re-echoes what it just delivered (`mirrorMessage`/`mirrorUserMessage`; web is the WS
-broadcast); and closing on any surface closes every binding (`closeConversation`, plus the
-platform→app direction via each adapter's `parseClose` → `closeConversationByExternalThread`).
-A channel that can't host threads (a DM) degrades to a single thread without breaking parity
-for the rest. The warm container
-(`chat_sessions`) stays a **single shared lease** per CEO member — a thread is only
-message-grouping + rolling window + memory scope, and each turn is a stateless one-shot
-`docker exec` reading a per-turn prompt file, so N threads run as N independent execs into
-the one container. Long-term memory (`chat_memories`) stays **per-agent** (shared across a
-member's threads); compaction serialises at the member level so concurrent threads never
-clobber the shared memory row. External channels (Telegram now, Discord later —
-`.dev/discord-chat-adapter.md`) are built on a **channel-adapter registry**
-(`services/chat-channels/`): a `ChatChannelAdapter` owns everything platform-specific
-(inbound parse, outbound deliver, thread create/close, transport lifecycle), and the
-manager/routes resolve a channel only through the registry — a new app is one adapter file.
-Inbound arrives at a generic public webhook `POST /webhooks/chat/:channel/:secret` (mounted
-before bearer auth; per-channel shared-secret, constant-time compared) → `parseInbound` →
-`ingestInboundEvent`, which enforces the **identity allowlist** (`chat_identity_links` maps
-`(channel, external_user_id)` → a Hezo user; unlinked senders are ignored/prompted to link)
-before routing the message to `ChatSessionManager.sendTurn`. Per-channel bot config lives in
+**Multi-thread conversations, one home surface per thread.** The CEO chat is
+**multi-threaded**, and every thread has exactly **one home surface**: a web thread, a
+Telegram DM, a topic in the operator's designated Topics supergroup, a Slack DM, a Slack
+channel, a Discord DM, a Discord channel — each is its own `chat_conversations` row.
+There is **no mirroring**: nothing started on one surface ever creates or posts into a
+thread on another. The conversation row's `channel` + `external_thread_id` **is the
+inbound routing key** — `findConversationByOrigin(channel, externalThreadId)` resolves an
+open conversation or a new one is created (so closing a thread from the web and DMing
+again starts a fresh thread; there is no bindings table). **The web view is the hub**:
+`listConversations` returns **all** kinds with their `channel` + `kind`, so the chatbox
+lists every thread from every surface, badged by origin — assistant threads fully
+interactive, coworker threads read-only (`POST /api/chat/messages` 409s on them).
+Delivery is **reply-where-asked**: `finalize` delivers a completed reply to the **turn's
+origin surface** (`ConversationContext.channel`, captured per turn) — a web-composed turn
+into a Telegram-DM thread answers on web only, a Telegram message answers in Telegram —
+via the manager's `ChannelHooks.deliver` → the registry adapter. Close parity is scoped
+to the origin surface only: `closeConversation` calls the adapter's optional
+`closeThread` for its own external thread (e.g. archiving the designated supergroup's
+topic), and the platform→app direction runs via `parseClose` →
+`closeConversationByExternalThread`. The warm container (`chat_sessions`) stays a
+**single shared lease** per CEO member — a thread is only message-grouping + rolling
+window + memory scope, and each turn is a stateless one-shot `docker exec` reading a
+per-turn prompt file, so N threads run as N independent execs into the one container.
+Long-term memory (`chat_memories`) stays **per-agent** (shared across a member's
+assistant threads); compaction serialises at the member level so concurrent threads never
+clobber the shared memory row. External channels (Telegram, Slack, Discord) are built on
+a **channel-adapter registry** (`services/chat-channels/`): a `ChatChannelAdapter` owns
+everything platform-specific (inbound parse, outbound deliver, optional thread close,
+transport lifecycle, group-mode capabilities), and the manager/routes resolve a channel
+only through the registry — a new app is one adapter file. Inbound arrives two ways: a
+**webhook** channel (Telegram) at the generic public route `POST
+/webhooks/chat/:channel/:secret` (mounted before bearer auth; per-channel shared-secret,
+constant-time compared), which dispatches `parseGroupMention` → `parseInbound` →
+`parseClose` → `observeMessage` in that order; a **socket-transport** adapter (Slack
+Socket Mode, the Discord gateway) has no webhook — its transport pushes parsed events
+through the `InboundEventSink` wired at startup (`buildInboundEventSink` → the same
+ingest functions the webhook route calls). DMs flow through `ingestInboundEvent`, which
+enforces the **identity allowlist** (`chat_identity_links` maps `(channel,
+external_user_id)` → a Hezo user; unlinked senders are ignored/prompted to link) before
+routing to `ChatSessionManager.sendTurn`. Per-channel bot config lives in
 `chat_channel_configs` (fully generic — the bot token is a `secrets`-vault reference, all
-channel-specific settings in `metadata` jsonb). **The bot token is decrypted in-process by
-trusted server code and outbound bot API calls go direct** (`api.telegram.org`, …), NOT
-through the agent egress proxy — the `__HEZO_SECRET__`/proxy mechanism is for agent *runs*,
-whose threat model differs from the server authenticating its own calls.
+channel-specific settings in `metadata` jsonb; a channel needing a **second** secret
+stores its vault name in metadata, e.g. Slack's `app_token_secret` → `SLACK_APP_TOKEN`).
+**Bot tokens are decrypted in-process by trusted server code and outbound bot API calls
+go direct** (`api.telegram.org`, `slack.com`, `discord.com`, …), NOT through the agent
+egress proxy — the `__HEZO_SECRET__`/proxy mechanism is for agent *runs*, whose threat
+model differs from the server authenticating its own calls.
+
+**Group/coworker mode (`kind = 'coworker'`).** Every chat app can support two integration
+modes, discriminated by `chat_conversations.kind`: **assistant** (DM mode — allowlist-gated,
+fully interactive from the web) and **coworker** — the CEO invited into an external group
+channel (a Slack channel, a Telegram group, a Discord channel) as a teammate. A
+group-capable adapter implements the optional capability trio `parseGroupMention` /
+`supportsGroupMode` / `fetchThreadContext` (history access is **mandatory** for group mode
+— a coworker without channel context is pointless), and mentions flow through a **second
+ingest path**, `ingestGroupMentionEvent` (`chat-channels/ingest-group.ts`) — never through
+`ingestInboundEvent`. Coworker semantics, all keyed off `kind` in `ChatSessionManager`:
+**channel invite is the authorization** (no identity-link gate; a link only enriches
+attribution); the thread is **read-only in the web view** (listed under "Team channels",
+composer disabled, REST 409 — the write surface is the platform itself, where the
+ephemeral channel context lives); concurrent turns **queue instead of interrupting** (two
+mentions = two answers; an aborted partial would post nothing to the platform); prompts
+swap in a group-chat guide, label transcript lines with the platform sender
+(`chat_messages.author_label`), omit the operator's long-term memory, and carry the
+adapter-fetched platform history plus any reply-quote as an **ephemeral `injectedContext`
+prompt section** (fetched history first, inline quote last) that is never persisted as a
+message; and coworker threads **never compact or auto-title** (a bounded replay window
+caps the prompt instead — compaction would fold group chatter into the operator's shared
+memory). Per-adapter history strategy and transport: **Slack** (`chat-channels/slack.ts` +
+`slack-socket.ts`) fetches `conversations.history`/`replies` on demand and runs both modes
+over **Socket Mode** — a zero-dependency WHATWG-WebSocket client (`apps.connections.open`
+mints single-use tickets; envelopes are acked before dispatch; Slack-initiated
+`disconnect` refreshes reconnect with backoff; a rejected app token stops the client);
+Slack **load-balances events across an app's open Socket Mode connections**, so no
+cross-instance ownership lease is needed. **Telegram** (`chat-channels/telegram.ts`) has
+**no history API**, so context comes from **passive accumulation**: the webhook route
+hands unclaimed group messages to `observeMessage` → `chat_observed_messages`, a bounded
+rolling buffer (~200/chat, deduped on message id, pruned per chat, topic-scoped reads),
+and `fetchThreadContext` reads it back — requires BotFather privacy mode off; mention =
+`@botusername` or a reply to the bot; `parseInbound` accepts only private DMs and the
+designated Topics supergroup, so team-group chatter can never leak into the DM path.
+**Discord** (`chat-channels/discord.ts` + `discord-gateway.ts`) fetches `GET
+/channels/{id}/messages` on demand and connects over the **Discord gateway** — a
+zero-dependency client speaking HELLO/IDENTIFY/RESUME with sequence-tracked heartbeats
+and the `MESSAGE_CONTENT` intent. The gateway is **true fanout** (every open connection
+receives every event, unlike Slack's load-balancing), so the adapter holds a
+**single-instance ownership lease** (`metadata.gateway_owner` `{id, ts}`, 90s TTL,
+renewed from the heartbeat timer, compare-and-swap on the config row) and stands the
+client down if another holder takes it — the guard against double-answering when two
+server instances share a database. Discord threads carry their own `channel_id`, so they
+become separate conversations with no extra handling.
 
 **Costs & budgets.** `cost_entries` is the immutable per-run spend ledger, attributed to
 the AI provider config that produced it — **never** team-scoped. `model_pricing` holds

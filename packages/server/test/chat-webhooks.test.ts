@@ -150,3 +150,97 @@ describe('POST /webhooks/chat/:channel/:secret', () => {
 		expect(res.status).toBe(404);
 	});
 });
+
+describe('group dispatch + observation on the generic webhook route', () => {
+	let db: PgliteDb;
+	let app: Hono<Env>;
+	let sendTurn: ReturnType<typeof vi.fn>;
+	let observed: unknown[];
+
+	beforeAll(async () => {
+		db = await createTestDbWithMigrations();
+		await db.query(
+			`INSERT INTO chat_channel_configs (channel, enabled, bot_token_secret, webhook_secret)
+			 VALUES ('telegram', true, 'TELEGRAM_BOT_TOKEN', $1)`,
+			[SECRET],
+		);
+	});
+	afterAll(() => db.close());
+
+	beforeEach(() => {
+		observed = [];
+		// Group-capable fake: mentions carry '@bot'; everything else is unclaimed
+		// group chatter handed to observeMessage.
+		const adapter: ChatChannelAdapter = {
+			channel: ChatChannel.Telegram,
+			start: async () => undefined,
+			stop: async () => undefined,
+			parseInbound: () => null,
+			deliver: async () => undefined,
+			supportsGroupMode: async () => true,
+			parseGroupMention: (raw: unknown) => {
+				const m = (raw as { message?: { text?: string; from?: { id?: number } } })?.message;
+				if (!m?.text?.includes('@bot')) return null;
+				return {
+					externalUserId: String(m.from?.id ?? 0),
+					externalThreadId: '-555',
+					text: m.text.replace('@bot', '').trim(),
+					senderDisplayName: 'Farez',
+					isThreadReply: false,
+				};
+			},
+			fetchThreadContext: async () => [],
+			observeMessage: async (raw: unknown) => {
+				observed.push(raw);
+			},
+		};
+		const registry = new ChatChannelRegistry();
+		registry.register(adapter);
+		sendTurn = vi.fn(async () => ({
+			userMessageId: 'u',
+			assistantMessageId: 'a',
+			conversationId: 'c',
+		}));
+		const manager = { sendTurn } as unknown as ChatSessionManager;
+
+		app = new Hono<Env>();
+		app.use('*', async (c, next) => {
+			c.set('db', db);
+			c.set('masterKeyManager', {} as MasterKeyManager);
+			c.set('chatSessionManager', manager);
+			c.set('chatChannelRegistry', registry);
+			await next();
+		});
+		app.route('/', chatWebhookRoutes);
+	});
+
+	const post = (body: unknown) =>
+		app.request(`/webhooks/chat/telegram/${SECRET}`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(body),
+		});
+
+	it('routes a group mention to the coworker path (kind + no allowlist gate)', async () => {
+		const res = await post({ message: { text: '@bot make a plan', from: { id: 42 } } });
+		expect(res.status).toBe(200);
+		await vi.waitFor(() => expect(sendTurn).toHaveBeenCalledTimes(1));
+		expect(sendTurn.mock.calls[0][0]).toMatchObject({
+			text: 'make a plan',
+			channel: 'telegram',
+			externalThreadId: '-555',
+			kind: 'coworker',
+			authorLabel: 'Farez',
+			// Unlinked group senders are served — the invite is the authorization.
+			authorUserId: null,
+		});
+		expect(observed).toHaveLength(0);
+	});
+
+	it('hands unclaimed group chatter to the observed-message buffer', async () => {
+		const res = await post({ message: { text: 'no mention here', from: { id: 42 } } });
+		expect(res.status).toBe(200);
+		await vi.waitFor(() => expect(observed).toHaveLength(1));
+		expect(sendTurn).not.toHaveBeenCalled();
+	});
+});

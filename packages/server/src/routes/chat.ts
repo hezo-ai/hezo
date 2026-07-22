@@ -3,6 +3,7 @@ import {
 	AuthType,
 	CHAT_UPLOADS_FOLDER,
 	ChatChannel,
+	ChatConversationKind,
 	DEFAULT_TEAM_ID,
 } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
@@ -191,6 +192,22 @@ chatRoutes.post('/chat/messages', async (c) => {
 	// An explicit thread from the switcher; omit for the default web thread.
 	const conversationId =
 		typeof body.conversation_id === 'string' ? body.conversation_id : undefined;
+
+	// Coworker (team-channel) threads are read-only in the web view: a
+	// web-composed message would be invisible to the people in the channel, and
+	// the CEO's ephemeral platform context wouldn't exist for it. The channel is
+	// the write surface.
+	if (conversationId) {
+		const convo = await manager.getConversation(conversationId);
+		if (convo?.kind === ChatConversationKind.Coworker) {
+			return err(
+				c,
+				'READ_ONLY',
+				'This conversation lives in its team channel — reply by mentioning Hezo there',
+				409,
+			);
+		}
+	}
 
 	try {
 		const result = await manager.sendTurn({

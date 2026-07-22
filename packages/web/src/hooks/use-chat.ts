@@ -1,5 +1,6 @@
 import {
 	type ChatChannel,
+	type ChatConversationKind,
 	type ChatMessageRole,
 	ChatMessageStatus,
 	type WsChatMessageCompleteMessage,
@@ -64,13 +65,14 @@ function writeStoredUnread(count: number): void {
 /** A conversation thread in the switcher list. */
 export interface ChatConversationSummary {
 	id: string;
+	/** The thread's one home surface (web, telegram, slack, discord, …). */
 	channel: ChatChannel;
 	external_thread_id: string | null;
+	/** 'assistant' = your own thread (interactive); 'coworker' = a team channel (read-only here). */
+	kind: ChatConversationKind;
 	title: string | null;
 	last_activity_at: string;
 	closed_at: string | null;
-	/** Every channel this thread is bound to (mirrored into), e.g. ['web','telegram']. */
-	channels: ChatChannel[];
 }
 
 /**

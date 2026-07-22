@@ -1,5 +1,5 @@
 ---
-title: Chat & Telegram
+title: Chat & messaging apps
 order: 18
 section: Concepts
 ---
@@ -24,44 +24,62 @@ planning, another for an ad-hoc question, and so on.
 
 Each thread keeps its own recent history and streams independently.
 
-## Chatting from Telegram
+## How threads work across chat apps
 
-You can talk to the CEO from **Telegram** as well as the web app — handy when you're away
-from your desk. Set it up from **Settings → Chat channels**:
+The CEO is also reachable from external chat apps —
+[Telegram](/docs/concepts/chat-telegram), [Slack](/docs/concepts/chat-slack), and
+[Discord](/docs/concepts/chat-discord). The model is simple:
 
-1. **Create a bot.** In Telegram, message [@BotFather](https://t.me/BotFather), create a
-   bot, and copy its token.
-2. **Paste the token.** On the Chat channels page, paste the token into the Telegram
-   section, tick **Enabled**, and save. Hezo registers the inbound connection for you.
-3. **Link your account.** Only accounts you explicitly allow may chat. Find your Telegram
-   numeric user id (message [@userinfobot](https://t.me/userinfobot)), then add it under
-   **Allowed identities** — it links to your Hezo account. Anyone not on the allowlist is
-   ignored.
+- **Every surface owns its own threads.** A Telegram DM is one thread. A Slack DM is a
+  different thread. A topic in your Telegram Topics group, a Slack channel, a Discord
+  channel — each is its own thread. Conversations never fork across apps: nothing you
+  start in one app ever shows up *inside* another app.
+- **The web chatbox is the hub.** It lists **all** threads — the ones you started here
+  plus every conversation from every connected app, each badged with where it lives.
+  The web view is the one place you can see everything.
+- **Replies go where you asked.** Message the bot from Telegram and the answer arrives
+  in Telegram. Ask from the web chatbox and the answer streams here. Each reply is
+  delivered to the surface the question came from — including when you open an app's
+  thread in the web view and continue it there (the answer then appears in the web view,
+  not in the app).
+- **Closing a thread ends it for good.** Close an app's thread from the web view and the
+  next message from that app starts a **fresh** thread. Your chats stay tidy without any
+  cross-app bookkeeping.
 
-Now message your bot and the CEO replies right in Telegram.
+## Two modes: assistant and coworker
 
-### Threads in Telegram
+Each app connects in one or both of two modes:
 
-- A **private chat** with your bot is a single conversation.
-- For **multiple threads** in Telegram, add the bot to a **Topics-enabled supergroup** as
-  an admin with the **Manage topics** permission. Each topic is one conversation.
+- **Assistant (DM) mode** — you message the bot **privately**, and the conversation is a
+  real-time CEO chat thread. It's your personal remote control for the CEO, so only
+  identities you explicitly link under **Settings → Chat channels → Allowed identities**
+  may chat; unknown senders get no reply. These threads are fully interactive from the
+  web view too.
+- **Coworker (channel) mode** — the CEO joins a **group channel your team already
+  uses**. Invite the bot to a channel, and anyone there can @-mention it: it reads the
+  recent channel conversation for context, does the work, and replies in the channel.
+  Discuss something with a colleague, then @-mention the CEO and ask it to *"make a plan
+  from our chat"* or *"document what we agreed"*. **Inviting the bot is the
+  authorization** — no identity linking needed. Channel threads appear in the web
+  chatbox under **Team channels**, read-only: you can follow everything from the web,
+  but the conversation belongs to the channel, so you continue it by mentioning the bot
+  there.
 
-### One thread, both places
+What coworker mode deliberately keeps separate: the CEO's private long-term chat memory
+(your preferences, past decisions) is **never** fed into group channels, and group
+chatter is never folded into it. Your personal assistant and your team's coworker share
+the same brain for work, not for your private conversation history.
 
-Once a Topics supergroup is connected, threads stay **mirrored** between the app and
-Telegram:
+## Per-app guides
 
-- **Start a thread in the web chatbox** → a matching **topic appears in your Telegram
-  group** automatically, and vice versa — a new topic in Telegram shows up as a thread in
-  the app.
-- **Messages sync both ways** — what you say and the CEO's replies appear on *both*
-  surfaces, so it's genuinely the same conversation. Start it on your laptop, continue on
-  your phone.
-- **Close it anywhere, it closes everywhere** — closing a thread in the app archives its
-  Telegram topic, and closing the topic in Telegram closes the thread in the app.
+| App | Assistant (DM) mode | Coworker (channel) mode | Setup |
+|---|---|---|---|
+| [Telegram](/docs/concepts/chat-telegram) | Private DM + optional Topics supergroup (parallel personal threads) | Groups the bot is added to (privacy mode off) | Bot token from @BotFather |
+| [Slack](/docs/concepts/chat-slack) | DMs with the bot | Channels the bot is invited to | App manifest + two tokens (Socket Mode) |
+| [Discord](/docs/concepts/chat-discord) | DMs with the bot | Server channels, on @-mention | Bot token + Message Content intent |
 
-(Without a Topics supergroup — e.g. a plain DM — Telegram just has the one conversation, and
-web threads stay in the app.)
-
-> **Security.** Your bot token is stored encrypted and is never exposed to agents. Only the
-> identities you add to the allowlist can chat — an unknown sender gets no reply.
+> **Security.** Bot tokens are stored encrypted in the global secrets vault and are
+> never exposed to agents or agent runs — the trusted Hezo server talks to each platform
+> directly. In assistant mode, only allowlisted identities can chat. In coworker mode,
+> access is channel-scoped: the bot only sees channels it was explicitly invited to, and
+> removing it removes its access.
