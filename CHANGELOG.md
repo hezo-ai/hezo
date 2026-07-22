@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.31.0 - 2026-07-22
+
+### Breaking Changes
+
+- **chat:** per-surface chat threads with the web as the hub — Slack, Telegram & Discord in assistant + coworker modes ([#794](https://github.com/hezo-ai/hezo/pull/794))
+
+### Features
+
+- **chat:** per-surface chat threads with the web as the hub — Slack, Telegram & Discord in assistant + coworker modes ([#794](https://github.com/hezo-ai/hezo/pull/794))
+- **marketplace:** add Influencer Marketing + Investment teams, goal suggestions, App Team rename ([#713](https://github.com/hezo-ai/hezo/pull/713))
+
+### Bug Fixes
+
+- **release:** never auto-bump the major version from breaking changes ([#799](https://github.com/hezo-ai/hezo/pull/799))
+- **marketplace:** wire roster reporting lines to the Captain on provisioning ([#796](https://github.com/hezo-ai/hezo/pull/796))
+- **agents:** load skills only via get_skill, never the CLI's own skill feature ([#795](https://github.com/hezo-ai/hezo/pull/795))
+- **cli:** add `hezo uninstall` to cleanly remove the data directory ([#793](https://github.com/hezo-ai/hezo/pull/793))
+
+### Documentation
+
+- dedicated "Chat & messaging apps" section; sync website docs on release publish ([#797](https://github.com/hezo-ai/hezo/pull/797))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.30.1...0.31.0
+
 ## 0.30.1 - 2026-07-21
 
 ### Bug Fixes
