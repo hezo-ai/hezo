@@ -11,6 +11,13 @@ individual pieces of work on the board, goals are the outcomes those tasks add u
 they give you, the admin, a way to see how far along a project is and where things stand
 **without micromanaging the board.**
 
+A goal is a **standing outcome** — something that stays meaningful every time the Captain
+re-checks it ("keep every stock document current", "reach 100 active customers and hold").
+A one-off deliverable with a fixed done state — a document to produce, a feature to ship, a
+one-time analysis — belongs on the board as a **task** (the Captain can link it to a goal),
+not as a goal: goals are re-checked on their cadence until you archive them, so a finite
+deliverable framed as a goal keeps getting re-checked long after it's done.
+
 You set the goals; the **Captain** keeps them up to date. You don't have to remember to
 update a status or move a slider — the Captain re-checks each goal on a schedule and writes
 a fresh estimate, so the **Progress** page is always a current read on the project.
@@ -59,7 +66,8 @@ goal has:
   archived. At 100% the goal drops back to its normal check frequency (and the every-heartbeat
   urgency returns if its progress later slips below 100 again).
 - **Check frequency** — how often the Captain re-assesses the goal: **daily** (the default),
-  **weekly**, or **monthly**.
+  **weekly**, or **monthly**. Pick it by how often the measurement meaningfully changes —
+  daily for fast-moving monitoring, monthly for slow-moving outcomes.
 
 The create and edit forms keep the **SMART** framework (Specific, Measurable, Achievable,
 Relevant, Time-bound) in front of you as a reminder. A project can have any number of goals;
@@ -116,8 +124,8 @@ chart shows the dip.
 That also means goals can be deliberately **never-ending** — a standing objective like "keep the
 error rate under 1%" or "respond to every support ticket within a day" is measured continuously,
 forever, and simply hovers around 100% while it's being met. The only way to stop the Captain
-checking a goal is to **archive** it (below); do that when a one-shot goal is truly done and no
-longer worth monitoring.
+checking a goal is to **archive** it (below) — do that when a goal has served its purpose and
+is no longer worth tracking.
 
 ## Archiving
 

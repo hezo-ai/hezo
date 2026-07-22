@@ -241,8 +241,14 @@ describe('MCP suggest_goal', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', id: 1 }),
 		});
-		const names = (await res.json()).result.tools.map((t: { name: string }) => t.name);
-		expect(names).toContain('suggest_goal');
+		const tools = (await res.json()).result.tools as { name: string; description: string }[];
+		const suggestGoal = tools.find((t) => t.name === 'suggest_goal');
+		expect(suggestGoal).toBeDefined();
+		// The description must carry the goal-vs-task rule: goals are standing outcomes;
+		// a finite deliverable is a task. Without it, agents file one-off deliverables as
+		// goals that then get cadence-checked forever.
+		expect(suggestGoal?.description).toContain('is a task, not a goal');
+		expect(suggestGoal?.description.toLowerCase()).toContain('standing');
 	});
 
 	it('is rejected for a non-agent caller', async () => {

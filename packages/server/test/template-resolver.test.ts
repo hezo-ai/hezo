@@ -80,6 +80,8 @@ describe('template resolver', () => {
 		expect(result).toContain(
 			'Goals are set by the admin, so when a need is truly recurring, recommend one to them',
 		);
+		// The goal-vs-task rule: a finite deliverable is a task, not a goal.
+		expect(result).toContain('fixed done state');
 	});
 
 	it('appends the credential-handling guidance to every runtime prompt', async () => {
