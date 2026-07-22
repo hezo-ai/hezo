@@ -39,7 +39,7 @@ export function coworkerConversationTitle(event: InboundGroupMentionEvent): stri
 
 /**
  * The coworker-mode ingest path — the second, deliberately separate entry point
- * beside `ingestInboundEvent` (which stays DM/mirror-only). A group @-mention of
+ * beside `ingestInboundEvent` (which stays DM/assistant-only). A group @-mention of
  * the bot flows here from a group-capable adapter's transport.
  *
  * Authorization model: **the channel invite is the authorization.** The bot only

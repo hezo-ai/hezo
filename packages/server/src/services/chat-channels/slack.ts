@@ -110,7 +110,7 @@ interface SlackApiResult {
 
 /**
  * Slack chat channel adapter (Socket Mode transport). Supports both integration
- * modes: DM/assistant mode (`message.im` → the mirror ingest path, identity
+ * modes: DM/assistant mode (`message.im` → the assistant ingest path, identity
  * allowlist enforced, thread visible in the web chatbox) and group/coworker mode
  * (`app_mention` in a channel the bot was invited to → the coworker ingest path,
  * channel invite is the authorization, replies stay in the Slack thread).
@@ -259,7 +259,7 @@ export class SlackAdapter implements ChatChannelAdapter {
 	/**
 	 * DM/assistant mode: a direct message to the bot. One conversation per DM
 	 * channel (bare `D…` id), exactly like a Telegram DM — no thread hosting, so
-	 * the conversation originates in Slack and mirrors into the web chatbox.
+	 * the conversation originates in Slack and is listed in the web chatbox.
 	 */
 	parseInbound(raw: unknown): InboundChatEvent | null {
 		const event = raw as SlackEvent;

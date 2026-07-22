@@ -104,7 +104,7 @@ export interface ChatChannelAdapter {
 	/**
 	 * Parse a raw event as a *thread close* (e.g. a Telegram `forum_topic_closed`
 	 * service message) → the external thread id that was closed, or null. Lets a topic
-	 * closed on the platform close the mirrored web thread. Optional.
+	 * closed on the platform close the conversation here too. Optional.
 	 */
 	parseClose?(raw: unknown): { externalThreadId: string } | null;
 
@@ -174,7 +174,7 @@ export interface ChatChannelConfig {
  * `routes/chat-webhooks.ts`, which calls the ingest functions directly.
  */
 export interface InboundEventSink {
-	/** DM/assistant-mode message → the allowlisted mirror ingest path. */
+	/** DM/assistant-mode message → the allowlisted assistant ingest path. */
 	ingestDm(adapter: ChatChannelAdapter, event: InboundChatEvent): Promise<void>;
 	/** Group @-mention → the coworker ingest path. */
 	ingestGroupMention(adapter: ChatChannelAdapter, event: InboundGroupMentionEvent): Promise<void>;

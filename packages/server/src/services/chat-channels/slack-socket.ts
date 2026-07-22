@@ -14,7 +14,7 @@ const log = logger.child('chat-slack-socket');
  * reconnecting is part of normal operation, not an error path. Slack also
  * load-balances events across an app's open Socket Mode connections, so a
  * duplicate process never double-delivers — no cross-instance ownership lease is
- * needed (unlike a true-fanout gateway; see .dev/discord-chat-adapter.md).
+ * needed (unlike Discord's true-fanout gateway; see discord.ts / discord-gateway.ts).
  */
 
 /** Minimal WebSocket surface the client needs — the injectable test seam. */

@@ -105,7 +105,7 @@ export class TelegramAdapter implements ChatChannelAdapter {
 	// undetectable and non-DM chats are ignored — fail closed, never misroute.
 	private botId: number | null = null;
 	private botUsername: string | null = null;
-	private mirrorGroupId: string | null = null;
+	private designatedGroupId: string | null = null;
 	// Last mention/reply message id per thread, so `deliver` can anchor the CEO's
 	// answer to the message that asked (best-effort visual threading in groups).
 	private replyTargets = new Map<string, number>();
@@ -119,11 +119,11 @@ export class TelegramAdapter implements ChatChannelAdapter {
 	 */
 	primeRuntimeCache(
 		identity: { id: number; username: string } | null,
-		mirrorGroupId: string | null,
+		designatedGroupId: string | null,
 	): void {
 		this.botId = identity?.id ?? null;
 		this.botUsername = identity?.username ?? null;
-		this.mirrorGroupId = mirrorGroupId;
+		this.designatedGroupId = designatedGroupId;
 	}
 
 	private async api<T = unknown>(method: string, body: Record<string, unknown>): Promise<T | null> {
@@ -159,7 +159,7 @@ export class TelegramAdapter implements ChatChannelAdapter {
 			log.warn('telegram getMe failed; group mentions will be ignored until restart');
 		}
 		const gid = config.metadata?.group_id;
-		this.mirrorGroupId = typeof gid === 'string' && gid.trim() !== '' ? gid.trim() : null;
+		this.designatedGroupId = typeof gid === 'string' && gid.trim() !== '' ? gid.trim() : null;
 
 		const baseUrl = await getInstanceBaseUrl(this.deps.db);
 		if (!baseUrl) {
@@ -178,7 +178,7 @@ export class TelegramAdapter implements ChatChannelAdapter {
 	async stop(): Promise<void> {
 		this.botId = null;
 		this.botUsername = null;
-		this.mirrorGroupId = null;
+		this.designatedGroupId = null;
 		// Best-effort: only possible when a token is still configured.
 		const config = await loadChannelConfig(this.deps, this.channel);
 		if (!config?.botTokenSecret) return;
@@ -200,8 +200,8 @@ export class TelegramAdapter implements ChatChannelAdapter {
 	}
 
 	/** True when the chat is the operator's designated assistant supergroup. */
-	private isMirrorGroup(chatId: number): boolean {
-		return this.mirrorGroupId !== null && String(chatId) === this.mirrorGroupId;
+	private isDesignatedGroup(chatId: number): boolean {
+		return this.designatedGroupId !== null && String(chatId) === this.designatedGroupId;
 	}
 
 	/**
@@ -213,7 +213,7 @@ export class TelegramAdapter implements ChatChannelAdapter {
 		const msg = (raw as TelegramUpdate)?.message;
 		if (!msg?.text || !msg.from?.id || msg.from.is_bot || msg.chat?.id == null) return null;
 		const isPrivate = msg.chat.type === 'private';
-		if (!isPrivate && !this.isMirrorGroup(msg.chat.id)) return null;
+		if (!isPrivate && !this.isDesignatedGroup(msg.chat.id)) return null;
 		return {
 			externalUserId: String(msg.from.id),
 			externalThreadId: encodeThreadId(msg.chat.id, msg.message_thread_id),
@@ -234,7 +234,7 @@ export class TelegramAdapter implements ChatChannelAdapter {
 		if (!msg?.text || !msg.from?.id || msg.from.is_bot || msg.chat?.id == null) return null;
 		const chatType = msg.chat.type;
 		if (chatType !== 'group' && chatType !== 'supergroup') return null;
-		if (this.isMirrorGroup(msg.chat.id)) return null;
+		if (this.isDesignatedGroup(msg.chat.id)) return null;
 
 		const username = this.botUsername;
 		const mentioned = username ? new RegExp(`@${username}\\b`, 'i').test(msg.text) : false;
@@ -281,7 +281,7 @@ export class TelegramAdapter implements ChatChannelAdapter {
 		if (!msg?.text || !msg.from || msg.from.is_bot || msg.chat?.id == null) return;
 		const chatType = msg.chat.type;
 		if (chatType !== 'group' && chatType !== 'supergroup') return;
-		if (this.isMirrorGroup(msg.chat.id)) return;
+		if (this.isDesignatedGroup(msg.chat.id)) return;
 		if (!(await this.supportsGroupMode())) return;
 		await recordObservedMessage(this.deps.db, {
 			channel: this.channel,
@@ -324,7 +324,7 @@ export class TelegramAdapter implements ChatChannelAdapter {
 		if (!messageThreadId) return; // A DM has no topic to close.
 		// Only the designated assistant supergroup's topics are ours to archive —
 		// closing a coworker thread must never touch the team's own group.
-		if (this.mirrorGroupId === null || chatId !== this.mirrorGroupId) return;
+		if (this.designatedGroupId === null || chatId !== this.designatedGroupId) return;
 		await this.api('closeForumTopic', {
 			chat_id: chatId,
 			message_thread_id: messageThreadId,

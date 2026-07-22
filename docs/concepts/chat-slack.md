@@ -20,10 +20,11 @@ Both integration modes are supported (see
 [Chat & messaging apps](/docs/concepts/chat-channels)):
 
 - **Coworker mode** — @-mention the bot in any channel it was invited to. Replies stay
-  in the Slack thread; these conversations never appear in the web chatbox.
-- **Assistant (DM) mode** — DM the bot for a private CEO chat, mirrored with the web
-  chatbox. Like Telegram, DMs require your Slack account to be linked under **Allowed
-  identities**.
+  in the Slack thread; the conversation also shows up read-only in the web chatbox
+  under **Team channels**, so you can follow it from the web.
+- **Assistant (DM) mode** — DM the bot for a private CEO chat. The DM is its own
+  thread, listed in the web chatbox alongside your web threads. Like Telegram, DMs
+  require your Slack account to be linked under **Allowed identities**.
 
 ## Setup
 
@@ -92,9 +93,10 @@ settings:
 - **Channel-scoped privacy.** The bot can only read channels it was explicitly invited
   to; Slack enforces this. Removing it from a channel removes its access. Anyone in an
   invited channel may mention it — the invite is the authorization.
-- **Not mirrored.** Coworker conversations live in Slack. They don't appear in the web
-  chatbox thread list, and the CEO's private long-term chat memory is not shared with
-  group channels.
+- **Lives in Slack, visible from the web.** A channel conversation belongs to the
+  channel — the web chatbox lists it under **Team channels** as a read-only view, and
+  you continue it by mentioning the bot in Slack. The CEO's private long-term chat
+  memory is never shared with group channels.
 
 > **Security.** Both tokens are stored encrypted in the global secrets vault, scoped to
 > `slack.com`, and are never exposed to agents or agent runs — the trusted Hezo server

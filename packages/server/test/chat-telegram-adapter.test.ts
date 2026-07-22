@@ -8,9 +8,9 @@ import type { ChatChannelAdapterDeps } from '../src/services/chat-channels/types
 // fills (bot identity + designated supergroup) is primed directly.
 const deps = {} as ChatChannelAdapterDeps;
 
-function adapter(mirrorGroupId: string | null = '-100123') {
+function adapter(designatedGroupId: string | null = '-100123') {
 	const a = new TelegramAdapter(deps);
-	a.primeRuntimeCache({ id: 777, username: 'hezo_bot' }, mirrorGroupId);
+	a.primeRuntimeCache({ id: 777, username: 'hezo_bot' }, designatedGroupId);
 	return a;
 }
 

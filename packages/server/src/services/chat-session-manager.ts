@@ -105,7 +105,7 @@ You were @-mentioned in an external group channel (e.g. a Slack channel) that yo
  * conversations never compact (compaction would fold group chatter into the
  * operator's shared long-term memory), so this cap bounds the prompt instead —
  * older mention exchanges simply age out of the replayed window. Companion to
- * CHAT_WINDOW_RETAIN_MESSAGES, which governs the mirror-mode compaction tail.
+ * CHAT_WINDOW_RETAIN_MESSAGES, which governs the assistant-mode compaction tail.
  */
 const COWORKER_WINDOW_MAX_MESSAGES = 40;
 
@@ -305,7 +305,7 @@ export class ChatSessionManager {
 	// Registry-wide channel hooks, set by the channel layer at wiring time. The
 	// manager reaches every channel generically through these — it only ever names
 	// the `ChatChannel` enum value; the registry resolves the adapter. This is the
-	// seam that keeps mirroring channel-agnostic (a new channel touches no manager code).
+	// seam that keeps delivery and close channel-agnostic (a new channel touches no manager code).
 	private channelHooks: ChannelHooks | null = null;
 
 	constructor(private readonly deps: CeoSessionDeps) {}
@@ -393,7 +393,7 @@ export class ChatSessionManager {
 		externalThreadId?: string | null;
 		authorUserId?: string | null;
 		attachmentIds?: string[];
-		/** Conversation mode when creating (default mirror). Existing rows keep their kind. */
+		/** Conversation mode when creating (default assistant). Existing rows keep their kind. */
 		kind?: ChatConversationKind;
 		/** External sender display label for multi-party (coworker) transcripts. */
 		authorLabel?: string | null;
@@ -451,7 +451,7 @@ export class ChatSessionManager {
 			await convo.titling?.catch(() => undefined);
 		}
 
-		// An in-flight reply in this thread: mirror threads interrupt it (abort, keep
+		// An in-flight reply in this thread: assistant threads interrupt it (abort, keep
 		// the partial as `interrupted`) so only the latest turn streams to the
 		// operator. Coworker threads QUEUE instead — in a group channel two quick
 		// mentions are two people expecting two answers, and an aborted partial would
@@ -1218,7 +1218,7 @@ export class ChatSessionManager {
 		const memory = isCoworker ? null : await getChatMemory(this.deps.db, session.ceoMemberId);
 
 		// The full active (non-compacted) window IS the short-term memory — for
-		// mirror threads its size is bounded by compaction. Coworker threads never
+		// assistant threads its size is bounded by compaction. Coworker threads never
 		// compact, so their replayed window is capped here instead.
 		let window = await loadActiveWindow(this.deps.db, conversationId);
 		if (isCoworker && window.length > COWORKER_WINDOW_MAX_MESSAGES) {
@@ -1344,7 +1344,7 @@ export class ChatSessionManager {
 		const advanced = after !== null && (before === null || after.updated_at !== before);
 		if (advanced) {
 			await markCompacted(this.deps.db, flush.evictIds);
-			// Tell the mirrored chatbox(es) for this thread to drop the evicted
+			// Tell the open chatbox(es) for this thread to drop the evicted
 			// messages and show the "chat compacted" marker — the conversation refetch
 			// returns just the tail.
 			this.broadcastChat(conversationId, {
@@ -1397,7 +1397,7 @@ export class ChatSessionManager {
 	/**
 	 * Headless title run: hand the agent the active window and capture its stdout as a
 	 * short title, then persist it (only while the thread is still untitled) and tell
-	 * the mirrored chatbox(es) to refetch the thread list. No `chat_message`, no
+	 * the open chatbox(es) to refetch the thread list. No `chat_message`, no
 	 * broadcast of a reply — the operator sees only the switcher label update. The
 	 * exec's tokens are not separately priced (matches `runCompaction`).
 	 */
