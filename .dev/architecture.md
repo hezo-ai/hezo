@@ -1290,7 +1290,9 @@ path `create_comment` uses — so it fans out to the admin inbox / agent wakeup 
 vanishing (the agent wrote an explicit, unambiguous wake; delivering it is safe). This flips an
 otherwise no-op run to a success and is why the one-block judge ceiling is acceptable.
 (2) an **unlinked bold/leading-line address that reads like an ask** (`**slug** — … when you
-resume …`, or the name after a short routing label like `Next step: slug — …`, via
+resume …`, the name after a short routing label like `Next step: slug — …`, or an
+action-assignment heading/label line like `## Required actions for slug` — where the phrase on
+the line is itself the ask signal, since the imperative list below it carries none — via
 `detectUnlinkedTeammateAsks`, gated on directed-ask intent so a bold name written for emphasis is
 never touched) is the wakes-no-one trap — but the net does **not** rewrite the
 agent's words or auto-deliver it (guessing intent to force a wake overreaches). `create_comment`

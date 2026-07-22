@@ -28,6 +28,52 @@ describe('detectUnlinkedTeammateAsks', () => {
 		).toEqual(['architect']);
 	});
 
+	it('flags a "Required actions for slug" heading over an imperative list (bare-name verdict-report shape)', () => {
+		// Mirror of the passive detector's verdict-report case: the imperative list
+		// carries no second-person/`please`/`?` signal, so only the action-assignment
+		// phrase on the heading line can mark this as an ask.
+		expect(
+			detectUnlinkedTeammateAsks(
+				'## Required actions for architect\n\n1. Reconcile the timing.\n2. Fix the duplication.',
+				slugs,
+			),
+		).toEqual(['architect']);
+	});
+
+	it('flags a colon-terminated action-assignment line with a bare name', () => {
+		expect(
+			detectUnlinkedTeammateAsks('Next steps for qa-engineer:\n\n- Re-test the flow.', slugs),
+		).toEqual(['qa-engineer']);
+	});
+
+	it('does not flag a slug that only appears inside a longer hyphenated bare name', () => {
+		// With overlapping roster slugs, only the addressed teammate is flagged —
+		// `architect` must not match inside `solution-architect`.
+		expect(
+			detectUnlinkedTeammateAsks('## Required actions for solution-architect\n\n1. Fix it.', [
+				...slugs,
+				'solution-architect',
+			]),
+		).toEqual(['solution-architect']);
+	});
+
+	it('does not flag an attribution heading without an action-assignment phrase', () => {
+		expect(
+			detectUnlinkedTeammateAsks('## Findings from architect\n\n- The design held up.', slugs),
+		).toEqual([]);
+	});
+
+	it('does not flag an action-assignment heading whose name is @-prefixed (handled as a mention)', () => {
+		// `@architect` is an active mention (wakes already); `@@architect` belongs to
+		// the passive detector — the bare-name detector must claim neither.
+		expect(
+			detectUnlinkedTeammateAsks('## Required actions for @architect\n\n1. Fix it.', slugs),
+		).toEqual([]);
+		expect(
+			detectUnlinkedTeammateAsks('## Required actions for @@architect\n\n1. Fix it.', slugs),
+		).toEqual([]);
+	});
+
 	it('does not flag a routing-label handoff without ask intent', () => {
 		expect(
 			detectUnlinkedTeammateAsks('**Next step:** architect — merged and shipped.', slugs),
