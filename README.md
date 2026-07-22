@@ -196,32 +196,6 @@ model's first-party agentic tooling, not a lowest-common-denominator wrapper.
 Full details — subscriptions vs. API keys, mixing providers, per-agent overrides — in
 [AI model support](./docs/ai-models.md).
 
-## Chat with the CEO from Slack, Telegram, and Discord
-
-Your AI workforce doesn't have to live behind a browser tab. Connect the **CEO** to the
-messaging apps your team already uses and run the whole org from your phone or a team
-channel — two ways:
-
-- **Assistant (DM) mode** — message the bot privately for a real-time, memory-backed CEO
-  thread: ask what's blocked, spin up a project or task, get a status read across every
-  team. Only [identities you explicitly allow](./docs/chat/overview.md#two-modes-assistant-and-coworker) can chat.
-- **Coworker (channel) mode** — invite the bot into a channel your team already uses and
-  @-mention it. It reads the recent conversation for context, does the work, and replies
-  in-thread — *"make a plan from our chat"*, *"document what we agreed"*. Inviting the bot
-  is the authorization.
-
-Every surface owns its own threads and each reply lands where you asked; the web chatbox
-is the hub that lists them all. Bot tokens are stored encrypted in your vault and are
-never exposed to agents — the Hezo server talks to each platform directly.
-
-| App | Assistant (DM) | Coworker (channel) | Setup |
-|---|---|---|---|
-| **[Telegram](./docs/chat/telegram.md)** | ✓ | ✓ | Bot token from @BotFather |
-| **[Slack](./docs/chat/slack.md)** | ✓ | ✓ | App manifest + Socket Mode tokens |
-| **[Discord](./docs/chat/discord.md)** | ✓ | ✓ | Bot token + Message Content intent |
-
-See [Chat & messaging apps](./docs/chat/overview.md) for the full walkthrough.
-
 ## How Hezo compares
 
 |  | Agents in terminal tabs | Hosted agent platforms | Agent frameworks / SDKs | **Hezo** |
