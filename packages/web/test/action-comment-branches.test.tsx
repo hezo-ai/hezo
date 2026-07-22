@@ -1,8 +1,10 @@
 // Branch-coverage tests for the action-comment renderer: setup_repo states
-// (resolved / unresolved / no-projectId), the unknown-action fallback, and
-// delegation to the hire-proposal renderer. Minimal standalone router so the
-// settings <Link>/<Button> resolve.
+// (resolved / unresolved / no-projectId), the graceful unrecognized-kind
+// fallback, and delegation to the hire-proposal + goal-suggestion renderers.
+// Minimal standalone router so the settings <Link>/<Button> resolve; a
+// QueryClient so the goal-suggestion renderer's mutation hook mounts.
 
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
 	createMemoryHistory,
 	createRootRoute,
@@ -21,8 +23,13 @@ function renderNode(node: React.ReactNode) {
 		routeTree: rootRoute,
 		history: createMemoryHistory({ initialEntries: ['/'] }),
 	});
-	// biome-ignore lint/suspicious/noExplicitAny: opaque router type at the test boundary.
-	return render(<RouterProvider router={router as any} />);
+	const queryClient = new QueryClient();
+	return render(
+		<QueryClientProvider client={queryClient}>
+			{/* biome-ignore lint/suspicious/noExplicitAny: opaque router type at the test boundary. */}
+			<RouterProvider router={router as any} />
+		</QueryClientProvider>,
+	);
 }
 
 function actionComment(
@@ -57,16 +64,45 @@ test('hire_proposal delegates to the HireProposalComment renderer', async () => 
 	expect(card.textContent).toContain('Backend Eng');
 });
 
-test('unknown action kind renders the "Unknown action" fallback', async () => {
-	const { findByText } = renderNode(
-		<ActionComment comment={actionComment({ kind: 'something_new' })} projectId="proj" />,
+test('goal_suggestion delegates to the GoalSuggestionComment renderer', async () => {
+	const { findByTestId } = renderNode(
+		<ActionComment
+			comment={actionComment({
+				kind: 'goal_suggestion',
+				approval_id: 'appr1',
+				title: 'Reach 5k followers',
+				measurement: '5000 followers',
+				check_frequency: 'weekly',
+			})}
+			projectId="proj"
+		/>,
 	);
-	expect((await findByText(/Unknown action/)).textContent).toContain('something_new');
+	// The pending suggestion card renders (not the unrecognized-kind fallback)...
+	const card = await findByTestId('goal-suggestion-pending');
+	expect(card.textContent).toContain('Reach 5k followers');
+	// ...with the info tooltip explaining what a goal is next to the title.
+	await findByTestId('goal-suggestion-info');
 });
 
-test('missing kind renders the unknown-action fallback with empty kind', async () => {
-	const { findByText } = renderNode(<ActionComment comment={actionComment({})} projectId="proj" />);
-	expect((await findByText(/Unknown action/)).textContent).toBe('Unknown action: ');
+test('an unrecognized action kind renders the graceful "needs a newer version" fallback', async () => {
+	const { findByTestId } = renderNode(
+		<ActionComment comment={actionComment({ kind: 'something_new' })} projectId="proj" />,
+	);
+	const fallback = await findByTestId('action-unknown');
+	// No scary "Unknown action: <kind>"; the message tells the user what to do,
+	// and the raw kind is preserved only in the debug `title` attribute.
+	expect(fallback.textContent).toMatch(/needs a newer version to display/i);
+	expect(fallback.textContent).not.toContain('something_new');
+	expect(fallback.getAttribute('title')).toContain('something_new');
+});
+
+test('a missing kind renders the graceful fallback with no debug title', async () => {
+	const { findByTestId } = renderNode(
+		<ActionComment comment={actionComment({})} projectId="proj" />,
+	);
+	const fallback = await findByTestId('action-unknown');
+	expect(fallback.textContent).toMatch(/refresh the page/i);
+	expect(fallback.getAttribute('title')).toBeNull();
 });
 
 test('setup_repo resolved shows the repo identifier from the result', async () => {

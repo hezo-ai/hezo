@@ -16,6 +16,7 @@ import { PasswordLogin } from '../components/password-login';
 import { ProjectRail } from '../components/project-rail';
 import { ProjectSidebar } from '../components/project-sidebar';
 import { PwaInstallPrompt } from '../components/pwa-install-prompt';
+import { ReloadPromptBanner } from '../components/reload-prompt-banner';
 import { ScrollToBottomButton } from '../components/scroll-to-bottom-button';
 import { ScrollToTopButton } from '../components/scroll-to-top-button';
 import { CreatePasswordFlow, SetupGate } from '../components/setup/setup-wizard';
@@ -284,6 +285,7 @@ function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
 			/>
 			<GlobalSearchDialog open={searchOpen} onOpenChange={setSearchOpen} />
 			<UpdateBanner />
+			<ReloadPromptBanner />
 			<div className="flex flex-row flex-1 overflow-hidden w-full">
 				{/* Rail + project sidebar + scrollable main span the full viewport so
 				    the main-panel scrollbar sits on the browser edge, not mid-screen. */}

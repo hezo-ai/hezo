@@ -42,6 +42,8 @@ test('the Goals page shows a pending suggestion and approving it creates the goa
 	// The suggestion renders in its own section; it is NOT yet a goal.
 	await findByTestId('goal-suggestions', undefined, { timeout: 15_000 });
 	await findByText('Reach 5k followers');
+	// The section header carries an info tooltip explaining what a goal is.
+	await findByTestId('suggested-goals-info');
 
 	// Approve it → the real goal is created and the suggestion clears.
 	await user.click(await findByTestId('goal-suggestion-approve'));

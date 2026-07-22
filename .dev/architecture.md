@@ -2035,6 +2035,19 @@ instance that can't self-apply falls back to the **"Download"** release link. Th
 banner polls the same way (`useUpdateStatus({ poll: true })`), so it surfaces "Install & restart"
 live on any page the moment the binary is staged — not only after a manual reload.
 
+**Stale-bundle reload prompt.** Independently of the binary self-update, an open tab keeps running
+the web bundle it first loaded; after the server moves to a new version (self-update, redeploy),
+that tab's JS can be older than the server and mis-render data the newer server pushes — e.g. a new
+comment/action `kind` the older bundle doesn't know renders the action-comment renderer's neutral
+"needs a newer version — refresh the page" fallback instead of the real card. `useServerVersionChanged`
+(`hooks/use-stale-bundle.ts`) watches the `current` field of `GET /api/updates/status` and latches
+true once it observes a **different** version than the one first seen this session — a server restart
+drops the WebSocket, and the reconnect's blanket `invalidateQueries` (`useInvalidateOnReconnect`)
+refetches the status, so the new version is observed right after the update lands. The shell's
+`ReloadPromptBanner` (below `UpdateBanner`) then offers a one-click **Refresh** (`location.reload()`).
+Tracking a *change* rather than comparing to a build-time constant means it never false-positives in
+dev, where a stable server version never changes mid-session.
+
 **Self-update & supervisor.** A compiled binary with auto-update enabled
 (`isAutoUpdateEnabled()` — compiled, not `HEZO_DISABLE_AUTO_UPDATE`, not in a container)
 runs as a thin **supervisor** (`supervisor.ts`): it spawns the real server as a **worker**
