@@ -402,8 +402,15 @@ export function DocsLibrary({
 						    background so scrolled text passes cleanly underneath, and the
 						    z-index sits below the review overlays (selection pill z-20,
 						    editor z-30) so an open comment editor is never hidden. */}
-						<div className="sticky top-0 z-10 flex items-center justify-between gap-2 mb-4 pt-2 pb-3 bg-bg border-b border-border-subtle">
-							<div className="flex items-center gap-1.5 min-w-0">
+						{/* `flex-wrap` + the title's `basis-full sm:basis-auto` keep the
+						    title on its own full-width first line on mobile, with the
+						    action cluster wrapping beneath it — the whole set of icon
+						    buttons can't share a 375px line with a readable title, and a
+						    `min-w-0` title squeezed by `shrink-0` actions would otherwise
+						    collapse to zero width (an invisible heading). Tablet/desktop
+						    (`sm:`) restore the original single-line, space-between row. */}
+						<div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-2 mb-4 pt-2 pb-3 bg-bg border-b border-border-subtle">
+							<div className="flex items-center gap-1.5 min-w-0 basis-full sm:basis-auto">
 								{/* Mobile already swaps to a single pane with its own Back
 								    button, so the collapse control is desktop/tablet only. */}
 								<span className="hidden md:block shrink-0">
@@ -440,7 +447,7 @@ export function DocsLibrary({
 									/>
 								)}
 							</div>
-							<div className="flex items-center gap-2 shrink-0">
+							<div className="flex items-center gap-2 shrink-0 ml-auto sm:ml-0">
 								{mode === 'view' ? (
 									<>
 										{review && projectId && (
