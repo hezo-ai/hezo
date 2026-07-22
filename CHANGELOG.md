@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.32.0 - 2026-07-22
+
+### Features
+
+- **mentions:** warn on action-assignment passive asks + verdict-report mention guidance ([#809](https://github.com/hezo-ai/hezo/pull/809))
+
+### Bug Fixes
+
+- **prompts:** stop agents delegating the done-transition to the admin ([#808](https://github.com/hezo-ai/hezo/pull/808))
+- **goals:** steer agents away from suggesting one-off deliverables as goals ([#807](https://github.com/hezo-ai/hezo/pull/807))
+- **web:** heal stale goal-suggestion cards on version skew + explain goals ([#805](https://github.com/hezo-ai/hezo/pull/805))
+- **mcp:** accept human identifiers (not only UUIDs) across reference params ([#803](https://github.com/hezo-ai/hezo/pull/803))
+- **coherence:** title the first-run setup ticket "Set up the team" ([#802](https://github.com/hezo-ai/hezo/pull/802))
+- **project-intake:** stop echoing the project description in the CEO greeting ([#801](https://github.com/hezo-ai/hezo/pull/801))
+
+### Refactors
+
+- **web:** progressive suggestion-first New Project dialog ([#806](https://github.com/hezo-ai/hezo/pull/806))
+
+### Documentation
+
+- **readme:** surface Slack, Telegram, and Discord chat integrations ([#804](https://github.com/hezo-ai/hezo/pull/804))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.31.0...0.32.0
+
 ## 0.31.0 - 2026-07-22
 
 ### Breaking Changes

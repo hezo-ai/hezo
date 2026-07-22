@@ -1,6 +1,6 @@
 {
 	"name": "@hezo/server",
-	"version": "0.31.0",
+	"version": "0.32.0",
 	"type": "module",
 	"scripts": {
 		"dev": "bun run --hot src/index.ts",
