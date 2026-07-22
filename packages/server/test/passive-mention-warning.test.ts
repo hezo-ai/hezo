@@ -75,6 +75,76 @@ describe('detectPassiveTeammateAsks', () => {
 		).toEqual([]);
 	});
 
+	it('flags the verdict-report case: "Required actions for @@slug" heading over an imperative list', () => {
+		// The DGXX verification report shape: a heading assigns required actions to a
+		// passive @@ mention, and the numbered list below is pure imperatives — no
+		// second-person pronoun, no `please`, no `?` — so the paragraph ask-gate
+		// never fires. The action-assignment phrase on the heading line IS the ask.
+		expect(
+			detectPassiveTeammateAsks(
+				'## Required actions for @@engineer\n\n' +
+					'1. Reconcile the Phase 1 timing with the 8-K.\n' +
+					'2. Bridge run-rate to recognized revenue.\n' +
+					'3. Fix the source duplication.\n\n' +
+					'Return to me for re-verification when these are addressed.',
+				slugs,
+			),
+		).toEqual(['engineer']);
+	});
+
+	it('flags a bold action-assignment label line with a passive mention', () => {
+		expect(
+			detectPassiveTeammateAsks(
+				'**Action items for @@architect**\n\n- Update the spec.\n- Re-run the checks.',
+				slugs,
+			),
+		).toEqual(['architect']);
+	});
+
+	it('flags a colon-terminated action-assignment line with a passive mention', () => {
+		expect(
+			detectPassiveTeammateAsks('Next steps for @@qa-engineer:\n\n- Re-test the flow.', slugs),
+		).toEqual(['qa-engineer']);
+	});
+
+	it('does not flag a heading naming a passive mention without an action-assignment phrase', () => {
+		expect(
+			detectPassiveTeammateAsks('## Notes from @@architect\n\n- The design held up well.', slugs),
+		).toEqual([]);
+	});
+
+	it('does not flag an attribution heading ("Actions taken by") — compound phrases only', () => {
+		expect(
+			detectPassiveTeammateAsks('## Actions taken by @@architect\n\n- Migrated the schema.', slugs),
+		).toEqual([]);
+	});
+
+	it('does not flag an action-assignment heading when the slug is also actively mentioned', () => {
+		expect(
+			detectPassiveTeammateAsks(
+				'## Required actions for @@engineer\n\n1. Fix the build.\n\n@engineer — please pick these up.',
+				slugs,
+			),
+		).toEqual([]);
+	});
+
+	it('does not flag a slug that only appears inside a longer hyphenated slug', () => {
+		// `engineer` must not match inside `@@qa-engineer` — only the addressed
+		// teammate is flagged, even when the roster carries overlapping slugs.
+		expect(
+			detectPassiveTeammateAsks('## Required actions for @@qa-engineer\n\n1. Re-test.', slugs),
+		).toEqual(['qa-engineer']);
+	});
+
+	it('does not flag an action-assignment phrase in plain prose (not a heading/label line)', () => {
+		expect(
+			detectPassiveTeammateAsks(
+				'I folded the required actions from @@architect into the tracker already.',
+				slugs,
+			),
+		).toEqual([]);
+	});
+
 	it('does not flag a passive FYI with no ask intent', () => {
 		expect(detectPassiveTeammateAsks('@@admin — release is done.', slugs)).toEqual([]);
 	});

@@ -15,6 +15,13 @@ const ASK_INTENT_RES: RegExp[] = [
 	/\?/,
 ];
 
+// Action-assignment phrases — a line that *assigns* work to the teammate it
+// names ("Required actions for X", "Action items — X", "Next steps for X")
+// rather than merely naming them. Compound phrases only, so attribution lines
+// ("Actions taken by X", "Findings from X") never match.
+const ACTION_ASSIGNMENT_RE =
+	/\b(?:required actions?|actions? required|action items?|action list|next steps?|to-?dos?|follow-?ups?)\b/i;
+
 // A leading-line address may follow a short routing label — `Next step:`,
 // `Handoff:`, `Owner:` — so a handoff like `Next step: captain — …` addresses the
 // captain even though the name isn't the first token on the line. The label is a
@@ -37,6 +44,30 @@ function leadingAddressRegex(namePattern: string): RegExp {
 		String.raw`(?:^|\n)\s*${ADDRESS_LABEL_PREFIX}${namePattern}\s*[—–\-:,](?:\s|$)`,
 		'i',
 	);
+}
+
+/**
+ * The "action-assignment line" matcher for a name pattern (a bare `slug` or the
+ * passive `@@slug`), shared by both ask-gated detectors: a markdown heading
+ * (`## …`), a fully-bold line (`**…**`), or a colon-terminated label line that
+ * both contains the teammate reference and carries an action-assignment phrase
+ * (see ACTION_ASSIGNMENT_RE). Such a line assigns work to the teammate it names
+ * — typically introducing an imperative list — so the phrase itself is the ask
+ * signal; the imperative items below rarely carry the second-person/`please`/`?`
+ * signals the paragraph gate needs, which is how the shape
+ * `## Required actions for @@slug` + numbered list evades the other forms.
+ */
+function hasActionAssignmentLine(stripped: string, namePattern: string): boolean {
+	const nameRe = new RegExp(namePattern, 'i');
+	for (const rawLine of stripped.split('\n')) {
+		const line = rawLine.trim();
+		if (!ACTION_ASSIGNMENT_RE.test(line) || !nameRe.test(line)) continue;
+		const isHeading = /^#{1,6}\s/.test(line);
+		const isBoldLine = /^(?:\*\*|__).*(?:\*\*|__):?$/.test(line);
+		const isLabelLine = /:$/.test(line);
+		if (isHeading || isBoldLine || isLabelLine) return true;
+	}
+	return false;
 }
 
 export function extractMentionSlugs(content: unknown): string[] {
@@ -116,6 +147,14 @@ export function detectPassiveTeammateAsks(content: unknown, knownSlugs: string[]
 		const slug = rawSlug.toLowerCase();
 		if (active.has(slug)) continue;
 		const s = escapeRegExp(slug);
+		// Action-assignment line: `## Required actions for @@slug` — the phrase on
+		// the line is itself the ask signal, no paragraph gate needed. The trailing
+		// guard keeps a slug from matching inside a longer hyphenated slug
+		// (`@@qa` in `@@qa-engineer`).
+		if (hasActionAssignmentLine(stripped, String.raw`(?<![\w@])@@${s}(?![\w-])`)) {
+			flagged.add(slug);
+			continue;
+		}
 		// Addressed by the passive form: emphasised `**@@slug**`/`__@@slug__` or a
 		// leading-line `@@slug —` — the @@-prefixed analogue of the sibling's forms.
 		const bold = new RegExp(String.raw`(\*\*|__)@@${s}\1`, 'i');
@@ -164,6 +203,15 @@ export function detectUnlinkedTeammateAsks(content: unknown, knownSlugs: string[
 		const slug = rawSlug.toLowerCase();
 		if (active.has(slug)) continue;
 		const s = escapeRegExp(slug);
+		// Action-assignment line with the bare name: `## Required actions for slug`
+		// — the phrase on the line is itself the ask signal, no paragraph gate
+		// needed. The lookbehind keeps `@slug`/`@@slug` out (handled elsewhere) and,
+		// with the trailing guard, keeps a slug from matching inside a longer
+		// hyphenated slug (`engineer` in `qa-engineer` / `engineer-lead`).
+		if (hasActionAssignmentLine(stripped, String.raw`(?<![\w@-])${s}(?![\w-])`)) {
+			flagged.add(slug);
+			continue;
+		}
 		// Emphasised name (**slug**/__slug__, not already @-prefixed) or a
 		// leading-line address (`slug —`/`slug:`, optionally after a routing label)
 		// — mirrors the addressing forms detectUnlinkedTeammateReferences recognises.
