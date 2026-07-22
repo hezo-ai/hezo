@@ -29,21 +29,22 @@ function ChatChannelsSettingsPage() {
 					<h1 className="text-[22px] font-medium">Chat channels</h1>
 					<InfoTooltip
 						label="About chat channels"
-						content="Connect external chat apps (Telegram, Slack) so the CEO is reachable outside the web app — as a personal assistant over DM, or as a coworker in your team's channels."
+						content="Connect external chat apps (Telegram, Slack, Discord) so the CEO is reachable outside the web app — as a personal assistant over DM, or as a coworker in your team's channels."
 					/>
 				</div>
 				<p className="text-[13px] text-text-2 mt-1 max-w-[680px]">
 					Chat apps connect in two modes. <span className="font-medium">Assistant (DM)</span>: DM
-					the bot and the conversation is a real-time CEO chat thread, mirrored with the chatbox
-					here — only linked identities may chat.{' '}
+					the bot and each conversation becomes its own CEO chat thread, listed in the chatbox here
+					— only linked identities may chat, and replies go back where you asked.{' '}
 					<span className="font-medium">Coworker (channels)</span>: invite the bot to a channel and
-					anyone there can @-mention it; it reads the channel history for context and replies
-					in-thread. Those conversations stay in the chat app and never appear in the web chatbox.
+					anyone there can @-mention it; it reads the recent channel messages for context and
+					replies in-thread. Channel threads show up read-only in the web chatbox.
 				</p>
 			</div>
 
 			<TelegramSection />
 			<SlackSection />
+			<DiscordSection />
 			<IdentitiesSection />
 		</div>
 	);
@@ -173,7 +174,7 @@ function SlackSection() {
 							checked={dmMode}
 							onChange={(e) => setDmMode(e.target.checked)}
 						/>
-						Assistant mode — answer DMs from linked identities (mirrored to the web chatbox)
+						Assistant mode — answer DMs from linked identities (each DM is a thread here)
 					</label>
 				</div>
 				{validationErrors.length > 0 && (
@@ -185,6 +186,107 @@ function SlackSection() {
 				)}
 				<div>
 					<Button size="sm" data-testid="slack-save" onClick={handleSave} disabled={saving}>
+						{saving && <Loader2 className="w-3 h-3 animate-spin" />} Save
+					</Button>
+				</div>
+			</div>
+		</section>
+	);
+}
+
+function DiscordSection() {
+	const { channels, saveChannel, saving } = useChatChannels();
+	const discord = channels.find((c) => c.channel === 'discord');
+	const [botToken, setBotToken] = useState('');
+	const [enabled, setEnabled] = useState(discord?.enabled ?? false);
+	const [dmMode, setDmMode] = useState(discord?.metadata?.dm_mode_enabled !== false);
+	const [groupMode, setGroupMode] = useState(discord?.metadata?.group_mode_enabled !== false);
+	const [validationErrors, setValidationErrors] = useState<string[]>([]);
+
+	const handleSave = async () => {
+		const result = await saveChannel({
+			channel: 'discord',
+			enabled,
+			bot_token: botToken.trim() || undefined,
+			metadata: { dm_mode_enabled: dmMode, group_mode_enabled: groupMode },
+		});
+		setBotToken('');
+		setValidationErrors(
+			result?.validation && !result.validation.ok ? result.validation.errors : [],
+		);
+	};
+
+	return (
+		<section
+			className="border border-border rounded-md p-4 bg-surface mb-4"
+			data-testid="discord-channel"
+		>
+			<h2 className="text-[15px] font-medium mb-1">
+				Discord{' '}
+				<span className="text-text-2 font-normal text-[13px]">— assistant + coworker modes</span>
+			</h2>
+			<p className="text-[13px] text-text-2 mb-3 max-w-[680px]">
+				The CEO joins your Discord server as a coworker: @-mention it in a channel and it reads the
+				recent messages for context and replies there. It also answers DMs as a personal assistant
+				(linked identities only). Create a bot in the Discord Developer Portal, enable the{' '}
+				<span className="font-medium">Message Content</span> intent, invite it to your server, then
+				paste its bot token — no public URL needed (gateway connection).
+			</p>
+			<div className="flex flex-col gap-3">
+				<label className="flex items-center gap-2 text-[13px]">
+					<input
+						type="checkbox"
+						data-testid="discord-enabled"
+						checked={enabled}
+						onChange={(e) => setEnabled(e.target.checked)}
+					/>
+					Enabled
+				</label>
+				<div>
+					<label className="block text-[13px] font-medium mb-1" htmlFor="discord-token">
+						Bot token{' '}
+						{discord?.has_token && <span className="text-text-2">(set — paste to replace)</span>}
+					</label>
+					<Input
+						id="discord-token"
+						data-testid="discord-token"
+						type="password"
+						autoComplete="off"
+						placeholder={discord?.has_token ? '••••••••' : 'Paste bot token'}
+						value={botToken}
+						onChange={(e) => setBotToken(e.target.value)}
+						className="sm:w-96"
+					/>
+				</div>
+				<div className="flex flex-col gap-1.5">
+					<label className="flex items-center gap-2 text-[13px]">
+						<input
+							type="checkbox"
+							data-testid="discord-group-mode"
+							checked={groupMode}
+							onChange={(e) => setGroupMode(e.target.checked)}
+						/>
+						Coworker mode — respond to @-mentions in channels on servers the bot joined
+					</label>
+					<label className="flex items-center gap-2 text-[13px]">
+						<input
+							type="checkbox"
+							data-testid="discord-dm-mode"
+							checked={dmMode}
+							onChange={(e) => setDmMode(e.target.checked)}
+						/>
+						Assistant mode — answer DMs from linked identities (each DM is a thread here)
+					</label>
+				</div>
+				{validationErrors.length > 0 && (
+					<ul className="text-[13px] text-danger" data-testid="discord-validation-errors">
+						{validationErrors.map((err) => (
+							<li key={err}>{err}</li>
+						))}
+					</ul>
+				)}
+				<div>
+					<Button size="sm" data-testid="discord-save" onClick={handleSave} disabled={saving}>
 						{saving && <Loader2 className="w-3 h-3 animate-spin" />} Save
 					</Button>
 				</div>
@@ -306,7 +408,8 @@ function IdentitiesSection() {
 			<p className="text-[13px] text-text-2 mb-3 max-w-[680px]">
 				Only these external accounts may DM the CEO (assistant mode). Telegram: your numeric user id
 				(message @userinfobot to find it). Slack: your member ID (profile → ⋯ → Copy member ID,
-				starts with U). Coworker mode doesn't use this list — inviting the bot to a channel is the
+				starts with U). Discord: your user ID (enable Developer Mode, then right-click your name →
+				Copy User ID). Coworker mode doesn't use this list — inviting the bot to a channel is the
 				authorization there.
 			</p>
 
@@ -324,6 +427,7 @@ function IdentitiesSection() {
 					>
 						<option value="telegram">Telegram</option>
 						<option value="slack">Slack</option>
+						<option value="discord">Discord</option>
 					</select>
 				</div>
 				<div>

@@ -74,3 +74,40 @@ test('configures the Slack app: both tokens, mode toggles, slack identities', as
 	expect(list.textContent).toContain('U0FAREZ');
 	expect(list.textContent?.toLowerCase()).toContain('slack');
 });
+
+test('configures the Discord bot: token, mode toggles, discord identities', async () => {
+	const { findByTestId, getByTestId, user } = await renderApp({
+		initialPath: '/settings/chat-channels',
+	});
+	await findByTestId('discord-channel');
+
+	// Save the token with assistant (DM) mode off. The channel stays disabled in
+	// this test so the adapter never dials discord.com.
+	await user.type(getByTestId('discord-token'), 'discord-bot-token');
+	await user.click(getByTestId('discord-dm-mode'));
+	await user.click(getByTestId('discord-save'));
+
+	// After the save + refetch, the token reads as set (never echoed back).
+	await expect
+		.poll(async () => (getByTestId('discord-token') as HTMLInputElement).placeholder)
+		.toContain('••');
+
+	// The config landed with the vault reference + mode flags in metadata.
+	const config = await getTestContext().db.query<{
+		bot_token_secret: string | null;
+		metadata: Record<string, unknown>;
+	}>(`SELECT bot_token_secret, metadata FROM chat_channel_configs WHERE channel = 'discord'`);
+	expect(config.rows[0].bot_token_secret).toBe('DISCORD_BOT_TOKEN');
+	expect(config.rows[0].metadata).toMatchObject({
+		dm_mode_enabled: false,
+		group_mode_enabled: true,
+	});
+
+	// The identity allowlist form offers Discord (for DM/assistant mode).
+	await user.selectOptions(getByTestId('identity-channel'), 'discord');
+	await user.type(getByTestId('identity-external-id'), '99887766554433');
+	await user.click(getByTestId('identity-add'));
+	const list = await findByTestId('identity-list');
+	expect(list.textContent).toContain('99887766554433');
+	expect(list.textContent?.toLowerCase()).toContain('discord');
+});

@@ -1,6 +1,7 @@
 import { ChatChannel } from '@hezo/shared';
 import { trackBackground } from '../../lib/background';
 import { logger } from '../../logger';
+import { splitMessageForLimit } from './format';
 import { SlackSocketClient } from './slack-socket';
 import {
 	type ChatChannelAdapter,
@@ -49,26 +50,7 @@ export function toSlackMrkdwn(text: string): string {
 
 /** Split a long reply on paragraph boundaries so every chunk fits Slack's cap. */
 export function splitForSlack(text: string, limit = SLACK_MESSAGE_LIMIT): string[] {
-	if (text.length <= limit) return [text];
-	const chunks: string[] = [];
-	let current = '';
-	for (const para of text.split('\n\n')) {
-		const candidate = current === '' ? para : `${current}\n\n${para}`;
-		if (candidate.length <= limit) {
-			current = candidate;
-			continue;
-		}
-		if (current !== '') chunks.push(current);
-		// A single paragraph over the cap is hard-split.
-		let rest = para;
-		while (rest.length > limit) {
-			chunks.push(rest.slice(0, limit));
-			rest = rest.slice(limit);
-		}
-		current = rest;
-	}
-	if (current !== '') chunks.push(current);
-	return chunks;
+	return splitMessageForLimit(text, limit);
 }
 
 /**

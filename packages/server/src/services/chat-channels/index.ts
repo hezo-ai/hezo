@@ -1,5 +1,6 @@
 import type { ChatChannel } from '@hezo/shared';
 import type { ChatSessionManager } from '../chat-session-manager';
+import { DiscordAdapter } from './discord';
 import type { IngestDeps } from './ingest';
 import { ingestInboundEvent } from './ingest';
 import { ingestGroupMentionEvent } from './ingest-group';
@@ -39,6 +40,7 @@ export function buildChatChannelRegistry(deps: ChatChannelAdapterDeps): ChatChan
 	const registry = new ChatChannelRegistry();
 	registry.register(new TelegramAdapter(deps));
 	registry.register(new SlackAdapter(deps));
+	registry.register(new DiscordAdapter(deps));
 	return registry;
 }
 
