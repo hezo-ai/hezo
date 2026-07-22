@@ -26,7 +26,7 @@ includes, and its version. Click a team to see its full details:
 
 **Launch new project** creates a fresh project together with its own team, staffed with the
 whole roster. Give the project a name and description and Hezo provisions the team, opens the
-Captain's planning task, and starts the initial CEO coherence review — exactly like creating a
+Captain's planning task, and starts the initial CEO team-setup pass — exactly like creating a
 project from a team type, but with the marketplace team's roles and prompts.
 
 ## Adding a team to an existing project

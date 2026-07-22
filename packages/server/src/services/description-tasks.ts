@@ -35,6 +35,23 @@ const INITIAL_SETUP_REASONS: ReadonlySet<TeamCoherenceReviewReason> = new Set([
 	'template_applied',
 ]);
 
+/**
+ * The genuine first-run setup pass: a brand-new team with no prior roster. This is
+ * narrower than {@link INITIAL_SETUP_REASONS} (which also owns `template_applied` for the
+ * CEO) — `template_applied` fires when an *existing* roster changed, so it reads as a
+ * roster-change review, not a from-scratch setup. Only `initial` is framed as team setup:
+ * it provisions the team from nothing and may do broader setup work (connectors, hiring,
+ * prompt rewrites), not just re-audit an existing roster.
+ */
+function isFirstRunSetup(reason: TeamCoherenceReviewReason): boolean {
+	return reason === 'initial';
+}
+
+/** The ticket title, framed as team setup for the first-run pass, else a coherence review. */
+function coherenceTaskTitle(reason: TeamCoherenceReviewReason): string {
+	return isFirstRunSetup(reason) ? 'Set up the team' : 'Review team coherence after roster change';
+}
+
 /** Resolves the CEO + the team's own project — coherence/setup live in that project. */
 async function loadTeamContext(db: Db, teamId: string): Promise<TeamCoordinationContext | null> {
 	return loadTeamCoordinationContext(db, teamId);
@@ -155,9 +172,15 @@ ${COHERENCE_CHANGES_HEADER}
 
 ${coherenceChangeLine(reason, changeSummary)}`
 		: '';
-	return `${draftBanner}## Team coherence review
+	// The first-run pass is a from-scratch setup ("was just created"); every reactive
+	// review audits a roster that changed. The audit + rewrite steps below are shared.
+	const heading = isFirstRunSetup(reason) ? '## Team setup' : '## Team coherence review';
+	const intro = isFirstRunSetup(reason)
+		? `The **${teamSlug}** project-team was just created. Set it up: audit its roster`
+		: `The **${teamSlug}** project-team changed (reason: ${reason}). Audit its roster`;
+	return `${draftBanner}${heading}
 
-The **${teamSlug}** project-team changed (reason: ${reason}). Audit its roster — including whether every role's output gets verified by someone other than its author — then rewrite the descriptive blobs that other agents read so they stay accurate. Use \`team_id\` = \`${teamSlug}\` for the tool calls below.
+${intro} — including whether every role's output gets verified by someone other than its author — then rewrite the descriptive blobs that other agents read so they stay accurate. Use \`team_id\` = \`${teamSlug}\` for the tool calls below.
 
 **Steps**
 
@@ -235,7 +258,7 @@ export async function enqueueTeamCoherenceReviewTask(
 		db,
 		ctx,
 		assigneeMemberId,
-		'Review team coherence after roster change',
+		coherenceTaskTitle(reason),
 		body,
 		COHERENCE_LABEL,
 		TaskPriority.High,
