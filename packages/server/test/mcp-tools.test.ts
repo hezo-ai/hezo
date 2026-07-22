@@ -1238,6 +1238,45 @@ describe('MCP create_project (CEO creates a project + team on approval)', () => 
 		expect(intakeTask.rows[0].status).toBe('done');
 	});
 
+	it('accepts the intake ticket identifier (e.g. HQ-1), not only its UUID', async () => {
+		const intake = await startIntake(`CEO Identifier ${Date.now()}`);
+		const ceoId = await instanceCeoId(db);
+		const { token: ceoToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			ceoId,
+			DEFAULT_TEAM_ID,
+			intake.intake_task_id,
+		);
+
+		// Pass the human-readable identifier the agent sees in the thread, not the UUID.
+		const result = await callToolAs(ceoToken, 'create_project', {
+			name: 'Identifier Project',
+			description: 'Created by passing the intake identifier.',
+			intake_task_id: intake.intake_task_identifier,
+		});
+		expect(result.error).toBeUndefined();
+		expect(result.slug).toBeTruthy();
+
+		// The intake ticket resolved from the identifier is closed.
+		const intakeTask = await db.query<{ status: string }>(
+			'SELECT status::text AS status FROM tasks WHERE id = $1',
+			[intake.intake_task_id],
+		);
+		expect(intakeTask.rows[0].status).toBe('done');
+	});
+
+	it('errors clearly when the intake identifier does not resolve', async () => {
+		const ceoId = await instanceCeoId(db);
+		const { token: ceoToken } = await mintAgentToken(db, masterKeyManager, ceoId, DEFAULT_TEAM_ID);
+		const result = await callToolAs(ceoToken, 'create_project', {
+			name: 'No Intake Project',
+			description: 'Intake reference is bogus.',
+			intake_task_id: 'HQ-999999',
+		});
+		expect(result.error).toBe('Intake task not found');
+	});
+
 	it('is idempotent — a second call on a closed intake errors instead of duplicating', async () => {
 		const intake = await startIntake(`CEO Idem ${Date.now()}`);
 		const ceoId = await instanceCeoId(db);
@@ -1787,6 +1826,133 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 			expect(row).toHaveProperty('description_truncated');
 			expect(row).toHaveProperty('description_length');
 		}
+	});
+});
+
+describe('MCP reference params accept the human identifier, not only the UUID', () => {
+	async function captainMemberId(): Promise<string> {
+		const r = await db.query<{ id: string }>(
+			`SELECT ma.id FROM member_agents ma JOIN members m ON m.id = ma.id
+			 WHERE m.team_id = $1 AND ma.slug = 'captain'`,
+			[teamId],
+		);
+		return r.rows[0].id;
+	}
+
+	it('update_task.assignee_id resolves an agent slug to its member id', async () => {
+		const taskRowId = await insertTaskDirect(agentId, 'Reassign by slug');
+		const result = (await callToolViaMcp('update_task', {
+			project: projectId,
+			task_id: taskRowId,
+			assignee_id: 'captain', // the slug an agent holds, not the member UUID
+		})) as { assignee_id?: string; error?: string };
+		expect(result.error).toBeUndefined();
+		expect(result.assignee_id).toBe(await captainMemberId());
+	});
+
+	it('update_task.assignee_id returns a clean error for an unknown slug', async () => {
+		const taskRowId = await insertTaskDirect(agentId, 'Reassign to nobody');
+		const result = (await callToolViaMcp('update_task', {
+			project: projectId,
+			task_id: taskRowId,
+			assignee_id: 'not-a-real-agent',
+		})) as { error?: string };
+		expect(result.error).toContain('Assignee not found');
+	});
+
+	it('list_tasks.assignee_id filters by an agent slug', async () => {
+		const captainId = await captainMemberId();
+		const mine = await insertTaskDirect(captainId, 'Captain task for slug filter');
+		const rows = (await callToolViaMcp('list_tasks', {
+			project: projectId,
+			assignee_id: 'captain', // slug, not member UUID
+		})) as Array<{ id: string; assignee_id: string }>;
+		expect(rows.length).toBeGreaterThan(0);
+		expect(rows.every((r) => r.assignee_id === captainId)).toBe(true);
+		expect(rows.some((r) => r.id === mine)).toBe(true);
+	});
+
+	it('list_comments.before accepts a comment public_id', async () => {
+		const task = (await callToolViaMcp('create_task', {
+			project: projectId,
+			title: 'public_id pagination',
+			assignee_id: agentId,
+		})) as { id: string };
+		for (let i = 0; i < 3; i++) {
+			await db.query(
+				`INSERT INTO task_comments (task_id, content_type, content, created_at)
+				 VALUES ($1, 'text'::comment_content_type, $2::jsonb, now() + ($3 || ' milliseconds')::interval)`,
+				[task.id, JSON.stringify({ text: `c${i}` }), i],
+			);
+		}
+		const all = (await callToolViaMcp('list_comments', {
+			project: projectId,
+			task_id: task.id,
+		})) as Array<{ id: string; public_id: string }>;
+		expect(all.length).toBe(3);
+		const newest = all[0];
+		const older = (await callToolViaMcp('list_comments', {
+			project: projectId,
+			task_id: task.id,
+			before: newest.public_id, // cite by public_id, not the UUID
+		})) as Array<{ id: string }>;
+		expect(older.length).toBe(2);
+		expect(older.some((r) => r.id === newest.id)).toBe(false);
+	});
+
+	it('create_comment.parent_comment_id accepts a public_id and threads the reply', async () => {
+		const task = (await callToolViaMcp('create_task', {
+			project: projectId,
+			title: 'reply by public_id',
+			assignee_id: agentId,
+		})) as { id: string };
+		const parent = (await callToolViaMcp('create_comment', {
+			project: projectId,
+			task_id: task.id,
+			content: 'parent comment',
+		})) as { id: string; public_id: string };
+		const reply = (await callToolViaMcp('create_comment', {
+			project: projectId,
+			task_id: task.id,
+			content: 'child reply',
+			parent_comment_id: parent.public_id, // cite by public_id, not the UUID
+		})) as { parent_comment_id?: string; error?: string };
+		expect(reply.error).toBeUndefined();
+		expect(reply.parent_comment_id).toBe(parent.id);
+	});
+
+	it('test_connector resolves a connector by name (not only id)', async () => {
+		await db.query(
+			`INSERT INTO mcp_connections (name, kind, config, project_id)
+			 VALUES ($1, 'api'::mcp_connection_kind, '{}'::jsonb, $2)`,
+			['named-api-connector', projectId],
+		);
+		const result = (await callToolViaMcp('test_connector', {
+			project: projectId,
+			connector_id: 'named-api-connector', // the name, not the UUID
+		})) as { error?: string };
+		// Resolution reached the kind gate — the old raw `id = $1` would have thrown
+		// "invalid input syntax for type uuid" on a name instead.
+		expect(result.error).toContain('test only meaningful for kind=saas');
+		expect(result.error).not.toContain('connector not found');
+	});
+
+	it('remove_connector resolves a project connector by name (not only id)', async () => {
+		await db.query(
+			`INSERT INTO mcp_connections (name, kind, config, project_id)
+			 VALUES ($1, 'api'::mcp_connection_kind, '{}'::jsonb, $2)`,
+			['removable-by-name', projectId],
+		);
+		const result = (await callToolViaMcp('remove_connector', {
+			project: projectId,
+			id: 'removable-by-name', // the name, not the UUID
+		})) as { removed?: boolean; error?: string };
+		expect(result.error).toBeUndefined();
+		expect(result.removed).toBe(true);
+		const gone = await db.query('SELECT 1 FROM mcp_connections WHERE name = $1', [
+			'removable-by-name',
+		]);
+		expect(gone.rows.length).toBe(0);
 	});
 });
 

@@ -127,7 +127,7 @@ Create a new project together with its dedicated team. CEO-only. Call this ONLY 
 | `template_id` | `string` | No | Team-type template id (from list_team_templates). Mutually exclusive with source_team_id; defaults to Blank when neither is given. |
 | `source_team_id` | `string` | No | Existing team to clone into a fresh template. Mutually exclusive with template_id. |
 | `marketplace_slug` | `string` | No | A marketplace team slug (from get_marketplace_team / the intake baseline) to provision the roster from directly. Mutually exclusive with template_id and source_team_id. |
-| `intake_task_id` | `string` | No | The HQ project-intake ticket this fulfils; it is closed with a completion note on success. |
+| `intake_task_id` | `string` | No | The HQ project-intake ticket this fulfils (its identifier, e.g. "HQ-1", or its UUID); it is closed with a completion note on success. |
 
 **Returns:** The new project row plus `team_slug`, `planning_task_id`, `planning_task_identifier`, and the initial coherence/setup ticket (`coherence_task_id`, `coherence_task_identifier`). The coherence ticket is created unassigned and does NOT auto-run on this path — draft its description then call `start_team_setup`. Returns `{ error }` if validation fails.
 
@@ -223,7 +223,7 @@ List a project's tasks. Returns up to 50 tasks ordered by creation date (newest 
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `status` | `string` | No | Filter by status (comma-separated) |
-| `assignee_id` | `string` | No | Filter by assignee member ID |
+| `assignee_id` | `string` | No | Filter by assignee — an agent slug (e.g. "engineer") or a member UUID |
 | `assignee_slug` | `string` | No | Filter by assignee agent slug (alternative to assignee_id) |
 | `excerpt_chars` | `integer` | No | When set, replaces description and rules with first-paragraph excerpts capped at this many characters, plus _truncated and _length companion fields |
 
@@ -302,7 +302,7 @@ Update an task. Agents can use this to change status, update progress, set rules
 | `description` | `string` | No | New description |
 | `status` | `string` | No | New status (backlog, in_progress, review, blocked, done, cancelled). `done` = completed (final); marking a ticket `done` wakes Coach to review it for prompt-learning but leaves it `done`. `cancelled` = abandoned. Re-opening a completed task (done/cancelled) is admin-only. |
 | `priority` | `string` | No | New priority |
-| `assignee_id` | `string` | No | New assignee ID |
+| `assignee_id` | `string` | No | New assignee — an agent slug (e.g. "engineer") or a member UUID |
 | `progress_summary` | `string` | No | Progress summary update |
 | `rules` | `string` | No | How-to-work-on guardrails for this ticket — approach constraints that shape execution (e.g. "run tests before committing", "consult the architect before auth changes"). Not a channel for passing project domain knowledge to other agents; put that in description instead. |
 | `branch_name` | `string` | No | Git branch name for this task |
@@ -448,7 +448,7 @@ List comments for an task. Returns up to 50 most-recent comments (newest first).
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `task_id` | `string` | Yes | Task identifier or UUID |
-| `before` | `string` | No | Comment ID — return only comments created before this one |
+| `before` | `string` | No | A comment id (UUID) or public_id — return only comments created before that one |
 | `excerpt_chars` | `integer` | No | When set, truncates content.text on text-typed comments to this many characters and adds text_truncated/text_length |
 
 **Returns:** Up to 50 comment rows newest-first, each with `id`, `public_id`, `task_id`, `author_member_id`, `author_api_key_id`, `parent_comment_id`, `content_type`, `content`, `chosen_option`, `created_at`, `author_type`, `author_name`, `reactions[]`, and `attachments[]`. Pass `before` to walk older; `excerpt_chars` truncates text comments (adds `text_truncated`/`text_length`).
@@ -500,7 +500,7 @@ Add a comment to an task. In content, reference teammates with @<agent-slug>. Re
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `task_id` | `string` | Yes | Task identifier or UUID |
 | `content` | `string` | Yes | Comment text |
-| `parent_comment_id` | `string` | No | UUID of the comment you are replying to. Setting this wakes that comment's author with source=reply and renders this comment as "replying to ..." in the UI. |
+| `parent_comment_id` | `string` | No | The comment you are replying to — its id (UUID) or its public_id. Setting this wakes that comment's author with source=reply and renders this comment as "replying to ..." in the UI. |
 
 **Returns:** The created comment row (`id`, `public_id`, `created_at`, …), optionally with an advisory `warning` string. Returns `{ error }` if `parent_comment_id` does not belong to the task. Setting `parent_comment_id` wakes the parent comment's author.
 
@@ -1053,7 +1053,7 @@ Test an MCP connector end-to-end from the server side. Resolves the stored OAuth
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
-| `connector_id` | `string` | Yes | connector id from list_connectors |
+| `connector_id` | `string` | Yes | connector id or name (both shown by list_connectors) |
 
 **Returns:** `{ ok, status, mcp_url, secret_name, token_prefix, token_length, www_authenticate, body_excerpt, hint }` from a direct server-side probe of the MCP URL. Returns `{ error }` if the connector is missing, not `saas`, or its token cannot be decrypted.
 
@@ -1085,7 +1085,7 @@ Remove one of your project's registered MCP connections. Only connectors owned b
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
-| `id` | `string` | Yes | connector id (returned by add_connector or list_connectors) |
+| `id` | `string` | Yes | connector id or name (returned by add_connector or list_connectors) |
 
 **Returns:** `{ removed: true, id }`, or `{ error }` if the connection is not found. Removes only your project's own connector (never a global or another project's).
 
