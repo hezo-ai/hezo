@@ -19,13 +19,22 @@ describe('computeBump', () => {
 		expect(computeBump([])).toBe('none');
 	});
 
-	it('returns major when any commit is breaking', () => {
-		expect(computeBump([commit({ type: 'fix' }), commit({ type: 'feat', breaking: true })])).toBe(
-			'major',
-		);
+	it('never auto-derives a major bump, even for a breaking change', () => {
+		// Major releases are a deliberate human decision and are never automated.
+		expect(computeBump([commit({ type: 'feat', breaking: true })])).not.toBe('major');
+		expect(computeBump([commit({ type: 'fix', breaking: true })])).not.toBe('major');
 	});
 
-	it('returns minor when a feat is present without breaking changes', () => {
+	it('does not let a breaking marker escalate the bump (pre-1.0: breaking does not count)', () => {
+		// A breaking `feat` is still just a minor (from the type)...
+		expect(computeBump([commit({ type: 'fix' }), commit({ type: 'feat', breaking: true })])).toBe(
+			'minor',
+		);
+		// ...and a breaking `fix` stays a patch — the `!` carries no version weight.
+		expect(computeBump([commit({ type: 'fix', breaking: true })])).toBe('patch');
+	});
+
+	it('returns minor when a feat is present', () => {
 		expect(computeBump([commit({ type: 'fix' }), commit({ type: 'feat' })])).toBe('minor');
 	});
 
