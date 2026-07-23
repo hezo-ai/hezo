@@ -1889,7 +1889,13 @@ checksummed and applied once). Schema changes add the next `NNN_*.sql`; data tra
 SQL can't express add a **code migration** TS module under `src/db/migrations/code/`
 (shared `NNN_` ordering, same per-migration transaction). On startup the runner migrates a
 **copy** of the DB (`<dataDir>/.migrate-tmp`) and **atomically swaps** it in on success; on
-failure the live `pgdata` is untouched, so downgrading to the previous binary just works.
+failure the live `pgdata` is untouched, so downgrading to the previous binary just works. The
+renamed-aside originals are kept as `pgdata.superseded.<timestamp>` (the swap auto-retains the
+newest 5 — `db/superseded.ts`). A superuser can reclaim them on demand: `GET
+/api/database-info/superseded` reports the on-disk size and `POST
+/api/database-info/prune-superseded` deletes **all** of them (no rollback retained; the live
+`pgdata` is untouched). Both are surfaced in the Database card on General settings and are
+embedded-only — external Postgres migrates in place and produces no snapshots.
 An **external Postgres** migrates **in place** instead: per-migration transactions under a
 session `pg_advisory_lock` (`applyPendingMigrationsExternal`), with the downgrade guard
 re-checked under the lock, so concurrent startups can't double-migrate and a failed

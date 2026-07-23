@@ -1,14 +1,13 @@
-import { cp, mkdir, readdir, rename, rm } from 'node:fs/promises';
+import { cp, mkdir, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { logger } from '../logger';
+import { pruneSuperseded, SUPERSEDED_PREFIX } from './superseded';
 
 const log = logger.child('migrate-swap');
 
 /** Temp data dir (sibling of `pgdata`) where migrations run against a copy. */
 const MIGRATE_TMP = '.migrate-tmp';
-/** Prefix for the previous `pgdata`, kept aside after a successful swap. */
-const SUPERSEDED_PREFIX = 'pgdata.superseded.';
-/** How many superseded `pgdata` directories to retain. */
+/** How many superseded `pgdata` directories the migration swap retains. */
 const KEEP_SUPERSEDED = 5;
 
 function pgDataPath(dataDir: string): string {
@@ -48,19 +47,11 @@ export async function promoteMigrationCopy(dataDir: string): Promise<void> {
 	await rename(join(tmp, 'pgdata'), pgDataPath(dataDir));
 	await rm(tmp, { recursive: true, force: true });
 
-	await pruneSuperseded(dataDir);
+	await pruneSuperseded(dataDir, KEEP_SUPERSEDED);
 	log.info(`Swapped in migrated database; previous pgdata kept at ${supersededPath}`);
 }
 
 /** Remove the temp copy after a failed migration. The original is untouched. */
 export async function discardMigrationCopy(dataDir: string): Promise<void> {
 	await rm(tmpDataDir(dataDir), { recursive: true, force: true });
-}
-
-async function pruneSuperseded(dataDir: string): Promise<void> {
-	const entries = (await readdir(dataDir)).filter((e) => e.startsWith(SUPERSEDED_PREFIX)).sort();
-	const excess = entries.slice(0, Math.max(0, entries.length - KEEP_SUPERSEDED));
-	for (const e of excess) {
-		await rm(join(dataDir, e), { recursive: true, force: true });
-	}
 }

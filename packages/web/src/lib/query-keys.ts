@@ -32,6 +32,12 @@ export const queryKeys = {
 	instanceSettings: () => ['instance', 'settings'],
 	/** Storage backend metadata (server-side redacted) for the General settings page. */
 	databaseInfo: () => ['instance', 'database'],
+	/**
+	 * On-disk size of the embedded DB's pre-migration snapshots
+	 * (`pgdata.superseded.*`). Under the `databaseInfo` prefix so its invalidation
+	 * cascades here too.
+	 */
+	supersededData: () => ['instance', 'database', 'superseded'],
 	/** Asset storage backend metadata (server-side redacted) for the General settings page. */
 	assetStorageInfo: () => ['instance', 'asset-storage'],
 	/** Instance-wide mention resolution (global CEO chat), keyed by sorted candidates. */

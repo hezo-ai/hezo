@@ -679,6 +679,7 @@ export function buildApp(
 		'/api',
 		buildDatabaseInfoRoutes(
 			config.storageInfo ?? { backend: 'embedded', display: join(config.dataDir, 'pgdata') },
+			config.dataDir,
 		),
 	);
 	app.route(
