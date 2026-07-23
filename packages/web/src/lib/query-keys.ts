@@ -38,6 +38,11 @@ export const queryKeys = {
 	 * cascades here too.
 	 */
 	supersededData: () => ['instance', 'database', 'superseded'],
+	/**
+	 * Live DB-usage figures + run-log compaction status for the chosen retention
+	 * window. Under the `databaseInfo` prefix so invalidating it cascades here.
+	 */
+	runLogUsage: (olderThanDays: number) => ['instance', 'database', 'run-log-usage', olderThanDays],
 	/** Asset storage backend metadata (server-side redacted) for the General settings page. */
 	assetStorageInfo: () => ['instance', 'asset-storage'],
 	/** Instance-wide mention resolution (global CEO chat), keyed by sorted candidates. */

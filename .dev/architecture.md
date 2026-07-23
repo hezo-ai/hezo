@@ -1894,14 +1894,34 @@ renamed-aside originals are kept as `pgdata.superseded.<timestamp>` (the swap au
 newest 5 — `db/superseded.ts`). A superuser can reclaim them on demand: `GET
 /api/database-info/superseded` reports the on-disk size and `POST
 /api/database-info/prune-superseded` deletes **all** of them (no rollback retained; the live
-`pgdata` is untouched). Both are surfaced in the Database card on General settings and are
-embedded-only — external Postgres migrates in place and produces no snapshots.
+`pgdata` is untouched). Both are surfaced in the Database card on the Storage settings
+subpage and are embedded-only — external Postgres migrates in place and produces no snapshots.
 An **external Postgres** migrates **in place** instead: per-migration transactions under a
 session `pg_advisory_lock` (`applyPendingMigrationsExternal`), with the downgrade guard
 re-checked under the lock, so concurrent startups can't double-migrate and a failed
 migration leaves the committed prefix intact. A database carrying migrations the binary
 doesn't recognize makes the server exit and ask the operator to upgrade. Migration
 mechanics and the per-migration rules are in `AGENTS.md` › Database migrations.
+
+**Run-log compaction.** `heartbeat_runs.log_text` (one verbose per-run blob, stored
+out-of-line in TOAST) is the largest thing in a busy instance's DB, and the streaming
+flusher's repeated whole-log rewrites leave heavy dead-tuple bloat that only a `VACUUM
+(FULL)` returns to the OS. A superuser triggers compaction from the Database card on the
+Storage settings subpage: `POST /api/database-info/compact-run-logs {older_than_days}` writes
+a `log_compaction:active` marker in `system_meta` (also the "in progress" flag the panel's
+button disables on) and kicks the drain. The `log-compaction` cron
+(`services/log-compaction.ts`, guarded so a manual kick and the scheduled tick never overlap)
+drains the backlog a bounded batch at a time — trimming each old, finished, TOASTed run's log
+to its tail (a "compacted" notice + the run's `invocation_command` + the end-of-run
+summary/`[done]` line) and stamping `log_compacted_at` (migration `040`, partial index
+`idx_runs_compaction`). When the backlog drains it runs `VACUUM (FULL, ANALYZE)
+heartbeat_runs` on the **embedded** backend (reclaiming bloat across *all* runs, not just the
+trimmed ones — external Postgres is left to autovacuum), records the real bytes freed in
+`log_compaction:last`, and clears the marker. `GET /api/database-info/run-log-usage` reports
+live sizes (`pg_database_size`, `pg_total_relation_size` — cheap, no detoast) plus the
+reclaimable/backlog estimate and status for the panel, embedded-only figures degrading to
+null/0 elsewhere. Deploy-time knobs: `HEZO_LOG_COMPACTION_CRON`, `_BATCH`, `_MAX_PER_TICK`,
+`_PRESERVED_BYTES`. The trimmed detail is unrecoverable, so the UI confirms first.
 
 **Storage abstraction & transactions.** All app code takes the `Db` interface
 (`query`/`exec`/`transaction`/`acquireSessionLock`/`close`); the drivers live in
