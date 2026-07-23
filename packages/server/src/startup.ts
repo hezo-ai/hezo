@@ -186,6 +186,20 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	setStartupPhase('seed');
 	await runSeed(db);
 
+	// One-time reclaim of the disk space the pre-chunk run-log write pattern
+	// left behind (migration 041 drops `heartbeat_runs.log_text`, but the column
+	// drop is metadata-only — the dead TOAST graveyard stays until a VACUUM FULL
+	// rewrites the table). Marker-gated, embedded-only, and synchronous on
+	// purpose: PGlite is single-connection, so running it in the background
+	// would stall the first requests anyway. Can take a while on a multi-GB
+	// table — once, on the first post-upgrade boot.
+	try {
+		const { runLegacyRunLogVacuumOnce } = await import('./db/run-log-chunks.js');
+		await runLegacyRunLogVacuumOnce(db, storageInfo.backend);
+	} catch (err) {
+		log.error('One-time legacy run-log reclaim failed (will retry next startup):', err);
+	}
+
 	// Asset blob storage: local filesystem by default, S3-compatible object
 	// storage when configured. Like databaseUrl, the raw assetStorageUrl stops
 	// here — only the pre-redacted info travels further.

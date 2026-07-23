@@ -7,6 +7,7 @@ import {
 	wsRoom,
 } from '@hezo/shared';
 import type { Db } from '../db/database';
+import { runLogTextSql } from '../db/run-log-chunks';
 import { broadcastRowChange } from '../lib/broadcast';
 import { logger } from '../logger';
 import { setAgentIdleIfNoActiveRuns } from './agent-runtime-status';
@@ -102,7 +103,11 @@ export async function detectOrphans(
 			const failedRun = await db.query<{
 				exit_code: number | null;
 				log_text: string | null;
-			}>('SELECT exit_code, log_text FROM heartbeat_runs WHERE id = $1', [run.id]);
+			}>(
+				`SELECT exit_code, ${runLogTextSql('heartbeat_runs.id')} AS log_text
+				 FROM heartbeat_runs WHERE id = $1`,
+				[run.id],
+			);
 			const fr = failedRun.rows[0];
 
 			await createWakeup(db, run.member_id, run.team_id, WakeupSource.Timer, {

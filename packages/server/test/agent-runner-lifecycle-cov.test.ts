@@ -19,6 +19,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { decrypt } from '../src/crypto/encryption';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
+import { runLogTextSql } from '../src/db/run-log-chunks';
 import { DomainEventBus } from '../src/events/bus';
 import type { Env } from '../src/lib/types';
 import {
@@ -439,7 +440,7 @@ describe('runAgent lifecycle — full success bookkeeping', () => {
 		expect(result.success).toBe(false);
 		expect(result.stderr).toContain('not running');
 		const run = await db.query<{ status: string; log_text: string | null }>(
-			'SELECT status, log_text FROM heartbeat_runs WHERE id = $1',
+			`SELECT status, ${runLogTextSql('heartbeat_runs.id')} AS log_text FROM heartbeat_runs WHERE id = $1`,
 			[result.heartbeatRunId],
 		);
 		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);

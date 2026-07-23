@@ -11,6 +11,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
+import { runLogTextSql } from '../src/db/run-log-chunks';
 import type { Env } from '../src/lib/types';
 import {
 	acquireCredentialLock,
@@ -257,7 +258,7 @@ describe('runAgent', () => {
 		expect(result.heartbeatRunId).toBeDefined();
 
 		const run = await db.query<{ status: string; log_text: string; error: string | null }>(
-			'SELECT status, log_text, error FROM heartbeat_runs WHERE id = $1',
+			`SELECT status, ${runLogTextSql('heartbeat_runs.id')} AS log_text, error FROM heartbeat_runs WHERE id = $1`,
 			[result.heartbeatRunId],
 		);
 		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
@@ -315,7 +316,7 @@ describe('runAgent', () => {
 		expect(result.stderr).toContain('not running');
 
 		const run = await db.query<{ status: string; log_text: string }>(
-			'SELECT status, log_text FROM heartbeat_runs WHERE id = $1',
+			`SELECT status, ${runLogTextSql('heartbeat_runs.id')} AS log_text FROM heartbeat_runs WHERE id = $1`,
 			[result.heartbeatRunId],
 		);
 		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
@@ -359,7 +360,7 @@ describe('runAgent', () => {
 		expect(result.heartbeatRunId).toBeDefined();
 
 		const run = await db.query<{ status: string; log_text: string }>(
-			'SELECT status, log_text FROM heartbeat_runs WHERE id = $1',
+			`SELECT status, ${runLogTextSql('heartbeat_runs.id')} AS log_text FROM heartbeat_runs WHERE id = $1`,
 			[result.heartbeatRunId],
 		);
 		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
@@ -430,7 +431,7 @@ describe('runAgent', () => {
 		expect(result.success).toBe(false);
 
 		const run = await db.query<{ status: string; error: string | null; log_text: string }>(
-			'SELECT status, error, log_text FROM heartbeat_runs WHERE id = $1',
+			`SELECT status, error, ${runLogTextSql('heartbeat_runs.id')} AS log_text FROM heartbeat_runs WHERE id = $1`,
 			[result.heartbeatRunId],
 		);
 		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
@@ -1736,7 +1737,7 @@ describe('runAgent', () => {
 			expect(runLogBroadcasts.some((b) => b.event.stream === 'stderr')).toBe(true);
 
 			const row = await db.query<{ log_text: string }>(
-				'SELECT log_text FROM heartbeat_runs WHERE id = $1',
+				`SELECT ${runLogTextSql('heartbeat_runs.id')} AS log_text FROM heartbeat_runs WHERE id = $1`,
 				[result.heartbeatRunId],
 			);
 			expect(row.rows[0].log_text).toContain('hello world');
@@ -2078,7 +2079,7 @@ describe('runAgent', () => {
 				output_tokens: number;
 				cost_cents: number;
 			}>(
-				'SELECT log_text, input_tokens::int AS input_tokens, output_tokens::int AS output_tokens, cost_cents FROM heartbeat_runs WHERE id = $1',
+				`SELECT ${runLogTextSql('heartbeat_runs.id')} AS log_text, input_tokens::int AS input_tokens, output_tokens::int AS output_tokens, cost_cents FROM heartbeat_runs WHERE id = $1`,
 				[result.heartbeatRunId],
 			);
 			const log = row.rows[0].log_text;

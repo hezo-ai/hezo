@@ -1,5 +1,6 @@
 import { WsMessageType } from '@hezo/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { CappedLogBuffer } from '../src/services/log-buffer';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { WebSocketManager } from '../src/services/ws';
 
@@ -201,5 +202,137 @@ describe('LogStreamBroker', () => {
 		const replayed: unknown[] = [];
 		broker.replay('project-runs:p1', (p) => replayed.push(p));
 		expect(replayed).toHaveLength(0);
+	});
+
+	describe('delta flushing', () => {
+		it('each flush receives only the text appended since the last successful flush', async () => {
+			vi.useFakeTimers();
+			const flushes: string[] = [];
+			broker.begin(makeRunConfig('r1', 'p1', async (delta) => void flushes.push(delta)));
+
+			broker.emit('run:r1', 'stdout', 'first\n');
+			await vi.advanceTimersByTimeAsync(500);
+			broker.emit('run:r1', 'stdout', 'second\n');
+			await vi.advanceTimersByTimeAsync(500);
+
+			expect(flushes).toEqual(['first\n', 'second\n']);
+		});
+
+		it('re-sends the identical delta after a failed flush, exactly once after success', async () => {
+			vi.useFakeTimers();
+			const flushes: string[] = [];
+			let fail = true;
+			broker.begin(
+				makeRunConfig('r1', 'p1', async (delta) => {
+					flushes.push(delta);
+					if (fail) throw new Error('db down');
+				}),
+			);
+
+			broker.emit('run:r1', 'stdout', 'tail\n');
+			await vi.advanceTimersByTimeAsync(500);
+			expect(flushes).toEqual(['tail\n']);
+
+			// The failure re-marked the stream dirty; the retry re-sends the same
+			// delta (the offset never advanced), and success settles it for good.
+			fail = false;
+			await vi.advanceTimersByTimeAsync(500);
+			expect(flushes).toEqual(['tail\n', 'tail\n']);
+
+			await vi.advanceTimersByTimeAsync(1000);
+			expect(flushes).toHaveLength(2);
+		});
+
+		it('end() after a successful periodic flush sends only the remainder', async () => {
+			vi.useFakeTimers();
+			const flushes: string[] = [];
+			broker.begin(makeRunConfig('r1', 'p1', async (delta) => void flushes.push(delta)));
+
+			broker.emit('run:r1', 'stdout', 'persisted\n');
+			await vi.advanceTimersByTimeAsync(500);
+			broker.emit('run:r1', 'stdout', 'remainder\n');
+			await broker.end('run:r1');
+
+			expect(flushes).toEqual(['persisted\n', 'remainder\n']);
+		});
+
+		it('serializes overlapping flushes so a slow flush never duplicates content', async () => {
+			vi.useFakeTimers();
+			const flushes: string[] = [];
+			let release: (() => void) | null = null;
+			broker.begin(
+				makeRunConfig('r1', 'p1', async (delta) => {
+					flushes.push(delta);
+					await new Promise<void>((resolve) => {
+						release = resolve;
+					});
+				}),
+			);
+
+			broker.emit('run:r1', 'stdout', 'one\n');
+			await vi.advanceTimersByTimeAsync(500); // first flush starts, blocks in onFlush
+
+			broker.emit('run:r1', 'stdout', 'two\n');
+			await vi.advanceTimersByTimeAsync(500); // second flush chains behind the first
+			expect(flushes).toEqual(['one\n']);
+
+			const releaseFirst = release as unknown as () => void;
+			release = null;
+			releaseFirst(); // unblock the first flush; the chained one now runs
+			await vi.advanceTimersByTimeAsync(0);
+			expect(flushes).toEqual(['one\n', 'two\n']);
+
+			(release as unknown as () => void)();
+			await broker.end('run:r1');
+			// Nothing new appended after 'two' — end() has no remainder to send.
+			expect(flushes).toEqual(['one\n', 'two\n']);
+		});
+
+		it('a capped stream still invokes onFlush with an empty delta', async () => {
+			vi.useFakeTimers();
+			const flushes: string[] = [];
+			broker.begin({
+				...makeRunConfig('r1', 'p1', async (delta) => void flushes.push(delta)),
+				capBytes: 10,
+			});
+
+			broker.emit('run:r1', 'stdout', '1234567890\n');
+			await vi.advanceTimersByTimeAsync(500);
+			expect(flushes).toHaveLength(1);
+			expect(flushes[0]).toContain('truncated');
+
+			// Emits after the cap append nothing, but the flush cadence must keep
+			// firing — the run's usage snapshot rides the same callback.
+			broker.emit('run:r1', 'stdout', 'dropped\n');
+			await vi.advanceTimersByTimeAsync(500);
+			expect(flushes).toHaveLength(2);
+			expect(flushes[1]).toBe('');
+		});
+	});
+});
+
+describe('CappedLogBuffer prefix stability', () => {
+	// The broker's delta flushing slices new text off by a persisted character
+	// offset, which is only sound if every earlier toString() result is a strict
+	// prefix of every later one — including across the truncation transition.
+	it('every toString() result is a prefix of every later one, through truncation', () => {
+		const buffer = new CappedLogBuffer(20);
+		const snapshots: string[] = [buffer.toString()];
+
+		buffer.append('stdout', 'one');
+		snapshots.push(buffer.toString());
+		buffer.append('stderr', 'two');
+		snapshots.push(buffer.toString());
+		buffer.append('stdout', 'x'.repeat(50)); // crosses the cap → truncation marker
+		snapshots.push(buffer.toString());
+		buffer.append('stdout', 'after-cap-noop');
+		snapshots.push(buffer.toString());
+
+		expect(buffer.isTruncated).toBe(true);
+		for (let i = 1; i < snapshots.length; i++) {
+			expect(snapshots[i].startsWith(snapshots[i - 1])).toBe(true);
+		}
+		// After the cap the text is frozen entirely.
+		expect(snapshots[snapshots.length - 1]).toBe(snapshots[snapshots.length - 2]);
 	});
 });

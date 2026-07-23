@@ -833,9 +833,16 @@ stay on fetch. Before that exec it
 the cached `container_status`: a container pruned externally or lost to a Docker restart is
 reconciled (status flipped, `container_id` nulled, project update broadcast) and the run
 fails fast with a clear message rather than tripping over a raw 404 mid-exec. It captures
-interleaved stdout/stderr into `log_text` (recorded in full, `[stderr]`-prefixed, with a
-10 MB runaway-output backstop) and
-broadcasts the same stream live over the `project-runs:<projectId>` WebSocket room.
+interleaved stdout/stderr (recorded in full, `[stderr]`-prefixed, with a 10 MB
+runaway-output backstop) into **append-only log chunks**: the debounced flusher
+(`services/log-stream-broker.ts`) persists only the text appended since the last successful
+flush as an INSERT into `heartbeat_run_log_chunks` (`db/run-log-chunks.ts`), serialized
+per stream so overlapping flushes can never duplicate a delta, with the running token/cost
+snapshot updated on `heartbeat_runs` in the same transaction. Readers concatenate the
+chunks (`string_agg` ordered by `seq`) back into the API's `log_text` field. INSERT-only
+writes replaced the old whole-blob `UPDATE heartbeat_runs.log_text` pattern, whose per-flush
+dead TOAST copies were the dominant source of database bloat. The same stream broadcasts
+live over the `project-runs:<projectId>` WebSocket room from the in-memory buffer.
 
 **System prompt composition.** The agent's stored template (its `agent_system_prompt`
 document, loaded from its **home** team) is resolved per run by
@@ -873,8 +880,9 @@ the project Custom Prompt (MCP or REST) — files a team-coherence review via
 knows what changed and why the review was triggered — regardless of who made the change (agent or
 admin).
 
-**Run logs to MCP.** A run's `log_text` is readable through the read-only `list_task_runs` (per-task
-run metadata) and `get_run_log` (one run's log tail, capped by `excerpt_chars`) MCP tools, team-scoped
+**Run logs to MCP.** A run's log (concatenated from its chunks, still a `log_text` string on the
+wire) is readable through the read-only `list_task_runs` (per-task run metadata) and `get_run_log`
+(one run's log tail, capped by `excerpt_chars`) MCP tools, team-scoped
 like any other resource. The Coach's post-task review prompt (`buildCoachReviewPrompt`) injects a
 compact **Agent Runs** summary alongside the comment history and directs the Coach to pull a specific
 run's log when the comments don't explain a struggle.
@@ -1903,25 +1911,31 @@ migration leaves the committed prefix intact. A database carrying migrations the
 doesn't recognize makes the server exit and ask the operator to upgrade. Migration
 mechanics and the per-migration rules are in `AGENTS.md` › Database migrations.
 
-**Run-log compaction.** `heartbeat_runs.log_text` (one verbose per-run blob, stored
-out-of-line in TOAST) is the largest thing in a busy instance's DB, and the streaming
-flusher's repeated whole-log rewrites leave heavy dead-tuple bloat that only a `VACUUM
-(FULL)` returns to the OS. A superuser triggers compaction from the Database card on the
-Storage settings subpage: `POST /api/database-info/compact-run-logs {older_than_days}` writes
-a `log_compaction:active` marker in `system_meta` (also the "in progress" flag the panel's
-button disables on) and kicks the drain. The `log-compaction` cron
-(`services/log-compaction.ts`, guarded so a manual kick and the scheduled tick never overlap)
-drains the backlog a bounded batch at a time — trimming each old, finished, TOASTed run's log
-to its tail (a "compacted" notice + the run's `invocation_command` + the end-of-run
-summary/`[done]` line) and stamping `log_compacted_at` (migration `040`, partial index
-`idx_runs_compaction`). When the backlog drains it runs `VACUUM (FULL, ANALYZE)
-heartbeat_runs` on the **embedded** backend (reclaiming bloat across *all* runs, not just the
-trimmed ones — external Postgres is left to autovacuum), records the real bytes freed in
-`log_compaction:last`, and clears the marker. `GET /api/database-info/run-log-usage` reports
-live sizes (`pg_database_size`, `pg_total_relation_size` — cheap, no detoast) plus the
+**Run-log compaction.** Run logs (the append-only `heartbeat_run_log_chunks` table, kept
+forever) are the largest thing in a busy instance's DB; compaction is the retention trim
+that keeps old runs' logs down to what still matters. A superuser triggers it from the
+Database card on the Storage settings subpage: `POST /api/database-info/compact-run-logs
+{older_than_days}` writes a `log_compaction:active` marker in `system_meta` (also the "in
+progress" flag the panel's button disables on) and kicks the drain. The `log-compaction`
+cron (`services/log-compaction.ts`, guarded so a manual kick and the scheduled tick never
+overlap) drains the backlog a bounded batch at a time — replacing each old, finished,
+large-enough run's chunks with a single compacted chunk (a "compacted" notice + the run's
+`invocation_command` + the end-of-run summary/`[done]` line) and stamping
+`log_compacted_at` (migration `040`, partial index `idx_runs_compaction`; eligibility
+filters on the summed `pg_column_size` of the run's chunks). When the backlog drains it
+runs `VACUUM (FULL, ANALYZE)` over both run tables on the **embedded** backend — the chunk
+table (compaction's DELETEs) and `heartbeat_runs` (the flusher's per-flush usage UPDATEs;
+PGlite has no autovacuum daemon — external Postgres is left to autovacuum) — records the
+real bytes freed in `log_compaction:last`, and clears the marker.
+`GET /api/database-info/run-log-usage` reports live sizes (`pg_database_size`,
+`pg_total_relation_size` over both tables — cheap, no detoast) plus the
 reclaimable/backlog estimate and status for the panel, embedded-only figures degrading to
 null/0 elsewhere. Deploy-time knobs: `HEZO_LOG_COMPACTION_CRON`, `_BATCH`, `_MAX_PER_TICK`,
 `_PRESERVED_BYTES`. The trimmed detail is unrecoverable, so the UI confirms first.
+Migration `041` (which moved logs from the old `heartbeat_runs.log_text` blob into chunks
+and dropped the column) leaves the legacy dead-TOAST graveyard behind — a one-time,
+marker-gated `VACUUM (FULL, ANALYZE) heartbeat_runs` at startup
+(`runLegacyRunLogVacuumOnce`, embedded only) reclaims it on the first post-upgrade boot.
 
 **Storage abstraction & transactions.** All app code takes the `Db` interface
 (`query`/`exec`/`transaction`/`acquireSessionLock`/`close`); the drivers live in
@@ -1988,7 +2002,8 @@ row (bytea → base64, generated tsvector columns excluded and recomputed on loa
 queries and restore inserts are batched by **bytes** as well as rows
 (`dumpPageRows`/`planInsertBatches`): each table's page size derives from its measured
 uncompressed row sizes, keeping every protocol message far below the embedded engine's
-~16MB per-response ceiling — which a large-log table (`heartbeat_runs.log_text`) would
+~16MB per-response ceiling — which a large-log table (`heartbeat_run_log_chunks`, whose
+legacy-migrated rows can each carry a whole multi-MB run log) would
 otherwise breach in a single flat-size page and hard-crash the WASM instance. The
 subcommands' teardown closes are best-effort (`closeQuietly` in `cli.ts`), so closing an
 already-crashed engine can never mask the original dump/restore error.

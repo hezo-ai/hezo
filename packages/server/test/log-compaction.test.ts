@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
+import { appendRunLogChunks, readRunLogText } from '../src/db/run-log-chunks';
 import { deleteSystemMeta, setSystemMeta } from '../src/lib/system-meta';
 import {
 	compactRunLogsBatch,
@@ -72,22 +73,22 @@ describe('run-log compaction — service + routes', () => {
 	): Promise<void> {
 		const r = await db.query<{ id: string }>(
 			`INSERT INTO heartbeat_runs
-			   (team_id, member_id, status, log_text, invocation_command, created_at, finished_at, log_compacted_at)
-			 VALUES ($1, $2, $3::heartbeat_run_status, $4, $5,
-			         now() - ($6 || ' days')::interval, now() - ($6 || ' days')::interval,
-			         CASE WHEN $7 THEN now() ELSE NULL END)
+			   (team_id, member_id, status, invocation_command, created_at, finished_at, log_compacted_at)
+			 VALUES ($1, $2, $3::heartbeat_run_status, $4,
+			         now() - ($5 || ' days')::interval, now() - ($5 || ' days')::interval,
+			         CASE WHEN $6 THEN now() ELSE NULL END)
 			 RETURNING id`,
 			[
 				teamId,
 				memberId,
 				opts.status ?? 'succeeded',
-				opts.log,
 				opts.command ?? 'claude -p',
 				String(opts.ageDays),
 				opts.compacted ?? false,
 			],
 		);
 		runIds[key] = r.rows[0].id;
+		await appendRunLogChunks(db, r.rows[0].id, opts.log);
 	}
 
 	beforeAll(async () => {
@@ -137,22 +138,28 @@ describe('run-log compaction — service + routes', () => {
 	});
 
 	it('compacts the old large run and leaves the others intact', async () => {
-		const before = await db.query<{ len: number }>(
-			`SELECT length(log_text) AS len FROM heartbeat_runs WHERE id = $1`,
-			[runIds.oldBig],
-		);
+		const beforeLen = (await readRunLogText(db, runIds.oldBig)).length;
 		const { processed, bytesReclaimed } = await compactRunLogsBatch(db, { olderThanDays: 30 });
 		expect(processed).toBe(1);
 		expect(bytesReclaimed).toBeGreaterThan(0);
 
-		const oldBig = await db.query<{ log_text: string; log_compacted_at: string | null }>(
-			`SELECT log_text, log_compacted_at FROM heartbeat_runs WHERE id = $1`,
+		const oldBig = await db.query<{ log_compacted_at: string | null }>(
+			`SELECT log_compacted_at FROM heartbeat_runs WHERE id = $1`,
 			[runIds.oldBig],
 		);
+		const compactedText = await readRunLogText(db, runIds.oldBig);
 		expect(oldBig.rows[0].log_compacted_at).not.toBeNull();
-		expect(oldBig.rows[0].log_text).toContain('THIS RUN LOG HAS BEEN COMPACTED');
-		expect(oldBig.rows[0].log_text).toContain('$ claude -p');
-		expect(oldBig.rows[0].log_text.length).toBeLessThan(before.rows[0].len);
+		expect(compactedText).toContain('THIS RUN LOG HAS BEEN COMPACTED');
+		expect(compactedText).toContain('$ claude -p');
+		expect(compactedText.length).toBeLessThan(beforeLen);
+
+		// The run's chunks were replaced by a single compacted chunk.
+		const chunks = await db.query<{ seq: number }>(
+			'SELECT seq FROM heartbeat_run_log_chunks WHERE run_id = $1',
+			[runIds.oldBig],
+		);
+		expect(chunks.rows).toHaveLength(1);
+		expect(chunks.rows[0].seq).toBe(0);
 
 		// The recent run's log is untouched.
 		const recent = await db.query<{ log_compacted_at: string | null }>(

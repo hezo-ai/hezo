@@ -50,6 +50,7 @@ import { LocalAssetStore } from '../assets/drivers/local';
 import type { AssetStore } from '../assets/store';
 import type { MasterKeyManager } from '../crypto/master-key';
 import type { Db } from '../db/database';
+import { runLogLengthSql, runLogTextSql } from '../db/run-log-chunks';
 import type { DomainEventBus } from '../events/bus';
 import { assertNoActiveRun } from '../lib/active-run';
 import { isHqInstanceAgent, isVirtualHqMemberInTeam } from '../lib/agent-roles';
@@ -2455,7 +2456,7 @@ export function registerTools(
 			const { teamId, taskId } = scope;
 			const r = await db.query<Record<string, unknown>>(
 				`SELECT hr.id, hr.status, hr.exit_code, hr.started_at, hr.finished_at,
-				        hr.invocation_command, length(hr.log_text) AS log_length,
+				        hr.invocation_command, ${runLogLengthSql('hr.id')} AS log_length,
 				        ma.title AS agent_title, ma.slug AS agent_slug
 				 FROM heartbeat_runs hr
 				 LEFT JOIN member_agents ma ON ma.id = hr.member_id
@@ -2497,7 +2498,8 @@ export function registerTools(
 				task_id: string | null;
 				log_text: string;
 			}>(
-				`SELECT id, status, exit_code, task_id, log_text
+				`SELECT id, status, exit_code, task_id,
+				        ${runLogTextSql('heartbeat_runs.id')} AS log_text
 				 FROM heartbeat_runs WHERE id = $1 AND team_id = $2`,
 				[runId, scope.teamId],
 			);
