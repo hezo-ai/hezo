@@ -7,10 +7,10 @@ import { queryKeys } from '../src/lib/query-keys';
 import { renderApp } from './helpers/render';
 
 // Full-route render against the real in-process backend: the local variant is
-// what a test server actually runs, and placement (after the Database card,
-// before the Version section) is part of the requirement.
-test('general settings shows the local asset-storage card between Database and Version', async () => {
-	const { findByTestId } = await renderApp({ initialPath: '/settings' });
+// what a test server actually runs, and placement (after the Database card) on
+// the dedicated Storage subpage is part of the requirement.
+test('storage subpage shows the local asset-storage card after Database', async () => {
+	const { findByTestId } = await renderApp({ initialPath: '/settings/storage' });
 
 	const backend = await findByTestId('settings-asset-storage-backend');
 	expect(backend.textContent).toBe('Local filesystem');
@@ -19,9 +19,7 @@ test('general settings shows the local asset-storage card between Database and V
 
 	const database = await findByTestId('settings-database');
 	const section = await findByTestId('settings-asset-storage');
-	const version = await findByTestId('settings-version');
 	expect(database.compareDocumentPosition(section) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-	expect(section.compareDocumentPosition(version) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 
 // Isolated-component render with a seeded cache for the s3 variant — no real

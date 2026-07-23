@@ -25,6 +25,7 @@ import type { Db } from '../db/database';
 import type { DomainEventBus } from '../events/bus';
 import { trackBackground } from '../lib/background';
 import { broadcastRowChange } from '../lib/broadcast';
+import type { StorageBackend } from '../lib/db-info';
 import { shouldDeferWakeupForBlockers } from '../lib/dependencies';
 import { ref } from '../lib/log-ref';
 import { logger } from '../logger';
@@ -183,6 +184,11 @@ export interface JobManagerDeps {
 	connectivityStatus?: ContainerConnectivityStatus;
 	connectivityProbe?: () => Promise<ProbeResult>;
 	pricing?: PricingService;
+	/**
+	 * Storage backend, so the log-compaction drain knows whether it may VACUUM
+	 * FULL to reclaim disk (embedded only). Defaults to 'embedded' when omitted.
+	 */
+	storageBackend?: StorageBackend;
 	/** Anonymous daily usage telemetry. Omitted/disabled → the cron is not registered. */
 	telemetry?: { enabled: boolean; endpoint: string };
 	/**
@@ -237,6 +243,11 @@ const ORPHAN_DETECTION_CRON = process.env.HEZO_ORPHAN_DETECTION_CRON ?? '*/30 * 
 // literal for the `<> ALL(...)` / `= ANY(...)` enum-array params.
 const BUDGET_PAUSE_STATUSES_PG = `{${BUDGET_PAUSE_STATUSES.join(',')}}`;
 const INBOX_RETENTION_DAYS = Number(process.env.HEZO_INBOX_RETENTION_DAYS ?? 30);
+// Drain tick for agent run-log compaction. Cheap when idle (a single
+// `system_meta` read); only does work while a compaction pass is active, which
+// the operator starts from the DB panel. Frequent so a started pass makes
+// visible progress and resumes promptly after a restart.
+const LOG_COMPACTION_CRON = process.env.HEZO_LOG_COMPACTION_CRON ?? '*/10 * * * * *';
 // Lower bound on how often a heartbeat can fire (`HEARTBEAT_INTERVAL_FLOOR_MIN`,
 // from ./heartbeat-schedule) is shared with the agents API's computed
 // `next_heartbeat_at` so the UI countdown matches the cadence enforced here.
@@ -471,6 +482,11 @@ export class JobManager {
 			cron: INBOX_ARCHIVE_CRON,
 			log: cronLog,
 			onTick: () => this.guarded('inbox-archive', () => this.archiveInboxItems()),
+		});
+		this.cron.createJob('log-compaction', {
+			cron: LOG_COMPACTION_CRON,
+			log: cronLog,
+			onTick: () => this.guarded('log-compaction', () => this.compactRunLogs()),
 		});
 		this.cron.createJob('budget-resume', {
 			cron: BUDGET_RESUME_CRON,
@@ -2696,6 +2712,29 @@ export class JobManager {
 		if (count > 0) {
 			log.debug(`Archived ${count} inbox item(s)`);
 		}
+	}
+
+	/**
+	 * Kick the run-log compaction drain immediately, without waiting for the next
+	 * cron tick — used by the manual trigger on the DB panel. Guarded under the
+	 * same key as the cron so a manual kick and a scheduled tick never overlap;
+	 * whichever holds the guard drains the backlog the active marker describes.
+	 */
+	kickLogCompaction(): void {
+		void trackBackground(this.guarded('log-compaction', () => this.compactRunLogs()));
+	}
+
+	/**
+	 * One drain tick of run-log compaction. A no-op unless a compaction pass is
+	 * active (its marker set from the DB panel); otherwise it compacts a bounded
+	 * slice of the backlog and, once drained, reclaims space and clears the
+	 * marker. See {@link ./log-compaction}.
+	 */
+	private async compactRunLogs(): Promise<void> {
+		const { runLogCompactionTick } = await import('./log-compaction');
+		await runLogCompactionTick(this.deps.db, {
+			backend: this.deps.storageBackend ?? 'embedded',
+		});
 	}
 
 	/**

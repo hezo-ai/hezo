@@ -346,6 +346,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		connectivityStatus,
 		connectivityProbe,
 		pricing,
+		storageBackend: storageInfo.backend,
 		telemetry: config.telemetry,
 		autoInstallUpdates: config.autoInstallUpdates,
 	});

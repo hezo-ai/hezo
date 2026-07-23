@@ -39,13 +39,13 @@ default, or in any **S3-compatible bucket** when you set `--asset-storage-url` /
 bucket configured, asset bytes live only with your storage provider — stored as plain
 objects (enable the provider's server-side encryption if you want them encrypted at
 rest) and always served through Hezo's signed URLs, so the bucket stays private. The
-active backend is shown under **Settings → General → Asset storage**.
+active backend is shown under **Settings → Storage → Asset storage**.
 
 Be clear-eyed about what changes: **your business content — tasks, comments, documents —
 is stored as ordinary database rows**, so with an external database that content lives
 with your database provider and travels the network. Hezo checks the server version at
 startup and shows the connection target (credentials occluded, never the full URL) under
-**Settings → General → Database**. Use TLS (`sslmode=verify-full`), prefer private
+**Settings → Storage → Database**. Use TLS (`sslmode=verify-full`), prefer private
 networking, and treat the provider's at-rest encryption and access controls as part of
 your security posture. Secrets are unaffected — see below.
 
@@ -85,7 +85,25 @@ without any manual migration work on your part.
 Each embedded upgrade leaves the previous database copy behind in the data directory as a
 rollback point, and Hezo keeps the few most recent ones automatically. On a long-running
 instance these can add up to gigabytes. When you're confident you won't need to roll back,
-open **Settings → General → Database** (superuser only): it shows how much disk the retained
+open **Settings → Storage → Database** (superuser only): it shows how much disk the retained
 copies are using next to a **Prune** button that deletes them all. Your current database is
 untouched — but once pruned, you can no longer roll back to an earlier version. This applies
 to the embedded database only; an external Postgres keeps no such copies.
+
+## Reclaiming disk from old agent run logs
+
+Every agent run keeps its full step-by-step log, and on a busy instance those logs become
+the largest thing in the database. When you no longer need the blow-by-blow detail of old
+runs, open **Settings → Storage → Database** (superuser only) and use **Compact old run
+logs**. Pick a window (for example, older than 30 days) and Hezo trims each of those runs'
+logs down to the part that still matters — the agent's end-of-run summary and outcome —
+while keeping the exact command that launched the run and clearly marking the log as
+compacted. Status, timing, token counts, and cost are untouched; runs newer than the window
+are left alone.
+
+The card also shows your current **database size** and how much run logs are using, so you
+can see the effect. Compaction runs in the background a batch at a time, so the button is
+disabled while a pass is in progress. On the embedded database the pass finishes by
+reclaiming the freed space (and accumulated storage overhead) so the on-disk size actually
+drops. Trimming is permanent — the detailed output of a compacted run can't be recovered —
+so Hezo confirms before it starts.

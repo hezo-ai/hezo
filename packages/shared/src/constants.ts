@@ -66,6 +66,23 @@ export const MAX_CHAT_HISTORY_SIZE_MAX = 256 * 1024;
 export const CHAT_WINDOW_RETAIN_MESSAGES = 6;
 
 /**
+ * Agent run-log compaction. The retention window (in days): runs older than this
+ * have their verbose `log_text` trimmed to the meaningful tail. Operator-chosen
+ * per compaction pass from the DB panel; clamped to [MIN, MAX].
+ */
+export const DEFAULT_LOG_COMPACTION_RETENTION_DAYS = 30;
+export const LOG_COMPACTION_RETENTION_MIN_DAYS = 1;
+export const LOG_COMPACTION_RETENTION_MAX_DAYS = 365;
+
+/**
+ * Bytes of each old run's log kept when it is compacted — the trailing slice
+ * that holds the agent's end-of-run summary and the `[done] … tokens=… cost=…`
+ * line. Everything before it is discarded. Internal (not operator-tunable via
+ * the UI); overridable at deploy time with `HEZO_LOG_COMPACTION_PRESERVED_BYTES`.
+ */
+export const LOG_COMPACTION_PRESERVED_TAIL_BYTES = 12 * 1024;
+
+/**
  * Default heartbeat interval for newly created agents and agent types, in
  * minutes (12 hours). Idle agents wake on this cadence to look for work; the
  * value is editable per agent and overridable per team-template role. The DB
