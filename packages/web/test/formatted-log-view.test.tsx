@@ -24,10 +24,14 @@ test('run log defaults to the formatted view and toggles to raw via the icon but
 			const ws = await seedWorkspace();
 			const agent = ws.agents.find((a) => a.slug === 'captain') ?? ws.agents[0];
 			const run = await ctx.db.query<{ id: string }>(
-				`INSERT INTO heartbeat_runs (member_id, team_id, status, started_at, finished_at, log_text, input_tokens, output_tokens, cost_cents)
-				 VALUES ($1, $2, 'succeeded'::heartbeat_run_status, now(), now(), $3, 100, 200, 1)
+				`INSERT INTO heartbeat_runs (member_id, team_id, status, started_at, finished_at, input_tokens, output_tokens, cost_cents)
+				 VALUES ($1, $2, 'succeeded'::heartbeat_run_status, now(), now(), 100, 200, 1)
 				 RETURNING id`,
-				[agent.id, ws.team.id, LOG_TEXT],
+				[agent.id, ws.team.id],
+			);
+			await ctx.db.query(
+				`INSERT INTO heartbeat_run_log_chunks (run_id, seq, content) VALUES ($1, 0, $2)`,
+				[run.rows[0].id, LOG_TEXT],
 			);
 			seeded.projectSlug = ws.internalSlug;
 			seeded.agentSlug = agent.slug;

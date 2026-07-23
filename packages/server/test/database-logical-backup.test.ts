@@ -190,23 +190,27 @@ describe('logical backup round-trip (PGlite leg)', () => {
 		const ctx = await createTestApp();
 		const migrations = allMigrations();
 		try {
-			// ~9MB of log_text across 30 runs — far past one 4MB page, so a flat
+			// ~9MB of log chunks across 30 runs — far past one 4MB page, so a flat
 			// row-count page would return it all in one response (the shape that
 			// crashes embedded PGlite's WASM on real instances).
 			const member = await ctx.db.query<{ id: string; team_id: string }>(
 				`SELECT id, team_id FROM members LIMIT 1`,
 			);
 			await ctx.db.query(
-				`INSERT INTO heartbeat_runs (team_id, member_id, status, log_text)
-				 SELECT $1, $2, 'succeeded', repeat('x', 300000) || n::text
-				 FROM generate_series(1, 30) n`,
+				`WITH new_runs AS (
+				   INSERT INTO heartbeat_runs (team_id, member_id, status)
+				   SELECT $1, $2, 'succeeded' FROM generate_series(1, 30) n
+				   RETURNING id
+				 )
+				 INSERT INTO heartbeat_run_log_chunks (run_id, seq, content)
+				 SELECT id, 0, repeat('x', 300000) || id::text FROM new_runs`,
 				[member.rows[0].team_id, member.rows[0].id],
 			);
 
 			const source = recordingDb(ctx.db);
 			const bytes = await dumpLogicalBackup(source.db, { hezoVersion: 'test', migrations });
 			const pageSelects = source.queries.filter(
-				(q) => q.includes('FROM "heartbeat_runs"') && q.includes('LIMIT'),
+				(q) => q.includes('FROM "heartbeat_run_log_chunks"') && q.includes('LIMIT'),
 			);
 			expect(pageSelects.length).toBeGreaterThanOrEqual(3);
 			// Every page carries the byte-derived row limit, not the flat cap.
@@ -216,18 +220,20 @@ describe('logical backup round-trip (PGlite leg)', () => {
 			try {
 				const target = recordingDb(restored);
 				await restoreLogicalBackup(target.db, bytes, migrations);
-				const inserts = target.queries.filter((q) => q.startsWith('INSERT INTO "heartbeat_runs"'));
+				const inserts = target.queries.filter((q) =>
+					q.startsWith('INSERT INTO "heartbeat_run_log_chunks"'),
+				);
 				expect(inserts.length).toBeGreaterThanOrEqual(3);
 
 				// The paged dump + batched restore is lossless.
 				const [a, b] = await Promise.all([
 					ctx.db.query<{ n: number; len: string }>(
-						`SELECT COUNT(*)::int AS n, COALESCE(SUM(length(log_text)), 0)::text AS len
-						 FROM heartbeat_runs`,
+						`SELECT COUNT(*)::int AS n, COALESCE(SUM(length(content)), 0)::text AS len
+						 FROM heartbeat_run_log_chunks`,
 					),
 					restored.query<{ n: number; len: string }>(
-						`SELECT COUNT(*)::int AS n, COALESCE(SUM(length(log_text)), 0)::text AS len
-						 FROM heartbeat_runs`,
+						`SELECT COUNT(*)::int AS n, COALESCE(SUM(length(content)), 0)::text AS len
+						 FROM heartbeat_run_log_chunks`,
 					),
 				]);
 				expect(b.rows[0]).toEqual(a.rows[0]);

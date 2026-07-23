@@ -5,6 +5,7 @@ import {
 	REQUIRED_SYSTEM_PROMPT_VARS,
 } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { appendRunLogChunks } from '../src/db/run-log-chunks';
 import { signAdminJwt, signAgentJwt } from '../src/middleware/auth';
 import { authHeader, createAgentRun, createTestTeam, projectSlugFor } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
@@ -898,12 +899,15 @@ describe('heartbeat runs', () => {
 
 	it('lists runs newest-first with trigger/task metadata', async () => {
 		const agent = await createAgent('Runner Agent');
-		await ctx.db.query(
-			`INSERT INTO heartbeat_runs (member_id, team_id, status, started_at, finished_at, exit_code, log_text)
-			 VALUES ($1, $2, 'succeeded', now() - interval '10 minutes', now() - interval '9 minutes', 0, 'older'),
-			        ($1, $2, 'failed', now() - interval '2 minutes', now() - interval '1 minute', 1, 'newer')`,
+		const seeded = await ctx.db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs (member_id, team_id, status, started_at, finished_at, exit_code)
+			 VALUES ($1, $2, 'succeeded', now() - interval '10 minutes', now() - interval '9 minutes', 0),
+			        ($1, $2, 'failed', now() - interval '2 minutes', now() - interval '1 minute', 1)
+			 RETURNING id`,
 			[agent.id, teamId],
 		);
+		await appendRunLogChunks(ctx.db, seeded.rows[0].id, 'older');
+		await appendRunLogChunks(ctx.db, seeded.rows[1].id, 'newer');
 		const res = await ctx.app.request(
 			`/api/projects/${projectSlug}/agents/${agent.id}/heartbeat-runs`,
 			{ headers: authHeader(ctx.token) },

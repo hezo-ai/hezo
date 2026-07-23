@@ -1,17 +1,16 @@
 /**
- * Agent run-log compaction. The biggest consumer of database size is
- * `heartbeat_runs.log_text` — one verbose per-run blob kept forever, stored out
- * of line in TOAST. Two things bloat it: the live text of old runs, and (much
- * larger) the dead TOAST tuples the streaming log flusher leaves behind. Only a
- * `VACUUM (FULL)` returns that dead space to the OS.
- *
- * Compaction addresses both: it trims the logs of old, finished runs down to the
- * part that still matters (the agent's end-of-run summary and the trailing
- * `[done] … tokens=… cost=…` line, both at the *end* of the blob), keeps the
+ * Agent run-log compaction — retention trimming of old runs' logs. Run logs
+ * live in the append-only `heartbeat_run_log_chunks` table (one INSERT per
+ * flush, concatenated on read — see src/db/run-log-chunks.ts), kept forever.
+ * Compaction trims the logs of old, finished runs down to the part that still
+ * matters (the agent's end-of-run summary and the trailing
+ * `[done] … tokens=… cost=…` line, both at the *end* of the log), keeps the
  * command that launched the run and a clear "compacted" notice, stamps
- * `log_compacted_at`, and — on the embedded backend — runs a `VACUUM (FULL)` at
- * the end of the pass so the on-disk size actually drops. The VACUUM reclaims
- * dead tuples across *all* runs, not just the trimmed ones.
+ * `log_compacted_at`, and — on the embedded backend — runs a `VACUUM (FULL)`
+ * at the end of the pass so the on-disk size actually drops (compaction's
+ * chunk DELETEs, and the flusher's small per-flush usage UPDATEs on
+ * `heartbeat_runs`, leave dead tuples PGlite has no autovacuum daemon to
+ * reuse).
  *
  * The work is incremental: a manual trigger writes the `log_compaction:active`
  * marker (with the chosen retention window), and the `log-compaction` cron job
@@ -27,6 +26,7 @@ import {
 	LOG_COMPACTION_RETENTION_MIN_DAYS,
 } from '@hezo/shared';
 import type { Db } from '../db/database';
+import { replaceRunLog, runLogStoredBytesSql, runLogTextSql } from '../db/run-log-chunks';
 import type { StorageBackend } from '../lib/db-info';
 import { deleteSystemMeta, getSystemMeta, setSystemMeta } from '../lib/system-meta';
 import { logger } from '../logger';
@@ -46,9 +46,10 @@ const PRESERVED_BYTES = Number(
 );
 /**
  * A log is worth compacting once its stored (compressed) size crosses Postgres's
- * ~2KB TOAST threshold — i.e. once it lives out of line and contributes the
- * write-amplification bloat. Filtering on `pg_column_size` (the stored size)
- * rather than `length` avoids detoasting every row just to decide.
+ * ~2KB TOAST threshold — below that the whole log fits in line and trimming it
+ * saves nothing worth a rewrite. Filtering on summed `pg_column_size` (the
+ * stored size) rather than `length` avoids detoasting every chunk just to
+ * decide.
  */
 const TOAST_THRESHOLD_BYTES = 2000;
 
@@ -136,7 +137,8 @@ export function computeCompactedLog(
  * Cheap database-usage figures for the DB panel — all metadata/counts, no
  * detoast, so it stays fast even while a pass polls it every couple seconds.
  * `databaseBytes` is embedded-only; `runLogDiskBytes` is the on-disk footprint
- * of the run-logs table (main + TOAST + indexes + any bloat).
+ * of the run tables — `heartbeat_runs` plus the log-chunk table (main + TOAST
+ * + indexes + any bloat).
  */
 export async function getDatabaseUsage(
 	db: Db,
@@ -147,7 +149,8 @@ export async function getDatabaseUsage(
 	);
 	const runLogDiskBytes = await scalarBytes(
 		db,
-		`SELECT pg_total_relation_size('heartbeat_runs')::bigint AS b`,
+		`SELECT (pg_total_relation_size('heartbeat_runs')
+		       + pg_total_relation_size('heartbeat_run_log_chunks'))::bigint AS b`,
 	);
 	let databaseBytes: number | null = null;
 	if (backend === 'embedded') {
@@ -172,10 +175,11 @@ async function scalarBytes(db: Db, sql: string): Promise<number> {
 /**
  * What a compaction pass over the given window would do: how many old runs get
  * trimmed, and how much disk it would reclaim. On the embedded backend the
- * reclaim is table bloat (dead TOAST tuples) the pass's VACUUM returns — far
- * larger than the trimmed live text, and independent of the window. On external
- * Postgres nothing is VACUUMed (autovacuum reuses the space), so it reports 0.
- * The one full-table scan here runs only when idle (never on the polling path).
+ * reclaim is the chunk table's bloat (dead tuples from earlier compaction
+ * DELETEs and any storage overhead) the pass's VACUUM returns, independent of
+ * the window. On external Postgres nothing is VACUUMed (autovacuum reuses the
+ * space), so it reports 0. The one full-table scan here runs only when idle
+ * (never on the polling path).
  */
 export async function getCompactionEstimate(
 	db: Db,
@@ -183,11 +187,11 @@ export async function getCompactionEstimate(
 	olderThanDays: number,
 ): Promise<{ runCount: number; reclaimableBytes: number }> {
 	const counted = await db.query<{ c: string }>(
-		`SELECT COUNT(*)::bigint AS c FROM heartbeat_runs
-		 WHERE log_compacted_at IS NULL
-		   AND status IN ${TERMINAL_STATUS_SQL}
-		   AND pg_column_size(log_text) > $1
-		   AND created_at < now() - ($2 || ' days')::interval`,
+		`SELECT COUNT(*)::bigint AS c FROM heartbeat_runs hr
+		 WHERE hr.log_compacted_at IS NULL
+		   AND hr.status IN ${TERMINAL_STATUS_SQL}
+		   AND ${runLogStoredBytesSql('hr.id')} > $1
+		   AND hr.created_at < now() - ($2 || ' days')::interval`,
 		[TOAST_THRESHOLD_BYTES, String(olderThanDays)],
 	);
 	const runCount = Number(counted.rows[0]?.c ?? 0);
@@ -196,9 +200,9 @@ export async function getCompactionEstimate(
 	if (backend === 'embedded') {
 		try {
 			const bloat = await db.query<{ bloat: string }>(
-				`SELECT GREATEST(0, pg_total_relation_size('heartbeat_runs')
-				               - COALESCE(SUM(pg_column_size(log_text)), 0))::bigint AS bloat
-				 FROM heartbeat_runs`,
+				`SELECT GREATEST(0, pg_total_relation_size('heartbeat_run_log_chunks')
+				               - COALESCE(SUM(pg_column_size(content)), 0))::bigint AS bloat
+				 FROM heartbeat_run_log_chunks`,
 			);
 			reclaimableBytes = Number(bloat.rows[0]?.bloat ?? 0);
 		} catch {
@@ -219,13 +223,13 @@ export async function compactRunLogsBatch(
 ): Promise<{ processed: number; bytesReclaimed: number }> {
 	const limit = opts.limit ?? LOG_COMPACTION_BATCH;
 	const rows = await db.query<{ id: string; log_text: string; invocation_command: string | null }>(
-		`SELECT id, log_text, invocation_command
-		 FROM heartbeat_runs
-		 WHERE log_compacted_at IS NULL
-		   AND status IN ${TERMINAL_STATUS_SQL}
-		   AND pg_column_size(log_text) > $1
-		   AND created_at < now() - ($2 || ' days')::interval
-		 ORDER BY created_at ASC
+		`SELECT hr.id, ${runLogTextSql('hr.id')} AS log_text, hr.invocation_command
+		 FROM heartbeat_runs hr
+		 WHERE hr.log_compacted_at IS NULL
+		   AND hr.status IN ${TERMINAL_STATUS_SQL}
+		   AND ${runLogStoredBytesSql('hr.id')} > $1
+		   AND hr.created_at < now() - ($2 || ' days')::interval
+		 ORDER BY hr.created_at ASC
 		 LIMIT $3`,
 		[TOAST_THRESHOLD_BYTES, String(opts.olderThanDays), limit],
 	);
@@ -238,10 +242,8 @@ export async function compactRunLogsBatch(
 				invocationCommand: row.invocation_command,
 			});
 			bytesReclaimed += Math.max(0, row.log_text.length - compacted.length);
-			await tx.query(
-				`UPDATE heartbeat_runs SET log_text = $1, log_compacted_at = now() WHERE id = $2`,
-				[compacted, row.id],
-			);
+			await replaceRunLog(tx, row.id, compacted);
+			await tx.query(`UPDATE heartbeat_runs SET log_compacted_at = now() WHERE id = $1`, [row.id]);
 		}
 	});
 	return { processed: rows.rows.length, bytesReclaimed };
@@ -300,31 +302,38 @@ async function finishCompaction(db: Db, state: CompactionState): Promise<void> {
 }
 
 function runLogTableSize(db: Db): Promise<number> {
-	return scalarBytes(db, `SELECT pg_total_relation_size('heartbeat_runs')::bigint AS b`);
+	return scalarBytes(
+		db,
+		`SELECT (pg_total_relation_size('heartbeat_runs')
+		       + pg_total_relation_size('heartbeat_run_log_chunks'))::bigint AS b`,
+	);
 }
 
 /**
  * Reclaim the disk freed by trimming logs (and the dead-tuple bloat around it).
- * On the embedded database a `VACUUM (FULL)` rewrites the table and returns
+ * On the embedded database a `VACUUM (FULL)` rewrites the tables and returns
  * space to the OS so the DB size actually drops; on external Postgres it is left
  * to autovacuum (a VACUUM FULL there takes a heavy lock the operator did not ask
- * for). Returns the on-disk bytes actually freed. Best-effort: a VACUUM failure
- * is logged, not fatal — the logs are already trimmed.
+ * for). Both run-log tables are vacuumed: the chunk table (compaction's chunk
+ * DELETEs) and `heartbeat_runs` itself (the flusher's per-flush usage UPDATEs).
+ * Returns the on-disk bytes actually freed. Best-effort: a VACUUM failure is
+ * logged, not fatal — the logs are already trimmed.
  */
 export async function reclaimRunLogSpace(db: Db, backend: StorageBackend): Promise<number> {
 	if (backend !== 'embedded') return 0;
 	const before = await runLogTableSize(db);
-	try {
-		await db.query('VACUUM (FULL, ANALYZE) heartbeat_runs');
-	} catch (fullErr) {
+	for (const table of ['heartbeat_run_log_chunks', 'heartbeat_runs']) {
 		try {
-			await db.query('VACUUM (ANALYZE) heartbeat_runs');
-		} catch (plainErr) {
-			log.warn('VACUUM after compaction failed; space will be reused by autovacuum', {
-				fullError: fullErr instanceof Error ? fullErr.message : String(fullErr),
-				plainError: plainErr instanceof Error ? plainErr.message : String(plainErr),
-			});
-			return 0;
+			await db.query(`VACUUM (FULL, ANALYZE) ${table}`);
+		} catch (fullErr) {
+			try {
+				await db.query(`VACUUM (ANALYZE) ${table}`);
+			} catch (plainErr) {
+				log.warn(`VACUUM of ${table} after compaction failed; space stays unreclaimed`, {
+					fullError: fullErr instanceof Error ? fullErr.message : String(fullErr),
+					plainError: plainErr instanceof Error ? plainErr.message : String(plainErr),
+				});
+			}
 		}
 	}
 	const after = await runLogTableSize(db);

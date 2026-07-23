@@ -3,6 +3,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
+import { appendRunLogChunks } from '../src/db/run-log-chunks';
 import type { Env } from '../src/lib/types';
 import { buildCoachReviewPrompt, type TaskInfo } from '../src/services/agent-runner';
 import { safeClose } from './helpers';
@@ -68,11 +69,12 @@ async function seedRun(opts: {
 }): Promise<string> {
 	const r = await db.query<{ id: string }>(
 		`INSERT INTO heartbeat_runs
-		   (team_id, member_id, task_id, status, exit_code, invocation_command, log_text, started_at, finished_at)
-		 VALUES ($1, $2, $3, 'succeeded'::heartbeat_run_status, 0, 'run agent', $4, now(), now())
+		   (team_id, member_id, task_id, status, exit_code, invocation_command, started_at, finished_at)
+		 VALUES ($1, $2, $3, 'succeeded'::heartbeat_run_status, 0, 'run agent', now(), now())
 		 RETURNING id`,
-		[opts.team, opts.member, opts.task, opts.log],
+		[opts.team, opts.member, opts.task],
 	);
+	await appendRunLogChunks(db, r.rows[0].id, opts.log);
 	return r.rows[0].id;
 }
 

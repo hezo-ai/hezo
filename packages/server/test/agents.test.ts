@@ -2,6 +2,7 @@ import { DEFAULT_TEAM_ID, HQ_PROJECT_SLUG } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
+import { appendRunLogChunks } from '../src/db/run-log-chunks';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestTeam, projectSlugFor } from './helpers/app';
@@ -472,11 +473,12 @@ describe('heartbeat runs', () => {
 		const agents = (await listRes.json()).data;
 		const agent = agents[0];
 
-		await db.query(
-			`INSERT INTO heartbeat_runs (member_id, team_id, status, started_at, finished_at, exit_code, log_text)
-			 VALUES ($1, $2, 'succeeded', now() - interval '5 minutes', now(), 0, 'All done')`,
+		const inserted = await db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs (member_id, team_id, status, started_at, finished_at, exit_code)
+			 VALUES ($1, $2, 'succeeded', now() - interval '5 minutes', now(), 0) RETURNING id`,
 			[agent.id, teamId],
 		);
+		await appendRunLogChunks(db, inserted.rows[0].id, 'All done');
 
 		const res = await app.request(
 			`/api/projects/${projectSlug}/agents/${agent.id}/heartbeat-runs`,

@@ -32,6 +32,7 @@ import {
 } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
 import type { Db } from '../db/database';
+import { appendRunLogChunks, runLogLengthSql } from '../db/run-log-chunks';
 import type { DomainEventBus } from '../events/bus';
 import { signAgentAssetUrl } from '../lib/asset-urls';
 import { broadcastProjectUpdate, broadcastRowChange } from '../lib/broadcast';
@@ -924,8 +925,8 @@ export async function runAgent(
 	const streamId = `run:${heartbeatRunId}`;
 
 	// Latest running token usage, refreshed from the parser on every exec chunk.
-	// Flushed to the row alongside log_text (below) so that whatever the run has
-	// burned so far survives a crash — reconcileOnStartup never overwrites these
+	// Persisted on every log flush (below) so that whatever the run has burned
+	// so far survives a crash — reconcileOnStartup never overwrites these
 	// columns, so the last snapshot is what a restart-failed run reports.
 	let currentUsage: AgentRunUsage | null = null;
 
@@ -949,32 +950,34 @@ export async function runAgent(
 			text,
 			replace: true,
 		}),
-		onFlush: async (text) => {
-			// Persist the running usage with the log so a crash mid-run still leaves a
-			// non-zero token/cost snapshot, flagged partial until a clean completion.
-			if (currentUsage) {
-				await deps.db.query(
-					`UPDATE heartbeat_runs
-					 SET log_text = $1,
-					     input_tokens = COALESCE($2, input_tokens),
-					     output_tokens = COALESCE($3, output_tokens),
-					     cost_cents = COALESCE($4, cost_cents),
-					     usage_partial = true
-					 WHERE id = $5`,
-					[
-						text,
-						currentUsage.inputTokens,
-						currentUsage.outputTokens,
-						currentUsage.costCents,
-						heartbeatRunId,
-					],
-				);
-			} else {
-				await deps.db.query('UPDATE heartbeat_runs SET log_text = $1 WHERE id = $2', [
-					text,
-					heartbeatRunId,
-				]);
-			}
+		onFlush: async (delta) => {
+			// Append only the new log text as a chunk row (never rewrite the whole
+			// log — the old full-blob UPDATE pattern left a dead TOAST copy per
+			// flush). The running usage persists alongside so a crash mid-run still
+			// leaves a non-zero token/cost snapshot, flagged partial until a clean
+			// completion. One transaction: the broker re-sends the same delta after
+			// a failed flush, so chunk + usage must land all-or-nothing to stay
+			// exactly-once.
+			if (delta.length === 0 && !currentUsage) return;
+			await deps.db.transaction(async (tx) => {
+				if (delta.length > 0) await appendRunLogChunks(tx, heartbeatRunId, delta);
+				if (currentUsage) {
+					await tx.query(
+						`UPDATE heartbeat_runs
+						 SET input_tokens = COALESCE($1, input_tokens),
+						     output_tokens = COALESCE($2, output_tokens),
+						     cost_cents = COALESCE($3, cost_cents),
+						     usage_partial = true
+						 WHERE id = $4`,
+						[
+							currentUsage.inputTokens,
+							currentUsage.outputTokens,
+							currentUsage.costCents,
+							heartbeatRunId,
+						],
+					);
+				}
+			});
 		},
 	});
 
@@ -2505,7 +2508,7 @@ async function loadRunSummaries(db: Db, taskId: string, teamId: string): Promise
 		agent_slug: string | null;
 	}>(
 		`SELECT hr.id, hr.status, hr.exit_code, hr.started_at,
-		        length(hr.log_text) AS log_length,
+		        ${runLogLengthSql('hr.id')} AS log_length,
 		        ma.title AS agent_title, ma.slug AS agent_slug
 		 FROM heartbeat_runs hr
 		 LEFT JOIN member_agents ma ON ma.id = hr.member_id

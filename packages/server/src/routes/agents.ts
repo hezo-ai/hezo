@@ -29,6 +29,7 @@ import {
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { Db } from '../db/database';
+import { runLogTextSql } from '../db/run-log-chunks';
 import { trackBackground } from '../lib/background';
 import { broadcastChange, broadcastCommentFamilyChange } from '../lib/broadcast';
 import { budgetWindowsError } from '../lib/budget-validation';
@@ -144,7 +145,7 @@ async function withAgentIconUrl(
 const HEARTBEAT_RUN_COLUMNS = `hr.id, hr.member_id, hr.team_id, hr.wakeup_id, hr.task_id, hr.kind,
 	hr.status, hr.queued_reason, hr.started_at, hr.finished_at, hr.exit_code, hr.error,
 	hr.input_tokens, hr.output_tokens, hr.cost_cents, hr.usage_partial,
-	hr.invocation_command, hr.log_text, hr.working_dir,
+	hr.invocation_command, ${runLogTextSql('hr.id')} AS log_text, hr.working_dir,
 	hr.process_pid, hr.retry_of_run_id, hr.process_loss_retry_count,
 	i.identifier AS task_identifier, i.title AS task_title,
 	i.project_id AS project_id, p.slug AS project_slug, p.name AS project_name,

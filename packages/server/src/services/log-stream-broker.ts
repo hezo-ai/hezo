@@ -1,6 +1,9 @@
+import { logger } from '../logger';
 import { CappedLogBuffer } from './log-buffer';
 import { splitLogLines } from './log-format';
 import type { WebSocketManager, WsEvent } from './ws';
+
+const log = logger.child('log-stream');
 
 export type LogStream = 'stdout' | 'stderr';
 
@@ -14,7 +17,17 @@ export interface LogStreamConfig {
 	room: string;
 	buildMessage: (line: LogLine) => WsEvent;
 	buildSnapshot: (text: string) => WsEvent;
-	onFlush?: (text: string) => Promise<void>;
+	/**
+	 * Persistence callback. Receives only the text appended since the last
+	 * SUCCESSFUL flush (the delta), so implementations append it — they must
+	 * never treat it as the whole log. A throw re-marks the stream dirty and the
+	 * same delta is re-sent on the next flush, so the callback must persist the
+	 * delta atomically (all-or-nothing) to stay exactly-once. An empty-string
+	 * delta is still delivered when the buffer is dirty-but-capped — callbacks
+	 * that piggyback other state (usage snapshots) on the flush cadence rely on
+	 * the call happening.
+	 */
+	onFlush?: (delta: string) => Promise<void>;
 	capBytes?: number;
 	debounceMs?: number;
 }
@@ -25,6 +38,10 @@ interface LogStreamEntry {
 	dirty: boolean;
 	flushTimer: ReturnType<typeof setTimeout> | null;
 	ended: boolean;
+	/** Chars of `buffer.toString()` already persisted by a successful onFlush. */
+	persistedChars: number;
+	/** Tail of the serialized flush chain — every flush awaits its predecessor. */
+	flushing: Promise<void> | null;
 }
 
 // Backstop against a runaway run flooding memory/DB — not a content truncation.
@@ -55,6 +72,8 @@ export class LogStreamBroker {
 			dirty: false,
 			flushTimer: null,
 			ended: false,
+			persistedChars: 0,
+			flushing: null,
 		};
 		this.streams.set(config.streamId, entry);
 
@@ -102,6 +121,13 @@ export class LogStreamBroker {
 		}
 	}
 
+	/**
+	 * Final-flush and tear down a stream. Drains any in-flight flush, then
+	 * persists the remaining unflushed tail. Unlike a mid-run flush there is no
+	 * retry after this — a persistence failure here is logged and the tail is
+	 * dropped (the run is finishing regardless; failing finalization over a log
+	 * tail would be worse).
+	 */
 	async end(streamId: string): Promise<void> {
 		const entry = this.streams.get(streamId);
 		if (!entry) return;
@@ -110,9 +136,11 @@ export class LogStreamBroker {
 			clearTimeout(entry.flushTimer);
 			entry.flushTimer = null;
 		}
-		if (entry.dirty && entry.config.onFlush) {
-			entry.dirty = false;
-			await entry.config.onFlush(entry.buffer.toString());
+		await this.flushDelta(entry);
+		if (entry.dirty) {
+			log.warn(
+				`Final log flush failed for stream ${streamId}; trailing log text was not persisted`,
+			);
 		}
 		this.streams.delete(streamId);
 		this.removeFromRoomIndex(entry.config.room, streamId);
@@ -138,15 +166,40 @@ export class LogStreamBroker {
 	}
 
 	private async performFlush(entry: LogStreamEntry): Promise<void> {
-		if (!entry.dirty || !entry.config.onFlush || entry.ended) return;
-		entry.dirty = false;
-		const text = entry.buffer.toString();
-		try {
-			await entry.config.onFlush(text);
-		} catch {
-			entry.dirty = true;
-		}
+		if (entry.ended) return;
+		await this.flushDelta(entry);
 		if (entry.dirty && !entry.ended) this.scheduleFlush(entry);
+	}
+
+	/**
+	 * The single serialized persistence path: every call chains on the previous
+	 * flush's promise, so two flushes can never overlap — an overlap would
+	 * compute its delta from a not-yet-advanced offset and persist the same text
+	 * twice. `persistedChars` advances only after `onFlush` succeeds; on failure
+	 * the stream is re-marked dirty and the identical delta goes out on the next
+	 * attempt. Delta extraction by offset is sound because
+	 * `CappedLogBuffer.toString()` is prefix-stable (append-only; the truncation
+	 * marker is appended once at the cap, after which nothing changes).
+	 */
+	private flushDelta(entry: LogStreamEntry): Promise<void> {
+		const prev = entry.flushing ?? Promise.resolve();
+		const next = prev.then(async () => {
+			if (!entry.dirty || !entry.config.onFlush) return;
+			entry.dirty = false;
+			const text = entry.buffer.toString();
+			const delta = text.slice(entry.persistedChars);
+			try {
+				await entry.config.onFlush(delta);
+				entry.persistedChars = text.length;
+			} catch {
+				entry.dirty = true;
+			}
+		});
+		const guarded = next.finally(() => {
+			if (entry.flushing === guarded) entry.flushing = null;
+		});
+		entry.flushing = guarded;
+		return guarded;
 	}
 
 	private removeFromRoomIndex(room: string, streamId: string): void {
