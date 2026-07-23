@@ -79,3 +79,13 @@ process is deliberately cautious:
 
 The net effect: upgrades are safe by default, and your data is preserved across them
 without any manual migration work on your part.
+
+## Reclaiming disk from old database versions
+
+Each embedded upgrade leaves the previous database copy behind in the data directory as a
+rollback point, and Hezo keeps the few most recent ones automatically. On a long-running
+instance these can add up to gigabytes. When you're confident you won't need to roll back,
+open **Settings → General → Database** (superuser only): it shows how much disk the retained
+copies are using next to a **Prune** button that deletes them all. Your current database is
+untouched — but once pruned, you can no longer roll back to an earlier version. This applies
+to the embedded database only; an external Postgres keeps no such copies.
