@@ -67,19 +67,17 @@ describe('template resolver', () => {
 		expect(result).toContain('already handed this ticket off');
 	});
 
-	it('points recurring work at the mechanisms that exist — heartbeats and goals', async () => {
+	it('routes recurring work to standing tasks and frames goals as outcomes', async () => {
 		const result = await resolveSystemPrompt(db, 'Base prompt.', { teamId });
 		// Positive framing: describe how scheduled work IS done rather than what's absent,
 		// so an agent routes a repeating need instead of asking for a cron feature.
 		expect(result).toContain('### Recurring & Scheduled Work');
-		expect(result).toContain('two mechanisms that are always in place');
-		// The two real mechanisms for repeating work.
-		expect(result).toContain('Your heartbeat');
-		expect(result).toContain('Project goals');
-		// Goals are admin-set, so an agent recommends one to the admin.
-		expect(result).toContain(
-			'Goals are set by the admin, so when a need is truly recurring, recommend one to them',
-		);
+		expect(result).toContain('goals are not a scheduler');
+		// Recurring operational work is a standing task the heartbeat re-visits.
+		expect(result).toContain('standing task');
+		// Goals are outcomes the admin wants — elicited from them, never invented.
+		expect(result).toContain('Project goals are outcomes, not schedules');
+		expect(result).toContain('ask the admin what they want the project to achieve');
 		// The goal-vs-task rule: a finite deliverable is a task, not a goal.
 		expect(result).toContain('fixed done state');
 	});
