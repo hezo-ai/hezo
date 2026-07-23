@@ -6,6 +6,10 @@
 	"summary": "The Investment template provisions a research team that tracks stocks and produces research-grade analysis (never financial advice). A Captain runs onboarding — the stocks and categories to watch, the investor's objective, risk appetite, and horizon — and suggests goals for the admin to approve. The Market Researcher screens and sources ideas; the Equity Analyst runs deep-dives and maintains a living per-stock document; the Catalyst Monitor sweeps filings and news daily and notifies the admin; the Risk Verifier challenges and verifies every thesis; and the Report Writer produces periodic portfolio reviews.",
 	"changelog": [
 		{
+			"version": 3,
+			"notes": "Goal suggestions are formulated from the admin's stated objectives — outcomes and milestones only; recurring work (daily monitoring, periodic reviews) runs as standing tasks, never goals."
+		},
+		{
 			"version": 2,
 			"notes": "Onboarding routes finite deliverables (e.g. the initial deep-dives) to tasks; goal suggestions are reserved for standing objectives like watchlist monitoring and coverage."
 		},

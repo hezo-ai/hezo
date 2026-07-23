@@ -1198,7 +1198,7 @@ export function registerTools(
 	tool(
 		server,
 		'suggest_goal',
-		"Suggest a project goal for the admin to approve. Callable only by the team Captain (or the CEO targeting a team via `project`), typically during initial project onboarding after you've asked the admin what they want to achieve. This does NOT create a goal directly — it files a suggestion the admin reviews and approves, at which point the real goal is created. Only suggest a goal for a STANDING outcome — one whose measurement stays meaningful every time it is re-checked (a level to hold or keep improving, e.g. \"every watched item's document stays current\", \"grow monthly reach\"). Goals are re-assessed on their cadence indefinitely and are never finished at 100%, so a finite deliverable with a fixed done state — a document to produce, a one-time analysis, a feature to ship — is a task, not a goal: file it with `create_task` (optionally linked via `goal_id`) instead. Pass a `title`, a `measurement` (the precise definition of when it is achieved — the bar to judge against; write it SMART), optional `actions` (guidance on what to do/check toward it), a `check_frequency` (daily/weekly/monthly — pick by how often the measurement meaningfully changes), and an optional `target_date` (deadline, ISO YYYY-MM-DD). Pass `task_id` (recommended — usually your planning task) to surface the suggestion as an Approve/Deny card in that task's thread; it also appears on the project's Goals page. Suggest goals from the admin's stated objectives — do not invent goals the admin did not ask for.",
+		'Suggest a project goal for the admin to approve. Callable only by the team Captain (or the CEO targeting a team via `project`). Goals come from the admin, so ask first: before suggesting anything, ask the admin what they want the project to achieve (on the planning/onboarding task or via an @admin comment), wait for their reply, and formulate each suggestion from their stated objectives — never file a suggestion the admin\'s own words do not support. This does NOT create a goal directly — it files a suggestion the admin reviews as an Approve/Deny card; the real goal exists only once they approve. A goal is an OUTCOME or MILESTONE the admin wants the project to achieve — a state of the world to reach, or reach and hold (e.g. "reach 10k monthly readers", "100 active customers, held"); its `measurement` judges results, never activity performance. If the candidate reads as "do X every day/week" — monitor, sweep, deliver a periodic report, keep a process running — it is NOT a goal: that is recurring operational work, filed with `create_task` as a standing task that stays open (optionally linked to a goal via `goal_id`), and so is any finite deliverable with a fixed done state — a document to produce, a one-time analysis, a feature to ship. Pass a `title`, a `measurement` (the precise definition of when it is achieved — the bar to judge against; write it SMART), optional `actions` (guidance on what to do/check when assessing it), a `check_frequency` (daily/weekly/monthly — how often the Captain re-assesses progress, not a schedule for doing work), and an optional `target_date` (deadline, ISO YYYY-MM-DD — milestones with target dates are legitimate goals). Pass `task_id` (recommended — usually your planning task) to surface the suggestion as an Approve/Deny card in that task\'s thread; it also appears on the project\'s Goals page.',
 		{
 			project: projectArg(),
 			title: z.string().describe('Short goal title.'),
@@ -1209,12 +1209,14 @@ export function registerTools(
 			actions: z
 				.string()
 				.optional()
-				.describe('Optional guidance on what to do or check toward the goal.'),
+				.describe(
+					'Optional guidance on what the Captain should do or check when assessing the goal.',
+				),
 			check_frequency: z
 				.enum(['daily', 'weekly', 'monthly'])
 				.optional()
 				.describe(
-					'How often the goal is re-assessed once created (default daily). Pick by how often the measurement meaningfully changes: daily for fast-moving monitoring, weekly for steady work streams, monthly for slow-moving outcomes. Checks recur indefinitely — this is a cadence, not a deadline.',
+					"How often the goal is re-assessed once created (default daily). This is the Captain's re-assessment cadence, not a schedule for doing work: pick by how often the measurement meaningfully changes — daily for fast-moving measurements, weekly for steady ones, monthly for slow-moving outcomes. Checks recur indefinitely — this is a cadence, not a deadline.",
 				),
 			target_date: z.string().optional().describe('Optional deadline as an ISO date (YYYY-MM-DD).'),
 			task_id: z

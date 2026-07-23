@@ -244,11 +244,16 @@ describe('MCP suggest_goal', () => {
 		const tools = (await res.json()).result.tools as { name: string; description: string }[];
 		const suggestGoal = tools.find((t) => t.name === 'suggest_goal');
 		expect(suggestGoal).toBeDefined();
-		// The description must carry the goal-vs-task rule: goals are standing outcomes;
-		// a finite deliverable is a task. Without it, agents file one-off deliverables as
+		// The description must carry the doctrine: goals are admin-elicited outcomes or
+		// milestones; activity-shaped recurring work ("do X every day/week") is a standing
+		// task, not a goal. Without it, agents file cron jobs and one-off deliverables as
 		// goals that then get cadence-checked forever.
-		expect(suggestGoal?.description).toContain('is a task, not a goal');
-		expect(suggestGoal?.description.toLowerCase()).toContain('standing');
+		expect(suggestGoal?.description).toContain('OUTCOME or MILESTONE');
+		expect(suggestGoal?.description).toContain('it is NOT a goal');
+		expect(suggestGoal?.description).toContain('standing task');
+		expect(suggestGoal?.description).toContain(
+			'ask the admin what they want the project to achieve',
+		);
 	});
 
 	it('is rejected for a non-agent caller', async () => {
