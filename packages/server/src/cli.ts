@@ -257,6 +257,23 @@ async function assertNoLiveEmbeddedServer(
  * directory). An external database + S3 storage can be backed up any time — the
  * source is only ever read.
  */
+
+/**
+ * Best-effort teardown for backup/restore cleanup paths. A close failure must
+ * never mask the operation's real error: when a query crashes the embedded
+ * engine's WASM instance, closing that dead instance throws the same runtime
+ * error, and a throwing `finally` would replace the diagnosable original.
+ */
+async function closeQuietly(closeable: { close(): Promise<unknown> } | null | undefined) {
+	if (!closeable) return;
+	try {
+		await closeable.close();
+	} catch (err) {
+		const msg = err instanceof Error ? err.message : String(err);
+		console.warn(`Warning: could not close the database cleanly (${msg}); continuing.`);
+	}
+}
+
 export async function runBackup(argv: string[] = process.argv): Promise<boolean> {
 	if (argv[2] !== 'backup') return false;
 
@@ -338,7 +355,7 @@ export async function runBackup(argv: string[] = process.argv): Promise<boolean>
 			await writeFile(output, bytes);
 			console.log(`Wrote logical backup of ${opened.storage.backend} database → ${output}`);
 		} finally {
-			await opened.db.close();
+			await closeQuietly(opened.db);
 		}
 		return true;
 	}
@@ -385,8 +402,8 @@ export async function runBackup(argv: string[] = process.argv): Promise<boolean>
 				`(${dbNote}${assets.count} asset blob(s) from ${openedStore.info.backend} storage)${missingNote}`,
 		);
 	} finally {
-		await openedStore.store.close();
-		await opened.db.close();
+		await closeQuietly(openedStore.store);
+		await closeQuietly(opened.db);
 	}
 	return true;
 }
@@ -497,8 +514,8 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 				console.log('This bundle has nothing to restore for the given options.');
 			}
 		} finally {
-			if (openedStore) await openedStore.store.close();
-			await opened.db.close();
+			await closeQuietly(openedStore?.store);
+			await closeQuietly(opened.db);
 		}
 		return true;
 	}
@@ -538,7 +555,7 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 				`into the ${opened.storage.backend} database: ${summary.rows} rows across ${summary.tables} tables.`,
 		);
 	} finally {
-		await opened.db.close();
+		await closeQuietly(opened.db);
 	}
 	return true;
 }

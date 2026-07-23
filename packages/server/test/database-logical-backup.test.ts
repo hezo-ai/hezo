@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { MasterKeyManager } from '../src/crypto/master-key';
 import { createMemoryDb } from '../src/db/client';
-import type { Db } from '../src/db/database';
+import type { Db, Queryable } from '../src/db/database';
 import { PostgresDb } from '../src/db/drivers/postgres';
 import {
 	dumpLogicalBackup,
+	dumpPageRows,
+	planInsertBatches,
 	readLogicalBackupHeader,
 	restoreLogicalBackup,
 } from '../src/db/logical-backup';
@@ -48,6 +50,70 @@ async function seedRichData(db: Db): Promise<{ teamId: string; taskId: string }>
 		[projectId, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff])],
 	);
 	return { teamId, taskId: parent.rows[0].id };
+}
+
+describe('byte-aware batch sizing', () => {
+	it('sizes dump pages from average row size, clamped to [1, flat cap]', () => {
+		// Empty table: nothing to size, keep the flat cap.
+		expect(dumpPageRows({ rowCount: 0, totalBytes: 0, maxRowBytes: 0 })).toBe(5000);
+		// Tiny rows: the flat row cap keeps a single response bounded.
+		expect(dumpPageRows({ rowCount: 100_000, totalBytes: 1_000_000, maxRowBytes: 50 })).toBe(5000);
+		// ~300KB average rows fit ~13 to a 4MB page.
+		expect(dumpPageRows({ rowCount: 30, totalBytes: 9_000_000, maxRowBytes: 310_000 })).toBe(
+			Math.floor((4 * 1024 * 1024) / 300_000),
+		);
+		// Average at/above the byte target: one row at a time.
+		expect(dumpPageRows({ rowCount: 2, totalBytes: 8_000_000, maxRowBytes: 4_000_000 })).toBe(1);
+		// A single outlier row past the target forces row-at-a-time even when
+		// the average looks harmless.
+		expect(dumpPageRows({ rowCount: 1000, totalBytes: 10_000_000, maxRowBytes: 9_000_000 })).toBe(
+			1,
+		);
+	});
+
+	it('splits insert batches on row cap and cumulative byte target', () => {
+		expect(planInsertBatches([])).toEqual([]);
+		// Row cap.
+		expect(planInsertBatches([1, 1, 1, 1, 1], 2, 1000)).toEqual([
+			{ start: 0, end: 2 },
+			{ start: 2, end: 4 },
+			{ start: 4, end: 5 },
+		]);
+		// Byte target: a row that would push past it starts the next batch.
+		expect(planInsertBatches([3, 3, 3], 500, 4)).toEqual([
+			{ start: 0, end: 1 },
+			{ start: 1, end: 2 },
+			{ start: 2, end: 3 },
+		]);
+		expect(planInsertBatches([1, 1, 1, 1, 1], 500, 4)).toEqual([
+			{ start: 0, end: 4 },
+			{ start: 4, end: 5 },
+		]);
+		// A single oversized row still gets its own batch.
+		expect(planInsertBatches([100], 500, 4)).toEqual([{ start: 0, end: 1 }]);
+	});
+});
+
+/** Wrap a Db so every SQL statement (incl. inside transactions) is recorded. */
+function recordingDb(inner: Db): { db: Db; queries: string[] } {
+	const queries: string[] = [];
+	const wrapQueryable = <Q extends Queryable>(q: Q): Q =>
+		new Proxy(q, {
+			get(target, prop, receiver) {
+				if (prop === 'query' || prop === 'exec') {
+					return (sql: string, params?: unknown[]) => {
+						queries.push(sql);
+						return prop === 'query' ? target.query(sql, params) : target.exec(sql);
+					};
+				}
+				if (prop === 'transaction') {
+					return (cb: (tx: Queryable) => Promise<unknown>) =>
+						(target as unknown as Db).transaction((tx) => cb(wrapQueryable(tx)));
+				}
+				return Reflect.get(target, prop, receiver);
+			},
+		});
+	return { db: wrapQueryable(inner), queries };
 }
 
 describe('logical backup round-trip (PGlite leg)', () => {
@@ -112,6 +178,59 @@ describe('logical backup round-trip (PGlite leg)', () => {
 				// The vault travels: the same unlock key unlocks the restored DB.
 				const mkm = new MasterKeyManager();
 				expect(await mkm.initialize(restored, ctx.unlockKeyHex)).toBe('unlocked');
+			} finally {
+				await restored.close();
+			}
+		} finally {
+			await safeClose(ctx.db);
+		}
+	});
+
+	it('pages a large-log table by bytes on dump and byte-caps restore inserts', async () => {
+		const ctx = await createTestApp();
+		const migrations = allMigrations();
+		try {
+			// ~9MB of log_text across 30 runs — far past one 4MB page, so a flat
+			// row-count page would return it all in one response (the shape that
+			// crashes embedded PGlite's WASM on real instances).
+			const member = await ctx.db.query<{ id: string; team_id: string }>(
+				`SELECT id, team_id FROM members LIMIT 1`,
+			);
+			await ctx.db.query(
+				`INSERT INTO heartbeat_runs (team_id, member_id, status, log_text)
+				 SELECT $1, $2, 'succeeded', repeat('x', 300000) || n::text
+				 FROM generate_series(1, 30) n`,
+				[member.rows[0].team_id, member.rows[0].id],
+			);
+
+			const source = recordingDb(ctx.db);
+			const bytes = await dumpLogicalBackup(source.db, { hezoVersion: 'test', migrations });
+			const pageSelects = source.queries.filter(
+				(q) => q.includes('FROM "heartbeat_runs"') && q.includes('LIMIT'),
+			);
+			expect(pageSelects.length).toBeGreaterThanOrEqual(3);
+			// Every page carries the byte-derived row limit, not the flat cap.
+			for (const q of pageSelects) expect(q).not.toContain('LIMIT 5000');
+
+			const restored = await createMemoryDb();
+			try {
+				const target = recordingDb(restored);
+				await restoreLogicalBackup(target.db, bytes, migrations);
+				const inserts = target.queries.filter((q) => q.startsWith('INSERT INTO "heartbeat_runs"'));
+				expect(inserts.length).toBeGreaterThanOrEqual(3);
+
+				// The paged dump + batched restore is lossless.
+				const [a, b] = await Promise.all([
+					ctx.db.query<{ n: number; len: string }>(
+						`SELECT COUNT(*)::int AS n, COALESCE(SUM(length(log_text)), 0)::text AS len
+						 FROM heartbeat_runs`,
+					),
+					restored.query<{ n: number; len: string }>(
+						`SELECT COUNT(*)::int AS n, COALESCE(SUM(length(log_text)), 0)::text AS len
+						 FROM heartbeat_runs`,
+					),
+				]);
+				expect(b.rows[0]).toEqual(a.rows[0]);
 			} finally {
 				await restored.close();
 			}

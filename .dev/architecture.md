@@ -1964,7 +1964,14 @@ blobs — as a **backup bundle** directory: `database.backup.gz` (the portable l
 database backup) + `assets/<projectId>/<assetId>` blob files + a `manifest.json` written
 **last** as the completion marker. The database half is the **portable logical backup**
 (`src/db/logical-backup.ts`): gzipped JSONL carrying the applied-migration set plus every
-row (bytea → base64, generated tsvector columns excluded and recomputed on load).
+row (bytea → base64, generated tsvector columns excluded and recomputed on load). Dump
+queries and restore inserts are batched by **bytes** as well as rows
+(`dumpPageRows`/`planInsertBatches`): each table's page size derives from its measured
+uncompressed row sizes, keeping every protocol message far below the embedded engine's
+~16MB per-response ceiling — which a large-log table (`heartbeat_runs.log_text`) would
+otherwise breach in a single flat-size page and hard-crash the WASM instance. The
+subcommands' teardown closes are best-effort (`closeQuietly` in `cli.ts`), so closing an
+already-crashed engine can never mask the original dump/restore error.
 Restore replays the binary's own migrations up to exactly the recorded set, then loads
 data in one transaction with FK constraints dropped/re-added around the inserts (insert
 order and self-references never matter) and serial sequences resumed; migration-seeded
