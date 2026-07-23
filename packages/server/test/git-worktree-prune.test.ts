@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -16,7 +16,9 @@ import { HostGitExecutor } from '../src/services/git-executor';
 // (host path == container path), mirroring git-worktree-state.test.ts. These back
 // the admin "Prune worktrees" action that sweeps closed/orphaned tasks' worktrees.
 
-const root = mkdtempSync(join(tmpdir(), 'git-wt-prune-'));
+// realpath so prefix comparisons against git-reported worktree paths hold on
+// macOS, where the tmpdir sits behind a symlink git resolves.
+const root = realpathSync(mkdtempSync(join(tmpdir(), 'git-wt-prune-')));
 const exec = new HostGitExecutor();
 const repoLoc = (p: string): RepoLoc => ({ hostPath: p, containerPath: p });
 const wtLoc = (p: string): WorktreeLoc => ({ hostPath: p, containerPath: p });
