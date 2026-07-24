@@ -98,12 +98,6 @@ function AppShell() {
 				    app chrome — so this pre-shell state still reads as Hezo. */}
 				<PageLogo />
 				<div className="flex flex-col items-center gap-3">
-					{isNetwork && (
-						<div
-							className="h-6 w-6 animate-spin rounded-full border-2 border-danger border-t-transparent"
-							aria-hidden="true"
-						/>
-					)}
 					<p
 						className={`max-w-md text-xl font-semibold ${isNetwork ? 'text-text-1' : 'text-danger'}`}
 					>
