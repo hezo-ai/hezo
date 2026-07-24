@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.33.0 - 2026-07-23
+
+### Features
+
+- append-only run-log chunk storage to eliminate TOAST write-amplification ([#817](https://github.com/hezo-ai/hezo/pull/817))
+- run-log compaction to reclaim database size ([#815](https://github.com/hezo-ai/hezo/pull/815))
+- prune control for old embedded-DB snapshots ([#813](https://github.com/hezo-ai/hezo/pull/813))
+
+### Bug Fixes
+
+- **goals:** goals are admin-owned outcomes; recurring work runs as standing tasks ([#816](https://github.com/hezo-ai/hezo/pull/816))
+- **backup:** page logical dump/restore by bytes to survive large-log tables ([#814](https://github.com/hezo-ai/hezo/pull/814))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.32.0...0.33.0
+
 ## 0.32.0 - 2026-07-22
 
 ### Features
