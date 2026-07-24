@@ -57,9 +57,9 @@ point — you change the team's structure freely from there; see
 [Team structure](/docs/concepts/team-structure) for the bigger picture.
 
 Hezo ships with the minimal **Blank** template plus a set of ready-made teams in the
-[team marketplace](/docs/concepts/marketplace) — an **App Team** that builds software, an
-**Influencer Marketing** team that grows a creator's reach, and an **Investment** team that
-researches and tracks stocks. Each agent's behaviour comes from a **system
+[team marketplace](/docs/concepts/marketplace) — an **App Team** that builds software, a
+**Social Media Marketing** team that grows a creator's reach, and an **Investment
+Portfolio** team that researches and tracks stocks. Each agent's behaviour comes from a **system
 prompt** that you can read (and, once hired, customise — see
 [Hiring & customizing agents](/docs/concepts/hiring-and-agents)). The links below point
 at the source prompt for each role.
@@ -103,7 +103,7 @@ assuming, and can suggest project goals for you to approve.
 - [Researcher](https://github.com/hezo-ai/hezo/blob/main/agents/software-development/researcher.md) —
   competitive analysis, technical research, and feasibility studies.
 
-### Influencer Marketing team
+### Social Media Marketing team
 
 A content team that grows a creator's social reach. Its Captain onboards you first —
 asking which accounts to work on (connect them on the project's Connections page), your
@@ -126,7 +126,7 @@ that off in the team's preferences).
 - [Distribution Manager](https://github.com/hezo-ai/hezo/blob/main/agents/influencer/distribution-manager.md) —
   publishes approved content, cross-posts, and runs the engagement/analytics loop.
 
-### Investment team
+### Investment Portfolio team
 
 A research team that tracks stocks and produces research-grade analysis (**not financial
 advice**). Its Captain onboards you first — which stocks and categories to watch, your
