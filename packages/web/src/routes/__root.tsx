@@ -6,7 +6,7 @@ import {
 	useMatches,
 	useNavigate,
 } from '@tanstack/react-router';
-import { ChevronsRight } from 'lucide-react';
+import { ChevronsRight, RefreshCw } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppHeader } from '../components/app-header';
 import { ChatWidget } from '../components/chat/chat-widget';
@@ -21,6 +21,8 @@ import { ScrollToBottomButton } from '../components/scroll-to-bottom-button';
 import { ScrollToTopButton } from '../components/scroll-to-top-button';
 import { CreatePasswordFlow, SetupGate } from '../components/setup/setup-wizard';
 import { StartingScreen } from '../components/starting-screen';
+import { Button } from '../components/ui/button';
+import { PageLogo } from '../components/ui/page-logo';
 import { Tooltip } from '../components/ui/tooltip';
 import { UpdateBanner } from '../components/update-banner';
 import { ScrollContentContext } from '../contexts/scroll-content-context';
@@ -88,20 +90,35 @@ function AppShell() {
 		const isNetwork = !raw || /failed to fetch|load failed|networkerror/i.test(raw);
 		const message = isNetwork ? "Can't reach the server. Retrying…" : raw;
 		return (
-			<div className="flex flex-col items-center justify-center h-screen gap-4 px-4 text-center">
-				<div className="flex items-center gap-2 text-danger">
+			<div
+				className="relative flex min-h-screen flex-col items-center justify-center gap-6 px-6 text-center"
+				data-testid="server-unreachable"
+			>
+				{/* Brand mark top-left, mirroring where the logo sits in the signed-in
+				    app chrome — so this pre-shell state still reads as Hezo. */}
+				<PageLogo />
+				<div className="flex flex-col items-center gap-3">
 					{isNetwork && (
-						<div className="w-3.5 h-3.5 border-2 border-danger border-t-transparent rounded-full animate-spin" />
+						<div
+							className="h-6 w-6 animate-spin rounded-full border-2 border-danger border-t-transparent"
+							aria-hidden="true"
+						/>
 					)}
-					<p className="text-[13px] max-w-md">{message}</p>
+					<p
+						className={`max-w-md text-xl font-semibold ${isNetwork ? 'text-text-1' : 'text-danger'}`}
+					>
+						{message}
+					</p>
+					{isNetwork && (
+						<p className="max-w-sm text-sm text-text-2">
+							We'll reconnect automatically the moment the server is back.
+						</p>
+					)}
 				</div>
-				<button
-					type="button"
-					onClick={() => refetch()}
-					className="text-[13px] font-medium text-text-1 hover:underline"
-				>
-					Retry
-				</button>
+				<Button onClick={() => refetch()}>
+					<RefreshCw className="h-4 w-4" aria-hidden="true" />
+					Retry now
+				</Button>
 			</div>
 		);
 	}
