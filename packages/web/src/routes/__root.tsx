@@ -54,8 +54,61 @@ function Spinner() {
 	);
 }
 
+/**
+ * Full-screen "can't reach the server" state (shown when the status probe fails).
+ * The brand mark sits top-left as in the signed-in chrome; the message is calm
+ * copy for the transient network case and the raw server message otherwise. The
+ * Retry-now button relabels to "Retrying…" and disables for the duration of the
+ * refetch it kicks off, so a click reads as doing something even though the query
+ * also polls on its own interval.
+ */
+export function UnreachableScreen({
+	message,
+	isNetwork,
+	onRetry,
+}: {
+	message: string;
+	isNetwork: boolean;
+	onRetry: () => Promise<unknown>;
+}) {
+	const [retrying, setRetrying] = useState(false);
+	const handleRetry = useCallback(async () => {
+		setRetrying(true);
+		try {
+			await onRetry();
+		} finally {
+			setRetrying(false);
+		}
+	}, [onRetry]);
+
+	return (
+		<div
+			className="relative flex min-h-screen flex-col items-center justify-center gap-6 px-6 text-center"
+			data-testid="server-unreachable"
+		>
+			<PageLogo />
+			<div className="flex flex-col items-center gap-3">
+				<p
+					className={`max-w-md text-xl font-semibold ${isNetwork ? 'text-text-1' : 'text-danger'}`}
+				>
+					{message}
+				</p>
+				{isNetwork && (
+					<p className="max-w-sm text-sm text-text-2">
+						We'll reconnect automatically the moment the server is back.
+					</p>
+				)}
+			</div>
+			<Button onClick={handleRetry} disabled={retrying}>
+				<RefreshCw className="h-4 w-4" aria-hidden="true" />
+				{retrying ? 'Retrying…' : 'Retry now'}
+			</Button>
+		</div>
+	);
+}
+
 function AppShell() {
-	const { data: status, isPending, isError, error, refetch } = useStatus();
+	const { data: status, isPending, isError, error, errorUpdatedAt, refetch } = useStatus();
 	const navigate = useNavigate();
 	// Session probe: only meaningful (and only fired) once the instance is unlocked.
 	// A 401 here means "unlocked but no valid session → show the password login".
@@ -73,13 +126,17 @@ function AppShell() {
 		return <StartingScreen phase={status.phase} message={status.message} detail={status.detail} />;
 	}
 
-	// Only the FIRST load (no status yet) shows the full-screen spinner. Background
-	// refetches — notably React Query's refetch-on-reconnect, which fires on every
-	// mobile network blip (radio waking on app-switch, cell↔wifi handoffs, signal
-	// dips) — must NOT unmount the shell, or the whole app blanks to a spinner and
-	// remounts, which reads as a spontaneous full-page refresh. `isPending` already
-	// covers the initial load and the retry-while-no-data window.
-	if (isPending) return <Spinner />;
+	// Only the FIRST load (nothing fetched yet, never errored) shows the full-screen
+	// spinner. Background refetches — notably React Query's refetch-on-reconnect,
+	// which fires on every mobile network blip (radio waking on app-switch, cell↔wifi
+	// handoffs, signal dips) — must NOT unmount the shell, or the whole app blanks to
+	// a spinner and remounts, which reads as a spontaneous full-page refresh. Once the
+	// probe has errored at least once (`errorUpdatedAt > 0`), keep the informative
+	// "can't reach the server" screen mounted through every retry instead of blanking
+	// to the spinner: a manual `refetch()` re-enters the pending-with-no-data window,
+	// so gating on `isPending` alone would tear that screen (and its Retry-now state)
+	// down for the duration of each retry.
+	if (isPending && errorUpdatedAt === 0) return <Spinner />;
 
 	if (isError || !status || !status.masterKeyState) {
 		const raw = (error as { message?: string } | null)?.message;
@@ -88,33 +145,10 @@ function AppShell() {
 		// that (the query keeps auto-retrying every 2s, so it self-heals when the
 		// server returns); pass through any real server-sent message unchanged.
 		const isNetwork = !raw || /failed to fetch|load failed|networkerror/i.test(raw);
-		const message = isNetwork ? "Can't reach the server. Retrying…" : raw;
-		return (
-			<div
-				className="relative flex min-h-screen flex-col items-center justify-center gap-6 px-6 text-center"
-				data-testid="server-unreachable"
-			>
-				{/* Brand mark top-left, mirroring where the logo sits in the signed-in
-				    app chrome — so this pre-shell state still reads as Hezo. */}
-				<PageLogo />
-				<div className="flex flex-col items-center gap-3">
-					<p
-						className={`max-w-md text-xl font-semibold ${isNetwork ? 'text-text-1' : 'text-danger'}`}
-					>
-						{message}
-					</p>
-					{isNetwork && (
-						<p className="max-w-sm text-sm text-text-2">
-							We'll reconnect automatically the moment the server is back.
-						</p>
-					)}
-				</div>
-				<Button onClick={() => refetch()}>
-					<RefreshCw className="h-4 w-4" aria-hidden="true" />
-					Retry now
-				</Button>
-			</div>
-		);
+		// The query already auto-retries on an interval, so the copy doesn't claim
+		// "Retrying…" — that state is surfaced only on the explicit Retry-now button.
+		const message = isNetwork ? "Can't reach the server." : (raw ?? '');
+		return <UnreachableScreen message={message} isNetwork={isNetwork} onRetry={refetch} />;
 	}
 
 	if (status.masterKeyState !== 'unlocked') {
