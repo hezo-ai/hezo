@@ -1,12 +1,16 @@
 {
 	"schema_version": 1,
 	"slug": "investment",
-	"name": "Investment",
+	"name": "Investment Portfolio",
 	"description": "Research-grade stock research and tracking — analysts, verifiers, and a monitor that keeps a living document on every stock you care about up to date",
-	"summary": "The Investment template provisions a research team that tracks stocks and produces research-grade analysis (never financial advice). A Captain runs onboarding — the stocks and categories to watch, the investor's objective, risk appetite, and horizon — and suggests goals for the admin to approve. The Market Researcher screens and sources ideas; the Equity Analyst runs deep-dives and maintains a living per-stock document; the Catalyst Monitor sweeps filings and news daily and notifies the admin; the Risk Verifier challenges and verifies every thesis; and the Report Writer produces periodic portfolio reviews.",
-	"version": 3,
-	"content_hash": "8b49711c42f1f70c853b02b9922d33d1d0036704c608832201882d2d2b417509",
+	"summary": "The Investment Portfolio template provisions a research team that tracks stocks and produces research-grade analysis (never financial advice). A Captain runs onboarding — the stocks and categories to watch, the investor's objective, risk appetite, and horizon — and suggests goals for the admin to approve. The Market Researcher screens and sources ideas; the Equity Analyst runs deep-dives and maintains a living per-stock document; the Catalyst Monitor sweeps filings and news daily and notifies the admin; the Risk Verifier challenges and verifies every thesis; and the Report Writer produces periodic portfolio reviews.",
+	"version": 4,
+	"content_hash": "cc7808791d66a2ca34c623a276b03a8e66a78a4c42e04dae71e77fa2bfb3497d",
 	"changelog": [
+		{
+			"version": 4,
+			"notes": "Renamed the team to Investment Portfolio."
+		},
 		{
 			"version": 3,
 			"notes": "Goal suggestions are formulated from the admin's stated objectives — outcomes and milestones only; recurring work (daily monitoring, periodic reviews) runs as standing tasks, never goals."

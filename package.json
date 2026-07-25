@@ -1,6 +1,6 @@
 {
 	"name": "hezo",
-	"description": "Your own AI workforce. Built to ship.",
+	"description": "Your own team of AI agents",
 	"private": true,
 	"license": "GPL-3.0-or-later",
 	"packageManager": "bun@1.3.9",
