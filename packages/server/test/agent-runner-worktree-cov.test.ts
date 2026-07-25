@@ -11,6 +11,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
+import { runLogTextSql } from '../src/db/run-log-chunks';
 import type { Env } from '../src/lib/types';
 import { type RunnerDeps, runAgent } from '../src/services/agent-runner';
 import type { DockerClient } from '../src/services/docker';
@@ -48,7 +49,7 @@ beforeAll(async () => {
 	dataDir = ctx.dataDir;
 
 	const typesRes = await app.request('/api/team-templates', { headers: authHeader(adminToken) });
-	const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
+	const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'App Team').id;
 	const teamRes = await createTestTeam(db, { name: 'Worktree Co', template_id: typeId });
 	teamId = (await teamRes.json()).data.id;
 
@@ -224,7 +225,7 @@ async function markProducedOutput() {
 
 async function runLog(runId: string): Promise<string> {
 	const r = await db.query<{ log_text: string | null; working_dir: string | null }>(
-		'SELECT log_text, working_dir FROM heartbeat_runs WHERE id = $1',
+		`SELECT ${runLogTextSql('heartbeat_runs.id')} AS log_text, working_dir FROM heartbeat_runs WHERE id = $1`,
 		[runId],
 	);
 	return r.rows[0].log_text ?? '';

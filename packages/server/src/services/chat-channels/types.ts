@@ -17,6 +17,42 @@ export interface InboundChatEvent {
 	text: string;
 }
 
+/**
+ * A group/channel @-mention of the bot — the coworker-mode inbound event. Produced
+ * by `parseGroupMention` on group-capable adapters and consumed by
+ * `ingestGroupMentionEvent` (never by the DM ingest path).
+ */
+export interface InboundGroupMentionEvent extends InboundChatEvent {
+	/** Human display name of the sender (falls back to externalHandle/externalUserId). */
+	senderDisplayName?: string;
+	/** Platform channel name for titles/labels, e.g. "#general". */
+	channelName?: string;
+	/** True when the mention arrived inside an existing platform thread. */
+	isThreadReply: boolean;
+	/** Platform message id (Slack ts / Telegram message_id), for logging/dedupe. */
+	messageTs?: string;
+	/**
+	 * Context that arrived WITH the event itself — e.g. Telegram's one-hop quote
+	 * of the message the mention replied to. The group ingest merges it ahead of
+	 * any `fetchThreadContext` history into the same ephemeral prompt block.
+	 */
+	inlineContext?: ThreadContextMessage[];
+}
+
+/**
+ * One message of ephemeral platform history an adapter fetched for a coworker-mode
+ * turn. The adapter owns the platform fetch and its filtering; the core owns
+ * formatting the list into the prompt (`formatGroupContextBlock`), so the prompt
+ * shape is identical across channels.
+ */
+export interface ThreadContextMessage {
+	/** Sender display name or handle. */
+	sender: string;
+	text: string;
+	/** Human-readable timestamp, if the platform provides one. */
+	timestamp?: string;
+}
+
 /** A finalized assistant reply to deliver back out to an external channel. */
 export interface OutboundReply {
 	externalThreadId: string;
@@ -26,11 +62,12 @@ export interface OutboundReply {
 
 /**
  * A chat channel adapter owns *everything* platform-specific: inbound parsing,
- * outbound delivery, optional thread create/close, and any long-lived transport
- * (a webhook registration or a persistent gateway). The manager, webhook route,
- * config routes, and web core are all channel-agnostic and reach a channel only
- * through the adapter registered here — so a new chat app (Discord, Slack, …) is
- * one new adapter file, with no changes to the core.
+ * outbound delivery, and any long-lived transport (a webhook registration or a
+ * persistent gateway). The manager, webhook route, config routes, and web core
+ * are all channel-agnostic and reach a channel only through the adapter
+ * registered here — so a new chat app is one new adapter file, with no changes
+ * to the core. There is no thread mirroring: every conversation lives on one
+ * surface, and replies are delivered to the surface each turn came from.
  */
 export interface ChatChannelAdapter {
 	readonly channel: ChatChannel;
@@ -57,24 +94,65 @@ export interface ChatChannelAdapter {
 	/** Prompt an unlinked sender to link their identity (best-effort, optional). */
 	promptToLink?(event: InboundChatEvent): Promise<void>;
 
-	/** Create a native platform thread, returning its id. No-op channels omit this. */
-	createThread?(title: string): Promise<string>;
-	/** Close/archive a native platform thread. No-op channels omit this. */
-	closeThread?(externalThreadId: string): Promise<void>;
-
 	/**
-	 * Whether this channel can host mirrored threads *right now* (enabled + configured
-	 * — e.g. Telegram with a Topics supergroup). Drives auto-mirroring: the manager
-	 * only creates a thread here when this is true. Default (absent) = false.
+	 * Close/archive a native platform thread when the operator closes its
+	 * conversation from the web view (e.g. a Telegram forum topic). Channels with
+	 * nothing to close (DMs, Slack threads) omit this.
 	 */
-	supportsThreads?(): Promise<boolean>;
+	closeThread?(externalThreadId: string): Promise<void>;
 
 	/**
 	 * Parse a raw event as a *thread close* (e.g. a Telegram `forum_topic_closed`
 	 * service message) → the external thread id that was closed, or null. Lets a topic
-	 * closed on the platform close the mirrored web thread. Optional.
+	 * closed on the platform close the conversation here too. Optional.
 	 */
 	parseClose?(raw: unknown): { externalThreadId: string } | null;
+
+	// --- Group / coworker mode (optional capability trio) ---
+	// A channel that can host the CEO as a coworker in an existing group
+	// channel/thread implements all three; a DM-only channel omits them and group
+	// mode simply doesn't exist for it. These feed `ingestGroupMentionEvent`, never
+	// the DM ingest path.
+
+	/**
+	 * Normalize a raw platform event into a group @-mention of the bot, or null to
+	 * ignore (not a mention, the bot's own message, …). Pure — mention tokens are
+	 * already stripped from `text`.
+	 */
+	parseGroupMention?(raw: unknown): InboundGroupMentionEvent | null;
+
+	/**
+	 * Whether group/coworker mode is live *right now* (enabled + configured + the
+	 * mode not switched off in channel metadata). Default (absent) = false.
+	 */
+	supportsGroupMode?(): Promise<boolean>;
+
+	/**
+	 * Fetch the platform history surrounding a group mention as ephemeral context
+	 * for this one turn (full thread when the mention is a thread reply, recent
+	 * channel messages when top-level). Platforms with a history API (Slack,
+	 * Discord) fetch on demand; platforms without one (Telegram) read the
+	 * observed-message buffer their `observeMessage` hook accumulated. The adapter
+	 * filters out the bot's own posts and prior bot-mention posts — those already
+	 * live in the persisted conversation window. Oldest-first. Best-effort: the
+	 * caller proceeds without context on failure.
+	 */
+	fetchThreadContext?(event: InboundGroupMentionEvent): Promise<ThreadContextMessage[]>;
+
+	/**
+	 * Record a group message the bot merely witnessed (no mention, no DM) into the
+	 * bounded observed-message buffer, for platforms whose history can't be
+	 * fetched retroactively. The webhook route calls this for raw updates no
+	 * parser claimed; the adapter decides what (if anything) to store. Optional.
+	 */
+	observeMessage?(raw: unknown): Promise<void>;
+
+	/**
+	 * Validate the saved credentials against the platform (e.g. Slack `auth.test`).
+	 * Called by the config route after save when enabling, so the operator sees a
+	 * broken token immediately instead of a silent dead channel. Optional.
+	 */
+	validateConfig?(): Promise<{ ok: boolean; errors: string[] }>;
 }
 
 /**
@@ -89,10 +167,25 @@ export interface ChatChannelConfig {
 	metadata: Record<string, unknown>;
 }
 
+/**
+ * The adapter-side path into the ingest layer, for adapters whose transport is a
+ * persistent connection (a Slack Socket Mode client, a gateway) rather than the
+ * generic webhook route. Webhook channels keep flowing through
+ * `routes/chat-webhooks.ts`, which calls the ingest functions directly.
+ */
+export interface InboundEventSink {
+	/** DM/assistant-mode message → the allowlisted assistant ingest path. */
+	ingestDm(adapter: ChatChannelAdapter, event: InboundChatEvent): Promise<void>;
+	/** Group @-mention → the coworker ingest path. */
+	ingestGroupMention(adapter: ChatChannelAdapter, event: InboundGroupMentionEvent): Promise<void>;
+}
+
 /** Shared dependencies handed to every adapter at construction. */
 export interface ChatChannelAdapterDeps {
 	db: Db;
 	masterKeyManager: MasterKeyManager;
+	/** Present once the manager is wired; socket-transport adapters ingest through it. */
+	sink?: InboundEventSink;
 }
 
 /** Decrypt a bot token from the secrets vault in-process (trusted server code). */

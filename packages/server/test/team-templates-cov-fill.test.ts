@@ -37,9 +37,9 @@ describe('GET /api/team-templates', () => {
 		const data = (await res.json()).data as Array<Record<string, unknown>>;
 		expect(data.length).toBeGreaterThanOrEqual(2);
 
-		const startup = data.find((t) => t.name === 'Startup');
+		const startup = data.find((t) => t.name === 'App Team');
 		expect(startup).toBeDefined();
-		// Startup now comes from the marketplace (a non-builtin template); Blank is the
+		// The App Team (formerly Startup) now comes from the marketplace (a non-builtin template); Blank is the
 		// only surviving built-in template.
 		expect(startup?.is_builtin).toBe(false);
 		const agentTypes = startup?.agent_types as Array<Record<string, unknown>>;
@@ -128,14 +128,14 @@ describe('POST /api/team-templates', () => {
 describe('GET /api/team-templates/:id', () => {
 	it('returns a single template with its roster', async () => {
 		const startup = await ctx.db.query<{ id: string }>(
-			"SELECT id FROM team_templates WHERE name = 'Startup'",
+			"SELECT id FROM team_templates WHERE name = 'App Team'",
 		);
 		const res = await ctx.app.request(`/api/team-templates/${startup.rows[0].id}`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
 		const data = (await res.json()).data;
-		expect(data.name).toBe('Startup');
+		expect(data.name).toBe('App Team');
 		expect((data.agent_types as unknown[]).length).toBeGreaterThanOrEqual(1);
 	});
 

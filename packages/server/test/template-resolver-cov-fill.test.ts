@@ -21,7 +21,7 @@ beforeAll(async () => {
 		headers: authHeader(ctx.token),
 	});
 	const startup = ((await typesRes.json()).data as Array<{ id: string; name: string }>).find(
-		(t) => t.name === 'Startup',
+		(t) => t.name === 'App Team',
 	);
 	expect(startup).toBeDefined();
 
@@ -144,6 +144,11 @@ describe('placeholder substitution', () => {
 			mode: 'placeholders',
 		});
 		expect(result).toContain("Call get_skill(slug) to load a skill's full instructions");
+		// The manifest disambiguates get_skill from the coding CLI's own skill
+		// feature so agents never try to load a Hezo skill natively (which fails
+		// with "unknown skill").
+		expect(result).toContain('load ONLY through the get_skill MCP tool');
+		expect(result).toContain('get_skill(slug) is the only loader');
 		expect(result).toContain('- Deploy Runbook (slug: deploy-runbook): How we deploy');
 		// Description-less skill gets no trailing colon segment.
 		expect(result).toContain('- No Desc Skill (slug: no-desc-skill)');

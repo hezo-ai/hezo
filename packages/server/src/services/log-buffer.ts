@@ -4,6 +4,13 @@
  * `[stderr] ` prefix so the persisted log preserves stream provenance when later
  * replayed as plain text — the prefix sits at the start of its own line so the
  * reader can strip it back off cleanly.
+ *
+ * INVARIANT: `toString()` is prefix-stable — every earlier `toString()` result
+ * is a strict prefix of every later one. Parts are append-only, and the
+ * truncation marker is appended exactly once at the cap, after which `append()`
+ * is a no-op. The log broker's delta flushing (log-stream-broker.ts) slices new
+ * text off by a persisted character offset and silently corrupts persisted logs
+ * if this ever breaks.
  */
 export class CappedLogBuffer {
 	private bytes = 0;

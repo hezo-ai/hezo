@@ -80,7 +80,9 @@ beside the reader, with a **search box** at the top that filters the list as you
 **+** button next to it for creating a new document — both stay in view while you scroll
 the list. A **dropdown** next to the open document's title opens a name search from
 inside the reader, so you can jump straight to another document without going back to the
-list; it's hidden while you're editing.
+list; it's hidden while you're editing. The reader's toolbar also has a **Download** button
+that saves the open document to your device — as **Markdown** (`.md`, the original source)
+or as **plain text** (`.txt`, with the Markdown formatting stripped).
 
 Agents don't carry every document's full text on every run. Instead each run includes a
 **manifest** — a table of contents listing each document's filename, its one-line

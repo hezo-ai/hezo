@@ -16,7 +16,7 @@ export async function withProvisionBridge<T>(
 	teamId: string,
 	dataDir: string,
 	socketUser: string,
-	fn: (ctx: { bridge: BridgeRunnerArgs }) => Promise<T>,
+	fn: (ctx: { bridge: BridgeRunnerArgs; scopeId: string }) => Promise<T>,
 ): Promise<T> {
 	const runId = `provision-${randomBytes(8).toString('hex')}`;
 	const socketHostPath = getRunSocketPath(dataDir, runId);
@@ -33,7 +33,10 @@ export async function withProvisionBridge<T>(
 			hostName: 'host.docker.internal',
 			hostPort: allocated.tcpHostPort,
 		};
-		return await fn({ bridge });
+		// The per-op runId doubles as the exec scope marker
+		// (`HEZO_HEARTBEAT_RUN_ID`), keeping an abandoned op's process tree
+		// killable — see ContainerGitExecutorOptions.scopeId.
+		return await fn({ bridge, scopeId: runId });
 	} finally {
 		await sshAgentServer.releaseRunSocket(runId);
 	}

@@ -587,6 +587,7 @@ export type CredentialInputType = (typeof CredentialInputType)[keyof typeof Cred
 export const ActionCommentKind = {
 	SetupRepo: 'setup_repo',
 	HireProposal: 'hire_proposal',
+	GoalSuggestion: 'goal_suggestion',
 } as const;
 export type ActionCommentKind = (typeof ActionCommentKind)[keyof typeof ActionCommentKind];
 
@@ -645,6 +646,7 @@ export const ApprovalType = {
 	DeployProduction: 'deploy_production',
 	DesignatedRepoRequest: 'designated_repo_request',
 	SkillProposal: 'skill_proposal',
+	GoalSuggestion: 'goal_suggestion',
 } as const;
 export type ApprovalType = (typeof ApprovalType)[keyof typeof ApprovalType];
 
@@ -824,8 +826,19 @@ export const GOAL_SMART_GUIDANCE: ReadonlyArray<{ letter: string; label: string;
 	{ letter: 'M', label: 'Measurable', hint: 'Define exactly how you will know it is achieved.' },
 	{ letter: 'A', label: 'Achievable', hint: 'Realistic for the team given its resources.' },
 	{ letter: 'R', label: 'Relevant', hint: "Matters to the project's mission right now." },
-	{ letter: 'T', label: 'Time-bound', hint: 'Give it a deadline to work toward.' },
+	{
+		letter: 'T',
+		label: 'Time-bound',
+		hint: 'Give it a deadline to work toward — ongoing level-to-hold goals can rely on their check cadence instead.',
+	},
 ];
+
+/**
+ * Ongoing-vs-one-off note shown alongside the SMART card: a goal is an outcome the project
+ * works toward, re-checked on its cadence; recurring work and one-off deliverables are tasks.
+ */
+export const GOAL_ONGOING_NOTE =
+	'A goal is an outcome the project works toward — the Captain re-checks it on its cadence indefinitely, and it is never "finished" at 100% (a reached milestone stays tracked and held until you archive it). Recurring work and one-off deliverables belong on the board as tasks instead.';
 
 /** One point in a goal's progress history — a snapshot recorded by a progress-update run. */
 export interface GoalHistoryPoint {
@@ -930,22 +943,47 @@ export interface ProjectProgress {
 // --- CEO chat ---
 
 /**
- * Surface a CEO chat message arrived through. Each conversation belongs to one
- * channel: `web` conversations are the in-app chatbox threads; external channels
- * (Telegram now, Discord later) map each external thread to its own conversation.
- * The channel is both message provenance and — together with `external_thread_id`
- * — part of the conversation's identity.
+ * Surface a CEO chat conversation lives on — its one home. `web` conversations
+ * are in-app chatbox threads; external channels (Telegram + Slack now, Discord
+ * next, WhatsApp later) map each external DM/topic/channel-thread to its own
+ * conversation. There is no mirroring: `channel` + `external_thread_id` on the
+ * conversation row ARE the inbound routing key, and every reply is delivered to
+ * the surface the triggering message came from. The web view lists all threads.
  */
 export const ChatChannel = {
 	Web: 'web',
 	Telegram: 'telegram',
 	WhatsApp: 'whatsapp',
+	Slack: 'slack',
+	Discord: 'discord',
 } as const;
 export type ChatChannel = (typeof ChatChannel)[keyof typeof ChatChannel];
 
 /** Runtime guard: is a string one of the known chat channels? */
 export function isChatChannel(value: string): value is ChatChannel {
 	return (Object.values(ChatChannel) as string[]).includes(value);
+}
+
+/**
+ * What kind of conversation a CEO chat thread is.
+ *
+ * - `assistant`: the operator's own line to the CEO — a web chatbox thread, an
+ *   app DM, or a designated-supergroup topic. Interactive from the web view;
+ *   identity-allowlist gated on external surfaces.
+ * - `coworker`: the CEO participating in a team channel/group it was invited to
+ *   (a Slack channel, a Telegram group, a Discord channel). Mention-driven,
+ *   platform history as ephemeral context, replies only into the platform
+ *   thread; visible read-only in the web view.
+ */
+export const ChatConversationKind = {
+	Assistant: 'assistant',
+	Coworker: 'coworker',
+} as const;
+export type ChatConversationKind = (typeof ChatConversationKind)[keyof typeof ChatConversationKind];
+
+/** Runtime guard: is a string one of the known chat conversation kinds? */
+export function isChatConversationKind(value: string): value is ChatConversationKind {
+	return (Object.values(ChatConversationKind) as string[]).includes(value);
 }
 
 export const ChatMessageRole = {

@@ -50,14 +50,18 @@ function buildGreetingText(input: CreateProjectIntakeInput): string {
 		'',
 		`Before we open it, I want to confirm we're standing up the right team for this work, clarify anything ambiguous in the brief, and lock in the final shape of the project.`,
 		'',
-		`Here's what you submitted:`,
-		'',
-		`**Name:** ${input.name}`,
 	];
+	// The full brief already lives in this ticket's description — echoing it back
+	// here would just duplicate it, so reference it instead.
 	if (input.baselineTeamTypeName) {
-		lines.push(`**Suggested team type:** ${input.baselineTeamTypeName}`);
+		lines.push(
+			`I've read your brief for **${input.name}** above (it's captured in full in this ticket's description, so I won't repeat it here). You picked **${input.baselineTeamTypeName}** as the baseline team type.`,
+		);
+	} else {
+		lines.push(
+			`I've read your brief for **${input.name}** above — it's captured in full in this ticket's description, so I won't repeat it here.`,
+		);
 	}
-	lines.push('**Description:**', '', input.description);
 	if (input.initialProjectPlan) {
 		lines.push(
 			'',
@@ -66,7 +70,7 @@ function buildGreetingText(input: CreateProjectIntakeInput): string {
 	}
 	lines.push(
 		'',
-		`Tell me anything you'd like me to know — users, constraints, deadlines, integrations — and whether the suggested team type fits. Once we're aligned and you give me the go-ahead, I'll create the project and its team.`,
+		`Tell me anything you'd like me to know — users, constraints, deadlines, integrations — and whether the baseline team fits. Once we're aligned and you give me the go-ahead, I'll create the project and its team.`,
 	);
 	return lines.join('\n');
 }

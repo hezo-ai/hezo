@@ -1,4 +1,4 @@
-import { waitFor, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
 import {
@@ -60,6 +60,7 @@ test('creates a project from Home (Create now) and lands on the Captain planning
 		await findByPlaceholderText(/What is this project/),
 		'Q3 brand push aimed at existing users to drive upsells.',
 	);
+	await user.click(await findByTestId('view-all-teams'));
 	await user.click(await findByTestId('team-type-card-Blank'));
 	await user.click(await findByTestId('create-project-submit'));
 
@@ -194,8 +195,8 @@ test('dialog attaches a project plan document, with a help tooltip, and persists
 	});
 	await user.click(await within(mainEl).findByRole('button', { name: 'New project' }));
 
-	// The field is labelled "Project plan document" with a help-icon tooltip.
-	await findByText('Project plan document (optional)');
+	// The compact attach row carries its label + a help-icon tooltip.
+	await findByText('Attach project plan');
 	await findByTestId('project-plan-help');
 
 	// Attach the plan via the (hidden) file input — the component reads it as text.
@@ -211,6 +212,7 @@ test('dialog attaches a project plan document, with a help tooltip, and persists
 		await findByPlaceholderText(/What is this project/),
 		'A project whose plan is fuller than the description.',
 	);
+	await user.click(await findByTestId('view-all-teams'));
 	await user.click(await findByTestId('team-type-card-Blank'));
 	await user.click(await findByTestId('create-project-submit'));
 
@@ -247,16 +249,19 @@ test('Create button stays disabled until name, description, and a team type are 
 	});
 	await user.click(await within(mainEl).findByRole('button', { name: 'New project' }));
 
-	const createBtn = (await findByTestId('create-project-submit')) as HTMLButtonElement;
-	expect(createBtn.disabled).toBe(true);
+	// The action buttons don't render at all until a team is selected.
+	expect(screen.queryByTestId('create-project-submit')).toBeNull();
 
 	await user.type(await findByPlaceholderText('e.g. Marketing Site'), 'Some Project');
-	expect(createBtn.disabled).toBe(true);
-
 	await user.type(
 		await findByPlaceholderText(/What is this project/),
 		'A description long enough.',
 	);
+	// Name + description alone still don't reveal them — a team must be chosen.
+	expect(screen.queryByTestId('create-project-submit')).toBeNull();
+
+	await user.click(await findByTestId('view-all-teams'));
 	await user.click(await findByTestId('team-type-card-Blank'));
+	const createBtn = (await findByTestId('create-project-submit')) as HTMLButtonElement;
 	await waitFor(() => expect(createBtn.disabled).toBe(false));
 }, 60_000);

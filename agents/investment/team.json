@@ -1,0 +1,106 @@
+{
+	"schema_version": 1,
+	"slug": "investment",
+	"name": "Investment",
+	"description": "Research-grade stock research and tracking — analysts, verifiers, and a monitor that keeps a living document on every stock you care about up to date",
+	"summary": "The Investment template provisions a research team that tracks stocks and produces research-grade analysis (never financial advice). A Captain runs onboarding — the stocks and categories to watch, the investor's objective, risk appetite, and horizon — and suggests goals for the admin to approve. The Market Researcher screens and sources ideas; the Equity Analyst runs deep-dives and maintains a living per-stock document; the Catalyst Monitor sweeps filings and news daily and notifies the admin; the Risk Verifier challenges and verifies every thesis; and the Report Writer produces periodic portfolio reviews.",
+	"changelog": [
+		{
+			"version": 3,
+			"notes": "Goal suggestions are formulated from the admin's stated objectives — outcomes and milestones only; recurring work (daily monitoring, periodic reviews) runs as standing tasks, never goals."
+		},
+		{
+			"version": 2,
+			"notes": "Onboarding routes finite deliverables (e.g. the initial deep-dives) to tasks; goal suggestions are reserved for standing objectives like watchlist monitoring and coverage."
+		},
+		{
+			"version": 1,
+			"notes": "Initial marketplace release."
+		}
+	],
+	"captain": {
+		"team_context": "You report to the CEO — the instance-level executive who oversees every team's Captain and reports to the human admin. Your team tracks stocks and produces research and analysis, never financial advice. You run onboarding (which stocks/categories, the investor's objective, risk appetite, horizon), suggest goals for the admin to approve, and set up per-stock documents plus a standing daily monitoring task. You delegate to the Market Researcher, Equity Analyst, Catalyst Monitor, Risk Verifier, and Report Writer. You do not write analysis yourself."
+	},
+	"roster": [
+		{
+			"slug": "market-researcher",
+			"title": "Market Researcher",
+			"reports_to_slug": "captain",
+			"sort_order": 1,
+			"role_description": "Screens the market, runs sector and thematic research, and sources new stocks and categories to watch.",
+			"summary": "The Market Researcher screens the market and the investor's chosen categories, sources candidate stocks, and runs sector and thematic research for the Equity Analyst. They report to the Captain.",
+			"team_context": "You report to the @captain. You screen the market and the investor's categories, source candidate stocks, and run sector research for the @equity-analyst. Research and analysis only, never buy/sell calls.",
+			"default_effort": "high",
+			"heartbeat_interval_min": 720,
+			"run_timeout_min": 60,
+			"monthly_budget_cents": 3000,
+			"daily_budget_cents": 0,
+			"weekly_budget_cents": 0,
+			"touches_code": false
+		},
+		{
+			"slug": "equity-analyst",
+			"title": "Equity Analyst",
+			"reports_to_slug": "captain",
+			"sort_order": 2,
+			"role_description": "Runs fundamental deep-dives and valuation, and maintains the per-stock analysis document for each watched stock.",
+			"summary": "The Equity Analyst runs fundamental deep-dives and valuation and maintains the per-stock analysis document for each watched stock. They report to the Captain, and their work is checked by the Risk Verifier.",
+			"team_context": "You report to the @captain. You run fundamental deep-dives and valuation and own each stock-<TICKER>.md document, updating it with dated changelogs. Your work is checked by the @risk-verifier before it's presented. Research and analysis only.",
+			"default_effort": "high",
+			"heartbeat_interval_min": 720,
+			"run_timeout_min": 60,
+			"monthly_budget_cents": 4000,
+			"daily_budget_cents": 0,
+			"weekly_budget_cents": 0,
+			"touches_code": false
+		},
+		{
+			"slug": "catalyst-monitor",
+			"title": "Catalyst Monitor",
+			"reports_to_slug": "captain",
+			"sort_order": 3,
+			"role_description": "Monitors SEC/EDGAR filings, press releases, news, and industry trends daily, updates the stock documents, and notifies the admin.",
+			"summary": "The Catalyst Monitor sweeps SEC/EDGAR filings, news, and industry trends daily, keeps each stock document current, and notifies the admin of material events. They report to the Captain.",
+			"team_context": "You report to the @captain. You run a standing daily watch task: sweep SEC/EDGAR filings, news, and industry trends for each watched stock, update the stock documents with dated changelogs, and @admin material events. Keep the watch task open. Research and analysis only.",
+			"default_effort": "medium",
+			"heartbeat_interval_min": 1440,
+			"run_timeout_min": 60,
+			"monthly_budget_cents": 3000,
+			"daily_budget_cents": 0,
+			"weekly_budget_cents": 0,
+			"touches_code": false
+		},
+		{
+			"slug": "risk-verifier",
+			"title": "Risk Verifier",
+			"reports_to_slug": "captain",
+			"sort_order": 4,
+			"role_description": "Verification gate for analysis — challenges every thesis, verifies claims and citations, and tracks portfolio-level risk before analysis is presented.",
+			"summary": "The Risk Verifier is the verification gate for analysis — challenging theses, verifying claims and citations, and tracking portfolio risk before analysis is presented. They report to the Captain.",
+			"team_context": "You report to the @captain. You are the verification gate for analysis: challenge every thesis, verify claims and citations against primary sources, and track portfolio risk before analysis is presented. Research and analysis only.",
+			"default_effort": "high",
+			"heartbeat_interval_min": 720,
+			"run_timeout_min": 60,
+			"monthly_budget_cents": 3000,
+			"daily_budget_cents": 0,
+			"weekly_budget_cents": 0,
+			"touches_code": false
+		},
+		{
+			"slug": "report-writer",
+			"title": "Report Writer",
+			"reports_to_slug": "captain",
+			"sort_order": 5,
+			"role_description": "Produces the periodic portfolio and watchlist review reports and maintains the portfolio document.",
+			"summary": "The Report Writer produces the periodic portfolio and watchlist review and maintains the portfolio overview document. They report to the Captain.",
+			"team_context": "You report to the @captain. You write the periodic portfolio and watchlist review and maintain portfolio.md, delivering reports to the admin via @admin comments. Research and analysis only.",
+			"default_effort": "medium",
+			"heartbeat_interval_min": 720,
+			"run_timeout_min": 60,
+			"monthly_budget_cents": 2000,
+			"daily_budget_cents": 0,
+			"weekly_budget_cents": 0,
+			"touches_code": false
+		}
+	]
+}

@@ -73,7 +73,7 @@ beforeAll(async () => {
 	masterKeyManager = ctx.masterKeyManager;
 
 	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
-	const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
+	const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'App Team').id;
 
 	const teamRes = await createTestTeam(db, { name: 'Workflow Test Co', template_id: typeId });
 	const team = (await teamRes.json()).data;
@@ -2436,7 +2436,7 @@ describe('JobManager workflow methods', () => {
 			// it is genuinely distinct from project A. We never dispatch on it — we just
 			// need a real, separate project id whose capacity we can check independently.
 			const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
-			const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
+			const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'App Team').id;
 			const teamBRes = await createTestTeam(db, {
 				name: `Parallel Team ${Date.now()}`,
 				template_id: typeId,

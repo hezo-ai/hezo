@@ -149,6 +149,23 @@ export async function resolveTaskId(db: Db, teamId: string, raw: string): Promis
 }
 
 /**
+ * Resolve a task-assignee reference to a member id. A well-formed UUID passes
+ * through untouched — it may name any member (agent or human), preserving the
+ * historical "assignee_id is a raw member UUID" behaviour. A bare slug resolves
+ * to the matching agent member in the team (with the HQ fallback `resolveAgentId`
+ * applies), so agents can reassign by the teammate slug they actually hold rather
+ * than a member UUID they never see.
+ */
+export async function resolveAssigneeId(
+	db: Db,
+	teamId: string,
+	raw: string,
+): Promise<string | null> {
+	if (UUID_RE.test(raw)) return raw;
+	return resolveAgentId(db, teamId, raw);
+}
+
+/**
  * Resolve an agent reference (UUID or slug) within a project team. HQ agents
  * (CEO/Coach) are virtual members of every project team, so a reference that
  * misses the project team falls back to the HQ team — the project's own member

@@ -19,9 +19,18 @@
 # shown once, so it cannot be pre-seeded. After boot, open the printed URL and
 # finish the short setup (create master key, set admin password, connect a model).
 #
-# Optional environment variables:
+# Optional environment variables (set in the shell, or seeded into /etc/hezo/deploy.env
+# by cloud-init before this script runs — see deploy/cloud-init/hezo.cloud-config.yaml):
 #   HEZO_DOMAIN_OVERRIDE   use this domain instead of <public-ip>.sslip.io
 #                          (point an A record at the host first; Caddy gets a cert for it)
+#   HEZO_DATABASE_URL      managed/external Postgres 14+ connection string
+#                          (postgres://user:pass@host:5432/hezo?sslmode=verify-full).
+#                          Persisted into /etc/hezo/hezo.env on first provision; omit to
+#                          use the embedded database on the VM's disk (the default).
+#   HEZO_ASSET_STORAGE_URL S3-compatible object storage for asset files
+#                          (s3://KEY:SECRET@endpoint/bucket[/prefix]). Persisted into
+#                          /etc/hezo/hezo.env on first provision; omit for local disk.
+#   HEZO_DATABASE_POOL_SIZE  connection-pool size for the external database (2-100).
 #   HEZO_RELEASE_TAG       pin a release tag (default: latest)
 #   HEZO_IMAGE_BUILD       set to 1 when baking a machine image (e.g. the DigitalOcean
 #                          Marketplace Packer build). Installs and enables everything but
@@ -40,6 +49,18 @@ DATA_DIR="/var/lib/hezo"
 ENV_FILE="/etc/hezo/hezo.env"
 DEPLOY_ENV="/etc/hezo/deploy.env"
 RELEASE_TAG="${HEZO_RELEASE_TAG:-latest}"
+
+# Cloud-init can seed optional settings (managed database / asset storage, domain
+# override) into deploy.env before this script runs — pick them up. Explicit shell
+# environment still wins over the file.
+if [[ -f "${DEPLOY_ENV}" ]]; then
+	while IFS='=' read -r key value; do
+		[[ "${key}" =~ ^HEZO_[A-Z_]+$ ]] || continue
+		if [[ -z "${!key:-}" ]]; then
+			export "${key}=${value}"
+		fi
+	done <"${DEPLOY_ENV}"
+fi
 
 log() { echo "[hezo-provision] $*"; }
 
@@ -89,6 +110,15 @@ HEZO_DATA_DIR=${DATA_DIR}
 # after each restart by design; unlock it from the browser gate. A copy of the key on disk
 # next to the encrypted data would let anyone who reads this box decrypt your vault.
 EOF
+	# Managed data hosting (optional): persist the database / asset-storage settings
+	# provided at provision time so the systemd unit picks them up. To wire them into
+	# an already-provisioned host, edit this file directly and restart hezo — see
+	# docs/deployment/one-click.md § Using managed data hosting.
+	for key in HEZO_DATABASE_URL HEZO_ASSET_STORAGE_URL HEZO_DATABASE_POOL_SIZE; do
+		if [[ -n "${!key:-}" ]]; then
+			echo "${key}=${!key}" >>"${ENV_FILE}"
+		fi
+	done
 fi
 
 # Persist the optional domain override so the first-boot unit can read it.

@@ -51,7 +51,7 @@ beforeAll(async () => {
 
 	const typesRes = await app.request('/api/team-templates', { headers: authHeader(adminToken) });
 	const typeId = (await typesRes.json()).data.find(
-		(t: { name: string; id: string }) => t.name === 'Startup',
+		(t: { name: string; id: string }) => t.name === 'App Team',
 	).id;
 
 	const teamRes = await createTestTeam(db, { name: 'Branch Co', template_id: typeId });

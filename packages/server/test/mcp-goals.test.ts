@@ -31,7 +31,7 @@ beforeAll(async () => {
 
 	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 	const typeId = (await typesRes.json()).data.find(
-		(t: { name: string }) => t.name === 'Startup',
+		(t: { name: string }) => t.name === 'App Team',
 	).id;
 	const teamRes = await createTestTeam(db, { name: 'MCP Goals Co', template_id: typeId });
 	teamId = (await teamRes.json()).data.id;
@@ -231,5 +231,108 @@ describe('MCP project progress + goal run activity', () => {
 		expect(
 			entry?.commented_tasks.find((t) => t.identifier === task.identifier)?.comment_count,
 		).toBe(1);
+	});
+});
+
+describe('MCP suggest_goal', () => {
+	it('registers suggest_goal', async () => {
+		const res = await app.request('/mcp', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', id: 1 }),
+		});
+		const tools = (await res.json()).result.tools as { name: string; description: string }[];
+		const suggestGoal = tools.find((t) => t.name === 'suggest_goal');
+		expect(suggestGoal).toBeDefined();
+		// The description must carry the doctrine: goals are admin-elicited outcomes or
+		// milestones; activity-shaped recurring work ("do X every day/week") is a standing
+		// task, not a goal. Without it, agents file cron jobs and one-off deliverables as
+		// goals that then get cadence-checked forever.
+		expect(suggestGoal?.description).toContain('OUTCOME or MILESTONE');
+		expect(suggestGoal?.description).toContain('it is NOT a goal');
+		expect(suggestGoal?.description).toContain('standing task');
+		expect(suggestGoal?.description).toContain(
+			'ask the admin what they want the project to achieve',
+		);
+	});
+
+	it('is rejected for a non-agent caller', async () => {
+		const result = (await callTool(token, 'suggest_goal', {
+			project: projectSlug,
+			title: 'Should not stick',
+		})) as { error?: string };
+		expect(result.error).toMatch(/only callable by agents/);
+	});
+
+	it('is rejected for a non-Captain agent run', async () => {
+		const architect = await db.query<{ id: string }>(
+			`SELECT ma.id FROM member_agents ma JOIN members m ON m.id = ma.id
+			 WHERE m.team_id = $1 AND ma.slug = 'architect' LIMIT 1`,
+			[teamId],
+		);
+		const agent = await mintAgentToken(db, masterKeyManager, architect.rows[0].id, teamId, null, {
+			projectId,
+		});
+		const result = (await callTool(agent.token, 'suggest_goal', {
+			project: projectSlug,
+			title: 'Architect should not suggest goals',
+		})) as { error?: string };
+		expect(result.error).toMatch(/Only the Captain or CEO/);
+	});
+
+	it('files a pending suggestion (not a goal) and materialises it on admin approval', async () => {
+		const agent = await mintAgentToken(db, masterKeyManager, captainAgentId, teamId, null, {
+			projectId,
+		});
+		const suggested = (await callTool(agent.token, 'suggest_goal', {
+			project: projectSlug,
+			title: 'Reach 5k Instagram followers',
+			measurement: '5000 followers on the connected Instagram account',
+			check_frequency: 'weekly',
+			target_date: '2026-12-31',
+		})) as { approval_id: string; status: string };
+		expect(suggested.status).toBe('pending');
+
+		// A suggestion is NOT a goal yet — list_goals doesn't include it.
+		const before = (await callTool(token, 'list_goals', { project: projectSlug })) as Array<{
+			title: string;
+		}>;
+		expect(before.map((g) => g.title)).not.toContain('Reach 5k Instagram followers');
+
+		// It shows on the project's suggestions endpoint.
+		const suggestionsRes = await app.request(`/api/projects/${projectSlug}/goals/suggestions`, {
+			headers: authHeader(token),
+		});
+		const suggestions = (await suggestionsRes.json()).data as Array<{
+			approval_id: string;
+			title: string;
+		}>;
+		expect(suggestions.map((s) => s.approval_id)).toContain(suggested.approval_id);
+
+		// The admin approves the suggestion → the real goal is created.
+		const resolveRes = await app.request(`/api/approvals/${suggested.approval_id}/resolve`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'content-type': 'application/json' },
+			body: JSON.stringify({ status: 'approved' }),
+		});
+		expect(resolveRes.status).toBe(200);
+
+		const after = (await callTool(token, 'list_goals', { project: projectSlug })) as Array<{
+			title: string;
+			check_frequency: string;
+		}>;
+		const goal = after.find((g) => g.title === 'Reach 5k Instagram followers');
+		expect(goal).toBeTruthy();
+		expect(goal?.check_frequency).toBe('weekly');
+
+		// And it's no longer pending on the suggestions endpoint.
+		const afterSuggestionsRes = await app.request(
+			`/api/projects/${projectSlug}/goals/suggestions`,
+			{ headers: authHeader(token) },
+		);
+		const afterSuggestions = (await afterSuggestionsRes.json()).data as Array<{
+			approval_id: string;
+		}>;
+		expect(afterSuggestions.map((s) => s.approval_id)).not.toContain(suggested.approval_id);
 	});
 });

@@ -2,6 +2,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
+import { appendRunLogChunks } from '../src/db/run-log-chunks';
 import type { Env } from '../src/lib/types';
 import {
 	type AgentInfo,
@@ -105,13 +106,13 @@ describe('heartbeat-runs API', () => {
 			 SET status = 'succeeded'::heartbeat_run_status,
 			     finished_at = now(),
 			     exit_code = 0,
-			     log_text = 'test output',
 			     invocation_command = '$ claude --mcp-config {...} -p task',
 			     working_dir = '/worktrees/RT-1/main',
 			     started_at = now()
 			 WHERE id = $1`,
 			[runId],
 		);
+		await appendRunLogChunks(db, runId, 'test output');
 
 		const res = await app.request(`/api/projects/${projectSlug}/agents/${agentId}/heartbeat-runs`, {
 			headers: authHeader(token),

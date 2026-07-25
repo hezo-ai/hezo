@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
+import { trackBackground } from '../lib/background';
 import type { ContainerRunUser } from './container-user';
 import type { DockerClient } from './docker';
 import { type BridgeRunnerArgs, buildBridgeRunnerArgv } from './ssh-agent';
@@ -13,6 +15,15 @@ import { type BridgeRunnerArgs, buildBridgeRunnerArgv } from './ssh-agent';
  */
 export const GIT_SSH_COMMAND_VALUE =
 	'ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3';
+
+/**
+ * Mint a scope id for container git ops that run outside an agent run or a
+ * provision bridge (whose ids are reused as scope ids). Shell-safe by
+ * construction (`[0-9a-f]` hex under a fixed prefix).
+ */
+export function mintGitOpScopeId(): string {
+	return `gitop-${randomBytes(8).toString('hex')}`;
+}
 
 /** Merge a run's abort signal with a per-op timeout signal (either may be absent). */
 function combineAbortSignals(...signals: Array<AbortSignal | undefined>): AbortSignal | undefined {
@@ -84,6 +95,16 @@ export interface ContainerGitExecutorOptions {
 	bridge?: BridgeRunnerArgs | null;
 	/** The container user every git exec runs as (detected, not assumed `node`). */
 	runUser: ContainerRunUser;
+	/**
+	 * Scope id stamped into every exec's env as `HEZO_HEARTBEAT_RUN_ID` so an
+	 * abandoned exec's whole process tree (git, ssh, the bridge wrapper and its
+	 * socat children) stays killable: the heartbeat run id during run prep, a
+	 * `provision-<hex>`/`gitop-<hex>` tag elsewhere. On a per-op timeout or an
+	 * aborted run signal the executor fires a best-effort marker kill — Docker
+	 * can't signal an exec'd process, so tearing down the attach stream alone
+	 * would strand the tree in the container.
+	 */
+	scopeId: string;
 	/** The run's abort signal, so a cancel / run-timeout interrupts an in-flight exec. */
 	signal?: AbortSignal;
 }
@@ -102,6 +123,7 @@ export class ContainerGitExecutor implements GitExecutor {
 	private readonly bridge: BridgeRunnerArgs | null;
 	private readonly baseEnv: string[];
 	private readonly runUser: ContainerRunUser;
+	private readonly scopeId: string;
 	private readonly runSignal?: AbortSignal;
 
 	constructor(
@@ -111,10 +133,14 @@ export class ContainerGitExecutor implements GitExecutor {
 	) {
 		this.bridge = opts.bridge ?? null;
 		this.runUser = opts.runUser;
+		this.scopeId = opts.scopeId;
 		this.runSignal = opts.signal;
 		// The bridge wrapper appends/redirects HEZO_PROMPT_FILE into the command it
 		// runs; it must never leak into a git invocation. Strip it defensively.
-		this.baseEnv = opts.baseEnv.filter((e) => !e.startsWith('HEZO_PROMPT_FILE='));
+		this.baseEnv = [
+			...opts.baseEnv.filter((e) => !e.startsWith('HEZO_PROMPT_FILE=')),
+			`HEZO_HEARTBEAT_RUN_ID=${opts.scopeId}`,
+		];
 	}
 
 	/**
@@ -131,6 +157,7 @@ export class ContainerGitExecutor implements GitExecutor {
 		containerId: string,
 		bridge: BridgeRunnerArgs | null,
 		runUser: ContainerRunUser,
+		scopeId: string,
 		extraEnv: string[] = [],
 		signal?: AbortSignal,
 	): ContainerGitExecutor {
@@ -140,14 +167,30 @@ export class ContainerGitExecutor implements GitExecutor {
 			...extraEnv,
 		];
 		if (bridge) baseEnv.push(`SSH_AUTH_SOCK=${bridge.socketPath}`);
-		return new ContainerGitExecutor(docker, containerId, { baseEnv, bridge, runUser, signal });
+		return new ContainerGitExecutor(docker, containerId, {
+			baseEnv,
+			bridge,
+			runUser,
+			scopeId,
+			signal,
+		});
 	}
 
 	async exec(args: string[], opts: GitExecOpts): Promise<GitExecResult> {
+		const wrapped = Boolean(opts.needsSsh && this.bridge);
 		const cmd =
 			opts.needsSsh && this.bridge
 				? [...buildBridgeRunnerArgv(this.bridge), 'git', ...args]
 				: ['git', ...args];
+		const env = [...this.baseEnv];
+		// Self-deadline for bridge-wrapped ops: newer container images run the
+		// wrapped command under `timeout` so the tree dies on its own even if this
+		// server process is gone before the op finishes (crash, hard kill). Old
+		// images simply ignore the env. Slack over the host-side per-op timeout so
+		// the host abort (and its marker kill) always fires first.
+		if (wrapped && opts.timeout) {
+			env.push(`HEZO_EXEC_DEADLINE_SECS=${Math.ceil(opts.timeout / 1000) + 15}`);
+		}
 		// The per-op deadline and the run's own abort (cancel / run-timeout) both
 		// interrupt an in-flight exec; whichever fires tears down the docker stream.
 		const timeoutSignal = opts.timeout ? AbortSignal.timeout(opts.timeout) : undefined;
@@ -155,7 +198,7 @@ export class ContainerGitExecutor implements GitExecutor {
 		try {
 			const execId = await this.docker.execCreate(this.containerId, {
 				Cmd: cmd,
-				Env: this.baseEnv,
+				Env: env,
 				WorkingDir: opts.cwd,
 				User: this.runUser.name,
 				AttachStdout: true,
@@ -166,6 +209,7 @@ export class ContainerGitExecutor implements GitExecutor {
 			return { exitCode: info.ExitCode, stdout, stderr };
 		} catch (e) {
 			if (timeoutSignal?.aborted) {
+				this.killAbandonedExec();
 				return {
 					exitCode: 1,
 					stdout: '',
@@ -173,9 +217,22 @@ export class ContainerGitExecutor implements GitExecutor {
 				};
 			}
 			if (this.runSignal?.aborted) {
+				this.killAbandonedExec();
 				return { exitCode: 1, stdout: '', stderr: 'run aborted' };
 			}
 			return { exitCode: 1, stdout: '', stderr: e instanceof Error ? e.message : String(e) };
 		}
+	}
+
+	/**
+	 * Aborting an exec only tears down its attach stream — Docker leaves the
+	 * process running in the container, so a timed-out/aborted git op would
+	 * strand its git/ssh/bridge tree there indefinitely. Reap it by the scope
+	 * marker every exec of this executor carries. Fire-and-forget and
+	 * best-effort: a generic transport error skips this (the container is likely
+	 * gone), and the startup sweep is the backstop either way.
+	 */
+	private killAbandonedExec(): void {
+		trackBackground(this.docker.killRunProcesses(this.containerId, this.scopeId).catch(() => {}));
 	}
 }

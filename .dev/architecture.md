@@ -229,41 +229,97 @@ links files sent through the chatbox to their message (stored in the HQ asset li
 under `uploads/chat/`), and `chat_memories` holds each chat-enabled agent's
 automatically-maintained long-term memory (§ 4).
 
-**Multi-thread conversations, mirrored across channels.** The CEO chat is
-**multi-threaded**, and a thread is **one logical conversation mirrored across every
-real-time channel**. A conversation has a **binding per channel** in
-`chat_conversation_bindings` (`(channel, external_thread_id)`, unique per open external
-thread; `chat_conversations.channel`/`external_thread_id` are origin provenance only).
-Inbound routing resolves by binding, so the same thread is found whether a message arrives
-on web or Telegram. **Parity is symmetric and automatic:** creating a thread on any surface
-auto-creates it on every mirror-capable channel (`setupBindings` → `registry.mirrorableChannels()`
-→ each adapter's `createThread` — e.g. a Telegram forum topic); the operator's message and
-the CEO's reply **fan out** to every binding with **origin-exclusion** so no channel
-re-echoes what it just delivered (`mirrorMessage`/`mirrorUserMessage`; web is the WS
-broadcast); and closing on any surface closes every binding (`closeConversation`, plus the
-platform→app direction via each adapter's `parseClose` → `closeConversationByExternalThread`).
-A channel that can't host threads (a DM) degrades to a single thread without breaking parity
-for the rest. The warm container
-(`chat_sessions`) stays a **single shared lease** per CEO member — a thread is only
-message-grouping + rolling window + memory scope, and each turn is a stateless one-shot
-`docker exec` reading a per-turn prompt file, so N threads run as N independent execs into
-the one container. Long-term memory (`chat_memories`) stays **per-agent** (shared across a
-member's threads); compaction serialises at the member level so concurrent threads never
-clobber the shared memory row. External channels (Telegram now, Discord later —
-`.dev/discord-chat-adapter.md`) are built on a **channel-adapter registry**
-(`services/chat-channels/`): a `ChatChannelAdapter` owns everything platform-specific
-(inbound parse, outbound deliver, thread create/close, transport lifecycle), and the
-manager/routes resolve a channel only through the registry — a new app is one adapter file.
-Inbound arrives at a generic public webhook `POST /webhooks/chat/:channel/:secret` (mounted
-before bearer auth; per-channel shared-secret, constant-time compared) → `parseInbound` →
-`ingestInboundEvent`, which enforces the **identity allowlist** (`chat_identity_links` maps
-`(channel, external_user_id)` → a Hezo user; unlinked senders are ignored/prompted to link)
-before routing the message to `ChatSessionManager.sendTurn`. Per-channel bot config lives in
+**Multi-thread conversations, one home surface per thread.** The CEO chat is
+**multi-threaded**, and every thread has exactly **one home surface**: a web thread, a
+Telegram DM, a topic in the operator's designated Topics supergroup, a Slack DM, a Slack
+channel, a Discord DM, a Discord channel — each is its own `chat_conversations` row.
+There is **no mirroring**: nothing started on one surface ever creates or posts into a
+thread on another. The conversation row's `channel` + `external_thread_id` **is the
+inbound routing key** — `findConversationByOrigin(channel, externalThreadId)` resolves an
+open conversation or a new one is created (so closing a thread from the web and DMing
+again starts a fresh thread; there is no bindings table). **The web view is the hub**:
+`listConversations` returns **all** kinds with their `channel` + `kind`, so the chatbox
+lists every thread from every surface, badged by origin — assistant threads fully
+interactive, coworker threads read-only (`POST /api/chat/messages` 409s on them).
+Delivery is **reply-where-asked**: `finalize` delivers a completed reply to the **turn's
+origin surface** (`ConversationContext.channel`, captured per turn) — a web-composed turn
+into a Telegram-DM thread answers on web only, a Telegram message answers in Telegram —
+via the manager's `ChannelHooks.deliver` → the registry adapter. Close parity is scoped
+to the origin surface only: `closeConversation` calls the adapter's optional
+`closeThread` for its own external thread (e.g. archiving the designated supergroup's
+topic), and the platform→app direction runs via `parseClose` →
+`closeConversationByExternalThread`. The warm container (`chat_sessions`) stays a
+**single shared lease** per CEO member — a thread is only message-grouping + rolling
+window + memory scope, and each turn is a stateless one-shot `docker exec` reading a
+per-turn prompt file, so N threads run as N independent execs into the one container.
+Long-term memory (`chat_memories`) stays **per-agent** (shared across a member's
+assistant threads); compaction serialises at the member level so concurrent threads never
+clobber the shared memory row. External channels (Telegram, Slack, Discord) are built on
+a **channel-adapter registry** (`services/chat-channels/`): a `ChatChannelAdapter` owns
+everything platform-specific (inbound parse, outbound deliver, optional thread close,
+transport lifecycle, group-mode capabilities), and the manager/routes resolve a channel
+only through the registry — a new app is one adapter file. Inbound arrives two ways: a
+**webhook** channel (Telegram) at the generic public route `POST
+/webhooks/chat/:channel/:secret` (mounted before bearer auth; per-channel shared-secret,
+constant-time compared), which dispatches `parseGroupMention` → `parseInbound` →
+`parseClose` → `observeMessage` in that order; a **socket-transport** adapter (Slack
+Socket Mode, the Discord gateway) has no webhook — its transport pushes parsed events
+through the `InboundEventSink` wired at startup (`buildInboundEventSink` → the same
+ingest functions the webhook route calls). DMs flow through `ingestInboundEvent`, which
+enforces the **identity allowlist** (`chat_identity_links` maps `(channel,
+external_user_id)` → a Hezo user; unlinked senders are ignored/prompted to link) before
+routing to `ChatSessionManager.sendTurn`. Per-channel bot config lives in
 `chat_channel_configs` (fully generic — the bot token is a `secrets`-vault reference, all
-channel-specific settings in `metadata` jsonb). **The bot token is decrypted in-process by
-trusted server code and outbound bot API calls go direct** (`api.telegram.org`, …), NOT
-through the agent egress proxy — the `__HEZO_SECRET__`/proxy mechanism is for agent *runs*,
-whose threat model differs from the server authenticating its own calls.
+channel-specific settings in `metadata` jsonb; a channel needing a **second** secret
+stores its vault name in metadata, e.g. Slack's `app_token_secret` → `SLACK_APP_TOKEN`).
+**Bot tokens are decrypted in-process by trusted server code and outbound bot API calls
+go direct** (`api.telegram.org`, `slack.com`, `discord.com`, …), NOT through the agent
+egress proxy — the `__HEZO_SECRET__`/proxy mechanism is for agent *runs*, whose threat
+model differs from the server authenticating its own calls.
+
+**Group/coworker mode (`kind = 'coworker'`).** Every chat app can support two integration
+modes, discriminated by `chat_conversations.kind`: **assistant** (DM mode — allowlist-gated,
+fully interactive from the web) and **coworker** — the CEO invited into an external group
+channel (a Slack channel, a Telegram group, a Discord channel) as a teammate. A
+group-capable adapter implements the optional capability trio `parseGroupMention` /
+`supportsGroupMode` / `fetchThreadContext` (history access is **mandatory** for group mode
+— a coworker without channel context is pointless), and mentions flow through a **second
+ingest path**, `ingestGroupMentionEvent` (`chat-channels/ingest-group.ts`) — never through
+`ingestInboundEvent`. Coworker semantics, all keyed off `kind` in `ChatSessionManager`:
+**channel invite is the authorization** (no identity-link gate; a link only enriches
+attribution); the thread is **read-only in the web view** (listed under "Team channels",
+composer disabled, REST 409 — the write surface is the platform itself, where the
+ephemeral channel context lives); concurrent turns **queue instead of interrupting** (two
+mentions = two answers; an aborted partial would post nothing to the platform); prompts
+swap in a group-chat guide, label transcript lines with the platform sender
+(`chat_messages.author_label`), omit the operator's long-term memory, and carry the
+adapter-fetched platform history plus any reply-quote as an **ephemeral `injectedContext`
+prompt section** (fetched history first, inline quote last) that is never persisted as a
+message; and coworker threads **never compact or auto-title** (a bounded replay window
+caps the prompt instead — compaction would fold group chatter into the operator's shared
+memory). Per-adapter history strategy and transport: **Slack** (`chat-channels/slack.ts` +
+`slack-socket.ts`) fetches `conversations.history`/`replies` on demand and runs both modes
+over **Socket Mode** — a zero-dependency WHATWG-WebSocket client (`apps.connections.open`
+mints single-use tickets; envelopes are acked before dispatch; Slack-initiated
+`disconnect` refreshes reconnect with backoff; a rejected app token stops the client);
+Slack **load-balances events across an app's open Socket Mode connections**, so no
+cross-instance ownership lease is needed. **Telegram** (`chat-channels/telegram.ts`) has
+**no history API**, so context comes from **passive accumulation**: the webhook route
+hands unclaimed group messages to `observeMessage` → `chat_observed_messages`, a bounded
+rolling buffer (~200/chat, deduped on message id, pruned per chat, topic-scoped reads),
+and `fetchThreadContext` reads it back — requires BotFather privacy mode off; mention =
+`@botusername` or a reply to the bot; `parseInbound` accepts only private DMs and the
+designated Topics supergroup, so team-group chatter can never leak into the DM path.
+**Discord** (`chat-channels/discord.ts` + `discord-gateway.ts`) fetches `GET
+/channels/{id}/messages` on demand and connects over the **Discord gateway** — a
+zero-dependency client speaking HELLO/IDENTIFY/RESUME with sequence-tracked heartbeats
+and the `MESSAGE_CONTENT` intent. The gateway is **true fanout** (every open connection
+receives every event, unlike Slack's load-balancing), so the adapter holds a
+**single-instance ownership lease** (`metadata.gateway_owner` `{id, ts}`, 90s TTL,
+renewed from the heartbeat timer, compare-and-swap on the config row) and stands the
+client down if another holder takes it — the guard against double-answering when two
+server instances share a database. Discord threads carry their own `channel_id`, so they
+become separate conversations with no extra handling.
 
 **Costs & budgets.** `cost_entries` is the immutable per-run spend ledger, attributed to
 the AI provider config that produced it — **never** team-scoped. `model_pricing` holds
@@ -703,6 +759,22 @@ override. `marketplace/index.json` is the catalog listing.
   `update_agent_system_prompt` where roles carry local customizations) instead of adding
   duplicates. Because instances always fetch the live catalog, a new team `version` reaches them
   automatically.
+- **Shipped teams.** Three: **App Team** (`software-development`, the full app-building roster;
+  display name was "Startup"), **Influencer Marketing** (`influencer` — brand-strategist,
+  trend-researcher, content-writer, media-producer, content-editor, distribution-manager), and
+  **Investment** (`investment` — market-researcher, equity-analyst, catalyst-monitor,
+  risk-verifier, report-writer). The Influencer/Investment Captains run a structured onboarding
+  Q&A on their planning task and **suggest goals** (below); the Influencer team gates outbound
+  content on admin approval (prompt-level, toggled via team preferences), and the Investment
+  team maintains a living per-stock document (with revision history) monitored ~daily.
+
+**Goal suggestions.** The Captain/CEO can propose goals the admin approves, reusing the
+approvals machinery. `suggest_goal` (MCP, Captain/CEO-only) files a pending `goal_suggestion`
+approval (`approval_type` enum extended by `038_goal_suggestion_approval.sql`) plus a
+`goal_suggestion` action comment on the task; approving it runs `goalSuggestionHandler`
+(`approval-handlers/goal-suggestion.ts`), which creates the real `goals` row via `createGoal`
+and flips the comment. Pending suggestions surface on the task thread and the project Goals page
+(`GET /projects/:projectId/goals/suggestions`), each with inline Approve/Deny.
 
 Key source: `services/teams.ts` (`seedDefaultTeam`), `team-template-apply.ts`
 (`ensureInstanceCeo`/`ensureInstanceCoach`), `services/internal-intake.ts` (coordination
@@ -761,9 +833,16 @@ stay on fetch. Before that exec it
 the cached `container_status`: a container pruned externally or lost to a Docker restart is
 reconciled (status flipped, `container_id` nulled, project update broadcast) and the run
 fails fast with a clear message rather than tripping over a raw 404 mid-exec. It captures
-interleaved stdout/stderr into `log_text` (recorded in full, `[stderr]`-prefixed, with a
-10 MB runaway-output backstop) and
-broadcasts the same stream live over the `project-runs:<projectId>` WebSocket room.
+interleaved stdout/stderr (recorded in full, `[stderr]`-prefixed, with a 10 MB
+runaway-output backstop) into **append-only log chunks**: the debounced flusher
+(`services/log-stream-broker.ts`) persists only the text appended since the last successful
+flush as an INSERT into `heartbeat_run_log_chunks` (`db/run-log-chunks.ts`), serialized
+per stream so overlapping flushes can never duplicate a delta, with the running token/cost
+snapshot updated on `heartbeat_runs` in the same transaction. Readers concatenate the
+chunks (`string_agg` ordered by `seq`) back into the API's `log_text` field. INSERT-only
+writes replaced the old whole-blob `UPDATE heartbeat_runs.log_text` pattern, whose per-flush
+dead TOAST copies were the dominant source of database bloat. The same stream broadcasts
+live over the `project-runs:<projectId>` WebSocket room from the in-memory buffer.
 
 **System prompt composition.** The agent's stored template (its `agent_system_prompt`
 document, loaded from its **home** team) is resolved per run by
@@ -801,8 +880,9 @@ the project Custom Prompt (MCP or REST) — files a team-coherence review via
 knows what changed and why the review was triggered — regardless of who made the change (agent or
 admin).
 
-**Run logs to MCP.** A run's `log_text` is readable through the read-only `list_task_runs` (per-task
-run metadata) and `get_run_log` (one run's log tail, capped by `excerpt_chars`) MCP tools, team-scoped
+**Run logs to MCP.** A run's log (concatenated from its chunks, still a `log_text` string on the
+wire) is readable through the read-only `list_task_runs` (per-task run metadata) and `get_run_log`
+(one run's log tail, capped by `excerpt_chars`) MCP tools, team-scoped
 like any other resource. The Coach's post-task review prompt (`buildCoachReviewPrompt`) injects a
 compact **Agent Runs** summary alongside the comment history and directs the Coach to pull a specific
 run's log when the comments don't explain a struggle.
@@ -906,6 +986,18 @@ on `mkdirSync`'s `mode` — that mode is masked by the **process umask**, so a h
 `0o027`/`0o077` under systemd `UMask=`) would silently strip the other-execute bit and the agent
 CLI would die with `EACCES` opening its `settings.json` (again only on native-Linux production).
 
+**Removing the data directory (macOS deny-delete ACL).** The `.previews` bind mount targets
+`/workspace/.previews` — a path *inside* the `/workspace` bind — so Docker Desktop on macOS has
+to materialize a mountpoint directory (`<project>/workspace/.previews`) inside the shared
+workspace folder and tags it with a `deny delete` ACL that a plain `rm -rf ~/.hezo` cannot
+override (it fails with a bare "Permission denied", leaving the whole tree undeletable). Hezo's
+own teardown paths already strip these — `forceRmRecursive` (`services/workspace.ts`) retries
+after `chmod -RN` on darwin — but a user deleting the data directory by hand has no such relief,
+so the **`hezo uninstall`** subcommand (`runUninstall`, `cli.ts`) is the supported removal path:
+it refuses while a live server holds the instance lock, requires an explicit `--yes`, best-effort
+stops+removes every `hezo.team`-labelled container (their ids live in the DB it is about to
+delete), then `forceRmRecursive`s the data dir and the per-run socket dir.
+
 Repo sync (`ensureProjectRepos`, `services/repo-sync.ts`) does **not trust a bare `.git`
 marker** in a repo's reserved workspace directory: an agent may have run `git init` there
 before the repo was connected, leaving a repo with no origin (every fetch then silently
@@ -995,6 +1087,56 @@ root, so it can signal the deprivileged run-user) that `kill -9`s every process 
 carries the run's `HEZO_HEARTBEAT_RUN_ID` marker (children inherit it). Best-effort and bounded by
 its own short timeout, so a kill failure never masks the run result or blocks finalization. This is
 what makes a terminate immediate — in-progress work is lost, as the confirmation dialog promises.
+
+**Process-tree lifecycle & dangling-process cleanup.** The abort-kill above is one instance of a
+system-wide invariant: **every abandonable exec carries a scope marker in its env, and every
+abandonment path reaps by that marker**, because a docker-exec'd process the server merely stops
+attending to would otherwise run in the (deliberately warm-surviving) project container forever.
+`HEZO_HEARTBEAT_RUN_ID=<scopeId>` is the universal marker — the heartbeat run id on the agent CLI
+exec and run-time git prep (`ContainerGitExecutor.forPrep` takes a required `scopeId`), the
+`provision-<hex>` id `withProvisionBridge` mints for provisioning/repo-link/reset git ops, a
+`gitop-<hex>` tag for bridge-less route git ops, an `mcp-install-<hex>` tag on the local-MCP
+`npm install` exec, and the chat `sessionId` on CEO chat execs. Kills are generalized as
+`DockerClient.killProcessesByEnvMarker` (marker-value validated against a shell-safe character
+class before interpolation; `killRunProcesses` is its run-id specialization). The reap points:
+
+- **Per-op timeout / run abort** (`ContainerGitExecutor.exec`): on the timeout or run-signal
+  branch the executor fires a tracked, best-effort marker kill for its scope — a generic docker
+  transport error skips it (container likely gone). The MCP installer does the same when its
+  install timeout fires.
+- **Chat interrupt/preempt**: every chat exec (turn, compaction, titling) additionally carries a
+  per-exec `HEZO_EXEC_SCOPE_ID=<uuid>` and an abort reaps by **that**, never the session id —
+  a session's execs run concurrently across conversations, so a session-wide kill would murder a
+  sibling conversation's live turn. Session-wide reaping by `sessionId` happens only at session
+  teardown (manager stop/restart/health teardown), when everything has already been aborted.
+- **Clean shutdown** (`shutdownRuntime`): before `jobManager.shutdown()` aborts the runs, an
+  awaited `JobManager.killLiveRunProcesses()` reaps every live run's tree (per-kill bounded,
+  whole pass raced against its own timer) — the runner's own abort-kill would race
+  `process.exit`. Chat teardown then reaps its session trees.
+- **Orphan tick**: when the ~30 s orphan detector marks a `running` run whose process vanished as
+  failed, it also fires `killRunProcesses` against the task's project container (task-less runs
+  skipped — the boot sweep is their backstop).
+- **Boot sweep** (crash backstop): `reconcileOnStartup`'s fourth container pass
+  (`sweepDanglingContainerProcesses`) scans each running container's `/proc`
+  (`DockerClient.listHezoProcesses` — emits only pids carrying a marker, an
+  `SSH_AUTH_SOCK=/run/hezo/…` env, or a bridge/socat cmdline) and applies the pure policy in
+  `services/process-sweeper.ts` (`decideSweepKills`): bridge infrastructure
+  (`hezo-run-with-bridge`/`hezo-ssh-bridge`/socat on `/run/hezo/`) always dies; a marker-carrying
+  process dies unless its id is a **succeeded** `heartbeat_runs` row — so a background process a
+  successful run intentionally left (e.g. a dev server on the project's dev port) survives a
+  restart, while failed/cancelled-run trees, previous-lifetime chat sessions, and
+  provision/gitop/mcp-install ops (never succeeded-run rows) die; a marker-less process dies only
+  when bridge-socket-scoped (legacy trees from versions predating the marker). PID 1 and anything
+  younger than 120 s (`SWEEP_MIN_AGE_SECS` — routes are live during reconcile, so a just-started
+  op's marker isn't in the DB yet) are never touched. Kills go through `DockerClient.killPids`
+  (validated pid list). The pass runs after the stranded-run repair (which flips previous-lifetime
+  `running` rows to `failed`), is per-container best-effort, and skips cleanly when Docker is
+  unreachable.
+
+Independently, `hezo-run-with-bridge` itself is hardened (see § SSH signing & git): the exit trap
+kills socat's whole process group, and bounded git ops carry an in-container
+`HEZO_EXEC_DEADLINE_SECS` self-deadline so the tree dies on its own even if the server process is
+gone mid-op.
 
 **Timeout handling (graceful cut).** The `run_timeout_min` timer aborts the run's signal with a
 tagged `'run_timeout'` reason (`JobManager.launchTask`), so the runner finalizes it as `timed_out`
@@ -1156,7 +1298,9 @@ path `create_comment` uses — so it fans out to the admin inbox / agent wakeup 
 vanishing (the agent wrote an explicit, unambiguous wake; delivering it is safe). This flips an
 otherwise no-op run to a success and is why the one-block judge ceiling is acceptable.
 (2) an **unlinked bold/leading-line address that reads like an ask** (`**slug** — … when you
-resume …`, or the name after a short routing label like `Next step: slug — …`, via
+resume …`, the name after a short routing label like `Next step: slug — …`, or an
+action-assignment heading/label line like `## Required actions for slug` — where the phrase on
+the line is itself the ask signal, since the imperative list below it carries none — via
 `detectUnlinkedTeammateAsks`, gated on directed-ask intent so a bold name written for emphasis is
 never touched) is the wakes-no-one trap — but the net does **not** rewrite the
 agent's words or auto-deliver it (guessing intent to force a wake overreaches). `create_comment`
@@ -1331,15 +1475,24 @@ runtime), every git transport — including repo prep (clone/fetch) — reaches 
 the TCP listener via the bridge; nothing on the host runs git.
 
 **Per-run socat bridge.** The agent base image ships `hezo-run-with-bridge` (the runner's
-`argv[0]`): it spawns a `socat UNIX-LISTEN…EXEC:hezo-ssh-bridge` that forwards each
-in-container connection (prefixing the token) to the host TCP listener, then execs the
-agent CLI. The container sees a normal `SSH_AUTH_SOCK` Unix socket and is unaware of the
-relay. The same socket serves both commit signing and `git@github.com:` clone/fetch/push —
-including the per-commit auto-push fired by the durability `post-commit` hook (§ Agent runtime,
-Commit durability), which is why that hook keys off a live `SSH_AUTH_SOCK`.
+`argv[0]`): it spawns a `socat UNIX-LISTEN…EXEC:hezo-ssh-bridge` (under `setsid` where
+available, so the exit trap can `kill -- -<pgid>` the whole socat process group — socat's
+`fork` spawns a bridge child per connection, and killing only the listener would leave a
+blocked child behind) that forwards each in-container connection (prefixing the token) to
+the host TCP listener, then runs the wrapped command. When the server sets
+`HEZO_EXEC_DEADLINE_SECS` (bounded git ops — `ContainerGitExecutor` sets it to the per-op
+timeout plus slack for bridge-wrapped ops), the wrapper runs the command under `timeout`,
+so the tree self-destructs even if the server process died mid-op; the env is ignored by
+older images and absent for the agent CLI run, keeping every old/new image × server
+combination compatible. The container sees a normal `SSH_AUTH_SOCK` Unix socket and is
+unaware of the relay. The same socket serves both commit signing and `git@github.com:`
+clone/fetch/push — including the per-commit auto-push fired by the durability `post-commit`
+hook (§ Agent runtime, Commit durability), which is why that hook keys off a live
+`SSH_AUTH_SOCK`.
 Repo/worktree prep wraps individual git commands with the same `hezo-run-with-bridge` runner;
 cloning outside a run (provision, repo link) allocates a short-lived bridge via
-`withProvisionBridge`.
+`withProvisionBridge`, whose per-op `provision-<hex>` id doubles as the exec scope marker
+(§ Agent execution, Process-tree lifecycle).
 
 **Verified-on-GitHub bootstrap.** On every successful GitHub OAuth connect the project's
 public key is auto-registered on the connecting user's account as **both** a signing key
@@ -1753,13 +1906,45 @@ checksummed and applied once). Schema changes add the next `NNN_*.sql`; data tra
 SQL can't express add a **code migration** TS module under `src/db/migrations/code/`
 (shared `NNN_` ordering, same per-migration transaction). On startup the runner migrates a
 **copy** of the DB (`<dataDir>/.migrate-tmp`) and **atomically swaps** it in on success; on
-failure the live `pgdata` is untouched, so downgrading to the previous binary just works.
+failure the live `pgdata` is untouched, so downgrading to the previous binary just works. The
+renamed-aside originals are kept as `pgdata.superseded.<timestamp>` (the swap auto-retains the
+newest 5 — `db/superseded.ts`). A superuser can reclaim them on demand: `GET
+/api/database-info/superseded` reports the on-disk size and `POST
+/api/database-info/prune-superseded` deletes **all** of them (no rollback retained; the live
+`pgdata` is untouched). Both are surfaced in the Database card on the Storage settings
+subpage and are embedded-only — external Postgres migrates in place and produces no snapshots.
 An **external Postgres** migrates **in place** instead: per-migration transactions under a
 session `pg_advisory_lock` (`applyPendingMigrationsExternal`), with the downgrade guard
 re-checked under the lock, so concurrent startups can't double-migrate and a failed
 migration leaves the committed prefix intact. A database carrying migrations the binary
 doesn't recognize makes the server exit and ask the operator to upgrade. Migration
 mechanics and the per-migration rules are in `AGENTS.md` › Database migrations.
+
+**Run-log compaction.** Run logs (the append-only `heartbeat_run_log_chunks` table, kept
+forever) are the largest thing in a busy instance's DB; compaction is the retention trim
+that keeps old runs' logs down to what still matters. A superuser triggers it from the
+Database card on the Storage settings subpage: `POST /api/database-info/compact-run-logs
+{older_than_days}` writes a `log_compaction:active` marker in `system_meta` (also the "in
+progress" flag the panel's button disables on) and kicks the drain. The `log-compaction`
+cron (`services/log-compaction.ts`, guarded so a manual kick and the scheduled tick never
+overlap) drains the backlog a bounded batch at a time — replacing each old, finished,
+large-enough run's chunks with a single compacted chunk (a "compacted" notice + the run's
+`invocation_command` + the end-of-run summary/`[done]` line) and stamping
+`log_compacted_at` (migration `040`, partial index `idx_runs_compaction`; eligibility
+filters on the summed `pg_column_size` of the run's chunks). When the backlog drains it
+runs `VACUUM (FULL, ANALYZE)` over both run tables on the **embedded** backend — the chunk
+table (compaction's DELETEs) and `heartbeat_runs` (the flusher's per-flush usage UPDATEs;
+PGlite has no autovacuum daemon — external Postgres is left to autovacuum) — records the
+real bytes freed in `log_compaction:last`, and clears the marker.
+`GET /api/database-info/run-log-usage` reports live sizes (`pg_database_size`,
+`pg_total_relation_size` over both tables — cheap, no detoast) plus the
+reclaimable/backlog estimate and status for the panel, embedded-only figures degrading to
+null/0 elsewhere. Deploy-time knobs: `HEZO_LOG_COMPACTION_CRON`, `_BATCH`, `_MAX_PER_TICK`,
+`_PRESERVED_BYTES`. The trimmed detail is unrecoverable, so the UI confirms first.
+Migration `041` (which moved logs from the old `heartbeat_runs.log_text` blob into chunks
+and dropped the column) leaves the legacy dead-TOAST graveyard behind — a one-time,
+marker-gated `VACUUM (FULL, ANALYZE) heartbeat_runs` at startup
+(`runLegacyRunLogVacuumOnce`, embedded only) reclaims it on the first post-upgrade boot.
 
 **Storage abstraction & transactions.** All app code takes the `Db` interface
 (`query`/`exec`/`transaction`/`acquireSessionLock`/`close`); the drivers live in
@@ -1822,7 +2007,15 @@ blobs — as a **backup bundle** directory: `database.backup.gz` (the portable l
 database backup) + `assets/<projectId>/<assetId>` blob files + a `manifest.json` written
 **last** as the completion marker. The database half is the **portable logical backup**
 (`src/db/logical-backup.ts`): gzipped JSONL carrying the applied-migration set plus every
-row (bytea → base64, generated tsvector columns excluded and recomputed on load).
+row (bytea → base64, generated tsvector columns excluded and recomputed on load). Dump
+queries and restore inserts are batched by **bytes** as well as rows
+(`dumpPageRows`/`planInsertBatches`): each table's page size derives from its measured
+uncompressed row sizes, keeping every protocol message far below the embedded engine's
+~16MB per-response ceiling — which a large-log table (`heartbeat_run_log_chunks`, whose
+legacy-migrated rows can each carry a whole multi-MB run log) would
+otherwise breach in a single flat-size page and hard-crash the WASM instance. The
+subcommands' teardown closes are best-effort (`closeQuietly` in `cli.ts`), so closing an
+already-crashed engine can never mask the original dump/restore error.
 Restore replays the binary's own migrations up to exactly the recorded set, then loads
 data in one transaction with FK constraints dropped/re-added around the inserts (insert
 order and self-references never matter) and serial sequences resumed; migration-seeded
@@ -1841,10 +2034,28 @@ input: a directory is a bundle, a file with a logical header is a `.backup.gz`, 
 legacy physical pgdata tarball (`db/backup.ts` `dumpDataDir`/`restoreDataDir`, embedded
 only). External startup migrations write a bare logical `.backup.gz` into `<dataDir>/backups/`
 automatically before applying (last 5 kept; a failed backup aborts the migration); the
-embedded path keeps its stronger copy-swap instead.
+embedded path keeps its stronger copy-swap instead. The `hezo backup`/`hezo restore`
+subcommands resolve the data dir with the same precedence as the server (`HEZO_DATA_DIR` >
+`--data-dir` > `~/.hezo`, via `pickDataDir` in `cli.ts`), so a deployment that starts the
+server with `HEZO_DATA_DIR` set needs no extra flag; backup also refuses (with an actionable
+message) if the target holds no `_migrations` bookkeeping. Embedded is single-process, so
+backup/restore against the embedded backend are gated by an **advisory instance lock**
+(`db/instance-lock.ts`): the running server writes its OS PID to `<dataDir>/hezo.lock`
+(embedded only, removed on graceful exit), and the subcommands refuse while that PID is
+*alive* — `process.kill(pid, 0)` is a portable liveness probe across the Linux/macOS/Windows
+binaries, and only a definitive `ESRCH` counts as dead, so a stale lock from a crash never
+blocks (the next start overwrites it) and a live server is never mistaken for gone. External
+Postgres manages its own concurrency and writes no lock.
 
 **Releases & updates.** A PR flow (`.github/workflows/`): `release.yml` computes the next
-version from Conventional Commits and opens a `release/<version>` PR; merging fires
+version from Conventional Commits and opens a `release/<version>` PR. The auto bump
+(`scripts/release.ts` → `computeBump`) is derived **purely from commit type** — `feat` →
+minor, any other conventional type → patch — and **never returns `major`**: a breaking-change
+marker (`feat!:` / `BREAKING CHANGE:`) does not escalate the version (pre-1.0 the API is
+explicitly unstable, and major releases are a deliberate human decision, never automated).
+Breaking changes are still listed in the changelog's "Breaking Changes" section so a reviewer
+can choose to cut a major by hand via the workflow's explicit `release-type: major` dispatch
+input. Merging the release PR fires
 `release-publish.yml`, which first builds and publishes the agent-base image to GHCR
 (`ghcr.io/hezo-ai/agent-base:<version>` + `:latest`) and then — **only once that push
 succeeds** — tags the merge commit, cross-compiles, and publishes a GitHub Release (assets
@@ -1854,7 +2065,18 @@ provisioning pull (`agent-base:<version>`) would 404. A final `publish-cfn-templ
 re-uploads the AWS CloudFormation deploy template (`deploy/aws/hezo.cfn.yaml`) to the public S3
 bucket the README's "Deploy on AWS" Launch Stack button serves, so the hosted copy never drifts
 from the repo (it asserts the template is ASCII-only first, and skips when AWS credentials aren't
-configured). The running instance polls
+configured). A last `notify-website` job announces the release to the marketing site:
+hezo.ai/docs is rendered by the separate `hezo-ai/website` repo (Gatsby on Cloudflare Pages)
+from this repo's `docs/` tree via a `vendor/hezo` git submodule **pinned to the latest release
+tag** — the job mints a token via the hezo-release-bot app and sends a `repository_dispatch`
+(`hezo-release-published`, `client_payload.tag`) that the website's `update-hezo-submodule.yml`
+handles by checking the submodule out at that tag and pushing (Cloudflare redeploys on push).
+The website deliberately tracks **releases, not main**, so the public docs always describe the
+version users can download; the dispatch must be sent from `release-publish.yml` itself because
+the Release is created with the workflow's own `GITHUB_TOKEN`, whose events GitHub suppresses
+(a `release: published` trigger elsewhere would never fire). The website workflow also keeps a
+manual `workflow_dispatch` (optional `tag` input, defaulting to the latest release) as the
+re-pin escape hatch. The running instance polls
 `GET /api/updates/latest` (cached ~1 h, fails soft) and shows a bottom banner. The
 Settings → General page also renders a **Version** section (current version linked to its
 GitHub release, plus a **"Check for new version"** button that calls
@@ -1871,6 +2093,19 @@ button (same restart confirmation) once `Staged`, or a **"Retry download"** on `
 instance that can't self-apply falls back to the **"Download"** release link. The top-of-shell
 banner polls the same way (`useUpdateStatus({ poll: true })`), so it surfaces "Install & restart"
 live on any page the moment the binary is staged — not only after a manual reload.
+
+**Stale-bundle reload prompt.** Independently of the binary self-update, an open tab keeps running
+the web bundle it first loaded; after the server moves to a new version (self-update, redeploy),
+that tab's JS can be older than the server and mis-render data the newer server pushes — e.g. a new
+comment/action `kind` the older bundle doesn't know renders the action-comment renderer's neutral
+"needs a newer version — refresh the page" fallback instead of the real card. `useServerVersionChanged`
+(`hooks/use-stale-bundle.ts`) watches the `current` field of `GET /api/updates/status` and latches
+true once it observes a **different** version than the one first seen this session — a server restart
+drops the WebSocket, and the reconnect's blanket `invalidateQueries` (`useInvalidateOnReconnect`)
+refetches the status, so the new version is observed right after the update lands. The shell's
+`ReloadPromptBanner` (below `UpdateBanner`) then offers a one-click **Refresh** (`location.reload()`).
+Tracking a *change* rather than comparing to a build-time constant means it never false-positives in
+dev, where a stable server version never changes mid-session.
 
 **Self-update & supervisor.** A compiled binary with auto-update enabled
 (`isAutoUpdateEnabled()` — compiled, not `HEZO_DISABLE_AUTO_UPDATE`, not in a container)

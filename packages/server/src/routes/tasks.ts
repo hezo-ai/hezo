@@ -1,6 +1,7 @@
 import { AuthType, TaskStatus, TERMINAL_TASK_STATUSES, WakeupSource, wsRoom } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
 import type { Db } from '../db/database';
+import { runLogTextSql } from '../db/run-log-chunks';
 import { assertNoActiveRun } from '../lib/active-run';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
@@ -426,7 +427,7 @@ tasksRoutes.get('/projects/:projectId/tasks/:taskId/latest-run', async (c) => {
 
 	const result = await db.query(
 		`SELECT hr.id, hr.member_id, hr.status, hr.started_at, hr.finished_at,
-		        hr.exit_code, hr.log_text, hr.invocation_command, hr.working_dir,
+		        hr.exit_code, ${runLogTextSql('hr.id')} AS log_text, hr.invocation_command, hr.working_dir,
 		        i.project_id AS project_id,
 		        ma.title AS agent_title, ma.slug AS agent_slug
 		 FROM heartbeat_runs hr

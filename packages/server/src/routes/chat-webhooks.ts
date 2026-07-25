@@ -5,7 +5,7 @@ import { trackBackground } from '../lib/background';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
-import { ingestInboundEvent } from '../services/chat-channels';
+import { ingestGroupMentionEvent, ingestInboundEvent } from '../services/chat-channels';
 import { loadChannelConfig } from '../services/chat-channels/types';
 
 const log = logger.child('chat-webhooks');
@@ -61,24 +61,36 @@ chatWebhookRoutes.post('/webhooks/chat/:channel/:secret', async (c) => {
 	if (!urlOk || !headerOk) return err(c, 'UNAUTHORIZED', 'invalid webhook secret', 401);
 
 	const raw = await c.req.json().catch(() => null);
-	const event = raw ? adapter.parseInbound(raw) : null;
 	// Ack quickly (platforms retry on non-2xx / slow responses); do the work in the
-	// background so a slow CEO reply never times out the webhook.
-	if (event) {
+	// background so a slow CEO reply never times out the webhook. Dispatch order:
+	// group mention (coworker path) → DM (assistant path) → thread close →
+	// unclaimed group chatter handed to the adapter's observed-message buffer.
+	const mention = raw && adapter.parseGroupMention ? adapter.parseGroupMention(raw) : null;
+	const event = !mention && raw ? adapter.parseInbound(raw) : null;
+	if (mention) {
+		trackBackground(
+			ingestGroupMentionEvent({ db, manager }, adapter, mention).catch((e) =>
+				log.error('group mention ingest failed', e),
+			),
+		);
+	} else if (event) {
 		trackBackground(
 			ingestInboundEvent({ db, manager }, adapter, event).catch((e) =>
 				log.error('inbound chat ingest failed', e),
 			),
 		);
-	} else if (raw && adapter.parseClose) {
-		// A thread closed on the platform (e.g. a Telegram topic) closes the mirrored
-		// conversation everywhere — close parity in the inbound direction.
-		const closed = adapter.parseClose(raw);
+	} else if (raw) {
+		// A topic closed on the platform closes the conversation living on it.
+		const closed = adapter.parseClose ? adapter.parseClose(raw) : null;
 		if (closed) {
 			trackBackground(
 				manager
 					.closeConversationByExternalThread(channel, closed.externalThreadId)
 					.catch((e) => log.error('inbound thread close failed', e)),
+			);
+		} else if (adapter.observeMessage) {
+			trackBackground(
+				adapter.observeMessage(raw).catch((e) => log.error('observe message failed', e)),
 			);
 		}
 	}

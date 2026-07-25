@@ -131,7 +131,7 @@ beforeAll(async () => {
 	const adminToken = ctx.token;
 
 	const typesRes = await app.request('/api/team-templates', { headers: authHeader(adminToken) });
-	const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
+	const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'App Team').id;
 
 	const teamRes = await createTestTeam(db, { name: 'Timeout Co', template_id: typeId });
 	teamId = (await teamRes.json()).data.id;

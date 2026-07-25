@@ -20,10 +20,10 @@ test('superuser refreshes a team from a type in settings', async () => {
 
 	const select = (await findByTestId('apply-type-select')) as HTMLSelectElement;
 	// Options come from the team-templates query; wait for one, then apply it.
-	const startup = await within(select).findByRole('option', { name: 'Startup' });
+	const startup = await within(select).findByRole('option', { name: 'App Team' });
 	await user.selectOptions(select, startup);
 	await user.click(getByTestId('apply-type-submit'));
 
-	// The merge runs and reports a result (Startup onto a Startup team is a no-op merge).
+	// The merge runs and reports a result (App Team onto an App Team team is a no-op merge).
 	await findByTestId('apply-type-result');
 });

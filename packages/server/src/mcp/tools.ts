@@ -50,6 +50,7 @@ import { LocalAssetStore } from '../assets/drivers/local';
 import type { AssetStore } from '../assets/store';
 import type { MasterKeyManager } from '../crypto/master-key';
 import type { Db } from '../db/database';
+import { runLogLengthSql, runLogTextSql } from '../db/run-log-chunks';
 import type { DomainEventBus } from '../events/bus';
 import { assertNoActiveRun } from '../lib/active-run';
 import { isHqInstanceAgent, isVirtualHqMemberInTeam } from '../lib/agent-roles';
@@ -77,6 +78,7 @@ import {
 	apiKeyIdFromAuth,
 	resolveActorMemberId,
 	resolveAgentId,
+	resolveAssigneeId,
 	resolveProject,
 	resolveReactorMemberId,
 	resolveTaskId,
@@ -122,6 +124,11 @@ import {
 	setDocumentArchived,
 	upsertDocument,
 } from '../services/documents';
+import {
+	type GoalSuggestionPayload,
+	insertGoalSuggestionApproval,
+	insertGoalSuggestionComment,
+} from '../services/goal-suggestion';
 import { listGoals, recordGoalProgress } from '../services/goals';
 import {
 	buildHirePayloadPatch,
@@ -224,6 +231,7 @@ const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'create_skill',
 	'add_connector',
 	'remove_connector',
+	'suggest_goal',
 	'update_goal_progress',
 	'update_project_progress',
 	'update_project_custom_prompt',
@@ -1008,7 +1016,10 @@ export function registerTools(
 		{
 			project: projectArg(),
 			status: z.string().optional().describe('Filter by status (comma-separated)'),
-			assignee_id: z.string().optional().describe('Filter by assignee member ID'),
+			assignee_id: z
+				.string()
+				.optional()
+				.describe('Filter by assignee — an agent slug (e.g. "engineer") or a member UUID'),
 			assignee_slug: z
 				.string()
 				.optional()
@@ -1035,7 +1046,11 @@ export function registerTools(
 				params.push(...statuses);
 				idx += statuses.length;
 			}
-			let assigneeId = args.assignee_id as string | undefined;
+			let assigneeId = args.assignee_id
+				? ((await resolveAssigneeId(db, scope.teamId, args.assignee_id as string)) ?? undefined)
+				: undefined;
+			// An assignee_id that resolves to nobody (unknown slug/id) matches nothing.
+			if (args.assignee_id && !assigneeId) return [];
 			if (!assigneeId && args.assignee_slug) {
 				const agent = await db.query<{ id: string }>(
 					`SELECT ma.id FROM member_agents ma
@@ -1177,6 +1192,107 @@ export function registerTools(
 				args.description as string | undefined,
 				created,
 			);
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'suggest_goal',
+		'Suggest a project goal for the admin to approve. Callable only by the team Captain (or the CEO targeting a team via `project`). Goals come from the admin, so ask first: before suggesting anything, ask the admin what they want the project to achieve (on the planning/onboarding task or via an @admin comment), wait for their reply, and formulate each suggestion from their stated objectives — never file a suggestion the admin\'s own words do not support. This does NOT create a goal directly — it files a suggestion the admin reviews as an Approve/Deny card; the real goal exists only once they approve. A goal is an OUTCOME or MILESTONE the admin wants the project to achieve — a state of the world to reach, or reach and hold (e.g. "reach 10k monthly readers", "100 active customers, held"); its `measurement` judges results, never activity performance. If the candidate reads as "do X every day/week" — monitor, sweep, deliver a periodic report, keep a process running — it is NOT a goal: that is recurring operational work, filed with `create_task` as a standing task that stays open (optionally linked to a goal via `goal_id`), and so is any finite deliverable with a fixed done state — a document to produce, a one-time analysis, a feature to ship. Pass a `title`, a `measurement` (the precise definition of when it is achieved — the bar to judge against; write it SMART), optional `actions` (guidance on what to do/check when assessing it), a `check_frequency` (daily/weekly/monthly — how often the Captain re-assesses progress, not a schedule for doing work), and an optional `target_date` (deadline, ISO YYYY-MM-DD — milestones with target dates are legitimate goals). Pass `task_id` (recommended — usually your planning task) to surface the suggestion as an Approve/Deny card in that task\'s thread; it also appears on the project\'s Goals page.',
+		{
+			project: projectArg(),
+			title: z.string().describe('Short goal title.'),
+			measurement: z
+				.string()
+				.optional()
+				.describe('The precise, measurable definition of when the goal is achieved.'),
+			actions: z
+				.string()
+				.optional()
+				.describe(
+					'Optional guidance on what the Captain should do or check when assessing the goal.',
+				),
+			check_frequency: z
+				.enum(['daily', 'weekly', 'monthly'])
+				.optional()
+				.describe(
+					"How often the goal is re-assessed once created (default daily). This is the Captain's re-assessment cadence, not a schedule for doing work: pick by how often the measurement meaningfully changes — daily for fast-moving measurements, weekly for steady ones, monthly for slow-moving outcomes. Checks recur indefinitely — this is a cadence, not a deadline.",
+				),
+			target_date: z.string().optional().describe('Optional deadline as an ISO date (YYYY-MM-DD).'),
+			task_id: z
+				.string()
+				.optional()
+				.describe(
+					'Optional originating task to attach the suggestion card to — a task identifier (e.g. "HM-1") or UUID.',
+				),
+		},
+		async (args, db, auth) => {
+			if (auth.type !== AuthType.Agent || !auth.memberId) {
+				return { error: 'suggest_goal is only callable by agents' };
+			}
+			const caller = await db.query<{ slug: string }>(
+				'SELECT slug FROM member_agents WHERE id = $1',
+				[auth.memberId],
+			);
+			const callerSlug = caller.rows[0]?.slug;
+			if (callerSlug !== CAPTAIN_AGENT_SLUG && callerSlug !== CEO_AGENT_SLUG) {
+				return { error: 'Only the Captain or CEO can suggest goals' };
+			}
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const teamId = scope.teamId;
+
+			const proj = await db.query<{ is_internal: boolean }>(
+				`SELECT is_internal FROM projects WHERE id = $1 AND team_id = $2`,
+				[scope.projectId, teamId],
+			);
+			if (proj.rows.length === 0) return { error: 'Project not found' };
+			if (proj.rows[0].is_internal) return { error: 'The HQ project does not support goals' };
+
+			const title = (args.title as string)?.trim();
+			if (!title) return { error: 'title is required' };
+
+			let taskId: string | null = null;
+			if (args.task_id !== undefined) {
+				const resolved = await resolveTaskId(db, teamId, args.task_id as string);
+				const taskCheck = resolved
+					? await db.query<{ id: string }>('SELECT id FROM tasks WHERE id = $1 AND team_id = $2', [
+							resolved,
+							teamId,
+						])
+					: null;
+				if (!resolved || !taskCheck || taskCheck.rows.length === 0) {
+					return { error: 'task_id not found on this team' };
+				}
+				taskId = resolved;
+			}
+
+			const payload: GoalSuggestionPayload = {
+				project_id: scope.projectId,
+				title,
+				measurement: args.measurement as string | undefined,
+				actions: args.actions as string | undefined,
+				check_frequency: args.check_frequency as string | undefined,
+				target_date: (args.target_date as string | undefined) ?? null,
+				task_id: taskId,
+			};
+			const row = await insertGoalSuggestionApproval(db, teamId, payload, auth.memberId);
+			broadcastApprovalChange(wsManager, teamId, 'INSERT', row);
+			if (taskId) {
+				await insertGoalSuggestionComment(
+					db,
+					{
+						taskId,
+						approvalId: row.id as string,
+						payload: payload as unknown as Record<string, unknown>,
+						teamId,
+						projectId: scope.projectId,
+					},
+					wsManager,
+				);
+			}
+			return { approval_id: row.id, status: row.status, payload: row.payload };
 		},
 		db,
 	);
@@ -1379,7 +1495,10 @@ export function registerTools(
 					'New status (backlog, in_progress, review, blocked, done, cancelled). `done` = completed (final); marking a ticket `done` wakes Coach to review it for prompt-learning but leaves it `done`. `cancelled` = abandoned. Re-opening a completed task (done/cancelled) is admin-only.',
 				),
 			priority: z.string().optional().describe('New priority'),
-			assignee_id: z.string().optional().describe('New assignee ID'),
+			assignee_id: z
+				.string()
+				.optional()
+				.describe('New assignee — an agent slug (e.g. "engineer") or a member UUID'),
 			progress_summary: z.string().optional().describe('Progress summary update'),
 			rules: z
 				.string()
@@ -1411,6 +1530,14 @@ export function registerTools(
 
 			const currentStatus = currentRow?.status;
 			const previousAssigneeId = currentRow?.assignee_id ?? null;
+
+			// Accept a teammate slug (what an agent holds) or a member UUID; every
+			// downstream check + the UPDATE below consumes the resolved member id.
+			if (typeof args.assignee_id === 'string' && args.assignee_id) {
+				const resolvedAssignee = await resolveAssigneeId(db, teamId, args.assignee_id);
+				if (!resolvedAssignee) return { error: `Assignee not found: ${args.assignee_id}` };
+				args.assignee_id = resolvedAssignee;
+			}
 
 			// `done` and `cancelled` are the only terminal states; once a task is
 			// terminal only the admin can re-open it (move it back to active).
@@ -1873,7 +2000,7 @@ export function registerTools(
 			.string()
 			.optional()
 			.describe(
-				'The HQ project-intake ticket this fulfils; it is closed with a completion note on success.',
+				'The HQ project-intake ticket this fulfils (its identifier, e.g. "HQ-1", or its UUID); it is closed with a completion note on success.',
 			),
 	} satisfies z.ZodRawShape;
 	tool(
@@ -1905,9 +2032,15 @@ export function registerTools(
 			// Idempotency: if this fulfils an intake ticket, that ticket must still be
 			// open — otherwise a re-run (e.g. after a timeout) would create a second
 			// project + team. Check before creating anything.
-			const intakeTaskId = input.intake_task_id?.trim() || undefined;
+			const rawIntakeTaskId = input.intake_task_id?.trim() || undefined;
+			let intakeTaskId: string | undefined;
 			let intakeTeamId: string | undefined;
-			if (intakeTaskId) {
+			if (rawIntakeTaskId) {
+				// Accept either the intake ticket's identifier (e.g. "HQ-1") or its
+				// UUID, like every other task reference on the MCP surface. Intake
+				// tickets always live in HQ, so resolve within the default team.
+				intakeTaskId = (await resolveTaskId(db, DEFAULT_TEAM_ID, rawIntakeTaskId)) ?? undefined;
+				if (!intakeTaskId) return { error: 'Intake task not found' };
 				const intake = await db.query<{ status: string; team_id: string }>(
 					'SELECT status::text AS status, team_id FROM tasks WHERE id = $1',
 					[intakeTaskId],
@@ -2240,7 +2373,9 @@ export function registerTools(
 			before: z
 				.string()
 				.optional()
-				.describe('Comment ID — return only comments created before this one'),
+				.describe(
+					'A comment id (UUID) or public_id — return only comments created before that one',
+				),
 			excerpt_chars: z
 				.number()
 				.int()
@@ -2259,7 +2394,7 @@ export function registerTools(
 			if (args.before) {
 				params.push(args.before);
 				conditions.push(
-					`(ic.created_at, ic.id) < (SELECT created_at, id FROM task_comments WHERE id = $${params.length})`,
+					`(ic.created_at, ic.id) < (SELECT created_at, id FROM task_comments WHERE (id::text = $${params.length} OR public_id = $${params.length}) AND task_id = $1 LIMIT 1)`,
 				);
 			}
 			const r = await db.query<Record<string, unknown>>(
@@ -2323,7 +2458,7 @@ export function registerTools(
 			const { teamId, taskId } = scope;
 			const r = await db.query<Record<string, unknown>>(
 				`SELECT hr.id, hr.status, hr.exit_code, hr.started_at, hr.finished_at,
-				        hr.invocation_command, length(hr.log_text) AS log_length,
+				        hr.invocation_command, ${runLogLengthSql('hr.id')} AS log_length,
 				        ma.title AS agent_title, ma.slug AS agent_slug
 				 FROM heartbeat_runs hr
 				 LEFT JOIN member_agents ma ON ma.id = hr.member_id
@@ -2365,7 +2500,8 @@ export function registerTools(
 				task_id: string | null;
 				log_text: string;
 			}>(
-				`SELECT id, status, exit_code, task_id, log_text
+				`SELECT id, status, exit_code, task_id,
+				        ${runLogTextSql('heartbeat_runs.id')} AS log_text
 				 FROM heartbeat_runs WHERE id = $1 AND team_id = $2`,
 				[runId, scope.teamId],
 			);
@@ -2509,7 +2645,7 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					'UUID of the comment you are replying to. Setting this wakes that comment\'s author with source=reply and renders this comment as "replying to ..." in the UI.',
+					'The comment you are replying to — its id (UUID) or its public_id. Setting this wakes that comment\'s author with source=reply and renders this comment as "replying to ..." in the UI.',
 				),
 		},
 		async (args, db, auth) => {
@@ -2518,14 +2654,17 @@ export function registerTools(
 			const { teamId, taskId } = scope;
 			let parentCommentId: string | null = null;
 			if (args.parent_comment_id) {
-				const parentCheck = await db.query(
-					'SELECT 1 FROM task_comments WHERE id = $1 AND task_id = $2',
+				// Accept the parent's id (UUID) or its public_id; store the resolved
+				// UUID as the reply FK. `id::text = $1` avoids the uuid-cast error a
+				// raw `id = $1` throws when a public_id is passed.
+				const parentCheck = await db.query<{ id: string }>(
+					'SELECT id FROM task_comments WHERE (id::text = $1 OR public_id = $1) AND task_id = $2 LIMIT 1',
 					[args.parent_comment_id, taskId],
 				);
 				if (parentCheck.rows.length === 0) {
 					return { error: 'parent_comment_id does not belong to this task' };
 				}
-				parentCommentId = args.parent_comment_id as string;
+				parentCommentId = parentCheck.rows[0].id;
 			}
 			const authorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 			const authorApiKeyId = apiKeyIdFromAuth(auth);
@@ -5287,7 +5426,7 @@ export function registerTools(
 		'Test an MCP connector end-to-end from the server side. Resolves the stored OAuth token from the vault and makes a direct HTTP call to the MCP server (bypassing the agent container and its egress proxy entirely). Returns the upstream status code, response excerpt, and the secret name + masked-token-prefix used. Use this when oauth_status says "active" but the MCP\'s tools are absent from your tool list — it isolates "is the token still valid against the provider?" from "does the proxy chain in the container work?".',
 		{
 			project: projectArg(),
-			connector_id: z.string().describe('connector id from list_connectors'),
+			connector_id: z.string().describe('connector id or name (both shown by list_connectors)'),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -5303,7 +5442,9 @@ export function registerTools(
 			}>(
 				`SELECT id, name, kind::text AS kind, config, oauth_connection_id
 				 FROM mcp_connections
-				 WHERE id = $1 AND (project_id = $2 OR project_id IS NULL)`,
+				 WHERE (id::text = $1 OR name = $1) AND (project_id = $2 OR project_id IS NULL)
+					 ORDER BY (project_id IS NOT NULL) DESC
+					 LIMIT 1`,
 				[connectorId, scope.projectId],
 			);
 			if (row.rows.length === 0) return { error: 'connector not found' };
@@ -5467,13 +5608,15 @@ export function registerTools(
 		'Remove one of your project\'s registered MCP connections. Only connectors owned by your project can be removed — global "all projects" connectors and other projects\' are managed elsewhere. The next agent run will not see it.',
 		{
 			project: projectArg(),
-			id: z.string().describe('connector id (returned by add_connector or list_connectors)'),
+			id: z
+				.string()
+				.describe('connector id or name (returned by add_connector or list_connectors)'),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
 			const r = await db.query<{ id: string }>(
-				'DELETE FROM mcp_connections WHERE id = $1 AND project_id = $2 RETURNING id',
+				'DELETE FROM mcp_connections WHERE (id::text = $1 OR name = $1) AND project_id = $2 RETURNING id',
 				[args.id as string, scope.projectId],
 			);
 			if (r.rows.length === 0) return { error: 'MCP connection not found' };

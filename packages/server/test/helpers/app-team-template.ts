@@ -2,22 +2,22 @@ import type { Db } from '../../src/db/database';
 import { getMarketplaceTeam } from '../../src/services/marketplace';
 
 /**
- * TEST FIXTURE ONLY. Production no longer seeds the "Startup" team template — its
+ * TEST FIXTURE ONLY. Production no longer seeds the "App Team" team template — its
  * roster lives in the marketplace (`marketplace/teams/software-development.json`)
  * and is provisioned directly. But a large body of existing tests provisions a
- * full software-development team via `GET /api/team-templates` → find `Startup` →
+ * full software-development team via `GET /api/team-templates` → find `App Team` →
  * `createTestTeam({ template_id })`. To keep that affordance without rewriting
- * every test, the harness materializes an equivalent `Startup` DB template from
+ * every test, the harness materializes an equivalent `App Team` DB template from
  * the marketplace def: `agent_types` for each roster role, a non-builtin
  * `team_templates` row (so the API's builtin filter still surfaces it), the join
  * rows, and the Captain override. Seeded right after
  * `seedBuiltins` in `createTestApp`.
  */
-export async function seedTestStartupTemplate(db: Db): Promise<void> {
+export async function seedTestAppTeamTemplate(db: Db): Promise<void> {
 	const def = await getMarketplaceTeam('software-development');
 	if (!def) {
 		throw new Error(
-			'seedTestStartupTemplate: marketplace "software-development" team not found — is HEZO_MARKETPLACE_DIR set and marketplace/teams built?',
+			'seedTestAppTeamTemplate: marketplace "software-development" team not found — is HEZO_MARKETPLACE_DIR set and marketplace/teams built?',
 		);
 	}
 
@@ -64,7 +64,7 @@ export async function seedTestStartupTemplate(db: Db): Promise<void> {
 		 ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description
 		 RETURNING id`,
 		[
-			'Startup',
+			'App Team',
 			def.description,
 			def.summary,
 			// Marketplace teams no longer bundle skills; the DB template column stays but is empty.
@@ -76,7 +76,7 @@ export async function seedTestStartupTemplate(db: Db): Promise<void> {
 	const templateId = tt.rows[0].id;
 
 	// Captain join row (references the builtin captain type; prompt comes from the
-	// override above) + one row per roster role — mirrors the old Startup roster.
+	// override above) + one row per roster role — mirrors the pre-marketplace App Team roster.
 	if (captainTypeId) {
 		await db.query(
 			`INSERT INTO team_template_agent_types (team_template_id, agent_type_id, reports_to_slug, sort_order)

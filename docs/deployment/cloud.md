@@ -19,13 +19,17 @@ DigitalOcean, Hetzner, Fly, Linode, or an EC2 instance.
 
 1. **Provision a host with Docker** and install the `hezo` binary
    ([Installation](/docs/getting-started/installation)).
-2. **Put the data directory on persistent storage** so it survives restarts and
-   redeploys:
+2. **Choose where your data lives.** The data directory goes on persistent storage so
+   it survives restarts and redeploys:
 
    ```sh
    hezo --data-dir /var/lib/hezo
    ```
 
+   By default that directory also holds the embedded database and all asset files. Or
+   hand either to a managed service — a hosted Postgres for the database, an
+   S3-compatible bucket for assets — so your provider handles backups and durability;
+   see [Managed database & asset storage](#managed-database--asset-storage) below.
 3. **Serve it over HTTPS** with a reverse proxy — required, not a nice-to-have; see
    [below](#serve-it-over-https).
 4. **Unlock it from the browser.** After boot Hezo starts **locked** — open its gate
@@ -46,6 +50,47 @@ DigitalOcean, Hetzner, Fly, Linode, or an EC2 instance.
    ```
 
 See the [Configuration reference](/docs/deployment/configuration) for every option.
+
+## Managed database & asset storage
+
+Local disk is the default, not a requirement: point Hezo at a **managed Postgres**
+and/or an **S3-compatible bucket** and the server itself becomes nearly stateless —
+the data directory then holds only workspaces, SSH/signing keys, and pre-migration
+backups. Each backend is one setting, adoptable independently:
+
+1. **Provision a PostgreSQL 14+ instance** in the same region as your server (Hezo's
+   scheduling polls every 1–5 seconds, so latency counts), with TLS and a **direct or
+   session-pooled** connection — transaction-mode poolers (PgBouncer in transaction
+   mode) are not supported. Full requirements:
+   [Using an external Postgres](/docs/deployment/configuration#using-an-external-postgres).
+2. **Provision a private bucket** on any S3-compatible store (AWS S3, Cloudflare R2,
+   DigitalOcean Spaces, Backblaze B2, MinIO, …) with an access key. The bucket stays
+   private — Hezo serves asset bytes through signed URLs. URL grammar and options:
+   [Storing assets in S3-compatible object storage](/docs/deployment/configuration#storing-assets-in-s3-compatible-object-storage).
+3. **Set the URL(s) where your service definition reads its environment** — e.g. the
+   `EnvironmentFile` of your systemd unit (see
+   [Self-hosting](/docs/deployment/self-hosting)), kept root-only (mode 600) since the
+   URLs carry credentials. Prefer the environment variables over the CLI flags — flags
+   are visible in the process list:
+
+   ```sh
+   HEZO_DATABASE_URL="postgres://hezo:••••@db-host:5432/hezo?sslmode=verify-full" \
+   HEZO_ASSET_STORAGE_URL="s3://ACCESS_KEY:SECRET@endpoint/bucket" \
+     hezo --data-dir /var/lib/hezo
+   ```
+
+4. **Verify at startup.** Hezo checks both backends and fails fast with guidance if
+   the database is older than 14 or the bucket is unreachable. The startup log shows
+   `Using external Postgres at …` and `Asset storage: S3-compatible (…)`, and
+   **Settings → General** shows the active **Database** and **Asset storage** backends
+   with credentials occluded.
+
+Provider-specific walkthroughs (DigitalOcean Managed Postgres + Spaces, serverless
+Postgres like Neon or Supabase) are in
+[One-click deploy → Using managed data hosting](/docs/deployment/one-click#using-managed-data-hosting) —
+the steps apply to a manual deployment unchanged. To move an **existing** instance's
+data into managed backends, use `hezo backup` / `hezo restore` — see
+[Switching an existing instance](/docs/deployment/configuration#switching-an-existing-instance).
 
 ## Serve it over HTTPS
 

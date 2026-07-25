@@ -1,6 +1,7 @@
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
+import { appendRunLogChunks } from '../src/db/run-log-chunks';
 import type { Env } from '../src/lib/types';
 import { signAgentJwt } from '../src/middleware/auth';
 import { safeClose } from './helpers';
@@ -51,7 +52,7 @@ beforeAll(async () => {
 
 	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 	const typeId = (await typesRes.json()).data.find(
-		(t: Record<string, unknown>) => t.name === 'Startup',
+		(t: Record<string, unknown>) => t.name === 'App Team',
 	).id;
 
 	const teamRes = await createTestTeam(db, { name: 'Agents Coverage Co', template_id: typeId });
@@ -418,11 +419,12 @@ describe('heartbeat-runs not-found / terminate branches', () => {
 	it('single heartbeat-run returns a real run', async () => {
 		const captain = await findAgent('captain');
 		const inserted = await db.query<{ id: string }>(
-			`INSERT INTO heartbeat_runs (member_id, team_id, status, started_at, finished_at, exit_code, log_text)
-			 VALUES ($1, $2, 'succeeded', now() - interval '2 minutes', now(), 0, 'done')
+			`INSERT INTO heartbeat_runs (member_id, team_id, status, started_at, finished_at, exit_code)
+			 VALUES ($1, $2, 'succeeded', now() - interval '2 minutes', now(), 0)
 			 RETURNING id`,
 			[captain.id, teamId],
 		);
+		await appendRunLogChunks(db, inserted.rows[0].id, 'done');
 		const res = await app.request(
 			`/api/projects/${projectSlug}/agents/${captain.id}/heartbeat-runs/${inserted.rows[0].id}`,
 			{ headers: authHeader(token) },

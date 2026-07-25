@@ -67,19 +67,19 @@ describe('template resolver', () => {
 		expect(result).toContain('already handed this ticket off');
 	});
 
-	it('points recurring work at the mechanisms that exist — heartbeats and goals', async () => {
+	it('routes recurring work to standing tasks and frames goals as outcomes', async () => {
 		const result = await resolveSystemPrompt(db, 'Base prompt.', { teamId });
 		// Positive framing: describe how scheduled work IS done rather than what's absent,
 		// so an agent routes a repeating need instead of asking for a cron feature.
 		expect(result).toContain('### Recurring & Scheduled Work');
-		expect(result).toContain('two mechanisms that are always in place');
-		// The two real mechanisms for repeating work.
-		expect(result).toContain('Your heartbeat');
-		expect(result).toContain('Project goals');
-		// Goals are admin-set, so an agent recommends one to the admin.
-		expect(result).toContain(
-			'Goals are set by the admin, so when a need is truly recurring, recommend one to them',
-		);
+		expect(result).toContain('goals are not a scheduler');
+		// Recurring operational work is a standing task the heartbeat re-visits.
+		expect(result).toContain('standing task');
+		// Goals are outcomes the admin wants — elicited from them, never invented.
+		expect(result).toContain('Project goals are outcomes, not schedules');
+		expect(result).toContain('ask the admin what they want the project to achieve');
+		// The goal-vs-task rule: a finite deliverable is a task, not a goal.
+		expect(result).toContain('fixed done state');
 	});
 
 	it('appends the credential-handling guidance to every runtime prompt', async () => {
@@ -124,6 +124,11 @@ describe('template resolver', () => {
 		expect(result).toContain('load its full body **first**');
 		// Err toward loading when relevance is uncertain.
 		expect(result).toContain('load it and see');
+		// get_skill is the ONLY loader — agents must not reach for the coding
+		// CLI's own skill feature (a Skill tool, /skill command, or file read),
+		// which doesn't know these DB-backed slugs and fails with "unknown skill".
+		expect(result).toContain('`get_skill` is the only way to load a Hezo skill');
+		expect(result).toContain('never try to load one with the CLI');
 	});
 
 	it('appends the ask-before-closing completion rule', async () => {
@@ -135,6 +140,15 @@ describe('template resolver', () => {
 		// later human reply.
 		expect(result).toContain('has no later human reply');
 		expect(result).toContain('the only correct state to wait in');
+	});
+
+	it('tells agents the admin has no mark-done control and completion is the agent action', async () => {
+		const result = await resolveSystemPrompt(db, 'Base prompt.', { teamId });
+		// The admin cannot mark a ticket done from the UI — Close cancels — so the
+		// agent must complete it itself or ask the admin to approve, never delegate
+		// the done-transition.
+		expect(result).toContain('the admin has no "mark done" button');
+		expect(result).toContain('Asking the admin to **approve** completion is correct');
 	});
 
 	it('appends the cancellation hand-back rule with the admin/CEO carve-out', async () => {
@@ -704,7 +718,7 @@ describe('template resolver with agents', () => {
 			headers: authHeader(token),
 		});
 		const types = (await typesRes.json()) as any;
-		const softDevType = types.data.find((t: any) => t.name === 'Startup');
+		const softDevType = types.data.find((t: any) => t.name === 'App Team');
 
 		// Create a team with the software dev team type to auto-create agents
 		const teamRes = await createTestTeam(db, {
@@ -934,7 +948,7 @@ describe('teammates block', () => {
 
 	beforeAll(async () => {
 		const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
-		const startup = ((await typesRes.json()) as any).data.find((t: any) => t.name === 'Startup');
+		const startup = ((await typesRes.json()) as any).data.find((t: any) => t.name === 'App Team');
 
 		const teamRes = await createTestTeam(db, {
 			name: 'Teammates Co',
@@ -1019,7 +1033,7 @@ describe('teammates block', () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId: otherId });
 		expect(result).toContain('## Teammates');
 		// The builtin Captain is seeded for every team (Coach now lives only in HQ),
-		// but the startup-template-only roles from the other test team must not bleed in.
+		// but the app-team-template-only roles from the other test team must not bleed in.
 		expect(result).toContain('- @captain — Captain');
 		expect(result).not.toContain('- @coach — Coach');
 		expect(result).not.toContain('- @architect — Architect');
@@ -1045,7 +1059,7 @@ describe('team context block', () => {
 
 	beforeAll(async () => {
 		const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
-		const startup = ((await typesRes.json()) as any).data.find((t: any) => t.name === 'Startup');
+		const startup = ((await typesRes.json()) as any).data.find((t: any) => t.name === 'App Team');
 
 		const teamRes = await createTestTeam(db, {
 			name: 'Team Context Co',
@@ -1076,7 +1090,7 @@ describe('team context block', () => {
 		expect(result).toContain('precomputed so you don');
 	});
 
-	it("renders the engineer's stored team_context content (Startup template default)", async () => {
+	it("renders the engineer's stored team_context content (App Team template default)", async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', {
 			teamId: tcTeamId,
 			agentId: tcEngineerMemberId,
@@ -1142,7 +1156,7 @@ describe('project state block', () => {
 
 	beforeAll(async () => {
 		const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
-		const startup = ((await typesRes.json()) as any).data.find((t: any) => t.name === 'Startup');
+		const startup = ((await typesRes.json()) as any).data.find((t: any) => t.name === 'App Team');
 
 		const teamRes = await createTestTeam(db, {
 			name: 'Project State Co',
@@ -1186,7 +1200,7 @@ describe('project state block', () => {
 		});
 		expect(result).toContain('## Project State');
 		expect(result).toContain('### Active tickets');
-		// Startup-template projects auto-create a planning ticket assigned to the Captain.
+		// App Team-template projects auto-create a planning ticket assigned to the Captain.
 		expect(result).toMatch(/- PP-\d+ — Draft execution plan/);
 		expect(result).toContain('assigned to Captain');
 	});

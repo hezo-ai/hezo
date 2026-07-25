@@ -13,13 +13,24 @@ export const INITIAL_BASE_VERSION = '0.0.0';
 /** Default first-release version when bumping from {@link INITIAL_BASE_VERSION}. */
 export const FIRST_RELEASE_VERSION = '0.1.0';
 
-/** Derive the bump implied by a set of commits, ignoring any explicit override. */
+/**
+ * Derive the bump implied by a set of commits, ignoring any explicit override.
+ *
+ * A breaking change never escalates the automatic bump, so `computeBump` never
+ * returns `'major'`. Two rules drive this:
+ *   - Major releases are a deliberate, human decision and are never automated —
+ *     they only ever come from an explicit `--release-type major` override.
+ *   - Pre-1.0 (`0.y.z`) the API is explicitly unstable, so the "breaking" marker
+ *     carries no version weight at all; the bump follows the commit *type* alone.
+ *
+ * The auto bump is therefore derived purely from commit type: a `feat` yields a
+ * minor, any other conventional type a patch. Breaking changes are still
+ * surfaced prominently in the changelog (see `renderChangelog`) so a reviewer of
+ * the release PR can choose to cut a major by hand.
+ */
 export function computeBump(commits: ParsedCommit[]): Bump {
 	let bump: Bump = 'none';
 	for (const c of commits) {
-		if (c.breaking) {
-			return 'major';
-		}
 		if (c.type === 'feat') {
 			bump = 'minor';
 		} else if (bump === 'none' && c.type !== '') {

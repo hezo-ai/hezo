@@ -25,6 +25,20 @@ const DOCKER_REQUEST_TIMEOUT_MS = (() => {
  */
 const KILL_EXEC_TIMEOUT_MS = 5_000;
 
+/**
+ * Upper bound on the boot sweep's `/proc` scan exec (`listHezoProcesses`).
+ * Wider than the kill bound — the scan walks every pid — but still short enough
+ * that a wedged daemon can't stall startup reconciliation.
+ */
+const SWEEP_EXEC_TIMEOUT_MS = 10_000;
+
+/**
+ * Every env-marker value interpolated into an in-container `sh -c` script must
+ * match this — UUIDs and `<kind>-<hex>` scope ids do; anything shell-active
+ * (quotes, spaces, `$`, backticks) is rejected before it reaches the shell.
+ */
+const ENV_MARKER_VALUE_RE = /^[0-9a-zA-Z_-]{1,64}$/;
+
 interface ContainerConfig {
 	Image: string;
 	Cmd?: string[];
@@ -345,6 +359,23 @@ export class DockerClient {
 		}
 	}
 
+	/**
+	 * List containers (running and stopped) carrying the given label key. Used by
+	 * `hezo uninstall` to find every container Hezo provisioned — they are all
+	 * labelled `hezo.team` (see `provisionContainer`) — so they can be removed
+	 * before the data directory is deleted, since the DB rows that otherwise track
+	 * their ids go away with it.
+	 */
+	async listContainersByLabel(label: string): Promise<Array<{ Id: string; Names: string[] }>> {
+		const filters = encodeURIComponent(JSON.stringify({ label: [label] }));
+		const res = await this.request('GET', `/containers/json?all=true&filters=${filters}`);
+		if (!res.ok) {
+			const text = await res.text();
+			throw new Error(`Docker listContainers failed (${res.status}): ${text}`);
+		}
+		return parseJsonOrThrow<Array<{ Id: string; Names: string[] }>>(res, 'listContainers');
+	}
+
 	async inspectContainer(containerId: string): Promise<ContainerInfo | null> {
 		const res = await this.request(
 			'GET',
@@ -497,12 +528,12 @@ export class DockerClient {
 
 	/**
 	 * Hard-kill every process inside `containerId` whose environment carries
-	 * `HEZO_HEARTBEAT_RUN_ID=<runId>` — the marker every agent-run exec sets and
-	 * all its children inherit. Docker exposes no API to signal an exec'd process,
-	 * and disconnecting from the exec attach stream (what an abort does) leaves it
-	 * running: the agent CLI keeps burning tokens and writing to the workspace
-	 * even though the run is marked cancelled. This is the only way to actually
-	 * stop a terminated or timed-out run's process tree.
+	 * `<name>=<value>` — the scope marker an exec sets and all its children
+	 * inherit. Docker exposes no API to signal an exec'd process, and
+	 * disconnecting from the exec attach stream (what an abort does) leaves it
+	 * running: the process keeps burning tokens / holding sockets / writing to
+	 * the workspace even though its exec was abandoned. This is the only way to
+	 * actually stop an abandoned exec's process tree.
 	 *
 	 * The kill exec runs as the container's default user (root — no `User`), so it
 	 * can signal the deprivileged run-user's processes, and scans each process's
@@ -510,11 +541,19 @@ export class DockerClient {
 	 * timeout so a wedged kill can never block run finalization. Best-effort: the
 	 * caller swallows failures (a dead/gone container simply can't be exec'd).
 	 */
-	async killRunProcesses(containerId: string, runId: string): Promise<void> {
-		// runId is a DB UUID (`[0-9a-f-]`), so it needs no shell escaping inside the
+	async killProcessesByEnvMarker(
+		containerId: string,
+		name: 'HEZO_HEARTBEAT_RUN_ID' | 'HEZO_EXEC_SCOPE_ID',
+		value: string,
+	): Promise<void> {
+		// Scope-id values are UUIDs or `<kind>-<hex>` tags. The character-class
+		// check guarantees the value needs no shell escaping inside the
 		// double-quoted grep pattern below — no metacharacters, word-splitting, or
 		// expansion is possible.
-		const marker = `HEZO_HEARTBEAT_RUN_ID=${runId}`;
+		if (!ENV_MARKER_VALUE_RE.test(value)) {
+			throw new Error(`unsafe env marker value: ${JSON.stringify(value)}`);
+		}
+		const marker = `${name}=${value}`;
 		// `/proc/<pid>/environ` is NUL-separated; `basename $(dirname …)` recovers the
 		// pid without relying on `${…}` shell parameter expansion (a JS-template
 		// look-alike). `|| true` keeps a since-exited pid from failing the loop.
@@ -536,6 +575,127 @@ export class DockerClient {
 			clearTimeout(timer);
 		}
 	}
+
+	/** Kill every process carrying `HEZO_HEARTBEAT_RUN_ID=<runId>` — the marker every agent-run exec sets. */
+	async killRunProcesses(containerId: string, runId: string): Promise<void> {
+		return this.killProcessesByEnvMarker(containerId, 'HEZO_HEARTBEAT_RUN_ID', runId);
+	}
+
+	/**
+	 * Scan `/proc` inside `containerId` for Hezo-related processes: anything
+	 * carrying a `HEZO_HEARTBEAT_RUN_ID` scope marker, anything whose env carries
+	 * an in-container SSH-bridge socket (`SSH_AUTH_SOCK=/run/hezo/…` — legacy git
+	 * execs predating the scope marker), and anything whose cmdline names the
+	 * bridge binaries or a `/run/hezo/` socket. Only matching pids are emitted,
+	 * so output stays tiny even under a high PidsLimit. Runs as root (same
+	 * rationale as the kill above) and is bounded by its own timeout. Feeds the
+	 * boot-time dangling-process sweep (`process-sweeper.ts`).
+	 */
+	async listHezoProcesses(containerId: string): Promise<ContainerProcessInfo[]> {
+		// Age derives from /proc/uptime minus stat field 22 (starttime, in clock
+		// ticks). The stat line's second field (comm) may contain spaces or
+		// parentheses, so everything up to the *last* `) ` is stripped first —
+		// after that, starttime is field 20 of the remainder.
+		const script =
+			'up=$(cut -d. -f1 /proc/uptime); hz=$(getconf CLK_TCK 2>/dev/null || echo 100); ' +
+			'for d in /proc/[0-9]*; do ' +
+			'pid=${d#/proc/}; ' +
+			'rid=$(tr "\\0" "\\n" < "$d/environ" 2>/dev/null | sed -n "s/^HEZO_HEARTBEAT_RUN_ID=//p" | head -n1); ' +
+			'sock=0; grep -qz "SSH_AUTH_SOCK=/run/hezo/" "$d/environ" 2>/dev/null && sock=1; ' +
+			'cmd=$(tr "\\0" " " < "$d/cmdline" 2>/dev/null); ' +
+			'st=$(sed "s/^.*) //" "$d/stat" 2>/dev/null | cut -d" " -f20); ' +
+			'age=$(( up - ${st:-0} / hz )); ' +
+			'case "$cmd" in *hezo-run-with-bridge*|*hezo-ssh-bridge*|*/run/hezo/*) hit=1;; *) hit=0;; esac; ' +
+			'if [ -n "$rid" ] || [ "$sock" = 1 ] || [ "$hit" = 1 ]; then ' +
+			'printf "%s\\t%s\\t%s\\t%s\\t%s\\n" "$pid" "$rid" "$sock" "$age" "$cmd"; ' +
+			'fi; ' +
+			'done';
+		const execId = await this.execCreate(containerId, {
+			Cmd: ['sh', '-c', script],
+			AttachStdout: true,
+			AttachStderr: false,
+		});
+		const ac = new AbortController();
+		const timer = setTimeout(() => ac.abort(), SWEEP_EXEC_TIMEOUT_MS);
+		let stdout: string;
+		try {
+			({ stdout } = await this.execStart(execId, { signal: ac.signal }));
+		} finally {
+			clearTimeout(timer);
+		}
+		return parseHezoProcessList(stdout);
+	}
+
+	/**
+	 * SIGKILL an explicit pid list inside `containerId`. Companion to
+	 * `listHezoProcesses` — the boot sweep decides server-side (it needs the DB)
+	 * and kills by pid. Validates every pid so nothing unexpected reaches the
+	 * shell; a no-op on an empty list. Best-effort, bounded like the marker kill.
+	 */
+	async killPids(containerId: string, pids: number[]): Promise<void> {
+		if (pids.length === 0) return;
+		for (const pid of pids) {
+			if (!Number.isInteger(pid) || pid <= 1) {
+				throw new Error(`unsafe pid: ${JSON.stringify(pid)}`);
+			}
+		}
+		// Validated positive integers only — safe to interpolate. `|| true` keeps
+		// an already-exited pid from failing the exec.
+		const script = `kill -9 ${pids.join(' ')} 2>/dev/null || true`;
+		const execId = await this.execCreate(containerId, {
+			Cmd: ['sh', '-c', script],
+			AttachStdout: false,
+			AttachStderr: false,
+		});
+		const ac = new AbortController();
+		const timer = setTimeout(() => ac.abort(), KILL_EXEC_TIMEOUT_MS);
+		try {
+			await this.execStart(execId, { signal: ac.signal });
+		} finally {
+			clearTimeout(timer);
+		}
+	}
+}
+
+/** One matching process from `listHezoProcesses`'s in-container `/proc` scan. */
+export interface ContainerProcessInfo {
+	pid: number;
+	/** Value of `HEZO_HEARTBEAT_RUN_ID` in the process env, or null when absent. */
+	runId: string | null;
+	/** Whether the process env carries `SSH_AUTH_SOCK=/run/hezo/…` (legacy bridge-scoped exec). */
+	hasHezoSock: boolean;
+	/** Seconds since the process started, floored. */
+	ageSecs: number;
+	/** NUL-joined cmdline rendered with spaces; empty for kernel threads. */
+	cmdline: string;
+}
+
+/**
+ * Parse the tab-separated `listHezoProcesses` scan output. The cmdline is the
+ * trailing field and may itself contain tabs, so only the first four tabs
+ * split; malformed lines (a pid that exited mid-scan can emit partial output)
+ * are dropped.
+ */
+export function parseHezoProcessList(stdout: string): ContainerProcessInfo[] {
+	const procs: ContainerProcessInfo[] = [];
+	for (const line of stdout.split('\n')) {
+		if (line.length === 0) continue;
+		const parts = line.split('\t');
+		if (parts.length < 5) continue;
+		const [pidRaw, runIdRaw, sockRaw, ageRaw] = parts;
+		const cmdline = parts.slice(4).join('\t');
+		const pid = Number.parseInt(pidRaw, 10);
+		const ageSecs = Number.parseInt(ageRaw, 10);
+		if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(ageSecs)) continue;
+		procs.push({
+			pid,
+			runId: runIdRaw.length > 0 ? runIdRaw : null,
+			hasHezoSock: sockRaw === '1',
+			ageSecs: Math.max(0, ageSecs),
+			cmdline,
+		});
+	}
+	return procs;
 }
 
 function demuxDockerStream(raw: Uint8Array): { stdout: string; stderr: string } {

@@ -11,16 +11,36 @@ individual pieces of work on the board, goals are the outcomes those tasks add u
 they give you, the admin, a way to see how far along a project is and where things stand
 **without micromanaging the board.**
 
+A goal is an **outcome or milestone you want the project to achieve** — a state of the world
+you care about: a level to reach ("reach 100 active customers"), or a level to reach and hold
+("keep the error rate under 1%"). Its **measurement** judges results, never activity —
+"monitor the watchlist daily" or "deliver a weekly report" is not a goal but recurring
+operational work, which the team runs as a task that stays open (see the callout below). A
+one-off deliverable with a fixed done state — a document to produce, a feature to ship, a
+one-time analysis — belongs on the board as a **task** too (the Captain can link it to a
+goal). Goals are re-checked on their cadence until you archive them, so a reached milestone
+stays tracked — and held — rather than quietly slipping.
+
 You set the goals; the **Captain** keeps them up to date. You don't have to remember to
 update a status or move a slider — the Captain re-checks each goal on a schedule and writes
 a fresh estimate, so the **Progress** page is always a current read on the project.
 
-> **There is no cron in Hezo.** Goals are how you schedule *recurring* work. Hezo has no
-> cron or timed-trigger system to configure — repeating work runs on two things instead:
-> agents wake on their own **heartbeat** to pick up whatever is assigned to them, and the
-> Captain acts on **goals** when their check frequency (daily/weekly/monthly) comes due. So
-> a standing "do this every day/week" objective becomes a goal, and its **suggested actions**
-> are how that recurring check turns into work on the board.
+The Captain (or the CEO) can also **suggest goals** — but goals start with you. During a
+project's initial onboarding the Captain asks what you want the project to achieve and
+formulates suggestions from your answers; it shouldn't invent goals you didn't ask for. A
+suggestion isn't a goal yet: it appears as an **Approve / Deny** card on the task thread and
+on the **Progress** page, and only becomes a real goal once you approve it. Deny it and it's
+dismissed. You stay in control of which goals the team actually tracks.
+
+> **There is no cron in Hezo — and goals aren't one either.** Hezo has no cron or
+> timed-trigger system to configure; repeating work runs on the **heartbeat**: agents wake on
+> their own cadence and revisit the open tasks assigned to them. Recurring operational work —
+> a daily monitoring sweep, a weekly report — is a **standing task**: an ordinary task that
+> stays open and is never marked done, so the heartbeat brings its assignee back to it every
+> time (with a sub-task per iteration where useful). Goals are different: they track the
+> **outcomes you want** — on each due check the Captain assesses progress and turns the
+> assessment into steering (a comment on an in-flight task) or new tasks. A goal's check
+> frequency schedules the Captain's re-assessment, not the work itself.
 
 ## The Progress page
 
@@ -43,17 +63,18 @@ goal has:
 - **Measurement** — the precise definition of *how you'll know the goal is achieved* (e.g.
   "100 active paid subscriptions in Stripe"). This is the bar the Captain measures against, so
   the more concrete it is, the more honest its progress estimates.
-- **Suggested actions** *(optional)* — guidance on what the Captain should do or check toward
-  the goal: specific checks, or a standing instruction like "review the signup funnel every
-  week" (the goal's **check frequency** *is* the schedule — there's no separate cron behind
-  it). Leave it blank to let the Captain decide.
+- **Suggested actions** *(optional)* — guidance on what the Captain should do or check when
+  it assesses the goal (e.g. "read the signup-funnel numbers, not just the task board").
+  Leave it blank to let the Captain decide.
 - **Deadline** *(optional)* — when the goal should be met. The Captain weighs progress against
   this date when it sets the goal's health, and once the deadline has passed an unmet goal is
   checked on every heartbeat — regardless of its check frequency — until it reaches 100% or is
   archived. At 100% the goal drops back to its normal check frequency (and the every-heartbeat
   urgency returns if its progress later slips below 100 again).
 - **Check frequency** — how often the Captain re-assesses the goal: **daily** (the default),
-  **weekly**, or **monthly**.
+  **weekly**, or **monthly**. This schedules the Captain's assessment, not the team's work —
+  pick it by how often the measurement meaningfully changes: daily for fast-moving
+  measurements, monthly for slow-moving outcomes.
 
 The create and edit forms keep the **SMART** framework (Specific, Measurable, Achievable,
 Relevant, Time-bound) in front of you as a reminder. A project can have any number of goals;
@@ -110,8 +131,8 @@ chart shows the dip.
 That also means goals can be deliberately **never-ending** — a standing objective like "keep the
 error rate under 1%" or "respond to every support ticket within a day" is measured continuously,
 forever, and simply hovers around 100% while it's being met. The only way to stop the Captain
-checking a goal is to **archive** it (below); do that when a one-shot goal is truly done and no
-longer worth monitoring.
+checking a goal is to **archive** it (below) — do that when a goal has served its purpose and
+is no longer worth tracking.
 
 ## Archiving
 

@@ -1,3 +1,4 @@
+import { ChevronDown } from 'lucide-react';
 import { useState } from 'react';
 import type { Task, useUpdateTask } from '../../hooks/use-tasks';
 import { MarkdownEditor } from '../markdown-editor';
@@ -14,149 +15,167 @@ interface TaskSummaryProps {
 	updateTask: UpdateTaskMutation;
 }
 
+interface CollapsibleSummaryCardProps {
+	testId: string;
+	toggleTestId: string;
+	label: string;
+	infoLabel: string;
+	infoTestId: string;
+	infoContent: string;
+	editorAriaLabel: string;
+	editorPlaceholder?: string;
+	value: string | null | undefined;
+	emptyText: string;
+	className: string;
+	projectId: string;
+	taskProjectSlug: string;
+	onSave: (value: string | null) => void;
+}
+
 /**
- * Renders the progress-summary and rules cards just below the task header.
- * Both edit inline against `useUpdateTask`. Status changes do not run through
- * here — `progress_summary` and `rules` are plain text fields.
+ * One collapsible progress-summary/rules card. Collapsed by default — the
+ * header (chevron toggle, label, info icon, Edit) stays visible while the body
+ * hides. Clicking Edit auto-expands and enters edit mode, and the card stays
+ * expanded after saving so the freshly-saved content is visible.
  */
-export function TaskSummary({ task, projectId, taskProjectSlug, updateTask }: TaskSummaryProps) {
-	const [editingSummary, setEditingSummary] = useState(false);
-	const [summaryText, setSummaryText] = useState('');
-	const [editingRules, setEditingRules] = useState(false);
-	const [rulesText, setRulesText] = useState('');
+function CollapsibleSummaryCard({
+	testId,
+	toggleTestId,
+	label,
+	infoLabel,
+	infoTestId,
+	infoContent,
+	editorAriaLabel,
+	editorPlaceholder,
+	value,
+	emptyText,
+	className,
+	projectId,
+	taskProjectSlug,
+	onSave,
+}: CollapsibleSummaryCardProps) {
+	const [open, setOpen] = useState(false);
+	const [editing, setEditing] = useState(false);
+	const [draft, setDraft] = useState('');
 
 	return (
-		<>
-			<div
-				data-testid="pinned-progress-summary"
-				className="bg-surface-2 rounded-md p-3 mb-3 text-[13px] text-text-2 leading-relaxed"
-			>
-				<div className="flex items-center justify-between mb-1">
-					<div className="flex items-center gap-1">
+		<div data-testid={testId} className={className}>
+			<div className="flex items-center justify-between">
+				<div className="flex items-center gap-1">
+					<button
+						type="button"
+						onClick={() => setOpen((o) => !o)}
+						className="flex items-center gap-1 text-left cursor-pointer"
+						data-testid={toggleTestId}
+						aria-expanded={open}
+					>
+						<ChevronDown
+							className={`w-3.5 h-3.5 text-text-3 transition-transform ${open ? '' : '-rotate-90'}`}
+						/>
 						<span className="text-[11px] uppercase tracking-wider font-medium text-text-3">
-							Progress Summary
+							{label}
 						</span>
-						<InfoTooltip
-							label="About Progress Summary"
-							data-testid="progress-summary-info"
-							content="A running checkpoint of what's been done and what's left on this task. Automatically included in every agent run's prompt — alongside the description and rules — so work stays continuous across runs. Agents update it at natural milestones via the update_task tool."
-						/>
-					</div>
-					{!editingSummary && (
-						<button
-							type="button"
-							onClick={() => {
-								setSummaryText(task.progress_summary ?? '');
-								setEditingSummary(true);
-							}}
-							className="text-[11px] text-text-3 hover:text-text-1"
-						>
-							Edit
-						</button>
-					)}
+					</button>
+					<InfoTooltip label={infoLabel} data-testid={infoTestId} content={infoContent} />
 				</div>
-				{editingSummary ? (
-					<div className="flex flex-col gap-2">
-						<MarkdownEditor
-							ariaLabel="Progress Summary"
-							projectId={projectId}
-							projectSlug={taskProjectSlug}
-							value={summaryText}
-							onChange={setSummaryText}
-							className="min-h-[60px]"
-							previewClassName="min-h-[60px]"
-							emptyPreviewText="_(nothing to preview)_"
-						/>
-						<div className="flex gap-2 justify-end">
-							<Button size="sm" variant="secondary" onClick={() => setEditingSummary(false)}>
-								Cancel
-							</Button>
-							<Button
-								size="sm"
-								onClick={() => {
-									updateTask.mutate({
-										progress_summary: summaryText || null,
-									});
-									setEditingSummary(false);
-								}}
-							>
-								Save
-							</Button>
-						</div>
-					</div>
-				) : task.progress_summary ? (
-					<MarkdownProse projectId={projectId} projectSlug={taskProjectSlug}>
-						{task.progress_summary}
-					</MarkdownProse>
-				) : (
-					<span>No progress summary yet.</span>
+				{!editing && (
+					<button
+						type="button"
+						onClick={() => {
+							setDraft(value ?? '');
+							setEditing(true);
+							setOpen(true);
+						}}
+						className="text-[11px] text-text-3 hover:text-text-1"
+					>
+						Edit
+					</button>
 				)}
 			</div>
+			{open && (
+				<div className="mt-2">
+					{editing ? (
+						<div className="flex flex-col gap-2">
+							<MarkdownEditor
+								ariaLabel={editorAriaLabel}
+								projectId={projectId}
+								projectSlug={taskProjectSlug}
+								value={draft}
+								onChange={setDraft}
+								placeholder={editorPlaceholder}
+								className="min-h-[60px]"
+								previewClassName="min-h-[60px]"
+								emptyPreviewText="_(nothing to preview)_"
+							/>
+							<div className="flex gap-2 justify-end">
+								<Button size="sm" variant="secondary" onClick={() => setEditing(false)}>
+									Cancel
+								</Button>
+								<Button
+									size="sm"
+									onClick={() => {
+										onSave(draft || null);
+										setEditing(false);
+									}}
+								>
+									Save
+								</Button>
+							</div>
+						</div>
+					) : value ? (
+						<MarkdownProse projectId={projectId} projectSlug={taskProjectSlug}>
+							{value}
+						</MarkdownProse>
+					) : (
+						<span>{emptyText}</span>
+					)}
+				</div>
+			)}
+		</div>
+	);
+}
 
-			<div
-				data-testid="pinned-rules"
+/**
+ * Renders the progress-summary and rules cards just below the task header.
+ * Both are collapsible (collapsed by default) and edit inline against
+ * `useUpdateTask`. Status changes do not run through here — `progress_summary`
+ * and `rules` are plain text fields.
+ */
+export function TaskSummary({ task, projectId, taskProjectSlug, updateTask }: TaskSummaryProps) {
+	return (
+		<>
+			<CollapsibleSummaryCard
+				testId="pinned-progress-summary"
+				toggleTestId="progress-summary-toggle"
+				label="Progress Summary"
+				infoLabel="About Progress Summary"
+				infoTestId="progress-summary-info"
+				infoContent="A running checkpoint of what's been done and what's left on this task. Automatically included in every agent run's prompt — alongside the description and rules — so work stays continuous across runs. Agents update it at natural milestones via the update_task tool."
+				editorAriaLabel="Progress Summary"
+				value={task.progress_summary}
+				emptyText="No progress summary yet."
+				className="bg-surface-2 rounded-md p-3 mb-3 text-[13px] text-text-2 leading-relaxed"
+				projectId={projectId}
+				taskProjectSlug={taskProjectSlug}
+				onSave={(v) => updateTask.mutate({ progress_summary: v })}
+			/>
+
+			<CollapsibleSummaryCard
+				testId="pinned-rules"
+				toggleTestId="rules-toggle"
+				label="Rules"
+				infoLabel="About Rules"
+				infoTestId="rules-info"
+				infoContent="Approach constraints and required workflows for this task — e.g. 'run the full suite before pushing' or 'consult the architect before touching auth'. Automatically prepended to every agent run's task prompt. Agents can update via the update_task tool as they discover new rules."
+				editorAriaLabel="Rules"
+				editorPlaceholder="e.g., Consult the architect before making changes..."
+				value={task.rules}
+				emptyText="No rules set."
 				className="bg-surface-2 rounded-md p-3 mb-5 text-[13px] text-text-2 leading-relaxed border-l-2 border-info"
-			>
-				<div className="flex items-center justify-between mb-1">
-					<div className="flex items-center gap-1">
-						<span className="text-[11px] uppercase tracking-wider font-medium text-text-3">
-							Rules
-						</span>
-						<InfoTooltip
-							label="About Rules"
-							data-testid="rules-info"
-							content="Approach constraints and required workflows for this task — e.g. 'run the full suite before pushing' or 'consult the architect before touching auth'. Automatically prepended to every agent run's task prompt. Agents can update via the update_task tool as they discover new rules."
-						/>
-					</div>
-					{!editingRules && (
-						<button
-							type="button"
-							onClick={() => {
-								setRulesText(task.rules ?? '');
-								setEditingRules(true);
-							}}
-							className="text-[11px] text-text-3 hover:text-text-1"
-						>
-							Edit
-						</button>
-					)}
-				</div>
-				{editingRules ? (
-					<div className="flex flex-col gap-2">
-						<MarkdownEditor
-							ariaLabel="Rules"
-							projectId={projectId}
-							projectSlug={taskProjectSlug}
-							value={rulesText}
-							onChange={setRulesText}
-							placeholder="e.g., Consult the architect before making changes..."
-							className="min-h-[60px]"
-							previewClassName="min-h-[60px]"
-							emptyPreviewText="_(nothing to preview)_"
-						/>
-						<div className="flex gap-2 justify-end">
-							<Button size="sm" variant="secondary" onClick={() => setEditingRules(false)}>
-								Cancel
-							</Button>
-							<Button
-								size="sm"
-								onClick={() => {
-									updateTask.mutate({ rules: rulesText || null });
-									setEditingRules(false);
-								}}
-							>
-								Save
-							</Button>
-						</div>
-					</div>
-				) : task.rules ? (
-					<MarkdownProse projectId={projectId} projectSlug={taskProjectSlug}>
-						{task.rules}
-					</MarkdownProse>
-				) : (
-					<span>No rules set.</span>
-				)}
-			</div>
+				projectId={projectId}
+				taskProjectSlug={taskProjectSlug}
+				onSave={(v) => updateTask.mutate({ rules: v })}
+			/>
 		</>
 	);
 }

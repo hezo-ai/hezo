@@ -81,6 +81,7 @@ const APPROVAL_TYPE_COLORS: Record<ApprovalType, BadgeColor> = {
 	[ApprovalType.PlanReview]: 'blue',
 	[ApprovalType.DeployProduction]: 'red',
 	[ApprovalType.SkillProposal]: 'blue',
+	[ApprovalType.GoalSuggestion]: 'purple',
 	// Previously fell through to the Badge's neutral default (no typeColors entry).
 	[ApprovalType.ProjectCreation]: 'neutral',
 };

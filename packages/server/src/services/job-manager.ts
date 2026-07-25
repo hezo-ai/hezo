@@ -25,6 +25,7 @@ import type { Db } from '../db/database';
 import type { DomainEventBus } from '../events/bus';
 import { trackBackground } from '../lib/background';
 import { broadcastRowChange } from '../lib/broadcast';
+import type { StorageBackend } from '../lib/db-info';
 import { shouldDeferWakeupForBlockers } from '../lib/dependencies';
 import { ref } from '../lib/log-ref';
 import { logger } from '../logger';
@@ -57,13 +58,14 @@ import {
 	verifyContainerWorkspace,
 	wakeAgentsWithPendingWork,
 } from './containers';
-import type { DockerClient } from './docker';
+import type { ContainerProcessInfo, DockerClient } from './docker';
 import type { EgressProxy } from './egress';
 import { getDueGoals } from './goals';
 import { HEARTBEAT_INTERVAL_FLOOR_MIN } from './heartbeat-schedule';
 import type { LogStreamBroker } from './log-stream-broker';
 import { detectOrphans, healStaleRunState, STALE_STATE_GRACE_SECONDS } from './orphan-detector';
 import type { PricingService } from './pricing';
+import { collectCandidateRunIds, decideSweepKills } from './process-sweeper';
 import { ensureRepoSetupAction } from './repo-setup';
 import { getProjectConcurrency, isTaskBusyInDb } from './run-concurrency';
 import type { SshAgentServer } from './ssh-agent';
@@ -182,6 +184,11 @@ export interface JobManagerDeps {
 	connectivityStatus?: ContainerConnectivityStatus;
 	connectivityProbe?: () => Promise<ProbeResult>;
 	pricing?: PricingService;
+	/**
+	 * Storage backend, so the log-compaction drain knows whether it may VACUUM
+	 * FULL to reclaim disk (embedded only). Defaults to 'embedded' when omitted.
+	 */
+	storageBackend?: StorageBackend;
 	/** Anonymous daily usage telemetry. Omitted/disabled → the cron is not registered. */
 	telemetry?: { enabled: boolean; endpoint: string };
 	/**
@@ -236,6 +243,11 @@ const ORPHAN_DETECTION_CRON = process.env.HEZO_ORPHAN_DETECTION_CRON ?? '*/30 * 
 // literal for the `<> ALL(...)` / `= ANY(...)` enum-array params.
 const BUDGET_PAUSE_STATUSES_PG = `{${BUDGET_PAUSE_STATUSES.join(',')}}`;
 const INBOX_RETENTION_DAYS = Number(process.env.HEZO_INBOX_RETENTION_DAYS ?? 30);
+// Drain tick for agent run-log compaction. Cheap when idle (a single
+// `system_meta` read); only does work while a compaction pass is active, which
+// the operator starts from the DB panel. Frequent so a started pass makes
+// visible progress and resumes promptly after a restart.
+const LOG_COMPACTION_CRON = process.env.HEZO_LOG_COMPACTION_CRON ?? '*/10 * * * * *';
 // Lower bound on how often a heartbeat can fire (`HEARTBEAT_INTERVAL_FLOOR_MIN`,
 // from ./heartbeat-schedule) is shared with the agents API's computed
 // `next_heartbeat_at` so the UI countdown matches the cadence enforced here.
@@ -471,6 +483,11 @@ export class JobManager {
 			log: cronLog,
 			onTick: () => this.guarded('inbox-archive', () => this.archiveInboxItems()),
 		});
+		this.cron.createJob('log-compaction', {
+			cron: LOG_COMPACTION_CRON,
+			log: cronLog,
+			onTick: () => this.guarded('log-compaction', () => this.compactRunLogs()),
+		});
 		this.cron.createJob('budget-resume', {
 			cron: BUDGET_RESUME_CRON,
 			log: cronLog,
@@ -589,6 +606,41 @@ export class JobManager {
 		this.liveRuns.clear();
 		this.cron.shutdown();
 		log.info('Job manager stopped.');
+	}
+
+	/**
+	 * Reap every live run's in-container process tree by its run-id marker.
+	 * Called from `shutdownRuntime` BEFORE `shutdown()` aborts the runs: the
+	 * abort path's own kill (agent-runner) races `process.exit`, so a clean
+	 * SIGTERM (an update restart) would otherwise strand the agent CLIs in the
+	 * warm containers. Bounded — each marker kill is individually timed out and
+	 * the whole pass races an 8s timer — so shutdown can never wedge on a dead
+	 * Docker socket. Best-effort; the startup sweep is the crash-path backstop.
+	 */
+	async killLiveRunProcesses(): Promise<void> {
+		const runs = [...this.liveRuns.values()];
+		if (runs.length === 0) return;
+		const projectIds = [...new Set(runs.map((r) => r.projectId))];
+		const containers = await this.deps.db.query<{ id: string; container_id: string }>(
+			`SELECT id, container_id FROM projects WHERE id = ANY($1::uuid[]) AND container_id IS NOT NULL`,
+			[projectIds],
+		);
+		const containerByProject = new Map(containers.rows.map((r) => [r.id, r.container_id]));
+		const kills = runs.flatMap((run) => {
+			const containerId = containerByProject.get(run.projectId);
+			if (!containerId) return [];
+			return [
+				this.deps.docker
+					.killRunProcesses(containerId, run.runId)
+					.catch((e) => log.warn(`Shutdown kill failed for run ${run.runId}:`, e)),
+			];
+		});
+		if (kills.length === 0) return;
+		await Promise.race([
+			Promise.allSettled(kills),
+			new Promise((resolve) => setTimeout(resolve, 8_000)),
+		]);
+		log.info(`Shutdown: reaped in-container processes for ${kills.length} live run(s)`);
 	}
 
 	/**
@@ -728,6 +780,7 @@ export class JobManager {
 		await this.selfHealErroredContainers(docker);
 		await this.restartStoppedRunningContainers(docker);
 		await this.repairStaleContainerMounts(docker);
+		await this.sweepDanglingContainerProcesses(docker);
 	}
 
 	/**
@@ -907,6 +960,76 @@ export class JobManager {
 				);
 			} catch (err) {
 				log.error(`Failed to rebuild stale container for project ${ref(row.slug, row.id)}:`, err);
+			}
+		}
+	}
+
+	/**
+	 * Fourth startup reconcile pass: reap dangling processes previous server
+	 * lifetimes left inside the (deliberately warm-surviving) project containers.
+	 * Docker can't kill an exec'd process, so any exec in flight when the server
+	 * stopped — an agent CLI, a git fetch and its SSH-bridge tree, an npm install
+	 * — keeps running in the container forever unless swept here.
+	 *
+	 * Runs after the stranded-run repair has already flipped previous-lifetime
+	 * `running` runs to `failed`, so the status-aware policy in
+	 * `decideSweepKills` sees them as non-succeeded and kills their trees, while
+	 * background processes a *succeeded* run intentionally left (e.g. a dev
+	 * server) are preserved. Legacy trees from versions predating the scope
+	 * marker are caught by their bridge cmdline / `SSH_AUTH_SOCK=/run/hezo/` env.
+	 * Best-effort per container: a container stopping mid-sweep just logs.
+	 */
+	private async sweepDanglingContainerProcesses(docker: DockerClient): Promise<void> {
+		const { db } = this.deps;
+
+		const reachable = await docker.ping();
+		if (!reachable) {
+			log.warn('Docker not reachable at startup; skipping dangling-process sweep');
+			return;
+		}
+
+		const running = await db.query<{ id: string; slug: string; container_id: string }>(
+			`SELECT p.id, p.slug, p.container_id
+			 FROM projects p
+			 WHERE p.container_status = $1::container_status AND p.container_id IS NOT NULL`,
+			[ContainerStatus.Running],
+		);
+		if (running.rows.length === 0) return;
+
+		const scans: Array<{ row: (typeof running.rows)[number]; procs: ContainerProcessInfo[] }> = [];
+		for (const row of running.rows) {
+			try {
+				const procs = await docker.listHezoProcesses(row.container_id);
+				if (procs.length > 0) scans.push({ row, procs });
+			} catch (err) {
+				log.warn(`Dangling-process scan failed for project ${ref(row.slug, row.id)}:`, err);
+			}
+		}
+		if (scans.length === 0) return;
+
+		// One batched lookup across every container: which scanned run ids belong
+		// to runs that completed successfully (their leftovers are intentional).
+		const candidateIds = collectCandidateRunIds(scans.flatMap((s) => s.procs));
+		let succeeded = new Set<string>();
+		if (candidateIds.length > 0) {
+			const rows = await db.query<{ id: string }>(
+				`SELECT id FROM heartbeat_runs
+				 WHERE status = $1::heartbeat_run_status AND id = ANY($2::uuid[])`,
+				[HeartbeatRunStatus.Succeeded, candidateIds],
+			);
+			succeeded = new Set(rows.rows.map((r) => r.id));
+		}
+
+		for (const { row, procs } of scans) {
+			const kills = decideSweepKills(procs, succeeded);
+			if (kills.length === 0) continue;
+			try {
+				await docker.killPids(row.container_id, kills);
+				log.info(
+					`Swept ${kills.length} dangling process(es) in container for project ${ref(row.slug, row.id)} (${procs.length - kills.length} preserved)`,
+				);
+			} catch (err) {
+				log.warn(`Dangling-process kill failed for project ${ref(row.slug, row.id)}:`, err);
 			}
 		}
 	}
@@ -2507,7 +2630,9 @@ export class JobManager {
 	}
 
 	private async detectOrphanedRuns(): Promise<void> {
-		await detectOrphans(this.deps.db, this.getLiveRunIds(), this.deps.wsManager);
+		await detectOrphans(this.deps.db, this.getLiveRunIds(), this.deps.wsManager, {
+			killProcesses: (containerId, runId) => this.deps.docker.killRunProcesses(containerId, runId),
+		});
 		await this.sweepStaleDispatches();
 		await healStaleRunState(this.deps.db, this.deps.wsManager);
 	}
@@ -2587,6 +2712,29 @@ export class JobManager {
 		if (count > 0) {
 			log.debug(`Archived ${count} inbox item(s)`);
 		}
+	}
+
+	/**
+	 * Kick the run-log compaction drain immediately, without waiting for the next
+	 * cron tick — used by the manual trigger on the DB panel. Guarded under the
+	 * same key as the cron so a manual kick and a scheduled tick never overlap;
+	 * whichever holds the guard drains the backlog the active marker describes.
+	 */
+	kickLogCompaction(): void {
+		void trackBackground(this.guarded('log-compaction', () => this.compactRunLogs()));
+	}
+
+	/**
+	 * One drain tick of run-log compaction. A no-op unless a compaction pass is
+	 * active (its marker set from the DB panel); otherwise it compacts a bounded
+	 * slice of the backlog and, once drained, reclaims space and clears the
+	 * marker. See {@link ./log-compaction}.
+	 */
+	private async compactRunLogs(): Promise<void> {
+		const { runLogCompactionTick } = await import('./log-compaction');
+		await runLogCompactionTick(this.deps.db, {
+			backend: this.deps.storageBackend ?? 'embedded',
+		});
 	}
 
 	/**

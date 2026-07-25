@@ -74,6 +74,7 @@ import { publicUsersRoutes, usersRoutes } from './routes/users';
 import { AuthChallengeStore } from './services/auth-challenges';
 import {
 	buildChatChannelRegistry,
+	buildInboundEventSink,
 	type ChatChannelRegistry,
 	wireManagerToChannels,
 } from './services/chat-channels';
@@ -169,11 +170,35 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	// no request handler can reach it.
 	const storageInfo = opened.storage;
 
+	// Embedded PGlite is single-process. Drop an advisory PID lock so the
+	// `hezo backup` / `hezo restore` preflight refuses while this server is live
+	// (opening a second cluster over the same pgdata files can corrupt them).
+	// Overwrites any stale lock from a prior crash; removed on graceful exit.
+	// External Postgres manages its own concurrency and needs no lock.
+	if (storageInfo.backend === 'embedded') {
+		const { writeInstanceLock } = await import('./db/instance-lock.js');
+		writeInstanceLock(config.dataDir);
+	}
+
 	await db.exec(BASE_SCHEMA);
 	setStartupPhase('migrations');
 	db = await runAvailableMigrations(db, config.dataDir);
 	setStartupPhase('seed');
 	await runSeed(db);
+
+	// One-time reclaim of the disk space the pre-chunk run-log write pattern
+	// left behind (migration 041 drops `heartbeat_runs.log_text`, but the column
+	// drop is metadata-only — the dead TOAST graveyard stays until a VACUUM FULL
+	// rewrites the table). Marker-gated, embedded-only, and synchronous on
+	// purpose: PGlite is single-connection, so running it in the background
+	// would stall the first requests anyway. Can take a while on a multi-GB
+	// table — once, on the first post-upgrade boot.
+	try {
+		const { runLegacyRunLogVacuumOnce } = await import('./db/run-log-chunks.js');
+		await runLegacyRunLogVacuumOnce(db, storageInfo.backend);
+	} catch (err) {
+		log.error('One-time legacy run-log reclaim failed (will retry next startup):', err);
+	}
 
 	// Asset blob storage: local filesystem by default, S3-compatible object
 	// storage when configured. Like databaseUrl, the raw assetStorageUrl stops
@@ -335,6 +360,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		connectivityStatus,
 		connectivityProbe,
 		pricing,
+		storageBackend: storageInfo.backend,
 		telemetry: config.telemetry,
 		autoInstallUpdates: config.autoInstallUpdates,
 	});
@@ -355,10 +381,17 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		containerLogStreamer,
 	});
 
-	// External chat channel adapters (Telegram now, Discord later). The registry is
-	// channel-agnostic; wiring the manager's delivery/close hooks routes external
-	// replies + thread closes through the right adapter without any platform branch.
-	const chatChannelRegistry = buildChatChannelRegistry({ db, masterKeyManager });
+	// External chat channel adapters (Telegram + Slack now, Discord later). The
+	// registry is channel-agnostic; wiring the manager's delivery/close hooks routes
+	// external replies + thread closes through the right adapter without any
+	// platform branch. The sink is the reverse seam: socket-transport adapters
+	// (Slack Socket Mode) push inbound events through it into the same ingest
+	// functions the webhook route uses.
+	const chatChannelRegistry = buildChatChannelRegistry({
+		db,
+		masterKeyManager,
+		sink: buildInboundEventSink({ db, manager: chatSessionManager }),
+	});
 	wireManagerToChannels(chatSessionManager, chatChannelRegistry);
 
 	setStartupPhase('workspace');
@@ -661,6 +694,7 @@ export function buildApp(
 		'/api',
 		buildDatabaseInfoRoutes(
 			config.storageInfo ?? { backend: 'embedded', display: join(config.dataDir, 'pgdata') },
+			config.dataDir,
 		),
 	);
 	app.route(

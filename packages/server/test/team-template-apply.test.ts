@@ -74,9 +74,9 @@ describe('applyTemplateToTeam', () => {
 		expect(slugs).toEqual([CAPTAIN_AGENT_SLUG]);
 	});
 
-	it('upgrades the existing Blank Captain prompt when Startup is applied later', async () => {
+	it('upgrades the existing Blank Captain prompt when App Team is applied later', async () => {
 		const blankId = await getTemplateId('Blank');
-		const startupId = await getTemplateId('Startup');
+		const startupId = await getTemplateId('App Team');
 
 		const team = await createTeam(
 			{ db, docker: docker as never, dataDir },
@@ -103,9 +103,9 @@ describe('applyTemplateToTeam', () => {
 		expect(new Set(slugs).size).toBe(slugs.length);
 	});
 
-	it('is additive — applying Startup twice does not duplicate agents', async () => {
+	it('is additive — applying App Team twice does not duplicate agents', async () => {
 		const blankId = await getTemplateId('Blank');
-		const startupId = await getTemplateId('Startup');
+		const startupId = await getTemplateId('App Team');
 
 		const team = await createTeam(
 			{ db, docker: docker as never, dataDir },
@@ -122,7 +122,7 @@ describe('applyTemplateToTeam', () => {
 
 	it('enqueues a team-coherence-review ticket when the roster actually changed', async () => {
 		const blankId = await getTemplateId('Blank');
-		const startupId = await getTemplateId('Startup');
+		const startupId = await getTemplateId('App Team');
 
 		const team = await createTeam(
 			{ db, docker: docker as never, dataDir },

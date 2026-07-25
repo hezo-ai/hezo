@@ -20,12 +20,23 @@ export const chatChannelRoutes = new Hono<Env>();
 /** Upstream host a channel's bot token is scoped to in the secrets vault. */
 const CHANNEL_HOST: Record<string, string> = {
 	telegram: 'api.telegram.org',
+	slack: 'slack.com',
 	discord: 'discord.com',
 };
 
 /** Canonical secrets-vault name for a channel's bot token, e.g. TELEGRAM_BOT_TOKEN. */
 function botTokenSecretName(channel: ChatChannel): string {
 	return `${channel.toUpperCase()}_BOT_TOKEN`;
+}
+
+/**
+ * Canonical secrets-vault name for a channel's secondary app-level token (e.g.
+ * SLACK_APP_TOKEN — the Socket Mode `xapp-` token). The config row has no column
+ * for a second token: the vault name is referenced from `metadata.app_token_secret`,
+ * the precedent for any future channel needing more than one secret.
+ */
+function appTokenSecretName(channel: ChatChannel): string {
+	return `${channel.toUpperCase()}_APP_TOKEN`;
 }
 
 chatChannelRoutes.get('/chat/channels', async (c) => {
@@ -48,6 +59,7 @@ chatChannelRoutes.get('/chat/channels', async (c) => {
 			channel: r.channel,
 			enabled: r.enabled,
 			has_token: !!r.bot_token_secret,
+			has_app_token: typeof (r.metadata ?? {}).app_token_secret === 'string',
 			has_webhook: !!r.webhook_secret,
 			metadata: r.metadata ?? {},
 			updated_at: r.updated_at,
@@ -74,6 +86,7 @@ chatChannelRoutes.put('/chat/channels/:channel', async (c) => {
 	const body = await c.req.json<{
 		enabled?: boolean;
 		bot_token?: string;
+		app_token?: string;
 		metadata?: Record<string, unknown>;
 	}>();
 	const enabled = !!body.enabled;
@@ -93,15 +106,36 @@ chatChannelRoutes.put('/chat/channels/:channel', async (c) => {
 		botTokenSecret = name;
 	}
 
+	// Same treatment for the optional secondary app-level token (Slack's Socket
+	// Mode `xapp-` token): vault row + a name reference in metadata.
+	if (body.app_token?.trim()) {
+		const name = appTokenSecretName(channel);
+		await db.query(
+			`INSERT INTO secrets (name, encrypted_value, category, allowed_hosts, allow_all_hosts, allow_body_substitution)
+			 VALUES ($1, $2, 'api_token', $3, false, false)
+			 ON CONFLICT (name) DO UPDATE SET encrypted_value = EXCLUDED.encrypted_value, updated_at = now()`,
+			[name, encrypt(body.app_token.trim(), key), [CHANNEL_HOST[channel] ?? '']],
+		);
+		metadata.app_token_secret = name;
+	}
+
 	// Reuse an existing webhook secret if present; otherwise mint one on first setup.
 	const existing = await db.query<{
 		webhook_secret: string | null;
 		bot_token_secret: string | null;
-	}>(`SELECT webhook_secret, bot_token_secret FROM chat_channel_configs WHERE channel = $1`, [
-		channel,
-	]);
+		metadata: Record<string, unknown> | null;
+	}>(
+		`SELECT webhook_secret, bot_token_secret, metadata FROM chat_channel_configs WHERE channel = $1`,
+		[channel],
+	);
 	const webhookSecret = existing.rows[0]?.webhook_secret ?? randomUUID().replace(/-/g, '');
 	if (!botTokenSecret) botTokenSecret = existing.rows[0]?.bot_token_secret ?? null;
+	// A token-less re-save must not orphan the stored app token: carry the existing
+	// vault reference forward when the client's metadata omits it.
+	const existingAppSecret = existing.rows[0]?.metadata?.app_token_secret;
+	if (metadata.app_token_secret === undefined && typeof existingAppSecret === 'string') {
+		metadata.app_token_secret = existingAppSecret;
+	}
 
 	await db.query(
 		`INSERT INTO chat_channel_configs (channel, enabled, bot_token_secret, webhook_secret, metadata)
@@ -120,7 +154,23 @@ chatChannelRoutes.put('/chat/channels/:channel', async (c) => {
 			log.error(`failed to ${enabled ? 'start' : 'stop'} ${channel}`, e),
 		);
 	}
-	return ok(c, { channel, enabled, has_token: !!botTokenSecret });
+	// Prove the saved credentials against the platform when enabling, so the
+	// operator sees a broken token now instead of a silent dead channel. Best-effort
+	// — the config persists either way.
+	let validation: { ok: boolean; errors: string[] } | undefined;
+	if (enabled && adapter?.validateConfig) {
+		validation = await adapter.validateConfig().catch((e) => ({
+			ok: false,
+			errors: [(e as Error).message],
+		}));
+	}
+	return ok(c, {
+		channel,
+		enabled,
+		has_token: !!botTokenSecret,
+		has_app_token: typeof metadata.app_token_secret === 'string',
+		...(validation ? { validation } : {}),
+	});
 });
 
 // Disable a channel and take its adapter offline.

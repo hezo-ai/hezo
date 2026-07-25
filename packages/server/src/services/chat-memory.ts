@@ -47,6 +47,12 @@ export interface WindowMessage {
 	id: string;
 	role: string;
 	content: string;
+	/**
+	 * External sender display label for multi-party (coworker) messages, e.g. the
+	 * Slack display name. Null for web/DM messages — the transcript falls back to
+	 * the role label ("Operator"/"CEO").
+	 */
+	authorLabel: string | null;
 	/** Library paths of files attached to this message (e.g. `uploads/chat/x.png`). */
 	attachmentNames: string[];
 }
@@ -64,9 +70,10 @@ export async function loadActiveWindow(db: Db, conversationId: string): Promise<
 		id: string;
 		role: string;
 		content: string;
+		author_label: string | null;
 		attachment_names: string | null;
 	}>(
-		`SELECT m.id, m.role, m.content,
+		`SELECT m.id, m.role, m.content, m.author_label,
 		        string_agg(a.original_filename, E'\n' ORDER BY ca.created_at)
 		          FILTER (WHERE a.id IS NOT NULL) AS attachment_names
 		 FROM chat_messages m
@@ -74,7 +81,7 @@ export async function loadActiveWindow(db: Db, conversationId: string): Promise<
 		 LEFT JOIN assets a ON a.id = ca.asset_id
 		 WHERE m.conversation_id = $1 AND m.compacted_at IS NULL
 		   AND m.status = 'complete' AND (m.content <> '' OR ca.chat_message_id IS NOT NULL)
-		 GROUP BY m.id, m.role, m.content, m.created_at
+		 GROUP BY m.id, m.role, m.content, m.author_label, m.created_at
 		 ORDER BY m.created_at ASC`,
 		[conversationId],
 	);
@@ -82,6 +89,7 @@ export async function loadActiveWindow(db: Db, conversationId: string): Promise<
 		id: row.id,
 		role: row.role,
 		content: row.content,
+		authorLabel: row.author_label,
 		attachmentNames: row.attachment_names ? row.attachment_names.split('\n') : [],
 	}));
 }

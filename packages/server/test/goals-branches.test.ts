@@ -27,10 +27,10 @@ beforeAll(async () => {
 	const ctx = await createTestApp();
 	db = ctx.db;
 	// Goals need a non-internal project, which needs a Captain — so provision a
-	// Startup-templated team rather than reusing HQ (CEO/Coach only, no Captain).
+	// App Team-templated team rather than reusing HQ (CEO/Coach only, no Captain).
 	const typesRes = await ctx.app.request('/api/team-templates', { headers: authHeader(ctx.token) });
 	const typeId = (await typesRes.json()).data.find(
-		(t: Record<string, unknown>) => t.name === 'Startup',
+		(t: Record<string, unknown>) => t.name === 'App Team',
 	).id;
 	const team = (
 		await (await createTestTeam(db, { name: 'Goal Branches Co', template_id: typeId })).json()

@@ -65,7 +65,11 @@ that. See [Master key & encryption](/docs/security/master-key).
 
 By default Hezo embeds its database inside the single binary and stores it under the data
 directory — no external database to run. If you'd rather use a managed/hosted Postgres
-(for managed backups, more headroom, or your own operational tooling), point Hezo at it:
+(for managed backups, more headroom, or your own operational tooling), point Hezo at it
+(this section is the reference; for a walkthrough on a cloud server see
+[Managed database & asset storage](/docs/deployment/cloud#managed-database--asset-storage)
+or, for the cloud-init deploy,
+[Using managed data hosting](/docs/deployment/one-click#using-managed-data-hosting)):
 
 ```sh
 HEZO_DATABASE_URL="postgres://hezo:••••@db.internal:5432/hezo?sslmode=verify-full" \
@@ -103,7 +107,9 @@ Requirements and recommendations:
 By default, uploaded [asset](/docs/concepts/assets) files (task attachments and the
 project assets library) live on the local filesystem under `<data-dir>/assets/`. To keep
 them in a bucket instead — for managed durability, or to keep the host closer to
-stateless — point Hezo at any **S3-compatible** store:
+stateless — point Hezo at any **S3-compatible** store (deployment walkthroughs:
+[Managed database & asset storage](/docs/deployment/cloud#managed-database--asset-storage)
+and [Using managed data hosting](/docs/deployment/one-click#using-managed-data-hosting)):
 
 ```sh
 HEZO_ASSET_STORAGE_URL="s3://ACCESS_KEY:SECRET@s3.eu-west-1.amazonaws.com/my-bucket/hezo-assets?region=eu-west-1" \
@@ -150,8 +156,10 @@ the whole instance (see [Backup & recovery](/docs/deployment/backup-and-recovery
 existing assets into a bucket:
 
 1. Stop the server.
-2. Back up the instance: `hezo backup --output move/` (add `--data-dir` if yours isn't the
-   default). This writes the database and every asset file into `move/`.
+2. Back up the instance: `hezo backup --output move/`. If your data directory isn't the
+   default, point the command at it — `hezo backup` reads `HEZO_DATA_DIR` (so a deployment
+   that already sets it needs nothing extra), or pass `--data-dir`. This writes the
+   database and every asset file into `move/`.
 3. Restore into the bucket: `hezo restore move/ --asset-storage-url "s3://…"` — add
    `--database-url` as well if you're also moving to hosted Postgres. Restored blobs are
    checksum-verified against the database rows.

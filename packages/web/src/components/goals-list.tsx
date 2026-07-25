@@ -12,10 +12,14 @@ import {
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import {
+	GOAL_EXPLAINER_TOOLTIP,
+	type GoalSuggestion,
 	useCancelQueuedProgressRun,
 	useGoalQueuedRun,
 	useGoalRuns,
+	useGoalSuggestions,
 	useGoals,
+	useResolveGoalSuggestion,
 	useRunProgressUpdateNow,
 	useUpdateGoal,
 } from '../hooks/use-goals';
@@ -30,6 +34,7 @@ import { Button } from './ui/button';
 import { ConfirmDialog } from './ui/confirm-dialog';
 import { EmptyState } from './ui/empty-state';
 import { HelpDialog } from './ui/help-dialog';
+import { InfoTooltip } from './ui/info-tooltip';
 import { Tooltip } from './ui/tooltip';
 
 interface GoalsListProps {
@@ -287,6 +292,78 @@ function ViewFilter({ view, onChange }: { view: GoalView; onChange: (v: GoalView
 	);
 }
 
+/**
+ * Pending goal suggestions (Captain/CEO proposals) shown above the goals grid.
+ * Each carries inline Approve (creates the real goal) / Deny. Renders nothing when
+ * there are no pending suggestions.
+ */
+function SuggestedGoals({
+	projectId,
+	suggestions,
+}: {
+	projectId: string;
+	suggestions: GoalSuggestion[];
+}) {
+	const resolve = useResolveGoalSuggestion(projectId);
+	if (suggestions.length === 0) return null;
+
+	return (
+		<div className="mb-4" data-testid="goal-suggestions">
+			<div className="mb-2 flex items-center gap-1.5">
+				<h2 className="text-sm font-semibold text-text-2">Suggested goals</h2>
+				<InfoTooltip
+					label="What is a goal?"
+					content={GOAL_EXPLAINER_TOOLTIP}
+					data-testid="suggested-goals-info"
+				/>
+			</div>
+			<div className="flex flex-col gap-2">
+				{suggestions.map((s) => (
+					<div
+						key={s.approval_id}
+						className="flex flex-col gap-2 rounded-lg border border-warning bg-warning-soft p-3 sm:flex-row sm:items-start sm:justify-between"
+						data-testid="goal-suggestion-row"
+					>
+						<div className="min-w-0 flex items-start gap-2">
+							<Target className="mt-0.5 h-4 w-4 shrink-0 text-warning-soft-fg" />
+							<div className="min-w-0">
+								<p className="text-sm font-medium text-text-1">{s.title}</p>
+								{s.measurement && (
+									<p className="mt-0.5 text-xs text-text-2">Measure: {s.measurement}</p>
+								)}
+								<p className="mt-0.5 text-xs text-text-3">
+									Checked {s.check_frequency}
+									{s.target_date ? ` · by ${s.target_date.slice(0, 10)}` : ''}
+									{s.suggested_by_name ? ` · suggested by ${s.suggested_by_name}` : ''}
+								</p>
+							</div>
+						</div>
+						<div className="flex shrink-0 gap-2">
+							<Button
+								size="sm"
+								disabled={resolve.isPending}
+								onClick={() => resolve.mutate({ approvalId: s.approval_id, status: 'approved' })}
+								data-testid="goal-suggestion-approve"
+							>
+								Approve
+							</Button>
+							<Button
+								size="sm"
+								variant="secondary"
+								disabled={resolve.isPending}
+								onClick={() => resolve.mutate({ approvalId: s.approval_id, status: 'denied' })}
+								data-testid="goal-suggestion-deny"
+							>
+								Deny
+							</Button>
+						</div>
+					</div>
+				))}
+			</div>
+		</div>
+	);
+}
+
 export function GoalsList({ projectId }: GoalsListProps) {
 	const [view, setView] = useState<GoalView>('active');
 	const [createOpen, setCreateOpen] = useState(false);
@@ -300,6 +377,8 @@ export function GoalsList({ projectId }: GoalsListProps) {
 	const goals = (allGoals ?? []).filter((g) =>
 		view === 'archived' ? !!g.archived_at : !g.archived_at,
 	);
+	const { data: suggestionsData } = useGoalSuggestions(projectId);
+	const suggestions = suggestionsData ?? [];
 
 	if (isLoading) {
 		return (
@@ -309,8 +388,9 @@ export function GoalsList({ projectId }: GoalsListProps) {
 		);
 	}
 
-	// First-run empty state (no goals at all): the hero CTA. Shown only on the active tab.
-	if (view === 'active' && goals.length === 0) {
+	// First-run empty state (no goals at all): the hero CTA. Shown only on the active
+	// tab and only when there are no pending suggestions to act on either.
+	if (view === 'active' && goals.length === 0 && suggestions.length === 0) {
 		return (
 			<div>
 				<ProjectProgressSummary projectId={projectId} />
@@ -368,9 +448,15 @@ export function GoalsList({ projectId }: GoalsListProps) {
 				)}
 			</div>
 
+			{view === 'active' && <SuggestedGoals projectId={projectId} suggestions={suggestions} />}
+
 			{goals.length === 0 ? (
 				<div className="py-12 text-center text-[13px] text-text-3" data-testid="goals-empty-view">
-					{view === 'archived' ? 'No archived goals.' : 'No active goals.'}
+					{view === 'archived'
+						? 'No archived goals.'
+						: suggestions.length > 0
+							? 'No active goals yet — approve a suggestion above to create one.'
+							: 'No active goals.'}
 				</div>
 			) : (
 				<div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">

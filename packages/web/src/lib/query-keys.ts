@@ -32,6 +32,17 @@ export const queryKeys = {
 	instanceSettings: () => ['instance', 'settings'],
 	/** Storage backend metadata (server-side redacted) for the General settings page. */
 	databaseInfo: () => ['instance', 'database'],
+	/**
+	 * On-disk size of the embedded DB's pre-migration snapshots
+	 * (`pgdata.superseded.*`). Under the `databaseInfo` prefix so its invalidation
+	 * cascades here too.
+	 */
+	supersededData: () => ['instance', 'database', 'superseded'],
+	/**
+	 * Live DB-usage figures + run-log compaction status for the chosen retention
+	 * window. Under the `databaseInfo` prefix so invalidating it cascades here.
+	 */
+	runLogUsage: (olderThanDays: number) => ['instance', 'database', 'run-log-usage', olderThanDays],
 	/** Asset storage backend metadata (server-side redacted) for the General settings page. */
 	assetStorageInfo: () => ['instance', 'asset-storage'],
 	/** Instance-wide mention resolution (global CEO chat), keyed by sorted candidates. */
@@ -141,6 +152,7 @@ export const queryKeys = {
 		goal: (slug: string, goalId: string) => ['projects', slug, 'goals', goalId],
 		goalHistory: (slug: string, goalId: string) => ['projects', slug, 'goals', goalId, 'history'],
 		goalRuns: (slug: string) => ['projects', slug, 'goals', 'runs'],
+		goalSuggestions: (slug: string) => ['projects', slug, 'goals', 'suggestions'],
 		// Infinite-scroll variants of the runs feeds, under their base prefixes so
 		// existing invalidations still cascade.
 		goalRunsInfinite: (slug: string, filters: KeyParam) => [

@@ -35,10 +35,45 @@ HEZO_DATABASE_URL=postgres://… HEZO_ASSET_STORAGE_URL="s3://…" hezo backup  
 `hezo backup` writes a **backup bundle** (default `<data-dir>/backups/hezo-<timestamp>/`)
 containing `database.backup.gz` (every row plus the exact schema version it was taken at),
 an `assets/` tree of every uploaded file, and a `manifest.json`. Use `--no-assets` for a
-database-only single `.backup.gz` file, or `--no-database` for an assets-only bundle. For
-the **embedded** database and **local** assets, run it while the server is stopped. A
-**hosted** database and bucket can be backed up any time — and pair well with your
-provider's own snapshots or versioning.
+database-only single `.backup.gz` file, or `--no-database` for an assets-only bundle.
+
+**Stop the server first for the embedded database and local assets.** The embedded database
+is single-process: `hezo backup` opens a *second* database over the same files, which is not
+a safe read-only operation — it races the running server's writes and can corrupt the data.
+So the command **refuses to run while the server is up** (the running instance holds an
+advisory lock at `<data-dir>/hezo.lock`; backup and restore check it and stop with guidance
+rather than risk the files). A **hosted** database and bucket are different — there `hezo
+backup` is an ordinary consistent read against your one Postgres server, so you can back them
+up **any time, server running**, and they pair well with your provider's own snapshots or
+versioning.
+
+> If a crash ever leaves a stale `hezo.lock` behind, the next server start overwrites it, and
+> backup/restore ignore it automatically (they verify the recorded process is actually
+> running). You only ever delete it by hand if the error insists a server is running when you
+> know none is.
+
+### Point the command at your data directory
+
+`hezo backup` resolves its data directory the **same way the server does** — `HEZO_DATA_DIR`
+first, then `--data-dir`, then the default `~/.hezo`. This matters the moment your instance
+does **not** live at the default location.
+
+**If your server runs with a custom data directory, the backup command has to know about it
+too.** Run `hezo backup` in the same environment as the server (so `HEZO_DATA_DIR` is set),
+or pass `--data-dir /your/path` explicitly. Otherwise the command falls back to `~/.hezo` — a
+directory your instance never used — and backs up the wrong database instead of yours.
+
+- **systemd / Docker** (the env var is already set for the service): `hezo backup` needs no
+  extra flag — run it with the unit's environment (an `EnvironmentFile` / `systemd-run`), or
+  `docker exec <container> hezo backup`, and the same `HEZO_DATA_DIR` resolves your database.
+- **A custom dir passed only as a startup flag** (`hezo --data-dir /var/lib/hezo`): pass the
+  **same** `--data-dir /var/lib/hezo` to `hezo backup` (there is no env var to inherit).
+
+Pointed at a directory that holds no Hezo database, the command stops with a clear error
+(`No Hezo database found at …`) instead of silently writing a backup of an empty one — but
+it's on you to point it at the *right* directory; a valid-but-wrong data dir is still a valid
+backup of the wrong instance. The same resolution applies to `hezo restore`, which **writes**
+into the resolved data directory.
 
 **The bundle does not cover the whole data directory.** Project workspaces (git worktrees)
 and the instance's keys live under `<data-dir>` and are **not** in a backup, so a full

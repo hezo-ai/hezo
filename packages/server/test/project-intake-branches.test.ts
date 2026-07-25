@@ -65,6 +65,8 @@ describe('createProjectIntake — baseline / plan branches', () => {
 		expect(comments.rows[0].content.text).not.toContain("I'll attach your project plan");
 		// No suggested-team-type line when baselineTeamTypeName is absent.
 		expect(comments.rows[0].content.text).not.toContain('Suggested team type');
+		// The greeting references the description rather than duplicating it.
+		expect(comments.rows[0].content.text).not.toContain('No baseline, no plan');
 	});
 
 	it('uses the template baseline line when only a templateId is given', async () => {
@@ -73,7 +75,7 @@ describe('createProjectIntake — baseline / plan branches', () => {
 			description: 'Has a template baseline',
 			initialProjectPlan: null,
 			baselineTemplateId: '00000000-0000-0000-0000-0000000000aa',
-			baselineTeamTypeName: 'Startup',
+			baselineTeamTypeName: 'App Team',
 		});
 		const task = await db.query<{ description: string }>(
 			'SELECT description FROM tasks WHERE id = $1',
@@ -82,7 +84,7 @@ describe('createProjectIntake — baseline / plan branches', () => {
 		expect(task.rows[0].description).toContain(
 			'template_id: `00000000-0000-0000-0000-0000000000aa`',
 		);
-		expect(task.rows[0].description).toContain('Startup');
+		expect(task.rows[0].description).toContain('App Team');
 	});
 
 	it('broadcasts the new intake task when a wsManager is supplied', async () => {

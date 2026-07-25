@@ -3,7 +3,7 @@ import { getActiveRuntime, setActiveRuntime, shutdownRuntime } from '../src/runt
 import type { StartupResult } from '../src/startup';
 
 function fakeRuntime() {
-	const jobManager = { shutdown: vi.fn() };
+	const jobManager = { shutdown: vi.fn(), killLiveRunProcesses: vi.fn(async () => {}) };
 	const chatSessionManager = { stop: vi.fn(async () => {}) };
 	const egressProxy = { releaseAll: vi.fn(async () => {}) };
 	const sshAgentServer = { releaseAll: vi.fn(async () => {}) };
@@ -35,6 +35,11 @@ describe('shutdownRuntime', () => {
 			fakeRuntime();
 
 		await shutdownRuntime(result);
+		// Live-run trees are reaped BEFORE the aborts, so the kill can't race exit.
+		expect(jobManager.killLiveRunProcesses).toHaveBeenCalledTimes(1);
+		expect(jobManager.killLiveRunProcesses.mock.invocationCallOrder[0]).toBeLessThan(
+			jobManager.shutdown.mock.invocationCallOrder[0],
+		);
 		expect(jobManager.shutdown).toHaveBeenCalledTimes(1);
 		expect(chatSessionManager.stop).toHaveBeenCalledTimes(1);
 		expect(egressProxy.releaseAll).toHaveBeenCalledTimes(1);

@@ -29,7 +29,7 @@ beforeAll(async () => {
 	masterKeyManager = ctx.masterKeyManager;
 
 	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
-	const teamTemplateId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
+	const teamTemplateId = (await typesRes.json()).data.find((t: any) => t.name === 'App Team').id;
 
 	const teamRes = await createTestTeam(db, {
 		name: 'Agent Trigger Co',

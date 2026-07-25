@@ -113,7 +113,7 @@ beforeAll(async () => {
 
 	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 	const typeId = (await typesRes.json()).data.find(
-		(t: Record<string, unknown>) => t.name === 'Startup',
+		(t: Record<string, unknown>) => t.name === 'App Team',
 	).id;
 
 	const teamRes = await createTestTeam(db, { name: 'Reactions Co', template_id: typeId });
@@ -285,7 +285,7 @@ describe('REST reactions endpoints', () => {
 		// Build a second team; mint an api key for it.
 		const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 		const typeId = (await typesRes.json()).data.find(
-			(t: Record<string, unknown>) => t.name === 'Startup',
+			(t: Record<string, unknown>) => t.name === 'App Team',
 		).id;
 		const otherTeam = await createTestTeam(db, { name: 'Other Co', template_id: typeId });
 		const otherTeamData = (await otherTeam.json()).data;
@@ -356,7 +356,7 @@ describe('REST reactions endpoints', () => {
 		);
 		const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 		const typeId = (await typesRes.json()).data.find(
-			(t: Record<string, unknown>) => t.name === 'Startup',
+			(t: Record<string, unknown>) => t.name === 'App Team',
 		).id;
 		const foreignTeam = await createTestTeam(db, {
 			name: 'Fallback Co',

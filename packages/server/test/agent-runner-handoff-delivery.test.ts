@@ -3,6 +3,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
+import { runLogTextSql } from '../src/db/run-log-chunks';
 import type { Env } from '../src/lib/types';
 import { type RunnerDeps, runAgent } from '../src/services/agent-runner';
 import type { DockerClient } from '../src/services/docker';
@@ -44,7 +45,7 @@ beforeAll(async () => {
 
 	const typesRes = await app.request('/api/team-templates', { headers: authHeader(adminToken) });
 	const typeId = (await typesRes.json()).data.find(
-		(t: { name: string }) => t.name === 'Startup',
+		(t: { name: string }) => t.name === 'App Team',
 	).id;
 
 	const teamRes = await createTestTeam(db, { name: 'Handoff Co', template_id: typeId });
@@ -249,7 +250,7 @@ describe('runAgent handoff-delivery guardrail', () => {
 		// The no-op run became a success because the guardrail produced a comment.
 		expect(result.success).toBe(true);
 		const run = await db.query<{ status: string; produced_output: boolean; log_text: string }>(
-			'SELECT status, produced_output, log_text FROM heartbeat_runs WHERE id = $1',
+			`SELECT status, produced_output, ${runLogTextSql('heartbeat_runs.id')} AS log_text FROM heartbeat_runs WHERE id = $1`,
 			[runId],
 		);
 		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Succeeded);
@@ -414,7 +415,7 @@ describe('runAgent handoff-delivery guardrail', () => {
 		// Instead, the stranded handoff is surfaced as a warning in the run log,
 		// naming the teammate and the active-mention fix.
 		const run = await db.query<{ log_text: string }>(
-			'SELECT log_text FROM heartbeat_runs WHERE id = $1',
+			`SELECT ${runLogTextSql('heartbeat_runs.id')} AS log_text FROM heartbeat_runs WHERE id = $1`,
 			[result.heartbeatRunId],
 		);
 		expect(run.rows[0].log_text).toContain('wakes no one');
@@ -471,7 +472,7 @@ describe('runAgent handoff-delivery guardrail', () => {
 		expect(comments.rows[0].parent_comment_id).toBe(adminReply);
 
 		const run = await db.query<{ produced_output: boolean; log_text: string }>(
-			'SELECT produced_output, log_text FROM heartbeat_runs WHERE id = $1',
+			`SELECT produced_output, ${runLogTextSql('heartbeat_runs.id')} AS log_text FROM heartbeat_runs WHERE id = $1`,
 			[result.heartbeatRunId],
 		);
 		expect(run.rows[0].produced_output).toBe(true);
@@ -643,7 +644,7 @@ describe('runAgent handoff-delivery guardrail', () => {
 		const comments = await textComments(result.heartbeatRunId);
 		expect(comments.rows.length).toBe(0);
 		const run = await db.query<{ log_text: string }>(
-			'SELECT log_text FROM heartbeat_runs WHERE id = $1',
+			`SELECT ${runLogTextSql('heartbeat_runs.id')} AS log_text FROM heartbeat_runs WHERE id = $1`,
 			[result.heartbeatRunId],
 		);
 		expect(run.rows[0].log_text).not.toContain('wakes no one');

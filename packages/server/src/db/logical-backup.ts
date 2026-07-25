@@ -28,6 +28,60 @@ const FORMAT_VERSION = 1;
 const DUMP_PAGE_SIZE = 5_000;
 const INSERT_BATCH_SIZE = 500;
 
+/**
+ * Ceiling on the data volume a single dump query may return / a single restore
+ * INSERT may carry. Embedded PGlite hard-crashes its WASM instance
+ * ("RuntimeError: Out of bounds memory access") when one protocol message
+ * exceeds roughly 16MB, so both directions size their batches by bytes as well
+ * as rows, with generous headroom under that ceiling. Large-log tables (a
+ * single agent run's log can be megabytes) are what make row-count-only
+ * batching unsafe.
+ */
+const BATCH_TARGET_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Rows per page for one table's dump queries: as many rows as fit the byte
+ * target given the table's average row size, at least 1 and at most the flat
+ * row cap. A table whose largest single row alone exceeds the target is read
+ * one row at a time — the best a row-granular reader can do.
+ */
+export function dumpPageRows(stats: {
+	rowCount: number;
+	totalBytes: number;
+	maxRowBytes: number;
+}): number {
+	if (stats.rowCount === 0) return DUMP_PAGE_SIZE;
+	if (stats.maxRowBytes > BATCH_TARGET_BYTES) return 1;
+	const avgRowBytes = Math.max(1, Math.ceil(stats.totalBytes / stats.rowCount));
+	return Math.min(DUMP_PAGE_SIZE, Math.max(1, Math.floor(BATCH_TARGET_BYTES / avgRowBytes)));
+}
+
+/**
+ * Split `sizes.length` rows into contiguous insert batches, closing a batch
+ * when it reaches the row cap or the cumulative byte target. Every batch holds
+ * at least one row, so a single oversized row still travels (alone).
+ */
+export function planInsertBatches(
+	sizes: number[],
+	maxRows = INSERT_BATCH_SIZE,
+	targetBytes = BATCH_TARGET_BYTES,
+): Array<{ start: number; end: number }> {
+	const batches: Array<{ start: number; end: number }> = [];
+	let start = 0;
+	let bytes = 0;
+	for (let i = 0; i < sizes.length; i++) {
+		const rowsInBatch = i - start;
+		if (rowsInBatch > 0 && (rowsInBatch >= maxRows || bytes + sizes[i] > targetBytes)) {
+			batches.push({ start, end: i });
+			start = i;
+			bytes = 0;
+		}
+		bytes += sizes[i];
+	}
+	if (start < sizes.length) batches.push({ start, end: sizes.length });
+	return batches;
+}
+
 interface ColumnMeta {
 	name: string;
 	udt: string;
@@ -152,25 +206,52 @@ export async function dumpLogicalBackup(
 		const orderBy =
 			table.pk.length > 0 ? `ORDER BY ${table.pk.map((c) => quoteIdent(c)).join(', ')}` : '';
 
-		let offset = 0;
-		for (;;) {
-			// Keyset pagination would be nicer, but OFFSET paging with a stable
-			// PK order is correct and Hezo-scale tables are modest. Tables with
-			// no PK are read in one page.
-			const page = await db.query<Record<string, unknown>>(
-				orderBy
-					? `SELECT ${colList} FROM ${quoteIdent(table.name)} ${orderBy} LIMIT ${DUMP_PAGE_SIZE} OFFSET ${offset}`
-					: `SELECT ${colList} FROM ${quoteIdent(table.name)}`,
+		try {
+			// Page size is derived from the table's *uncompressed* row sizes
+			// (rendering the whole row to text detoasts it), so one page's
+			// response stays well under the embedded engine's per-message
+			// ceiling regardless of how large individual rows are. Only the
+			// aggregates travel back here, so this probe itself is safe on any
+			// table.
+			const stats = await db.query<{
+				row_count: number;
+				total_bytes: string;
+				max_row_bytes: number;
+			}>(
+				`SELECT COUNT(*)::int AS row_count,
+				        COALESCE(SUM(octet_length(__hezo_row::text)), 0)::text AS total_bytes,
+				        COALESCE(MAX(octet_length(__hezo_row::text)), 0)::int AS max_row_bytes
+				 FROM ${quoteIdent(table.name)} AS __hezo_row`,
 			);
-			for (const row of page.rows) {
-				const encoded: Record<string, unknown> = {};
-				for (const col of cols) {
-					encoded[col.name] = encodeValue(row[col.name], col.udt);
+			const pageRows = dumpPageRows({
+				rowCount: stats.rows[0].row_count,
+				totalBytes: Number(stats.rows[0].total_bytes),
+				maxRowBytes: stats.rows[0].max_row_bytes,
+			});
+
+			let offset = 0;
+			for (;;) {
+				// Keyset pagination would be nicer, but OFFSET paging with a
+				// stable PK order is correct at backup scale. Tables with no PK
+				// are read in one page.
+				const page = await db.query<Record<string, unknown>>(
+					orderBy
+						? `SELECT ${colList} FROM ${quoteIdent(table.name)} ${orderBy} LIMIT ${pageRows} OFFSET ${offset}`
+						: `SELECT ${colList} FROM ${quoteIdent(table.name)}`,
+				);
+				for (const row of page.rows) {
+					const encoded: Record<string, unknown> = {};
+					for (const col of cols) {
+						encoded[col.name] = encodeValue(row[col.name], col.udt);
+					}
+					lines.push(JSON.stringify({ t: table.name, r: encoded }));
 				}
-				lines.push(JSON.stringify({ t: table.name, r: encoded }));
+				if (!orderBy || page.rows.length < pageRows) break;
+				offset += pageRows;
 			}
-			if (!orderBy || page.rows.length < DUMP_PAGE_SIZE) break;
-			offset += DUMP_PAGE_SIZE;
+		} catch (err) {
+			const causeMsg = err instanceof Error ? err.message : String(err);
+			throw new Error(`Dumping table "${table.name}" failed: ${causeMsg}`, { cause: err });
 		}
 	}
 
@@ -261,13 +342,15 @@ export async function restoreLogicalBackup(
 	const tables = await introspectTables(db);
 	const tableMeta = new Map(tables.map((t) => [t.name, t]));
 
-	// Group data lines by table (the file is written table-by-table).
-	const rowsByTable = new Map<string, Record<string, unknown>[]>();
+	// Group data lines by table (the file is written table-by-table), keeping
+	// each row's encoded size so inserts can be batched by bytes as well as
+	// row count.
+	const rowsByTable = new Map<string, Array<{ row: Record<string, unknown>; bytes: number }>>();
 	for (const line of text.slice(newline + 1).split('\n')) {
 		if (!line) continue;
 		const { t, r } = JSON.parse(line) as { t: string; r: Record<string, unknown> };
 		const list = rowsByTable.get(t) ?? [];
-		list.push(r);
+		list.push({ row: r, bytes: line.length });
 		rowsByTable.set(t, list);
 	}
 
@@ -313,10 +396,10 @@ export async function restoreLogicalBackup(
 			});
 			const colList = colMeta.map((c) => quoteIdent(c.name)).join(', ');
 
-			for (let i = 0; i < rows.length; i += INSERT_BATCH_SIZE) {
-				const batch = rows.slice(i, i + INSERT_BATCH_SIZE);
+			for (const { start, end } of planInsertBatches(rows.map((r) => r.bytes))) {
+				const batch = rows.slice(start, end);
 				const params: unknown[] = [];
-				const tuples = batch.map((row) => {
+				const tuples = batch.map(({ row }) => {
 					const placeholders = colMeta.map((col) => {
 						params.push(decodeValue(row[col.name], col.udt));
 						const cast = col.udt === 'jsonb' || col.udt === 'json' ? `::${col.udt}` : '';

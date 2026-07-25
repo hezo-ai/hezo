@@ -336,7 +336,7 @@ export async function createProjectReadyForAgents(
 	return project;
 }
 
-/** Resolve a team-type template id by display name (e.g. 'Startup', 'Blank'). */
+/** Resolve a team-type template id by display name (e.g. 'App Team', 'Blank'). */
 export async function getTemplateIdByName(
 	page: Page,
 	token: string,
@@ -409,7 +409,7 @@ type CreatedProject = {
  * Create a workspace: under 1:1 teams↔projects a "workspace" is a team WITH its
  * single project. We provision both in one shot via `POST /api/projects` (which
  * stands up a fresh team, plus its project + planning task), then close the
- * planning task so it doesn't race agent runs. The full "Startup" roster now
+ * planning task so it doesn't race agent runs. The full "App Team" roster now
  * comes from the marketplace (`software-development`); "Blank" is still a seeded
  * template resolved by name.
  */
@@ -421,7 +421,7 @@ async function createWorkspaceProject(
 	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 	const uid = `${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
 	const source =
-		opts.templateName === 'Startup'
+		opts.templateName === 'App Team'
 			? { marketplace_slug: 'software-development' }
 			: { template_id: await getTemplateIdByName(page, token, opts.templateName) };
 	const res = await page.request.post('/api/projects', {
@@ -446,7 +446,7 @@ export async function createTeamWithAgents(page: Page) {
 	await ensureAiProviderConfigured(page, token);
 
 	const project = await createWorkspaceProject(page, token, {
-		templateName: 'Startup',
+		templateName: 'App Team',
 		namePrefix: 'Test Co',
 	});
 

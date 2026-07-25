@@ -15,6 +15,7 @@ import { Route as SettingsIndexRouteImport } from './routes/settings/index'
 import { Route as MarketplaceIndexRouteImport } from './routes/marketplace/index'
 import { Route as HomeIndexRouteImport } from './routes/home/index'
 import { Route as SettingsUsersRouteImport } from './routes/settings/users'
+import { Route as SettingsStorageRouteImport } from './routes/settings/storage'
 import { Route as SettingsSkillsRouteImport } from './routes/settings/skills'
 import { Route as SettingsCredentialsRouteImport } from './routes/settings/credentials'
 import { Route as SettingsConnectorsRouteImport } from './routes/settings/connectors'
@@ -85,6 +86,11 @@ const HomeIndexRoute = HomeIndexRouteImport.update({
 const SettingsUsersRoute = SettingsUsersRouteImport.update({
   id: '/users',
   path: '/users',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsStorageRoute = SettingsStorageRouteImport.update({
+  id: '/storage',
+  path: '/storage',
   getParentRoute: () => SettingsRouteRoute,
 } as any)
 const SettingsSkillsRoute = SettingsSkillsRouteImport.update({
@@ -332,6 +338,7 @@ export interface FileRoutesByFullPath {
   '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
   '/settings/skills': typeof SettingsSkillsRoute
+  '/settings/storage': typeof SettingsStorageRoute
   '/settings/users': typeof SettingsUsersRoute
   '/home/': typeof HomeIndexRoute
   '/marketplace/': typeof MarketplaceIndexRoute
@@ -379,6 +386,7 @@ export interface FileRoutesByTo {
   '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
   '/settings/skills': typeof SettingsSkillsRoute
+  '/settings/storage': typeof SettingsStorageRoute
   '/settings/users': typeof SettingsUsersRoute
   '/home': typeof HomeIndexRoute
   '/marketplace': typeof MarketplaceIndexRoute
@@ -428,6 +436,7 @@ export interface FileRoutesById {
   '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
   '/settings/skills': typeof SettingsSkillsRoute
+  '/settings/storage': typeof SettingsStorageRoute
   '/settings/users': typeof SettingsUsersRoute
   '/home/': typeof HomeIndexRoute
   '/marketplace/': typeof MarketplaceIndexRoute
@@ -479,6 +488,7 @@ export interface FileRouteTypes {
     | '/settings/connectors'
     | '/settings/credentials'
     | '/settings/skills'
+    | '/settings/storage'
     | '/settings/users'
     | '/home/'
     | '/marketplace/'
@@ -526,6 +536,7 @@ export interface FileRouteTypes {
     | '/settings/connectors'
     | '/settings/credentials'
     | '/settings/skills'
+    | '/settings/storage'
     | '/settings/users'
     | '/home'
     | '/marketplace'
@@ -574,6 +585,7 @@ export interface FileRouteTypes {
     | '/settings/connectors'
     | '/settings/credentials'
     | '/settings/skills'
+    | '/settings/storage'
     | '/settings/users'
     | '/home/'
     | '/marketplace/'
@@ -662,6 +674,13 @@ declare module '@tanstack/react-router' {
       path: '/users'
       fullPath: '/settings/users'
       preLoaderRoute: typeof SettingsUsersRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/storage': {
+      id: '/settings/storage'
+      path: '/storage'
+      fullPath: '/settings/storage'
+      preLoaderRoute: typeof SettingsStorageRouteImport
       parentRoute: typeof SettingsRouteRoute
     }
     '/settings/skills': {
@@ -965,6 +984,7 @@ interface SettingsRouteRouteChildren {
   SettingsConnectorsRoute: typeof SettingsConnectorsRoute
   SettingsCredentialsRoute: typeof SettingsCredentialsRoute
   SettingsSkillsRoute: typeof SettingsSkillsRoute
+  SettingsStorageRoute: typeof SettingsStorageRoute
   SettingsUsersRoute: typeof SettingsUsersRoute
   SettingsIndexRoute: typeof SettingsIndexRoute
 }
@@ -980,6 +1000,7 @@ const SettingsRouteRouteChildren: SettingsRouteRouteChildren = {
   SettingsConnectorsRoute: SettingsConnectorsRoute,
   SettingsCredentialsRoute: SettingsCredentialsRoute,
   SettingsSkillsRoute: SettingsSkillsRoute,
+  SettingsStorageRoute: SettingsStorageRoute,
   SettingsUsersRoute: SettingsUsersRoute,
   SettingsIndexRoute: SettingsIndexRoute,
 }

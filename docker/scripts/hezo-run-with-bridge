@@ -16,10 +16,22 @@ PORT="${HOST_PORT##*:}"
 
 mkdir -p "$(dirname "$SOCKET")"
 
-socat "UNIX-LISTEN:$SOCKET,fork,reuseaddr,unlink-early,mode=0600,user=$SOCK_USER" \
+# Run socat in its own session (process group) so the exit trap can kill the
+# whole group: socat's `fork` spawns a hezo-ssh-bridge child per connection,
+# and killing only the listener would leave a blocked child (e.g. stuck on a
+# dead host relay) running forever. Fall back to a single-PID kill on images
+# without setsid.
+SETSID=""
+KILL_GROUP=0
+if command -v setsid >/dev/null 2>&1; then SETSID="setsid"; KILL_GROUP=1; fi
+$SETSID socat "UNIX-LISTEN:$SOCKET,fork,reuseaddr,unlink-early,mode=0600,user=$SOCK_USER" \
       "EXEC:/usr/local/bin/hezo-ssh-bridge $TOKEN $HOST $PORT" &
 BRIDGE_PID=$!
-trap 'kill "$BRIDGE_PID" 2>/dev/null' EXIT INT TERM HUP
+if [ "$KILL_GROUP" = 1 ]; then
+    trap 'kill -- "-$BRIDGE_PID" 2>/dev/null' EXIT INT TERM HUP
+else
+    trap 'kill "$BRIDGE_PID" 2>/dev/null' EXIT INT TERM HUP
+fi
 
 i=0
 while [ "$i" -lt 60 ] && [ ! -S "$SOCKET" ]; do
@@ -35,6 +47,20 @@ if [ -n "${HTTPS_PROXY:-}" ]; then
         "$HTTPS_PROXY" "$HTTPS_PROXY" \
         | sudo tee /etc/apt/apt.conf.d/01hezo-proxy >/dev/null
 fi
+
+# Self-deadline: when the server sets HEZO_EXEC_DEADLINE_SECS (bounded ops
+# like git fetch/clone), run the wrapped command under `timeout` so the whole
+# tree dies on its own even if the server process is gone before the op
+# finishes (crash, hard kill). Non-numeric/absent values are ignored, keeping
+# old servers and new images (and vice versa) compatible.
+case "${HEZO_EXEC_DEADLINE_SECS:-}" in
+    ''|*[!0-9]*) ;;
+    *)
+        if command -v timeout >/dev/null 2>&1; then
+            set -- timeout -k 5 "$HEZO_EXEC_DEADLINE_SECS" "$@"
+        fi
+        ;;
+esac
 
 # Deliver the prompt either on stdin (default) or as a trailing arg when
 # HEZO_PROMPT_MODE=arg (OpenCode `run <message>`).

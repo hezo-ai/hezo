@@ -33,7 +33,7 @@ beforeAll(async () => {
 	token = ctx.token;
 
 	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
-	const teamTemplateId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
+	const teamTemplateId = (await typesRes.json()).data.find((t: any) => t.name === 'App Team').id;
 
 	const teamRes = await createTestTeam(db, {
 		name: 'Orphan Test Co',
@@ -243,6 +243,85 @@ async function setAgentActiveStale(memberId: string): Promise<void> {
 	);
 	await db.query('ALTER TABLE member_agents ENABLE TRIGGER trg_member_agents_updated');
 }
+
+describe('detectOrphans process reaping', () => {
+	async function insertOrphanRunOnTask(taskId: string): Promise<string> {
+		const result = await db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs
+			   (team_id, member_id, task_id, status, started_at)
+			 VALUES ($1, $2, $3, $4::heartbeat_run_status, now() - interval '10 minutes')
+			 RETURNING id`,
+			[teamId, agentId, taskId, HeartbeatRunStatus.Running],
+		);
+		return result.rows[0].id;
+	}
+
+	it("kills the orphaned run's in-container processes via the task's project container", async () => {
+		const taskId = await createTask(teamId);
+		const projectRow = await db.query<{ project_id: string }>(
+			'SELECT project_id FROM tasks WHERE id = $1',
+			[taskId],
+		);
+		await db.query(`UPDATE projects SET container_id = $1 WHERE id = $2`, [
+			'orphan-container-1',
+			projectRow.rows[0].project_id,
+		]);
+		const runId = await insertOrphanRunOnTask(taskId);
+
+		const kills: Array<{ containerId: string; runId: string }> = [];
+		await detectOrphans(db, new Set(), undefined, {
+			killProcesses: async (containerId, rid) => {
+				kills.push({ containerId, runId: rid });
+			},
+		});
+
+		expect(kills).toContainEqual({ containerId: 'orphan-container-1', runId });
+	});
+
+	it('skips the kill for task-less runs (no container resolvable)', async () => {
+		const runId = await insertOrphanRun(agentId, teamId);
+
+		const kills: string[] = [];
+		await detectOrphans(db, new Set(), undefined, {
+			killProcesses: async (_cid, rid) => {
+				kills.push(rid);
+			},
+		});
+
+		expect(kills).not.toContain(runId);
+		const run = await db.query<{ status: string }>(
+			'SELECT status FROM heartbeat_runs WHERE id = $1',
+			[runId],
+		);
+		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
+	});
+
+	it('a kill failure does not fail detection', async () => {
+		const taskId = await createTask(teamId);
+		const projectRow = await db.query<{ project_id: string }>(
+			'SELECT project_id FROM tasks WHERE id = $1',
+			[taskId],
+		);
+		await db.query(`UPDATE projects SET container_id = $1 WHERE id = $2`, [
+			'orphan-container-2',
+			projectRow.rows[0].project_id,
+		]);
+		const runId = await insertOrphanRunOnTask(taskId);
+
+		const count = await detectOrphans(db, new Set(), undefined, {
+			killProcesses: async () => {
+				throw new Error('daemon unreachable');
+			},
+		});
+
+		expect(count).toBeGreaterThanOrEqual(1);
+		const run = await db.query<{ status: string }>(
+			'SELECT status FROM heartbeat_runs WHERE id = $1',
+			[runId],
+		);
+		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
+	});
+});
 
 describe('healStaleRunState', () => {
 	it('repairs lock, agent status, and claimed wakeup stranded by a lost completion path', async () => {

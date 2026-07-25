@@ -190,7 +190,7 @@ test('agent mentions link to the agent home project; HQ singletons resolve to hq
 
 test('an unresolved passive @@mention sheds its @@ prefix and renders as the bare slug', async () => {
 	// Instance-wide resolution drops references that aren't unique across every team
-	// (an agent slug like `captain` collides — every Startup team has one), so the
+	// (an agent slug like `captain` collides — every App Team team has one), so the
 	// passive mention never links. It must still degrade to the bare slug, not leak
 	// the internal `@@` authoring syntax to the reader.
 	const { findByTestId, getByTestId } = await renderApp({

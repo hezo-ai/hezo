@@ -193,6 +193,56 @@ function pickAssetStorageUrl(
 }
 
 /**
+ * Resolve the data directory for the backup/restore subcommands, honouring
+ * `HEZO_DATA_DIR` (env wins over `--data-dir`, then the default) exactly as
+ * `parseConfig` does for the server — and mirroring `pickDatabaseUrl` /
+ * `pickAssetStorageUrl` in these same commands, which already read their env.
+ *
+ * Without this, a production instance started with `HEZO_DATA_DIR=/var/lib/hezo`
+ * (a systemd/docker deployment that never passes `--data-dir`) would make
+ * `hezo backup` fall back to the default `~/.hezo`; `openPersistentDb` then
+ * silently creates a fresh, empty database there, and the dump crashes with a
+ * bare `relation "_migrations" does not exist`. Reading the env var keeps the
+ * subcommand pointed at the same embedded database the server uses.
+ */
+function pickDataDir(cliValue: unknown, env: NodeJS.ProcessEnv = process.env): string {
+	const e = env.HEZO_DATA_DIR;
+	if (e !== undefined && e !== '') return resolveDataDir(e);
+	if (typeof cliValue === 'string' && cliValue.length > 0) return resolveDataDir(cliValue);
+	return resolveDataDir(DEFAULT_DATA_DIR);
+}
+
+/**
+ * Refuse an embedded backup/restore while a Hezo server is live on `dataDir`.
+ *
+ * Embedded PGlite is single-process: backup opens a *second* Postgres cluster
+ * over the same `pgdata` files (and restore writes those files directly), so
+ * running either against a live server races its writes and can corrupt the
+ * data. The running server drops an advisory PID lock; this reads it and only
+ * refuses when the recorded process is actually alive, so a stale lock left by a
+ * crash (dead PID) does not block anything. Embedded target only — external
+ * Postgres handles its own concurrency and is safe to back up live.
+ */
+async function assertNoLiveEmbeddedServer(
+	dataDir: string,
+	action: 'backup' | 'restore',
+): Promise<void> {
+	const { readLiveInstanceLock, instanceLockPath } = await import('./db/instance-lock.js');
+	const live = readLiveInstanceLock(dataDir);
+	if (!live) return;
+	const verb = action === 'backup' ? 'back up' : 'restore';
+	const risk =
+		action === 'backup'
+			? 'the backup opens a second database over the same files, which races the live server and can corrupt them'
+			: 'the restore writes over files the live server is using, which can corrupt them';
+	throw new Error(
+		`A Hezo server appears to be running against ${dataDir} (PID ${live.pid}). ` +
+			`Stop it before you ${verb} the embedded database — ${risk}. ` +
+			`If you are certain no server is running, delete ${instanceLockPath(dataDir)} and retry.`,
+	);
+}
+
+/**
  * Handle the `hezo backup` subcommand and exit. By default it captures BOTH the
  * database and every asset blob into a portable **backup bundle** directory
  * (`hezo-<timestamp>/` — `database.backup.gz` + `assets/<projectId>/<assetId>` +
@@ -207,6 +257,23 @@ function pickAssetStorageUrl(
  * directory). An external database + S3 storage can be backed up any time — the
  * source is only ever read.
  */
+
+/**
+ * Best-effort teardown for backup/restore cleanup paths. A close failure must
+ * never mask the operation's real error: when a query crashes the embedded
+ * engine's WASM instance, closing that dead instance throws the same runtime
+ * error, and a throwing `finally` would replace the diagnosable original.
+ */
+async function closeQuietly(closeable: { close(): Promise<unknown> } | null | undefined) {
+	if (!closeable) return;
+	try {
+		await closeable.close();
+	} catch (err) {
+		const msg = err instanceof Error ? err.message : String(err);
+		console.warn(`Warning: could not close the database cleanly (${msg}); continuing.`);
+	}
+}
+
 export async function runBackup(argv: string[] = process.argv): Promise<boolean> {
 	if (argv[2] !== 'backup') return false;
 
@@ -219,7 +286,7 @@ export async function runBackup(argv: string[] = process.argv): Promise<boolean>
 			'--output <path>',
 			'Output path: a bundle directory (default <data-dir>/backups/hezo-<timestamp>), or a .backup.gz file with --no-assets',
 		)
-		.option('--data-dir <path>', 'Data directory', DEFAULT_DATA_DIR)
+		.option('--data-dir <path>', 'Data directory (env: HEZO_DATA_DIR)', DEFAULT_DATA_DIR)
 		.option('--database-url <url>', 'External Postgres connection string (env: HEZO_DATABASE_URL)')
 		.option(
 			'--asset-storage-url <url>',
@@ -235,15 +302,39 @@ export async function runBackup(argv: string[] = process.argv): Promise<boolean>
 	if (!withAssets && !withDatabase) {
 		throw new Error('Nothing to back up: --no-assets and --no-database cannot be combined.');
 	}
-	const dataDir = resolveDataDir(opts.dataDir as string);
+	const dataDir = pickDataDir(opts.dataDir);
 	const databaseUrl = pickDatabaseUrl(opts.databaseUrl);
 	const assetStorageUrl = pickAssetStorageUrl(opts.assetStorageUrl);
+
+	// Embedded backend: never open a second cluster over a live server's files.
+	if (!databaseUrl) await assertNoLiveEmbeddedServer(dataDir, 'backup');
 
 	const { mkdir, writeFile } = await import('node:fs/promises');
 	const { openDatabase } = await import('./db/open.js');
 	const stamp = new Date().toISOString().replace(/[:.]/g, '-');
 
-	const dumpDatabase = async (db: import('./db/database').Db): Promise<Buffer> => {
+	const dumpDatabase = async (
+		db: import('./db/database').Db,
+		sourceLabel: string,
+	): Promise<Buffer> => {
+		// A data dir (or external database) that isn't a Hezo instance has no
+		// `_migrations` bookkeeping. For embedded storage `openPersistentDb` happily
+		// creates an empty database on open, so without this guard the dump would
+		// crash with a bare `relation "_migrations" does not exist`. Fail with an
+		// actionable message instead — the usual cause is a `--data-dir` /
+		// `HEZO_DATA_DIR` that doesn't point at the running instance's data.
+		const probe = await db.query<{ reg: string | null }>(
+			`SELECT to_regclass('public._migrations')::text AS reg`,
+		);
+		if (probe.rows[0]?.reg == null) {
+			throw new Error(
+				`No Hezo database found at ${sourceLabel}: its migration bookkeeping (the _migrations ` +
+					`table) is missing, so there is nothing to back up. Check that --data-dir / ` +
+					`HEZO_DATA_DIR points at your instance's data directory (an external database is ` +
+					`selected with --database-url / HEZO_DATABASE_URL). A brand-new instance has no ` +
+					`database until the server has started at least once.`,
+			);
+		}
 		const { loadAllMigrations } = await import('./db/load-migrations.js');
 		const migrations = await loadAllMigrations();
 		if (!migrations) throw new Error('No migrations found — cannot determine the schema version.');
@@ -256,7 +347,7 @@ export async function runBackup(argv: string[] = process.argv): Promise<boolean>
 	if (!withAssets) {
 		const opened = await openDatabase({ dataDir, databaseUrl });
 		try {
-			const bytes = await dumpDatabase(opened.db);
+			const bytes = await dumpDatabase(opened.db, opened.storage.display);
 			const output = resolve(
 				(opts.output as string | undefined) ?? `${dataDir}/backups/hezo-${stamp}.backup.gz`,
 			);
@@ -264,7 +355,7 @@ export async function runBackup(argv: string[] = process.argv): Promise<boolean>
 			await writeFile(output, bytes);
 			console.log(`Wrote logical backup of ${opened.storage.backend} database → ${output}`);
 		} finally {
-			await opened.db.close();
+			await closeQuietly(opened.db);
 		}
 		return true;
 	}
@@ -282,7 +373,10 @@ export async function runBackup(argv: string[] = process.argv): Promise<boolean>
 	try {
 		let databaseFile: string | null = null;
 		if (withDatabase) {
-			await writeFile(join(bundleDir, blob.BUNDLE_DB_NAME), await dumpDatabase(opened.db));
+			await writeFile(
+				join(bundleDir, blob.BUNDLE_DB_NAME),
+				await dumpDatabase(opened.db, opened.storage.display),
+			);
 			databaseFile = blob.BUNDLE_DB_NAME;
 		}
 		const assets = await blob.dumpAssetBlobs(opened.db, openedStore.store, bundleDir);
@@ -308,8 +402,8 @@ export async function runBackup(argv: string[] = process.argv): Promise<boolean>
 				`(${dbNote}${assets.count} asset blob(s) from ${openedStore.info.backend} storage)${missingNote}`,
 		);
 	} finally {
-		await openedStore.store.close();
-		await opened.db.close();
+		await closeQuietly(openedStore.store);
+		await closeQuietly(opened.db);
 	}
 	return true;
 }
@@ -339,7 +433,7 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 			'Restore a backup: a "hezo backup" bundle (database + assets), a logical .backup.gz, or a legacy pgdata .tar.gz',
 		)
 		.argument('<backup>', 'path to a backup bundle directory or file')
-		.option('--data-dir <path>', 'Data directory', DEFAULT_DATA_DIR)
+		.option('--data-dir <path>', 'Data directory (env: HEZO_DATA_DIR)', DEFAULT_DATA_DIR)
 		.option(
 			'--database-url <url>',
 			'External Postgres connection string to restore into (env: HEZO_DATABASE_URL)',
@@ -361,9 +455,12 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 
 	const opts = program.opts();
 	const backupPath = resolve(program.args[0]);
-	const dataDir = resolveDataDir(opts.dataDir as string);
+	const dataDir = pickDataDir(opts.dataDir);
 	const databaseUrl = pickDatabaseUrl(opts.databaseUrl);
 	const assetStorageUrl = pickAssetStorageUrl(opts.assetStorageUrl);
+
+	// Embedded target: refuse to write over the files of a live server.
+	if (!databaseUrl) await assertNoLiveEmbeddedServer(dataDir, 'restore');
 
 	const { loadAllMigrations } = await import('./db/load-migrations.js');
 	const { openDatabase } = await import('./db/open.js');
@@ -417,8 +514,8 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 				console.log('This bundle has nothing to restore for the given options.');
 			}
 		} finally {
-			if (openedStore) await openedStore.store.close();
-			await opened.db.close();
+			await closeQuietly(openedStore?.store);
+			await closeQuietly(opened.db);
 		}
 		return true;
 	}
@@ -458,8 +555,134 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 				`into the ${opened.storage.backend} database: ${summary.rows} rows across ${summary.tables} tables.`,
 		);
 	} finally {
-		await opened.db.close();
+		await closeQuietly(opened.db);
 	}
+	return true;
+}
+
+/** Injectable seams for {@link runUninstall} — real Docker cleanup by default. */
+export interface UninstallDeps {
+	/**
+	 * Remove the Docker containers Hezo provisioned. Returns the count removed, or
+	 * `null` when Docker was unreachable. Defaults to the real Docker path;
+	 * overridden in tests so they never touch a live daemon.
+	 */
+	removeContainers?: () => Promise<number | null>;
+}
+
+async function defaultRemoveProvisionedContainers(): Promise<number | null> {
+	const { DockerClient } = await import('./services/docker.js');
+	const { removeProvisionedContainers } = await import('./services/uninstall.js');
+	return removeProvisionedContainers(new DockerClient());
+}
+
+/**
+ * Handle the `hezo uninstall` subcommand and exit. Removes Hezo's **data
+ * directory** (default `~/.hezo`) — every project workspace, the embedded
+ * database, backups, and settings — and best-effort removes the containers Hezo
+ * provisioned. It does not touch the `hezo` binary itself.
+ *
+ * This exists because a plain `rm -rf ~/.hezo` fails on macOS: Docker Desktop
+ * tags the nested `.previews` bind-mount point (`<project>/workspace/.previews`,
+ * a mount target inside the `/workspace` bind) with a `deny delete` ACL that
+ * `rm` cannot override, so the tree is left undeletable with a bare "Permission
+ * denied". `forceRmRecursive` strips those ACLs (`chmod -RN`) and retries, so
+ * `hezo uninstall` is the supported, ACL-aware way to fully remove an instance.
+ *
+ * Guards: refuses while a live embedded server holds the instance lock (stop it
+ * first — deleting the data dir under a live server corrupts its database), and
+ * requires an explicit `--yes`. Without `--yes` it prints exactly what would be
+ * removed and exits without deleting anything.
+ *
+ * Returns `true` when it handled the invocation so the caller skips normal
+ * server startup.
+ */
+export async function runUninstall(
+	argv: string[] = process.argv,
+	deps: UninstallDeps = {},
+): Promise<boolean> {
+	if (argv[2] !== 'uninstall') return false;
+
+	const program = new Command()
+		.name('hezo uninstall')
+		.description(
+			"Remove Hezo's data directory (all projects, the database, backups, settings) and the containers it created",
+		)
+		.option('--data-dir <path>', 'Data directory to remove (env: HEZO_DATA_DIR)', DEFAULT_DATA_DIR)
+		.option('--yes', 'Confirm removal — required; without it nothing is deleted')
+		.parse(argv.slice(3), { from: 'user' });
+
+	const opts = program.opts();
+	const dataDir = pickDataDir(opts.dataDir);
+
+	const { existsSync } = await import('node:fs');
+	if (!existsSync(dataDir)) {
+		console.log(`Nothing to remove: no Hezo data directory at ${dataDir}.`);
+		return true;
+	}
+
+	// Refuse while a live embedded server is using this data dir — removing it
+	// under a running server corrupts the database and leaves containers with
+	// dangling mounts. A stale lock from a crash (dead PID) does not block.
+	const { readLiveInstanceLock, instanceLockPath } = await import('./db/instance-lock.js');
+	const live = readLiveInstanceLock(dataDir);
+	if (live) {
+		throw new Error(
+			`A Hezo server appears to be running against ${dataDir} (PID ${live.pid}). ` +
+				`Stop it before uninstalling. If you are certain no server is running, ` +
+				`delete ${instanceLockPath(dataDir)} and retry.`,
+		);
+	}
+
+	// A destructive, irreversible delete requires an explicit opt-in. Without it,
+	// show exactly what would go and how to confirm — deleting nothing.
+	if (opts.yes !== true) {
+		const dataDirArg =
+			typeof opts.dataDir === 'string' && opts.dataDir !== DEFAULT_DATA_DIR
+				? ` --data-dir ${opts.dataDir}`
+				: '';
+		console.log(
+			`This permanently deletes Hezo's data directory and everything in it:\n` +
+				`  ${dataDir}\n` +
+				`That includes every project workspace, the embedded database, backups, and ` +
+				`settings. The hezo binary itself is not affected.\n\n` +
+				`Re-run with --yes to confirm:\n` +
+				`  hezo uninstall --yes${dataDirArg}`,
+		);
+		return true;
+	}
+
+	// Best-effort container cleanup before the data dir goes: their ids live in
+	// the database we are about to delete, so skipping this orphans them. Never
+	// fatal — Docker may already be stopped.
+	const removeContainers = deps.removeContainers ?? defaultRemoveProvisionedContainers;
+	try {
+		const removed = await removeContainers();
+		if (removed === null) {
+			console.log(
+				'→ Docker not reachable; skipping container cleanup. Remove any leftovers with: ' +
+					'docker rm -f $(docker ps -aq --filter label=hezo.team)',
+			);
+		} else if (removed > 0) {
+			console.log(`→ Removed ${removed} Hezo container(s).`);
+		}
+	} catch (err) {
+		const msg = err instanceof Error ? err.message : String(err);
+		console.log(
+			`→ Could not clean up Hezo containers (${msg}); continuing. Remove any leftovers with: ` +
+				'docker rm -f $(docker ps -aq --filter label=hezo.team)',
+		);
+	}
+
+	// ACL-aware removal: forceRmRecursive strips the macOS Docker Desktop
+	// deny-delete ACLs a plain `rm -rf` chokes on, then retries.
+	const { forceRmRecursive, getRunSocketDir } = await import('./services/workspace.js');
+	forceRmRecursive(dataDir);
+	// Per-run ssh/egress sockets live under the OS temp dir, keyed by a hash of
+	// the data dir — clean those too so nothing is left behind.
+	forceRmRecursive(getRunSocketDir(dataDir));
+
+	console.log(`Removed Hezo data directory: ${dataDir}`);
 	return true;
 }
 

@@ -16,15 +16,20 @@ function msg(id: string, content: string): ChatMessage {
 	return { id, role: 'assistant', channel: 'web', status: 'complete', content, created_at: now() };
 }
 
-function thread(id: string, title: string | null): ChatConversationSummary {
+function thread(
+	id: string,
+	title: string | null,
+	overrides: Partial<ChatConversationSummary> = {},
+): ChatConversationSummary {
 	return {
 		id,
 		channel: 'web',
 		external_thread_id: null,
+		kind: 'assistant',
 		title,
 		last_activity_at: now(),
 		closed_at: null,
-		channels: ['web'],
+		...overrides,
 	};
 }
 
@@ -90,4 +95,52 @@ test('an untitled thread renders as "New thread" (not "Main"); a titled thread s
 	expect(labels).toContain('New thread');
 	expect(labels).toContain('Roadmap planning');
 	expect(labels).not.toContain('Main');
+});
+
+test('external and team-channel threads list with origin chips; coworker threads are read-only', async () => {
+	queryClient.setQueryData(queryKeys.chatConversations(), {
+		conversations: [
+			thread('thread-1', 'Ops', { channel: 'telegram', external_thread_id: '999' }),
+			thread('thread-2', 'Launch', { channel: 'slack', external_thread_id: 'D123' }),
+			thread('thread-3', 'Local only'),
+			thread('thread-4', '#product', {
+				channel: 'slack',
+				external_thread_id: 'C42:1721.0001',
+				kind: 'coworker',
+			}),
+		],
+	});
+	queryClient.setQueryData(queryKeys.chatConversation(), {
+		conversation_id: 'thread-1',
+		messages: [msg('m1', 'hi')],
+		compacted_count: 0,
+	});
+	queryClient.setQueryData(queryKeys.chatConversation('thread-4'), {
+		conversation_id: 'thread-4',
+		messages: [msg('m4', 'plan incoming')],
+		compacted_count: 0,
+	});
+
+	const { findByTestId, user } = await renderApp({ initialPath: '/home' });
+	(await findByTestId('chat-launcher')).click();
+	await findByTestId('chat-panel');
+
+	// Every surface's threads list, badged by their home channel; the coworker
+	// thread sits in the "Team channels" optgroup with the read-only lock.
+	const select = (await findByTestId('chat-thread-select')) as HTMLSelectElement;
+	const labels = Array.from(select.options).map((o) => o.textContent?.trim());
+	expect(labels).toContain('Ops · TG DM');
+	expect(labels).toContain('Launch · SLACK DM');
+	expect(labels).toContain('Local only');
+	expect(labels).toContain('#product 🔒 · SLACK');
+	const groups = Array.from(select.querySelectorAll('optgroup')).map((g) => g.label);
+	expect(groups).toContain('Team channels');
+
+	// Selecting the coworker thread locks the composer and shows the banner.
+	await user.selectOptions(select, 'thread-4');
+	const banner = await findByTestId('chat-readonly-banner');
+	expect(banner.textContent).toContain('#product');
+	expect(banner.textContent).toContain('Slack');
+	const input = (await findByTestId('chat-input')) as HTMLTextAreaElement;
+	expect(input.disabled).toBe(true);
 });

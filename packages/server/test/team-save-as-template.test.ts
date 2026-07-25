@@ -17,7 +17,7 @@ beforeAll(async () => {
 	db = ctx.db;
 	token = ctx.token;
 	const res = await app.request('/api/team-templates', { headers: authHeader(token) });
-	const startup = (await res.json()).data.find((t: { name: string }) => t.name === 'Startup');
+	const startup = (await res.json()).data.find((t: { name: string }) => t.name === 'App Team');
 	startupTemplateId = startup.id;
 });
 
@@ -112,7 +112,7 @@ describe('apply a team type (refresh / merge)', () => {
 		expect(res.status).toBe(200);
 
 		const after = await agentSlugs(team);
-		// Merge is additive: the built-in Captain is preserved, Startup roles added.
+		// Merge is additive: the built-in Captain is preserved, App Team roles added.
 		expect(after).toContain('captain');
 		expect(after).toContain('architect');
 		expect(after).toContain('engineer');

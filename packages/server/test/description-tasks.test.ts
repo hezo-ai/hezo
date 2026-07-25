@@ -27,7 +27,7 @@ beforeAll(async () => {
 
 	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 	const typeId = (await typesRes.json()).data.find(
-		(t: Record<string, unknown>) => t.name === 'Startup',
+		(t: Record<string, unknown>) => t.name === 'App Team',
 	).id;
 
 	const teamRes = await createTestTeam(db, { name: 'Description Tasks Co', template_id: typeId });
@@ -82,7 +82,25 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 		expect(row.labels).toEqual(expect.arrayContaining(['internal', 'team-coherence-review']));
 		expect(row.priority).toBe('high');
 		expect(row.status).toBe('backlog');
-		expect(row.title).toContain('coherence');
+		// Reactive reviews (a change to an existing roster) keep the coherence-review title.
+		expect(row.title).toBe('Review team coherence after roster change');
+	});
+
+	it('titles the first-run (initial) pass as team setup, not a coherence review', async () => {
+		const taskId = await enqueueTeamCoherenceReviewTask(db, teamId, 'initial');
+		const task = await db.query<{ title: string; description: string }>(
+			`SELECT title, description FROM tasks WHERE id = $1`,
+			[taskId],
+		);
+		const row = task.rows[0];
+		// A brand-new team is set up from scratch — the ticket is framed as team setup.
+		expect(row.title).toBe('Set up the team');
+		expect(row.description).toContain('## Team setup');
+		expect(row.description).toContain('was just created');
+		// It is not framed as a reactive roster-change review.
+		expect(row.description).not.toContain('## Team coherence review');
+		// The shared audit + rewrite steps still run.
+		expect(row.description).toContain('list_agents');
 	});
 
 	it('assigns an INITIAL setup review to the CEO (auto-started) and wakes them', async () => {
@@ -272,7 +290,7 @@ describe('project creation', () => {
 	it('produces exactly one team-coherence task on a fresh project (no per-agent duplicates)', async () => {
 		const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 		const typeId = (await typesRes.json()).data.find(
-			(t: Record<string, unknown>) => t.name === 'Startup',
+			(t: Record<string, unknown>) => t.name === 'App Team',
 		).id;
 
 		const projectRes = await app.request('/api/projects', {
@@ -304,7 +322,7 @@ describe('project creation', () => {
 	it('direct POST /api/projects auto-runs coherence: the ticket is assigned to the CEO with a wakeup', async () => {
 		const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 		const typeId = (await typesRes.json()).data.find(
-			(t: Record<string, unknown>) => t.name === 'Startup',
+			(t: Record<string, unknown>) => t.name === 'App Team',
 		).id;
 
 		const projectRes = await app.request('/api/projects', {

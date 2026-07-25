@@ -1,5 +1,83 @@
 # Changelog
 
+## 0.33.0 - 2026-07-23
+
+### Features
+
+- append-only run-log chunk storage to eliminate TOAST write-amplification ([#817](https://github.com/hezo-ai/hezo/pull/817))
+- run-log compaction to reclaim database size ([#815](https://github.com/hezo-ai/hezo/pull/815))
+- prune control for old embedded-DB snapshots ([#813](https://github.com/hezo-ai/hezo/pull/813))
+
+### Bug Fixes
+
+- **goals:** goals are admin-owned outcomes; recurring work runs as standing tasks ([#816](https://github.com/hezo-ai/hezo/pull/816))
+- **backup:** page logical dump/restore by bytes to survive large-log tables ([#814](https://github.com/hezo-ai/hezo/pull/814))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.32.0...0.33.0
+
+## 0.32.0 - 2026-07-22
+
+### Features
+
+- **mentions:** warn on action-assignment passive asks + verdict-report mention guidance ([#809](https://github.com/hezo-ai/hezo/pull/809))
+
+### Bug Fixes
+
+- **prompts:** stop agents delegating the done-transition to the admin ([#808](https://github.com/hezo-ai/hezo/pull/808))
+- **goals:** steer agents away from suggesting one-off deliverables as goals ([#807](https://github.com/hezo-ai/hezo/pull/807))
+- **web:** heal stale goal-suggestion cards on version skew + explain goals ([#805](https://github.com/hezo-ai/hezo/pull/805))
+- **mcp:** accept human identifiers (not only UUIDs) across reference params ([#803](https://github.com/hezo-ai/hezo/pull/803))
+- **coherence:** title the first-run setup ticket "Set up the team" ([#802](https://github.com/hezo-ai/hezo/pull/802))
+- **project-intake:** stop echoing the project description in the CEO greeting ([#801](https://github.com/hezo-ai/hezo/pull/801))
+
+### Refactors
+
+- **web:** progressive suggestion-first New Project dialog ([#806](https://github.com/hezo-ai/hezo/pull/806))
+
+### Documentation
+
+- **readme:** surface Slack, Telegram, and Discord chat integrations ([#804](https://github.com/hezo-ai/hezo/pull/804))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.31.0...0.32.0
+
+## 0.31.0 - 2026-07-22
+
+### Breaking Changes
+
+- **chat:** per-surface chat threads with the web as the hub — Slack, Telegram & Discord in assistant + coworker modes ([#794](https://github.com/hezo-ai/hezo/pull/794))
+
+### Features
+
+- **chat:** per-surface chat threads with the web as the hub — Slack, Telegram & Discord in assistant + coworker modes ([#794](https://github.com/hezo-ai/hezo/pull/794))
+- **marketplace:** add Influencer Marketing + Investment teams, goal suggestions, App Team rename ([#713](https://github.com/hezo-ai/hezo/pull/713))
+
+### Bug Fixes
+
+- **release:** never auto-bump the major version from breaking changes ([#799](https://github.com/hezo-ai/hezo/pull/799))
+- **marketplace:** wire roster reporting lines to the Captain on provisioning ([#796](https://github.com/hezo-ai/hezo/pull/796))
+- **agents:** load skills only via get_skill, never the CLI's own skill feature ([#795](https://github.com/hezo-ai/hezo/pull/795))
+- **cli:** add `hezo uninstall` to cleanly remove the data directory ([#793](https://github.com/hezo-ai/hezo/pull/793))
+
+### Documentation
+
+- dedicated "Chat & messaging apps" section; sync website docs on release publish ([#797](https://github.com/hezo-ai/hezo/pull/797))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.30.1...0.31.0
+
+## 0.30.1 - 2026-07-21
+
+### Bug Fixes
+
+- **runtime:** never strand in-container process trees; sweep leftovers at boot ([#790](https://github.com/hezo-ai/hezo/pull/790))
+- **cli:** honor HEZO_DATA_DIR in `hezo backup` / `hezo restore` ([#788](https://github.com/hezo-ai/hezo/pull/788))
+
+### Documentation
+
+- accuracy audit + enforced docs-alignment acknowledgment on commits ([#789](https://github.com/hezo-ai/hezo/pull/789))
+- **deploy:** step-by-step managed Postgres + object storage for cloud deploys ([#787](https://github.com/hezo-ai/hezo/pull/787))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.30.0...0.30.1
+
 ## 0.30.0 - 2026-07-20
 
 ### Features
