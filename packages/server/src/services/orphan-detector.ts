@@ -20,7 +20,9 @@ const MAX_RETRIES = 3;
 const SAFETY_WINDOW_SECONDS = 30;
 /** How long DB state may disagree with the absence of any active run before
  * the heal pass repairs it. Long enough to cover the dispatch window (status
- * flips active before the run row lands) and normal completion bookkeeping. */
+ * flips active before the run row lands) and normal completion bookkeeping.
+ * Doubles as the age a `queued` run must reach before the orphan pass will
+ * reap it, since that window likewise spans the whole not-yet-started phase. */
 export const STALE_STATE_GRACE_SECONDS = 120;
 
 export interface DetectOrphansOpts {
@@ -39,6 +41,16 @@ export async function detectOrphans(
 	wsManager?: WebSocketManager,
 	opts?: DetectOrphansOpts,
 ): Promise<number> {
+	// Both non-terminal states can be stranded, and each needs its own clock.
+	// A `running` run has a `started_at` to age against. A `queued` one never
+	// started — `started_at` is NULL — so it ages against `created_at`, and it
+	// gets the longer grace window because the gap between the row landing and
+	// the run going live legitimately covers credential-lock waits and container
+	// setup. Without this arm a queued row whose driver died before
+	// `markHeartbeatRunRunning` is never reaped: it pins the task's
+	// `has_active_run` (blocking reassignment and reading as a live run in the
+	// UI) until the next server restart, since `healStaleRunState` counts
+	// `queued` as active too.
 	const orphans = await db.query<{
 		id: string;
 		member_id: string;
@@ -47,32 +59,49 @@ export async function detectOrphans(
 		project_id: string | null;
 		container_id: string | null;
 		process_loss_retry_count: number;
+		status: HeartbeatRunStatus;
 	}>(
-		`SELECT hr.id, hr.member_id, hr.team_id, hr.task_id, hr.process_loss_retry_count,
+		`SELECT hr.id, hr.member_id, hr.team_id, hr.task_id, hr.process_loss_retry_count, hr.status,
 		        (SELECT t.project_id FROM tasks t WHERE t.id = hr.task_id) AS project_id,
 		        (SELECT p.container_id FROM projects p JOIN tasks t ON t.project_id = p.id
 		         WHERE t.id = hr.task_id) AS container_id
 		 FROM heartbeat_runs hr
-		 WHERE hr.status = $1::heartbeat_run_status
-		   AND hr.started_at < now() - ($2 || ' seconds')::interval`,
-		[HeartbeatRunStatus.Running, String(SAFETY_WINDOW_SECONDS)],
+		 WHERE (hr.status = $1::heartbeat_run_status
+		        AND hr.started_at < now() - ($2 || ' seconds')::interval)
+		    OR (hr.status = $3::heartbeat_run_status
+		        AND hr.created_at < now() - ($4 || ' seconds')::interval)`,
+		[
+			HeartbeatRunStatus.Running,
+			String(SAFETY_WINDOW_SECONDS),
+			HeartbeatRunStatus.Queued,
+			String(STALE_STATE_GRACE_SECONDS),
+		],
 	);
 
 	let orphanCount = 0;
 
 	for (const run of orphans.rows) {
+		// The live registry is populated the moment the run row is inserted
+		// (`onRunRegistered` in agent-runner), so a queued run still owned by a
+		// host-side driver — waiting on the credential lock, say — is skipped
+		// here exactly like a healthy running one.
 		if (liveRunIds.has(run.id)) continue;
 
 		orphanCount++;
+
+		const error =
+			run.status === HeartbeatRunStatus.Queued
+				? 'Orphaned: run never started'
+				: 'Orphaned: process no longer running';
 
 		await db.query(
 			`UPDATE heartbeat_runs
 			 SET status = $2::heartbeat_run_status,
 			     finished_at = now(),
-			     error = 'Orphaned: process no longer running',
+			     error = $3,
 			     process_loss_retry_count = process_loss_retry_count + 1
 			 WHERE id = $1`,
-			[run.id, HeartbeatRunStatus.Failed],
+			[run.id, HeartbeatRunStatus.Failed, error],
 		);
 
 		// Task-less runs can't resolve a container here; the startup sweep is
@@ -96,7 +125,7 @@ export async function detectOrphans(
 			task_id: run.task_id,
 			project_id: run.project_id,
 			status: HeartbeatRunStatus.Failed,
-			error: 'Orphaned: process no longer running',
+			error,
 		});
 
 		if (run.process_loss_retry_count + 1 < MAX_RETRIES) {

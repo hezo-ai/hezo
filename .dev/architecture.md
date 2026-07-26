@@ -847,6 +847,22 @@ absorbs sibling queued wakeups for the same task → marks the run terminal → 
 task blockers (waking dependents when the last blocker clears) → fires task automations.
 Instance agents (CEO/Coach) select work across *all* teams here.
 
+**Stranded-run recovery.** A `heartbeat_runs` row is inserted `queued` and only flips to
+`running` (stamping `started_at`) once a credential is resolved and the credential lock
+held, so both states can strand — and while either persists the run counts as *active*,
+which blocks reassignment on its task and reads as live agent activity in the UI. The ~30 s
+orphan pass (`services/orphan-detector.ts`) therefore reaps both, each aged against the only
+clock it has: a `running` row against `started_at` (30 s safety window), a `queued` row
+against `created_at` (the 120 s grace window, which spans the whole not-yet-started phase).
+Both arms are guarded by the in-process live-run registry — the run id is registered the
+moment the row is inserted, so a run whose host-side driver still owns it (waiting on the
+credential lock, say) is skipped and only a row whose driver has vanished is failed. The two
+kinds are distinguished only by their recorded `error` (`Orphaned: run never started` vs
+`Orphaned: process no longer running`); the retry/approval escalation is shared.
+`healStaleRunState` is the inverse pass and deliberately counts `queued` as active, so it
+repairs the *surroundings* (execution locks, agent `runtime_status`, claimed wakeups) but
+never the run row itself.
+
 **Run.** `agent-runner.ts` builds the run context (provider/runtime resolution, MCP
 descriptors, egress proxy, ssh-agent socket, container env), starts a `heartbeat_runs`
 row, and drives a streaming `docker exec` of the runtime CLI. The long-lived Docker streams
@@ -1139,9 +1155,10 @@ class before interpolation; `killRunProcesses` is its run-id specialization). Th
   awaited `JobManager.killLiveRunProcesses()` reaps every live run's tree (per-kill bounded,
   whole pass raced against its own timer) — the runner's own abort-kill would race
   `process.exit`. Chat teardown then reaps its session trees.
-- **Orphan tick**: when the ~30 s orphan detector marks a `running` run whose process vanished as
-  failed, it also fires `killRunProcesses` against the task's project container (task-less runs
-  skipped — the boot sweep is their backstop).
+- **Orphan tick**: when the ~30 s orphan detector marks a stranded run failed — a `running` one
+  whose process vanished, or a `queued` one whose driver died before it ever started — it also
+  fires `killRunProcesses` against the task's project container (task-less runs skipped — the boot
+  sweep is their backstop). The kill is a no-op for a run that never started, and harmless.
 - **Boot sweep** (crash backstop): `reconcileOnStartup`'s fourth container pass
   (`sweepDanglingContainerProcesses`) scans each running container's `/proc`
   (`DockerClient.listHezoProcesses` — emits only pids carrying a marker, an

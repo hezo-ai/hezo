@@ -103,10 +103,11 @@ async function createTask(coId: string): Promise<string> {
 
 describe('detectOrphans', () => {
 	it('returns 0 when no orphaned runs exist', async () => {
-		// Clean state — no running heartbeat runs
+		// Clean state — no non-terminal heartbeat runs of either kind
 		await db.query(
-			`DELETE FROM heartbeat_runs WHERE team_id = $1 AND status = $2::heartbeat_run_status`,
-			[teamId, HeartbeatRunStatus.Running],
+			`DELETE FROM heartbeat_runs
+			 WHERE team_id = $1 AND status IN ($2::heartbeat_run_status, $3::heartbeat_run_status)`,
+			[teamId, HeartbeatRunStatus.Running, HeartbeatRunStatus.Queued],
 		);
 
 		const count = await detectOrphans(db, new Set());
@@ -144,8 +145,9 @@ describe('detectOrphans', () => {
 
 	it('resets member_agents.runtime_status from active to idle when no other live run remains', async () => {
 		await db.query(
-			`DELETE FROM heartbeat_runs WHERE team_id = $1 AND status = $2::heartbeat_run_status`,
-			[teamId, HeartbeatRunStatus.Running],
+			`DELETE FROM heartbeat_runs
+			 WHERE team_id = $1 AND status IN ($2::heartbeat_run_status, $3::heartbeat_run_status)`,
+			[teamId, HeartbeatRunStatus.Running, HeartbeatRunStatus.Queued],
 		);
 		await setAgentActive(agentId);
 		await insertOrphanRun(agentId, teamId);
@@ -214,10 +216,11 @@ describe('detectOrphans', () => {
 	});
 
 	it('returns correct orphan count for multiple orphans', async () => {
-		// Remove all existing running runs
+		// Remove all existing non-terminal runs
 		await db.query(
-			`DELETE FROM heartbeat_runs WHERE team_id = $1 AND status = $2::heartbeat_run_status`,
-			[teamId, HeartbeatRunStatus.Running],
+			`DELETE FROM heartbeat_runs
+			 WHERE team_id = $1 AND status IN ($2::heartbeat_run_status, $3::heartbeat_run_status)`,
+			[teamId, HeartbeatRunStatus.Running, HeartbeatRunStatus.Queued],
 		);
 
 		// Insert 3 orphaned runs (no PIDs)
@@ -227,6 +230,115 @@ describe('detectOrphans', () => {
 
 		const count = await detectOrphans(db, new Set());
 		expect(count).toBe(3);
+	});
+});
+
+describe('detectOrphans for runs stranded before they started', () => {
+	/** A `queued` run has no `started_at`, so it ages against `created_at`. */
+	async function insertQueuedRun(age: string, opts: { taskId?: string } = {}): Promise<string> {
+		const result = await db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status, created_at)
+			 VALUES ($1, $2, $3, $4::heartbeat_run_status, now() - $5::interval)
+			 RETURNING id`,
+			[teamId, agentId, opts.taskId ?? null, HeartbeatRunStatus.Queued, age],
+		);
+		return result.rows[0].id;
+	}
+
+	async function clearRuns(): Promise<void> {
+		await db.query(
+			`DELETE FROM heartbeat_runs
+			 WHERE team_id = $1 AND status IN ($2::heartbeat_run_status, $3::heartbeat_run_status)`,
+			[teamId, HeartbeatRunStatus.Running, HeartbeatRunStatus.Queued],
+		);
+	}
+
+	it('fails a queued run whose driver never started it, and frees the state it pinned', async () => {
+		await clearRuns();
+		const taskId = await createTask(teamId);
+		const lockId = await insertLock(agentId, taskId);
+		await setAgentActive(agentId);
+		const runId = await insertQueuedRun('10 minutes', { taskId });
+
+		const count = await detectOrphans(db, new Set());
+		expect(count).toBe(1);
+
+		const run = await db.query<{ status: string; error: string; finished_at: string | null }>(
+			'SELECT status, error, finished_at FROM heartbeat_runs WHERE id = $1',
+			[runId],
+		);
+		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
+		expect(run.rows[0].error).toBe('Orphaned: run never started');
+		expect(run.rows[0].finished_at).not.toBeNull();
+
+		// The point of the reap: the task stops reading as having an active run,
+		// which is what blocks reassignment and shows the agent as busy.
+		const active = await db.query<{ has_active_run: boolean }>(
+			`SELECT EXISTS (
+			   SELECT 1 FROM heartbeat_runs hr
+			   WHERE hr.task_id = $1 AND hr.status IN ('running', 'queued')
+			 ) AS has_active_run`,
+			[taskId],
+		);
+		expect(active.rows[0].has_active_run).toBe(false);
+
+		const lock = await db.query<{ released_at: string | null }>(
+			'SELECT released_at FROM execution_locks WHERE id = $1',
+			[lockId],
+		);
+		expect(lock.rows[0].released_at).not.toBeNull();
+
+		const agent = await db.query<{ runtime_status: string }>(
+			'SELECT runtime_status FROM member_agents WHERE id = $1',
+			[agentId],
+		);
+		expect(agent.rows[0].runtime_status).toBe(AgentRuntimeStatus.Idle);
+	});
+
+	it('leaves a queued run alone while its driver still holds it (waiting on a credential lock)', async () => {
+		await clearRuns();
+		const runId = await insertQueuedRun('10 minutes');
+
+		const count = await detectOrphans(db, new Set([runId]));
+		expect(count).toBe(0);
+
+		const run = await db.query<{ status: string }>(
+			'SELECT status FROM heartbeat_runs WHERE id = $1',
+			[runId],
+		);
+		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Queued);
+	});
+
+	it('leaves a queued run alone inside the grace window', async () => {
+		await clearRuns();
+		const runId = await insertQueuedRun('5 seconds');
+
+		const count = await detectOrphans(db, new Set());
+		expect(count).toBe(0);
+
+		const run = await db.query<{ status: string }>(
+			'SELECT status FROM heartbeat_runs WHERE id = $1',
+			[runId],
+		);
+		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Queued);
+
+		await clearRuns();
+	});
+
+	it('reports the two stranded kinds with distinct errors in one pass', async () => {
+		await clearRuns();
+		const queuedId = await insertQueuedRun('10 minutes');
+		const runningId = await insertOrphanRun(agentId, teamId);
+
+		expect(await detectOrphans(db, new Set())).toBe(2);
+
+		const runs = await db.query<{ id: string; error: string }>(
+			'SELECT id, error FROM heartbeat_runs WHERE id = ANY($1::uuid[])',
+			[[queuedId, runningId]],
+		);
+		const errorById = new Map(runs.rows.map((r) => [r.id, r.error]));
+		expect(errorById.get(queuedId)).toBe('Orphaned: run never started');
+		expect(errorById.get(runningId)).toBe('Orphaned: process no longer running');
 	});
 });
 
