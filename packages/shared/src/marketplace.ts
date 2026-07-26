@@ -75,6 +75,20 @@ export interface MarketplaceCaptainOverride {
 	team_context: string;
 }
 
+/**
+ * Discovery vocabulary for a team: the words and short phrases a person would
+ * type when they want *this* team. Authored as data rather than derived in code
+ * so the picker's recall is a property of the team, not of the matcher — a team
+ * published to the marketplace ships its own vocabulary, and Hezo generates the
+ * list for a publisher at bundle time.
+ *
+ * Deliberately NOT part of the content hash (see `computeContentHash`): keywords
+ * only affect which teams surface in the New Project picker, so changing them
+ * must not bump the team's version and trigger a roster reconcile on every
+ * instance already running it.
+ */
+export type MarketplaceKeywords = string[];
+
 /** One self-contained marketplace team definition (`marketplace/teams/<slug>.json`). */
 export interface MarketplaceTeamDef {
 	schema_version: number;
@@ -84,9 +98,11 @@ export interface MarketplaceTeamDef {
 	description: string;
 	/** Team-level narrative (the team summary shown to agents). */
 	summary: string;
+	/** Lowercased, de-duplicated discovery terms. See `MarketplaceKeywords`. */
+	keywords: MarketplaceKeywords;
 	/** Unsigned integer, auto-incremented by the build when content changes. */
 	version: number;
-	/** sha256 of the canonical def MINUS version/changelog/content_hash/schema_version. */
+	/** sha256 of the canonical def MINUS keywords/version/changelog/content_hash/schema_version. */
 	content_hash: string;
 	/** Newest-first version history; an entry per version is optional but recommended. */
 	changelog: MarketplaceChangelogEntry[];
@@ -101,6 +117,8 @@ export interface MarketplaceIndexEntry {
 	name: string;
 	description: string;
 	summary: string;
+	/** Discovery terms, carried into the index so the picker can rank without fetching every def. */
+	keywords: MarketplaceKeywords;
 	version: number;
 	/** Total number of roles in the team, INCLUDING the always-present Captain. */
 	roster_count: number;
@@ -122,6 +140,7 @@ export function toMarketplaceIndexEntry(def: MarketplaceTeamDef): MarketplaceInd
 		name: def.name,
 		description: def.description,
 		summary: def.summary,
+		keywords: def.keywords,
 		version: def.version,
 		// +1 for the Captain, which every team has but which lives outside `roster`.
 		roster_count: def.roster.length + 1,
