@@ -23,6 +23,25 @@ appears as the project's thumbnail in the rail. Pick any common image (PNG, JPEG
 GIF, or SVG); Hezo crops it to a square and resizes it to 512×512. Use **Replace image**
 to swap it or **Remove** to go back to the initials.
 
+## Reordering the project rail
+
+The rail lists your projects newest first. Once you have more than a few, the one you
+work in every day drifts down the list - so you can drag the avatars into whatever order
+you like:
+
+- **On a computer**, press an avatar and drag it up or down the rail.
+- **On a phone or tablet**, press and hold an avatar for a moment until it lifts, then
+  drag. A quick swipe still scrolls the rail as usual.
+- **From the keyboard**, focus an avatar and press **Alt+Up** or **Alt+Down** to move it
+  one place at a time.
+
+The order is saved as soon as you drop, and it applies everywhere projects are listed -
+the rail, the home dashboard, and the project pickers. New projects still arrive at the
+top. HQ stays pinned at the bottom of the rail and is not part of the ordering.
+
+Reordering is an admin (superuser) action, because the order is shared across everyone
+using this Hezo install.
+
 ## Agent and admin avatars
 
 Agents and the admin user work the same way. Open an agent's **Settings** and upload an

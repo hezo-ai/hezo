@@ -4,7 +4,13 @@ import { useState } from 'react';
 import { useActiveProject } from '../hooks/use-active-project';
 import { useInboxUnreadCount, useInboxUnreadCountsBySlug } from '../hooks/use-inbox-count';
 import { useMe } from '../hooks/use-me';
-import { useAllVisibleProjects, useHqProject } from '../hooks/use-projects';
+import {
+	type ProjectWithTeam,
+	useAllVisibleProjects,
+	useHqProject,
+	useReorderProjects,
+} from '../hooks/use-projects';
+import { moveItem, useSortableRail } from '../hooks/use-sortable-rail';
 import { CreateProjectWithTeamDialog } from './create-project-with-team-dialog';
 import { Avatar, avatarColorFromString, getInitials } from './ui/avatar';
 import { CountOverlayBadge } from './ui/count-overlay-badge';
@@ -27,6 +33,12 @@ import { Tooltip } from './ui/tooltip';
  * `showHome` pins a Home button above the avatar list (separated by a border).
  * It's used in the mobile side drawer, where the header logo opens the drawer
  * instead of linking home, so the drawer needs its own way back to the dashboard.
+ *
+ * The avatars are drag-reorderable (see `use-sortable-rail`): press and drag with
+ * a mouse, press-and-hold then drag on touch, or `Alt+ArrowUp`/`Alt+ArrowDown`
+ * from the keyboard. The order is global to the instance, so — like the create
+ * button below and archiving — it is offered to superusers only. Neither the
+ * create button nor the pinned HQ entry takes part.
  */
 export function ProjectRail({ showHome = false }: { showHome?: boolean } = {}) {
 	const { data: me } = useMe();
@@ -34,6 +46,14 @@ export function ProjectRail({ showHome = false }: { showHome?: boolean } = {}) {
 	const hq = useHqProject();
 	const active = useActiveProject();
 	const inboxCounts = useInboxUnreadCountsBySlug();
+	const reorder = useReorderProjects();
+	const canReorder = !!me?.is_superuser && projects.length > 1;
+	const { containerRef, getItemProps, announcement } = useSortableRail<ProjectWithTeam>({
+		items: projects,
+		enabled: canReorder,
+		labelFor: (p) => p.name,
+		onReorder: (from, to) => reorder.mutate(moveItem(projects, from, to).map((p) => p.id)),
+	});
 	// HQ is excluded from the visible-project map (it's internal), so fetch its
 	// outstanding count separately to badge the pinned HQ entry.
 	const { data: hqInbox } = useInboxUnreadCount(hq?.slug ?? '', !!hq);
@@ -68,33 +88,48 @@ export function ProjectRail({ showHome = false }: { showHome?: boolean } = {}) {
 				  overhang plus the active ring.
 				*/}
 				<div
+					ref={containerRef}
 					className="flex-1 min-h-0 w-full overflow-y-auto flex flex-col items-center gap-2 pt-2.5 pb-1"
 					data-testid="project-rail-scroll"
 				>
-					{projects.map((p) => {
+					{projects.map((p, index) => {
 						const isActive = active?.slug === p.slug && active?.teamSlug === p.teamSlug;
+						/*
+						  The drag handlers live on this wrapper rather than the Link:
+						  Radix's `Tooltip.Trigger asChild` already owns the Link's pointer
+						  handlers, and pointerdown bubbles up here anyway. The wrapper is
+						  also what the hook measures and transforms, so the lifted avatar
+						  and its displaced neighbours all move *inside* the scroll
+						  container — `overflow-y-auto` never has an escaping element to
+						  clip. `items-center` keeps it shrink-to-fit, so it adds no layout.
+						*/
 						return (
-							<Tooltip key={p.id} content={p.name} side="right">
-								<Link
-									to="/projects/$projectId"
-									params={{ projectId: p.slug }}
-									aria-label={p.name}
-									data-testid={`project-rail-avatar-${p.slug}`}
-									className={`relative inline-flex rounded-full transition-shadow ${
-										isActive ? 'ring-2 ring-inverse ring-offset-1 ring-offset-surface-2' : ''
-									}`}
-								>
-									<Avatar
-										initials={getInitials(p.name)}
-										color={avatarColorFromString(p.name)}
-										imageUrl={p.icon_url}
-									/>
-									<CountOverlayBadge
-										count={inboxCounts[p.slug] ?? 0}
-										testId={`project-rail-inbox-badge-${p.slug}`}
-									/>
-								</Link>
-							</Tooltip>
+							<div key={p.id} data-sortable-index={index} {...getItemProps(index)}>
+								<Tooltip content={p.name} side="right">
+									<Link
+										to="/projects/$projectId"
+										params={{ projectId: p.slug }}
+										aria-label={p.name}
+										// Chromium natively drags anchors; that gesture would hijack
+										// the reorder drag and cancel the pointer stream.
+										draggable={false}
+										data-testid={`project-rail-avatar-${p.slug}`}
+										className={`relative inline-flex rounded-full transition-shadow ${
+											isActive ? 'ring-2 ring-inverse ring-offset-1 ring-offset-surface-2' : ''
+										}`}
+									>
+										<Avatar
+											initials={getInitials(p.name)}
+											color={avatarColorFromString(p.name)}
+											imageUrl={p.icon_url}
+										/>
+										<CountOverlayBadge
+											count={inboxCounts[p.slug] ?? 0}
+											testId={`project-rail-inbox-badge-${p.slug}`}
+										/>
+									</Link>
+								</Tooltip>
+							</div>
 						);
 					})}
 					{me?.is_superuser && (
@@ -142,6 +177,15 @@ export function ProjectRail({ showHome = false }: { showHome?: boolean } = {}) {
 						</Tooltip>
 					</div>
 				)}
+				{/* Announces keyboard reorders, which have no other audible result. */}
+				<div
+					className="sr-only"
+					role="status"
+					aria-live="polite"
+					data-testid="project-rail-reorder-status"
+				>
+					{announcement}
+				</div>
 			</nav>
 			<CreateProjectWithTeamDialog open={createOpen} onOpenChange={setCreateOpen} />
 		</>
