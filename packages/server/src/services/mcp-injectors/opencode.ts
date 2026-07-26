@@ -45,6 +45,13 @@ type OpencodeServer = OpencodeRemoteServer | OpencodeLocalServer;
 interface OpencodeConfig {
 	$schema: string;
 	mcp?: Record<string, OpencodeServer>;
+	/**
+	 * OpenCode's tool gate. Unlike the other runtimes this is **top-level**, not a
+	 * key on the server entry (whose only switch is the whole-server `enabled`) —
+	 * a flat map of tool-name pattern to boolean, where a later, more specific key
+	 * overrides an earlier wildcard.
+	 */
+	tools?: Record<string, boolean>;
 }
 
 const CONFIG_BASENAME = 'opencode.json';
@@ -99,6 +106,20 @@ export const opencodeAdapter: RuntimeMcpAdapter = {
 				mcp[d.name] = d.kind === 'http' ? buildRemoteServer(d) : buildLocalServer(d);
 			}
 			config.mcp = mcp;
+
+			// Deny each restricted server's whole namespace, then re-allow its
+			// enabled tools. Insertion order is precedence order, so the wildcard
+			// has to be written before the specific keys. A server with no
+			// allowlist contributes nothing, and when none is restricted the
+			// `tools` key is omitted entirely — an unrestricted run's config stays
+			// byte-identical to what it was before method access existed.
+			const tools: Record<string, boolean> = {};
+			for (const d of descriptors) {
+				if (!d.enabledTools) continue;
+				tools[`${d.name}*`] = false;
+				for (const tool of d.enabledTools) tools[`${d.name}_${tool}`] = true;
+			}
+			if (Object.keys(tools).length > 0) config.tools = tools;
 		}
 
 		const contents = `${JSON.stringify(config, null, 2)}\n`;

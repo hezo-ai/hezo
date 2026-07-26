@@ -1171,6 +1171,16 @@ export const McpInstallStatus = {
 } as const;
 export type McpInstallStatus = (typeof McpInstallStatus)[keyof typeof McpInstallStatus];
 
+/**
+ * The level of access an agent asked for when it registered a connector.
+ * `Read` makes Hezo disable every write method once the connector's methods are
+ * first listed; `Write` is the default and means "no restriction requested".
+ * An agent can only ever narrow its own access — this never widens an allowlist
+ * an operator has already set.
+ */
+export const ConnectorAccess = { Read: 'read', Write: 'write' } as const;
+export type ConnectorAccess = (typeof ConnectorAccess)[keyof typeof ConnectorAccess];
+
 export const AgentTypeSource = {
 	Builtin: 'builtin',
 	Custom: 'custom',
@@ -1615,6 +1625,33 @@ export const RUNTIME_DISALLOWED_TOOLS_ARGS: Record<AgentRuntime, readonly string
 	[AgentRuntime.Gemini]: [],
 	[AgentRuntime.OpenCode]: [],
 	[AgentRuntime.Grok]: [],
+};
+
+/**
+ * Whether a runtime's config can hide the MCP tools a connector's method
+ * allowlist withholds, so the agent never sees a tool it may not call.
+ *
+ * This is only the *hiding* leg and it is deliberately not load-bearing: the
+ * CLIs are installed unpinned, so a key that works today can be renamed
+ * upstream tomorrow. The egress proxy independently rejects a `tools/call`
+ * naming a disabled method, which is what actually enforces the allowlist — a
+ * `false` here costs an agent a wasted call and a clear error, never access.
+ *
+ * - **Gemini** — `mcpServers.<name>.includeTools`, a per-server allowlist.
+ * - **OpenCode** — the top-level `tools` map, deny-the-namespace then re-allow.
+ * - **Claude Code** — `permissions.deny` in the settings file, addressing tools
+ *   as `mcp__<server>__<tool>`.
+ * - **Codex / Grok** — no per-server tool filter is documented for either CLI.
+ *   Emitting a guessed TOML key would risk the CLI rejecting the whole config
+ *   and breaking every run on that runtime, which is a far worse failure than
+ *   showing an agent a tool the proxy will refuse. Revisit if upstream adds one.
+ */
+export const RUNTIME_SUPPORTS_MCP_TOOL_FILTER: Record<AgentRuntime, boolean> = {
+	[AgentRuntime.ClaudeCode]: true,
+	[AgentRuntime.Codex]: false,
+	[AgentRuntime.Gemini]: true,
+	[AgentRuntime.OpenCode]: true,
+	[AgentRuntime.Grok]: false,
 };
 
 /**

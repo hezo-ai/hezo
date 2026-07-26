@@ -1,4 +1,4 @@
-import { ConnectorTransport, type McpInstallStatus } from '@hezo/shared';
+import { ConnectorTransport, type McpInstallStatus, type McpMethodInfo } from '@hezo/shared';
 import type { Db } from '../../db/database';
 import { credentialPlaceholder } from '../../lib/credential-placeholder';
 import { logger } from '../../logger';
@@ -135,6 +135,16 @@ export interface ConnectorRow {
 	api_key_secret_id: string | null;
 	install_status: McpInstallStatus;
 	install_error: string | null;
+	/**
+	 * Allowlist of the server's method names this connector exposes, or `null`
+	 * for **no restriction**. Never conflate the two: `null` means the run gets
+	 * whatever the server advertises today *and* tomorrow, while a non-null list
+	 * means an unrecognised new method is disabled until an operator enables it.
+	 */
+	enabled_methods: string[] | null;
+	/** Cached `tools/list` catalog, or null when the server's methods have never
+	 * been listed. Only used to derive the deny-list view of the allowlist. */
+	discovered_methods: McpMethodInfo[] | null;
 	created_at: string;
 	updated_at: string;
 }
@@ -165,6 +175,7 @@ export async function loadConnectorsForRun(
 		`SELECT id, name, kind::text AS kind,
 		        config, oauth_connection_id, api_key_secret_id,
 		        install_status::text AS install_status, install_error,
+		        enabled_methods, discovered_methods,
 		        created_at::text, updated_at::text
 		 FROM mcp_connections
 		 WHERE revoked_at IS NULL
@@ -310,6 +321,7 @@ export async function loadConnectorDescriptors(
 				name: row.name,
 				url: config.url,
 				headers,
+				...toolRestrictionOf(row),
 			});
 		} else if (row.kind === ConnectorTransport.Api) {
 		} else if (row.kind === ConnectorTransport.Local) {
@@ -332,10 +344,33 @@ export async function loadConnectorDescriptors(
 				command: config.command,
 				args: config.args,
 				env: config.env,
+				...toolRestrictionOf(row),
 			});
 		}
 	}
 	return descriptors;
+}
+
+/**
+ * Spread-able tool-restriction fields for a descriptor. A row with no allowlist
+ * yields an empty object so the keys are absent entirely and every adapter emits
+ * exactly the config it emitted before method access existed — an unrestricted
+ * connector must not change one byte of a run's spawn artifacts.
+ *
+ * `disabledTools` is the deny-list view the Claude Code adapter needs, derived
+ * from the cached catalog. It is therefore only as complete as the last
+ * `tools/list`; see {@link McpDescriptor.disabledTools} for why that is fine.
+ */
+function toolRestrictionOf(row: ConnectorRow): {
+	enabledTools?: readonly string[];
+	disabledTools?: readonly string[];
+} {
+	if (row.enabled_methods === null) return {};
+	const enabled = new Set(row.enabled_methods);
+	const disabled = (row.discovered_methods ?? [])
+		.map((m) => m.name)
+		.filter((name) => !enabled.has(name));
+	return { enabledTools: row.enabled_methods, disabledTools: disabled };
 }
 
 /** Drop any case-variant of `name` from a header map (so we can set it cleanly). */

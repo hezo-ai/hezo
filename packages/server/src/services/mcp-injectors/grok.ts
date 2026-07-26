@@ -102,6 +102,12 @@ export const grokAdapter: RuntimeMcpAdapter = {
 			throw new Error('grok mcp adapter requires hostHomeDir and containerHomeDir');
 		}
 
+		// A descriptor's `enabledTools` is intentionally ignored here: Grok
+		// documents no per-server tool filter, and inventing a TOML key risks the
+		// CLI rejecting the whole config and breaking every Grok run. Restricted
+		// connectors are still enforced — the egress proxy refuses a `tools/call`
+		// naming a disabled method regardless of runtime. See
+		// RUNTIME_SUPPORTS_MCP_TOOL_FILTER in @hezo/shared.
 		const blocks: string[] = [];
 		for (const d of descriptors) {
 			blocks.push(d.kind === 'http' ? renderHttpServer(d) : renderStdioServer(d));

@@ -138,14 +138,32 @@ export interface ClaudeCodeSettings {
 	hooks: {
 		Stop: ClaudeStopHookMatcherGroup[];
 	};
+	/**
+	 * Tool-permission rules. Only ever carries `deny` entries for MCP tools a
+	 * connector's method allowlist withholds (`mcp__<server>__<tool>`); omitted
+	 * entirely when nothing is restricted, so an unrestricted run's settings file
+	 * is byte-identical to what it was before method access existed.
+	 */
+	permissions?: {
+		deny: string[];
+	};
 }
 
 export function buildClaudeCodeSettings(
 	provider: AiProvider,
 	runModel?: string | null,
+	/**
+	 * MCP tools to withhold, as fully-qualified `mcp__<server>__<tool>` patterns.
+	 * Claude Code's per-server config entry has no tool filter, so the allowlist
+	 * has to be expressed here as a deny list of the *disabled* tools — which is
+	 * why the caller resolves it against the connector's known method catalog
+	 * rather than passing the allowlist through.
+	 */
+	deniedTools?: readonly string[],
 ): ClaudeCodeSettings {
 	const model = judgeModelForProvider(provider, runModel);
 	return {
+		...(deniedTools && deniedTools.length > 0 ? { permissions: { deny: [...deniedTools] } } : {}),
 		hooks: {
 			Stop: [
 				{
