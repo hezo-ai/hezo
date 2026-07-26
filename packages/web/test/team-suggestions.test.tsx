@@ -1,7 +1,14 @@
 import type { MarketplaceIndexEntry, TeamTemplateSource } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
 import type { TeamTemplate, TeamTemplateAgentType } from '../src/hooks/use-team-templates';
-import { buildTeamOptions, rankTeams, SUGGEST_MIN_CHARS } from '../src/lib/team-suggestions';
+import {
+	buildTeamOptions,
+	extractTerms,
+	FIELD_WEIGHT,
+	rankTeams,
+	SUGGEST_MIN_CHARS,
+	stemTerm,
+} from '../src/lib/team-suggestions';
 
 function mp(over: Partial<MarketplaceIndexEntry>): MarketplaceIndexEntry {
 	return {
@@ -42,6 +49,48 @@ function tpl(over: Partial<TeamTemplate>): TeamTemplate {
 	};
 }
 
+describe('stemTerm', () => {
+	it('folds plurals onto the singular stem', () => {
+		expect(stemTerm('apps')).toBe(stemTerm('app'));
+		expect(stemTerm('analysts')).toBe(stemTerm('analyst'));
+		expect(stemTerm('publishes')).toBe(stemTerm('publish'));
+		expect(stemTerm('verifies')).toBe(stemTerm('verify'));
+	});
+
+	it('folds verb and agent endings onto the same stem', () => {
+		expect(stemTerm('marketing')).toBe(stemTerm('market'));
+		expect(stemTerm('tracking')).toBe(stemTerm('tracked'));
+		expect(stemTerm('researchers')).toBe(stemTerm('research'));
+		// Two stripping passes: engineering → engineer → engin.
+		expect(stemTerm('engineering')).toBe(stemTerm('engineer'));
+	});
+
+	it('leaves short words and non-plural s-endings intact', () => {
+		// The guard that matters: "app" is never rewritten into something longer,
+		// and nothing rewrites "approval" down to it.
+		expect(stemTerm('app')).toBe('app');
+		expect(stemTerm('approval')).toBe('approval');
+		expect(stemTerm('business')).toBe('business');
+		expect(stemTerm('status')).toBe('status');
+	});
+});
+
+describe('extractTerms', () => {
+	it('drops short tokens and function words', () => {
+		expect(extractTerms('a todo list app for me and my team')).toEqual([
+			'todo',
+			'list',
+			'app',
+			'team',
+		]);
+	});
+
+	it('drops function words that only surface after stemming', () => {
+		// "uses" → "use", "wants" → "want", "this" → "thi": all stopwords.
+		expect(extractTerms('this uses and wants')).toEqual([]);
+	});
+});
+
 describe('buildTeamOptions', () => {
 	it('maps the three sources with the exact meta strings + groups', () => {
 		const options = buildTeamOptions(
@@ -72,17 +121,31 @@ describe('buildTeamOptions', () => {
 		const inv = options.find((o) => o.key === 'marketplace:inv');
 		expect(inv?.group).toBe('new');
 		expect(inv?.meta).toBe('6 roles');
-		// keywords fold in name + description + summary, lowercased.
-		expect(inv?.keywords).toContain('analysts');
-		expect(inv?.keywords).toContain('stock research');
+		// Terms are indexed by stem, weighted by the field they came from.
+		expect(inv?.keywords.get('investment')).toBe(FIELD_WEIGHT.name);
+		expect(inv?.keywords.get('research')).toBe(FIELD_WEIGHT.description);
+		expect(inv?.keywords.get(stemTerm('analysts'))).toBe(FIELD_WEIGHT.summary);
 
+		// A template's name + description are indexed; "apps" folds onto "app".
+		const app = options.find((o) => o.key === 'template:app');
+		expect(app?.meta).toBe('2 agent roles');
+		expect(app?.keywords.get('app')).toBe(FIELD_WEIGHT.name);
 		expect(options.find((o) => o.key === 'template:blank')?.meta).toBe('Captain only');
-		expect(options.find((o) => o.key === 'template:app')?.meta).toBe('2 agent roles');
 
 		const ops = options.find((o) => o.key === 'team:t1');
 		expect(ops?.group).toBe('copy');
 		expect(ops?.meta).toBe('3 agents');
+		expect(ops?.keywords.get('ops')).toBe(FIELD_WEIGHT.name);
 		expect(options.find((o) => o.key === 'team:t2')?.meta).toBe('No agents yet');
+	});
+
+	it('keeps the strongest field a term appears in, not the sum', () => {
+		const [option] = buildTeamOptions(
+			[mp({ name: 'Growth', description: 'growth growth growth', summary: 'growth growth' })],
+			[],
+			[],
+		);
+		expect(option.keywords.get('growth')).toBe(FIELD_WEIGHT.name);
 	});
 
 	it('singularizes a one-agent team', () => {
@@ -114,6 +177,61 @@ describe('rankTeams', () => {
 	it('ignores tokens of 2 characters or fewer', () => {
 		// every token here is ≤2 chars, so nothing is scored.
 		expect(rankTeams('ai to go', options)).toEqual([]);
+	});
+
+	it('does not score function words', () => {
+		// "and" is in Finance's description, "with"/"for" are in neither — a query
+		// made only of function words must match nothing.
+		expect(rankTeams('and for the with your', options)).toEqual([]);
+	});
+
+	it('matches whole stemmed words, never substrings', () => {
+		const teams = buildTeamOptions(
+			[
+				mp({ slug: 'app', name: 'App Team', description: 'A full team that builds your app' }),
+				mp({
+					slug: 'social',
+					name: 'Social Media Marketing',
+					description: 'drafts content and publishes it with your approval',
+				}),
+				mp({
+					slug: 'inv',
+					name: 'Investment Portfolio',
+					description: 'tracks stocks',
+					summary: 'the investor objective, risk appetite, and horizon',
+				}),
+			],
+			[],
+			[],
+		);
+
+		// The reported bug: "app" was substring-matching "approval" and "appetite",
+		// which tied with App Team and beat it on catalog order.
+		const ranked = rankTeams('todo list app', teams, 2);
+		expect(ranked.map((o) => o.name)).toEqual(['App Team']);
+	});
+
+	it('scores a name match above a summary match', () => {
+		const teams = buildTeamOptions(
+			[
+				mp({ slug: 'buried', name: 'Portfolio', summary: 'a team that ships a mobile app' }),
+				mp({ slug: 'named', name: 'App Team', description: 'builds software' }),
+			],
+			[],
+			[],
+		);
+		expect(rankTeams('mobile app', teams, 2)[0]?.name).toBe('App Team');
+	});
+
+	it('matches across plural and verb forms', () => {
+		const teams = buildTeamOptions(
+			[mp({ slug: 'm', name: 'Market Research', description: 'analyst coverage' })],
+			[],
+			[],
+		);
+		expect(rankTeams('marketing analysts', teams, 2).map((o) => o.name)).toEqual([
+			'Market Research',
+		]);
 	});
 
 	it('caps the result at the given limit', () => {
