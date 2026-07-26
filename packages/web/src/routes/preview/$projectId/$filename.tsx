@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { History, Pencil } from 'lucide-react';
 import { useState } from 'react';
+import { DocumentDownloadMenu } from '../../../components/document-download-menu';
 import { DocumentBody } from '../../../components/document-review/document-body';
 import { ReviewToolbarActions } from '../../../components/document-review/review-toolbar-actions';
 import { ScrollToBottomButton } from '../../../components/scroll-to-bottom-button';
@@ -79,6 +80,10 @@ function DocPreviewPage() {
 								<History className="h-4 w-4" />
 							</Link>
 						</Tooltip>
+						{/* Same client-side download the Documents toolbar offers — this
+						    standalone tab is where a doc gets read in full, so it's where
+						    saving a copy is most likely to be wanted. */}
+						<DocumentDownloadMenu filename={filename} content={doc.content} variant="icon" />
 					</div>
 				</div>
 			</div>

@@ -82,7 +82,9 @@ the list. A **dropdown** next to the open document's title opens a name search f
 inside the reader, so you can jump straight to another document without going back to the
 list; it's hidden while you're editing. The reader's toolbar also has a **Download** button
 that saves the open document to your device — as **Markdown** (`.md`, the original source)
-or as **plain text** (`.txt`, with the Markdown formatting stripped).
+or as **plain text** (`.txt`, with the Markdown formatting stripped). Download is available
+on every surface you can read a document from, so a document you opened from a task thread
+saves from right there.
 
 Agents don't carry every document's full text on every run. Instead each run includes a
 **manifest** — a table of contents listing each document's filename, its one-line
@@ -142,10 +144,12 @@ confirms with a link straight to the new task comment. The same review loop also
 files in the assets library — see [Reviewing assets](/docs/concepts/assets).
 
 Wherever you read a document — the Documents page, the task-sidebar preview, or its own tab —
-its header carries **Edit** and **History** buttons. On the two preview views these take you
-to the document on the Documents page, ready to edit or with its version history open, so you
-can move from a quick look straight into changing the document or seeing how it changed.
-(Edit is hidden while a document is archived, since archived documents are read-only.)
+its header carries **Edit**, **History**, and **Download** buttons. On the two preview views
+Edit and History take you to the document on the Documents page, ready to edit or with its
+version history open, so you can move from a quick look straight into changing the document or
+seeing how it changed. Download saves the copy from where you are, with no detour through the
+Documents page. (Edit is hidden while a document is archived, since archived documents are
+read-only.)
 
 On a larger screen you can also **hide the document list** — the panel button just left of
 the document's title collapses it, giving the document the full width of the page; the same
