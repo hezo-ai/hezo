@@ -62,13 +62,26 @@ export function CreateTaskDialog({
 	const navigate = useNavigate();
 
 	// On open, seed the picker with the passed/active project (only when it's a
-	// user-visible project) and clear any stale assignee. Rising-edge only, so a
-	// pick already in progress is never reset while the dialog stays open.
+	// user-visible project) and clear any stale assignee. The seed is deferred
+	// until the project list is actually available: the dialog can open before
+	// that request resolves, and matching against an empty list would leave the
+	// picker blank for as long as it stays open. Seeding happens at most once
+	// per open, so a pick already in progress is never reset.
 	const prevOpenRef = useRef(false);
+	const seededRef = useRef(false);
 	useEffect(() => {
-		if (selectProject && open && !prevOpenRef.current) {
-			setPickedProjectId(projectId && projects.some((p) => p.slug === projectId) ? projectId : '');
-			setAssigneeId('');
+		if (selectProject && open) {
+			if (!prevOpenRef.current) {
+				seededRef.current = false;
+				setPickedProjectId('');
+				setAssigneeId('');
+			}
+			if (!seededRef.current && projects.length > 0) {
+				setPickedProjectId(
+					projectId && projects.some((p) => p.slug === projectId) ? projectId : '',
+				);
+				seededRef.current = true;
+			}
 		}
 		prevOpenRef.current = open;
 	}, [open, selectProject, projectId, projects]);

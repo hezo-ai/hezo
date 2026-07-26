@@ -1,3 +1,5 @@
+import { queryClient } from '@hezo/web/lib/query-client';
+import { queryKeys } from '@hezo/web/lib/query-keys';
 import { screen, waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
@@ -43,6 +45,39 @@ test('the dialog project picker defaults to the currently viewed project', async
 
 	const projectSelect = (await screen.findByTestId('create-task-project')) as HTMLSelectElement;
 	await waitFor(() => expect(projectSelect.value).toBe(projectSlug));
+});
+
+test('the project picker seeds even when the project list arrives after the dialog opens', async () => {
+	const { findByTestId, user, projectSlug } = await renderOnProjectTasks();
+
+	// Hold the project index in flight and drop what's cached, so the dialog
+	// mounts with an empty list — what a real first paint looks like on a slow
+	// connection. The picker must still land on the active project once the
+	// list lands, not stay blank for the life of the dialog.
+	let release!: () => void;
+	const inFlight = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	const routed = globalThis.fetch;
+	globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+		const raw = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+		if (new URL(raw, 'http://localhost').pathname === '/api/projects') await inFlight;
+		return routed(input, init);
+	}) as typeof globalThis.fetch;
+
+	try {
+		queryClient.removeQueries({ queryKey: queryKeys.projects.all() });
+		await user.click(await findByTestId('app-header-new-task'));
+
+		const projectSelect = (await screen.findByTestId('create-task-project')) as HTMLSelectElement;
+		expect(projectSelect.value).toBe('');
+
+		release();
+		await waitFor(() => expect(projectSelect.value).toBe(projectSlug));
+	} finally {
+		release();
+		globalThis.fetch = routed;
+	}
 });
 
 test('the sidebar "+" next to Tasks opens the create-task dialog', async () => {

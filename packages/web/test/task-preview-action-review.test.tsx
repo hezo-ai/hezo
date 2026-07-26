@@ -2,7 +2,7 @@ import { waitFor } from '@testing-library/react';
 import { expect, test, vi } from 'vitest';
 import { buildReviewHandoff } from '../src/components/document-review/review-handoff';
 import { toast } from '../src/hooks/use-toast';
-import { renderApp } from './helpers/render';
+import { clickUntil, renderApp } from './helpers/render';
 import {
 	seedComment,
 	seedDocument,
@@ -47,8 +47,13 @@ async function openActionDialogFromTask() {
 		params: { projectId: ref.projectSlug, taskId: ref.taskId },
 	});
 
-	const mention = await utils.findByTestId('doc-mention-link', undefined, { timeout: 15_000 });
-	await utils.user.click(mention);
+	await utils.findByTestId('doc-mention-link', undefined, { timeout: 15_000 });
+	await clickUntil(
+		utils.user,
+		() => document.querySelector('[data-testid="doc-mention-link"]'),
+		() => !!document.querySelector('[data-testid="preview-panel"]'),
+		{ label: 'the doc mention' },
+	);
 	await utils.findByTestId('preview-panel');
 
 	// Count chip appearing means the review-comments query resolved with count > 0,
