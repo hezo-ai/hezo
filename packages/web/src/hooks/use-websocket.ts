@@ -181,6 +181,30 @@ export function resolveProjectSlugByIdOnly(
 }
 
 /**
+ * Resolve a `projects`-table row change. The row *is* the project, so its own
+ * `id` is the project id — `project_id` never appears on it.
+ *
+ * This must not go through `resolveProjectSlugForRow`: a projects row carries no
+ * `project_id`, so that path falls through to the `team_id` lookup, which filters
+ * out `is_internal` projects and therefore can *never* resolve HQ. That silently
+ * dropped every HQ projects UPDATE — including the `container_status` →
+ * `running` transition that ends provisioning — so the banner and the CEO chat
+ * kept rendering the provisioning state until a full page reload refetched the
+ * index. Several broadcasts (the startup container restart and the self-heal
+ * re-attach in `job-manager`, the progress-summary write, the designated-repo
+ * update) also emit a *partial* row carrying neither `project_id` nor `team_id`,
+ * which was unresolvable for ordinary projects too. Every projects broadcast
+ * carries `id`, so keying on it covers all of them.
+ */
+export function resolveProjectSlugForProjectRow(
+	index: Project[],
+	row: Record<string, unknown>,
+): string | undefined {
+	const projectUuid = row.id as string | undefined;
+	return projectUuid ? index.find((p) => p.id === projectUuid)?.slug : undefined;
+}
+
+/**
  * Tables whose row-change broadcasts must resolve to their own project by
  * `project_id` only (never the team fallback). These fire often during agent
  * activity, so a misattributed invalidation storms an unrelated project's
@@ -192,6 +216,22 @@ const PROJECT_STRICT_TABLES = new Set([
 	'heartbeat_runs',
 	'agent_wakeup_requests',
 ]);
+
+/**
+ * The single entry point mapping a row_change to the project slug its caches are
+ * keyed by. Picks the resolver the table needs: its own `id` for `projects`, the
+ * strict `project_id`-only lookup for the high-frequency project-scoped tables,
+ * and the `project_id`-then-`team_id` lookup for everything else.
+ */
+export function resolveProjectSlugForChange(
+	index: Project[],
+	table: string,
+	row: Record<string, unknown>,
+): string | undefined {
+	if (table === 'projects') return resolveProjectSlugForProjectRow(index, row);
+	if (PROJECT_STRICT_TABLES.has(table)) return resolveProjectSlugByIdOnly(index, row);
+	return resolveProjectSlugForRow(index, row);
+}
 
 interface TeamRoom {
 	id: string;
@@ -250,17 +290,15 @@ export function useShellWebSockets(teams: TeamRoom[] | undefined): void {
 			const { table, row } = msg as WsRowChangeMessage;
 
 			// Resolve the project slug the change maps to from the cached index.
+			// High-frequency, project-scoped tables resolve by their own `project_id`
+			// only — never the `team_id` fallback. That fallback maps a row to the
+			// team's first non-internal project, so a run/wakeup in *any* project on
+			// the team would invalidate *every* team project's task list, producing a
+			// refetch storm (and breaking infinite-scroll pagination, which never
+			// settles while it's being re-fetched). A `projects` row resolves by its
+			// own `id`. Skip when the row carries no resolvable project.
 			const index = queryClient.getQueryData<Project[]>(queryKeys.projects.all()) ?? [];
-			// High-frequency, project-scoped tables must resolve by their own
-			// `project_id` only — never the `team_id` fallback. That fallback maps a
-			// row to the team's first non-internal project, so a run/wakeup in *any*
-			// project on the team would invalidate *every* team project's task list,
-			// producing a refetch storm (and breaking infinite-scroll pagination,
-			// which never settles while it's being re-fetched). Skip when the row
-			// carries no resolvable project.
-			const cid = PROJECT_STRICT_TABLES.has(table)
-				? resolveProjectSlugByIdOnly(index, row)
-				: resolveProjectSlugForRow(index, row);
+			const cid = resolveProjectSlugForChange(index, table, row);
 
 			if (cid) {
 				invalidateQueriesForRowChange(queryClient, cid, table, row);

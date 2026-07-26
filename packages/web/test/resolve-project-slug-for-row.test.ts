@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'vitest';
 import type { Project } from '../src/hooks/use-projects';
-import { resolveProjectSlugByIdOnly, resolveProjectSlugForRow } from '../src/hooks/use-websocket';
+import {
+	resolveProjectSlugByIdOnly,
+	resolveProjectSlugForChange,
+	resolveProjectSlugForProjectRow,
+	resolveProjectSlugForRow,
+} from '../src/hooks/use-websocket';
 
 // resolveProjectSlugForRow only reads id/slug/team_id/is_internal; cast minimal
 // fixtures rather than spelling out every Project field.
@@ -68,5 +73,71 @@ describe('resolveProjectSlugByIdOnly', () => {
 		expect(resolveProjectSlugByIdOnly(index, { project_id: 'ops-proj', team_id: 'hq-team' })).toBe(
 			'operations',
 		);
+	});
+});
+
+describe('resolveProjectSlugForProjectRow', () => {
+	test('resolves HQ from the row id — the team fallback never can', () => {
+		// The bug this exists for: a `projects` row carries no project_id, so the
+		// generic resolver fell through to team_id, which excludes is_internal
+		// projects. Every HQ projects UPDATE — including container_status →
+		// running, the end of provisioning — was silently dropped, leaving the
+		// banner and the CEO chat stuck until a full page reload.
+		expect(resolveProjectSlugForRow(index, { id: 'hq-proj', team_id: 'hq-team' })).toBeUndefined();
+		expect(resolveProjectSlugForProjectRow(index, { id: 'hq-proj', team_id: 'hq-team' })).toBe(
+			'hq',
+		);
+	});
+
+	test('resolves an ordinary project from the row id', () => {
+		expect(resolveProjectSlugForProjectRow(index, { id: 'ops-proj', team_id: 'ops-team' })).toBe(
+			'operations',
+		);
+	});
+
+	test('resolves a partial row carrying neither project_id nor team_id', () => {
+		// The shape the startup container restart and the self-heal re-attach in
+		// job-manager broadcast, plus the progress-summary and designated-repo
+		// writes. These were unresolvable for ordinary projects too, not just HQ.
+		expect(
+			resolveProjectSlugForProjectRow(index, {
+				id: 'ops-proj',
+				container_status: 'running',
+				container_error: null,
+			}),
+		).toBe('operations');
+	});
+
+	test('returns undefined for an unknown project id', () => {
+		expect(resolveProjectSlugForProjectRow(index, { id: 'gone' })).toBeUndefined();
+		expect(resolveProjectSlugForProjectRow(index, {})).toBeUndefined();
+	});
+});
+
+describe('resolveProjectSlugForChange', () => {
+	test('routes a projects row to the id-based resolver', () => {
+		expect(resolveProjectSlugForChange(index, 'projects', { id: 'hq-proj' })).toBe('hq');
+	});
+
+	test('routes a strict table to the project_id-only resolver', () => {
+		expect(resolveProjectSlugForChange(index, 'heartbeat_runs', { project_id: 'ops-proj' })).toBe(
+			'operations',
+		);
+		expect(
+			resolveProjectSlugForChange(index, 'heartbeat_runs', { team_id: 'ops-team' }),
+		).toBeUndefined();
+	});
+
+	test('routes every other table to the project_id-then-team_id resolver', () => {
+		expect(resolveProjectSlugForChange(index, 'secrets', { team_id: 'ops-team' })).toBe(
+			'operations',
+		);
+		expect(resolveProjectSlugForChange(index, 'secrets', { project_id: 'hq-proj' })).toBe('hq');
+	});
+
+	test('a non-projects table is never resolved by its own row id', () => {
+		// `id` is the row's own primary key on every other table — resolving by it
+		// would map an unrelated row onto whichever project shares that uuid.
+		expect(resolveProjectSlugForChange(index, 'secrets', { id: 'ops-proj' })).toBeUndefined();
 	});
 });
