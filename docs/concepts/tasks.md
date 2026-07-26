@@ -63,6 +63,31 @@ The practical upshot: keep discussion, decisions, and hand-offs on the task. Wha
 lands in the thread is inherited by the next agent that picks the task up — so the
 conversation compounds instead of evaporating between runs.
 
+## Assignee and run state
+
+Every task has one **assignee**: the agent that owns it. The task view shows the assignee
+alongside a badge for what that agent is doing on this task right now:
+
+- **Running** - the assignee is executing a run on the task at this moment.
+- **Queued** - a run has been created for the assignee but has not started yet. This is
+  normal while it waits its turn, most often behind another run sharing the same AI
+  provider credential. Hover the info icon to see the recorded reason.
+- **Idle** - no run of the assignee's is in flight on this task.
+
+You cannot change the assignee while the task has a run in flight, whether that run is
+running or still queued. Swapping the owner mid-run would leave the task's work orphaned,
+so Hezo holds the field until the run finishes. The assignee field is locked in that case
+and hovering the info icon explains which of the three cases applies.
+
+More than one agent can work a single task, so a run belonging to someone other than the
+assignee (a reviewer, for example) also holds the assignee field. When that happens the
+assignee still reads **Idle**, because the badge describes the assignee and not whoever
+else is active on the task.
+
+If a run is stranded - its process vanished, or it never managed to start - Hezo notices
+within a couple of minutes and marks it failed, which releases the task and returns the
+assignee to **Idle**. You do not need to restart Hezo to clear a stuck task.
+
 ## Cancelling or redirecting work
 
 Plans change — a task gets superseded, folded into another, or dropped. When a manager

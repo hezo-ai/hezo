@@ -1,5 +1,5 @@
 import { AgentRuntimeStatus, BUDGET_PAUSE_STATUSES } from '@hezo/shared';
-import { agentRuntimeStatusMeta } from '../lib/status-meta';
+import { agentRuntimeStatusMeta, type BadgeMeta } from '../lib/status-meta';
 import { Badge } from './ui/badge';
 import { StatusDot } from './ui/status-dot';
 
@@ -14,6 +14,13 @@ interface AgentStatusLabelProps {
 	 * amber dot when budget-paused, and nothing at all when idle.
 	 */
 	variant?: 'badge' | 'sidebar';
+	/**
+	 * Overrides the badge derived from `runtimeStatus`, for callers whose pill
+	 * describes something other than the agent's own runtime status — the task
+	 * sidebar labels the *run* on the task ("Queued" vs "Running"). Ignored by the
+	 * `sidebar` variant, which renders a dot rather than a pill.
+	 */
+	badge?: BadgeMeta;
 	className?: string;
 }
 
@@ -21,6 +28,7 @@ export function AgentStatusLabel({
 	name,
 	runtimeStatus,
 	variant = 'badge',
+	badge: badgeOverride,
 	className = '',
 }: AgentStatusLabelProps) {
 	if (variant === 'sidebar') {
@@ -40,7 +48,7 @@ export function AgentStatusLabel({
 		);
 	}
 
-	const badge = agentRuntimeStatusMeta(runtimeStatus);
+	const badge = badgeOverride ?? agentRuntimeStatusMeta(runtimeStatus);
 	return (
 		<span className={`inline-flex min-w-0 items-center gap-1.5 ${className}`}>
 			<span className="min-w-0 truncate">{name}</span>

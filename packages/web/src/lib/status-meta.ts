@@ -2,6 +2,7 @@ import {
 	AgentRuntimeStatus,
 	ApprovalType,
 	formatTaskStatus,
+	HeartbeatRunStatus,
 	TaskPriority,
 	TaskStatus,
 } from '@hezo/shared';
@@ -73,6 +74,20 @@ export function agentRuntimeStatusMeta(status: string): BadgeMeta {
 		AGENT_RUNTIME_STATUS_META[AgentRuntimeStatus.Idle]
 	);
 }
+
+/**
+ * Badge meta for a task's current non-terminal run. Distinct from the agent
+ * runtime statuses above: this describes *the run*, so a run that exists but has
+ * not begun executing reads "Queued" rather than borrowing the cyan `live`
+ * signal, which stays reserved for an agent actually working.
+ */
+export const TASK_RUN_STATUS_META: Record<
+	typeof HeartbeatRunStatus.Running | typeof HeartbeatRunStatus.Queued,
+	BadgeMeta
+> = {
+	[HeartbeatRunStatus.Running]: { color: 'live', label: 'Running' },
+	[HeartbeatRunStatus.Queued]: { color: 'yellow', label: 'Queued' },
+};
 
 const APPROVAL_TYPE_COLORS: Record<ApprovalType, BadgeColor> = {
 	[ApprovalType.Strategy]: 'purple',

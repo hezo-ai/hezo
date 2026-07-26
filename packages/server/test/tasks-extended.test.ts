@@ -496,6 +496,120 @@ describe('tasks list — assignee_type and has_active_run', () => {
 	});
 });
 
+describe('single-task GET — active_run', () => {
+	async function getTask() {
+		const res = await app.request(
+			`/api/projects/${otherProjectSlug}/tasks/${taskInProgressUrgent}`,
+			{ headers: authHeader(token) },
+		);
+		expect(res.status).toBe(200);
+		return (await res.json()).data;
+	}
+
+	async function insertRun(
+		status: 'running' | 'queued',
+		opts: { member?: string; queuedReason?: string } = {},
+	): Promise<string> {
+		const row = await db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at, queued_reason)
+			 VALUES ($1, $2, $3, $4::heartbeat_run_status, $5, $6) RETURNING id`,
+			[
+				opts.member ?? memberId,
+				teamId,
+				taskInProgressUrgent,
+				status,
+				status === 'running' ? new Date().toISOString() : null,
+				opts.queuedReason ?? null,
+			],
+		);
+		return row.rows[0].id;
+	}
+
+	const cleanup = (id: string) => db.query(`DELETE FROM heartbeat_runs WHERE id = $1`, [id]);
+
+	it('is null when the task has no non-terminal run', async () => {
+		const task = await getTask();
+		expect(task.active_run).toBeNull();
+		expect(task.has_active_run).toBe(false);
+	});
+
+	it('reports a running run with the owning member', async () => {
+		const runId = await insertRun('running');
+		try {
+			const task = await getTask();
+			expect(task.has_active_run).toBe(true);
+			expect(task.active_run).toMatchObject({ status: 'running', member_id: memberId });
+		} finally {
+			await cleanup(runId);
+		}
+	});
+
+	it('reports a queued run as queued, carrying its recorded reason', async () => {
+		const runId = await insertRun('queued', {
+			queuedReason: 'waiting for prior run on this credential',
+		});
+		try {
+			const task = await getTask();
+			// The distinction the UI needs: still blocks reassignment, but nothing
+			// is executing yet, so it must not be reported as running.
+			expect(task.has_active_run).toBe(true);
+			expect(task.active_run).toMatchObject({
+				status: 'queued',
+				member_id: memberId,
+				queued_reason: 'waiting for prior run on this credential',
+			});
+		} finally {
+			await cleanup(runId);
+		}
+	});
+
+	it('prefers the executing run when the task carries both', async () => {
+		const queuedId = await insertRun('queued');
+		const runningId = await insertRun('running');
+		try {
+			const task = await getTask();
+			expect(task.active_run.status).toBe('running');
+		} finally {
+			await cleanup(queuedId);
+			await cleanup(runningId);
+		}
+	});
+
+	it("reports another agent's run under that agent's id, not the assignee's", async () => {
+		const other = await db.query<{ id: string }>(
+			`INSERT INTO members (team_id, display_name, member_type)
+			 VALUES ($1, 'Reviewer', 'agent') RETURNING id`,
+			[teamId],
+		);
+		const otherMemberId = other.rows[0].id;
+		const runId = await insertRun('running', { member: otherMemberId });
+		try {
+			const task = await getTask();
+			expect(task.has_active_run).toBe(true);
+			expect(task.active_run.member_id).toBe(otherMemberId);
+			expect(task.active_run.member_id).not.toBe(task.assignee_id);
+		} finally {
+			await cleanup(runId);
+			await db.query(`DELETE FROM members WHERE id = $1`, [otherMemberId]);
+		}
+	});
+
+	it('clears once the run reaches a terminal status', async () => {
+		const runId = await insertRun('running');
+		await db.query(
+			`UPDATE heartbeat_runs SET status = 'failed', finished_at = now() WHERE id = $1`,
+			[runId],
+		);
+		try {
+			const task = await getTask();
+			expect(task.has_active_run).toBe(false);
+			expect(task.active_run).toBeNull();
+		} finally {
+			await cleanup(runId);
+		}
+	});
+});
+
 describe('tasks list — has_unread_admin_mention', () => {
 	const findTask = (data: any[], id: string) => data.find((i: any) => i.id === id);
 

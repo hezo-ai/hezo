@@ -3,6 +3,7 @@ import {
 	AgentRuntimeStatus,
 	CAPTAIN_AGENT_SLUG,
 	DEFAULT_EFFORT,
+	HeartbeatRunStatus,
 	HQ_PROJECT_SLUG,
 	TaskPriority,
 	TaskStatus,
@@ -16,6 +17,7 @@ import type { CommentSkeleton } from '../../hooks/use-comments';
 import type { ExecutionLockState } from '../../hooks/use-execution-locks';
 import { useQueuedWakeups } from '../../hooks/use-queued-wakeups';
 import type { Task, useUpdateTask } from '../../hooks/use-tasks';
+import { TASK_RUN_STATUS_META } from '../../lib/status-meta';
 import { AgentLink } from '../agent-link';
 import { AgentStatusLabel } from '../agent-status-label';
 import { TaskStatusBadge } from '../task-status-badge';
@@ -84,6 +86,33 @@ export function TaskSidebar({
 		?.filter((a) => a.admin_status !== 'disabled')
 		.filter((a) => !isInternalProject || a.slug === CAPTAIN_AGENT_SLUG);
 
+	// Reassignment is blocked whenever the task carries any non-terminal run —
+	// that mirrors the server, which 409s on a queued run just as it does on a
+	// running one, and on any agent's run rather than only the assignee's. The
+	// pill, though, labels *the assignee*, so it stays Idle unless the active run
+	// is theirs, and distinguishes a run that is executing from one still waiting.
+	const activeRun = task.active_run ?? null;
+	const assigneeOwnsRun = activeRun !== null && activeRun.member_id === task.assignee_id;
+	const assigneeRunBadge = assigneeOwnsRun ? TASK_RUN_STATUS_META[activeRun.status] : undefined;
+	const assigneeLock = !activeRun
+		? null
+		: !assigneeOwnsRun
+			? {
+					content: 'Cannot change assignee while another agent has a run on this task',
+					label: 'Assignee locked: another agent is running',
+				}
+			: activeRun.status === HeartbeatRunStatus.Queued
+				? {
+						content: `Cannot change assignee while a run is queued on this task${
+							activeRun.queued_reason ? ` - ${activeRun.queued_reason}` : ''
+						}`,
+						label: 'Assignee locked: run queued',
+					}
+				: {
+						content: 'Cannot change assignee while an agent is running on this task',
+						label: 'Assignee locked: agent is running',
+					};
+
 	return (
 		<>
 			<div
@@ -134,7 +163,7 @@ export function TaskSidebar({
 					<span className="text-text-3 block mb-1 uppercase tracking-wider font-medium">
 						Assignee
 					</span>
-					{task.has_active_run ? (
+					{assigneeLock ? (
 						<div className="flex items-center gap-1 w-full text-[13px] text-text-1 px-1 py-0.5">
 							{assignedAgent ? (
 								<AgentLink
@@ -145,21 +174,20 @@ export function TaskSidebar({
 								>
 									<AgentStatusLabel
 										name={assignedAgent.title}
-										runtimeStatus={AgentRuntimeStatus.Active}
+										runtimeStatus={AgentRuntimeStatus.Idle}
+										badge={assigneeRunBadge}
 										className="min-w-0"
 									/>
 								</AgentLink>
 							) : (
 								<AgentStatusLabel
 									name="—"
-									runtimeStatus={AgentRuntimeStatus.Active}
+									runtimeStatus={AgentRuntimeStatus.Idle}
+									badge={assigneeRunBadge}
 									className="flex-1 min-w-0"
 								/>
 							)}
-							<InfoTooltip
-								content="Cannot change assignee while an agent is running on this task"
-								label="Assignee locked: agent is running"
-							/>
+							<InfoTooltip content={assigneeLock.content} label={assigneeLock.label} />
 						</div>
 					) : (
 						<>
