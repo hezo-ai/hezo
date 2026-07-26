@@ -77,7 +77,9 @@ runcmd:
   # - [ sh, -c, "echo 'HEZO_DOMAIN_OVERRIDE=hezo.example.com' >> /etc/environment" ]
   # To use a managed database and/or object storage for assets, seed the URLs into
   # /etc/hezo/deploy.env (root-only, mode 600 — not /etc/environment: they carry credentials).
-  # provision.sh persists them into the service's env file:
+  # provision.sh persists them into the service's env file. sslmode=require encrypts
+  # without verifying the certificate; for verified TLS use sslmode=verify-full plus
+  # &sslrootcert=/etc/hezo/db-ca.crt when the provider signs with its own CA (most do).
   # - [ sh, -c, "install -d -m 700 /etc/hezo && install -m 600 /dev/null /etc/hezo/deploy.env" ]
   # - [ sh, -c, "echo 'HEZO_DATABASE_URL=postgres://hezo:PASSWORD@db-host:5432/hezo?sslmode=require' >> /etc/hezo/deploy.env" ]
   # - [ sh, -c, "echo 'HEZO_ASSET_STORAGE_URL=s3://ACCESS_KEY:SECRET@endpoint/bucket' >> /etc/hezo/deploy.env" ]
@@ -124,8 +126,9 @@ postgres://hezo:PASSWORD@db-host:5432/hezo?sslmode=require
   round-trip latency low. Same-VPC/private networking is ideal.
 - **Use the direct or session-pooled connection**, never a transaction-mode pooler
   (PgBouncer in transaction mode breaks the locks Hezo uses to coordinate migrations).
-- **Use TLS** — `sslmode=require` at minimum, `sslmode=verify-full` where your provider
-  supports it.
+- **Use TLS** — `sslmode=require` encrypts the connection but does not verify the
+  server's certificate. For verified TLS use `sslmode=verify-full`, adding
+  `&sslrootcert=/etc/hezo/db-ca.crt` if your provider signs with its own CA (most do).
 
 Full requirements: [Configuration → Using an external
 Postgres](/docs/deployment/configuration#using-an-external-postgres).
@@ -196,6 +199,16 @@ The concrete version for a DigitalOcean Droplet deployed with the snippet above:
 
    ```
    postgres://doadmin:PASSWORD@db-postgresql-fra1-12345-do-user-0.db.ondigitalocean.com:25060/defaultdb?sslmode=require
+   ```
+
+   DigitalOcean signs cluster certificates with its own CA, so `sslmode=require`
+   encrypts without verifying them. For verified TLS, download the cluster's CA from
+   **Connection details → Download CA certificate**, put it on the Droplet, and extend
+   the URL:
+
+   ```sh
+   sudo install -m 644 ca-certificate.crt /etc/hezo/db-ca.crt
+   # ...?sslmode=verify-full&sslrootcert=/etc/hezo/db-ca.crt
    ```
 
 2. **Assets:** create a [Spaces](https://www.digitalocean.com/products/spaces) bucket

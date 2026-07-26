@@ -2022,6 +2022,23 @@ credentials occluded, query params dropped except `sslmode`) and only that is pa
 `buildApp`, surfaced at the superuser-only `GET /api/database-info` for the Settings →
 General Database card.
 
+**External TLS (`sslmode`).** node-postgres 8 reads `prefer`/`require`/`verify-ca` as
+aliases for `verify-full`, which no other Postgres client does and which pg 9 drops.
+Since managed providers (DigitalOcean, RDS, Azure) sign with a private CA, that reading
+rejects connection strings `psql` accepts. `normalizePostgresUrl`
+(`src/db/postgres-url.ts`) opts the string into pg-connection-string's libpq semantics
+(`uselibpqcompat=true`) for exactly the modes the two readings disagree on, leaving
+`no-verify` (which would flip back to verifying) and bare `verify-ca` (which would throw)
+untouched. It is applied in `PostgresDb.connect` — the single pool construction site, so
+it is unbypassable — and an explicit `ssl` option would not work there, since
+node-postgres merges the parsed connection string *over* the caller's config. The same
+function reports the resulting `PostgresTlsPosture`, which `openDatabase` renders into the
+startup line so a `require` connection visibly says "certificate not verified".
+Connect failures are classified by `src/db/postgres-connect-errors.ts`: deterministic
+causes (rejected certificate, bad credentials, missing database) skip the retry backoff and
+carry targeted guidance instead of the generic TLS advice. Delete the normalizer when pg
+reaches v9.
+
 **Asset storage.** Asset blobs (task attachments + the project assets library) live behind
 the `AssetStore` interface (`src/assets/store.ts`:
 `write`/`read`/`delete`/`deleteProjectAssets`/`close`, keyed `projectId/assetId` — teams

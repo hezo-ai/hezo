@@ -17,7 +17,7 @@ handy for baking defaults into a service definition while still overriding per r
 |---|---|---|---|
 | `--port <port>` | `HEZO_PORT` | `3100` | Port the server and web app listen on (1–65535). |
 | `--data-dir <path>` | `HEZO_DATA_DIR` | `~/.hezo/` | Where Hezo stores its database, encrypted secrets, and assets. Still required with an external database or S3 asset storage — workspaces and keys live here. |
-| `--database-url <url>` | `HEZO_DATABASE_URL` | — | Connection string for an [external Postgres](#using-an-external-postgres) (`postgres://user:password@host:5432/hezo`). Omit to use the embedded database under the data directory (the default). |
+| `--database-url <url>` | `HEZO_DATABASE_URL` | — | Connection string for an [external Postgres](#using-an-external-postgres) (`postgres://user:password@host:5432/hezo`). Its `sslmode` follows standard libpq rules - see [TLS and sslmode](#tls-and-sslmode). Omit to use the embedded database under the data directory (the default). |
 | — | `HEZO_DATABASE_POOL_SIZE` | `10` | Connection-pool size for the external database (2–100). Ignored for the embedded database. |
 | `--asset-storage-url <url>` | `HEZO_ASSET_STORAGE_URL` | — | [S3-compatible object storage](#storing-assets-in-s3-compatible-object-storage) for asset files (`s3://KEY:SECRET@endpoint/bucket[/prefix]`). Omit to store assets on the local filesystem under the data directory (the default). |
 | `--master-key <phrase>` | `HEZO_MASTER_KEY` | — | The twelve-word master key, to set up or unlock without the web gate. |
@@ -86,9 +86,9 @@ Requirements and recommendations:
 
 - **PostgreSQL 14 or newer.** The version is checked at startup.
 - **Use TLS.** With an external database your tasks, comments, and documents travel the
-  network and live with the provider — prefer `sslmode=verify-full` and private
-  networking. [Secrets remain encrypted](/docs/concepts/your-data) with the master key
-  either way.
+  network and live with the provider. Set `sslmode` deliberately - see
+  [TLS and sslmode](#tls-and-sslmode) for what each mode does and does not protect against.
+  [Secrets remain encrypted](/docs/concepts/your-data) with the master key either way.
 - **Keep the database close to the server.** Hezo's background scheduling polls every
   1–5 seconds, so every millisecond of round-trip latency counts. Same-host,
   same-VPC, or same-region placement is strongly recommended.
@@ -101,6 +101,47 @@ Requirements and recommendations:
 - `hezo backup` / `hezo restore` work against an external database too — including
   **moving an existing embedded instance to hosted Postgres** (and back). See
   [Backup & recovery](/docs/deployment/backup-and-recovery).
+
+### TLS and sslmode
+
+Hezo reads `sslmode` from the connection string exactly as `psql` and libpq do, so a
+connection string copied from your provider's dashboard behaves the same way in Hezo as
+it does in any other Postgres client:
+
+| `sslmode` | Encrypted | Certificate verified | Notes |
+|---|---|---|---|
+| *(omitted)* | No | - | **Plaintext.** There is no implicit TLS - set `sslmode` explicitly. |
+| `disable` | No | - | Plaintext. Only over a trusted private network. |
+| `prefer` | Yes | No | Same protection as `require` in Hezo. |
+| `require` | Yes | No | Encrypted, but an interceptor can present any certificate. |
+| `verify-ca` | Yes | Chain only | Needs `sslrootcert`. The host name is not checked. |
+| `verify-full` | Yes | Chain + host name | **Recommended.** |
+| `no-verify` | Yes | No | Same as `require`; accepted for compatibility. |
+
+Hezo logs the mode it resolved on every start, so you can confirm what you actually got:
+
+```
+Using external Postgres at postgres://••••:••••@db.internal:5432/hezo?sslmode=require
+  (server 16.4, pool max 10, TLS encrypted, certificate not verified ...)
+```
+
+**Verifying against a provider-private CA.** Managed Postgres (DigitalOcean, AWS RDS,
+Azure) and most self-hosted servers present a certificate signed by their own CA rather
+than a public one, so `verify-full` on its own fails with *"self signed certificate in
+certificate chain"*. Download the provider's CA certificate and point `sslrootcert` at
+it - this is the recommended setup:
+
+```sh
+# DigitalOcean: Databases → your cluster → Connection details → Download CA certificate
+sudo install -m 644 ca-certificate.crt /etc/hezo/db-ca.crt
+
+HEZO_DATABASE_URL="postgres://hezo:••••@db-postgresql-lon1-12345-do-user-0.db.ondigitalocean.com:25060/hezo?sslmode=verify-full&sslrootcert=/etc/hezo/db-ca.crt" \
+  hezo --data-dir /var/lib/hezo
+```
+
+The `PGSSLMODE` environment variable is honoured only when the connection string carries
+no `sslmode` of its own, and node-postgres reads it strictly (every verifying mode means
+full verification). Put `sslmode` in the URL rather than relying on it.
 
 ## Storing assets in S3-compatible object storage
 

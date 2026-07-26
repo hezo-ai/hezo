@@ -4,9 +4,35 @@
 // Postgres via HEZO_TEST_DATABASE_URL (the test-postgres CI job provides
 // one); skips silently otherwise.
 import { describe, expect, it } from 'bun:test';
+import pg from 'pg';
 import { PostgresDb } from '../../src/db/drivers/postgres';
+import { normalizePostgresUrl } from '../../src/db/postgres-url';
 
 const url = process.env.HEZO_TEST_DATABASE_URL;
+
+// Needs no server: proves the connection-string parser resolves TLS the same
+// way on the production runtime as it does under Node in the vitest tier.
+describe('sslmode resolution on the Bun runtime', () => {
+	it('reads sslmode=require as encrypted-but-unverified, matching libpq', () => {
+		const { url: normalized, tls } = normalizePostgresUrl(
+			'postgres://u:p@db.example:5432/hezo?sslmode=require',
+			{},
+		);
+		expect(tls).toBe('encrypted');
+		expect(new pg.Client({ connectionString: normalized }).connectionParameters.ssl).toEqual({
+			rejectUnauthorized: false,
+		});
+	});
+
+	it('leaves sslmode=verify-full fully verifying', () => {
+		const { url: normalized, tls } = normalizePostgresUrl(
+			'postgres://u:p@db.example:5432/hezo?sslmode=verify-full',
+			{},
+		);
+		expect(tls).toBe('verified');
+		expect(new pg.Client({ connectionString: normalized }).connectionParameters.ssl).toEqual({});
+	});
+});
 
 describe.skipIf(!url)('PostgresDb on the Bun runtime', () => {
 	it('connects, queries with parity-parsed types, and closes', async () => {
