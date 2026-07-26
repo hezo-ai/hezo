@@ -111,9 +111,14 @@ export async function createProject(
 		);
 		const deferCaptainPlanningWake = Number(countResult.rows[0]?.count ?? 0) === 0;
 
+		// `display_order` ascends with the rail (1 = topmost), so one below the
+		// current minimum puts a new project on top — the newest-first placement the
+		// rail had before it became reorderable. Values drift negative over time;
+		// that is harmless and self-heals, since every reorder renumbers the whole
+		// visible list back to 1..N.
 		const projectResult = await db.query(
-			`INSERT INTO projects (team_id, name, slug, task_prefix, description, docker_base_image)
-			 VALUES ($1, $2, $3, $4, $5, $6)
+			`INSERT INTO projects (team_id, name, slug, task_prefix, description, docker_base_image, display_order)
+			 VALUES ($1, $2, $3, $4, $5, $6, (SELECT COALESCE(MIN(display_order), 1) - 1 FROM projects))
 			 RETURNING *`,
 			[
 				input.teamId,

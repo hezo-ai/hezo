@@ -108,6 +108,23 @@ default (`?filter=active|archived|all`, mirroring the docs/assets soft-delete), 
 archived project drops out of the left rail while keeping its tasks/history. Unarchiving
 (`POST /projects/:id/unarchive`) clears the stamp and restores rail visibility.
 
+**Rail order.** `projects.display_order` (INTEGER NOT NULL) is the operator's own ordering
+of the project rail, ascending — 1 is the topmost avatar. Every project listing sorts
+`display_order ASC, created_at DESC`; the tiebreak preserves the newest-first behaviour the
+rail had before the column existed (migration 042 backfilled positions in exactly that
+order, so upgrading is a visual no-op). `project-create.ts` inserts at
+`MIN(display_order) - 1` so a new project still lands on top without renumbering anything;
+values drift negative and self-heal, because a reorder renumbers the whole visible list
+back to 1..N. Reordering is `PUT /project-display-order` with the full ordered id list —
+a *collection*-level route (it spans projects across many teams, so it takes
+`requireSuperuser` rather than `requireProjectAccessMiddleware`, and lives outside the
+`/projects/…` tree because Hono's `/projects/:projectId/*` pattern also matches
+`/projects/<word>`). It renumbers in one `unnest … WITH ORDINALITY` statement, rejects
+archived/internal/unknown ids with a 400, and signals `broadcastProjectsChanged` on the
+global `projects:global` room (no row data — the index is authorized per caller) so every
+open shell re-orders live. The MCP `list_projects` tool is deliberately unaffected and
+keeps its alphabetical `ORDER BY p.name`.
+
 **Repos.** `repos` stores a GitHub `owner/repo` identifier; the segment after the owner
 is the display label, worktree directory name, and `@mention` handle. The **first** repo
 linked to a project becomes its immutable `designated_repo_id` (`ON DELETE RESTRICT` +
