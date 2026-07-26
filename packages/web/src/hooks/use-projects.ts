@@ -72,9 +72,27 @@ export interface Repo {
 export type ProjectWithTeam = Project & { teamSlug: string; teamName: string };
 
 /**
+ * Container states that always resolve on their own, so a UI parked on one is
+ * waiting for a transition it must not miss. Deliberately excludes the `null`
+ * status: a torn-down project sits at `null` indefinitely and would poll forever.
+ */
+const TRANSIENT_CONTAINER_STATUSES = new Set(['creating', 'stopping']);
+
+/** How often to re-check the index while a container is mid-transition. */
+const TRANSIENT_CONTAINER_POLL_MS = 10_000;
+
+/**
  * The instance-wide project index: every project the caller can see across all
  * their teams, including the per-team internal projects. The single source the
  * rail, the project→team resolution, and realtime invalidation all read from.
+ *
+ * The container status banner and the CEO chat's HQ gate both read their health
+ * from here, and provisioning ends with a single `projects` row-change broadcast.
+ * That event has no replay — a socket that hasn't joined the team room yet (the
+ * rooms are derived from this very query, so there is a window between its
+ * response and the join) drops it, and the UI then shows "provisioning" until a
+ * full reload. Poll while any container is in a transient state so the UI
+ * converges on its own; the interval switches off once everything has settled.
  */
 export function useProjectsIndex() {
 	return useQuery({
@@ -82,6 +100,12 @@ export function useProjectsIndex() {
 		queryFn: () => api.get<Project[]>('/api/projects'),
 		staleTime: 0,
 		refetchOnMount: 'always',
+		refetchInterval: (query) =>
+			(query.state.data ?? []).some(
+				(p) => p.container_status && TRANSIENT_CONTAINER_STATUSES.has(p.container_status),
+			)
+				? TRANSIENT_CONTAINER_POLL_MS
+				: false,
 	});
 }
 

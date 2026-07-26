@@ -1804,6 +1804,31 @@ shell watches). Clients react by refetching the per-caller-authorized project in
 left project rail updates live — for the dialog, the CEO's `create_project`, and other
 sessions alike — without a row on the shared room leaking a project a user can't see.
 
+**Row-change → project-slug resolution** (`resolveProjectSlugForChange` in
+`hooks/use-websocket.ts`) picks a resolver per table, and getting it wrong silently drops
+the event (an unresolved row invalidates nothing):
+
+- **`projects`** resolves by the row's **own `id`** — the row *is* the project, and no
+  `projects` row carries a `project_id`. It must not use the generic resolver: that falls
+  through to `team_id`, which maps a team-wide row to the team's *non-internal* project and
+  so can never resolve **HQ**. Several call sites also broadcast a partial row (`{ id,
+  container_status }` from the startup container restart and the self-heal re-attach in
+  `job-manager`, plus the progress-summary and designated-repo writes) carrying neither
+  `project_id` nor `team_id`; keying on `id` covers those too.
+- **`tasks` / `task_comments` / `heartbeat_runs` / `agent_wakeup_requests`** resolve by
+  `project_id` **only** — never the `team_id` fallback, which would misattribute one
+  project's high-frequency activity to another and storm its caches.
+- **Everything else** resolves `project_id` first, then falls back to `team_id`.
+
+**Container-state convergence.** The container status banner
+(`components/container-status-banner.tsx`), the CEO chat's HQ gate, and the create-project
+gate all derive from one `useContainerHealth(project)` reading `container_status` off the
+project index, and provisioning ends with a single `projects` UPDATE broadcast. WebSocket
+events have no replay, so the index also **polls every 10s while any container sits in a
+transient state** (`creating` / `stopping` — deliberately not the `null` of a torn-down
+project, which would poll forever). That bounds the damage of a missed transition to a few
+seconds of stale banner instead of "stuck until the operator reloads the page."
+
 **Lazy comments feed.** A task's comment thread can be long, so the feed
 (`components/task-detail/comments-section.tsx`, virtualized with react-virtuoso) loads in
 two payloads off the one `GET …/tasks/:taskId/comments` route. On mount it fetches a
