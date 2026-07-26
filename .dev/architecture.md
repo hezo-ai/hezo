@@ -1327,8 +1327,11 @@ otherwise no-op run to a success and is why the one-block judge ceiling is accep
 resume …`, the name after a short routing label like `Next step: slug — …`, or an
 action-assignment heading/label line like `## Required actions for slug` — where the phrase on
 the line is itself the ask signal, since the imperative list below it carries none — via
-`detectUnlinkedTeammateAsks`, gated on directed-ask intent so a bold name written for emphasis is
-never touched) is the wakes-no-one trap — but the net does **not** rewrite the
+`detectUnlinkedTeammateAsks`, gated on directed-ask intent — an explicit request signal such as a
+second-person pronoun, `please` or a `?`, or a baton-passing status line such as "ready for
+review" / "all yours", which is what catches a report whose closing handoff block is present but
+passive throughout; a bold name written for mere emphasis is never touched) is the wakes-no-one
+trap — but the net does **not** rewrite the
 agent's words or auto-deliver it (guessing intent to force a wake overreaches). `create_comment`
 already warns the agent interactively when it posts such a comment; the final-message path skips
 that check, so the runner surfaces the **same warning in the run log** and leaves the handoff
@@ -1341,6 +1344,22 @@ was woken by a `WakeupSource.Reply`/`Mention` whose waking comment was authored 
 comment of its own on the task, the final message is delivered verbatim as a reply threaded under
 the waking comment (`postAgentComment` with `parentCommentId`), flipping the no-op run to success.
 Runs on **every** runtime including OpenCode (which has no judge at all).
+
+**Comment-write mention advisories.** Upstream of the net, `create_comment` / `update_comment`
+run a set of best-effort, non-blocking checks over the posted markdown and return their findings
+to the agent in a `warning` field on the already-persisted result. They **never rewrite the
+comment** — the agent fixes it in place with `update_comment`. The checks (all in
+`lib/mentions.ts`, scoped by `resolveWarnableSlugs` = the task team's roster + HQ + `@admin`,
+minus the author): `detectUnlinkedTeammateReferences` (a teammate addressed by bold/bare name,
+which notifies nobody), `detectPassiveTeammateAsks` (a `@@slug` address whose text reads as an
+ask), and `detectNarratedActiveMentions` — the inverse failure, where an **active** `@slug` is
+used to *describe a mention living in another comment* ("the @admin mention in TASK-7#comment-9")
+and so fires a real wake here instead of pointing there. The offered fix for that one is
+**backticks**, not the passive form: `@@admin` renders as the bare word `admin` and loses the
+token being quoted, while `` `@admin` `` keeps the literal text inert. Because the sibling
+backticked-entity check would otherwise tell the author to un-backtick exactly that token,
+`detectQuotedMentionTokens` subtracts backticked-and-narrated slugs from its candidates, so the
+two advisories can never contradict each other.
 
 ---
 
