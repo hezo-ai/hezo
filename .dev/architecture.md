@@ -727,10 +727,30 @@ override. `marketplace/index.json` is the catalog listing.
   roster + team metadata live in a hand-authored `agents/<team>/team.json` manifest.
   `build:marketplace` (`scripts/build-marketplace-teams.ts`, run by `bun run dev` and by
   authors) resolves partials, validates required prompt vars, computes a content hash over the
-  meaningful content (excluding version/changelog), **auto-increments `version`** on a hash
-  change, and writes the committed JSONs. `build:teams` bundles them into the gitignored,
+  meaningful content (excluding version/changelog/keywords), **auto-increments `version`** on a
+  hash change, and writes the committed JSONs. `build:teams` bundles them into the gitignored,
   embedded `teams-bundle.json`. Pure logic in `services/marketplace-build.ts`; guarded by
   `marketplace-build.test.ts` (determinism + a stale-source drift check).
+- **Discovery keywords.** Each team carries a `keywords` list — the words and short phrases
+  someone would type when they want that team ("website", "saas", "todo list") — authored in
+  `team.json`, normalized by the build (`normalizeKeywords`, lowercased + de-duplicated,
+  bounded by `MAX_TEAM_KEYWORDS`/`MAX_TEAM_KEYWORD_LENGTH`), and carried through to both the
+  team def and `index.json`. They exist so the New Project picker's recall is a property of
+  the **team's data**, not of the matcher: a team can be made findable for a new phrasing by
+  editing its manifest, and a team published from outside this repo ships its own vocabulary.
+  Hezo generates the list at bundle time for a publisher (today: hand-authored for the three
+  default teams). Keywords are **excluded from the content hash** — the team's `version` drives
+  the reconcile that re-runs hiring against every project already on that team, and retuning
+  search terms must not trigger that. Instances always fetch the live catalog, so improved
+  keywords take effect on the next fetch regardless of version.
+- **Ranking (client-side).** There is no server suggestion endpoint. The New Project dialog
+  ranks the catalog it already has (`packages/web/src/lib/team-suggestions.ts`) against the
+  typed name + description: both sides are normalized to stemmed terms by
+  `@hezo/shared`'s `extractTerms`/`stemTerm` (whole-word, never substring — so "app" matches
+  "App Team" and not the "approval" in another team's blurb), and each distinct query term
+  scores the **best** field it lands in — keywords 4, name 3, description 2, summary 1. The
+  normalizer lives in `@hezo/shared` because both sides need it: the web ranker on the query
+  side, the server on the authoring side when it generates a published team's keywords.
 - **Runtime load.** `services/marketplace.ts` resolves the catalog from, in order: the repo
   folder in dev (`HEZO_MARKETPLACE_DIR`, or the source-tree `marketplace/`), GitHub raw on
   `main` (cached ~1h; the untrusted boundary — every def is zod-validated with a
@@ -759,14 +779,16 @@ override. `marketplace/index.json` is the catalog listing.
   `update_agent_system_prompt` where roles carry local customizations) instead of adding
   duplicates. Because instances always fetch the live catalog, a new team `version` reaches them
   automatically.
-- **Shipped teams.** Three: **App Team** (`software-development`, the full app-building roster;
-  display name was "Startup"), **Influencer Marketing** (`influencer` — brand-strategist,
-  trend-researcher, content-writer, media-producer, content-editor, distribution-manager), and
-  **Investment** (`investment` — market-researcher, equity-analyst, catalyst-monitor,
-  risk-verifier, report-writer). The Influencer/Investment Captains run a structured onboarding
-  Q&A on their planning task and **suggest goals** (below); the Influencer team gates outbound
-  content on admin approval (prompt-level, toggled via team preferences), and the Investment
-  team maintains a living per-stock document (with revision history) monitored ~daily.
+- **Shipped teams.** Three: **App Team** (`software-development`, the full app-building roster),
+  **Social Media Marketing** (`influencer` — brand-strategist, trend-researcher, content-writer,
+  media-producer, content-editor, distribution-manager), and **Investment Portfolio**
+  (`investment` — market-researcher, equity-analyst, catalyst-monitor, risk-verifier,
+  report-writer). Slugs are stable ids and keep their historical names. The
+  Social-Media-Marketing/Investment-Portfolio Captains run a structured onboarding
+  Q&A on their planning task and **suggest goals** (below); the Social Media Marketing team
+  gates outbound content on admin approval (prompt-level, toggled via team preferences), and
+  the Investment Portfolio team maintains a living per-stock document (with revision history)
+  monitored ~daily.
 
 **Goal suggestions.** The Captain/CEO can propose goals the admin approves, reusing the
 approvals machinery. `suggest_goal` (MCP, Captain/CEO-only) files a pending `goal_suggestion`

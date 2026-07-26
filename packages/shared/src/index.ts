@@ -7,6 +7,7 @@ export * from './documents/text.js';
 export * from './marketplace.js';
 export * from './mentions/index.js';
 export * from './pricing.js';
+export * from './search/terms.js';
 export * from './system-prompt-vars.js';
 export * from './task-progress.js';
 export * from './types/index.js';

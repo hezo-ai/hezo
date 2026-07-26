@@ -21,6 +21,7 @@ function manifest(overrides: Partial<TeamManifest> = {}): TeamManifest {
 		name: 'Demo',
 		description: 'A demo team.',
 		summary: 'Demo summary.',
+		keywords: ['demo', 'example'],
 		changelog: [{ version: 1, notes: 'Initial.' }],
 		captain: { team_context: 'captain ctx' },
 		roster: [
@@ -116,6 +117,40 @@ describe('marketplace build helpers', () => {
 		);
 		expect(next.version).toBe(2);
 		expect(next.changelog.find((c) => c.version === 2)).toEqual({ version: 2, notes: '' });
+	});
+
+	it('normalizes authored keywords into the def', () => {
+		const def = buildTeamDef(
+			manifest({ keywords: [' Mobile  App ', 'SaaS', 'mobile app', '', 'Website'] }),
+			promptFor,
+			null,
+		);
+		expect(def.keywords).toEqual(['mobile app', 'saas', 'website']);
+	});
+
+	it('does not bump the version when only the keywords change', () => {
+		// Keywords drive discovery only. A version bump triggers the reconcile that
+		// re-runs hiring against every project already on this team, and retuning
+		// search terms must never cause that.
+		const prev = buildTeamDef(manifest(), promptFor, null);
+		const next = buildTeamDef(
+			manifest({ keywords: ['completely', 'different', 'terms'] }),
+			promptFor,
+			prev,
+		);
+		expect(next.keywords).toEqual(['completely', 'different', 'terms']);
+		expect(next.version).toBe(prev.version);
+		expect(next.content_hash).toBe(prev.content_hash);
+	});
+
+	it('rejects a keyword list that breaches the marketplace ceilings', () => {
+		expect(() =>
+			buildTeamDef(
+				manifest({ keywords: Array.from({ length: 200 }, (_, i) => `kw${i}`) }),
+				promptFor,
+				null,
+			),
+		).toThrow(/too many keywords/);
 	});
 
 	it('rejects a reserved roster slug (captain/coach/ceo)', () => {

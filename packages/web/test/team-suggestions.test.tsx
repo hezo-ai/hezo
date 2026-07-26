@@ -1,13 +1,12 @@
 import type { MarketplaceIndexEntry, TeamTemplateSource } from '@hezo/shared';
+import { stemTerm } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
 import type { TeamTemplate, TeamTemplateAgentType } from '../src/hooks/use-team-templates';
 import {
 	buildTeamOptions,
-	extractTerms,
 	FIELD_WEIGHT,
 	rankTeams,
 	SUGGEST_MIN_CHARS,
-	stemTerm,
 } from '../src/lib/team-suggestions';
 
 function mp(over: Partial<MarketplaceIndexEntry>): MarketplaceIndexEntry {
@@ -16,6 +15,7 @@ function mp(over: Partial<MarketplaceIndexEntry>): MarketplaceIndexEntry {
 		name: 'N',
 		description: '',
 		summary: '',
+		keywords: [],
 		version: 1,
 		roster_count: 1,
 		latest_notes: '',
@@ -49,48 +49,6 @@ function tpl(over: Partial<TeamTemplate>): TeamTemplate {
 	};
 }
 
-describe('stemTerm', () => {
-	it('folds plurals onto the singular stem', () => {
-		expect(stemTerm('apps')).toBe(stemTerm('app'));
-		expect(stemTerm('analysts')).toBe(stemTerm('analyst'));
-		expect(stemTerm('publishes')).toBe(stemTerm('publish'));
-		expect(stemTerm('verifies')).toBe(stemTerm('verify'));
-	});
-
-	it('folds verb and agent endings onto the same stem', () => {
-		expect(stemTerm('marketing')).toBe(stemTerm('market'));
-		expect(stemTerm('tracking')).toBe(stemTerm('tracked'));
-		expect(stemTerm('researchers')).toBe(stemTerm('research'));
-		// Two stripping passes: engineering → engineer → engin.
-		expect(stemTerm('engineering')).toBe(stemTerm('engineer'));
-	});
-
-	it('leaves short words and non-plural s-endings intact', () => {
-		// The guard that matters: "app" is never rewritten into something longer,
-		// and nothing rewrites "approval" down to it.
-		expect(stemTerm('app')).toBe('app');
-		expect(stemTerm('approval')).toBe('approval');
-		expect(stemTerm('business')).toBe('business');
-		expect(stemTerm('status')).toBe('status');
-	});
-});
-
-describe('extractTerms', () => {
-	it('drops short tokens and function words', () => {
-		expect(extractTerms('a todo list app for me and my team')).toEqual([
-			'todo',
-			'list',
-			'app',
-			'team',
-		]);
-	});
-
-	it('drops function words that only surface after stemming', () => {
-		// "uses" → "use", "wants" → "want", "this" → "thi": all stopwords.
-		expect(extractTerms('this uses and wants')).toEqual([]);
-	});
-});
-
 describe('buildTeamOptions', () => {
 	it('maps the three sources with the exact meta strings + groups', () => {
 		const options = buildTeamOptions(
@@ -100,6 +58,7 @@ describe('buildTeamOptions', () => {
 					name: 'Investment',
 					description: 'Stock research',
 					summary: 'analysts',
+					keywords: ['equities', 'due diligence'],
 					roster_count: 6,
 				}),
 			],
@@ -121,21 +80,27 @@ describe('buildTeamOptions', () => {
 		const inv = options.find((o) => o.key === 'marketplace:inv');
 		expect(inv?.group).toBe('new');
 		expect(inv?.meta).toBe('6 roles');
+		// Authored keywords are the top tier, above the team's own name. The index
+		// is keyed by stem, so "equities" is stored under stemTerm('equities').
+		expect(inv?.terms.get(stemTerm('equities'))).toBe(FIELD_WEIGHT.keywords);
+		// A keyword phrase contributes each of its words.
+		expect(inv?.terms.get('due')).toBe(FIELD_WEIGHT.keywords);
+		expect(inv?.terms.get('diligence')).toBe(FIELD_WEIGHT.keywords);
 		// Terms are indexed by stem, weighted by the field they came from.
-		expect(inv?.keywords.get('investment')).toBe(FIELD_WEIGHT.name);
-		expect(inv?.keywords.get('research')).toBe(FIELD_WEIGHT.description);
-		expect(inv?.keywords.get(stemTerm('analysts'))).toBe(FIELD_WEIGHT.summary);
+		expect(inv?.terms.get('investment')).toBe(FIELD_WEIGHT.name);
+		expect(inv?.terms.get('research')).toBe(FIELD_WEIGHT.description);
+		expect(inv?.terms.get(stemTerm('analysts'))).toBe(FIELD_WEIGHT.summary);
 
 		// A template's name + description are indexed; "apps" folds onto "app".
 		const app = options.find((o) => o.key === 'template:app');
 		expect(app?.meta).toBe('2 agent roles');
-		expect(app?.keywords.get('app')).toBe(FIELD_WEIGHT.name);
+		expect(app?.terms.get('app')).toBe(FIELD_WEIGHT.name);
 		expect(options.find((o) => o.key === 'template:blank')?.meta).toBe('Captain only');
 
 		const ops = options.find((o) => o.key === 'team:t1');
 		expect(ops?.group).toBe('copy');
 		expect(ops?.meta).toBe('3 agents');
-		expect(ops?.keywords.get('ops')).toBe(FIELD_WEIGHT.name);
+		expect(ops?.terms.get('ops')).toBe(FIELD_WEIGHT.name);
 		expect(options.find((o) => o.key === 'team:t2')?.meta).toBe('No agents yet');
 	});
 
@@ -145,7 +110,7 @@ describe('buildTeamOptions', () => {
 			[],
 			[],
 		);
-		expect(option.keywords.get('growth')).toBe(FIELD_WEIGHT.name);
+		expect(option.terms.get('growth')).toBe(FIELD_WEIGHT.name);
 	});
 
 	it('singularizes a one-agent team', () => {
@@ -209,6 +174,37 @@ describe('rankTeams', () => {
 		// which tied with App Team and beat it on catalog order.
 		const ranked = rankTeams('todo list app', teams, 2);
 		expect(ranked.map((o) => o.name)).toEqual(['App Team']);
+	});
+
+	it('finds a team on a word that appears only in its authored keywords', () => {
+		// The recall half: nothing in App Team's prose says "website", so before
+		// keywords were data this query matched nothing at all.
+		const teams = buildTeamOptions(
+			[
+				mp({
+					slug: 'app',
+					name: 'App Team',
+					description: 'A full team that builds your app',
+					keywords: ['website', 'saas', 'landing page'],
+				}),
+				mp({ slug: 'social', name: 'Social Media Marketing', description: 'grow your reach' }),
+			],
+			[],
+			[],
+		);
+		expect(rankTeams('a website for my bakery', teams, 2).map((o) => o.name)).toEqual(['App Team']);
+	});
+
+	it('scores an authored keyword above another team name match', () => {
+		const teams = buildTeamOptions(
+			[
+				mp({ slug: 'named', name: 'Website Team', description: 'unrelated' }),
+				mp({ slug: 'kw', name: 'App Team', keywords: ['website'] }),
+			],
+			[],
+			[],
+		);
+		expect(rankTeams('build a website', teams, 2)[0]?.name).toBe('App Team');
 	});
 
 	it('scores a name match above a summary match', () => {
