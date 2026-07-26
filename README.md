@@ -45,7 +45,7 @@ manage goals and projects, not twenty terminal tabs.
 
 Because those agents run real, often AI-written code, Hezo is **secure by design**: agents
 never see your real secrets, everything sensitive is encrypted behind a key only you hold,
-and every agent runs sandboxed in its own container. You own the machine, the model keys,
+and every project runs sandboxed in its own container. You own the machine, the model keys,
 the spend, and the data.
 
 New here? Start with the [Introduction](./docs/introduction.md) and
@@ -169,7 +169,7 @@ proxy blocks the request; the substitution simply never happens.
 So a buggy, jailbroken, or outright malicious agent **cannot leak what it never sees**. It
 can only use a secret against the hosts you scoped it to, and every substitution is logged
 by name, never by value. The same posture runs end to end — encrypted at rest behind your
-master key, every agent sandboxed in its own container, and an append-only audit trail of
+master key, every project sandboxed in its own container, and an append-only audit trail of
 every action and secret use. See the [security documentation](./docs/security/secret-protection.md)
 for the full picture.
 
