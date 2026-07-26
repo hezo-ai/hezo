@@ -111,7 +111,12 @@ The target database must be empty unless `--wipe` is passed. Restored asset blob
 verified by checksum against the database rows; `--strict-assets` fails if any blob has
 no matching row. `--no-assets` / `--no-database` restore only one half of a bundle.
 Backups taken by a newer Hezo are refused — upgrade first. Like `hezo backup`, restore
-reads `--data-dir` from `HEZO_DATA_DIR` when the flag is omitted. See
+reads `--data-dir` from `HEZO_DATA_DIR` when the flag is omitted.
+
+Restore prints its progress as it goes - a line per step, plus a live counter with a
+percentage and an estimated time remaining while it loads rows and copies asset files. In a
+terminal the counter is rewritten in place; piped to a log file it is appended every few
+seconds. See
 [Backup & recovery](/docs/deployment/backup-and-recovery).
 
 ## Reset

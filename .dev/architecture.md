@@ -1804,6 +1804,31 @@ shell watches). Clients react by refetching the per-caller-authorized project in
 left project rail updates live — for the dialog, the CEO's `create_project`, and other
 sessions alike — without a row on the shared room leaking a project a user can't see.
 
+**Row-change → project-slug resolution** (`resolveProjectSlugForChange` in
+`hooks/use-websocket.ts`) picks a resolver per table, and getting it wrong silently drops
+the event (an unresolved row invalidates nothing):
+
+- **`projects`** resolves by the row's **own `id`** — the row *is* the project, and no
+  `projects` row carries a `project_id`. It must not use the generic resolver: that falls
+  through to `team_id`, which maps a team-wide row to the team's *non-internal* project and
+  so can never resolve **HQ**. Several call sites also broadcast a partial row (`{ id,
+  container_status }` from the startup container restart and the self-heal re-attach in
+  `job-manager`, plus the progress-summary and designated-repo writes) carrying neither
+  `project_id` nor `team_id`; keying on `id` covers those too.
+- **`tasks` / `task_comments` / `heartbeat_runs` / `agent_wakeup_requests`** resolve by
+  `project_id` **only** — never the `team_id` fallback, which would misattribute one
+  project's high-frequency activity to another and storm its caches.
+- **Everything else** resolves `project_id` first, then falls back to `team_id`.
+
+**Container-state convergence.** The container status banner
+(`components/container-status-banner.tsx`), the CEO chat's HQ gate, and the create-project
+gate all derive from one `useContainerHealth(project)` reading `container_status` off the
+project index, and provisioning ends with a single `projects` UPDATE broadcast. WebSocket
+events have no replay, so the index also **polls every 10s while any container sits in a
+transient state** (`creating` / `stopping` — deliberately not the `null` of a torn-down
+project, which would poll forever). That bounds the damage of a missed transition to a few
+seconds of stale banner instead of "stuck until the operator reloads the page."
+
 **Lazy comments feed.** A task's comment thread can be long, so the feed
 (`components/task-detail/comments-section.tsx`, virtualized with react-virtuoso) loads in
 two payloads off the one `GET …/tasks/:taskId/comments` route. On mount it fetches a
@@ -2032,7 +2057,17 @@ artifact internal callers still use), `--no-database` an assets-only bundle, and
 `--strict-assets` fails restore on any blob with no verifying row. Restore auto-detects the
 input: a directory is a bundle, a file with a logical header is a `.backup.gz`, otherwise a
 legacy physical pgdata tarball (`db/backup.ts` `dumpDataDir`/`restoreDataDir`, embedded
-only). External startup migrations write a bare logical `.backup.gz` into `<dataDir>/backups/`
+only). Restoring a large instance is minutes of work inside two loops (row inserts, blob
+copies), so both engines emit `ProgressState` updates through an optional `onProgress`
+callback and `runRestore` renders them (`lib/progress.ts`): a phase line per step
+(read/decompress/wipe/schema/prepare/constraints) and a live counter with percentage and
+ETA for the countable ones (rows parsed, rows loaded per table, blobs copied). Rendering
+adapts to the stream — one line rewritten in place (`\r` + erase-to-EOL) on a TTY, throttled
+appended lines into a pipe or log file — and the engines themselves stay terminal-agnostic.
+The CLI decompresses a single-file `.backup.gz` **once** (`decompressLogicalBackup` +
+`parseLogicalBackupHeader`, then handing the text to `restoreLogicalBackup`, which accepts
+`Buffer | string`) rather than gunzipping a multi-GB backup for the header and again for the
+load. External startup migrations write a bare logical `.backup.gz` into `<dataDir>/backups/`
 automatically before applying (last 5 kept; a failed backup aborts the migration); the
 embedded path keeps its stronger copy-swap instead. The `hezo backup`/`hezo restore`
 subcommands resolve the data dir with the same precedence as the server (`HEZO_DATA_DIR` >

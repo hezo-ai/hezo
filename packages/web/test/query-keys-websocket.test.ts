@@ -97,6 +97,19 @@ describe('invalidateQueriesForRowChange uses the queryKeys factory', () => {
 		expect(keys).toContainEqual(queryKeys.projects.budgetStatus(SLUG));
 	});
 
+	test('projects row change refetches the index the container UI reads from', () => {
+		// The container status banner and the CEO chat's HQ gate both derive their
+		// health from the project index, so a container_status transition has to
+		// invalidate it (exactly) plus the container page's detail query.
+		const { client, keys } = recordingClient();
+		invalidateQueriesForRowChange(client, SLUG, 'projects', {
+			id: 'p1',
+			container_status: 'running',
+		});
+		expect(keys).toContainEqual(queryKeys.projects.all());
+		expect(keys).toContainEqual(queryKeys.projects.detail(SLUG));
+	});
+
 	test('unknown table is a no-op', () => {
 		const { client, keys } = recordingClient();
 		invalidateQueriesForRowChange(client, SLUG, 'nonexistent', {});

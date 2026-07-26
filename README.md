@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <strong>Your own AI workforce. Built to ship.</strong>
+  <strong>Your own team of AI agents. Built to ship.</strong>
 </p>
 
 <p align="center">

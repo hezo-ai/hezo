@@ -323,6 +323,7 @@ To add a channel:
 These rules apply to **user-facing prose** — the `docs/` tree and anything a Hezo operator reads — because the audience is users, not engineers. They do **not** force renames of code identifiers, DB columns, route paths, or internal comments.
 
 - **Say "task", never "ticket".** The work item on the board is a **task** everywhere in `docs/`. "Ticket" is banned from user-facing prose — use "task" (plural "tasks"). The generated `docs/reference/mcp-api.md` is the one exception: it is built from the MCP tool registry and must not be hand-edited; when you author a tool's description or `TOOL_DOC_META` that will surface there, prefer "task" too so the generated page stays consistent.
+- **Use hyphens, not em dashes, in new or updated prose.** When you write or rewrite user-facing text (docs/, READMEs, UI strings, marketing copy), put a plain " - " where an em dash would go. Existing prose isn't mass-rewritten for this; apply it to the lines you touch.
 - **Say "global", never "instance-wide".** Describe HQ, the CEO, the Coach, skills, and MCP connections as **global** (e.g. "the global HQ project"). Users don't know what "instance-wide" means — don't use it in `docs/`.
 
 ### Web frontend mutations

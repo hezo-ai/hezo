@@ -8,6 +8,7 @@ import {
 	validateMnemonic,
 } from '@hezo/shared';
 import { Command } from 'commander';
+import { createStreamProgressReporter, formatBytes } from './lib/progress';
 import { DEFAULT_TELEMETRY_ENDPOINT } from './services/telemetry';
 import { HEZO_VERSION } from './version';
 
@@ -423,6 +424,11 @@ export async function runBackup(argv: string[] = process.argv): Promise<boolean>
  * Asset blobs are verified by sha256 against the target rows when present.
  * Returns `true` when it handled the invocation so the caller skips normal
  * server startup.
+ *
+ * Every phase reports progress (`lib/progress.ts`) — a live row/file counter
+ * with a percentage and ETA, rewritten in place on a TTY and appended as
+ * throttled lines when the output is a pipe or a log file — so a restore of a
+ * large instance is never a silent multi-minute wait.
  */
 export async function runRestore(argv: string[] = process.argv): Promise<boolean> {
 	if (argv[2] !== 'restore') return false;
@@ -466,6 +472,10 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 	const { openDatabase } = await import('./db/open.js');
 	const blob = await import('./assets/blob-backup.js');
 
+	// Restoring a large instance is minutes of work with nothing to look at:
+	// report each phase (and a live row/file counter) on the way through.
+	const progress = createStreamProgressReporter();
+
 	// Backup bundle (a directory): restore the database and/or assets it holds.
 	if (await blob.isBundleDir(backupPath)) {
 		const withAssets = opts.assets !== false;
@@ -477,7 +487,7 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 		const restoreDb = withDatabase && manifest.database !== null;
 		const restoreAssets = withAssets && manifest.assets !== null;
 
-		const { readFile } = await import('node:fs/promises');
+		const { readFile, stat } = await import('node:fs/promises');
 		const { openAssetStorage } = await import('./assets/open.js');
 
 		const opened = await openDatabase({ dataDir, databaseUrl });
@@ -490,10 +500,18 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 					throw new Error('No migrations found — cannot reproduce the backup schema.');
 				}
 				const { restoreLogicalBackup } = await import('./db/logical-backup.js');
-				const dbBytes = await readFile(join(backupPath, blob.BUNDLE_DB_NAME));
+				const dbPath = join(backupPath, blob.BUNDLE_DB_NAME);
+				progress.report({
+					phase: 'read',
+					label: 'Reading the database backup',
+					detail: formatBytes((await stat(dbPath)).size),
+				});
+				const dbBytes = await readFile(dbPath);
 				const summary = await restoreLogicalBackup(opened.db, dbBytes, migrations, {
 					wipe: opts.wipe === true,
+					onProgress: progress.report,
 				});
+				progress.finish();
 				console.log(
 					`Restored database (Hezo ${manifest.hezoVersion}, taken ${manifest.createdAt}) into the ` +
 						`${opened.storage.backend} backend: ${summary.rows} rows across ${summary.tables} tables.`,
@@ -502,7 +520,9 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 			if (restoreAssets && openedStore) {
 				const summary = await blob.restoreAssetBlobs(opened.db, openedStore.store, backupPath, {
 					strict: opts.strictAssets === true,
+					onProgress: progress.report,
 				});
+				progress.finish();
 				const unverifiedNote = summary.unverified
 					? ` (${summary.unverified} without a matching database row)`
 					: '';
@@ -514,6 +534,7 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 				console.log('This bundle has nothing to restore for the given options.');
 			}
 		} finally {
+			progress.finish();
 			await closeQuietly(openedStore?.store);
 			await closeQuietly(opened.db);
 		}
@@ -521,15 +542,27 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 	}
 
 	// Single-file backups (unchanged): logical .backup.gz, or a legacy pgdata tarball.
-	const { readFile } = await import('node:fs/promises');
+	const { readFile, stat } = await import('node:fs/promises');
+	progress.report({
+		phase: 'read',
+		label: 'Reading the backup',
+		detail: formatBytes((await stat(backupPath)).size),
+	});
 	const bytes = await readFile(backupPath);
 
-	const { readLogicalBackupHeader, restoreLogicalBackup } = await import('./db/logical-backup.js');
-	const header = readLogicalBackupHeader(bytes);
+	const { decompressLogicalBackup, parseLogicalBackupHeader, restoreLogicalBackup } = await import(
+		'./db/logical-backup.js'
+	);
+	// Decompress once here and hand the text to the restore: on a multi-GB
+	// backup a second gunzip inside it would be minutes of duplicated work.
+	progress.report({ phase: 'decompress', label: 'Decompressing the backup' });
+	const text = decompressLogicalBackup(bytes);
+	const header = text === null ? null : parseLogicalBackupHeader(text);
 
-	if (!header) {
+	if (!header || text === null) {
 		// Legacy physical pgdata tarball — embedded only.
 		if (databaseUrl) {
+			progress.finish();
 			console.error(
 				'This file is a legacy pgdata snapshot, which only restores into the embedded ' +
 					'database. To move data into an external Postgres, take a portable backup with ' +
@@ -538,7 +571,11 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 			process.exit(1);
 		}
 		const { restoreDataDir } = await import('./db/backup.js');
-		await restoreDataDir(dataDir, backupPath);
+		try {
+			await restoreDataDir(dataDir, backupPath, { onProgress: progress.report });
+		} finally {
+			progress.finish();
+		}
 		return true;
 	}
 
@@ -547,14 +584,17 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 
 	const opened = await openDatabase({ dataDir, databaseUrl });
 	try {
-		const summary = await restoreLogicalBackup(opened.db, bytes, migrations, {
+		const summary = await restoreLogicalBackup(opened.db, text, migrations, {
 			wipe: opts.wipe === true,
+			onProgress: progress.report,
 		});
+		progress.finish();
 		console.log(
 			`Restored logical backup (Hezo ${header.hezoVersion}, taken ${header.createdAt}) ` +
 				`into the ${opened.storage.backend} database: ${summary.rows} rows across ${summary.tables} tables.`,
 		);
 	} finally {
+		progress.finish();
 		await closeQuietly(opened.db);
 	}
 	return true;

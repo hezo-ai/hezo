@@ -1,5 +1,6 @@
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { formatBytes, type ProgressCallback } from '../lib/progress';
 import { logger } from '../logger';
 import type { PgliteDb } from './drivers/pglite';
 
@@ -70,12 +71,18 @@ async function pruneBackups(backupsDir: string): Promise<void> {
  * data directory first. After this the operator runs the matching (older) Hezo
  * binary. Used by the `hezo restore` CLI subcommand for manual downgrade.
  */
-export async function restoreDataDir(dataDir: string, backupFile: string): Promise<void> {
+export async function restoreDataDir(
+	dataDir: string,
+	backupFile: string,
+	options: { onProgress?: ProgressCallback } = {},
+): Promise<void> {
+	const progress: ProgressCallback = options.onProgress ?? (() => {});
 	const { PGlite } = await import('@electric-sql/pglite');
 	const { NodeFS } = await import('@electric-sql/pglite/nodefs');
 	const { loadPgliteAssets } = await import('./pglite-assets');
 
 	const pgDataPath = join(dataDir, 'pgdata');
+	progress({ phase: 'read', label: 'Reading the snapshot' });
 	const bytes = await readFile(backupFile);
 	const blob = new File([bytes as BlobPart], 'dump.tar.gz', { type: 'application/gzip' });
 
@@ -83,6 +90,13 @@ export async function restoreDataDir(dataDir: string, backupFile: string): Promi
 	// in dev they resolve from node_modules.
 	const assets = await loadPgliteAssets();
 
+	// The whole snapshot is unpacked inside one PGlite open call, so this phase
+	// can only be announced (with its size) - there is no interior to count.
+	progress({
+		phase: 'legacy-load',
+		label: 'Loading the pgdata snapshot',
+		detail: formatBytes(bytes.byteLength),
+	});
 	await rm(pgDataPath, { recursive: true, force: true });
 	const db = assets
 		? new PGlite({
