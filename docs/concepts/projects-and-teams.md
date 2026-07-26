@@ -64,10 +64,13 @@ Portfolio** team that researches and tracks stocks.
 You don't have to know which one you want up front. As you describe the project in the
 **New project** dialog, Hezo suggests the teams that best fit what you wrote - describe a
 todo list app and you'll be offered the App Team. **View all teams** always shows the full
-catalog if you'd rather choose yourself. Each agent's behaviour comes from a **system
-prompt** that you can read (and, once hired, customise — see
-[Hiring & customizing agents](/docs/concepts/hiring-and-agents)). The links below point
-at the source prompt for each role.
+catalog if you'd rather choose yourself, and opening any team there shows its **roster** -
+every role, who it reports to, and what it's responsible for - before you commit;
+**Select team** confirms your choice and takes you back to the project details.
+
+Each agent's behaviour comes from a **system prompt** that you can read (and, once hired,
+customise — see [Hiring & customizing agents](/docs/concepts/hiring-and-agents)). The links
+below point at the source prompt for each role.
 
 ### Blank team
 
@@ -178,7 +181,9 @@ starting point again? You don't have to rebuild it:
 - **Save a team as a template** so it shows up as a reusable option for future
   projects, or
 - **Start a new project directly from an existing team**, which snapshots that team's
-  roster as the new project's starting point.
+  roster as the new project's starting point. Existing teams appear on the "Copy
+  existing team" tab of the team catalog, and opening one shows the roles it has
+  actually hired so far - so you can check what you're copying before you do.
 
 Either way the new project gets its own independent team — changes to one never affect
 the other.

@@ -8,6 +8,12 @@ import type { TeamTemplate } from '../hooks/use-team-templates';
 export interface SourceTeamOption {
 	id: string;
 	slug: string;
+	/**
+	 * The slug of the project this team backs. Distinct from `slug` (the team's own)
+	 * and needed because every team-scoped read is addressed by project — the dialog's
+	 * team detail fetches the roster via `GET /api/projects/:projectId/agents`.
+	 */
+	projectSlug: string;
 	name: string;
 	agent_count: number;
 }
@@ -71,6 +77,7 @@ export type TeamOption =
 			key: string;
 			id: string;
 			slug: string;
+			projectSlug: string;
 			name: string;
 			description: string;
 			meta: string;
@@ -159,6 +166,7 @@ export function buildTeamOptions(
 			key: `team:${src.id}`,
 			id: src.id,
 			slug: src.slug,
+			projectSlug: src.projectSlug,
 			name: src.name,
 			description: '',
 			meta:

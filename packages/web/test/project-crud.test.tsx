@@ -61,7 +61,9 @@ test('creates a project from Home (Create now) and lands on the Captain planning
 		'Q3 brand push aimed at existing users to drive upsells.',
 	);
 	await user.click(await findByTestId('view-all-teams'));
+	// A card in the catalog opens that team's detail; "Select team" confirms it.
 	await user.click(await findByTestId('team-type-card-Blank'));
+	await user.click(await findByTestId('team-detail-select'));
 	await user.click(await findByTestId('create-project-submit'));
 
 	// "Create now" creates the team + project + Captain planning task directly,
@@ -213,7 +215,9 @@ test('dialog attaches a project plan document, with a help tooltip, and persists
 		'A project whose plan is fuller than the description.',
 	);
 	await user.click(await findByTestId('view-all-teams'));
+	// A card in the catalog opens that team's detail; "Select team" confirms it.
 	await user.click(await findByTestId('team-type-card-Blank'));
+	await user.click(await findByTestId('team-detail-select'));
 	await user.click(await findByTestId('create-project-submit'));
 
 	await waitFor(() => expect(router.state.location.pathname).toMatch(/^\/projects\/.+\/tasks\//), {
@@ -261,7 +265,9 @@ test('Create button stays disabled until name, description, and a team type are 
 	expect(screen.queryByTestId('create-project-submit')).toBeNull();
 
 	await user.click(await findByTestId('view-all-teams'));
+	// A card in the catalog opens that team's detail; "Select team" confirms it.
 	await user.click(await findByTestId('team-type-card-Blank'));
+	await user.click(await findByTestId('team-detail-select'));
 	const createBtn = (await findByTestId('create-project-submit')) as HTMLButtonElement;
 	await waitFor(() => expect(createBtn.disabled).toBe(false));
 }, 60_000);

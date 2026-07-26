@@ -17,9 +17,14 @@ test('marketplace detail shows the roster, version, and changelog with breadcrum
 	await findByTestId('marketplace-detail');
 	// Breadcrumb back to the marketplace.
 	await findByText('Marketplace');
-	// Roster is rendered (Captain is always shown, plus specialist roles).
-	await findByText('Engineer');
-	await findByText('Architect');
+	// Roster is rendered (Captain is always shown, plus specialist roles). Asserted by
+	// row rather than by text: "Reports to" now shows the parent role's *title*, so a
+	// role that others report to (Architect) legitimately appears more than once.
+	await findByTestId('marketplace-roster');
+	await findByTestId('roster-row-captain');
+	await findByTestId('roster-row-engineer');
+	const architect = await findByTestId('roster-row-architect');
+	expect(architect.textContent).toContain('Architect');
 	// Version badge appears (at least once).
 	expect(getAllByText(/^v\d+$/).length).toBeGreaterThan(0);
 	// Action buttons are present.

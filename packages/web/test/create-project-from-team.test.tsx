@@ -51,7 +51,13 @@ test('lists existing teams (not HQ) as cloneable sources and submits source_team
 	// No action buttons until a team is picked.
 	expect(screen.queryByTestId('create-project-submit')).toBeNull();
 
+	// The card opens the team's detail — its live roster, and no action buttons,
+	// because the browse screens are for picking, not submitting.
 	await user.click(sourceCard);
+	await screen.findByTestId('team-detail');
+	expect(screen.queryByTestId('create-project-submit')).toBeNull();
+	await user.click(screen.getByTestId('team-detail-select'));
+
 	const submit = (await screen.findByTestId('create-project-submit')) as HTMLButtonElement;
 	expect(submit.disabled).toBe(false);
 
