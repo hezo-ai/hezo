@@ -1,6 +1,6 @@
 import { waitFor } from '@testing-library/react';
 import { expect, test, vi } from 'vitest';
-import { getTestContext, renderApp } from './helpers/render';
+import { clickUntil, getTestContext, renderApp } from './helpers/render';
 import {
 	archiveSeededDocument,
 	type SeededProject,
@@ -172,8 +172,13 @@ test('the task-detail preview panel flags an archived doc in the metadata banner
 		params: { projectId: ctx.projectSlug, taskId: ctx.taskId },
 	});
 
-	const mention = await findByTestId('doc-mention-link', undefined, { timeout: 15_000 });
-	await user.click(mention);
+	await findByTestId('doc-mention-link', undefined, { timeout: 15_000 });
+	await clickUntil(
+		user,
+		() => document.querySelector('[data-testid="doc-mention-link"]'),
+		() => !!document.querySelector('[data-testid="preview-panel"]'),
+		{ label: 'the doc mention' },
+	);
 	const banner = await findByTestId('doc-metadata-banner');
 	expect(banner.textContent).toContain('Archived');
 });
@@ -249,8 +254,13 @@ test('the task-detail preview panel exposes Edit and History deep-links into the
 		params: { projectId: ctx.projectSlug, taskId: ctx.taskId },
 	});
 
-	const mention = await findByTestId('doc-mention-link', undefined, { timeout: 15_000 });
-	await user.click(mention);
+	await findByTestId('doc-mention-link', undefined, { timeout: 15_000 });
+	await clickUntil(
+		user,
+		() => document.querySelector('[data-testid="doc-mention-link"]'),
+		() => !!document.querySelector('[data-testid="preview-panel"]'),
+		{ label: 'the doc mention' },
+	);
 
 	const editLink = (await findByTestId('preview-edit')) as HTMLAnchorElement;
 	const historyLink = (await findByTestId('preview-history')) as HTMLAnchorElement;
@@ -286,7 +296,12 @@ test('a doc mention in a task comment opens the preview panel instead of a new t
 	expect(container.querySelector('[data-testid="doc-mention-preview-link"]')).toBeNull();
 
 	// The new-tab affordance now lives on the panel and points at the standalone preview.
-	await user.click(name);
+	await clickUntil(
+		user,
+		() => document.querySelector('[data-testid="doc-mention-link"]'),
+		() => !!document.querySelector('[data-testid="preview-panel"]'),
+		{ label: 'the doc mention' },
+	);
 	const openTab = (await findByTestId('preview-open-tab')) as HTMLAnchorElement;
 	expect(openTab.getAttribute('href')).toBe(`/preview/${ctx.projectSlug}/ui-mockups.md`);
 	expect(openTab.getAttribute('target')).toBe('_blank');

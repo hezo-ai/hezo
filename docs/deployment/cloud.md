@@ -79,6 +79,11 @@ backups. Each backend is one setting, adoptable independently:
      hezo --data-dir /var/lib/hezo
    ```
 
+   Most managed providers sign their database certificates with their own CA, so
+   `verify-full` also needs the provider's CA certificate:
+   `?sslmode=verify-full&sslrootcert=/etc/hezo/db-ca.crt`. See
+   [TLS and sslmode](/docs/deployment/configuration#tls-and-sslmode).
+
 4. **Verify at startup.** Hezo checks both backends and fails fast with guidance if
    the database is older than 14 or the bucket is unreachable. The startup log shows
    `Using external Postgres at …` and `Asset storage: S3-compatible (…)`, and

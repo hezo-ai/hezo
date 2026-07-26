@@ -1,5 +1,6 @@
 import pg from 'pg';
 import type { Db, Queryable, QueryResult, SessionLockHandle } from '../database';
+import { normalizePostgresUrl } from '../postgres-url';
 import { TxContext } from './tx-context';
 
 // Parser parity with PGlite (the conformance suite is the executable
@@ -54,8 +55,13 @@ export class PostgresDb implements Db {
 	/** Create the pool and prove basic connectivity with one round-trip. */
 	static async connect(options: PostgresConnectOptions): Promise<PostgresDb> {
 		const url = new URL(options.url);
+		// Every pool in the codebase is built here, so normalizing the string at
+		// this one point makes libpq `sslmode` semantics unbypassable. Note that
+		// an explicit `ssl` option alongside `connectionString` would NOT work:
+		// node-postgres merges the parsed string over the caller's config, so a
+		// URL carrying `sslmode` silently wins.
 		const pool = new pg.Pool({
-			connectionString: options.url,
+			connectionString: normalizePostgresUrl(options.url).url,
 			max: Math.max(MIN_POOL_SIZE, options.max ?? 10),
 			// Checkout starvation (e.g. a transaction leak eating the pool) must
 			// fail loudly, not hang requests forever.

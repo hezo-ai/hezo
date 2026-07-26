@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { renderApp } from './helpers/render';
+import { clickUntil, renderApp } from './helpers/render';
 import { seedComment, seedProject, seedTask, seedWorkspace } from './helpers/seed';
 
 // A document mention inside a task comment opens in the in-page preview panel
@@ -38,7 +38,12 @@ test('doc mention in a task comment opens the preview panel, not a new tab', asy
 	expect(container.querySelector('[data-testid="doc-mention-preview-link"]')).toBeNull();
 	expect(container.querySelector('[data-testid="preview-panel"]')).toBeNull();
 
-	await user.click(mention);
+	await clickUntil(
+		user,
+		() => document.querySelector('[data-testid="doc-mention-link"]'),
+		() => !!document.querySelector('[data-testid="preview-panel"]'),
+		{ label: 'the doc mention' },
+	);
 
 	// The panel opens with the document, its rendered body, and an icon-only
 	// open-in-new-tab link sitting immediately before the close button.

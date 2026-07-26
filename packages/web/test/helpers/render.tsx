@@ -17,7 +17,7 @@ import {
 	Navigate,
 	RouterProvider,
 } from '@tanstack/react-router';
-import { render } from '@testing-library/react';
+import { render, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Hono } from 'hono';
 import { StrictMode } from 'react';
@@ -54,8 +54,29 @@ interface TestAppContext {
 }
 
 let activeContext: TestAppContext | null = null;
-let realFetch: typeof globalThis.fetch | null = null;
 let activeQueryClient: QueryClient | null = null;
+
+// Captured once, before any test installs its override, so each test's
+// passthrough is the environment's own fetch rather than the previous test's
+// teardown stub.
+const pristineFetch = globalThis.fetch;
+
+/**
+ * The fetch a torn-down test is left with. The React tree is unmounted by then,
+ * but debounced and in-flight requests from it can still fire; handing those the
+ * real fetch dials happy-dom's default origin, and the connection error arrives
+ * as an unhandled rejection that can fail a run in which every test passed.
+ * Answering locally keeps the failure contained to the caller that is no longer
+ * listening.
+ */
+function tornDownFetch(): Promise<Response> {
+	return Promise.resolve(
+		new Response(JSON.stringify({ error: 'test context torn down' }), {
+			status: 503,
+			headers: { 'Content-Type': 'application/json' },
+		}),
+	);
+}
 
 // One test app per test. Vitest runs in pool=forks with isolate=true so the
 // server module state (logger, etc.) doesn't leak; the only thing that lives
@@ -113,12 +134,7 @@ beforeEach(async () => {
 	// Reroute fetch through the in-process Hono app. Bypasses the real network
 	// entirely; matches the way the dev Vite proxy forwards /api, /oauth, /mcp,
 	// /health, /SKILL.md, and /llms.txt to the server.
-	realFetch = globalThis.fetch;
-	// Close over the captured fetch rather than reading `realFetch` at call
-	// time: a debounced/in-flight request can land after afterEach nulls the
-	// module variable, and the late call would then throw inside the server
-	// route ("realFetch is not a function") instead of completing quietly.
-	const passthroughFetch = realFetch;
+	const passthroughFetch = pristineFetch;
 	globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
 		let req: Request;
 		if (input instanceof Request) {
@@ -176,7 +192,17 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-	if (realFetch) globalThis.fetch = realFetch;
+	// Let work the just-unmounted tree started settle while its token and app are
+	// still valid. A request that lands after `api.clearToken()` below comes back
+	// 401 with nobody listening, and one unhandled rejection fails the whole run
+	// even when every test passed. Mutations are dropped outright — an in-flight
+	// save has no one left to report to.
+	activeQueryClient?.getMutationCache().clear();
+	singletonQueryClient.getMutationCache().clear();
+	await Promise.all([activeQueryClient?.cancelQueries(), singletonQueryClient.cancelQueries()]);
+	await new Promise((resolve) => setTimeout(resolve, 0));
+
+	globalThis.fetch = tornDownFetch as typeof globalThis.fetch;
 	if (activeQueryClient) {
 		activeQueryClient.clear();
 		activeQueryClient = null;
@@ -199,7 +225,6 @@ afterEach(async () => {
 		}
 	}
 	activeContext = null;
-	realFetch = null;
 });
 
 export function getTestContext(): TestAppContext {
@@ -247,4 +272,69 @@ export async function renderApp(options: RenderOptions) {
 		ctx,
 		router,
 	};
+}
+
+type UserLike = {
+	click: (element: Element) => Promise<void>;
+	hover: (element: Element) => Promise<void>;
+};
+
+interface ClickUntilOptions {
+	timeout?: number;
+	/** Name used in the timeout message. */
+	label?: string;
+}
+
+/**
+ * Click a target whose DOM node a background refetch may replace, and keep
+ * clicking a freshly located node until the effect is observable.
+ *
+ * A query hands back a node reference, but a React Query refetch can re-render
+ * that subtree before the click dispatches — leaving the test holding a
+ * detached node whose handler never fires. The click silently does nothing and
+ * the assertion that follows fails on a timeout that looks like slowness rather
+ * than a lost event. Re-locating on every attempt removes the window entirely.
+ *
+ * `locate` must return the current node (never a captured one) and `settled`
+ * must report the click's observable effect. The trigger has to be idempotent,
+ * since a replaced node can be clicked more than once — this is for "open this
+ * panel" affordances, not toggles.
+ */
+export async function clickUntil(
+	user: UserLike,
+	locate: () => Element | null,
+	settled: () => boolean,
+	options: ClickUntilOptions = {},
+): Promise<void> {
+	await interactUntil((el) => user.click(el), 'clicking', locate, settled, options);
+}
+
+/** `clickUntil` for hover-driven affordances (tooltips, hover cards). */
+export async function hoverUntil(
+	user: UserLike,
+	locate: () => Element | null,
+	settled: () => boolean,
+	options: ClickUntilOptions = {},
+): Promise<void> {
+	await interactUntil((el) => user.hover(el), 'hovering', locate, settled, options);
+}
+
+async function interactUntil(
+	act: (element: Element) => Promise<void>,
+	verb: string,
+	locate: () => Element | null,
+	settled: () => boolean,
+	options: ClickUntilOptions,
+): Promise<void> {
+	const label = options.label ?? 'the target';
+	await waitFor(
+		async () => {
+			if (settled()) return;
+			const target = locate();
+			if (!target?.isConnected) throw new Error(`${label} is not mounted yet`);
+			await act(target);
+			if (!settled()) throw new Error(`${verb} ${label} has not taken effect yet`);
+		},
+		{ timeout: options.timeout ?? 15_000 },
+	);
 }
