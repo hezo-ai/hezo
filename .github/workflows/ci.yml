@@ -49,10 +49,28 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      # Whether the image made it to GHCR, i.e. whether test-backend can pull
+      # it. Read by test-backend below — never infer it from the event name
+      # there, or the two jobs drift.
+      published: ${{ steps.publishable.outputs.value }}
     steps:
       - uses: actions/checkout@v5
+      # A pull_request from a fork runs with a read-only GITHUB_TOKEN: the
+      # `packages: write` requested above is not grantable, so the push is
+      # denied outright ("denied: installation not allowed to Write organization
+      # package"). That used to fail this job, which skipped test-backend (it
+      # `needs:` this one), which failed test-backend-complete — leaving every
+      # fork PR unmergeable over an image it never needed. So on a fork PR we
+      # still build (keeping the Dockerfile under test) but don't push, and
+      # test-backend runs without the image while the container suites self-skip.
+      - name: Decide whether GHCR is writable
+        id: publishable
+        run: |
+          echo "value=${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
+        if: steps.publishable.outputs.value == 'true'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -64,7 +82,7 @@ jobs:
         with:
           context: docker
           file: docker/Dockerfile.agent-base
-          push: true
+          push: ${{ steps.publishable.outputs.value }}
           tags: ghcr.io/hezo-ai/agent-base:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -98,6 +116,7 @@ jobs:
           key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
           restore-keys: bun-${{ runner.os }}-
       - uses: docker/login-action@v3
+        if: needs.build-agent-image.outputs.published == 'true'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -107,9 +126,16 @@ jobs:
       # Every shard pulls it — vitest file-sharding is non-deterministic about
       # which shard gets the *-docker.test.ts suites. Image is cached in GHCR.
       - name: Pull agent base image
+        if: needs.build-agent-image.outputs.published == 'true'
         run: |
           docker pull ghcr.io/hezo-ai/agent-base:${{ github.sha }}
           docker tag ghcr.io/hezo-ai/agent-base:${{ github.sha }} hezo/agent-base:latest
+      # No silent coverage gap: say so in the run when the container suites are
+      # going to self-skip because the image couldn't be published.
+      - name: Note unavailable agent base image
+        if: needs.build-agent-image.outputs.published != 'true'
+        run: |
+          echo "::notice title=agent-base image unavailable::A fork pull request gets a read-only GITHUB_TOKEN, so the image was built but not pushed to GHCR. The *-docker.test.ts container suites will self-skip on this run; they run in full once the change lands on main."
       - run: bun install --frozen-lockfile
       # Runs the server vitest suite (Node runtime) — including the ssh-agent /
       # egress-proxy / mcp-connections container suites now that the image is
