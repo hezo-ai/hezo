@@ -1,7 +1,13 @@
 import type { MarketplaceIndexEntry, TeamTemplateSource } from '@hezo/shared';
+import { stemTerm } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
 import type { TeamTemplate, TeamTemplateAgentType } from '../src/hooks/use-team-templates';
-import { buildTeamOptions, rankTeams, SUGGEST_MIN_CHARS } from '../src/lib/team-suggestions';
+import {
+	buildTeamOptions,
+	FIELD_WEIGHT,
+	rankTeams,
+	SUGGEST_MIN_CHARS,
+} from '../src/lib/team-suggestions';
 
 function mp(over: Partial<MarketplaceIndexEntry>): MarketplaceIndexEntry {
 	return {
@@ -9,6 +15,7 @@ function mp(over: Partial<MarketplaceIndexEntry>): MarketplaceIndexEntry {
 		name: 'N',
 		description: '',
 		summary: '',
+		keywords: [],
 		version: 1,
 		roster_count: 1,
 		latest_notes: '',
@@ -51,6 +58,7 @@ describe('buildTeamOptions', () => {
 					name: 'Investment',
 					description: 'Stock research',
 					summary: 'analysts',
+					keywords: ['equities', 'due diligence'],
 					roster_count: 6,
 				}),
 			],
@@ -72,20 +80,40 @@ describe('buildTeamOptions', () => {
 		const inv = options.find((o) => o.key === 'marketplace:inv');
 		expect(inv?.group).toBe('new');
 		expect(inv?.meta).toBe('6 roles');
-		// keywords fold in name + description + summary, lowercased.
-		expect(inv?.keywords).toContain('analysts');
-		expect(inv?.keywords).toContain('stock research');
+		// Authored keywords are the top tier, above the team's own name. The index
+		// is keyed by stem, so "equities" is stored under stemTerm('equities').
+		expect(inv?.terms.get(stemTerm('equities'))).toBe(FIELD_WEIGHT.keywords);
+		// A keyword phrase contributes each of its words.
+		expect(inv?.terms.get('due')).toBe(FIELD_WEIGHT.keywords);
+		expect(inv?.terms.get('diligence')).toBe(FIELD_WEIGHT.keywords);
+		// Terms are indexed by stem, weighted by the field they came from.
+		expect(inv?.terms.get('investment')).toBe(FIELD_WEIGHT.name);
+		expect(inv?.terms.get('research')).toBe(FIELD_WEIGHT.description);
+		expect(inv?.terms.get(stemTerm('analysts'))).toBe(FIELD_WEIGHT.summary);
 
+		// A template's name + description are indexed; "apps" folds onto "app".
+		const app = options.find((o) => o.key === 'template:app');
+		expect(app?.meta).toBe('2 agent roles');
+		expect(app?.terms.get('app')).toBe(FIELD_WEIGHT.name);
 		expect(options.find((o) => o.key === 'template:blank')?.meta).toBe('Captain only');
-		expect(options.find((o) => o.key === 'template:app')?.meta).toBe('2 agent roles');
 
 		const ops = options.find((o) => o.key === 'team:t1');
 		expect(ops?.group).toBe('copy');
 		expect(ops?.meta).toBe('3 agents');
+		expect(ops?.terms.get('ops')).toBe(FIELD_WEIGHT.name);
 		// The owning project's slug rides along — the team detail's roster is only
 		// reachable through the project, not the team.
 		expect(ops).toMatchObject({ projectSlug: 'ops-project' });
 		expect(options.find((o) => o.key === 'team:t2')?.meta).toBe('No agents yet');
+	});
+
+	it('keeps the strongest field a term appears in, not the sum', () => {
+		const [option] = buildTeamOptions(
+			[mp({ name: 'Growth', description: 'growth growth growth', summary: 'growth growth' })],
+			[],
+			[],
+		);
+		expect(option.terms.get('growth')).toBe(FIELD_WEIGHT.name);
 	});
 
 	it('singularizes a one-agent team', () => {
@@ -121,6 +149,92 @@ describe('rankTeams', () => {
 	it('ignores tokens of 2 characters or fewer', () => {
 		// every token here is ≤2 chars, so nothing is scored.
 		expect(rankTeams('ai to go', options)).toEqual([]);
+	});
+
+	it('does not score function words', () => {
+		// "and" is in Finance's description, "with"/"for" are in neither — a query
+		// made only of function words must match nothing.
+		expect(rankTeams('and for the with your', options)).toEqual([]);
+	});
+
+	it('matches whole stemmed words, never substrings', () => {
+		const teams = buildTeamOptions(
+			[
+				mp({ slug: 'app', name: 'App Team', description: 'A full team that builds your app' }),
+				mp({
+					slug: 'social',
+					name: 'Social Media Marketing',
+					description: 'drafts content and publishes it with your approval',
+				}),
+				mp({
+					slug: 'inv',
+					name: 'Investment Portfolio',
+					description: 'tracks stocks',
+					summary: 'the investor objective, risk appetite, and horizon',
+				}),
+			],
+			[],
+			[],
+		);
+
+		// The reported bug: "app" was substring-matching "approval" and "appetite",
+		// which tied with App Team and beat it on catalog order.
+		const ranked = rankTeams('todo list app', teams, 2);
+		expect(ranked.map((o) => o.name)).toEqual(['App Team']);
+	});
+
+	it('finds a team on a word that appears only in its authored keywords', () => {
+		// The recall half: nothing in App Team's prose says "website", so before
+		// keywords were data this query matched nothing at all.
+		const teams = buildTeamOptions(
+			[
+				mp({
+					slug: 'app',
+					name: 'App Team',
+					description: 'A full team that builds your app',
+					keywords: ['website', 'saas', 'landing page'],
+				}),
+				mp({ slug: 'social', name: 'Social Media Marketing', description: 'grow your reach' }),
+			],
+			[],
+			[],
+		);
+		expect(rankTeams('a website for my bakery', teams, 2).map((o) => o.name)).toEqual(['App Team']);
+	});
+
+	it('scores an authored keyword above another team name match', () => {
+		const teams = buildTeamOptions(
+			[
+				mp({ slug: 'named', name: 'Website Team', description: 'unrelated' }),
+				mp({ slug: 'kw', name: 'App Team', keywords: ['website'] }),
+			],
+			[],
+			[],
+		);
+		expect(rankTeams('build a website', teams, 2)[0]?.name).toBe('App Team');
+	});
+
+	it('scores a name match above a summary match', () => {
+		const teams = buildTeamOptions(
+			[
+				mp({ slug: 'buried', name: 'Portfolio', summary: 'a team that ships a mobile app' }),
+				mp({ slug: 'named', name: 'App Team', description: 'builds software' }),
+			],
+			[],
+			[],
+		);
+		expect(rankTeams('mobile app', teams, 2)[0]?.name).toBe('App Team');
+	});
+
+	it('matches across plural and verb forms', () => {
+		const teams = buildTeamOptions(
+			[mp({ slug: 'm', name: 'Market Research', description: 'analyst coverage' })],
+			[],
+			[],
+		);
+		expect(rankTeams('marketing analysts', teams, 2).map((o) => o.name)).toEqual([
+			'Market Research',
+		]);
 	});
 
 	it('caps the result at the given limit', () => {

@@ -56,18 +56,21 @@ are never part of a template — they live in HQ (below). A template is only the
 point — you change the team's structure freely from there; see
 [Team structure](/docs/concepts/team-structure) for the bigger picture.
 
-You don't have to choose blind. In the New project dialog, "View all teams" opens the
-full catalog, and opening any team there shows its **roster** - every role, who it
-reports to, and what it's responsible for - before you commit. **Select team** confirms
-your choice and takes you back to the project details.
-
 Hezo ships with the minimal **Blank** template plus a set of ready-made teams in the
 [team marketplace](/docs/concepts/marketplace) — an **App Team** that builds software, a
 **Social Media Marketing** team that grows a creator's reach, and an **Investment
-Portfolio** team that researches and tracks stocks. Each agent's behaviour comes from a **system
-prompt** that you can read (and, once hired, customise — see
-[Hiring & customizing agents](/docs/concepts/hiring-and-agents)). The links below point
-at the source prompt for each role.
+Portfolio** team that researches and tracks stocks.
+
+You don't have to know which one you want up front. As you describe the project in the
+**New project** dialog, Hezo suggests the teams that best fit what you wrote - describe a
+todo list app and you'll be offered the App Team. **View all teams** always shows the full
+catalog if you'd rather choose yourself, and opening any team there shows its **roster** -
+every role, who it reports to, and what it's responsible for - before you commit;
+**Select team** confirms your choice and takes you back to the project details.
+
+Each agent's behaviour comes from a **system prompt** that you can read (and, once hired,
+customise — see [Hiring & customizing agents](/docs/concepts/hiring-and-agents)). The links
+below point at the source prompt for each role.
 
 ### Blank team
 

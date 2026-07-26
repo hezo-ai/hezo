@@ -59,6 +59,7 @@ const teamDefSchema = z.object({
 	name: z.string().min(1),
 	description: z.string(),
 	summary: z.string(),
+	keywords: z.array(z.string()),
 	version: z.number(),
 	content_hash: z.string(),
 	changelog: z.array(z.object({ version: z.number(), notes: z.string() })),
