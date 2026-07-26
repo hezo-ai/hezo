@@ -27,6 +27,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Db } from '../db/database';
+import type { ProgressCallback } from '../lib/progress';
 import { logger } from '../logger';
 import { AssetNotFoundError, type AssetStore } from './store';
 
@@ -187,6 +188,15 @@ export async function dumpAssetBlobs(
 	return { count, bytes, missing };
 }
 
+export interface RestoreAssetBlobsOptions {
+	strict?: boolean;
+	/**
+	 * Per-file counter updates for a terminal progress line - a bundle can hold
+	 * tens of thousands of blobs, and copying them is otherwise silent.
+	 */
+	onProgress?: ProgressCallback;
+}
+
 /**
  * Write every blob in the bundle's `assets/` tree into `store`. Each write
  * recomputes the sha256, which is asserted against the target `assets` row when
@@ -199,9 +209,11 @@ export async function restoreAssetBlobs(
 	db: Db,
 	store: AssetStore,
 	bundleDir: string,
-	options: { strict?: boolean } = {},
+	options: RestoreAssetBlobsOptions = {},
 ): Promise<AssetRestoreSummary> {
+	const progress: ProgressCallback = options.onProgress ?? (() => {});
 	const assetsRoot = join(bundleDir, BUNDLE_ASSETS_DIR);
+	progress({ phase: 'assets-scan', label: 'Scanning the bundle for asset files' });
 	const blobs = await enumerateBundleBlobs(assetsRoot);
 	const rowsById = new Map<string, AssetRow>();
 	for (const row of await enumerateAssetRows(db)) rowsById.set(row.id, row);
@@ -210,6 +222,17 @@ export async function restoreAssetBlobs(
 	let bytes = 0;
 	let verified = 0;
 	let unverified = 0;
+
+	const reportCopied = () =>
+		progress({
+			phase: 'assets',
+			label: 'Restoring asset files',
+			done: count,
+			total: blobs.length,
+			unit: 'files',
+			bytes,
+		});
+	reportCopied();
 
 	await forEachConcurrent(blobs, ASSET_COPY_CONCURRENCY, async ({ projectId, assetId }) => {
 		const buf = await readFile(join(assetsRoot, projectId, assetId));
@@ -236,6 +259,7 @@ export async function restoreAssetBlobs(
 		}
 		count += 1;
 		bytes += buf.byteLength;
+		reportCopied();
 	});
 
 	return { count, bytes, verified, unverified };

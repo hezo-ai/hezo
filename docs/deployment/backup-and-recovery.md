@@ -103,6 +103,22 @@ restored database forward to the binary's current schema.
 Legacy physical snapshots (`.tar.gz` files from older Hezo versions) still restore with
 the same command, into the embedded database only.
 
+### Watching a large restore
+
+A big instance takes minutes to restore, so `hezo restore` reports what it is doing at every
+step - reading and decompressing the backup, recreating the schema, then a live counter for
+the two long parts:
+
+```
+Loading rows · 42% · 1,204,000/2,860,113 rows · task_comments · 1m 12s · ~1m 40s left
+Restoring asset files · 88% · 8,412/9,530 files · 3.1 GB · 4m 06s · ~32s left
+```
+
+In a terminal that single line is rewritten in place. When the output goes to a pipe or a
+log file (systemd, Docker), the same updates are appended as ordinary lines every few
+seconds instead, so a restore you started over SSH or under a service manager still shows
+its progress in the log.
+
 ## Moving between local and hosted storage
 
 The same two commands are the migration path for the database **and** assets, in either
