@@ -1714,6 +1714,18 @@ connectors UI treats a non-revoked, non-failed local row as **connected the
 moment it exists** (`statusOf`/`connectorStatus` short-circuit `kind='local'` to `active`)
 rather than showing it a meaningless "Pending connect" OAuth affordance.
 
+**GitHub's row is roster-aware.** GitHub is not an `mcp_connections` row until someone
+connects it (`POST …/connectors/ensure` materializes it), so the project Connectors page
+renders it from the OAuth connection alone. Whether it reads as a *setup step* is derived
+from the roster: the project payload carries `code_agent_count` (roster agents with
+`member_agents.touches_code`, alongside `repo_count`), and a project with no code-touching
+agent, no repo, and no GitHub connection renders the row **last** with a neutral `Optional`
+badge instead of the amber "Pending connect". This is the UI counterpart of the repo-setup
+gate in `job-manager.ts`, which likewise fires only for a `touches_code` agent — a roster
+like the shipped `investment`/`influencer` marketplace teams (entirely non-code) will never
+request a repo, so offering GitHub as pending work would invite the operator to finish
+something that is never needed. Any of the three signals promotes the row back.
+
 `kind='api'` is a **direct-REST connector with no MCP server** — for backends that expose a
 plain HTTP API rather than MCP (e.g. Google's APIs). Its `config` carries
 `{ base_url, allowed_hosts, auth: { placement: 'header'|'query', name, scheme? }, docs_url? }`
