@@ -2,6 +2,7 @@ import { Link } from '@tanstack/react-router';
 import { ExternalLink, History, Pencil, X } from 'lucide-react';
 import { type ProjectDoc, useProjectDoc } from '../../hooks/use-project-docs';
 import { docPreviewPath } from '../../lib/doc-preview';
+import { DocumentDownloadMenu } from '../document-download-menu';
 import type { ReviewTaskContext } from '../document-review/action-review-dialog';
 import { DocumentBody } from '../document-review/document-body';
 import { ReviewToolbarActions } from '../document-review/review-toolbar-actions';
@@ -91,6 +92,15 @@ export function PreviewPanel({ item, onClose, task }: PreviewPanelProps) {
 						<History className="h-4 w-4" />
 					</Link>
 				</Tooltip>
+				{/* Same client-side download the Documents toolbar offers, so a doc read
+				    from the task thread doesn't have to be reopened elsewhere to save it. */}
+				{typeof docQuery.data?.content === 'string' && (
+					<DocumentDownloadMenu
+						filename={item.filename}
+						content={docQuery.data.content}
+						variant="icon"
+					/>
+				)}
 				<Tooltip content="Open in new tab">
 					<a
 						href={openUrl}

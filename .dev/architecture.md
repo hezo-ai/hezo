@@ -389,7 +389,11 @@ task-sidebar panel, Documents tab view mode) via a rehype plugin
 (selection pill, hover-line ghost, margin icons, editor) is extracted into
 `ReviewSurface` (`packages/web/src/components/document-review/review-surface.tsx`), which
 the asset viewer reuses for text assets (markdown through the same rehype plugin, plain
-text through `PlainTextWithHighlights`). Each project-doc revision carries a
+text through `PlainTextWithHighlights`). Those same three surfaces each carry
+`DocumentDownloadMenu` (`packages/web/src/components/document-download-menu.tsx`) — a
+client-side save of the already-loaded content as Markdown (verbatim) or plain text
+(`markdownToPlainText`), no server round-trip; the two preview surfaces render it in the
+compact `variant="icon"` form that matches their icon-only header clusters. Each project-doc revision carries a
 **changelog** (`change_summary`): the web PUT forwards `change_summary` and the MCP
 `write_project_doc` tool takes an optional `changelog`, both stored on the revision recorded for
 the *prior* content; `restoreRevision` writes `Restored content from revision N`. The single-doc
