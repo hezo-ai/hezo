@@ -15,6 +15,40 @@ const ASK_INTENT_RES: RegExp[] = [
 	/\?/,
 ];
 
+// Baton-passing signals — a handoff written as a status line rather than a
+// request. SHARED_INSTRUCTIONS already treats this shape as an ask ("ready for
+// review", "ready to merge", "over to you"), but its grammar carries no
+// imperative opener, no second-person pronoun and no question mark, so
+// ASK_INTENT_RES alone never fires on it. That is how a report's *closing
+// handoff block* — the one part whose entire job is to wake people — slips
+// through when its lines are passive: `@@captain — verification confirms PASS.
+// The document is ready for the admin.` reads as a status recap and wakes no
+// one. (`over to you` / `back to you` need no pattern here; the pronoun covers
+// them.)
+const HANDOFF_INTENT_RES: RegExp[] = [
+	// "ready for review", "ready for the admin", "ready to merge/ship/publish"
+	/\bready\s+(?:for|to)\b/i,
+	// "all yours", "the call is yours" — `yours` escapes the `your` pronoun
+	// pattern above, whose word boundary stops at the `s`.
+	/\byours\b/i,
+	// "handing this back", "handed off to the captain", "hand it over"
+	/\bhand(?:ing|ed|s)?\s+(?:this|it|these|them|off|over|back)\b/i,
+	// "take it from here", "takes it from here"
+	/\btak(?:e|es|ing)\s+it\s+from\s+here\b/i,
+];
+
+/**
+ * Whether text sitting next to a teammate address reads as a directed ask —
+ * either an explicit request signal (ASK_INTENT_RES) or a baton-passing handoff
+ * phrased as a status line (HANDOFF_INTENT_RES). Shared by both ask-gated
+ * detectors so the passive and unlinked forms recognise the same intent.
+ */
+function readsAsAsk(block: string): boolean {
+	return (
+		ASK_INTENT_RES.some((re) => re.test(block)) || HANDOFF_INTENT_RES.some((re) => re.test(block))
+	);
+}
+
 // Action-assignment phrases — a line that *assigns* work to the teammate it
 // names ("Required actions for X", "Action items — X", "Next steps for X")
 // rather than merely naming them. Compound phrases only, so attribution lines
@@ -88,6 +122,95 @@ function escapeRegExp(value: string): string {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+// The noun that marks a mention token as the *thing being discussed* rather than
+// a reference to the teammate: "the @admin mention in TASK-7", "the @architect
+// ping I sent". Deliberately narrow — `mentioned`/`pinged` are excluded because
+// "@admin mentioned that …" narrates the *person speaking* (whose fix is the
+// passive `@@`), not the mention token (whose fix is backticks).
+const MENTION_NOUN_RE_SRC = String.raw`(?:@-)?(?:mention|ping)s?`;
+
+// In the token-then-noun order, narrated position also requires a determiner in
+// front of the token — "the @admin mention", "an unanswered @architect ping" —
+// with room for up to two adjectives in between. Without that anchor an ordinary
+// imperative ask using one of the nouns as a *verb* ("@admin ping me when you're
+// back") would read as narration and warn on a perfectly good wake. Adjacency is
+// what does the work: the determiner run must reach the token through whole
+// words only, so a determiner elsewhere in the sentence ("check the doc? @admin
+// ping me") can't anchor it.
+const NARRATED_DETERMINER_RE_SRC = String.raw`\b(?:the|an?|that|this|these|those|your|my|our|their|his|her|its|one|each|every|any|no)\s+(?:\w+\s+){0,2}`;
+
+/**
+ * Whether `text` uses `@<slug>` in narrated position — the mention token named
+ * as a noun ("the @admin mention", "a mention of @admin") rather than used to
+ * address anyone. Both orders are recognised: a determiner-anchored token before
+ * the noun, and the noun before an `of`/`from`/`by` token. The passive `@@slug`
+ * is excluded (it fires nothing, so there is nothing to warn about).
+ */
+function isNarratedMentionPosition(text: string, slug: string): boolean {
+	const s = escapeRegExp(slug);
+	// The determiner's trailing `\s+` already guarantees no `@` precedes the token,
+	// so `the @@admin mention` never matches.
+	const trailing = new RegExp(
+		String.raw`${NARRATED_DETERMINER_RE_SRC}@${s}(?![\w-])\s+${MENTION_NOUN_RE_SRC}\b`,
+		'i',
+	);
+	// `\s+` before the token can't consume an `@`, so `mention of @@slug` never matches.
+	const leading = new RegExp(
+		String.raw`\b${MENTION_NOUN_RE_SRC}\s+(?:of|from|by)\s+@${s}(?![\w-])`,
+		'i',
+	);
+	return trailing.test(text) || leading.test(text);
+}
+
+/**
+ * Flags teammate slugs written as an ACTIVE `@<slug>` while merely *describing a
+ * mention that lives somewhere else* — "the report contained the @admin mention
+ * in TASK-7#comment-9". The reference reads as a pointer to the other comment,
+ * but the renderer and the wakeup fan-out see an ordinary active mention, so it
+ * fires a real wake (and, for `@admin`, an inbox row) on **this** comment. The
+ * fix is backticks, not the passive form: `@@admin` renders as the bare word
+ * `admin` and loses the very token being quoted, whereas `` `@admin` `` keeps
+ * the literal text and notifies no one.
+ *
+ * The `@admin` case is self-defeating as well as noisy: a narrated `@admin`
+ * lands a fresh unanswered admin ask, and an unanswered admin ask is exactly
+ * what blocks the task from going `done` — so an agent explaining that it is
+ * stuck behind an old `@admin` question deepens the block by writing about it.
+ */
+export function detectNarratedActiveMentions(content: unknown, knownSlugs: string[]): string[] {
+	const text = flattenTextFields(content);
+	if (!text) return [];
+	const stripped = text.replace(FENCED_CODE_RE, ' ').replace(INLINE_CODE_RE, ' ');
+	const flagged = new Set<string>();
+	for (const rawSlug of knownSlugs) {
+		const slug = rawSlug.toLowerCase();
+		if (isNarratedMentionPosition(stripped, slug)) flagged.add(slug);
+	}
+	return Array.from(flagged);
+}
+
+/**
+ * Slugs whose mention token is BOTH wrapped in inline code AND sitting in
+ * narrated position (`` the `@architect` ping in TASK-4 ``) — the deliberate
+ * quoted form detectNarratedActiveMentions asks authors to write. The
+ * backticked-entity warning subtracts these from its candidates so the two
+ * checks never contradict each other, telling the author to un-backtick a token
+ * the sibling check just told them to backtick. Backticks are dropped rather
+ * than the spans erased, so a quoted token is matched exactly as its bare form
+ * would be.
+ */
+export function detectQuotedMentionTokens(content: unknown, knownSlugs: string[]): string[] {
+	const text = flattenTextFields(content);
+	if (!text) return [];
+	const deTicked = text.replace(FENCED_CODE_RE, ' ').replace(/`([^`]+)`/g, '$1');
+	const flagged = new Set<string>();
+	for (const rawSlug of knownSlugs) {
+		const slug = rawSlug.toLowerCase();
+		if (isNarratedMentionPosition(deTicked, slug)) flagged.add(slug);
+	}
+	return Array.from(flagged);
+}
+
 /**
  * Flags teammate slugs that are addressed in the comment by bold or bare name
  * rather than a mention prefix, so nothing notifies the named teammate. Detects
@@ -130,7 +253,7 @@ export function detectUnlinkedTeammateReferences(content: unknown, knownSlugs: s
  * intended, yet `@@` links without notifying, so the handoff stalls silently. To
  * avoid warning on a deliberate passive reference, a slug is flagged only when it
  * is BOTH addressed (a leading-line `@@slug —` or an emphasised `**@@slug**`) AND
- * its address paragraph carries a directed-ask signal (see ASK_INTENT_RES). A slug
+ * its address paragraph reads as an ask (see readsAsAsk). A slug
  * that is also actively `@`-mentioned anywhere is never flagged — it already
  * notifies. Mirrors detectUnlinkedTeammateReferences for the passive form.
  */
@@ -163,7 +286,7 @@ export function detectPassiveTeammateAsks(content: unknown, knownSlugs: string[]
 		// Only warn when the paragraph(s) carrying this passive mention read as an
 		// ask — scoped to those paragraphs so a `you` elsewhere never leaks in.
 		const block = passiveMentionParagraphs(stripped, s);
-		if (block && ASK_INTENT_RES.some((re) => re.test(block))) flagged.add(slug);
+		if (block && readsAsAsk(block)) flagged.add(slug);
 	}
 	return Array.from(flagged);
 }
@@ -184,7 +307,7 @@ function passiveMentionParagraphs(stripped: string, escapedSlug: string): string
  * almost certainly intended yet the bare/bold name renders as inert text and
  * wakes no one, stranding the handoff silently. This is the precise, ask-gated
  * subset of detectUnlinkedTeammateReferences: it adds the same directed-ask gate
- * detectPassiveTeammateAsks uses (see ASK_INTENT_RES) so a bold name written for
+ * detectPassiveTeammateAsks uses (see readsAsAsk) so a bold name written for
  * mere emphasis or attribution is never flagged. A slug also reached by an
  * active `@`-mention anywhere is skipped — it already notifies. The runner's
  * handoff-delivery net uses these to warn (in the run log) that a run ended with a
@@ -221,7 +344,7 @@ export function detectUnlinkedTeammateAsks(content: unknown, knownSlugs: string[
 		// Only warn when the paragraph(s) carrying this address read as an ask —
 		// scoped to those paragraphs so a `you` elsewhere never leaks in.
 		const block = unlinkedMentionParagraphs(stripped, s);
-		if (block && ASK_INTENT_RES.some((re) => re.test(block))) flagged.add(slug);
+		if (block && readsAsAsk(block)) flagged.add(slug);
 	}
 	return Array.from(flagged);
 }

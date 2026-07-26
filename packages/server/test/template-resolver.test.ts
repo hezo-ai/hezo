@@ -585,6 +585,53 @@ describe('template resolver', () => {
 		expect(result).toContain('findings below for you to consolidate and route');
 	});
 
+	it('mention discipline requires the closing handoff block itself to be active, not just present', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		// The screenshot failure: a verdict report DID end with a per-recipient handoff
+		// block, but every line in it was passive (`@@captain — …ready for the admin.`),
+		// so it looked routed and woke no one. The body's passive rule must not be read
+		// as extending into the block.
+		expect(result).toContain(
+			'The closing handoff block only routes if its own mentions are active',
+		);
+		expect(result).toContain('the same stall with the ritual performed');
+		// the verdict vocabulary is what disguises the ask as status
+		expect(result).toContain('"PASS", "verified", "clean pass", "cleared", "ready for"');
+		expect(result).toContain('every line in it is active `@<slug>`');
+		// worked example carries the all-passive block as a named Bad case
+		expect(result).toContain('the closing block is *there* but passive throughout');
+	});
+
+	it('mention discipline names the MIXED closing block and rejects tone as the test', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		// The screenshot failure: `@captain` active on one line, `@@equity-analyst` on the
+		// next — and the passive line was the one carrying an explicit "Please …".
+		expect(result).toContain('A *mixed* closing block is the same bug half-applied');
+		expect(result).toContain('Tone is not the test');
+		expect(result).toContain('at your next opportunity');
+		expect(result).toContain(
+			'one active line in the block is not evidence the rest are marked right',
+		);
+	});
+
+	it('mention discipline tells agents to backtick a mention token they are quoting, not using', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		// The screenshot failure: an agent described an unanswered @admin ask living in an
+		// earlier comment using live `@admin` tokens, firing fresh mentions here — and for
+		// @admin, a fresh unanswered ask is exactly what blocks the ticket from closing.
+		expect(result).toContain('Quoting a mention that lives in another comment? Backtick it');
+		expect(result).toContain('does not *point at* that comment');
+		// the passive form is explicitly NOT the fix — it drops the token being quoted
+		expect(result).toContain('loses the very token you are quoting');
+		expect(result).toContain('The test is *use vs mention*');
+		// the backtick prohibition carries the matching carve-out so the rules don't fight
+		expect(result).toContain('quoting rather than using');
+		// and the advisory-warning list mentions the new check
+		expect(result).toContain(
+			'write a live mention while describing a mention that lives elsewhere',
+		);
+	});
+
 	it('worked examples include a bare-vs-backticked doc/asset reference case', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		// The screenshot failure: an agent backticked a doc/asset reference in a comment,

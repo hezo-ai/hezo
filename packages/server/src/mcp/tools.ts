@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { SearchScope } from '@hezo/shared';
 import {
+	ADMIN_MENTION_SLUG,
 	AgentAdminStatus,
 	ApprovalStatus,
 	ApprovalType,
@@ -69,7 +70,9 @@ import {
 } from '../lib/dependencies';
 import { readImageDimensions } from '../lib/image-dimensions';
 import {
+	detectNarratedActiveMentions,
 	detectPassiveTeammateAsks,
+	detectQuotedMentionTokens,
 	detectUnlinkedTeammateReferences,
 	extractMentionSlugs,
 } from '../lib/mentions';
@@ -296,6 +299,40 @@ async function buildPassiveMentionWarning(
 }
 
 /**
+ * Returns a warning when a comment writes an ACTIVE `@<slug>` while merely
+ * describing a mention that lives in another comment ("the @admin mention in
+ * TASK-7#comment-9") — the renderer and the wakeup fan-out can't tell that from
+ * a real ask, so it wakes the teammate (or lands an admin-inbox row) here. The
+ * fix offered is backticks, which keep the quoted token literal; the server
+ * never rewrites the comment. Same scoping as buildUnlinkedMentionWarning;
+ * best-effort and non-blocking.
+ */
+async function buildNarratedMentionWarning(
+	db: Db,
+	teamId: string,
+	authorMemberId: string,
+	content: string,
+): Promise<string | null> {
+	const knownSlugs = await resolveWarnableSlugs(db, teamId, authorMemberId);
+	const offenders = detectNarratedActiveMentions(content, knownSlugs);
+	if (offenders.length === 0) return null;
+	const named = offenders.map((s) => `@${s}`).join(', ');
+	const fixes = offenders.map((s) => `\`@${s}\``).join(', ');
+	const adminNote = offenders.includes(ADMIN_MENTION_SLUG)
+		? ` Note that a narrated @${ADMIN_MENTION_SLUG} lands a fresh unanswered admin ask — the exact ` +
+			`condition that blocks this task from going done — so writing *about* an admin question ` +
+			`this way deepens the block instead of describing it.`
+		: '';
+	return (
+		`You wrote ${named} as a live mention while describing a mention that lives elsewhere — ` +
+		`that notifies here and now, it does not point at the other comment. Wrap the quoted ` +
+		`token in backticks (${fixes}) so it renders as literal text and wakes no one; keep an ` +
+		`active mention only for an ask you are actually making in this comment. To refer to the ` +
+		`person rather than the token, use the passive form (@@${offenders[0]}).${adminNote}`
+	);
+}
+
+/**
  * Returns a warning when markdown wraps a Hezo reference in inline backticks —
  * which renders it as inert code instead of a link — or null when nothing is
  * amiss. Tasks, project docs/skills, and teammates are flagged only when they
@@ -325,11 +362,18 @@ async function buildBacktickedEntityWarning(
 ): Promise<string | null> {
 	const candidates = extractBacktickedMentionCandidates(content);
 	const looseAssetPaths = extractBacktickedLooseAssetPaths(content);
+	// A backticked mention token in narrated position (`` the `@architect` ping in
+	// TASK-4 ``) is the deliberate quoted form buildNarratedMentionWarning asks
+	// for — un-backticking it would fire the very wake the author avoided, so it
+	// is never flagged here. (`@admin` never reaches this list; the extractor
+	// excludes it.)
+	const quotedTokens = new Set(detectQuotedMentionTokens(content, candidates.agents));
+	const agentCandidates = candidates.agents.filter((slug) => !quotedTokens.has(slug));
 	if (
 		candidates.tasks.length === 0 &&
 		candidates.filenames.length === 0 &&
 		candidates.assets.length === 0 &&
-		candidates.agents.length === 0 &&
+		agentCandidates.length === 0 &&
 		looseAssetPaths.length === 0
 	) {
 		return null;
@@ -338,12 +382,12 @@ async function buildBacktickedEntityWarning(
 	const refs: string[] = [];
 	let hasAgents = false;
 
-	if (candidates.agents.length > 0) {
+	if (agentCandidates.length > 0) {
 		const r = await db.query<{ slug: string }>(
 			`SELECT ma.slug FROM member_agents ma
 			 JOIN members m ON m.id = ma.id
 			 WHERE (m.team_id = $1 OR m.team_id = $2) AND LOWER(ma.slug) = ANY($3::text[])`,
-			[teamId, DEFAULT_TEAM_ID, candidates.agents],
+			[teamId, DEFAULT_TEAM_ID, agentCandidates],
 		);
 		for (const row of r.rows) {
 			refs.push(`@${row.slug}`);
@@ -2706,26 +2750,41 @@ export function registerTools(
 			// already-persisted comment on this check.
 			if (authorMemberId) {
 				const commentText = args.content as string;
-				const [teammateWarning, passiveWarning, backtickWarning, terminalAskWarning] =
-					await Promise.all([
-						buildUnlinkedMentionWarning(db, teamId, authorMemberId, commentText).catch((e) => {
-							log.error('Failed to check comment for unlinked teammate references:', e);
-							return null;
-						}),
-						buildPassiveMentionWarning(db, teamId, authorMemberId, commentText).catch((e) => {
-							log.error('Failed to check comment for passive teammate asks:', e);
-							return null;
-						}),
-						buildBacktickedEntityWarning(db, teamId, scope.projectId, commentText).catch((e) => {
-							log.error('Failed to check comment for backticked entity references:', e);
-							return null;
-						}),
-						buildTerminalTaskAskWarning(db, taskId, commentText).catch((e) => {
-							log.error('Failed to check comment for asks on a terminal task:', e);
-							return null;
-						}),
-					]);
-				const warning = [teammateWarning, passiveWarning, backtickWarning, terminalAskWarning]
+				const [
+					teammateWarning,
+					passiveWarning,
+					narratedWarning,
+					backtickWarning,
+					terminalAskWarning,
+				] = await Promise.all([
+					buildUnlinkedMentionWarning(db, teamId, authorMemberId, commentText).catch((e) => {
+						log.error('Failed to check comment for unlinked teammate references:', e);
+						return null;
+					}),
+					buildPassiveMentionWarning(db, teamId, authorMemberId, commentText).catch((e) => {
+						log.error('Failed to check comment for passive teammate asks:', e);
+						return null;
+					}),
+					buildNarratedMentionWarning(db, teamId, authorMemberId, commentText).catch((e) => {
+						log.error('Failed to check comment for narrated active mentions:', e);
+						return null;
+					}),
+					buildBacktickedEntityWarning(db, teamId, scope.projectId, commentText).catch((e) => {
+						log.error('Failed to check comment for backticked entity references:', e);
+						return null;
+					}),
+					buildTerminalTaskAskWarning(db, taskId, commentText).catch((e) => {
+						log.error('Failed to check comment for asks on a terminal task:', e);
+						return null;
+					}),
+				]);
+				const warning = [
+					teammateWarning,
+					passiveWarning,
+					narratedWarning,
+					backtickWarning,
+					terminalAskWarning,
+				]
 					.filter((w): w is string => Boolean(w))
 					.join(' ');
 				if (warning) return { ...row, warning };
@@ -2819,25 +2878,35 @@ export function registerTools(
 					wsManager,
 				).catch((e) => log.error('Failed to record task links from edited comment:', e)),
 			);
-			const [teammateWarning, passiveWarning, backtickWarning] = await Promise.all([
-				buildUnlinkedMentionWarning(db, teamId, auth.memberId, args.content as string).catch(
-					(e) => {
-						log.error('Failed to check edited comment for unlinked teammate references:', e);
-						return null;
-					},
-				),
-				buildPassiveMentionWarning(db, teamId, auth.memberId, args.content as string).catch((e) => {
-					log.error('Failed to check edited comment for passive teammate asks:', e);
-					return null;
-				}),
-				buildBacktickedEntityWarning(db, teamId, scope.projectId, args.content as string).catch(
-					(e) => {
-						log.error('Failed to check edited comment for backticked entity references:', e);
-						return null;
-					},
-				),
-			]);
-			const warning = [teammateWarning, passiveWarning, backtickWarning]
+			const [teammateWarning, passiveWarning, narratedWarning, backtickWarning] = await Promise.all(
+				[
+					buildUnlinkedMentionWarning(db, teamId, auth.memberId, args.content as string).catch(
+						(e) => {
+							log.error('Failed to check edited comment for unlinked teammate references:', e);
+							return null;
+						},
+					),
+					buildPassiveMentionWarning(db, teamId, auth.memberId, args.content as string).catch(
+						(e) => {
+							log.error('Failed to check edited comment for passive teammate asks:', e);
+							return null;
+						},
+					),
+					buildNarratedMentionWarning(db, teamId, auth.memberId, args.content as string).catch(
+						(e) => {
+							log.error('Failed to check edited comment for narrated active mentions:', e);
+							return null;
+						},
+					),
+					buildBacktickedEntityWarning(db, teamId, scope.projectId, args.content as string).catch(
+						(e) => {
+							log.error('Failed to check edited comment for backticked entity references:', e);
+							return null;
+						},
+					),
+				],
+			);
+			const warning = [teammateWarning, passiveWarning, narratedWarning, backtickWarning]
 				.filter((w): w is string => Boolean(w))
 				.join(' ');
 			if (warning) return { ...r.rows[0], warning };
