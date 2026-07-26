@@ -1,6 +1,6 @@
 import pg from 'pg';
 import type { Db, Queryable, QueryResult, SessionLockHandle } from '../database';
-import { normalizePostgresUrl } from '../postgres-url';
+import { isSslUnsupportedError, type PostgresTlsPosture, planPostgresSsl } from '../postgres-ssl';
 import { TxContext } from './tx-context';
 
 // Parser parity with PGlite (the conformance suite is the executable
@@ -18,6 +18,17 @@ export interface PostgresConnectOptions {
 	url: string;
 	/** Pool size (default 10, floor 2 — see MIN_POOL_SIZE). */
 	max?: number;
+}
+
+/** `sslnegotiation` is a real pg option that @types/pg does not declare yet. */
+type PoolConfig = pg.PoolConfig & { sslnegotiation?: 'postgres' | 'direct' };
+
+function hasApplicationName(url: string): boolean {
+	try {
+		return new URL(url).searchParams.has('application_name');
+	} catch {
+		return false;
+	}
 }
 
 function wrapClient(client: pg.PoolClient): Queryable {
@@ -50,31 +61,55 @@ export class PostgresDb implements Db {
 	/** Tail of the in-process transaction queue — see transaction(). */
 	private txQueue: Promise<unknown> = Promise.resolve();
 
-	private constructor(private readonly pool: pg.Pool) {}
+	private constructor(
+		private readonly pool: pg.Pool,
+		/** TLS posture actually in force on this pool (after any fallback). */
+		readonly tls: PostgresTlsPosture,
+	) {}
 
-	/** Create the pool and prove basic connectivity with one round-trip. */
+	/**
+	 * Create the pool and prove basic connectivity with one round-trip.
+	 *
+	 * TLS is tolerant by default (see `planPostgresSsl`): it is attempted even
+	 * when the URL says nothing about it — so a hosted database that requires
+	 * TLS or presents an unknown/self-signed/mismatched certificate connects —
+	 * and a server that cannot do TLS at all is retried in plaintext.
+	 */
 	static async connect(options: PostgresConnectOptions): Promise<PostgresDb> {
-		const url = new URL(options.url);
-		// Every pool in the codebase is built here, so normalizing the string at
-		// this one point makes libpq `sslmode` semantics unbypassable. Note that
-		// an explicit `ssl` option alongside `connectionString` would NOT work:
-		// node-postgres merges the parsed string over the caller's config, so a
-		// URL carrying `sslmode` silently wins.
-		const pool = new pg.Pool({
-			connectionString: normalizePostgresUrl(options.url).url,
-			max: Math.max(MIN_POOL_SIZE, options.max ?? 10),
-			// Checkout starvation (e.g. a transaction leak eating the pool) must
-			// fail loudly, not hang requests forever.
-			connectionTimeoutMillis: 10_000,
-			...(url.searchParams.has('application_name') ? {} : { application_name: 'hezo' }),
-		});
+		const plan = planPostgresSsl(options.url);
+		const build = (ssl: PoolConfig['ssl']): pg.Pool =>
+			new pg.Pool({
+				connectionString: plan.connectionString,
+				ssl,
+				...(ssl && plan.sslNegotiation ? { sslnegotiation: plan.sslNegotiation } : {}),
+				max: Math.max(MIN_POOL_SIZE, options.max ?? 10),
+				// Checkout starvation (e.g. a transaction leak eating the pool) must
+				// fail loudly, not hang requests forever.
+				connectionTimeoutMillis: 10_000,
+				...(hasApplicationName(options.url) ? {} : { application_name: 'hezo' }),
+			} satisfies PoolConfig);
+
+		const probe = async (pool: pg.Pool): Promise<void> => {
+			try {
+				await pool.query('SELECT 1');
+			} catch (err) {
+				await pool.end().catch(() => undefined);
+				throw err;
+			}
+		};
+
+		const pool = build(plan.ssl);
 		try {
-			await pool.query('SELECT 1');
+			await probe(pool);
 		} catch (err) {
-			await pool.end().catch(() => undefined);
-			throw err;
+			// The server answered the SSLRequest with "no". Nothing in the URL
+			// demanded TLS, so connect the way the server can.
+			if (!plan.plaintextFallback || !isSslUnsupportedError(err)) throw err;
+			const plaintext = build(false);
+			await probe(plaintext);
+			return new PostgresDb(plaintext, 'none');
 		}
-		return new PostgresDb(pool);
+		return new PostgresDb(pool, plan.tls);
 	}
 
 	async query<T = Record<string, unknown>>(

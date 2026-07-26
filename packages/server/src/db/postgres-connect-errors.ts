@@ -44,9 +44,11 @@ const FAILURE_KINDS: FailureKind[] = [
 		hint:
 			"The database's TLS certificate is signed by a CA this host does not trust. " +
 			'That is normal for DigitalOcean, AWS RDS, Azure and self-hosted Postgres, which ' +
-			'sign with a provider-private CA. Either download the provider CA certificate and ' +
-			'use sslmode=verify-full&sslrootcert=/path/to/ca.crt (verified, recommended), or ' +
-			'use sslmode=require to encrypt without verifying the certificate.',
+			'sign with a provider-private CA, and it only fails the connection because the URL ' +
+			'asked for verification (sslmode=verify-ca / verify-full, or sslrootcert=). Either ' +
+			'download the provider CA certificate and use ' +
+			'sslmode=verify-full&sslrootcert=/path/to/ca.crt (verified, recommended), or drop ' +
+			'the sslmode to connect encrypted without verifying the certificate (the default).',
 	},
 	{
 		codes: ['CERT_HAS_EXPIRED', 'CERT_NOT_YET_VALID'],
@@ -61,17 +63,19 @@ const FAILURE_KINDS: FailureKind[] = [
 		patterns: [/hostname\/ip does not match/i, /altname/i],
 		deterministic: true,
 		hint:
-			'The database host name does not match its TLS certificate. Connect using the host ' +
-			'name the certificate was issued for, or drop to sslmode=require to skip the ' +
-			'hostname check.',
+			'The database host name does not match its TLS certificate, and the URL asked for ' +
+			'sslmode=verify-full. Connect using the host name the certificate was issued for, ' +
+			'or use sslmode=verify-ca to verify the chain without the hostname check.',
 	},
 	{
 		codes: [],
 		patterns: [/does not support SSL connections/i],
 		deterministic: true,
 		hint:
-			'The server refused TLS - it is running with ssl=off. Enable TLS on the server, or ' +
-			'use sslmode=disable only if the connection stays on a trusted private network.',
+			'The server refused TLS - it is running with ssl=off - and the URL demanded it ' +
+			'(sslmode=require / verify-* or sslnegotiation=direct). Without an sslmode Hezo ' +
+			'falls back to a plaintext connection on its own; enable TLS on the server, or use ' +
+			'sslmode=disable if the connection stays on a trusted private network.',
 	},
 	{
 		codes: ['28P01', '28000'],

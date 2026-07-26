@@ -142,6 +142,12 @@ Migrate just one side by setting only that target on `restore` (e.g. only
 `--no-assets` / `--no-database`. Your master key is unchanged by a move — the encrypted
 vault travels inside the backup.
 
+`backup` and `restore` reach a hosted database exactly the way the server does: TLS is
+negotiated automatically and the server certificate is not verified, so the connection
+string your provider gave you works as-is. The
+[same `sslmode` overrides](/docs/deployment/configuration#using-an-external-postgres)
+apply if you want verification or plaintext.
+
 ## Upgrades are safe to roll back
 
 When you upgrade the binary, Hezo runs any needed database migrations on startup, and

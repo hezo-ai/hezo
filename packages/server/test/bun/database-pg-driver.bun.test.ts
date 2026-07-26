@@ -6,31 +6,34 @@
 import { describe, expect, it } from 'bun:test';
 import pg from 'pg';
 import { PostgresDb } from '../../src/db/drivers/postgres';
-import { normalizePostgresUrl } from '../../src/db/postgres-url';
+import { planPostgresSsl } from '../../src/db/postgres-ssl';
 
 const url = process.env.HEZO_TEST_DATABASE_URL;
 
-// Needs no server: proves the connection-string parser resolves TLS the same
-// way on the production runtime as it does under Node in the vitest tier.
+// Needs no server: proves TLS resolves the same way on the production runtime
+// as it does under Node in the vitest tier, and that the string handed to
+// node-postgres no longer carries a mode that could override it.
 describe('sslmode resolution on the Bun runtime', () => {
 	it('reads sslmode=require as encrypted-but-unverified, matching libpq', () => {
-		const { url: normalized, tls } = normalizePostgresUrl(
-			'postgres://u:p@db.example:5432/hezo?sslmode=require',
-			{},
-		);
-		expect(tls).toBe('encrypted');
-		expect(new pg.Client({ connectionString: normalized }).connectionParameters.ssl).toEqual({
-			rejectUnauthorized: false,
-		});
+		const plan = planPostgresSsl('postgres://u:p@db.example:5432/hezo?sslmode=require', {});
+		expect(plan.tls).toBe('encrypted');
+		expect(plan.ssl).toMatchObject({ rejectUnauthorized: false });
+		// The stripped string leaves the parser with no TLS opinion of its own.
+		expect(
+			new pg.Client({ connectionString: plan.connectionString }).connectionParameters.ssl,
+		).toBeFalsy();
 	});
 
 	it('leaves sslmode=verify-full fully verifying', () => {
-		const { url: normalized, tls } = normalizePostgresUrl(
-			'postgres://u:p@db.example:5432/hezo?sslmode=verify-full',
-			{},
-		);
-		expect(tls).toBe('verified');
-		expect(new pg.Client({ connectionString: normalized }).connectionParameters.ssl).toEqual({});
+		const plan = planPostgresSsl('postgres://u:p@db.example:5432/hezo?sslmode=verify-full', {});
+		expect(plan.tls).toBe('verified');
+		expect(plan.ssl).toMatchObject({ rejectUnauthorized: true });
+	});
+
+	it('offers TLS even when the URL says nothing about it', () => {
+		const plan = planPostgresSsl('postgres://u:p@db.example:5432/hezo', {});
+		expect(plan.tls).toBe('encrypted');
+		expect(plan.plaintextFallback).toBe(true);
 	});
 });
 

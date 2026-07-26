@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PostgresDb } from '../src/db/drivers/postgres';
 import { ExternalDbError } from '../src/db/migrate-errors';
 import { openDatabase } from '../src/db/open';
+import type { PostgresTlsPosture } from '../src/db/postgres-ssl';
 import { setLogLevel } from '../src/logger';
 
 // openDatabase's external-Postgres path (scheme validation, connect retries,
@@ -24,6 +25,7 @@ function fakePostgresDb(opts?: {
 	serverVersionNum?: number;
 	serverVersion?: string;
 	uuidError?: Error;
+	tls?: PostgresTlsPosture;
 }): PostgresDb & { query: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> } {
 	const num = opts?.serverVersionNum ?? 160_004;
 	const version = opts?.serverVersion ?? '16.4';
@@ -33,7 +35,13 @@ function fakePostgresDb(opts?: {
 		return { rows: [] };
 	});
 	const close = vi.fn(async () => {});
-	return { kind: 'postgres', query, close } as unknown as PostgresDb & {
+	// `tls` is read off the connected pool for the startup log line.
+	return {
+		kind: 'postgres',
+		tls: opts?.tls ?? 'encrypted',
+		query,
+		close,
+	} as unknown as PostgresDb & {
 		query: ReturnType<typeof vi.fn>;
 		close: ReturnType<typeof vi.fn>;
 	};

@@ -45,8 +45,9 @@ Be clear-eyed about what changes: **your business content — tasks, comments, d
 is stored as ordinary database rows**, so with an external database that content lives
 with your database provider and travels the network. Hezo checks the server version at
 startup and shows the connection target (credentials occluded, never the full URL) under
-**Settings → Storage → Database**. Use TLS: `sslmode=verify-full` encrypts *and* proves
-you are talking to the right server, where `sslmode=require` only encrypts - see
+**Settings → Storage → Database**. The connection is encrypted automatically, without
+verifying the server's certificate; `sslmode=verify-full` additionally proves you are
+talking to the right server - see
 [TLS and sslmode](/docs/deployment/configuration#tls-and-sslmode). Prefer private networking,
 and treat the provider's at-rest encryption and access controls as part of your security
 posture. Secrets are unaffected — see below.

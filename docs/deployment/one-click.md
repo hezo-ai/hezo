@@ -77,11 +77,12 @@ runcmd:
   # - [ sh, -c, "echo 'HEZO_DOMAIN_OVERRIDE=hezo.example.com' >> /etc/environment" ]
   # To use a managed database and/or object storage for assets, seed the URLs into
   # /etc/hezo/deploy.env (root-only, mode 600 — not /etc/environment: they carry credentials).
-  # provision.sh persists them into the service's env file. sslmode=require encrypts
-  # without verifying the certificate; for verified TLS use sslmode=verify-full plus
-  # &sslrootcert=/etc/hezo/db-ca.crt when the provider signs with its own CA (most do).
+  # provision.sh persists them into the service's env file. The database connection is
+  # encrypted automatically without verifying the certificate; for verified TLS add
+  # ?sslmode=verify-full plus &sslrootcert=/etc/hezo/db-ca.crt when the provider signs
+  # with its own CA (most do).
   # - [ sh, -c, "install -d -m 700 /etc/hezo && install -m 600 /dev/null /etc/hezo/deploy.env" ]
-  # - [ sh, -c, "echo 'HEZO_DATABASE_URL=postgres://hezo:PASSWORD@db-host:5432/hezo?sslmode=require' >> /etc/hezo/deploy.env" ]
+  # - [ sh, -c, "echo 'HEZO_DATABASE_URL=postgres://hezo:PASSWORD@db-host:5432/hezo' >> /etc/hezo/deploy.env" ]
   # - [ sh, -c, "echo 'HEZO_ASSET_STORAGE_URL=s3://ACCESS_KEY:SECRET@endpoint/bucket' >> /etc/hezo/deploy.env" ]
   - [ sh, -c, "curl -fsSL https://raw.githubusercontent.com/hezo-ai/hezo/main/deploy/provision.sh -o /root/hezo-provision.sh" ]
   - [ sh, -c, "set -a; [ -f /etc/environment ] && . /etc/environment; set +a; bash /root/hezo-provision.sh" ]
@@ -119,15 +120,16 @@ Create a managed **PostgreSQL 14 or newer** instance (Hezo checks the version at
 startup), plus a database and user for Hezo, and assemble the connection string:
 
 ```
-postgres://hezo:PASSWORD@db-host:5432/hezo?sslmode=require
+postgres://hezo:PASSWORD@db-host:5432/hezo
 ```
 
 - **Same region as the server** — Hezo's scheduling polls every 1–5 seconds, so keep
   round-trip latency low. Same-VPC/private networking is ideal.
 - **Use the direct or session-pooled connection**, never a transaction-mode pooler
   (PgBouncer in transaction mode breaks the locks Hezo uses to coordinate migrations).
-- **Use TLS** — `sslmode=require` encrypts the connection but does not verify the
-  server's certificate. For verified TLS use `sslmode=verify-full`, adding
+- **TLS needs no flag** - Hezo encrypts the connection automatically and accepts the
+  provider's certificate as-is, so the URL your provider gives you works whether or not
+  it carries an `sslmode`. For verified TLS use `sslmode=verify-full`, adding
   `&sslrootcert=/etc/hezo/db-ca.crt` if your provider signs with its own CA (most do).
 
 Full requirements: [Configuration → Using an external
@@ -163,7 +165,7 @@ path instead.
 and:
 
 ```sh
-echo 'HEZO_DATABASE_URL=postgres://hezo:PASSWORD@db-host:5432/hezo?sslmode=require' | sudo tee -a /etc/hezo/hezo.env >/dev/null
+echo 'HEZO_DATABASE_URL=postgres://hezo:PASSWORD@db-host:5432/hezo' | sudo tee -a /etc/hezo/hezo.env >/dev/null
 echo 'HEZO_ASSET_STORAGE_URL=s3://ACCESS_KEY:SECRET@endpoint/bucket' | sudo tee -a /etc/hezo/hezo.env >/dev/null
 sudo systemctl restart hezo
 ```

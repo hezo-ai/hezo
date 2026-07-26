@@ -39,10 +39,12 @@ hezo --disable-telemetry         # turn off the anonymous daily usage report (on
 
 By default the database is embedded and lives under the data directory. With
 `--database-url` (or `HEZO_DATABASE_URL`) Hezo runs against an external PostgreSQL 14+
-instead — see [Using an external Postgres](/docs/deployment/configuration) for
-requirements (TLS, latency, pooling) and
-[TLS and sslmode](/docs/deployment/configuration#tls-and-sslmode) for what each `sslmode`
-protects against.
+instead - TLS is negotiated automatically and the certificate is not verified, so a
+provider's connection string works as-is. See
+[Using an external Postgres](/docs/deployment/configuration) for requirements (latency,
+pooling) and [TLS and sslmode](/docs/deployment/configuration#tls-and-sslmode) for what
+each `sslmode` protects against. The same applies to `--database-url` on `hezo backup`
+and `hezo restore`.
 
 Uploaded asset files live under the data directory by default. With
 `--asset-storage-url` (or `HEZO_ASSET_STORAGE_URL`) they live in any S3-compatible

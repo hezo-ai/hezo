@@ -74,7 +74,7 @@ backups. Each backend is one setting, adoptable independently:
    are visible in the process list:
 
    ```sh
-   HEZO_DATABASE_URL="postgres://hezo:••••@db-host:5432/hezo?sslmode=verify-full" \
+   HEZO_DATABASE_URL="postgres://hezo:••••@db-host:5432/hezo" \
    HEZO_ASSET_STORAGE_URL="s3://ACCESS_KEY:SECRET@endpoint/bucket" \
      hezo --data-dir /var/lib/hezo
    ```

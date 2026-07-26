@@ -72,7 +72,7 @@ or, for the cloud-init deploy,
 [Using managed data hosting](/docs/deployment/one-click#using-managed-data-hosting)):
 
 ```sh
-HEZO_DATABASE_URL="postgres://hezo:••••@db.internal:5432/hezo?sslmode=verify-full" \
+HEZO_DATABASE_URL="postgres://hezo:••••@db.internal:5432/hezo" \
   hezo --data-dir /var/lib/hezo
 ```
 
@@ -85,8 +85,11 @@ General → Database**.
 Requirements and recommendations:
 
 - **PostgreSQL 14 or newer.** The version is checked at startup.
-- **Use TLS.** With an external database your tasks, comments, and documents travel the
-  network and live with the provider. Set `sslmode` deliberately - see
+- **TLS is handled for you - paste the URL your provider gave you.** Hezo negotiates TLS
+  on every connection, even when the URL carries no `sslmode`, and does not verify the
+  server certificate unless you ask it to. With an external database your tasks,
+  comments, and documents travel the network and live with the provider, so prefer
+  private networking, and set `sslmode` deliberately if you want verification - see
   [TLS and sslmode](#tls-and-sslmode) for what each mode does and does not protect against.
   [Secrets remain encrypted](/docs/concepts/your-data) with the master key either way.
 - **Keep the database close to the server.** Hezo's background scheduling polls every
@@ -104,24 +107,31 @@ Requirements and recommendations:
 
 ### TLS and sslmode
 
-Hezo reads `sslmode` from the connection string exactly as `psql` and libpq do, so a
-connection string copied from your provider's dashboard behaves the same way in Hezo as
-it does in any other Postgres client:
+Hezo connects over TLS whenever the server offers it, whether or not the connection
+string says so, and **does not verify the server certificate unless you ask it to**. A
+connection string copied from your provider's dashboard therefore works as-is, including
+the private-CA and host-name-mismatch certificates that managed Postgres hands out.
+`sslmode` is read exactly as `psql` and libpq read it, so you can still ask for anything
+stricter - or for no TLS at all:
 
 | `sslmode` | Encrypted | Certificate verified | Notes |
 |---|---|---|---|
-| *(omitted)* | No | - | **Plaintext.** There is no implicit TLS - set `sslmode` explicitly. |
-| `disable` | No | - | Plaintext. Only over a trusted private network. |
-| `prefer` | Yes | No | Same protection as `require` in Hezo. |
-| `require` | Yes | No | Encrypted, but an interceptor can present any certificate. |
-| `verify-ca` | Yes | Chain only | Needs `sslrootcert`. The host name is not checked. |
-| `verify-full` | Yes | Chain + host name | **Recommended.** |
+| *(omitted)* | Yes | No | **The default.** TLS is negotiated automatically; a server that cannot do TLS falls back to plaintext. |
+| `disable` | No | - | Plaintext, always. Only over a trusted private network. |
+| `prefer` | Yes | No | Same as omitting it: TLS when available, plaintext otherwise. |
+| `require` | Yes | No | Encrypted, and the connection fails if the server has no TLS. An interceptor can present any certificate. |
+| `verify-ca` | Yes | Chain only | Against `sslrootcert` when given, else this host's CA store. The host name is not checked. |
+| `verify-full` | Yes | Chain + host name | **The strictest option** - use it with `sslrootcert` for a provider CA. |
 | `no-verify` | Yes | No | Same as `require`; accepted for compatibility. |
 
-Hezo logs the mode it resolved on every start, so you can confirm what you actually got:
+Supplying `sslrootcert=` on its own also turns verification on (`verify-ca`) - a CA is
+only worth naming if it gets used.
+
+Hezo logs the posture it resolved on every start, so you can confirm what you actually
+got:
 
 ```
-Using external Postgres at postgres://••••:••••@db.internal:5432/hezo?sslmode=require
+Using external Postgres at postgres://••••:••••@db.internal:5432/hezo
   (server 16.4, pool max 10, TLS encrypted, certificate not verified ...)
 ```
 
@@ -129,7 +139,7 @@ Using external Postgres at postgres://••••:••••@db.internal:5432
 Azure) and most self-hosted servers present a certificate signed by their own CA rather
 than a public one, so `verify-full` on its own fails with *"self signed certificate in
 certificate chain"*. Download the provider's CA certificate and point `sslrootcert` at
-it - this is the recommended setup:
+it:
 
 ```sh
 # DigitalOcean: Databases → your cluster → Connection details → Download CA certificate
@@ -140,8 +150,11 @@ HEZO_DATABASE_URL="postgres://hezo:••••@db-postgresql-lon1-12345-do-user
 ```
 
 The `PGSSLMODE` environment variable is honoured only when the connection string carries
-no `sslmode` of its own, and node-postgres reads it strictly (every verifying mode means
-full verification). Put `sslmode` in the URL rather than relying on it.
+no `sslmode` of its own, and selects the same postures as the table above. Put `sslmode`
+in the URL rather than relying on it.
+
+The same resolution applies to `hezo backup` and `hezo restore` when you point them at a
+hosted database with `--database-url` / `HEZO_DATABASE_URL`.
 
 ## Storing assets in S3-compatible object storage
 

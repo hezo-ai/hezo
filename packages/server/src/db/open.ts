@@ -7,7 +7,7 @@ import { PgliteDb } from './drivers/pglite';
 import { ExternalDbError } from './migrate-errors';
 import { connectFailureHint, isRetryableConnectError } from './postgres-connect-errors';
 import { assertExternalPostgresCompatible } from './postgres-preflight';
-import { describeTlsPosture, normalizePostgresUrl } from './postgres-url';
+import { describeTlsPosture } from './postgres-ssl';
 
 const log = logger.child('db-open');
 
@@ -112,10 +112,11 @@ export async function openDatabase(options: OpenDatabaseOptions): Promise<Opened
 
 	try {
 		const preflight = await assertExternalPostgresCompatible(db);
-		// The effective TLS posture is stated on every boot: `sslmode=require`
-		// encrypts without authenticating the server, and that is worth seeing
-		// rather than assuming.
-		const tls = describeTlsPosture(normalizePostgresUrl(options.databaseUrl).tls);
+		// The effective TLS posture is stated on every boot: the connection is
+		// encrypted without authenticating the server unless the operator asked
+		// for verification, and that is worth seeing rather than assuming. Read
+		// from the pool, so a plaintext fallback is reported as what it is.
+		const tls = describeTlsPosture(db.tls);
 		log.info(
 			`Using external Postgres at ${redacted} (server ${preflight.serverVersion}, pool max ${max ?? 10}, ${tls})`,
 		);
