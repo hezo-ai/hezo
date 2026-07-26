@@ -2048,7 +2048,17 @@ artifact internal callers still use), `--no-database` an assets-only bundle, and
 `--strict-assets` fails restore on any blob with no verifying row. Restore auto-detects the
 input: a directory is a bundle, a file with a logical header is a `.backup.gz`, otherwise a
 legacy physical pgdata tarball (`db/backup.ts` `dumpDataDir`/`restoreDataDir`, embedded
-only). External startup migrations write a bare logical `.backup.gz` into `<dataDir>/backups/`
+only). Restoring a large instance is minutes of work inside two loops (row inserts, blob
+copies), so both engines emit `ProgressState` updates through an optional `onProgress`
+callback and `runRestore` renders them (`lib/progress.ts`): a phase line per step
+(read/decompress/wipe/schema/prepare/constraints) and a live counter with percentage and
+ETA for the countable ones (rows parsed, rows loaded per table, blobs copied). Rendering
+adapts to the stream — one line rewritten in place (`\r` + erase-to-EOL) on a TTY, throttled
+appended lines into a pipe or log file — and the engines themselves stay terminal-agnostic.
+The CLI decompresses a single-file `.backup.gz` **once** (`decompressLogicalBackup` +
+`parseLogicalBackupHeader`, then handing the text to `restoreLogicalBackup`, which accepts
+`Buffer | string`) rather than gunzipping a multi-GB backup for the header and again for the
+load. External startup migrations write a bare logical `.backup.gz` into `<dataDir>/backups/`
 automatically before applying (last 5 kept; a failed backup aborts the migration); the
 embedded path keeps its stronger copy-swap instead. The `hezo backup`/`hezo restore`
 subcommands resolve the data dir with the same precedence as the server (`HEZO_DATA_DIR` >

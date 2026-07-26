@@ -1,4 +1,5 @@
 import { gunzipSync, gzipSync } from 'node:zlib';
+import { formatBytes, type ProgressCallback } from '../lib/progress';
 import type { Db, Queryable } from './database';
 import { checksumOfMigration, type Migration, runMigrations } from './migrate';
 import { BackupNewerThanAppError, RestorePreconditionError } from './migrate-errors';
@@ -27,6 +28,13 @@ import { BASE_SCHEMA } from './schema';
 const FORMAT_VERSION = 1;
 const DUMP_PAGE_SIZE = 5_000;
 const INSERT_BATCH_SIZE = 500;
+
+/**
+ * Rows between progress reports while parsing the dump. Parsing is a tight loop
+ * over millions of lines, so it reports on a row interval rather than per row;
+ * the reporter throttles rendering on top of that.
+ */
+const PARSE_PROGRESS_ROWS = 20_000;
 
 /**
  * Ceiling on the data volume a single dump query may return / a single restore
@@ -258,14 +266,23 @@ export async function dumpLogicalBackup(
 	return gzipSync(`${lines.join('\n')}\n`);
 }
 
-/** Parse just the header from a logical backup buffer; null if not this format. */
-export function readLogicalBackupHeader(bytes: Buffer): LogicalBackupHeader | null {
-	let text: string;
+/**
+ * Decompress a logical backup to its JSONL text; null when the bytes aren't
+ * gzip at all (a legacy physical pgdata tarball, or a wrong file entirely).
+ * Exposed separately from the header parse so a caller restoring a multi-GB
+ * backup decompresses it once and hands the text to `restoreLogicalBackup`
+ * rather than paying for a second pass.
+ */
+export function decompressLogicalBackup(bytes: Buffer): string | null {
 	try {
-		text = gunzipSync(bytes).toString('utf8');
+		return gunzipSync(bytes).toString('utf8');
 	} catch {
 		return null;
 	}
+}
+
+/** Parse just the header line of a decompressed backup; null if not this format. */
+export function parseLogicalBackupHeader(text: string): LogicalBackupHeader | null {
 	const firstLine = text.slice(0, text.indexOf('\n'));
 	try {
 		const header = JSON.parse(firstLine) as LogicalBackupHeader;
@@ -277,8 +294,24 @@ export function readLogicalBackupHeader(bytes: Buffer): LogicalBackupHeader | nu
 	}
 }
 
+/** Parse just the header from a logical backup buffer; null if not this format. */
+export function readLogicalBackupHeader(bytes: Buffer): LogicalBackupHeader | null {
+	const text = decompressLogicalBackup(bytes);
+	return text === null ? null : parseLogicalBackupHeader(text);
+}
+
+export interface RestoreLogicalBackupOptions {
+	wipe?: boolean;
+	/**
+	 * Phase/counter updates for a terminal progress line. A restore of a large
+	 * instance is minutes of silence otherwise (see `lib/progress.ts`).
+	 */
+	onProgress?: ProgressCallback;
+}
+
 /**
- * Restore a logical backup into `db`. The target must be empty (no tables in
+ * Restore a logical backup into `db`, from either the gzipped bytes or the
+ * already-decompressed JSONL text. The target must be empty (no tables in
  * `public`) unless `wipe` is set, which drops and recreates the schema first.
  * Schema is reproduced by replaying the binary's own migrations up to exactly
  * the set the backup recorded (a backup carrying unknown migrations refuses —
@@ -289,11 +322,24 @@ export function readLogicalBackupHeader(bytes: Buffer): LogicalBackupHeader | nu
  */
 export async function restoreLogicalBackup(
 	db: Db,
-	bytes: Buffer,
+	backup: Buffer | string,
 	binaryMigrations: Record<string, Migration>,
-	options: { wipe?: boolean } = {},
+	options: RestoreLogicalBackupOptions = {},
 ): Promise<RestoreSummary> {
-	const text = gunzipSync(bytes).toString('utf8');
+	const progress: ProgressCallback = options.onProgress ?? (() => {});
+	let text: string;
+	if (typeof backup === 'string') {
+		text = backup;
+	} else {
+		// gunzip is one blocking call with no observable interior, so this phase
+		// is announced rather than counted.
+		progress({
+			phase: 'decompress',
+			label: 'Decompressing the database backup',
+			detail: formatBytes(backup.byteLength),
+		});
+		text = gunzipSync(backup).toString('utf8');
+	}
 	const newline = text.indexOf('\n');
 	const header = JSON.parse(text.slice(0, newline)) as LogicalBackupHeader;
 	if (header.formatVersion !== FORMAT_VERSION) {
@@ -330,10 +376,17 @@ export async function restoreLogicalBackup(
 					`Pass --wipe to drop the existing schema and restore over it, or point at an empty database.`,
 			);
 		}
+		progress({ phase: 'wipe', label: 'Dropping the existing schema' });
 		await db.exec('DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
 	}
 
-	// Reproduce the schema at exactly the backup's migration set.
+	// Reproduce the schema at exactly the backup's migration set. Announced (not
+	// counted) because `runMigrations` logs a line per migration itself.
+	progress({
+		phase: 'schema',
+		label: 'Recreating the schema',
+		detail: `${header.migrations.length} migrations`,
+	});
 	await db.exec(BASE_SCHEMA);
 	const subset: Record<string, Migration> = {};
 	for (const m of header.migrations) subset[m.filename] = binaryMigrations[m.filename];
@@ -346,16 +399,35 @@ export async function restoreLogicalBackup(
 	// each row's encoded size so inserts can be batched by bytes as well as
 	// row count.
 	const rowsByTable = new Map<string, Array<{ row: Record<string, unknown>; bytes: number }>>();
-	for (const line of text.slice(newline + 1).split('\n')) {
+	const body = text.slice(newline + 1);
+	// The row total isn't known until the whole body is read, so completion is
+	// reported as the fraction of the body consumed.
+	const reportParsed = (parsed: number, consumed: number) =>
+		progress({
+			phase: 'parse',
+			label: 'Reading rows from the backup',
+			done: parsed,
+			unit: 'rows',
+			ratio: body.length > 0 ? consumed / body.length : 1,
+		});
+	let parsedRows = 0;
+	let consumedChars = 0;
+	reportParsed(0, 0);
+	for (const line of body.split('\n')) {
+		consumedChars += line.length + 1;
 		if (!line) continue;
 		const { t, r } = JSON.parse(line) as { t: string; r: Record<string, unknown> };
 		const list = rowsByTable.get(t) ?? [];
 		list.push({ row: r, bytes: line.length });
 		rowsByTable.set(t, list);
+		parsedRows += 1;
+		if (parsedRows % PARSE_PROGRESS_ROWS === 0) reportParsed(parsedRows, consumedChars);
 	}
+	reportParsed(parsedRows, body.length);
 
 	let totalRows = 0;
 	await db.transaction(async (tx) => {
+		progress({ phase: 'prepare', label: 'Preparing the target schema' });
 		// Drop every FK so insert order (and self-references) never matter;
 		// re-created verbatim below. DDL is transactional — a failed restore
 		// leaves no half-loaded state.
@@ -376,6 +448,17 @@ export async function restoreLogicalBackup(
 			if (table.name === '_migrations') continue;
 			await tx.exec(`TRUNCATE ${quoteIdent(table.name)}`);
 		}
+
+		const reportLoaded = (table: string) =>
+			progress({
+				phase: 'load',
+				label: 'Loading rows',
+				done: totalRows,
+				total: parsedRows,
+				unit: 'rows',
+				detail: table,
+			});
+		reportLoaded('');
 
 		for (const [tableName, rows] of rowsByTable) {
 			const meta = tableMeta.get(tableName);
@@ -412,9 +495,11 @@ export async function restoreLogicalBackup(
 					params,
 				);
 				totalRows += batch.length;
+				reportLoaded(tableName);
 			}
 		}
 
+		progress({ phase: 'constraints', label: 'Restoring foreign keys and sequences' });
 		for (const fk of fks.rows) {
 			await tx.exec(`ALTER TABLE ${fk.tbl} ADD CONSTRAINT ${quoteIdent(fk.name)} ${fk.def}`);
 		}
