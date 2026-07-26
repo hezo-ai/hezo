@@ -498,3 +498,194 @@ describe('cross-project connector isolation', () => {
 		expect(still.rows.length).toBe(1);
 	});
 });
+
+describe('connector method access', () => {
+	const CATALOG = [
+		{ name: 'get_issue', description: 'Fetch an issue', readOnly: true, inferred: false },
+		{ name: 'list_issues', description: 'List issues', readOnly: true, inferred: true },
+		{ name: 'save_issue', description: 'Create or update', readOnly: false, inferred: false },
+	];
+
+	async function createProjectConnector(name: string): Promise<string> {
+		const res = await ctx.app.request(`/api/projects/${projectSlug}/connectors`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name, kind: 'saas', config: { url: `https://${name}.example/mcp` } }),
+		});
+		expect(res.status).toBe(201);
+		return (await res.json()).data.id as string;
+	}
+
+	/** Give a connector a catalog without going through a live server. */
+	async function seedCatalog(id: string): Promise<void> {
+		await ctx.db.query(
+			`UPDATE mcp_connections SET discovered_methods = $1::jsonb, methods_listed_at = now()
+			 WHERE id = $2`,
+			[JSON.stringify(CATALOG), id],
+		);
+	}
+
+	const methodsUrl = (id: string) => `/api/projects/${projectSlug}/connectors/${id}/methods`;
+
+	it('reports an unrestricted connector as mode "all" with every method enabled', async () => {
+		const id = await createProjectConnector('methods-all');
+		await seedCatalog(id);
+
+		const res = await ctx.app.request(methodsUrl(id), { headers: authHeader(token) });
+		expect(res.status).toBe(200);
+		const data = (await res.json()).data;
+		// null, not a list of every name — the distinction is what lets a new
+		// server-side method appear automatically on an unrestricted connector.
+		expect(data.enabled_methods).toBeNull();
+		expect(data.summary.mode).toBe('all');
+		expect(data.summary.enabled).toBe(3);
+		expect(data.methods.map((m: { name: string }) => m.name)).toEqual([
+			'get_issue',
+			'list_issues',
+			'save_issue',
+		]);
+	});
+
+	it('returns an empty catalog for a connector whose methods were never listed', async () => {
+		const id = await createProjectConnector('methods-unlisted');
+		const res = await ctx.app.request(methodsUrl(id), { headers: authHeader(token) });
+		expect(res.status).toBe(200);
+		const data = (await res.json()).data;
+		expect(data.methods).toEqual([]);
+		expect(data.methods_listed_at).toBeNull();
+	});
+
+	it('saves an allowlist and reports the restricted counts', async () => {
+		const id = await createProjectConnector('methods-restrict');
+		await seedCatalog(id);
+
+		const res = await ctx.app.request(methodsUrl(id), {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ enabled_methods: ['get_issue', 'list_issues'] }),
+		});
+		expect(res.status).toBe(200);
+		expect((await res.json()).data.enabled_methods).toEqual(['get_issue', 'list_issues']);
+
+		const after = await ctx.app.request(methodsUrl(id), { headers: authHeader(token) });
+		const data = (await after.json()).data;
+		expect(data.summary.mode).toBe('restricted');
+		expect(data.summary.writeEnabled).toBe(0);
+		expect(data.summary.writeDisabled).toBe(1);
+	});
+
+	it('resets to unrestricted on an explicit null', async () => {
+		const id = await createProjectConnector('methods-reset');
+		await seedCatalog(id);
+		await ctx.app.request(methodsUrl(id), {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ enabled_methods: ['get_issue'] }),
+		});
+
+		const res = await ctx.app.request(methodsUrl(id), {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ enabled_methods: null }),
+		});
+		expect(res.status).toBe(200);
+		expect((await res.json()).data.enabled_methods).toBeNull();
+	});
+
+	it('accepts an empty allowlist as "nothing enabled"', async () => {
+		const id = await createProjectConnector('methods-none');
+		await seedCatalog(id);
+		const res = await ctx.app.request(methodsUrl(id), {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ enabled_methods: [] }),
+		});
+		expect(res.status).toBe(200);
+		expect((await res.json()).data.enabled_methods).toEqual([]);
+	});
+
+	it('rejects a method the server does not advertise', async () => {
+		const id = await createProjectConnector('methods-unknown');
+		await seedCatalog(id);
+		const res = await ctx.app.request(methodsUrl(id), {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ enabled_methods: ['get_issue', 'typo_method'] }),
+		});
+		expect(res.status).toBe(400);
+		expect((await res.json()).error.message).toContain('typo_method');
+	});
+
+	it('rejects a body with no enabled_methods field', async () => {
+		// Absent must not be read as "reset to unrestricted" — that would turn a
+		// malformed request into a silent removal of the restriction.
+		const id = await createProjectConnector('methods-nobody');
+		const res = await ctx.app.request(methodsUrl(id), {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({}),
+		});
+		expect(res.status).toBe(400);
+		expect((await res.json()).error.message).toContain('enabled_methods is required');
+	});
+
+	it('rejects a non-string entry', async () => {
+		const id = await createProjectConnector('methods-badtype');
+		const res = await ctx.app.request(methodsUrl(id), {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ enabled_methods: ['get_issue', 42] }),
+		});
+		expect(res.status).toBe(400);
+	});
+
+	it('returns 404 for an unknown connector', async () => {
+		const res = await ctx.app.request(methodsUrl('00000000-0000-0000-0000-000000000000'), {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(404);
+	});
+
+	it('refuses to edit a global connector from a project page', async () => {
+		// Global connectors are read-only everywhere else on the project page too;
+		// one allowlist shared by every project is edited on the global page.
+		const global = await ctx.db.query<{ id: string }>(
+			`INSERT INTO mcp_connections (name, kind, config, install_status, project_id)
+			 VALUES ('shared-mcp', 'saas', $1::jsonb, 'installed', NULL) RETURNING id`,
+			[JSON.stringify({ url: 'https://shared.example/mcp' })],
+		);
+		const id = global.rows[0].id;
+
+		// Readable from the project (its runs use it) …
+		const read = await ctx.app.request(methodsUrl(id), { headers: authHeader(token) });
+		expect(read.status).toBe(200);
+
+		// … but not editable here.
+		const write = await ctx.app.request(methodsUrl(id), {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ enabled_methods: [] }),
+		});
+		expect(write.status).toBe(404);
+	});
+
+	it('explains why a refresh failed instead of leaking a stack trace', async () => {
+		const id = await createProjectConnector('methods-refresh-fail');
+		const res = await ctx.app.request(`${methodsUrl(id)}/refresh`, {
+			method: 'POST',
+			headers: authHeader(token),
+		});
+		// Nothing is listening on that URL, so the probe fails — the operator gets
+		// a sentence, not an exception.
+		expect(res.status).toBe(400);
+		expect((await res.json()).error.message).toContain('did not answer');
+	});
+
+	it('returns 404 when refreshing an unknown connector', async () => {
+		const res = await ctx.app.request(
+			`${methodsUrl('00000000-0000-0000-0000-000000000000')}/refresh`,
+			{ method: 'POST', headers: authHeader(token) },
+		);
+		expect(res.status).toBe(404);
+	});
+});

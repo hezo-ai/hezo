@@ -1,4 +1,10 @@
-import { ConnectorTransport, getConnectorCapability, wsRoom } from '@hezo/shared';
+import {
+	ConnectorTransport,
+	getConnectorCapability,
+	type McpMethodInfo,
+	summarizeMethodAccess,
+	wsRoom,
+} from '@hezo/shared';
 import { Hono } from 'hono';
 import { encrypt } from '../crypto/encryption';
 import { trackBackground } from '../lib/background';
@@ -18,6 +24,10 @@ import {
 	fireCredentialProvidedWakeup,
 	markApiKeyActive,
 } from '../services/connectors/lifecycle';
+import type {
+	MethodDiscoveryDeps,
+	MethodDiscoveryResult,
+} from '../services/connectors/method-discovery';
 import { installLocalMcpById } from '../services/mcp-installer';
 
 const log = logger.child('connectors-route');
@@ -29,6 +39,8 @@ const log = logger.child('connectors-route');
 const CONNECTOR_COLUMNS = `id, name, display_name, kind::text AS kind,
         config, oauth_connection_id, api_key_secret_id, project_id, install_status::text AS install_status, install_error,
         skill_id, created_by_task_id, activated_at, revoked_at, auth_error,
+        enabled_methods, discovered_methods, methods_listed_at,
+        requested_access::text AS requested_access,
         created_at, updated_at`;
 
 // Same columns, `mc.`-qualified for queries that JOIN `projects` (whose id/name/
@@ -36,7 +48,9 @@ const CONNECTOR_COLUMNS = `id, name, display_name, kind::text AS kind,
 const CONNECTOR_COLUMNS_MC = `mc.id, mc.name, mc.display_name, mc.kind::text AS kind,
         mc.config, mc.oauth_connection_id, mc.api_key_secret_id, mc.project_id, mc.install_status::text AS install_status,
         mc.install_error, mc.skill_id, mc.created_by_task_id, mc.activated_at, mc.revoked_at,
-        mc.auth_error, mc.created_at, mc.updated_at`;
+        mc.auth_error, mc.enabled_methods, mc.discovered_methods, mc.methods_listed_at,
+        mc.requested_access::text AS requested_access,
+        mc.created_at, mc.updated_at`;
 
 // The credential(s) a connector uses, as a JSON array — its pasted API-key secret
 // or the access token of its linked OAuth connection (relation R, symmetric with
@@ -52,6 +66,108 @@ const connectorCredentialsJson = (alias: string): string =>
 	), '[]'::json) AS credentials`;
 
 export const connectorsRoutes = new Hono<Env>();
+
+/** The method-access view of a connector, as both method routes return it. */
+interface ConnectorMethodsView {
+	connector_id: string;
+	kind: string;
+	/** The cached `tools/list` catalog, `[]` when never listed. */
+	methods: McpMethodInfo[];
+	/** Allowlist, or `null` for unrestricted — the distinction is meaningful. */
+	enabled_methods: string[] | null;
+	methods_listed_at: string | null;
+	requested_access: string | null;
+	summary: ReturnType<typeof summarizeMethodAccess>;
+}
+
+async function loadConnectorMethods(
+	db: Env['Variables']['db'],
+	connectorId: string,
+	projectId: string,
+): Promise<ConnectorMethodsView | null> {
+	const result = await db.query<{
+		id: string;
+		kind: string;
+		discovered_methods: McpMethodInfo[] | null;
+		enabled_methods: string[] | null;
+		methods_listed_at: string | null;
+		requested_access: string | null;
+	}>(
+		`SELECT id, kind::text AS kind, discovered_methods, enabled_methods,
+		        methods_listed_at::text AS methods_listed_at,
+		        requested_access::text AS requested_access
+		 FROM mcp_connections
+		 WHERE id = $1 AND (project_id = $2 OR project_id IS NULL)`,
+		[connectorId, projectId],
+	);
+	const row = result.rows[0];
+	if (!row) return null;
+	const methods = row.discovered_methods ?? [];
+	return {
+		connector_id: row.id,
+		kind: row.kind,
+		methods,
+		enabled_methods: row.enabled_methods,
+		methods_listed_at: row.methods_listed_at,
+		requested_access: row.requested_access,
+		summary: summarizeMethodAccess(methods, row.enabled_methods),
+	};
+}
+
+/**
+ * Validate a PATCH body. `enabled_methods: null` resets to unrestricted, which
+ * is why the field must be present-and-null rather than merely absent — an
+ * omitted field would make "reset" indistinguishable from a malformed body.
+ */
+function parseEnabledMethods(body: unknown): { enabled: string[] | null } | { error: string } {
+	if (!body || typeof body !== 'object' || !('enabled_methods' in body)) {
+		return { error: 'enabled_methods is required (an array of names, or null for no restriction)' };
+	}
+	const raw = (body as { enabled_methods: unknown }).enabled_methods;
+	if (raw === null) return { enabled: null };
+	if (!Array.isArray(raw) || !raw.every((n) => typeof n === 'string' && n.trim().length > 0)) {
+		return { error: 'enabled_methods must be an array of non-empty strings, or null' };
+	}
+	return { enabled: [...new Set(raw as string[])] };
+}
+
+/**
+ * Names in the allowlist the server does not advertise. Rejecting these turns a
+ * typo into a 400 instead of a silently-inert entry that looks enabled in the
+ * UI. Skipped when the catalog is empty — the connector's methods have simply
+ * never been listed, and refusing every name then would make the route unusable.
+ */
+function unknownMethodNames(enabled: string[] | null, catalog: McpMethodInfo[] | null): string[] {
+	if (enabled === null || !catalog || catalog.length === 0) return [];
+	const known = new Set(catalog.map((m) => m.name));
+	return enabled.filter((n) => !known.has(n));
+}
+
+/** Run discovery for a connector with the request's own deps. */
+async function refreshConnectorMethods(
+	deps: MethodDiscoveryDeps,
+	connectorId: string,
+	trigger: 'connect' | 'manual' = 'manual',
+): Promise<MethodDiscoveryResult> {
+	const { discoverConnectorMethods } = await import('../services/connectors/method-discovery');
+	return discoverConnectorMethods(deps, connectorId, trigger);
+}
+
+/** Turn a discovery failure into something an operator can act on. */
+function describeDiscoveryFailure(result: { reason: string; detail?: string }): string {
+	switch (result.reason) {
+		case 'unsupported_kind':
+			return 'Method access applies to hosted MCP servers only.';
+		case 'not_connected':
+			return 'Connect this server before listing its methods.';
+		case 'locked':
+			return 'Hezo is locked, so this connector’s credential can’t be read. Unlock and try again.';
+		case 'not_found':
+			return 'connector not found';
+		default:
+			return `The server did not answer: ${result.detail ?? 'unknown error'}`;
+	}
+}
 
 // The bundled OAuth-provider descriptors (Google/YouTube, GitHub, …) used to
 // populate the generic OAuth-broker form's provider dropdown. Exposes only
@@ -308,6 +424,99 @@ connectorsRoutes.get('/projects/:projectId/connectors/:id', async (c) => {
 	return ok(c, result.rows[0]);
 });
 
+/**
+ * Method access for one connector: the cached catalog of what the MCP server
+ * advertises, plus the allowlist of what this connector actually exposes.
+ *
+ * `enabled_methods` of `null` means unrestricted, and the API preserves that
+ * distinction end to end — it is not shorthand for "every name in the catalog".
+ *
+ * There is deliberately no MCP-tool counterpart to the write route below. An
+ * agent may *narrow* its own access when it registers a connector
+ * (`register_connector`'s `access` argument), but letting one widen an
+ * allowlist would be a privilege escalation, so editing is human-only. The
+ * AGENTS.md parallel-naming rule doesn't apply where only one surface exists.
+ */
+connectorsRoutes.get('/projects/:projectId/connectors/:id/methods', async (c) => {
+	const db = c.get('db');
+	const projectId = c.get('projectId') as string;
+	const found = await loadConnectorMethods(db, c.req.param('id'), projectId);
+	if (!found) return err(c, 'NOT_FOUND', 'connector not found', 404);
+	return ok(c, found);
+});
+
+connectorsRoutes.patch('/projects/:projectId/connectors/:id/methods', async (c) => {
+	const db = c.get('db');
+	const teamId = c.get('teamId') as string;
+	const projectId = c.get('projectId') as string;
+	const id = c.req.param('id');
+
+	const body = await c.req.json().catch(() => ({}));
+	const parsed = parseEnabledMethods(body);
+	if ('error' in parsed) return err(c, 'INVALID_REQUEST', parsed.error, 400);
+
+	// A global connector is read-only from a project page (matching every other
+	// action on it) — it is shared by every project, so its allowlist is edited
+	// on the global connectors page instead.
+	const existing = await db.query<{ discovered_methods: McpMethodInfo[] | null; name: string }>(
+		`SELECT discovered_methods, name FROM mcp_connections WHERE id = $1 AND project_id = $2`,
+		[id, projectId],
+	);
+	if (existing.rows.length === 0) {
+		return err(c, 'NOT_FOUND', 'connector not found in this project', 404);
+	}
+
+	const unknown = unknownMethodNames(parsed.enabled, existing.rows[0].discovered_methods);
+	if (unknown.length > 0) {
+		return err(
+			c,
+			'INVALID_REQUEST',
+			`not advertised by this server: ${unknown.join(', ')}. Refresh the method list if the server has changed.`,
+			400,
+		);
+	}
+
+	const updated = await db.query(
+		`UPDATE mcp_connections SET enabled_methods = $1::jsonb, updated_at = now()
+		 WHERE id = $2 RETURNING ${CONNECTOR_COLUMNS}`,
+		[parsed.enabled === null ? null : JSON.stringify(parsed.enabled), id],
+	);
+
+	broadcastChange(c, wsRoom.team(teamId), 'mcp_connections', 'UPDATE', { id, status: 'updated' });
+	const actor = await resolveActor(db, c.get('auth'), teamId);
+	c.get('events').emit({
+		type: 'mcp_connection.updated',
+		teamId,
+		actorType: actor.actorType,
+		actorMemberId: actor.actorMemberId,
+		connectionId: id,
+		name: existing.rows[0].name,
+		changeKind: 'method_access',
+	});
+	return ok(c, updated.rows[0]);
+});
+
+connectorsRoutes.post('/projects/:projectId/connectors/:id/methods/refresh', async (c) => {
+	const db = c.get('db');
+	const projectId = c.get('projectId') as string;
+	const id = c.req.param('id');
+
+	const owned = await db.query<{ id: string }>(
+		`SELECT id FROM mcp_connections WHERE id = $1 AND (project_id = $2 OR project_id IS NULL)`,
+		[id, projectId],
+	);
+	if (owned.rows.length === 0) return err(c, 'NOT_FOUND', 'connector not found', 404);
+
+	const result = await refreshConnectorMethods(
+		{ db, masterKeyManager: c.get('masterKeyManager') },
+		id,
+	);
+	if (!result.ok) return err(c, 'INVALID_REQUEST', describeDiscoveryFailure(result), 400);
+
+	const found = await loadConnectorMethods(db, id, projectId);
+	return ok(c, found);
+});
+
 connectorsRoutes.post('/projects/:projectId/connectors/:id/revoke', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const projectId = c.get('projectId') as string;
@@ -541,6 +750,22 @@ connectorsRoutes.post('/projects/:projectId/connectors/:id/api-key', async (c) =
 		id: conn.id,
 		created_by_task_id: conn.created_by_task_id,
 	});
+
+	// Same post-activation step as the OAuth path: list the server's methods now
+	// that the key works, applying any read-only access the requesting agent
+	// asked for. Backgrounded so a slow third-party server can't stall the paste.
+	trackBackground(
+		refreshConnectorMethods(
+			{ db, masterKeyManager: c.get('masterKeyManager') },
+			conn.id,
+			'connect',
+		).catch((e) =>
+			log.warn('method discovery failed after api-key connect', {
+				connectorId: conn.id,
+				error: (e as Error).message,
+			}),
+		),
+	);
 
 	return ok(c, updated);
 });
