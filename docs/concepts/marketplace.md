@@ -29,6 +29,10 @@ whole roster. Give the project a name and description and Hezo provisions the te
 Captain's planning task, and starts the initial CEO team-setup pass — exactly like creating a
 project from a team type, but with the marketplace team's roles and prompts.
 
+You can also reach these teams from the other direction: every marketplace team appears in
+the New project dialog's team catalog, where opening one shows the same roster without
+leaving the flow.
+
 ## Adding a team to an existing project
 
 **Add to a project** brings a marketplace team's roles into a project you already have. Rather

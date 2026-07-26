@@ -7,8 +7,15 @@ import type { ComponentPropsWithoutRef, ReactNode } from 'react';
 // editor bottom sheet (z-[70]). At the lower z-50 the opaque preview panel painted
 // over dialogs opened from its toolbar, so on mobile the dialog scroll-locked the
 // page but was never visible. (In-dialog tooltips ride above at z-[95].)
+// dvh, not vh: on mobile `100vh` — and the containing block `inset-0` resolves
+// against — is the LARGE viewport, i.e. the URL bar collapsed. With the bar
+// expanded the box is laid out taller than the visual viewport, and because
+// nothing then overflows, `overflow-y-auto` never engages and the bottom of the
+// dialog is simply unreachable. dvh tracks the bar. Same hazard the app shell
+// documents in routes/__root.tsx. The swap can only make a dialog shorter or
+// equal, never taller, and every content box already scrolls.
 const base =
-	'fixed inset-0 z-[90] flex flex-col bg-surface p-4 overflow-y-auto outline-none sm:inset-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:w-full sm:max-h-[90vh] sm:rounded-lg sm:border sm:border-border sm:p-6 sm:shadow-lg';
+	'fixed inset-0 z-[90] flex flex-col bg-surface p-4 max-h-dvh overflow-y-auto outline-none sm:inset-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:w-full sm:max-h-[90dvh] sm:rounded-lg sm:border sm:border-border sm:p-6 sm:shadow-lg';
 
 export const dialogContentClassName = {
 	sm: `${base} sm:max-w-sm`,

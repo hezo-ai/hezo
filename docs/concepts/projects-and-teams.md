@@ -56,6 +56,11 @@ are never part of a template — they live in HQ (below). A template is only the
 point — you change the team's structure freely from there; see
 [Team structure](/docs/concepts/team-structure) for the bigger picture.
 
+You don't have to choose blind. In the New project dialog, "View all teams" opens the
+full catalog, and opening any team there shows its **roster** - every role, who it
+reports to, and what it's responsible for - before you commit. **Select team** confirms
+your choice and takes you back to the project details.
+
 Hezo ships with the minimal **Blank** template plus a set of ready-made teams in the
 [team marketplace](/docs/concepts/marketplace) — an **App Team** that builds software, a
 **Social Media Marketing** team that grows a creator's reach, and an **Investment
@@ -173,7 +178,9 @@ starting point again? You don't have to rebuild it:
 - **Save a team as a template** so it shows up as a reusable option for future
   projects, or
 - **Start a new project directly from an existing team**, which snapshots that team's
-  roster as the new project's starting point.
+  roster as the new project's starting point. Existing teams appear on the "Copy
+  existing team" tab of the team catalog, and opening one shows the roles it has
+  actually hired so far - so you can check what you're copying before you do.
 
 Either way the new project gets its own independent team — changes to one never affect
 the other.

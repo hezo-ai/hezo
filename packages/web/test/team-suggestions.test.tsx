@@ -64,8 +64,8 @@ describe('buildTeamOptions', () => {
 				}),
 			],
 			[
-				{ id: 't1', slug: 'ops', name: 'Ops', agent_count: 3 },
-				{ id: 't2', slug: 'empty', name: 'Empty', agent_count: 0 },
+				{ id: 't1', slug: 'ops', projectSlug: 'ops-project', name: 'Ops', agent_count: 3 },
+				{ id: 't2', slug: 'empty', projectSlug: 'empty-project', name: 'Empty', agent_count: 0 },
 			],
 		);
 
@@ -82,11 +82,18 @@ describe('buildTeamOptions', () => {
 		const ops = options.find((o) => o.key === 'team:t1');
 		expect(ops?.group).toBe('copy');
 		expect(ops?.meta).toBe('3 agents');
+		// The owning project's slug rides along — the team detail's roster is only
+		// reachable through the project, not the team.
+		expect(ops).toMatchObject({ projectSlug: 'ops-project' });
 		expect(options.find((o) => o.key === 'team:t2')?.meta).toBe('No agents yet');
 	});
 
 	it('singularizes a one-agent team', () => {
-		const [team] = buildTeamOptions([], [], [{ id: 't', slug: 's', name: 'Solo', agent_count: 1 }]);
+		const [team] = buildTeamOptions(
+			[],
+			[],
+			[{ id: 't', slug: 's', projectSlug: 'p', name: 'Solo', agent_count: 1 }],
+		);
 		expect(team.meta).toBe('1 agent');
 	});
 });
