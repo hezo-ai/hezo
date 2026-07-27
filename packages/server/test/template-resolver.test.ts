@@ -1442,11 +1442,58 @@ describe('repository block', () => {
 		expect(result).toContain('Also linked: `acme/docs`');
 		// The additional repo is flagged as cloned/checked out locally, and — with no
 		// resolved ticket here — described relative to the working directory.
-		expect(result).toContain('also cloned and checked out locally at');
+		expect(result).toContain('cloned and checked out for this run at');
 		expect(result).toContain('a sibling directory named `docs` next to your working directory');
 		// Steer reading to disk, not the github MCP file API.
 		expect(result).toContain('Read connected repositories from disk, never through an API');
 		expect(result).toContain('get_file_contents');
+	});
+
+	// An agent told the designated repo is "the one and only place your code goes"
+	// refuses to push a finished change to a second linked repo and asks a human to
+	// apply the patch by hand — while nothing about the run is actually per-repo
+	// scoped. Every linked repo must read as writable.
+	it('states that additional linked repos are writable, not just readable', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', {
+			teamId: repoTeamId,
+			projectId: repoProjectId,
+		});
+		expect(result).toContain('Every repository listed above is yours to work in');
+		expect(result).toContain('commit, push, and open a pull request here');
+		expect(result).toContain('Nothing about your run is scoped to a single repository');
+		// The old framing must be gone — it is what produced the refusal.
+		expect(result).not.toContain('the one and only place your code goes');
+		// A denied push is reported with the real git error, never theorised about.
+		expect(result).toContain('quote the exact git output');
+		expect(result).toContain('Never assert a restriction that is not written in this block');
+	});
+
+	it('marks a repo the connected account cannot push to, and leaves unknown repos unmarked', async () => {
+		const readOnly = await db.query<{ id: string }>(
+			`INSERT INTO repos (project_id, repo_identifier, host_type, can_push)
+			 VALUES ($1, 'acme/vendor', 'github'::repo_host_type, false)
+			 RETURNING id`,
+			[repoProjectId],
+		);
+
+		const result = await resolveSystemPrompt(db, 'Simple prompt', {
+			teamId: repoTeamId,
+			projectId: repoProjectId,
+		});
+		const vendorLine = result
+			.split('\n')
+			.find((l) => l.includes('Also linked: `acme/vendor`')) as string;
+		expect(vendorLine).toContain('no write access to this repository');
+		expect(vendorLine).toContain('ask `@admin`');
+
+		// `can_push` is NULL on the other repos — unknown, not restricted. Reporting
+		// unknown as read-only would recreate the very refusal this block prevents.
+		const docsLine = result
+			.split('\n')
+			.find((l) => l.includes('Also linked: `acme/docs`')) as string;
+		expect(docsLine).not.toContain('no write access');
+
+		await db.query('DELETE FROM repos WHERE id = $1', [readOnly.rows[0].id]);
 	});
 
 	it('names the concrete worktree path of a linked repo when the ticket resolves', async () => {

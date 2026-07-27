@@ -74,6 +74,7 @@ import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
 import { type EgressProxy, formatEgressProxyUrl } from './egress';
 import {
+	clearPushErrors,
 	ensurePushHook,
 	ensureTaskWorktreeWithRetry,
 	fastForwardLocalDefault,
@@ -81,6 +82,7 @@ import {
 	getWorktreeHead,
 	mergeDefaultIntoWorktree,
 	type RepoLoc,
+	readPushErrors,
 	seedInitialCommitIfEmpty,
 	type WorktreeLoc,
 	worktreeHasChanges,
@@ -1314,6 +1316,7 @@ export async function runAgent(
 						workingDir: '/workspace',
 						designatedRepo: null as RepoRow | null,
 						worktrees: [] as WorktreeRef[],
+						clones: [] as RepoLoc[],
 						executor: null as GitExecutor | null,
 					};
 
@@ -1359,6 +1362,21 @@ export async function runAgent(
 			const execInfo = await deps.docker.execInspect(execId);
 			const durationMs = Date.now() - startTime;
 			const exitedClean = execInfo.ExitCode === 0;
+
+			// Report auto-pushes that were denied during the run. The post-commit hook
+			// is deliberately non-fatal, so without this the human sees a run that
+			// "succeeded" while its commits never left the container — the exact shape
+			// of a repo the connected GitHub account can read but not write.
+			for (const clone of prep.clones) {
+				const pushErrors = readPushErrors(clone);
+				if (!pushErrors) continue;
+				emit(
+					'stderr',
+					`[system] auto-push failed during this run in ${clone.containerPath} — ` +
+						`commits are local only. Check the connected GitHub account's write access ` +
+						`to this repository.\n${pushErrors}\n`,
+				);
+			}
 
 			// Grok emits no usage on its stream; recover it from the `--debug-file`
 			// (readable host-side in the home mount), then scrub the file — it also
@@ -1687,6 +1705,8 @@ async function prepareWorktrees(
 	workingDir: string;
 	designatedRepo: RepoRow | null;
 	worktrees: WorktreeRef[];
+	/** Each prepared repo's clone — where the auto-push hook records failed pushes. */
+	clones: RepoLoc[];
 	executor: GitExecutor | null;
 }> {
 	const emitSystem = (stream: 'stdout' | 'stderr', text: string) =>
@@ -1700,7 +1720,13 @@ async function prepareWorktrees(
 
 	if (repos.rows.length === 0) {
 		emitSystem('stdout', '(no repos linked to project — running in /workspace)');
-		return { workingDir: '/workspace', designatedRepo: null, worktrees: [], executor: null };
+		return {
+			workingDir: '/workspace',
+			designatedRepo: null,
+			worktrees: [],
+			clones: [],
+			executor: null,
+		};
 	}
 
 	return withProjectGitLock(project.id, async () => {
@@ -1742,7 +1768,13 @@ async function prepareWorktrees(
 		}
 
 		if (signal?.aborted) {
-			return { workingDir: '/workspace', designatedRepo: null, worktrees: [], executor };
+			return {
+				workingDir: '/workspace',
+				designatedRepo: null,
+				worktrees: [],
+				clones: [],
+				executor,
+			};
 		}
 
 		const workspaceRoot = getWorkspacePath(deps.dataDir, project.team_id, project.id);
@@ -1786,8 +1818,11 @@ async function prepareWorktrees(
 			// Install/refresh the auto-push post-commit hook so every commit the agent
 			// makes this run is pushed to origin immediately — committed work then
 			// survives an aborted or timed-out run instead of dying with the ephemeral
-			// worktree. Idempotent and best-effort (never throws).
+			// worktree. Idempotent and best-effort (never throws). Clearing the hook's
+			// error log here scopes what the run reports at finalize to this run's own
+			// failed pushes.
 			ensurePushHook(repoLoc);
+			clearPushErrors(repoLoc);
 
 			// Bootstrap a connected repo that has no commits yet: `git worktree add`
 			// can't branch off an unborn HEAD, so an empty remote would otherwise fail
@@ -1850,7 +1885,13 @@ async function prepareWorktrees(
 		}
 
 		if (signal?.aborted) {
-			return { workingDir: '/workspace', designatedRepo: null, worktrees: [], executor };
+			return {
+				workingDir: '/workspace',
+				designatedRepo: null,
+				worktrees: [],
+				clones: [],
+				executor,
+			};
 		}
 
 		const designated = project.designated_repo_id
@@ -1871,14 +1912,17 @@ async function prepareWorktrees(
 		// Capture each prepared worktree's location + pre-run commit so the completion
 		// path can detect whether the run produced any code change.
 		const worktrees: WorktreeRef[] = [];
+		const clones: RepoLoc[] = [];
 		for (const repo of repos.rows) {
 			if (worktreeErrors.has(repo.id)) continue;
-			const loc = wtLocOf(repoNameFromIdentifier(repo.repo_identifier));
+			const repoName = repoNameFromIdentifier(repo.repo_identifier);
+			const loc = wtLocOf(repoName);
 			if (!existsSync(join(loc.hostPath, '.git'))) continue;
 			worktrees.push({ loc, headBefore: await getWorktreeHead(executor, loc) });
+			clones.push(repoLocOf(repoName));
 		}
 
-		return { workingDir, designatedRepo: primary ?? null, worktrees, executor };
+		return { workingDir, designatedRepo: primary ?? null, worktrees, clones, executor };
 	});
 }
 

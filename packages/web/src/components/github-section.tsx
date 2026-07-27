@@ -266,6 +266,11 @@ export function GitHubSection({ projectId }: GitHubSectionProps) {
 												);
 											})()}
 											{r.is_designated && <Badge color="blue">Designated</Badge>}
+											{r.can_push === false && (
+												<Badge color="amber" testId={`repo-no-write-${repoName}`}>
+													No write access
+												</Badge>
+											)}
 											{r.setup_status === 'pending' && (
 												<span
 													className="flex items-center gap-1 text-xs text-text-2"
@@ -324,6 +329,18 @@ export function GitHubSection({ projectId }: GitHubSectionProps) {
 										>
 											Setup failed{r.setup_error ? `: ${r.setup_error}` : ''}. Retry to run it
 											again.
+										</p>
+									)}
+									{r.can_push === false && (
+										<p
+											className="text-xs text-warning-soft-fg"
+											data-testid={`repo-no-write-detail-${repoName}`}
+										>
+											{githubConnection?.provider_account_label
+												? `${githubConnection.provider_account_label} can read this repository but not push to it.`
+												: 'The connected GitHub account can read this repository but not push to it.'}{' '}
+											Agents can read the code, but their commits will not reach GitHub. Grant that
+											account write access on GitHub to fix it.
 										</p>
 									)}
 									{isExpanded && (

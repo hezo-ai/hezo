@@ -10,6 +10,13 @@ export interface GitHubSimRepo {
 	default_branch: string;
 	clone_url: string;
 	ssh_url: string;
+	/**
+	 * The token account's rights on the repo. GitHub returns this on an
+	 * authenticated repo read and Hezo derives `repos.can_push` from it; seed
+	 * `{ push: false }` to simulate a read-only collaborator. Omit for the
+	 * common case — the route fills in full access, as GitHub does for an owner.
+	 */
+	permissions?: { admin: boolean; push: boolean; pull: boolean };
 }
 
 export interface GitHubSimOrg {
@@ -157,7 +164,10 @@ export async function createGitHubSim(): Promise<GitHubSim> {
 		const full = `${c.req.param('owner')}/${c.req.param('repo')}`;
 		const found = state.repos.find((r) => r.full_name === full);
 		if (!found) return c.json({ message: 'Not Found' }, 404);
-		return c.json(found);
+		return c.json({
+			permissions: { admin: true, push: true, pull: true },
+			...found,
+		});
 	});
 
 	const repoNameAlreadyExistsResponse = () => ({
