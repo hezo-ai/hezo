@@ -3,6 +3,7 @@ import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
 import { api, nextOffsetPageParam } from '../lib/api';
 import { queryClient } from '../lib/query-client';
 import { queryKeys } from '../lib/query-keys';
+import { INSTANCE_CONNECTORS_KEY } from './use-instance-connectors';
 
 export interface Connector {
 	id: string;
@@ -251,7 +252,10 @@ export function useUpdateConnectorMethods(scope: ConnectorMethodsScope) {
 		onSuccess: (updated) => {
 			queryClient.invalidateQueries({ queryKey: methodsKey(scope, updated.id) });
 			if (scope === null) {
-				queryClient.invalidateQueries({ queryKey: ['connectors'] });
+				// The admin list carries enabled_methods/discovered_methods per row and
+				// is what the badge falls back to, so it has to refetch. (The reverse
+				// import is type-only and erased, so this is not a runtime cycle.)
+				queryClient.invalidateQueries({ queryKey: INSTANCE_CONNECTORS_KEY });
 				return;
 			}
 			queryClient.setQueryData<Connector>(
@@ -275,7 +279,7 @@ export function useRefreshConnectorMethods(scope: ConnectorMethodsScope) {
 		onSuccess: (_data, connectorId) => {
 			queryClient.invalidateQueries({ queryKey: methodsKey(scope, connectorId) });
 			queryClient.invalidateQueries({
-				queryKey: scope === null ? ['connectors'] : queryKeys.projects.connectors(scope),
+				queryKey: scope === null ? INSTANCE_CONNECTORS_KEY : queryKeys.projects.connectors(scope),
 			});
 		},
 	});
