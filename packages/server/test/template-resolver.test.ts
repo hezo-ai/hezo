@@ -531,6 +531,62 @@ describe('template resolver', () => {
 		expect(result).toContain('emphasis is not a substitute for `@`');
 	});
 
+	it('mention discipline gives an active mention one canonical shape: `@<slug> - ` then the ask', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		// the shape rule itself: slug opens the line, hyphen, then the request
+		expect(result).toContain('Every active mention has one shape');
+		expect(result).toContain('A line starting with `@<slug> - ` is an active mention');
+		// the corollary that keeps the shape from swallowing plain references
+		expect(result).toContain('a teammate you are only naming does not get this shape at all');
+		// the worked example teaches the hyphen separator, not an em dash
+		expect(result).toContain('`@<slug> - please re-run the fixture and confirm it passes.`');
+	});
+
+	it('mention discipline requires multiple recipients to be mentioned one per line', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		// the antipattern: two slugs sharing one ask, so neither owns anything
+		expect(result).toContain('one `@<slug>` per line, one ask per line');
+		expect(result).toContain('`@<slug-a> @<slug-b> - please review`');
+		expect(result).toContain('both wait and neither moves, or both do the same work twice');
+		// the fenced worked example renders as real lines, not a literal \n
+		expect(result).toContain(
+			'\n  @<slug-a> - please re-check the totals in section 3 and correct them in place.\n',
+		);
+		// a teammate who owes nothing stays out of the block entirely
+		expect(result).toContain('A teammate who owes none does not get a line');
+	});
+
+	it('mention discipline forbids opening a line with a passive `@@<slug> - ` address', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		expect(result).toContain('Never open a line with `@@<slug> - `');
+		expect(result).toContain('The address shape is reserved for active mentions');
+		// the canonical miss, and why "it was only a status line" is not a defence
+		expect(result).toContain('`@@admin - release is done.`');
+		expect(result).toContain('asking the admin to register that fact');
+		// the escape hatch: a genuine reference goes inside a sentence, not at line head
+		expect(result).toContain('never at the head of its own line');
+		// a routing label in front of it is the same mistake
+		expect(result).toContain('`Next step: @@<slug> - …` is the identical mistake');
+		// and the detector backs the rule unconditionally
+		expect(result).toContain('warns on this shape every time, ask or no ask');
+	});
+
+	it('teaches the hyphen separator consistently across the mention examples', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		// The shape rule teaches `@<slug> - ask`, so no mention-address example in the
+		// section may still model an em dash — a contradicted example teaches the
+		// contradiction.
+		for (const example of [
+			'`**devops-engineer** - please update the PR`',
+			'`@<slug>` - please address the required actions above',
+			'`@@<slug> - verification confirms PASS',
+			'`@<slug-a> - signed off, the correction can be made in-line.`',
+			'`@@<slug-b> - strong work on the rewrite.',
+		]) {
+			expect(result).toContain(example);
+		}
+	});
+
 	it('mention discipline makes routing/triage handoffs an active @, not a passive reference', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		// handing work to someone to own — even tracked on a different ticket — wakes them

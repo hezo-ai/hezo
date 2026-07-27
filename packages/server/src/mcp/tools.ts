@@ -293,11 +293,12 @@ async function buildPassiveMentionWarning(
 	const named = offenders.map((s) => `@@${s}`).join(', ');
 	const fixes = offenders.map((s) => `@${s}`).join(', ');
 	return (
-		`You addressed ${named} with the passive form (@@) but the text reads like an ask - ` +
-		`that renders as a link and notifies no one, so no wakeup or admin-inbox alert was ` +
-		`created. If you need them to act on this ticket, edit this comment or post a follow-up ` +
-		`with an active mention (${fixes}); if you only meant to refer to them, leave the ` +
-		`passive form as-is.`
+		`You addressed ${named} with the passive form (@@) - that renders as a link and ` +
+		`notifies no one, so no wakeup or admin-inbox alert was created. If you need them to ` +
+		`act on this ticket, edit this comment or post a follow-up with an active mention ` +
+		`(${fixes}). If you only meant to refer to them, keep the passive form but move the ` +
+		`reference inside the sentence: a line that opens with a teammate reference and a ` +
+		`dash is an address, and the address form is reserved for active mentions.`
 	);
 }
 
