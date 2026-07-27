@@ -164,11 +164,20 @@ export function ProjectRail({ showHome = false }: { showHome?: boolean } = {}) {
 								params={{ projectId: hq.slug }}
 								aria-label={hq.name}
 								data-testid="project-rail-hq"
-								className={`relative w-9 h-9 rounded-full flex items-center justify-center text-text-2 hover:text-text-1 hover:bg-surface border border-border bg-surface transition-colors ${
-									hqActive ? 'ring-2 ring-inverse ring-offset-1 ring-offset-surface-2' : ''
-								}`}
+								// A full-bleed icon drops the border and surface fill (the same rule
+								// `Avatar` follows): keeping them would leave a grey ring between the
+								// image and the active ring. Without an icon, HQ keeps its glyph.
+								className={`relative w-9 h-9 rounded-full flex items-center justify-center overflow-hidden transition-colors ${
+									hq.icon_url
+										? ''
+										: 'text-text-2 hover:text-text-1 hover:bg-surface border border-border bg-surface'
+								} ${hqActive ? 'ring-2 ring-inverse ring-offset-1 ring-offset-surface-2' : ''}`}
 							>
-								<Building2 className="w-4 h-4" />
+								{hq.icon_url ? (
+									<img src={hq.icon_url} alt="" className="w-full h-full object-cover" />
+								) : (
+									<Building2 className="w-4 h-4" />
+								)}
 								<CountOverlayBadge
 									count={hqInbox?.unread ?? 0}
 									testId="project-rail-hq-inbox-badge"

@@ -5,7 +5,7 @@ import { type ReactNode, useState } from 'react';
 import { CreateProjectWithTeamDialog } from '../../components/create-project-with-team-dialog';
 import { HqContainerNotice } from '../../components/hq-container-notice';
 import { ProjectIntakeHomePanel } from '../../components/project-intake-home-panel';
-import { Avatar, avatarColorFromString, getInitials } from '../../components/ui/avatar';
+import { Avatar, getInitials } from '../../components/ui/avatar';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
@@ -19,6 +19,7 @@ import {
 	useAllVisibleProjects,
 	useHqProject,
 } from '../../hooks/use-projects';
+import { defaultAvatarForSlug } from '../../lib/default-avatars';
 
 function formatMoney(cents: number): string {
 	return `$${(cents / 100).toFixed(2)}`;
@@ -119,6 +120,7 @@ const ACTION_LINK_CLASS =
 function NeedsYouRowShell({
 	tag,
 	tagColor,
+	avatar,
 	children,
 	project,
 	createdAt,
@@ -126,16 +128,24 @@ function NeedsYouRowShell({
 }: {
 	tag: string;
 	tagColor: 'accent' | 'info';
+	/**
+	 * The actor behind the row, shown just before the text (which leads with their
+	 * name). Rows with no identifiable actor pass nothing and get a same-width
+	 * spacer instead, so the list stays aligned — synthesising initials from the
+	 * "An agent" fallback label would show a misleading badge.
+	 */
+	avatar?: ReactNode;
 	children: ReactNode;
 	project: string | null;
 	createdAt: string;
 	actionLink: ReactNode;
 }) {
 	return (
-		<div className="flex items-center gap-3 px-3 py-2.5" data-testid="home-needs-you-row">
+		<div className="flex items-center gap-2 px-3 py-2.5 sm:gap-3" data-testid="home-needs-you-row">
 			<Badge color={tagColor} mono className="shrink-0">
 				{tag}
 			</Badge>
+			{avatar ?? <span aria-hidden className="w-[26px] shrink-0" />}
 			<span className="min-w-0 flex-1 truncate text-[13px] text-text-1">{children}</span>
 			<span className="shrink-0 font-mono text-[11px] text-text-3">
 				{project ? `${project} · ` : ''}
@@ -151,6 +161,17 @@ function NeedsYouAction({ approval }: { approval: Approval }) {
 		<NeedsYouRowShell
 			tag="action"
 			tagColor="accent"
+			avatar={
+				approval.requested_by_name ? (
+					<Avatar
+						size="sm"
+						initials={getInitials(approval.requested_by_name)}
+						imageUrl={
+							approval.requested_by_icon_url ?? defaultAvatarForSlug(approval.requested_by_slug)
+						}
+					/>
+				) : undefined
+			}
 			project={approval.payload_project_slug}
 			createdAt={approval.created_at}
 			actionLink={
@@ -173,6 +194,13 @@ function NeedsYouMention({ mention }: { mention: AdminMentionItem }) {
 		<NeedsYouRowShell
 			tag="mention"
 			tagColor="info"
+			avatar={
+				<Avatar
+					size="sm"
+					initials={getInitials(mention.author_display_name)}
+					imageUrl={mention.author_icon_url ?? defaultAvatarForSlug(mention.author_slug)}
+				/>
+			}
 			project={mention.project_slug}
 			createdAt={mention.created_at}
 			actionLink={
@@ -246,10 +274,7 @@ function ActiveProjectCard({
 		<Link to="/projects/$projectId" params={{ projectId: project.slug }}>
 			<Card className="cursor-pointer h-full" data-testid="home-active-card">
 				<div className="flex items-start gap-3">
-					<Avatar
-						initials={getInitials(project.name)}
-						color={avatarColorFromString(project.name)}
-					/>
+					<Avatar initials={getInitials(project.name)} imageUrl={project.icon_url} />
 					<div className="flex flex-col gap-1 min-w-0 flex-1">
 						<div className="flex items-center justify-between gap-2">
 							<h3 className="text-[15px] font-medium text-text-1 truncate">{project.name}</h3>
@@ -290,11 +315,7 @@ function OtherProjectRow({ project }: { project: ProjectWithTeam }) {
 			data-testid="home-other-row"
 		>
 			<div className="flex items-center gap-3 px-3 py-2.5 hover:bg-surface-2">
-				<Avatar
-					initials={getInitials(project.name)}
-					color={avatarColorFromString(project.name)}
-					size="sm"
-				/>
+				<Avatar initials={getInitials(project.name)} imageUrl={project.icon_url} size="sm" />
 				<span className="min-w-0 flex-1 truncate text-[13px] text-text-1">{project.name}</span>
 				<span className="shrink-0 font-mono text-[11px] text-text-3">
 					{paused ? 'paused' : 'idle'}

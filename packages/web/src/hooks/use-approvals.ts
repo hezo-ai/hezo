@@ -22,6 +22,12 @@ export interface Approval {
 	team_slug: string;
 	requested_by_name: string | null;
 	requested_by_member_id: string | null;
+	requested_by_slug: string | null;
+	/**
+	 * The requester's uploaded avatar, or null. The built-in CEO/Coach default is
+	 * resolved client-side from `requested_by_slug`; this only carries the upload.
+	 */
+	requested_by_icon_url: string | null;
 	payload_member_name: string | null;
 	payload_member_slug: string | null;
 	payload_project_name: string | null;

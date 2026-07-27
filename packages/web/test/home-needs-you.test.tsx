@@ -123,6 +123,79 @@ test('an unread admin mention renders as a mention row linking to the comment wi
 	expect(link.getAttribute('href')).toContain('#comment-');
 });
 
+test('a mention row shows the authoring agent’s uploaded avatar before their name', async () => {
+	const ref = { agentId: '' };
+	const { findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Mention Avatar Home' });
+			const task = await seedTask(ws, project, { title: 'Avatar Ticket' });
+			const author = ws.agents.find((a) => a.slug === 'architect') ?? ws.agents[0];
+			ref.agentId = author.id;
+			await getTestContext().db.query(
+				`INSERT INTO agent_icons (member_id, content_type, data, byte_size, width, height)
+				 VALUES ($1, 'image/png', $2, 3, 512, 512)`,
+				[author.id, Buffer.from([0x89, 0x50, 0x4e])],
+			);
+			await seedAdminMention(ws, task, '@admin please confirm the rollout window.');
+		},
+	});
+
+	await router.navigate({ to: '/home' });
+
+	const row = await findByTestId('home-needs-you-row', undefined, { timeout: 20_000 });
+	const img = row.querySelector<HTMLImageElement>('img');
+	expect(img).not.toBeNull();
+	expect(img?.getAttribute('src') ?? '').toContain(`/api/agents/${ref.agentId}/icon`);
+});
+
+test('an action row shows the requesting agent’s uploaded avatar', async () => {
+	const ref = { agentId: '' };
+	const { findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Action Avatar Home' });
+			const captain = ws.agents.find((a) => a.slug === 'captain') ?? ws.agents[0];
+			ref.agentId = captain.id;
+			await getTestContext().db.query(
+				`INSERT INTO agent_icons (member_id, content_type, data, byte_size, width, height)
+				 VALUES ($1, 'image/png', $2, 3, 512, 512)`,
+				[captain.id, Buffer.from([0x89, 0x50, 0x4e])],
+			);
+			await seedApproval(ws, project, ApprovalType.PlanReview, captain.id);
+		},
+	});
+
+	await router.navigate({ to: '/home' });
+
+	const row = await findByTestId('home-needs-you-row', undefined, { timeout: 20_000 });
+	const img = row.querySelector<HTMLImageElement>('img');
+	expect(img).not.toBeNull();
+	expect(img?.getAttribute('src') ?? '').toContain(`/api/agents/${ref.agentId}/icon`);
+});
+
+test('an action row with no known requester renders no avatar and keeps its text', async () => {
+	const { findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Anonymous Action Home' });
+			// No requested_by_member_id → the "An agent" fallback, which must not be
+			// turned into initials; the row gets the alignment spacer instead.
+			await seedApproval(ws, project, ApprovalType.DesignatedRepoRequest);
+		},
+	});
+
+	await router.navigate({ to: '/home' });
+
+	const row = await findByTestId('home-needs-you-row', undefined, { timeout: 20_000 });
+	expect(row.querySelector('img')).toBeNull();
+	expect(row.textContent).toContain('An agent');
+	expect(row.textContent).toContain('needs GitHub access to set up the repo');
+});
+
 test('more than five needs-you items collapse behind a "Show N more" link to the inbox', async () => {
 	const { findByTestId, router } = await renderApp({
 		initialPath: '/',

@@ -79,6 +79,48 @@ describe('approvals CRUD', () => {
 		expect(resolved.resolved_at).not.toBeNull();
 	});
 
+	it('serializes the requester’s slug and signed avatar URL on the listing', async () => {
+		const createRes = await app.request(`/api/projects/${projectSlug}/approvals`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				type: 'strategy',
+				requested_by_member_id: agentId,
+				payload: { summary: 'Needs a call' },
+			}),
+		});
+		const approvalId = (await createRes.json()).data.id;
+
+		const listOne = await app.request(`/api/projects/${projectSlug}/approvals`, {
+			headers: authHeader(token),
+		});
+		type Row = {
+			id: string;
+			requested_by_slug: string | null;
+			requested_by_icon_url: string | null;
+		};
+		const before = ((await listOne.json()).data as Row[]).find((a) => a.id === approvalId);
+		// The slug is always there (the client needs it for the built-in CEO/Coach
+		// default); the icon URL is null until the requester uploads an avatar.
+		expect(before?.requested_by_slug).toBeTruthy();
+		expect(before?.requested_by_icon_url).toBeNull();
+
+		await db.query(
+			`INSERT INTO agent_icons (member_id, content_type, data, byte_size, width, height)
+			 VALUES ($1, 'image/png', $2, 3, 512, 512)`,
+			[agentId, Buffer.from([0x89, 0x50, 0x4e])],
+		);
+
+		const listTwo = await app.request(`/api/projects/${projectSlug}/approvals`, {
+			headers: authHeader(token),
+		});
+		const after = ((await listTwo.json()).data as Row[]).find((a) => a.id === approvalId);
+		expect(after?.requested_by_icon_url).toContain(`/api/agents/${agentId}/icon`);
+		expect(after?.requested_by_icon_url).toContain('sig=');
+
+		await db.query('DELETE FROM agent_icons WHERE member_id = $1', [agentId]);
+	});
+
 	it('lets the admin modify a pending hire proposal before approving', async () => {
 		const createRes = await app.request(`/api/projects/${projectSlug}/approvals`, {
 			method: 'POST',

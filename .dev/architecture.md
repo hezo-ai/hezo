@@ -532,7 +532,9 @@ and `asset.deleted` domain events feed the audit log (doc archival rides
 live-refreshes. `project_icons`
 (1:1 with `projects`, `ON DELETE CASCADE`) holds an optional per-project icon image —
 unlike assets the **bytes live in the DB** (a `BYTEA` column) in a dedicated table so the
-hot `projects.*` list query never pulls the blob; it is rendered in the project rail and
+hot `projects.*` list query never pulls the blob; it is rendered on every surface that draws
+a project avatar — the project rail (including the pinned HQ entry, which falls back to a
+building glyph when HQ has no icon) and the home dashboard's Active cards and Other rows — and
 served from a public HMAC-signed read route (`GET /api/projects/:projectId/icon`, the `sig`
 query param is the credential since an `<img>` carries no bearer token). The serialized
 project carries a freshly-signed `icon_url` (null when unset); the client normalizes any
@@ -542,18 +544,24 @@ admin) reuse the same mechanism for agent avatars and the admin's own avatar —
 `BYTEA` table, a freshly-signed `icon_url` threaded onto the serialized agent/user row, and
 a public HMAC-signed read route (`GET /api/agents/:agentId/icon`, `GET /api/users/:userId/icon`).
 The signing/verification is generalized in `lib/entity-icon-urls.ts` (a `basePath` +
-per-entity `keyPurpose`), the client control in `components/icon-upload-section.tsx`; agent
-icons are edited on the agent Settings page (project-access-gated, like other agent config)
-and rendered on the roster/org-chart/agent header, user icons on the global Settings → Users
-page (superuser-gated). No MCP tool — icon upload is a human-only UI action (as for
-`project_icons`). The **CEO and Coach** — the HQ singletons that are identical across every
+per-entity `keyPurpose`), which also owns `signAuthorIconUrl` — the shared resolver every
+*feed* uses to turn a row's author/requester into a signed avatar URL (user icon when the
+actor is human, else the agent icon; best-effort, so a signing failure yields null and the
+row degrades to initials rather than failing the request). The comments feed
+(`routes/comments.ts`), the admin-mentions inbox (`routes/inbox.ts` → `author_icon_url`) and
+the approvals listing (`routes/approvals.ts` → `requested_by_slug` + `requested_by_icon_url`)
+all go through it. The client control is `components/icon-upload-section.tsx`; agent
+icons are edited on the agent Settings page (project-access-gated, like other agent config),
+user icons on the global Settings → Users page (superuser-gated). No MCP tool — icon upload
+is a human-only UI action (as for `project_icons`). The **CEO and Coach** — the HQ singletons that are identical across every
 project — ship a **built-in default avatar** (a committed image under
 `packages/web/public/avatars/`, bundled into the web app); the client resolves an agent's
 effective avatar as `uploaded icon_url ?? defaultAvatarForSlug(slug) ?? initials`
 (`web/src/lib/default-avatars.ts`), so a user upload always overrides the built-in default and
 per-project roles (e.g. the Captain) get no shared default — they show initials until an avatar
 is uploaded. Every agent-avatar surface (org chart, agent header, budget rows, agent-authored
-comments) applies this resolution.
+comments, and the admin inbox — both the home "Needs you" rows and the full inbox's mention /
+approval cards) applies this resolution.
 
 **Governance & misc.** `approvals` (polymorphic board decisions), `audit_log`
 (append-only, project + instance scopes — `project_id` set scopes a row to one project,

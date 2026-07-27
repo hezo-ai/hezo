@@ -5,7 +5,7 @@ import type { MasterKeyManager } from '../crypto/master-key';
 import { signAssetUrl } from '../lib/asset-urls';
 import { broadcastChange, broadcastCommentFamilyChange } from '../lib/broadcast';
 import { validateCredentialValue } from '../lib/credential-validator';
-import { AGENT_ICON_URL, signVersionedIconUrl, USER_ICON_URL } from '../lib/entity-icon-urls';
+import { signAuthorIconUrl } from '../lib/entity-icon-urls';
 import {
 	apiKeyIdFromAuth,
 	resolveActor,
@@ -47,27 +47,12 @@ async function attachAuthorIcons(
 	rows: Record<string, unknown>[],
 ): Promise<void> {
 	for (const row of rows) {
-		let url: string | null = null;
-		try {
-			if (row.author_user_id) {
-				url = await signVersionedIconUrl(
-					USER_ICON_URL,
-					row.author_user_id as string,
-					row.author_user_icon_updated_at,
-					masterKeyManager,
-				);
-			} else if (row.author_member_id) {
-				url = await signVersionedIconUrl(
-					AGENT_ICON_URL,
-					row.author_member_id as string,
-					row.author_agent_icon_updated_at,
-					masterKeyManager,
-				);
-			}
-		} catch {
-			url = null;
-		}
-		row.author_icon_url = url;
+		row.author_icon_url = await signAuthorIconUrl(masterKeyManager, {
+			userId: row.author_user_id,
+			memberId: row.author_member_id,
+			userIconUpdatedAt: row.author_user_icon_updated_at,
+			agentIconUpdatedAt: row.author_agent_icon_updated_at,
+		});
 		delete row.author_user_id;
 		delete row.author_user_icon_updated_at;
 		delete row.author_agent_icon_updated_at;

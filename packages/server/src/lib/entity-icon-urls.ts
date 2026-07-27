@@ -79,6 +79,47 @@ export async function signVersionedIconUrl(
 	return null;
 }
 
+/**
+ * The signed avatar URL for whoever authored/requested a row in a feed: a human
+ * resolves to their `user_icons` image (keyed by `userId`), an agent to its
+ * `agent_icons` image (keyed by `memberId`); an API-key author has neither.
+ *
+ * Best-effort by design — a signing failure (e.g. the master key being
+ * unavailable) yields null so the row degrades to its initials fallback rather
+ * than failing the whole feed. The avatar is purely cosmetic.
+ */
+export async function signAuthorIconUrl(
+	masterKeyManager: MasterKeyManager,
+	author: {
+		userId?: unknown;
+		memberId?: unknown;
+		userIconUpdatedAt?: unknown;
+		agentIconUpdatedAt?: unknown;
+	},
+): Promise<string | null> {
+	try {
+		if (author.userId) {
+			return await signVersionedIconUrl(
+				USER_ICON_URL,
+				author.userId as string,
+				author.userIconUpdatedAt,
+				masterKeyManager,
+			);
+		}
+		if (author.memberId) {
+			return await signVersionedIconUrl(
+				AGENT_ICON_URL,
+				author.memberId as string,
+				author.agentIconUpdatedAt,
+				masterKeyManager,
+			);
+		}
+	} catch {
+		return null;
+	}
+	return null;
+}
+
 export async function verifyEntityIconUrl(
 	keyPurpose: string,
 	id: string,
