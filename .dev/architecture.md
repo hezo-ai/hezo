@@ -1807,6 +1807,83 @@ MCP, and each of the five runtime adapters translates the descriptors into the s
 artifacts its CLI expects (Claude Code `--mcp-config`, Codex `config.toml`, Gemini
 `.gemini/settings.json`, etc.).
 
+**Method access (per-connector allowlist).** A hosted MCP server ships its read and write
+tools in one connection, so a connector carries an allowlist of the methods agents may
+call. It lives on the `mcp_connections` row itself — `enabled_methods` (jsonb array),
+`discovered_methods` (the cached catalog), `methods_listed_at`, `requested_access`
+(`connector_access` enum), `access_applied_at` (migration `044`). **`enabled_methods` NULL
+means no allowlist — every method enabled**, deliberately *not* the same as an array naming
+every currently-known method, so a server that grows a tool doesn't silently grant it.
+These are columns rather than `config` keys because `config` is replaced wholesale by the
+reconfigure routes (`POST /connectors`, `add_connector`) — an operator changing a URL would
+otherwise wipe the allowlist, a security control quietly switching itself off. They also
+survive `restoreRevokedConnector`, so a revoke/reconnect keeps the restriction.
+
+`classifyMcpMethod` (`@hezo/shared`, `mcp/method-access.ts`) decides read vs write: the
+spec's `annotations.readOnlyHint` wins when the server sets it (`inferred: false`),
+otherwise a leading-word heuristic. An unrecognised name classifies as **write**, so the
+heuristic can never widen access by accident. `summarizeMethodAccess` is the single source
+for every count the card, the dialog, and `list_connectors` show, so they can't disagree.
+
+`discoverConnectorMethods` (`services/connectors/method-discovery.ts`) probes a connected
+`saas` connector over the MCP SDK's Streamable HTTP transport (SSE fallback) and caches the
+catalog. It decrypts the connector's own credential in-process (trusted server code — § 7's
+chat-bot-token precedent) and **drops any header still carrying an unsubstituted
+placeholder** rather than sending it verbatim. It fires via `trackBackground` from both
+activation paths and from the explicit refresh route, so a probe failure can never fail a
+connect; a `connect`-triggered failure logs at debug and a `manual` one warns. **It is never
+called from `loadConnectorDescriptors`**, which deliberately resolves secret *names* only so
+descriptors build while the master key is locked.
+
+Enforcement has two legs, split because the coding CLIs are installed unpinned and their
+config keys can drift:
+
+- **Runtime config filtering is the UX leg** — descriptors carry `enabledTools` and
+  `disabledTools` (both views, since Claude Code takes a deny list while Gemini/OpenCode
+  take allowlists), and each adapter emits its own key: Gemini `includeTools`, OpenCode
+  top-level `tools`, Claude Code `permissions.deny`. An agent never sees a tool it cannot
+  call. Best-effort and degrades safely: an unrestricted connector emits a byte-identical
+  config to before, and Claude Code's deny list is only as complete as the last
+  `tools/list`. **Codex and Grok emit no filter** — no per-server tool-filter key could be
+  verified, and a guessed TOML key risks the CLI rejecting the whole config and breaking
+  every run on that runtime. `RUNTIME_SUPPORTS_MCP_TOOL_FILTER` records which runtimes can
+  hide tools.
+- **The egress proxy is the enforcement leg** — runtime-independent, and the only thing
+  restricting Codex and Grok at all. `allocateRunProxy` resolves the run's restricted
+  connectors once into a `host:port → allowlist` map (`loadMcpHostRestrictions`); an
+  unrestricted run gets an empty map and takes no new path. In `forward`, a request to a
+  mapped host has its body inspected by the pure `shouldBlockMcpRequest`
+  (`egress/mcp-method-guard.ts`) and a `tools/call` naming a disabled method is rejected
+  `403 mcp_method_not_enabled` before it leaves the host. Only `tools/call` is inspected —
+  `initialize`/`tools/list`/notifications pass through, since a listing that still
+  advertises a disabled tool is harmless once the call is blocked. A JSON-RPC **batch** is
+  rejected whole if any element names a disabled method (the messages share one body).
+  **Fails closed** for restricted hosts only: an unparseable body, or one over
+  `MAX_MCP_INSPECTION_BYTES` (256 KB), is rejected rather than forwarded uninspected.
+  Two details are load-bearing. The inspection cap is **separate from and much larger
+  than** `MAX_BODY_SUBSTITUTION_BYTES` (8 KB) — a real `tools/call` carries file contents,
+  far past what the credential-in-body substitution path was sized for — and the body is
+  **read once**, at whichever cap applies, since both gates want the same bytes and the
+  stream can only be consumed once. The inspection gate (`mayCarryJsonRpc`) is deliberately
+  *wider* than `isBodySubstitutionEligible`: it accepts a chunked body with no
+  `Content-Length` and does not exclude a compressed one, so an uninspectable request
+  reaches the guard and is blocked rather than skipped. Both sides of the map normalise
+  through `mcpRestrictionKey(hostname, port)` with the scheme default applied — the proxy
+  resolves host and port separately, so keying on a raw `URL.host` would silently miss on
+  any non-default port, and a lookup that misses means no enforcement at all.
+
+An agent registering a connector can ask for read-only (`register_connector`'s
+`access: 'read' | 'write'`, default `write`), which persists `requested_access` and shows on
+the `connect_required` card before the human authorizes. Discovery applies it **exactly
+once**, guarded on `requested_access = 'read' AND access_applied_at IS NULL AND
+enabled_methods IS NULL`: the stamp stops re-application and the null allowlist means an
+operator who has already decided is never overwritten. The request narrows only —
+`createOrFetchConnector` will upgrade an unrestricted row to `read` but never clears a
+stored `read`, and `list_connectors` reports `method_access` so a run learns a missing tool
+is withheld rather than absent. There is deliberately **no MCP write tool** for the
+allowlist: letting an agent widen its own access would be a privilege escalation, so the
+write side is human-only (`GET`/`PATCH`/`POST …/methods{,/refresh}`).
+
 **Git vs API.** Repo clone/fetch/push does **not** use the OAuth token — that's SSH with
 the project key (§ 8). The OAuth token is reserved for GitHub REST (listing/creating
 repos, registering keys) and the GitHub MCP tool surface. Full design: this section plus

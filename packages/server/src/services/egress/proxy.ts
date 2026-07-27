@@ -21,7 +21,13 @@ import type { Db } from '../../db/database';
 import { ref } from '../../lib/log-ref';
 import { closeServerWithDeadline } from '../../lib/net';
 import { logger } from '../../logger';
+import {
+	loadMcpHostRestrictions,
+	type McpHostRestriction,
+	mcpRestrictionKey,
+} from '../connectors/connections';
 import type { HezoCA } from './ca';
+import { mcpMethodBlockedMessage, shouldBlockMcpRequest } from './mcp-method-guard';
 import {
 	EGRESS_HOST_PORT_RANGE_END,
 	EGRESS_HOST_PORT_RANGE_START,
@@ -55,6 +61,15 @@ const HOP_BY_HOP_HEADERS = new Set(['connection', 'keep-alive', 'upgrade']);
  * streaming/long-lived request body (SSE, Streamable-HTTP MCP) is never
  * buffered. Kept deliberately small so the supported shape is unambiguous. */
 const MAX_BODY_SUBSTITUTION_BYTES = 8192;
+
+/** Hard cap on request bodies the proxy will buffer to enforce a connector's MCP
+ * method allowlist. Separate from — and much larger than — the substitution cap,
+ * because an MCP `tools/call` legitimately carries a payload (a file to write, a
+ * long issue body) far past the small credential-in-body logins substitution was
+ * sized for. Applies only to a host whose connector is restricted; every other
+ * host still streams unbuffered exactly as before. A restricted request larger
+ * than this is rejected rather than forwarded uninspected — see `forward`. */
+const MAX_MCP_INSPECTION_BYTES = 262144;
 
 const PROXY_HOST = 'host.docker.internal';
 const PROXY_BIND_HOST = '127.0.0.1';
@@ -195,6 +210,17 @@ export class EgressProxy {
 		// attempt lands on a different one, then release the losers once we've
 		// bound (or all of them if every attempt fails).
 		const tokenBytes = this.authEnabled ? randomBytes(PROXY_TOKEN_BYTES) : null;
+		// Resolve the run's restricted connectors once, before binding. A failure
+		// here propagates rather than starting a run whose method restrictions
+		// can't be enforced — the query hits the same DB the proxy needs for
+		// secrets anyway, so a failure is not something to paper over.
+		const mcpRestrictions = await loadMcpHostRestrictions(this.deps.db, scope.projectId);
+		if (mcpRestrictions.size > 0) {
+			log.debug('egress proxy enforcing mcp method allowlists', {
+				run: ref(scope.label, runId),
+				hosts: [...mcpRestrictions.keys()],
+			});
+		}
 		const reserved: number[] = [];
 		let lastReason = 'no bindable port in egress range';
 		try {
@@ -213,6 +239,7 @@ export class EgressProxy {
 					getMintCa: () => this.getMintCa(),
 					upstreamTrustedCAs: this.deps.extraUpstreamTrustedCAs,
 					hostPortAllocator: this.hostPortAllocator,
+					mcpRestrictions,
 				});
 
 				try {
@@ -278,6 +305,11 @@ interface RunProxyConfig {
 	getMintCa: () => Promise<CA>;
 	upstreamTrustedCAs?: string | string[];
 	hostPortAllocator: PortAllocator;
+	/** Host → method allowlist for this run's *restricted* connectors only.
+	 * Empty for the overwhelmingly common unrestricted run, which then takes no
+	 * inspection path at all. Resolved once at allocation: the allowlist is an
+	 * operator setting, not something that should change under a live run. */
+	mcpRestrictions: Map<string, McpHostRestriction>;
 }
 
 /** A per-host internal TLS-terminating server. The agent's CONNECT socket is
@@ -717,10 +749,35 @@ class RunProxyInstance {
 		// non-JSON) is never buffered and streams through byte-for-byte as before.
 		const bodyEligible = isBodySubstitutionEligible(method, headers);
 
+		// A host backing a restricted connector must have its `tools/call` bodies
+		// inspected, which needs a larger cap than substitution and must also cover
+		// request shapes substitution skips (no Content-Length, oversized). Null for
+		// every other host, which keeps the untouched path untouched.
+		const restriction = this.cfg.mcpRestrictions.get(mcpRestrictionKey(host, port)) ?? null;
+		const inspectForMcp = restriction !== null && mayCarryJsonRpc(method, headers);
+
+		// Read the body ONCE, at whichever cap applies. Both gates want the same
+		// bytes and the stream can only be consumed once, so the read is shared and
+		// each gate decides separately what to do with the result.
 		let bufferedBody: Buffer | null = null;
-		if (bodyEligible) {
-			const read = await readBodyCapped(req, MAX_BODY_SUBSTITUTION_BYTES);
+		if (bodyEligible || inspectForMcp) {
+			const cap = inspectForMcp ? MAX_MCP_INSPECTION_BYTES : MAX_BODY_SUBSTITUTION_BYTES;
+			const read = await readBodyCapped(req, cap);
 			if (read.tooLarge) {
+				// Over the inspection cap on a restricted host means the allowlist
+				// cannot be checked. Fail closed: forwarding it uninspected would make
+				// the restriction advisory.
+				if (inspectForMcp) {
+					respondEarly(
+						res,
+						403,
+						'mcp_method_not_enabled',
+						`Blocked by Hezo: this request to the "${restriction.connectorName}" MCP server ` +
+							`exceeds the ${MAX_MCP_INSPECTION_BYTES}-byte limit for method-allowlist inspection, ` +
+							`and that connector only exposes a subset of its server's methods.`,
+					);
+					return;
+				}
 				respondEarly(
 					res,
 					413,
@@ -730,6 +787,26 @@ class RunProxyInstance {
 				return;
 			}
 			bufferedBody = read.buffer;
+		}
+
+		if (restriction && inspectForMcp && bufferedBody !== null) {
+			const verdict = shouldBlockMcpRequest(bufferedBody.toString('utf8'), restriction.enabled);
+			if (verdict.blocked) {
+				log.info('egress proxy blocked a disabled mcp method', {
+					run: ref(this.cfg.scope.label, this.cfg.runId),
+					connector: restriction.connectorName,
+					host,
+					method: verdict.method,
+					reason: verdict.reason,
+				});
+				respondEarly(
+					res,
+					403,
+					'mcp_method_not_enabled',
+					mcpMethodBlockedMessage(verdict, restriction.connectorName),
+				);
+				return;
+			}
 		}
 
 		const probeInBody =
@@ -848,8 +925,11 @@ class RunProxyInstance {
 	): void {
 		const outHeaders: Record<string, string | string[] | undefined> = { ...headers };
 		outHeaders['content-length'] = String(body.byteLength);
-		// Eligible requests carry a fixed Content-Length (never chunked), but drop
-		// any transfer-encoding defensively so framing can't be ambiguous upstream.
+		// The body is now a fixed Buffer, so re-frame it as such. Substitution can
+		// change its length, and the MCP-inspection path also buffers requests that
+		// arrived chunked with no Content-Length at all — either way the original
+		// framing is stale, and leaving a transfer-encoding alongside an explicit
+		// Content-Length would make it ambiguous upstream.
 		delete outHeaders['transfer-encoding'];
 		const requestFn = isSSL ? httpsRequest : httpRequest;
 		const upstream = requestFn(
@@ -1081,6 +1161,34 @@ function isBodySubstitutionEligible(
 	if (lenRaw === null) return false;
 	const len = Number(lenRaw);
 	if (!Number.isInteger(len) || len < 0 || len > MAX_BODY_SUBSTITUTION_BYTES) return false;
+	return true;
+}
+
+/** Whether a request to a restricted MCP host could carry a JSON-RPC message,
+ * and so must be inspected before it is forwarded.
+ *
+ * Deliberately wider than `isBodySubstitutionEligible`: that gate exists to keep
+ * buffering rare, while this one exists to make sure nothing slips past. It
+ * accepts a body with no `Content-Length` (a chunked `tools/call` is legal) and
+ * imposes no size limit here — `readBodyCapped` enforces the inspection cap and
+ * an over-cap request is rejected rather than waved through.
+ *
+ * Only bodied methods are inspected. A GET/DELETE carries no JSON-RPC message,
+ * and on MCP's Streamable HTTP transport a GET is the SSE channel the server
+ * pushes on — buffering that would hang the stream, and it can't invoke a tool
+ * regardless. A compressed body is *not* excluded here: it can't be inspected,
+ * so it must reach the guard and be blocked rather than skipped. */
+function mayCarryJsonRpc(
+	method: string,
+	headers: Record<string, string | string[] | undefined>,
+): boolean {
+	const m = method.toUpperCase();
+	if (m !== 'POST' && m !== 'PUT' && m !== 'PATCH') return false;
+	const contentType = headerValue(headers, 'content-type');
+	// An MCP client posts JSON. Anything else on this transport isn't a tools/call
+	// — and a body we can't read as JSON is caught by the guard's fail-closed
+	// parse, not skipped here.
+	if (contentType && !/^\s*application\/json\b/i.test(contentType)) return false;
 	return true;
 }
 

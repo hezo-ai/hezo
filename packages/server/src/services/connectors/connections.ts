@@ -1,4 +1,4 @@
-import { ConnectorTransport, type McpInstallStatus } from '@hezo/shared';
+import { ConnectorTransport, type McpInstallStatus, type McpMethodInfo } from '@hezo/shared';
 import type { Db } from '../../db/database';
 import { credentialPlaceholder } from '../../lib/credential-placeholder';
 import { logger } from '../../logger';
@@ -135,6 +135,16 @@ export interface ConnectorRow {
 	api_key_secret_id: string | null;
 	install_status: McpInstallStatus;
 	install_error: string | null;
+	/**
+	 * Allowlist of the server's method names this connector exposes, or `null`
+	 * for **no restriction**. Never conflate the two: `null` means the run gets
+	 * whatever the server advertises today *and* tomorrow, while a non-null list
+	 * means an unrecognised new method is disabled until an operator enables it.
+	 */
+	enabled_methods: string[] | null;
+	/** Cached `tools/list` catalog, or null when the server's methods have never
+	 * been listed. Only used to derive the deny-list view of the allowlist. */
+	discovered_methods: McpMethodInfo[] | null;
 	created_at: string;
 	updated_at: string;
 }
@@ -165,6 +175,7 @@ export async function loadConnectorsForRun(
 		`SELECT id, name, kind::text AS kind,
 		        config, oauth_connection_id, api_key_secret_id,
 		        install_status::text AS install_status, install_error,
+		        enabled_methods, discovered_methods,
 		        created_at::text, updated_at::text
 		 FROM mcp_connections
 		 WHERE revoked_at IS NULL
@@ -180,6 +191,73 @@ export async function loadConnectorsForRun(
 	const out = new Map<string, ConnectorRow>();
 	for (const row of result.rows) out.set(row.name, row);
 	return [...out.values()];
+}
+
+/** A restricted connector's upstream host and the methods agents may call on it. */
+export interface McpHostRestriction {
+	/** Connector name, so a rejection can say which connector withheld the method. */
+	connectorName: string;
+	enabled: ReadonlySet<string>;
+}
+
+/**
+ * The key both sides of the restriction lookup agree on: lowercased hostname
+ * plus the *effective* port, with the scheme default applied.
+ *
+ * Both halves matter. Hostname alone would let a restricted MCP server's
+ * allowlist bleed onto an unrelated service on another port of the same host.
+ * A raw `URL.host` would omit the port for 443/80 but include it otherwise,
+ * while the proxy resolves host and port separately and always has a concrete
+ * port — so the two would silently fail to match on any non-default port, and a
+ * lookup that misses means *no enforcement at all*. Normalising both sides
+ * through this function is what keeps that from being a silent hole.
+ */
+export function mcpRestrictionKey(hostname: string, port: number): string {
+	return `${hostname.toLowerCase()}:${port}`;
+}
+
+/**
+ * Build the host → allowlist map the egress proxy enforces for one run.
+ *
+ * Only **restricted** connectors are included, so a run with no restricted
+ * connector gets an empty map and the proxy takes no new code path at all.
+ *
+ * A host:port serving two connectors — the same provider connected twice, or a
+ * project connector shadowing a global one — collapses to one entry, and the
+ * enabled sets are **unioned**. The proxy cannot tell which connector a request
+ * belongs to (same host, same credential shape), so the alternative would be
+ * blocking a method one of the two connectors legitimately enables.
+ */
+export async function loadMcpHostRestrictions(
+	db: Db,
+	projectId?: string | null,
+): Promise<Map<string, McpHostRestriction>> {
+	const rows = await loadConnectorsForRun(db, projectId);
+	const map = new Map<string, McpHostRestriction>();
+	for (const row of rows) {
+		if (row.kind !== ConnectorTransport.Saas) continue;
+		if (row.enabled_methods === null) continue;
+		const url = (row.config as SaasConnectorConfig)?.url;
+		if (!url) continue;
+		let key: string;
+		try {
+			const parsed = new URL(url);
+			const port = parsed.port ? Number(parsed.port) : parsed.protocol === 'https:' ? 443 : 80;
+			key = mcpRestrictionKey(parsed.hostname, port);
+		} catch {
+			continue;
+		}
+		const existing = map.get(key);
+		if (existing) {
+			map.set(key, {
+				connectorName: existing.connectorName,
+				enabled: new Set([...existing.enabled, ...row.enabled_methods]),
+			});
+		} else {
+			map.set(key, { connectorName: row.name, enabled: new Set(row.enabled_methods) });
+		}
+	}
+	return map;
 }
 
 /**
@@ -310,6 +388,7 @@ export async function loadConnectorDescriptors(
 				name: row.name,
 				url: config.url,
 				headers,
+				...toolRestrictionOf(row),
 			});
 		} else if (row.kind === ConnectorTransport.Api) {
 		} else if (row.kind === ConnectorTransport.Local) {
@@ -332,10 +411,33 @@ export async function loadConnectorDescriptors(
 				command: config.command,
 				args: config.args,
 				env: config.env,
+				...toolRestrictionOf(row),
 			});
 		}
 	}
 	return descriptors;
+}
+
+/**
+ * Spread-able tool-restriction fields for a descriptor. A row with no allowlist
+ * yields an empty object so the keys are absent entirely and every adapter emits
+ * exactly the config it emitted before method access existed — an unrestricted
+ * connector must not change one byte of a run's spawn artifacts.
+ *
+ * `disabledTools` is the deny-list view the Claude Code adapter needs, derived
+ * from the cached catalog. It is therefore only as complete as the last
+ * `tools/list`; see {@link McpDescriptor.disabledTools} for why that is fine.
+ */
+function toolRestrictionOf(row: ConnectorRow): {
+	enabledTools?: readonly string[];
+	disabledTools?: readonly string[];
+} {
+	if (row.enabled_methods === null) return {};
+	const enabled = new Set(row.enabled_methods);
+	const disabled = (row.discovered_methods ?? [])
+		.map((m) => m.name)
+		.filter((name) => !enabled.has(name));
+	return { enabledTools: row.enabled_methods, disabledTools: disabled };
 }
 
 /** Drop any case-variant of `name` from a header map (so we can set it cleanly). */

@@ -11,6 +11,7 @@ interface GeminiHttpEntry {
 	httpUrl: string;
 	timeout: number;
 	headers?: Record<string, string>;
+	includeTools?: string[];
 }
 
 interface GeminiStdioEntry {
@@ -18,6 +19,7 @@ interface GeminiStdioEntry {
 	timeout: number;
 	args?: string[];
 	env?: Record<string, string>;
+	includeTools?: string[];
 }
 
 type GeminiServerEntry = GeminiHttpEntry | GeminiStdioEntry;
@@ -51,6 +53,12 @@ interface GeminiSettings {
 // is never cut off. There is no env-var equivalent; it's a settings.json key.
 const SHELL_INACTIVITY_TIMEOUT_DISABLED = 0;
 
+// `mcpServers.<name>.includeTools` is the CLI's per-server allowlist: with it
+// set, only the listed tools are exposed from that server. We only ever emit the
+// allowlist, never `excludeTools` — the CLI documents exclude as taking
+// precedence over include, so mixing the two would make the effective set depend
+// on a precedence rule instead of on our list.
+//
 // Per-MCP-server request timeout (`mcpServers.<name>.timeout`, milliseconds). The
 // CLI default is already 10 min; we set it explicitly so a future default change
 // can't silently tighten it, and to stay consistent with the other runtimes.
@@ -61,6 +69,7 @@ function buildHttpEntry(d: McpHttpDescriptor): GeminiHttpEntry {
 	const headers: Record<string, string> = { ...(d.headers ?? {}) };
 	if (d.bearerToken) headers.Authorization = `Bearer ${d.bearerToken}`;
 	if (Object.keys(headers).length > 0) entry.headers = headers;
+	if (d.enabledTools) entry.includeTools = [...d.enabledTools];
 	return entry;
 }
 
@@ -68,6 +77,7 @@ function buildStdioEntry(d: McpStdioDescriptor): GeminiStdioEntry {
 	const entry: GeminiStdioEntry = { command: d.command, timeout: MCP_REQUEST_TIMEOUT_MS };
 	if (d.args?.length) entry.args = d.args;
 	if (d.env && Object.keys(d.env).length > 0) entry.env = d.env;
+	if (d.enabledTools) entry.includeTools = [...d.enabledTools];
 	return entry;
 }
 

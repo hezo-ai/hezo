@@ -1006,8 +1006,9 @@ Two kinds:
 | `auth` | `object` | No | For kind 'api' — where the credential rides. Defaults to an `Authorization: Bearer ` header when omitted (the right default for OAuth access tokens). |
 | `oauth_provider_id` | `string` | No | For kind 'api' only — a bundled OAuth-broker provider key (e.g. "google-youtube") to pre-select for the human. The provider is then LOCKED in the completion UI: the human finishes the OAuth device flow inline (in the task comment or on the Connectors page) by pasting only a client id — no provider picker. Omit for a plain API-key REST connector. |
 | `skill_id` | `string` | No | Optional ID of a previously-fetched skill document (see fetch_skill_file). When set, the skill file is exposed to every team agent run via the per-adapter skill path. |
+| `access` | `read` \| `write` | No | How much of the server you need. 'write' (default) leaves every method the server advertises available. 'read' asks for read-only: once the human connects it, every write method the server advertises is disabled automatically, and runs never see them. Ask for 'read' whenever the task only needs to look things up — it is the narrowest scope that still does the job, and the human can widen it later. This is a request, not a grant: if the human has already chosen which methods are enabled, their choice stands. |
 
-**Returns:** `{ connector_id, status, name, display_name, comment_id?, reused }`. `status` is `active` (OAuth already complete) or `pending` (a connect_required comment is posted for the human). Idempotent.
+**Returns:** `{ connector_id, status, name, display_name, comment_id?, reused }`. `status` is `active` (OAuth already complete) or `pending` (a connect_required comment is posted for the human). Idempotent. Pass `access: "read"` when the task only needs to look things up: every write method the server advertises is disabled once the human connects it, and the connect card says so before they authorize. The request narrows only - it never widens access, and it is skipped entirely if the human has already chosen which methods are enabled.
 
 ### `fetch_skill_file`
 
@@ -1040,7 +1041,7 @@ List the connectors available to agent runs in your project (its own connectors 
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 
-**Returns:** An array of connector rows with a derived `oauth_status` (`active` | `pending` | `failed` | `revoked` | `none`) and, for an active OAuth-backed connector, `rest_auth` = `{ placeholder, allowed_hosts, scopes }` (else `null`). Other fields include `id`, `name`, `display_name`, `kind`, `config`, `project_id`, `oauth_account_label`, `install_status`, `install_error`, `skill_id`, `created_by_task_id`, `activated_at`, `revoked_at`, `auth_error`. Scoped to your project: its own connectors plus global ("all projects") ones, with a project connector shadowing a global one of the same name.
+**Returns:** An array of connector rows with a derived `oauth_status` (`active` | `pending` | `failed` | `revoked` | `none`) and, for an active OAuth-backed connector, `rest_auth` = `{ placeholder, allowed_hosts, scopes }` (else `null`). Other fields include `id`, `name`, `display_name`, `kind`, `config`, `project_id`, `oauth_account_label`, `install_status`, `install_error`, `skill_id`, `created_by_task_id`, `activated_at`, `revoked_at`, `auth_error`. A hosted MCP connector whose methods have been listed also carries `method_access` = `{ mode: "all" | "restricted", enabled, total, disabled_write }` (else `null`) - when `mode` is `restricted`, the withheld methods are absent from your tool list on purpose, so a tool you expect and cannot see is disabled rather than missing. Scoped to your project: its own connectors plus global ("all projects") ones, with a project connector shadowing a global one of the same name.
 
 ### `test_connector`
 

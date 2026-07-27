@@ -16,8 +16,27 @@ export interface TestMcpServer {
 	reset(): void;
 }
 
+/** A `tools/list` entry, as much of it as any test needs to assert on. */
+export interface TestMcpTool {
+	name: string;
+	description?: string;
+	annotations?: { readOnlyHint?: boolean };
+}
+
+const DEFAULT_TOOLS: TestMcpTool[] = [
+	{ name: 'echo', description: 'Echoes the provided message back as the result.' },
+];
+
 interface StartOpts {
 	tls?: { cert: string; key: string };
+	/**
+	 * Tools this server advertises. Defaults to the canned `echo` tool the
+	 * substitution/wiring tests rely on; method-discovery tests pass their own
+	 * catalog (including `annotations.readOnlyHint`) to drive classification.
+	 */
+	tools?: TestMcpTool[];
+	/** Reject every request with this status — for probe-failure paths. */
+	failWithStatus?: number;
 }
 
 /**
@@ -57,7 +76,17 @@ export async function startTestMcpHttpServer(opts: StartOpts = {}): Promise<Test
 				parsedBody: parsed,
 			});
 
-			const response = renderMcpResponse(parsed);
+			if (opts.failWithStatus) {
+				const body = JSON.stringify({ error: 'test-forced failure' });
+				res.writeHead(opts.failWithStatus, {
+					'content-type': 'application/json',
+					'content-length': Buffer.byteLength(body).toString(),
+				});
+				res.end(body);
+				return;
+			}
+
+			const response = renderMcpResponse(parsed, opts.tools ?? DEFAULT_TOOLS);
 			res.writeHead(response.status, {
 				'content-type': 'application/json',
 				'content-length': Buffer.byteLength(response.body).toString(),
@@ -92,7 +121,7 @@ interface RenderedMcpResponse {
 	body: string;
 }
 
-function renderMcpResponse(parsed: unknown): RenderedMcpResponse {
+function renderMcpResponse(parsed: unknown, tools: TestMcpTool[]): RenderedMcpResponse {
 	if (!parsed || typeof parsed !== 'object') {
 		return { status: 200, body: JSON.stringify({ ok: true }) };
 	}
@@ -121,17 +150,13 @@ function renderMcpResponse(parsed: unknown): RenderedMcpResponse {
 				jsonrpc: '2.0',
 				id,
 				result: {
-					tools: [
-						{
-							name: 'echo',
-							description: 'Echoes the provided message back as the result.',
-							inputSchema: {
-								type: 'object',
-								properties: { message: { type: 'string' } },
-								required: ['message'],
-							},
+					tools: tools.map((t) => ({
+						...t,
+						inputSchema: {
+							type: 'object',
+							properties: { message: { type: 'string' } },
 						},
-					],
+					})),
 				},
 			}),
 		};

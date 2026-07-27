@@ -62,6 +62,12 @@ export const codexAdapter: RuntimeMcpAdapter = {
 		const blocks: string[] = [
 			`web_search = "live"\nbackground_terminal_max_timeout = ${BACKGROUND_TERMINAL_MAX_TIMEOUT_MS}`,
 		];
+		// A descriptor's `enabledTools` is intentionally ignored here: Codex
+		// documents no per-server tool filter, and inventing a TOML key risks the
+		// CLI rejecting the whole config and breaking every Codex run. Restricted
+		// connectors are still enforced — the egress proxy refuses a `tools/call`
+		// naming a disabled method regardless of runtime. See
+		// RUNTIME_SUPPORTS_MCP_TOOL_FILTER in @hezo/shared.
 		for (const d of descriptors) {
 			const serverBlock = d.kind === 'http' ? renderHttpBlock(d) : renderStdioBlock(d);
 			blocks.push(withServerTimeouts(serverBlock));

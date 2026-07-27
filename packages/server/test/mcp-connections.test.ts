@@ -517,6 +517,73 @@ describe('loadConnectorDescriptors', () => {
 			expect(local.env).toEqual({ K: 'v' });
 		}
 	});
+
+	it('omits tool restrictions entirely for a connector with no allowlist', async () => {
+		// The absence of the keys is the contract: every adapter then emits exactly
+		// the config it emitted before method access existed.
+		await db.query(
+			`INSERT INTO mcp_connections (name, kind, config, install_status)
+			 VALUES ('unrestricted', 'saas', $1::jsonb, 'installed')`,
+			[JSON.stringify({ url: 'https://unrestricted.example/mcp' })],
+		);
+		const descriptors = await loadConnectorDescriptors(db);
+		const d = descriptors.find((x) => x.name === 'unrestricted');
+		expect(d).toBeDefined();
+		expect(d && 'enabledTools' in d).toBe(false);
+		expect(d && 'disabledTools' in d).toBe(false);
+	});
+
+	it('carries both views of an allowlist, deriving the deny list from the catalog', async () => {
+		await db.query(
+			`INSERT INTO mcp_connections
+			   (name, kind, config, install_status, enabled_methods, discovered_methods)
+			 VALUES ('restricted', 'saas', $1::jsonb, 'installed', $2::jsonb, $3::jsonb)`,
+			[
+				JSON.stringify({ url: 'https://restricted.example/mcp' }),
+				JSON.stringify(['get_issue']),
+				JSON.stringify([
+					{ name: 'get_issue', readOnly: true, inferred: false },
+					{ name: 'save_issue', readOnly: false, inferred: false },
+					{ name: 'delete_comment', readOnly: false, inferred: true },
+				]),
+			],
+		);
+		const descriptors = await loadConnectorDescriptors(db);
+		const d = descriptors.find((x) => x.name === 'restricted');
+		expect(d?.enabledTools).toEqual(['get_issue']);
+		expect(d?.disabledTools).toEqual(['save_issue', 'delete_comment']);
+	});
+
+	it('still restricts when the catalog is missing, with an empty deny list', async () => {
+		// An allowlist set before the methods were ever listed: the allowlist-style
+		// runtimes still restrict correctly; the deny-list ones simply have nothing
+		// to name, which is exactly why the proxy is the enforcement leg.
+		await db.query(
+			`INSERT INTO mcp_connections (name, kind, config, install_status, enabled_methods)
+			 VALUES ('no-catalog', 'saas', $1::jsonb, 'installed', $2::jsonb)`,
+			[JSON.stringify({ url: 'https://no-catalog.example/mcp' }), JSON.stringify(['get_issue'])],
+		);
+		const descriptors = await loadConnectorDescriptors(db);
+		const d = descriptors.find((x) => x.name === 'no-catalog');
+		expect(d?.enabledTools).toEqual(['get_issue']);
+		expect(d?.disabledTools).toEqual([]);
+	});
+
+	it('treats an empty allowlist as "nothing enabled", not as unrestricted', async () => {
+		await db.query(
+			`INSERT INTO mcp_connections
+			   (name, kind, config, install_status, enabled_methods, discovered_methods)
+			 VALUES ('all-off', 'saas', $1::jsonb, 'installed', '[]'::jsonb, $2::jsonb)`,
+			[
+				JSON.stringify({ url: 'https://all-off.example/mcp' }),
+				JSON.stringify([{ name: 'get_issue', readOnly: true, inferred: false }]),
+			],
+		);
+		const descriptors = await loadConnectorDescriptors(db);
+		const d = descriptors.find((x) => x.name === 'all-off');
+		expect(d?.enabledTools).toEqual([]);
+		expect(d?.disabledTools).toEqual(['get_issue']);
+	});
 });
 
 describe('loadConnectorDescriptors project scoping', () => {

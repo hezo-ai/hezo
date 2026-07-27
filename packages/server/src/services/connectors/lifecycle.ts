@@ -1,4 +1,4 @@
-import { ConnectorTransport, type McpTransport, WakeupSource } from '@hezo/shared';
+import { ConnectorAccess, ConnectorTransport, type McpTransport, WakeupSource } from '@hezo/shared';
 import type { Db } from '../../db/database';
 import { trackBackground } from '../../lib/background';
 import { logger } from '../../logger';
@@ -11,6 +11,7 @@ const CONNECTOR_COLS = `id, name, display_name, kind::text AS kind,
         config, oauth_connection_id, api_key_secret_id, project_id, install_status::text AS install_status,
         install_error, skill_id, created_by_task_id,
         activated_at::text AS activated_at, revoked_at::text AS revoked_at, auth_error,
+        requested_access::text AS requested_access, access_applied_at::text AS access_applied_at,
         created_at::text AS created_at, updated_at::text AS updated_at`;
 
 export interface CreateConnectorInput {
@@ -39,6 +40,15 @@ export interface CreateConnectorInput {
 	apiConfig?: Record<string, unknown>;
 	/** Owning project, or null for a global ("all projects") connector. */
 	projectId?: string | null;
+	/**
+	 * The access the registering agent asked for. `Read` makes discovery disable
+	 * every write method the server advertises, once, on connect. `Write` is
+	 * today's behaviour and is stored only as a record of what was asked.
+	 *
+	 * This is a *request*, not a grant — it is applied only while the operator has
+	 * not decided anything themselves (see `discoverConnectorMethods`).
+	 */
+	requestedAccess?: ConnectorAccess | null;
 }
 
 export interface ConnectorRow {
@@ -57,6 +67,8 @@ export interface ConnectorRow {
 	activated_at: string | null;
 	revoked_at: string | null;
 	auth_error: string | null;
+	requested_access: string | null;
+	access_applied_at: string | null;
 	created_at: string;
 	updated_at: string;
 }
@@ -110,10 +122,12 @@ export async function createOrFetchConnector(
 	);
 	const existingRow = existing.rows[0];
 	if (existingRow) {
-		// If this row was previously revoked, restore it for re-authorization.
+		// If this row was previously revoked, restore it for re-authorization. The
+		// access columns survive the restore, so a reconnect keeps the restriction.
 		if (existingRow.revoked_at) {
 			const restored = await restoreRevokedConnector(db, existingRow.id);
-			return { row: restored ?? existingRow, alreadyExisted: true };
+			const narrowed = await narrowRequestedAccess(db, restored ?? existingRow, input);
+			return { row: narrowed, alreadyExisted: true };
 		}
 		// Re-registering an api connector with a broker provider preset the row
 		// doesn't yet carry: patch it onto the (still-pending) row so the preset
@@ -132,9 +146,12 @@ export async function createOrFetchConnector(
 				 RETURNING ${CONNECTOR_COLS}`,
 				[JSON.stringify(presetProvider), existingRow.id],
 			);
-			return { row: patched.rows[0] ?? existingRow, alreadyExisted: true };
+			return {
+				row: await narrowRequestedAccess(db, patched.rows[0] ?? existingRow, input),
+				alreadyExisted: true,
+			};
 		}
-		return { row: existingRow, alreadyExisted: true };
+		return { row: await narrowRequestedAccess(db, existingRow, input), alreadyExisted: true };
 	}
 
 	// An explicit `Api` kind builds the row from the validated api config
@@ -161,11 +178,11 @@ export async function createOrFetchConnector(
 	const inserted = await db.query<ConnectorRow>(
 		`INSERT INTO mcp_connections (
 		    name, display_name, kind, config,
-		    install_status, skill_id, created_by_task_id, project_id
+		    install_status, skill_id, created_by_task_id, project_id, requested_access
 		 )
 		 VALUES (
 		    $1, $2, $3::mcp_connection_kind, $4::jsonb,
-		    'pending'::mcp_install_status, $5, $6, $7
+		    'pending'::mcp_install_status, $5, $6, $7, $8::connector_access
 		 )
 		 RETURNING ${CONNECTOR_COLS}`,
 		[
@@ -176,13 +193,43 @@ export async function createOrFetchConnector(
 			input.skillId ?? null,
 			input.createdByTaskId ?? null,
 			projectId,
+			input.requestedAccess ?? null,
 		],
 	);
 	log.info('connector created', {
 		connectorId: inserted.rows[0]!.id,
 		name: input.name,
+		requestedAccess: input.requestedAccess ?? null,
 	});
 	return { row: inserted.rows[0]!, alreadyExisted: false };
+}
+
+/**
+ * Record a read-only request onto a connector row that already exists.
+ *
+ * Narrowing only, and only while nothing has been decided yet. `write` is not an
+ * escalation — it never clears a stored `read` request and never touches an
+ * allowlist — so re-registering a connector can tighten access but never widen
+ * it. The guard is the same one discovery applies: once a read request has been
+ * applied (`access_applied_at`) or an operator has set an allowlist
+ * (`enabled_methods`), the decision is theirs and a re-register does not disturb
+ * it.
+ */
+async function narrowRequestedAccess(
+	db: Db,
+	row: ConnectorRow,
+	input: CreateConnectorInput,
+): Promise<ConnectorRow> {
+	if (input.requestedAccess !== ConnectorAccess.Read) return row;
+	if (row.requested_access === ConnectorAccess.Read) return row;
+	const updated = await db.query<ConnectorRow>(
+		`UPDATE mcp_connections
+		 SET requested_access = 'read'::connector_access, updated_at = now()
+		 WHERE id = $1 AND access_applied_at IS NULL AND enabled_methods IS NULL
+		 RETURNING ${CONNECTOR_COLS}`,
+		[row.id],
+	);
+	return updated.rows[0] ?? row;
 }
 
 export async function markActive(

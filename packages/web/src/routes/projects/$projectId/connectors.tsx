@@ -1,13 +1,12 @@
-import { getConnectorCapability } from '@hezo/shared';
+import { getConnectorCapability, isReadOnlyRestricted } from '@hezo/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { createFileRoute, Link } from '@tanstack/react-router';
-import { Check, ExternalLink, Github, KeyRound, Plug, Plus, Trash2, X } from 'lucide-react';
+import { Check, ExternalLink, Github, Plug, Plus, Trash2, X } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
-import { apiKeyGuideFor, ConnectorApiKeyForm } from '../../../components/connector-api-key-form';
 import { ConnectorDeviceFlowDialog } from '../../../components/connector-device-flow-dialog';
 import { ConnectorOAuthBrokerForm } from '../../../components/connector-oauth-broker-form';
+import { ConnectorSettingsSection } from '../../../components/connector-settings-section';
 import { InfiniteScrollSentinel } from '../../../components/infinite-scroll-sentinel';
-import { RelatedItemsList } from '../../../components/related-items-list';
 import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
 import { ConfirmDialog } from '../../../components/ui/confirm-dialog';
@@ -515,15 +514,13 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 	const [deviceOpen, setDeviceOpen] = useState(false);
 	const [brokerOpen, setBrokerOpen] = useState(false);
 	// A static-key `api` connector (query-placement credential) leads with the
-	// API-key form — expand it by default so the paste field is the primary action.
-	const [showApiKey, setShowApiKey] = useState(
-		() =>
-			connector.kind === 'api' &&
-			(connector.config as { auth?: { placement?: unknown } } | null)?.auth?.placement === 'query',
-	);
+	// API-key form — the Settings section opens it by default so the paste field
+	// is the primary action.
+	const leadsWithApiKey =
+		connector.kind === 'api' &&
+		(connector.config as { auth?: { placement?: unknown } } | null)?.auth?.placement === 'query';
 	const [confirmOpen, setConfirmOpen] = useState(false);
 	const [removeConfirmOpen, setRemoveConfirmOpen] = useState(false);
-	const credentials = connector.credentials ?? [];
 	// The credentials page is superuser-only, so link there only for a superuser;
 	// members see the credential name as plain text.
 	const isSuperuser = !!me?.is_superuser;
@@ -554,8 +551,14 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 	// header), so a query-placement `api` connector is unambiguously a static-key
 	// REST API — lead with the API-key form and hide the OAuth broker for it.
 	const isStaticKeyApi = isApi && cfg.auth?.placement === 'query';
-	const apiKeyGuide = apiKeyGuideFor(connector.config);
 	const displayUrl = url ?? baseUrl;
+	// Badge the card only when every write method the server advertises is off —
+	// a server with no write methods was never narrowed, so calling it read-only
+	// would overstate what the operator actually did.
+	const readOnly = isReadOnlyRestricted(
+		connector.discovered_methods ?? [],
+		connector.enabled_methods ?? null,
+	);
 
 	const openConnect = () => {
 		setError(null);
@@ -630,6 +633,11 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 							{connector.display_name ?? connector.name}
 						</h2>
 						<StatusBadge status={status} />
+						{readOnly && (
+							<Badge className="bg-info-soft text-info-soft-fg" testId="connector-read-only-badge">
+								Read-only
+							</Badge>
+						)}
 						{isGlobal && (
 							<Badge
 								className="bg-neutral-soft text-neutral-soft-fg"
@@ -720,15 +728,6 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 							<Button
 								size="sm"
 								variant="outline"
-								onClick={() => setShowApiKey((v) => !v)}
-								data-testid="connector-api-key-toggle"
-							>
-								<KeyRound className="size-3.5 mr-1" />
-								API key
-							</Button>
-							<Button
-								size="sm"
-								variant="outline"
 								onClick={() => setRemoveConfirmOpen(true)}
 								disabled={del.isPending}
 								data-testid="connector-remove"
@@ -740,18 +739,6 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 					)}
 				</div>
 			</div>
-
-			{!isGlobal && status !== 'active' && showApiKey && (
-				<div className="mt-3 pt-3 border-t border-border">
-					<ConnectorApiKeyForm
-						projectId={projectId}
-						connectorId={connector.id}
-						guide={apiKeyGuide}
-						onSuccess={() => setShowApiKey(false)}
-						onCancel={() => setShowApiKey(false)}
-					/>
-				</div>
-			)}
 
 			{/* Inline OAuth device-flow completion for an OAuth-backed `api` connector —
 			    the same broker form the task comment shows, with the agent-preset
@@ -776,20 +763,14 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 				</div>
 			)}
 
-			{credentials.length > 0 && (
-				<div className="mt-3">
-					<RelatedItemsList
-						label="Credentials"
-						testId={`connector-credentials-${connector.id}`}
-						items={credentials.map((cred) => ({
-							key: cred.id,
-							label: cred.name,
-							href: isSuperuser ? `/settings/credentials?focus=${cred.id}#${cred.id}` : undefined,
-							testId: `connector-credential-link-${cred.id}`,
-						}))}
-					/>
-				</div>
-			)}
+			<ConnectorSettingsSection
+				connector={connector}
+				projectId={projectId}
+				status={status}
+				isGlobal={isGlobal}
+				isSuperuser={isSuperuser}
+				initialApiKeyOpen={leadsWithApiKey}
+			/>
 
 			{connector.created_by_task_identifier && (
 				<div className="mt-3 pt-3 border-t border-border text-xs text-text-2">

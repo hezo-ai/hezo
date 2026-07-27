@@ -55,9 +55,17 @@ export const claudeCodeAdapter: RuntimeMcpAdapter = {
 			mcpServers[d.name] = d.kind === 'http' ? buildHttpEntry(d) : buildStdioEntry(d);
 		}
 
+		// Claude Code's per-server `mcpServers` entry has no tool filter, so a
+		// connector's method allowlist is expressed in the settings file as denials
+		// of the withheld tools, addressed by their fully-qualified names.
+		const deniedTools: string[] = [];
+		for (const d of descriptors) {
+			for (const tool of d.disabledTools ?? []) deniedTools.push(`mcp__${d.name}__${tool}`);
+		}
+
 		const settingsHostPath = join(ctx.hostHomeDir, 'settings.json');
 		const settingsContainerPath = join(ctx.containerHomeDir, 'settings.json');
-		const settingsContents = `${JSON.stringify(buildClaudeCodeSettings(ctx.provider ?? AiProvider.Anthropic, ctx.runModel), null, 2)}\n`;
+		const settingsContents = `${JSON.stringify(buildClaudeCodeSettings(ctx.provider ?? AiProvider.Anthropic, ctx.runModel, deniedTools), null, 2)}\n`;
 
 		const cliArgs: string[] = ['--settings', settingsContainerPath];
 		if (descriptors.length > 0) {

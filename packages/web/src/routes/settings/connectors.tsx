@@ -1,7 +1,9 @@
+import { summarizeMethodAccess } from '@hezo/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
 import { ChevronDown, Plus, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ConnectorMethodsDialog } from '../../components/connector-methods-dialog';
 import { InfiniteScrollSentinel } from '../../components/infinite-scroll-sentinel';
 import { RelatedItemsList } from '../../components/related-items-list';
 import { Badge } from '../../components/ui/badge';
@@ -14,7 +16,12 @@ import {
 	SearchableSelect,
 	type SearchableSelectOption,
 } from '../../components/ui/searchable-select';
-import { type Connector, connectorStatus } from '../../hooks/use-connectors';
+import {
+	type Connector,
+	connectorStatus,
+	useConnectorMethods,
+	useRefreshConnectorMethods,
+} from '../../hooks/use-connectors';
 import {
 	INSTANCE_CONNECTORS_KEY,
 	useCreateInstanceConnector,
@@ -394,6 +401,9 @@ function InstanceConnectorRow({
 					}))}
 				/>
 			)}
+			{connector.kind === 'saas' && status === 'active' && (
+				<AdminMethodAccess connector={connector} />
+			)}
 			{connector.auth_error && status === 'failed' && (
 				<p className="text-xs text-danger mt-1">{connector.auth_error}</p>
 			)}
@@ -416,6 +426,79 @@ function InstanceConnectorRow({
 					await deleteConnector.mutateAsync(connector.id);
 				}}
 			/>
+		</div>
+	);
+}
+
+/**
+ * Method access for a connector on the global page.
+ *
+ * This is the **only** place an "All projects" connector's allowlist can be
+ * edited — such a connector is read-only from every project page, since it is
+ * shared by all of them. The project page nests the same control inside its
+ * card's Settings disclosure; this page's rows are flat, so it renders as one
+ * line rather than behind another layer of expansion.
+ */
+function AdminMethodAccess({ connector }: { connector: Connector }) {
+	const [open, setOpen] = useState(false);
+	const methodsQuery = useConnectorMethods(null, connector.id);
+	const refresh = useRefreshConnectorMethods(null);
+	const [error, setError] = useState<string | null>(null);
+
+	const summary = summarizeMethodAccess(
+		methodsQuery.data?.methods ?? connector.discovered_methods ?? [],
+		methodsQuery.data?.enabled_methods ?? connector.enabled_methods ?? null,
+	);
+
+	return (
+		<div
+			className="flex flex-wrap items-center gap-2 mt-1.5"
+			data-testid={`connector-methods-row-${connector.id}`}
+		>
+			<span className="text-[11.5px] text-text-3">Methods</span>
+			<Badge color={summary.mode === 'all' ? 'neutral' : 'info'}>
+				{summary.mode === 'all'
+					? summary.total > 0
+						? `All ${summary.total}`
+						: 'All'
+					: `${summary.enabled} of ${summary.total}`}
+			</Badge>
+			{summary.total > 0 && (
+				<Button
+					size="sm"
+					variant="outline"
+					onClick={() => setOpen(true)}
+					data-testid="connector-methods-edit"
+				>
+					Edit
+				</Button>
+			)}
+			<Button
+				size="sm"
+				variant="outline"
+				disabled={refresh.isPending}
+				data-testid="connector-methods-refresh"
+				onClick={() => {
+					setError(null);
+					refresh.mutate(connector.id, {
+						onError: (e: unknown) =>
+							setError(errMessage(e, "Could not list this server's methods")),
+					});
+				}}
+			>
+				{refresh.isPending ? 'Listing…' : summary.total > 0 ? 'Refresh' : 'List methods'}
+			</Button>
+			{error && <span className="text-xs text-danger basis-full">{error}</span>}
+			{open && methodsQuery.data && (
+				<ConnectorMethodsDialog
+					open={open}
+					onOpenChange={setOpen}
+					scope={null}
+					connectorId={connector.id}
+					connectorLabel={connector.display_name ?? connector.name}
+					data={methodsQuery.data}
+				/>
+			)}
 		</div>
 	);
 }
