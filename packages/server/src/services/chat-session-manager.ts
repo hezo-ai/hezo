@@ -393,6 +393,15 @@ export class ChatSessionManager {
 		externalThreadId?: string | null;
 		authorUserId?: string | null;
 		attachmentIds?: string[];
+		/**
+		 * Ordered batch of user messages to post as this turn's input. Each becomes
+		 * its own message row (own bubble, own timestamp, own attachments) and then
+		 * ONE reply answers all of them — what the web chatbox's message queue
+		 * flushes when a reply finishes. Sending them as N separate turns instead
+		 * would produce N replies, the first of which answers stale context.
+		 * Supersedes `text`/`attachmentIds` when non-empty.
+		 */
+		messages?: Array<{ text: string; attachmentIds?: string[] }>;
 		/** Conversation mode when creating (default assistant). Existing rows keep their kind. */
 		kind?: ChatConversationKind;
 		/** External sender display label for multi-party (coworker) transcripts. */
@@ -405,7 +414,12 @@ export class ChatSessionManager {
 		injectedContext?: string;
 		/** Title when creating the conversation (coworker threads are titled at birth). */
 		title?: string;
-	}): Promise<{ userMessageId: string; assistantMessageId: string; conversationId: string }> {
+	}): Promise<{
+		userMessageId: string;
+		userMessageIds: string[];
+		assistantMessageId: string;
+		conversationId: string;
+	}> {
 		const ctx = await this.resolveConversationForInput(input);
 		const convo = this.getConvoRuntime(ctx.conversationId);
 		// Serialize turns *within this conversation*: chain on the prior send so two
@@ -425,11 +439,17 @@ export class ChatSessionManager {
 			text: string;
 			authorUserId?: string | null;
 			attachmentIds?: string[];
+			messages?: Array<{ text: string; attachmentIds?: string[] }>;
 			authorLabel?: string | null;
 			injectedContext?: string;
 		},
 		ctx: ConversationContext,
-	): Promise<{ userMessageId: string; assistantMessageId: string; conversationId: string }> {
+	): Promise<{
+		userMessageId: string;
+		userMessageIds: string[];
+		assistantMessageId: string;
+		conversationId: string;
+	}> {
 		const session = await this.ensureSession();
 		const { conversationId, channel } = ctx;
 		const isCoworker = ctx.kind === ChatConversationKind.Coworker;
@@ -461,46 +481,57 @@ export class ChatSessionManager {
 			await convo.current.promise.catch(() => undefined);
 		}
 
-		const userMessageId = await this.insertMessage({
-			conversationId,
-			role: ChatMessageRole.User,
-			channel,
-			status: ChatMessageStatus.Complete,
-			content: input.text,
-			authorUserId: input.authorUserId ?? null,
-			authorLabel: input.authorLabel ?? null,
-			completed: true,
-		});
-		// Link any uploaded files to the user message, then resolve their metadata so
-		// the sent bubble streams in with its attachment chips already attached.
-		const attachmentIds = input.attachmentIds ?? [];
-		let userAttachments: CommentAttachment[] = [];
-		if (attachmentIds.length > 0) {
-			await this.deps.db.query(
-				`INSERT INTO chat_message_attachments (chat_message_id, asset_id)
-				 SELECT $1::uuid, asset FROM UNNEST($2::uuid[]) AS asset`,
-				[userMessageId, attachmentIds],
+		// One turn can carry several user messages (a flushed chatbox queue). Each is
+		// its own row and its own bubble; a single reply below answers all of them.
+		const batch =
+			input.messages && input.messages.length > 0
+				? input.messages
+				: [{ text: input.text, attachmentIds: input.attachmentIds }];
+		const userMessageIds: string[] = [];
+		for (const message of batch) {
+			const userMessageId = await this.insertMessage({
+				conversationId,
+				role: ChatMessageRole.User,
+				channel,
+				status: ChatMessageStatus.Complete,
+				content: message.text,
+				authorUserId: input.authorUserId ?? null,
+				authorLabel: input.authorLabel ?? null,
+				completed: true,
+			});
+			userMessageIds.push(userMessageId);
+			// Link any uploaded files to the user message, then resolve their metadata so
+			// the sent bubble streams in with its attachment chips already attached.
+			const attachmentIds = message.attachmentIds ?? [];
+			let userAttachments: CommentAttachment[] = [];
+			if (attachmentIds.length > 0) {
+				await this.deps.db.query(
+					`INSERT INTO chat_message_attachments (chat_message_id, asset_id)
+					 SELECT $1::uuid, asset FROM UNNEST($2::uuid[]) AS asset`,
+					[userMessageId, attachmentIds],
+				);
+				userAttachments =
+					(
+						await loadChatMessageAttachments(
+							this.deps.db,
+							[userMessageId],
+							this.deps.masterKeyManager,
+						)
+					).get(userMessageId) ?? [];
+			}
+			// Every thread is visible in the web view (coworker threads read-only), so
+			// every turn broadcasts — the web renders the stored conversation live.
+			this.broadcastStart(
+				conversationId,
+				userMessageId,
+				ChatMessageRole.User,
+				channel,
+				message.text,
+				userAttachments,
 			);
-			userAttachments =
-				(
-					await loadChatMessageAttachments(
-						this.deps.db,
-						[userMessageId],
-						this.deps.masterKeyManager,
-					)
-				).get(userMessageId) ?? [];
 		}
+		const userMessageId = userMessageIds[userMessageIds.length - 1];
 		await this.touchConversation(conversationId);
-		// Every thread is visible in the web view (coworker threads read-only), so
-		// every turn broadcasts — the web renders the stored conversation live.
-		this.broadcastStart(
-			conversationId,
-			userMessageId,
-			ChatMessageRole.User,
-			channel,
-			input.text,
-			userAttachments,
-		);
 
 		const assistantMessageId = await this.insertMessage({
 			conversationId,
@@ -530,7 +561,7 @@ export class ChatSessionManager {
 			trackBackground(promise.then(() => this.maybeCompact(ctx)));
 		}
 
-		return { userMessageId, assistantMessageId, conversationId };
+		return { userMessageId, userMessageIds, assistantMessageId, conversationId };
 	}
 
 	/** Tear the live session down; the next turn re-allocates a fresh one. */

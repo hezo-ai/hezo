@@ -666,6 +666,23 @@ turn survives a process restart, so `reconcileOnStartup` clears orphaned non-ter
 `chat_messages` (deletes empty `streaming`/`pending` placeholders, marks partial ones
 `interrupted`) — an abandoned turn never lingers as a stuck "thinking" bubble.
 
+**Chatbox message queue (client-side) + the batched turn it flushes.** The composer stays usable
+while a reply streams. Enter (or a tap of the send button) **queues** into a per-thread list held
+in `useChat` — client state only, never a `chat_messages` row, so a reload drops it; that is the
+deliberate trade against a `queued` status + migration. A queued message renders as a dashed
+bubble at the tail of the thread and can be removed until dispatch. When the thread goes idle
+(reply complete, failed, *or* interrupted, so nothing is stranded by a bad turn) the whole queue
+flushes as **one** `POST /api/chat/messages` carrying an ordered `messages: [{text,
+attachment_ids}]` batch. `sendTurn`'s `messages` param inserts each as its own complete user row
+(own bubble, own attachments, all broadcast) and then runs a **single** assistant turn, whose
+prompt therefore sees every queued message — N separate turns would yield N replies, the first
+answering stale context. The route (`parseMessageBatch`) accepts the single-message shape too, so
+external channel ingest is unchanged; `MAX_BATCH_MESSAGES` caps a batch at 20. **Interrupting is
+the deliberate path**: holding the send button past `LONG_PRESS_MS` (`use-long-press.ts`), or
+⌘/Ctrl+Enter, posts immediately, and the existing interrupt above does the rest server-side. It is
+only offered while a reply is actually running (`streaming && !sending`) — during the pre-flight
+window there is no turn to abort, so the control queues and says so.
+
 **Automatic, agent-driven chat memory.** Each turn's prompt carries the agent's **long-term
 memory** (`chat_memories`, one markdown row per member, no revision history) plus the full
 **active window** — the non-compacted `chat_messages`, which *is* the short-term memory. The
