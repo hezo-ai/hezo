@@ -402,7 +402,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	read_project_doc: {
 		category: 'Project docs & assets',
 		returns:
-			"`{ filename, content }` (the full markdown body), plus `description` when the doc has a one-line summary set, plus `review_comments: [{ id, quote, occurrence, comment, created_at }]` when the admin has left pending review feedback on the doc (each comment anchors to an exact `quote` snippet; `occurrence` disambiguates repeats). Any write to the doc deletes all of its review comments, so capture them before writing. Returns `{ error }` if the file is not found or its archive state doesn't match `filter` (default `'active'`, so archived docs need `filter: 'archived'` or `'all'`; an archived read carries `archived: true`).",
+			"`{ filename, content, offset, returned_bytes, total_bytes, next_offset, truncated }`. `content` is a UTF-8 byte window of the markdown body starting at `offset` (default 0). A doc that fits in one read comes back whole (`offset: 0`, `next_offset: null`, `truncated: false`, `returned_bytes === total_bytes`). A larger doc is paged: `truncated` is true, `next_offset` is the byte offset to pass back as `offset` on the next call, and a `paging_hint` string spells out the loop - keep calling until `next_offset` is null, concatenating each `content`. The optional `max_bytes` param shrinks a window. `description` is included when the doc has a one-line summary set. `review_comments: [{ id, quote, occurrence, comment, created_at }]` is included when the admin has left pending review feedback (each anchors to an exact `quote` snippet; `occurrence` disambiguates repeats); any write to the doc deletes all of its review comments, so capture them before writing. Returns `{ error }` if the file is not found or its archive state doesn't match `filter` (default `'active'`, so archived docs need `filter: 'archived'` or `'all'`; an archived read carries `archived: true`).",
 	},
 	write_project_doc: {
 		category: 'Project docs & assets',
@@ -604,6 +604,9 @@ export function generateMcpReference(
 		'  full-resource inspection tools, e.g. `get_agent_system_prompts`); over the',
 		'  cap you get `{ "error": "result_too_large", … }`. Narrow it with filters, a',
 		'  single-resource `get_*`, `before` pagination, or `excerpt_chars`.',
+		'  `read_project_doc` never returns that error for a big doc: it returns a UTF-8',
+		'  byte window with a `next_offset` cursor so you can page the rest (see its',
+		'  entry below).',
 		'- **Excerpts (`excerpt_chars`):** list tools accept `excerpt_chars` to truncate long',
 		'  text fields, adding `_truncated`/`_length` companions.',
 		'- **Pagination (`before`):** `list_comments` walks older items by passing the oldest',
