@@ -1508,7 +1508,7 @@ export async function runAgent(
 									const fixes = strandedAsks.map((s) => `@${s}`).join(', ');
 									emit(
 										'stdout',
-										`\n[runner] WARNING: this run's final message addresses ${named} by bold/bare name — that renders as text and wakes no one, so the handoff was NOT delivered. Post a comment with an active mention (${fixes}) to reach them.\n`,
+										`\n[runner] WARNING: this run's final message addresses ${named} by name only, with no active @-mention — a bare or bold name, or a sign-off gate like "awaiting <name> sign-off", renders as text and wakes no one, so the handoff was NOT delivered. Post a comment with an active mention (${fixes}) to reach them.\n`,
 									);
 								}
 							} else if (directQuestionWake && !posted.rows.some((c) => c.task_id === task.id)) {

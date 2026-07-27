@@ -422,6 +422,109 @@ describe('runAgent handoff-delivery guardrail', () => {
 		expect(run.rows[0].log_text).toContain(`@${otherSlug}`);
 	});
 
+	it('warns about a stranded "awaiting <slug> sign-off" recap but does not deliver or wake', async () => {
+		const other = await db.query<{ id: string; slug: string }>(
+			`SELECT ma.id, ma.slug FROM member_agents ma
+			 JOIN members m ON m.id = ma.id
+			 WHERE m.team_id = $1 AND ma.id <> $2 LIMIT 1`,
+			[teamId, agentId],
+		);
+		const { id: otherId, slug: otherSlug } = other.rows[0];
+		await db.query(`DELETE FROM agent_wakeup_requests WHERE member_id = $1`, [otherId]);
+
+		// The exact screenshot incident: a completion report that correctly leaves the
+		// ticket in `review` but hands off via a stative "awaiting <slug> sign-off"
+		// recap — the name is mid-sentence, bound to the sign-off gate, no `@`, so it
+		// wakes no one as-is. detectUnlinkedTeammateAsks now catches this bound form.
+		const deps = makeDeps(
+			createMockDocker({
+				producesOutput: true,
+				execStart: streamResult(
+					`Review complete. Draft passes all checks. The ticket stays in review awaiting ${otherSlug} sign-off.`,
+				),
+			}),
+		);
+
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+		expect(result.success).toBe(true);
+
+		// Not delivered, not rewritten (the "agent posts it itself" posture): no
+		// comment posted, no teammate force-woken.
+		const comments = await textComments(result.heartbeatRunId);
+		expect(comments.rows.length).toBe(0);
+		const wakeups = await db.query(
+			`SELECT 1 FROM agent_wakeup_requests WHERE member_id = $1 AND source = 'mention'`,
+			[otherId],
+		);
+		expect(wakeups.rows.length).toBe(0);
+
+		// Surfaced as a run-log warning naming the teammate and the active-mention fix.
+		const run = await db.query<{ log_text: string }>(
+			`SELECT ${runLogTextSql('heartbeat_runs.id')} AS log_text FROM heartbeat_runs WHERE id = $1`,
+			[result.heartbeatRunId],
+		);
+		expect(run.rows[0].log_text).toContain('wakes no one');
+		expect(run.rows[0].log_text).toContain(`@${otherSlug}`);
+	});
+
+	it('does not warn about the sign-off recap when the run already posted the @-mention ask this turn', async () => {
+		const other = await db.query<{ id: string; slug: string }>(
+			`SELECT ma.id, ma.slug FROM member_agents ma
+			 JOIN members m ON m.id = ma.id
+			 WHERE m.team_id = $1 AND ma.id <> $2 LIMIT 1`,
+			[teamId, agentId],
+		);
+		const { slug: otherSlug } = other.rows[0];
+
+		const deps = makeDeps(
+			createMockDocker({
+				producesOutput: true,
+				execStart: async (
+					_execId: string,
+					opts: { onChunk?: (c: { stream: string; text: string }) => Promise<void> },
+				) => {
+					// The agent DID post the active sign-off ask this run, then echoed the
+					// stative recap in its final message — the delivered set must suppress it.
+					const runRow = await db.query<{ id: string }>(
+						`SELECT id FROM heartbeat_runs WHERE task_id = $1 AND status = 'running'`,
+						[taskId],
+					);
+					await db.query(
+						`INSERT INTO task_comments (task_id, author_member_id, content_type, content, created_by_run_id)
+						 VALUES ($1, $2, 'text', $3::jsonb, $4)`,
+						[
+							taskId,
+							agentId,
+							JSON.stringify({ text: `@${otherSlug} — please sign off so I can close this.` }),
+							runRow.rows[0].id,
+						],
+					);
+					const event = JSON.stringify({
+						type: 'result',
+						is_error: false,
+						result: `Review complete. The ticket stays in review awaiting ${otherSlug} sign-off.`,
+						usage: {},
+					});
+					await opts.onChunk?.({ stream: 'stdout', text: `${event}\n` });
+					return { stdout: '', stderr: '' };
+				},
+			}),
+		);
+
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+
+		// Exactly one comment — the agent's own active ask; the guardrail added none.
+		const comments = await textComments(result.heartbeatRunId);
+		expect(comments.rows.length).toBe(1);
+
+		// And no stranded-handoff warning, because the ask was already delivered.
+		const run = await db.query<{ log_text: string }>(
+			`SELECT ${runLogTextSql('heartbeat_runs.id')} AS log_text FROM heartbeat_runs WHERE id = $1`,
+			[result.heartbeatRunId],
+		);
+		expect(run.rows[0].log_text).not.toContain('wakes no one');
+	});
+
 	it("delivers a stranded direct answer to a human's reply as a threaded reply comment", async () => {
 		// The screenshot case: admin replies asking for the link; the agent computes
 		// it but leaves it only in its final message. It must land in the thread.
