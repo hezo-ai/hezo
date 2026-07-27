@@ -10,7 +10,7 @@ import {
 	wsRoom,
 } from '@hezo/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSocket } from '../contexts/socket-context';
 import { api } from '../lib/api';
 import { queryKeys } from '../lib/query-keys';
@@ -34,6 +34,32 @@ interface ConversationData {
 	/** How many older messages have been compacted into long-term memory. */
 	compacted_count: number;
 }
+
+/**
+ * A message parked while the CEO is mid-reply. It has not reached the server, so
+ * it can still be pulled back out; the whole queue flushes as one turn the moment
+ * the reply settles.
+ */
+export interface QueuedChatMessage {
+	id: string;
+	text: string;
+	attachments: CommentAttachment[];
+}
+
+/** One message on its way to the server (a send in flight). */
+interface OutboundChatMessage {
+	text: string;
+	attachments: CommentAttachment[];
+}
+
+/** Queue bucket for the default web thread, which has no caller-supplied id. */
+const DEFAULT_THREAD_QUEUE_KEY = '__default__';
+
+/** Stable identity for "no queue" so it never re-triggers effects. */
+const EMPTY_QUEUE: readonly QueuedChatMessage[] = Object.freeze([]);
+
+let queuedMessageSeq = 0;
+const nextQueuedMessageId = () => `queued-${++queuedMessageSeq}`;
 
 /**
  * Unread badge state for the minimized launcher. The CEO conversation has no
@@ -164,15 +190,22 @@ export function useChat(active: boolean, conversationId?: string) {
 	// thread resolves to a concrete id in the query response). Used to filter WS
 	// events so another thread's stream never lands in this cache entry.
 	const resolvedIdRef = useRef<string | null>(conversationId ?? null);
-	// In-flight send: the user's text is shown optimistically (with a pending
+	// In-flight send: the user's messages are shown optimistically (with a pending
 	// assistant placeholder) while the server warms the session / egress check, so
 	// the operator gets immediate feedback instead of a ~10s blank. Cleared when the
 	// real user message arrives over WS, or when the send settles (incl. failure).
+	// It's a list because a flushed queue sends several messages as one turn.
 	const [pending, setPending] = useState<{
-		text: string;
 		at: string;
-		attachments: CommentAttachment[];
+		messages: OutboundChatMessage[];
 	} | null>(null);
+	// Messages parked while a reply streams, bucketed per thread so switching
+	// threads (or closing the panel) never drops or misdelivers a queued message.
+	// Client-side only: a reload loses the queue, which is the accepted cost of not
+	// making a parked message a `chat_messages` row + migration.
+	const [queues, setQueues] = useState<Record<string, QueuedChatMessage[]>>({});
+	const queueKey = conversationId ?? DEFAULT_THREAD_QUEUE_KEY;
+	const queue = queues[queueKey] ?? EMPTY_QUEUE;
 	// The socket handler is wired once; this ref lets it read the live open state
 	// (whether the chat is currently visible) without re-subscribing every toggle.
 	const activeRef = useRef(active);
@@ -287,10 +320,14 @@ export function useChat(active: boolean, conversationId?: string) {
 	}, [subscribe, queryClient, conversationId]);
 
 	const sendMutation = useMutation({
-		mutationFn: ({ text, attachmentIds }: { text: string; attachmentIds: string[] }) =>
+		// Always the batch shape: one turn carries N user messages, so a flushed
+		// queue posts each as its own bubble and a single reply answers all of them.
+		mutationFn: (batch: OutboundChatMessage[]) =>
 			api.post('/api/chat/messages', {
-				text,
-				attachment_ids: attachmentIds,
+				messages: batch.map((m) => ({
+					text: m.text,
+					attachment_ids: m.attachments.map((a) => a.id),
+				})),
 				...(conversationId ? { conversation_id: conversationId } : {}),
 			}),
 		onError: (error: { message?: string }) => {
@@ -303,22 +340,22 @@ export function useChat(active: boolean, conversationId?: string) {
 	});
 
 	const serverMessages = query.data?.messages ?? [];
-	// Append the optimistic user bubble + a pending assistant "thinking" placeholder
+	// Append the optimistic user bubbles + a pending assistant "thinking" placeholder
 	// while a send is in flight (an assistant row with empty streaming content renders
 	// the existing typing indicator). They're dropped the moment the real rows arrive.
 	const messages: ChatMessage[] =
 		pending !== null
 			? [
 					...serverMessages,
-					{
-						id: 'optimistic-user',
+					...pending.messages.map((m, i) => ({
+						id: `optimistic-user-${i}`,
 						role: 'user' as ChatMessageRole,
 						channel: 'web' as ChatChannel,
 						status: 'complete' as ChatMessageStatus,
-						content: pending.text,
+						content: m.text,
 						created_at: pending.at,
-						attachments: pending.attachments,
-					},
+						attachments: m.attachments,
+					})),
 					{
 						id: 'optimistic-assistant',
 						role: 'assistant' as ChatMessageRole,
@@ -330,21 +367,80 @@ export function useChat(active: boolean, conversationId?: string) {
 				]
 			: serverMessages;
 	const streaming = messages.some((m) => m.role === 'assistant' && m.status === 'streaming');
+	const sending = pending !== null;
 
+	// Stable across renders so the flush effect below can depend on it honestly
+	// rather than suppressing the dependency.
+	const { mutateAsync } = sendMutation;
+	const sendBatch = useCallback(
+		(batch: OutboundChatMessage[]) => {
+			if (batch.length === 0) return Promise.resolve();
+			setPending({ at: new Date().toISOString(), messages: batch });
+			return mutateAsync(batch);
+		},
+		[mutateAsync],
+	);
+
+	/**
+	 * Post immediately. While a reply is streaming the server aborts it (keeping the
+	 * partial as `interrupted`) and starts a fresh turn — that's the interrupt.
+	 */
 	const send = (text: string, attachments: CommentAttachment[] = []) => {
 		const trimmed = text.trim();
 		if (!trimmed && attachments.length === 0) return Promise.resolve();
-		setPending({ text: trimmed, at: new Date().toISOString(), attachments });
-		return sendMutation.mutateAsync({ text: trimmed, attachmentIds: attachments.map((a) => a.id) });
+		return sendBatch([{ text: trimmed, attachments }]);
 	};
+
+	/** Park a message for the next turn. Nothing has reached the server yet. */
+	const enqueue = (text: string, attachments: CommentAttachment[] = []) => {
+		const trimmed = text.trim();
+		if (!trimmed && attachments.length === 0) return;
+		setQueues((prev) => ({
+			...prev,
+			[queueKey]: [
+				...(prev[queueKey] ?? []),
+				{ id: nextQueuedMessageId(), text: trimmed, attachments },
+			],
+		}));
+	};
+
+	/** Pull a message back out. Only possible before the queue has been dispatched. */
+	const dequeue = (id: string) => {
+		setQueues((prev) => ({
+			...prev,
+			[queueKey]: (prev[queueKey] ?? []).filter((m) => m.id !== id),
+		}));
+	};
+
+	// Flush the queue as one turn the moment the thread goes idle — after a reply
+	// completes, fails, or is interrupted, so a parked message is never lost to a
+	// turn that went wrong. The ref guards the window between clearing the queue and
+	// `pending` landing, where this effect would otherwise re-enter and double-post.
+	const flushingRef = useRef(false);
+	useEffect(() => {
+		if (streaming || sending || queue.length === 0 || flushingRef.current) return;
+		flushingRef.current = true;
+		setQueues((prev) => ({ ...prev, [queueKey]: [] }));
+		// A rejected flush is already surfaced by the mutation's `onError` toast;
+		// swallow it here so it doesn't surface again as an unhandled rejection.
+		sendBatch(queue.map((m) => ({ text: m.text, attachments: m.attachments })))
+			.catch(() => undefined)
+			.finally(() => {
+				flushingRef.current = false;
+			});
+	}, [streaming, sending, queue, queueKey, sendBatch]);
 
 	return {
 		messages,
 		send,
 		streaming,
-		sending: pending !== null,
+		sending,
 		loaded: !query.isPending,
 		unread,
+		// Messages parked for the next turn, plus the two ways to change that queue.
+		queue,
+		enqueue,
+		dequeue,
 		// The server-resolved id of the active thread (the default web thread when
 		// no id was passed) — drives the switcher's selected value.
 		conversationId: query.data?.conversation_id,
