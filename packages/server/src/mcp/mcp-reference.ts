@@ -85,19 +85,19 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	create_project: {
 		category: 'Projects',
 		returns:
-			'The new project row plus `team_slug`, `planning_task_id`, `planning_task_identifier`, and the initial coherence/setup ticket (`coherence_task_id`, `coherence_task_identifier`). The coherence ticket is created unassigned and does NOT auto-run on this path — draft its description then call `start_team_setup`. Returns `{ error }` if validation fails.',
-		auth: 'CEO only — call after the admin has explicitly approved the scope and team type in intake.',
+			'The new project row plus `team_slug`, `planning_task_id`, `planning_task_identifier`, and the initial coherence/setup ticket (`coherence_task_id`, `coherence_task_identifier`). The coherence ticket is created unassigned and does NOT auto-run on this path - draft its description then call `start_team_setup`. Returns `{ error }` if validation fails.',
+		auth: 'CEO only - call after the admin has explicitly approved the scope and team type in intake.',
 	},
 	start_team_setup: {
 		category: 'Projects',
 		returns:
 			'`{ started: true, task_id, task_identifier }` after assigning the project’s open coherence/setup ticket to the CEO and waking them to run it. Returns `{ error }` if there is no open setup ticket for the project or a run is already active on it.',
-		auth: 'CEO only — for a project the CEO created via `create_project`; author the coherence ticket description first.',
+		auth: 'CEO only - for a project the CEO created via `create_project`; author the coherence ticket description first.',
 	},
 	list_team_templates: {
 		category: 'Projects',
 		returns:
-			'An array of local templates (`id`, `name`, `description`, `is_builtin`, `agent_types[]` where each entry has `slug`, `name`, `role_description`). Only the built-in Blank template and custom saved templates appear here — the default specialist rosters live in the marketplace (`get_marketplace_team`).',
+			'An array of local templates (`id`, `name`, `description`, `is_builtin`, `agent_types[]` where each entry has `slug`, `name`, `role_description`). Only the built-in Blank template and custom saved templates appear here - the default specialist rosters live in the marketplace (`get_marketplace_team`).',
 	},
 	get_marketplace_team: {
 		category: 'Projects',
@@ -108,8 +108,8 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	apply_marketplace_team: {
 		category: 'Projects',
 		returns:
-			'`{ added, refreshed, skipped, captain_updated, version }` — the roster slugs added, refreshed in place (with `refresh_existing`), and skipped. Provisions members directly (no approval flow). Returns `{ error }` if the slug is unknown.',
-		auth: 'CEO only — use only for a team the admin already chose; reconcile the merged roster afterwards.',
+			'`{ added, refreshed, skipped, captain_updated, version }` - the roster slugs added, refreshed in place (with `refresh_existing`), and skipped. Provisions members directly (no approval flow). Returns `{ error }` if the slug is unknown.',
+		auth: 'CEO only - use only for a team the admin already chose; reconcile the merged roster afterwards.',
 	},
 	update_project_progress: {
 		category: 'Projects',
@@ -132,7 +132,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	create_task: {
 		category: 'Tasks',
 		returns:
-			'The created task row (it may carry an advisory `warning` string, e.g. when the description backticks a Hezo reference such as an `assets/<path>` — flagged even before that asset exists). Returns `{ error }` on a validation failure.',
+			'The created task row (it may carry an advisory `warning` string, e.g. when the description backticks a Hezo reference such as an `assets/<path>` - flagged even before that asset exists). Returns `{ error }` on a validation failure.',
 		auth: 'An agent caller may only assign to itself or a direct subordinate; sub-task depth is capped at 2.',
 	},
 	create_tasks: {
@@ -160,12 +160,12 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_task_runs: {
 		category: 'Tasks',
 		returns:
-			"An array of up to 50 run rows for the task, newest-first: `id`, `status`, `exit_code`, `started_at`, `finished_at`, `invocation_command`, `log_length` (characters), plus `agent_title`/`agent_slug`. Metadata only — fetch a run's log with `get_run_log`.",
+			"An array of up to 50 run rows for the task, newest-first: `id`, `status`, `exit_code`, `started_at`, `finished_at`, `invocation_command`, `log_length` (characters), plus `agent_title`/`agent_slug`. Metadata only - fetch a run's log with `get_run_log`.",
 	},
 	get_run_log: {
 		category: 'Tasks',
 		returns:
-			"`{ id, status, exit_code, task_id, log, length, truncated }` for one run — `log` is the tail of the container log capped at `excerpt_chars` (default 12000); `truncated` flags dropped earlier output. Returns `{ error }` for a malformed `run_id` or a run outside the resolved project's team.",
+			"`{ id, status, exit_code, task_id, log, length, truncated }` for one run - `log` is the tail of the container log capped at `excerpt_chars` (default 12000); `truncated` flags dropped earlier output. Returns `{ error }` for a malformed `run_id` or a run outside the resolved project's team.",
 	},
 
 	// Goals
@@ -177,7 +177,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	suggest_goal: {
 		category: 'Goals',
 		returns:
-			'`{ approval_id, status: "pending", payload }`. Files a goal *suggestion* the admin must approve — no goal exists until then. On approval the real goal is created and appears on the Goals page. Surfaces as an Approve/Deny card on the `task_id` thread (when given) and on the project Goals page. Returns `{ error }` if the caller is not the Captain/CEO, the project is HQ/internal, or the inputs are invalid.',
+			'`{ approval_id, status: "pending", payload }`. Files a goal *suggestion* the admin must approve - no goal exists until then. On approval the real goal is created and appears on the Goals page. Surfaces as an Approve/Deny card on the `task_id` thread (when given) and on the project Goals page. Returns `{ error }` if the caller is not the Captain/CEO, the project is HQ/internal, or the inputs are invalid.',
 		auth: 'Captain (its own team) or CEO (any team via `project`), and only from within an agent run.',
 	},
 	update_goal_progress: {
@@ -224,7 +224,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 		category: 'Agents & hiring',
 		returns:
 			'`{ approval_id, status, payload }` for the new pending hire approval, or `{ error }` if the spec is rejected (missing title, invalid effort/budget, reserved or duplicate slug, or an unknown `task_id`).',
-		auth: 'A team Captain (for its own team) or the CEO (for any team — pass `project`, including HQ). The proposal surfaces as a pending approval for the admin.',
+		auth: 'A team Captain (for its own team) or the CEO (for any team - pass `project`, including HQ). The proposal surfaces as a pending approval for the admin.',
 	},
 	update_hire_proposal: {
 		category: 'Agents & hiring',
@@ -273,13 +273,13 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	update_agent_system_prompts: {
 		category: 'Agent prompts & context',
 		returns:
-			'Batch form — `{ results, applied_count }`, where `results` is a per-item array (`{ index, agent_id, slug, ok: true, document_id }` or `{ index, agent_id, ok: false, error }`). Each applied change stores its own revision, and a SINGLE team-coherence review is filed summarising all of them. Up to 50 updates per call; prefer this over calling update_agent_system_prompt in a loop.',
+			'Batch form - `{ results, applied_count }`, where `results` is a per-item array (`{ index, agent_id, slug, ok: true, document_id }` or `{ index, agent_id, ok: false, error }`). Each applied change stores its own revision, and a SINGLE team-coherence review is filed summarising all of them. Up to 50 updates per call; prefer this over calling update_agent_system_prompt in a loop.',
 		auth: "The CEO, the Coach, or the team's Captain.",
 	},
 	get_project_custom_prompt: {
 		category: 'Agent prompts & context',
 		returns:
-			"`{ content, length, updated_at }` — the project's Custom Prompt (the project-wide instruction block injected verbatim into every agent's system prompt in the project). `content` is empty when none is set yet.",
+			"`{ content, length, updated_at }` - the project's Custom Prompt (the project-wide instruction block injected verbatim into every agent's system prompt in the project). `content` is empty when none is set yet.",
 	},
 	update_project_custom_prompt: {
 		category: 'Agent prompts & context',
@@ -346,12 +346,12 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	propose_skill: {
 		category: 'Skills & search',
 		returns:
-			'`{ approval_id, status }` — creates a skill-proposal approval that writes the skill when approved.',
+			'`{ approval_id, status }` - creates a skill-proposal approval that writes the skill when approved.',
 	},
 	full_text_search: {
 		category: 'Skills & search',
 		returns:
-			'`{ results, count }` — full-text (keyword + stemming) matches ranked by relevance across skills, tasks, project docs, and comments. A bare task number or full identifier resolves directly to that task, ranked first.',
+			'`{ results, count }` - full-text (keyword + stemming) matches ranked by relevance across skills, tasks, project docs, and comments. A bare task number or full identifier resolves directly to that task, ranked first.',
 	},
 
 	// Credentials & connectors
@@ -397,7 +397,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_project_docs: {
 		category: 'Project docs & assets',
 		returns:
-			"`{ files: [{ id, filename, description, updated_at }] }` — the markdown project docs, where `description` is the one-line \"what this is\" summary (`''` if unset). The `filter` param defaults to `'active'` (archived docs excluded); with `'archived'` or `'all'` each entry also carries `archived: boolean`.",
+			"`{ files: [{ id, filename, description, updated_at }] }` - the markdown project docs, where `description` is the one-line \"what this is\" summary (`''` if unset). The `filter` param defaults to `'active'` (archived docs excluded); with `'archived'` or `'all'` each entry also carries `archived: boolean`.",
 	},
 	read_project_doc: {
 		category: 'Project docs & assets',
@@ -407,12 +407,12 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	write_project_doc: {
 		category: 'Project docs & assets',
 		returns:
-			"`{ written: true, id, filename }`, or `{ error }` if the filename is not `.md` or the doc is archived (unarchive first — archived docs are read-only). Make all edits in one consolidated write: a content-changing write deletes ALL pending review comments on the doc (read them first) and records a document revision, so many partial writes lose review context and bury the revision history. The optional `description` sets the doc's one-line \"what this is\" summary (shown in the Documents list and doc header; omit to leave it unchanged). The optional `changelog` is stored as that revision's changelog and shown in the document's history — put update/status notes there, not in the document body.",
+			"`{ written: true, id, filename }`, or `{ error }` if the filename is not `.md` or the doc is archived (unarchive first - archived docs are read-only). Make all edits in one consolidated write: a content-changing write deletes ALL pending review comments on the doc (read them first) and records a document revision, so many partial writes lose review context and bury the revision history. The optional `description` sets the doc's one-line \"what this is\" summary (shown in the Documents list and doc header; omit to leave it unchanged). The optional `changelog` is stored as that revision's changelog and shown in the document's history - put update/status notes there, not in the document body.",
 	},
 	archive_project_doc: {
 		category: 'Project docs & assets',
 		returns:
-			'`{ archived: true, filename, changed }` (`changed: false` when it was already archived — the call is idempotent), or `{ error }` if the file is not found. The archived doc leaves listings, search, and agent-run context but keeps its filename reserved and its revision history.',
+			'`{ archived: true, filename, changed }` (`changed: false` when it was already archived - the call is idempotent), or `{ error }` if the file is not found. The archived doc leaves listings, search, and agent-run context but keeps its filename reserved and its revision history.',
 		auth: 'Archival is the agent-facing soft delete; hard deletion of docs is admin-only in the web app.',
 	},
 	unarchive_project_doc: {
@@ -423,32 +423,32 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_project_assets: {
 		category: 'Project docs & assets',
 		returns:
-			"`{ files: [{ id, filename, content_type, created_at, width?, height? }] }` — the project asset files; raster images (PNG/JPEG/GIF/WebP) also carry pixel `width`/`height`. `filename` is the full path and may carry a folder prefix up to 2 levels (e.g. `launch/images/hero.png`). The `filter` param defaults to `'active'` (archived assets excluded); with `'archived'` or `'all'` each entry also carries `archived: boolean`.",
+			"`{ files: [{ id, filename, content_type, created_at, width?, height? }] }` - the project asset files; raster images (PNG/JPEG/GIF/WebP) also carry pixel `width`/`height`. `filename` is the full path and may carry a folder prefix up to 2 levels (e.g. `launch/images/hero.png`). The `filter` param defaults to `'active'` (archived assets excluded); with `'archived'` or `'all'` each entry also carries `archived: boolean`.",
 	},
 	read_project_asset: {
 		category: 'Project docs & assets',
 		returns:
-			"For a text asset, `{ filename, content_type, content }`. For a raster image (PNG/JPEG/GIF/WebP) at or under ~4 MB, the image is returned inline as an MCP image content block alongside a text block of `{ filename, content_type, byte_size, binary: true, width, height, url }` so a vision-capable model can see it — pass `include_image: false` (or exceed the size cap) for that metadata alone with no image block. Other binary assets return `{ filename, content_type, byte_size, binary: true, url }` — a signed download URL valid for 24h; fetch it with plain `curl` (no auth header), and re-call the tool for a fresh one if it expires. Either shape also carries `review_comments: [{ id, quote?, occurrence?, comment, created_at }]` when the admin has left pending review feedback on the asset: on a text asset (markdown, plain text) a comment anchors to an exact `quote` snippet (`occurrence` disambiguates repeats); a comment without a quote applies to the whole file. Any write to the asset's path deletes all of its review comments, so capture them before writing. Returns `{ error }` if not found — match the full path, folder prefix included — or if the asset's archive state doesn't match `filter` (default `'active'`, so archived assets need `filter: 'archived'` or `'all'`; an archived read carries `archived: true`).",
+			"For a text asset, `{ filename, content_type, content }`. For a raster image (PNG/JPEG/GIF/WebP) at or under ~4 MB, the image is returned inline as an MCP image content block alongside a text block of `{ filename, content_type, byte_size, binary: true, width, height, url }` so a vision-capable model can see it - pass `include_image: false` (or exceed the size cap) for that metadata alone with no image block. Other binary assets return `{ filename, content_type, byte_size, binary: true, url }` - a signed download URL valid for 24h; fetch it with plain `curl` (no auth header), and re-call the tool for a fresh one if it expires. Either shape also carries `review_comments: [{ id, quote?, occurrence?, comment, created_at }]` when the admin has left pending review feedback on the asset: on a text asset (markdown, plain text) a comment anchors to an exact `quote` snippet (`occurrence` disambiguates repeats); a comment without a quote applies to the whole file. Any write to the asset's path deletes all of its review comments, so capture them before writing. Returns `{ error }` if not found - match the full path, folder prefix included - or if the asset's archive state doesn't match `filter` (default `'active'`, so archived assets need `filter: 'archived'` or `'all'`; an archived read carries `archived: true`).",
 	},
 	write_project_asset: {
 		category: 'Project docs & assets',
 		returns:
-			'`{ written: true, id, reference: "assets/<path>", byte_size, width?, height? }` (raster images also report their pixel `width`/`height`), or `{ error }`. Accepts any type a human can upload: text formats (`.html`, `.svg`, `.txt`, `.md`, and `.sh`/`.py`/`.js`/`.ts`/`.json`/`.csv`/`.yaml`/`.yml` stored as plain text) with the default `encoding: "utf8"`, and binary formats (`.png`, `.jpg`, `.gif`, `.webp`, `.pdf`, media, …) with `encoding: "base64"` — a non-text type written without base64 is rejected, as is invalid or truncated base64 (a runtime argument-size cap can cut a large base64 `content` mid-stream — pass `byte_size` (the file’s exact byte length) so a short decode is rejected, or upload large binaries via a multipart POST to `/mcp/assets` with a `path` field and optional `overwrite=true`, which streams the bytes with no argument limit). Also errors if the type is unsupported, the path is invalid (max 2 folder levels), the content exceeds 10 MB, or an archived asset holds the path (unarchive it first or pick another path). Re-saving the same path overwrites it; matching is path-exact. Overwriting deletes ALL pending review comments on the asset (the admin feedback returned by read_project_asset) — read them first and make all edits in one consolidated write.',
+			'`{ written: true, id, reference: "assets/<path>", byte_size, width?, height? }` (raster images also report their pixel `width`/`height`), or `{ error }`. Accepts any type a human can upload: text formats (`.html`, `.svg`, `.txt`, `.md`, and `.sh`/`.py`/`.js`/`.ts`/`.json`/`.csv`/`.yaml`/`.yml` stored as plain text) with the default `encoding: "utf8"`, and binary formats (`.png`, `.jpg`, `.gif`, `.webp`, `.pdf`, media, …) with `encoding: "base64"` - a non-text type written without base64 is rejected, as is invalid or truncated base64 (a runtime argument-size cap can cut a large base64 `content` mid-stream - pass `byte_size` (the file’s exact byte length) so a short decode is rejected, or upload large binaries via a multipart POST to `/mcp/assets` with a `path` field and optional `overwrite=true`, which streams the bytes with no argument limit). Also errors if the type is unsupported, the path is invalid (max 2 folder levels), the content exceeds 10 MB, or an archived asset holds the path (unarchive it first or pick another path). Re-saving the same path overwrites it; matching is path-exact. Overwriting deletes ALL pending review comments on the asset (the admin feedback returned by read_project_asset) - read them first and make all edits in one consolidated write.',
 	},
 	move_project_asset: {
 		category: 'Project docs & assets',
 		returns:
-			'`{ moved: true, id, from, reference: "assets/<path>", note }`, or `{ error }` when the source is missing or archived, the destination exists (moves never overwrite; an archived asset still holds its path), the extension changes, or a path is invalid. Metadata-only — the stored bytes do not move. Existing text references to the old path are not rewritten.',
+			'`{ moved: true, id, from, reference: "assets/<path>", note }`, or `{ error }` when the source is missing or archived, the destination exists (moves never overwrite; an archived asset still holds its path), the extension changes, or a path is invalid. Metadata-only - the stored bytes do not move. Existing text references to the old path are not rewritten.',
 	},
 	copy_project_asset: {
 		category: 'Project docs & assets',
 		returns:
-			'`{ copied: true, id, reference: "assets/<path>" }` — a new asset with its own id, any type including binary. Returns `{ error }` when the source is missing or archived, the destination exists (copies never overwrite), or a path is invalid.',
+			'`{ copied: true, id, reference: "assets/<path>" }` - a new asset with its own id, any type including binary. Returns `{ error }` when the source is missing or archived, the destination exists (copies never overwrite), or a path is invalid.',
 	},
 	archive_project_asset: {
 		category: 'Project docs & assets',
 		returns:
-			'`{ archived: true, reference: "assets/<path>", changed }` (`changed: false` when it was already archived — the call is idempotent), or `{ error }` if the asset is not found. The archived asset leaves listings and default reads but keeps its path reserved; existing `assets/<path>` references keep resolving.',
+			'`{ archived: true, reference: "assets/<path>", changed }` (`changed: false` when it was already archived - the call is idempotent), or `{ error }` if the asset is not found. The archived asset leaves listings and default reads but keeps its path reserved; existing `assets/<path>` references keep resolving.',
 		auth: 'Archival is the agent-facing soft delete; hard deletion of assets is admin-only in the web app.',
 	},
 	unarchive_project_asset: {
@@ -468,8 +468,8 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	register: {
 		category: 'Onboarding',
 		returns:
-			'`{ id, token, status, message }` — the `hezo_…` token is shown once. Returns `{ error }` if `name` is missing.',
-		auth: 'No token required — this is how an external agent self-registers. The registration stays inert until a Hezo admin approves it.',
+			'`{ id, token, status, message }` - the `hezo_…` token is shown once. Returns `{ error }` if `name` is missing.',
+		auth: 'No token required - this is how an external agent self-registers. The registration stays inert until a Hezo admin approves it.',
 	},
 	connection_status: {
 		category: 'Onboarding',
@@ -569,7 +569,7 @@ export function generateMcpReference(
 		'section: Reference',
 		'---',
 		'',
-		'<!-- GENERATED FILE — do not edit by hand. Source: packages/server/src/mcp/mcp-reference.ts',
+		'<!-- GENERATED FILE - do not edit by hand. Source: packages/server/src/mcp/mcp-reference.ts',
 		'     (generator + per-tool metadata) and the live MCP tool registry. Regenerate with',
 		'     `bun run build:docs`; mcp-reference.test.ts fails if this file is stale. -->',
 		'',
@@ -581,12 +581,12 @@ export function generateMcpReference(
 		'',
 		'## Connecting',
 		'',
-		'- **Endpoint:** `POST /mcp` — JSON-RPC 2.0 over Streamable HTTP.',
+		'- **Endpoint:** `POST /mcp` - JSON-RPC 2.0 over Streamable HTTP.',
 		'- **Authentication:** `Authorization: Bearer <token>`, where the token is an',
 		'  instance-scoped API key (`hezo_…`).',
 		'- **Discovery:** call `tools/list` for the live machine-readable schemas, then invoke a',
 		'  tool with `tools/call`.',
-		'- **File uploads:** binary files cannot ride a JSON-RPC call — `POST` them to',
+		'- **File uploads:** binary files cannot ride a JSON-RPC call - `POST` them to',
 		'  `/mcp/assets` as `multipart/form-data` (a `file` field, plus an optional `project`',
 		'  field). They then appear in `list_project_assets` / `read_project_asset`.',
 		'',
@@ -610,7 +610,7 @@ export function generateMcpReference(
 		'  `id` you have seen as `before`.',
 		'- **Secrets:** agents reference secrets by placeholder (`__HEZO_SECRET_<NAME>__`); the',
 		"  egress proxy substitutes the real value only for the secret's `allowed_hosts`.",
-		'- **Write tools:** tools marked _Write tool_ persist data — a successful call from an',
+		'- **Write tools:** tools marked _Write tool_ persist data - a successful call from an',
 		'  agent run marks the run as having produced output.',
 		'',
 	];

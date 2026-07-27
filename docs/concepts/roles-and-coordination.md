@@ -11,22 +11,22 @@ Hezo organises agents like a company. A few roles coordinate; the rest do the wo
 ## The CEO
 
 The **CEO** is the global executive, and your main point of contact. There is
-exactly one CEO, and it lives in [HQ](/docs/concepts/projects-and-teams#hq--the-home-team) —
+exactly one CEO, and it lives in [HQ](/docs/concepts/projects-and-teams#hq--the-home-team) -
 so it can see and act across every project. You chat with the CEO to get things done
 across the whole instance:
 
-- **Intake** — describe a new project and the CEO scopes it with you, then provisions the
+- **Intake** - describe a new project and the CEO scopes it with you, then provisions the
   team once you've confirmed the plan (see
   [Your first project](/docs/getting-started/first-project)). It won't create anything
   until you give the go-ahead.
-- **Coordination** — ask about any project's status, tasks, or roster; the CEO
+- **Coordination** - ask about any project's status, tasks, or roster; the CEO
   works across every team.
-- **Setup review** — before a new team starts planning, the CEO aligns its roster with the
+- **Setup review** - before a new team starts planning, the CEO aligns its roster with the
   goal, including making sure each role's output has a path to being reviewed by another
   agent. When the CEO creates a project with you, it sets the team up according to the plan
-  you agreed — the roles to hire and how they fit together — then starts it; a project
+  you agreed (the roles to hire and how they fit together), then starts it; a project
   created directly from the form gets an automatic coherence check instead.
-- **Actioning changes** — hire new agents, retire ones a team no longer needs, adjust
+- **Actioning changes** - hire new agents, retire ones a team no longer needs, adjust
   system prompts, and change settings, all through the conversation. See
   [Hiring & customizing agents](/docs/concepts/hiring-and-agents).
 
@@ -39,7 +39,7 @@ The CEO's behaviour comes from its
 ## The Coach
 
 The **Coach** is the second global role that lives in HQ. Whenever a task is
-completed — in any project — the Coach automatically reviews how it went: it reads the
+completed, in any project, the Coach automatically reviews how it went: it reads the
 whole thread, notices where an agent struggled, got pushback, or needed several attempts,
 and captures what went well and what to improve. It then writes those lessons back as
 durable **learned rules** on the agents that need them (and sometimes updates a project
@@ -52,40 +52,40 @@ The Coach's behaviour comes from its
 [system prompt](https://github.com/hezo-ai/hezo/blob/main/agents/_instance/coach.md).
 
 Both the CEO and the Coach are global singletons that live in
-[HQ](/docs/concepts/projects-and-teams#hq--the-home-team) — the one special team — and
+[HQ](/docs/concepts/projects-and-teams#hq--the-home-team), the one special team, and
 act across every project's team. They are never part of a project template.
 
 ## The Captain
 
-Each project team has a **Captain** — the lead agent for that team. The Captain breaks
+Each project team has a **Captain** - the lead agent for that team. The Captain breaks
 the goal down into tasks, coordinates the worker agents, keeps the work moving, and
 escalates to the CEO when needed.
 
 ## Worker agents
 
-The rest of the roster are **workers** — domain specialists such as engineers,
+The rest of the roster are **workers** - domain specialists such as engineers,
 designers, QA, or researchers, depending on the team template. They pick up tasks,
 do the work, and report up to the Captain. For the full roster of each built-in
-template — and a link to every role's system prompt — see
+template, and a link to every role's system prompt, see
 [Team templates](/docs/concepts/projects-and-teams#team-templates).
 
 ## Chatting with the CEO
 
 The CEO is always one click away. A chat opens from any page in the app, and there's a
-single ongoing conversation — pick up where you left off rather than starting a new
+single ongoing conversation - pick up where you left off rather than starting a new
 thread each time. As the CEO works, its reply **streams back in real time**, so you can
 follow its thinking instead of waiting for a finished block of text.
 
-**Attach files to a message.** Click the paperclip in the composer — or, on desktop, drag
-files straight onto the chat — to send images, PDFs, and other supported files (up to
+**Attach files to a message.** Click the paperclip in the composer - or, on desktop, drag
+files straight onto the chat - to send images, PDFs, and other supported files (up to
 10&nbsp;MB each) along with your text. Each file uploads as you add it and appears as a
 removable chip until you send; the message then carries the files as links you and the CEO
 can open. Attachments are saved to the global HQ project's asset library, so they stay
 available after the conversation scrolls on.
 
 Keep working alongside it: **minimize** the chat to the corner button and a badge appears
-there when a CEO reply lands while you're away — the same unread indicator the inbox uses
-— clearing the moment you reopen it. On a phone, the corner button can be **dragged**
+there when a CEO reply lands while you're away (the same unread indicator the inbox uses),
+clearing the moment you reopen it. On a phone, the corner button can be **dragged**
 anywhere on screen to move it off content it covers; it stays where you drop it until
 the page reloads. When you want more room, **expand** the chat to fill
 the screen below the top navigation bar; expanding dims the rest of the page into a focused,
@@ -102,6 +102,6 @@ scoping work, reorganising a team, or changing how an agent behaves. State what 
 in plain language; the CEO proposes the change and asks you to approve anything that
 matters. Standing preferences and guidelines persist in the CEO's
 [long-term chat memory](/docs/concepts/documents-and-memory#long-term-chat-memory), which it
-maintains **automatically** as your conversations are compacted — so you don't repeat
+maintains **automatically** as your conversations are compacted - so you don't repeat
 yourself and never have to tell it to remember. You can review and edit that memory yourself
 on the CEO's **Chat history** tab.
