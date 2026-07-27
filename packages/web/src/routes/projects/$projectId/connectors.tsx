@@ -672,7 +672,10 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 							Skill file imported
 						</p>
 					)}
-					{connector.auth_error && status !== 'active' && (
+					{/* Shown for an active connector too: a token whose refresh keeps
+					    failing leaves the row activated but unusable, and the error is
+					    the only signal the operator gets. Cleared on reconnect. */}
+					{connector.auth_error && (
 						<p className="text-xs text-danger-soft-fg mt-2">{connector.auth_error}</p>
 					)}
 					{error && <p className="text-xs text-danger-soft-fg mt-2">{error}</p>}

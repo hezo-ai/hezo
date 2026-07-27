@@ -252,3 +252,128 @@ describe('refreshExpiringTokens', () => {
 		expect(decrypt(accessRow.rows[0].encrypted_value, key)).toBe('via-provider');
 	});
 });
+
+describe('failed-refresh backoff', () => {
+	it('attempts a failing connection once, then skips it on the next sweep', async () => {
+		const conn = await makeConnection({
+			provider: 'backoff-1',
+			providerAccountId: 'b1',
+			expiresAt: new Date(Date.now() - 1_000),
+			withRefresh: true,
+		});
+		let attempts = 0;
+		registerRefreshFn('backoff-1', async () => {
+			attempts += 1;
+			throw new Error('token endpoint exploded');
+		});
+
+		// The sweep runs on every proxied request; without a backoff each of these
+		// would re-attempt (and re-log) because a failure never advances expires_at.
+		await refreshExpiringTokens({ db, masterKeyManager });
+		await refreshExpiringTokens({ db, masterKeyManager });
+		await refreshExpiringTokens({ db, masterKeyManager });
+
+		expect(attempts).toBe(1);
+		// Still a candidate — the row is untouched, it is the backoff holding it back.
+		const after = await getConnection({ db, masterKeyManager }, conn.id);
+		expect(after?.expiresAt?.getTime()).toBeLessThan(Date.now());
+	});
+
+	it('does not hold back a different connection', async () => {
+		await makeConnection({
+			provider: 'backoff-2',
+			providerAccountId: 'b2',
+			expiresAt: new Date(Date.now() - 1_000),
+			withRefresh: true,
+		});
+		await makeConnection({
+			provider: 'backoff-3',
+			providerAccountId: 'b3',
+			expiresAt: new Date(Date.now() - 1_000),
+			withRefresh: true,
+		});
+		let healthy = 0;
+		registerRefreshFn('backoff-2', async () => {
+			throw new Error('nope');
+		});
+		registerRefreshFn('backoff-3', async () => {
+			healthy += 1;
+			return { accessToken: 'fresh', expiresAt: new Date(Date.now() + 3_600_000) };
+		});
+
+		await refreshExpiringTokens({ db, masterKeyManager });
+		await refreshExpiringTokens({ db, masterKeyManager });
+
+		// The healthy one leaves the candidate set by being refreshed, not by backoff.
+		expect(healthy).toBe(1);
+	});
+
+	it('clears the backoff once a refresh succeeds', async () => {
+		await makeConnection({
+			provider: 'backoff-4',
+			providerAccountId: 'b4',
+			expiresAt: new Date(Date.now() - 1_000),
+			withRefresh: true,
+		});
+		let calls = 0;
+		registerRefreshFn('backoff-4', async () => {
+			calls += 1;
+			if (calls === 1) throw new Error('transient');
+			return { accessToken: 'fresh', expiresAt: new Date(Date.now() + 3_600_000) };
+		});
+
+		await refreshExpiringTokens({ db, masterKeyManager });
+		expect(calls).toBe(1);
+		// Suppressed while backed off…
+		await refreshExpiringTokens({ db, masterKeyManager });
+		expect(calls).toBe(1);
+		// …and clearRefreshFns resets the backoff state between tests, so a fresh
+		// registration is attempted again rather than inheriting the old timer.
+		clearRefreshFns();
+		registerRefreshFn('backoff-4', async () => {
+			calls += 1;
+			return { accessToken: 'fresh', expiresAt: new Date(Date.now() + 3_600_000) };
+		});
+		await refreshExpiringTokens({ db, masterKeyManager });
+		expect(calls).toBe(2);
+	});
+
+	it('records the failure on the backing connector and clears it on success', async () => {
+		const conn = await makeConnection({
+			provider: 'backoff-5',
+			providerAccountId: 'b5',
+			expiresAt: new Date(Date.now() - 1_000),
+			withRefresh: true,
+		});
+		await db.query(
+			`INSERT INTO mcp_connections (name, kind, config, oauth_connection_id)
+			 VALUES ('backoff-connector', 'saas', '{}'::jsonb, $1)`,
+			[conn.id],
+		);
+
+		registerRefreshFn('backoff-5', async () => {
+			throw new Error('generic refresh needs token_url + client_id in connection metadata');
+		});
+		await refreshExpiringTokens({ db, masterKeyManager });
+
+		const failed = await db.query<{ auth_error: string | null }>(
+			`SELECT auth_error FROM mcp_connections WHERE oauth_connection_id = $1`,
+			[conn.id],
+		);
+		expect(failed.rows[0].auth_error).toContain('token refresh');
+		expect(failed.rows[0].auth_error).toContain('token_url + client_id');
+
+		clearRefreshFns();
+		registerRefreshFn('backoff-5', async () => ({
+			accessToken: 'fresh',
+			expiresAt: new Date(Date.now() + 3_600_000),
+		}));
+		await refreshExpiringTokens({ db, masterKeyManager });
+
+		const recovered = await db.query<{ auth_error: string | null }>(
+			`SELECT auth_error FROM mcp_connections WHERE oauth_connection_id = $1`,
+			[conn.id],
+		);
+		expect(recovered.rows[0].auth_error).toBe(null);
+	});
+});

@@ -954,9 +954,22 @@ class RunProxyInstance {
 	/** A connection to the real upstream failed (refused, DNS, timeout, TLS).
 	 * Logs the target and the error's system-level fields so the cause is
 	 * diagnosable — `code` distinguishes ECONNREFUSED (upstream refused) from
-	 * ENOTFOUND (DNS) from ETIMEDOUT — then returns a 502 to the agent. */
+	 * ENOTFOUND (DNS) from ETIMEDOUT — then returns a 502 to the agent.
+	 *
+	 * One shape reaching here is not a failure: `this.closed`, i.e. our own
+	 * `close()` aborting in-flight upstreams at run end (proxy.ts `close`). A
+	 * long-lived Streamable-HTTP SSE channel is always in flight at that point, so
+	 * every run touching a hosted MCP would otherwise report a failure per stream
+	 * on the way out. That case logs at debug; everything else still warns.
+	 *
+	 * `headers_sent` rides on the metadata rather than gating the level: it
+	 * separates "the upstream never answered" (a genuine connect/DNS/TLS failure)
+	 * from "the response had started and the stream died mid-flight", and the two
+	 * are worth telling apart in a report without silencing either. */
 	private onForwardError(res: ServerResponse, err: Error, target?: UpstreamTarget): void {
-		log.warn('egress upstream request failed', this.failureMeta(err, target));
+		const meta = { ...this.failureMeta(err, target), headers_sent: res.headersSent };
+		if (this.closed) log.debug('egress upstream aborted by run teardown', meta);
+		else log.warn('egress upstream request failed', meta);
 		this.finishError(res, err);
 	}
 

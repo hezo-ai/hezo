@@ -333,4 +333,67 @@ describe('EgressProxy streaming + teardown under Bun', () => {
 			await new Promise<void>((r) => upstream.close(() => r()));
 		}
 	}, 40_000);
+
+	// The warn path is the one an operator acts on, so it has to keep firing for a
+	// real connectivity failure (refused / DNS / TLS) even as teardown-induced
+	// aborts are demoted to debug. Lives in the Bun tier because the upstream leg
+	// is Bun's HTTP client: under Node the same scenario reports a different error
+	// shape, so a vitest assertion here would not reflect production.
+	const FAILURE_LINE = 'egress upstream request failed';
+
+	/** The logger routes every level through console.log with the level in the text. */
+	async function captureLogs(fn: () => Promise<void>): Promise<string[]> {
+		const lines: string[] = [];
+		const original = console.log;
+		console.log = (...args: unknown[]) => {
+			lines.push(args.map(String).join(' '));
+		};
+		try {
+			await fn();
+		} finally {
+			console.log = original;
+		}
+		return lines;
+	}
+
+	test('still warns when the upstream never answers at all', async () => {
+		// Bind then release a port so the proxy's upstream connect is refused. CONNECT
+		// still succeeds (it only bridges into the per-host MITM server), so the
+		// failure lands on the forwarded request with no response headers sent.
+		const dead = createHttpsServer({});
+		await new Promise<void>((r) => dead.listen(0, '127.0.0.1', () => r()));
+		const deadPort = (dead.address() as { port: number }).port;
+		await new Promise<void>((r) => dead.close(() => r()));
+
+		await insertSecret('DEAD_UPSTREAM', 'tok', ['localhost']);
+		const runId = `dead-upstream-${process.pid}`;
+		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
+
+		try {
+			let response = '';
+			const lines = await captureLogs(async () => {
+				const tls = await tunnelTo(allocated.proxyPort, 'localhost', deadPort);
+				const done = new Promise<void>((resolve) => {
+					tls.on('data', (c: Buffer) => {
+						response += c.toString();
+						if (response.includes('\r\n\r\n')) resolve();
+					});
+					tls.on('close', () => resolve());
+					tls.on('error', () => resolve());
+				});
+				tls.write(
+					`GET /mcp HTTP/1.1\r\nHost: localhost:${deadPort}\r\n` +
+						`Authorization: Bearer __HEZO_SECRET_DEAD_UPSTREAM__\r\n\r\n`,
+				);
+				await done;
+				tls.destroy();
+			});
+			expect(response).toContain('502');
+			const warned = lines.filter((l) => l.includes(FAILURE_LINE));
+			expect(warned.length).toBe(1);
+			expect(warned[0]).toContain('[warn]');
+		} finally {
+			await proxy.releaseRunProxy(runId);
+		}
+	}, 40_000);
 });
