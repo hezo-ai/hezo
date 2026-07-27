@@ -81,6 +81,10 @@
 	],
 	"changelog": [
 		{
+			"version": 8,
+			"notes": "The engineer opens each pull request against the repository the change actually lives in, not always the designated one - a project can link several repositories and agents work in all of them."
+		},
+		{
 			"version": 7,
 			"notes": "When tasked with building an app, the Captain proactively suggests a shippable-MVP goal for the admin to approve."
 		},

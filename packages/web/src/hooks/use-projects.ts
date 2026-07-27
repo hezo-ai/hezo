@@ -79,6 +79,12 @@ export interface Repo {
 	/** Background checkout setup lifecycle; the row settles via WebSocket UPDATE. */
 	setup_status?: 'pending' | 'ready' | 'failed';
 	setup_error?: string | null;
+	/**
+	 * Whether the connected GitHub account can push here, re-checked whenever the
+	 * server holds the token. `null`/undefined means unknown — never rendered as a
+	 * restriction, since a missing check must not read as "read-only".
+	 */
+	can_push?: boolean | null;
 }
 
 export type ProjectWithTeam = Project & { teamSlug: string; teamName: string };

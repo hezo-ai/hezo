@@ -10,10 +10,39 @@ import type { AiProvider } from '@hezo/shared';
  */
 export type McpDescriptor = McpHttpDescriptor | McpStdioDescriptor;
 
-export interface McpHttpDescriptor {
-	kind: 'http';
+interface McpDescriptorBase {
 	/** Stable identifier used as the MCP server name in the runtime config. */
 	name: string;
+	/**
+	 * Allowlist of this server's tool names the run may use. Absent means **no
+	 * restriction** — the run gets everything the server advertises, and adapters
+	 * emit no filter at all so the config is byte-identical to before this
+	 * existed. Present means the runtime config should expose only these.
+	 *
+	 * This is the *hiding* leg: it keeps a disabled tool out of the agent's tool
+	 * list so it never tries to call one. It is not the enforcement boundary —
+	 * the runtimes are installed unpinned and their filter keys can drift, so the
+	 * egress proxy independently rejects a `tools/call` naming a disabled method
+	 * (see `services/egress/mcp-method-guard.ts`).
+	 */
+	enabledTools?: readonly string[];
+	/**
+	 * The same restriction expressed the other way round: the catalogued tools
+	 * this run may NOT use. Set only alongside `enabledTools`.
+	 *
+	 * Both views exist because the runtimes disagree on shape — Gemini and
+	 * OpenCode take an allowlist, Claude Code's settings file only has a
+	 * `permissions.deny`. A deny list is strictly weaker: it can only name tools
+	 * we knew about when the connector's methods were last listed, so a tool the
+	 * server adds afterwards is not denied by it. That gap is deliberate and
+	 * accepted here precisely because the proxy, not the runtime config, is what
+	 * actually enforces the allowlist.
+	 */
+	disabledTools?: readonly string[];
+}
+
+export interface McpHttpDescriptor extends McpDescriptorBase {
+	kind: 'http';
 	/** Streamable-HTTP endpoint URL. */
 	url: string;
 	/** Headers to send with each request to this MCP server. Values may
@@ -24,10 +53,8 @@ export interface McpHttpDescriptor {
 	bearerToken?: string;
 }
 
-export interface McpStdioDescriptor {
+export interface McpStdioDescriptor extends McpDescriptorBase {
 	kind: 'stdio';
-	/** Stable identifier used as the MCP server name in the runtime config. */
-	name: string;
 	/** Absolute path or PATH-resolvable binary the runtime spawns. */
 	command: string;
 	/** Args passed to the command. */

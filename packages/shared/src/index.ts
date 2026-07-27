@@ -5,6 +5,7 @@ export * from './crypto/auth.js';
 export * from './crypto/mnemonic.js';
 export * from './documents/text.js';
 export * from './marketplace.js';
+export * from './mcp/method-access.js';
 export * from './mentions/index.js';
 export * from './pricing.js';
 export * from './search/terms.js';

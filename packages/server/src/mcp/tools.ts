@@ -18,6 +18,7 @@ import {
 	CEO_AGENT_SLUG,
 	COACH_AGENT_SLUG,
 	CommentContentType,
+	ConnectorAccess,
 	ConnectorTransport,
 	CredentialInputType,
 	CredentialKind,
@@ -34,12 +35,14 @@ import {
 	isAllowedAttachmentMime,
 	isMarkdownDocSlug,
 	isTextAssetMime,
+	type McpMethodInfo,
 	matchesArchiveFilter,
 	normalizeAssetPath,
 	REQUIRED_SYSTEM_PROMPT_VARS,
 	ReactionKind,
 	requiredSystemPromptVarsError,
 	SEARCH_SCOPES,
+	summarizeMethodAccess,
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
 	WakeupSource,
@@ -3140,6 +3143,12 @@ export function registerTools(
 				.describe(
 					'Optional ID of a previously-fetched skill document (see fetch_skill_file). When set, the skill file is exposed to every team agent run via the per-adapter skill path.',
 				),
+			access: z
+				.enum(['read', 'write'])
+				.optional()
+				.describe(
+					"How much of the server you need. 'write' (default) leaves every method the server advertises available. 'read' asks for read-only: once the human connects it, every write method the server advertises is disabled automatically, and runs never see them. Ask for 'read' whenever the task only needs to look things up - it is the narrowest scope that still does the job, and the human can widen it later. This is a request, not a grant: if the human has already chosen which methods are enabled, their choice stands.",
+				),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveTaskScope(db, auth, args);
@@ -3151,6 +3160,10 @@ export function registerTools(
 			const kind = (args.kind as 'saas' | 'api' | undefined) ?? 'saas';
 			const mcpTransport = (args.mcp_transport as 'http' | 'sse' | undefined) ?? 'http';
 			const skillId = (args.skill_id as string | undefined) ?? null;
+			// Only a 'read' request carries meaning downstream — 'write' is today's
+			// behaviour, so storing it would just be noise on the row.
+			const requestedAccess =
+				(args.access as 'read' | 'write' | undefined) === 'read' ? ConnectorAccess.Read : null;
 
 			// For an OAuth REST-API connector, validate the api config and the
 			// bundled broker provider (if any) up front. The provider is persisted
@@ -3213,6 +3226,7 @@ export function registerTools(
 				skillId,
 				createdByTaskId: taskId,
 				projectId: scope.projectId,
+				requestedAccess,
 			});
 
 			if (!alreadyExisted) {
@@ -3260,6 +3274,9 @@ export function registerTools(
 					connector_id: row.id,
 					display_name: displayName,
 					provider_id: providerId,
+					// Surfaced on the connect card so the human sees what the agent
+					// asked for before they authorize it, not after.
+					...(requestedAccess ? { requested_access: requestedAccess } : {}),
 				};
 				const inserted = await db.query<{ id: string }>(
 					`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
@@ -5390,12 +5407,15 @@ export function registerTools(
 				oauth_scopes: string[] | null;
 				oauth_account_label: string | null;
 				api_key_secret_name: string | null;
+				enabled_methods: string[] | null;
+				discovered_methods: McpMethodInfo[] | null;
 			}>(
 				`SELECT mc.id, mc.name, mc.display_name, mc.kind::text AS kind,
 				        mc.config, mc.oauth_connection_id, mc.api_key_secret_id,
 				        mc.install_status::text AS install_status, mc.install_error,
 				        mc.skill_id, mc.created_by_task_id,
 				        mc.activated_at::text AS activated_at, mc.revoked_at::text AS revoked_at, mc.auth_error,
+				        mc.enabled_methods, mc.discovered_methods,
 				        mc.created_at::text, mc.updated_at::text,
 				        s.name AS oauth_secret_name, s.allowed_hosts AS oauth_allowed_hosts, oc.scopes AS oauth_scopes,
 				        oc.provider_account_label AS oauth_account_label,
@@ -5439,6 +5459,8 @@ export function registerTools(
 					oauth_allowed_hosts,
 					oauth_scopes,
 					api_key_secret_name,
+					enabled_methods,
+					discovered_methods,
 					...rest
 				} = row;
 				const rest_auth =
@@ -5483,7 +5505,29 @@ export function registerTools(
 								docs_url: typeof apiCfg.docs_url === 'string' ? apiCfg.docs_url : null,
 							}
 						: null;
-				return { ...rest, oauth_status, rest_auth, api_auth };
+
+				// Withheld methods simply don't appear in a run's tool list, so without
+				// this an agent burns a run hunting a tool that "should" exist. Say up
+				// front that the gap is deliberate and how wide it is.
+				const method_access =
+					row.kind === 'saas' && (discovered_methods?.length ?? 0) > 0
+						? summarizeMethodAccess(discovered_methods ?? [], enabled_methods)
+						: null;
+
+				return {
+					...rest,
+					oauth_status,
+					rest_auth,
+					api_auth,
+					method_access: method_access
+						? {
+								mode: method_access.mode,
+								enabled: method_access.enabled,
+								total: method_access.total,
+								disabled_write: method_access.writeDisabled,
+							}
+						: null,
+				};
 			});
 		},
 		db,

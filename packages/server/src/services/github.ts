@@ -13,6 +13,14 @@ export type FetchFn = (input: string | URL | Request, init?: RequestInit) => Pro
 export interface RepoAccessResult {
 	accessible: boolean;
 	status: number;
+	/**
+	 * Whether the token's account can push to the repo, read from the
+	 * `permissions` object GitHub returns on the repo response. `null` means
+	 * unknown — the field was absent or malformed — and is never treated as
+	 * "yes": a missing signal must not manufacture write access the account
+	 * may not have.
+	 */
+	canPush: boolean | null;
 }
 
 export interface GitHubOrg {
@@ -66,6 +74,14 @@ export function parseGitHubUrl(url: string): { owner: string; repo: string } | n
 	return null;
 }
 
+/**
+ * Check that the token's account can reach the repo, and — on the same
+ * response — whether it can *write* to it. A 200 only proves read: a read-only
+ * collaborator, and anyone at all on a public repo, gets one. Push access lives
+ * in the response's `permissions` object, so reading it here is free and is the
+ * difference between catching a write gap at link time and discovering it when
+ * an agent's push is silently denied mid-run.
+ */
 export async function validateRepoAccess(
 	owner: string,
 	repo: string,
@@ -75,7 +91,27 @@ export async function validateRepoAccess(
 	const res = await fetchFn(`${getApiBaseUrl()}/repos/${owner}/${repo}`, {
 		headers: authHeaders(accessToken),
 	});
-	return { accessible: res.status === 200, status: res.status };
+	if (res.status !== 200) return { accessible: false, status: res.status, canPush: null };
+	return { accessible: true, status: res.status, canPush: await parsePushPermission(res) };
+}
+
+/**
+ * Read `permissions.push` off a repo response. Any shape that doesn't carry a
+ * boolean there — an unexpected body, a non-JSON response, an API that omits
+ * the field — is reported as unknown rather than assumed either way.
+ */
+async function parsePushPermission(res: Response): Promise<boolean | null> {
+	let body: unknown;
+	try {
+		body = await res.json();
+	} catch {
+		return null;
+	}
+	if (typeof body !== 'object' || body === null) return null;
+	const permissions = (body as { permissions?: unknown }).permissions;
+	if (typeof permissions !== 'object' || permissions === null) return null;
+	const push = (permissions as { push?: unknown }).push;
+	return typeof push === 'boolean' ? push : null;
 }
 
 export async function fetchAuthenticatedUser(

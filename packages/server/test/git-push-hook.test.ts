@@ -4,7 +4,13 @@ import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { ensurePushHook, POST_COMMIT_PUSH_HOOK, type RepoLoc } from '../src/services/git';
+import {
+	clearPushErrors,
+	ensurePushHook,
+	POST_COMMIT_PUSH_HOOK,
+	type RepoLoc,
+	readPushErrors,
+} from '../src/services/git';
 
 // These tests exercise the REAL `post-commit` auto-push hook end-to-end with local
 // `git` and a bare `origin` — no Docker/SSH. The hook keys off a live `SSH_AUTH_SOCK`
@@ -129,5 +135,101 @@ describe('post-commit auto-push', () => {
 			run('git commit --allow-empty -m first', dir, { ...process.env, SSH_AUTH_SOCK: sock }),
 		).not.toThrow();
 		expect(sha(dir, 'HEAD')).toBeTruthy();
+	});
+});
+
+// A denied push used to be discarded to /dev/null, so it produced exactly the same
+// output as a clean one: the agent had no signal its commits weren't leaving the
+// container, and neither did the human reading the run log afterwards. These pin the
+// reporting down — loud in both directions, and still never fatal to the commit.
+describe('post-commit auto-push failure reporting', () => {
+	// `origin` points at a path that is not a repository, so the push fails the way a
+	// permission denial does: non-zero exit with a message on stderr.
+	function setupBrokenOrigin(name: string, branch: string): string {
+		const clone = join(root, `${name}-clone`);
+		run(`git init -b main ${clone}`);
+		configure(clone);
+		run(`git remote add origin ${join(root, `${name}-missing.git`)}`, clone);
+		run('git commit --allow-empty -m base', clone, { ...process.env, SSH_AUTH_SOCK: '' });
+		run(`git checkout -b ${branch}`, clone);
+		ensurePushHook(repoLoc(clone));
+		return clone;
+	}
+
+	it('reports a failed push on stderr and still lets the commit succeed', async () => {
+		const clone = setupBrokenOrigin('pushfail', 'hezo/AUTO-4');
+		const sock = await liveSocket(clone);
+
+		const before = sha(clone, 'HEAD');
+		const output = execSync('git commit --allow-empty -m doomed 2>&1', {
+			cwd: clone,
+			env: { ...process.env, SSH_AUTH_SOCK: sock },
+		}).toString();
+
+		// The commit is never blocked by a reporting hook.
+		expect(sha(clone, 'HEAD')).not.toBe(before);
+		expect(output).toContain('auto-push');
+		expect(output).toContain('local only');
+	});
+
+	it('records the git error in the push-error log for the runner to surface', async () => {
+		const clone = setupBrokenOrigin('pushlog', 'hezo/AUTO-5');
+		const sock = await liveSocket(clone);
+
+		expect(readPushErrors(repoLoc(clone))).toBeNull();
+		run('git commit --allow-empty -m doomed', clone, { ...process.env, SSH_AUTH_SOCK: sock });
+
+		const errors = readPushErrors(repoLoc(clone));
+		expect(errors).toContain('auto-push failed');
+		expect(errors).toContain('hezo/AUTO-5');
+		// The real git output is kept, not just the fact that something failed —
+		// "Permission to <repo> denied to <account>" is the whole diagnosis.
+		expect(errors).toMatch(/does not appear to be a git repository|repository not found/i);
+	});
+
+	it('writes nothing to the log when the push succeeds', async () => {
+		const branch = 'hezo/AUTO-6';
+		const { clone } = setupClone('pushclean', branch);
+		const sock = await liveSocket(join(root, 'pushclean-clone'));
+
+		run('git commit --allow-empty -m fine', clone, { ...process.env, SSH_AUTH_SOCK: sock });
+		expect(readPushErrors(repoLoc(clone))).toBeNull();
+	});
+
+	it('clearPushErrors scopes the log to the current run', async () => {
+		const clone = setupBrokenOrigin('pushclear', 'hezo/AUTO-7');
+		const sock = await liveSocket(clone);
+
+		run('git commit --allow-empty -m doomed', clone, { ...process.env, SSH_AUTH_SOCK: sock });
+		expect(readPushErrors(repoLoc(clone))).not.toBeNull();
+
+		// Run prep clears it, so the next run never reports a previous run's failures.
+		clearPushErrors(repoLoc(clone));
+		expect(readPushErrors(repoLoc(clone))).toBeNull();
+		// Clearing an already-absent log is fine.
+		expect(() => clearPushErrors(repoLoc(clone))).not.toThrow();
+	});
+
+	// The production path: the agent commits inside a per-task worktree, not the
+	// clone. The hook resolves the shared git dir so the log lands where the runner
+	// reads it — a worktree-relative path would strand the report.
+	it('records a worktree commit failure in the clone’s log, where the runner reads it', async () => {
+		const clone = setupBrokenOrigin('pushwt', 'hezo/AUTO-8');
+		const worktree = join(root, 'pushwt-worktree');
+		run(`git worktree add -b hezo/AUTO-9 ${worktree}`, clone);
+		configure(worktree);
+		const sock = await liveSocket(join(root, 'pushwt-clone'));
+
+		run('git commit --allow-empty -m doomed', worktree, { ...process.env, SSH_AUTH_SOCK: sock });
+
+		const errors = readPushErrors(repoLoc(clone));
+		expect(errors).toContain('auto-push failed');
+		expect(errors).toContain('hezo/AUTO-9');
+	});
+
+	it('readPushErrors returns null for a clone that has never failed a push', () => {
+		const dir = join(root, 'never-failed');
+		run(`git init -b main ${dir}`);
+		expect(readPushErrors(repoLoc(dir))).toBeNull();
 	});
 });

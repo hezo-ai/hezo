@@ -39,6 +39,35 @@ has no branch for a task to build on, so this makes it usable immediately. (Repo
 you create through Hezo already start with an initial commit, so this only applies to
 pre-existing empty repositories you link.)
 
+### Every linked repository is a working repository
+
+A project can link more than one repository, and agents work in **all** of them - each is
+cloned into the workspace and checked out on the task's own branch, with its own remote.
+One of them is the **designated** repository (the default place a task's work goes, and the
+directory an agent starts in), but that is a default, not a boundary: an agent can commit,
+push, and open a pull request in any repository you have linked. Nothing about a run is
+scoped to a single repository - the same project key and the same connected account serve
+every one of them.
+
+### Write access is checked, not assumed
+
+Being able to *see* a repository on GitHub is not the same as being able to *push* to it -
+a read-only collaborator, and anyone at all on a public repository, can read it. So when
+you link a repository, Hezo asks GitHub whether the connected account can write to it, and
+re-checks whenever it has the chance (setup, retry, re-clone, and each time you expand the
+repository on the **Git** settings page).
+
+If the answer is no, the repository is still linked - linking a repository purely so agents
+can read its code is perfectly valid - but it is marked **"No write access"**, with a note
+naming the connected account. Agents are told the same thing, so instead of pushing into a
+rejection they will tell you that the change needs write access. To fix it, grant the
+connected account write access to that repository on GitHub; the badge clears on the next
+check.
+
+Should a push be rejected anyway, it is no longer silent: the failure is written into the
+run's log with the actual error from git, so you can see exactly which repository and
+account were refused.
+
 ## Verified commits, signed on the host
 
 When an agent commits, the **signing happens host-side on its behalf** - the agent asks
@@ -67,6 +96,11 @@ automatic pushes are always a clean fast-forward and never collide with other wo
 often. One thing to know: because Hezo pushes on every commit, a branch that runs CI on each
 push will build more often than it would with a single end-of-run push - scope CI to pull
 requests if that becomes noisy.
+
+An automatic push never interrupts the agent's commit; the commit lands locally either way.
+But if the push itself is rejected, that is reported rather than hidden - the agent sees the
+error immediately, and the run's log carries it too, so a repository whose commits are not
+reaching GitHub is visible without having to go looking for it.
 
 ## Recovering a stuck repository
 

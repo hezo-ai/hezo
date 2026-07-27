@@ -130,7 +130,7 @@ is the display label, worktree directory name, and `@mention` handle. The **firs
 linked to a project becomes its immutable `designated_repo_id` (`ON DELETE RESTRICT` +
 a 409 `DESIGNATED_REPO_IMMUTABLE` guard). Adding a repo is **asynchronous**: `POST
 /repos` validates GitHub-side access (or creates the repo upstream), inserts the row
-with `setup_status = 'pending'`, and returns immediately; the slow half — container up,
+with `setup_status = 'pending'` and its `can_push` verdict, and returns immediately; the slow half — container up,
 in-container clone, first-repo designation + approval finalize — runs in a tracked
 background task (`services/repo-provisioning.ts`) and settles the row to
 `ready`/`failed` (`setup_error` records why), broadcast to the team room as a `repos`
@@ -140,6 +140,22 @@ exists (the gate never half-opens), and POSTing the same repo again reclaims a
 `REPO_SETUP_IN_PROGRESS`; a `ready` duplicate 409s `REPO_NAME_TAKEN`). Rows still
 `pending` at boot were lost with the previous process — `JobManager.reconcileOnStartup`
 parks them `failed` so they surface as retryable instead of spinning forever.
+
+**Push access (`repos.can_push`).** A 200 from `GET /repos/:owner/:repo` proves only
+*read* — a read-only collaborator gets one, and so does anyone on a public repo — so
+`validateRepoAccess` (`services/github.ts`) also reads `permissions.push` off that same
+response and `repos.can_push` records it (`true`/`false`/`NULL` = unknown, never assumed
+true). `refreshRepoPushAccess` (`services/repo-push-access.ts`) re-checks it wherever the
+server already holds the connection token — `performRepoSetup` (link, retry, reclone) and
+the admin `git-state` panel — so an access change made on GitHub after linking is picked
+up. Only a definitive answer overwrites the stored one (`permissions.push` on a 200, or a
+hard 403/404); a locked vault, a network failure, or a 5xx leaves it untouched rather than
+demoting a writable repo to read-only. `can_push === false` never blocks the link (a
+read-only reference repo is legitimate) — it surfaces as a "No write access" badge in the
+Git settings page and as a per-repo read-only note in the agent's Repository prompt block
+(`buildRepositoryBlock`). Nothing about a run is per-repo scoped — one account-level SSH
+key and one account-wide OAuth token serve every linked repo — so this column is the only
+place a genuine per-repo write restriction is represented.
 
 **Tasks & threads.** `tasks` are Linear-style tickets with a frozen `identifier`
 (`<task_prefix>-<n>`, e.g. `IN-42`), a required `assignee_id → members.id`, `rules`, and
@@ -1109,7 +1125,17 @@ checkpoint, not a reviewed push — it skips any pre-push test/lint hook so a WI
 are still red still reaches the remote), and only when a live `SSH_AUTH_SOCK` exists — true for the
 agent's own bridged commits, false for the bare prep-time catch-up merge, so that merge commit is
 skipped rather than attempting an unauthenticated push. A repo-less workspace, an empty remote, or a
-clone whose `core.hooksPath` is redirected (e.g. husky) simply doesn't fire it. *Uncommitted*
+clone whose `core.hooksPath` is redirected (e.g. husky) simply doesn't fire it.
+
+Non-fatal is **not** silent. The hook previously discarded the push to `/dev/null`, so a denied
+push (no write access on that repo, a protected branch) produced output identical to a clean one
+and the run reported success while its commits never left the container. A failed push now reports
+twice: one line plus the git error on the commit's own stderr, where the agent sees it
+immediately, and the full error appended to `<git-common-dir>/hezo-push-errors.log`
+(`PUSH_ERROR_LOG_NAME`). Worktree prep clears that log per repo (`clearPushErrors`) so it is
+scoped to the run, and the runner reads it back at run completion (`readPushErrors`) and emits it
+into the run log for every prepared clone. The hook still `exit 0`s unconditionally — reporting a
+failure never fails the commit. *Uncommitted*
 changes are still not covered — the agent commits to preserve, and the role prompts frame frequent
 committing (not a manual end-of-run push) as the durability action.
 
@@ -1121,7 +1147,10 @@ computed locally, no network fetch), plus the active `/worktrees/<task>/<repo>` 
 to their tasks and the project's active (queued/running) agent-run count (`active_runs`, from
 `getProjectConcurrency`) so the panel can disable the reset controls proactively instead of only
 failing them server-side — and returns `{ container_running: false }` when the container is stopped
-rather than auto-starting one, since a passive inspect must not trigger a provision. `POST .../reset`
+rather than auto-starting one, since a passive inspect must not trigger a provision. It also
+re-checks and returns `can_push` (`refreshRepoPushAccess`), computed **before** the
+container-gated branch so it is reported either way — the check needs GitHub, not a container,
+and the panel is where an operator notices write access changed upstream. `POST .../reset`
 runs one of three recovery actions: `discard_local` (`git reset --hard` + `clean -fd` — no `-x`,
 so gitignored build artifacts survive — after a best-effort fetch; the escape hatch for the
 "local changes would be overwritten" fast-forward failure that otherwise silently stalls sync),
@@ -1777,6 +1806,83 @@ At run build, `loadConnectorDescriptors` merges connectors after the built-in `h
 MCP, and each of the five runtime adapters translates the descriptors into the spawn
 artifacts its CLI expects (Claude Code `--mcp-config`, Codex `config.toml`, Gemini
 `.gemini/settings.json`, etc.).
+
+**Method access (per-connector allowlist).** A hosted MCP server ships its read and write
+tools in one connection, so a connector carries an allowlist of the methods agents may
+call. It lives on the `mcp_connections` row itself — `enabled_methods` (jsonb array),
+`discovered_methods` (the cached catalog), `methods_listed_at`, `requested_access`
+(`connector_access` enum), `access_applied_at` (migration `044`). **`enabled_methods` NULL
+means no allowlist — every method enabled**, deliberately *not* the same as an array naming
+every currently-known method, so a server that grows a tool doesn't silently grant it.
+These are columns rather than `config` keys because `config` is replaced wholesale by the
+reconfigure routes (`POST /connectors`, `add_connector`) — an operator changing a URL would
+otherwise wipe the allowlist, a security control quietly switching itself off. They also
+survive `restoreRevokedConnector`, so a revoke/reconnect keeps the restriction.
+
+`classifyMcpMethod` (`@hezo/shared`, `mcp/method-access.ts`) decides read vs write: the
+spec's `annotations.readOnlyHint` wins when the server sets it (`inferred: false`),
+otherwise a leading-word heuristic. An unrecognised name classifies as **write**, so the
+heuristic can never widen access by accident. `summarizeMethodAccess` is the single source
+for every count the card, the dialog, and `list_connectors` show, so they can't disagree.
+
+`discoverConnectorMethods` (`services/connectors/method-discovery.ts`) probes a connected
+`saas` connector over the MCP SDK's Streamable HTTP transport (SSE fallback) and caches the
+catalog. It decrypts the connector's own credential in-process (trusted server code — § 7's
+chat-bot-token precedent) and **drops any header still carrying an unsubstituted
+placeholder** rather than sending it verbatim. It fires via `trackBackground` from both
+activation paths and from the explicit refresh route, so a probe failure can never fail a
+connect; a `connect`-triggered failure logs at debug and a `manual` one warns. **It is never
+called from `loadConnectorDescriptors`**, which deliberately resolves secret *names* only so
+descriptors build while the master key is locked.
+
+Enforcement has two legs, split because the coding CLIs are installed unpinned and their
+config keys can drift:
+
+- **Runtime config filtering is the UX leg** — descriptors carry `enabledTools` and
+  `disabledTools` (both views, since Claude Code takes a deny list while Gemini/OpenCode
+  take allowlists), and each adapter emits its own key: Gemini `includeTools`, OpenCode
+  top-level `tools`, Claude Code `permissions.deny`. An agent never sees a tool it cannot
+  call. Best-effort and degrades safely: an unrestricted connector emits a byte-identical
+  config to before, and Claude Code's deny list is only as complete as the last
+  `tools/list`. **Codex and Grok emit no filter** — no per-server tool-filter key could be
+  verified, and a guessed TOML key risks the CLI rejecting the whole config and breaking
+  every run on that runtime. `RUNTIME_SUPPORTS_MCP_TOOL_FILTER` records which runtimes can
+  hide tools.
+- **The egress proxy is the enforcement leg** — runtime-independent, and the only thing
+  restricting Codex and Grok at all. `allocateRunProxy` resolves the run's restricted
+  connectors once into a `host:port → allowlist` map (`loadMcpHostRestrictions`); an
+  unrestricted run gets an empty map and takes no new path. In `forward`, a request to a
+  mapped host has its body inspected by the pure `shouldBlockMcpRequest`
+  (`egress/mcp-method-guard.ts`) and a `tools/call` naming a disabled method is rejected
+  `403 mcp_method_not_enabled` before it leaves the host. Only `tools/call` is inspected —
+  `initialize`/`tools/list`/notifications pass through, since a listing that still
+  advertises a disabled tool is harmless once the call is blocked. A JSON-RPC **batch** is
+  rejected whole if any element names a disabled method (the messages share one body).
+  **Fails closed** for restricted hosts only: an unparseable body, or one over
+  `MAX_MCP_INSPECTION_BYTES` (256 KB), is rejected rather than forwarded uninspected.
+  Two details are load-bearing. The inspection cap is **separate from and much larger
+  than** `MAX_BODY_SUBSTITUTION_BYTES` (8 KB) — a real `tools/call` carries file contents,
+  far past what the credential-in-body substitution path was sized for — and the body is
+  **read once**, at whichever cap applies, since both gates want the same bytes and the
+  stream can only be consumed once. The inspection gate (`mayCarryJsonRpc`) is deliberately
+  *wider* than `isBodySubstitutionEligible`: it accepts a chunked body with no
+  `Content-Length` and does not exclude a compressed one, so an uninspectable request
+  reaches the guard and is blocked rather than skipped. Both sides of the map normalise
+  through `mcpRestrictionKey(hostname, port)` with the scheme default applied — the proxy
+  resolves host and port separately, so keying on a raw `URL.host` would silently miss on
+  any non-default port, and a lookup that misses means no enforcement at all.
+
+An agent registering a connector can ask for read-only (`register_connector`'s
+`access: 'read' | 'write'`, default `write`), which persists `requested_access` and shows on
+the `connect_required` card before the human authorizes. Discovery applies it **exactly
+once**, guarded on `requested_access = 'read' AND access_applied_at IS NULL AND
+enabled_methods IS NULL`: the stamp stops re-application and the null allowlist means an
+operator who has already decided is never overwritten. The request narrows only —
+`createOrFetchConnector` will upgrade an unrestricted row to `read` but never clears a
+stored `read`, and `list_connectors` reports `method_access` so a run learns a missing tool
+is withheld rather than absent. There is deliberately **no MCP write tool** for the
+allowlist: letting an agent widen its own access would be a privilege escalation, so the
+write side is human-only (`GET`/`PATCH`/`POST …/methods{,/refresh}`).
 
 **Git vs API.** Repo clone/fetch/push does **not** use the OAuth token — that's SSH with
 the project key (§ 8). The OAuth token is reserved for GitHub REST (listing/creating
