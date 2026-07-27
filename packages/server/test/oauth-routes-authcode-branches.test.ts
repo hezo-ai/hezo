@@ -305,6 +305,28 @@ describe('auth-code/start → authorize → /oauth/callback success', () => {
 		expect(conn.rows.length).toBe(1);
 		expect(conn.rows[0].expires_at).toBeTruthy();
 	});
+
+	it('persists the refresh material (token_url + client_id) on the connection metadata', async () => {
+		// The generic host-side refresh reads both off metadata and throws before any
+		// network call if either is missing, which would leave the connection stuck on
+		// its first access token forever — silently, since the failure is swallowed.
+		const startRes = await startAuthCode({
+			provider: 'refreshable',
+			manual_config: manualConfig(),
+			server_url: `${sim.baseUrl}/resource`,
+		});
+		const authUrl = ((await startRes.json()) as { data: { auth_url: string } }).data.auth_url;
+		const redirect = await fetch(authUrl, { redirect: 'manual' });
+		const loc = new URL(redirect.headers.get('location')!);
+		const cb = await app.request(`${loc.pathname}?${loc.searchParams.toString()}`);
+		expect(cb.status).toBe(200);
+
+		const conn = await db.query<{ metadata: Record<string, unknown> }>(
+			`SELECT metadata FROM oauth_connections WHERE provider = 'refreshable'`,
+		);
+		expect(conn.rows[0].metadata.client_id).toBe('client-1');
+		expect(conn.rows[0].metadata.token_url).toBe(`${sim.baseUrl}/token`);
+	});
 });
 
 describe('POST /projects/:projectId/oauth/auth-code/start validation', () => {

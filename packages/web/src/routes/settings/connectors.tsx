@@ -404,9 +404,9 @@ function InstanceConnectorRow({
 			{connector.kind === 'saas' && status === 'active' && (
 				<AdminMethodAccess connector={connector} />
 			)}
-			{connector.auth_error && status === 'failed' && (
-				<p className="text-xs text-danger mt-1">{connector.auth_error}</p>
-			)}
+			{/* Not gated on status === 'failed': a stale-token refresh failure is
+			    recorded on a row that stays 'active', and would otherwise be invisible. */}
+			{connector.auth_error && <p className="text-xs text-danger mt-1">{connector.auth_error}</p>}
 			{rowError && <p className="text-xs text-danger mt-1">{rowError}</p>}
 			{rowInfo && <p className="text-xs text-text-3 mt-1">{rowInfo}</p>}
 			<ConfirmDialog

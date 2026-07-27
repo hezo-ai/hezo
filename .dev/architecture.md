@@ -1651,7 +1651,16 @@ single **generic** refresh fn is registered at startup (`registerGenericOAuthRef
 handles any connection carrying `token_url` + `client_id` in its metadata (decrypting the
 host-only client secret when present), so refresh is now **real** for broker connections
 rather than the historically GitHub-inert no-op; a provider-specific fn still wins over the
-generic one where registered. Deleting a project (or its team) purges the project's
+generic one where registered. Every flow that mints a connection therefore has to persist
+**both** `token_url` and `client_id` on its metadata — the auth-code and MCP DCR callbacks
+included, not just the device-flow broker. Omitting `client_id` makes the generic fn throw
+before any network call, and because a failed refresh is swallowed and never advances
+`expires_at`, the connection silently keeps serving its original access token until the
+upstream 401s. A failed refresh now backs off per connection (30 s doubling to a 15 min
+ceiling, cleared on success) so a structurally broken connection can't re-attempt on every
+proxied request, and records the reason on the backing connector's `mcp_connections.auth_error`
+(cleared on the next success) so it surfaces on the Connectors page rather than only in the
+log. Deleting a project (or its team) purges the project's
 connections and their token secrets (access, refresh, and client secret) before the cascade,
 so no encrypted token orphans in the vault.
 
