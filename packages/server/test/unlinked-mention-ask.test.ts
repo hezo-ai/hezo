@@ -189,4 +189,72 @@ describe('detectUnlinkedTeammateAsks', () => {
 		expect(detectUnlinkedTeammateAsks('', slugs)).toEqual([]);
 		expect(detectUnlinkedTeammateAsks(null, slugs)).toEqual([]);
 	});
+
+	describe('name-bound sign-off gate (mid-sentence, no addressing position)', () => {
+		const signoffSlugs = ['captain', 'marketing-lead', 'architect', 'admin'];
+
+		it('flags the stranded "awaiting Captain sign-off" recap (the screenshot case)', () => {
+			// The exact incident string: a stative status recap, name mid-sentence,
+			// bound to the sign-off gate — no bold, no leading-line address, no @.
+			expect(
+				detectUnlinkedTeammateAsks(
+					'Review complete. The ticket stays in `review` awaiting Captain sign-off.',
+					signoffSlugs,
+				),
+			).toEqual(['captain']);
+		});
+
+		it('flags the gate → name → object forms (needs/pending/for)', () => {
+			expect(
+				detectUnlinkedTeammateAsks("The draft needs the marketing-lead's approval.", signoffSlugs),
+			).toEqual(['marketing-lead']);
+			expect(detectUnlinkedTeammateAsks('Left it pending Captain review.', signoffSlugs)).toEqual([
+				'captain',
+			]);
+			expect(
+				detectUnlinkedTeammateAsks('Parked for architect sign-off before release.', signoffSlugs),
+			).toEqual(['architect']);
+			expect(
+				detectUnlinkedTeammateAsks('Still waiting on admin approval to ship.', signoffSlugs),
+			).toEqual(['admin']);
+		});
+
+		it('flags the name → pending-action forms (modal required)', () => {
+			for (const line of [
+				'Captain to sign off next.',
+				'Captain must approve before publication.',
+				'Captain still needs to review the copy.',
+			]) {
+				expect(detectUnlinkedTeammateAsks(line, signoffSlugs)).toEqual(['captain']);
+			}
+		});
+
+		it('does NOT flag a granted/past sign-off (no pending gate, no modal)', () => {
+			// "the Captain's approval was already granted" — the name is possessed by a
+			// noun with no leading gate word and no modal+verb, so it is a report of a
+			// completed approval, not a pending ask.
+			expect(
+				detectUnlinkedTeammateAsks(
+					"The Captain's approval was already granted last week.",
+					signoffSlugs,
+				),
+			).toEqual([]);
+			expect(
+				detectUnlinkedTeammateAsks('Captain approved the plan on Monday.', signoffSlugs),
+			).toEqual([]);
+		});
+
+		it('does NOT flag a gate word with no name bound to it', () => {
+			// The sign-off gate fires only when a roster name is bound to it — a bare
+			// "awaiting review" names no one.
+			expect(detectUnlinkedTeammateAsks('The draft is awaiting review.', signoffSlugs)).toEqual([]);
+		});
+
+		it('does NOT flag a name only actively @-mentioned in the same sign-off recap', () => {
+			// @captain already wakes, so the gate must not double-flag it.
+			expect(
+				detectUnlinkedTeammateAsks('@captain — this is awaiting captain sign-off.', signoffSlugs),
+			).toEqual([]);
+		});
+	});
 });

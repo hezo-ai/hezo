@@ -116,6 +116,48 @@ function hasActionAssignmentLine(stripped: string, namePattern: string): boolean
 	return false;
 }
 
+// The sign-off/approval OBJECT of a gated handoff — the thing an approver grants.
+const SIGNOFF_OBJECT_RE = String.raw`(?:sign-?\s?offs?|approvals?|reviews?)`;
+// Gate words that put a NAMED approver on the hook for the sign-off object that
+// follows them: "awaiting <name> sign-off", "needs the <name>'s approval",
+// "pending <name> review", "for <name> sign-off", "waiting on <name> approval".
+const SIGNOFF_GATE_LEAD_RE = String.raw`(?:awaiting|await|pending|needs?|needing|requires?|requiring|for|blocked\s+on|waiting\s+(?:on|for))`;
+// Pending-action verbs the named approver must still perform — "<name> to sign
+// off", "<name> must approve", "<name> still needs to review". The verb list is
+// the ACTION, gated below by a REQUIRED modal so a past/granted "<name> approved
+// …" (no modal) is never matched.
+const SIGNOFF_PENDING_ACTION_RE = String.raw`(?:sign-?\s?off|approve|review)`;
+
+/**
+ * Whether `stripped` binds the teammate named by `namePattern` DIRECTLY to a
+ * sign-off/approval gate — the mid-sentence handoff the address-position forms
+ * (bold, leading-line, action-assignment line) all miss because the name sits
+ * inside the sentence rather than opening a line. Two binding directions:
+ *
+ *   - gate → name → object:  "awaiting Captain sign-off", "needs the
+ *     marketing-lead's approval", "pending Captain review", "for Captain sign-off".
+ *   - name → pending action:  "Captain to sign off", "Captain must approve",
+ *     "Captain still needs to review" — the modal ("to"/"must"/"needs to"/…) is
+ *     REQUIRED, so a past/granted "Captain approved the plan" is NOT flagged.
+ *
+ * The binding of the name to the gate is itself the ask signal, so this needs no
+ * separate readsAsAsk pass. It fires ONLY when the name is bound to the gate,
+ * never when a gate word merely co-occurs with a non-addressed name elsewhere in
+ * the sentence ("The doc went out for review last week; the architect wrote the
+ * brief." → no match).
+ */
+function hasNameBoundSignoffGate(stripped: string, namePattern: string): boolean {
+	const gateNameObject = new RegExp(
+		String.raw`\b${SIGNOFF_GATE_LEAD_RE}\s+(?:the\s+)?${namePattern}(?:['’]s)?\s+${SIGNOFF_OBJECT_RE}\b`,
+		'i',
+	);
+	const namePendingAction = new RegExp(
+		String.raw`\b${namePattern}(?:['’]s)?\s+(?:(?:still\s+)?(?:needs?|has)\s+to\s+|to\s+|must\s+|should\s+)${SIGNOFF_PENDING_ACTION_RE}\b`,
+		'i',
+	);
+	return gateNameObject.test(stripped) || namePendingAction.test(stripped);
+}
+
 export function extractMentionSlugs(content: unknown): string[] {
 	const text = flattenTextFields(content);
 	if (!text) return [];
@@ -332,16 +374,18 @@ function passiveMentionParagraphs(stripped: string, escapedSlug: string): string
 
 /**
  * Flags teammate slugs addressed with the UNLINKED form — bold (`**slug**` /
- * `__slug__`) or a leading-line address (`slug —` / `slug:`), no `@` prefix at
- * all — where the surrounding text reads like an ask, so an active `@slug` was
- * almost certainly intended yet the bare/bold name renders as inert text and
- * wakes no one, stranding the handoff silently. This is the precise, ask-gated
- * subset of detectUnlinkedTeammateReferences: it adds the same directed-ask gate
- * detectPassiveTeammateAsks uses (see readsAsAsk) so a bold name written for
- * mere emphasis or attribution is never flagged. A slug also reached by an
- * active `@`-mention anywhere is skipped — it already notifies. The runner's
+ * `__slug__`), a leading-line address (`slug —` / `slug:`), or a name bound
+ * directly to a sign-off/approval gate (`awaiting slug sign-off`, `slug to
+ * approve`), no `@` prefix at all — where the surrounding text reads like an ask,
+ * so an active `@slug` was almost certainly intended yet the bare/bold name
+ * renders as inert text and wakes no one, stranding the handoff silently. The
+ * bold/leading forms add the same directed-ask gate detectPassiveTeammateAsks
+ * uses (see readsAsAsk) so a name written for mere emphasis or attribution is
+ * never flagged; the action-assignment line and the name-bound sign-off gate are
+ * self-gating (the binding IS the ask). A slug also reached by an active
+ * `@`-mention anywhere is skipped — it already notifies. The runner's
  * handoff-delivery net uses these to warn (in the run log) that a run ended with a
- * stranded bold-name handoff, mirroring create_comment's interactive warning.
+ * stranded bare-name handoff, mirroring create_comment's interactive warning.
  */
 export function detectUnlinkedTeammateAsks(content: unknown, knownSlugs: string[]): string[] {
 	const text = flattenTextFields(content);
@@ -362,6 +406,15 @@ export function detectUnlinkedTeammateAsks(content: unknown, knownSlugs: string[
 		// with the trailing guard, keeps a slug from matching inside a longer
 		// hyphenated slug (`engineer` in `qa-engineer` / `engineer-lead`).
 		if (hasActionAssignmentLine(stripped, String.raw`(?<![\w@-])${s}(?![\w-])`)) {
+			flagged.add(slug);
+			continue;
+		}
+		// Name-bound sign-off gate: a mid-sentence handoff the address-position
+		// forms miss because the name sits inside the sentence rather than opening a
+		// line — `awaiting slug sign-off`, `needs slug's approval`, `slug to sign
+		// off`. The binding of the name to the sign-off gate is itself the ask
+		// signal, so like the action-assignment line it needs no readsAsAsk pass.
+		if (hasNameBoundSignoffGate(stripped, String.raw`(?<![\w@-])${s}(?![\w-])`)) {
 			flagged.add(slug);
 			continue;
 		}
