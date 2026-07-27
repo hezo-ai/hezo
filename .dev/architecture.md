@@ -1418,8 +1418,8 @@ to the agent in a `warning` field on the already-persisted result. They **never 
 comment** — the agent fixes it in place with `update_comment`. The checks (all in
 `lib/mentions.ts`, scoped by `resolveWarnableSlugs` = the task team's roster + HQ + `@admin`,
 minus the author): `detectUnlinkedTeammateReferences` (a teammate addressed by bold/bare name,
-which notifies nobody), `detectPassiveTeammateAsks` (a `@@slug` address whose text reads as an
-ask), and `detectNarratedActiveMentions` — the inverse failure, where an **active** `@slug` is
+which notifies nobody), `detectPassiveTeammateAsks` (a `@@slug` address that should have been
+active), and `detectNarratedActiveMentions` — the inverse failure, where an **active** `@slug` is
 used to *describe a mention living in another comment* ("the @admin mention in TASK-7#comment-9")
 and so fires a real wake here instead of pointing there. The offered fix for that one is
 **backticks**, not the passive form: `@@admin` renders as the bare word `admin` and loses the
@@ -1427,6 +1427,18 @@ token being quoted, while `` `@admin` `` keeps the literal text inert. Because t
 backticked-entity check would otherwise tell the author to un-backtick exactly that token,
 `detectQuotedMentionTokens` subtracts backticked-and-narrated slugs from its candidates, so the
 two advisories can never contradict each other.
+
+`detectPassiveTeammateAsks` gates its two addressing forms differently, because they differ in
+how ambiguous they are. A **leading-line** `@@slug — …` (including one behind a routing label,
+`Next step: @@slug — …`) is flagged **unconditionally, with no ask gate**: opening a line with a
+teammate reference and a separator is the *address* shape, and the address shape is reserved for
+active mentions — a reference you only mean to make belongs inside a sentence. This is what
+catches `@@admin — release is done.`, which is asking the admin to register the fact but carries
+no pronoun, no `please` and no `?`, so no ask gate could see it. An **emphasised** `**@@slug**`
+stays gated on `readsAsAsk` over its own paragraph(s), since bold marks attribution and headings
+as much as address. `SHARED_INSTRUCTIONS` teaches the matching rules: an active mention's shape
+is a line opening `@<slug> - ` then the ask, several recipients get one such line each, and a
+line never opens with `@@<slug> - `.
 
 ---
 

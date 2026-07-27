@@ -260,14 +260,22 @@ export function detectUnlinkedTeammateReferences(content: unknown, knownSlugs: s
 }
 
 /**
- * Flags teammate slugs addressed with the PASSIVE mention form (`@@slug`) where
- * the surrounding text reads like an ask — an active `@slug` was almost certainly
- * intended, yet `@@` links without notifying, so the handoff stalls silently. To
- * avoid warning on a deliberate passive reference, a slug is flagged only when it
- * is BOTH addressed (a leading-line `@@slug —` or an emphasised `**@@slug**`) AND
- * its address paragraph reads as an ask (see readsAsAsk). A slug
- * that is also actively `@`-mentioned anywhere is never flagged — it already
- * notifies. Mirrors detectUnlinkedTeammateReferences for the passive form.
+ * Flags teammate slugs addressed with the PASSIVE mention form (`@@slug`) where an
+ * active `@slug` was almost certainly intended — `@@` links without notifying, so
+ * the handoff stalls silently. Two addressing forms, gated differently:
+ *
+ * - A **leading-line address** (`@@slug — …`, optionally after a routing label) is
+ *   flagged unconditionally. Opening a line with a teammate reference and a
+ *   separator is the address shape, reserved for active mentions; a genuine
+ *   passive reference goes inside the sentence. `@@admin — release is done.` is
+ *   the canonical miss — it is asking the admin to register the fact, but carries
+ *   no pronoun, no `please` and no `?`, so no ask gate can see it.
+ * - An **emphasised** `**@@slug**` is ambiguous (bold marks attribution and
+ *   headings too), so it keeps the directed-ask gate over its own paragraph(s)
+ *   (see readsAsAsk) and a bold name written for emphasis is never flagged.
+ *
+ * A slug that is also actively `@`-mentioned anywhere is never flagged — it
+ * already notifies. Mirrors detectUnlinkedTeammateReferences for the passive form.
  */
 export function detectPassiveTeammateAsks(content: unknown, knownSlugs: string[]): string[] {
 	const text = flattenTextFields(content);
@@ -290,13 +298,23 @@ export function detectPassiveTeammateAsks(content: unknown, knownSlugs: string[]
 			flagged.add(slug);
 			continue;
 		}
-		// Addressed by the passive form: emphasised `**@@slug**`/`__@@slug__` or a
-		// leading-line `@@slug —` — the @@-prefixed analogue of the sibling's forms.
-		const bold = new RegExp(String.raw`(\*\*|__)@@${s}\1`, 'i');
-		const lead = leadingAddressRegex(`@@${s}`);
-		if (!bold.test(stripped) && !lead.test(stripped)) continue;
-		// Only warn when the paragraph(s) carrying this passive mention read as an
-		// ask — scoped to those paragraphs so a `you` elsewhere never leaks in.
+		// Leading-line address (`@@slug — …`, optionally after a routing label): the
+		// line-opening name-then-separator shape IS the address form, and the only
+		// reason to write it is to hand the named teammate the next action — so the
+		// passive marking is wrong on sight, with no ask gate. There is no legitimate
+		// passive use of it: a reference you merely mean to *make* belongs inside the
+		// sentence (`as @@slug noted, …`), not opening a line. This is the shape that
+		// strands the most work, because the status vocabulary it attracts
+		// (`@@admin — release is done.`) is exactly what the ask gate cannot see.
+		if (leadingAddressRegex(`@@${s}`).test(stripped)) {
+			flagged.add(slug);
+			continue;
+		}
+		// Emphasised `**@@slug**`/`__@@slug__` is genuinely ambiguous — bold is used
+		// for attribution and headings as much as for address — so it keeps the ask
+		// gate, scoped to the paragraph(s) carrying the mention so a `you` elsewhere
+		// never leaks in.
+		if (!new RegExp(String.raw`(\*\*|__)@@${s}\1`, 'i').test(stripped)) continue;
 		const block = passiveMentionParagraphs(stripped, s);
 		if (block && readsAsAsk(block)) flagged.add(slug);
 	}
