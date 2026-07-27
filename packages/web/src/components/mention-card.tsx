@@ -1,7 +1,9 @@
 import type { AdminMentionItem } from '@hezo/shared';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { useMarkMentionRead } from '../hooks/use-admin-mentions';
+import { defaultAvatarForSlug } from '../lib/default-avatars';
 import { formatDateTime, formatRelativeTime } from '../lib/format-date';
+import { Avatar, getInitials } from './ui/avatar';
 import { Badge } from './ui/badge';
 
 interface MentionCardProps {
@@ -66,8 +68,16 @@ export function MentionCard({ mention, showTeam = false }: MentionCardProps) {
 					{formatRelativeTime(mention.created_at)}
 				</time>
 			</div>
-			<p className={`text-xs mb-1 ${unread ? 'text-text-1' : 'text-text-2'}`}>
-				<span className={unread ? 'font-semibold' : 'font-medium'}>{author}</span> asked you on{' '}
+			{/* A div, not a p: Avatar renders a div and cannot legally nest in a p. */}
+			<div className={`text-xs mb-1 ${unread ? 'text-text-1' : 'text-text-2'}`}>
+				<Avatar
+					size="sm"
+					initials={getInitials(mention.author_display_name)}
+					imageUrl={mention.author_icon_url ?? defaultAvatarForSlug(mention.author_slug)}
+					className="mr-1.5 align-middle"
+				/>
+				<span className={`align-middle ${unread ? 'font-semibold' : 'font-medium'}`}>{author}</span>{' '}
+				asked you on{' '}
 				<Link
 					to={'/projects/$projectId/tasks/$taskId' as never}
 					params={
@@ -81,7 +91,7 @@ export function MentionCard({ mention, showTeam = false }: MentionCardProps) {
 				>
 					{mention.task_identifier}
 				</Link>
-			</p>
+			</div>
 			{mention.snippet && (
 				<p className="text-sm text-text-3 break-words line-clamp-3">{mention.snippet}</p>
 			)}

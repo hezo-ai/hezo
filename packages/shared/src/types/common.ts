@@ -672,6 +672,13 @@ export interface AdminMentionItem {
 	author_member_id: string | null;
 	author_display_name: string;
 	author_slug: string | null;
+	/**
+	 * Freshly-signed avatar URL for the author (their `user_icons` image when a
+	 * human, its `agent_icons` image when an agent), or null when neither has an
+	 * upload. The built-in CEO/Coach default is resolved client-side from
+	 * `author_slug`; this only carries the upload.
+	 */
+	author_icon_url: string | null;
 	created_at: string;
 	read_at: string | null;
 }

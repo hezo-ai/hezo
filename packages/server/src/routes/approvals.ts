@@ -7,6 +7,7 @@ import {
 } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
+import { signAuthorIconUrl } from '../lib/entity-icon-urls';
 import { resolveAgentId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
@@ -35,6 +36,12 @@ approvalsRoutes.get('/projects/:projectId/approvals', async (c) => {
             co.slug AS team_slug,
             COALESCE(ma.title, m.display_name) AS requested_by_name,
             a.requested_by_member_id,
+            ma.slug AS requested_by_slug,
+            mu.user_id AS requested_by_user_id,
+            (SELECT ui.updated_at FROM user_icons ui WHERE ui.user_id = mu.user_id)
+              AS requested_by_user_icon_updated_at,
+            (SELECT ai.updated_at FROM agent_icons ai WHERE ai.member_id = a.requested_by_member_id)
+              AS requested_by_agent_icon_updated_at,
             COALESCE(pma.title, pm.display_name) AS payload_member_name,
             pma.slug AS payload_member_slug,
             pp.name AS payload_project_name,
@@ -44,6 +51,7 @@ approvalsRoutes.get('/projects/:projectId/approvals', async (c) => {
      JOIN teams co ON co.id = a.team_id
      LEFT JOIN members m ON m.id = a.requested_by_member_id
      LEFT JOIN member_agents ma ON ma.id = a.requested_by_member_id
+     LEFT JOIN member_users mu ON mu.id = a.requested_by_member_id
      LEFT JOIN members pm ON pm.id = (a.payload->>'member_id')::uuid
      LEFT JOIN member_agents pma ON pma.id = pm.id
      LEFT JOIN projects pp ON pp.id = (a.payload->>'project_id')::uuid
@@ -55,6 +63,21 @@ approvalsRoutes.get('/projects/:projectId/approvals', async (c) => {
      ORDER BY a.created_at DESC`,
 		[teamId, ...statusFilter.split(',').map((s) => s.trim())],
 	);
+
+	// The requester's uploaded avatar (if any), so the inbox can put a face on the
+	// row. The built-in CEO/Coach default is resolved client-side from the slug.
+	const masterKeyManager = c.get('masterKeyManager');
+	for (const row of result.rows) {
+		row.requested_by_icon_url = await signAuthorIconUrl(masterKeyManager, {
+			userId: row.requested_by_user_id,
+			memberId: row.requested_by_member_id,
+			userIconUpdatedAt: row.requested_by_user_icon_updated_at,
+			agentIconUpdatedAt: row.requested_by_agent_icon_updated_at,
+		});
+		delete row.requested_by_user_id;
+		delete row.requested_by_user_icon_updated_at;
+		delete row.requested_by_agent_icon_updated_at;
+	}
 
 	return ok(c, result.rows);
 });
