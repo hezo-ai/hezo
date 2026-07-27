@@ -6,8 +6,8 @@ section: Deployment
 
 # Backup & recovery
 
-`hezo backup` captures a **complete instance** — the database *and* every uploaded asset
-file — as a portable **backup bundle**. It works for both database backends (embedded and
+`hezo backup` captures a **complete instance** - the database *and* every uploaded asset
+file - as a portable **backup bundle**. It works for both database backends (embedded and
 [external Postgres](/docs/deployment/configuration)) and both asset backends (local files
 and an [S3-compatible bucket](/docs/deployment/configuration)), which also makes it the way
 to **move an instance between them**. But there's one crucial pairing to understand first.
@@ -17,7 +17,7 @@ to **move an instance between them**. But there's one crucial pairing to underst
 Your secrets are **encrypted with your master key**, and the master key is never stored
 with them. To restore a working instance you need **both**:
 
-- a **backup** (and, for a complete instance, the data directory — see below), and
+- a **backup** (and, for a complete instance, the data directory - see below), and
 - the **twelve-word master key** that unlocks it.
 
 A backup without the master key cannot decrypt the secrets inside it. Store the master
@@ -39,10 +39,10 @@ database-only single `.backup.gz` file, or `--no-database` for an assets-only bu
 
 **Stop the server first for the embedded database and local assets.** The embedded database
 is single-process: `hezo backup` opens a *second* database over the same files, which is not
-a safe read-only operation — it races the running server's writes and can corrupt the data.
+a safe read-only operation - it races the running server's writes and can corrupt the data.
 So the command **refuses to run while the server is up** (the running instance holds an
 advisory lock at `<data-dir>/hezo.lock`; backup and restore check it and stop with guidance
-rather than risk the files). A **hosted** database and bucket are different — there `hezo
+rather than risk the files). A **hosted** database and bucket are different - there `hezo
 backup` is an ordinary consistent read against your one Postgres server, so you can back them
 up **any time, server running**, and they pair well with your provider's own snapshots or
 versioning.
@@ -54,23 +54,23 @@ versioning.
 
 ### Point the command at your data directory
 
-`hezo backup` resolves its data directory the **same way the server does** — `HEZO_DATA_DIR`
+`hezo backup` resolves its data directory the **same way the server does** - `HEZO_DATA_DIR`
 first, then `--data-dir`, then the default `~/.hezo`. This matters the moment your instance
 does **not** live at the default location.
 
 **If your server runs with a custom data directory, the backup command has to know about it
 too.** Run `hezo backup` in the same environment as the server (so `HEZO_DATA_DIR` is set),
-or pass `--data-dir /your/path` explicitly. Otherwise the command falls back to `~/.hezo` — a
-directory your instance never used — and backs up the wrong database instead of yours.
+or pass `--data-dir /your/path` explicitly. Otherwise the command falls back to `~/.hezo` - a
+directory your instance never used - and backs up the wrong database instead of yours.
 
 - **systemd / Docker** (the env var is already set for the service): `hezo backup` needs no
-  extra flag — run it with the unit's environment (an `EnvironmentFile` / `systemd-run`), or
+  extra flag - run it with the unit's environment (an `EnvironmentFile` / `systemd-run`), or
   `docker exec <container> hezo backup`, and the same `HEZO_DATA_DIR` resolves your database.
 - **A custom dir passed only as a startup flag** (`hezo --data-dir /var/lib/hezo`): pass the
   **same** `--data-dir /var/lib/hezo` to `hezo backup` (there is no env var to inherit).
 
 Pointed at a directory that holds no Hezo database, the command stops with a clear error
-(`No Hezo database found at …`) instead of silently writing a backup of an empty one — but
+(`No Hezo database found at …`) instead of silently writing a backup of an empty one - but
 it's on you to point it at the *right* directory; a valid-but-wrong data dir is still a valid
 backup of the wrong instance. The same resolution applies to `hezo restore`, which **writes**
 into the resolved data directory.
@@ -80,7 +80,7 @@ and the instance's keys live under `<data-dir>` and are **not** in a backup, so 
 disaster-recovery copy is the bundle **plus** a copy of the data directory (a file backup
 or volume snapshot works; stopped-server copies are cleanest). If your assets already live
 in [S3-compatible object storage](/docs/deployment/configuration), `hezo backup` reads them
-straight from the bucket into the bundle — or rely on the bucket's own
+straight from the bucket into the bundle - or rely on the bucket's own
 versioning/replication and take a `--no-assets` database backup.
 
 ## Restoring
@@ -92,7 +92,7 @@ hezo restore <bundle> --asset-storage-url "s3://…"         # assets into an S3
 ```
 
 Restore replays Hezo's own migrations up to exactly the version the backup recorded,
-then loads the data — so the target must be an **empty database** (pass `--wipe` to drop
+then loads the data - so the target must be an **empty database** (pass `--wipe` to drop
 and restore over a non-empty one). Asset blobs from a bundle are written into the target
 asset store and checksum-verified against the restored rows (`--strict-assets` fails on any
 blob with no matching row); use `--no-assets` / `--no-database` to restore only one half of
@@ -139,7 +139,7 @@ hezo
 
 Migrate just one side by setting only that target on `restore` (e.g. only
 `HEZO_DATABASE_URL` to move the database while leaving assets where they are), or with
-`--no-assets` / `--no-database`. Your master key is unchanged by a move — the encrypted
+`--no-assets` / `--no-database`. Your master key is unchanged by a move - the encrypted
 vault travels inside the backup.
 
 ## Upgrades are safe to roll back
@@ -149,7 +149,7 @@ each backend has a safety net:
 
 - **Embedded:** migrations run against a *copy* of the database, which is swapped in
   only on success; the previous copy is kept aside in the data directory. A failed
-  migration leaves your original data untouched — just run the previous binary.
+  migration leaves your original data untouched - just run the previous binary.
 - **External:** a pre-migration `hezo backup` file is written into
   `<data-dir>/backups/` automatically before anything changes (the last 5 are kept),
   and each migration commits its own transaction. To roll back a bad upgrade, restore
@@ -161,15 +161,15 @@ hezo restore <backup>
 
 ## Starting over
 
-If you need a clean slate — or you've lost the master key and have no way back — reset
+If you need a clean slate (or you've lost the master key and have no way back), reset
 the instance:
 
 ```sh
 hezo --reset
 ```
 
-This **starts fresh with an empty embedded database**. Your previous data isn't deleted —
-the existing `pgdata` is renamed aside on disk — but it stays encrypted with the old
+This **starts fresh with an empty embedded database**. Your previous data isn't deleted -
+the existing `pgdata` is renamed aside on disk - but it stays encrypted with the old
 master key, so there's no recovery path for a lost key. Treat `--reset` as the last
 resort it is. (For an external database, drop and recreate it with your provider's tools
 instead.)
