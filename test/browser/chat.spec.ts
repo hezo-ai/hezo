@@ -272,6 +272,107 @@ test.describe('CEO chat widget — responsive layout', () => {
 	});
 });
 
+// Kept in Playwright by decision-tree items 1 & 2 (real CSS layout + a mobile
+// viewport): "did this token wrap or did it widen the panel" is a question only a
+// real layout pass answers — happy-dom reports scrollWidth/clientWidth as 0 and
+// never re-flows text at 375px.
+test.describe('CEO chat widget — long unbreakable content', () => {
+	// No spaces, far wider than the ~420px anchored panel: the pasted-link case
+	// that used to push the whole message list into horizontal scroll.
+	const LONG_URL =
+		'https://www.linkedin.com/feed/update/urn:li:activity:7486869676694818816/?utm_source=share&utm_medium=member_desktop';
+
+	test('a pasted link wraps inside its bubble instead of widening the message list', async ({
+		sharedPage,
+		sharedWorkspace,
+	}) => {
+		const page = sharedPage;
+
+		const seeded = [
+			{
+				id: 'seed-user',
+				conversation_id: 'conv-wrap',
+				role: 'user',
+				channel: 'web',
+				status: 'complete',
+				content: `i want to post: ${LONG_URL}`,
+				created_at: new Date(Date.UTC(2026, 0, 1, 0, 0)).toISOString(),
+			},
+			{
+				id: 'seed-ceo',
+				conversation_id: 'conv-wrap',
+				role: 'assistant',
+				channel: 'web',
+				status: 'complete',
+				// The CEO side is markdown, so the bare URL autolinks — the anchor has
+				// to wrap too, not just the plain-text user bubble.
+				content: `On it. Source: ${LONG_URL}`,
+				created_at: new Date(Date.UTC(2026, 0, 1, 0, 1)).toISOString(),
+			},
+		];
+
+		// The widget swaps the scrollable message list for an HQ-container notice
+		// unless HQ is healthy — force the instance project to "running".
+		await page.route('**/api/projects', async (route) => {
+			if (route.request().method() !== 'GET') return route.fallback();
+			const response = await route.fetch();
+			const body = (await response.json()) as { data?: Array<Record<string, unknown>> };
+			const data = Array.isArray(body.data)
+				? body.data.map((p) => (p.is_internal ? { ...p, container_status: 'running' } : p))
+				: body.data;
+			await route.fulfill({ response, json: { ...body, data } });
+		});
+		await page.route('**/api/chat/conversation', (route) =>
+			route.fulfill({ json: { data: { conversation_id: 'conv-wrap', messages: seeded } } }),
+		);
+
+		await page.setViewportSize({ width: 1280, height: 800 });
+		await page.goto(`/projects/${sharedWorkspace.projectSlug}/tasks`);
+		await waitForPageLoad(page);
+
+		const launcher = page.getByTestId('chat-launcher');
+		await expect(launcher).toBeVisible({ timeout: 15000 });
+		await launcher.click();
+		await expect(page.getByTestId('chat-panel')).toBeVisible();
+
+		const list = page.getByTestId('chat-messages');
+		const bubbles = {
+			user: page.locator('[data-testid="chat-message"][data-role="user"]'),
+			ceo: page.locator('[data-testid="chat-message"][data-role="ceo"]'),
+		};
+		await expect(bubbles.user).toBeVisible();
+		await expect(bubbles.ceo).toBeVisible();
+
+		// Both breakpoints: the anchored desktop panel and the near-full-screen
+		// mobile sheet are the two widths the bubble has to fit.
+		for (const width of [1280, 375]) {
+			await page.setViewportSize({ width, height: 800 });
+
+			// The list never gains a horizontal scroll range — the bug was the URL
+			// setting a min-content width wider than the panel.
+			await expect
+				.poll(() => list.evaluate((el) => el.scrollWidth - el.clientWidth))
+				.toBeLessThanOrEqual(1);
+
+			const listBox = await list.boundingBox();
+			expect(listBox).not.toBeNull();
+			for (const [role, bubble] of Object.entries(bubbles)) {
+				const box = await bubble.boundingBox();
+				expect(box, `${role} bubble at ${width}px`).not.toBeNull();
+				if (!box || !listBox) continue;
+				expect(box.x, `${role} bubble left edge at ${width}px`).toBeGreaterThanOrEqual(
+					listBox.x - 1,
+				);
+				expect(box.x + box.width, `${role} bubble right edge at ${width}px`).toBeLessThanOrEqual(
+					listBox.x + listBox.width + 1,
+				);
+				// Wrapped, not clipped: the URL alone spans several lines at these widths.
+				expect(box.height, `${role} bubble height at ${width}px`).toBeGreaterThan(40);
+			}
+		}
+	});
+});
+
 // Kept in Playwright by decision-tree item 1 (real CSS layout): the composer
 // auto-grows by measuring its own `scrollHeight` and writing back an inline
 // height. happy-dom reports `scrollHeight` as 0, so the grow/collapse can only

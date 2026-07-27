@@ -19,13 +19,15 @@ import {
 	Plus,
 	X,
 } from 'lucide-react';
-import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { useAutoGrowTextarea } from '../../hooks/use-auto-grow-textarea';
 import {
 	type ChatConversationSummary,
 	type ChatMessage,
+	readStoredThreadId,
 	useChat,
 	useChatConversations,
+	writeStoredThreadId,
 } from '../../hooks/use-chat';
 import { useContainerHealth } from '../../hooks/use-container-health';
 import { useDraggableFab } from '../../hooks/use-draggable-fab';
@@ -66,9 +68,11 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 	// moves). Must be called before the `if (!open)` early return below.
 	const fab = useDraggableFab('chat');
 	// The selected thread (undefined = the default web thread). The switcher lets the
-	// operator create/switch/close parallel conversation threads.
+	// operator create/switch/close parallel conversation threads. Seeded from the
+	// last thread they switched to, so reopening the chat resumes it rather than
+	// jumping back to the default thread.
 	const [selectedConversationId, setSelectedConversationId] = useState<string | undefined>(
-		undefined,
+		readStoredThreadId,
 	);
 	const {
 		messages,
@@ -80,7 +84,21 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 		compactedCount,
 		conversationId: activeConversationId,
 	} = useChat(open, selectedConversationId);
-	const { conversations, createThread, closeThread } = useChatConversations(open);
+	const {
+		conversations,
+		loaded: threadsLoaded,
+		createThread,
+		closeThread,
+	} = useChatConversations(open);
+	// The one writer for the thread selection — dropdown, rail, new thread, and the
+	// fall-back-to-default paths all go through it, so what's rendered and what's
+	// remembered can never drift. `undefined` (back to the server's default web
+	// thread) clears the memory rather than pinning the default's id, keeping the
+	// untouched-switcher case behaving exactly as it did before.
+	const selectThread = useCallback((id: string | undefined) => {
+		setSelectedConversationId(id);
+		writeStoredThreadId(id);
+	}, []);
 	const hq = useHqProject();
 	const hqHealth = useContainerHealth(hq);
 	// The CEO can only act while the HQ container is up. When it isn't, the chat
@@ -122,6 +140,17 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 		if (!el) return;
 		el.scrollTop = el.scrollHeight;
 	}, [lastId, lastLen, streaming, open, expanded]);
+
+	// A remembered thread can be closed later (from the ✕ here, another tab, or its
+	// own platform), and the server still serves a closed thread's history by id —
+	// so a stale id would restore as a thread that reads fine but rejects every
+	// send. Once the thread list has loaded, a selection it doesn't list is dropped
+	// back to the default thread.
+	useEffect(() => {
+		if (!open || !threadsLoaded || !selectedConversationId) return;
+		if (conversations.some((t) => t.id === selectedConversationId)) return;
+		selectThread(undefined);
+	}, [open, threadsLoaded, selectedConversationId, conversations, selectThread]);
 
 	// Escape closes the chat from any open state (anchored or the expanded modal).
 	useEffect(() => {
@@ -183,7 +212,7 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 		const res = (await createThread().catch(() => null)) as {
 			conversation?: { id: string };
 		} | null;
-		if (res?.conversation?.id) setSelectedConversationId(res.conversation.id);
+		if (res?.conversation?.id) selectThread(res.conversation.id);
 	};
 	// Close a thread (defaults to the active one). If it was the active thread, fall
 	// back to the default web thread afterwards.
@@ -191,7 +220,7 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 		const target = id ?? activeConversationId;
 		if (!target) return;
 		await closeThread(target).catch(() => undefined);
-		if (target === activeConversationId) setSelectedConversationId(undefined);
+		if (target === activeConversationId) selectThread(undefined);
 	};
 
 	// Copy the whole conversation as plain text, each turn labelled by speaker.
@@ -354,7 +383,7 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 										>
 											<button
 												type="button"
-												onClick={() => setSelectedConversationId(t.id)}
+												onClick={() => selectThread(t.id)}
 												className="min-w-0 flex-1 truncate text-left"
 											>
 												{threadLabel(t)}
@@ -398,7 +427,7 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 												>
 													<button
 														type="button"
-														onClick={() => setSelectedConversationId(t.id)}
+														onClick={() => selectThread(t.id)}
 														className="flex min-w-0 flex-1 items-center gap-1 truncate text-left"
 													>
 														<span className="truncate">{threadLabel(t)}</span>
@@ -433,7 +462,7 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 								data-testid="chat-thread-select"
 								aria-label="Conversation thread"
 								value={activeConversationId ?? ''}
-								onChange={(e) => setSelectedConversationId(e.target.value || undefined)}
+								onChange={(e) => selectThread(e.target.value || undefined)}
 								className="min-w-0 flex-1 truncate rounded-md border border-border bg-surface px-2 py-1 text-xs text-text-1"
 							>
 								{conversations.length === 0 && <option value="">New thread</option>}
@@ -711,7 +740,12 @@ function MessageBubble({
 		>
 			<RoleLabel>You</RoleLabel>
 			{message.content.length > 0 && (
-				<div className="rounded-2xl rounded-br-sm bg-inverse px-3.5 py-2.5 text-sm leading-relaxed text-inverse-fg whitespace-pre-wrap">
+				// wrap-anywhere (not break-words): the bubble is a fit-content flex
+				// item, so an unbreakable token — a pasted URL — would otherwise set a
+				// min-content width wider than the panel and push the message list into
+				// horizontal scroll. `anywhere` is the one overflow-wrap value that also
+				// shrinks the intrinsic size, keeping the bubble inside max-w-[90%].
+				<div className="rounded-2xl rounded-br-sm bg-inverse px-3.5 py-2.5 text-sm leading-relaxed text-inverse-fg whitespace-pre-wrap wrap-anywhere">
 					{message.content}
 				</div>
 			)}
