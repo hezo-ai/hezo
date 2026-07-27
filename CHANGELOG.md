@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.35.0 - 2026-07-27
+
+### Features
+
+- **mcp:** page large project docs via read_project_doc byte windows ([#846](https://github.com/hezo-ai/hezo/pull/846))
+- **chat:** queue messages while the CEO replies, hold to interrupt ([#842](https://github.com/hezo-ai/hezo/pull/842))
+- **web:** show project icons and agent avatars across dashboard and inbox ([#843](https://github.com/hezo-ai/hezo/pull/843))
+
+### Bug Fixes
+
+- **mentions:** reserve the line-leading address shape for active mentions ([#841](https://github.com/hezo-ai/hezo/pull/841))
+- **oauth,egress:** stop MCP token-refresh log flood and demote SSE teardown noise ([#844](https://github.com/hezo-ai/hezo/pull/844))
+- **web:** wrap long links in chat bubbles; remember the last chat thread ([#840](https://github.com/hezo-ai/hezo/pull/840))
+
+### Documentation
+
+- make project doc description an overall summary, not a content inventory ([#847](https://github.com/hezo-ai/hezo/pull/847))
+
+### Other
+
+- Update product headline to "Built to deliver." ([#845](https://github.com/hezo-ai/hezo/pull/845))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.34.0...0.35.0
+
 ## 0.34.0 - 2026-07-27
 
 ### Features
