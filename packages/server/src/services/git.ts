@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { RepoHostType } from '@hezo/shared';
 import type { GitExecutor } from './git-executor';
@@ -967,13 +967,27 @@ export async function resetCloneToOrigin(
 }
 
 /**
+ * Filename, inside a clone's git dir, that {@link POST_COMMIT_PUSH_HOOK} appends failed
+ * auto-pushes to. Read back by {@link readPushErrors} at run end.
+ */
+export const PUSH_ERROR_LOG_NAME = 'hezo-push-errors.log';
+
+/**
  * `post-commit` hook installed into every clone so committed work survives an aborted
  * or timed-out run. The per-task worktree is ephemeral and the run's hard time limit
  * discards it on abort, so a commit that only lives in the worktree is lost; pushing
  * on every commit means committed work always reaches the remote.
  *
- * Best-effort and non-fatal by design — git ignores post-commit's exit status, and a
- * failed push must never break the agent's commit:
+ * Non-fatal but never silent. Git ignores post-commit's exit status and a failed push
+ * must never break the agent's commit — but it must not look like a successful one
+ * either. A denied push (the connected account lacks write on this repo, a protected
+ * branch, a lost SSH agent) used to be discarded to `/dev/null`, so the agent saw the
+ * same output as a clean push and was left to guess why its work never landed. The
+ * failure is now reported twice: one line on the commit's own stderr, where the agent
+ * sees it immediately, and the full git error appended to {@link PUSH_ERROR_LOG_NAME}
+ * in the git dir, which the runner surfaces into the run log at run end for the human.
+ *
+ * The rest of the shape:
  * - `[ -S "$SSH_AUTH_SOCK" ]` — only push when a live SSH agent socket exists. That
  *   holds during the agent's own bridged run (where its commits happen) but not during
  *   Hezo's bare prep git ops, so the prep-time catch-up merge commit
@@ -985,14 +999,27 @@ export async function resetCloneToOrigin(
  * - `--no-verify` — this is a durability checkpoint, not a reviewed push, so it skips
  *   any pre-push test/lint hook; a WIP commit whose tests are still red must reach the
  *   remote all the same.
+ * - `exit 0` unconditionally — reporting a failure is not the same as failing the commit.
  */
 export const POST_COMMIT_PUSH_HOOK = `#!/bin/sh
 # Hezo durability hook — installed by ensurePushHook(); do not edit in place.
 # Push each commit to origin immediately so committed work survives an aborted or
-# timed-out run (the per-task worktree is ephemeral). Non-fatal: never break a commit.
+# timed-out run (the per-task worktree is ephemeral). Non-fatal: never break a commit,
+# but never hide a failed push either — a denied push must not look like a clean one.
 [ -S "$SSH_AUTH_SOCK" ] || exit 0
 git remote get-url origin >/dev/null 2>&1 || exit 0
-git push --no-verify origin HEAD >/dev/null 2>&1 || true
+
+hezo_push_out=$(git push --no-verify origin HEAD 2>&1) && exit 0
+
+hezo_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
+hezo_remote=$(git remote get-url origin 2>/dev/null || echo origin)
+hezo_log="$(git rev-parse --git-common-dir 2>/dev/null || echo .git)/${PUSH_ERROR_LOG_NAME}"
+{
+  echo "=== auto-push failed: $hezo_remote ($hezo_branch)"
+  echo "$hezo_push_out"
+} >>"$hezo_log" 2>/dev/null || true
+echo "hezo: auto-push to $hezo_remote ($hezo_branch) failed — this commit is local only." >&2
+echo "$hezo_push_out" | head -n 5 >&2
 exit 0
 `;
 
@@ -1017,5 +1044,42 @@ export function ensurePushHook(clone: RepoLoc): void {
 		chmodSync(hookPath, 0o755);
 	} catch {
 		// Non-fatal — see the docstring. Swallowed so run prep never fails on a hook write.
+	}
+}
+
+const pushErrorLogPath = (clone: RepoLoc): string =>
+	join(clone.hostPath, '.git', PUSH_ERROR_LOG_NAME);
+
+/**
+ * Clear a clone's auto-push error log at run prep, so what {@link readPushErrors}
+ * reports at run end belongs to this run and not a previous one. Best-effort.
+ */
+export function clearPushErrors(clone: RepoLoc): void {
+	try {
+		rmSync(pushErrorLogPath(clone), { force: true });
+	} catch {
+		// Non-fatal — a stale log is worth less than a failed run prep.
+	}
+}
+
+/**
+ * Read back the auto-pushes that failed during this run, so the runner can put them
+ * in the run log. Without this a denied push is visible only on the agent's own
+ * stderr — which nobody reads once the run is over — and a repo the connected
+ * account cannot write to looks indistinguishable from one it can.
+ *
+ * Returns the trailing `maxLines` lines, or null when nothing failed. Best-effort:
+ * an unreadable log reports nothing rather than throwing at run finalize.
+ */
+export function readPushErrors(clone: RepoLoc, maxLines = 40): string | null {
+	try {
+		const path = pushErrorLogPath(clone);
+		if (!existsSync(path)) return null;
+		const text = readFileSync(path, 'utf-8').trim();
+		if (!text) return null;
+		const lines = text.split('\n');
+		return lines.length > maxLines ? lines.slice(-maxLines).join('\n') : text;
+	} catch {
+		return null;
 	}
 }

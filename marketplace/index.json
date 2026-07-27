@@ -211,9 +211,9 @@
 				"testing",
 				"security review"
 			],
-			"version": 7,
+			"version": 8,
 			"roster_count": 10,
-			"latest_notes": "When tasked with building an app, the Captain proactively suggests a shippable-MVP goal for the admin to approve."
+			"latest_notes": "The engineer opens each pull request against the repository the change actually lives in, not always the designated one - a project can link several repositories and agents work in all of them."
 		}
 	]
 }

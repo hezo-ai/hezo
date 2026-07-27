@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDataPreservationHarness, type DataPreservationHarness } from './helpers/migrate';
 
-const TARGET = '043_connector_method_access.sql';
+const TARGET = '044_connector_method_access.sql';
 
-describe('043_connector_method_access migration', () => {
+describe('044_connector_method_access migration', () => {
 	let h: DataPreservationHarness;
 	let seededConnectorId: string;
 

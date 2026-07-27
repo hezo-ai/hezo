@@ -31,6 +31,7 @@ import { ContainerGitExecutor, mintGitOpScopeId } from '../services/git-executor
 import { createGitHubRepo, parseGitHubUrl, validateRepoAccess } from '../services/github';
 import { getConnection } from '../services/oauth/connection-store';
 import { performRepoSetup } from '../services/repo-provisioning';
+import { refreshRepoPushAccess } from '../services/repo-push-access';
 import { removeRepoFromWorkspace } from '../services/repo-sync';
 import { getProjectConcurrency } from '../services/run-concurrency';
 import { type BridgeRunnerArgs, withProvisionBridge } from '../services/ssh-agent';
@@ -54,6 +55,7 @@ reposRoutes.get('/projects/:projectId/repos', async (c) => {
 	const result = await db.query(
 		`SELECT r.id, r.project_id, r.repo_identifier, r.host_type,
 		        r.oauth_connection_id, r.created_at, r.setup_status, r.setup_error,
+		        r.can_push,
 		        (p.designated_repo_id = r.id) AS is_designated,
 		        oc.provider_account_label AS oauth_account_label
 		 FROM repos r
@@ -128,6 +130,12 @@ reposRoutes.post('/projects/:projectId/repos', async (c) => {
 
 	let owner: string;
 	let repoName: string;
+	// Whether the connected account can push. A read-only repo is still a valid
+	// link — agents read connected repos from disk — so this never blocks the
+	// link; it is recorded so the repo card and the agent's Repository prompt
+	// block can say so up front instead of the gap surfacing as a silently
+	// denied push mid-run. `null` = unknown (see `repos.can_push`).
+	let canPush: boolean | null;
 
 	if (mode === 'link') {
 		owner = parsedOwner as string;
@@ -142,6 +150,7 @@ reposRoutes.post('/projects/:projectId/repos', async (c) => {
 				403,
 			);
 		}
+		canPush = access2.canPush;
 	} else {
 		let created: Awaited<ReturnType<typeof createGitHubRepo>>;
 		try {
@@ -159,6 +168,8 @@ reposRoutes.post('/projects/:projectId/repos', async (c) => {
 		}
 		owner = created.owner;
 		repoName = created.name;
+		// We just created it through this token's account, so it can push.
+		canPush = true;
 	}
 	const repoIdentifier = `${owner}/${repoName}`;
 
@@ -171,9 +182,10 @@ reposRoutes.post('/projects/:projectId/repos', async (c) => {
 		created_at: string;
 		setup_status: string;
 		setup_error: string | null;
+		can_push: boolean | null;
 	};
 	const REPO_COLUMNS = `id, project_id, repo_identifier, host_type, oauth_connection_id,
-	                      created_at, setup_status, setup_error`;
+	                      created_at, setup_status, setup_error, can_push`;
 
 	// The row is inserted `pending` and the response returns immediately; the
 	// slow half (container up + in-container clone + first-repo designation)
@@ -185,10 +197,10 @@ reposRoutes.post('/projects/:projectId/repos', async (c) => {
 	let insertedRepo: InsertedRepo;
 	try {
 		const insertRes = await db.query<InsertedRepo>(
-			`INSERT INTO repos (project_id, repo_identifier, host_type, oauth_connection_id, setup_status)
-			 VALUES ($1, $2, 'github'::repo_host_type, $3, $4::repo_setup_status)
+			`INSERT INTO repos (project_id, repo_identifier, host_type, oauth_connection_id, setup_status, can_push)
+			 VALUES ($1, $2, 'github'::repo_host_type, $3, $4::repo_setup_status, $5)
 			 RETURNING ${REPO_COLUMNS}`,
-			[projectId, repoIdentifier, conn.id, RepoSetupStatus.Pending],
+			[projectId, repoIdentifier, conn.id, RepoSetupStatus.Pending, canPush],
 		);
 		insertedRepo = insertRes.rows[0];
 	} catch (e) {
@@ -220,10 +232,11 @@ reposRoutes.post('/projects/:projectId/repos', async (c) => {
 		}
 		const reclaimed = await db.query<InsertedRepo>(
 			`UPDATE repos
-			 SET setup_status = $1::repo_setup_status, setup_error = NULL, oauth_connection_id = $2
+			 SET setup_status = $1::repo_setup_status, setup_error = NULL, oauth_connection_id = $2,
+			     can_push = $5
 			 WHERE id = $3 AND setup_status = $4::repo_setup_status
 			 RETURNING ${REPO_COLUMNS}`,
-			[RepoSetupStatus.Pending, conn.id, row.id, RepoSetupStatus.Failed],
+			[RepoSetupStatus.Pending, conn.id, row.id, RepoSetupStatus.Failed, canPush],
 		);
 		if (reclaimed.rows.length === 0) {
 			return err(c, 'REPO_SETUP_IN_PROGRESS', `${repoIdentifier} is already being set up`, 409);
@@ -323,8 +336,17 @@ reposRoutes.get('/projects/:projectId/repos/:repoId/git-state', async (c) => {
 	const repo = await loadRepoForGit(db, dataDir, teamId, projectId, c.req.param('repoId'));
 	if (!repo) return err(c, 'NOT_FOUND', 'Repo not found', 404);
 
+	// Re-check the connected account's write access here rather than trusting
+	// link-time truth — a permission change on GitHub is otherwise invisible
+	// until an agent's push is denied. Needs no container, so it runs before the
+	// container-gated branch below and is reported either way.
+	const canPush = await refreshRepoPushAccess(
+		{ db, masterKeyManager: c.get('masterKeyManager') },
+		repo.repoId,
+	);
+
 	if (!repo.containerId || !repo.containerRunning) {
-		return ok(c, { container_running: false });
+		return ok(c, { container_running: false, can_push: canPush });
 	}
 	const containerId = repo.containerId;
 
@@ -387,6 +409,7 @@ reposRoutes.get('/projects/:projectId/repos/:repoId/git-state', async (c) => {
 
 	return ok(c, {
 		container_running: true,
+		can_push: canPush,
 		clone: state.clone,
 		worktrees: state.worktrees.map((w) => ({ ...w, task: taskMap.get(w.taskIdentifier) ?? null })),
 		active_runs: active,

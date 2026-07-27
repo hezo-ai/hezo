@@ -190,6 +190,19 @@ Manage connections two ways:
   project or back to the global scope. New connectors pick their scope in the Add form the
   same way.
 
+### GitHub on a project that doesn't write code
+
+GitHub is offered on every project, but it is only a *setup step* for a team that actually
+works with repositories. Hezo decides that from the roster: an agent is marked **Touches
+code** when it reads or writes repository code, and only those agents ever need a repo.
+
+On a project where nobody touches code - an investment team, a marketing team, any roster
+built from a non-engineering template - GitHub sits at the bottom of the Connectors list
+with a neutral **Optional** badge instead of the amber **Pending connect**, so it doesn't
+read as unfinished setup. It stays one click away if you want agents to use the GitHub MCP
+server anyway. Hire a code-touching agent, or attach a repository, and GitHub moves back to
+the top of the list as a real setup step.
+
 ## Choosing which methods agents can use
 
 A hosted MCP server ships its read tools and its write tools in one connection. Connecting

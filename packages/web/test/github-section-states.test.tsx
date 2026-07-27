@@ -24,6 +24,7 @@ interface MockRepo {
 	is_designated: boolean;
 	setup_status?: 'pending' | 'ready' | 'failed';
 	setup_error?: string | null;
+	can_push?: boolean | null;
 }
 
 /**
@@ -271,4 +272,64 @@ test('a failing connector-ensure surfaces an inline error under the GitHub headi
 	const connectBtn = await r.findByTestId('github-connect', undefined, { timeout: 20_000 });
 	await r.user.click(connectBtn);
 	await r.findByText('connector setup failed');
+});
+
+// A repo the connected account can read but not push to used to look identical to
+// one it can write: agents committed there and the work silently never left the
+// container. The badge is the operator's only up-front signal.
+test('a repo the connected account cannot push to is badged read-only', async () => {
+	const r = await renderSettings({
+		connection: { id: 'conn-1', provider_account_label: 'octocat' },
+		scopeSufficient: true,
+		repos: [
+			{
+				id: 'r1',
+				repo_identifier: 'octocat/writable',
+				host_type: 'github',
+				is_designated: true,
+				can_push: true,
+			},
+			{
+				id: 'r2',
+				repo_identifier: 'other-org/read-only',
+				host_type: 'github',
+				is_designated: false,
+				can_push: false,
+			},
+		],
+	});
+
+	const badge = await r.findByTestId('repo-no-write-read-only', undefined, { timeout: 20_000 });
+	expect(badge.textContent).toContain('No write access');
+	const detail = r.queryByTestId('repo-no-write-detail-read-only');
+	expect(detail?.textContent).toContain('octocat');
+	expect(detail?.textContent).toContain('not push to it');
+
+	// A writable repo carries no badge — the marker means a real restriction.
+	expect(r.queryByTestId('repo-no-write-writable')).toBeNull();
+	expect(r.queryByTestId('repo-no-write-detail-writable')).toBeNull();
+});
+
+test('a repo whose push access is unknown is not badged read-only', async () => {
+	// `can_push` absent/null = the check has not run. Rendering that as a
+	// restriction would tell the operator (and agents) about a limit that may not
+	// exist — unknown is never a restriction.
+	const r = await renderSettings({
+		connection: { id: 'conn-1', provider_account_label: 'octocat' },
+		scopeSufficient: true,
+		repos: [
+			{ id: 'r1', repo_identifier: 'octocat/unchecked', host_type: 'github', is_designated: true },
+			{
+				id: 'r2',
+				repo_identifier: 'octocat/explicit-null',
+				host_type: 'github',
+				is_designated: false,
+				can_push: null,
+			},
+		],
+	});
+
+	await r.findByTestId('repo-link-unchecked', undefined, { timeout: 20_000 });
+	expect(r.queryByTestId('repo-no-write-unchecked')).toBeNull();
+	expect(r.queryByTestId('repo-no-write-explicit-null')).toBeNull();
 });

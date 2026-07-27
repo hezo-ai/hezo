@@ -130,7 +130,7 @@ is the display label, worktree directory name, and `@mention` handle. The **firs
 linked to a project becomes its immutable `designated_repo_id` (`ON DELETE RESTRICT` +
 a 409 `DESIGNATED_REPO_IMMUTABLE` guard). Adding a repo is **asynchronous**: `POST
 /repos` validates GitHub-side access (or creates the repo upstream), inserts the row
-with `setup_status = 'pending'`, and returns immediately; the slow half — container up,
+with `setup_status = 'pending'` and its `can_push` verdict, and returns immediately; the slow half — container up,
 in-container clone, first-repo designation + approval finalize — runs in a tracked
 background task (`services/repo-provisioning.ts`) and settles the row to
 `ready`/`failed` (`setup_error` records why), broadcast to the team room as a `repos`
@@ -140,6 +140,22 @@ exists (the gate never half-opens), and POSTing the same repo again reclaims a
 `REPO_SETUP_IN_PROGRESS`; a `ready` duplicate 409s `REPO_NAME_TAKEN`). Rows still
 `pending` at boot were lost with the previous process — `JobManager.reconcileOnStartup`
 parks them `failed` so they surface as retryable instead of spinning forever.
+
+**Push access (`repos.can_push`).** A 200 from `GET /repos/:owner/:repo` proves only
+*read* — a read-only collaborator gets one, and so does anyone on a public repo — so
+`validateRepoAccess` (`services/github.ts`) also reads `permissions.push` off that same
+response and `repos.can_push` records it (`true`/`false`/`NULL` = unknown, never assumed
+true). `refreshRepoPushAccess` (`services/repo-push-access.ts`) re-checks it wherever the
+server already holds the connection token — `performRepoSetup` (link, retry, reclone) and
+the admin `git-state` panel — so an access change made on GitHub after linking is picked
+up. Only a definitive answer overwrites the stored one (`permissions.push` on a 200, or a
+hard 403/404); a locked vault, a network failure, or a 5xx leaves it untouched rather than
+demoting a writable repo to read-only. `can_push === false` never blocks the link (a
+read-only reference repo is legitimate) — it surfaces as a "No write access" badge in the
+Git settings page and as a per-repo read-only note in the agent's Repository prompt block
+(`buildRepositoryBlock`). Nothing about a run is per-repo scoped — one account-level SSH
+key and one account-wide OAuth token serve every linked repo — so this column is the only
+place a genuine per-repo write restriction is represented.
 
 **Tasks & threads.** `tasks` are Linear-style tickets with a frozen `identifier`
 (`<task_prefix>-<n>`, e.g. `IN-42`), a required `assignee_id → members.id`, `rules`, and
@@ -1109,7 +1125,17 @@ checkpoint, not a reviewed push — it skips any pre-push test/lint hook so a WI
 are still red still reaches the remote), and only when a live `SSH_AUTH_SOCK` exists — true for the
 agent's own bridged commits, false for the bare prep-time catch-up merge, so that merge commit is
 skipped rather than attempting an unauthenticated push. A repo-less workspace, an empty remote, or a
-clone whose `core.hooksPath` is redirected (e.g. husky) simply doesn't fire it. *Uncommitted*
+clone whose `core.hooksPath` is redirected (e.g. husky) simply doesn't fire it.
+
+Non-fatal is **not** silent. The hook previously discarded the push to `/dev/null`, so a denied
+push (no write access on that repo, a protected branch) produced output identical to a clean one
+and the run reported success while its commits never left the container. A failed push now reports
+twice: one line plus the git error on the commit's own stderr, where the agent sees it
+immediately, and the full error appended to `<git-common-dir>/hezo-push-errors.log`
+(`PUSH_ERROR_LOG_NAME`). Worktree prep clears that log per repo (`clearPushErrors`) so it is
+scoped to the run, and the runner reads it back at run completion (`readPushErrors`) and emits it
+into the run log for every prepared clone. The hook still `exit 0`s unconditionally — reporting a
+failure never fails the commit. *Uncommitted*
 changes are still not covered — the agent commits to preserve, and the role prompts frame frequent
 committing (not a manual end-of-run push) as the durability action.
 
@@ -1121,7 +1147,10 @@ computed locally, no network fetch), plus the active `/worktrees/<task>/<repo>` 
 to their tasks and the project's active (queued/running) agent-run count (`active_runs`, from
 `getProjectConcurrency`) so the panel can disable the reset controls proactively instead of only
 failing them server-side — and returns `{ container_running: false }` when the container is stopped
-rather than auto-starting one, since a passive inspect must not trigger a provision. `POST .../reset`
+rather than auto-starting one, since a passive inspect must not trigger a provision. It also
+re-checks and returns `can_push` (`refreshRepoPushAccess`), computed **before** the
+container-gated branch so it is reported either way — the check needs GitHub, not a container,
+and the panel is where an operator notices write access changed upstream. `POST .../reset`
 runs one of three recovery actions: `discard_local` (`git reset --hard` + `clean -fd` — no `-x`,
 so gitignored build artifacts survive — after a best-effort fetch; the escape hatch for the
 "local changes would be overwritten" fast-forward failure that otherwise silently stalls sync),
@@ -1714,6 +1743,18 @@ connectors UI treats a non-revoked, non-failed local row as **connected the
 moment it exists** (`statusOf`/`connectorStatus` short-circuit `kind='local'` to `active`)
 rather than showing it a meaningless "Pending connect" OAuth affordance.
 
+**GitHub's row is roster-aware.** GitHub is not an `mcp_connections` row until someone
+connects it (`POST …/connectors/ensure` materializes it), so the project Connectors page
+renders it from the OAuth connection alone. Whether it reads as a *setup step* is derived
+from the roster: the project payload carries `code_agent_count` (roster agents with
+`member_agents.touches_code`, alongside `repo_count`), and a project with no code-touching
+agent, no repo, and no GitHub connection renders the row **last** with a neutral `Optional`
+badge instead of the amber "Pending connect". This is the UI counterpart of the repo-setup
+gate in `job-manager.ts`, which likewise fires only for a `touches_code` agent — a roster
+like the shipped `investment`/`influencer` marketplace teams (entirely non-code) will never
+request a repo, so offering GitHub as pending work would invite the operator to finish
+something that is never needed. Any of the three signals promotes the row back.
+
 `kind='api'` is a **direct-REST connector with no MCP server** — for backends that expose a
 plain HTTP API rather than MCP (e.g. Google's APIs). Its `config` carries
 `{ base_url, allowed_hosts, auth: { placement: 'header'|'query', name, scheme? }, docs_url? }`
@@ -1770,7 +1811,7 @@ artifacts its CLI expects (Claude Code `--mcp-config`, Codex `config.toml`, Gemi
 tools in one connection, so a connector carries an allowlist of the methods agents may
 call. It lives on the `mcp_connections` row itself — `enabled_methods` (jsonb array),
 `discovered_methods` (the cached catalog), `methods_listed_at`, `requested_access`
-(`connector_access` enum), `access_applied_at` (migration `043`). **`enabled_methods` NULL
+(`connector_access` enum), `access_applied_at` (migration `044`). **`enabled_methods` NULL
 means no allowlist — every method enabled**, deliberately *not* the same as an array naming
 every currently-known method, so a server that grows a tool doesn't silently grant it.
 These are columns rather than `config` keys because `config` is replaced wholesale by the

@@ -28,6 +28,7 @@ import {
 	useEnsureConnector,
 	useOAuthConnections,
 } from '../../../hooks/use-oauth-connections';
+import { useProject } from '../../../hooks/use-projects';
 import { queryKeys } from '../../../lib/query-keys';
 
 interface ConnectorsSearch {
@@ -66,6 +67,22 @@ function ConnectorsPage() {
 	const githubConnection = oauthConnections.find((c) => c.provider === 'github') ?? null;
 	const isEmpty = connectors.length === 0 && oauthConnections.length === 0;
 
+	// GitHub is offered on every project, but it is only a *setup step* for a team that
+	// actually does git work. A team whose roster has no `touches_code` agent never trips
+	// the repo-setup gate, so an amber "Pending connect" would be inviting the operator to
+	// finish something that will never be needed. Any one of these promotes it back:
+	// a code-touching agent is hired, a repo is attached, or GitHub is connected anyway.
+	const { data: project, isPending: projectPending } = useProject(projectId);
+	const gitRelevant =
+		(project?.code_agent_count ?? 0) > 0 ||
+		(project?.repo_count ?? 0) > 0 ||
+		githubConnection !== null;
+	// Hold the row back until the project resolves so it doesn't render at the top and
+	// then jump to the bottom (or vice versa) one tick later.
+	const githubRow = projectPending ? null : (
+		<GitHubRow projectId={projectId} connection={githubConnection} optional={!gitRelevant} />
+	);
+
 	const [showAdd, setShowAdd] = useState(false);
 
 	return (
@@ -96,7 +113,7 @@ function ConnectorsPage() {
 			{showAdd && <AddConnectorForm projectId={projectId} onClose={() => setShowAdd(false)} />}
 
 			<ul className="space-y-3" data-testid="connectors-list">
-				<GitHubRow projectId={projectId} connection={githubConnection} />
+				{gitRelevant && githubRow}
 				{connectors
 					.filter((connector) => connector.name !== 'github')
 					.map((connector) => (
@@ -108,6 +125,7 @@ function ConnectorsPage() {
 							focusRef={connector.id === focus ? focusRef : undefined}
 						/>
 					))}
+				{!gitRelevant && githubRow}
 			</ul>
 
 			<InfiniteScrollSentinel
@@ -359,15 +377,17 @@ function AddConnectorForm({ projectId, onClose }: AddConnectorFormProps) {
 interface GitHubRowProps {
 	projectId: string;
 	connection: OAuthConnection | null;
+	/** No agent on this team touches code, so GitHub is an extra rather than a setup step. */
+	optional?: boolean;
 }
 
-function GitHubRow({ projectId, connection }: GitHubRowProps) {
+function GitHubRow({ projectId, connection, optional = false }: GitHubRowProps) {
 	const deleteConn = useDeleteOAuthConnection(projectId);
 	const ensure = useEnsureConnector(projectId);
 	const [deviceConnectorId, setDeviceConnectorId] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [confirmOpen, setConfirmOpen] = useState(false);
-	const status = connection ? 'active' : 'pending';
+	const status = connection ? 'active' : optional ? 'optional' : 'pending';
 	const connecting = ensure.isPending;
 
 	const startConnect = async () => {
@@ -382,7 +402,7 @@ function GitHubRow({ projectId, connection }: GitHubRowProps) {
 
 	return (
 		<li
-			className="rounded-lg border p-4 border-border"
+			className={`rounded-lg border p-4 ${optional ? 'border-dashed border-border/60' : 'border-border'}`}
 			data-testid="connector-row"
 			data-connector-name="github"
 			data-status={status}
@@ -414,6 +434,11 @@ function GitHubRow({ projectId, connection }: GitHubRowProps) {
 								scopes: {connection.scopes.join(' ')}
 							</p>
 						</>
+					) : optional ? (
+						<p className="text-xs text-text-3 mt-1">
+							No agents on this team touch code, so nothing here needs a repo. Connect GitHub only
+							if you want agents to work with repos or call the GitHub MCP server.
+						</p>
 					) : (
 						<p className="text-xs text-text-2 mt-1">
 							One connection covers both git operations (clone, push, SSH-key registration) and the
@@ -796,7 +821,11 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 	);
 }
 
-function StatusBadge({ status }: { status: 'pending' | 'active' | 'failed' | 'revoked' }) {
+function StatusBadge({
+	status,
+}: {
+	status: 'pending' | 'active' | 'failed' | 'revoked' | 'optional';
+}) {
 	if (status === 'active') {
 		return (
 			<Badge className="bg-success-soft text-success-soft-fg border-success">
@@ -815,6 +844,11 @@ function StatusBadge({ status }: { status: 'pending' | 'active' | 'failed' | 're
 	}
 	if (status === 'revoked') {
 		return <Badge>Revoked</Badge>;
+	}
+	// Deliberately neutral, not the warning colours below - "optional" is a resting
+	// state, not an unfinished setup step.
+	if (status === 'optional') {
+		return <Badge>Optional</Badge>;
 	}
 	return (
 		<Badge className="bg-warning-soft text-warning-soft-fg border-warning">Pending connect</Badge>

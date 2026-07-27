@@ -6,6 +6,7 @@ import { logger } from '../logger';
 import { resolveContainerRunUser } from './container-user';
 import { type ContainerDeps, ensureProjectContainerRunning } from './containers';
 import { ContainerGitExecutor, mintGitOpScopeId } from './git-executor';
+import { refreshRepoPushAccess } from './repo-push-access';
 import {
 	enqueueRepoSetupResumeWakeups,
 	finalizePendingRepoSetup,
@@ -48,6 +49,7 @@ interface RepoRowForBroadcast {
 	created_at: string;
 	setup_status: string;
 	setup_error: string | null;
+	can_push: boolean | null;
 }
 
 /**
@@ -121,10 +123,51 @@ export async function performRepoSetup(
 		}
 	}
 
-	if (setupError) {
-		return finishFailed(deps, input, setupError);
+	const outcome = setupError
+		? await finishFailed(deps, input, setupError)
+		: await finishReady(deps, input);
+
+	// Re-read push access so the card and the agent's Repository prompt block
+	// reflect the account's current rights rather than whatever was true when the
+	// repo was first linked (the reclone/retry paths have no link-time check at
+	// all). Deliberately **after** the settle: this is a GitHub round trip, and
+	// designation — which unblocks the tasks gated on the repo — must never wait
+	// on it. Best-effort; a changed verdict broadcasts its own `repos` UPDATE.
+	await refreshAndBroadcastPushAccess(deps, input);
+
+	return outcome;
+}
+
+/**
+ * Refresh `repos.can_push` and, when the verdict actually changed, push the new
+ * row to the team room so an open Git settings page updates without a reload.
+ * Never throws — a failed check leaves the stored value and says nothing.
+ */
+async function refreshAndBroadcastPushAccess(
+	deps: RepoSetupDeps,
+	input: RepoSetupInput,
+): Promise<void> {
+	const { db, wsManager } = deps;
+	const before = await db.query<{ can_push: boolean | null }>(
+		'SELECT can_push FROM repos WHERE id = $1',
+		[input.repoId],
+	);
+	if (before.rows.length === 0) return; // deleted while setup ran
+
+	const after = await refreshRepoPushAccess(deps, input.repoId);
+	if (after === (before.rows[0].can_push ?? null)) return;
+
+	const row = await db.query<Record<string, unknown>>(
+		`SELECT r.id, r.project_id, r.repo_identifier, r.host_type, r.oauth_connection_id,
+		        r.created_at, r.setup_status, r.setup_error, r.can_push,
+		        (p.designated_repo_id = r.id) AS is_designated
+		 FROM repos r JOIN projects p ON p.id = r.project_id
+		 WHERE r.id = $1`,
+		[input.repoId],
+	);
+	if (row.rows[0]) {
+		broadcastRowChange(wsManager, wsRoom.team(input.teamId), 'repos', 'UPDATE', row.rows[0]);
 	}
-	return finishReady(deps, input);
 }
 
 async function finishReady(deps: RepoSetupDeps, input: RepoSetupInput): Promise<RepoSetupOutcome> {
@@ -135,7 +178,7 @@ async function finishReady(deps: RepoSetupDeps, input: RepoSetupInput): Promise<
 			`UPDATE repos SET setup_status = $1::repo_setup_status, setup_error = NULL
 			 WHERE id = $2
 			 RETURNING id, project_id, repo_identifier, host_type, oauth_connection_id, created_at,
-			           setup_status, setup_error`,
+			           setup_status, setup_error, can_push`,
 			[RepoSetupStatus.Ready, input.repoId],
 		);
 		// The repo was deleted while its setup ran — nothing to settle.
@@ -210,7 +253,7 @@ async function finishFailed(
 		`UPDATE repos SET setup_status = $1::repo_setup_status, setup_error = $2
 		 WHERE id = $3
 		 RETURNING id, project_id, repo_identifier, host_type, oauth_connection_id, created_at,
-		           setup_status, setup_error`,
+		           setup_status, setup_error, can_push`,
 		[RepoSetupStatus.Failed, error, input.repoId],
 	);
 	if (updated.rows.length === 0) {

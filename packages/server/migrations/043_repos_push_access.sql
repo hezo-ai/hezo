@@ -1,0 +1,18 @@
+-- Records whether the repo's connected GitHub account can *push* to it.
+--
+-- Linking a repo only ever proved read access: the link check accepts any 200
+-- from `GET /repos/:owner/:repo`, which a read-only collaborator — and anyone at
+-- all on a public repo — receives. GitHub returns a `permissions` object on that
+-- same response, so write access was knowable at link time and simply discarded.
+-- The gap then surfaced at push time, where the per-commit auto-push hook
+-- swallowed the denial, leaving an agent to guess why its work would not land.
+--
+-- Nullable on purpose, with three meanings:
+--   true  — the connected account can push; agents may commit and push here.
+--   false — read-only for that account; surfaced on the repo card and in the
+--           agent's Repository prompt block so nobody attempts a doomed push.
+--   NULL  — unknown. Every row existing before this migration starts here and
+--           stays here until its next access check (repo setup, retry, reclone,
+--           or the admin git-state panel). Unknown is never treated as "yes" —
+--           a missing signal must not manufacture write access.
+ALTER TABLE repos ADD COLUMN can_push BOOLEAN;
