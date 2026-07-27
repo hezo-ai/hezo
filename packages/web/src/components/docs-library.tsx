@@ -63,7 +63,7 @@ interface DocsLibraryProps {
 	docTitle?: ReactNode;
 
 	/**
-	 * The selected doc's one-line description. `undefined` means the doc type has
+	 * The selected doc's description. `undefined` means the doc type has
 	 * no description (e.g. the repo-backed AGENTS.md) — the description block and
 	 * its editor are hidden. `''` is a project doc with none set yet: view mode
 	 * shows nothing, edit mode shows the input with a placeholder.
@@ -609,10 +609,10 @@ export function DocsLibrary({
 											>
 												Description
 											</label>
-											<Tooltip content="Agents fill this in when they write the doc — you can edit it here anytime.">
+											<Tooltip content="An overall summary of what the doc is - 1-2 sentences, not a list of its current contents. Agents fill it in when they write the doc; you can edit it here anytime.">
 												<Info
 													className="w-3.5 h-3.5 text-text-3"
-													aria-label="Agents set the description when they write the doc; you can edit it here anytime."
+													aria-label="An overall summary of what the doc is, in 1-2 sentences; agents set it when they write the doc and you can edit it here anytime."
 												/>
 											</Tooltip>
 										</div>
@@ -620,7 +620,7 @@ export function DocsLibrary({
 											id="doc-description-input"
 											value={descDraft}
 											onChange={(e) => setDescDraft(e.target.value)}
-											placeholder="What this doc is and when to read it"
+											placeholder="What this doc is and when to read it (1-2 sentences)"
 											data-testid="doc-description-input"
 										/>
 									</div>
