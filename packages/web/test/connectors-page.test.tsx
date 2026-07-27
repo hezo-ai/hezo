@@ -1,5 +1,5 @@
 import { createGitHubSim, type GitHubSim } from '@hezo/server/test/helpers/github-sim';
-import { screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
 import { type SeededWorkspace, seedWorkspace } from './helpers/seed';
@@ -134,6 +134,18 @@ async function seedGlobalConnector(name: string, url: string): Promise<{ id: str
 	return r.rows[0];
 }
 
+// Clear `touches_code` across the whole roster, turning the seeded App Team into
+// a team that does no git work (the shape of the shipped investment/influencer
+// marketplace teams, whose rosters are entirely non-code).
+async function clearTouchesCode(ws: SeededWorkspace): Promise<void> {
+	const { db } = getTestContext();
+	await db.query(
+		`UPDATE member_agents SET touches_code = false
+		   WHERE id IN (SELECT id FROM members WHERE team_id = $1)`,
+		[ws.team.id],
+	);
+}
+
 const CONNECTORS_ROUTE = '/projects/$projectId/connectors';
 
 let sim: GitHubSim | null = null;
@@ -151,7 +163,7 @@ afterEach(async () => {
 	for (const k of Object.keys(savedEnv)) delete savedEnv[k];
 });
 
-test('lists a seeded MCP connector alongside the always-present GitHub row', async () => {
+test('lists a seeded MCP connector above the GitHub row on a code-touching team', async () => {
 	let slug = '';
 	const { findByText, getByTestId, router } = await renderApp({
 		initialPath: '/',
@@ -164,15 +176,107 @@ test('lists a seeded MCP connector alongside the always-present GitHub row', asy
 	await router.navigate({ to: CONNECTORS_ROUTE, params: { projectId: slug } });
 
 	await findByText('Connectors', { selector: 'h1' });
-	// The GitHub row is rendered unconditionally.
 	await findByText('GitHub');
 	// The seeded saas connector renders as its own row with its url.
 	await findByText('linear');
 	await findByText('https://mcp.linear.example/mcp');
 
-	// The GitHub row, with no connection, shows the pending-connect affordance.
+	// The App Team roster has `touches_code` agents, so GitHub is a real setup
+	// step: pending-connect affordance, and first in the list.
 	const list = getByTestId('connectors-list');
-	expect(list.querySelector('[data-connector-name="github"][data-status="pending"]')).toBeTruthy();
+	await waitFor(() => {
+		expect(
+			list.querySelector('[data-connector-name="github"][data-status="pending"]'),
+		).toBeTruthy();
+	});
+	expect(list.firstElementChild?.getAttribute('data-connector-name')).toBe('github');
+});
+
+test('demotes GitHub to an optional row when no agent on the team touches code', async () => {
+	let slug = '';
+	const { findByText, getByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			slug = ws.internalSlug;
+			await clearTouchesCode(ws);
+			await seedSaasConnector(ws, { name: 'linear', url: 'https://mcp.linear.example/mcp' });
+		},
+	});
+	await router.navigate({ to: CONNECTORS_ROUTE, params: { projectId: slug } });
+
+	await findByText('Connectors', { selector: 'h1' });
+	await findByText('linear');
+
+	// Still offered - just not as an unfinished setup step: neutral "Optional"
+	// badge instead of the amber "Pending connect", and last in the list.
+	const list = getByTestId('connectors-list');
+	await waitFor(() => {
+		expect(
+			list.querySelector('[data-connector-name="github"][data-status="optional"]'),
+		).toBeTruthy();
+	});
+	expect(list.querySelector('[data-connector-name="github"][data-status="pending"]')).toBeNull();
+	const githubRow = list.lastElementChild as HTMLElement;
+	expect(githubRow.getAttribute('data-connector-name')).toBe('github');
+	await findByText('Optional');
+	await findByText(/No agents on this team touch code/);
+	// The connect affordance is still there — demoted, not hidden.
+	expect(within(githubRow).getByTestId('connector-connect')).toBeTruthy();
+});
+
+test('promotes GitHub back to the top once an agent is flagged as touching code', async () => {
+	let ws!: SeededWorkspace;
+	let engineerId = '';
+	const { findByRole, findByText, getByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			ws = await seedWorkspace();
+			const engineer = ws.agents.find((a) => a.slug === 'engineer');
+			if (!engineer) throw new Error('engineer missing from seeded workspace');
+			engineerId = engineer.id;
+			await clearTouchesCode(ws);
+		},
+	});
+	await router.navigate({ to: CONNECTORS_ROUTE, params: { projectId: ws.internalSlug } });
+	await waitFor(() => {
+		expect(
+			getByTestId('connectors-list').querySelector(
+				'[data-connector-name="github"][data-status="optional"]',
+			),
+		).toBeTruthy();
+	});
+
+	// Turn "Touches code" back on from the agent's own settings page. Saving must
+	// refresh the project payload the Connectors page reads, not leave the stale
+	// `code_agent_count` in the query cache for its full staleTime.
+	await router.navigate({
+		to: '/projects/$projectId/agents/$agentId/settings',
+		params: { projectId: ws.internalSlug, agentId: engineerId },
+	});
+	const checkbox = (await findByRole(
+		'checkbox',
+		{ name: /Touches code/i },
+		{
+			timeout: 15_000,
+		},
+	)) as HTMLInputElement;
+	expect(checkbox.checked).toBe(false);
+	fireEvent.click(checkbox);
+	fireEvent.submit(checkbox.closest('form') as HTMLFormElement);
+
+	await router.navigate({ to: CONNECTORS_ROUTE, params: { projectId: ws.internalSlug } });
+	await findByText('Connectors', { selector: 'h1' });
+	await waitFor(
+		() => {
+			const list = getByTestId('connectors-list');
+			expect(
+				list.querySelector('[data-connector-name="github"][data-status="pending"]'),
+			).toBeTruthy();
+			expect(list.firstElementChild?.getAttribute('data-connector-name')).toBe('github');
+		},
+		{ timeout: 15_000 },
+	);
 });
 
 test('the Add form creates a project-scoped connector and auto-probes OAuth', async () => {

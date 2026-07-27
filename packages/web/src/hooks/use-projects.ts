@@ -37,6 +37,12 @@ export interface Project {
 	agent_count: number;
 	/** Agents currently running on this project's team (runtime_status = active). */
 	running_agents_count: number;
+	/**
+	 * Agents on this team flagged `touches_code` - 0 means the team does no git work.
+	 * Drives whether the Connectors page treats GitHub as a pending setup step or as
+	 * an optional extra. Optional because older/partial payloads may omit it.
+	 */
+	code_agent_count?: number;
 	/** Spend on this project so far today (UTC), in cents. */
 	today_spend_cents: number;
 	/** Most recent task update, falling back to the project's creation time. */

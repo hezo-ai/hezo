@@ -136,6 +136,9 @@ projectsRoutes.get('/projects', async (c) => {
        (SELECT count(*) FROM member_agents ma JOIN members mm ON mm.id = ma.id
           WHERE mm.team_id = p.team_id AND ma.runtime_status = 'active'::agent_runtime_status)::int
           AS running_agents_count,
+       (SELECT count(*) FROM member_agents ma2 JOIN members mm2 ON mm2.id = ma2.id
+          WHERE mm2.team_id = p.team_id AND ma2.touches_code)::int
+          AS code_agent_count,
        (SELECT COALESCE(sum(ce.amount_cents), 0) FROM cost_entries ce
           WHERE ce.project_id = p.id AND ce.created_at >= date_trunc('day', now()))::int
           AS today_spend_cents,
@@ -437,6 +440,8 @@ projectsRoutes.get('/projects/:projectId', async (c) => {
        (SELECT count(*) FROM repos r WHERE r.project_id = p.id)::int AS repo_count,
        (SELECT count(*) FROM tasks i WHERE i.project_id = p.id AND i.status NOT IN (${ts2.placeholders}))::int AS open_task_count,
        (SELECT count(*) FROM goals g WHERE g.project_id = p.id AND g.archived_at IS NULL)::int AS open_goal_count,
+       (SELECT count(*) FROM member_agents ma JOIN members mm ON mm.id = ma.id
+          WHERE mm.team_id = p.team_id AND ma.touches_code)::int AS code_agent_count,
        (SELECT pi.updated_at FROM project_icons pi WHERE pi.project_id = p.id) AS icon_updated_at
      FROM projects p
      WHERE p.id = $1 AND p.team_id = $2`,
