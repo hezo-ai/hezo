@@ -62,6 +62,35 @@ function writeStoredUnread(count: number): void {
 	}
 }
 
+/**
+ * The thread the operator last switched to in the chatbox (same localStorage
+ * convention as the unread tally above). The widget restores it on mount, so
+ * closing and reopening — or a reload, or the remount a bare route forces —
+ * comes back to that conversation instead of snapping to the server's default
+ * web thread. Only an *explicit* switch is recorded, and returning to the default
+ * clears the key, so an operator who never touches the switcher keeps exactly the
+ * old behaviour. A stored id is discarded once the thread list shows it is no
+ * longer open.
+ */
+const CHAT_THREAD_KEY = 'hezo_chat_thread';
+
+export function readStoredThreadId(): string | undefined {
+	try {
+		return localStorage.getItem(CHAT_THREAD_KEY) ?? undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+export function writeStoredThreadId(id: string | undefined): void {
+	try {
+		if (id) localStorage.setItem(CHAT_THREAD_KEY, id);
+		else localStorage.removeItem(CHAT_THREAD_KEY);
+	} catch {
+		// localStorage may be unavailable (private mode); the selection just won't persist.
+	}
+}
+
 /** A conversation thread in the switcher list. */
 export interface ChatConversationSummary {
 	id: string;

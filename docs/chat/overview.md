@@ -24,6 +24,11 @@ planning, another for an ad-hoc question, and so on.
 
 Each thread keeps its own recent history and streams independently.
 
+The chatbox remembers the thread you switched to, so closing and reopening it - or
+reloading the page - picks that conversation back up instead of dropping you on your main
+thread. The memory is per browser. If the thread you were on has been closed since (by you
+here, in another tab, or on its own chat app), the chatbox falls back to your main thread.
+
 ## How threads work across chat apps
 
 The CEO is also reachable from external chat apps -
