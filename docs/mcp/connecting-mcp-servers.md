@@ -196,9 +196,11 @@ A hosted MCP server ships its read tools and its write tools in one connection. 
 a tracker to look things up would, by default, also hand your agents the tools that close
 issues and delete comments.
 
-Each connector's **Settings** section has an **Enabled methods** row that fixes this. It
-starts at **All** - every method the server advertises is available. Press the edit icon to
-open the picker, where the server's methods are split into two groups:
+Every connected MCP server has an **Enabled methods** control that fixes this - in the
+connector's **Settings** section on a project's Connectors page, or as a **Methods** row on
+the global Connectors page. It starts at **All**, meaning every method the server
+advertises is available. Open the picker from there and the server's methods are split into
+two groups:
 
 - **Read-only** - methods that only look things up.
 - **Write** - everything else: anything that creates, changes, or deletes.
@@ -214,10 +216,11 @@ a server declares nothing, Hezo infers the category from the method name and lab
 **inferred** so you know it's a guess rather than a declaration. An unrecognised name counts
 as a write method, so a method Hezo can't place is withheld rather than quietly allowed.
 
-Disabled methods don't appear in an agent's tool list at all - a run never sees a tool it
-isn't allowed to call, so it won't waste a turn trying. And because the restriction is also
-enforced on the way out of the container, a disabled method stays blocked even if a tool
-list gets stale.
+A disabled method is blocked on the way out of the container, so the restriction holds no
+matter which AI model or coding tool the agent is running. On most of them the disabled
+methods are also hidden from the agent's tool list, so it never sees a tool it can't use
+and won't waste a turn trying; on the rest the tool is still listed but calling it fails
+with an error saying it's disabled. Either way it cannot be called.
 
 Methods are listed when you connect the server. If a connector shows that its methods
 haven't been listed yet - it was connected before this existed, or the listing failed -
@@ -237,7 +240,7 @@ have to remember to lock it down afterwards.
 This only ever narrows access. An agent can't ask for *more* than it would get by default,
 and the request is skipped entirely once you've chosen the enabled methods yourself: your
 choice stands, and a later registration won't undo it. You can widen or narrow a connector
-at any time from its Settings section.
+at any time from the same control.
 
 ## Reconnecting a revoked connector
 
