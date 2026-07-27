@@ -1,4 +1,4 @@
-import type { MarketplaceIndexEntry } from '@hezo/shared';
+import { extractTerms, type MarketplaceIndexEntry, uniqueTerms } from '@hezo/shared';
 import type { TeamTemplate } from '../hooks/use-team-templates';
 
 /**
@@ -8,9 +8,37 @@ import type { TeamTemplate } from '../hooks/use-team-templates';
 export interface SourceTeamOption {
 	id: string;
 	slug: string;
+	/**
+	 * The slug of the project this team backs. Distinct from `slug` (the team's own)
+	 * and needed because every team-scoped read is addressed by project — the dialog's
+	 * team detail fetches the roster via `GET /api/projects/:projectId/agents`.
+	 */
+	projectSlug: string;
 	name: string;
 	agent_count: number;
 }
+
+/**
+ * Relative worth of a match, by the field it landed in.
+ *
+ * A team's authored `keywords` outrank everything: they are the team's own
+ * statement of what it is for ("website", "saas", "todo list"), curated for this
+ * exact purpose, and they are the one field that can be improved for a team
+ * without touching this code. Its *name* comes next ("App Team" for "todo list
+ * app"), then its one-line description. Its long marketing summary is the
+ * weakest — that blob mentions half the vocabulary of every project brief, so an
+ * unweighted hit there would drown out a name match.
+ */
+export const FIELD_WEIGHT = { keywords: 4, name: 3, description: 2, summary: 1 } as const;
+
+/**
+ * The scored match index for one option: stemmed term → the *highest* field
+ * weight it was found in. Keyed by stem (`stemTerm` in `@hezo/shared`) so "apps"
+ * matches "app" and "marketing" matches "market", while a bare substring like
+ * "app" can never match inside "approval". Distinct from a team's authored
+ * `keywords`, which are one of the fields folded into this index.
+ */
+export type TeamTermIndex = ReadonlyMap<string, number>;
 
 /**
  * One selectable team in the New Project dialog, unifying the three sources that
@@ -18,8 +46,9 @@ export interface SourceTeamOption {
  * existing team to clone — behind a single shape the suggestion ranker, the
  * search, and the card renderer all work over. `group` splits them into the two
  * "all teams" tabs: `new` (marketplace + templates) vs `copy` (existing teams).
- * `keywords` is the lowercased free-text bag the client-side ranker scores
- * against (there is no server suggestion endpoint and teams carry no tags).
+ * `terms` is the weighted match index the client-side ranker scores against
+ * (there is no server suggestion endpoint — ranking is client-side over the
+ * catalog the picker already has).
  */
 export type TeamOption =
 	| {
@@ -30,7 +59,7 @@ export type TeamOption =
 			name: string;
 			description: string;
 			meta: string;
-			keywords: string;
+			terms: TeamTermIndex;
 	  }
 	| {
 			kind: 'template';
@@ -40,7 +69,7 @@ export type TeamOption =
 			name: string;
 			description: string;
 			meta: string;
-			keywords: string;
+			terms: TeamTermIndex;
 	  }
 	| {
 			kind: 'team';
@@ -48,10 +77,11 @@ export type TeamOption =
 			key: string;
 			id: string;
 			slug: string;
+			projectSlug: string;
 			name: string;
 			description: string;
 			meta: string;
-			keywords: string;
+			terms: TeamTermIndex;
 	  };
 
 /**
@@ -60,6 +90,22 @@ export type TeamOption =
  * to suggest anything meaningful.
  */
 export const SUGGEST_MIN_CHARS = 12;
+
+/**
+ * Build the weighted match index for one option, keeping the *best* field a term
+ * appears in rather than summing — a term repeated through a long summary should
+ * not out-score a term in the team's name.
+ */
+function buildTermIndex(fields: Array<[string, number]>): TeamTermIndex {
+	const index = new Map<string, number>();
+	for (const [text, weight] of fields) {
+		for (const term of extractTerms(text)) {
+			const best = index.get(term);
+			if (best === undefined || best < weight) index.set(term, weight);
+		}
+	}
+	return index;
+}
 
 function roleCountMeta(n: number): string {
 	return `${n} role${n === 1 ? '' : 's'}`;
@@ -81,9 +127,16 @@ export function buildTeamOptions(
 			key: `marketplace:${mt.slug}`,
 			slug: mt.slug,
 			name: mt.name,
-			description: mt.description ?? '',
+			description: mt.description,
 			meta: roleCountMeta(mt.roster_count),
-			keywords: `${mt.name} ${mt.description ?? ''} ${mt.summary ?? ''}`.toLowerCase(),
+			terms: buildTermIndex([
+				// Authored discovery vocabulary first, at the highest weight. Phrases
+				// split into their words, so "todo list" contributes both.
+				[mt.keywords.join(' '), FIELD_WEIGHT.keywords],
+				[mt.name, FIELD_WEIGHT.name],
+				[mt.description, FIELD_WEIGHT.description],
+				[mt.summary, FIELD_WEIGHT.summary],
+			]),
 		}),
 	);
 
@@ -99,7 +152,10 @@ export function buildTeamOptions(
 				tpl.agent_types.length === 0
 					? 'Captain only'
 					: `${tpl.agent_types.length} agent role${tpl.agent_types.length === 1 ? '' : 's'}`,
-			keywords: `${tpl.name} ${tpl.description ?? ''}`.toLowerCase(),
+			terms: buildTermIndex([
+				[tpl.name, FIELD_WEIGHT.name],
+				[tpl.description ?? '', FIELD_WEIGHT.description],
+			]),
 		}),
 	);
 
@@ -110,13 +166,14 @@ export function buildTeamOptions(
 			key: `team:${src.id}`,
 			id: src.id,
 			slug: src.slug,
+			projectSlug: src.projectSlug,
 			name: src.name,
 			description: '',
 			meta:
 				src.agent_count === 0
 					? 'No agents yet'
 					: `${src.agent_count} agent${src.agent_count === 1 ? '' : 's'}`,
-			keywords: src.name.toLowerCase(),
+			terms: buildTermIndex([[src.name, FIELD_WEIGHT.name]]),
 		}),
 	);
 
@@ -124,22 +181,23 @@ export function buildTeamOptions(
 }
 
 /**
- * Rank options by keyword overlap with the query (the project name + description).
- * Distinct query tokens of >2 chars each score a point per option whose keyword
- * bag contains them; ties fall back to the original order. Returns the top
- * `limit` positively-scored options, or `[]` when the query has no usable tokens
- * (the caller decides the empty-query fallback / prompt).
+ * Rank options by weighted term overlap with the query (the project name +
+ * description). Each distinct query term scores the weight of the best field it
+ * matches in — authored keywords beat name beats description beats summary — and
+ * terms are matched as whole stemmed words, never as substrings, so "app" hits
+ * "App Team" and not the "approval" buried in another team's blurb. Ties fall
+ * back to the original order. Returns the top `limit` positively-scored options,
+ * or `[]` when the query has no usable terms (the caller decides the empty-query
+ * fallback).
  */
 export function rankTeams(query: string, options: TeamOption[], limit = 2): TeamOption[] {
-	const tokens = Array.from(
-		new Set((query.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter((t) => t.length > 2)),
-	);
-	if (tokens.length === 0) return [];
+	const terms = uniqueTerms(query);
+	if (terms.length === 0) return [];
 	return options
 		.map((option, index) => ({
 			option,
 			index,
-			score: tokens.reduce((acc, token) => acc + (option.keywords.includes(token) ? 1 : 0), 0),
+			score: terms.reduce((acc, term) => acc + (option.terms.get(term) ?? 0), 0),
 		}))
 		.filter((entry) => entry.score > 0)
 		.sort((a, b) => b.score - a.score || a.index - b.index)

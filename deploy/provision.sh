@@ -24,7 +24,11 @@
 #   HEZO_DOMAIN_OVERRIDE   use this domain instead of <public-ip>.sslip.io
 #                          (point an A record at the host first; Caddy gets a cert for it)
 #   HEZO_DATABASE_URL      managed/external Postgres 14+ connection string
-#                          (postgres://user:pass@host:5432/hezo?sslmode=verify-full).
+#                          (postgres://user:pass@host:5432/hezo?sslmode=require).
+#                          sslmode follows libpq rules: require encrypts without
+#                          verifying the certificate; for verified TLS use
+#                          sslmode=verify-full, adding &sslrootcert=/etc/hezo/db-ca.crt
+#                          when the provider signs with its own CA (most do).
 #                          Persisted into /etc/hezo/hezo.env on first provision; omit to
 #                          use the embedded database on the VM's disk (the default).
 #   HEZO_ASSET_STORAGE_URL S3-compatible object storage for asset files

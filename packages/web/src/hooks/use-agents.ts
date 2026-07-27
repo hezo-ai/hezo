@@ -110,11 +110,14 @@ export function useUpdateAgent(projectId: string, agentId: string) {
 			omitOptimistic: ['system_prompt', 'system_prompt_change_summary'],
 			// budgetStatus carries the per-agent window limits the Budget page reads,
 			// so a cap edit here must refetch it (staleTime would otherwise serve the
-			// old caps for up to a minute).
+			// old caps for up to a minute). The project payload aggregates the roster's
+			// `touches_code` into `code_agent_count` (which decides whether Connectors
+			// treats GitHub as a setup step), so it needs the same treatment.
 			invalidateOnSettled: [
 				queryKeys.projects.agents(projectId),
 				queryKeys.projects.agentSystemPrompt(projectId, agentId),
 				queryKeys.projects.budgetStatus(projectId),
+				queryKeys.projects.detail(projectId),
 			],
 			errorMessage: 'Failed to update agent',
 		},
@@ -259,6 +262,9 @@ export function useOnboardAgent(projectId: string) {
 			queryClient.invalidateQueries({ queryKey: queryKeys.projects.agents(projectId) });
 			queryClient.invalidateQueries({ queryKey: queryKeys.projects.tasks(projectId) });
 			queryClient.invalidateQueries({ queryKey: queryKeys.projects.approvals(projectId) });
+			// A hire changes the roster's `code_agent_count`, which the Connectors page
+			// reads to decide how prominently to offer GitHub.
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(projectId) });
 		},
 	});
 }

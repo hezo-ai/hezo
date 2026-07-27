@@ -585,6 +585,53 @@ describe('template resolver', () => {
 		expect(result).toContain('findings below for you to consolidate and route');
 	});
 
+	it('mention discipline requires the closing handoff block itself to be active, not just present', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		// The screenshot failure: a verdict report DID end with a per-recipient handoff
+		// block, but every line in it was passive (`@@captain — …ready for the admin.`),
+		// so it looked routed and woke no one. The body's passive rule must not be read
+		// as extending into the block.
+		expect(result).toContain(
+			'The closing handoff block only routes if its own mentions are active',
+		);
+		expect(result).toContain('the same stall with the ritual performed');
+		// the verdict vocabulary is what disguises the ask as status
+		expect(result).toContain('"PASS", "verified", "clean pass", "cleared", "ready for"');
+		expect(result).toContain('every line in it is active `@<slug>`');
+		// worked example carries the all-passive block as a named Bad case
+		expect(result).toContain('the closing block is *there* but passive throughout');
+	});
+
+	it('mention discipline names the MIXED closing block and rejects tone as the test', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		// The screenshot failure: `@captain` active on one line, `@@equity-analyst` on the
+		// next — and the passive line was the one carrying an explicit "Please …".
+		expect(result).toContain('A *mixed* closing block is the same bug half-applied');
+		expect(result).toContain('Tone is not the test');
+		expect(result).toContain('at your next opportunity');
+		expect(result).toContain(
+			'one active line in the block is not evidence the rest are marked right',
+		);
+	});
+
+	it('mention discipline tells agents to backtick a mention token they are quoting, not using', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		// The screenshot failure: an agent described an unanswered @admin ask living in an
+		// earlier comment using live `@admin` tokens, firing fresh mentions here — and for
+		// @admin, a fresh unanswered ask is exactly what blocks the ticket from closing.
+		expect(result).toContain('Quoting a mention that lives in another comment? Backtick it');
+		expect(result).toContain('does not *point at* that comment');
+		// the passive form is explicitly NOT the fix — it drops the token being quoted
+		expect(result).toContain('loses the very token you are quoting');
+		expect(result).toContain('The test is *use vs mention*');
+		// the backtick prohibition carries the matching carve-out so the rules don't fight
+		expect(result).toContain('quoting rather than using');
+		// and the advisory-warning list mentions the new check
+		expect(result).toContain(
+			'write a live mention while describing a mention that lives elsewhere',
+		);
+	});
+
 	it('worked examples include a bare-vs-backticked doc/asset reference case', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		// The screenshot failure: an agent backticked a doc/asset reference in a comment,
@@ -1395,11 +1442,58 @@ describe('repository block', () => {
 		expect(result).toContain('Also linked: `acme/docs`');
 		// The additional repo is flagged as cloned/checked out locally, and — with no
 		// resolved ticket here — described relative to the working directory.
-		expect(result).toContain('also cloned and checked out locally at');
+		expect(result).toContain('cloned and checked out for this run at');
 		expect(result).toContain('a sibling directory named `docs` next to your working directory');
 		// Steer reading to disk, not the github MCP file API.
 		expect(result).toContain('Read connected repositories from disk, never through an API');
 		expect(result).toContain('get_file_contents');
+	});
+
+	// An agent told the designated repo is "the one and only place your code goes"
+	// refuses to push a finished change to a second linked repo and asks a human to
+	// apply the patch by hand — while nothing about the run is actually per-repo
+	// scoped. Every linked repo must read as writable.
+	it('states that additional linked repos are writable, not just readable', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', {
+			teamId: repoTeamId,
+			projectId: repoProjectId,
+		});
+		expect(result).toContain('Every repository listed above is yours to work in');
+		expect(result).toContain('commit, push, and open a pull request here');
+		expect(result).toContain('Nothing about your run is scoped to a single repository');
+		// The old framing must be gone — it is what produced the refusal.
+		expect(result).not.toContain('the one and only place your code goes');
+		// A denied push is reported with the real git error, never theorised about.
+		expect(result).toContain('quote the exact git output');
+		expect(result).toContain('Never assert a restriction that is not written in this block');
+	});
+
+	it('marks a repo the connected account cannot push to, and leaves unknown repos unmarked', async () => {
+		const readOnly = await db.query<{ id: string }>(
+			`INSERT INTO repos (project_id, repo_identifier, host_type, can_push)
+			 VALUES ($1, 'acme/vendor', 'github'::repo_host_type, false)
+			 RETURNING id`,
+			[repoProjectId],
+		);
+
+		const result = await resolveSystemPrompt(db, 'Simple prompt', {
+			teamId: repoTeamId,
+			projectId: repoProjectId,
+		});
+		const vendorLine = result
+			.split('\n')
+			.find((l) => l.includes('Also linked: `acme/vendor`')) as string;
+		expect(vendorLine).toContain('no write access to this repository');
+		expect(vendorLine).toContain('ask `@admin`');
+
+		// `can_push` is NULL on the other repos — unknown, not restricted. Reporting
+		// unknown as read-only would recreate the very refusal this block prevents.
+		const docsLine = result
+			.split('\n')
+			.find((l) => l.includes('Also linked: `acme/docs`')) as string;
+		expect(docsLine).not.toContain('no write access');
+
+		await db.query('DELETE FROM repos WHERE id = $1', [readOnly.rows[0].id]);
 	});
 
 	it('names the concrete worktree path of a linked repo when the ticket resolves', async () => {

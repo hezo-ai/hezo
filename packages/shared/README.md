@@ -14,7 +14,7 @@ import { DEFAULT_PORT, AgentRuntime, type MasterKeyState } from "@hezo/shared";
 
 ### Types
 
-- `MasterKeyState` — `"unset" | "locked" | "unlocked"`
+- `MasterKeyState` - `"unset" | "locked" | "unlocked"`
 
 ### Enums
 

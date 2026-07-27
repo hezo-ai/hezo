@@ -7,12 +7,12 @@ section: Getting started
 # Your first project
 
 The main way to start a project in Hezo is to **talk to the CEO** rather than fill in a
-long form — the CEO is the agent that handles intake for every new piece of work. (A
+long form - the CEO is the agent that handles intake for every new piece of work. (A
 superuser can also create one directly from the web app's "Create" dialog.)
 
 ## 1. Tell the CEO what you want
 
-Open the chat and describe the project in plain language — what you're building or
+Open the chat and describe the project in plain language - what you're building or
 doing, and any constraints that matter. The CEO asks clarifying questions, scopes the
 work with you, and proposes a team to do it.
 
@@ -25,7 +25,7 @@ When the scope looks right, approve it. Hezo provisions everything in one step:
   chose, and
 - the first planning task.
 
-The team is created from a **template** — the default is a minimal Captain-only team,
+The team is created from a **template** - the default is a minimal Captain-only team,
 or you can pick a fuller one (for example a software-development roster with an
 architect, engineers, QA, and more). See
 [Projects & teams](/docs/concepts/projects-and-teams).
@@ -43,7 +43,7 @@ driving each step.
 
 - **Set rules on any task** to constrain how it's worked, and read the
   [progress summary](/docs/concepts/tasks) an agent keeps as it goes.
-- **Approve sensitive actions** when an agent asks — including pasting in a credential
+- **Approve sensitive actions** when an agent asks - including pasting in a credential
   it needs (which it will only ever use as a [protected placeholder](/docs/security/secret-protection)).
   Pending approvals and credential requests also surface on the Dashboard's action items.
 - **Keep an eye on spend** from the Dashboard or the full budget view. See

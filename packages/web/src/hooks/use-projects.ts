@@ -3,7 +3,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { type ApiError, api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
 import { queryKeys } from '../lib/query-keys';
-import { useSimpleOptimisticUpdate } from './use-optimistic-mutation';
+import { useOptimisticMutation, useSimpleOptimisticUpdate } from './use-optimistic-mutation';
 import { useRouteProjectId } from './use-route-project-id';
 
 export interface Project {
@@ -37,10 +37,22 @@ export interface Project {
 	agent_count: number;
 	/** Agents currently running on this project's team (runtime_status = active). */
 	running_agents_count: number;
+	/**
+	 * Agents on this team flagged `touches_code` - 0 means the team does no git work.
+	 * Drives whether the Connectors page treats GitHub as a pending setup step or as
+	 * an optional extra. Optional because older/partial payloads may omit it.
+	 */
+	code_agent_count?: number;
 	/** Spend on this project so far today (UTC), in cents. */
 	today_spend_cents: number;
 	/** Most recent task update, falling back to the project's creation time. */
 	last_activity_at: string;
+	/**
+	 * The operator's rail position, lowest first (1 = topmost). Set by dragging in
+	 * the project rail; new projects land below the current minimum so they still
+	 * appear on top. Always compared with `created_at DESC` as the tiebreak.
+	 */
+	display_order: number;
 	created_at: string;
 	/** When the project was archived (soft-deleted), or null/absent when active.
 	 * Archived projects are excluded from the default index that backs the rail. */
@@ -67,6 +79,12 @@ export interface Repo {
 	/** Background checkout setup lifecycle; the row settles via WebSocket UPDATE. */
 	setup_status?: 'pending' | 'ready' | 'failed';
 	setup_error?: string | null;
+	/**
+	 * Whether the connected GitHub account can push here, re-checked whenever the
+	 * server holds the token. `null`/undefined means unknown — never rendered as a
+	 * restriction, since a missing check must not read as "read-only".
+	 */
+	can_push?: boolean | null;
 }
 
 export type ProjectWithTeam = Project & { teamSlug: string; teamName: string };
@@ -109,13 +127,25 @@ export function useProjectsIndex() {
 	});
 }
 
+/**
+ * The order every project list in the app renders in: the operator's own rail
+ * order (set by dragging in the project rail), newest-first within a tie. The
+ * server's index is already sorted this way; re-sorting here keeps the order
+ * correct through an optimistic reorder, which rewrites `display_order` in the
+ * cache before the server has confirmed.
+ */
+export function compareProjectOrder(a: Project, b: Project): number {
+	if (a.display_order !== b.display_order) return a.display_order - b.display_order;
+	return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+}
+
 /** User-facing projects across all teams (excludes internal projects). */
 export function useAllVisibleProjects() {
 	const { data, isLoading } = useProjectsIndex();
 	const projects: ProjectWithTeam[] = (data ?? [])
 		.filter((p) => !p.is_internal)
 		.map((p) => ({ ...p, teamSlug: p.team_slug, teamName: p.team_name }))
-		.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+		.sort(compareProjectOrder);
 	return { projects, isLoading };
 }
 
@@ -227,6 +257,37 @@ export function useUpdateProject(projectId: string) {
 			errorMessage: 'Failed to update project',
 		},
 	);
+}
+
+/**
+ * Persist the project rail's order. Takes the full ordered list of visible
+ * project ids, topmost first — the same payload shape the server renumbers to
+ * 1..N in one statement.
+ *
+ * Optimistic: the rail must settle under the finger the instant a drag is
+ * dropped, so the cached index is rewritten with the new positions and rolled
+ * back (with a toast) if the server refuses. Positions are written as 1..N to
+ * match exactly what the server will store, so the confirming refetch is a no-op
+ * rather than a visible re-shuffle. Projects outside the payload (HQ, archived)
+ * keep their cached position, as they do server-side.
+ */
+export function useReorderProjects() {
+	return useOptimisticMutation<string[], Array<{ id: string; display_order: number }>, Project[]>({
+		mutationFn: (projectIds) =>
+			api.put<Array<{ id: string; display_order: number }>>('/api/project-display-order', {
+				project_ids: projectIds,
+			}),
+		queryKey: queryKeys.projects.all(),
+		applyOptimistic: (current, projectIds) => {
+			if (!current) return current;
+			const positions = new Map(projectIds.map((id, i) => [id, i + 1]));
+			return current.map((p) => {
+				const position = positions.get(p.id);
+				return position === undefined ? p : { ...p, display_order: position };
+			});
+		},
+		errorMessage: 'Failed to reorder projects',
+	});
 }
 
 export function useDeleteProject() {

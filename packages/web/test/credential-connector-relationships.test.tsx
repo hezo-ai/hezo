@@ -104,7 +104,7 @@ test('instance connectors page lists the credential a connector uses and links t
 test('project connectors page links a connector to the credential it uses', async () => {
 	let slug = '';
 	let secretId = '';
-	const { findByText, findByTestId, router } = await renderApp({
+	const { findByText, findByTestId, router, user } = await renderApp({
 		initialPath: '/',
 		seed: async (ctx) => {
 			const ws = await seedWorkspace();
@@ -129,6 +129,9 @@ test('project connectors page links a connector to the credential it uses', asyn
 
 	await router.navigate({ to: '/projects/$projectId/connectors', params: { projectId: slug } });
 	await findByText('projcred');
+	// On the project page the credential list lives inside the card's Settings
+	// section, so it has to be opened before the link exists.
+	await user.click(await findByTestId('connector-settings-toggle'));
 	const link = (await findByTestId(`connector-credential-link-${secretId}`)) as HTMLAnchorElement;
 	// The admin (superuser) sees a link to the global credentials page.
 	expect(link.getAttribute('href')).toBe(`/settings/credentials?focus=${secretId}#${secretId}`);

@@ -5,7 +5,9 @@ import { openPersistentDb } from './client';
 import type { Db } from './database';
 import { PgliteDb } from './drivers/pglite';
 import { ExternalDbError } from './migrate-errors';
+import { connectFailureHint, isRetryableConnectError } from './postgres-connect-errors';
 import { assertExternalPostgresCompatible } from './postgres-preflight';
+import { describeTlsPosture, normalizePostgresUrl } from './postgres-url';
 
 const log = logger.child('db-open');
 
@@ -86,6 +88,9 @@ export async function openDatabase(options: OpenDatabaseOptions): Promise<Opened
 			break;
 		} catch (err) {
 			lastError = err;
+			// A rejected certificate or bad credentials fail identically on every
+			// attempt — spending the backoff on them only delays the guidance.
+			if (!isRetryableConnectError(err)) break;
 			if (attempt < CONNECT_ATTEMPTS) {
 				log.warn(
 					`Could not reach the external database at ${redacted} (attempt ${attempt}/${CONNECT_ATTEMPTS}); retrying…`,
@@ -96,19 +101,23 @@ export async function openDatabase(options: OpenDatabaseOptions): Promise<Opened
 	}
 	if (!db) {
 		const causeMsg = lastError instanceof Error ? lastError.message : String(lastError);
+		const hint =
+			connectFailureHint(lastError) ??
+			'Check that the connection string is correct and the server is reachable from this host.';
 		throw new ExternalDbError(
-			`Could not connect to the external database at ${redacted}. ` +
-				`Check that the connection string is correct, the server is reachable from this host, ` +
-				`and TLS settings match the provider's requirements (most hosted Postgres need ` +
-				`sslmode=require or sslmode=verify-full). (cause: ${causeMsg})`,
+			`Could not connect to the external database at ${redacted}. ${hint} (cause: ${causeMsg})`,
 			lastError,
 		);
 	}
 
 	try {
 		const preflight = await assertExternalPostgresCompatible(db);
+		// The effective TLS posture is stated on every boot: `sslmode=require`
+		// encrypts without authenticating the server, and that is worth seeing
+		// rather than assuming.
+		const tls = describeTlsPosture(normalizePostgresUrl(options.databaseUrl).tls);
 		log.info(
-			`Using external Postgres at ${redacted} (server ${preflight.serverVersion}, pool max ${max ?? 10})`,
+			`Using external Postgres at ${redacted} (server ${preflight.serverVersion}, pool max ${max ?? 10}, ${tls})`,
 		);
 		return {
 			db,

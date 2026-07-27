@@ -145,6 +145,71 @@ describe('detectPassiveTeammateAsks', () => {
 		).toEqual([]);
 	});
 
+	it('flags the closing-handoff-block case: a readiness status line with no pronoun/please/?', () => {
+		// The verdict-report screenshot: the report DOES end with a per-recipient
+		// handoff block, but every line in it is passive. The captain line is pure
+		// status — "confirms PASS", "is ready for the admin" — so it carries no
+		// second-person pronoun, no `please`, no `?` and no action-assignment
+		// phrase, and every earlier gate misses it. The baton-passing phrasing
+		// ("ready for") is the ask signal.
+		expect(
+			detectPassiveTeammateAsks(
+				'@@captain — SVRA re-verification confirms PASS. The July 24 CFO departure update ' +
+					'is verified and properly integrated. The document is ready for the admin.',
+				['captain', 'equity-analyst', 'admin'],
+			),
+		).toEqual(['captain']);
+	});
+
+	it('flags every passive recipient of a multi-recipient closing handoff block', () => {
+		expect(
+			detectPassiveTeammateAsks(
+				'## Verdict\n\n' +
+					'**PASS.** The update is thoroughly researched and correctly integrated. The five ' +
+					'observations above are for awareness, not action items.\n\n' +
+					'@@captain — re-verification confirms PASS. The document is ready for the admin.\n\n' +
+					'@@equity-analyst — clean pass. Five minor observations above for your ' +
+					'consideration on the next write — none are blocking.',
+				['captain', 'equity-analyst', 'admin'],
+			),
+		).toEqual(['captain', 'equity-analyst']);
+	});
+
+	it('flags the passive line of a MIXED closing handoff block', () => {
+		// The third screenshot: the block got `@captain` right on one line, then wrote
+		// `@@equity-analyst` on the next — and the passive line is the one carrying the
+		// explicit "Please make the correction". A sibling line being active must not
+		// suppress the warning on the line that actually asks for work.
+		expect(
+			detectPassiveTeammateAsks(
+				'**Overall: PASS.** The document is cleared with one minor correction.\n\n' +
+					'@captain — the doc is signed off. The correction is minor and can be made in-line.\n\n' +
+					'@@equity-analyst — strong work on the rewrite. Please make the DWS correction ' +
+					'(2.92%) at your next opportunity.',
+				['captain', 'equity-analyst', 'admin'],
+			),
+		).toEqual(['equity-analyst']);
+	});
+
+	it('flags a passive address that hands the baton back ("all yours")', () => {
+		// `yours` escapes the `your` pronoun pattern — its word boundary stops at
+		// the `s` — so only the baton-passing signal catches this one.
+		expect(detectPassiveTeammateAsks('@@architect — analysis attached, all yours.', slugs)).toEqual(
+			['architect'],
+		);
+	});
+
+	it('scopes the baton-passing signal to the addressing paragraph', () => {
+		// The readiness line is about the work, in its own paragraph; the passive
+		// address is a plain recap and must not inherit the other paragraph's signal.
+		expect(
+			detectPassiveTeammateAsks(
+				'The doc is ready for the admin.\n\n@@architect — merged and shipped.',
+				slugs,
+			),
+		).toEqual([]);
+	});
+
 	it('does not flag a passive FYI with no ask intent', () => {
 		expect(detectPassiveTeammateAsks('@@admin — release is done.', slugs)).toEqual([]);
 	});
@@ -313,6 +378,29 @@ describe('MCP create_comment / update_comment warn on passive-mention asks', () 
 			content:
 				'**Next step:** @@captain — this draft is reviewed and approved from my side. Ready ' +
 				'for your strategic review before we schedule.',
+		});
+		expect(result.warning).toBeDefined();
+		expect(result.warning).toContain('captain');
+		expect(result.warning).toContain('active mention');
+	});
+
+	it('warns on a verdict report whose closing handoff block is all passive (screenshot case)', async () => {
+		const taskId = await insertTask(architectId, 'Verdict report closing block');
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			productLeadId,
+			teamId,
+			taskId,
+			{ projectId },
+		);
+		const result = await callTool(agentToken, 'create_comment', {
+			project: projectId,
+			task_id: taskId,
+			content:
+				'## Verdict\n\n**PASS.** The update is thoroughly researched and correctly ' +
+				'integrated. The observations above are for awareness, not action items.\n\n' +
+				'@@captain — re-verification confirms PASS. The document is ready for the admin.',
 		});
 		expect(result.warning).toBeDefined();
 		expect(result.warning).toContain('captain');

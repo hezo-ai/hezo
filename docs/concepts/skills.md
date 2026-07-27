@@ -6,7 +6,7 @@ section: Concepts
 
 # Skills
 
-**Skills** are reusable know-how you give your agents — a standard operating procedure
+**Skills** are reusable know-how you give your agents - a standard operating procedure
 written once and reached for whenever it's relevant. Where a
 [project document](/docs/concepts/documents-and-memory) is knowledge *about one project*,
 a skill is a *portable capability* an agent can draw on: how to drive a particular
@@ -14,8 +14,8 @@ connected service, your commit conventions, a release checklist, a house style f
 research write-ups.
 
 Each skill is a markdown document with a name, a short description, and optional tags. On
-every run agents are given a **manifest** of the skills available to that run — each one's
-name and description, not its full body — so they know what they can reach for; an agent then
+every run agents are given a **manifest** of the skills available to that run - each one's
+name and description, not its full body - so they know what they can reach for; an agent then
 loads a skill's full instructions on demand when it's relevant to the task. That
 manifest-plus-load-on-demand pattern is part of how Hezo gives agents
 [long-term memory](/docs/concepts/documents-and-memory#what-an-agent-carries-into-every-run)
@@ -25,9 +25,9 @@ without bloating every prompt.
 
 Every skill is either **global** or **scoped to one project**:
 
-- **Global** skills are shared with every project — the right home for know-how any agent
+- **Global** skills are shared with every project - the right home for know-how any agent
   might need (a widely-used tool's usage, a general technique).
-- **Project** skills are private to a single project — its particular deployment steps, its
+- **Project** skills are private to a single project - its particular deployment steps, its
   own conventions, a runbook only that project needs.
 
 A run sees its own project's skills **plus** all global ones; if a project skill and a global
@@ -36,38 +36,38 @@ each project's manifest focused while still letting broadly-useful know-how reac
 
 ## Where skills come from
 
-- **Author them yourself.** Open **Settings → Skills** — the global Skills page — and write
+- **Author them yourself.** Open **Settings → Skills** (the global Skills page) and write
   one directly, choosing its scope (global, or a specific project) as you add it. The editor
   previews the markdown as you go.
 - **Search and add from [skills.sh](https://skills.sh).** With a skills.sh token
   configured, search the public registry and install a skill straight into your catalog.
 - **Let agents contribute.** While working, an agent can add a skill directly
   (`create_skill`) or, when you'd rather review first, file one for your approval
-  (`propose_skill`) — the proposal lands in your inbox like any other approval. The agent
+  (`propose_skill`) - the proposal lands in your inbox like any other approval. The agent
   chooses whether the new skill is global or project-scoped, and defaults to the current
   project when it doesn't say.
-- **The starter library.** Hezo ships a **starter library of global skills** — proven
+- **The starter library.** Hezo ships a **starter library of global skills** - proven
   methods for planning, brainstorming, debugging, test-driven development, code review,
   verification, design, web app testing, research, data analysis, writing, and authoring
   new skills. A **brand-new instance gets them automatically** on first start, so they're
-  there from day one. On an **existing instance** they're not added silently on upgrade —
+  there from day one. On an **existing instance** they're not added silently on upgrade -
   instead **Settings → Skills** shows an **Add default skills** button that lists the ones
   you don't have and asks you to confirm before adding them. Either way, once added they're
-  ordinary global skills — **fully yours** to edit, delete, or re-scope to a single project —
+  ordinary global skills - **fully yours** to edit, delete, or re-scope to a single project -
   and Hezo never re-adds one you've removed. Several are adapted from well-known open-source
   skill collections and link their source.
 
   One built-in skill is special: **`connector-recipes`**, a curated catalog of connection
   recipes agents consult before
   [connecting an external service](/docs/mcp/connecting-mcp-servers). It appears with a
-  **Built-in** badge on **Settings → Skills** and — because it's global — on every
-  project's **Skills** page too, is read-only — it can't be edited or deleted — and
+  **Built-in** badge on **Settings → Skills** and, because it's global, on every
+  project's **Skills** page too, is read-only (it can't be edited or deleted) and
   updates automatically as Hezo does. Open it (the **view** button on its row) to read the
   full recipe catalog.
 
 Agents contribute proactively for connected services: once an agent gets a
 [connector](/docs/mcp/connecting-mcp-servers) to a third-party service working, it records
-how to drive that service as a skill — and keeps the skill updated as it learns more — so
+how to drive that service as a skill, and keeps the skill updated as it learns more, so
 teammates can use the connection without re-deriving the integration from vendor docs. The
 skill's scope follows the connector's: a connector shared with every project gets a global
 skill, a project's own connector a project skill. Where a good public skill already exists
@@ -77,13 +77,13 @@ references it.
 
 ## Managing scope
 
-The global **Settings → Skills** page lists **every** skill — global and each project's —
+The global **Settings → Skills** page lists **every** skill, global and each project's,
 and each row has a scope drop-down so you can move a skill between global and any project (it
 works just like the [Connectors](/docs/mcp/connecting-mcp-servers) page). Each project also has its
 own **Skills** page, under **Connectors** in the project's settings menu, showing that
 project's skills plus the globals; you can edit or remove the project's own skills there,
-while global ones are shown for reference and stay managed on the global page. Every row —
-on either page — has a **view** button that opens the skill and renders its full markdown so
+while global ones are shown for reference and stay managed on the global page. Every row -
+on either page - has a **view** button that opens the skill and renders its full markdown so
 you can read exactly what your agents see, including read-only built-ins.
 
 Skills are part of what the [Coach](/docs/concepts/coach-and-self-improving-teams) can
@@ -93,13 +93,13 @@ so the whole instance benefits.
 ## Version history & restore
 
 Every change to a skill's content is **versioned automatically**. From a skill's editor in
-**Settings → Skills**, open its **revision history** to see each past version — who changed
-it and when — and **restore** any earlier one with a click. Restoring is itself recorded as
+**Settings → Skills**, open its **revision history** to see each past version - who changed
+it and when - and **restore** any earlier one with a click. Restoring is itself recorded as
 a new revision, so you can always move forward or back without losing the thread. This is
 the same "versioned & reversible" guarantee that covers
 [project documents and agent system prompts](/docs/concepts/documents-and-memory#version-history).
 
 ## Finding skills
 
-Skills are part of [global search](/docs/concepts/search) — one query covers tasks,
-comments, documents, and skills — so a skill you wrote months ago is easy to find again.
+Skills are part of [global search](/docs/concepts/search) - one query covers tasks,
+comments, documents, and skills - so a skill you wrote months ago is easy to find again.

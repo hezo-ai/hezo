@@ -141,6 +141,49 @@ describe('openDatabase (external Postgres path)', () => {
 		expect(connectMock).toHaveBeenCalledTimes(3);
 	});
 
+	it('fails fast on a rejected certificate and names the CA remedy', async () => {
+		setLogLevel('error');
+		connectMock.mockRejectedValue(
+			Object.assign(new Error('self signed certificate in certificate chain'), {
+				code: 'SELF_SIGNED_CERT_IN_CHAIN',
+			}),
+		);
+
+		await expect(
+			openDatabase({ dataDir: '/unused', databaseUrl: URL_WITH_SECRET }),
+		).rejects.toSatisfy((err: unknown) => {
+			expect(err).toBeInstanceOf(ExternalDbError);
+			const msg = (err as Error).message;
+			expect(msg).toContain('signed by a CA this host does not trust');
+			expect(msg).toContain('sslrootcert=/path/to/ca.crt');
+			// The old catch-all guidance pointed the wrong way for this failure.
+			expect(msg).not.toContain('most hosted Postgres need');
+			return true;
+		});
+		// Deterministic failure — no backoff spent re-proving it.
+		expect(connectMock).toHaveBeenCalledTimes(1);
+	});
+
+	it('reports the effective TLS posture when the connection succeeds', async () => {
+		const messages: string[] = [];
+		const spy = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+			messages.push(args.map(String).join(' '));
+		});
+		setLogLevel('info');
+		connectMock.mockResolvedValue(fakePostgresDb());
+		try {
+			await openDatabase({
+				dataDir: '/unused',
+				databaseUrl: `${URL_WITH_SECRET}?sslmode=require`,
+			});
+		} finally {
+			spy.mockRestore();
+		}
+		const line = messages.find((m) => m.includes('Using external Postgres'));
+		expect(line).toBeDefined();
+		expect(line).toContain('TLS encrypted, certificate not verified');
+	});
+
 	it('closes the connection and rethrows when the version preflight fails', async () => {
 		const db = fakePostgresDb({ serverVersionNum: 130_000, serverVersion: '13.2' });
 		connectMock.mockResolvedValue(db);

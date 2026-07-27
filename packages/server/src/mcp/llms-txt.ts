@@ -17,7 +17,7 @@ export function generateLlmsTxt(opts: { baseUrl?: string } = {}): string {
 		'## MCP API',
 		'',
 		`- MCP endpoint: \`POST ${base}/mcp\` (JSON-RPC, Streamable HTTP, \`Authorization: Bearer <token>\`).`,
-		`- [SKILL.md](${base}/SKILL.md): the full agent manifest — every MCP tool, how to connect, and how to self-register for access (pending admin approval).`,
+		`- [SKILL.md](${base}/SKILL.md): the full agent manifest - every MCP tool, how to connect, and how to self-register for access (pending admin approval).`,
 		'',
 		'## Docs',
 		'',

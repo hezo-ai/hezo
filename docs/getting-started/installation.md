@@ -6,18 +6,18 @@ section: Getting started
 
 # Installation
 
-Hezo ships as a **single self-contained binary** — there's no runtime, language
+Hezo ships as a **single self-contained binary** - there's no runtime, language
 toolchain, or dependencies to install. Download it, run it, and you're up in seconds.
 The one thing to have in place first is **Docker**, which Hezo uses to run each
 project's agents in an isolated container.
 
 ## Prerequisites
 
-- **Docker** — Docker Engine (Linux) or Docker Desktop (macOS/Windows), running and
+- **Docker** - Docker Engine (Linux) or Docker Desktop (macOS/Windows), running and
   reachable. Hezo launches a container per project through it. On startup Hezo checks
   for a working Docker daemon and, if it's missing or stopped, prints how to install or
   start it (with a link to [Docker's install page](https://docs.docker.com/get-docker/))
-  and exits — so install Docker first.
+  and exits - so install Docker first.
 - A machine you're happy to leave running while agents work (a laptop is fine to
   start; a small always-on server is better for long-running teams).
 

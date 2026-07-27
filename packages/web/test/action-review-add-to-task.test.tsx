@@ -1,7 +1,7 @@
 import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { buildReviewHandoff } from '../src/components/document-review/review-handoff';
-import { renderApp } from './helpers/render';
+import { clickUntil, renderApp } from './helpers/render';
 import {
 	seedComment,
 	seedDocument,
@@ -255,8 +255,13 @@ test('task context: current task pinned first exactly once; a filter excluding i
 		to: '/projects/$projectId/tasks/$taskId',
 		params: { projectId: ref.projectSlug, taskId: ref.taskId },
 	});
-	const mention = await utils.findByTestId('doc-mention-link', undefined, { timeout: 15_000 });
-	await utils.user.click(mention);
+	await utils.findByTestId('doc-mention-link', undefined, { timeout: 15_000 });
+	await clickUntil(
+		utils.user,
+		() => document.querySelector('[data-testid="doc-mention-link"]'),
+		() => !!document.querySelector('[data-testid="preview-panel"]'),
+		{ label: 'the doc mention' },
+	);
 	await utils.findByTestId('preview-panel');
 	await utils.findByTestId('review-count-chip');
 	await utils.user.click(await utils.findByTestId('review-action-open'));

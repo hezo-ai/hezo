@@ -6,6 +6,7 @@ import {
 	wsRoom,
 } from '@hezo/shared';
 import { Hono } from 'hono';
+import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
 import { requestOrigin } from '../lib/request-origin';
 import { err, ok } from '../lib/response';
@@ -21,6 +22,7 @@ import {
 	restoreRevokedConnector,
 } from '../services/connectors/lifecycle';
 import { pushConnectorToTeamContainers } from '../services/connectors/live-push';
+import { discoverConnectorMethods } from '../services/connectors/method-discovery';
 import {
 	computeScopeStatus,
 	fetchAccount,
@@ -1252,6 +1254,23 @@ async function finalizeConnectorConnection(
 	}
 
 	await fireCredentialProvidedWakeup(db, connector);
+
+	// Now that the connector has a working credential, list the methods its
+	// server advertises so the operator can restrict them — and so any read-only
+	// access the requesting agent asked for is applied. Backgrounded: the connect
+	// must not wait on (or fail because of) a slow or unhappy third-party server.
+	trackBackground(
+		discoverConnectorMethods(
+			{ db, masterKeyManager: c.get('masterKeyManager') },
+			connector.id,
+			'connect',
+		).catch((e) =>
+			log.warn('method discovery failed after connect', {
+				connectorId: connector.id,
+				error: (e as Error).message,
+			}),
+		),
+	);
 
 	// The instance-admin flow has no team room to target; the settings page
 	// refetches off the popup's hezo-oauth-success postMessage instead.

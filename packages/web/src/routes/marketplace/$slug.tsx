@@ -3,6 +3,7 @@ import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { ChevronRight, Loader2, Store } from 'lucide-react';
 import { useState } from 'react';
 import { CreateProjectWithTeamDialog } from '../../components/create-project-with-team-dialog';
+import { marketplaceRosterRows, TeamRosterTable } from '../../components/team-roster-table';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { DialogContent } from '../../components/ui/dialog';
@@ -60,31 +61,7 @@ function MarketplaceTeamDetail() {
 						<h2 className="text-[15px] font-medium mb-2">
 							Roster ({team.roster.length + 1} roles)
 						</h2>
-						<div className="overflow-x-auto">
-							<table className="w-full text-[13px] border-collapse">
-								<thead>
-									<tr className="text-left text-text-2 border-b border-border">
-										<th className="py-2 pr-4 font-medium">Role</th>
-										<th className="py-2 pr-4 font-medium">Reports to</th>
-										<th className="py-2 font-medium">Responsibility</th>
-									</tr>
-								</thead>
-								<tbody>
-									<tr className="border-b border-border/60">
-										<td className="py-2 pr-4 font-medium">Captain</td>
-										<td className="py-2 pr-4 text-text-2">CEO</td>
-										<td className="py-2 text-text-2">Leads the team and delegates work.</td>
-									</tr>
-									{team.roster.map((r) => (
-										<tr key={r.slug} className="border-b border-border/60">
-											<td className="py-2 pr-4 font-medium">{r.title}</td>
-											<td className="py-2 pr-4 text-text-2">{r.reports_to_slug ?? '—'}</td>
-											<td className="py-2 text-text-2">{r.role_description}</td>
-										</tr>
-									))}
-								</tbody>
-							</table>
-						</div>
+						<TeamRosterTable rows={marketplaceRosterRows(team)} testId="marketplace-roster" />
 					</section>
 
 					{team.changelog.length > 0 && (

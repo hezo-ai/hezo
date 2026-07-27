@@ -375,7 +375,7 @@ other tenant's hostname.
 |---|---|---|
 | `HEZO_PORT` | `3100` | behind local Caddy |
 | `HEZO_DATA_DIR` | `/var/lib/hezo` | scratch only — DB and assets are external |
-| `HEZO_DATABASE_URL` | `postgres://hezo_t_<id>:<pw>@<cluster-private-host>:25060/hezo_t_<id>?sslmode=require` | per-tenant role + database |
+| `HEZO_DATABASE_URL` | `postgres://hezo_t_<id>:<pw>@<cluster-private-host>:25060/hezo_t_<id>?sslmode=require` | per-tenant role + database. `require` is libpq-semantic (see `.dev/architecture.md` § Storage): encrypted, certificate not verified — accepted here because the host is the cluster's private VPC address. Verifying it would mean `sslmode=verify-full&sslrootcert=` with the DO cluster CA placed by provisioning. |
 | `HEZO_DATABASE_POOL_SIZE` | `4` | keeps cluster connection math sane |
 | `HEZO_ASSET_STORAGE_URL` | `s3://<KEY>:<SECRET>@<region>.digitaloceanspaces.com/hezo-t-<shortid>?region=…` | per-bucket key |
 | `HEZO_WEB_URL` | `https://<sub>.app.hezo.ai` | also the SSO `aud` |

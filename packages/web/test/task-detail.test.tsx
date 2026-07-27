@@ -1,6 +1,6 @@
 import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
-import { getTestContext, renderApp } from './helpers/render';
+import { clickUntil, getTestContext, renderApp } from './helpers/render';
 import { type SeededWorkspace, seedProject, seedTask, seedWorkspace } from './helpers/seed';
 
 interface SeededSubTask {
@@ -195,10 +195,15 @@ test('bare ticket identifier renders as a tooltip-ed link and navigates to the t
 	const mentionLink = await findByTestId('task-mention-link');
 	expect(mentionLink.textContent).toContain(targetIdentifier);
 
-	await user.click(mentionLink);
+	const targetPath = `/projects/${projSlug}/tasks/${targetIdentifier.toLowerCase()}`;
+	await clickUntil(
+		user,
+		() => document.querySelector('[data-testid="task-mention-link"]'),
+		() => router.state.location.pathname === targetPath,
+		{ label: 'the task mention link' },
+	);
 
 	await findByRole('heading', { name: targetTitle });
-	const targetPath = `/projects/${projSlug}/tasks/${targetIdentifier.toLowerCase()}`;
 	expect(router.state.location.pathname).toBe(targetPath);
 });
 

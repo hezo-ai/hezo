@@ -79,6 +79,7 @@ describe('validateRepoAccess', () => {
 		const res = await validateRepoAccess('acc', 'visible', 'gho_access');
 		expect(res.accessible).toBe(true);
 		expect(res.status).toBe(200);
+		expect(res.canPush).toBe(true);
 	});
 
 	it('returns accessible=false (404) for a repo that does not exist', async () => {
@@ -86,6 +87,57 @@ describe('validateRepoAccess', () => {
 		const res = await validateRepoAccess('acc', 'nope', 'gho_access');
 		expect(res.accessible).toBe(false);
 		expect(res.status).toBe(404);
+		expect(res.canPush).toBeNull();
+	});
+
+	// A 200 only proves read: a read-only collaborator gets one too. Reading
+	// `permissions.push` off that same response is what separates "linked and
+	// readable" from "an agent's push will land".
+	it('reports canPush=false for a repo the account can read but not push to', async () => {
+		sim.seed({
+			token: 'gho_access',
+			user: { id: 5, login: 'acc', avatar_url: '', email: null },
+			repos: [
+				{
+					id: 2,
+					name: 'readonly',
+					full_name: 'other/readonly',
+					owner: { login: 'other' },
+					private: true,
+					default_branch: 'main',
+					clone_url: 'https://github.com/other/readonly.git',
+					ssh_url: 'git@github.com:other/readonly.git',
+					permissions: { admin: false, push: false, pull: true },
+				},
+			],
+		});
+		const res = await validateRepoAccess('other', 'readonly', 'gho_access');
+		expect(res.accessible).toBe(true);
+		expect(res.canPush).toBe(false);
+	});
+
+	it('reports canPush=null when the response carries no usable permissions object', async () => {
+		const withBody = (body: unknown) =>
+			validateRepoAccess('acc', 'x', 'gho_access', async () =>
+				Response.json(body as Record<string, unknown>, { status: 200 }),
+			);
+
+		// Unknown must never be reported as write access — a missing signal must
+		// not manufacture a permission the account may not have.
+		expect((await withBody({ full_name: 'acc/x' })).canPush).toBeNull();
+		expect((await withBody({ permissions: null })).canPush).toBeNull();
+		expect((await withBody({ permissions: { push: 'yes' } })).canPush).toBeNull();
+	});
+
+	it('reports canPush=null when the response body is not JSON', async () => {
+		const res = await validateRepoAccess(
+			'acc',
+			'x',
+			'gho_access',
+			async () => new Response('<html>gateway error</html>', { status: 200 }),
+		);
+		expect(res.accessible).toBe(true);
+		expect(res.canPush).toBeNull();
 	});
 });
 

@@ -698,3 +698,74 @@ export async function mockRailProjects(
 		}),
 	);
 }
+
+/**
+ * Narrow the project rail to a known set of *real* projects, preserving the
+ * server's own ordering of them.
+ *
+ * The sibling `mockRailProjects` injects synthetic clones, which is right for
+ * pure layout specs but useless for reorder specs — the clone slugs don't exist,
+ * so a real `PUT /api/project-display-order` would reject them. This keeps every
+ * row the server actually returned (so ids, slugs, and `display_order` are all
+ * genuine and the reorder round-trips for real) and merely hides the projects
+ * other parallel workers created, which would otherwise make rail order
+ * unpredictable. Internal (HQ) rows are always kept — HQ renders outside the
+ * sortable list.
+ */
+export async function scopeRailToProjects(page: Page, slugs: string[]): Promise<void> {
+	const keep = new Set(slugs);
+	await page.route('**/api/projects', async (route) => {
+		// A request still in flight when the page tears down rejects here; letting
+		// it through keeps that teardown race out of the test's failure report.
+		try {
+			const res = await route.fetch();
+			const json = (await res.json()) as { data: Array<Record<string, unknown>> };
+			const data = json.data.filter((p) => p.is_internal === true || keep.has(p.slug as string));
+			await route.fulfill({ response: res, body: JSON.stringify({ ...json, data }) });
+		} catch {
+			await route.continue().catch(() => {});
+		}
+	});
+}
+
+/**
+ * Inflate the marketplace catalog to `count` teams so the New Project dialog's team
+ * list is guaranteed to overflow, whatever the committed `marketplace/` folder ships.
+ * The extra entries are clones of a real one, so every field the dialog reads is
+ * present and the per-team detail fetch still resolves for the original slugs.
+ */
+export async function mockMarketplaceCatalog(page: Page, count: number): Promise<void> {
+	await page.route('**/api/marketplace/teams', async (route) => {
+		const res = await route.fetch();
+		const json = (await res.json()) as { data: Array<Record<string, unknown>> };
+		const base = json.data[0];
+		if (!base) throw new Error('mockMarketplaceCatalog: the live catalog is empty');
+		const filler = Array.from({ length: Math.max(0, count - json.data.length) }, (_, i) => ({
+			...base,
+			slug: `catalog-fill-${i + 1}`,
+			name: `Catalog Fill ${i + 1}`,
+		}));
+		await route.fulfill({
+			response: res,
+			body: JSON.stringify({ ...json, data: [...json.data, ...filler] }),
+		});
+	});
+	// The clones have no def behind them; serve the real one so opening their detail
+	// renders a roster instead of the fetch-failed state.
+	await page.route('**/api/marketplace/teams/catalog-fill-*', async (route) => {
+		const url = new URL(route.request().url());
+		const real = `${url.origin}/api/marketplace/teams/software-development`;
+		await route.fulfill({ response: await route.fetch({ url: real }) });
+	});
+}
+
+/**
+ * Open the New Project dialog from the home page and step into its full team
+ * catalog ("View all teams"), waiting until the list is interactive.
+ */
+export async function openTeamCatalog(page: Page): Promise<void> {
+	await page.getByTestId('home-new-project').first().click();
+	await expect(page.getByPlaceholder('e.g. Marketing Site')).toBeVisible({ timeout: 15_000 });
+	await page.getByTestId('view-all-teams').click();
+	await expect(page.getByTestId('team-search')).toBeVisible({ timeout: 15_000 });
+}

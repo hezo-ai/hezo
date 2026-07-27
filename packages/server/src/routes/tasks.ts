@@ -311,10 +311,12 @@ tasksRoutes.get('/projects/:projectId/tasks/:taskId', async (c) => {
             COALESCE(ma_ps.title, m_ps.display_name) AS progress_summary_updated_by_name,
             (SELECT count(*)::int FROM task_comments ic WHERE ic.task_id = i.id) AS comment_count,
             ra.run_count, ra.total_duration_seconds, ca.total_cost_cents,
-            EXISTS (
-              SELECT 1 FROM heartbeat_runs hr
-              WHERE hr.task_id = i.id AND hr.status IN ('running', 'queued')
-            ) AS has_active_run,
+            (ar.status IS NOT NULL) AS has_active_run,
+            CASE WHEN ar.status IS NOT NULL THEN json_build_object(
+              'status', ar.status,
+              'member_id', ar.member_id,
+              'queued_reason', ar.queued_reason
+            ) ELSE NULL END AS active_run,
             lr.status AS last_run_status,
             lr.run_id AS last_run_id,
             lr.comment_id AS last_run_comment_id,
@@ -359,6 +361,16 @@ tasksRoutes.get('/projects/:projectId/tasks/:taskId', async (c) => {
        ORDER BY hr.finished_at DESC NULLS LAST, hr.started_at DESC
        LIMIT 1
      ) lr ON true
+     LEFT JOIN LATERAL (
+       -- The task's current non-terminal run, preferring one that is actually
+       -- executing over one still waiting to start, so the UI can label the two
+       -- states apart instead of calling both "running".
+       SELECT hr.status, hr.member_id, hr.queued_reason
+       FROM heartbeat_runs hr
+       WHERE hr.task_id = i.id AND hr.status IN ('running', 'queued')
+       ORDER BY (hr.status = 'running') DESC, hr.created_at DESC
+       LIMIT 1
+     ) ar ON true
      LEFT JOIN LATERAL (
        SELECT count(*) FILTER (WHERE hr.started_at IS NOT NULL)::int AS run_count,
               COALESCE(sum(

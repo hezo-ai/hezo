@@ -1,5 +1,5 @@
 import { createGitHubSim, type GitHubSim } from '@hezo/server/test/helpers/github-sim';
-import { screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
 import { type SeededWorkspace, seedWorkspace } from './helpers/seed';
@@ -134,6 +134,18 @@ async function seedGlobalConnector(name: string, url: string): Promise<{ id: str
 	return r.rows[0];
 }
 
+// Clear `touches_code` across the whole roster, turning the seeded App Team into
+// a team that does no git work (the shape of the shipped investment/influencer
+// marketplace teams, whose rosters are entirely non-code).
+async function clearTouchesCode(ws: SeededWorkspace): Promise<void> {
+	const { db } = getTestContext();
+	await db.query(
+		`UPDATE member_agents SET touches_code = false
+		   WHERE id IN (SELECT id FROM members WHERE team_id = $1)`,
+		[ws.team.id],
+	);
+}
+
 const CONNECTORS_ROUTE = '/projects/$projectId/connectors';
 
 let sim: GitHubSim | null = null;
@@ -151,7 +163,7 @@ afterEach(async () => {
 	for (const k of Object.keys(savedEnv)) delete savedEnv[k];
 });
 
-test('lists a seeded MCP connector alongside the always-present GitHub row', async () => {
+test('lists a seeded MCP connector above the GitHub row on a code-touching team', async () => {
 	let slug = '';
 	const { findByText, getByTestId, router } = await renderApp({
 		initialPath: '/',
@@ -164,15 +176,107 @@ test('lists a seeded MCP connector alongside the always-present GitHub row', asy
 	await router.navigate({ to: CONNECTORS_ROUTE, params: { projectId: slug } });
 
 	await findByText('Connectors', { selector: 'h1' });
-	// The GitHub row is rendered unconditionally.
 	await findByText('GitHub');
 	// The seeded saas connector renders as its own row with its url.
 	await findByText('linear');
 	await findByText('https://mcp.linear.example/mcp');
 
-	// The GitHub row, with no connection, shows the pending-connect affordance.
+	// The App Team roster has `touches_code` agents, so GitHub is a real setup
+	// step: pending-connect affordance, and first in the list.
 	const list = getByTestId('connectors-list');
-	expect(list.querySelector('[data-connector-name="github"][data-status="pending"]')).toBeTruthy();
+	await waitFor(() => {
+		expect(
+			list.querySelector('[data-connector-name="github"][data-status="pending"]'),
+		).toBeTruthy();
+	});
+	expect(list.firstElementChild?.getAttribute('data-connector-name')).toBe('github');
+});
+
+test('demotes GitHub to an optional row when no agent on the team touches code', async () => {
+	let slug = '';
+	const { findByText, getByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			slug = ws.internalSlug;
+			await clearTouchesCode(ws);
+			await seedSaasConnector(ws, { name: 'linear', url: 'https://mcp.linear.example/mcp' });
+		},
+	});
+	await router.navigate({ to: CONNECTORS_ROUTE, params: { projectId: slug } });
+
+	await findByText('Connectors', { selector: 'h1' });
+	await findByText('linear');
+
+	// Still offered - just not as an unfinished setup step: neutral "Optional"
+	// badge instead of the amber "Pending connect", and last in the list.
+	const list = getByTestId('connectors-list');
+	await waitFor(() => {
+		expect(
+			list.querySelector('[data-connector-name="github"][data-status="optional"]'),
+		).toBeTruthy();
+	});
+	expect(list.querySelector('[data-connector-name="github"][data-status="pending"]')).toBeNull();
+	const githubRow = list.lastElementChild as HTMLElement;
+	expect(githubRow.getAttribute('data-connector-name')).toBe('github');
+	await findByText('Optional');
+	await findByText(/No agents on this team touch code/);
+	// The connect affordance is still there — demoted, not hidden.
+	expect(within(githubRow).getByTestId('connector-connect')).toBeTruthy();
+});
+
+test('promotes GitHub back to the top once an agent is flagged as touching code', async () => {
+	let ws!: SeededWorkspace;
+	let engineerId = '';
+	const { findByRole, findByText, getByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			ws = await seedWorkspace();
+			const engineer = ws.agents.find((a) => a.slug === 'engineer');
+			if (!engineer) throw new Error('engineer missing from seeded workspace');
+			engineerId = engineer.id;
+			await clearTouchesCode(ws);
+		},
+	});
+	await router.navigate({ to: CONNECTORS_ROUTE, params: { projectId: ws.internalSlug } });
+	await waitFor(() => {
+		expect(
+			getByTestId('connectors-list').querySelector(
+				'[data-connector-name="github"][data-status="optional"]',
+			),
+		).toBeTruthy();
+	});
+
+	// Turn "Touches code" back on from the agent's own settings page. Saving must
+	// refresh the project payload the Connectors page reads, not leave the stale
+	// `code_agent_count` in the query cache for its full staleTime.
+	await router.navigate({
+		to: '/projects/$projectId/agents/$agentId/settings',
+		params: { projectId: ws.internalSlug, agentId: engineerId },
+	});
+	const checkbox = (await findByRole(
+		'checkbox',
+		{ name: /Touches code/i },
+		{
+			timeout: 15_000,
+		},
+	)) as HTMLInputElement;
+	expect(checkbox.checked).toBe(false);
+	fireEvent.click(checkbox);
+	fireEvent.submit(checkbox.closest('form') as HTMLFormElement);
+
+	await router.navigate({ to: CONNECTORS_ROUTE, params: { projectId: ws.internalSlug } });
+	await findByText('Connectors', { selector: 'h1' });
+	await waitFor(
+		() => {
+			const list = getByTestId('connectors-list');
+			expect(
+				list.querySelector('[data-connector-name="github"][data-status="pending"]'),
+			).toBeTruthy();
+			expect(list.firstElementChild?.getAttribute('data-connector-name')).toBe('github');
+		},
+		{ timeout: 15_000 },
+	);
 });
 
 test('the Add form creates a project-scoped connector and auto-probes OAuth', async () => {
@@ -262,6 +366,8 @@ test('the Add form creates a REST-API connector (base_url shown, no OAuth Connec
 		.find((li) => li.getAttribute('data-connector-id'));
 	if (!row) throw new Error('api connector row not found');
 	expect(within(row).queryByTestId('connector-connect')).toBeNull();
+	// The API-key attach lives in the card's Settings disclosure.
+	await user.click(within(row).getByTestId('connector-settings-toggle'));
 	within(row).getByTestId('connector-api-key-toggle');
 });
 
@@ -341,7 +447,7 @@ test('an api connector with an agent-preset provider locks the picker on the Con
 
 test('a static-key api connector (query-param key) leads with the API-key form, no OAuth broker', async () => {
 	let slug = '';
-	const { findByText, getByTestId, queryByTestId, findByTestId, router } = await renderApp({
+	const { findByText, getByTestId, queryByTestId, findByTestId, user, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -364,7 +470,9 @@ test('a static-key api connector (query-param key) leads with the API-key form, 
 
 	// No "Complete connection" OAuth affordance — this is a plain API key.
 	expect(within(row).queryByTestId('connector-oauth-broker')).toBeNull();
-	// The API-key form is expanded by default (primary action) with the guide.
+	// Opening Settings shows the API-key form already expanded (the primary
+	// action for a static-key connector) with its guide.
+	await user.click(within(row).getByTestId('connector-settings-toggle'));
 	await findByTestId('connector-api-key-form');
 	const guide = await findByTestId('connector-api-key-guide');
 	expect(guide.textContent).toContain('YouTube Data API key');
@@ -637,3 +745,206 @@ test('GitHub Connect drives the device flow to a connected OAuth connection', as
 	// The finalized connection now shows in the GitHub row as connected.
 	await findByText(/Connected as/);
 }, 30_000);
+
+/**
+ * Put a connector into the "connected, methods listed" state without a live MCP
+ * server: mark it active and write the catalog the discovery probe would have
+ * cached.
+ */
+async function seedListedMethods(
+	connectorId: string,
+	methods: { name: string; readOnly: boolean; inferred?: boolean; description?: string }[],
+	enabled: string[] | null = null,
+): Promise<void> {
+	const { db } = getTestContext();
+	await db.query(
+		`UPDATE mcp_connections
+		 SET api_key_secret_id = COALESCE(api_key_secret_id, (
+		       SELECT id FROM secrets WHERE name = 'TEST_METHODS_KEY'
+		     )),
+		     activated_at = now(),
+		     discovered_methods = $1::jsonb,
+		     enabled_methods = $2::jsonb,
+		     methods_listed_at = now()
+		 WHERE id = $3`,
+		[
+			JSON.stringify(methods.map((m) => ({ inferred: false, ...m }))),
+			enabled === null ? null : JSON.stringify(enabled),
+			connectorId,
+		],
+	);
+}
+
+const CATALOG = [
+	{ name: 'get_issue', readOnly: true, description: 'Fetch an issue' },
+	{ name: 'list_issues', readOnly: true, description: 'List issues' },
+	{ name: 'save_issue', readOnly: false, description: 'Create or update an issue' },
+	{ name: 'delete_comment', readOnly: false, description: 'Delete a comment' },
+];
+
+/** Seed a connected saas connector with a catalog and open its Settings section. */
+async function renderWithMethods(enabled: string[] | null = null) {
+	let slug = '';
+	const app = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			slug = ws.internalSlug;
+			const { db } = getTestContext();
+			await db.query(
+				`INSERT INTO secrets (name, encrypted_value, category, allowed_hosts)
+				 VALUES ('TEST_METHODS_KEY', 'enc', 'api_token'::secret_category, '{mcp.linear.example}')`,
+			);
+			const connector = await seedSaasConnector(ws, {
+				name: 'linear',
+				url: 'https://mcp.linear.example/mcp',
+			});
+			await seedListedMethods(connector.id, CATALOG, enabled);
+		},
+	});
+	await app.router.navigate({ to: CONNECTORS_ROUTE, params: { projectId: slug } });
+	await app.findByText('linear');
+	const row = (await app.findByText('linear')).closest(
+		'[data-testid="connector-row"]',
+	) as HTMLElement;
+	await app.user.click(within(row).getByTestId('connector-settings-toggle'));
+	return { ...app, row };
+}
+
+test('the Settings section is collapsed by default and holds the credentials', async () => {
+	let slug = '';
+	const { findByText, getByTestId, queryByTestId, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			slug = ws.internalSlug;
+			await seedSaasConnector(ws, { name: 'linear', url: 'https://mcp.linear.example/mcp' });
+		},
+	});
+	await router.navigate({ to: CONNECTORS_ROUTE, params: { projectId: slug } });
+	await findByText('linear');
+
+	// Collapsed: the body is absent and the row recaps what is configured.
+	expect(queryByTestId('connector-settings-body')).toBeNull();
+	const row = (await findByText('linear')).closest('[data-testid="connector-row"]') as HTMLElement;
+	expect(within(row).getByTestId('connector-settings-summary').textContent).toContain(
+		'all methods',
+	);
+
+	await user.click(within(row).getByTestId('connector-settings-toggle'));
+	getByTestId('connector-settings-body');
+	within(row).getByTestId('connector-api-key-toggle');
+});
+
+test('an unrestricted connector reports every method as enabled', async () => {
+	const { row } = await renderWithMethods(null);
+	expect(within(row).getByText('All 4')).toBeTruthy();
+	expect(within(row).queryByTestId('connector-read-only-badge')).toBeNull();
+});
+
+test('a read-only connector shows the restricted counts and badges the card', async () => {
+	const { row } = await renderWithMethods(['get_issue', 'list_issues']);
+	expect(within(row).getByText('2 of 4')).toBeTruthy();
+	expect(within(row).getByText(/2 read-only · 0 write/)).toBeTruthy();
+	// Every write method is off, so the card itself says read-only.
+	expect(within(row).getByTestId('connector-read-only-badge')).toBeTruthy();
+});
+
+test('the methods dialog opens with both categories collapsed and their counts', async () => {
+	const { row, user, findByTestId } = await renderWithMethods(null);
+	await user.click(within(row).getByTestId('connector-methods-edit'));
+
+	const dialog = await findByTestId('connector-methods-dialog');
+	expect(within(dialog).getByTestId('connector-methods-count').textContent).toBe('4 of 4 enabled');
+	// Collapsed: the headers carry the counts, no method rows are mounted.
+	const read = within(dialog).getByTestId('connector-methods-category-read');
+	const write = within(dialog).getByTestId('connector-methods-category-write');
+	expect(read.getAttribute('data-enabled-count')).toBe('2');
+	expect(write.getAttribute('data-enabled-count')).toBe('2');
+	expect(within(read).getByText(/2 of 2/)).toBeTruthy();
+	expect(within(dialog).queryByTestId('connector-method-get_issue')).toBeNull();
+
+	await user.click(within(dialog).getByTestId('connector-methods-toggle-read'));
+	within(dialog).getByTestId('connector-method-get_issue');
+});
+
+test('the Write category checkbox deselects every write method in one click', async () => {
+	const { row, user, findByTestId } = await renderWithMethods(null);
+	await user.click(within(row).getByTestId('connector-methods-edit'));
+	const dialog = await findByTestId('connector-methods-dialog');
+
+	// Works while the category is collapsed — no need to expand and tick rows.
+	await user.click(within(dialog).getByTestId('connector-methods-category-checkbox-write'));
+
+	expect(within(dialog).getByTestId('connector-methods-count').textContent).toBe('2 of 4 enabled');
+	expect(
+		within(dialog)
+			.getByTestId('connector-methods-category-write')
+			.getAttribute('data-enabled-count'),
+	).toBe('0');
+	// Read-only is untouched.
+	expect(
+		within(dialog)
+			.getByTestId('connector-methods-category-read')
+			.getAttribute('data-enabled-count'),
+	).toBe('2');
+
+	await user.click(within(dialog).getByTestId('connector-methods-save'));
+	await waitFor(() => expect(within(row).getByText('2 of 4')).toBeTruthy());
+});
+
+test('the category checkbox re-selects everything from a mixed state', async () => {
+	// Starting with one of two write methods on, one click must select all rather
+	// than clear the category — otherwise a partial selection is a trap.
+	const { row, user, findByTestId } = await renderWithMethods(['get_issue', 'save_issue']);
+	await user.click(within(row).getByTestId('connector-methods-edit'));
+	const dialog = await findByTestId('connector-methods-dialog');
+	expect(
+		within(dialog)
+			.getByTestId('connector-methods-category-write')
+			.getAttribute('data-enabled-count'),
+	).toBe('1');
+
+	await user.click(within(dialog).getByTestId('connector-methods-category-checkbox-write'));
+	expect(
+		within(dialog)
+			.getByTestId('connector-methods-category-write')
+			.getAttribute('data-enabled-count'),
+	).toBe('2');
+
+	// A second click now clears it.
+	await user.click(within(dialog).getByTestId('connector-methods-category-checkbox-write'));
+	expect(
+		within(dialog)
+			.getByTestId('connector-methods-category-write')
+			.getAttribute('data-enabled-count'),
+	).toBe('0');
+});
+
+test('a search term does not narrow what the category checkbox affects', async () => {
+	const { row, user, findByTestId } = await renderWithMethods(null);
+	await user.click(within(row).getByTestId('connector-methods-edit'));
+	const dialog = await findByTestId('connector-methods-dialog');
+
+	await user.type(within(dialog).getByTestId('connector-methods-search'), 'save');
+	await user.click(within(dialog).getByTestId('connector-methods-category-checkbox-write'));
+
+	// `delete_comment` is filtered out of view but must still be disabled — a
+	// hidden method surviving "deselect all" is exactly the surprise to avoid.
+	expect(
+		within(dialog)
+			.getByTestId('connector-methods-category-write')
+			.getAttribute('data-enabled-count'),
+	).toBe('0');
+});
+
+test('Reset to all clears the restriction', async () => {
+	const { row, user, findByTestId } = await renderWithMethods(['get_issue']);
+	expect(within(row).getByText('1 of 4')).toBeTruthy();
+
+	await user.click(within(row).getByTestId('connector-methods-edit'));
+	const dialog = await findByTestId('connector-methods-dialog');
+	await user.click(within(dialog).getByTestId('connector-methods-reset'));
+
+	await waitFor(() => expect(within(row).getByText('All 4')).toBeTruthy());
+});

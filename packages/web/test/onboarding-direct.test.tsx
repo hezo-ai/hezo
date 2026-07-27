@@ -21,7 +21,9 @@ test('the welcome card opens the dialog exposing both creation flows', async () 
 	expect(screen.queryByTestId('create-project-submit')).toBeNull();
 
 	await user.click(await findByTestId('view-all-teams'));
+	// A card in the catalog opens that team's detail; "Select team" confirms it.
 	await user.click(await findByTestId('team-type-card-Blank'));
+	await user.click(await findByTestId('team-detail-select'));
 
 	// Both creation flows are now available (direct vs CEO-assisted).
 	await findByTestId('create-project-submit');
@@ -48,7 +50,9 @@ test('the direct flow creates a project in its own new team and opens the planni
 		'A direct-flow project with its own dedicated team.',
 	);
 	await user.click(await findByTestId('view-all-teams'));
+	// A card in the catalog opens that team's detail; "Select team" confirms it.
 	await user.click(await findByTestId('team-type-card-Blank'));
+	await user.click(await findByTestId('team-detail-select'));
 	await user.click(await findByTestId('create-project-submit'));
 
 	// Lands on the new project's Captain planning task.
@@ -89,7 +93,9 @@ test('the CEO-assisted flow opens the HQ intake thread instead of creating immed
 		'A project we want the CEO to scope with us first.',
 	);
 	await user.click(await findByTestId('view-all-teams'));
+	// A card in the catalog opens that team's detail; "Select team" confirms it.
 	await user.click(await findByTestId('team-type-card-Blank'));
+	await user.click(await findByTestId('team-detail-select'));
 	await user.click(await findByTestId('plan-with-ceo-submit'));
 
 	// Lands on the CEO's intake thread inside HQ (no project created yet).

@@ -164,7 +164,9 @@ test('superuser creates a new project from the rail create button', async () => 
 		'A research project for the launch.',
 	);
 	await user.click(await screen.findByTestId('view-all-teams'));
+	// A card in the catalog opens that team's detail; "Select team" confirms it.
 	await user.click(await screen.findByTestId('team-type-card-Blank'));
+	await user.click(await screen.findByTestId('team-detail-select'));
 	await user.click(await screen.findByTestId('create-project-submit'));
 
 	// "Create now" provisions the team + project directly and navigates to the

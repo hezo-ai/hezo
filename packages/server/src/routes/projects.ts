@@ -13,7 +13,11 @@ import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { Db } from '../db/database';
 import { trackBackground } from '../lib/background';
-import { broadcastChange, broadcastProjectUpdate } from '../lib/broadcast';
+import {
+	broadcastChange,
+	broadcastProjectsChanged,
+	broadcastProjectUpdate,
+} from '../lib/broadcast';
 import { budgetWindowsError } from '../lib/budget-validation';
 import { signEntityIconUrl } from '../lib/entity-icon-urls';
 import { readImageDimensions } from '../lib/image-dimensions';
@@ -41,6 +45,8 @@ import { createProjectWithTeam } from '../services/project-create';
 import { getProjectDashboard } from '../services/project-dashboard';
 import { createProjectIntake, getOpenProjectIntakeForHome } from '../services/project-intake';
 import { getProjectProgress } from '../services/projects';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function buildContainerDeps(c: Context<Env>): ContainerDeps {
 	return {
@@ -132,6 +138,9 @@ projectsRoutes.get('/projects', async (c) => {
        (SELECT count(*) FROM member_agents ma JOIN members mm ON mm.id = ma.id
           WHERE mm.team_id = p.team_id AND ma.runtime_status = 'active'::agent_runtime_status)::int
           AS running_agents_count,
+       (SELECT count(*) FROM member_agents ma2 JOIN members mm2 ON mm2.id = ma2.id
+          WHERE mm2.team_id = p.team_id AND ma2.touches_code)::int
+          AS code_agent_count,
        (SELECT COALESCE(sum(ce.amount_cents), 0) FROM cost_entries ce
           WHERE ce.project_id = p.id AND ce.created_at >= date_trunc('day', now()))::int
           AS today_spend_cents,
@@ -141,17 +150,23 @@ projectsRoutes.get('/projects', async (c) => {
      FROM projects p
      JOIN teams t ON t.id = p.team_id`;
 
+	// The operator's own rail order (PUT /project-display-order), lowest first.
+	// `created_at DESC` breaks ties so rows sharing a position — concurrent creates,
+	// a project just unarchived back into the rail — keep the newest-first
+	// behaviour the rail had before it became reorderable.
+	const orderBy = 'ORDER BY p.display_order ASC, p.created_at DESC';
+
 	let query: string;
 	if (!isAdmin || isSuperuser) {
 		const where = archivedCond ? ` WHERE ${archivedCond}` : '';
-		query = `${base}${where} ORDER BY p.created_at DESC`;
+		query = `${base}${where} ${orderBy}`;
 	} else {
 		const and = archivedCond ? ` AND ${archivedCond}` : '';
 		query = `${base}
      JOIN members m2 ON m2.team_id = p.team_id
      JOIN member_users mu ON mu.id = m2.id
      WHERE mu.user_id = $${params.length + 1}${and}
-     ORDER BY p.created_at DESC`;
+     ${orderBy}`;
 		params.push(auth.userId);
 	}
 
@@ -160,6 +175,71 @@ projectsRoutes.get('/projects', async (c) => {
 		result.rows.map((r) => withIconUrl(c, r as Record<string, unknown>)),
 	);
 	return ok(c, rows);
+});
+
+// Persist the operator's project-rail order: the full ordered list of visible
+// project ids, topmost first, renumbered to 1..N in one atomic statement.
+//
+// A collection-level route, not `PATCH /projects/:projectId` — a reorder spans
+// many projects across many teams, so it carries its own gate rather than
+// `requireProjectAccessMiddleware`. It sits at `/project-display-order`, outside
+// the `/projects/…` tree, for the same reason `/project-intakes` does: Hono's
+// `/projects/:projectId/*` middleware pattern also matches `/projects/<word>`
+// (the wildcard matches the empty rest), so a collection-level route nested under
+// `/projects/` would be resolved as a project slug and 404 before reaching here.
+//
+// `display_order` is global to the instance, so reordering is superuser-only,
+// matching the rail's other superuser-gated affordances (create, archive,
+// unarchive).
+projectsRoutes.put('/project-display-order', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
+
+	const db = c.get('db');
+	const body = await c.req.json<{ project_ids?: unknown }>();
+	const ids = body.project_ids;
+
+	if (!Array.isArray(ids) || ids.length === 0) {
+		return err(c, 'INVALID_REQUEST', 'project_ids must be a non-empty array', 400);
+	}
+	if (!ids.every((id): id is string => typeof id === 'string' && UUID_RE.test(id))) {
+		return err(c, 'INVALID_REQUEST', 'project_ids must contain only project UUIDs', 400);
+	}
+	if (new Set(ids).size !== ids.length) {
+		return err(c, 'INVALID_REQUEST', 'project_ids must not contain duplicates', 400);
+	}
+
+	// Only projects the rail actually sorts may be reordered: HQ is rendered
+	// outside the sortable list and archived projects are not in it at all.
+	const eligible = await db.query<{ id: string }>(
+		`SELECT id FROM projects
+		 WHERE id = ANY($1::uuid[]) AND archived_at IS NULL AND is_internal = false`,
+		[ids],
+	);
+	if (eligible.rows.length !== ids.length) {
+		return err(
+			c,
+			'INVALID_REQUEST',
+			'project_ids must all reference active, non-internal projects',
+			400,
+		);
+	}
+
+	// One statement, so a partial ordering is never visible. Projects absent from
+	// the payload keep their value — including one created mid-drag, which sits
+	// below the minimum and correctly stays on top.
+	const updated = await db.query<{ id: string; display_order: number }>(
+		`UPDATE projects p SET display_order = v.pos
+		 FROM (SELECT * FROM unnest($1::uuid[]) WITH ORDINALITY AS t(id, pos)) v
+		 WHERE p.id = v.id
+		 RETURNING p.id, p.display_order`,
+		[ids],
+	);
+
+	// The change spans teams, and the index is authorized per caller, so signal the
+	// global project-index room (no row data) rather than per-team row changes.
+	broadcastProjectsChanged(c.get('wsManager'));
+	return ok(c, updated.rows);
 });
 
 // Projects-primary creation: a project owns its own team (1:1). "Create a
@@ -362,6 +442,8 @@ projectsRoutes.get('/projects/:projectId', async (c) => {
        (SELECT count(*) FROM repos r WHERE r.project_id = p.id)::int AS repo_count,
        (SELECT count(*) FROM tasks i WHERE i.project_id = p.id AND i.status NOT IN (${ts2.placeholders}))::int AS open_task_count,
        (SELECT count(*) FROM goals g WHERE g.project_id = p.id AND g.archived_at IS NULL)::int AS open_goal_count,
+       (SELECT count(*) FROM member_agents ma JOIN members mm ON mm.id = ma.id
+          WHERE mm.team_id = p.team_id AND ma.touches_code)::int AS code_agent_count,
        (SELECT pi.updated_at FROM project_icons pi WHERE pi.project_id = p.id) AS icon_updated_at
      FROM projects p
      WHERE p.id = $1 AND p.team_id = $2`,

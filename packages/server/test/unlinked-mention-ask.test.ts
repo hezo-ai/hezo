@@ -74,6 +74,24 @@ describe('detectUnlinkedTeammateAsks', () => {
 		).toEqual([]);
 	});
 
+	it('flags a bare-name closing handoff written as a readiness status line', () => {
+		// Bare-name mirror of the passive detector's closing-handoff-block case: no
+		// second-person pronoun, no `please`, no `?` — only the baton-passing
+		// phrasing ("ready for") marks it as an ask.
+		expect(
+			detectUnlinkedTeammateAsks(
+				'**architect** — re-verification confirms PASS. The document is ready for the admin.',
+				slugs,
+			),
+		).toEqual(['architect']);
+	});
+
+	it('flags a bare-name address that hands the baton back ("all yours")', () => {
+		expect(
+			detectUnlinkedTeammateAsks('**qa-engineer** — the fixture is rebuilt, all yours.', slugs),
+		).toEqual(['qa-engineer']);
+	});
+
 	it('does not flag a routing-label handoff without ask intent', () => {
 		expect(
 			detectUnlinkedTeammateAsks('**Next step:** architect — merged and shipped.', slugs),

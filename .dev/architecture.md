@@ -108,12 +108,29 @@ default (`?filter=active|archived|all`, mirroring the docs/assets soft-delete), 
 archived project drops out of the left rail while keeping its tasks/history. Unarchiving
 (`POST /projects/:id/unarchive`) clears the stamp and restores rail visibility.
 
+**Rail order.** `projects.display_order` (INTEGER NOT NULL) is the operator's own ordering
+of the project rail, ascending — 1 is the topmost avatar. Every project listing sorts
+`display_order ASC, created_at DESC`; the tiebreak preserves the newest-first behaviour the
+rail had before the column existed (migration 042 backfilled positions in exactly that
+order, so upgrading is a visual no-op). `project-create.ts` inserts at
+`MIN(display_order) - 1` so a new project still lands on top without renumbering anything;
+values drift negative and self-heal, because a reorder renumbers the whole visible list
+back to 1..N. Reordering is `PUT /project-display-order` with the full ordered id list —
+a *collection*-level route (it spans projects across many teams, so it takes
+`requireSuperuser` rather than `requireProjectAccessMiddleware`, and lives outside the
+`/projects/…` tree because Hono's `/projects/:projectId/*` pattern also matches
+`/projects/<word>`). It renumbers in one `unnest … WITH ORDINALITY` statement, rejects
+archived/internal/unknown ids with a 400, and signals `broadcastProjectsChanged` on the
+global `projects:global` room (no row data — the index is authorized per caller) so every
+open shell re-orders live. The MCP `list_projects` tool is deliberately unaffected and
+keeps its alphabetical `ORDER BY p.name`.
+
 **Repos.** `repos` stores a GitHub `owner/repo` identifier; the segment after the owner
 is the display label, worktree directory name, and `@mention` handle. The **first** repo
 linked to a project becomes its immutable `designated_repo_id` (`ON DELETE RESTRICT` +
 a 409 `DESIGNATED_REPO_IMMUTABLE` guard). Adding a repo is **asynchronous**: `POST
 /repos` validates GitHub-side access (or creates the repo upstream), inserts the row
-with `setup_status = 'pending'`, and returns immediately; the slow half — container up,
+with `setup_status = 'pending'` and its `can_push` verdict, and returns immediately; the slow half — container up,
 in-container clone, first-repo designation + approval finalize — runs in a tracked
 background task (`services/repo-provisioning.ts`) and settles the row to
 `ready`/`failed` (`setup_error` records why), broadcast to the team room as a `repos`
@@ -123,6 +140,22 @@ exists (the gate never half-opens), and POSTing the same repo again reclaims a
 `REPO_SETUP_IN_PROGRESS`; a `ready` duplicate 409s `REPO_NAME_TAKEN`). Rows still
 `pending` at boot were lost with the previous process — `JobManager.reconcileOnStartup`
 parks them `failed` so they surface as retryable instead of spinning forever.
+
+**Push access (`repos.can_push`).** A 200 from `GET /repos/:owner/:repo` proves only
+*read* — a read-only collaborator gets one, and so does anyone on a public repo — so
+`validateRepoAccess` (`services/github.ts`) also reads `permissions.push` off that same
+response and `repos.can_push` records it (`true`/`false`/`NULL` = unknown, never assumed
+true). `refreshRepoPushAccess` (`services/repo-push-access.ts`) re-checks it wherever the
+server already holds the connection token — `performRepoSetup` (link, retry, reclone) and
+the admin `git-state` panel — so an access change made on GitHub after linking is picked
+up. Only a definitive answer overwrites the stored one (`permissions.push` on a 200, or a
+hard 403/404); a locked vault, a network failure, or a 5xx leaves it untouched rather than
+demoting a writable repo to read-only. `can_push === false` never blocks the link (a
+read-only reference repo is legitimate) — it surfaces as a "No write access" badge in the
+Git settings page and as a per-repo read-only note in the agent's Repository prompt block
+(`buildRepositoryBlock`). Nothing about a run is per-repo scoped — one account-level SSH
+key and one account-wide OAuth token serve every linked repo — so this column is the only
+place a genuine per-repo write restriction is represented.
 
 **Tasks & threads.** `tasks` are Linear-style tickets with a frozen `identifier`
 (`<task_prefix>-<n>`, e.g. `IN-42`), a required `assignee_id → members.id`, `rules`, and
@@ -389,7 +422,11 @@ task-sidebar panel, Documents tab view mode) via a rehype plugin
 (selection pill, hover-line ghost, margin icons, editor) is extracted into
 `ReviewSurface` (`packages/web/src/components/document-review/review-surface.tsx`), which
 the asset viewer reuses for text assets (markdown through the same rehype plugin, plain
-text through `PlainTextWithHighlights`). Each project-doc revision carries a
+text through `PlainTextWithHighlights`). Those same three surfaces each carry
+`DocumentDownloadMenu` (`packages/web/src/components/document-download-menu.tsx`) — a
+client-side save of the already-loaded content as Markdown (verbatim) or plain text
+(`markdownToPlainText`), no server round-trip; the two preview surfaces render it in the
+compact `variant="icon"` form that matches their icon-only header clusters. Each project-doc revision carries a
 **changelog** (`change_summary`): the web PUT forwards `change_summary` and the MCP
 `write_project_doc` tool takes an optional `changelog`, both stored on the revision recorded for
 the *prior* content; `restoreRevision` writes `Restored content from revision N`. The single-doc
@@ -727,10 +764,30 @@ override. `marketplace/index.json` is the catalog listing.
   roster + team metadata live in a hand-authored `agents/<team>/team.json` manifest.
   `build:marketplace` (`scripts/build-marketplace-teams.ts`, run by `bun run dev` and by
   authors) resolves partials, validates required prompt vars, computes a content hash over the
-  meaningful content (excluding version/changelog), **auto-increments `version`** on a hash
-  change, and writes the committed JSONs. `build:teams` bundles them into the gitignored,
+  meaningful content (excluding version/changelog/keywords), **auto-increments `version`** on a
+  hash change, and writes the committed JSONs. `build:teams` bundles them into the gitignored,
   embedded `teams-bundle.json`. Pure logic in `services/marketplace-build.ts`; guarded by
   `marketplace-build.test.ts` (determinism + a stale-source drift check).
+- **Discovery keywords.** Each team carries a `keywords` list — the words and short phrases
+  someone would type when they want that team ("website", "saas", "todo list") — authored in
+  `team.json`, normalized by the build (`normalizeKeywords`, lowercased + de-duplicated,
+  bounded by `MAX_TEAM_KEYWORDS`/`MAX_TEAM_KEYWORD_LENGTH`), and carried through to both the
+  team def and `index.json`. They exist so the New Project picker's recall is a property of
+  the **team's data**, not of the matcher: a team can be made findable for a new phrasing by
+  editing its manifest, and a team published from outside this repo ships its own vocabulary.
+  Hezo generates the list at bundle time for a publisher (today: hand-authored for the three
+  default teams). Keywords are **excluded from the content hash** — the team's `version` drives
+  the reconcile that re-runs hiring against every project already on that team, and retuning
+  search terms must not trigger that. Instances always fetch the live catalog, so improved
+  keywords take effect on the next fetch regardless of version.
+- **Ranking (client-side).** There is no server suggestion endpoint. The New Project dialog
+  ranks the catalog it already has (`packages/web/src/lib/team-suggestions.ts`) against the
+  typed name + description: both sides are normalized to stemmed terms by
+  `@hezo/shared`'s `extractTerms`/`stemTerm` (whole-word, never substring — so "app" matches
+  "App Team" and not the "approval" in another team's blurb), and each distinct query term
+  scores the **best** field it lands in — keywords 4, name 3, description 2, summary 1. The
+  normalizer lives in `@hezo/shared` because both sides need it: the web ranker on the query
+  side, the server on the authoring side when it generates a published team's keywords.
 - **Runtime load.** `services/marketplace.ts` resolves the catalog from, in order: the repo
   folder in dev (`HEZO_MARKETPLACE_DIR`, or the source-tree `marketplace/`), GitHub raw on
   `main` (cached ~1h; the untrusted boundary — every def is zod-validated with a
@@ -759,14 +816,16 @@ override. `marketplace/index.json` is the catalog listing.
   `update_agent_system_prompt` where roles carry local customizations) instead of adding
   duplicates. Because instances always fetch the live catalog, a new team `version` reaches them
   automatically.
-- **Shipped teams.** Three: **App Team** (`software-development`, the full app-building roster;
-  display name was "Startup"), **Influencer Marketing** (`influencer` — brand-strategist,
-  trend-researcher, content-writer, media-producer, content-editor, distribution-manager), and
-  **Investment** (`investment` — market-researcher, equity-analyst, catalyst-monitor,
-  risk-verifier, report-writer). The Influencer/Investment Captains run a structured onboarding
-  Q&A on their planning task and **suggest goals** (below); the Influencer team gates outbound
-  content on admin approval (prompt-level, toggled via team preferences), and the Investment
-  team maintains a living per-stock document (with revision history) monitored ~daily.
+- **Shipped teams.** Three: **App Team** (`software-development`, the full app-building roster),
+  **Social Media Marketing** (`influencer` — brand-strategist, trend-researcher, content-writer,
+  media-producer, content-editor, distribution-manager), and **Investment Portfolio**
+  (`investment` — market-researcher, equity-analyst, catalyst-monitor, risk-verifier,
+  report-writer). Slugs are stable ids and keep their historical names. The
+  Social-Media-Marketing/Investment-Portfolio Captains run a structured onboarding
+  Q&A on their planning task and **suggest goals** (below); the Social Media Marketing team
+  gates outbound content on admin approval (prompt-level, toggled via team preferences), and
+  the Investment Portfolio team maintains a living per-stock document (with revision history)
+  monitored ~daily.
 
 **Goal suggestions.** The Captain/CEO can propose goals the admin approves, reusing the
 approvals machinery. `suggest_goal` (MCP, Captain/CEO-only) files a pending `goal_suggestion`
@@ -820,6 +879,22 @@ runs the **pre-run budget gate** (`activateAgent`; over-budget skips the run wit
 absorbs sibling queued wakeups for the same task → marks the run terminal → reconciles
 task blockers (waking dependents when the last blocker clears) → fires task automations.
 Instance agents (CEO/Coach) select work across *all* teams here.
+
+**Stranded-run recovery.** A `heartbeat_runs` row is inserted `queued` and only flips to
+`running` (stamping `started_at`) once a credential is resolved and the credential lock
+held, so both states can strand — and while either persists the run counts as *active*,
+which blocks reassignment on its task and reads as live agent activity in the UI. The ~30 s
+orphan pass (`services/orphan-detector.ts`) therefore reaps both, each aged against the only
+clock it has: a `running` row against `started_at` (30 s safety window), a `queued` row
+against `created_at` (the 120 s grace window, which spans the whole not-yet-started phase).
+Both arms are guarded by the in-process live-run registry — the run id is registered the
+moment the row is inserted, so a run whose host-side driver still owns it (waiting on the
+credential lock, say) is skipped and only a row whose driver has vanished is failed. The two
+kinds are distinguished only by their recorded `error` (`Orphaned: run never started` vs
+`Orphaned: process no longer running`); the retry/approval escalation is shared.
+`healStaleRunState` is the inverse pass and deliberately counts `queued` as active, so it
+repairs the *surroundings* (execution locks, agent `runtime_status`, claimed wakeups) but
+never the run row itself.
 
 **Run.** `agent-runner.ts` builds the run context (provider/runtime resolution, MCP
 descriptors, egress proxy, ssh-agent socket, container env), starts a `heartbeat_runs`
@@ -1050,7 +1125,17 @@ checkpoint, not a reviewed push — it skips any pre-push test/lint hook so a WI
 are still red still reaches the remote), and only when a live `SSH_AUTH_SOCK` exists — true for the
 agent's own bridged commits, false for the bare prep-time catch-up merge, so that merge commit is
 skipped rather than attempting an unauthenticated push. A repo-less workspace, an empty remote, or a
-clone whose `core.hooksPath` is redirected (e.g. husky) simply doesn't fire it. *Uncommitted*
+clone whose `core.hooksPath` is redirected (e.g. husky) simply doesn't fire it.
+
+Non-fatal is **not** silent. The hook previously discarded the push to `/dev/null`, so a denied
+push (no write access on that repo, a protected branch) produced output identical to a clean one
+and the run reported success while its commits never left the container. A failed push now reports
+twice: one line plus the git error on the commit's own stderr, where the agent sees it
+immediately, and the full error appended to `<git-common-dir>/hezo-push-errors.log`
+(`PUSH_ERROR_LOG_NAME`). Worktree prep clears that log per repo (`clearPushErrors`) so it is
+scoped to the run, and the runner reads it back at run completion (`readPushErrors`) and emits it
+into the run log for every prepared clone. The hook still `exit 0`s unconditionally — reporting a
+failure never fails the commit. *Uncommitted*
 changes are still not covered — the agent commits to preserve, and the role prompts frame frequent
 committing (not a manual end-of-run push) as the durability action.
 
@@ -1062,7 +1147,10 @@ computed locally, no network fetch), plus the active `/worktrees/<task>/<repo>` 
 to their tasks and the project's active (queued/running) agent-run count (`active_runs`, from
 `getProjectConcurrency`) so the panel can disable the reset controls proactively instead of only
 failing them server-side — and returns `{ container_running: false }` when the container is stopped
-rather than auto-starting one, since a passive inspect must not trigger a provision. `POST .../reset`
+rather than auto-starting one, since a passive inspect must not trigger a provision. It also
+re-checks and returns `can_push` (`refreshRepoPushAccess`), computed **before** the
+container-gated branch so it is reported either way — the check needs GitHub, not a container,
+and the panel is where an operator notices write access changed upstream. `POST .../reset`
 runs one of three recovery actions: `discard_local` (`git reset --hard` + `clean -fd` — no `-x`,
 so gitignored build artifacts survive — after a best-effort fetch; the escape hatch for the
 "local changes would be overwritten" fast-forward failure that otherwise silently stalls sync),
@@ -1113,9 +1201,10 @@ class before interpolation; `killRunProcesses` is its run-id specialization). Th
   awaited `JobManager.killLiveRunProcesses()` reaps every live run's tree (per-kill bounded,
   whole pass raced against its own timer) — the runner's own abort-kill would race
   `process.exit`. Chat teardown then reaps its session trees.
-- **Orphan tick**: when the ~30 s orphan detector marks a `running` run whose process vanished as
-  failed, it also fires `killRunProcesses` against the task's project container (task-less runs
-  skipped — the boot sweep is their backstop).
+- **Orphan tick**: when the ~30 s orphan detector marks a stranded run failed — a `running` one
+  whose process vanished, or a `queued` one whose driver died before it ever started — it also
+  fires `killRunProcesses` against the task's project container (task-less runs skipped — the boot
+  sweep is their backstop). The kill is a no-op for a run that never started, and harmless.
 - **Boot sweep** (crash backstop): `reconcileOnStartup`'s fourth container pass
   (`sweepDanglingContainerProcesses`) scans each running container's `/proc`
   (`DockerClient.listHezoProcesses` — emits only pids carrying a marker, an
@@ -1301,8 +1390,11 @@ otherwise no-op run to a success and is why the one-block judge ceiling is accep
 resume …`, the name after a short routing label like `Next step: slug — …`, or an
 action-assignment heading/label line like `## Required actions for slug` — where the phrase on
 the line is itself the ask signal, since the imperative list below it carries none — via
-`detectUnlinkedTeammateAsks`, gated on directed-ask intent so a bold name written for emphasis is
-never touched) is the wakes-no-one trap — but the net does **not** rewrite the
+`detectUnlinkedTeammateAsks`, gated on directed-ask intent — an explicit request signal such as a
+second-person pronoun, `please` or a `?`, or a baton-passing status line such as "ready for
+review" / "all yours", which is what catches a report whose closing handoff block is present but
+passive throughout; a bold name written for mere emphasis is never touched) is the wakes-no-one
+trap — but the net does **not** rewrite the
 agent's words or auto-deliver it (guessing intent to force a wake overreaches). `create_comment`
 already warns the agent interactively when it posts such a comment; the final-message path skips
 that check, so the runner surfaces the **same warning in the run log** and leaves the handoff
@@ -1315,6 +1407,22 @@ was woken by a `WakeupSource.Reply`/`Mention` whose waking comment was authored 
 comment of its own on the task, the final message is delivered verbatim as a reply threaded under
 the waking comment (`postAgentComment` with `parentCommentId`), flipping the no-op run to success.
 Runs on **every** runtime including OpenCode (which has no judge at all).
+
+**Comment-write mention advisories.** Upstream of the net, `create_comment` / `update_comment`
+run a set of best-effort, non-blocking checks over the posted markdown and return their findings
+to the agent in a `warning` field on the already-persisted result. They **never rewrite the
+comment** — the agent fixes it in place with `update_comment`. The checks (all in
+`lib/mentions.ts`, scoped by `resolveWarnableSlugs` = the task team's roster + HQ + `@admin`,
+minus the author): `detectUnlinkedTeammateReferences` (a teammate addressed by bold/bare name,
+which notifies nobody), `detectPassiveTeammateAsks` (a `@@slug` address whose text reads as an
+ask), and `detectNarratedActiveMentions` — the inverse failure, where an **active** `@slug` is
+used to *describe a mention living in another comment* ("the @admin mention in TASK-7#comment-9")
+and so fires a real wake here instead of pointing there. The offered fix for that one is
+**backticks**, not the passive form: `@@admin` renders as the bare word `admin` and loses the
+token being quoted, while `` `@admin` `` keeps the literal text inert. Because the sibling
+backticked-entity check would otherwise tell the author to un-backtick exactly that token,
+`detectQuotedMentionTokens` subtracts backticked-and-narrated slugs from its candidates, so the
+two advisories can never contradict each other.
 
 ---
 
@@ -1635,6 +1743,18 @@ connectors UI treats a non-revoked, non-failed local row as **connected the
 moment it exists** (`statusOf`/`connectorStatus` short-circuit `kind='local'` to `active`)
 rather than showing it a meaningless "Pending connect" OAuth affordance.
 
+**GitHub's row is roster-aware.** GitHub is not an `mcp_connections` row until someone
+connects it (`POST …/connectors/ensure` materializes it), so the project Connectors page
+renders it from the OAuth connection alone. Whether it reads as a *setup step* is derived
+from the roster: the project payload carries `code_agent_count` (roster agents with
+`member_agents.touches_code`, alongside `repo_count`), and a project with no code-touching
+agent, no repo, and no GitHub connection renders the row **last** with a neutral `Optional`
+badge instead of the amber "Pending connect". This is the UI counterpart of the repo-setup
+gate in `job-manager.ts`, which likewise fires only for a `touches_code` agent — a roster
+like the shipped `investment`/`influencer` marketplace teams (entirely non-code) will never
+request a repo, so offering GitHub as pending work would invite the operator to finish
+something that is never needed. Any of the three signals promotes the row back.
+
 `kind='api'` is a **direct-REST connector with no MCP server** — for backends that expose a
 plain HTTP API rather than MCP (e.g. Google's APIs). Its `config` carries
 `{ base_url, allowed_hosts, auth: { placement: 'header'|'query', name, scheme? }, docs_url? }`
@@ -1686,6 +1806,83 @@ At run build, `loadConnectorDescriptors` merges connectors after the built-in `h
 MCP, and each of the five runtime adapters translates the descriptors into the spawn
 artifacts its CLI expects (Claude Code `--mcp-config`, Codex `config.toml`, Gemini
 `.gemini/settings.json`, etc.).
+
+**Method access (per-connector allowlist).** A hosted MCP server ships its read and write
+tools in one connection, so a connector carries an allowlist of the methods agents may
+call. It lives on the `mcp_connections` row itself — `enabled_methods` (jsonb array),
+`discovered_methods` (the cached catalog), `methods_listed_at`, `requested_access`
+(`connector_access` enum), `access_applied_at` (migration `044`). **`enabled_methods` NULL
+means no allowlist — every method enabled**, deliberately *not* the same as an array naming
+every currently-known method, so a server that grows a tool doesn't silently grant it.
+These are columns rather than `config` keys because `config` is replaced wholesale by the
+reconfigure routes (`POST /connectors`, `add_connector`) — an operator changing a URL would
+otherwise wipe the allowlist, a security control quietly switching itself off. They also
+survive `restoreRevokedConnector`, so a revoke/reconnect keeps the restriction.
+
+`classifyMcpMethod` (`@hezo/shared`, `mcp/method-access.ts`) decides read vs write: the
+spec's `annotations.readOnlyHint` wins when the server sets it (`inferred: false`),
+otherwise a leading-word heuristic. An unrecognised name classifies as **write**, so the
+heuristic can never widen access by accident. `summarizeMethodAccess` is the single source
+for every count the card, the dialog, and `list_connectors` show, so they can't disagree.
+
+`discoverConnectorMethods` (`services/connectors/method-discovery.ts`) probes a connected
+`saas` connector over the MCP SDK's Streamable HTTP transport (SSE fallback) and caches the
+catalog. It decrypts the connector's own credential in-process (trusted server code — § 7's
+chat-bot-token precedent) and **drops any header still carrying an unsubstituted
+placeholder** rather than sending it verbatim. It fires via `trackBackground` from both
+activation paths and from the explicit refresh route, so a probe failure can never fail a
+connect; a `connect`-triggered failure logs at debug and a `manual` one warns. **It is never
+called from `loadConnectorDescriptors`**, which deliberately resolves secret *names* only so
+descriptors build while the master key is locked.
+
+Enforcement has two legs, split because the coding CLIs are installed unpinned and their
+config keys can drift:
+
+- **Runtime config filtering is the UX leg** — descriptors carry `enabledTools` and
+  `disabledTools` (both views, since Claude Code takes a deny list while Gemini/OpenCode
+  take allowlists), and each adapter emits its own key: Gemini `includeTools`, OpenCode
+  top-level `tools`, Claude Code `permissions.deny`. An agent never sees a tool it cannot
+  call. Best-effort and degrades safely: an unrestricted connector emits a byte-identical
+  config to before, and Claude Code's deny list is only as complete as the last
+  `tools/list`. **Codex and Grok emit no filter** — no per-server tool-filter key could be
+  verified, and a guessed TOML key risks the CLI rejecting the whole config and breaking
+  every run on that runtime. `RUNTIME_SUPPORTS_MCP_TOOL_FILTER` records which runtimes can
+  hide tools.
+- **The egress proxy is the enforcement leg** — runtime-independent, and the only thing
+  restricting Codex and Grok at all. `allocateRunProxy` resolves the run's restricted
+  connectors once into a `host:port → allowlist` map (`loadMcpHostRestrictions`); an
+  unrestricted run gets an empty map and takes no new path. In `forward`, a request to a
+  mapped host has its body inspected by the pure `shouldBlockMcpRequest`
+  (`egress/mcp-method-guard.ts`) and a `tools/call` naming a disabled method is rejected
+  `403 mcp_method_not_enabled` before it leaves the host. Only `tools/call` is inspected —
+  `initialize`/`tools/list`/notifications pass through, since a listing that still
+  advertises a disabled tool is harmless once the call is blocked. A JSON-RPC **batch** is
+  rejected whole if any element names a disabled method (the messages share one body).
+  **Fails closed** for restricted hosts only: an unparseable body, or one over
+  `MAX_MCP_INSPECTION_BYTES` (256 KB), is rejected rather than forwarded uninspected.
+  Two details are load-bearing. The inspection cap is **separate from and much larger
+  than** `MAX_BODY_SUBSTITUTION_BYTES` (8 KB) — a real `tools/call` carries file contents,
+  far past what the credential-in-body substitution path was sized for — and the body is
+  **read once**, at whichever cap applies, since both gates want the same bytes and the
+  stream can only be consumed once. The inspection gate (`mayCarryJsonRpc`) is deliberately
+  *wider* than `isBodySubstitutionEligible`: it accepts a chunked body with no
+  `Content-Length` and does not exclude a compressed one, so an uninspectable request
+  reaches the guard and is blocked rather than skipped. Both sides of the map normalise
+  through `mcpRestrictionKey(hostname, port)` with the scheme default applied — the proxy
+  resolves host and port separately, so keying on a raw `URL.host` would silently miss on
+  any non-default port, and a lookup that misses means no enforcement at all.
+
+An agent registering a connector can ask for read-only (`register_connector`'s
+`access: 'read' | 'write'`, default `write`), which persists `requested_access` and shows on
+the `connect_required` card before the human authorizes. Discovery applies it **exactly
+once**, guarded on `requested_access = 'read' AND access_applied_at IS NULL AND
+enabled_methods IS NULL`: the stamp stops re-application and the null allowlist means an
+operator who has already decided is never overwritten. The request narrows only —
+`createOrFetchConnector` will upgrade an unrestricted row to `read` but never clears a
+stored `read`, and `list_connectors` reports `method_access` so a run learns a missing tool
+is withheld rather than absent. There is deliberately **no MCP write tool** for the
+allowlist: letting an agent widen its own access would be a privilege escalation, so the
+write side is human-only (`GET`/`PATCH`/`POST …/methods{,/refresh}`).
 
 **Git vs API.** Repo clone/fetch/push does **not** use the OAuth token — that's SSH with
 the project key (§ 8). The OAuth token is reserved for GitHub REST (listing/creating
@@ -1985,6 +2182,23 @@ computes a redacted `StorageInfo` once (`redactDatabaseUrl` in `src/lib/db-info.
 credentials occluded, query params dropped except `sslmode`) and only that is passed to
 `buildApp`, surfaced at the superuser-only `GET /api/database-info` for the Settings →
 General Database card.
+
+**External TLS (`sslmode`).** node-postgres 8 reads `prefer`/`require`/`verify-ca` as
+aliases for `verify-full`, which no other Postgres client does and which pg 9 drops.
+Since managed providers (DigitalOcean, RDS, Azure) sign with a private CA, that reading
+rejects connection strings `psql` accepts. `normalizePostgresUrl`
+(`src/db/postgres-url.ts`) opts the string into pg-connection-string's libpq semantics
+(`uselibpqcompat=true`) for exactly the modes the two readings disagree on, leaving
+`no-verify` (which would flip back to verifying) and bare `verify-ca` (which would throw)
+untouched. It is applied in `PostgresDb.connect` — the single pool construction site, so
+it is unbypassable — and an explicit `ssl` option would not work there, since
+node-postgres merges the parsed connection string *over* the caller's config. The same
+function reports the resulting `PostgresTlsPosture`, which `openDatabase` renders into the
+startup line so a `require` connection visibly says "certificate not verified".
+Connect failures are classified by `src/db/postgres-connect-errors.ts`: deterministic
+causes (rejected certificate, bad credentials, missing database) skip the retry backoff and
+carry targeted guidance instead of the generic TLS advice. Delete the normalizer when pg
+reaches v9.
 
 **Asset storage.** Asset blobs (task attachments + the project assets library) live behind
 the `AssetStore` interface (`src/assets/store.ts`:

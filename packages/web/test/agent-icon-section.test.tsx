@@ -6,7 +6,7 @@
 
 import { fireEvent } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
-import { renderApp } from './helpers/render';
+import { clickUntil, renderApp } from './helpers/render';
 import { type SeededWorkspace, seedWorkspace } from './helpers/seed';
 
 function pngHeader(): Uint8Array {
@@ -86,11 +86,16 @@ test('uploading an agent avatar swaps to Replace/Remove, and Remove returns to i
 	});
 
 	// Preview state → Save the normalized blob.
-	const save = await findByTestId('agent-icon-save');
+	await findByTestId('agent-icon-save');
 	expect((await findByTestId('agent-icon-preview')).querySelector('img')?.getAttribute('src')).toBe(
 		'blob:preview-url',
 	);
-	await user.click(save);
+	await clickUntil(
+		user,
+		() => document.querySelector('[data-testid="agent-icon-save"]'),
+		() => !!document.querySelector('[data-testid="agent-icon-remove"]'),
+		{ label: 'the avatar Save button' },
+	);
 
 	// Upload succeeded: the section now offers Replace + Remove.
 	await findByTestId('agent-icon-remove', undefined, { timeout: 15_000 });
@@ -98,7 +103,12 @@ test('uploading an agent avatar swaps to Replace/Remove, and Remove returns to i
 	expect((await findByTestId('agent-icon-upload')).textContent).toContain('Replace image');
 
 	// Remove clears the avatar and returns to the initials fallback.
-	await user.click(await findByTestId('agent-icon-remove'));
+	await clickUntil(
+		user,
+		() => document.querySelector('[data-testid="agent-icon-remove"]'),
+		() => !document.querySelector('[data-testid="agent-icon-remove"]'),
+		{ label: 'the avatar Remove button' },
+	);
 	await findByTestId('agent-icon-upload', undefined, { timeout: 15_000 });
 	expect(queryByTestId('agent-icon-remove')).toBeNull();
 	expect((await findByTestId('agent-icon-upload')).textContent).toContain('Upload image');

@@ -1,3 +1,4 @@
+import type { HeartbeatRunStatus } from '@hezo/shared';
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { api } from '../lib/api';
@@ -12,6 +13,14 @@ export interface QueuedWakeup {
 	blocker_task_id: string | null;
 	blocker_identifier: string | null;
 	blocker_project_slug: string | null;
+}
+
+export interface ActiveRun {
+	status: typeof HeartbeatRunStatus.Running | typeof HeartbeatRunStatus.Queued;
+	/** The agent the run belongs to — not necessarily the task's assignee. */
+	member_id: string;
+	/** Why the run is still waiting, when the server recorded a reason. */
+	queued_reason: string | null;
 }
 
 export interface Task {
@@ -30,6 +39,15 @@ export interface Task {
 	assignee_slug: string | null;
 	assignee_type: 'agent' | 'user' | null;
 	has_active_run: boolean;
+	/**
+	 * The task's current non-terminal run, when there is one. `has_active_run` is
+	 * the same fact as a boolean; this carries the detail needed to tell an
+	 * executing run apart from one still waiting to start, and to know whose run
+	 * it is (any agent's run on the task blocks reassignment, not just the
+	 * assignee's). Only the single-task endpoint returns it — list rows get the
+	 * boolean alone, hence optional rather than nullable.
+	 */
+	active_run?: ActiveRun | null;
 	/** Number of agent runs that have started on this task (excludes queued). */
 	run_count: number;
 	/** Summed wall-clock duration of finished runs, in seconds. */

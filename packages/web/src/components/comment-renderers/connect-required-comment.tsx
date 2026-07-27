@@ -1,4 +1,4 @@
-import { Check, Plug } from 'lucide-react';
+import { Check, Eye, Plug } from 'lucide-react';
 import { connectorStatus, useConnector } from '../../hooks/use-connectors';
 import { ConnectorCompletion } from '../connector-completion';
 import type { CommentDataOf } from './comment-data';
@@ -9,7 +9,7 @@ interface Props {
 }
 
 export function ConnectRequiredComment({ comment, projectId }: Props) {
-	const { connector_id, display_name, provider_id } = comment.content;
+	const { connector_id, display_name, provider_id, requested_access } = comment.content;
 	const connectorQuery = useConnector(projectId ?? '', connector_id);
 
 	if (!projectId) {
@@ -70,6 +70,21 @@ export function ConnectRequiredComment({ comment, projectId }: Props) {
 						)}
 					</p>
 					<p className="text-xs text-text-2 mt-0.5">{statusLabel}</p>
+					{requested_access === 'read' && (
+						// Say what the agent asked for *before* the human authorizes it,
+						// so the narrower scope is visible at the moment of the decision
+						// rather than something to discover on the Connectors page after.
+						<p
+							className="flex items-center gap-1.5 text-xs text-text-2 mt-1"
+							data-testid="connect-required-read-only"
+						>
+							<Eye className="w-3.5 h-3.5 shrink-0 text-info" />
+							<span>
+								<span className="font-medium text-text-1">Read-only requested.</span> Write methods
+								will be disabled once connected. You can change this in the connector's Settings.
+							</span>
+						</p>
+					)}
 					{connector?.auth_error && (
 						<p className="text-xs text-danger-soft-fg mt-1">{connector.auth_error}</p>
 					)}

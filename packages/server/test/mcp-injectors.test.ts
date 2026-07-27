@@ -663,3 +663,110 @@ describe('grok adapter', () => {
 		expect(injection.files[0].contents).not.toContain('[mcp_servers.');
 	});
 });
+
+/**
+ * A connector whose method allowlist withholds two of its four tools. The
+ * descriptor carries both views of the restriction because the runtimes disagree
+ * on shape — allowlist (Gemini, OpenCode) vs deny list (Claude Code).
+ */
+const RESTRICTED_DESCRIPTOR: McpDescriptor = {
+	kind: 'http',
+	name: 'linear',
+	url: 'https://mcp.linear.app/mcp',
+	enabledTools: ['get_issue', 'list_issues'],
+	disabledTools: ['save_issue', 'delete_comment'],
+};
+
+describe('per-connector MCP method filtering', () => {
+	const HOMES = { hostHomeDir: HOME, containerHomeDir: HOME };
+
+	describe('claude-code', () => {
+		const adapter = MCP_ADAPTERS[AgentRuntime.ClaudeCode];
+
+		it('denies the withheld tools by fully-qualified name in settings.json', () => {
+			const injection = adapter.build([HEZO_DESCRIPTOR, RESTRICTED_DESCRIPTOR], HOMES);
+			const settings = JSON.parse(injection.files[0].contents) as {
+				permissions?: { deny: string[] };
+			};
+			expect(settings.permissions?.deny).toEqual([
+				'mcp__linear__save_issue',
+				'mcp__linear__delete_comment',
+			]);
+		});
+
+		it('omits the permissions block entirely when nothing is restricted', () => {
+			const injection = adapter.build([HEZO_DESCRIPTOR], HOMES);
+			const settings = JSON.parse(injection.files[0].contents) as Record<string, unknown>;
+			expect(settings.permissions).toBeUndefined();
+		});
+
+		it('does not emit a --disallowedTools flag (the runner appends the global one)', () => {
+			// A second --disallowedTools would collide with the flag agent-runner
+			// splices in from RUNTIME_DISALLOWED_TOOLS_ARGS.
+			const injection = adapter.build([RESTRICTED_DESCRIPTOR], HOMES);
+			expect(injection.cliArgs).not.toContain('--disallowedTools');
+		});
+	});
+
+	describe('gemini', () => {
+		const adapter = MCP_ADAPTERS[AgentRuntime.Gemini];
+
+		it('emits includeTools as the per-server allowlist', () => {
+			const injection = adapter.build([HEZO_DESCRIPTOR, RESTRICTED_DESCRIPTOR], HOMES);
+			const settings = JSON.parse(injection.files[0].contents) as {
+				mcpServers: Record<string, { includeTools?: string[] }>;
+			};
+			expect(settings.mcpServers.linear.includeTools).toEqual(['get_issue', 'list_issues']);
+			expect(settings.mcpServers.hezo.includeTools).toBeUndefined();
+		});
+
+		it('never emits excludeTools (its precedence would decide the effective set)', () => {
+			const injection = adapter.build([RESTRICTED_DESCRIPTOR], HOMES);
+			expect(injection.files[0].contents).not.toContain('excludeTools');
+		});
+	});
+
+	describe('opencode', () => {
+		const adapter = MCP_ADAPTERS[AgentRuntime.OpenCode];
+
+		it('denies the server namespace then re-allows the enabled tools, in that order', () => {
+			const injection = adapter.build([HEZO_DESCRIPTOR, RESTRICTED_DESCRIPTOR], HOMES);
+			const config = JSON.parse(injection.files[0].contents) as {
+				tools?: Record<string, boolean>;
+			};
+			// Key order is precedence order, so the wildcard must come first.
+			expect(Object.entries(config.tools ?? {})).toEqual([
+				['linear*', false],
+				['linear_get_issue', true],
+				['linear_list_issues', true],
+			]);
+		});
+
+		it('omits the tools map when nothing is restricted', () => {
+			const injection = adapter.build([HEZO_DESCRIPTOR], HOMES);
+			const config = JSON.parse(injection.files[0].contents) as Record<string, unknown>;
+			expect(config.tools).toBeUndefined();
+		});
+	});
+
+	describe('codex and grok', () => {
+		it('pass the restriction through untouched (no documented per-server filter)', () => {
+			// Deliberate: guessing a TOML key risks the CLI rejecting the whole
+			// config. The egress proxy still enforces the allowlist for these runs.
+			for (const runtime of [AgentRuntime.Codex, AgentRuntime.Grok]) {
+				const injection = MCP_ADAPTERS[runtime].build([RESTRICTED_DESCRIPTOR], HOMES);
+				const contents = injection.files.map((f) => f.contents).join('\n');
+				expect(contents, runtime).toContain('[mcp_servers.linear]');
+				expect(contents, runtime).not.toContain('get_issue');
+			}
+		});
+	});
+
+	it('every adapter still produces a valid injection when a descriptor is restricted', () => {
+		for (const runtime of Object.values(AgentRuntime)) {
+			const adapter = MCP_ADAPTERS[runtime];
+			const injection = adapter.build([HEZO_DESCRIPTOR, RESTRICTED_DESCRIPTOR], HOMES);
+			expect(() => validateInjection(adapter, injection), runtime).not.toThrow();
+		}
+	});
+});

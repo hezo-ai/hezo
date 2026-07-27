@@ -27,7 +27,7 @@ export const ONBOARDING_TOOLS: McpToolShape[] = [
 	{
 		name: REGISTER_TOOL,
 		description:
-			'Register this agent with Hezo. Returns an access token (shown once) — set it as your `Authorization: Bearer` token. The registration is inert until a Hezo admin approves it under Settings → API keys; once approved you have full instance access (every project and team). Poll `connection_status` to learn when you are approved.',
+			'Register this agent with Hezo. Returns an access token (shown once) - set it as your `Authorization: Bearer` token. The registration is inert until a Hezo admin approves it under Settings → API keys; once approved you have full instance access (every project and team). Poll `connection_status` to learn when you are approved.',
 		inputSchema: {
 			type: 'object',
 			properties: {
@@ -85,6 +85,6 @@ export async function handleConnectionStatusTool(
 		};
 	}
 	const status = await getApiKeyStatusByToken(db, token);
-	if (!status) return { error: 'Unknown token — not a registered agent.' };
+	if (!status) return { error: 'Unknown token - not a registered agent.' };
 	return { status: status.status };
 }
