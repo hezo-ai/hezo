@@ -39,6 +39,9 @@ connect, authenticate, and register for access, see
   full-resource inspection tools, e.g. `get_agent_system_prompts`); over the
   cap you get `{ "error": "result_too_large", … }`. Narrow it with filters, a
   single-resource `get_*`, `before` pagination, or `excerpt_chars`.
+  `read_project_doc` never returns that error for a big doc: it returns a UTF-8
+  byte window with a `next_offset` cursor so you can page the rest (see its
+  entry below).
 - **Excerpts (`excerpt_chars`):** list tools accept `excerpt_chars` to truncate long
   text fields, adding `_truncated`/`_length` companions.
 - **Pagination (`before`):** `list_comments` walks older items by passing the oldest
@@ -1226,7 +1229,7 @@ Restore an archived project asset to active. It reappears in list_project_assets
 
 _Read-only._
 
-Read a markdown project doc by filename (e.g. "spec.md") - the high-level project context (PRDs, specs, architecture decisions, research) that list_project_docs returns; the full body comes back inline as `content`. These docs live in the project-doc store in the database, NOT on the filesystem: there is no /workspace/.hezo/project-docs path, so do not reach for the Read/cat file tools - always load a doc through this tool by its bare filename. Archived docs are not readable by default - set filter: 'archived' or 'all' to read one. When the admin has left review feedback on the doc, the result includes `review_comments` - each anchors a `comment` to a `quote` (an exact text snippet; `occurrence` disambiguates repeated snippets). Action them when asked to. IMPORTANT: any write to the doc deletes ALL of its review comments, so capture every comment from this result BEFORE your first write_project_doc call - after one write they are gone. For non-markdown assets (mockups, wireframes, diagrams) use read_project_asset instead.
+Read a markdown project doc by filename (e.g. "spec.md") - the high-level project context (PRDs, specs, architecture decisions, research) that list_project_docs returns; the full body comes back inline as `content`. These docs live in the project-doc store in the database, NOT on the filesystem: there is no /workspace/.hezo/project-docs path, so do not reach for the Read/cat file tools - always load a doc through this tool by its bare filename. Archived docs are not readable by default - set filter: 'archived' or 'all' to read one. When the admin has left review feedback on the doc, the result includes `review_comments` - each anchors a `comment` to a `quote` (an exact text snippet; `occurrence` disambiguates repeated snippets). Action them when asked to. IMPORTANT: any write to the doc deletes ALL of its review comments, so capture every comment from this result BEFORE your first write_project_doc call - after one write they are gone. For non-markdown assets (mockups, wireframes, diagrams) use read_project_asset instead. Large docs come back one byte-window at a time: when `truncated` is true, call again with `offset` set to the returned `next_offset` and keep going until `next_offset` is null.
 
 **Parameters:**
 
@@ -1235,8 +1238,10 @@ Read a markdown project doc by filename (e.g. "spec.md") - the high-level projec
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `filename` | `string` | Yes | Filename to read (e.g. "spec.md") |
 | `filter` | `active` \| `archived` \| `all` | No | Which archive states to consider: 'active' (default - archived items are excluded), 'archived' (only archived), or 'all'. |
+| `offset` | `integer` | No | Byte offset to start reading from (default 0). To page through a doc too large for one read, pass back the `next_offset` from the previous call. Snapped down to a UTF-8 character boundary so a window never begins mid-character. |
+| `max_bytes` | `integer` | No | Max bytes of content to return in this window (default and ceiling is the read budget, so a normal-size doc comes back whole). Clamped to the budget; the returned slice ends on a UTF-8 character boundary, so it can come back a few bytes short. |
 
-**Returns:** `{ filename, content }` (the full markdown body), plus `description` when the doc has an overall summary set, plus `review_comments: [{ id, quote, occurrence, comment, created_at }]` when the admin has left pending review feedback on the doc (each comment anchors to an exact `quote` snippet; `occurrence` disambiguates repeats). Any write to the doc deletes all of its review comments, so capture them before writing. Returns `{ error }` if the file is not found or its archive state doesn't match `filter` (default `'active'`, so archived docs need `filter: 'archived'` or `'all'`; an archived read carries `archived: true`).
+**Returns:** `{ filename, content, offset, returned_bytes, total_bytes, next_offset, truncated }`. `content` is a UTF-8 byte window of the markdown body starting at `offset` (default 0). A doc that fits in one read comes back whole (`offset: 0`, `next_offset: null`, `truncated: false`, `returned_bytes === total_bytes`). A larger doc is paged: `truncated` is true, `next_offset` is the byte offset to pass back as `offset` on the next call, and a `paging_hint` string spells out the loop - keep calling until `next_offset` is null, concatenating each `content`. The optional `max_bytes` param shrinks a window. `description` is included when the doc has an overall summary set. `review_comments: [{ id, quote, occurrence, comment, created_at }]` is included when the admin has left pending review feedback (each anchors to an exact `quote` snippet; `occurrence` disambiguates repeats); any write to the doc deletes all of its review comments, so capture them before writing. Returns `{ error }` if the file is not found or its archive state doesn't match `filter` (default `'active'`, so archived docs need `filter: 'archived'` or `'all'`; an archived read carries `archived: true`).
 
 ### `write_project_doc`
 
