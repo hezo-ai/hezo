@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <strong>Your own team of AI agents. Built to get things done.</strong>
+  <strong>Your own team of AI agents. Built to deliver.</strong>
 </p>
 
 <p align="center">
