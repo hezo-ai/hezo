@@ -1,3 +1,4 @@
+import type { McpMethodInfo, MethodAccessSummary } from '@hezo/shared';
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
 import { api, nextOffsetPageParam } from '../lib/api';
 import { queryClient } from '../lib/query-client';
@@ -38,6 +39,13 @@ export interface Connector {
 	/** The credential(s) this connector uses — its pasted API-key secret or the
 	 * access token of its OAuth connection. Populated by the list/detail routes. */
 	credentials?: { id: string; name: string }[];
+	/** Allowlist of the MCP methods agents may call, or `null` for no
+	 * restriction. See {@link ConnectorMethods} on why the two differ. */
+	enabled_methods?: string[] | null;
+	/** Cached catalog of what the server advertises; null if never listed. */
+	discovered_methods?: McpMethodInfo[] | null;
+	methods_listed_at?: string | null;
+	requested_access?: 'read' | 'write' | null;
 }
 
 export type ConnectorStatus = 'pending' | 'active' | 'failed' | 'revoked';
@@ -163,6 +171,91 @@ export function useDeleteConnector(projectId: string) {
 	return useMutation({
 		mutationFn: (id: string) => api.delete(`/api/projects/${projectId}/connectors/${id}`),
 		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.connectors(projectId) });
+		},
+	});
+}
+
+/**
+ * Which of an MCP server's methods this connector exposes to agents.
+ *
+ * `enabled_methods` is `null` when the connector is unrestricted, which is not
+ * the same as a list naming every method — an unrestricted connector picks up
+ * methods the server adds later, a restricted one does not. The UI must keep
+ * that distinction rather than normalising `null` into a full array.
+ */
+export interface ConnectorMethods {
+	connector_id: string;
+	kind: 'saas' | 'local' | 'api';
+	methods: McpMethodInfo[];
+	enabled_methods: string[] | null;
+	/** When the catalog was last fetched; null if the methods were never listed. */
+	methods_listed_at: string | null;
+	/** The access level the agent that registered this connector asked for. */
+	requested_access: 'read' | 'write' | null;
+	summary: MethodAccessSummary;
+}
+
+export function useConnectorMethods(
+	projectId: string,
+	connectorId: string | undefined,
+	enabled = true,
+) {
+	return useQuery({
+		queryKey: queryKeys.projects.connectorMethods(projectId, connectorId ?? null),
+		queryFn: () =>
+			api.get<ConnectorMethods>(`/api/projects/${projectId}/connectors/${connectorId}/methods`),
+		enabled: enabled && !!connectorId,
+	});
+}
+
+/**
+ * Save a connector's method allowlist (`null` clears the restriction).
+ * Response-driven, never optimistic: this is a security control, so the UI must
+ * not show an agent's access as narrowed before the server has actually stored
+ * it.
+ */
+export function useUpdateConnectorMethods(projectId: string) {
+	return useMutation({
+		mutationFn: ({
+			connectorId,
+			enabledMethods,
+		}: {
+			connectorId: string;
+			enabledMethods: string[] | null;
+		}) =>
+			api.patch<Connector>(`/api/projects/${projectId}/connectors/${connectorId}/methods`, {
+				enabled_methods: enabledMethods,
+			}),
+		onSuccess: (updated) => {
+			queryClient.setQueryData<Connector>(
+				queryKeys.projects.connectorDetail(projectId, updated.id),
+				updated,
+			);
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.projects.connectorMethods(projectId, updated.id),
+			});
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.connectors(projectId) });
+		},
+	});
+}
+
+/**
+ * Re-ask the server what it advertises. Invalidate-and-refetch rather than
+ * response-driven: the round trip goes out to a third-party server, so how long
+ * it takes and what comes back are both the server's call.
+ */
+export function useRefreshConnectorMethods(projectId: string) {
+	return useMutation({
+		mutationFn: (connectorId: string) =>
+			api.post<ConnectorMethods>(
+				`/api/projects/${projectId}/connectors/${connectorId}/methods/refresh`,
+				{},
+			),
+		onSuccess: (_data, connectorId) => {
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.projects.connectorMethods(projectId, connectorId),
+			});
 			queryClient.invalidateQueries({ queryKey: queryKeys.projects.connectors(projectId) });
 		},
 	});

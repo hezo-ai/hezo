@@ -307,6 +307,13 @@ export const queryKeys = {
 			'detail',
 			connectorId,
 		],
+		connectorMethods: (slug: string, connectorId: string | null) => [
+			'projects',
+			slug,
+			'connectors',
+			'methods',
+			connectorId,
+		],
 		oauthConnections: (slug: string) => ['projects', slug, 'oauth-connections'],
 		oauthConnectionOrgs: (slug: string, oauthConnectionId: string | null | undefined) => [
 			'projects',

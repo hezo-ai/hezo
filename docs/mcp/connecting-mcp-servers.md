@@ -216,8 +216,8 @@ the same kind of server you can still tell their credentials apart at a glance.
 
 Both pages show the link between the two:
 
-- Under each connector, the **credential** it uses — click it to jump to that credential on
-  the Credentials page.
+- Under each connector, in its **Settings** section, the **credential** it uses — click it to
+  jump to that credential on the Credentials page.
 - Under each credential (**Settings → Credentials**), the **connectors** that use it — click
   one to jump to it on the Connectors page.
 
