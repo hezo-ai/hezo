@@ -1391,9 +1391,13 @@ resume …`, the name after a short routing label like `Next step: slug — …`
 action-assignment heading/label line like `## Required actions for slug` — where the phrase on
 the line is itself the ask signal, since the imperative list below it carries none — via
 `detectUnlinkedTeammateAsks`, gated on directed-ask intent — an explicit request signal such as a
-second-person pronoun, `please` or a `?`, or a baton-passing status line such as "ready for
-review" / "all yours", which is what catches a report whose closing handoff block is present but
-passive throughout; a bold name written for mere emphasis is never touched) is the wakes-no-one
+second-person pronoun, `please` or a `?`, or a baton-passing status line, which is what catches a
+report whose closing handoff block is present but passive throughout. The baton-passing set covers
+both the phrasings that name the recipient ("ready for review", "all yours", "handing this back",
+"passing this to …", "take it from here") and the ones that name only the gate being waited on
+("awaiting review", "for review", "pending approval", "sign-off needed") — the latter is the same
+handoff with its `ready` opener dropped, and it carries no pronoun, no imperative and no `?` at
+all; a bold name written for mere emphasis is never touched) is the wakes-no-one
 trap — but the net does **not** rewrite the
 agent's words or auto-deliver it (guessing intent to force a wake overreaches). `create_comment`
 already warns the agent interactively when it posts such a comment; the final-message path skips

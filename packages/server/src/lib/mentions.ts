@@ -33,8 +33,20 @@ const HANDOFF_INTENT_RES: RegExp[] = [
 	/\byours\b/i,
 	// "handing this back", "handed off to the captain", "hand it over"
 	/\bhand(?:ing|ed|s)?\s+(?:this|it|these|them|off|over|back)\b/i,
+	// "passing this to marketing", "passed it back", "passing the draft along" —
+	// the same verb class as `hand …` above, which alone missed the `pass` form.
+	/\bpass(?:ing|ed|es)?\s+(?:this|it|these|them|the\s+\w+)\s+(?:to|over|back|along)\b/i,
 	// "take it from here", "takes it from here"
 	/\btak(?:e|es|ing)\s+it\s+from\s+here\b/i,
+	// The gate-word forms of the same handoff, which name the thing being waited
+	// on instead of the person: "awaiting review", "awaiting final sign-off",
+	// "for review", "pending approval", "sign-off needed". `ready for review`
+	// above only covers the variant that opens with `ready`; a closing handoff
+	// block just as often drops it ("@@marketing-lead — for review.").
+	/\bawaiting\s+(?:\w+\s+){0,2}(?:review|approval|sign-?off|feedback|confirmation|decision)\b/i,
+	/\b(?:for|pending)\s+(?:your\s+)?(?:review|approval|sign-?off|feedback|confirmation|decision)\b/i,
+	/\bsign-?off\s+(?:needed|required|requested)\b/i,
+	/\b(?:needs|requires)\s+(?:your\s+)?sign-?off\b/i,
 ];
 
 /**

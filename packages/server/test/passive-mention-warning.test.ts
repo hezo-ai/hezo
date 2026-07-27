@@ -199,6 +199,62 @@ describe('detectPassiveTeammateAsks', () => {
 		);
 	});
 
+	it('flags the content-writer screenshot: a passive sign-off handoff on a finished draft', () => {
+		// The exact stalled handoff: a completion report ends with a passive
+		// `@@marketing-lead — ready for review.`, which renders as the bare word
+		// `marketing-lead` (a delivered-LOOKING link) and wakes no one. The trailing
+		// sentence is pure status, so `ready for` is the only ask signal present.
+		expect(
+			detectPassiveTeammateAsks(
+				'hiddentao.com canonical draft complete at assets/community-posts/article.md ' +
+					'(2,801 words, 10 sections).\n\n' +
+					'@@marketing-lead — ready for review. Dev.to adaptation follows after this ' +
+					'version is approved.',
+				['marketing-lead', 'captain', 'admin'],
+			),
+		).toEqual(['marketing-lead']);
+	});
+
+	it('flags a passive handoff that names the gate instead of the person', () => {
+		// The same closing-handoff shape with the `ready` opener dropped — the line
+		// names only what is being waited on. Each of these was silent until the
+		// gate-word signals joined the baton-passing set.
+		for (const line of [
+			'@@marketing-lead — awaiting review.',
+			'@@marketing-lead — awaiting final sign-off.',
+			'@@marketing-lead — for review.',
+			'@@marketing-lead — pending approval before publication.',
+			'@@marketing-lead — sign-off needed before publication.',
+			'@@marketing-lead — needs signoff.',
+		]) {
+			expect(detectPassiveTeammateAsks(line, ['marketing-lead', 'admin'])).toEqual([
+				'marketing-lead',
+			]);
+		}
+	});
+
+	it('flags a passive address that passes the baton on ("passing this to …")', () => {
+		// `pass` is the same verb class as the `hand …` signal, which alone missed it.
+		expect(
+			detectPassiveTeammateAsks('@@architect — passing this back after the rewrite.', slugs),
+		).toEqual(['architect']);
+		expect(
+			detectPassiveTeammateAsks('**@@architect** — passed it back for the rewrite.', slugs),
+		).toEqual(['architect']);
+	});
+
+	it('does not flag a gate word in narration around a non-addressed passive reference', () => {
+		// "for review" is the signal, but nothing addresses the teammate — the passive
+		// mention sits mid-sentence as attribution, so the address gate rejects it
+		// before the ask gate is ever consulted.
+		expect(
+			detectPassiveTeammateAsks(
+				'The doc went out for review last week; @@architect wrote the brief.',
+				slugs,
+			),
+		).toEqual([]);
+	});
+
 	it('scopes the baton-passing signal to the addressing paragraph', () => {
 		// The readiness line is about the work, in its own paragraph; the passive
 		// address is a plain recap and must not inherit the other paragraph's signal.

@@ -92,6 +92,37 @@ describe('detectUnlinkedTeammateAsks', () => {
 		).toEqual(['qa-engineer']);
 	});
 
+	it('flags a bare-name handoff that names the gate instead of the person', () => {
+		// The gate-word forms of the same baton-passing handoff, with the `ready`
+		// opener dropped. The ask gate is shared with detectPassiveTeammateAsks, so
+		// the bare/bold form recognises them too.
+		for (const line of [
+			'architect — awaiting review.',
+			'architect — for review.',
+			'**architect** — pending approval before we ship.',
+			'**architect** — sign-off needed before publication.',
+		]) {
+			expect(detectUnlinkedTeammateAsks(line, slugs)).toEqual(['architect']);
+		}
+	});
+
+	it('flags a bare-name address that passes the baton on ("passing this back")', () => {
+		expect(
+			detectUnlinkedTeammateAsks('**qa-engineer** — passing this back after the rewrite.', slugs),
+		).toEqual(['qa-engineer']);
+	});
+
+	it('does not flag a gate word in narration around a non-addressed bare name', () => {
+		// "for review" is the signal, but nothing addresses the teammate — the name is
+		// mid-sentence attribution, so the address gate rejects it before the ask gate.
+		expect(
+			detectUnlinkedTeammateAsks(
+				'The doc went out for review last week; the architect wrote the brief.',
+				slugs,
+			),
+		).toEqual([]);
+	});
+
 	it('does not flag a routing-label handoff without ask intent', () => {
 		expect(
 			detectUnlinkedTeammateAsks('**Next step:** architect — merged and shipped.', slugs),
