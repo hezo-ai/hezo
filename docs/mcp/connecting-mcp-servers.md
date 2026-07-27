@@ -190,6 +190,55 @@ Manage connections two ways:
   project or back to the global scope. New connectors pick their scope in the Add form the
   same way.
 
+## Choosing which methods agents can use
+
+A hosted MCP server ships its read tools and its write tools in one connection. Connecting
+a tracker to look things up would, by default, also hand your agents the tools that close
+issues and delete comments.
+
+Each connector's **Settings** section has an **Enabled methods** row that fixes this. It
+starts at **All** - every method the server advertises is available. Press the edit icon to
+open the picker, where the server's methods are split into two groups:
+
+- **Read-only** - methods that only look things up.
+- **Write** - everything else: anything that creates, changes, or deletes.
+
+Each group has a checkbox in its header that turns the whole group on or off in one click,
+so the common choice - give them reads, withhold writes - takes one press without expanding
+anything. Tick individual methods for anything finer. Nothing is saved until you press
+**Save**, so you can change your mind freely; **Reset to all** puts the connector back to
+unrestricted.
+
+Hezo takes the server's word for which methods are read-only when the server says so. Where
+a server declares nothing, Hezo infers the category from the method name and labels the row
+**inferred** so you know it's a guess rather than a declaration. An unrecognised name counts
+as a write method, so a method Hezo can't place is withheld rather than quietly allowed.
+
+Disabled methods don't appear in an agent's tool list at all - a run never sees a tool it
+isn't allowed to call, so it won't waste a turn trying. And because the restriction is also
+enforced on the way out of the container, a disabled method stays blocked even if a tool
+list gets stale.
+
+Methods are listed when you connect the server. If a connector shows that its methods
+haven't been listed yet - it was connected before this existed, or the listing failed -
+press **List methods** on the same row.
+
+The allowlist belongs to the connector, so a connector scoped to **All projects** carries
+one allowlist shared by every project, edited from the global **Settings → Connectors**
+page. A project-scoped connector's is edited from that project's own Connectors page.
+
+### When an agent asks for read-only
+
+An agent registering a connector can ask for read-only up front. When it does, the connect
+card in the task thread says **Read-only requested** before you authorize anything, and the
+write methods are disabled automatically the moment the connection completes - you don't
+have to remember to lock it down afterwards.
+
+This only ever narrows access. An agent can't ask for *more* than it would get by default,
+and the request is skipped entirely once you've chosen the enabled methods yourself: your
+choice stands, and a later registration won't undo it. You can widen or narrow a connector
+at any time from its Settings section.
+
 ## Reconnecting a revoked connector
 
 Revoking a connector clears its stored token or API key so agents lose access immediately,

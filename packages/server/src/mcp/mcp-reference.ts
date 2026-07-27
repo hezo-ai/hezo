@@ -363,7 +363,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	register_connector: {
 		category: 'Credentials & connectors',
 		returns:
-			'`{ connector_id, status, name, display_name, comment_id?, reused }`. `status` is `active` (OAuth already complete) or `pending` (a connect_required comment is posted for the human). Idempotent.',
+			'`{ connector_id, status, name, display_name, comment_id?, reused }`. `status` is `active` (OAuth already complete) or `pending` (a connect_required comment is posted for the human). Idempotent. Pass `access: "read"` when the task only needs to look things up: every write method the server advertises is disabled once the human connects it, and the connect card says so before they authorize. The request narrows only - it never widens access, and it is skipped entirely if the human has already chosen which methods are enabled.',
 	},
 	fetch_skill_file: {
 		category: 'Credentials & connectors',
@@ -375,7 +375,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_connectors: {
 		category: 'MCP connections',
 		returns:
-			'An array of connector rows with a derived `oauth_status` (`active` | `pending` | `failed` | `revoked` | `none`) and, for an active OAuth-backed connector, `rest_auth` = `{ placeholder, allowed_hosts, scopes }` (else `null`). Other fields include `id`, `name`, `display_name`, `kind`, `config`, `project_id`, `oauth_account_label`, `install_status`, `install_error`, `skill_id`, `created_by_task_id`, `activated_at`, `revoked_at`, `auth_error`. Scoped to your project: its own connectors plus global ("all projects") ones, with a project connector shadowing a global one of the same name.',
+			'An array of connector rows with a derived `oauth_status` (`active` | `pending` | `failed` | `revoked` | `none`) and, for an active OAuth-backed connector, `rest_auth` = `{ placeholder, allowed_hosts, scopes }` (else `null`). Other fields include `id`, `name`, `display_name`, `kind`, `config`, `project_id`, `oauth_account_label`, `install_status`, `install_error`, `skill_id`, `created_by_task_id`, `activated_at`, `revoked_at`, `auth_error`. A hosted MCP connector whose methods have been listed also carries `method_access` = `{ mode: "all" | "restricted", enabled, total, disabled_write }` (else `null`) - when `mode` is `restricted`, the withheld methods are absent from your tool list on purpose, so a tool you expect and cannot see is disabled rather than missing. Scoped to your project: its own connectors plus global ("all projects") ones, with a project connector shadowing a global one of the same name.',
 	},
 	test_connector: {
 		category: 'MCP connections',

@@ -120,6 +120,11 @@ export interface ConnectRequiredContent {
 	display_name: string;
 	provider_id?: string;
 	skill_doc_slug?: string;
+	/**
+	 * Set to `read` when the requesting agent asked for read-only access. Only
+	 * ever present as `read` — `write` is the default and isn't recorded.
+	 */
+	requested_access?: 'read';
 }
 
 export interface AssetDeletionRequestContent {

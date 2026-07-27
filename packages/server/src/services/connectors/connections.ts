@@ -193,6 +193,73 @@ export async function loadConnectorsForRun(
 	return [...out.values()];
 }
 
+/** A restricted connector's upstream host and the methods agents may call on it. */
+export interface McpHostRestriction {
+	/** Connector name, so a rejection can say which connector withheld the method. */
+	connectorName: string;
+	enabled: ReadonlySet<string>;
+}
+
+/**
+ * The key both sides of the restriction lookup agree on: lowercased hostname
+ * plus the *effective* port, with the scheme default applied.
+ *
+ * Both halves matter. Hostname alone would let a restricted MCP server's
+ * allowlist bleed onto an unrelated service on another port of the same host.
+ * A raw `URL.host` would omit the port for 443/80 but include it otherwise,
+ * while the proxy resolves host and port separately and always has a concrete
+ * port — so the two would silently fail to match on any non-default port, and a
+ * lookup that misses means *no enforcement at all*. Normalising both sides
+ * through this function is what keeps that from being a silent hole.
+ */
+export function mcpRestrictionKey(hostname: string, port: number): string {
+	return `${hostname.toLowerCase()}:${port}`;
+}
+
+/**
+ * Build the host → allowlist map the egress proxy enforces for one run.
+ *
+ * Only **restricted** connectors are included, so a run with no restricted
+ * connector gets an empty map and the proxy takes no new code path at all.
+ *
+ * A host:port serving two connectors — the same provider connected twice, or a
+ * project connector shadowing a global one — collapses to one entry, and the
+ * enabled sets are **unioned**. The proxy cannot tell which connector a request
+ * belongs to (same host, same credential shape), so the alternative would be
+ * blocking a method one of the two connectors legitimately enables.
+ */
+export async function loadMcpHostRestrictions(
+	db: Db,
+	projectId?: string | null,
+): Promise<Map<string, McpHostRestriction>> {
+	const rows = await loadConnectorsForRun(db, projectId);
+	const map = new Map<string, McpHostRestriction>();
+	for (const row of rows) {
+		if (row.kind !== ConnectorTransport.Saas) continue;
+		if (row.enabled_methods === null) continue;
+		const url = (row.config as SaasConnectorConfig)?.url;
+		if (!url) continue;
+		let key: string;
+		try {
+			const parsed = new URL(url);
+			const port = parsed.port ? Number(parsed.port) : parsed.protocol === 'https:' ? 443 : 80;
+			key = mcpRestrictionKey(parsed.hostname, port);
+		} catch {
+			continue;
+		}
+		const existing = map.get(key);
+		if (existing) {
+			map.set(key, {
+				connectorName: existing.connectorName,
+				enabled: new Set([...existing.enabled, ...row.enabled_methods]),
+			});
+		} else {
+			map.set(key, { connectorName: row.name, enabled: new Set(row.enabled_methods) });
+		}
+	}
+	return map;
+}
+
 /**
  * Resolve the vault secret NAME behind each connector's auth so the descriptor
  * can emit an `__HEZO_SECRET_<NAME>__` placeholder for it.
