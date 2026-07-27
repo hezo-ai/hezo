@@ -343,3 +343,66 @@ test('settings page sidebar links to connectors', async () => {
 	expect(router.state.location.pathname).toBe('/settings/connectors');
 	await findByRole('heading', { name: 'Connectors' });
 });
+
+test("a global connector's method allowlist is editable from the global page", async () => {
+	// This page is the *only* surface where an "All projects" connector's
+	// allowlist can be edited — it is read-only from every project page — so this
+	// covers a control that has no equivalent elsewhere.
+	const CATALOG = [
+		{ name: 'get_issue', description: 'Fetch an issue', readOnly: true, inferred: false },
+		{ name: 'list_issues', description: 'List issues', readOnly: true, inferred: true },
+		{ name: 'save_issue', description: 'Create an issue', readOnly: false, inferred: false },
+		{ name: 'delete_issue', description: 'Delete an issue', readOnly: false, inferred: false },
+	];
+
+	const { findByText, findByTestId, getByTestId, user, ctx } = await renderApp({
+		initialPath: '/settings/connectors',
+		seed: async (c) => {
+			await seedInstanceConnector(c, {
+				name: 'global-tracker',
+				display_name: 'Global Tracker',
+				kind: 'saas',
+				config: { url: 'https://mcp.tracker.example/mcp' },
+			});
+			// Activate it and give it a catalog, without a live server.
+			const secret = await c.db.query<{ id: string }>(
+				`INSERT INTO secrets (name, encrypted_value) VALUES ('T_TRACKER', 'enc') RETURNING id`,
+			);
+			const oc = await c.db.query<{ id: string }>(
+				`INSERT INTO oauth_connections
+				 (provider, provider_account_id, provider_account_label, access_token_secret_id)
+				 VALUES ('mcp:tracker', 'acct', 'Tracker', $1) RETURNING id`,
+				[secret.rows[0].id],
+			);
+			await c.db.query(
+				`UPDATE mcp_connections
+				 SET oauth_connection_id = $1, activated_at = now(),
+				     discovered_methods = $2::jsonb, methods_listed_at = now()
+				 WHERE name = 'global-tracker'`,
+				[oc.rows[0].id, JSON.stringify(CATALOG)],
+			);
+		},
+	});
+
+	await findByText('Global Tracker');
+	// Unrestricted to begin with.
+	await findByText('All 4');
+
+	await user.click(await findByTestId('connector-methods-edit'));
+	await findByTestId('connector-methods-dialog');
+
+	// One click on the Write category header withholds both write methods.
+	await user.click(getByTestId('connector-methods-category-checkbox-write'));
+	expect(getByTestId('connector-methods-category-write').dataset.enabledCount).toBe('0');
+	expect(getByTestId('connector-methods-category-read').dataset.enabledCount).toBe('2');
+
+	await user.click(getByTestId('connector-methods-save'));
+
+	await waitFor(async () => {
+		const row = await ctx.db.query<{ enabled_methods: string[] }>(
+			`SELECT enabled_methods FROM mcp_connections WHERE name = 'global-tracker'`,
+		);
+		expect([...row.rows[0].enabled_methods].sort()).toEqual(['get_issue', 'list_issues']);
+	});
+	await findByText('2 of 4');
+});

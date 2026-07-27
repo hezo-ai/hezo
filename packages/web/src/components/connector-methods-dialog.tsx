@@ -2,7 +2,11 @@ import { type McpMethodInfo, summarizeMethodAccess } from '@hezo/shared';
 import * as Dialog from '@radix-ui/react-dialog';
 import { ChevronDown, ChevronRight, Eye, Search, SquarePen } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { type ConnectorMethods, useUpdateConnectorMethods } from '../hooks/use-connectors';
+import {
+	type ConnectorMethods,
+	type ConnectorMethodsScope,
+	useUpdateConnectorMethods,
+} from '../hooks/use-connectors';
 import { toast } from '../hooks/use-toast';
 import { Button } from './ui/button';
 import { DialogContent } from './ui/dialog';
@@ -11,7 +15,8 @@ import { Input } from './ui/input';
 interface Props {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
-	projectId: string;
+	/** Project slug, or `null` for the global (admin) connectors surface. */
+	scope: ConnectorMethodsScope;
 	connectorId: string;
 	connectorLabel: string;
 	data: ConnectorMethods;
@@ -33,12 +38,12 @@ type Category = 'read' | 'write';
 export function ConnectorMethodsDialog({
 	open,
 	onOpenChange,
-	projectId,
+	scope,
 	connectorId,
 	connectorLabel,
 	data,
 }: Props) {
-	const update = useUpdateConnectorMethods(projectId);
+	const update = useUpdateConnectorMethods(scope);
 	const [draft, setDraft] = useState<Set<string>>(
 		() => new Set(data.enabled_methods ?? data.methods.map((m) => m.name)),
 	);

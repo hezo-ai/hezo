@@ -925,8 +925,11 @@ class RunProxyInstance {
 	): void {
 		const outHeaders: Record<string, string | string[] | undefined> = { ...headers };
 		outHeaders['content-length'] = String(body.byteLength);
-		// Eligible requests carry a fixed Content-Length (never chunked), but drop
-		// any transfer-encoding defensively so framing can't be ambiguous upstream.
+		// The body is now a fixed Buffer, so re-frame it as such. Substitution can
+		// change its length, and the MCP-inspection path also buffers requests that
+		// arrived chunked with no Content-Length at all — either way the original
+		// framing is stale, and leaving a transfer-encoding alongside an explicit
+		// Content-Length would make it ambiguous upstream.
 		delete outHeaders['transfer-encoding'];
 		const requestFn = isSSL ? httpsRequest : httpRequest;
 		const upstream = requestFn(

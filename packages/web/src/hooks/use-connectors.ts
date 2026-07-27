@@ -196,15 +196,36 @@ export interface ConnectorMethods {
 	summary: MethodAccessSummary;
 }
 
+/**
+ * Which connectors surface a methods hook is talking to.
+ *
+ * A project slug scopes to that project's Connectors page. `null` means the
+ * **global** Settings → Connectors page, which is admin-only and unscoped — and
+ * is the only place an "All projects" connector's allowlist can be edited, since
+ * such a connector is read-only from every project page.
+ */
+export type ConnectorMethodsScope = string | null;
+
+function methodsPath(scope: ConnectorMethodsScope, connectorId: string | undefined): string {
+	return scope === null
+		? `/api/connectors/${connectorId}/methods`
+		: `/api/projects/${scope}/connectors/${connectorId}/methods`;
+}
+
+function methodsKey(scope: ConnectorMethodsScope, connectorId: string | null) {
+	return scope === null
+		? queryKeys.adminConnectorMethods(connectorId)
+		: queryKeys.projects.connectorMethods(scope, connectorId);
+}
+
 export function useConnectorMethods(
-	projectId: string,
+	scope: ConnectorMethodsScope,
 	connectorId: string | undefined,
 	enabled = true,
 ) {
 	return useQuery({
-		queryKey: queryKeys.projects.connectorMethods(projectId, connectorId ?? null),
-		queryFn: () =>
-			api.get<ConnectorMethods>(`/api/projects/${projectId}/connectors/${connectorId}/methods`),
+		queryKey: methodsKey(scope, connectorId ?? null),
+		queryFn: () => api.get<ConnectorMethods>(methodsPath(scope, connectorId)),
 		enabled: enabled && !!connectorId,
 	});
 }
@@ -215,7 +236,7 @@ export function useConnectorMethods(
  * not show an agent's access as narrowed before the server has actually stored
  * it.
  */
-export function useUpdateConnectorMethods(projectId: string) {
+export function useUpdateConnectorMethods(scope: ConnectorMethodsScope) {
 	return useMutation({
 		mutationFn: ({
 			connectorId,
@@ -224,18 +245,20 @@ export function useUpdateConnectorMethods(projectId: string) {
 			connectorId: string;
 			enabledMethods: string[] | null;
 		}) =>
-			api.patch<Connector>(`/api/projects/${projectId}/connectors/${connectorId}/methods`, {
+			api.patch<Connector>(methodsPath(scope, connectorId), {
 				enabled_methods: enabledMethods,
 			}),
 		onSuccess: (updated) => {
+			queryClient.invalidateQueries({ queryKey: methodsKey(scope, updated.id) });
+			if (scope === null) {
+				queryClient.invalidateQueries({ queryKey: ['connectors'] });
+				return;
+			}
 			queryClient.setQueryData<Connector>(
-				queryKeys.projects.connectorDetail(projectId, updated.id),
+				queryKeys.projects.connectorDetail(scope, updated.id),
 				updated,
 			);
-			queryClient.invalidateQueries({
-				queryKey: queryKeys.projects.connectorMethods(projectId, updated.id),
-			});
-			queryClient.invalidateQueries({ queryKey: queryKeys.projects.connectors(projectId) });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.connectors(scope) });
 		},
 	});
 }
@@ -245,18 +268,15 @@ export function useUpdateConnectorMethods(projectId: string) {
  * response-driven: the round trip goes out to a third-party server, so how long
  * it takes and what comes back are both the server's call.
  */
-export function useRefreshConnectorMethods(projectId: string) {
+export function useRefreshConnectorMethods(scope: ConnectorMethodsScope) {
 	return useMutation({
 		mutationFn: (connectorId: string) =>
-			api.post<ConnectorMethods>(
-				`/api/projects/${projectId}/connectors/${connectorId}/methods/refresh`,
-				{},
-			),
+			api.post<ConnectorMethods>(`${methodsPath(scope, connectorId)}/refresh`, {}),
 		onSuccess: (_data, connectorId) => {
+			queryClient.invalidateQueries({ queryKey: methodsKey(scope, connectorId) });
 			queryClient.invalidateQueries({
-				queryKey: queryKeys.projects.connectorMethods(projectId, connectorId),
+				queryKey: scope === null ? ['connectors'] : queryKeys.projects.connectors(scope),
 			});
-			queryClient.invalidateQueries({ queryKey: queryKeys.projects.connectors(projectId) });
 		},
 	});
 }

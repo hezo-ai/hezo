@@ -80,10 +80,18 @@ interface ConnectorMethodsView {
 	summary: ReturnType<typeof summarizeMethodAccess>;
 }
 
+/**
+ * Load a connector's method catalog + allowlist.
+ *
+ * `projectId` scopes the lookup to what that project can see (its own connectors
+ * plus globals). Pass `null` for the **admin** surface, which lists connectors
+ * across every project and so must not be scoped — the caller is responsible for
+ * having enforced `requireAdminEquivalent` first.
+ */
 async function loadConnectorMethods(
 	db: Env['Variables']['db'],
 	connectorId: string,
-	projectId: string,
+	projectId: string | null,
 ): Promise<ConnectorMethodsView | null> {
 	const result = await db.query<{
 		id: string;
@@ -97,8 +105,8 @@ async function loadConnectorMethods(
 		        methods_listed_at::text AS methods_listed_at,
 		        requested_access::text AS requested_access
 		 FROM mcp_connections
-		 WHERE id = $1 AND (project_id = $2 OR project_id IS NULL)`,
-		[connectorId, projectId],
+		 WHERE id = $1 ${projectId === null ? '' : 'AND (project_id = $2 OR project_id IS NULL)'}`,
+		projectId === null ? [connectorId] : [connectorId, projectId],
 	);
 	const row = result.rows[0];
 	if (!row) return null;
@@ -515,6 +523,84 @@ connectorsRoutes.post('/projects/:projectId/connectors/:id/methods/refresh', asy
 
 	const found = await loadConnectorMethods(db, id, projectId);
 	return ok(c, found);
+});
+
+// Admin equivalents of the three /methods routes above, for the global
+// Connectors page. A **global** ("All projects") connector is read-only from any
+// project page — it is shared by every project — so these are the only place its
+// allowlist can be edited. They are admin-only for the same reason the
+// project-scoped PATCH has no MCP tool: widening method access is a privilege
+// decision, never something a run can make for itself.
+connectorsRoutes.get('/connectors/:id/methods', async (c) => {
+	const denied = requireAdminEquivalent(c);
+	if (denied) return denied;
+	const found = await loadConnectorMethods(c.get('db'), c.req.param('id'), null);
+	if (!found) return err(c, 'NOT_FOUND', 'connector not found', 404);
+	return ok(c, found);
+});
+
+connectorsRoutes.patch('/connectors/:id/methods', async (c) => {
+	const denied = requireAdminEquivalent(c);
+	if (denied) return denied;
+	const db = c.get('db');
+	const id = c.req.param('id');
+
+	const body = await c.req.json().catch(() => ({}));
+	const parsed = parseEnabledMethods(body);
+	if ('error' in parsed) return err(c, 'INVALID_REQUEST', parsed.error, 400);
+
+	const existing = await db.query<{ discovered_methods: McpMethodInfo[] | null; name: string }>(
+		`SELECT discovered_methods, name FROM mcp_connections WHERE id = $1`,
+		[id],
+	);
+	if (existing.rows.length === 0) return err(c, 'NOT_FOUND', 'connector not found', 404);
+
+	const unknown = unknownMethodNames(parsed.enabled, existing.rows[0].discovered_methods);
+	if (unknown.length > 0) {
+		return err(
+			c,
+			'INVALID_REQUEST',
+			`not advertised by this server: ${unknown.join(', ')}. Refresh the method list if the server has changed.`,
+			400,
+		);
+	}
+
+	const updated = await db.query(
+		`UPDATE mcp_connections SET enabled_methods = $1::jsonb, updated_at = now()
+		 WHERE id = $2 RETURNING ${CONNECTOR_COLUMNS}`,
+		[parsed.enabled === null ? null : JSON.stringify(parsed.enabled), id],
+	);
+
+	c.get('events').emit({
+		type: 'mcp_connection.updated',
+		teamId: null,
+		actorType: 'admin',
+		actorMemberId: null,
+		connectionId: id,
+		name: existing.rows[0].name,
+		changeKind: 'method_access',
+	});
+	return ok(c, updated.rows[0]);
+});
+
+connectorsRoutes.post('/connectors/:id/methods/refresh', async (c) => {
+	const denied = requireAdminEquivalent(c);
+	if (denied) return denied;
+	const db = c.get('db');
+	const id = c.req.param('id');
+
+	const owned = await db.query<{ id: string }>(`SELECT id FROM mcp_connections WHERE id = $1`, [
+		id,
+	]);
+	if (owned.rows.length === 0) return err(c, 'NOT_FOUND', 'connector not found', 404);
+
+	const result = await refreshConnectorMethods(
+		{ db, masterKeyManager: c.get('masterKeyManager') },
+		id,
+	);
+	if (!result.ok) return err(c, 'INVALID_REQUEST', describeDiscoveryFailure(result), 400);
+
+	return ok(c, await loadConnectorMethods(db, id, null));
 });
 
 connectorsRoutes.post('/projects/:projectId/connectors/:id/revoke', async (c) => {

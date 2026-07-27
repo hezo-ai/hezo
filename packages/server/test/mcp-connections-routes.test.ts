@@ -689,3 +689,124 @@ describe('connector method access', () => {
 		expect(res.status).toBe(404);
 	});
 });
+
+/**
+ * The admin equivalents of the /methods routes.
+ *
+ * These exist because a **global** ("All projects") connector is read-only from
+ * every project page, so this is the only surface where its allowlist can be
+ * edited at all. They are admin-only: widening method access is a privilege
+ * decision, which is also why there is no MCP tool for it.
+ */
+describe('admin connector method access', () => {
+	const CATALOG = [
+		{ name: 'get_issue', description: 'Fetch an issue', readOnly: true, inferred: false },
+		{ name: 'save_issue', description: 'Create or update', readOnly: false, inferred: false },
+	];
+
+	/** Create a connector at the global scope, which no project page can edit. */
+	async function createGlobalConnector(name: string): Promise<string> {
+		const res = await ctx.app.request('/api/connectors', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name, kind: 'saas', config: { url: `https://${name}.example/mcp` } }),
+		});
+		expect(res.status).toBe(201);
+		const id = (await res.json()).data.id as string;
+		await ctx.db.query(
+			`UPDATE mcp_connections SET discovered_methods = $1::jsonb, methods_listed_at = now()
+			 WHERE id = $2`,
+			[JSON.stringify(CATALOG), id],
+		);
+		return id;
+	}
+
+	it('reads a global connector the project surface cannot edit', async () => {
+		const id = await createGlobalConnector('admin-methods-read');
+		const res = await ctx.app.request(`/api/connectors/${id}/methods`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		const data = (await res.json()).data;
+		expect(data.enabled_methods).toBeNull();
+		expect(data.summary.mode).toBe('all');
+		expect(data.methods.map((m: { name: string }) => m.name)).toEqual(['get_issue', 'save_issue']);
+	});
+
+	it('saves an allowlist on a global connector', async () => {
+		const id = await createGlobalConnector('admin-methods-save');
+		const res = await ctx.app.request(`/api/connectors/${id}/methods`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ enabled_methods: ['get_issue'] }),
+		});
+		expect(res.status).toBe(200);
+
+		const after = await ctx.db.query<{ enabled_methods: string[] }>(
+			'SELECT enabled_methods FROM mcp_connections WHERE id = $1',
+			[id],
+		);
+		expect(after.rows[0].enabled_methods).toEqual(['get_issue']);
+	});
+
+	it('resets to unrestricted on an explicit null', async () => {
+		const id = await createGlobalConnector('admin-methods-reset');
+		await ctx.app.request(`/api/connectors/${id}/methods`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ enabled_methods: ['get_issue'] }),
+		});
+		const res = await ctx.app.request(`/api/connectors/${id}/methods`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ enabled_methods: null }),
+		});
+		expect(res.status).toBe(200);
+
+		const after = await ctx.db.query<{ enabled_methods: string[] | null }>(
+			'SELECT enabled_methods FROM mcp_connections WHERE id = $1',
+			[id],
+		);
+		expect(after.rows[0].enabled_methods).toBeNull();
+	});
+
+	it('rejects a method the server does not advertise', async () => {
+		const id = await createGlobalConnector('admin-methods-unknown');
+		const res = await ctx.app.request(`/api/connectors/${id}/methods`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ enabled_methods: ['get_issue', 'not_a_method'] }),
+		});
+		expect(res.status).toBe(400);
+		expect((await res.json()).error.message).toContain('not_a_method');
+	});
+
+	it('rejects a non-superuser on every admin methods route', async () => {
+		const id = await createGlobalConnector('admin-methods-authz');
+		const get = await ctx.app.request(`/api/connectors/${id}/methods`, {
+			headers: authHeader(nonAdminToken),
+		});
+		expect(get.status).toBe(403);
+
+		const patch = await ctx.app.request(`/api/connectors/${id}/methods`, {
+			method: 'PATCH',
+			headers: { ...authHeader(nonAdminToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ enabled_methods: [] }),
+		});
+		expect(patch.status).toBe(403);
+
+		const refresh = await ctx.app.request(`/api/connectors/${id}/methods/refresh`, {
+			method: 'POST',
+			headers: authHeader(nonAdminToken),
+		});
+		expect(refresh.status).toBe(403);
+	});
+
+	it('404s on an unknown connector', async () => {
+		const missing = '00000000-0000-0000-0000-000000000000';
+		const res = await ctx.app.request(`/api/connectors/${missing}/methods`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(404);
+	});
+});

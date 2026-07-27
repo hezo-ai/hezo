@@ -86,6 +86,44 @@ function postThroughProxy(
 	});
 }
 
+/**
+ * POST a chunked body (no Content-Length) through the run's proxy — the shape
+ * `isBodySubstitutionEligible` deliberately skips, and so the one most likely to
+ * slip past inspection if the MCP gate merely reused it.
+ */
+function postChunkedThroughProxy(
+	port: number,
+	body: string,
+): Promise<{ status: number; body: string }> {
+	const url = `http://${upstreamHost}/mcp`;
+	const head = [
+		`POST ${url} HTTP/1.1`,
+		`Host: ${upstreamHost}`,
+		'Connection: close',
+		'Content-Type: application/json',
+		'Transfer-Encoding: chunked',
+	].join('\r\n');
+	// One chunk, then the terminating zero-length chunk.
+	const chunked = `${Buffer.byteLength(body).toString(16)}\r\n${body}\r\n0\r\n\r\n`;
+	return new Promise((resolve, reject) => {
+		const sock = connect({ host: '127.0.0.1', port });
+		const chunks: Buffer[] = [];
+		sock.on('connect', () => sock.write(`${head}\r\n\r\n${chunked}`));
+		sock.on('data', (c: Buffer) => chunks.push(c));
+		sock.on('end', () => {
+			const all = Buffer.concat(chunks).toString();
+			const sep = all.indexOf('\r\n\r\n');
+			const headPart = sep === -1 ? all : all.slice(0, sep);
+			resolve({
+				status: Number(headPart.split('\r\n')[0]?.split(' ')[1] ?? '0'),
+				body: sep === -1 ? '' : all.slice(sep + 4),
+			});
+		});
+		sock.on('error', reject);
+		sock.setTimeout(20_000, () => sock.destroy(new Error('proxy fetch timed out')));
+	});
+}
+
 /** Insert an active saas connector pointed at the fake server. */
 async function seedConnector(enabledMethods: string[] | null): Promise<void> {
 	await db.query(
@@ -308,6 +346,51 @@ describe('egress enforcement of a connector method allowlist', () => {
 			expect(upstreamHits.length).toBe(1);
 			// The body must arrive intact — buffering for inspection must not
 			// truncate or re-encode it.
+			expect(upstreamHits[0].body).toBe(body);
+		} finally {
+			await run.release();
+		}
+	});
+
+	it('blocks a chunked call, which the substitution gate would have skipped', async () => {
+		// isBodySubstitutionEligible requires a fixed Content-Length, so a chunked
+		// body streams through unbuffered on the substitution path. The inspection
+		// gate is deliberately wider — if it weren't, dropping Content-Length would
+		// be a one-header bypass of the entire allowlist.
+		await seedConnector(['get_issue']);
+		const run = await allocate();
+		try {
+			const res = await postChunkedThroughProxy(
+				run.port,
+				JSON.stringify({
+					jsonrpc: '2.0',
+					id: 1,
+					method: 'tools/call',
+					params: { name: 'delete_issue' },
+				}),
+			);
+			expect(res.status).toBe(403);
+			expect(upstreamHits.length).toBe(0);
+		} finally {
+			await run.release();
+		}
+	});
+
+	it('forwards a chunked call to an enabled method, re-framed with a length', async () => {
+		await seedConnector(['get_issue']);
+		const run = await allocate();
+		try {
+			const body = JSON.stringify({
+				jsonrpc: '2.0',
+				id: 1,
+				method: 'tools/call',
+				params: { name: 'get_issue' },
+			});
+			const res = await postChunkedThroughProxy(run.port, body);
+			expect(res.status).toBe(200);
+			expect(upstreamHits.length).toBe(1);
+			// Buffering a chunked request means re-framing it; the payload the
+			// server sees must still be byte-identical.
 			expect(upstreamHits[0].body).toBe(body);
 		} finally {
 			await run.release();

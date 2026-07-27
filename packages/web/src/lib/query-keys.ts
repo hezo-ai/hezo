@@ -62,6 +62,9 @@ export const queryKeys = {
 	search: (q: string, scope: string) => ['search', q, scope],
 	/** Bundled OAuth-provider descriptors for the generic OAuth-broker form. */
 	oauthProviders: () => ['connectors', 'oauth-providers'],
+	/** Method catalog + allowlist read through the admin (global) connectors
+	 * surface, which is unscoped — distinct from the per-project key. */
+	adminConnectorMethods: (connectorId: string | null) => ['connectors', 'methods', connectorId],
 
 	teams: {
 		connectors: (teamId: string) => ['teams', teamId, 'connectors'],

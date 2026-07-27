@@ -207,7 +207,7 @@ export function ConnectorSettingsSection({
 				<ConnectorMethodsDialog
 					open={methodsOpen}
 					onOpenChange={setMethodsOpen}
-					projectId={projectId}
+					scope={projectId}
 					connectorId={connector.id}
 					connectorLabel={connector.display_name ?? connector.name}
 					data={methodsQuery.data}
