@@ -554,10 +554,13 @@ const SKILL_COLUMNS = `id, name, slug, description, content, source_url,
 const APPROVAL_COLUMNS = `id, team_id, type, status, requested_by_member_id,
 	resolution_note, resolved_at, created_at, payload`;
 
-// Cap MCP tool result payloads at 24 000 bytes — comfortably under the
-// Claude Code harness's ~25k-token tool-result limit. Oversized results would
-// otherwise be persisted to disk by the harness and become unreadable for the
-// agent (the persisted file itself trips the same cap).
+// Cap MCP tool result payloads at 64 000 bytes, comfortably under a typical agent
+// runtime's tool-result limit (e.g. the Claude Code harness's ~25k-token ceiling).
+// An oversized result is discarded whole and replaced with a `result_too_large`
+// error, because a runtime that instead persists a large result to disk would make
+// it unreadable anyway (the persisted file trips the same cap). A few single-
+// resource readers raise this via MCP_RESULT_BYTE_LIMIT_OVERRIDES; read_project_doc
+// keeps this cap and pages a large doc into byte windows rather than tripping it.
 export const MCP_RESULT_BYTE_LIMIT = 64_000;
 
 // A few inspection tools return a single, inherently large resource rather than
@@ -569,6 +572,12 @@ export const MCP_RESULT_BYTE_LIMIT = 64_000;
 export const MCP_RESULT_BYTE_LIMIT_OVERRIDES: Readonly<Record<string, number>> = {
 	get_agent_system_prompts: 131_072,
 };
+
+// Headroom reserved for the JSON result envelope (field names, pretty-print
+// indentation, string-escaping inflation of newlines/quotes/backslashes, and any
+// review_comments) when read_project_doc sizes a content window under its effective
+// result cap, so the serialized window stays under the byte guard.
+const DOC_READ_ENVELOPE_RESERVE = 4_096;
 
 // Inline-image cap for read_project_asset. A raster asset at or under this many
 // bytes is returned as an actual MCP image content block (base64) so a
@@ -610,6 +619,20 @@ export function excerpt(text: string | null | undefined, maxChars: number): Exce
 	const lastSpace = slice.lastIndexOf(' ');
 	const cut = lastSpace > maxChars * 0.5 ? slice.slice(0, lastSpace) : slice;
 	return { excerpt: cut, truncated: true, length };
+}
+
+/**
+ * Largest index <= `end` that does not fall inside a multi-byte UTF-8 codepoint,
+ * so a Buffer slice taken at this index never splits a character. UTF-8
+ * continuation bytes match 0b10xxxxxx; back off them onto the preceding lead byte.
+ * Used to window read_project_doc content on codepoint boundaries: applied to the
+ * window start (slice includes it, keeping the whole leading codepoint) and to the
+ * window end (slice excludes it, dropping a partial trailing codepoint).
+ */
+function utf8FloorBoundary(buf: Buffer, end: number): number {
+	let e = Math.max(0, Math.min(end, buf.length));
+	while (e > 0 && e < buf.length && (buf[e] & 0xc0) === 0x80) e--;
+	return e;
 }
 
 /**
@@ -4926,11 +4949,27 @@ export function registerTools(
 	tool(
 		server,
 		'read_project_doc',
-		"Read a markdown project doc by filename (e.g. \"spec.md\") - the high-level project context (PRDs, specs, architecture decisions, research) that list_project_docs returns; the full body comes back inline as `content`. These docs live in the project-doc store in the database, NOT on the filesystem: there is no /workspace/.hezo/project-docs path, so do not reach for the Read/cat file tools - always load a doc through this tool by its bare filename. Archived docs are not readable by default - set filter: 'archived' or 'all' to read one. When the admin has left review feedback on the doc, the result includes `review_comments` - each anchors a `comment` to a `quote` (an exact text snippet; `occurrence` disambiguates repeated snippets). Action them when asked to. IMPORTANT: any write to the doc deletes ALL of its review comments, so capture every comment from this result BEFORE your first write_project_doc call - after one write they are gone. For non-markdown assets (mockups, wireframes, diagrams) use read_project_asset instead.",
+		"Read a markdown project doc by filename (e.g. \"spec.md\") - the high-level project context (PRDs, specs, architecture decisions, research) that list_project_docs returns; the full body comes back inline as `content`. These docs live in the project-doc store in the database, NOT on the filesystem: there is no /workspace/.hezo/project-docs path, so do not reach for the Read/cat file tools - always load a doc through this tool by its bare filename. Archived docs are not readable by default - set filter: 'archived' or 'all' to read one. When the admin has left review feedback on the doc, the result includes `review_comments` - each anchors a `comment` to a `quote` (an exact text snippet; `occurrence` disambiguates repeated snippets). Action them when asked to. IMPORTANT: any write to the doc deletes ALL of its review comments, so capture every comment from this result BEFORE your first write_project_doc call - after one write they are gone. For non-markdown assets (mockups, wireframes, diagrams) use read_project_asset instead. Large docs come back one byte-window at a time: when `truncated` is true, call again with `offset` set to the returned `next_offset` and keep going until `next_offset` is null.",
 		{
 			project: projectArg(),
 			filename: z.string().describe('Filename to read (e.g. "spec.md")'),
 			filter: archiveFilterArg(),
+			offset: z
+				.number()
+				.int()
+				.min(0)
+				.optional()
+				.describe(
+					'Byte offset to start reading from (default 0). To page through a doc too large for one read, pass back the `next_offset` from the previous call. Snapped down to a UTF-8 character boundary so a window never begins mid-character.',
+				),
+			max_bytes: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe(
+					'Max bytes of content to return in this window (default and ceiling is the read budget, so a normal-size doc comes back whole). Clamped to the budget; the returned slice ends on a UTF-8 character boundary, so it can come back a few bytes short.',
+				),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -4957,26 +4996,73 @@ export function registerTools(
 				documentId: doc.id,
 			});
 			const descriptionField = doc.description ? { description: doc.description } : {};
-			if (reviewComments.length === 0)
+			const reviewCommentsField =
+				reviewComments.length > 0
+					? {
+							review_comments: reviewComments.map((r) => ({
+								id: r.id,
+								quote: r.quote,
+								occurrence: r.occurrence,
+								comment: r.comment,
+								created_at: r.created_at,
+							})),
+						}
+					: {};
+
+			// Window the body so the serialized result stays under this tool's cap,
+			// letting an agent page an arbitrarily large doc via offset/next_offset
+			// instead of tripping the generic result_too_large guard. Byte units keep
+			// next_offset exact; utf8FloorBoundary keeps every window on a codepoint
+			// boundary (the cap is bytes, but String.slice cuts UTF-16 units).
+			const effectiveLimit =
+				MCP_RESULT_BYTE_LIMIT_OVERRIDES.read_project_doc ?? MCP_RESULT_BYTE_LIMIT;
+			const buf = Buffer.from(doc.content, 'utf8');
+			const total = buf.length;
+			const start = utf8FloorBoundary(
+				buf,
+				Math.max(0, Math.min((args.offset as number | undefined) ?? 0, total)),
+			);
+			const requested = (args.max_bytes as number | undefined) ?? effectiveLimit;
+			let budget = Math.min(requested, effectiveLimit - DOC_READ_ENVELOPE_RESERVE);
+			let end = utf8FloorBoundary(buf, start + budget);
+
+			const build = (e: number) => {
+				const nextOffset = e < total ? e : null;
 				return {
 					filename: doc.slug,
 					...descriptionField,
-					content: doc.content,
+					content: buf.subarray(start, e).toString('utf8'),
+					offset: start,
+					returned_bytes: e - start,
+					total_bytes: total,
+					next_offset: nextOffset,
+					truncated: start > 0 || e < total,
+					...(nextOffset !== null
+						? {
+								paging_hint: `Doc is larger than one read. Returned bytes ${start}-${e} of ${total}. Call read_project_doc again with offset: ${e}; repeat until next_offset is null.`,
+							}
+						: {}),
 					...archivedField,
+					...reviewCommentsField,
 				};
-			return {
-				filename: doc.slug,
-				...descriptionField,
-				content: doc.content,
-				...archivedField,
-				review_comments: reviewComments.map((r) => ({
-					id: r.id,
-					quote: r.quote,
-					occurrence: r.occurrence,
-					comment: r.comment,
-					created_at: r.created_at,
-				})),
 			};
+
+			let result = build(end);
+			// A byte-accurate content window can still serialize larger than its byte
+			// count (JSON escaping inflates newlines/quotes, and review_comments add
+			// bytes). Measure with the same serialization the wrapper guard uses and
+			// trim the window until it fits. Terminates because the budget strictly
+			// shrinks; if the metadata alone (huge review_comments) exceeds the cap,
+			// content trims to empty and the generic guard reports result_too_large.
+			while (
+				end > start &&
+				Buffer.byteLength(JSON.stringify(result, null, 2), 'utf8') > effectiveLimit
+			) {
+				budget = Math.max(0, Math.floor(budget * 0.9) - 1);
+				end = utf8FloorBoundary(buf, start + budget);
+				result = build(end);
+			}
+			return result;
 		},
 		db,
 	);
