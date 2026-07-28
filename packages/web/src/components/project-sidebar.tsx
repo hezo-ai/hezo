@@ -19,10 +19,19 @@ import { Tooltip } from './ui/tooltip';
  * follow; the backing team's agents close it out under a Team section. The team
  * is presented as the project's own — there is no separate team-level view.
  */
-export function ProjectSidebar({ onCollapse }: { onCollapse?: () => void } = {}) {
+export function ProjectSidebar({
+	onCollapse,
+	projectSlug,
+}: {
+	onCollapse?: () => void;
+	projectSlug?: string;
+} = {}) {
 	const active = useActiveProject();
 	const navigate = useNavigate();
-	const projectId = active?.slug ?? '';
+	// The shell passes an explicit slug so the menu can fall back to HQ on a
+	// non-project route (e.g. /home before the first project is created); on a
+	// project route it passes the active slug, so the two agree.
+	const projectId = projectSlug ?? active?.slug ?? '';
 	const project = useProjectMeta(projectId);
 	const health = useContainerHealth(project);
 	const { data: inboxCount } = useInboxUnreadCount(projectId);
@@ -34,7 +43,7 @@ export function ProjectSidebar({ onCollapse }: { onCollapse?: () => void } = {})
 	const isInternalProject = project?.is_internal ?? false;
 	const hasNoGoals = !isInternalProject && project != null && (project.open_goal_count ?? 0) === 0;
 
-	if (!active) return null;
+	if (!projectId) return null;
 
 	const isInternal = project?.is_internal ?? false;
 	const projectParams = { projectId };

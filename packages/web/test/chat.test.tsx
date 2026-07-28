@@ -2,7 +2,7 @@ import type { ChatMessage } from '@hezo/web/hooks/use-chat';
 import { toast } from '@hezo/web/hooks/use-toast';
 import { queryClient } from '@hezo/web/lib/query-client';
 import { queryKeys } from '@hezo/web/lib/query-keys';
-import { fireEvent, waitFor } from '@testing-library/react';
+import { fireEvent, waitFor, within } from '@testing-library/react';
 import { expect, test, vi } from 'vitest';
 import { renderApp } from './helpers/render';
 
@@ -101,13 +101,15 @@ test('shows the empty state once history loads', async () => {
 });
 
 test('the header identifies the CEO with the HQ badge and the composer invites cross-project questions', async () => {
-	const { findByTestId, getByTestId, getByText } = await renderApp({ initialPath: '/home' });
+	const { findByTestId, getByTestId } = await renderApp({ initialPath: '/home' });
 	(await findByTestId('chat-launcher')).click();
-	await findByTestId('chat-panel');
+	const panel = await findByTestId('chat-panel');
 
-	// Header reads "CEO" alongside the HQ team badge (the CEO lives in HQ).
-	expect(getByText('CEO')).toBeTruthy();
-	expect(getByText('HQ')).toBeTruthy();
+	// Header reads "CEO" alongside the HQ team badge (the CEO lives in HQ). Scope
+	// to the chat panel: with no project created the HQ project menu now also
+	// renders on /home (its italic "HQ" name), so a document-wide query is ambiguous.
+	expect(within(panel).getByText('CEO')).toBeTruthy();
+	expect(within(panel).getByText('HQ')).toBeTruthy();
 	// The placeholder reflects the global, every-project scope of the chat.
 	const input = getByTestId('chat-input') as HTMLTextAreaElement;
 	expect(input.placeholder).toBe('Ask the CEO anything, across every project…');

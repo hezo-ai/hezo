@@ -30,7 +30,7 @@ import { SocketProvider } from '../contexts/socket-context';
 import { useActiveProject } from '../hooks/use-active-project';
 import { useMe } from '../hooks/use-me';
 import { useProjectMenuCollapsed } from '../hooks/use-project-menu-collapsed';
-import { useProjectsIndex } from '../hooks/use-projects';
+import { useAllVisibleProjects, useHqProject, useProjectsIndex } from '../hooks/use-projects';
 import { useScrollToBottom } from '../hooks/use-scroll-to-bottom';
 import { useScrollToTop } from '../hooks/use-scroll-to-top';
 import { useStatus } from '../hooks/use-status';
@@ -219,6 +219,14 @@ interface ShellChromeProps {
 function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
 	const [searchOpen, setSearchOpen] = useState(false);
 	const active = useActiveProject();
+	const hq = useHqProject();
+	const { projects, isLoading: projectsLoading } = useAllVisibleProjects();
+	// The project whose menu the shell shows. Normally the route's active project;
+	// but before the first project is created there is no project-scoped route, so
+	// fall back to HQ (the one project that always exists) so its menu — the way to
+	// reach HQ's Container/Tasks/etc. — stays viewable and expandable from /home.
+	const menuProjectSlug =
+		active?.slug ?? (!projectsLoading && projects.length === 0 && hq ? hq.slug : null);
 	const [menuCollapsed, setMenuCollapsed] = useProjectMenuCollapsed();
 	const mainRef = useRef<HTMLElement>(null);
 	// The scroll-to-bottom hook needs the <main> element as state (a ref never
@@ -341,18 +349,21 @@ function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
 					<div className="hidden md:flex h-full">
 						<ProjectRail />
 					</div>
-					{active && !menuCollapsed && (
+					{menuProjectSlug && !menuCollapsed && (
 						<div
 							data-testid="project-menu"
 							className="hidden lg:block w-[208px] shrink-0 h-full overflow-y-auto border-r border-border bg-surface pb-2"
 						>
-							<ProjectSidebar onCollapse={() => setMenuCollapsed(true)} />
+							<ProjectSidebar
+								projectSlug={menuProjectSlug}
+								onCollapse={() => setMenuCollapsed(true)}
+							/>
 						</div>
 					)}
 					{/* Collapsed: a slim expand tab docked to the project rail's right
 					    edge, flush under the app header. Desktop-only — below lg the
 					    project menu is a drawer, so there is nothing to collapse. */}
-					{active && menuCollapsed && (
+					{menuProjectSlug && menuCollapsed && (
 						<Tooltip content="Expand menu" side="right">
 							<button
 								type="button"
@@ -411,9 +422,9 @@ function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
 					/>
 					<div className="relative flex h-full bg-surface shadow-xl">
 						<ProjectRail showHome />
-						{active && (
+						{menuProjectSlug && (
 							<div className="w-[208px] h-full overflow-y-auto py-2 border-r border-border bg-surface">
-								<ProjectSidebar />
+								<ProjectSidebar projectSlug={menuProjectSlug} />
 							</div>
 						)}
 					</div>
