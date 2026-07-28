@@ -17,5 +17,5 @@
 			"@hezo/web/*": ["src/*"]
 		}
 	},
-	"include": ["src", "test", "vite-env.d.ts"]
+	"include": ["src", "test", "brand", "scripts", "vite-env.d.ts"]
 }
