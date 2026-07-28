@@ -2161,11 +2161,53 @@ surfaces a dismissible bottom card: Chrome/Android replays the captured `beforei
 one-tap install (`useInstallPrompt`), while iOS Safari — which has no programmatic prompt — shows
 the manual Share → Add to Home Screen steps. Already-installed (standalone) and recently-dismissed
 states stay silent. Serving requires `.webmanifest` → `application/manifest+json` in both static MIME
-maps (`startup.ts`, `scripts/bundle-static.ts`).
+maps (`startup.ts`, `scripts/bundle-static.ts`), and `.png` for the icons themselves.
+
+**Icon variants.** `packages/web/brand/icon-geometry.ts` is the source of truth for every icon
+bitmap; `packages/web/scripts/generate-icons.ts` rasterizes it via Playwright's Chromium into
+`public/icons/`. Four variants exist because the manifest's three `purpose` values are genuinely
+different jobs, and one bitmap cannot serve them:
+
+- `any` (192, 512) — rounded plate, frame at full size. The unmasked face: browser tabs, favicon.
+- `maskable` (192, 512) — **full bleed, no self-rounding**, lockup shrunk into Android's safe zone.
+  The launcher supplies the only rounded edge, so nothing nests inside its silhouette.
+- `monochrome` (512) — the maskable lockup as alpha only, for Android 13+ themed icons. No
+  background: the system tints the alpha channel, so a filled plate would tint solid.
+- `apple` (180) — full bleed, not self-rounded (iOS applies its own superellipse), fully opaque
+  (iOS composites transparency against black).
+
+Each manifest entry carries a **single** `purpose`; a combined `"any maskable"` claims one bitmap
+is correct for two jobs and is what produced a clipped, white-banded icon on One UI.
+
+**The safe-zone solve.** Android guarantees only the central 80% circle (radius `0.4 × 514`)
+survives every launcher mask. A rounded square's furthest point from centre is its outer corner
+arc, `(H - R) × √2 + R`, so tight corners throw the frame's extremes far out along the diagonal —
+the brand frame as drawn in `logo.svg` reaches 138% of that budget. Rounding the corners pulls the
+extremes in and buys size: `solveFrameSide()` inverts the equation, and at a corner ratio of 0.55
+the frame solves to 334 units against 291 at the brand's own 0.115, for the identical budget. The
+masked variants therefore keep the frame with softened corners rather than dropping it or shrinking
+the whole lockup.
+
+**Generation is author-run.** `bun run build:icons` regenerates and the output is **committed** —
+it is deliberately not part of `bun run build` or `bun run dev`, both of which run in every CI job
+and on every contributor machine and must not require a browser binary (same posture as
+`build:marketplace`). Drift is caught by `packages/web/test/pwa-icons.test.ts`, which decodes the
+committed PNGs with a dependency-free reader (`test/helpers/png.ts`, `node:zlib` over IDAT) and
+asserts dimensions, edge-to-edge painting, full-bleed opacity, and safe-zone reach. That test
+exists because both faults it covers actually shipped: every icon was missing its bottom 87 pixels
+(an out-of-band generator screenshotted headless Chromium at a window size whose viewport paints
+shorter than the image it writes), and the maskable variant had no safe zone at all.
 
 ---
 
 ## 12. Build, release, migrations & upgrades
+
+**Author-run generators.** Two build steps are **not** wired into `bun run build` or CI, because
+their output is committed and regenerating them requires a tool the ordinary build must not
+depend on: `build:marketplace` (recompiles `marketplace/teams/*.json`, also run by `bun run dev`)
+and `build:icons` (`packages/web/scripts/generate-icons.ts`, needs a Chromium binary). Both are run
+by authors, both commit their output, and both are guarded by a drift test rather than by being
+re-run in CI — `marketplace-build.test.ts` and `pwa-icons.test.ts` respectively.
 
 **Single binary.** `bun build --compile` (`scripts/build.ts`) produces one executable per
 platform (linux/darwin/windows × x64/arm64) plus a `SHA256SUMS` manifest;

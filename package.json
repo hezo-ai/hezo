@@ -35,6 +35,7 @@
 	"scripts": {
 		"build": "bun run scripts/build.ts",
 		"build:compile": "bun run scripts/build.ts --compile",
+		"build:icons": "bun run --cwd packages/web build:icons",
 		"build:release": "bun run scripts/build.ts --release",
 		"check": "bunx biome check .",
 		"check:fix": "bunx biome check --write .",
