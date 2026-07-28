@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.36.0 - 2026-07-28
+
+### Features
+
+- **ai-providers:** add Ollama + LM Studio, surface OpenRouter in the add dialog ([#852](https://github.com/hezo-ai/hezo/pull/852))
+- **marketplace:** export a live team as a downloadable bundle ([#850](https://github.com/hezo-ai/hezo/pull/850))
+
+### Bug Fixes
+
+- **web:** repair the truncated PWA icons and give the maskable one a safe zone ([#855](https://github.com/hezo-ai/hezo/pull/855))
+- **deploy:** stop unattended upgrades restarting Hezo into a locked state ([#854](https://github.com/hezo-ai/hezo/pull/854))
+- **deploy:** provision swap so low-RAM VPSes don't OOM-kill Hezo ([#853](https://github.com/hezo-ai/hezo/pull/853))
+- **web:** sort the Done task list by last-updated, newest first ([#851](https://github.com/hezo-ai/hezo/pull/851))
+- **agents:** wake the approver on a stranded "awaiting sign-off" handoff ([#849](https://github.com/hezo-ai/hezo/pull/849))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.35.0...0.36.0
+
 ## 0.35.0 - 2026-07-27
 
 ### Features
