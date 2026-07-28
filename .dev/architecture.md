@@ -845,6 +845,20 @@ override. `marketplace/index.json` is the catalog listing.
   `update_agent_system_prompt` where roles carry local customizations) instead of adding
   duplicates. Because instances always fetch the live catalog, a new team `version` reaches them
   automatically.
+- **Export a live team as a bundle.** `GET /api/projects/:projectId/team-bundle`
+  (`services/team-bundle-export.ts`, `exportTeamBundle`) serializes a project's current team
+  into a self-contained `MarketplaceTeamDef` — the inverse of `applyMarketplaceTeamToTeam`. It
+  reads the team's `member_agents` + their `agent_system_prompt` documents, emits the Captain as
+  the top-level `captain` override and the rest as `roster` (reserved slugs / cross-team instance
+  agents excluded; each `reports_to` mapped back to the Captain, a roster slug, or null), derives
+  discovery `keywords` from the team's text (`generateTeamKeywords` in `@hezo/shared` — readable
+  words, not stems, since only the built-in teams carry a hand-authored list), and stamps
+  `version: 1` + a fresh `content_hash` (via `computeContentHash`, reused from the build). It
+  ships **only** roster + prompts — never skills, MCP servers, secrets, or project config. The
+  Team page's **Export team** button (beside Hire agent) fetches it and downloads the JSON
+  client-side; a user submits that file to the Hezo authors on GitHub, whose `build:marketplace`
+  re-derives the hash/version/validation when it lands in the repo. Read-only, project-access
+  gated. (Parallels a future `get_team_bundle` MCP tool if one is added.)
 - **Shipped teams.** Three: **App Team** (`software-development`, the full app-building roster),
   **Social Media Marketing** (`influencer` — brand-strategist, trend-researcher, content-writer,
   media-producer, content-editor, distribution-manager), and **Investment Portfolio**

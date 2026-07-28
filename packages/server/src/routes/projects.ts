@@ -43,6 +43,7 @@ import { enqueueAddMarketplaceTeamTask } from '../services/marketplace-add-team'
 import { createProjectWithTeam } from '../services/project-create';
 import { createProjectIntake, getOpenProjectIntakeForHome } from '../services/project-intake';
 import { getProjectProgress } from '../services/projects';
+import { exportTeamBundle, TeamBundleExportError } from '../services/team-bundle-export';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -322,6 +323,25 @@ projectsRoutes.post('/projects/:projectId/marketplace-team', async (c) => {
 		return err(c, 'CONFLICT', 'This project cannot receive a team (no CEO or project found)', 409);
 	}
 	return ok(c, result, 201);
+});
+
+// Export the project's team as a self-contained marketplace team bundle
+// (MarketplaceTeamDef JSON). Read-only — any member with project access may
+// download it; the client prompts a file download and the user can send the
+// bundle to the Hezo authors for inclusion in the marketplace. Parallels a
+// future `get_team_bundle` MCP tool should one be added.
+projectsRoutes.get('/projects/:projectId/team-bundle', async (c) => {
+	const teamId = c.get('teamId') as string;
+	const db = c.get('db');
+	try {
+		const bundle = await exportTeamBundle(db, teamId);
+		return ok(c, bundle);
+	} catch (e) {
+		if (e instanceof TeamBundleExportError) {
+			return err(c, 'CONFLICT', e.message, 409);
+		}
+		throw e;
+	}
 });
 
 // CEO-assisted project creation: open a conversation in HQ where the CEO scopes

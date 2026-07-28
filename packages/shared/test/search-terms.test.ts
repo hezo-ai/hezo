@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	extractTerms,
+	generateTeamKeywords,
 	MAX_TEAM_KEYWORD_LENGTH,
 	MAX_TEAM_KEYWORDS,
 	normalizeKeywords,
@@ -78,6 +79,45 @@ describe('normalizeKeywords', () => {
 		// Stems are a matcher implementation detail; storing them in a published
 		// marketplace file would freeze one matcher version into the data.
 		expect(normalizeKeywords(['engineering'])).toEqual(['engineering']);
+	});
+});
+
+describe('generateTeamKeywords', () => {
+	it('produces readable, de-duplicated words and drops function words / short tokens', () => {
+		const kw = generateTeamKeywords([
+			'Social Media Marketing',
+			'A team that grows your social reach and drafts content',
+			'Content Writer',
+		]);
+		// Readable words (not stems), function words ("that", "and", "your") and
+		// short tokens dropped, "social"/"content" de-duplicated across the inputs.
+		expect(kw).toEqual([
+			'social',
+			'media',
+			'marketing',
+			'team',
+			'grows',
+			'reach',
+			'drafts',
+			'content',
+			'writer',
+		]);
+	});
+
+	it('drops function words that only surface after stemming', () => {
+		// "uses" → "use", "wants" → "want" are stopwords; "app" survives.
+		expect(generateTeamKeywords(['this uses and wants an app'])).toEqual(['app']);
+	});
+
+	it('keeps whole words rather than stems, so the list stays human-reviewable', () => {
+		expect(generateTeamKeywords(['engineering marketing'])).toEqual(['engineering', 'marketing']);
+	});
+
+	it('caps the list and never breaches the marketplace keyword ceilings', () => {
+		const many = Array.from({ length: MAX_TEAM_KEYWORDS + 20 }, (_, i) => `word${i}`).join(' ');
+		const kw = generateTeamKeywords([many]);
+		expect(kw.length).toBe(MAX_TEAM_KEYWORDS);
+		expect(teamKeywordsError(kw)).toBeNull();
 	});
 });
 

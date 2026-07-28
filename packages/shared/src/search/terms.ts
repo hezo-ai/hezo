@@ -230,3 +230,34 @@ export function normalizeKeywords(keywords: readonly string[]): string[] {
 	}
 	return out;
 }
+
+/**
+ * Derive a discovery-keyword list for a team from its own free text (name,
+ * description, summary, role titles/descriptions) — used when a user exports a
+ * live team as a marketplace bundle, since only Hezo's built-in teams carry a
+ * hand-authored `keywords` list. The result is a bag of **readable words** (not
+ * stems): each alphanumeric word of at least `MIN_TERM_LENGTH` characters that
+ * isn't a function word, lowercased, de-duplicated, order-preserving, and capped
+ * at `limit` (default `MAX_TEAM_KEYWORDS`). Function words are checked against
+ * both the raw word and its stem, matching `extractTerms`, so "used" is dropped
+ * along with "use"; the word itself is kept unstemmed so the published list stays
+ * human-reviewable (the stemmer is the matcher's private representation).
+ */
+export function generateTeamKeywords(
+	texts: readonly string[],
+	limit: number = MAX_TEAM_KEYWORDS,
+): string[] {
+	const seen = new Set<string>();
+	const out: string[] = [];
+	for (const text of texts) {
+		for (const word of text.toLowerCase().match(/[a-z0-9]+/g) ?? []) {
+			if (out.length >= limit) return out;
+			if (word.length < MIN_TERM_LENGTH || STOPWORDS.has(word)) continue;
+			if (STOPWORDS.has(stemTerm(word))) continue;
+			if (seen.has(word)) continue;
+			seen.add(word);
+			out.push(word);
+		}
+	}
+	return out;
+}

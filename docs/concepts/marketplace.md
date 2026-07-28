@@ -54,6 +54,22 @@ the live marketplace, improvements to the default teams become available automat
 don't need to upgrade Hezo to get them. New projects launched from a team always use its latest
 version, and you can bring an existing team up to date by adding it to the project again.
 
+## Exporting your team
+
+Once you've shaped a team - refined its roster, adjusted reporting lines, tuned each role's
+prompt and settings - you can package that whole state as a **team bundle** and share it. On the
+Team page, the **Export team** button (next to **Hire agent**) opens a short dialog that explains
+what's about to happen, then downloads a single JSON file describing your team.
+
+The bundle captures the team name, description, and summary; every role, from the Captain to each
+teammate, with its reporting line; and each role's system prompt, effort, budgets, and settings.
+It's the same self-contained format the marketplace ships. It does **not** include skills,
+connections, secrets, or project data - those are configured per project, not carried by a team.
+
+To have your team added to the marketplace, send the downloaded file to the Hezo authors on
+GitHub. They review it, generate a changelog, and publish it so anyone can launch a project from
+your team.
+
 ## Where teams come from
 
 The marketplace teams are maintained in the Hezo repository and served from there. A running

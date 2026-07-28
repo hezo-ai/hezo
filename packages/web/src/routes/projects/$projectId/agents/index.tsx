@@ -2,6 +2,7 @@ import { createFileRoute, Link } from '@tanstack/react-router';
 import { Globe, Plus, UserPlus } from 'lucide-react';
 import { agentPageParams } from '../../../../components/agent-link';
 import { AgentStatusLabel } from '../../../../components/agent-status-label';
+import { ExportTeamButton } from '../../../../components/export-team-dialog';
 import { OrgChartTree } from '../../../../components/org-chart-tree';
 import { Button } from '../../../../components/ui/button';
 import { EmptyState } from '../../../../components/ui/empty-state';
@@ -55,12 +56,13 @@ function TeamPage() {
 	return (
 		<div className="grid grid-cols-1 lg:grid-cols-[1fr_240px] lg:gap-6">
 			<div className="min-w-0">
-				<div className="flex items-center justify-end mb-4">
+				<div className="flex items-center justify-end gap-2 mb-4">
 					<Link to="/projects/$projectId/agents/hire" params={{ projectId }}>
 						<Button>
 							<UserPlus className="w-4 h-4" /> Hire agent
 						</Button>
 					</Link>
+					<ExportTeamButton projectId={projectId} />
 				</div>
 
 				<div
