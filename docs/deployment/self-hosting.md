@@ -17,6 +17,17 @@ keys, and the spend.
 - Your **master key** (created on first run; see
   [First-run setup](/docs/getting-started/first-run)).
 
+**Low-RAM host?** Agent containers are memory-hungry, so on a small box (under ~2 GB
+RAM) add swap or the kernel may OOM-kill Hezo. The
+[one-click deploy](/docs/deployment/one-click) sets up a 4 GB swap file for you; on a
+manual install, add one yourself:
+
+```sh
+sudo fallocate -l 4G /swapfile && sudo chmod 600 /swapfile
+sudo mkswap /swapfile && sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+```
+
 ## The data directory
 
 Everything Hezo keeps lives in one place - the **data directory** (default `~/.hezo/`):

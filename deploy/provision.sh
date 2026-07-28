@@ -9,12 +9,13 @@
 #   • you can also just SSH into a box and run it by hand
 #
 # What it does, idempotently:
-#   1. installs Docker Engine and starts it (Hezo needs the host Docker socket)
-#   2. downloads the arch-matched `hezo` binary from GitHub Releases
-#   3. installs Caddy as a reverse proxy with automatic HTTPS + WebSocket passthrough
-#   4. installs systemd units (a first-boot unit that derives the public URL, then Hezo)
-#   5. exempts Hezo from needrestart's automatic restarts (it comes back locked)
-#   6. locks the firewall down (only 80/443 public; 3100 + egress ports stay host-local)
+#   1. ensures a swap file exists (default 4 GB) so low-RAM hosts don't get OOM-killed
+#   2. installs Docker Engine and starts it (Hezo needs the host Docker socket)
+#   3. downloads the arch-matched `hezo` binary from GitHub Releases
+#   4. installs Caddy as a reverse proxy with automatic HTTPS + WebSocket passthrough
+#   5. installs systemd units (a first-boot unit that derives the public URL, then Hezo)
+#   6. exempts Hezo from needrestart's automatic restarts (it comes back locked)
+#   7. locks the firewall down (only 80/443 public; 3100 + egress ports stay host-local)
 #
 # It never sets the master key: that is generated in the browser on first run and
 # shown once, so it cannot be pre-seeded. After boot, open the printed URL and
@@ -36,6 +37,10 @@
 #                          (s3://KEY:SECRET@endpoint/bucket[/prefix]). Persisted into
 #                          /etc/hezo/hezo.env on first provision; omit for local disk.
 #   HEZO_DATABASE_POOL_SIZE  connection-pool size for the external database (2-100).
+#   HEZO_SWAP_SIZE         size of the swap file this script creates so low-RAM hosts
+#                          don't OOM (default 4G; accepts 4G / 4096M). Set 0 to disable.
+#                          Auto-shrinks to fit the disk when 4G plus headroom won't fit,
+#                          and is skipped when the host already has active swap.
 #   HEZO_RELEASE_TAG       pin a release tag (default: latest)
 #   HEZO_IMAGE_BUILD       set to 1 when baking a machine image (e.g. the DigitalOcean
 #                          Marketplace Packer build). Installs and enables everything but
@@ -70,7 +75,124 @@ fi
 log() { echo "[hezo-provision] $*"; }
 
 # ---------------------------------------------------------------------------
-# 1. Docker Engine
+# 1. Swap file — give low-RAM hosts a memory cushion so the install itself and
+#    the running services (Hezo + agent containers) don't get OOM-killed. The
+#    cheapest droplets ship as little as 512 MB RAM with no swap. Written as a
+#    standalone helper so the first-boot unit can reuse it: a machine-image
+#    build (HEZO_IMAGE_BUILD=1) defers swap creation to the user's first boot so
+#    no /swapfile is baked into the snapshot.
+# ---------------------------------------------------------------------------
+install -d /usr/local/sbin
+cat >/usr/local/sbin/hezo-ensure-swap.sh <<'EOF'
+#!/usr/bin/env bash
+# Idempotently ensure a swap file exists. Safe to run repeatedly and on every
+# boot: a no-op when the host already has active swap. Never aborts the caller —
+# a host that forbids swapon just logs a warning and exits 0.
+#
+#   HEZO_SWAP_SIZE  desired size (default 4G; accepts 4G / 4096M / integer MiB).
+#                   Set 0/off/none to disable. Auto-shrinks to fit the disk.
+set -uo pipefail
+
+SWAPFILE="/swapfile"
+HEADROOM_MIB=2048 # keep at least this much free disk beyond the swap file
+FLOOR_MIB=512     # don't bother creating swap smaller than this
+
+log() { echo "[hezo-swap] $*"; }
+
+REQUEST="${HEZO_SWAP_SIZE:-4G}"
+case "${REQUEST,,}" in
+	0 | off | none | no | false | disabled)
+		log "swap disabled (HEZO_SWAP_SIZE=${REQUEST})"
+		exit 0
+		;;
+esac
+
+# Already have swap somewhere? Respect it and do nothing.
+if [[ -n "$(swapon --show=NAME --noheadings 2>/dev/null)" ]]; then
+	log "swap already active; leaving it as-is"
+	exit 0
+fi
+
+# Parse the requested size to MiB (4G / 4096M / bare integer MiB).
+size_to_mib() {
+	local v="${1,,}" num unit
+	num="${v%[gm]}"
+	unit="${v#"${num}"}"
+	[[ "${num}" =~ ^[0-9]+$ ]] || {
+		echo ""
+		return
+	}
+	case "${unit}" in
+		g) echo $((num * 1024)) ;;
+		m | "") echo "${num}" ;;
+		*) echo "" ;;
+	esac
+}
+
+want_mib="$(size_to_mib "${REQUEST}")"
+if [[ -z "${want_mib}" || "${want_mib}" -lt 1 ]]; then
+	log "unrecognised HEZO_SWAP_SIZE='${REQUEST}'; skipping swap setup"
+	exit 0
+fi
+
+# A leftover /swapfile from a previous run: just switch it on and persist.
+if [[ -f "${SWAPFILE}" ]]; then
+	if swapon "${SWAPFILE}" 2>/dev/null; then
+		grep -q "^${SWAPFILE} " /etc/fstab 2>/dev/null || echo "${SWAPFILE} none swap sw 0 0" >>/etc/fstab
+		log "enabled existing ${SWAPFILE}"
+	else
+		log "could not enable existing ${SWAPFILE}; leaving it in place"
+	fi
+	exit 0
+fi
+
+# Disk headroom guard ("if possible"): never fill the root filesystem.
+avail_bytes="$(df --output=avail -B1 / 2>/dev/null | tail -1 | tr -d ' ')"
+if [[ "${avail_bytes}" =~ ^[0-9]+$ ]]; then
+	avail_mib=$((avail_bytes / 1024 / 1024))
+	usable_mib=$((avail_mib - HEADROOM_MIB))
+	if ((usable_mib < FLOOR_MIB)); then
+		log "only ${avail_mib} MiB free on /; too little for swap after ${HEADROOM_MIB} MiB headroom — skipping"
+		exit 0
+	fi
+	if ((want_mib > usable_mib)); then
+		log "shrinking swap from ${want_mib} MiB to ${usable_mib} MiB to fit the disk"
+		want_mib="${usable_mib}"
+	fi
+fi
+
+log "creating ${want_mib} MiB swap at ${SWAPFILE}"
+if ! fallocate -l "${want_mib}M" "${SWAPFILE}" 2>/dev/null; then
+	if ! dd if=/dev/zero of="${SWAPFILE}" bs=1M count="${want_mib}" status=none 2>/dev/null; then
+		log "failed to allocate ${SWAPFILE}; skipping swap setup"
+		rm -f "${SWAPFILE}"
+		exit 0
+	fi
+fi
+chmod 600 "${SWAPFILE}"
+if ! mkswap "${SWAPFILE}" >/dev/null 2>&1; then
+	log "mkswap failed; skipping swap setup"
+	rm -f "${SWAPFILE}"
+	exit 0
+fi
+grep -q "^${SWAPFILE} " /etc/fstab 2>/dev/null || echo "${SWAPFILE} none swap sw 0 0" >>/etc/fstab
+if ! swapon "${SWAPFILE}" 2>/dev/null; then
+	log "swapon failed (host may forbid swap); ${SWAPFILE} stays in fstab for next boot"
+	exit 0
+fi
+log "swap is on: $(swapon --show=NAME,SIZE --noheadings | tr '\n' ' ')"
+EOF
+chmod +x /usr/local/sbin/hezo-ensure-swap.sh
+
+# Create swap now for the direct/cloud-init/AWS/GCP paths, before the memory-heavy
+# Docker + Caddy installs. Skipped for machine-image builds (see the heredoc note
+# above); the first-boot unit creates it on the end user's real first boot instead.
+if [[ "${HEZO_IMAGE_BUILD:-}" != "1" ]]; then
+	HEZO_SWAP_SIZE="${HEZO_SWAP_SIZE:-4G}" /usr/local/sbin/hezo-ensure-swap.sh || log "swap setup skipped"
+fi
+
+# ---------------------------------------------------------------------------
+# 2. Docker Engine
 # ---------------------------------------------------------------------------
 if ! command -v docker >/dev/null 2>&1; then
 	log "Installing Docker Engine…"
@@ -80,7 +202,7 @@ systemctl enable --now docker
 log "Docker is running."
 
 # ---------------------------------------------------------------------------
-# 2. Hezo binary
+# 3. Hezo binary
 # ---------------------------------------------------------------------------
 case "$(uname -m)" in
 	x86_64) ARCH="x64" ;;
@@ -102,7 +224,7 @@ curl -fsSL -o /usr/local/bin/hezo "${BINARY_URL}"
 chmod +x /usr/local/bin/hezo
 
 # ---------------------------------------------------------------------------
-# 3. Data dir + environment file (never overwrite an operator-edited env file)
+# 4. Data dir + environment file (never overwrite an operator-edited env file)
 # ---------------------------------------------------------------------------
 install -d -m 700 /etc/hezo
 install -d -m 755 "${DATA_DIR}"
@@ -126,14 +248,15 @@ EOF
 	done
 fi
 
-# Persist the optional domain override so the first-boot unit can read it.
-if [[ -n "${HEZO_DOMAIN_OVERRIDE:-}" ]]; then
+# Persist optional settings the first-boot unit reads (domain override, swap size).
+if [[ -n "${HEZO_DOMAIN_OVERRIDE:-}" || -n "${HEZO_SWAP_SIZE:-}" ]]; then
 	install -m 600 /dev/null "${DEPLOY_ENV}"
-	echo "HEZO_DOMAIN_OVERRIDE=${HEZO_DOMAIN_OVERRIDE}" >"${DEPLOY_ENV}"
+	[[ -n "${HEZO_DOMAIN_OVERRIDE:-}" ]] && echo "HEZO_DOMAIN_OVERRIDE=${HEZO_DOMAIN_OVERRIDE}" >>"${DEPLOY_ENV}"
+	[[ -n "${HEZO_SWAP_SIZE:-}" ]] && echo "HEZO_SWAP_SIZE=${HEZO_SWAP_SIZE}" >>"${DEPLOY_ENV}"
 fi
 
 # ---------------------------------------------------------------------------
-# 4. Caddy (reverse proxy, automatic HTTPS, WebSocket passthrough)
+# 5. Caddy (reverse proxy, automatic HTTPS, WebSocket passthrough)
 # ---------------------------------------------------------------------------
 if ! command -v caddy >/dev/null 2>&1; then
 	log "Installing Caddy…"
@@ -172,7 +295,7 @@ EOF
 [[ -f /etc/caddy/hezo.env ]] || echo 'HEZO_SITE_ADDRESS=:80' >/etc/caddy/hezo.env
 
 # ---------------------------------------------------------------------------
-# 5. First-boot unit: derive the public URL, wire it into Caddy + Hezo
+# 6. First-boot unit: derive the public URL, wire it into Caddy + Hezo
 # ---------------------------------------------------------------------------
 cat >/usr/local/sbin/hezo-firstboot.sh <<'EOF'
 #!/usr/bin/env bash
@@ -185,6 +308,13 @@ SENTINEL="/var/lib/hezo/.firstboot-done"
 [[ -f "${SENTINEL}" ]] && exit 0
 
 [[ -f /etc/hezo/deploy.env ]] && . /etc/hezo/deploy.env
+
+# Ensure host swap exists before Caddy/Hezo start (no-op if already active). On the
+# machine-image path this is where swap first gets created, since provision.sh
+# skipped it at build time.
+if [[ -x /usr/local/sbin/hezo-ensure-swap.sh ]]; then
+	HEZO_SWAP_SIZE="${HEZO_SWAP_SIZE:-}" /usr/local/sbin/hezo-ensure-swap.sh || true
+fi
 
 if [[ -n "${HEZO_DOMAIN_OVERRIDE:-}" ]]; then
 	DOMAIN="${HEZO_DOMAIN_OVERRIDE}"
@@ -226,7 +356,7 @@ WantedBy=multi-user.target
 EOF
 
 # ---------------------------------------------------------------------------
-# 6. Hezo systemd unit (mirrors docs/deployment/self-hosting.md)
+# 7. Hezo systemd unit (mirrors docs/deployment/self-hosting.md)
 # ---------------------------------------------------------------------------
 cat >/etc/systemd/system/hezo.service <<'EOF'
 [Unit]
@@ -248,7 +378,7 @@ WantedBy=multi-user.target
 EOF
 
 # ---------------------------------------------------------------------------
-# 7. Hold Hezo back from unattended-upgrade restarts
+# 8. Hold Hezo back from unattended-upgrade restarts
 #    Ubuntu runs needrestart from the APT hook in automatic mode, so a security
 #    upgrade replacing a library the binary maps (the C library among them)
 #    restarts the service with no prompt. Hezo keeps its master key in memory
@@ -269,7 +399,7 @@ $nrconf{override_rc} = { qr(^hezo\.service$) => 0 };
 EOF
 
 # ---------------------------------------------------------------------------
-# 8. Firewall — only 80/443 public; keep 3100 and the egress range host-local,
+# 9. Firewall — only 80/443 public; keep 3100 and the egress range host-local,
 #    but let the Docker bridge reach the host (agents call back over docker0).
 #    See docs/deployment/self-hosting.md § Networking & firewall.
 # ---------------------------------------------------------------------------
@@ -285,7 +415,7 @@ if command -v ufw >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------------
-# 9. Enable (and, outside image builds, start) everything
+# 10. Enable (and, outside image builds, start) everything
 # ---------------------------------------------------------------------------
 systemctl daemon-reload
 

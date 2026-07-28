@@ -10,7 +10,7 @@ host** — not to a managed-container PaaS. These artifacts automate that host s
 
 | Path | Purpose |
 |---|---|
-| `provision.sh` | The canonical, self-contained installer. Installs Docker, downloads the `hezo` binary, sets up Caddy (automatic HTTPS + WebSocket passthrough), installs the systemd units, exempts Hezo from needrestart's automatic restarts, and locks the firewall down. Single source of truth — everything else runs it. |
+| `provision.sh` | The canonical, self-contained installer. Creates a swap file (default 4 GB, `HEZO_SWAP_SIZE`) so low-RAM hosts don't get OOM-killed, installs Docker, downloads the `hezo` binary, sets up Caddy (automatic HTTPS + WebSocket passthrough), installs the systemd units, exempts Hezo from needrestart's automatic restarts, and locks the firewall down. Single source of truth — everything else runs it. |
 | `cloud-init/hezo.cloud-config.yaml` | Portable cloud-init user-data. Paste it into any VPS provider's "User data" field; it fetches and runs `provision.sh` on first boot. |
 | `aws/` | CloudFormation **Launch Stack** template (`hezo.cfn.yaml`) — an EC2 VM whose UserData runs `provision.sh`. See [`aws/README.md`](aws/README.md). |
 | `gcp/` | **Open in Cloud Shell** deploy — `deploy.sh` creates a Compute Engine VM (startup script runs `provision.sh`) with a guided `tutorial.md`. See [`gcp/README.md`](gcp/README.md). |
@@ -74,7 +74,7 @@ curl -fsSL https://raw.githubusercontent.com/hezo-ai/hezo/main/deploy/provision.
 throwaway VM/droplet:
 
 1. **Local VM:** `multipass launch 24.04 --cloud-init cloud-init/hezo.cloud-config.yaml`,
-   then check `systemctl is-active hezo caddy` and
+   then check `swapon --show` lists `/swapfile`, `systemctl is-active hezo caddy`, and
    `curl -s http://127.0.0.1:3100/health` → `{"ok":true}`. (Multipass has no public
    IP — set `HEZO_DOMAIN_OVERRIDE` to a local name to exercise Caddy.)
 2. **Throwaway droplet:** create a small droplet with the cloud-init, then from your

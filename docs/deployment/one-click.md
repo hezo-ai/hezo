@@ -45,6 +45,9 @@ uses the portable [cloud-init snippet](#deploy-it) below.
 
 On first boot the snippet:
 
+- creates a **4 GB swap file** so a low-RAM server doesn't get OOM-killed while
+  installing and running (auto-shrunk to fit the disk, and skipped if the box already
+  has swap - size it with `HEZO_SWAP_SIZE`, or set `0` to disable),
 - installs **Docker** and starts it (Hezo runs each project's agents in a container),
 - downloads the latest **`hezo`** binary for the server's CPU architecture,
 - puts **Caddy** in front for **automatic HTTPS** with a real certificate - no domain
@@ -62,6 +65,7 @@ setup screen; you take it from there.
 ## Deploy it
 
 1. **Create an Ubuntu server** on your provider - 2 GB RAM or more is a good start.
+   The deploy also adds a 4 GB swap file, so it still comes up on a smaller box.
 2. **Paste the snippet below** into the provider's user-data field (each provider
    calls it something slightly different - see [Where to paste it](#where-to-paste-it)).
 3. **Create the server and wait ~2 minutes** for first boot to finish.
@@ -75,6 +79,9 @@ package_update: true
 packages:
   - curl
 runcmd:
+  # To change the swap size (default 4G; set 0 to disable), uncomment and edit this
+  # before the curl line runs:
+  # - [ sh, -c, "echo 'HEZO_SWAP_SIZE=2G' >> /etc/environment" ]
   # To use your own domain instead of sslip.io, point an A record at this server, then
   # uncomment the next line and set your domain (do it before the curl line runs):
   # - [ sh, -c, "echo 'HEZO_DOMAIN_OVERRIDE=hezo.example.com' >> /etc/environment" ]
