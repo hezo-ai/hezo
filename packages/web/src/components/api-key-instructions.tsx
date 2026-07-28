@@ -203,6 +203,60 @@ export const API_KEY_INSTRUCTIONS: Record<AiProvider, ProviderInstructionContent
 			</>
 		),
 	},
+	// The two local runners take setup steps rather than key-console links: there
+	// is no key to fetch, and the thing that actually needs getting right is the
+	// server URL as seen from inside the agent container.
+	[AiProvider.Ollama]: {
+		title: 'How to connect your Ollama server',
+		steps: [
+			<>
+				Install <InstructionsLink href="https://ollama.com/download">Ollama</InstructionsLink> and
+				pull a model, for example <code>ollama pull qwen3-coder</code>.
+			</>,
+			<>
+				Start the server with <code>ollama serve</code>. It listens on{' '}
+				<code>http://localhost:11434</code> by default.
+			</>,
+			<>
+				Set <strong>Server URL</strong> to an address the agent container can reach —{' '}
+				<code>http://host.docker.internal:11434</code> for a server on this machine. Leave the API
+				key blank.
+			</>,
+		],
+		footer: (
+			<>
+				Ollama serves Anthropic's Messages API, so agents run on the <strong>Claude Code</strong>{' '}
+				CLI. Runs on your own hardware cost nothing per token, so they record <code>$0</code>. Pick
+				a model with strong tool-calling - weaker local models struggle with agentic work.
+			</>
+		),
+	},
+	[AiProvider.LmStudio]: {
+		title: 'How to connect your LM Studio server',
+		steps: [
+			<>
+				Install <InstructionsLink href="https://lmstudio.ai/download">LM Studio</InstructionsLink>{' '}
+				and download a model from its Discover tab.
+			</>,
+			<>
+				Open the <strong>Developer</strong> tab and start the local server. It listens on{' '}
+				<code>http://localhost:1234</code> by default.
+			</>,
+			<>
+				Set <strong>Server URL</strong> to an address the agent container can reach —{' '}
+				<code>http://host.docker.internal:1234</code> for a server on this machine. Leave the API
+				key blank unless you enabled <strong>Require Authentication</strong>.
+			</>,
+		],
+		footer: (
+			<>
+				LM Studio serves Anthropic's Messages API from version 0.4.1, so agents run on the{' '}
+				<strong>Claude Code</strong> CLI. Runs on your own hardware cost nothing per token, so they
+				record <code>$0</code>. Pick a model with strong tool-calling - weaker local models struggle
+				with agentic work.
+			</>
+		),
+	},
 };
 
 /** The gray, provider-specific "how to get your API key" box. */

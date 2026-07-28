@@ -56,6 +56,7 @@ aiProvidersRoutes.post('/ai-providers', async (c) => {
 		api_key: string;
 		label?: string;
 		auth_method?: string;
+		base_url?: string;
 	}>();
 
 	if (!body.provider || !VALID_PROVIDERS.has(body.provider)) {
@@ -67,10 +68,6 @@ aiProvidersRoutes.post('/ai-providers', async (c) => {
 		);
 	}
 
-	if (!body.api_key?.trim()) {
-		return err(c, 'INVALID_REQUEST', 'api_key is required', 400);
-	}
-
 	const key = masterKeyManager.getKey();
 	if (!key) {
 		return err(c, 'LOCKED', 'Server must be unlocked to manage AI providers', 401);
@@ -80,6 +77,31 @@ aiProvidersRoutes.post('/ai-providers', async (c) => {
 	const authMethod = (body.auth_method as AiAuthMethod) || AiAuthMethod.ApiKey;
 
 	const info = AI_PROVIDER_INFO[provider];
+
+	// A locally-hosted runner authenticates only if the operator turned auth on, so
+	// the key is optional here; `encrypted_credential` is NOT NULL, so an omitted
+	// one is stored as the runner's documented sentinel. Its endpoint is
+	// per-install, so the base URL takes the place of the key as the required field.
+	let baseUrl: string | null = null;
+	if (info?.local) {
+		const raw = body.base_url?.trim() || info.local.defaultBaseUrl;
+		let parsed: URL;
+		try {
+			parsed = new URL(raw);
+		} catch {
+			return err(c, 'INVALID_BASE_URL', 'Server URL must be a valid URL', 400);
+		}
+		if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+			return err(c, 'INVALID_BASE_URL', 'Server URL must use http or https', 400);
+		}
+		baseUrl = raw.replace(/\/+$/, '');
+	} else if (!body.api_key?.trim()) {
+		return err(c, 'INVALID_REQUEST', 'api_key is required', 400);
+	}
+
+	const credentialValue = info?.local
+		? body.api_key?.trim() || info.local.authTokenSentinel
+		: body.api_key;
 
 	if (authMethod === AiAuthMethod.Subscription) {
 		if (!info.supportsSubscription) {
@@ -99,7 +121,7 @@ aiProvidersRoutes.post('/ai-providers', async (c) => {
 	if (
 		info.keyPrefix &&
 		authMethod === AiAuthMethod.ApiKey &&
-		!body.api_key.startsWith(info.keyPrefix)
+		!credentialValue.startsWith(info.keyPrefix)
 	) {
 		return err(
 			c,
@@ -111,7 +133,7 @@ aiProvidersRoutes.post('/ai-providers', async (c) => {
 
 	if (authMethod === AiAuthMethod.ApiKey && !process.env.SKIP_AI_KEY_VALIDATION) {
 		try {
-			const valid = await verifyProviderKey(provider, body.api_key, authMethod);
+			const valid = await verifyProviderKey(provider, credentialValue, authMethod, baseUrl);
 			if (!valid) {
 				return err(
 					c,
@@ -121,10 +143,15 @@ aiProvidersRoutes.post('/ai-providers', async (c) => {
 				);
 			}
 		} catch {
+			// For a local provider the usual cause is that the runner is not listening
+			// at the given URL, so name the endpoint rather than blaming a key that
+			// may not even be required.
 			return err(
 				c,
 				'VALIDATION_FAILED',
-				'Could not reach the provider to validate the key. Please try again.',
+				info.local
+					? `Could not reach ${info.name} at ${baseUrl}. Check the server is running and the URL is reachable from Hezo.`
+					: 'Could not reach the provider to validate the key. Please try again.',
 				503,
 			);
 		}
@@ -135,9 +162,10 @@ aiProvidersRoutes.post('/ai-providers', async (c) => {
 			db,
 			masterKeyManager,
 			provider,
-			body.api_key,
+			credentialValue,
 			authMethod,
 			body.label?.trim(),
+			baseUrl ? { base_url: baseUrl } : {},
 		);
 
 		return ok(c, { id: configId }, 201);
@@ -201,7 +229,12 @@ aiProvidersRoutes.post('/ai-providers/:configId/verify', async (c) => {
 	}
 
 	try {
-		const valid = await verifyProviderKey(cred.provider as AiProvider, cred.value, cred.authMethod);
+		const valid = await verifyProviderKey(
+			cred.provider as AiProvider,
+			cred.value,
+			cred.authMethod,
+			cred.baseUrl,
+		);
 		if (valid) {
 			// Persist the healthy state so the badge is truthful and a key that was
 			// previously marked `invalid` recovers on a successful re-verify.
@@ -302,23 +335,21 @@ aiProvidersRoutes.get('/ai-providers/:configId/models', async (c) => {
 		);
 	}
 
-	const endpoint = AI_PROVIDER_INFO[provider]?.verifyEndpoint;
+	const endpoint = resolveCatalogEndpoint(provider, cred.value, cred.baseUrl);
 	if (!endpoint) {
 		return err(c, 'UNSUPPORTED', `No models endpoint for provider "${provider}"`, 400);
 	}
 
-	const url = typeof endpoint.url === 'function' ? endpoint.url(cred.value) : endpoint.url;
-	const headers =
-		typeof endpoint.headers === 'function' ? endpoint.headers(cred.value) : endpoint.headers;
-
 	let res: Response;
 	try {
-		res = await fetch(url, {
+		res = await fetch(endpoint.url, {
 			method: 'GET',
-			headers,
+			headers: endpoint.headers,
 			signal: AbortSignal.timeout(10000),
 		});
 	} catch {
+		// For a local provider this is the expected error when the operator's server
+		// simply is not running, which is exactly what PROVIDER_UNREACHABLE conveys.
 		return err(c, 'PROVIDER_UNREACHABLE', 'Could not reach provider to list models', 503);
 	}
 
@@ -340,23 +371,52 @@ aiProvidersRoutes.get('/ai-providers/:configId/models', async (c) => {
 	return ok(c, models);
 });
 
+/**
+ * Resolve the catalog endpoint used both to verify a credential and to list a
+ * provider's models. Hosted providers use their fixed `verifyEndpoint`; a
+ * locally-hosted one (Ollama, LM Studio) has no fixed endpoint, so the URL is
+ * built from the operator's configured base URL, falling back to the runner's
+ * documented default port. Both runners expose the OpenAI-shaped `/v1/models`,
+ * which `parseProviderModels` already handles via its generic `data[]` branch.
+ */
+function resolveCatalogEndpoint(
+	provider: AiProvider,
+	apiKey: string,
+	baseUrl?: string | null,
+): { url: string; headers: Record<string, string> } | null {
+	const info = AI_PROVIDER_INFO[provider];
+	if (!info) return null;
+
+	if (info.local) {
+		const root = (baseUrl?.trim() || info.local.defaultBaseUrl).replace(/\/+$/, '');
+		return {
+			url: `${root}/v1/models`,
+			headers: { Authorization: `Bearer ${apiKey}` },
+		};
+	}
+
+	const endpoint = info.verifyEndpoint;
+	if (!endpoint) return null;
+	return {
+		url: typeof endpoint.url === 'function' ? endpoint.url(apiKey) : endpoint.url,
+		headers: typeof endpoint.headers === 'function' ? endpoint.headers(apiKey) : endpoint.headers,
+	};
+}
+
 async function verifyProviderKey(
 	provider: AiProvider,
 	apiKey: string,
 	authMethod: string,
+	baseUrl?: string | null,
 ): Promise<boolean> {
 	if (authMethod === AiAuthMethod.Subscription) return true;
 
-	const endpoint = AI_PROVIDER_INFO[provider]?.verifyEndpoint;
+	const endpoint = resolveCatalogEndpoint(provider, apiKey, baseUrl);
 	if (!endpoint) return false;
 
-	const url = typeof endpoint.url === 'function' ? endpoint.url(apiKey) : endpoint.url;
-	const headers =
-		typeof endpoint.headers === 'function' ? endpoint.headers(apiKey) : endpoint.headers;
-
-	const res = await fetch(url, {
+	const res = await fetch(endpoint.url, {
 		method: 'GET',
-		headers,
+		headers: endpoint.headers,
 		signal: AbortSignal.timeout(10000),
 	});
 

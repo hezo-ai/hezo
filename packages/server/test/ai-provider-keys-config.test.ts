@@ -129,6 +129,9 @@ describe('getProviderConfigCredential', () => {
 			provider: AiProvider.Google,
 			authMethod: AiAuthMethod.ApiKey,
 			value: 'google-secret-key',
+			// Hosted providers carry no operator-supplied endpoint; only the local
+			// runners (Ollama, LM Studio) store one in metadata.
+			baseUrl: null,
 		});
 	});
 

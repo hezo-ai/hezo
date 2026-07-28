@@ -21,19 +21,58 @@ and your agents run on the models you choose.
 | **Kimi** (Moonshot) | Kimi | Claude Code | API key |
 | **DeepSeek** | DeepSeek | Claude Code | API key |
 | **Z.ai** | GLM | Claude Code | API key |
+| **OpenRouter** | Many, via one account | OpenCode | API key |
+| **Ollama** | Whatever you run locally | Claude Code | Server URL (no key) |
+| **LM Studio** | Whatever you run locally | Claude Code | Server URL (no key) |
 
 Each provider is driven through a **first-party agentic command-line runtime** inside the
 agent's container - not a lowest-common-denominator wrapper. Anthropic, OpenAI, Google, and
 xAI each use their own CLI (xAI runs on its **Grok Build** CLI, on the `grok-4.5` model);
 Kimi, DeepSeek, and Z.ai run through Claude Code against their Anthropic-compatible
-endpoints.
+endpoints; OpenRouter runs through the **OpenCode** CLI; and Ollama and LM Studio run
+through Claude Code against your own machine.
 
-## Local models (on the roadmap)
+## Local models
 
-First-class support for **local, self-hosted models** (for example via Ollama or any
-OpenAI-compatible endpoint), so you could run agents entirely on your own hardware with
-no per-token cost, is planned. **This isn't available in Hezo yet** - this page will be
-updated when it ships.
+You can run agents **entirely on your own hardware**, with no per-token cost and no
+prompt or code leaving your machine. Hezo supports two local model servers:
+
+| Server | Default address | Notes |
+|---|---|---|
+| **Ollama** | `http://localhost:11434` | Start it with `ollama serve` |
+| **LM Studio** | `http://localhost:1234` | Start the server from the **Developer** tab |
+
+Both serve Anthropic's Messages API directly, so agents run on the same **Claude Code**
+runtime the hosted Anthropic-compatible providers use. There is nothing to translate and
+no extra proxy to run.
+
+To connect one, pick it in **Add AI provider** and fill in the **Server URL**. Leave the
+API key blank - Ollama ignores it, and LM Studio only checks one if you turned on
+**Require Authentication**.
+
+### Use an address the agents can reach
+
+This is the one thing that catches people out. Agents run inside a container, so
+`localhost` there means *the container itself*, not the machine running your model
+server. A URL that works in your browser will fail at run time.
+
+Use one of these instead:
+
+- `http://host.docker.internal:11434` - a server on the same machine as Hezo.
+- `http://192.168.1.50:11434` - a server elsewhere on your network, by its LAN address.
+
+Hezo warns you in the connect form if you enter a `localhost` address.
+
+### Cost and model choice
+
+Local runs record **$0**, because nothing is billed per token. That is a real zero, not a
+missing price - but it does mean [budgets](/docs/concepts/budgets-and-costs) do not
+constrain local agents, since there is no spend to cap.
+
+Pick a model with strong **tool-calling** ability. Agents work by calling tools in a loop,
+and smaller local models are noticeably weaker at it than the hosted frontier models. Some
+capabilities the hosted providers offer are also unavailable locally, including prompt
+caching and token counting.
 
 ## API key or subscription
 
@@ -56,10 +95,14 @@ form in Hezo walks you through these same steps inline.
 | **Kimi** (Moonshot) | [Kimi Open Platform → API keys](https://platform.kimi.ai/console/api-keys) | Prepaid balance |
 | **DeepSeek** | [DeepSeek Platform → API keys](https://platform.deepseek.com/api_keys) | Prepaid balance |
 | **Z.ai** | [Z.ai platform → API keys](https://z.ai/manage-apikey/apikey-list) | Prepaid balance ([billing page](https://z.ai/manage-apikey/billing)) |
+| **OpenRouter** | [OpenRouter → Keys](https://openrouter.ai/keys) | Prepaid credits, billed per token |
+| **Ollama** | Not required | Runs on your hardware, no per-token cost |
+| **LM Studio** | Not required | Runs on your hardware, no per-token cost |
 
 Most consoles show a newly created key **only once** - copy it right away and paste it
 into Hezo, which stores it encrypted. Providers billed per token generally need a
-positive balance before agents can run.
+positive balance before agents can run. The local servers need no key at all - you give
+them a [server URL](#local-models) instead.
 
 ## Use more than one
 

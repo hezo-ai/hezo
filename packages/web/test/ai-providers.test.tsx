@@ -33,7 +33,7 @@ async function postProvider(body: Record<string, unknown>) {
 	});
 }
 
-test('Add provider modal shows provider cards (incl. xAI; no OpenRouter, no Moonshot, no OAuth)', async () => {
+test('Add provider modal shows a card for every offered provider (incl. OpenRouter and the local runners)', async () => {
 	const { findByRole, getByRole, queryAllByText, queryAllByRole, user } = await renderApp({
 		initialPath: '/settings/ai-providers',
 	});
@@ -43,16 +43,78 @@ test('Add provider modal shows provider cards (incl. xAI; no OpenRouter, no Moon
 
 	const dialog = await findByRole('dialog');
 	// The picker step renders one selectable card per provider (each card's
-	// accessible name is just the provider name).
-	for (const name of ['Anthropic', 'OpenAI', 'Google', 'DeepSeek', 'Kimi', 'xAI']) {
+	// accessible name is just the provider name). A provider missing here is
+	// unreachable in the UI even though the API accepts it, so this list is the
+	// guard on ADD_PROVIDER_ORDER staying in sync with the AiProvider enum.
+	for (const name of [
+		'Anthropic',
+		'OpenAI',
+		'Google',
+		'DeepSeek',
+		'Kimi',
+		'xAI',
+		'OpenRouter',
+		'Ollama',
+		'LM Studio',
+	]) {
 		expect(within(dialog).getByRole('button', { name: new RegExp(name) })).toBeTruthy();
 	}
-	// OpenRouter stays hidden for now (plumbing present, card suppressed).
-	expect(within(dialog).queryByRole('button', { name: /OpenRouter/ })).toBeNull();
 	// Cards show only the logo + name now — the runtime label is no longer on them.
 	expect(queryAllByText('Grok Build').length).toBe(0);
 	expect(queryAllByText('Moonshot').length).toBe(0);
 	expect(queryAllByRole('button', { name: /OAuth/i }).length).toBe(0);
+});
+
+test('a local provider asks for a Server URL, keeps the key optional, and warns on localhost', async () => {
+	const { findByRole, getByRole, user } = await renderApp({
+		initialPath: '/settings/ai-providers',
+	});
+
+	await findByRole('heading', { name: 'AI providers' });
+	await user.click(getByRole('button', { name: 'Add provider' }));
+
+	const dialog = await findByRole('dialog');
+	await user.click(within(dialog).getByRole('button', { name: /Ollama/ }));
+
+	// The Server URL field replaces the key as the required input, prefilled with
+	// the runner's documented default.
+	const urlField = within(dialog).getByLabelText('Server URL') as HTMLInputElement;
+	expect(urlField.value).toBe('http://localhost:11434');
+	// The key is explicitly optional for a local runner.
+	within(dialog).getByLabelText('API key (optional)');
+
+	// localhost inside the agent container is the container itself, so the form
+	// warns and points at host.docker.internal. This is the likeliest misconfig.
+	// Scoped to the dialog: it renders in a Radix portal, and the instructions box
+	// mentions the same hostname, so a document-wide match would be ambiguous.
+	await within(dialog).findByText(/means the container itself/);
+
+	// A reachable host clears the warning; submit stays enabled (no key needed).
+	await user.clear(urlField);
+	await user.type(urlField, 'http://host.docker.internal:11434');
+	await waitFor(() => {
+		expect(within(dialog).queryByText(/means the container itself/)).toBeNull();
+	});
+	const submit = within(dialog).getByRole('button', { name: 'Add provider' });
+	expect((submit as HTMLButtonElement).disabled).toBe(false);
+});
+
+test('a hosted provider still requires a key and shows no Server URL field', async () => {
+	const { findByRole, getByRole, user } = await renderApp({
+		initialPath: '/settings/ai-providers',
+	});
+
+	await findByRole('heading', { name: 'AI providers' });
+	await user.click(getByRole('button', { name: 'Add provider' }));
+
+	const dialog = await findByRole('dialog');
+	await user.click(within(dialog).getByRole('button', { name: /DeepSeek/ }));
+
+	expect(within(dialog).queryByLabelText('Server URL')).toBeNull();
+	within(dialog).getByLabelText('API key');
+	// Nothing typed yet, so the submit stays disabled until a key is entered.
+	const submit = within(dialog).getByRole('button', { name: 'Add provider' });
+	expect((submit as HTMLButtonElement).disabled).toBe(true);
 });
 
 test('the add picker renders a brand logo for every offered provider (OpenAI, DeepSeek, z.ai, Kimi included)', async () => {
