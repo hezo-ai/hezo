@@ -231,6 +231,56 @@ test('terminal tasks render in a Done section split out from the Backlog', async
 	expect(backlogSection.querySelector('tbody tr')?.className ?? '').not.toContain('opacity-60');
 });
 
+test('Done section orders tasks by last-updated, most recent first', async () => {
+	let projectSlug = '';
+
+	const { findByTestId, findByText, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Done Order Project' });
+			projectSlug = project.slug;
+			const agentId = ws.agents[0].id;
+			// Created in order first -> second -> third.
+			const first = await seedTask(ws, project, { title: 'First done', assignee_id: agentId });
+			const second = await seedTask(ws, project, { title: 'Second done', assignee_id: agentId });
+			const third = await seedTask(ws, project, { title: 'Third done', assignee_id: agentId });
+			// Move to done in an order that is neither the created order nor its
+			// reverse, so `second` is updated last. Each PATCH is a separate awaited
+			// transaction, so the updated_at trigger stamps increasing timestamps.
+			await patchStatus(ws, first.id, 'done');
+			await patchStatus(ws, third.id, 'done');
+			await patchStatus(ws, second.id, 'done');
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks',
+		params: { projectId: projectSlug },
+	});
+
+	await findByText('First done', undefined, { timeout: 10_000 });
+	const doneSection = await findByTestId('task-list-done');
+
+	// Expected reverse-chron-by-updated_at order: Second (updated last), Third,
+	// First. This differs from created_at desc (Third, Second, First) and
+	// created_at asc (First, Second, Third), so it uniquely pins updated_at desc.
+	await waitFor(
+		() => {
+			const titles = Array.from(doneSection.querySelectorAll('tbody tr'))
+				.map((r) => r.textContent ?? '')
+				.filter((t) => t.includes(' done'));
+			const secondIdx = titles.findIndex((t) => t.includes('Second done'));
+			const thirdIdx = titles.findIndex((t) => t.includes('Third done'));
+			const firstIdx = titles.findIndex((t) => t.includes('First done'));
+			expect(secondIdx).toBeGreaterThan(-1);
+			expect(thirdIdx).toBeGreaterThan(secondIdx);
+			expect(firstIdx).toBeGreaterThan(thirdIdx);
+		},
+		{ timeout: 10_000 },
+	);
+});
+
 test('Done section hides when only terminal tasks remain after filtering them out', async () => {
 	let projectSlug = '';
 

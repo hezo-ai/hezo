@@ -252,7 +252,18 @@ export function TaskList({ projectId }: TaskListProps) {
 		const rows = mainRows.filter((t) => !PINNED_STATUS_SET.has(t.status));
 		return {
 			backlogTasks: nestTasksForDisplay(rows.filter((t) => !TERMINAL_STATUS_SET.has(t.status))),
-			doneTasks: nestTasksForDisplay(rows.filter((t) => TERMINAL_STATUS_SET.has(t.status))),
+			// Finished work reads best as a recent-activity log: always most-recently
+			// updated first, independent of the sort dropdown (which governs the
+			// Backlog) — the same treatment the pinned In-progress section gets.
+			// `updated_at` is trigger-maintained server-side, so it's a reliable key;
+			// localeCompare on the ISO string keeps ties stable (falls back to the
+			// server order). Sorting the full Task rows before nesting needs no type
+			// change, and nestTasksForDisplay preserves this sibling order.
+			doneTasks: nestTasksForDisplay(
+				rows
+					.filter((t) => TERMINAL_STATUS_SET.has(t.status))
+					.sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
+			),
 		};
 	}, [mainRows, todoListEnabled]);
 
