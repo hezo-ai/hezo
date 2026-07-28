@@ -10,7 +10,7 @@ host** — not to a managed-container PaaS. These artifacts automate that host s
 
 | Path | Purpose |
 |---|---|
-| `provision.sh` | The canonical, self-contained installer. Creates a swap file (default 4 GB, `HEZO_SWAP_SIZE`) so low-RAM hosts don't get OOM-killed, installs Docker, downloads the `hezo` binary, sets up Caddy (automatic HTTPS + WebSocket passthrough), installs the systemd units, and locks the firewall down. Single source of truth — everything else runs it. |
+| `provision.sh` | The canonical, self-contained installer. Creates a swap file (default 4 GB, `HEZO_SWAP_SIZE`) so low-RAM hosts don't get OOM-killed, installs Docker, downloads the `hezo` binary, sets up Caddy (automatic HTTPS + WebSocket passthrough), installs the systemd units, exempts Hezo from needrestart's automatic restarts, and locks the firewall down. Single source of truth — everything else runs it. |
 | `cloud-init/hezo.cloud-config.yaml` | Portable cloud-init user-data. Paste it into any VPS provider's "User data" field; it fetches and runs `provision.sh` on first boot. |
 | `aws/` | CloudFormation **Launch Stack** template (`hezo.cfn.yaml`) — an EC2 VM whose UserData runs `provision.sh`. See [`aws/README.md`](aws/README.md). |
 | `gcp/` | **Open in Cloud Shell** deploy — `deploy.sh` creates a Compute Engine VM (startup script runs `provision.sh`) with a guided `tutorial.md`. See [`gcp/README.md`](gcp/README.md). |
@@ -42,6 +42,13 @@ env file — see `docs/deployment/one-click.md` § Using managed data hosting. I
 browser on first run and shown once, so the deploy lands you at the setup gate and
 you finish there (master key → admin password → connect a model). Password auth
 makes exposing that URL safe.
+
+Unattended upgrades: Ubuntu's post-upgrade `needrestart` hook restarts services
+running against replaced libraries, which would leave Hezo **locked** (its master
+key is in memory only) until an operator unlocked it from the browser. The script
+drops `/etc/needrestart/conf.d/hezo.conf` so the restart is reported but never
+performed - patches still install on schedule, and the restart is taken
+deliberately. See `docs/deployment/self-hosting.md` § Keeping the host patched.
 
 Firewall posture: only **80/443** are public; **3100** (the Hezo server) and
 **20000–29999** (the per-run egress proxy) stay host-local, while the Docker

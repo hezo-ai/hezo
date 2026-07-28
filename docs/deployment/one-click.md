@@ -52,7 +52,10 @@ On first boot the snippet:
 - downloads the latest **`hezo`** binary for the server's CPU architecture,
 - puts **Caddy** in front for **automatic HTTPS** with a real certificate - no domain
   required (see [How the HTTPS URL works](#how-the-https-url-works)),
-- runs Hezo under **systemd** so it restarts on boot and after a crash, and
+- runs Hezo under **systemd** so it restarts on boot and after a crash,
+- exempts Hezo from the automatic service restarts that follow an **unattended
+  security upgrade**, so a background patch never leaves it sitting locked (see
+  [Keeping the host patched](/docs/deployment/self-hosting#keeping-the-host-patched)), and
 - locks the **firewall** down so only the web ports (80/443) are public.
 
 It deliberately does **not** set your master key - that's generated in your browser

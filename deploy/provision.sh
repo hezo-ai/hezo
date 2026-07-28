@@ -14,7 +14,8 @@
 #   3. downloads the arch-matched `hezo` binary from GitHub Releases
 #   4. installs Caddy as a reverse proxy with automatic HTTPS + WebSocket passthrough
 #   5. installs systemd units (a first-boot unit that derives the public URL, then Hezo)
-#   6. locks the firewall down (only 80/443 public; 3100 + egress ports stay host-local)
+#   6. exempts Hezo from needrestart's automatic restarts (it comes back locked)
+#   7. locks the firewall down (only 80/443 public; 3100 + egress ports stay host-local)
 #
 # It never sets the master key: that is generated in the browser on first run and
 # shown once, so it cannot be pre-seeded. After boot, open the printed URL and
@@ -377,7 +378,28 @@ WantedBy=multi-user.target
 EOF
 
 # ---------------------------------------------------------------------------
-# 8. Firewall — only 80/443 public; keep 3100 and the egress range host-local,
+# 8. Hold Hezo back from unattended-upgrade restarts
+#    Ubuntu runs needrestart from the APT hook in automatic mode, so a security
+#    upgrade replacing a library the binary maps (the C library among them)
+#    restarts the service with no prompt. Hezo keeps its master key in memory
+#    only and comes back locked, so an unattended restart takes agent execution
+#    offline until someone unlocks it from the browser gate - minutes if you are
+#    awake, hours if it lands overnight. Patches still install on schedule; the
+#    restart becomes yours to make when you can unlock it straight after.
+#    See docs/deployment/self-hosting.md § Keeping the host patched.
+# ---------------------------------------------------------------------------
+install -d /etc/needrestart/conf.d
+cat >/etc/needrestart/conf.d/hezo.conf <<'EOF'
+# Managed by Hezo provision.sh.
+# Hezo comes back locked after a restart (its master key lives in memory only),
+# so an unattended restart takes agent execution offline until an operator
+# unlocks it. needrestart still reports Hezo as needing a restart - check with
+# `needrestart -b -r l` - it just must never perform one on its own.
+$nrconf{override_rc} = { qr(^hezo\.service$) => 0 };
+EOF
+
+# ---------------------------------------------------------------------------
+# 9. Firewall — only 80/443 public; keep 3100 and the egress range host-local,
 #    but let the Docker bridge reach the host (agents call back over docker0).
 #    See docs/deployment/self-hosting.md § Networking & firewall.
 # ---------------------------------------------------------------------------
@@ -393,7 +415,7 @@ if command -v ufw >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------------
-# 9. Enable (and, outside image builds, start) everything
+# 10. Enable (and, outside image builds, start) everything
 # ---------------------------------------------------------------------------
 systemctl daemon-reload
 

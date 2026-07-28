@@ -353,3 +353,52 @@ You can always upgrade by replacing the binary yourself. On startup Hezo runs an
 required database migrations automatically - the embedded database is migrated on a
 copy and swapped in only on success (the previous copy is kept aside), so an upgrade
 is safe to roll back. See [Backup & recovery](/docs/deployment/backup-and-recovery).
+
+## Keeping the host patched
+
+This section is about patching the **operating system** under Hezo, not Hezo
+itself. On Ubuntu and Debian, `unattended-upgrades` installs security updates on
+its own daily schedule. After each one a helper called `needrestart` runs from
+the package manager's hook and, in the automatic mode Ubuntu uses there,
+restarts every service still running against a library the upgrade replaced.
+That is the right default for most daemons: a patched file on disk does nothing
+for a process that still has the old code mapped in memory.
+
+Hezo is the exception, because it cannot bring itself back. Its master key is
+held in memory only and never written to disk, so any restart outside the in-app
+update flow above brings the instance up **locked**, with agent execution
+stopped until someone opens the browser gate and unlocks it. An unattended
+restart therefore turns a routine background patch into an outage lasting until
+you happen to notice - a couple of minutes if you are at your desk, the whole
+night if it lands at 3am.
+
+The one-click deploy installs an exemption at
+`/etc/needrestart/conf.d/hezo.conf` so that never happens:
+
+```perl
+$nrconf{override_rc} = { qr(^hezo\.service$) => 0 };
+```
+
+Patches still download and install on the usual schedule. `needrestart` still
+*reports* that Hezo wants a restart - it simply no longer performs one, so the
+restart is yours to make at a moment when you can unlock right afterwards. If
+you set the service up by hand rather than through the one-click deploy, write
+that file yourself.
+
+**The trade-off is that you have to come back for it.** Until you restart, Hezo
+keeps running against the pre-patch copy of the library, so a fix for something
+like a C-library vulnerability is not yet live in the running process. Check for
+a pending restart whenever you are on the box:
+
+```sh
+sudo needrestart -b -r l      # lists services running against replaced libraries
+```
+
+If `hezo.service` is listed, restart it and unlock it in the browser:
+
+```sh
+sudo systemctl restart hezo
+```
+
+Kernel upgrades need a full reboot, which locks Hezo the same way, so they are a
+natural moment to take both together.
