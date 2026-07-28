@@ -2244,12 +2244,29 @@ working-tree Dockerfile so edits take effect immediately. The version is also su
 port immediately, so requests can arrive before the app exists. Until `serverReady` flips,
 the entry delegates to `serveStartupRequest` (`startup-serving.ts`): browser navigations and
 static assets are served from the embedded SPA bundle, and `/api/status` answers **200** with
-`{ starting: true, phase, message }` read from a boot-progress singleton (`startup-progress.ts`,
-advanced through `database → migrations → seed → pricing → workspace`). The web UI
-(`useStatus` → `StartingScreen`) renders a loading screen naming the current phase and keeps
-polling, flipping to the master-key gate the moment boot finishes — so a browser that connects
-mid-boot never sees a raw JSON error. Other API/MCP/WebSocket surfaces still get a JSON **503
-STARTING** so machine clients retry; `/health` always answers 200.
+`{ starting: true, phase, message, detail }` read from a boot-progress singleton
+(`startup-progress.ts`, advanced through `database → migrations → seed → pricing →
+workspace`). The web UI (`useStatus` → `StartingScreen`) renders a loading screen naming the
+current phase and keeps polling, flipping to the master-key gate the moment boot finishes —
+so a browser that connects mid-boot never sees a raw JSON error. Other API/MCP/WebSocket
+surfaces still get a JSON **503 STARTING** so machine clients retry; `/health` always answers 200.
+
+`detail` names the **step in flight** within a phase, because a phase alone cannot distinguish
+a slow boot from a hung one: the migration runners report the pgdata copy / pre-migration
+backup, then each migration as `Applying <file> (n of m)`, and the one-time legacy run-log
+VACUUM names itself under the `seed` phase. Two further signals make a **crash loop** legible,
+which is otherwise indistinguishable from a boot that never finishes (the process dies, the
+restart policy brings it back, and the browser just sees the boot screen again):
+
+- **Fatal-exit breadcrumb** (`startup-failure.ts`). The operator-actionable failures
+  (`MigrationFailedError`, `DbNewerThanAppError`, `ExternalDbError`, `AssetStorageError`)
+  `process.exit(1)`, so their reason never reaches the browser. Each writes
+  `<dataDir>/.last-startup-error.json` on the way out; the **next** boot reads it before
+  `startup()` runs and serves it as `last_failure` on `/api/status`, and the boot screen shows
+  it. Cleared once a boot reaches `ready`.
+- **Restart counter** (client-side, in `StartingScreen`). A boot phase moving *backwards*
+  means a fresh process answered the poll. This is the only signal available for a kill the
+  process cannot observe — an OOM `SIGKILL` (exit 137) writes no breadcrumb.
 
 **Migrations.** Real, tracked, **append-only** SQL under `packages/server/migrations/`
 (`001_initial_schema.sql` is the frozen baseline — never edit a shipped migration; each is
@@ -2384,6 +2401,18 @@ legacy-migrated rows can each carry a whole multi-MB run log) would
 otherwise breach in a single flat-size page and hard-crash the WASM instance. The
 subcommands' teardown closes are best-effort (`closeQuietly` in `cli.ts`), so closing an
 already-crashed engine can never mask the original dump/restore error.
+
+The dump is **streamed, never buffered**: `streamLogicalBackupLines` is an async generator
+yielding one JSONL line at a time, and `dumpLogicalBackupToFile` pipes it through gzip
+straight to the destination file, so resident memory stays at roughly one page regardless of
+instance size. Every caller that ends up with a file on disk uses it — the `hezo backup`
+subcommands and the external-Postgres **pre-migration backup**. The buffer-returning
+`dumpLogicalBackup` is retained for round-trip tests only. This matters because the
+pre-migration backup runs on the **startup** path: collecting the whole database into a
+`string[]`, joining it, and gzipping that held three uncompressed copies at once, which
+OOM-killed small hosts (exit 137) *mid-upgrade* — and since the kill lands before the
+migration is applied, the restart policy replayed the identical kill on every boot, leaving
+the instance in an unbreakable loop showing "Running database migrations…".
 Restore replays the binary's own migrations up to exactly the recorded set, then loads
 data in one transaction with FK constraints dropped/re-added around the inserts (insert
 order and self-references never matter) and serial sequences resumed; migration-seeded

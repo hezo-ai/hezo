@@ -1,4 +1,7 @@
-import { gunzipSync, gzipSync } from 'node:zlib';
+import { createWriteStream } from 'node:fs';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import { createGzip, gunzipSync, gzipSync } from 'node:zlib';
 import { formatBytes, type ProgressCallback } from '../lib/progress';
 import type { Db, Queryable } from './database';
 import { checksumOfMigration, type Migration, runMigrations } from './migrate';
@@ -184,10 +187,23 @@ function decodeValue(value: unknown, udt: string): unknown {
 }
 
 /** Dump the whole database as a gzipped logical backup buffer. */
-export async function dumpLogicalBackup(
+/**
+ * Yield the backup as newline-terminated JSONL lines, a page of rows at a time.
+ *
+ * This is the memory-safe core of the dump, and it must stay a generator. The
+ * dump used to accumulate every row of the database into one `string[]`, join it
+ * into a single giant string, then gzip that — three full copies of the
+ * uncompressed database resident at once, on top of V8's per-string overhead for
+ * millions of array entries. On a small VPS that is an OOM kill (exit 137), and
+ * because the pre-migration backup runs on the startup path, the kill lands
+ * mid-upgrade: the supervisor restarts, dumps again, is killed again, forever.
+ * Streaming keeps resident memory at roughly one page (~4MB) regardless of how
+ * large the instance is.
+ */
+export async function* streamLogicalBackupLines(
 	db: Db,
 	meta: { hezoVersion: string; migrations: Record<string, Migration> },
-): Promise<Buffer> {
+): AsyncGenerator<string> {
 	const tables = await introspectTables(db);
 	const applied = await db.query<{ filename: string; checksum: string }>(
 		`SELECT filename, checksum FROM _migrations ORDER BY id`,
@@ -206,7 +222,7 @@ export async function dumpLogicalBackup(
 			})),
 	};
 
-	const lines: string[] = [JSON.stringify(header)];
+	yield `${JSON.stringify(header)}\n`;
 	for (const table of tables) {
 		if (table.name === '_migrations') continue;
 		const cols = table.columns.filter((c) => !c.generated);
@@ -252,7 +268,10 @@ export async function dumpLogicalBackup(
 					for (const col of cols) {
 						encoded[col.name] = encodeValue(row[col.name], col.udt);
 					}
-					lines.push(JSON.stringify({ t: table.name, r: encoded }));
+					// Yielding per row (rather than per page) is what lets the consumer
+					// apply back-pressure: the gzip stream and the file write decide how
+					// fast rows are produced, so nothing queues up behind a slow disk.
+					yield `${JSON.stringify({ t: table.name, r: encoded })}\n`;
 				}
 				if (!orderBy || page.rows.length < pageRows) break;
 				offset += pageRows;
@@ -262,8 +281,42 @@ export async function dumpLogicalBackup(
 			throw new Error(`Dumping table "${table.name}" failed: ${causeMsg}`, { cause: err });
 		}
 	}
+}
 
-	return gzipSync(`${lines.join('\n')}\n`);
+/**
+ * Write a logical backup straight to `filePath`, gzipped, in constant memory.
+ *
+ * This is the form every caller that ends up with a file on disk should use -
+ * the startup pre-migration backup and the `hezo backup` CLI both do. Holding
+ * the whole dump in a Buffer first (see `dumpLogicalBackup`) is what OOM-killed
+ * small hosts mid-upgrade.
+ */
+export async function dumpLogicalBackupToFile(
+	db: Db,
+	filePath: string,
+	meta: { hezoVersion: string; migrations: Record<string, Migration> },
+): Promise<void> {
+	await pipeline(
+		Readable.from(streamLogicalBackupLines(db, meta), { objectMode: false }),
+		createGzip(),
+		createWriteStream(filePath),
+	);
+}
+
+/**
+ * The whole backup as one gzipped Buffer.
+ *
+ * Prefer `dumpLogicalBackupToFile` for anything that writes to disk: this holds
+ * the entire uncompressed database in memory and is retained for callers that
+ * genuinely need the bytes in hand (tests, round-trip checks).
+ */
+export async function dumpLogicalBackup(
+	db: Db,
+	meta: { hezoVersion: string; migrations: Record<string, Migration> },
+): Promise<Buffer> {
+	const lines: string[] = [];
+	for await (const line of streamLogicalBackupLines(db, meta)) lines.push(line);
+	return gzipSync(lines.join(''));
 }
 
 /**

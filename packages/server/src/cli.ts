@@ -310,14 +310,17 @@ export async function runBackup(argv: string[] = process.argv): Promise<boolean>
 	// Embedded backend: never open a second cluster over a live server's files.
 	if (!databaseUrl) await assertNoLiveEmbeddedServer(dataDir, 'backup');
 
-	const { mkdir, writeFile } = await import('node:fs/promises');
+	const { mkdir } = await import('node:fs/promises');
 	const { openDatabase } = await import('./db/open.js');
 	const stamp = new Date().toISOString().replace(/[:.]/g, '-');
 
-	const dumpDatabase = async (
+	// Streams straight to `outFile`: a logical dump held in memory first is a
+	// multi-GB allocation on a real instance, which OOM-kills small hosts.
+	const dumpDatabaseToFile = async (
 		db: import('./db/database').Db,
 		sourceLabel: string,
-	): Promise<Buffer> => {
+		outFile: string,
+	): Promise<void> => {
 		// A data dir (or external database) that isn't a Hezo instance has no
 		// `_migrations` bookkeeping. For embedded storage `openPersistentDb` happily
 		// creates an empty database on open, so without this guard the dump would
@@ -339,8 +342,9 @@ export async function runBackup(argv: string[] = process.argv): Promise<boolean>
 		const { loadAllMigrations } = await import('./db/load-migrations.js');
 		const migrations = await loadAllMigrations();
 		if (!migrations) throw new Error('No migrations found — cannot determine the schema version.');
-		const { dumpLogicalBackup } = await import('./db/logical-backup.js');
-		return dumpLogicalBackup(db, { hezoVersion: HEZO_VERSION, migrations });
+		const { dumpLogicalBackupToFile } = await import('./db/logical-backup.js');
+		await mkdir(resolve(outFile, '..'), { recursive: true });
+		await dumpLogicalBackupToFile(db, outFile, { hezoVersion: HEZO_VERSION, migrations });
 	};
 
 	// --no-assets keeps the exact legacy single-file artifact (the DB-only
@@ -348,12 +352,10 @@ export async function runBackup(argv: string[] = process.argv): Promise<boolean>
 	if (!withAssets) {
 		const opened = await openDatabase({ dataDir, databaseUrl });
 		try {
-			const bytes = await dumpDatabase(opened.db, opened.storage.display);
 			const output = resolve(
 				(opts.output as string | undefined) ?? `${dataDir}/backups/hezo-${stamp}.backup.gz`,
 			);
-			await mkdir(resolve(output, '..'), { recursive: true });
-			await writeFile(output, bytes);
+			await dumpDatabaseToFile(opened.db, opened.storage.display, output);
 			console.log(`Wrote logical backup of ${opened.storage.backend} database → ${output}`);
 		} finally {
 			await closeQuietly(opened.db);
@@ -374,9 +376,10 @@ export async function runBackup(argv: string[] = process.argv): Promise<boolean>
 	try {
 		let databaseFile: string | null = null;
 		if (withDatabase) {
-			await writeFile(
+			await dumpDatabaseToFile(
+				opened.db,
+				opened.storage.display,
 				join(bundleDir, blob.BUNDLE_DB_NAME),
-				await dumpDatabase(opened.db, opened.storage.display),
 			);
 			databaseFile = blob.BUNDLE_DB_NAME;
 		}

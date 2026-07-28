@@ -37,15 +37,17 @@ async function writePreMigrationBackup(
 	pending: string[],
 	backup: ExternalMigrationBackupOptions,
 ): Promise<string> {
-	const { mkdir, readdir, rm, writeFile } = await import('node:fs/promises');
+	const { mkdir, readdir, rm } = await import('node:fs/promises');
 	const { join } = await import('node:path');
-	const { dumpLogicalBackup } = await import('./logical-backup.js');
+	const { dumpLogicalBackupToFile } = await import('./logical-backup.js');
 
-	const bytes = await dumpLogicalBackup(db, { hezoVersion: backup.version, migrations });
 	await mkdir(backup.dir, { recursive: true });
 	const stamp = new Date().toISOString().replace(/[:.]/g, '-');
 	const file = join(backup.dir, `hezo-${stamp}-pre-${backup.version}.backup.gz`);
-	await writeFile(file, bytes);
+	// Streamed to disk, never buffered: this runs on the startup path, so an
+	// out-of-memory kill here takes the whole instance into a restart loop that
+	// repeats the same kill on every boot.
+	await dumpLogicalBackupToFile(db, file, { hezoVersion: backup.version, migrations });
 	log.info(`Wrote pre-migration logical backup (${pending.length} pending) → ${file}`);
 
 	const existing = (await readdir(backup.dir)).filter((f) => f.endsWith('.backup.gz')).sort();
@@ -78,7 +80,11 @@ async function writePreMigrationBackup(
 export async function applyPendingMigrationsExternal(
 	db: Db,
 	migrations: Record<string, Migration>,
-	options: { backup?: ExternalMigrationBackupOptions } = {},
+	options: {
+		backup?: ExternalMigrationBackupOptions;
+		/** Display-safe step line, forwarded to the boot-phase detail. See `migrate-runner.ts`. */
+		onProgress?: (detail: string) => void;
+	} = {},
 ): Promise<void> {
 	// Cheap pre-check outside the lock — the common nothing-pending boot path.
 	const unknownEarly = await findUnknownAppliedMigrations(db, migrations);
@@ -86,6 +92,7 @@ export async function applyPendingMigrationsExternal(
 	if ((await getPendingMigrations(db, migrations)).length === 0) return;
 
 	log.info('Acquiring the migration lock (waits if another Hezo instance is migrating)…');
+	options.onProgress?.('Waiting for the migration lock');
 	const lock = await db.acquireSessionLock(MIGRATION_LOCK_KEY);
 	try {
 		const unknown = await findUnknownAppliedMigrations(db, migrations);
@@ -99,6 +106,9 @@ export async function applyPendingMigrationsExternal(
 
 		if (options.backup) {
 			try {
+				options.onProgress?.(
+					'Writing a pre-migration backup - this can take a few minutes on a large instance',
+				);
 				await writePreMigrationBackup(db, migrations, pending, options.backup);
 			} catch (err) {
 				throw new ExternalDbError(
@@ -114,7 +124,10 @@ export async function applyPendingMigrationsExternal(
 
 		log.info(`Applying ${pending.length} migration(s) in place: ${pending.join(', ')}`);
 		try {
-			await runMigrations(db, migrations);
+			await runMigrations(db, migrations, {
+				onProgress: ({ filename, index, total }) =>
+					options.onProgress?.(`Applying ${filename} (${index} of ${total})`),
+			});
 		} catch (err) {
 			throw new ExternalMigrationFailedError(pending, err);
 		}

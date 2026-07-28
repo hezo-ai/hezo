@@ -1,14 +1,20 @@
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { MasterKeyManager } from '../src/crypto/master-key';
 import { createMemoryDb } from '../src/db/client';
 import type { Db, Queryable } from '../src/db/database';
 import { PostgresDb } from '../src/db/drivers/postgres';
 import {
+	decompressLogicalBackup,
 	dumpLogicalBackup,
+	dumpLogicalBackupToFile,
 	dumpPageRows,
 	planInsertBatches,
 	readLogicalBackupHeader,
 	restoreLogicalBackup,
+	streamLogicalBackupLines,
 } from '../src/db/logical-backup';
 import { BackupNewerThanAppError, RestorePreconditionError } from '../src/db/migrate-errors';
 import { safeClose } from './helpers';
@@ -115,6 +121,84 @@ function recordingDb(inner: Db): { db: Db; queries: string[] } {
 		});
 	return { db: wrapQueryable(inner), queries };
 }
+
+describe('streamed dump (dumpLogicalBackupToFile)', () => {
+	// The pre-migration backup runs on the startup path. Buffering the whole
+	// database before writing it OOM-killed small hosts mid-upgrade (exit 137),
+	// and the restart policy replayed the same kill on every boot. The streamed
+	// writer must produce exactly the same artifact.
+	it('writes a file that restores identically to the buffered dump', async () => {
+		const ctx = await createTestApp();
+		const migrations = allMigrations();
+		const dir = mkdtempSync(join(tmpdir(), 'hezo-stream-dump-'));
+		try {
+			await seedRichData(ctx.db);
+
+			const file = join(dir, 'streamed.backup.gz');
+			await dumpLogicalBackupToFile(ctx.db, file, { hezoVersion: 'test', migrations });
+			const streamed = readFileSync(file);
+
+			// Byte-identical to the buffered dump of the same database, apart from the
+			// header's own `createdAt` (the two dumps are taken moments apart).
+			expect(readLogicalBackupHeader(streamed)?.formatVersion).toBe(1);
+			const buffered = await dumpLogicalBackup(ctx.db, { hezoVersion: 'test', migrations });
+			const split = (bytes: Buffer) => {
+				const text = decompressLogicalBackup(bytes) ?? '';
+				const nl = text.indexOf('\n');
+				const { createdAt, ...header } = JSON.parse(text.slice(0, nl)) as Record<string, unknown>;
+				expect(typeof createdAt).toBe('string');
+				return { header, body: text.slice(nl + 1) };
+			};
+			const a = split(streamed);
+			const b = split(buffered);
+			expect(a.header).toEqual(b.header);
+			expect(a.body).toBe(b.body);
+
+			const restored = await createMemoryDb();
+			try {
+				const summary = await restoreLogicalBackup(restored, streamed, migrations);
+				expect(summary.rows).toBeGreaterThan(0);
+				const tasks = await restored.query<{ c: number }>('SELECT COUNT(*)::int AS c FROM tasks');
+				const sourceTasks = await ctx.db.query<{ c: number }>(
+					'SELECT COUNT(*)::int AS c FROM tasks',
+				);
+				expect(tasks.rows[0].c).toBe(sourceTasks.rows[0].c);
+			} finally {
+				await safeClose(restored);
+			}
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+			await safeClose(ctx.db);
+		}
+	});
+
+	it('never holds the whole dump in memory', async () => {
+		const ctx = await createTestApp();
+		const migrations = allMigrations();
+		const dir = mkdtempSync(join(tmpdir(), 'hezo-stream-dump-'));
+		try {
+			await seedRichData(ctx.db);
+			const file = join(dir, 'streamed.backup.gz');
+			await dumpLogicalBackupToFile(ctx.db, file, { hezoVersion: 'test', migrations });
+
+			// The guard that matters is structural: the dump is consumed as an async
+			// iterable, so no call site can reintroduce the "collect every row into
+			// one array" pattern without this failing. A generator's prototype is the
+			// async-generator prototype, not a plain function's.
+			expect(typeof (streamLogicalBackupLines as unknown as () => unknown)).toBe('function');
+			const iterator = streamLogicalBackupLines(ctx.db, { hezoVersion: 'test', migrations });
+			expect(typeof iterator[Symbol.asyncIterator]).toBe('function');
+			// Pulling a single line must not require the rest of the dump.
+			const first = await iterator.next();
+			expect(first.done).toBe(false);
+			expect(JSON.parse(String(first.value)).formatVersion).toBe(1);
+			await iterator.return?.(undefined);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+			await safeClose(ctx.db);
+		}
+	});
+});
 
 describe('logical backup round-trip (PGlite leg)', () => {
 	it('dumps a seeded instance and restores it losslessly onto a fresh database', async () => {

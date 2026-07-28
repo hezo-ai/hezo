@@ -28,6 +28,20 @@ export interface StatusResponse {
 	message?: string;
 	/** Optional extra context for the loading screen. */
 	detail?: string;
+	/**
+	 * Why the PREVIOUS boot died, when it died fatally. Present only while
+	 * `starting` — a restart loop repeats the same failure, so this is what turns
+	 * an endless boot screen into something actionable.
+	 */
+	lastFailure?: StartupFailure;
+}
+
+/** Mirrors `StartupFailureRecord` in `packages/server/src/startup-failure.ts`. */
+export interface StartupFailure {
+	message: string;
+	phase: string;
+	version: string;
+	at: string;
 }
 
 /** The password below is the minimum the UI will accept before deriving a verifier. */
@@ -48,6 +62,7 @@ export async function checkStatus(): Promise<StatusResponse> {
 	const res = await fetch('/api/status');
 	const body = (await res.json()) as StatusResponse & {
 		error?: { code?: string; message?: string };
+		last_failure?: StartupFailure;
 	};
 	// While booting, the server answers 200 with `starting: true` and a live phase
 	// instead of `masterKeyState`. Surface it so the UI can render a loading screen.
@@ -58,6 +73,7 @@ export async function checkStatus(): Promise<StatusResponse> {
 			message: body.message,
 			detail: body.detail,
 			version: body.version,
+			lastFailure: body.last_failure,
 		};
 	}
 	if (!res.ok) {

@@ -39,7 +39,30 @@ export function checksumOfMigration(m: Migration): string {
 	return checksumOf(m);
 }
 
-export async function runMigrations(db: Db, migrations: Record<string, Migration>): Promise<void> {
+/** Progress for one step of a `runMigrations` pass. */
+export interface MigrationProgress {
+	/** The migration about to be applied. */
+	filename: string;
+	/** 1-based position within THIS run's pending set. */
+	index: number;
+	/** How many migrations this run will apply. */
+	total: number;
+}
+
+export interface RunMigrationsOptions {
+	/**
+	 * Called just before each pending migration is applied. Startup wires this to
+	 * the boot-phase detail so the loading screen names the migration in flight -
+	 * a long migration is otherwise indistinguishable from a hung server.
+	 */
+	onProgress?: (progress: MigrationProgress) => void;
+}
+
+export async function runMigrations(
+	db: Db,
+	migrations: Record<string, Migration>,
+	options: RunMigrationsOptions = {},
+): Promise<void> {
 	await db.exec(`
     CREATE TABLE IF NOT EXISTS _migrations (
       id          SERIAL PRIMARY KEY,
@@ -55,6 +78,8 @@ export async function runMigrations(db: Db, migrations: Record<string, Migration
 	const appliedMap = new Map(applied.rows.map((r) => [r.filename, r.checksum]));
 
 	const filenames = Object.keys(migrations).sort();
+	const total = filenames.filter((f) => !appliedMap.has(f)).length;
+	let index = 0;
 
 	for (const filename of filenames) {
 		const migration = migrations[filename];
@@ -66,6 +91,9 @@ export async function runMigrations(db: Db, migrations: Record<string, Migration
 			}
 			continue;
 		}
+
+		index += 1;
+		options.onProgress?.({ filename, index, total });
 
 		try {
 			await db.transaction(async (tx) => {
