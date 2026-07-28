@@ -1302,6 +1302,8 @@ export const AiProvider = {
 	OpenRouter: 'openrouter',
 	Kimi: 'kimi',
 	XAi: 'x_ai',
+	Ollama: 'ollama',
+	LmStudio: 'lmstudio',
 } as const;
 export type AiProvider = (typeof AiProvider)[keyof typeof AiProvider];
 
@@ -1458,6 +1460,22 @@ export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapte
 		runtime: AgentRuntime.Grok,
 		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'XAI_API_KEY' },
 	},
+	// Local, self-hosted runners. Both serve Anthropic's Messages API natively
+	// (Ollama `/v1/messages`; LM Studio the same since 0.4.1), so they run on the
+	// Claude Code runtime exactly like DeepSeek/Z.ai/Kimi — with one structural
+	// difference: the endpoint is the operator's own machine, so it CANNOT live in
+	// `staticEnv`. The base URL is stored per-config and injected at run time from
+	// the credential (see `buildProviderEnv`), which is why there is no
+	// `ANTHROPIC_BASE_URL` here. Model defaults are likewise omitted: whatever the
+	// operator has pulled locally is the model, selected per agent.
+	[AiProvider.Ollama]: {
+		runtime: AgentRuntime.ClaudeCode,
+		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'ANTHROPIC_AUTH_TOKEN' },
+	},
+	[AiProvider.LmStudio]: {
+		runtime: AgentRuntime.ClaudeCode,
+		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'ANTHROPIC_AUTH_TOKEN' },
+	},
 };
 
 /** Default upstream API hostnames per provider (for egress NO_PROXY). */
@@ -1470,6 +1488,11 @@ const PROVIDER_UPSTREAM_HOSTS: Record<AiProvider, readonly string[]> = {
 	[AiProvider.OpenRouter]: ['openrouter.ai'],
 	[AiProvider.Kimi]: ['api.moonshot.ai'],
 	[AiProvider.XAi]: ['api.x.ai'],
+	// Local runners have no fixed upstream — the real host comes from the config's
+	// stored base URL, passed to `providerDirectUpstreamHosts` at run time. These
+	// are only the fallback for a config that somehow carries no URL.
+	[AiProvider.Ollama]: ['localhost'],
+	[AiProvider.LmStudio]: ['localhost'],
 };
 
 /**
@@ -1477,9 +1500,19 @@ const PROVIDER_UPSTREAM_HOSTS: Record<AiProvider, readonly string[]> = {
  * LLM credentials are injected via container env (not `__HEZO_SECRET_*`
  * placeholders); MITM breaks some Anthropic-compatible APIs, so provider
  * traffic goes direct while git/MCP placeholders still use the proxy.
+ *
+ * `configuredBaseUrl` is the operator-supplied endpoint carried on the
+ * credential, used by the local providers (Ollama / LM Studio) whose host is
+ * per-install and therefore absent from `staticEnv`. It takes precedence over
+ * both the static override and the default table; an unparseable value falls
+ * through to them rather than throwing.
  */
-export function providerDirectUpstreamHosts(provider: AiProvider): readonly string[] {
-	const baseUrl = PROVIDER_RUNTIME_ADAPTERS[provider].staticEnv?.ANTHROPIC_BASE_URL;
+export function providerDirectUpstreamHosts(
+	provider: AiProvider,
+	configuredBaseUrl?: string | null,
+): readonly string[] {
+	const baseUrl =
+		configuredBaseUrl || PROVIDER_RUNTIME_ADAPTERS[provider].staticEnv?.ANTHROPIC_BASE_URL;
 	if (baseUrl) {
 		try {
 			return [new URL(baseUrl).hostname];
@@ -1524,9 +1557,24 @@ export function claudeCodeModelArg(provider: AiProvider, model: string): string 
  */
 export function claudeCodeProviderUsesCustomEndpoint(provider: AiProvider): boolean {
 	const adapter = PROVIDER_RUNTIME_ADAPTERS[provider];
-	return (
-		adapter.runtime === AgentRuntime.ClaudeCode && Boolean(adapter.staticEnv?.ANTHROPIC_BASE_URL)
-	);
+	if (adapter.runtime !== AgentRuntime.ClaudeCode) return false;
+	// Local providers reach a custom endpoint too, but carry it on the credential
+	// rather than in `staticEnv`, so the base-URL probe alone would miss them. The
+	// cost rationale for excluding Anthropic above does not apply here: local
+	// inference is free, so tracking the run's model costs nothing, and the pinned
+	// alternative would be a model the operator may not even have pulled.
+	if (isLocalAiProvider(provider)) return true;
+	return Boolean(adapter.staticEnv?.ANTHROPIC_BASE_URL);
+}
+
+/**
+ * True for providers served by a runner on hardware the operator controls
+ * (Ollama, LM Studio) rather than a vendor's hosted API. These are configured
+ * with a base URL instead of a fixed endpoint, need no real credential, and
+ * cost nothing per token.
+ */
+export function isLocalAiProvider(provider: AiProvider): boolean {
+	return Boolean(AI_PROVIDER_INFO[provider]?.local);
 }
 
 /**
@@ -1721,12 +1769,30 @@ export interface AiProviderVerifyEndpoint {
 	headers: Record<string, string> | ((apiKey: string) => Record<string, string>);
 }
 
+/**
+ * Marks a provider as a locally-hosted runner and carries the two things that
+ * differ from a vendor API: where it listens by default, and the throwaway token
+ * to store when the operator supplies none (`encrypted_credential` is NOT NULL,
+ * and these runners either ignore the token entirely or only check it when the
+ * operator has explicitly turned auth on).
+ */
+export interface AiProviderLocalInfo {
+	defaultBaseUrl: string;
+	authTokenSentinel: string;
+}
+
 export interface AiProviderInfo {
 	name: string;
 	runtimeLabel: string;
 	supportsSubscription?: boolean;
 	keyPrefix?: string;
 	keyPlaceholder: string;
+	/**
+	 * Present only for locally-hosted providers. When set, the operator supplies
+	 * a base URL and `verifyEndpoint` is unused - verification and the model list
+	 * are built from that URL instead (see the ai-providers routes).
+	 */
+	local?: AiProviderLocalInfo;
 	verifyEndpoint: AiProviderVerifyEndpoint;
 }
 
@@ -1814,6 +1880,30 @@ export const AI_PROVIDER_INFO: Record<AiProvider, AiProviderInfo> = {
 		// default-model dropdown (grok-4.5, grok-build-0.1, …); standard `data[]`.
 		verifyEndpoint: {
 			url: 'https://api.x.ai/v1/models',
+			headers: (apiKey) => ({ Authorization: `Bearer ${apiKey}` }),
+		},
+	},
+	// Local runners. `verifyEndpoint` is a formality for these two - the routes
+	// branch on `local` first and build `<baseUrl>/v1/models` from the operator's
+	// configured URL - but the field is required by the interface, so it points at
+	// the default port and stays correct for an out-of-the-box install.
+	[AiProvider.Ollama]: {
+		name: 'Ollama',
+		runtimeLabel: 'Claude Code',
+		keyPlaceholder: 'not required',
+		local: { defaultBaseUrl: 'http://localhost:11434', authTokenSentinel: 'ollama' },
+		verifyEndpoint: {
+			url: 'http://localhost:11434/v1/models',
+			headers: (apiKey) => ({ Authorization: `Bearer ${apiKey}` }),
+		},
+	},
+	[AiProvider.LmStudio]: {
+		name: 'LM Studio',
+		runtimeLabel: 'Claude Code',
+		keyPlaceholder: 'not required',
+		local: { defaultBaseUrl: 'http://localhost:1234', authTokenSentinel: 'lmstudio' },
+		verifyEndpoint: {
+			url: 'http://localhost:1234/v1/models',
 			headers: (apiKey) => ({ Authorization: `Bearer ${apiKey}` }),
 		},
 	},

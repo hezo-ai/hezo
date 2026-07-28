@@ -75,6 +75,15 @@ export const CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER: Partial<Record<AiProvider, str
  * that must not scale with the run's model (an Opus run should not judge with
  * Opus), so it always uses the constant. `claudeCodeProviderUsesCustomEndpoint`
  * encodes exactly that split.
+ *
+ * The locally-hosted providers (Ollama, LM Studio) also derive from the run's
+ * model, and for them it is the ONLY workable choice: the models an operator has
+ * pulled are unknowable here, so there is no constant to fall back to. A local
+ * run with no pinned model therefore falls through to the Anthropic id, which
+ * the local server does not serve — the judge call fails and the hook fails
+ * open, the same posture already accepted for OpenCode and Grok. Deriving from
+ * the run model (the normal case, since agents are assigned one) keeps the judge
+ * working without pinning ids we cannot know.
  */
 export function judgeModelForProvider(provider: AiProvider, runModel?: string | null): string {
 	const fallback = CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER[provider] ?? STOP_HOOK_JUDGE_MODEL_ANTHROPIC;

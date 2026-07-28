@@ -104,6 +104,21 @@ export const SUBSCRIPTION_LAYOUTS: Partial<Record<AiProvider, SubscriptionLayout
 		envVarName: 'HEZO_CLAUDE_CONFIG_DIR',
 		rotates: false,
 	},
+	// The local providers are Claude Code-driven too, so they need the same per-run
+	// config dir — without an entry here `ensureRuntimeHomeDir` returns null, no
+	// settings.json is written, and the completeness Stop hook silently never
+	// loads. Api-key only (a sentinel token via ANTHROPIC_AUTH_TOKEN), so no
+	// authFileRelative.
+	[AiProvider.Ollama]: {
+		dirName: 'claude-code-ollama',
+		envVarName: 'HEZO_CLAUDE_CONFIG_DIR',
+		rotates: false,
+	},
+	[AiProvider.LmStudio]: {
+		dirName: 'claude-code-lmstudio',
+		envVarName: 'HEZO_CLAUDE_CONFIG_DIR',
+		rotates: false,
+	},
 	// OpenCode (OpenRouter) needs a per-run dir to host `opencode.json`. The
 	// envVarName is a Hezo-internal marker; the OpenCode adapter points the CLI at
 	// the config file via an explicit `OPENCODE_CONFIG=<dir>/opencode.json` env

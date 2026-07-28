@@ -12,10 +12,12 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 
 // Display order mirrors the catalogue order used elsewhere in the app. Shared by
-// every surface that renders the provider card grid (onboarding + settings).
-// OpenRouter (OpenCode runtime) is intentionally omitted from the picker for now
-// — the plumbing stays in place, but it's hidden until we've confirmed whether
-// its runs report cost in output.
+// every surface that renders the provider card grid (onboarding + settings), so
+// a provider missing here is unreachable in the UI even though the API accepts
+// it — keep it in sync with the AiProvider enum.
+//
+// Hosted providers first, then the self-hosted runners, which are a different
+// kind of choice: the operator supplies a server URL instead of a key.
 export const ADD_PROVIDER_ORDER: readonly AiProvider[] = [
 	AiProvider.DeepSeek,
 	AiProvider.ZAi,
@@ -24,7 +26,30 @@ export const ADD_PROVIDER_ORDER: readonly AiProvider[] = [
 	AiProvider.Google,
 	AiProvider.Kimi,
 	AiProvider.XAi,
+	AiProvider.OpenRouter,
+	AiProvider.Ollama,
+	AiProvider.LmStudio,
 ];
+
+/**
+ * Warn when a local provider's server URL points at loopback. Agents run inside
+ * a container, where `localhost` is the container itself rather than the host
+ * running the model server, so this is the most likely way to configure a local
+ * provider that verifies fine from the browser and then fails at run time.
+ * Returns null when the host is fine (including `host.docker.internal`, which
+ * the runner already exempts from the egress proxy).
+ */
+export function loopbackHostWarning(rawUrl: string): string | null {
+	let host: string;
+	try {
+		host = new URL(rawUrl).hostname.toLowerCase();
+	} catch {
+		return null; // Not a URL yet - the server validates on submit.
+	}
+	const isLoopback = host === 'localhost' || host === '127.0.0.1' || host === '::1';
+	if (!isLoopback) return null;
+	return "Agents run in a container, where this address means the container itself. Use host.docker.internal to reach a server on this machine, or the machine's LAN address.";
+}
 
 /**
  * Friendly default name for a new config, skipping labels already used for that
@@ -80,6 +105,7 @@ export function ProviderConfigForm({
 	const [nameEdited, setNameEdited] = useState(false);
 	const [apiKey, setApiKey] = useState('');
 	const [authJson, setAuthJson] = useState('');
+	const [baseUrl, setBaseUrl] = useState(info.local?.defaultBaseUrl ?? '');
 	const [error, setError] = useState<string | null>(null);
 
 	// Keep the name pinned to the generated default until the user edits it
@@ -89,17 +115,23 @@ export function ProviderConfigForm({
 	}, [configs, nameEdited, provider]);
 
 	const credential = authMethod === AiAuthMethod.Subscription ? authJson : apiKey;
+	// A local runner needs a reachable server URL, not a credential: it either
+	// ignores the token or only checks one when the operator has enabled auth.
+	const isLocal = Boolean(info.local);
+	const canSubmit = isLocal ? Boolean(baseUrl.trim()) : Boolean(credential.trim());
+	const loopbackWarning = isLocal ? loopbackHostWarning(baseUrl) : null;
 
 	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
 		setError(null);
-		if (!credential.trim()) return;
+		if (!canSubmit) return;
 		try {
 			await createProvider.mutateAsync({
 				provider,
 				api_key: credential,
 				label: showName ? name.trim() || undefined : undefined,
 				auth_method: authMethod,
+				...(isLocal ? { base_url: baseUrl.trim() } : {}),
 			});
 			onDone();
 		} catch (err) {
@@ -168,8 +200,23 @@ export function ProviderConfigForm({
 			) : (
 				<div className="flex flex-col gap-2">
 					<ApiKeyInstructions provider={provider} />
+					{isLocal && (
+						<div className="flex flex-col gap-1.5">
+							<Input
+								label="Server URL"
+								type="url"
+								inputMode="url"
+								placeholder={info.local?.defaultBaseUrl}
+								value={baseUrl}
+								onChange={(e) => setBaseUrl(e.target.value)}
+							/>
+							{loopbackWarning && (
+								<p className="text-[13px] text-warning break-words">{loopbackWarning}</p>
+							)}
+						</div>
+					)}
 					<Input
-						label="API key"
+						label={isLocal ? 'API key (optional)' : 'API key'}
 						type="password"
 						placeholder={info.keyPlaceholder}
 						value={apiKey}
@@ -184,7 +231,7 @@ export function ProviderConfigForm({
 				<Button type="button" variant="ghost" onClick={onCancel}>
 					Cancel
 				</Button>
-				<Button type="submit" disabled={!credential.trim() || createProvider.isPending}>
+				<Button type="submit" disabled={!canSubmit || createProvider.isPending}>
 					{createProvider.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
 					{submitLabel}
 				</Button>

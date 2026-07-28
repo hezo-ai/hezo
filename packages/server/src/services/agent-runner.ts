@@ -245,6 +245,18 @@ export function buildProviderEnv(
 			}
 		}
 	}
+	// Locally-hosted providers (Ollama, LM Studio) reach an endpoint that is
+	// per-install, so it cannot sit in `staticEnv` like the hosted third-party
+	// Anthropic-compatible providers above. It rides on the credential instead and
+	// is stamped here.
+	if (credential.baseUrl && adapter.runtime === AgentRuntime.ClaudeCode) {
+		out.push(`ANTHROPIC_BASE_URL=${credential.baseUrl}`);
+		// These runners authenticate (when they authenticate at all) from
+		// ANTHROPIC_AUTH_TOKEN. Claude Code prefers ANTHROPIC_API_KEY when both are
+		// present, so an inherited key from the host environment would silently win
+		// and get sent to the operator's local server. Blank it explicitly.
+		out.push('ANTHROPIC_API_KEY=');
+	}
 	const varName = adapter.credentialEnvByAuthMethod[credential.authMethod];
 	if (varName) out.push(`${varName}=${credential.value}`);
 	return out;
@@ -556,7 +568,10 @@ export async function buildRuntimeInvocation(
 			// architecture § Asset storage). Connector MCP servers live on their own
 			// remote hosts (reached via HTTPS CONNECT) and still traverse the proxy.
 			'host.docker.internal',
-			...providerDirectUpstreamHosts(provider),
+			// For a locally-hosted provider the upstream is the operator's own machine,
+			// known only from the config's stored base URL — pass it so that host
+			// bypasses the MITM proxy like any other model-provider endpoint.
+			...providerDirectUpstreamHosts(provider, credential.baseUrl),
 		];
 		const noProxy = [...new Set(noProxyHosts)].join(',');
 		env.push(

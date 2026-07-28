@@ -192,19 +192,15 @@ model's first-party agentic tooling, not a lowest-common-denominator wrapper.
 | **Kimi** (Moonshot) | Kimi | Claude Code | API key |
 | **DeepSeek** | DeepSeek | Claude Code | API key |
 | **Z.ai** | GLM | Claude Code | API key |
+| **OpenRouter** | Many, via one account | OpenCode | API key |
+| **Ollama** | Whatever you run locally | Claude Code | Server URL (no key) |
+| **LM Studio** | Whatever you run locally | Claude Code | Server URL (no key) |
+
+Ollama and LM Studio run agents **entirely on your own hardware** at no per-token cost -
+point Hezo at your server URL and leave the key blank.
 
 Full details (subscriptions vs. API keys, mixing providers, per-agent overrides) in
 [AI model support](./docs/ai-models.md).
-
-## How Hezo compares
-
-|  | Agents in terminal tabs | Hosted agent platforms | Agent frameworks / SDKs | **Hezo** |
-|---|---|---|---|---|
-| Runs on | Your machine, by hand | Someone else's cloud | Wherever you build it | **Hardware you own** |
-| Your secrets | Live in your shell | Held by the vendor | You wire them up | **Never exposed to the agent** |
-| Many agents | Tabs and willpower | Varies | You build it | **An org chart, built in** |
-| Spend control | Watch the meter | Vendor billing | Do it yourself | **Hard budget caps** |
-| You provide | Prompts, by hand | Vendor config | Code | **Goals and rules** |
 
 ## Development
 

@@ -1292,15 +1292,35 @@ agents back to `idle` once a window rolls over or a limit is raised.
 
 ## 6. AI providers, runtimes & the completeness stop-hook
 
-**Providers → runtimes.** `AiProvider` has **eight** values — `anthropic`, `openai`,
-`google`, `deepseek`, `z_ai`, `openrouter`, `kimi`, `x_ai` — and `AgentRuntime` has **five** —
-`claude_code`, `codex`, `gemini`, `opencode`, `grok`. The mapping is data-driven in
+**Providers → runtimes.** `AiProvider` has **ten** values — `anthropic`, `openai`,
+`google`, `deepseek`, `z_ai`, `openrouter`, `kimi`, `x_ai`, `ollama`, `lmstudio` — and
+`AgentRuntime` has **five** — `claude_code`, `codex`, `gemini`, `opencode`, `grok`. The mapping
+is data-driven in
 `packages/shared/src/types/common.ts` (`PROVIDER_RUNTIME_ADAPTERS`, `PROVIDER_TO_RUNTIME`,
 `PROVIDERS_BY_RUNTIME`): Anthropic + DeepSeek + Z.ai + Kimi → `claude_code` (DeepSeek/Z.ai/Kimi
 inject `ANTHROPIC_BASE_URL` + model defaults to point Claude Code at their Anthropic-compatible
 gateway — Kimi at `api.moonshot.ai/anthropic`, model `kimi-k2.7-code`), OpenAI → `codex`,
 Google → `gemini`, OpenRouter → `opencode`, xAI → `grok` (its own first-party Grok Build CLI,
-`XAI_API_KEY` direct to `api.x.ai`, model `grok-4.5`).
+`XAI_API_KEY` direct to `api.x.ai`, model `grok-4.5`), Ollama + LM Studio → `claude_code`
+(local runners, see below).
+
+**Local providers carry their endpoint on the credential, not in `staticEnv`.** Ollama and
+LM Studio serve Anthropic's Messages API natively, so they reuse the Claude Code runtime
+with no shim — but their endpoint is the operator's own machine and therefore cannot live in
+a compile-time constant. The URL is stored per-config in `ai_provider_configs.metadata ->
+'base_url'` (no new column), surfaces on `AiProviderCredential.baseUrl`
+(`readConfigBaseUrl` in `services/ai-provider-keys.ts`), and is consumed in three places:
+`buildProviderEnv` stamps it as `ANTHROPIC_BASE_URL` (and blanks `ANTHROPIC_API_KEY`, since
+Claude Code would otherwise prefer an inherited key over `ANTHROPIC_AUTH_TOKEN`);
+`providerDirectUpstreamHosts(provider, baseUrl)` adds its host to NO_PROXY so local traffic
+skips the MITM proxy; and the ai-providers routes build `<baseUrl>/v1/models` for both key
+verification and the live model list (`resolveCatalogEndpoint`, branching on
+`AI_PROVIDER_INFO[p].local`). `encrypted_credential` is NOT NULL, so a config with no
+operator-supplied token stores the runner's sentinel (`ollama` / `lmstudio`) instead.
+`claudeCodeProviderUsesCustomEndpoint` returns true for them, so the Stop-hook judge and the
+Claude Code subagent default track the run's selected model — the only workable choice, since
+the models an operator has pulled are unknowable here. With no `model_pricing` rows, local
+runs price at `$0`, which for local inference is correct rather than the usual fail-low.
 
 **Provider config.** `ai_provider_configs` is instance-level (shared across teams), one
 row per `(provider, label)`, each inlining an encrypted credential. `auth_method`
