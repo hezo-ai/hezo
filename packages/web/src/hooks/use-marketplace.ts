@@ -27,14 +27,15 @@ export interface AddMarketplaceTeamResponse {
 }
 
 /**
- * Adds a marketplace team's roster to an existing project. The server kicks off a
- * CEO task that hires the roster and reconciles it — the result lives on that task,
- * not this page, so callers surface a success toast linking to it.
+ * Adds a marketplace team to an existing project — the whole roster, or just the
+ * roles named in `roles`. The server kicks off a CEO task that hires them and fits
+ * them to the existing team; the result lives on that task, not this page, so callers
+ * surface a success toast linking to it.
  */
 export function useAddMarketplaceTeam(projectId: string) {
 	return useMutation({
-		mutationFn: (slug: string) =>
-			api.post<AddMarketplaceTeamResponse>(`/api/projects/${projectId}/marketplace-team`, { slug }),
+		mutationFn: (vars: { slug: string; roles?: string[] }) =>
+			api.post<AddMarketplaceTeamResponse>(`/api/projects/${projectId}/marketplace-team`, vars),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.projects.all(), exact: true });
 		},

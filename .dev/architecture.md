@@ -845,6 +845,29 @@ override. `marketplace/index.json` is the catalog listing.
   `update_agent_system_prompt` where roles carry local customizations) instead of adding
   duplicates. Because instances always fetch the live catalog, a new team `version` reaches them
   automatically.
+- **Adding only SOME of the roster.** The same route takes an optional `roles: string[]`. Omitted →
+  the whole-team path above. Present → each slug is resolved against `teamDef.roster` (404 on the
+  first unknown; an explicit `[]` is a 400, never "all"), and resolving against `roster` is also what
+  rejects `captain` and the other `RESERVED_ROSTER_SLUGS` — the Captain lives in the separate
+  `captain` override and every project already has one. It enqueues `enqueueAddMarketplaceRolesTask`
+  (`marketplace-add-team.ts`, label `add-marketplace-roles`; both enqueues share `enqueueCeoTask`),
+  whose body has the CEO call the **`apply_marketplace_agent`** MCP tool once per role →
+  `applyMarketplaceRoleToTeam` (`team-template-apply.ts`). Two deliberate differences from the
+  whole-team provisioning path: the def's **Captain override is never applied** (borrowing worker
+  roles must not rewrite the target team's Captain), and the reporting line **falls back to the
+  Captain** when the role's own manager is absent — `insertRosterAgents` otherwise leaves
+  `reports_to` null, which a subset add hits constantly (the App Team `engineer` reports to
+  `architect`). The tool returns `reports_to_fell_back` so the CEO re-points it. The task body is the
+  substance: these prompts/`team_context` were authored for a roster that is not coming with them and
+  @-mention agents that may not exist in the target, so reconciliation is mandatory, and the CEO is
+  explicitly licensed to stop and `@admin` when a role does not clearly belong (an allowed stop — the
+  reply re-wakes it), adding the clear roles and asking about the rest.
+- **Marketplace as a hiring source.** `list_marketplace_teams` (catalog discovery, CEO or Captain)
+  plus the relaxed `get_marketplace_team` let a hiring conversation reach for a proven, fully-written
+  role instead of authoring one from scratch. Guidance lives in `agents/_partials/captain/hire-workflow.md`
+  (a partial, since only the seeded Captain/CEO file hires — runtime hires never do) and
+  `agents/_instance/ceo.md` § Roster changes. Both `apply_marketplace_*` tools are in
+  `MCP_WRITE_TOOLS`, so a run that only provisions is not recorded as a no-op.
 - **Export a live team as a bundle.** `GET /api/projects/:projectId/team-bundle`
   (`services/team-bundle-export.ts`, `exportTeamBundle`) serializes a project's current team
   into a self-contained `MarketplaceTeamDef` — the inverse of `applyMarketplaceTeamToTeam`. It
@@ -916,7 +939,17 @@ countdown matches the enforced cadence. Alongside it the API derives `has_action
 false the next heartbeat would no-op, so the UI shows a dash rather than a countdown.
 
 **Dispatch.** `JobManager` runs a ~1 Hz cron that also does container sync, container
-health, and orphan recovery. Per project-concurrency-limited, it: loads queued wakeups →
+health, and orphan recovery. Container sync separates its two costs: liveness
+(`inspectContainer`) runs every pass, while the working-set **memory sample**
+(`containerStats`, the expensive call, and issued with `one-shot=true` so the daemon
+answers from its current sample instead of waiting for the next collector tick) runs on a
+~15s per-project interval — a container's memory does not move meaningfully inside a
+second, and the serial per-project fan-out shared a socket with the live exec streams.
+Projects are swept with bounded concurrency, and the status write is conditional
+(`IS DISTINCT FROM`), so an unchanged project costs no row rewrite. `guarded()` still
+drops a tick whose predecessor is in flight, but now **says so** (rate-limited): a
+silently-skipped tick is stale state with no signal. Per project-concurrency-limited, it:
+loads queued wakeups →
 runs the **pre-run budget gate** (`activateAgent`; over-budget skips the run with no
 `heartbeat_runs` row and pauses the agent) → claims the wakeup → invokes the runner →
 absorbs sibling queued wakeups for the same task → marks the run terminal → reconciles
@@ -952,15 +985,50 @@ the cached `container_status`: a container pruned externally or lost to a Docker
 reconciled (status flipped, `container_id` nulled, project update broadcast) and the run
 fails fast with a clear message rather than tripping over a raw 404 mid-exec. It captures
 interleaved stdout/stderr (recorded in full, `[stderr]`-prefixed, with a 10 MB
-runaway-output backstop) into **append-only log chunks**: the debounced flusher
+runaway-output backstop) into **append-only log chunks**. The exec transport itself
+**retains nothing**: `execStart` with an `onChunk` callback forwards each frame and returns
+an empty `ExecResult`, because a run's raw stream-json output (every tool result in full)
+is strictly larger than the capped rendered log and was, held alongside it, the largest
+single consumer of server memory. Anything derived from the raw stream is computed
+incrementally in the callback. Framing for both the exec stream and the container-log
+follower is decoded by the shared `DockerFrameDecoder` (`services/docker-frames.ts`),
+which reads at an offset rather than reallocating the pending buffer per socket read, and
+decodes per stream with `TextDecoder({stream:true})` so a codepoint straddling a frame
+boundary is not corrupted. Persistence is via the debounced flusher
 (`services/log-stream-broker.ts`) persists only the text appended since the last successful
 flush as an INSERT into `heartbeat_run_log_chunks` (`db/run-log-chunks.ts`), serialized
 per stream so overlapping flushes can never duplicate a delta, with the running token/cost
-snapshot updated on `heartbeat_runs` in the same transaction. Readers concatenate the
-chunks (`string_agg` ordered by `seq`) back into the API's `log_text` field. INSERT-only
+snapshot updated on `heartbeat_runs` in **the same statement** — a data-modifying CTE, not
+a transaction: both drivers serialize every transaction block process-wide, so at ten
+concurrent runs the old three-statement block put ~20 globally-serialized transactions a
+second in front of every user request, and a single statement is already atomic, which is
+all the exactly-once delta contract needs. Readers concatenate the
+chunks (`string_agg` ordered by `seq`) back into the API's `log_text` field — but only
+where the whole log is actually wanted. The paginated runs list ships `log_length` instead
+(`per_page` reaches 200, so a page carrying full logs could materialize gigabytes), and
+every caller that wants an excerpt — `get_run_log`, a task's latest-run view, the orphan
+detector's failure tail — uses `readRunLogTail`, which walks back from the newest chunk
+until the budget is covered rather than aggregating the whole log and slicing it. INSERT-only
 writes replaced the old whole-blob `UPDATE heartbeat_runs.log_text` pattern, whose per-flush
-dead TOAST copies were the dominant source of database bloat. The same stream broadcasts
-live over the `project-runs:<projectId>` WebSocket room from the in-memory buffer.
+dead TOAST copies were the dominant source of database bloat. The delta itself is read by
+character **offset** (`CappedLogBuffer.sliceFrom`), never by building the whole log and
+slicing it: the buffer grows toward its 10 MB cap and the flusher runs twice a second per
+run, so materializing it per flush was O(total) work on a fixed cadence — the in-memory
+twin of the write amplification the chunk table fixed.
+
+The same stream broadcasts live over the `project-runs:<projectId>` WebSocket room from the
+in-memory buffer, **coalesced**: consecutive lines on one stream accumulate for ~100ms (or
+until a burst ceiling) and go out as a single frame whose text is newline-joined. The client
+already splits an incoming payload on `\n`, so this needs no protocol change; only
+same-stream lines merge, so stdout/stderr ordering is preserved. A newly-subscribing client
+is replayed a **line-aligned tail** of the buffer rather than the whole thing (`replay` runs
+for every live stream in the room, so a project with ten concurrent runs would otherwise push
+ten full logs into one socket on tab open); the pending batch is drained first, since the
+snapshot replaces the client's buffer and a line arriving after it would render twice. The
+full log stays available from the REST run endpoint, which is what the run view seeds from.
+Sockets carry a `backpressureLimit` with `closeOnBackpressureLimit`, so a client that falls
+irrecoverably behind is dropped and recovers through the existing reconnect-and-resubscribe
+path instead of growing an unbounded send queue.
 
 **System prompt composition.** The agent's stored template (its `agent_system_prompt`
 document, loaded from its **home** team) is resolved per run by
@@ -1007,7 +1075,14 @@ run's log when the comments don't explain a struggle.
 
 **Task prompt.** After the system prompt, `buildTaskPrompt` (`agent-runner.ts`) appends the
 run's task block: the current task's identifier/title/priority/status, plus its `rules`,
-`description`, and `progress_summary`. It also injects the **latest 3 comments** inline (the
+`description`, and `progress_summary`. The block also carries the ticket's **lineage** in both
+directions: upward from `loadSpawnedFromTask` (a `**Parent ticket:**` line, and a
+`**Spawned from:**` provenance line when a run on a different ticket created this one), and
+downward from `loadOpenSubTasks` — an `**Open sub-tasks**` list naming each non-terminal child
+with its assignee and status. The downward half exists so a manager can see what it has already
+delegated: `SHARED_INSTRUCTIONS` tells it to route fresh feedback to an in-flight sub-task
+rather than absorbing the deliverable, and without the list that rule depends on the agent
+remembering its own earlier fan-out. It also injects the **latest 3 comments** inline (the
 comment that woke the run tagged) as a head-start — small enough to carry on every run, while
 the `SHARED_INSTRUCTIONS` "read the thread before you act" rule still directs the agent to
 `list_comments` for the full thread before acting, since instructions posted after a task is
@@ -1289,8 +1364,11 @@ if the CLI force-terminated still-running background work (Claude Code's headles
 `--print` mode prints "Background tasks still running after Ns; terminating" and kills a
 `run_in_background` job or a `Workflow` fan-out that never synthesized), the run
 **abandoned unfinished work** and is marked `failed` regardless of earlier output
-(`detectTerminatedBackgroundWork` scans the CLI's own diagnostic output — stderr and
-non-JSON stdout lines — so an agent that merely echoes the phrase can't trip it). This is
+(`services/background-termination.ts` scans the CLI's own diagnostic output — stderr and
+non-JSON stdout lines — so an agent that merely echoes the phrase can't trip it). The scan
+is **incremental**, fed from the same per-chunk callback the log pipeline uses: the exec
+transport retains no output at all (see below), so the verdict is accumulated as the run
+streams rather than computed from a kept transcript. This is
 a backstop to `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0` (which lifts the wait ceiling) for
 CLI versions that ignore the override. The completeness **stop-hook** (§ 6) is a separate
 gate that blocks the agent from ending its turn with unfinished work.
@@ -1525,7 +1603,20 @@ assumes the agent itself may misbehave; the egress proxy is the choke point.
 `['api.stripe.com']`, `*.googleapis.com` wildcards) or the `allow_all_hosts` escape hatch.
 They are **instance-global** — `name` is globally unique and the egress proxy resolves the
 placeholder by name with no project context — bounded per-secret by `allowed_hosts`. The
-master key (§ 10) decrypts at request time. Connectors, by contrast, are project-scoped
+master key (§ 10) decrypts at request time.
+
+The decrypted vault is **cached in server memory** rather than re-read and re-decrypted per
+request. `loadAllSecrets` runs for every proxied request carrying a placeholder — every MCP
+call an agent makes — and cost two queries plus an AES-256-GCM decrypt of the whole vault
+each time, on the one serialized database handle. Invalidation has three layers on purpose:
+every path that writes `secrets` calls `invalidateSecretsVault()`; the cache is dropped
+whenever the master key changes state, so decrypted material never outlives its unlock; and
+a short TTL means a write path that forgets the first degrades to seconds of staleness
+rather than a permanent stale read. Concurrent misses share one load. The values live only
+in server memory on the proxy path, exactly as they did transiently before — nothing here
+is reachable from an agent run, so the red line is untouched.
+
+Connectors, by contrast, are project-scoped
 (`mcp_connections.project_id`, NULL = global); a credential does **not** follow its
 connector's scope (moving a connector between scopes leaves its credential untouched).
 Instead the credential *name* carries the project signal (see the API-key row below), so a
@@ -2325,7 +2416,13 @@ Database card on the Storage settings subpage: `POST /api/database-info/compact-
 {older_than_days}` writes a `log_compaction:active` marker in `system_meta` (also the "in
 progress" flag the panel's button disables on) and kicks the drain. The `log-compaction`
 cron (`services/log-compaction.ts`, guarded so a manual kick and the scheduled tick never
-overlap) drains the backlog a bounded batch at a time — replacing each old, finished,
+overlap) drains the backlog a bounded batch at a time. **Nothing starts a pass on its own** —
+the cron is a no-op without the operator's marker, because run logs are the user's history
+and an instance may deliberately keep all of it; a test asserts this. Each batch selects ids
+and sizes only and reads each run's tail (never the whole log, which reaches the 10 MB cap),
+and commits **per run** rather than wrapping the batch in one transaction: every transaction
+block serializes process-wide, so a single 50-run transaction stalled every agent and every
+request for its duration. Each pass replaces one old, finished,
 large-enough run's chunks with a single compacted chunk (a "compacted" notice + the run's
 `invocation_command` + the end-of-run summary/`[done]` line) and stamping
 `log_compacted_at` (migration `040`, partial index `idx_runs_compaction`; eligibility
@@ -2343,6 +2440,29 @@ Migration `041` (which moved logs from the old `heartbeat_runs.log_text` blob in
 and dropped the column) leaves the legacy dead-TOAST graveyard behind — a one-time,
 marker-gated `VACUUM (FULL, ANALYZE) heartbeat_runs` at startup
 (`runLegacyRunLogVacuumOnce`, embedded only) reclaims it on the first post-upgrade boot.
+
+**Nightly database maintenance** (`services/db-maintenance.ts`, the `db-maintenance` cron,
+default 04:30). Two deliberately narrow jobs:
+
+- **`analyzeHotTables`** refreshes planner statistics on the **embedded** backend only.
+  PGlite has no autovacuum and therefore no auto-ANALYZE, so as an instance grows the
+  planner keeps costing queries against statistics gathered when the tables were small and
+  silently stops choosing the indexes added for them — the composite indexes in migration
+  `047` would degrade to sequential scans at exactly the size where they matter. It reads
+  nothing and deletes nothing. A no-op on external Postgres, where autovacuum already does
+  it. The table list is explicit (the hot ones), and a test asserts every name resolves —
+  the per-table catch means a typo would otherwise degrade to a warning and that table
+  would silently never be analyzed.
+- **`sweepTerminalWakeups`** deletes terminal `agent_wakeup_requests` rows older than the
+  retention window (7 days), bounded per pass so a backlog drains over several ticks. This
+  is the **only** table swept automatically, and it qualifies on a specific test: it is
+  internal scheduler bookkeeping with no user-facing surface — nothing renders it, exports
+  it, or links to it. Run logs, cost entries and audit history are the user's record and an
+  instance may keep all of it; reclaiming those stays an explicit operator action (run-log
+  compaction above). `ACTIVE_WAKEUP_STATUSES` / `TERMINAL_WAKEUP_STATUSES` live in
+  `@hezo/shared` beside the enum with a test asserting they partition it exactly, so adding
+  a status fails the build until someone classifies it — `deferred` is **active** (a
+  cleared blocker re-queues it) and must never be swept.
 
 **Storage abstraction & transactions.** All app code takes the `Db` interface
 (`query`/`exec`/`transaction`/`acquireSessionLock`/`close`); the drivers live in
@@ -2659,11 +2779,39 @@ shapes.
 - **Tasks & collaboration** — `tasks`, `goals` (CRUD + `/goals/runs` + `/goals/:id/history`),
   `comments`, `mentions`, `assets`, `inbox`, `search` (full-text).
 - **Money & governance** — `costs` (project-scoped, `group_by=day` for charts),
-  `model-pricing`, `approvals`, `audit-log`.
+  `model-pricing`, `approvals`, `audit-log` (**keyset**-paginated, see below).
 - **Integrations & secrets** — `ai-providers`, `secrets`, `connectors`, `oauth`
   (connectors: ensure / auth-start — project-scoped and instance-admin
   (`/connectors/:id/auth-start`) / device / callbacks), `skills`.
 - **Ops** — `health`, `updates`, `preview` (HMAC-signed file URLs), public assets.
+
+**Request-body ceiling.** `/api/*` carries a global `bodyLimit` at `API_BODY_MAX_BYTES`
+(32 MB). Only the handful of upload routes were capped before, so a JSON body had no bound
+at all and one request could ask the process to buffer arbitrarily much before a handler
+saw it. It is a **backstop, never a policy**, and must stay well clear of every per-route
+cap for two reasons a test pins: a route that polices its own size answers a too-large file
+with its own specific `4xx`, which an earlier global trip would replace with an opaque
+`413`; and the per-route caps measure the *file* while the request carries it in a
+multipart envelope, so a ceiling set to exactly `ATTACHMENT_MAX_BYTES` rejects a
+legitimately-sized maximum attachment. Reads are unaffected - this bounds request bodies,
+not responses. `/mcp` and `/mcp/assets` sit outside `/api`: the agent surface is not capped
+here.
+
+**Pagination.** Most list routes are offset-paginated (`page`/`per_page`, `meta.total`)
+via `lib/pagination.ts`. The **activity log** is the exception and pages by **keyset**
+(`?limit=&cursor=`, `meta.has_more` + `meta.next_cursor`) because `audit_log` only grows
+and is never pruned: its global view carries no scope predicate, so producing `total`
+meant a full sequential scan of the largest table on the instance for every page load —
+to render a number nothing consumed. Offsets also drift, since rows land while someone
+reads. The cursor is opaque (`<created_at ISO>|<id>`) and the seek is
+`(created_at, id) < ($1, $2)` ordered `created_at DESC, id DESC`, so the order is total
+and no row can be skipped or repeated across a page boundary; `has_more` is exact because
+the query over-fetches one row rather than counting. Migration `047` adds the two indexes
+the seek needs (`audit_log (created_at DESC, id DESC)` and the `project_id`-leading
+variant) — the pre-existing indexes stopped at the leading column and left `id` to a sort
+step, which a range scan cannot use. Both web views drive it through `useInfiniteQuery`
+with a "Load older activity" control; the global view previously fetched a fixed newest-100
+slice with no way to reach anything older.
 
 One non-REST surface shares the port: the **MCP endpoint** (`POST /mcp`, Streamable
 HTTP), whose tools mirror the REST surface and enforce the same authorization. It is the

@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.37.0 - 2026-07-29
+
+### Features
+
+- **agents:** check cross-task impact before acting ([#860](https://github.com/hezo-ai/hezo/pull/860))
+
+### Bug Fixes
+
+- stop the MCP endpoint stalling under concurrent agent requests ([#859](https://github.com/hezo-ai/hezo/pull/859))
+- **startup:** stop the OOM crash-loop on upgrade, and stream backup/restore both ways ([#858](https://github.com/hezo-ai/hezo/pull/858))
+- **web:** show the HQ menu on /home before the first project exists ([#857](https://github.com/hezo-ai/hezo/pull/857))
+
+### Performance
+
+- server stack review - memory, DB throughput, egress and control-plane load at 10 concurrent agents ([#861](https://github.com/hezo-ai/hezo/pull/861))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.36.0...0.37.0
+
 ## 0.36.0 - 2026-07-28
 
 ### Features

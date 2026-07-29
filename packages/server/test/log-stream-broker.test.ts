@@ -67,7 +67,7 @@ describe('LogStreamBroker', () => {
 		vi.useRealTimers();
 	});
 
-	it('broadcasts each non-empty line to subscribers of its room', () => {
+	function subscribeSocket(room: string): Array<Record<string, unknown>> {
 		const received: Array<Record<string, unknown>> = [];
 		const ws = {
 			data: { auth: { type: 'test' }, rooms: new Set<string>() },
@@ -75,14 +75,100 @@ describe('LogStreamBroker', () => {
 				received.push(JSON.parse(msg));
 			},
 		};
-		wsManager.subscribe(ws, 'project-runs:p1');
+		wsManager.subscribe(ws, room);
+		return received;
+	}
+
+	// Lines are coalesced into one frame per batch window: a verbose agent emits
+	// hundreds a second, and each used to cost a stringify plus a send per
+	// subscriber. The client splits on `\n`, so this needs no protocol change.
+	it('coalesces same-stream lines into a single broadcast frame', async () => {
+		const received = subscribeSocket('project-runs:p1');
 
 		broker.begin(makeRunConfig('r1', 'p1'));
 		broker.emit('run:r1', 'stdout', 'hello\nworld\n');
 
-		expect(received).toHaveLength(2);
-		expect(received[0]).toMatchObject({ runId: 'r1', stream: 'stdout', text: 'hello' });
-		expect(received[1]).toMatchObject({ runId: 'r1', stream: 'stdout', text: 'world' });
+		// Nothing goes out synchronously — it batches.
+		expect(received).toHaveLength(0);
+		await broker.end('run:r1');
+
+		expect(received).toHaveLength(1);
+		expect(received[0]).toMatchObject({ runId: 'r1', stream: 'stdout', text: 'hello\nworld' });
+	});
+
+	it('keeps stdout and stderr in separate frames, in emission order', async () => {
+		const received = subscribeSocket('project-runs:p1');
+
+		broker.begin(makeRunConfig('r1', 'p1'));
+		broker.emit('run:r1', 'stdout', 'first\n');
+		broker.emit('run:r1', 'stderr', 'oops\n');
+		broker.emit('run:r1', 'stdout', 'second\nthird\n');
+		await broker.end('run:r1');
+
+		expect(received.map((m) => [m.stream, m.text])).toEqual([
+			['stdout', 'first'],
+			['stderr', 'oops'],
+			['stdout', 'second\nthird'],
+		]);
+	});
+
+	it('flushes a burst early instead of waiting out the batch window', () => {
+		const received = subscribeSocket('project-runs:p1');
+
+		broker.begin(makeRunConfig('r1', 'p1'));
+		// Well past the pending-line ceiling; the batch must not wait on a timer.
+		broker.emit(
+			'run:r1',
+			'stdout',
+			`${Array.from({ length: 600 }, (_, i) => `line ${i}`).join('\n')}\n`,
+		);
+
+		expect(received.length).toBeGreaterThan(0);
+		expect(received[0].text).toContain('line 0');
+	});
+
+	// The snapshot carries `replace: true`, so a queued line that arrives *after*
+	// it would be appended to an already-complete buffer and render twice. replay()
+	// therefore drains the pending batch first; nothing may be left to fire later.
+	it('drains the pending batch before replaying, so no line lands after the snapshot', async () => {
+		vi.useFakeTimers();
+		broker.begin(makeRunConfig('r1', 'p1'));
+		broker.emit('run:r1', 'stdout', 'before join\n');
+
+		const received = subscribeSocket('project-runs:p1');
+		const replayed: Array<Record<string, unknown>> = [];
+		broker.replay('project-runs:p1', (p) => replayed.push(p as Record<string, unknown>));
+
+		expect(replayed).toHaveLength(1);
+		expect(replayed[0]).toMatchObject({ replace: true, text: 'before join\n' });
+
+		// The batch went out before the snapshot, so the snapshot is authoritative.
+		expect(received.map((m) => m.text)).toEqual(['before join']);
+
+		// And the batch timer has nothing left to deliver behind it.
+		await vi.advanceTimersByTimeAsync(500);
+		expect(received).toHaveLength(1);
+	});
+
+	// replay() runs for every live stream in the room, so a project with ten
+	// concurrent runs would otherwise push ten whole logs into one socket the
+	// moment a tab opens. The run view seeds its full log from REST anyway.
+	it('replays only a line-aligned tail of a very large log, flagged as trimmed', () => {
+		broker.begin(makeRunConfig('r1', 'p1'));
+		const line = `${'x'.repeat(200)}\n`;
+		for (let i = 0; i < 4_000; i++) broker.emit('run:r1', 'stdout', line);
+
+		const replayed: Array<{ text?: string }> = [];
+		broker.replay('project-runs:p1', (p) => replayed.push(p as { text?: string }));
+
+		const text = replayed[0].text ?? '';
+		expect(text.length).toBeLessThan(300 * 1024);
+		expect(text.length).toBeGreaterThan(200 * 1024);
+		expect(text.startsWith('...[earlier output trimmed')).toBe(true);
+		// Every rendered line is whole — the cut never lands mid-line.
+		for (const rendered of text.split('\n').slice(1)) {
+			if (rendered.length > 0) expect(rendered.length).toBe(200);
+		}
 	});
 
 	it('replays one snapshot per stream registered to a room with the full buffered text', () => {
@@ -334,5 +420,52 @@ describe('CappedLogBuffer prefix stability', () => {
 		}
 		// After the cap the text is frozen entirely.
 		expect(snapshots[snapshots.length - 1]).toBe(snapshots[snapshots.length - 2]);
+	});
+});
+
+/**
+ * The flusher reads its delta by character offset instead of building the whole
+ * log and slicing it. That used to be `toString().slice(persisted)` on every
+ * 500ms flush — O(total) work twice a second per run, growing toward the 10 MB
+ * cap. `sliceFrom` must be exactly equivalent, including across the truncation
+ * marker, or persisted logs silently corrupt.
+ */
+describe('CappedLogBuffer offset reads', () => {
+	it('sliceFrom matches toString().slice at every offset, before and after the cap', () => {
+		const buffer = new CappedLogBuffer(200);
+		const check = () => {
+			const whole = buffer.toString();
+			expect(buffer.length).toBe(whole.length);
+			for (let offset = 0; offset <= whole.length + 2; offset++) {
+				expect(buffer.sliceFrom(offset)).toBe(whole.slice(offset));
+			}
+		};
+
+		check();
+		buffer.append('stdout', 'alpha');
+		check();
+		buffer.append('stderr', 'beta');
+		check();
+		for (let i = 0; i < 10; i++) buffer.append('stdout', `line ${i} ${'y'.repeat(i)}`);
+		check();
+		buffer.append('stdout', 'z'.repeat(300)); // crosses the cap
+		expect(buffer.isTruncated).toBe(true);
+		check();
+	});
+
+	it('sliceFrom returns the tail without materializing the whole log', () => {
+		const buffer = new CappedLogBuffer(10_000_000);
+		for (let i = 0; i < 5_000; i++) buffer.append('stdout', `line ${i}`);
+		const persisted = buffer.length;
+		buffer.append('stdout', 'the newest line');
+
+		expect(buffer.sliceFrom(persisted)).toBe('the newest line\n');
+	});
+
+	it('reports length without building the string', () => {
+		const buffer = new CappedLogBuffer(1_000);
+		buffer.append('stdout', 'abc');
+		buffer.append('stderr', 'de');
+		expect(buffer.length).toBe(buffer.toString().length);
 	});
 });

@@ -328,6 +328,17 @@ export default {
 		return serveFetch(req, server);
 	},
 	websocket: {
+		// Inbound frames are only `subscribe`/`unsubscribe` control messages, so a
+		// tight cap costs nothing and stops a hostile client buying server memory.
+		maxPayloadLength: 64 * 1024,
+		// Log rooms push hard: ten concurrent verbose runs against one tab on a slow
+		// link will outrun the socket, and Bun buffers without bound by default. Cut
+		// a socket loose once it falls this far behind rather than growing its queue
+		// forever — the client reconnects (ReconnectingWebSocket), re-subscribes on
+		// open, and is re-seeded from the room snapshot, so the recovery is the
+		// existing reconnect path rather than a special case.
+		backpressureLimit: 8 * 1024 * 1024,
+		closeOnBackpressureLimit: true,
 		async open(ws: Bun.ServerWebSocket<WsConnectionData>) {
 			if (!wsManager) {
 				ws.close(1011, 'Server not ready');

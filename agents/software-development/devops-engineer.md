@@ -47,6 +47,7 @@ Escalation: infrastructure outages → @-mention the Architect and Captain immed
 - Keep project docs updated via `write_project_doc` when infrastructure decisions affect the technical spec or implementation plan.
 - Before starting work on a project, read its AGENTS.md for codebase conventions, commands, and constraints. When you discover an operational task or convention that would prevent future mistakes, update the project's AGENTS.md.
 - Review team preferences to align infrastructure decisions with the admin's preferences. When you observe a new preference in admin feedback, update the team preferences document.
+{{> partials/common/code-quality-principles}}
 {{> partials/common/no-designated-repo}}
 {{> partials/common/delivery-knowledge}}
 

@@ -1649,3 +1649,74 @@ describe('MCP Coach can resolve update_agent_system_prompt cross-team', () => {
 		expect(result.applied).toBe(true);
 	});
 });
+
+describe('MCP marketplace tools', () => {
+	async function ceoTokenFor(team: string): Promise<string> {
+		const ceoId = await instanceCeoId(db);
+		const { token: t } = await mintAgentToken(db, masterKeyManager, ceoId, team);
+		return t;
+	}
+
+	it('list_marketplace_teams returns the shipped catalog without search keywords', async () => {
+		const result = (await callTool('list_marketplace_teams', {})) as {
+			teams?: Array<Record<string, unknown>>;
+			error?: string;
+		};
+		expect(result.error).toBeUndefined();
+		const slugs = (result.teams ?? []).map((t) => t.slug);
+		expect(slugs).toContain('software-development');
+		const appTeam = (result.teams ?? []).find((t) => t.slug === 'software-development');
+		expect(appTeam?.name).toBe('App Team');
+		expect(appTeam?.roster_count).toBe(10);
+		// Keywords are picker vocabulary, deliberately kept out of an agent's context.
+		expect(appTeam).not.toHaveProperty('keywords');
+	});
+
+	it('apply_marketplace_agent rejects a caller that is not the CEO', async () => {
+		const result = (await callToolAs(await captainToken(), 'apply_marketplace_agent', {
+			project: projectId,
+			slug: 'software-development',
+			role: 'researcher',
+		})) as ToolResult;
+		expect(result.error).toContain('Only the CEO');
+	});
+
+	it('apply_marketplace_agent provisions one role and reports the reporting line', async () => {
+		// A team the App Team roles are not already on, so the add is observable.
+		const teamRes = await createTestTeam(db, { name: 'MCP Single Role Co' });
+		const soloTeamId = (await teamRes.json()).data.id as string;
+		const projRes = await createTestProject(db, soloTeamId, {
+			name: 'Single Role Project',
+			description: 'for the single-role add',
+		});
+		const soloProjectSlug = (await projRes.json()).data.slug as string;
+
+		const result = (await callToolAs(await ceoTokenFor(soloTeamId), 'apply_marketplace_agent', {
+			project: soloProjectSlug,
+			slug: 'software-development',
+			role: 'security-engineer',
+		})) as ToolResult;
+		expect(result.error).toBeUndefined();
+		expect(result.role).toBe('security-engineer');
+		expect(result.added).toBe(true);
+		// Its own manager (architect) is absent, so the line falls back to the Captain.
+		expect(result.reports_to).toBe('captain');
+		expect(result.reports_to_fell_back).toBe(true);
+
+		const rows = await db.query<{ slug: string }>(
+			`SELECT ma.slug FROM member_agents ma JOIN members m ON m.id = ma.id
+			 WHERE m.team_id = $1 ORDER BY ma.slug`,
+			[soloTeamId],
+		);
+		expect(rows.rows.map((r) => r.slug)).toEqual(['captain', 'security-engineer']);
+	});
+
+	it('apply_marketplace_agent errors on a role outside the roster', async () => {
+		const result = (await callToolAs(await ceoTokenFor(teamId), 'apply_marketplace_agent', {
+			project: projectId,
+			slug: 'software-development',
+			role: 'captain',
+		})) as ToolResult;
+		expect(result.error).toContain('captain');
+	});
+});

@@ -62,9 +62,9 @@
 				"design",
 				"analytics"
 			],
-			"version": 4,
+			"version": 5,
 			"roster_count": 7,
-			"latest_notes": "Renamed the team to Social Media Marketing."
+			"latest_notes": "Captain now checks the team marketplace for a proven, fully-written role before authoring a hire's system prompt from scratch."
 		},
 		{
 			"slug": "investment",
@@ -127,9 +127,9 @@
 				"report",
 				"review"
 			],
-			"version": 4,
+			"version": 5,
 			"roster_count": 6,
-			"latest_notes": "Renamed the team to Investment Portfolio."
+			"latest_notes": "Captain now checks the team marketplace for a proven, fully-written role before authoring a hire's system prompt from scratch."
 		},
 		{
 			"slug": "software-development",
@@ -211,9 +211,9 @@
 				"testing",
 				"security review"
 			],
-			"version": 8,
+			"version": 10,
 			"roster_count": 10,
-			"latest_notes": "The engineer opens each pull request against the repository the change actually lives in, not always the designated one - a project can link several repositories and agents work in all of them."
+			"latest_notes": "Captain now checks the team marketplace for a proven, fully-written role before authoring a hire's system prompt from scratch."
 		}
 	]
 }

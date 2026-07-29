@@ -1,10 +1,11 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { AuditLogTable } from '../../../components/audit-log-table';
+import { LoadOlderActivity } from '../../../components/load-older-activity';
 import { useProjectAuditLog } from '../../../hooks/use-audit-log';
 
 function ProjectAuditLogPage() {
 	const { projectId } = Route.useParams();
-	const { data: entries } = useProjectAuditLog(projectId);
+	const { entries, hasMore, loadMore, isLoadingMore } = useProjectAuditLog(projectId);
 
 	return (
 		<div>
@@ -16,6 +17,7 @@ function ProjectAuditLogPage() {
 				</p>
 			</div>
 			<AuditLogTable entries={entries} emptyText="No activity on this project yet." />
+			<LoadOlderActivity hasMore={hasMore} loadMore={loadMore} isLoading={isLoadingMore} />
 		</div>
 	);
 }

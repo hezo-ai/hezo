@@ -2,6 +2,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import {
 	type ClientRequest,
 	createServer as createHttpServer,
+	Agent as HttpAgent,
 	type Server as HttpServer,
 	request as httpRequest,
 	type IncomingMessage,
@@ -360,12 +361,21 @@ class RunProxyInstance {
 	 * connection), so not pooling them is what keeps them from outliving the run and
 	 * accumulating against a remote MCP host. */
 	private readonly upstreamAgent: HttpsAgent;
+	/**
+	 * The plain-HTTP counterpart. Without it these requests fell through to
+	 * Node's `globalAgent`, which is process-global, pools by default, and is
+	 * owned by nobody — so a socket opened for one run could outlive it, which is
+	 * exactly the leak #283 fixed on the HTTPS side. Same keep-alive-off posture,
+	 * so teardown stays a matter of aborting in-flight requests.
+	 */
+	private readonly upstreamHttpAgent: HttpAgent;
 
 	constructor(private readonly cfg: RunProxyConfig) {
 		this.upstreamAgent = new HttpsAgent({
 			keepAlive: false,
 			...(cfg.upstreamTrustedCAs ? { ca: cfg.upstreamTrustedCAs } : {}),
 		});
+		this.upstreamHttpAgent = new HttpAgent({ keepAlive: false });
 	}
 
 	/** Debug-gated lifecycle logging. Enable with `HEZO_EGRESS_DEBUG=1` to trace
@@ -514,6 +524,7 @@ class RunProxyInstance {
 		this.liveUpstreams.clear();
 		// Tear down the run's upstream agent so nothing it holds outlives the run.
 		this.upstreamAgent.destroy();
+		this.upstreamHttpAgent.destroy();
 
 		const closables: Array<Promise<void>> = [];
 		for (const [host, { server, port }] of this.hostServers.entries()) {
@@ -897,7 +908,9 @@ class RunProxyInstance {
 				method,
 				path,
 				headers,
-				...(isSSL ? { servername: host, agent: this.upstreamAgent } : {}),
+				...(isSSL
+					? { servername: host, agent: this.upstreamAgent }
+					: { agent: this.upstreamHttpAgent }),
 			},
 			(upstreamRes) => {
 				res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers);
@@ -939,7 +952,9 @@ class RunProxyInstance {
 				method,
 				path,
 				headers: outHeaders,
-				...(isSSL ? { servername: host, agent: this.upstreamAgent } : {}),
+				...(isSSL
+					? { servername: host, agent: this.upstreamAgent }
+					: { agent: this.upstreamHttpAgent }),
 			},
 			(upstreamRes) => {
 				res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers);

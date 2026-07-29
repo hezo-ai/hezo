@@ -27,7 +27,11 @@ import {
 } from './helpers/app';
 
 function deps(docker: DockerClient, wsManager?: WebSocketManager): ContainerDeps {
-	return { db, docker, dataDir: '/tmp/hezo-test-unused', wsManager };
+	// Production samples container memory every 15s rather than on every sync
+	// pass (the stats call is the expensive one and a working set does not move
+	// meaningfully inside a second). These tests drive the sync directly and
+	// assert on that sampling, so they opt out of the throttle.
+	return { db, docker, dataDir: '/tmp/hezo-test-unused', wsManager, memoryCheckIntervalMs: 0 };
 }
 
 let db: Db;
@@ -737,6 +741,9 @@ describe('syncAllContainerStatuses', () => {
 	});
 });
 
+/** The broker's broadcast batch window, plus headroom. */
+const waitForLogBatch = () => new Promise((resolve) => setTimeout(resolve, 150));
+
 describe('provisionContainer broadcasting', () => {
 	let projectId: string;
 
@@ -1123,9 +1130,14 @@ describe('provisionContainer broadcasting', () => {
 		);
 
 		const logRoom = `container-logs:${projectId}`;
+		// Log frames are coalesced on a short window, and the provisioning stream is
+		// never ended (it stays open for replay), so the last batch lands on the
+		// timer rather than synchronously. Read lines, not frames: a frame's text
+		// carries however many lines the window happened to collect.
+		await waitForLogBatch();
 		const logLines = mockWsManager.broadcast.mock.calls
 			.filter(([room]: [string]) => room === logRoom)
-			.map(([, event]: [string, any]) => event.text as string);
+			.flatMap(([, event]: [string, any]) => (event.text as string).split('\n'));
 
 		expect(logLines).toEqual(
 			expect.arrayContaining([
@@ -1166,9 +1178,14 @@ describe('provisionContainer broadcasting', () => {
 		).rejects.toThrow('boom');
 
 		const logRoom = `container-logs:${projectId}`;
+		// Log frames are coalesced on a short window, and the provisioning stream is
+		// never ended (it stays open for replay), so the last batch lands on the
+		// timer rather than synchronously. Read lines, not frames: a frame's text
+		// carries however many lines the window happened to collect.
+		await waitForLogBatch();
 		const logLines = mockWsManager.broadcast.mock.calls
 			.filter(([room]: [string]) => room === logRoom)
-			.map(([, event]: [string, any]) => event.text as string);
+			.flatMap(([, event]: [string, any]) => (event.text as string).split('\n'));
 
 		expect(logLines.some((line: string) => line.includes('✗ Provisioning failed: boom'))).toBe(
 			true,

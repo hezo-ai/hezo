@@ -7,7 +7,7 @@ import {
 	wsRoom,
 } from '@hezo/shared';
 import type { Db } from '../db/database';
-import { runLogTextSql } from '../db/run-log-chunks';
+import { readRunLogTail } from '../db/run-log-chunks';
 import { broadcastRowChange } from '../lib/broadcast';
 import { logger } from '../logger';
 import { setAgentIdleIfNoActiveRuns } from './agent-runtime-status';
@@ -18,6 +18,15 @@ const log = logger.child('orphan-detector');
 
 const MAX_RETRIES = 3;
 const SAFETY_WINDOW_SECONDS = 30;
+/** Failure excerpt handed to the retry wakeup. */
+const ORPHAN_LOG_TAIL_CHARS = 1_000;
+/**
+ * Orphans reaped per pass. The scan was previously unbounded, so a backlog (a
+ * crash that stranded every live run, a long outage) put an arbitrarily large
+ * result set and an arbitrarily long serial repair loop on a 30s cron. The
+ * remainder is picked up on the next tick.
+ */
+const MAX_ORPHANS_PER_PASS = 50;
 /** How long DB state may disagree with the absence of any active run before
  * the heal pass repairs it. Long enough to cover the dispatch window (status
  * flips active before the run row lands) and normal completion bookkeeping.
@@ -69,12 +78,15 @@ export async function detectOrphans(
 		 WHERE (hr.status = $1::heartbeat_run_status
 		        AND hr.started_at < now() - ($2 || ' seconds')::interval)
 		    OR (hr.status = $3::heartbeat_run_status
-		        AND hr.created_at < now() - ($4 || ' seconds')::interval)`,
+		        AND hr.created_at < now() - ($4 || ' seconds')::interval)
+		 ORDER BY hr.created_at ASC
+		 LIMIT $5`,
 		[
 			HeartbeatRunStatus.Running,
 			String(SAFETY_WINDOW_SECONDS),
 			HeartbeatRunStatus.Queued,
 			String(STALE_STATE_GRACE_SECONDS),
+			MAX_ORPHANS_PER_PASS,
 		],
 	);
 
@@ -129,15 +141,13 @@ export async function detectOrphans(
 		});
 
 		if (run.process_loss_retry_count + 1 < MAX_RETRIES) {
-			const failedRun = await db.query<{
-				exit_code: number | null;
-				log_text: string | null;
-			}>(
-				`SELECT exit_code, ${runLogTextSql('heartbeat_runs.id')} AS log_text
-				 FROM heartbeat_runs WHERE id = $1`,
+			const failedRun = await db.query<{ exit_code: number | null }>(
+				`SELECT exit_code FROM heartbeat_runs WHERE id = $1`,
 				[run.id],
 			);
-			const fr = failedRun.rows[0];
+			// Read the excerpt from storage; this used to aggregate the run's whole
+			// log (up to 10 MB) to keep its last 1000 characters, on a 30s cron.
+			const tail = await readRunLogTail(db, run.id, ORPHAN_LOG_TAIL_CHARS);
 
 			await createWakeup(db, run.member_id, run.team_id, WakeupSource.Timer, {
 				reason: 'orphan_retry',
@@ -145,8 +155,8 @@ export async function detectOrphans(
 				max_retries: MAX_RETRIES,
 				previous_failure: {
 					run_id: run.id,
-					exit_code: fr?.exit_code ?? null,
-					log_tail: fr?.log_text?.slice(-1000) ?? null,
+					exit_code: failedRun.rows[0]?.exit_code ?? null,
+					log_tail: tail.text.length > 0 ? tail.text : null,
 				},
 			});
 		} else {

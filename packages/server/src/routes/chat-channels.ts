@@ -6,6 +6,7 @@ import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireAdminEquivalent } from '../middleware/auth';
+import { invalidateSecretsVault } from '../services/egress';
 
 const log = logger.child('chat-channels-routes');
 
@@ -118,6 +119,7 @@ chatChannelRoutes.put('/chat/channels/:channel', async (c) => {
 		);
 		metadata.app_token_secret = name;
 	}
+	invalidateSecretsVault();
 
 	// Reuse an existing webhook secret if present; otherwise mint one on first setup.
 	const existing = await db.query<{

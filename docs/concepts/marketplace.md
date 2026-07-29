@@ -47,6 +47,33 @@ If the project was originally created from that same team, the CEO recognizes th
 update** rather than a duplicate add: it refreshes the existing roles to the newer prompts,
 preserving any customizations you've made, instead of creating parallel copies.
 
+## Adding only some of a team's roles
+
+You don't have to take the whole roster. The same **Add to a project** dialog asks what you want to
+add: **the whole team**, or **just the roles you choose** from a checklist. So you can bring only
+the Security Engineer, or the Content Editor and the Trend Researcher, into a project that already
+has its own team. The Captain isn't on the list - every project already has one.
+
+Picking a subset changes what the CEO does. Those roles are being lifted out of a roster they were
+written for, and the rest of that team isn't coming with them, so their prompts assume teammates
+your project may not have. The CEO:
+
+1. reads each chosen role and compares it against the team it is joining;
+2. **asks you first** when a role doesn't clearly belong - when an existing agent already covers
+   that responsibility, when the role's way of working depends on teammates your project doesn't
+   have, or when there is no sensible manager for it. It posts the question on the task and waits.
+   If some of your picks are clear and others aren't, it adds the clear ones and asks about the rest;
+3. hires them, leaving the rest of the project's roster untouched;
+4. rewrites each one's prompt around the teammates it actually has, gives it a manager, and updates
+   the agents whose work now flows through it.
+
+So what you get is fitted to your project, not a copy of what's in the catalog. A role your project
+already has is skipped rather than duplicated.
+
+The CEO also draws on the marketplace when you talk to it about hiring: asked to staff a team, it
+checks the catalog for a proven role that matches before writing a new one from scratch, and tells
+you which one it started from.
+
 ## Versions and updates
 
 Each team carries a whole-number **version** and a changelog. Because your instance always reads

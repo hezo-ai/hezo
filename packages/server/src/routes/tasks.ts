@@ -1,7 +1,7 @@
 import { AuthType, TaskStatus, TERMINAL_TASK_STATUSES, WakeupSource, wsRoom } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
 import type { Db } from '../db/database';
-import { runLogTextSql } from '../db/run-log-chunks';
+import { readRunLogTail } from '../db/run-log-chunks';
 import { assertNoActiveRun } from '../lib/active-run';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
@@ -47,6 +47,12 @@ import { createWakeup } from '../services/wakeup';
 const log = logger.child('routes');
 
 const MAX_BATCH_TASKS = 50;
+
+/**
+ * Log excerpt returned with a task's latest run. The task view renders a
+ * preview, not the whole log — the run page fetches that from its own endpoint.
+ */
+const LATEST_RUN_LOG_TAIL_CHARS = 64 * 1024;
 
 async function buildCreateTaskCaller(c: Context<Env>, teamId: string): Promise<CreateTaskCaller> {
 	const auth = c.get('auth');
@@ -437,9 +443,9 @@ tasksRoutes.get('/projects/:projectId/tasks/:taskId/latest-run', async (c) => {
 	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
 	if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 
-	const result = await db.query(
+	const result = await db.query<{ id: string } & Record<string, unknown>>(
 		`SELECT hr.id, hr.member_id, hr.status, hr.started_at, hr.finished_at,
-		        hr.exit_code, ${runLogTextSql('hr.id')} AS log_text, hr.invocation_command, hr.working_dir,
+		        hr.exit_code, hr.invocation_command, hr.working_dir,
 		        i.project_id AS project_id,
 		        ma.title AS agent_title, ma.slug AS agent_slug
 		 FROM heartbeat_runs hr
@@ -454,7 +460,11 @@ tasksRoutes.get('/projects/:projectId/tasks/:taskId/latest-run', async (c) => {
 	if (result.rows.length === 0) {
 		return ok(c, null);
 	}
-	return ok(c, result.rows[0]);
+	// The log is fetched separately as a bounded tail rather than joined in: a
+	// run's log reaches 10 MB and this view renders an excerpt.
+	const row = result.rows[0];
+	const tail = await readRunLogTail(db, row.id, LATEST_RUN_LOG_TAIL_CHARS);
+	return ok(c, { ...row, log_text: tail.text, log_length: tail.length });
 });
 
 tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {

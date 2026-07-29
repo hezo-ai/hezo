@@ -38,7 +38,7 @@ import { signAgentAssetUrl } from '../lib/asset-urls';
 import { broadcastProjectUpdate, broadcastRowChange } from '../lib/broadcast';
 import { withProjectGitLock } from '../lib/git-lock';
 import { detectUnlinkedTeammateAsks, extractMentionSlugs } from '../lib/mentions';
-import { withTransaction } from '../lib/sql';
+import { terminalStatusParams, withTransaction } from '../lib/sql';
 import { logger } from '../logger';
 import { signAgentJwt } from '../middleware/auth';
 import { pauseAgentForBudget } from './agent-runtime-status';
@@ -52,6 +52,7 @@ import {
 	getProviderCredentialAndModel,
 	updateAiProviderCredential,
 } from './ai-provider-keys';
+import { BackgroundTerminationDetector } from './background-termination';
 import { checkOverBudget, recordRunCost } from './budget';
 import { postAgentComment, resolveWarnableSlugs } from './comment-wakeups';
 import { loadConnectorDescriptors } from './connectors/connections';
@@ -160,7 +161,10 @@ interface ProjectInfo {
 export interface RunResult {
 	success: boolean;
 	exitCode: number;
-	stdout: string;
+	/**
+	 * Failure text for the run, not the exec's stderr — a streamed exec retains
+	 * no output at all (see `ExecStartOpts.onChunk`). Empty on success.
+	 */
 	stderr: string;
 	durationMs: number;
 	heartbeatRunId?: string;
@@ -736,6 +740,7 @@ async function buildRunContext(
 	const wakingCommentId =
 		typeof wakeupPayload?.comment_id === 'string' ? wakeupPayload.comment_id : undefined;
 	const spawnedFrom = task ? await loadSpawnedFromTask(deps.db, task) : null;
+	const openSubTasks = task ? await loadOpenSubTasks(deps.db, task) : [];
 	let basePrompt: string;
 	if (progressUpdate) {
 		basePrompt = buildProgressUpdatePrompt(resolvedPrompt, progressUpdate);
@@ -764,6 +769,7 @@ async function buildRunContext(
 			replyContext,
 			commentWakeContext,
 			spawnedFrom,
+			openSubTasks,
 			recentComments,
 			wakingCommentId,
 		});
@@ -842,37 +848,6 @@ function abortedRunStatus(reason: RunAbortReason | null): HeartbeatRunStatus {
 function abortErrorMessage(reason: RunAbortReason | null): string | undefined {
 	if (reason === 'run_timeout') return 'run reached its time limit';
 	return reason ?? undefined;
-}
-
-/**
- * Claude Code's headless `--print` mode caps how long it waits for still-running
- * background tasks (a `run_in_background` job, a Workflow fan-out that hasn't
- * synthesized yet) and then FORCE-KILLS them, printing a diagnostic line like
- * "Background tasks still running after 600s; terminating." to its own output.
- * `CLAUDE_CODE_QUIET_ENV` sets `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0` to lift
- * that ceiling, but an older CLI (or one that ignores the override) still
- * terminates the work — and the CLI then exits 0 with a NON-error `result`, so a
- * run that already wrote something earlier (e.g. a progress update) would be
- * counted a success even though its actual deliverable was killed mid-flight.
- * This is the runner-side backstop: detect the diagnostic so the run is failed.
- *
- * Matched only against the CLI's own diagnostic output — stderr, plus non-JSON
- * stdout lines. The stream-json events an agent's text rides in are JSON objects
- * (they start with `{`), so an agent that merely echoes this phrase in its
- * message can't trip the backstop.
- */
-const BACKGROUND_TERMINATION_MARKER = /Background tasks still running after .*?terminating/i;
-
-export function detectTerminatedBackgroundWork(stdout: string, stderr: string): boolean {
-	if (BACKGROUND_TERMINATION_MARKER.test(stderr)) return true;
-	for (const line of stdout.split('\n')) {
-		const trimmed = line.trim();
-		// Skip the JSON stream events (agent-authored text lives inside these); a
-		// CLI diagnostic is a bare line that never starts with `{`.
-		if (trimmed === '' || trimmed.startsWith('{')) continue;
-		if (BACKGROUND_TERMINATION_MARKER.test(trimmed)) return true;
-	}
-	return false;
 }
 
 function extractTriggeredBy(payload: Record<string, unknown> | undefined): TriggeredBy | null {
@@ -968,33 +943,16 @@ export async function runAgent(
 			replace: true,
 		}),
 		onFlush: async (delta) => {
-			// Append only the new log text as a chunk row (never rewrite the whole
+			// Append only the new log text as chunk rows (never rewrite the whole
 			// log — the old full-blob UPDATE pattern left a dead TOAST copy per
 			// flush). The running usage persists alongside so a crash mid-run still
 			// leaves a non-zero token/cost snapshot, flagged partial until a clean
-			// completion. One transaction: the broker re-sends the same delta after
-			// a failed flush, so chunk + usage must land all-or-nothing to stay
-			// exactly-once.
+			// completion. One statement, so it is atomic without a transaction:
+			// the broker re-sends the same delta after a failed flush, so chunk +
+			// usage must land all-or-nothing to stay exactly-once, and every
+			// transaction block serializes process-wide on both drivers.
 			if (delta.length === 0 && !currentUsage) return;
-			await deps.db.transaction(async (tx) => {
-				if (delta.length > 0) await appendRunLogChunks(tx, heartbeatRunId, delta);
-				if (currentUsage) {
-					await tx.query(
-						`UPDATE heartbeat_runs
-						 SET input_tokens = COALESCE($1, input_tokens),
-						     output_tokens = COALESCE($2, output_tokens),
-						     cost_cents = COALESCE($3, cost_cents),
-						     usage_partial = true
-						 WHERE id = $4`,
-						[
-							currentUsage.inputTokens,
-							currentUsage.outputTokens,
-							currentUsage.costCents,
-							heartbeatRunId,
-						],
-					);
-				}
-			});
+			await appendRunLogChunks(deps.db, heartbeatRunId, delta, currentUsage);
 		},
 	});
 
@@ -1019,7 +977,6 @@ export async function runAgent(
 		return {
 			success: false,
 			exitCode: -1,
-			stdout: '',
 			stderr: message,
 			durationMs,
 			heartbeatRunId,
@@ -1045,7 +1002,6 @@ export async function runAgent(
 		return {
 			success: false,
 			exitCode: -1,
-			stdout: '',
 			stderr: abortErrorMessage(reason) ?? 'Aborted',
 			durationMs,
 			heartbeatRunId,
@@ -1362,7 +1318,13 @@ export async function runAgent(
 				AttachStderr: true,
 			});
 
+			// Scanned incrementally rather than over a retained transcript: the raw
+			// exec output is the full stream-json stream and never kept (see
+			// ExecStartOpts.onChunk).
+			const backgroundTermination = new BackgroundTerminationDetector();
+
 			const onChunk = async (chunk: ExecLogChunk) => {
+				backgroundTermination.push(chunk.stream, chunk.text);
 				const rendered =
 					chunk.stream === 'stdout' ? parser.onStdout(chunk.text) : parser.onStderr(chunk.text);
 				if (rendered) emit(chunk.stream, rendered);
@@ -1371,7 +1333,7 @@ export async function runAgent(
 				currentUsage = parser.getUsage();
 			};
 
-			const { stdout, stderr } = await deps.docker.execStart(execId, { signal, onChunk });
+			await deps.docker.execStart(execId, { signal, onChunk });
 			const tail = parser.flush();
 			if (tail) emit('stdout', tail);
 			const execInfo = await deps.docker.execInspect(execId);
@@ -1574,9 +1536,7 @@ export async function runAgent(
 			// though it exits 0 and may have written something earlier. Fail it so it
 			// surfaces and is retried rather than silently counting as done.
 			const backgroundWorkTerminated =
-				exitedClean &&
-				runtimeType === AgentRuntime.ClaudeCode &&
-				detectTerminatedBackgroundWork(stdout, stderr);
+				exitedClean && runtimeType === AgentRuntime.ClaudeCode && backgroundTermination.finish();
 
 			const success =
 				exitedClean && (producedOutput || reportedNoWork) && !backgroundWorkTerminated;
@@ -1617,7 +1577,7 @@ export async function runAgent(
 			);
 
 			await cleanupRunArtifacts();
-			return { success, exitCode: execInfo.ExitCode, stdout, stderr, durationMs, heartbeatRunId };
+			return { success, exitCode: execInfo.ExitCode, stderr: '', durationMs, heartbeatRunId };
 		} catch (error) {
 			const durationMs = Date.now() - startTime;
 			const isAbort = (error as Error).name === 'AbortError';
@@ -1665,7 +1625,6 @@ export async function runAgent(
 			return {
 				success: false,
 				exitCode: -1,
-				stdout: '',
 				stderr: errorMessage,
 				durationMs,
 				heartbeatRunId,
@@ -1678,7 +1637,7 @@ export async function runAgent(
 }
 
 function failedResult(stderr: string, startTime: number): RunResult {
-	return { success: false, exitCode: -1, stdout: '', stderr, durationMs: Date.now() - startTime };
+	return { success: false, exitCode: -1, stderr, durationMs: Date.now() - startTime };
 }
 
 function abortedResult(startTime: number): RunResult {
@@ -2205,6 +2164,7 @@ export interface BuildTaskPromptContext {
 	replyContext?: ReplyContext | null;
 	commentWakeContext?: CommentWakeContext | null;
 	spawnedFrom?: SpawnedFromTask | null;
+	openSubTasks?: OpenSubTask[];
 	recentComments?: RenderableComment[];
 	wakingCommentId?: string;
 }
@@ -2283,6 +2243,7 @@ export function buildTaskPrompt(
 	ctx: BuildTaskPromptContext = {},
 ): string {
 	const { mentionContext, replyContext, commentWakeContext, spawnedFrom, recentComments } = ctx;
+	const openSubTasks = ctx.openSubTasks ?? [];
 	const parts = [systemPrompt, '', '---', ''];
 
 	if (replyContext && wakeupPayload?.source === WakeupSource.Reply) {
@@ -2298,6 +2259,16 @@ export function buildTaskPrompt(
 	parts.push(`**Status:** ${task.status}`);
 	if (spawnedFrom?.parentLine) parts.push(spawnedFrom.parentLine);
 	if (spawnedFrom?.spawnLine) parts.push(spawnedFrom.spawnLine);
+	if (openSubTasks.length > 0) {
+		parts.push(
+			'**Open sub-tasks** (already delegated — route new instructions to these tickets, do not do their work yourself):',
+		);
+		for (const sub of openSubTasks) {
+			parts.push(
+				`- ${sub.identifier} — ${sub.title} (${sub.status}, assigned to ${sub.assignee_name ?? 'unassigned'})`,
+			);
+		}
+	}
 	parts.push('');
 
 	if (task.rules) {
@@ -2548,6 +2519,40 @@ export async function loadSpawnedFromTask(db: Db, task: TaskInfo): Promise<Spawn
 			? `**Spawned from:** ${spawningTask.identifier} — ${spawningTask.title} (provenance only; this ticket is your own work)`
 			: null,
 	};
+}
+
+/** A non-terminal sub-task of the ticket a run is on — work already delegated out. */
+export interface OpenSubTask {
+	identifier: string;
+	title: string;
+	status: string;
+	assignee_name: string | null;
+}
+
+/** Cap on the sub-tasks listed in the prompt; a fan-out wider than this is already unusual. */
+const OPEN_SUB_TASKS_LIMIT = 20;
+
+/**
+ * The current ticket's still-open sub-tasks, so the run prompt can say what this
+ * agent has already delegated. `loadSpawnedFromTask` renders the ticket's lineage
+ * *upward* (parent / spawned-from); this is the downward half, and it is what makes
+ * the "route new instructions to the delegate, don't absorb their work" rule in
+ * SHARED_INSTRUCTIONS checkable from the prompt rather than from memory. One extra
+ * query per run start (not per request), bounded by OPEN_SUB_TASKS_LIMIT.
+ */
+export async function loadOpenSubTasks(db: Db, task: TaskInfo): Promise<OpenSubTask[]> {
+	const terminal = terminalStatusParams(2, true);
+	const r = await db.query<OpenSubTask>(
+		`SELECT i.identifier, i.title, i.status::text AS status, m.display_name AS assignee_name
+		 FROM tasks i
+		 LEFT JOIN members m ON m.id = i.assignee_id
+		 WHERE i.parent_task_id = $1
+		   AND i.status NOT IN (${terminal.placeholders})
+		 ORDER BY i.created_at ASC
+		 LIMIT ${OPEN_SUB_TASKS_LIMIT}`,
+		[task.id, ...terminal.values],
+	);
+	return r.rows;
 }
 
 /**

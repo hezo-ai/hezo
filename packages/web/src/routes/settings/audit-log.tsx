@@ -1,12 +1,13 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { AuditLogTable } from '../../components/audit-log-table';
+import { LoadOlderActivity } from '../../components/load-older-activity';
 import { InfoTooltip } from '../../components/ui/info-tooltip';
 import { useInstanceAuditLog } from '../../hooks/use-audit-log';
 import { useMe } from '../../hooks/use-me';
 
 function InstanceAuditLogPage() {
 	const { data: me } = useMe();
-	const { data: entries } = useInstanceAuditLog();
+	const { entries, hasMore, loadMore, isLoadingMore } = useInstanceAuditLog();
 
 	const body =
 		me && !me.is_superuser ? (
@@ -31,6 +32,7 @@ function InstanceAuditLogPage() {
 					</p>
 				</div>
 				<AuditLogTable entries={entries} showProject emptyText="No activity recorded yet." />
+				<LoadOlderActivity hasMore={hasMore} loadMore={loadMore} isLoading={isLoadingMore} />
 			</>
 		);
 

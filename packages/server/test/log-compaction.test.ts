@@ -16,6 +16,7 @@ import {
 } from '../src/services/log-compaction';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp } from './helpers/app';
+import { createTestDbWithMigrations } from './helpers/db';
 
 // A large, poorly-compressible log so its stored (pg_column_size) size clears
 // the ~2KB TOAST threshold the compaction filter uses. A run of repeated 'x'
@@ -243,5 +244,50 @@ describe('run-log compaction — service + routes', () => {
 			headers: authHeader(memberToken),
 		});
 		expect(res.status).toBe(403);
+	});
+});
+
+/**
+ * Run logs are the user's history: an instance may deliberately keep all of it.
+ * Compaction is therefore an explicit control on the global Storage settings
+ * page, and no scheduled path may start a pass on its own. This locks that in -
+ * the cron exists only to *drain* a pass an operator already started.
+ */
+describe('compaction stays operator-triggered', () => {
+	it('the cron drains nothing until an operator marks a pass active', async () => {
+		const db = await createTestDbWithMigrations();
+		try {
+			// A run old and large enough to be a compaction candidate.
+			const team = await db.query<{ id: string }>(
+				`INSERT INTO teams (name, slug) VALUES ('Retention', 'retention') RETURNING id`,
+			);
+			const member = await db.query<{ id: string }>(
+				`INSERT INTO members (team_id, member_type, display_name)
+				 VALUES ($1, 'agent', 'Worker') RETURNING id`,
+				[team.rows[0].id],
+			);
+			const run = await db.query<{ id: string }>(
+				`INSERT INTO heartbeat_runs (team_id, member_id, status, created_at)
+				 VALUES ($1, $2, 'succeeded'::heartbeat_run_status, now() - interval '400 days')
+				 RETURNING id`,
+				[team.rows[0].id, member.rows[0].id],
+			);
+			await appendRunLogChunks(db, run.rows[0].id, 'x'.repeat(200_000));
+
+			// No active marker => the scheduled tick is a no-op and the log is intact.
+			expect(await getActiveCompaction(db)).toBeNull();
+			await runLogCompactionTick(db, { backend: 'embedded' });
+			expect(await getActiveCompaction(db)).toBeNull();
+
+			const after = await readRunLogText(db, run.rows[0].id);
+			expect(after.length).toBe(200_000);
+			const marker = await db.query<{ log_compacted_at: string | null }>(
+				'SELECT log_compacted_at FROM heartbeat_runs WHERE id = $1',
+				[run.rows[0].id],
+			);
+			expect(marker.rows[0].log_compacted_at).toBeNull();
+		} finally {
+			await safeClose(db);
+		}
 	});
 });

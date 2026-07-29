@@ -162,11 +162,23 @@ List local team templates: the built-in Blank template plus any custom templates
 
 **Returns:** An array of local templates (`id`, `name`, `description`, `is_builtin`, `agent_types[]` where each entry has `slug`, `name`, `role_description`). Only the built-in Blank template and custom saved templates appear here - the default specialist rosters live in the marketplace (`get_marketplace_team`).
 
+### `list_marketplace_teams`
+
+_Read-only._
+
+Browse the team marketplace: every ready-made team available to this instance, with its name, description, summary, role count, and version. Callable by the CEO or a team Captain. Use it before staffing a team - the marketplace carries proven, fully-written roles, so check whether one already covers the role you need (then pull its prompt with get_marketplace_team) instead of authoring a system prompt from scratch. You can take a whole roster (apply_marketplace_team) or lift out a single role (apply_marketplace_agent).
+
+**Parameters:** none.
+
+**Returns:** `{ teams }` - every marketplace team available to this instance, each with `slug`, `name`, `description`, `summary`, `version`, and `roster_count`. Search keywords are omitted. Fetch one team’s full roster and prompts with `get_marketplace_team`.
+
+**Authorization:** CEO or a team Captain.
+
 ### `get_marketplace_team`
 
 _Read-only._
 
-Fetch one marketplace team's full definition: its version, changelog, and every role's title, reporting line, and CURRENT system prompt (including the Captain override). CEO-only. Use this when adding/updating a team so you can compare the marketplace's prompts to the agents you already have and decide what to refresh.
+Fetch one marketplace team's full definition: its version, changelog, and every role's title, reporting line, and CURRENT system prompt (including the Captain override). Callable by the CEO or a team Captain. Use it when adding/updating a team, to compare the marketplace's prompts to the agents you already have and decide what to refresh; and when hiring, to start a role from a proven marketplace prompt instead of writing one from scratch - find candidate teams with list_marketplace_teams first.
 
 **Parameters:**
 
@@ -176,11 +188,11 @@ Fetch one marketplace team's full definition: its version, changelog, and every 
 
 **Returns:** The marketplace team’s `slug`, `name`, `version`, `changelog[]`, `captain` (`system_prompt`, `team_context`), and `roster[]` (each with `slug`, `title`, `reports_to_slug`, `role_description`, `summary`, `team_context`, `system_prompt`). Returns `{ error }` if the slug is unknown.
 
-**Authorization:** CEO only.
+**Authorization:** CEO or a team Captain.
 
 ### `apply_marketplace_team`
 
-_Read-only._
+_Write tool._
 
 Add or update a marketplace team's roster on a project's team. CEO-only. Fetches the named marketplace team and provisions its members directly onto the project's existing team - a direct add, not an approval-gated hire proposal, so use it only for a team the admin already chose. Roles the team already has are SKIPPED by default; pass refresh_existing=true to instead refresh those roles' descriptions and system prompts to this team's current versions (use this when the project was created from an earlier version of THIS SAME team - it is a version update, not a duplicate add). refresh_existing overwrites prompts, so before using it on roles that may carry local customizations, read them (get_agent_system_prompt) and the new versions (get_marketplace_team) and refresh selectively with update_agent_system_prompt instead. After it returns, reconcile the merged roster. Returns the roles added, refreshed, and skipped.
 
@@ -195,6 +207,24 @@ Add or update a marketplace team's roster on a project's team. CEO-only. Fetches
 **Returns:** `{ added, refreshed, skipped, captain_updated, version }` - the roster slugs added, refreshed in place (with `refresh_existing`), and skipped. Provisions members directly (no approval flow). Returns `{ error }` if the slug is unknown.
 
 **Authorization:** CEO only - use only for a team the admin already chose; reconcile the merged roster afterwards.
+
+### `apply_marketplace_agent`
+
+_Write tool._
+
+Add ONE role from a marketplace team to a project's team. CEO-only. Use this when the admin wants a single role (e.g. just the security engineer) rather than a whole roster - it provisions that one member directly, a direct add rather than an approval-gated hire proposal, and leaves the rest of the roster, including the Captain, untouched. The team already having that slug is a no-op (skipped). The role's prompt was written for its home team, so AFTER this returns you MUST fit it to this project: rewrite its system prompt and team context (update_agent_system_prompt, set_agent_team_context) so every teammate and hand-off they name is an agent that actually exists here, set a real manager with set_agent_reports_to, and update the existing agents whose work now flows through it. When the role's own manager is not on this team the reporting line is wired to the Captain as a placeholder and reports_to_fell_back comes back true - re-point it. Returns whether the role was added or skipped, plus the reporting line applied.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `slug` | `string` | Yes | The marketplace team slug the role comes from (e.g. "software-development"). |
+| `role` | `string` | Yes | The roster role slug to add (e.g. "security-engineer"), as listed by get_marketplace_team. The Captain is not a roster role and cannot be added this way. |
+
+**Returns:** `{ role, added, skipped, reports_to, reports_to_fell_back, version }` for the single role provisioned. `skipped` is true when the team already had that slug. `reports_to_fell_back` is true when the role’s own manager is not on this team, so the line was wired to the Captain as a placeholder. Returns `{ error }` if the team slug or role slug is unknown.
+
+**Authorization:** CEO only - use only for a role the admin already chose; fit the role’s prompt and reporting line to the existing roster afterwards.
 
 ### `list_projects`
 
