@@ -104,13 +104,15 @@ async function getCommentsFull(
             ic.author_member_id,
             ic.author_api_key_id,
             ic.author_user_id,
-            (SELECT ui.updated_at FROM user_icons ui WHERE ui.user_id = ic.author_user_id) AS author_user_icon_updated_at,
-            (SELECT ai.updated_at FROM agent_icons ai WHERE ai.member_id = ic.author_member_id) AS author_agent_icon_updated_at,
+            ui.updated_at AS author_user_icon_updated_at,
+            ai.updated_at AS author_agent_icon_updated_at,
             ic.parent_comment_id
      FROM task_comments ic
      LEFT JOIN members m ON m.id = ic.author_member_id
      LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
      LEFT JOIN api_keys ca ON ca.id = ic.author_api_key_id
+     LEFT JOIN user_icons ui ON ui.user_id = ic.author_user_id
+     LEFT JOIN agent_icons ai ON ai.member_id = ic.author_member_id
      WHERE ic.task_id = $1
      ORDER BY ic.created_at ASC`,
 		[taskId],
@@ -156,16 +158,25 @@ async function getCommentSkeletons(
             ic.author_member_id,
             ic.author_api_key_id,
             ic.author_user_id,
-            (SELECT ui.updated_at FROM user_icons ui WHERE ui.user_id = ic.author_user_id) AS author_user_icon_updated_at,
-            (SELECT ai.updated_at FROM agent_icons ai WHERE ai.member_id = ic.author_member_id) AS author_agent_icon_updated_at,
+            ui.updated_at AS author_user_icon_updated_at,
+            ai.updated_at AS author_agent_icon_updated_at,
             ic.parent_comment_id,
             CASE WHEN ic.content_type = 'text'
                  THEN COALESCE(length(ic.content->>'text'), 0) ELSE NULL END AS text_length,
-            (SELECT count(*)::int FROM comment_attachments cat WHERE cat.comment_id = ic.id) AS attachment_count
+            COALESCE(att.n, 0) AS attachment_count
      FROM task_comments ic
      LEFT JOIN members m ON m.id = ic.author_member_id
      LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
      LEFT JOIN api_keys ca ON ca.id = ic.author_api_key_id
+     LEFT JOIN user_icons ui ON ui.user_id = ic.author_user_id
+     LEFT JOIN agent_icons ai ON ai.member_id = ic.author_member_id
+     LEFT JOIN (
+       SELECT cat.comment_id, count(*)::int AS n
+       FROM comment_attachments cat
+       JOIN task_comments tc ON tc.id = cat.comment_id
+       WHERE tc.task_id = $1
+       GROUP BY cat.comment_id
+     ) att ON att.comment_id = ic.id
      WHERE ic.task_id = $1
      ORDER BY ic.created_at ASC`,
 		[taskId],

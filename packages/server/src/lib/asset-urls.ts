@@ -1,14 +1,12 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { ATTACHMENT_SIGNED_URL_TTL_SECONDS } from '@hezo/shared';
-import { deriveKey } from '../crypto/encryption';
 import type { MasterKeyManager } from '../crypto/master-key';
 
 const KEY_PURPOSE = 'asset-url';
 
-async function getSigningKey(masterKeyManager: MasterKeyManager): Promise<Buffer> {
-	const unlockKeyHex = masterKeyManager.getUnlockKeyHex();
-	if (!unlockKeyHex) throw new Error('Master key not available');
-	return deriveKey(unlockKeyHex, KEY_PURPOSE);
+/** Memoized on the manager — see entity-icon-urls.ts for why this matters. */
+function getSigningKey(masterKeyManager: MasterKeyManager): Promise<Buffer> {
+	return masterKeyManager.getDerivedKey(KEY_PURPOSE);
 }
 
 export async function signAssetUrl(
