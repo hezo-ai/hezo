@@ -1052,7 +1052,14 @@ run's log when the comments don't explain a struggle.
 
 **Task prompt.** After the system prompt, `buildTaskPrompt` (`agent-runner.ts`) appends the
 run's task block: the current task's identifier/title/priority/status, plus its `rules`,
-`description`, and `progress_summary`. It also injects the **latest 3 comments** inline (the
+`description`, and `progress_summary`. The block also carries the ticket's **lineage** in both
+directions: upward from `loadSpawnedFromTask` (a `**Parent ticket:**` line, and a
+`**Spawned from:**` provenance line when a run on a different ticket created this one), and
+downward from `loadOpenSubTasks` — an `**Open sub-tasks**` list naming each non-terminal child
+with its assignee and status. The downward half exists so a manager can see what it has already
+delegated: `SHARED_INSTRUCTIONS` tells it to route fresh feedback to an in-flight sub-task
+rather than absorbing the deliverable, and without the list that rule depends on the agent
+remembering its own earlier fan-out. It also injects the **latest 3 comments** inline (the
 comment that woke the run tagged) as a head-start — small enough to carry on every run, while
 the `SHARED_INSTRUCTIONS` "read the thread before you act" rule still directs the agent to
 `list_comments` for the full thread before acting, since instructions posted after a task is
