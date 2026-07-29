@@ -1,6 +1,6 @@
 {
 	"locale.title": "Choisissez votre langue",
-	"locale.subtitle": "Choisissez la langue de Hezo et le format des nombres. Vous pouvez modifier ces réglages à tout moment dans les réglages.",
+	"locale.subtitle": "Choisissez la langue de Hezo et le format des nombres. Vous pourrez les modifier à tout moment dans les Réglages.",
 	"locale.language.label": "Langue",
 	"locale.dateFormat.label": "Format de date",
 	"locale.numberFormat.label": "Format monétaire",
@@ -47,7 +47,7 @@
 	"settings.title": "Réglages",
 	"settings.general": "Général",
 	"settings.aiProviders": "Fournisseurs d'IA",
-	"settings.skills": "Skills",
+	"settings.skills": "Compétences",
 	"settings.connectors": "Connecteurs",
 	"settings.chatChannels": "Canaux de discussion",
 	"settings.credentials": "Identifiants",

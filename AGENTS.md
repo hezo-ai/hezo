@@ -296,6 +296,36 @@ Write the second occurrence as shared code, not a copy. These are decision rules
 
 **Don't over-rotate.** A shared abstraction with one real caller and a speculative second is worse than the duplication it avoids — it fixes the shape of the code before you know the shape of the problem. Extract on the second *real* occurrence, not the first imagined one.
 
+## Translations
+
+The web app's message catalogs (`packages/web/src/lib/i18n/catalog/*.json`) are **hand-authored source files**, not generated — there is no translation API and no build step behind them. `en.json` is the source of truth; the other eleven are written against it by whoever is doing the work, and reviewed like any other code.
+
+That changes the failure mode. A machine pass fails by translating things it shouldn't; an authored pass fails by **omission** — a key added to `en.json` and copy-pasted unchanged into the rest, which renders English inside an otherwise translated screen. `test/i18n-catalog.test.ts` is what catches that (it is how `settings.skills` was found sitting untranslated in all eleven languages), including an `IDENTICAL_TO_ENGLISH_OK` allowlist for words that genuinely coincide. **Adding an allowlist entry to quiet the test is the mistake it exists to prevent** — every entry is a claim that the two really are the same word.
+
+Rules for any catalog edit:
+
+- **Never translated:** `Hezo`, `Captain`, `CEO`, `Coach`, `HQ`, `MCP`, agent role names, marketplace team names, and any CLI/command text. Role and team names must match the app's `marketplace/teams/*.json` rosters — translating one side desyncs them.
+- **"task", never "ticket" — in every language.** Pick the word for a unit of work, not a support ticket: `Aufgabe` not `Ticket`, `tâche` not `ticket`, `タスク` not `チケット`. The test asserts the literal string, which only catches the English-shaped mistake; the rest is on you.
+- **The em/en dash ban applies to every language**, not just English (**User-facing docs terminology**).
+- **`{placeholder}` tokens are copied verbatim.** A translated `{count}` renders literally.
+- **One term per concept per language.** Whatever a language calls Settings, it calls it that everywhere — French is `Réglages` throughout, so a string referring to the page uses `Réglages` too. Check the existing catalog before inventing a second word.
+- **Watch for repetition the English doesn't have.** French once read "modifier ces réglages … dans les réglages" — correct, consistent, and clumsy. Recast rather than accepting it.
+
+**Register is a per-language decision, already made.** Do not "fix" one language to match another — forcing formal address onto Swedish would be actively wrong, since it is archaic there after the du-reform.
+
+| | Address | Why |
+|---|---|---|
+| de | formal (Sie) | The safe default for business software |
+| fr | formal (vous) | Standard for product UI |
+| es / it | informal (tú / tu) | Modern software convention |
+| nl | informal (je) | Normal for product UI |
+| pt-BR | você | Standard and neutral |
+| pl | informal 2nd person | Now standard in Polish developer tooling |
+| sv | informal (du) | Required — formal address is archaic |
+| zh-Hans / ja / ko | polite-neutral | 您 / です・ます / 해요체 |
+
+These are **unreviewed by native speakers**. The register calls above and the CJK politeness levels in particular deserve a native pass before a release that markets the translations.
+
 ## Type safety
 
 No `any` in source code. Use specific types, `unknown`, `Record<string, unknown>`, or generics. If a library lacks types, install them (`@types/*`) — don't fall back to `any` or `declare const` hacks. `any` is acceptable only in test files for unpredictable JSON.
