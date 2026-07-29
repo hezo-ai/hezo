@@ -21,7 +21,10 @@ export type MasterKeyState = 'unset' | 'locked' | 'unlocked';
  */
 export class MasterKeyManager {
 	private key: Buffer | null = null;
-	private jwtKey: Buffer | null = null;
+	/** HKDF-derived keys by purpose, memoized per unlock (see getDerivedKey). */
+	private derivedKeys = new Map<string, Buffer>();
+	/** In-flight derivations, so concurrent first-callers share one HKDF. */
+	private derivingKeys = new Map<string, Promise<Buffer>>();
 	private unlockKeyHex: string | null = null;
 	private authPublicKeyHex: string | null = null;
 	private state: MasterKeyState = 'unset';
@@ -115,10 +118,36 @@ export class MasterKeyManager {
 	}
 
 	async getJwtKey(): Promise<Buffer> {
-		if (this.jwtKey) return this.jwtKey;
+		return this.getDerivedKey('jwt');
+	}
+
+	/**
+	 * The HKDF-derived key for a purpose, memoized for the life of the unlock.
+	 *
+	 * Derivation is deterministic in (unlock key, purpose), so caching is sound,
+	 * and it matters: URL signing derives per call, and the feeds that sign a URL
+	 * per row (a task's comment thread, the agents and projects lists, the inbox,
+	 * mentions) were paying an HKDF round trip through libuv for every row they
+	 * rendered. A long thread turned a page load into thousands of serial
+	 * derivations. The cache is cleared on every unlock, so a re-unlock with a
+	 * different key can never serve a stale derivation.
+	 */
+	async getDerivedKey(purpose: string): Promise<Buffer> {
+		const cached = this.derivedKeys.get(purpose);
+		if (cached) return cached;
 		if (!this.unlockKeyHex) throw new Error('Master key not available');
-		this.jwtKey = await deriveKey(this.unlockKeyHex, 'jwt');
-		return this.jwtKey;
+		// Coalesce concurrent first-derivations of the same purpose: a page that
+		// signs 200 rows would otherwise start 200 identical HKDFs before any
+		// of them resolves and populates the cache.
+		let inflight = this.derivingKeys.get(purpose);
+		if (!inflight) {
+			inflight = deriveKey(this.unlockKeyHex, purpose);
+			this.derivingKeys.set(purpose, inflight);
+			inflight.finally(() => this.derivingKeys.delete(purpose));
+		}
+		const key = await inflight;
+		this.derivedKeys.set(purpose, key);
+		return key;
 	}
 
 	/** The enrolled Ed25519 auth public key (hex), memoized after first read. */
@@ -160,6 +189,9 @@ export class MasterKeyManager {
 
 	private async setUnlocked(unlockKeyHex: string): Promise<void> {
 		this.unlockKeyHex = unlockKeyHex;
+		// Never serve a key derived from a previous unlock key.
+		this.derivedKeys.clear();
+		this.derivingKeys.clear();
 		this.key = await deriveKey(unlockKeyHex, 'encryption');
 		const wasLocked = this.state !== 'unlocked';
 		this.state = 'unlocked';

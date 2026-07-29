@@ -38,6 +38,10 @@ three columns:
 
 You can narrow the view by entity type, action, and date range.
 
+The log loads the most recent entries first, in pages. **Load older activity** at the
+bottom of the list fetches the next page and appends it, so you can walk back through the
+whole history as far as you need without waiting for it all up front.
+
 ## Project and instance views
 
 There are two scopes:

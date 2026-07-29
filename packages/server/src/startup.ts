@@ -1,8 +1,9 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { extname, join, resolve } from 'node:path';
-import { ATTACHMENT_MAX_BYTES } from '@hezo/shared';
+import { API_BODY_MAX_BYTES, ATTACHMENT_MAX_BYTES } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
+import { compress } from 'hono/compress';
 import { LocalAssetStore } from './assets/drivers/local';
 import { openAssetStorage } from './assets/open';
 import type { AssetStore } from './assets/store';
@@ -88,7 +89,7 @@ import { ContainerLogStreamer } from './services/container-logs';
 import type { ContainerDeps } from './services/containers';
 import { DockerClient } from './services/docker';
 import { extractBundledDockerContext } from './services/docker-assets';
-import { EgressProxy, loadOrCreateCA } from './services/egress';
+import { bindSecretsVaultToMasterKey, EgressProxy, loadOrCreateCA } from './services/egress';
 import { ImageBuildTracker, setSharedImageBuildTracker } from './services/image-build-tracker';
 import {
 	pruneStaleBundledImages,
@@ -317,6 +318,8 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		bindHostRef: bindHost,
 		authEnabled: config.egressProxyAuth,
 	});
+	// Decrypted secrets must never outlive the unlock that produced them.
+	bindSecretsVaultToMasterKey(masterKeyManager);
 	// Verify a container can actually reach back to the host — the MCP server
 	// (firewall signal) and a listener at the egress/SSH bind host. On native-Linux
 	// Docker a host firewall or a loopback bind silently blocks this, leaving every
@@ -536,6 +539,40 @@ export function buildApp(
 		log.error(`Route error on ${c.req.method} ${c.req.path}:`, err);
 		return c.text('Internal Server Error', 500);
 	});
+
+	// Compress text responses. Nothing was compressed before: every JSON payload
+	// and every SPA asset shipped raw, which on a self-hosted instance reached
+	// over a link the operator does not control. Hono's middleware honours
+	// Accept-Encoding and skips responses that are already encoded, so
+	// pre-compressed asset bodies (images, gzipped bundles) pass through
+	// untouched. Streamed responses are not buffered to compress them.
+	app.use('*', compress());
+
+	// Ceiling on every request body the API accepts. Only the handful of upload
+	// routes were capped, so a JSON body had no bound at all - one request could
+	// ask the process to buffer arbitrarily much before a handler ever saw it.
+	// Deliberately well above every per-route cap (see `API_BODY_MAX_BYTES`) so
+	// it is a pure backstop and never the binding constraint: routes that police
+	// their own size still answer with their own specific error, and a
+	// legitimately-sized upload is never rejected for its multipart envelope.
+	// `/mcp` and `/mcp/assets` sit outside `/api` - the agent surface is not
+	// capped here.
+	app.use(
+		'/api/*',
+		bodyLimit({
+			maxSize: API_BODY_MAX_BYTES,
+			onError: (c) =>
+				c.json(
+					{
+						error: {
+							code: 'TOO_LARGE',
+							message: `Request body exceeds ${API_BODY_MAX_BYTES / (1024 * 1024)} MB`,
+						},
+					},
+					413,
+				),
+		}),
+	);
 
 	app.use('*', async (c, next) => {
 		c.set('db', db);
@@ -762,27 +799,48 @@ export function buildApp(
 			return new Response(asset.body, { headers: { 'Content-Type': asset.type } });
 		}
 
-		// Filesystem fallback (dev / `bun run`).
-		if (existsSync(webDistDir)) {
-			const fullPath = join(webDistDir, filePath);
-			if (existsSync(fullPath)) {
-				const ext = extname(fullPath).toLowerCase();
-				return new Response(readFileSync(fullPath), {
-					headers: { 'Content-Type': STATIC_MIME[ext] || 'application/octet-stream' },
-				});
-			}
-			const indexPath = join(webDistDir, 'index.html');
-			if (existsSync(indexPath)) {
-				return new Response(readFileSync(indexPath), {
-					headers: { 'Content-Type': 'text/html; charset=utf-8' },
-				});
-			}
+		// Filesystem fallback (dev / `bun run`). Read straight through rather than
+		// stat-then-read: `existsSync` + `readFileSync` was two syscalls per
+		// request for one file (three on the index fallback), and the stat told us
+		// nothing the read does not. Reads stay uncached so a `vite build` during
+		// dev is picked up on the next request.
+		const fullPath = join(webDistDir, filePath);
+		const body = readFileIfPresent(fullPath);
+		if (body) {
+			const ext = extname(fullPath).toLowerCase();
+			return new Response(body, {
+				headers: { 'Content-Type': STATIC_MIME[ext] || 'application/octet-stream' },
+			});
+		}
+		// SPA fallback: any unmatched path renders the client-side router.
+		const index = readFileIfPresent(join(webDistDir, 'index.html'));
+		if (index) {
+			return new Response(index, {
+				headers: { 'Content-Type': 'text/html; charset=utf-8' },
+			});
 		}
 
 		return c.text('Not found', 404);
 	});
 
 	return app;
+}
+
+/**
+ * Read a file, or `null` when it is not there. Collapses the stat-then-read pair
+ * the static fallback used to do into one syscall, and closes the window between
+ * them (a file deleted after the `existsSync` threw out of the handler).
+ * Anything other than "not present" still throws - a permissions or IO error is
+ * a real fault and must not be reported to the browser as a 404.
+ */
+function readFileIfPresent(path: string): Buffer<ArrayBuffer> | null {
+	try {
+		return readFileSync(path);
+	} catch (e) {
+		const code = (e as NodeJS.ErrnoException).code;
+		if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'EISDIR') return null;
+		throw e;
+	}
 }
 
 async function cleanupOrphanRunSockets(_db: Db, dataDir: string): Promise<void> {

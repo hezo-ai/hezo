@@ -1,6 +1,6 @@
 import { WsMessageType } from '@hezo/shared';
-import { stripNulBytes } from '../lib/sql';
 import type { DockerClient } from './docker';
+import { DockerFrameDecoder } from './docker-frames';
 import type { LogStreamBroker } from './log-stream-broker';
 
 interface StreamState {
@@ -96,70 +96,30 @@ export class ContainerLogStreamer {
 		const reader = res.body?.getReader();
 		if (!reader) return;
 
-		const decoder = new TextDecoder();
-		let buffer: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
-		let batchLines: Array<{ stream: 'stdout' | 'stderr'; text: string }> = [];
-		let batchTimer: ReturnType<typeof setTimeout> | null = null;
-
-		const flush = () => {
-			if (batchLines.length === 0) return;
-			const lines = batchLines;
-			batchLines = [];
-			for (const line of lines) {
-				logs.emit(streamId, line.stream, line.text);
-			}
-		};
-
-		const scheduleBatch = () => {
-			if (batchTimer) return;
-			batchTimer = setTimeout(() => {
-				batchTimer = null;
-				flush();
-			}, 100);
-		};
+		// Frames go straight to the broker, which coalesces them into periodic
+		// batched WS frames for every log stream (see LogStreamBroker). This path
+		// used to keep its own 100ms batcher that then re-emitted line by line,
+		// so the coalescing never reached the socket.
+		const frames = new DockerFrameDecoder();
 
 		try {
 			while (true) {
 				const { done, value } = await reader.read();
 				if (done) break;
+				if (!value) continue;
 
-				buffer = concatBuffers(buffer, value);
-
-				while (buffer.length >= 8) {
-					const streamType = buffer[0];
-					const frameSize = (buffer[4] << 24) | (buffer[5] << 16) | (buffer[6] << 8) | buffer[7];
-
-					if (buffer.length < 8 + frameSize) break;
-
-					const payload = buffer.slice(8, 8 + frameSize);
-					buffer = buffer.slice(8 + frameSize);
-
-					const stream: 'stdout' | 'stderr' = streamType === 2 ? 'stderr' : 'stdout';
-					const text = stripNulBytes(decoder.decode(payload));
-
-					batchLines.push({ stream, text });
-					scheduleBatch();
+				frames.push(value);
+				for (let frame = frames.next(); frame !== null; frame = frames.next()) {
+					logs.emit(streamId, frame.stream, frame.text);
 				}
 			}
+			for (const frame of frames.flush()) logs.emit(streamId, frame.stream, frame.text);
 		} catch (e) {
 			if ((e as Error).name === 'AbortError') return;
 			throw e;
 		} finally {
-			if (batchTimer) clearTimeout(batchTimer);
-			flush();
 			reader.releaseLock();
 			this.streams.delete(projectId);
 		}
 	}
-}
-
-function concatBuffers(
-	a: Uint8Array<ArrayBufferLike>,
-	b: Uint8Array<ArrayBufferLike>,
-): Uint8Array<ArrayBufferLike> {
-	if (a.length === 0) return b;
-	const result = new Uint8Array(a.length + b.length);
-	result.set(a);
-	result.set(b, a.length);
-	return result;
 }

@@ -78,8 +78,12 @@ export async function verifyToken(
 
 		if (result.rows[0].status !== ApiKeyStatus.Approved) return null;
 
-		// Update last_used_at
-		await db.query('UPDATE api_keys SET last_used_at = now() WHERE id = $1', [result.rows[0].id]);
+		// `last_used_at` is a coarse "when was this key last seen" signal for the
+		// admin list, so it is written at most once a minute per key rather than on
+		// every request. An agent's MCP traffic is many requests a second, and each
+		// one was a row write - plus a dead tuple - for a timestamp nobody reads at
+		// that resolution.
+		await touchApiKeyLastUsed(db, result.rows[0].id);
 
 		return {
 			type: AuthType.ApiKey,
@@ -164,6 +168,18 @@ export async function verifyToken(
 	} catch {
 		return null;
 	}
+}
+
+/** Coarsest useful resolution for the api-key "last seen" timestamp. */
+const API_KEY_TOUCH_INTERVAL_MS = 60_000;
+const apiKeyTouchedAt = new Map<string, number>();
+
+async function touchApiKeyLastUsed(db: Db, apiKeyId: string): Promise<void> {
+	const now = Date.now();
+	const last = apiKeyTouchedAt.get(apiKeyId) ?? 0;
+	if (now - last < API_KEY_TOUCH_INTERVAL_MS) return;
+	apiKeyTouchedAt.set(apiKeyId, now);
+	await db.query('UPDATE api_keys SET last_used_at = now() WHERE id = $1', [apiKeyId]);
 }
 
 export const authMiddleware = createMiddleware<Env>(async (c, next) => {

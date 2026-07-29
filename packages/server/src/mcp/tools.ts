@@ -54,7 +54,7 @@ import { LocalAssetStore } from '../assets/drivers/local';
 import type { AssetStore } from '../assets/store';
 import type { MasterKeyManager } from '../crypto/master-key';
 import type { Db } from '../db/database';
-import { runLogLengthSql, runLogTextSql } from '../db/run-log-chunks';
+import { readRunLogTail, runLogLengthSql } from '../db/run-log-chunks';
 import type { DomainEventBus } from '../events/bus';
 import { assertNoActiveRun } from '../lib/active-run';
 import { isHqInstanceAgent, isVirtualHqMemberInTeam } from '../lib/agent-roles';
@@ -2569,26 +2569,25 @@ export function registerTools(
 				status: string;
 				exit_code: number | null;
 				task_id: string | null;
-				log_text: string;
 			}>(
-				`SELECT id, status, exit_code, task_id,
-				        ${runLogTextSql('heartbeat_runs.id')} AS log_text
+				`SELECT id, status, exit_code, task_id
 				 FROM heartbeat_runs WHERE id = $1 AND team_id = $2`,
 				[runId, scope.teamId],
 			);
 			if (r.rows.length === 0) return { error: `Run not found in this project: ${runId}` };
 			const run = r.rows[0];
-			const full = run.log_text ?? '';
 			const max = (args.excerpt_chars as number | undefined) ?? 12_000;
-			const truncated = full.length > max;
+			// Read the tail from storage rather than aggregating the whole log and
+			// slicing it here: a run's log reaches 10 MB and this returns ~12 KB.
+			const tail = await readRunLogTail(db, run.id, max);
 			return {
 				id: run.id,
 				status: run.status,
 				exit_code: run.exit_code,
 				task_id: run.task_id,
-				log: truncated ? full.slice(full.length - max) : full,
-				length: full.length,
-				truncated,
+				log: tail.text,
+				length: tail.length,
+				truncated: tail.truncated,
 			};
 		},
 		db,

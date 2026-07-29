@@ -255,6 +255,12 @@ const SHARED_INSTRUCTIONS = `
 - **How to ask:** post a comment stating exactly what you intend to do — the service, the specific action, the target resource, and why — put \`@admin\` in that same comment, and end your turn with the ticket in a non-terminal status. That is a recognised "waiting on input" state; the admin's reply wakes you automatically. Proceed only after they approve.
 - **Read-only inspection needs no approval.** Listing, reading, and querying an external service to understand its current state is always fine — the gate is on state-changing writes, not on looking.
 - Having the service's endpoint or credentials is **not** approval for a specific change. Access lets you inspect and, once approved, act; it never licenses an unreviewed write on its own.
+
+### Don't Re-Break What Was Already Fixed
+- **Before you change, simplify, or remove something that looks redundant, defensive, over-complicated, or plainly wrong, find out why it is that way.** Read the surrounding comments, the tests that cover it, and the history behind it. A guard rail that looks like waste is usually an incident somebody already had; a workaround that looks naive is often the second attempt, after a cleaner one failed.
+- **"This looks unnecessary" is a hypothesis, not a finding.** Confirm it before acting on it. The cost of checking is minutes; the cost of reintroducing a fixed bug is paid by whoever hits it next, and they will not know it was ever fixed.
+- **If the original reason no longer applies, say so explicitly** — name what changed and why the constraint is now obsolete — and keep the test that encoded it. If the reason still applies, leave it alone and record what you checked, so the next person does not re-litigate it from scratch.
+- This holds for everything, not just code: a process step, a checklist item, a prompt instruction, a clause in a document. Removing something is a change like any other, and it needs the same evidence.
 `;
 
 export async function resolveSystemPrompt(

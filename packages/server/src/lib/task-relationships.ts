@@ -1,4 +1,9 @@
-import { CommentContentType, HeartbeatRunStatus, TaskStatus, WakeupStatus } from '@hezo/shared';
+import {
+	ACTIVE_WAKEUP_STATUSES,
+	CommentContentType,
+	HeartbeatRunStatus,
+	TaskStatus,
+} from '@hezo/shared';
 import type { Db } from '../db/database';
 
 export const MAX_SUB_TASK_DEPTH = 2;
@@ -66,7 +71,9 @@ export async function assertChildrenAllClosed(
 }
 
 const ACTIVE_RUN_STATUSES = [HeartbeatRunStatus.Queued, HeartbeatRunStatus.Running];
-const ACTIVE_WAKEUP_STATUSES = [WakeupStatus.Queued, WakeupStatus.Claimed, WakeupStatus.Deferred];
+// ACTIVE_WAKEUP_STATUSES now lives in @hezo/shared beside the enum, paired with
+// TERMINAL_WAKEUP_STATUSES that the maintenance sweep deletes on. The two must
+// agree about `deferred`, so they cannot be two separate lists.
 const PING_WAKEUP_SOURCES = ['mention', 'comment', 'reply'];
 
 export async function assertNoOutstandingActivity(

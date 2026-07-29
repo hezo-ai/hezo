@@ -491,6 +491,18 @@ describe('heartbeat runs', () => {
 		expect(body.data.length).toBeGreaterThanOrEqual(1);
 		expect(body.data[0].status).toBe('succeeded');
 		expect(body.data[0].exit_code).toBe(0);
-		expect(body.data[0].log_text).toBe('All done');
+		// The list carries a size hint, never the log itself: `per_page` reaches
+		// 200 and a run's log reaches 10 MB, so a page of full logs could
+		// materialize gigabytes in one response.
+		expect(body.data[0].log_text).toBeUndefined();
+		expect(body.data[0].log_length).toBe('All done'.length);
+
+		// The single-run read is where the full log lives.
+		const runRes = await app.request(
+			`/api/projects/${projectSlug}/agents/${agent.id}/heartbeat-runs/${inserted.rows[0].id}`,
+			{ headers: authHeader(token) },
+		);
+		expect(runRes.status).toBe(200);
+		expect((await runRes.json()).data.log_text).toBe('All done');
 	});
 });

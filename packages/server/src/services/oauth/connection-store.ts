@@ -4,6 +4,7 @@ import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Db } from '../../db/database';
 import { withTransaction } from '../../lib/sql';
 import { logger } from '../../logger';
+import { invalidateSecretsVault } from '../egress';
 
 const log = logger.child('oauth-connections');
 
@@ -176,6 +177,7 @@ export async function createConnection(
 		return { ...conn.rows[0], access_token_secret_name: accessName };
 	});
 
+	invalidateSecretsVault();
 	log.info('oauth connection created', {
 		id: row.id,
 		provider: row.provider,
@@ -284,6 +286,7 @@ export async function deleteConnection(
 
 		return true;
 	});
+	invalidateSecretsVault();
 
 	if (deleted) log.info('oauth connection deleted', { id: connectionId });
 	return deleted;
@@ -351,6 +354,7 @@ export async function updateTokens(
 			conn.id,
 		]);
 	});
+	invalidateSecretsVault();
 }
 
 interface RawConnRow {

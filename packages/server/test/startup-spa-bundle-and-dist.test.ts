@@ -49,7 +49,16 @@ vi.mock('node:fs', async (importOriginal) => {
 		}) as typeof actual.existsSync,
 		readFileSync: ((p: Parameters<typeof actual.readFileSync>[0], o?: unknown) => {
 			const r = rel(p);
-			if (r !== null && state.dist && r in state.dist) return Buffer.from(state.dist[r]);
+			if (r !== null) {
+				if (state.dist && r in state.dist) return Buffer.from(state.dist[r]);
+				// Any other path under the fake dist must read as absent. The handler
+				// probes with the read itself rather than stat-then-read, so falling
+				// through to the real fs here would serve this repo's actual
+				// packages/web/dist whenever it happens to have been built.
+				const e = new Error(`ENOENT: no such file or directory, open '${String(p)}'`);
+				(e as NodeJS.ErrnoException).code = 'ENOENT';
+				throw e;
+			}
 			return actual.readFileSync(p, o as never);
 		}) as typeof actual.readFileSync,
 	};

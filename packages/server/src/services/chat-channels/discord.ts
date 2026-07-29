@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { ChatChannel } from '@hezo/shared';
 import { trackBackground } from '../../lib/background';
+import { BoundedMap } from '../../lib/bounded-map';
 import { logger } from '../../logger';
 import { DiscordGatewayClient } from './discord-gateway';
 import { splitMessageForLimit } from './format';
@@ -73,15 +74,19 @@ function discordSenderName(msg: DiscordMessage): string {
  * it on each heartbeat — a second Hezo process stands down instead of
  * double-replying. Requires the Message Content intent on the bot.
  */
+/** Ceiling on the per-workspace name/reply caches below. */
+const NAME_CACHE_MAX = 2_000;
+
 export class DiscordAdapter implements ChatChannelAdapter {
 	readonly channel = ChatChannel.Discord;
 
 	private gateway: DiscordGatewayClient | null = null;
 	private botUserId: string | null = null;
 	private readonly instanceId = randomUUID();
-	private channelNames = new Map<string, string>();
+	// Bounded: keyed by channel id, so an unbounded map grows forever.
+	private channelNames = new BoundedMap<string, string>(NAME_CACHE_MAX);
 	// Last mention message id per channel, so `deliver` can reply-reference it.
-	private replyTargets = new Map<string, string>();
+	private replyTargets = new BoundedMap<string, string>(NAME_CACHE_MAX);
 
 	constructor(private readonly deps: ChatChannelAdapterDeps) {}
 

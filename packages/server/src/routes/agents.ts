@@ -29,7 +29,7 @@ import {
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { Db } from '../db/database';
-import { runLogTextSql } from '../db/run-log-chunks';
+import { runLogLengthSql, runLogTextSql } from '../db/run-log-chunks';
 import { trackBackground } from '../lib/background';
 import { broadcastChange, broadcastCommentFamilyChange } from '../lib/broadcast';
 import { budgetWindowsError } from '../lib/budget-validation';
@@ -142,10 +142,20 @@ async function withAgentIconUrl(
 	return row;
 }
 
+/**
+ * Every run column except the log itself.
+ *
+ * The log is deliberately absent: `log_text` aggregates a run's chunks into one
+ * string that reaches the 10 MB cap, and this projection also backs the
+ * paginated list, where `per_page` goes to 200 - a single page could materialize
+ * and serialize gigabytes. Single-run reads add it back via
+ * `HEARTBEAT_RUN_COLUMNS_WITH_LOG`; the list ships `log_length` instead, which
+ * is a cheap aggregate over lengths.
+ */
 const HEARTBEAT_RUN_COLUMNS = `hr.id, hr.member_id, hr.team_id, hr.wakeup_id, hr.task_id, hr.kind,
 	hr.status, hr.queued_reason, hr.started_at, hr.finished_at, hr.exit_code, hr.error,
 	hr.input_tokens, hr.output_tokens, hr.cost_cents, hr.usage_partial,
-	hr.invocation_command, ${runLogTextSql('hr.id')} AS log_text, hr.working_dir,
+	hr.invocation_command, hr.working_dir,
 	hr.process_pid, hr.retry_of_run_id, hr.process_loss_retry_count,
 	i.identifier AS task_identifier, i.title AS task_title,
 	i.project_id AS project_id, p.slug AS project_slug, p.name AS project_name,
@@ -230,6 +240,12 @@ const HEARTBEAT_RUN_COLUMNS = `hr.id, hr.member_id, hr.team_id, hr.wakeup_id, hr
 		  AND (hr.finished_at IS NULL OR a.created_at <= hr.finished_at)),
 		'[]'::jsonb
 	) AS proposed_skills`;
+
+/** Run columns plus the full log, for single-run reads only. */
+const HEARTBEAT_RUN_COLUMNS_WITH_LOG = `${HEARTBEAT_RUN_COLUMNS}, ${runLogTextSql('hr.id')} AS log_text`;
+
+/** Run columns plus a cheap log-size hint, for the paginated list. */
+const HEARTBEAT_RUN_COLUMNS_WITH_LOG_LENGTH = `${HEARTBEAT_RUN_COLUMNS}, ${runLogLengthSql('hr.id')} AS log_length`;
 
 const HEARTBEAT_RUN_TRIGGER_JOINS = `LEFT JOIN agent_wakeup_requests aw ON aw.id = hr.wakeup_id
 	LEFT JOIN task_comments tic ON tic.id = NULLIF(aw.payload->>'comment_id', '')::uuid
@@ -1319,7 +1335,7 @@ agentsRoutes.get('/projects/:projectId/agents/:agentId/heartbeat-runs', async (c
 	);
 	const total = countResult.rows[0]?.total ?? 0;
 	const result = await db.query(
-		`SELECT ${HEARTBEAT_RUN_COLUMNS}
+		`SELECT ${HEARTBEAT_RUN_COLUMNS_WITH_LOG_LENGTH}
 		 FROM heartbeat_runs hr
 		 LEFT JOIN tasks i ON i.id = hr.task_id
 		 LEFT JOIN projects p ON p.id = i.project_id
@@ -1341,7 +1357,7 @@ agentsRoutes.get('/projects/:projectId/agents/:agentId/heartbeat-runs/:runId', a
 	const runId = c.req.param('runId');
 
 	const result = await db.query(
-		`SELECT ${HEARTBEAT_RUN_COLUMNS}
+		`SELECT ${HEARTBEAT_RUN_COLUMNS_WITH_LOG}
 		 FROM heartbeat_runs hr
 		 LEFT JOIN tasks i ON i.id = hr.task_id
 		 LEFT JOIN projects p ON p.id = i.project_id
@@ -1382,7 +1398,7 @@ agentsRoutes.post(
 		);
 
 		const refreshed = await db.query<Record<string, unknown>>(
-			`SELECT ${HEARTBEAT_RUN_COLUMNS}
+			`SELECT ${HEARTBEAT_RUN_COLUMNS_WITH_LOG}
 		 FROM heartbeat_runs hr
 		 LEFT JOIN tasks i ON i.id = hr.task_id
 		 LEFT JOIN projects p ON p.id = i.project_id

@@ -248,6 +248,15 @@ const INBOX_RETENTION_DAYS = Number(process.env.HEZO_INBOX_RETENTION_DAYS ?? 30)
 // the operator starts from the DB panel. Frequent so a started pass makes
 // visible progress and resumes promptly after a restart.
 const LOG_COMPACTION_CRON = process.env.HEZO_LOG_COMPACTION_CRON ?? '*/10 * * * * *';
+
+// Database housekeeping: refresh planner statistics on the embedded backend and
+// sweep terminal scheduler bookkeeping. Nightly, off-peak - neither is urgent,
+// and both are cheap enough that the point is only to stop them never running.
+// Statistics drift on the scale of days, not seconds.
+const DB_MAINTENANCE_CRON = process.env.HEZO_DB_MAINTENANCE_CRON ?? '0 30 4 * * *';
+
+/** Rate limit on the "job is overrunning its interval" warning. */
+const SKIP_WARN_INTERVAL_MS = 60_000;
 // Lower bound on how often a heartbeat can fire (`HEARTBEAT_INTERVAL_FLOOR_MIN`,
 // from ./heartbeat-schedule) is shared with the agents API's computed
 // `next_heartbeat_at` so the UI countdown matches the cadence enforced here.
@@ -261,6 +270,9 @@ export class JobManager {
 	private runningTasks = new Map<string, RunningTask>();
 	private liveRuns = new Map<string, LiveRun>();
 	private guards = new Map<string, boolean>();
+	/** Ticks dropped since the last warning, per job — see guarded(). */
+	private skippedTicks = new Map<string, number>();
+	private skipWarnedAt = new Map<string, number>();
 	// Tasks currently held by a dispatched run. Populated synchronously in activateAgent
 	// before launchTask, cleared in the launchTask finally. Closes the race window between
 	// dispatch and createHeartbeatRun where the DB-backed check is not yet authoritative.
@@ -492,6 +504,11 @@ export class JobManager {
 			cron: BUDGET_RESUME_CRON,
 			log: cronLog,
 			onTick: () => this.guarded('budget-resume', () => this.processBudgetResumes()),
+		});
+		this.cron.createJob('db-maintenance', {
+			cron: DB_MAINTENANCE_CRON,
+			log: cronLog,
+			onTick: () => this.guarded('db-maintenance', () => this.runDbMaintenance()),
 		});
 		this.cron.createJob('update-check', {
 			cron: UPDATE_CHECK_CRON,
@@ -1084,8 +1101,31 @@ export class JobManager {
 		}
 	}
 
+	/**
+	 * Run a cron tick unless the previous one is still going.
+	 *
+	 * A skipped tick is reported, not silent. The overlap guard means a job that
+	 * consistently overruns its period simply stops running at its stated cadence
+	 * — container status goes stale, wakeups dispatch late — with nothing in the
+	 * log to say so. That is how #186's stalled sync loop stayed invisible. The
+	 * warning is rate-limited so a job that is merely slow for a while does not
+	 * flood, while a job that is permanently behind keeps saying so.
+	 */
 	private async guarded(name: string, fn: () => Promise<void>): Promise<void> {
-		if (this.guards.get(name)) return;
+		if (this.guards.get(name)) {
+			const now = Date.now();
+			const lastWarned = this.skipWarnedAt.get(name) ?? 0;
+			const skipped = (this.skippedTicks.get(name) ?? 0) + 1;
+			this.skippedTicks.set(name, skipped);
+			if (now - lastWarned >= SKIP_WARN_INTERVAL_MS) {
+				this.skipWarnedAt.set(name, now);
+				log.warn(
+					`Job ${name} is overrunning its interval; ${skipped} tick(s) skipped while the previous run is still in flight`,
+				);
+				this.skippedTicks.set(name, 0);
+			}
+			return;
+		}
 		this.guards.set(name, true);
 		try {
 			await fn();
@@ -1969,7 +2009,6 @@ export class JobManager {
 							{
 								success: false,
 								exitCode: -1,
-								stdout: '',
 								stderr: err instanceof Error ? err.message : String(err),
 								durationMs: 0,
 								heartbeatRunId: registeredRunId,
@@ -2294,7 +2333,6 @@ export class JobManager {
 					await this.onProgressUpdateComplete(memberId, teamId, wakeupId, {
 						success: false,
 						exitCode: -1,
-						stdout: '',
 						stderr: err instanceof Error ? err.message : String(err),
 						durationMs: 0,
 						heartbeatRunId: registeredRunId,
@@ -2704,6 +2742,22 @@ export class JobManager {
 			this.cancelLiveRunsForProject(projectId, reason);
 			await failProjectRuns(this.buildContainerDeps(), projectId, projectSlug, teamId, reason);
 		}
+	}
+
+	/**
+	 * Nightly database housekeeping. Deliberately narrow: refresh planner
+	 * statistics (embedded only - PGlite has no auto-ANALYZE, so the indexes the
+	 * hot queries need silently stop being chosen as an instance grows), and
+	 * delete terminal wakeup rows past their retention window. Nothing here
+	 * touches run logs, cost entries or audit history - those are the user's
+	 * record, and reclaiming them stays an explicit operator action.
+	 */
+	private async runDbMaintenance(): Promise<void> {
+		const { analyzeHotTables, sweepTerminalWakeups } = await import('./db-maintenance');
+		const swept = await sweepTerminalWakeups(this.deps.db);
+		if (swept > 0) log.debug(`Swept ${swept} terminal wakeup row(s)`);
+		const analyzed = await analyzeHotTables(this.deps.db);
+		if (analyzed > 0) log.debug(`Refreshed planner statistics on ${analyzed} table(s)`);
 	}
 
 	private async archiveInboxItems(): Promise<void> {

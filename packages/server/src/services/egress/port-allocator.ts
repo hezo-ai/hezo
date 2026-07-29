@@ -17,6 +17,8 @@ export const EGRESS_HOST_PORT_RANGE_END = 39999;
  */
 export class PortAllocator {
 	private readonly inUse = new Set<number>();
+	/** Where the next scan starts; see allocate(). */
+	private cursor = 0;
 	private readonly lastForAgent = new Map<string, number>();
 
 	constructor(
@@ -41,10 +43,20 @@ export class PortAllocator {
 				this.inUse.delete(previous);
 			}
 		}
-		for (let port = this.rangeStart; port <= this.rangeEnd; port++) {
+		// Scan from a rotating cursor rather than always from `rangeStart`. Every
+		// allocation used to re-probe the low end of the range — a real bind and
+		// close per candidate — so a run touching N hosts paid N scans that each
+		// walked past the same busy ports. The cursor makes the common case one
+		// probe. Wrapping keeps the whole range reachable, so this changes cost,
+		// not semantics: the allocate-then-bind race is still handled by the
+		// caller's retry loop.
+		const span = this.rangeEnd - this.rangeStart + 1;
+		for (let i = 0; i < span; i++) {
+			const port = this.rangeStart + ((this.cursor + i) % span);
 			if (this.inUse.has(port)) continue;
 			this.inUse.add(port);
 			if (await this.probeAvailability(port)) {
+				this.cursor = (port - this.rangeStart + 1) % span;
 				if (agentId) this.lastForAgent.set(agentId, port);
 				return port;
 			}

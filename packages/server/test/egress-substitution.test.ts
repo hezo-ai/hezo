@@ -1,5 +1,12 @@
-import { describe, expect, it } from 'vitest';
-import { type ResolvedSecret, substituteRequest } from '../src/services/egress/substitution';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { encrypt } from '../src/crypto/encryption';
+import {
+	invalidateSecretsVault,
+	loadAllSecrets,
+	type ResolvedSecret,
+	substituteRequest,
+} from '../src/services/egress/substitution';
+import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
 function makeSecret(
 	name: string,
@@ -309,5 +316,91 @@ describe('substituteRequest', () => {
 				expect(result.headersChanged).toBe(false);
 			}
 		});
+	});
+});
+
+/**
+ * The vault is read and decrypted on every proxied request carrying a
+ * placeholder — i.e. every MCP call an agent makes — so it is cached. These
+ * lock the three invalidation layers: explicit, master-key state, and TTL.
+ */
+describe('decrypted vault cache', () => {
+	let ctx: ServerTestContext;
+
+	beforeEach(async () => {
+		ctx = await createTestContext();
+		invalidateSecretsVault();
+	});
+	afterEach(async () => {
+		invalidateSecretsVault();
+		await destroyTestContext(ctx);
+	});
+
+	const scope = () => ({ db: ctx.db, masterKeyManager: ctx.masterKeyManager });
+
+	async function seedSecret(name: string, value: string): Promise<void> {
+		const key = ctx.masterKeyManager.getKey();
+		if (!key) throw new Error('locked');
+		await ctx.db.query(
+			`INSERT INTO secrets (name, encrypted_value, category, allowed_hosts, allow_all_hosts)
+			 VALUES ($1, $2, 'api_token'::secret_category, '{}', true)
+			 ON CONFLICT (name) DO UPDATE SET encrypted_value = EXCLUDED.encrypted_value`,
+			[name, encrypt(value, key)],
+		);
+	}
+
+	it('serves a second read from cache without re-querying', async () => {
+		await seedSecret('CACHED_ONE', 'first');
+		const first = await loadAllSecrets(scope());
+		expect(first.get('CACHED_ONE')?.value).toBe('first');
+
+		// Change the row behind the cache's back — a cached read must not see it.
+		await seedSecret('CACHED_ONE', 'second');
+		const cached = await loadAllSecrets(scope());
+		expect(cached.get('CACHED_ONE')?.value).toBe('first');
+	});
+
+	it('picks up a change once the vault is invalidated', async () => {
+		await seedSecret('CACHED_TWO', 'before');
+		await loadAllSecrets(scope());
+
+		await seedSecret('CACHED_TWO', 'after');
+		invalidateSecretsVault();
+		const reloaded = await loadAllSecrets(scope());
+		expect(reloaded.get('CACHED_TWO')?.value).toBe('after');
+	});
+
+	it('coalesces concurrent misses into a single load', async () => {
+		await seedSecret('CACHED_THREE', 'value');
+		const results = await Promise.all([
+			loadAllSecrets(scope()),
+			loadAllSecrets(scope()),
+			loadAllSecrets(scope()),
+		]);
+		// One load, shared: every caller gets the identical map instance.
+		expect(results[1]).toBe(results[0]);
+		expect(results[2]).toBe(results[0]);
+		expect(results[0].get('CACHED_THREE')?.value).toBe('value');
+	});
+
+	// Decrypted material must never outlive the unlock that produced it.
+	it('drops the cache when the master key is locked', async () => {
+		await seedSecret('CACHED_FOUR', 'secret');
+		await loadAllSecrets(scope());
+
+		const locked = {
+			getKey: () => null,
+			getUnlockKeyHex: () => null,
+			getState: () => 'locked' as const,
+		};
+		await expect(loadAllSecrets({ db: ctx.db, masterKeyManager: locked as never })).rejects.toThrow(
+			'LOCKED',
+		);
+
+		// The rejection cleared the cache rather than leaving plaintext behind: a
+		// later unlocked read must go back to the database.
+		await ctx.db.query(`DELETE FROM secrets WHERE name = 'CACHED_FOUR'`);
+		const after = await loadAllSecrets(scope());
+		expect(after.has('CACHED_FOUR')).toBe(false);
 	});
 });

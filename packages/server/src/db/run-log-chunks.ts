@@ -65,27 +65,136 @@ export async function readRunLogText(q: Queryable, runId: string): Promise<strin
 	return r.rows[0]?.log_text ?? '';
 }
 
+/** The running token/cost snapshot a mid-run flush carries alongside its delta. */
+export interface RunUsageSnapshot {
+	inputTokens: number | null;
+	outputTokens: number | null;
+	costCents: number | null;
+}
+
 /**
  * Append `text` to a run's log as one or more chunk rows (split at
- * `MAX_RUN_LOG_CHUNK_CHARS`). Sequence numbers continue from the stored
- * maximum, so appends survive process restarts without any in-memory counter.
- * The single-writer-per-run guarantee (the log broker serializes flushes per
- * stream) makes MAX+1 race-free. Callers that must commit the append together
- * with other writes pass their transaction handle.
+ * `MAX_RUN_LOG_CHUNK_CHARS`), optionally stamping the run's running usage in
+ * the same breath.
+ *
+ * **One statement, deliberately.** This runs on every debounced flush — twice a
+ * second per live run — and used to be three statements (a `MAX(seq)` probe, an
+ * INSERT per chunk, an `UPDATE heartbeat_runs`) wrapped in a transaction. Both
+ * drivers serialize *every* transaction block process-wide (PGlite holds the
+ * engine lock; the Postgres driver queues blocks through `txQueue` for parity),
+ * so at ten concurrent runs that was ~20 globally-serialized transactions a
+ * second sitting in front of every user request. A single statement is atomic on
+ * its own, which is all the broker's exactly-once delta contract needs: on
+ * failure nothing lands and the identical delta is re-sent.
+ *
+ * Sequence numbers still come from the stored maximum rather than an in-memory
+ * counter, so appends survive a process restart; the single-writer-per-run
+ * guarantee (the broker serializes flushes per stream) makes MAX+1 race-free.
+ * Data-modifying CTEs run exactly once and to completion whether or not the
+ * primary query reads them, so the INSERT happens even though the UPDATE is the
+ * statement's visible result.
  */
-export async function appendRunLogChunks(q: Queryable, runId: string, text: string): Promise<void> {
-	if (text.length === 0) return;
-	const next = await q.query<{ next_seq: number }>(
-		'SELECT COALESCE(MAX(seq), -1) + 1 AS next_seq FROM heartbeat_run_log_chunks WHERE run_id = $1',
+export async function appendRunLogChunks(
+	q: Queryable,
+	runId: string,
+	text: string,
+	usage?: RunUsageSnapshot | null,
+): Promise<void> {
+	const chunks: string[] = [];
+	for (let offset = 0; offset < text.length; offset += MAX_RUN_LOG_CHUNK_CHARS) {
+		chunks.push(text.slice(offset, offset + MAX_RUN_LOG_CHUNK_CHARS));
+	}
+	if (chunks.length === 0 && !usage) return;
+
+	const insertCte = `WITH base AS (
+			SELECT COALESCE(MAX(seq), -1) + 1 AS start
+			FROM heartbeat_run_log_chunks WHERE run_id = $1
+		), ins AS (
+			INSERT INTO heartbeat_run_log_chunks (run_id, seq, content)
+			SELECT $1, base.start + (t.ord - 1)::int, t.content
+			FROM base, unnest($2::text[]) WITH ORDINALITY AS t(content, ord)
+		)`;
+	const usageUpdate = `UPDATE heartbeat_runs
+		 SET input_tokens = COALESCE($3, input_tokens),
+		     output_tokens = COALESCE($4, output_tokens),
+		     cost_cents = COALESCE($5, cost_cents),
+		     usage_partial = true
+		 WHERE id = $1`;
+
+	if (chunks.length > 0 && usage) {
+		await q.query(`${insertCte} ${usageUpdate}`, [
+			runId,
+			chunks,
+			usage.inputTokens,
+			usage.outputTokens,
+			usage.costCents,
+		]);
+		return;
+	}
+	if (chunks.length > 0) {
+		// `SELECT 1` keeps the CTE's shape without a second write.
+		await q.query(`${insertCte} SELECT 1`, [runId, chunks]);
+		return;
+	}
+	// Usage-only flush: a capped-but-dirty stream still reports its snapshot.
+	await q.query(
+		`UPDATE heartbeat_runs
+		 SET input_tokens = COALESCE($2, input_tokens),
+		     output_tokens = COALESCE($3, output_tokens),
+		     cost_cents = COALESCE($4, cost_cents),
+		     usage_partial = true
+		 WHERE id = $1`,
+		[runId, usage?.inputTokens ?? null, usage?.outputTokens ?? null, usage?.costCents ?? null],
+	);
+}
+
+/**
+ * The last `maxChars` characters of a run's log, plus its full length.
+ *
+ * Reads only the chunks it needs. Every caller that wants a tail — the
+ * `get_run_log` tool, the task's latest-run view, the orphan detector's failure
+ * excerpt — used to `string_agg` the whole log (up to the 10 MB cap) and then
+ * `slice` the last few KB off it in JS, detoasting and shipping megabytes to
+ * discard almost all of them.
+ */
+export async function readRunLogTail(
+	q: Queryable,
+	runId: string,
+	maxChars: number,
+): Promise<{ text: string; length: number; truncated: boolean }> {
+	const total = await q.query<{ len: number }>(
+		`SELECT COALESCE(SUM(length(content))::int, 0) AS len
+		 FROM heartbeat_run_log_chunks WHERE run_id = $1`,
 		[runId],
 	);
-	let seq = Number(next.rows[0]?.next_seq ?? 0);
-	for (let offset = 0; offset < text.length; offset += MAX_RUN_LOG_CHUNK_CHARS) {
-		await q.query(
-			'INSERT INTO heartbeat_run_log_chunks (run_id, seq, content) VALUES ($1, $2, $3)',
-			[runId, seq, text.slice(offset, offset + MAX_RUN_LOG_CHUNK_CHARS)],
+	const length = Number(total.rows[0]?.len ?? 0);
+	if (length === 0) return { text: '', length: 0, truncated: false };
+
+	// Walk back from the newest chunk until the budget is covered. Chunks are a
+	// few KB on a normal flush, so this is a handful of rows even for a big log;
+	// the widening loop only matters for pathological chunk sizes.
+	let limit = 32;
+	for (;;) {
+		const r = await q.query<{ content: string }>(
+			`SELECT content FROM heartbeat_run_log_chunks
+			 WHERE run_id = $1 ORDER BY seq DESC LIMIT $2`,
+			[runId, limit],
 		);
-		seq += 1;
+		const rows = r.rows;
+		const read = rows.reduce((n, row) => n + row.content.length, 0);
+		const reachedStart = rows.length < limit;
+		if (read >= maxChars || reachedStart) {
+			const text = rows
+				.map((row) => row.content)
+				.reverse()
+				.join('');
+			return {
+				text: text.length > maxChars ? text.slice(text.length - maxChars) : text,
+				length,
+				truncated: length > maxChars,
+			};
+		}
+		limit *= 4;
 	}
 }
 
