@@ -1,19 +1,19 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { gunzipSync } from 'node:zlib';
+import { afterAll, describe, expect, it } from 'vitest';
 import { MasterKeyManager } from '../src/crypto/master-key';
 import { createMemoryDb } from '../src/db/client';
 import type { Db, Queryable } from '../src/db/database';
 import { PostgresDb } from '../src/db/drivers/postgres';
 import {
-	decompressLogicalBackup,
-	dumpLogicalBackup,
 	dumpLogicalBackupToFile,
 	dumpPageRows,
+	type LogicalBackupHeader,
+	peekLogicalBackupHeaderFromFile,
 	planInsertBatches,
-	readLogicalBackupHeader,
-	restoreLogicalBackup,
+	restoreLogicalBackupFromFile,
 	streamLogicalBackupLines,
 } from '../src/db/logical-backup';
 import { BackupNewerThanAppError, RestorePreconditionError } from '../src/db/migrate-errors';
@@ -57,6 +57,23 @@ async function seedRichData(db: Db): Promise<{ teamId: string; taskId: string }>
 	);
 	return { teamId, taskId: parent.rows[0].id };
 }
+
+/** Dump to a throwaway file — the streamed writer is the only dump form. */
+const backupTempDirs: string[] = [];
+async function dumpToTempFile(
+	db: Db,
+	meta: Parameters<typeof dumpLogicalBackupToFile>[2],
+): Promise<string> {
+	const dir = mkdtempSync(join(tmpdir(), 'hezo-backup-'));
+	backupTempDirs.push(dir);
+	const file = join(dir, 'backup.gz');
+	await dumpLogicalBackupToFile(db, file, meta);
+	return file;
+}
+
+afterAll(() => {
+	for (const dir of backupTempDirs) rmSync(dir, { recursive: true, force: true });
+});
 
 describe('byte-aware batch sizing', () => {
 	it('sizes dump pages from average row size, clamped to [1, flat cap]', () => {
@@ -123,11 +140,12 @@ function recordingDb(inner: Db): { db: Db; queries: string[] } {
 }
 
 describe('streamed dump (dumpLogicalBackupToFile)', () => {
-	// The pre-migration backup runs on the startup path. Buffering the whole
-	// database before writing it OOM-killed small hosts mid-upgrade (exit 137),
-	// and the restart policy replayed the same kill on every boot. The streamed
-	// writer must produce exactly the same artifact.
-	it('writes a file that restores identically to the buffered dump', async () => {
+	// The pre-migration backup runs on the startup path, and restore is the
+	// recovery path. Buffering the database in either direction OOM-killed small
+	// hosts mid-upgrade (exit 137), and the restart policy replayed the same kill
+	// on every boot. Both directions stream; these cover the artifact and the
+	// round trip.
+	it('writes gzipped JSONL with each table’s rows contiguous', async () => {
 		const ctx = await createTestApp();
 		const migrations = allMigrations();
 		const dir = mkdtempSync(join(tmpdir(), 'hezo-stream-dump-'));
@@ -136,36 +154,105 @@ describe('streamed dump (dumpLogicalBackupToFile)', () => {
 
 			const file = join(dir, 'streamed.backup.gz');
 			await dumpLogicalBackupToFile(ctx.db, file, { hezoVersion: 'test', migrations });
-			const streamed = readFileSync(file);
 
-			// Byte-identical to the buffered dump of the same database, apart from the
-			// header's own `createdAt` (the two dumps are taken moments apart).
-			expect(readLogicalBackupHeader(streamed)?.formatVersion).toBe(1);
-			const buffered = await dumpLogicalBackup(ctx.db, { hezoVersion: 'test', migrations });
-			const split = (bytes: Buffer) => {
-				const text = decompressLogicalBackup(bytes) ?? '';
-				const nl = text.indexOf('\n');
-				const { createdAt, ...header } = JSON.parse(text.slice(0, nl)) as Record<string, unknown>;
-				expect(typeof createdAt).toBe('string');
-				return { header, body: text.slice(nl + 1) };
-			};
-			const a = split(streamed);
-			const b = split(buffered);
-			expect(a.header).toEqual(b.header);
-			expect(a.body).toBe(b.body);
+			// Decompressing here (rather than through the module) keeps the test
+			// honest about the artifact on disk: real gzip, header line first.
+			const text = gunzipSync(readFileSync(file)).toString('utf8');
+			const nl = text.indexOf('\n');
+			const header = JSON.parse(text.slice(0, nl)) as LogicalBackupHeader;
+			expect(header.formatVersion).toBe(1);
+			expect(header.hezoVersion).toBe('test');
+			expect(header.migrations.length).toBeGreaterThan(0);
+			expect(typeof header.createdAt).toBe('string');
+
+			// Every data line is `{t, r}`, and a table's rows never appear in two
+			// separate runs. The streaming restore relies on this: it flushes the
+			// open INSERT batch whenever the table changes, so an interleaved dump
+			// would turn one batched insert per table into one per row.
+			const runs: string[] = [];
+			let rows = 0;
+			for (const line of text.slice(nl + 1).split('\n')) {
+				if (!line) continue;
+				const { t, r } = JSON.parse(line) as { t: string; r: Record<string, unknown> };
+				expect(typeof t).toBe('string');
+				expect(r).toBeTypeOf('object');
+				if (runs[runs.length - 1] !== t) runs.push(t);
+				rows += 1;
+			}
+			expect(rows).toBeGreaterThan(0);
+			expect(runs.length).toBe(new Set(runs).size);
+			// `_migrations` is rebuilt by the restore's migration replay, never dumped.
+			expect(runs).not.toContain('_migrations');
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+			await safeClose(ctx.db);
+		}
+	});
+
+	it('restores straight from the file without materializing it', async () => {
+		const ctx = await createTestApp();
+		const migrations = allMigrations();
+		const dir = mkdtempSync(join(tmpdir(), 'hezo-stream-restore-'));
+		try {
+			const { taskId } = await seedRichData(ctx.db);
+			// Non-ASCII on both sides of the dump: gunzip chunk boundaries land
+			// mid-codepoint, so the line reader must decode incrementally rather
+			// than per chunk.
+			await ctx.db.query(`UPDATE tasks SET description = $1 WHERE id = $2`, [
+				`unicode ✓ ${'ünïcødé — ✚✚✚ '.repeat(4000)}`,
+				taskId,
+			]);
+
+			const file = join(dir, 'streamed.backup.gz');
+			await dumpLogicalBackupToFile(ctx.db, file, { hezoVersion: 'test', migrations });
 
 			const restored = await createMemoryDb();
 			try {
-				const summary = await restoreLogicalBackup(restored, streamed, migrations);
+				const summary = await restoreLogicalBackupFromFile(restored, file, migrations);
 				expect(summary.rows).toBeGreaterThan(0);
-				const tasks = await restored.query<{ c: number }>('SELECT COUNT(*)::int AS c FROM tasks');
-				const sourceTasks = await ctx.db.query<{ c: number }>(
-					'SELECT COUNT(*)::int AS c FROM tasks',
+				expect(summary.tables).toBeGreaterThan(0);
+
+				// Multi-byte content survives the incremental decode byte-for-byte.
+				const round = await restored.query<{ description: string }>(
+					'SELECT description FROM tasks WHERE id = $1',
+					[taskId],
 				);
-				expect(tasks.rows[0].c).toBe(sourceTasks.rows[0].c);
+				const source = await ctx.db.query<{ description: string }>(
+					'SELECT description FROM tasks WHERE id = $1',
+					[taskId],
+				);
+				expect(round.rows[0].description).toBe(source.rows[0].description);
+
+				// Same result as restoring the buffer form.
+				const rowCounts = async (db: Db) =>
+					(await db.query<{ c: number }>('SELECT COUNT(*)::int AS c FROM tasks')).rows[0].c;
+				expect(await rowCounts(restored)).toBe(await rowCounts(ctx.db));
 			} finally {
 				await safeClose(restored);
 			}
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+			await safeClose(ctx.db);
+		}
+	});
+
+	it('reads only the header when identifying a backup file', async () => {
+		const ctx = await createTestApp();
+		const migrations = allMigrations();
+		const dir = mkdtempSync(join(tmpdir(), 'hezo-peek-'));
+		try {
+			const file = join(dir, 'streamed.backup.gz');
+			await dumpLogicalBackupToFile(ctx.db, file, { hezoVersion: 'test', migrations });
+			const header = await peekLogicalBackupHeaderFromFile(file);
+			expect(header?.formatVersion).toBe(1);
+			expect(header?.hezoVersion).toBe('test');
+
+			// A file that isn't a logical backup identifies as null rather than
+			// throwing — that is how the restore CLI falls through to the legacy
+			// pgdata-tarball path.
+			const bogus = join(dir, 'not-a-backup.gz');
+			writeFileSync(bogus, Buffer.from('definitely not gzip'));
+			expect(await peekLogicalBackupHeaderFromFile(bogus)).toBeNull();
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 			await safeClose(ctx.db);
@@ -206,15 +293,15 @@ describe('logical backup round-trip (PGlite leg)', () => {
 		const migrations = allMigrations();
 		try {
 			await seedRichData(ctx.db);
-			const bytes = await dumpLogicalBackup(ctx.db, { hezoVersion: 'test', migrations });
+			const backupFile = await dumpToTempFile(ctx.db, { hezoVersion: 'test', migrations });
 
-			const header = readLogicalBackupHeader(bytes);
+			const header = await peekLogicalBackupHeaderFromFile(backupFile);
 			expect(header?.formatVersion).toBe(1);
 			expect(header?.migrations.length).toBeGreaterThan(0);
 
 			const restored = await createMemoryDb();
 			try {
-				const summary = await restoreLogicalBackup(restored, bytes, migrations);
+				const summary = await restoreLogicalBackupFromFile(restored, backupFile, migrations);
 				expect(summary.rows).toBeGreaterThan(0);
 
 				// Row parity across representative tables (incl. seeded builtins).
@@ -292,7 +379,7 @@ describe('logical backup round-trip (PGlite leg)', () => {
 			);
 
 			const source = recordingDb(ctx.db);
-			const bytes = await dumpLogicalBackup(source.db, { hezoVersion: 'test', migrations });
+			const backupFile = await dumpToTempFile(source.db, { hezoVersion: 'test', migrations });
 			const pageSelects = source.queries.filter(
 				(q) => q.includes('FROM "heartbeat_run_log_chunks"') && q.includes('LIMIT'),
 			);
@@ -303,7 +390,7 @@ describe('logical backup round-trip (PGlite leg)', () => {
 			const restored = await createMemoryDb();
 			try {
 				const target = recordingDb(restored);
-				await restoreLogicalBackup(target.db, bytes, migrations);
+				await restoreLogicalBackupFromFile(target.db, backupFile, migrations);
 				const inserts = target.queries.filter((q) =>
 					q.startsWith('INSERT INTO "heartbeat_run_log_chunks"'),
 				);
@@ -333,16 +420,16 @@ describe('logical backup round-trip (PGlite leg)', () => {
 		const ctx = await createTestApp();
 		const migrations = allMigrations();
 		try {
-			const bytes = await dumpLogicalBackup(ctx.db, { hezoVersion: 'test', migrations });
+			const backupFile = await dumpToTempFile(ctx.db, { hezoVersion: 'test', migrations });
 
 			const occupied = await createMemoryDb();
 			try {
 				await occupied.exec('CREATE TABLE already_here (id INT)');
-				await expect(restoreLogicalBackup(occupied, bytes, migrations)).rejects.toBeInstanceOf(
-					RestorePreconditionError,
-				);
+				await expect(
+					restoreLogicalBackupFromFile(occupied, backupFile, migrations),
+				).rejects.toBeInstanceOf(RestorePreconditionError);
 
-				await restoreLogicalBackup(occupied, bytes, migrations, { wipe: true });
+				await restoreLogicalBackupFromFile(occupied, backupFile, migrations, { wipe: true });
 				const teams = await occupied.query<{ c: number }>('SELECT COUNT(*)::int AS c FROM teams');
 				expect(teams.rows[0].c).toBeGreaterThan(0);
 				// The pre-existing table went with the wiped schema.
@@ -362,12 +449,12 @@ describe('logical backup round-trip (PGlite leg)', () => {
 			await ctx.db.query(
 				`INSERT INTO _migrations (filename, checksum) VALUES ('999_from_the_future.sql', 'x')`,
 			);
-			const bytes = await dumpLogicalBackup(ctx.db, { hezoVersion: 'future', migrations });
+			const backupFile = await dumpToTempFile(ctx.db, { hezoVersion: 'future', migrations });
 			const restored = await createMemoryDb();
 			try {
-				await expect(restoreLogicalBackup(restored, bytes, migrations)).rejects.toBeInstanceOf(
-					BackupNewerThanAppError,
-				);
+				await expect(
+					restoreLogicalBackupFromFile(restored, backupFile, migrations),
+				).rejects.toBeInstanceOf(BackupNewerThanAppError);
 			} finally {
 				await restored.close();
 			}
@@ -388,8 +475,8 @@ describe.skipIf(!process.env.HEZO_TEST_DATABASE_URL)('logical backup cross-backe
 			await seedRichData(ctx.db);
 
 			// Embedded → Postgres.
-			const outbound = await dumpLogicalBackup(ctx.db, { hezoVersion: 'test', migrations });
-			await restoreLogicalBackup(external, outbound, migrations, { wipe: true });
+			const outbound = await dumpToTempFile(ctx.db, { hezoVersion: 'test', migrations });
+			await restoreLogicalBackupFromFile(external, outbound, migrations, { wipe: true });
 
 			const child = await external.query<{ title: string }>(
 				`SELECT title FROM tasks WHERE identifier = 'BKP-9002'`,
@@ -407,10 +494,10 @@ describe.skipIf(!process.env.HEZO_TEST_DATABASE_URL)('logical backup cross-backe
 			expect(await mkmExternal.initialize(external, ctx.unlockKeyHex)).toBe('unlocked');
 
 			// …and back: Postgres → embedded.
-			const inbound = await dumpLogicalBackup(external, { hezoVersion: 'test', migrations });
+			const inbound = await dumpToTempFile(external, { hezoVersion: 'test', migrations });
 			const homeAgain = await createMemoryDb();
 			try {
-				await restoreLogicalBackup(homeAgain, inbound, migrations);
+				await restoreLogicalBackupFromFile(homeAgain, inbound, migrations);
 				for (const table of ['users', 'teams', 'tasks', 'system_meta']) {
 					const [a, b] = await Promise.all([
 						ctx.db.query<{ c: number }>(`SELECT COUNT(*)::int AS c FROM ${table}`),

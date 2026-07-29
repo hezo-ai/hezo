@@ -490,7 +490,7 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 		const restoreDb = withDatabase && manifest.database !== null;
 		const restoreAssets = withAssets && manifest.assets !== null;
 
-		const { readFile, stat } = await import('node:fs/promises');
+		const { stat } = await import('node:fs/promises');
 		const { openAssetStorage } = await import('./assets/open.js');
 
 		const opened = await openDatabase({ dataDir, databaseUrl });
@@ -502,15 +502,14 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 				if (!migrations) {
 					throw new Error('No migrations found — cannot reproduce the backup schema.');
 				}
-				const { restoreLogicalBackup } = await import('./db/logical-backup.js');
+				const { restoreLogicalBackupFromFile } = await import('./db/logical-backup.js');
 				const dbPath = join(backupPath, blob.BUNDLE_DB_NAME);
 				progress.report({
 					phase: 'read',
 					label: 'Reading the database backup',
 					detail: formatBytes((await stat(dbPath)).size),
 				});
-				const dbBytes = await readFile(dbPath);
-				const summary = await restoreLogicalBackup(opened.db, dbBytes, migrations, {
+				const summary = await restoreLogicalBackupFromFile(opened.db, dbPath, migrations, {
 					wipe: opts.wipe === true,
 					onProgress: progress.report,
 				});
@@ -544,25 +543,22 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 		return true;
 	}
 
-	// Single-file backups (unchanged): logical .backup.gz, or a legacy pgdata tarball.
-	const { readFile, stat } = await import('node:fs/promises');
+	// Single-file backups: logical .backup.gz, or a legacy pgdata tarball.
+	const { stat } = await import('node:fs/promises');
 	progress.report({
 		phase: 'read',
 		label: 'Reading the backup',
 		detail: formatBytes((await stat(backupPath)).size),
 	});
-	const bytes = await readFile(backupPath);
 
-	const { decompressLogicalBackup, parseLogicalBackupHeader, restoreLogicalBackup } = await import(
+	const { peekLogicalBackupHeaderFromFile, restoreLogicalBackupFromFile } = await import(
 		'./db/logical-backup.js'
 	);
-	// Decompress once here and hand the text to the restore: on a multi-GB
-	// backup a second gunzip inside it would be minutes of duplicated work.
-	progress.report({ phase: 'decompress', label: 'Decompressing the backup' });
-	const text = decompressLogicalBackup(bytes);
-	const header = text === null ? null : parseLogicalBackupHeader(text);
+	// Only decompress as far as the header to tell the two formats apart; the
+	// restore then streams the body off disk rather than holding it in memory.
+	const header = await peekLogicalBackupHeaderFromFile(backupPath);
 
-	if (!header || text === null) {
+	if (!header) {
 		// Legacy physical pgdata tarball — embedded only.
 		if (databaseUrl) {
 			progress.finish();
@@ -587,7 +583,7 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 
 	const opened = await openDatabase({ dataDir, databaseUrl });
 	try {
-		const summary = await restoreLogicalBackup(opened.db, text, migrations, {
+		const summary = await restoreLogicalBackupFromFile(opened.db, backupPath, migrations, {
 			wipe: opts.wipe === true,
 			onProgress: progress.report,
 		});

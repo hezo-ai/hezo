@@ -2402,17 +2402,39 @@ otherwise breach in a single flat-size page and hard-crash the WASM instance. Th
 subcommands' teardown closes are best-effort (`closeQuietly` in `cli.ts`), so closing an
 already-crashed engine can never mask the original dump/restore error.
 
-The dump is **streamed, never buffered**: `streamLogicalBackupLines` is an async generator
-yielding one JSONL line at a time, and `dumpLogicalBackupToFile` pipes it through gzip
-straight to the destination file, so resident memory stays at roughly one page regardless of
-instance size. Every caller that ends up with a file on disk uses it — the `hezo backup`
-subcommands and the external-Postgres **pre-migration backup**. The buffer-returning
-`dumpLogicalBackup` is retained for round-trip tests only. This matters because the
-pre-migration backup runs on the **startup** path: collecting the whole database into a
-`string[]`, joining it, and gzipping that held three uncompressed copies at once, which
-OOM-killed small hosts (exit 137) *mid-upgrade* — and since the kill lands before the
-migration is applied, the restart policy replayed the identical kill on every boot, leaving
-the instance in an unbreakable loop showing "Running database migrations…".
+**Both directions are streamed, never buffered** — the format is designed so neither side
+ever holds the database in memory:
+
+- **Dump.** `streamLogicalBackupLines` is an async generator yielding one JSONL line at a
+  time; `dumpLogicalBackupToFile` pipes it through gzip straight to the destination file, so
+  resident memory stays at roughly one page regardless of instance size. Every caller that
+  ends up with a file on disk uses it — the `hezo backup` subcommands and the
+  external-Postgres **pre-migration backup**. There is no buffer-returning form.
+- **Restore.** `restoreLogicalBackupFromFile` decompresses incrementally off disk
+  (`linesOfGzipFile`, via `StringDecoder` — gzip chunk boundaries land mid-codepoint and the
+  dump carries arbitrary user text) and inserts rows **as they are read**: a batch flushes on
+  the row cap, the byte target, or a change of table, all inside the one restore transaction.
+  There is deliberately no separate parse phase and no row *total* in the progress output —
+  knowing the total up front is only possible by reading everything first, which is the bug.
+  `peekLogicalBackupHeaderFromFile` decompresses only as far as the header, which is how the
+  restore CLI distinguishes a logical backup from a legacy pgdata tarball without touching
+  the body. There is no buffer-taking form.
+
+This matters most on the **startup** path, where the pre-migration backup runs. Collecting
+the whole database into a `string[]`, joining it, and gzipping that held three uncompressed
+copies at once, which OOM-killed small hosts (exit 137) *mid-upgrade* — and since the kill
+lands before the migration is applied, the restart policy replayed the identical kill on
+every boot, leaving the instance in an unbreakable loop showing "Running database
+migrations…". Restore was worse still (compressed buffer + uncompressed buffer +
+uncompressed string + line array + every decoded row before the first INSERT) and is the
+**recovery** path, so it has to work on a host that is already short on memory.
+
+The same rule applies to the **updater**: `downloadAndStage` streams the release asset to
+`staged.part` while hashing incrementally, and only renames it into the staged path once the
+SHA256 matches — so an unverified binary is never stageable and a >100MB asset is never
+resident. Asset blobs (`assets/blob-backup.ts`) are bounded by construction instead: each is
+capped at `ATTACHMENT_MAX_BYTES` (10MB), rows are enumerated a page at a time, and copies run
+with bounded concurrency.
 Restore replays the binary's own migrations up to exactly the recorded set, then loads
 data in one transaction with FK constraints dropped/re-added around the inserts (insert
 order and self-references never matter) and serial sequences resumed; migration-seeded
@@ -2432,14 +2454,14 @@ legacy physical pgdata tarball (`db/backup.ts` `dumpDataDir`/`restoreDataDir`, e
 only). Restoring a large instance is minutes of work inside two loops (row inserts, blob
 copies), so both engines emit `ProgressState` updates through an optional `onProgress`
 callback and `runRestore` renders them (`lib/progress.ts`): a phase line per step
-(read/decompress/wipe/schema/prepare/constraints) and a live counter with percentage and
-ETA for the countable ones (rows parsed, rows loaded per table, blobs copied). Rendering
+(read/wipe/schema/prepare/constraints) and a live counter with percentage and
+ETA for the countable ones (rows loaded per table, blobs copied). Rendering
 adapts to the stream — one line rewritten in place (`\r` + erase-to-EOL) on a TTY, throttled
 appended lines into a pipe or log file — and the engines themselves stay terminal-agnostic.
-The CLI decompresses a single-file `.backup.gz` **once** (`decompressLogicalBackup` +
-`parseLogicalBackupHeader`, then handing the text to `restoreLogicalBackup`, which accepts
-`Buffer | string`) rather than gunzipping a multi-GB backup for the header and again for the
-load. External startup migrations write a bare logical `.backup.gz` into `<dataDir>/backups/`
+The CLI identifies a single-file `.backup.gz` from its header alone
+(`peekLogicalBackupHeaderFromFile`, which stops at the first newline) and then streams the
+body through `restoreLogicalBackupFromFile`, so a multi-GB backup is never decompressed for
+the header and again for the load, and never held in memory. External startup migrations write a bare logical `.backup.gz` into `<dataDir>/backups/`
 automatically before applying (last 5 kept; a failed backup aborts the migration); the
 embedded path keeps its stronger copy-swap instead. The `hezo backup`/`hezo restore`
 subcommands resolve the data dir with the same precedence as the server (`HEZO_DATA_DIR` >

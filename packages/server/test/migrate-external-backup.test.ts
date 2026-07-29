@@ -1,11 +1,11 @@
-import { mkdir, mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createMemoryDb } from '../src/db/client';
 import type { Db } from '../src/db/database';
 import type { PgliteDb } from '../src/db/drivers/pglite';
-import { readLogicalBackupHeader } from '../src/db/logical-backup';
+import { peekLogicalBackupHeaderFromFile } from '../src/db/logical-backup';
 import { ExternalDbError } from '../src/db/migrate-errors';
 import { applyPendingMigrationsExternal, MIGRATION_LOCK_KEY } from '../src/db/migrate-external';
 
@@ -57,7 +57,7 @@ describe('applyPendingMigrationsExternal — pre-migration backup', () => {
 
 		// The backup is a readable v1 logical backup taken at the pre-migration
 		// schema (only tables that existed before 002 ran, minus _migrations).
-		const header = readLogicalBackupHeader(await readFile(join(dir, fresh[0])));
+		const header = await peekLogicalBackupHeaderFromFile(join(dir, fresh[0]));
 		expect(header).not.toBeNull();
 		expect(header?.hezoVersion).toBe('9.9.9');
 		expect(header?.migrations.map((m) => m.filename)).toEqual(['001_posts.sql']);

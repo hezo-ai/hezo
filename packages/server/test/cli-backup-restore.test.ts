@@ -11,7 +11,7 @@ import { backupDataDir } from '../src/db/backup';
 import type { Db } from '../src/db/database';
 import type { PgliteDb } from '../src/db/drivers/pglite';
 import { instanceLockPath, removeInstanceLock, writeInstanceLock } from '../src/db/instance-lock';
-import { readLogicalBackupHeader } from '../src/db/logical-backup';
+import { peekLogicalBackupHeaderFromFile } from '../src/db/logical-backup';
 import { runMigrations } from '../src/db/migrate';
 import { openDatabase } from '../src/db/open';
 import { BASE_SCHEMA } from '../src/db/schema';
@@ -139,7 +139,7 @@ describe('hezo backup / hezo restore subcommands', () => {
 			await runBackup(argv('backup', '--data-dir', sourceDir, '--no-assets', '--output', output)),
 		).toBe(true);
 		expect(existsSync(output)).toBe(true);
-		const header = readLogicalBackupHeader(await readFile(output));
+		const header = await peekLogicalBackupHeaderFromFile(output);
 		expect(header?.formatVersion).toBe(1);
 		expect(header?.migrations.length).toBeGreaterThan(0);
 		expect(
@@ -292,7 +292,7 @@ describe('hezo backup / hezo restore subcommands', () => {
 			await runBackup(argv('backup', '--data-dir', sourceDir, '--no-assets', '--output', output)),
 		).toBe(true);
 		expect((await stat(output)).isFile()).toBe(true);
-		expect(readLogicalBackupHeader(await readFile(output))?.formatVersion).toBe(1);
+		expect((await peekLogicalBackupHeaderFromFile(output))?.formatVersion).toBe(1);
 	}, 120_000);
 
 	it('backs up assets-only with --no-database and restores just the blobs', async () => {
@@ -337,7 +337,7 @@ describe('hezo backup / hezo restore subcommands', () => {
 
 		const output = join(makeTempDir(), 'env-datadir.backup.gz');
 		expect(await runBackup(argv('backup', '--no-assets', '--output', output))).toBe(true);
-		const header = readLogicalBackupHeader(await readFile(output));
+		const header = await peekLogicalBackupHeaderFromFile(output);
 		expect(header?.formatVersion).toBe(1);
 		expect(header?.migrations.length).toBeGreaterThan(0);
 
