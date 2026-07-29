@@ -2,6 +2,7 @@ import { createRouter, Navigate, RouterProvider } from '@tanstack/react-router';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Toaster } from './components/ui/toast';
+import { I18nProvider } from './lib/i18n';
 import { registerServiceWorker } from './lib/register-sw';
 import { ThemeProvider } from './lib/theme';
 import { routeTree } from './routeTree.gen';
@@ -26,10 +27,17 @@ declare module '@tanstack/react-router' {
 
 createRoot(document.getElementById('root') as HTMLElement).render(
 	<StrictMode>
-		<ThemeProvider>
-			<RouterProvider router={router} />
-			<Toaster />
-		</ThemeProvider>
+		{/*
+		 * I18nProvider sits above both the router and the Toaster: toasts render
+		 * outside the route tree, so a provider mounted inside __root.tsx would
+		 * not cover them.
+		 */}
+		<I18nProvider>
+			<ThemeProvider>
+				<RouterProvider router={router} />
+				<Toaster />
+			</ThemeProvider>
+		</I18nProvider>
 	</StrictMode>,
 );
 

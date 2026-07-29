@@ -3,32 +3,35 @@ import { ChevronDown, LogOut } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { useMe } from '../hooks/use-me';
 import { logout } from '../lib/auth';
+import { type MessageKey, useI18n } from '../lib/i18n';
 import { queryClient } from '../lib/query-client';
 
 interface NavItem {
 	to: string;
-	label: string;
+	/** Catalog key; resolved through `t()` so the menu follows the instance language. */
+	labelKey: MessageKey;
 }
 
 // General (instance settings) and AI providers are visible to everyone; the
 // instance-level resources below are Admin (superuser) only.
 const PUBLIC_ITEMS: NavItem[] = [
-	{ to: '/settings', label: 'General' },
-	{ to: '/settings/ai-providers', label: 'AI providers' },
+	{ to: '/settings', labelKey: 'settings.general' },
+	{ to: '/settings/ai-providers', labelKey: 'settings.aiProviders' },
+	{ to: '/settings/locale', labelKey: 'locale.settings.title' },
 ];
 
 const ADMIN_ITEMS: NavItem[] = [
-	{ to: '/settings/admin-password', label: 'Admin password' },
-	{ to: '/settings/users', label: 'Users' },
-	{ to: '/settings/chatbox', label: 'Chatbox' },
-	{ to: '/settings/skills', label: 'Skills' },
-	{ to: '/settings/connectors', label: 'Connectors' },
-	{ to: '/settings/chat-channels', label: 'Chat channels' },
-	{ to: '/settings/credentials', label: 'Credentials' },
-	{ to: '/settings/api-keys', label: 'API keys' },
-	{ to: '/settings/storage', label: 'Storage' },
-	{ to: '/settings/archived-projects', label: 'Archived projects' },
-	{ to: '/settings/audit-log', label: 'Activity' },
+	{ to: '/settings/admin-password', labelKey: 'settings.adminPassword' },
+	{ to: '/settings/users', labelKey: 'settings.users' },
+	{ to: '/settings/chatbox', labelKey: 'settings.chatbox' },
+	{ to: '/settings/skills', labelKey: 'settings.skills' },
+	{ to: '/settings/connectors', labelKey: 'settings.connectors' },
+	{ to: '/settings/chat-channels', labelKey: 'settings.chatChannels' },
+	{ to: '/settings/credentials', labelKey: 'settings.credentials' },
+	{ to: '/settings/api-keys', labelKey: 'settings.apiKeys' },
+	{ to: '/settings/storage', labelKey: 'settings.storage' },
+	{ to: '/settings/archived-projects', labelKey: 'settings.archivedProjects' },
+	{ to: '/settings/audit-log', labelKey: 'settings.auditLog' },
 ];
 
 /** Exact-match the route against a nav item (every settings path is a distinct leaf). */
@@ -51,6 +54,7 @@ function itemClass(active: boolean): string {
  * 401s and the app falls back to the admin-password sign-in screen.
  */
 function LogoutButton({ onClick, className }: { onClick: () => void; className?: string }) {
+	const { t } = useI18n();
 	return (
 		<button
 			type="button"
@@ -59,7 +63,7 @@ function LogoutButton({ onClick, className }: { onClick: () => void; className?:
 			className={`flex items-center gap-2 text-left text-[13px] px-3 py-1.5 rounded-md transition-colors cursor-pointer text-text-2 hover:text-text-1 hover:bg-surface-2 ${className ?? ''}`}
 		>
 			<LogOut className="w-4 h-4 shrink-0" />
-			<span>Log out</span>
+			<span>{t('settings.logOut')}</span>
 		</button>
 	);
 }
@@ -75,6 +79,7 @@ function LogoutButton({ onClick, className }: { onClick: () => void; className?:
  *    beneath it.
  */
 export function SettingsSidebar() {
+	const { t } = useI18n();
 	const { data: me } = useMe();
 	const pathname = useLocation({ select: (l) => l.pathname });
 	const [open, setOpen] = useState(false);
@@ -116,7 +121,7 @@ export function SettingsSidebar() {
 					data-testid="settings-nav-toggle"
 					className="w-full flex items-center justify-between gap-2 rounded-md border border-border bg-surface px-3 py-2 text-[13px] font-medium text-text-1"
 				>
-					<span>{current.label}</span>
+					<span>{t(current.labelKey)}</span>
 					<ChevronDown
 						className={`w-4 h-4 shrink-0 text-text-2 transition-transform ${open ? 'rotate-180' : ''}`}
 					/>
@@ -137,7 +142,7 @@ export function SettingsSidebar() {
 									onClick={() => setOpen(false)}
 									className={itemClass(isActive(item.to, pathname))}
 								>
-									{item.label}
+									{t(item.labelKey)}
 								</Link>
 							))}
 							<LogoutButton onClick={handleLogout} className="mt-3" />
@@ -153,7 +158,7 @@ export function SettingsSidebar() {
 			>
 				{items.map((item) => (
 					<Link key={item.to} to={item.to} className={itemClass(isActive(item.to, pathname))}>
-						{item.label}
+						{t(item.labelKey)}
 					</Link>
 				))}
 				<LogoutButton onClick={handleLogout} className="mt-4" />

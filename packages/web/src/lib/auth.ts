@@ -9,6 +9,7 @@ import {
 	derivePasswordKeyPair,
 	deriveUnlockKey,
 	generatePasswordSalt,
+	type LocaleSettings,
 	type MasterKeyState,
 	signAuthMessage,
 } from '@hezo/shared';
@@ -28,6 +29,19 @@ export interface StatusResponse {
 	message?: string;
 	/** Optional extra context for the loading screen. */
 	detail?: string;
+	/**
+	 * The instance display locale. Public because every pre-auth screen (the
+	 * language step, the master-key gate, the login form) renders in it before
+	 * any credential exists. Absent while the server is booting — no database is
+	 * open yet — so callers fall back to their stored render hint.
+	 */
+	locale?: LocaleSettings;
+	/**
+	 * Whether the operator has ever chosen a locale. Drives the onboarding
+	 * language gate; distinct from "the locale equals the default", which an
+	 * operator may legitimately have picked.
+	 */
+	localeConfigured?: boolean;
 }
 
 /** The password below is the minimum the UI will accept before deriving a verifier. */

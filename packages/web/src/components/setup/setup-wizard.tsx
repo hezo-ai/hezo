@@ -4,12 +4,14 @@ import { useState } from 'react';
 import { useAiProviderStatus } from '../../hooks/use-ai-providers';
 import { api } from '../../lib/api';
 import { getPendingSetupToken } from '../../lib/auth';
+import { useI18n } from '../../lib/i18n';
 import { queryClient } from '../../lib/query-client';
 import { queryKeys } from '../../lib/query-keys';
 import { AiProviderPicker } from '../ai-provider-picker';
+import { GateLocaleSwitcher } from '../locale/locale-switcher';
 import { MasterKeyForm, VaultShell } from '../master-key-gate';
 import { PasswordSetForm } from '../password-set-form';
-import { PageLogo } from '../ui/page-logo';
+import { OnboardingShell } from './onboarding-shell';
 import { Stepper, type StepStatus } from './stepper';
 
 export type WizardStep = 'password' | 'ai-provider' | 'done';
@@ -25,42 +27,43 @@ interface WizardShellProps {
  * steps are creating a password and configuring an AI provider.
  */
 function WizardShell({ currentStep, children }: WizardShellProps) {
+	const { t } = useI18n();
 	const passwordStatus: StepStatus = currentStep === 'password' ? 'current' : 'complete';
 	const aiProviderStatus: StepStatus = currentStep === 'ai-provider' ? 'current' : 'pending';
 	return (
-		<div className="relative min-h-screen flex flex-col items-center px-4 py-8 sm:py-16 bg-surface">
-			<PageLogo />
-			<div className="w-full max-w-2xl">
+		/* The locale control stays reachable throughout setup, not just on the
+		   language step. */
+		<OnboardingShell width="2xl" cornerAction={<GateLocaleSwitcher />}>
+			<div>
 				<div className="text-center mb-6 sm:mb-10">
-					<h1 className="text-xl sm:text-2xl font-semibold mb-2">Welcome to Hezo</h1>
-					<p className="text-[13px] text-text-2">A quick setup before you get to work.</p>
+					<h1 className="text-xl sm:text-2xl font-semibold mb-2">{t('setup.welcome')}</h1>
+					<p className="text-[13px] text-text-2">{t('setup.subtitle')}</p>
 				</div>
 				<Stepper
 					steps={[
-						{ label: 'Master key', status: 'complete' },
-						{ label: 'Password', status: passwordStatus },
-						{ label: 'AI provider', status: aiProviderStatus },
+						{ label: t('setup.step.language'), status: 'complete' },
+						{ label: t('setup.step.masterKey'), status: 'complete' },
+						{ label: t('setup.step.password'), status: passwordStatus },
+						{ label: t('setup.step.aiProvider'), status: aiProviderStatus },
 					]}
 				/>
 				<div className="rounded-lg border border-border bg-surface p-5 sm:p-8 shadow-sm">
 					{children}
 				</div>
 			</div>
-		</div>
+		</OnboardingShell>
 	);
 }
 
 /** Create/confirm the admin password. On success the session is stored and the gate advances. */
 function PasswordStep() {
+	const { t } = useI18n();
 	return (
 		<div data-testid="setup-step-password" className="mx-auto max-w-md">
-			<h2 className="text-base sm:text-lg font-semibold mb-1">Create an admin password</h2>
-			<p className="text-[13px] text-text-2 mb-5">
-				You'll sign in with this password from now on. If you forget it, you can reset it with your
-				master key.
-			</p>
+			<h2 className="text-base sm:text-lg font-semibold mb-1">{t('setup.password.title')}</h2>
+			<p className="text-[13px] text-text-2 mb-5">{t('setup.password.description')}</p>
 			<PasswordSetForm
-				submitLabel="Set password & continue"
+				submitLabel={t('setup.password.submit')}
 				onSuccess={() => {
 					// Now logged in (session stored) and passwordSet flips true.
 					queryClient.invalidateQueries({ queryKey: queryKeys.status() });
@@ -78,6 +81,7 @@ function PasswordStep() {
  * re-entering the master key.
  */
 export function CreatePasswordFlow() {
+	const { t } = useI18n();
 	const [reentered, setReentered] = useState(0);
 	const hasCredential = getPendingSetupToken() !== null || api.getToken() !== null;
 
@@ -86,10 +90,10 @@ export function CreatePasswordFlow() {
 			<VaultShell>
 				<div className="rounded-2xl border border-border-strong bg-surface p-6 sm:p-8 shadow-[var(--elev-lg)]">
 					<div className="mb-5 text-center">
-						<h2 className="text-lg font-semibold text-text-1">Confirm your master key</h2>
-						<p className="mt-1 text-sm text-text-2">
-							Enter your master key to set an admin password for this instance.
-						</p>
+						<h2 className="text-lg font-semibold text-text-1">
+							{t('setup.masterKey.confirmTitle')}
+						</h2>
+						<p className="mt-1 text-sm text-text-2">{t('setup.masterKey.confirmDescription')}</p>
 					</div>
 					<MasterKeyForm
 						state="unlocked"
@@ -109,14 +113,12 @@ export function CreatePasswordFlow() {
 }
 
 export function SetupWizard() {
+	const { t } = useI18n();
 	return (
 		<WizardShell currentStep="ai-provider">
 			<div data-testid="setup-step-ai-provider">
-				<h2 className="text-base sm:text-lg font-semibold mb-1">Set up an AI provider</h2>
-				<p className="text-[13px] text-text-2 mb-5">
-					Configure at least one provider so your agents can run. Shared across every team on this
-					instance — you can add more later in settings.
-				</p>
+				<h2 className="text-base sm:text-lg font-semibold mb-1">{t('setup.aiProvider.title')}</h2>
+				<p className="text-[13px] text-text-2 mb-5">{t('setup.aiProvider.description')}</p>
 				<AiProviderPicker />
 			</div>
 		</WizardShell>

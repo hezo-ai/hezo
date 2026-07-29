@@ -20,7 +20,7 @@ import {
 
 /** Intl emits non-breaking / narrow-no-break spaces; normalize for assertions. */
 function normalizeSpaces(value: string): string {
-	return value.replace(/[  ]/g, ' ');
+	return value.replace(/[\u00a0\u202f\u2009]/g, ' ');
 }
 
 function settings(overrides: Partial<LocaleSettings> = {}): LocaleSettings {

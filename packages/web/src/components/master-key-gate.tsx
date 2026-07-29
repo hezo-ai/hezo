@@ -21,6 +21,7 @@ import { authenticateWithMnemonic } from '../lib/auth';
 import { copyToClipboard } from '../lib/clipboard';
 import { queryClient } from '../lib/query-client';
 import { queryKeys } from '../lib/query-keys';
+import { GateLocaleSwitcher } from './locale/locale-switcher';
 import { BackLink } from './ui/back-link';
 import { Button } from './ui/button';
 import { PageLogo } from './ui/page-logo';
@@ -41,6 +42,9 @@ const SAVE_COUNTDOWN_SECONDS = 5;
 export function VaultShell({ children }: { children: ReactNode }) {
 	return (
 		<div className="relative min-h-screen flex flex-col items-center justify-center bg-bg px-4 py-10">
+			{/* The locale control stays reachable on every pre-auth gate, so an
+			    operator can switch language mid-setup or at the unlock screen. */}
+			<GateLocaleSwitcher />
 			<PageLogo />
 			<div className="w-full max-w-md">{children}</div>
 		</div>
