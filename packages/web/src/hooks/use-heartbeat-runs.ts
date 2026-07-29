@@ -27,7 +27,14 @@ export interface HeartbeatRun {
 	/** True when the usage above is a mid-run snapshot (the run was interrupted before it finished). */
 	usage_partial: boolean;
 	invocation_command: string | null;
-	log_text: string | null;
+	/**
+	 * Full run log. Present only on single-run reads (`useHeartbeatRun`, the
+	 * terminate response) - the paginated list omits it and sends `log_length`
+	 * instead, since a page of 200 runs would otherwise carry gigabytes of text.
+	 */
+	log_text?: string | null;
+	/** Character length of the run's log. Sent by the list in place of `log_text`. */
+	log_length?: number;
 	working_dir: string | null;
 	trigger_source: WakeupSource | null;
 	trigger_payload: Record<string, unknown> | null;

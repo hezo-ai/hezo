@@ -965,8 +965,17 @@ boundary is not corrupted. Persistence is via the debounced flusher
 (`services/log-stream-broker.ts`) persists only the text appended since the last successful
 flush as an INSERT into `heartbeat_run_log_chunks` (`db/run-log-chunks.ts`), serialized
 per stream so overlapping flushes can never duplicate a delta, with the running token/cost
-snapshot updated on `heartbeat_runs` in the same transaction. Readers concatenate the
-chunks (`string_agg` ordered by `seq`) back into the API's `log_text` field. INSERT-only
+snapshot updated on `heartbeat_runs` in **the same statement** — a data-modifying CTE, not
+a transaction: both drivers serialize every transaction block process-wide, so at ten
+concurrent runs the old three-statement block put ~20 globally-serialized transactions a
+second in front of every user request, and a single statement is already atomic, which is
+all the exactly-once delta contract needs. Readers concatenate the
+chunks (`string_agg` ordered by `seq`) back into the API's `log_text` field — but only
+where the whole log is actually wanted. The paginated runs list ships `log_length` instead
+(`per_page` reaches 200, so a page carrying full logs could materialize gigabytes), and
+every caller that wants an excerpt — `get_run_log`, a task's latest-run view, the orphan
+detector's failure tail — uses `readRunLogTail`, which walks back from the newest chunk
+until the budget is covered rather than aggregating the whole log and slicing it. INSERT-only
 writes replaced the old whole-blob `UPDATE heartbeat_runs.log_text` pattern, whose per-flush
 dead TOAST copies were the dominant source of database bloat. The delta itself is read by
 character **offset** (`CappedLogBuffer.sliceFrom`), never by building the whole log and

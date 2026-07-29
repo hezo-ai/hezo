@@ -941,33 +941,16 @@ export async function runAgent(
 			replace: true,
 		}),
 		onFlush: async (delta) => {
-			// Append only the new log text as a chunk row (never rewrite the whole
+			// Append only the new log text as chunk rows (never rewrite the whole
 			// log — the old full-blob UPDATE pattern left a dead TOAST copy per
 			// flush). The running usage persists alongside so a crash mid-run still
 			// leaves a non-zero token/cost snapshot, flagged partial until a clean
-			// completion. One transaction: the broker re-sends the same delta after
-			// a failed flush, so chunk + usage must land all-or-nothing to stay
-			// exactly-once.
+			// completion. One statement, so it is atomic without a transaction:
+			// the broker re-sends the same delta after a failed flush, so chunk +
+			// usage must land all-or-nothing to stay exactly-once, and every
+			// transaction block serializes process-wide on both drivers.
 			if (delta.length === 0 && !currentUsage) return;
-			await deps.db.transaction(async (tx) => {
-				if (delta.length > 0) await appendRunLogChunks(tx, heartbeatRunId, delta);
-				if (currentUsage) {
-					await tx.query(
-						`UPDATE heartbeat_runs
-						 SET input_tokens = COALESCE($1, input_tokens),
-						     output_tokens = COALESCE($2, output_tokens),
-						     cost_cents = COALESCE($3, cost_cents),
-						     usage_partial = true
-						 WHERE id = $4`,
-						[
-							currentUsage.inputTokens,
-							currentUsage.outputTokens,
-							currentUsage.costCents,
-							heartbeatRunId,
-						],
-					);
-				}
-			});
+			await appendRunLogChunks(deps.db, heartbeatRunId, delta, currentUsage);
 		},
 	});
 
