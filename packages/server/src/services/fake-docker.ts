@@ -98,6 +98,13 @@ export function createFakeDockerClient(db?: Db): DockerClient {
 			return { stdout: '', stderr: '' };
 		},
 		execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+		// A container that is comfortably under any limit. Omitting this made the
+		// container-sync memory check throw `containerStats is not a function` on
+		// every pass under HEZO_SKIP_DOCKER - a warning on a green run, and worse,
+		// `enforceContainerMemoryLimit` never actually ran in any harness that
+		// uses the fake, so nothing exercised it.
+		containerStats: async (id: string) =>
+			containers.has(id) ? { usedBytes: 64 * 1024 * 1024, rawUsageBytes: 96 * 1024 * 1024 } : null,
 		killRunProcesses: async () => {},
 		killProcessesByEnvMarker: async () => {},
 		// Empty scan = the startup dangling-process sweep is a clean no-op in
