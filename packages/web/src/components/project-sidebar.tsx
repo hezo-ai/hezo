@@ -199,12 +199,6 @@ export function ProjectSidebar({ onCollapse }: { onCollapse?: () => void } = {})
 		{
 			items: [
 				{
-					to: '/projects/$projectId/dashboard',
-					params: projectParams,
-					label: 'Dashboard',
-					testId: 'project-sidebar-dashboard',
-				},
-				{
 					to: '/projects/$projectId/inbox',
 					params: projectParams,
 					label: 'Inbox',
@@ -261,9 +255,9 @@ export function ProjectSidebar({ onCollapse }: { onCollapse?: () => void } = {})
 				className={`relative pl-2.5 ${onCollapse ? 'pr-7' : 'pr-2.5'} pt-1.5 pb-1 flex items-center gap-1 min-w-0`}
 			>
 				<Link
-					to="/projects/$projectId"
+					to="/projects/$projectId/dashboard"
 					params={projectParams}
-					data-testid="project-sidebar-name"
+					data-testid="project-sidebar-dashboard"
 					className="min-w-0 flex-1 text-[13px] font-semibold text-text-1 truncate"
 				>
 					{project ? (

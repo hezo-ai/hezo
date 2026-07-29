@@ -21,22 +21,28 @@ test.describe('Project dashboard — mobile (390px)', () => {
 		await expect(page.getByTestId('project-dashboard')).toBeVisible({ timeout: 20_000 });
 	});
 
-	test('sidebar lists Dashboard before Inbox', async ({ page, freshWorkspace }) => {
+	test('project title link (dashboard) appears above Inbox in the sidebar', async ({
+		page,
+		freshWorkspace,
+	}) => {
 		await page.goto(`/projects/${freshWorkspace.projectSlug}/dashboard`);
 		await waitForPageLoad(page);
 
 		await page.getByTestId('mobile-nav-toggle').click();
 		const drawer = page.getByTestId('mobile-nav-drawer');
 		await expect(drawer).toBeVisible();
-		await expect(drawer.getByTestId('project-sidebar-dashboard')).toBeVisible({
-			timeout: 15_000,
-		});
 
-		const nav = drawer.locator('nav[aria-label="Sidebar"]');
-		const labels = await nav.getByRole('link').allTextContents();
-		const dashboardIdx = labels.findIndex((t) => t.includes('Dashboard'));
-		const inboxIdx = labels.findIndex((t) => t.includes('Inbox'));
-		expect(dashboardIdx).toBeGreaterThanOrEqual(0);
-		expect(inboxIdx).toBeGreaterThan(dashboardIdx);
+		// The project title is now the dashboard link — it lives above the nav list.
+		const dashboardLink = drawer.getByTestId('project-sidebar-dashboard');
+		await expect(dashboardLink).toBeVisible({ timeout: 15_000 });
+
+		const inboxLink = drawer.getByTestId('sidebar-link-inbox');
+		await expect(inboxLink).toBeVisible();
+
+		const dashboardBox = await dashboardLink.boundingBox();
+		const inboxBox = await inboxLink.boundingBox();
+		expect(dashboardBox).not.toBeNull();
+		expect(inboxBox).not.toBeNull();
+		expect(dashboardBox!.y).toBeLessThan(inboxBox!.y);
 	});
 });

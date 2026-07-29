@@ -54,7 +54,13 @@ test('project dashboard shows spend, progress, goals, and in-progress tasks', as
 		params: { projectId: ref.slug },
 	});
 
-	const dashboard = await findByTestId('project-dashboard', undefined, { timeout: 15_000 });
+	await findByTestId('project-dashboard', undefined, { timeout: 15_000 });
+
+	// Wait for async widget data to settle.
+	await findByTestId('project-dashboard-goals', undefined, { timeout: 15_000 });
+	await findByTestId('project-dashboard-progress', undefined, { timeout: 15_000 });
+
+	const dashboard = document.body.querySelector('[data-testid="project-dashboard"]')!;
 	expect(dashboard.textContent).toContain('Dash View');
 	expect(dashboard.textContent).toContain('$9.99');
 	expect(dashboard.textContent).toContain('Shipping');
@@ -69,6 +75,66 @@ test('project dashboard shows spend, progress, goals, and in-progress tasks', as
 	expect(taskRow!.getAttribute('href')).not.toMatch(
 		/\/tasks\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
 	);
+});
+
+test('team snapshot links to the running task on slug-based dashboard routes', async () => {
+	const ref = { slug: '', taskIdentifier: '' };
+	const { findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Run Link Demo' });
+			ref.slug = project.slug;
+			const db = getTestContext().db;
+			const projectRow = await db.query<{ id: string; team_id: string }>(
+				`SELECT id, team_id FROM projects WHERE slug = $1`,
+				[project.slug],
+			);
+			const agentRes = await getTestContext().apiBase(`/api/projects/${project.slug}/agents`, {
+				method: 'POST',
+				headers: ws.headers,
+				body: JSON.stringify({ title: 'Runner' }),
+			});
+			const agent = (await agentRes.json()).data;
+
+			const taskRes = await getTestContext().apiBase(`/api/projects/${project.slug}/tasks`, {
+				method: 'POST',
+				headers: ws.headers,
+				body: JSON.stringify({
+					title: 'Running work',
+					assignee_id: agent.id,
+				}),
+			});
+			const task = (await taskRes.json()).data;
+			ref.taskIdentifier = task.identifier;
+			await db.query(`UPDATE tasks SET status = $1::task_status WHERE id = $2`, [
+				TaskStatus.InProgress,
+				task.id,
+			]);
+			await db.query(
+				`UPDATE member_agents SET runtime_status = 'active'::agent_runtime_status WHERE id = $1`,
+				[agent.id],
+			);
+			await db.query(
+				`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
+				 VALUES ($1, $2, $3, 'running', now())`,
+				[agent.id, projectRow.rows[0].team_id, task.id],
+			);
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/dashboard',
+		params: { projectId: ref.slug },
+	});
+
+	await findByTestId('project-dashboard-running-agent', undefined, { timeout: 15_000 });
+	const team = document.body.querySelector('[data-testid="project-dashboard-team"]')!;
+	const taskLink = Array.from(team.querySelectorAll('a')).find(
+		(a) => a.textContent?.trim() === ref.taskIdentifier,
+	) as HTMLAnchorElement | undefined;
+	expect(taskLink).toBeTruthy();
+	expect(taskLink?.textContent).toContain(ref.taskIdentifier);
 });
 
 test('HQ dashboard hides spend/goals and shows the empty HQ state', async () => {
@@ -112,7 +178,7 @@ test('project index redirects to dashboard', async () => {
 	);
 });
 
-test('sidebar lists Dashboard first', async () => {
+test('project title is the dashboard link and appears above Inbox', async () => {
 	let projectSlug = '';
 	const { container, findByTestId, router } = await renderApp({
 		initialPath: '/',
@@ -128,12 +194,16 @@ test('sidebar lists Dashboard first', async () => {
 		params: { projectId: projectSlug },
 	});
 
-	await findByTestId('project-sidebar-dashboard', undefined, { timeout: 15_000 });
-	const nav = container.querySelector('nav[aria-label="Sidebar"]');
-	if (!nav) throw new Error('sidebar missing');
-	const links = Array.from(nav.querySelectorAll('a')).map((a) => a.textContent?.trim());
-	const dashboardIdx = links.findIndex((t) => t?.startsWith('Dashboard'));
-	const inboxIdx = links.findIndex((t) => t?.startsWith('Inbox'));
-	expect(dashboardIdx).toBeGreaterThanOrEqual(0);
-	expect(inboxIdx).toBeGreaterThan(dashboardIdx);
+	// The project title link carries this testId and links to /dashboard.
+	const dashboardLink = await findByTestId('project-sidebar-dashboard', undefined, {
+		timeout: 15_000,
+	});
+	expect(dashboardLink.getAttribute('href')).toMatch(/\/dashboard$/);
+
+	// The dashboard link must appear before the Inbox link in the DOM.
+	const inboxLink = container.querySelector('[data-testid="sidebar-link-inbox"]');
+	expect(inboxLink).not.toBeNull();
+	const pos = dashboardLink.compareDocumentPosition(inboxLink!);
+	// DOCUMENT_POSITION_FOLLOWING (4) means inboxLink comes after dashboardLink.
+	expect(pos & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });

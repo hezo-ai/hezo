@@ -37,6 +37,13 @@ export interface Agent {
 	model_override_provider: string | null;
 	model_override_model: string | null;
 	created_at: string;
+	/** Active run on this agent (running or queued), if any. */
+	active_run?: {
+		task_id: string | null;
+		task_identifier: string | null;
+		task_project_id: string | null;
+		run_status: 'running' | 'queued';
+	} | null;
 	/** True for HQ agents (CEO/Coach) surfaced as virtual members of this project. */
 	is_instance?: boolean;
 	/** True when the agent has a live chatbox (and thus a Chat history tab). CEO only today. */

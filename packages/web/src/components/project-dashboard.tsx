@@ -1,23 +1,43 @@
 import {
+	closestCenter,
+	DndContext,
+	type DragEndEvent,
+	DragOverlay,
+	KeyboardSensor,
+	PointerSensor,
+	useSensor,
+	useSensors,
+} from '@dnd-kit/core';
+import { arrayMove, rectSortingStrategy, SortableContext, useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import {
 	ApprovalType,
 	centsToDollars,
-	type ProjectDashboard,
+	type DashboardWidgetId,
+	type DashboardWidgetOrder,
 	type ProjectDashboardNeedsYouItem,
-	type ProjectDashboardRunningAgent,
 } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
 import {
 	Activity,
 	AlertTriangle,
 	DollarSign,
+	GripVertical,
 	Inbox,
 	KeyRound,
 	ListTodo,
 	Target,
 } from 'lucide-react';
-import type { ReactNode } from 'react';
-import { useProjectDashboard } from '../hooks/use-project-dashboard';
-import { useProjectMeta } from '../hooks/use-projects';
+import type { CSSProperties, ReactNode } from 'react';
+import { useState } from 'react';
+import { useAgents } from '../hooks/use-agents';
+import { useBudgetStatus, useCosts } from '../hooks/use-costs';
+import { useDashboardWidgetOrder } from '../hooks/use-dashboard-widget-order';
+import { useGoals } from '../hooks/use-goals';
+import { useNeedsYou } from '../hooks/use-inbox-count';
+import { useProject, useProjectMeta, useProjectProgress } from '../hooks/use-projects';
+import { useTasks } from '../hooks/use-tasks';
+import { DEFAULT_WIDGET_ORDER, sanitizeWidgetOrder } from '../lib/dashboard-widget-order';
 import { defaultAvatarForSlug } from '../lib/default-avatars';
 import { agentPageParams } from './agent-link';
 import { GoalHealthPill } from './goal-health-pill';
@@ -29,8 +49,13 @@ import { Badge } from './ui/badge';
 import { BudgetBar } from './ui/budget-bar';
 import { Card } from './ui/card';
 import { EmptyState } from './ui/empty-state';
-import { SectionHeader } from './ui/section-header';
 import { StatusDot } from './ui/status-dot';
+
+export { DEFAULT_WIDGET_ORDER, sanitizeWidgetOrder };
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 const RELATIVE_UNITS: Array<[Intl.RelativeTimeFormatUnit, number]> = [
 	['day', 86400],
@@ -51,7 +76,6 @@ function relativeTime(iso: string): string {
 	return 'now';
 }
 
-/** Compact relative label with "ago" suffix, except when the time is "now". */
 function relativeTimeAgo(iso: string): string {
 	const t = relativeTime(iso);
 	if (!t) return '';
@@ -62,13 +86,10 @@ function formatMoney(cents: number): string {
 	return `$${centsToDollars(cents)}`;
 }
 
-function splitLead(summary: string): { lead: string; body: string } {
+function splitLead(summary: string): { lead: string } {
 	const match = summary.match(/\n[ \t]*\n/);
-	if (!match || match.index === undefined) return { lead: summary, body: '' };
-	return {
-		lead: summary.slice(0, match.index).trimEnd(),
-		body: summary.slice(match.index + match[0].length).trim(),
-	};
+	if (!match || match.index === undefined) return { lead: summary };
+	return { lead: summary.slice(0, match.index).trimEnd() };
 }
 
 function approvalText(approval: { type: string; requested_by_name: string | null }): string {
@@ -102,6 +123,55 @@ function approvalActionLabel(type: string): string {
 
 const ACTION_LINK_CLASS =
 	'shrink-0 rounded-md border border-border px-2 py-1 text-[12px] text-text-1 hover:bg-surface-2';
+
+// ---------------------------------------------------------------------------
+// Drag handle
+// ---------------------------------------------------------------------------
+
+function DragHandle({ listeners, attributes }: { listeners?: object; attributes?: object }) {
+	return (
+		<button
+			type="button"
+			className="flex cursor-grab items-center rounded p-0.5 text-text-3 opacity-0 transition-opacity hover:text-text-2 group-hover/widget:opacity-100 active:cursor-grabbing"
+			aria-label="Drag to reorder widget"
+			{...(listeners ?? {})}
+			{...(attributes ?? {})}
+		>
+			<GripVertical className="h-3.5 w-3.5" aria-hidden />
+		</button>
+	);
+}
+
+function WidgetHeader({
+	icon: Icon,
+	title,
+	action,
+	dragListeners,
+	dragAttributes,
+}: {
+	icon: React.ComponentType<{ className?: string; 'aria-hidden'?: boolean }>;
+	title: string;
+	action?: ReactNode;
+	dragListeners?: object;
+	dragAttributes?: object;
+}) {
+	return (
+		<div className="mb-3 flex items-start justify-between gap-3">
+			<div className="flex items-center gap-1.5">
+				{dragListeners || dragAttributes ? (
+					<DragHandle listeners={dragListeners} attributes={dragAttributes} />
+				) : null}
+				<Icon className="h-4 w-4 shrink-0 text-text-3" aria-hidden />
+				<h2 className="text-sm font-medium text-text-1">{title}</h2>
+			</div>
+			{action && <div className="shrink-0">{action}</div>}
+		</div>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Needs You (Action items) — full width, no drag
+// ---------------------------------------------------------------------------
 
 function NeedsYouRowShell({
 	tag,
@@ -196,39 +266,89 @@ function NeedsYouRow({ projectId, row }: { projectId: string; row: ProjectDashbo
 	);
 }
 
-function DashboardSkeleton() {
+function NeedsYouSection({
+	projectId,
+	rows,
+	actionCount,
+}: {
+	projectId: string;
+	rows: ProjectDashboardNeedsYouItem[];
+	actionCount: number;
+}) {
+	if (rows.length === 0) {
+		return (
+			<section data-testid="project-dashboard-needs-you">
+				<div className="flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-[13px]">
+					<Inbox className="h-3.5 w-3.5 shrink-0 text-text-3" aria-hidden />
+					<span className="font-medium text-text-1">Action items</span>
+					<span className="text-text-3">· All caught up</span>
+				</div>
+			</section>
+		);
+	}
+
 	return (
-		<div className="flex flex-col gap-6" data-testid="project-dashboard-loading">
-			<div className="h-8 w-48 animate-pulse rounded bg-surface-2" />
-			<div className="h-32 w-full animate-pulse rounded-lg bg-surface-2" />
-			<div className="h-40 w-full animate-pulse rounded-lg bg-surface-2" />
-		</div>
+		<section data-testid="project-dashboard-needs-you">
+			<div className="mb-3 flex items-start justify-between gap-3">
+				<div className="flex items-center gap-2">
+					<Inbox className="h-4 w-4 shrink-0 text-text-3" aria-hidden />
+					<h2 className="text-sm font-medium text-text-1">{`Action items · ${actionCount}`}</h2>
+				</div>
+				<div className="shrink-0">
+					<Link
+						to="/projects/$projectId/inbox"
+						params={{ projectId }}
+						className="text-xs text-info-soft-fg hover:underline"
+					>
+						Open inbox
+					</Link>
+				</div>
+			</div>
+			<Card className="divide-y divide-border p-0">
+				{rows.map((row) => (
+					<NeedsYouRow
+						key={`${row.kind}-${row.kind === 'approval' ? row.approval.id : row.kind === 'mention' ? row.mention.id : row.credential.comment_id}`}
+						projectId={projectId}
+						row={row}
+					/>
+				))}
+			</Card>
+		</section>
 	);
 }
 
-function SpendSection({
+// ---------------------------------------------------------------------------
+// Widget sections
+// ---------------------------------------------------------------------------
+
+function SpendWidget({
 	projectId,
-	spend,
-	budget,
+	dragListeners,
+	dragAttributes,
 }: {
 	projectId: string;
-	spend: ProjectDashboard['spend'];
-	budget: ProjectDashboard['budget'];
+	dragListeners?: object;
+	dragAttributes?: object;
 }) {
+	const { data: budget } = useBudgetStatus(projectId);
+	const allTimeCents = useTotalSpend(projectId);
 	if (!budget) return null;
 
+	const { project: p } = budget;
 	const windows = [
-		{ label: 'Today', cents: budget.daily.spentCents, capCents: budget.daily.limitCents },
-		{ label: 'This week', cents: budget.weekly.spentCents, capCents: budget.weekly.limitCents },
-		{ label: 'This month', cents: budget.monthly.spentCents, capCents: budget.monthly.limitCents },
-		{ label: 'All time', cents: spend.all_time_cents, capCents: null as number | null },
+		{ label: 'Today', cents: p.daily.spentCents, capCents: p.daily.limitCents },
+		{ label: 'This week', cents: p.weekly.spentCents, capCents: p.weekly.limitCents },
+		{ label: 'This month', cents: p.monthly.spentCents, capCents: p.monthly.limitCents },
+		{ label: 'All time', cents: allTimeCents, capCents: null as number | null },
 	];
 
 	return (
 		<section data-testid="project-dashboard-spend">
-			<SectionHeader
+			<WidgetHeader
 				icon={DollarSign}
 				title="Spend"
+				dragListeners={dragListeners}
+				dragAttributes={dragAttributes}
 				action={
 					<Link
 						to="/projects/$projectId/budget"
@@ -253,17 +373,15 @@ function SpendSection({
 						</div>
 					))}
 				</div>
-				{budget && budget.monthly.limitCents > 0 && (
+				{p.monthly.limitCents > 0 && (
 					<div className="border-t border-border px-4 py-3">
 						<div className="mb-1.5 flex items-center justify-between text-[12px]">
 							<span className="text-text-2">Monthly cap</span>
-							<span
-								className={`font-mono ${budget.monthly.overBudget ? 'text-danger' : 'text-text-1'}`}
-							>
-								{formatMoney(budget.monthly.spentCents)} / {formatMoney(budget.monthly.limitCents)}
+							<span className={`font-mono ${p.monthly.overBudget ? 'text-danger' : 'text-text-1'}`}>
+								{formatMoney(p.monthly.spentCents)} / {formatMoney(p.monthly.limitCents)}
 							</span>
 						</div>
-						<BudgetBar used={budget.monthly.spentCents} total={budget.monthly.limitCents} />
+						<BudgetBar used={p.monthly.spentCents} total={p.monthly.limitCents} />
 					</div>
 				)}
 			</Card>
@@ -271,18 +389,36 @@ function SpendSection({
 	);
 }
 
-function InProgressSection({
+/** All-time spend total from the costs summary endpoint. */
+function useTotalSpend(projectId: string): number {
+	const { data } = useCosts(projectId);
+	if (!data) return 0;
+	return data.total_cents;
+}
+
+function InProgressWidget({
 	projectId,
-	tasks,
+	dragListeners,
+	dragAttributes,
 }: {
 	projectId: string;
-	tasks: ProjectDashboard['in_progress_tasks'];
+	dragListeners?: object;
+	dragAttributes?: object;
 }) {
+	const { data } = useTasks(projectId, {
+		status: 'in_progress,review',
+		sort: 'updated_at:desc',
+		per_page: '10',
+	});
+	const tasks = data?.data ?? [];
+
 	return (
 		<section data-testid="project-dashboard-in-progress">
-			<SectionHeader
+			<WidgetHeader
 				icon={ListTodo}
 				title="In progress"
+				dragListeners={dragListeners}
+				dragAttributes={dragAttributes}
 				action={
 					<Link
 						to="/projects/$projectId/tasks"
@@ -294,11 +430,13 @@ function InProgressSection({
 				}
 			/>
 			{tasks.length === 0 ? (
-				<Card>
-					<EmptyState
-						title="Nothing in progress"
-						description="Tasks in progress or review will appear here."
-					/>
+				<Card className="flex min-h-[88px] items-center justify-center px-4 py-3">
+					<div className="text-center">
+						<h3 className="text-sm font-medium text-text-1">Nothing in progress</h3>
+						<p className="mt-1 text-sm text-text-2">
+							Tasks in progress or review will appear here.
+						</p>
+					</div>
 				</Card>
 			) : (
 				<Card className="divide-y divide-border p-0">
@@ -327,31 +465,27 @@ function InProgressSection({
 	);
 }
 
-function ProgressSection({
+function ProgressWidget({
 	projectId,
-	progress,
+	dragListeners,
+	dragAttributes,
 }: {
 	projectId: string;
-	progress: ProjectDashboard['progress'];
+	dragListeners?: object;
+	dragAttributes?: object;
 }) {
+	const { data: progress } = useProjectProgress(projectId);
 	const summary = progress?.summary?.trim() ?? '';
 	if (!summary) return null;
 	const { lead } = splitLead(summary);
 
 	return (
 		<section data-testid="project-dashboard-progress">
-			<SectionHeader
+			<WidgetHeader
 				icon={Activity}
-				title="Progress"
-				action={
-					<Link
-						to="/projects/$projectId/goals"
-						params={{ projectId }}
-						className="text-xs text-info-soft-fg hover:underline"
-					>
-						View goals
-					</Link>
-				}
+				title="Status"
+				dragListeners={dragListeners}
+				dragAttributes={dragAttributes}
 			/>
 			<Card>
 				<div className="text-sm text-text-2 line-clamp-4">
@@ -367,20 +501,26 @@ function ProgressSection({
 	);
 }
 
-function GoalsSection({
+function GoalsWidget({
 	projectId,
-	goals,
+	dragListeners,
+	dragAttributes,
 }: {
 	projectId: string;
-	goals: ProjectDashboard['goals'];
+	dragListeners?: object;
+	dragAttributes?: object;
 }) {
-	if (goals.length === 0) return null;
+	const { data: goals } = useGoals(projectId);
+	const preview = (goals ?? []).slice(0, 3);
+	if (preview.length === 0) return null;
 
 	return (
 		<section data-testid="project-dashboard-goals">
-			<SectionHeader
+			<WidgetHeader
 				icon={Target}
 				title="Goals"
+				dragListeners={dragListeners}
+				dragAttributes={dragAttributes}
 				action={
 					<Link
 						to="/projects/$projectId/goals"
@@ -392,7 +532,7 @@ function GoalsSection({
 				}
 			/>
 			<Card className="divide-y divide-border p-0">
-				{goals.map((goal) => (
+				{preview.map((goal) => (
 					<Link
 						key={goal.id}
 						to="/projects/$projectId/goals/$goalId"
@@ -413,58 +553,32 @@ function GoalsSection({
 	);
 }
 
-function RunningAgentRow({
+function TeamSnapshotWidget({
 	projectId,
-	agent,
+	dragListeners,
+	dragAttributes,
 }: {
 	projectId: string;
-	agent: ProjectDashboardRunningAgent;
+	dragListeners?: object;
+	dragAttributes?: object;
 }) {
-	const working = agent.run_status === 'running';
-	const statusLabel = working ? 'Working' : agent.run_status === 'queued' ? 'Queued' : 'Running';
+	const project = useProjectMeta(projectId);
+	const { data: agents } = useAgents(projectId, 'enabled');
+	const currentProjectId = project?.id;
 
-	return (
-		<div
-			className="flex items-center gap-2 px-3 py-2"
-			data-testid="project-dashboard-running-agent"
-		>
-			<Link
-				to="/projects/$projectId/agents/$agentId"
-				params={agentPageParams(projectId, agent.slug)}
-				className="flex min-w-0 flex-1 items-center gap-2 hover:opacity-80"
-			>
-				<Avatar
-					size="sm"
-					initials={getInitials(agent.title)}
-					imageUrl={agent.icon_url ?? defaultAvatarForSlug(agent.slug)}
-				/>
-				<span className="min-w-0 truncate text-[13px] font-medium text-text-1">{agent.title}</span>
-			</Link>
-			{agent.task_identifier && agent.task_id && agent.task_in_current_project ? (
-				<Link
-					to="/projects/$projectId/tasks/$taskId"
-					params={{ projectId, taskId: agent.task_identifier.toLowerCase() }}
-					className="shrink-0 font-mono text-[12px] text-text-3 hover:text-text-1 hover:underline"
-				>
-					{agent.task_identifier}
-				</Link>
-			) : null}
-			<StatusDot status="active" pulse={working} label={statusLabel} />
-		</div>
-	);
-}
-
-function TeamSnapshot({ data, projectId }: { data: ProjectDashboard; projectId: string }) {
+	const runningAgents = (agents ?? []).filter((a) => a.active_run?.run_status === 'running');
 	const containerIssue =
-		data.container_status === 'error' ||
-		data.container_status === 'stopped' ||
-		data.container_status === 'creating';
+		project?.container_status === 'error' ||
+		project?.container_status === 'stopped' ||
+		project?.container_status === 'creating';
 
 	return (
 		<section data-testid="project-dashboard-team">
-			<SectionHeader
+			<WidgetHeader
 				icon={Activity}
 				title="Team snapshot"
+				dragListeners={dragListeners}
+				dragAttributes={dragAttributes}
 				action={
 					<Link
 						to="/projects/$projectId/agents"
@@ -478,26 +592,65 @@ function TeamSnapshot({ data, projectId }: { data: ProjectDashboard; projectId: 
 			<Card className="flex flex-col gap-0 p-0 text-[13px] text-text-2">
 				<div className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
 					<div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-						{data.running_agents_count > 0 ? (
-							<span className="text-live">{data.running_agents_count} running</span>
+						{runningAgents.length > 0 ? (
+							<span className="text-live">{runningAgents.length} running</span>
 						) : (
 							<span>No agents running</span>
 						)}
-						<span>{data.open_task_count} open tasks</span>
-						<span>Active {relativeTimeAgo(data.last_activity_at)}</span>
+						<span>{project?.open_task_count ?? 0} open tasks</span>
+						{project?.last_activity_at && (
+							<span>Active {relativeTimeAgo(project.last_activity_at)}</span>
+						)}
 					</div>
 					{containerIssue && (
 						<span className="inline-flex items-center gap-1 text-danger">
 							<AlertTriangle className="h-3.5 w-3.5" aria-hidden />
-							Container {data.container_status}
+							Container {project?.container_status}
 						</span>
 					)}
 				</div>
-				{data.running_agents.length > 0 && (
+				{runningAgents.length > 0 && (
 					<div className="divide-y divide-border border-t border-border">
-						{data.running_agents.map((agent) => (
-							<RunningAgentRow key={agent.id} projectId={projectId} agent={agent} />
-						))}
+						{runningAgents.map((agent) => {
+							const run = agent.active_run;
+							const working = run?.run_status === 'running';
+							const statusLabel = working ? 'Working' : 'Queued';
+							return (
+								<div
+									key={agent.id}
+									className="flex items-center gap-2 px-3 py-2"
+									data-testid="project-dashboard-running-agent"
+								>
+									<Link
+										to="/projects/$projectId/agents/$agentId"
+										params={agentPageParams(projectId, agent.slug)}
+										className="flex min-w-0 flex-1 items-center gap-2 hover:opacity-80"
+									>
+										<Avatar
+											size="sm"
+											initials={getInitials(agent.title)}
+											imageUrl={agent.icon_url ?? defaultAvatarForSlug(agent.slug)}
+										/>
+										<span className="min-w-0 truncate text-[13px] font-medium text-text-1">
+											{agent.title}
+										</span>
+									</Link>
+									{run?.task_identifier &&
+									run.task_id &&
+									currentProjectId &&
+									run.task_project_id === currentProjectId ? (
+										<Link
+											to="/projects/$projectId/tasks/$taskId"
+											params={{ projectId, taskId: run.task_identifier.toLowerCase() }}
+											className="shrink-0 font-mono text-[12px] text-text-3 hover:text-text-1 hover:underline"
+										>
+											{run.task_identifier}
+										</Link>
+									) : null}
+									<StatusDot status="active" pulse={working} label={statusLabel} />
+								</div>
+							);
+						})}
 					</div>
 				)}
 			</Card>
@@ -505,103 +658,191 @@ function TeamSnapshot({ data, projectId }: { data: ProjectDashboard; projectId: 
 	);
 }
 
-function NeedsYouSection({
-	projectId,
-	rows,
-	unreadCount,
+// ---------------------------------------------------------------------------
+// Sortable widget wrapper
+// ---------------------------------------------------------------------------
+
+function SortableWidget({
+	id,
+	children,
 }: {
-	projectId: string;
-	rows: ProjectDashboardNeedsYouItem[];
-	unreadCount: number;
+	id: DashboardWidgetId;
+	children: (dragListeners: object, dragAttributes: object) => ReactNode;
 }) {
-	if (rows.length === 0) {
-		return (
-			<section data-testid="project-dashboard-needs-you">
-				<div className="flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-[13px]">
-					<Inbox className="h-3.5 w-3.5 shrink-0 text-text-3" aria-hidden />
-					<span className="font-medium text-text-1">Action items</span>
-					<span className="text-text-3">· All caught up</span>
-				</div>
-			</section>
-		);
-	}
+	const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+		id,
+	});
+
+	const style: CSSProperties = {
+		transform: CSS.Transform.toString(transform),
+		transition,
+		opacity: isDragging ? 0.4 : undefined,
+	};
 
 	return (
-		<section data-testid="project-dashboard-needs-you">
-			<SectionHeader
-				icon={Inbox}
-				title={`Action items · ${unreadCount}`}
-				action={
-					<Link
-						to="/projects/$projectId/inbox"
-						params={{ projectId }}
-						className="text-xs text-info-soft-fg hover:underline"
-					>
-						Open inbox
-					</Link>
-				}
-			/>
-			<Card className="divide-y divide-border p-0">
-				{rows.map((row) => (
-					<NeedsYouRow
-						key={`${row.kind}-${row.kind === 'approval' ? row.approval.id : row.kind === 'mention' ? row.mention.id : row.credential.comment_id}`}
-						projectId={projectId}
-						row={row}
-					/>
-				))}
-			</Card>
-		</section>
+		<div ref={setNodeRef} style={style} className="group/widget">
+			{children(listeners ?? {}, attributes ?? {})}
+		</div>
 	);
 }
 
-export function ProjectDashboardView({ projectId }: { projectId: string }) {
-	const project = useProjectMeta(projectId);
-	const { data, isLoading, isError } = useProjectDashboard(projectId);
+// ---------------------------------------------------------------------------
+// Widget grid
+// ---------------------------------------------------------------------------
 
-	if (isLoading) return <DashboardSkeleton />;
-	if (isError || !data) {
-		return (
-			<EmptyState
-				title="Could not load dashboard"
-				description="Try refreshing the page."
-				variant="hero"
-			/>
-		);
+function WidgetGrid({
+	projectId,
+	isInternal,
+	order,
+	onOrderChange,
+}: {
+	projectId: string;
+	isInternal: boolean;
+	order: DashboardWidgetOrder;
+	onOrderChange: (next: DashboardWidgetOrder) => void;
+}) {
+	const [localOrder, setLocalOrder] = useState<DashboardWidgetOrder | null>(null);
+	const [activeId, setActiveId] = useState<DashboardWidgetId | null>(null);
+
+	const displayOrder: DashboardWidgetOrder = localOrder ?? order;
+
+	const sensors = useSensors(
+		useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+		useSensor(KeyboardSensor),
+	);
+
+	function handleDragEnd(event: DragEndEvent) {
+		const { active, over } = event;
+		setActiveId(null);
+		if (!over || active.id === over.id) return;
+		const oldIndex = displayOrder.indexOf(active.id as DashboardWidgetId);
+		const newIndex = displayOrder.indexOf(over.id as DashboardWidgetId);
+		if (oldIndex === -1 || newIndex === -1) return;
+		const next = arrayMove(displayOrder, oldIndex, newIndex);
+		setLocalOrder(next);
+		onOrderChange(next);
 	}
 
-	const isInternal = data.is_internal;
+	function renderWidget(id: DashboardWidgetId, listeners: object, attributes: object): ReactNode {
+		switch (id) {
+			case 'goals':
+				return isInternal ? null : (
+					<GoalsWidget
+						projectId={projectId}
+						dragListeners={listeners}
+						dragAttributes={attributes}
+					/>
+				);
+			case 'team_snapshot':
+				return (
+					<TeamSnapshotWidget
+						projectId={projectId}
+						dragListeners={listeners}
+						dragAttributes={attributes}
+					/>
+				);
+			case 'in_progress':
+				return (
+					<InProgressWidget
+						projectId={projectId}
+						dragListeners={listeners}
+						dragAttributes={attributes}
+					/>
+				);
+			case 'spend':
+				return isInternal ? null : (
+					<SpendWidget
+						projectId={projectId}
+						dragListeners={listeners}
+						dragAttributes={attributes}
+					/>
+				);
+			default:
+				return null;
+		}
+	}
+
+	return (
+		<DndContext
+			sensors={sensors}
+			collisionDetection={closestCenter}
+			onDragStart={({ active }) => setActiveId(active.id as DashboardWidgetId)}
+			onDragEnd={handleDragEnd}
+		>
+			<SortableContext items={displayOrder} strategy={rectSortingStrategy}>
+				<div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+					{displayOrder.map((id) => (
+						<SortableWidget key={id} id={id}>
+							{(listeners, attributes) => renderWidget(id, listeners, attributes)}
+						</SortableWidget>
+					))}
+				</div>
+			</SortableContext>
+			<DragOverlay>
+				{activeId ? (
+					<div className="rounded-lg border border-border bg-surface opacity-90 shadow-lg">
+						{renderWidget(activeId, {}, {})}
+					</div>
+				) : null}
+			</DragOverlay>
+		</DndContext>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Skeleton
+// ---------------------------------------------------------------------------
+
+function DashboardSkeleton() {
+	return (
+		<div className="flex flex-col gap-6" data-testid="project-dashboard-loading">
+			<div className="h-8 w-48 animate-pulse rounded bg-surface-2" />
+			<div className="h-32 w-full animate-pulse rounded-lg bg-surface-2" />
+			<div className="h-40 w-full animate-pulse rounded-lg bg-surface-2" />
+		</div>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Main view
+// ---------------------------------------------------------------------------
+
+export function ProjectDashboardView({ projectId }: { projectId: string }) {
+	const projectMeta = useProjectMeta(projectId);
+	// Full project detail carries dashboard_widget_order.
+	const { data: project, isLoading } = useProject(projectId);
+	const { data: needsYou } = useNeedsYou(projectId);
+	const { mutate: saveOrder } = useDashboardWidgetOrder(projectId);
+
+	if (isLoading && !projectMeta) return <DashboardSkeleton />;
+
+	const isInternal = project?.is_internal ?? projectMeta?.is_internal ?? false;
+	const widgetOrder = sanitizeWidgetOrder(project?.dashboard_widget_order);
 
 	return (
 		<div className="flex flex-col gap-6" data-testid="project-dashboard">
 			<header>
-				<h1 className="text-xl font-semibold text-text-1">{project?.name ?? 'Project'}</h1>
+				<h1 className="text-xl font-semibold text-text-1">
+					{project?.name ?? projectMeta?.name ?? projectId}
+				</h1>
 			</header>
+
+			{isInternal ? null : <ProgressWidget projectId={projectId} />}
 
 			<NeedsYouSection
 				projectId={projectId}
-				rows={data.needs_you}
-				unreadCount={data.inbox_unread}
+				rows={needsYou?.items ?? []}
+				actionCount={needsYou?.action_count ?? 0}
 			/>
 
-			<div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-				<div className="flex flex-col gap-6">
-					{!isInternal && (
-						<SpendSection projectId={projectId} spend={data.spend} budget={data.budget} />
-					)}
-					<InProgressSection projectId={projectId} tasks={data.in_progress_tasks} />
-				</div>
-				<div className="flex flex-col gap-6">
-					{!isInternal && (
-						<>
-							<ProgressSection projectId={projectId} progress={data.progress} />
-							<GoalsSection projectId={projectId} goals={data.goals} />
-						</>
-					)}
-					<TeamSnapshot data={data} projectId={projectId} />
-				</div>
-			</div>
+			<WidgetGrid
+				projectId={projectId}
+				isInternal={isInternal}
+				order={widgetOrder}
+				onOrderChange={saveOrder}
+			/>
 
-			{isInternal && data.needs_you.length === 0 && data.in_progress_tasks.length === 0 && (
+			{isInternal && (needsYou?.items ?? []).length === 0 && (
 				<Card>
 					<EmptyState
 						icon={<KeyRound className="h-5 w-5" />}

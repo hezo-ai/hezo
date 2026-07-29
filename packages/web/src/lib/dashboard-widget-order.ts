@@ -4,7 +4,6 @@ import {
 	type DashboardWidgetOrder,
 } from '@hezo/shared';
 
-/** Default widget render order — matches the peer-feedback layout. */
 export const DEFAULT_WIDGET_ORDER: DashboardWidgetOrder = [
 	'goals',
 	'team_snapshot',
@@ -25,7 +24,6 @@ export function sanitizeWidgetOrder(raw: unknown): DashboardWidgetOrder {
 			}
 		}
 	}
-	// Append any widget ids that are missing from the stored order.
 	for (const id of DEFAULT_WIDGET_ORDER) {
 		if (!seen.has(id)) valid.push(id);
 	}

@@ -23,6 +23,7 @@ import {
 	CredentialInputType,
 	CredentialKind,
 	credentialKindRequiresAllowedHosts,
+	DASHBOARD_WIDGET_IDS,
 	DEFAULT_TEAM_ID,
 	DocumentType,
 	extensionOf,
@@ -146,6 +147,7 @@ import {
 import { insertHireProposalComment } from '../services/hire-proposal-comment';
 import { getMarketplaceTeam } from '../services/marketplace';
 import { createProjectWithTeam } from '../services/project-create';
+import { sanitizeWidgetOrder } from '../services/project-dashboard';
 import { completeProjectIntakeAfterProvisioning } from '../services/project-intake';
 import { ProjectProgressError, updateProjectProgress } from '../services/projects';
 import {
@@ -241,6 +243,7 @@ const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'update_goal_progress',
 	'update_project_progress',
 	'update_project_custom_prompt',
+	'update_dashboard_widget_order',
 ]);
 
 /** A handler result that signals failure rather than a persisted write. */
@@ -3913,6 +3916,38 @@ export function registerTools(
 			}
 
 			return { applied: true, document_id: doc.id, length: (args.content as string).length };
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'update_dashboard_widget_order',
+		"Save the user's preferred widget order for the project dashboard. Pass the full ordered list of widget ids; unknown or duplicate ids are rejected. The order persists across sessions and is returned in subsequent get_project_dashboard calls.",
+		{
+			project: projectArg(),
+			order: z
+				.array(z.enum(DASHBOARD_WIDGET_IDS as unknown as [string, ...string[]]))
+				.describe(`Ordered list of widget ids. Valid values: ${DASHBOARD_WIDGET_IDS.join(', ')}.`),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { projectId } = scope;
+
+			const raw = args.order as string[];
+			const seen = new Set<string>();
+			for (const id of raw) {
+				if (seen.has(id)) return { error: `Duplicate widget id: ${id}` };
+				seen.add(id);
+			}
+
+			await db.query(`UPDATE projects SET dashboard_widget_order = $1 WHERE id = $2`, [
+				JSON.stringify(raw),
+				projectId,
+			]);
+
+			return { order: sanitizeWidgetOrder(raw) };
 		},
 		db,
 	);

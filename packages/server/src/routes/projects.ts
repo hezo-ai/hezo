@@ -2,6 +2,7 @@ import {
 	ArchiveFilter,
 	AuthType,
 	ContainerStatus,
+	DASHBOARD_WIDGET_IDS,
 	isAllowedProjectIconStoredMime,
 	isArchiveFilter,
 	MemberType,
@@ -19,7 +20,6 @@ import {
 	broadcastProjectUpdate,
 } from '../lib/broadcast';
 import { budgetWindowsError } from '../lib/budget-validation';
-import { signEntityIconUrl } from '../lib/entity-icon-urls';
 import { readImageDimensions } from '../lib/image-dimensions';
 import { ref } from '../lib/log-ref';
 import { signProjectIconUrl, verifyProjectIconUrl } from '../lib/project-icon-urls';
@@ -42,7 +42,7 @@ import type { JobManager } from '../services/job-manager';
 import { getMarketplaceTeam } from '../services/marketplace';
 import { enqueueAddMarketplaceTeamTask } from '../services/marketplace-add-team';
 import { createProjectWithTeam } from '../services/project-create';
-import { getProjectDashboard } from '../services/project-dashboard';
+import { sanitizeWidgetOrder } from '../services/project-dashboard';
 import { createProjectIntake, getOpenProjectIntakeForHome } from '../services/project-intake';
 import { getProjectProgress } from '../services/projects';
 
@@ -472,34 +472,45 @@ projectsRoutes.get('/projects/:projectId/progress', async (c) => {
 	return ok(c, progress);
 });
 
-// Aggregated at-a-glance payload for the per-project Dashboard page.
-projectsRoutes.get('/projects/:projectId/dashboard', async (c) => {
-	const teamId = c.get('teamId') as string;
+// Store a user's preferred widget order for the dashboard.
+projectsRoutes.patch('/projects/:projectId/dashboard-widget-order', async (c) => {
 	const projectId = c.get('projectId') as string;
-	const auth = c.get('auth');
-	const adminUserId = auth.type === AuthType.Admin ? auth.userId : null;
+	const db = c.get('db');
 
-	const signAgentIcon = async (agentId: string, iconUpdatedAt: string | null) => {
-		if (!iconUpdatedAt) return null;
-		const version = Math.floor(new Date(iconUpdatedAt).getTime() / 1000);
-		return signEntityIconUrl(
-			'/api/agents',
-			'agent-icon-url',
-			agentId,
-			c.get('masterKeyManager'),
-			version,
-		);
-	};
+	let body: unknown;
+	try {
+		body = await c.req.json();
+	} catch {
+		return err(c, 'BAD_REQUEST', 'Invalid JSON body', 400);
+	}
 
-	const dashboard = await getProjectDashboard(
-		c.get('db'),
+	if (
+		typeof body !== 'object' ||
+		body === null ||
+		!Array.isArray((body as Record<string, unknown>).order)
+	) {
+		return err(c, 'BAD_REQUEST', 'Body must be { order: DashboardWidgetId[] }', 400);
+	}
+
+	const raw: unknown[] = (body as { order: unknown[] }).order;
+	const known = new Set(DASHBOARD_WIDGET_IDS as readonly string[]);
+	const seen = new Set<string>();
+	for (const item of raw) {
+		if (typeof item !== 'string' || !known.has(item)) {
+			return err(c, 'BAD_REQUEST', `Unknown widget id: ${String(item)}`, 400);
+		}
+		if (seen.has(item)) {
+			return err(c, 'BAD_REQUEST', `Duplicate widget id: ${item}`, 400);
+		}
+		seen.add(item);
+	}
+
+	await db.query(`UPDATE projects SET dashboard_widget_order = $1 WHERE id = $2`, [
+		JSON.stringify(raw),
 		projectId,
-		teamId,
-		adminUserId,
-		signAgentIcon,
-	);
-	if (!dashboard) return err(c, 'NOT_FOUND', 'Project not found', 404);
-	return ok(c, dashboard);
+	]);
+
+	return ok(c, { order: sanitizeWidgetOrder(raw) });
 });
 
 projectsRoutes.patch('/projects/:projectId', async (c) => {

@@ -1,5 +1,10 @@
 import type { GoalHealth, ProjectProgress } from './common.js';
 
+export const DASHBOARD_WIDGET_IDS = ['goals', 'team_snapshot', 'in_progress', 'spend'] as const;
+
+export type DashboardWidgetId = (typeof DASHBOARD_WIDGET_IDS)[number];
+export type DashboardWidgetOrder = DashboardWidgetId[];
+
 /** All-time spend for a project (windowed spend lives on `budget.*.spentCents`). */
 export interface ProjectDashboardSpend {
 	all_time_cents: number;
@@ -105,5 +110,6 @@ export interface ProjectDashboard {
 	goals: ProjectDashboardGoal[];
 	in_progress_tasks: ProjectDashboardTask[];
 	needs_you: ProjectDashboardNeedsYouItem[];
-	inbox_unread: number;
+	action_count: number;
+	widget_order: DashboardWidgetOrder;
 }
