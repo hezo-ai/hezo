@@ -33,6 +33,18 @@ const KILL_EXEC_TIMEOUT_MS = 5_000;
 const SWEEP_EXEC_TIMEOUT_MS = 10_000;
 
 /**
+ * Bound on the container control calls (create/start/stop/remove/exec-create and
+ * the label listing). #186 timed out the three sync-loop calls; these had none at
+ * all, so a wedged daemon hung them forever - and they sit on the provisioning
+ * and run-launch paths, where a hang is indistinguishable from a slow start.
+ * Generous rather than tight: creating and starting a container is legitimately
+ * slower than an inspect. `pullImage` is deliberately excluded - an image pull is
+ * legitimately minutes long - as are the streaming calls, which carry their own
+ * per-call signals.
+ */
+const DOCKER_CONTROL_TIMEOUT_MS = 60_000;
+
+/**
  * Every env-marker value interpolated into an in-container `sh -c` script must
  * match this — UUIDs and `<kind>-<hex>` scope ids do; anything shell-active
  * (quotes, spaces, `$`, backticks) is rejected before it reaches the shell.
@@ -347,6 +359,7 @@ export class DockerClient {
 			'POST',
 			`/containers/create?name=${encodeURIComponent(name)}`,
 			config,
+			AbortSignal.timeout(DOCKER_CONTROL_TIMEOUT_MS),
 		);
 		if (!res.ok) {
 			const text = await res.text();
@@ -356,7 +369,12 @@ export class DockerClient {
 	}
 
 	async startContainer(containerId: string): Promise<void> {
-		const res = await this.request('POST', `/containers/${containerId}/start`);
+		const res = await this.request(
+			'POST',
+			`/containers/${containerId}/start`,
+			undefined,
+			AbortSignal.timeout(DOCKER_CONTROL_TIMEOUT_MS),
+		);
 		if (!res.ok && res.status !== 304) {
 			const text = await res.text();
 			throw new Error(`Docker startContainer failed (${res.status}): ${text}`);
@@ -364,7 +382,12 @@ export class DockerClient {
 	}
 
 	async stopContainer(containerId: string, timeoutSec = 10): Promise<void> {
-		const res = await this.request('POST', `/containers/${containerId}/stop?t=${timeoutSec}`);
+		const res = await this.request(
+			'POST',
+			`/containers/${containerId}/stop?t=${timeoutSec}`,
+			undefined,
+			AbortSignal.timeout(DOCKER_CONTROL_TIMEOUT_MS),
+		);
 		if (!res.ok && res.status !== 304) {
 			const text = await res.text();
 			throw new Error(`Docker stopContainer failed (${res.status}): ${text}`);
@@ -388,7 +411,12 @@ export class DockerClient {
 	 */
 	async listContainersByLabel(label: string): Promise<Array<{ Id: string; Names: string[] }>> {
 		const filters = encodeURIComponent(JSON.stringify({ label: [label] }));
-		const res = await this.request('GET', `/containers/json?all=true&filters=${filters}`);
+		const res = await this.request(
+			'GET',
+			`/containers/json?all=true&filters=${filters}`,
+			undefined,
+			AbortSignal.timeout(DOCKER_CONTROL_TIMEOUT_MS),
+		);
 		if (!res.ok) {
 			const text = await res.text();
 			throw new Error(`Docker listContainers failed (${res.status}): ${text}`);
@@ -424,7 +452,12 @@ export class DockerClient {
 	 */
 	async findContainerByNamePrefix(prefix: string): Promise<ContainerInfo | null> {
 		const filters = encodeURIComponent(JSON.stringify({ name: [prefix] }));
-		const res = await this.request('GET', `/containers/json?all=true&filters=${filters}`);
+		const res = await this.request(
+			'GET',
+			`/containers/json?all=true&filters=${filters}`,
+			undefined,
+			AbortSignal.timeout(DOCKER_CONTROL_TIMEOUT_MS),
+		);
 		if (!res.ok) {
 			const text = await res.text();
 			throw new Error(`Docker listContainers failed (${res.status}): ${text}`);
@@ -510,7 +543,12 @@ export class DockerClient {
 	}
 
 	async execCreate(containerId: string, config: ExecConfig): Promise<string> {
-		const res = await this.request('POST', `/containers/${containerId}/exec`, config);
+		const res = await this.request(
+			'POST',
+			`/containers/${containerId}/exec`,
+			config,
+			AbortSignal.timeout(DOCKER_CONTROL_TIMEOUT_MS),
+		);
 		if (!res.ok) {
 			const text = await res.text();
 			throw new Error(`Docker execCreate failed (${res.status}): ${text}`);
@@ -541,7 +579,12 @@ export class DockerClient {
 	}
 
 	async execInspect(execId: string): Promise<{ ExitCode: number; Running: boolean; Pid: number }> {
-		const res = await this.request('GET', `/exec/${execId}/json`);
+		const res = await this.request(
+			'GET',
+			`/exec/${execId}/json`,
+			undefined,
+			AbortSignal.timeout(DOCKER_CONTROL_TIMEOUT_MS),
+		);
 		if (!res.ok) {
 			const text = await res.text();
 			throw new Error(`Docker execInspect failed (${res.status}): ${text}`);

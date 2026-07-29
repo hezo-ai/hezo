@@ -26,7 +26,12 @@ import {
 	LOG_COMPACTION_RETENTION_MIN_DAYS,
 } from '@hezo/shared';
 import type { Db } from '../db/database';
-import { replaceRunLog, runLogStoredBytesSql, runLogTextSql } from '../db/run-log-chunks';
+import {
+	readRunLogTail,
+	replaceRunLog,
+	runLogLengthSql,
+	runLogStoredBytesSql,
+} from '../db/run-log-chunks';
 import type { StorageBackend } from '../lib/db-info';
 import { deleteSystemMeta, getSystemMeta, setSystemMeta } from '../lib/system-meta';
 import { logger } from '../logger';
@@ -36,7 +41,7 @@ const log = logger.child('log-compaction');
 export const LOG_COMPACTION_ACTIVE_KEY = 'log_compaction:active';
 export const LOG_COMPACTION_LAST_KEY = 'log_compaction:last';
 
-/** Rows compacted per batch (one transaction). Deploy-time tunable. */
+/** Rows compacted per batch. Each run commits on its own - see compactRunLogsBatch. */
 const LOG_COMPACTION_BATCH = Number(process.env.HEZO_LOG_COMPACTION_BATCH ?? 50);
 /** Upper bound on rows a single cron tick processes before yielding to the next. */
 const LOG_COMPACTION_MAX_PER_TICK = Number(process.env.HEZO_LOG_COMPACTION_MAX_PER_TICK ?? 500);
@@ -109,10 +114,20 @@ const COMPACTED_NOTICE = (date: string, hadCommand: boolean): string =>
  */
 export function computeCompactedLog(
 	logText: string,
-	opts: { invocationCommand?: string | null; preservedBytes?: number; now?: Date } = {},
+	opts: {
+		invocationCommand?: string | null;
+		preservedBytes?: number;
+		now?: Date;
+		/**
+		 * Length of the *whole* log when `logText` is only its tail. The batch
+		 * reads a tail rather than the entire log (which reaches the 10 MB cap),
+		 * so it must still be able to tell "already short enough" from "trimmed".
+		 */
+		originalLength?: number;
+	} = {},
 ): string {
 	const preserved = opts.preservedBytes ?? PRESERVED_BYTES;
-	if (logText.length <= preserved) return logText;
+	if ((opts.originalLength ?? logText.length) <= preserved) return logText;
 
 	// Keep the trailing `preserved` chars, then advance past the first partial
 	// line so the excerpt starts cleanly on a line boundary.
@@ -129,7 +144,11 @@ export function computeCompactedLog(
 	blocks.push(tail);
 	const compacted = blocks.join('\n\n');
 
-	// Defensive: never grow a log (short logs with a long command).
+	// Defensive: never grow a log (short logs with a long command). Only applies
+	// when `logText` IS the whole log — when the caller passed a tail we already
+	// know content was dropped, and returning it without the notice would present
+	// a truncated log as if it were complete.
+	if (opts.originalLength !== undefined) return compacted;
 	return compacted.length < logText.length ? compacted : logText;
 }
 
@@ -222,8 +241,15 @@ export async function compactRunLogsBatch(
 	opts: { olderThanDays: number; limit?: number },
 ): Promise<{ processed: number; bytesReclaimed: number }> {
 	const limit = opts.limit ?? LOG_COMPACTION_BATCH;
-	const rows = await db.query<{ id: string; log_text: string; invocation_command: string | null }>(
-		`SELECT hr.id, ${runLogTextSql('hr.id')} AS log_text, hr.invocation_command
+	// Ids and sizes only. This used to select each candidate's full `log_text`,
+	// so one batch materialized up to 50 x 10 MB in a single result set purely to
+	// keep a 12 KB tail from each.
+	const rows = await db.query<{
+		id: string;
+		log_length: number;
+		invocation_command: string | null;
+	}>(
+		`SELECT hr.id, ${runLogLengthSql('hr.id')} AS log_length, hr.invocation_command
 		 FROM heartbeat_runs hr
 		 WHERE hr.log_compacted_at IS NULL
 		   AND hr.status IN ${TERMINAL_STATUS_SQL}
@@ -236,16 +262,24 @@ export async function compactRunLogsBatch(
 	if (rows.rows.length === 0) return { processed: 0, bytesReclaimed: 0 };
 
 	let bytesReclaimed = 0;
-	await db.transaction(async (tx) => {
-		for (const row of rows.rows) {
-			const compacted = computeCompactedLog(row.log_text, {
-				invocationCommand: row.invocation_command,
-			});
-			bytesReclaimed += Math.max(0, row.log_text.length - compacted.length);
+	// One transaction per run, not one across the batch. Every transaction block
+	// serializes process-wide on both drivers, so wrapping fifty rewrites in one
+	// meant an operator's compaction pass stalled every agent and every request
+	// for its whole duration. Per-run commits are still atomic where it matters
+	// (a run's delete+insert), and a failure part-way leaves the remaining runs
+	// for the next pass rather than rolling back the work already done.
+	for (const row of rows.rows) {
+		const tail = await readRunLogTail(db, row.id, PRESERVED_BYTES);
+		const compacted = computeCompactedLog(tail.text, {
+			invocationCommand: row.invocation_command,
+			originalLength: row.log_length,
+		});
+		bytesReclaimed += Math.max(0, row.log_length - compacted.length);
+		await db.transaction(async (tx) => {
 			await replaceRunLog(tx, row.id, compacted);
 			await tx.query(`UPDATE heartbeat_runs SET log_compacted_at = now() WHERE id = $1`, [row.id]);
-		}
-	});
+		});
+	}
 	return { processed: rows.rows.length, bytesReclaimed };
 }
 

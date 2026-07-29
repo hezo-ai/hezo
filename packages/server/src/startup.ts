@@ -3,6 +3,7 @@ import { extname, join, resolve } from 'node:path';
 import { ATTACHMENT_MAX_BYTES } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
+import { compress } from 'hono/compress';
 import { LocalAssetStore } from './assets/drivers/local';
 import { openAssetStorage } from './assets/open';
 import type { AssetStore } from './assets/store';
@@ -538,6 +539,14 @@ export function buildApp(
 		log.error(`Route error on ${c.req.method} ${c.req.path}:`, err);
 		return c.text('Internal Server Error', 500);
 	});
+
+	// Compress text responses. Nothing was compressed before: every JSON payload
+	// and every SPA asset shipped raw, which on a self-hosted instance reached
+	// over a link the operator does not control. Hono's middleware honours
+	// Accept-Encoding and skips responses that are already encoded, so
+	// pre-compressed asset bodies (images, gzipped bundles) pass through
+	// untouched. Streamed responses are not buffered to compress them.
+	app.use('*', compress());
 
 	app.use('*', async (c, next) => {
 		c.set('db', db);

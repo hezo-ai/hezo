@@ -2356,7 +2356,13 @@ Database card on the Storage settings subpage: `POST /api/database-info/compact-
 {older_than_days}` writes a `log_compaction:active` marker in `system_meta` (also the "in
 progress" flag the panel's button disables on) and kicks the drain. The `log-compaction`
 cron (`services/log-compaction.ts`, guarded so a manual kick and the scheduled tick never
-overlap) drains the backlog a bounded batch at a time — replacing each old, finished,
+overlap) drains the backlog a bounded batch at a time. **Nothing starts a pass on its own** —
+the cron is a no-op without the operator's marker, because run logs are the user's history
+and an instance may deliberately keep all of it; a test asserts this. Each batch selects ids
+and sizes only and reads each run's tail (never the whole log, which reaches the 10 MB cap),
+and commits **per run** rather than wrapping the batch in one transaction: every transaction
+block serializes process-wide, so a single 50-run transaction stalled every agent and every
+request for its duration. Each pass replaces one old, finished,
 large-enough run's chunks with a single compacted chunk (a "compacted" notice + the run's
 `invocation_command` + the end-of-run summary/`[done]` line) and stamping
 `log_compacted_at` (migration `040`, partial index `idx_runs_compaction`; eligibility
