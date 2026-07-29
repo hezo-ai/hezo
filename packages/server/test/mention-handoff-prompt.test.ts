@@ -301,6 +301,14 @@ describe('mention handoff prompt (integration)', () => {
 		expect(prompt).toContain('peer');
 		expect(prompt).toContain('top-level');
 		expect(prompt).toContain('Check before you create');
+		// The "Assigned to you" branch says to do what the comment asks *in this run*,
+		// which read literally tells a manager to personally execute feedback that
+		// belongs to a sub-task it already delegated and that is still open. The
+		// carve-out has to survive into the resolved prompt alongside the triage flow.
+		expect(prompt).toContain('"do what it asks" means making sure it **lands**');
+		expect(prompt).toContain(
+			'**New instructions on work you have already delegated** under **Sub-Tasks & Delegation**',
+		);
 	});
 
 	it('injects the full comment verbatim — no truncation, no code stripping', async () => {

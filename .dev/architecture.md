@@ -867,6 +867,29 @@ override. `marketplace/index.json` is the catalog listing.
   `update_agent_system_prompt` where roles carry local customizations) instead of adding
   duplicates. Because instances always fetch the live catalog, a new team `version` reaches them
   automatically.
+- **Adding only SOME of the roster.** The same route takes an optional `roles: string[]`. Omitted →
+  the whole-team path above. Present → each slug is resolved against `teamDef.roster` (404 on the
+  first unknown; an explicit `[]` is a 400, never "all"), and resolving against `roster` is also what
+  rejects `captain` and the other `RESERVED_ROSTER_SLUGS` — the Captain lives in the separate
+  `captain` override and every project already has one. It enqueues `enqueueAddMarketplaceRolesTask`
+  (`marketplace-add-team.ts`, label `add-marketplace-roles`; both enqueues share `enqueueCeoTask`),
+  whose body has the CEO call the **`apply_marketplace_agent`** MCP tool once per role →
+  `applyMarketplaceRoleToTeam` (`team-template-apply.ts`). Two deliberate differences from the
+  whole-team provisioning path: the def's **Captain override is never applied** (borrowing worker
+  roles must not rewrite the target team's Captain), and the reporting line **falls back to the
+  Captain** when the role's own manager is absent — `insertRosterAgents` otherwise leaves
+  `reports_to` null, which a subset add hits constantly (the App Team `engineer` reports to
+  `architect`). The tool returns `reports_to_fell_back` so the CEO re-points it. The task body is the
+  substance: these prompts/`team_context` were authored for a roster that is not coming with them and
+  @-mention agents that may not exist in the target, so reconciliation is mandatory, and the CEO is
+  explicitly licensed to stop and `@admin` when a role does not clearly belong (an allowed stop — the
+  reply re-wakes it), adding the clear roles and asking about the rest.
+- **Marketplace as a hiring source.** `list_marketplace_teams` (catalog discovery, CEO or Captain)
+  plus the relaxed `get_marketplace_team` let a hiring conversation reach for a proven, fully-written
+  role instead of authoring one from scratch. Guidance lives in `agents/_partials/captain/hire-workflow.md`
+  (a partial, since only the seeded Captain/CEO file hires — runtime hires never do) and
+  `agents/_instance/ceo.md` § Roster changes. Both `apply_marketplace_*` tools are in
+  `MCP_WRITE_TOOLS`, so a run that only provisions is not recorded as a no-op.
 - **Export a live team as a bundle.** `GET /api/projects/:projectId/team-bundle`
   (`services/team-bundle-export.ts`, `exportTeamBundle`) serializes a project's current team
   into a self-contained `MarketplaceTeamDef` — the inverse of `applyMarketplaceTeamToTeam`. It
@@ -1074,7 +1097,14 @@ run's log when the comments don't explain a struggle.
 
 **Task prompt.** After the system prompt, `buildTaskPrompt` (`agent-runner.ts`) appends the
 run's task block: the current task's identifier/title/priority/status, plus its `rules`,
-`description`, and `progress_summary`. It also injects the **latest 3 comments** inline (the
+`description`, and `progress_summary`. The block also carries the ticket's **lineage** in both
+directions: upward from `loadSpawnedFromTask` (a `**Parent ticket:**` line, and a
+`**Spawned from:**` provenance line when a run on a different ticket created this one), and
+downward from `loadOpenSubTasks` — an `**Open sub-tasks**` list naming each non-terminal child
+with its assignee and status. The downward half exists so a manager can see what it has already
+delegated: `SHARED_INSTRUCTIONS` tells it to route fresh feedback to an in-flight sub-task
+rather than absorbing the deliverable, and without the list that rule depends on the agent
+remembering its own earlier fan-out. It also injects the **latest 3 comments** inline (the
 comment that woke the run tagged) as a head-start — small enough to carry on every run, while
 the `SHARED_INSTRUCTIONS` "read the thread before you act" rule still directs the agent to
 `list_comments` for the full thread before acting, since instructions posted after a task is

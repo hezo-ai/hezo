@@ -62,6 +62,10 @@
 	],
 	"changelog": [
 		{
+			"version": 5,
+			"notes": "Captain now checks the team marketplace for a proven, fully-written role before authoring a hire's system prompt from scratch."
+		},
+		{
 			"version": 4,
 			"notes": "Renamed the team to Investment Portfolio."
 		},

@@ -1,6 +1,7 @@
+import { createTestProject, createTestTeam } from '@hezo/server/test/helpers/app';
 import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
-import { renderApp } from './helpers/render';
+import { getTestContext, renderApp } from './helpers/render';
 
 test('marketplace list renders the available teams', async () => {
 	const { findByTestId, findByText } = await renderApp({ initialPath: '/marketplace' });
@@ -46,5 +47,80 @@ test('Launch new project opens the standard create dialog preselected to the tea
 		);
 		expect(card).toBeTruthy();
 		expect(card?.getAttribute('aria-pressed')).toBe('true');
+	});
+});
+
+test('Add to a project can add the whole team or a chosen subset of roles', async () => {
+	let projectSlug = '';
+	const { findByTestId, findByText, user, ctx } = await renderApp({
+		initialPath: '/marketplace/software-development',
+		// A Blank team (Captain only), not seedWorkspace's 10-agent App Team: this
+		// test just needs one project to appear in the dialog's dropdown, and this
+		// file shares a shard with the asset suites, whose PGlite is already the
+		// heaviest in the web tier.
+		seed: async () => {
+			const { db } = getTestContext();
+			const team = (await (await createTestTeam(db, { name: 'Demo Team' })).json()).data;
+			const project = (
+				await (await createTestProject(db, team.id, { name: 'Demo Project' })).json()
+			).data;
+			projectSlug = project.slug;
+		},
+	});
+
+	await user.click(await findByTestId('marketplace-add-existing'));
+
+	// The dialog is portalled onto document.body.
+	const dialogBody = document.body;
+	await waitFor(() => {
+		expect(dialogBody.querySelector('[data-testid="add-to-project-select"]')).toBeTruthy();
+	});
+	const select = dialogBody.querySelector(
+		'[data-testid="add-to-project-select"]',
+	) as HTMLSelectElement;
+	await user.selectOptions(select, projectSlug);
+
+	// Whole team is the default, and the role checkboxes are hidden until asked for.
+	const wholeTeam = dialogBody.querySelector(
+		'[data-testid="add-scope-whole-team"]',
+	) as HTMLInputElement;
+	expect(wholeTeam.checked).toBe(true);
+	expect(dialogBody.querySelector('[data-testid="add-role-picker"]')).toBeNull();
+
+	// Switch to picking roles: the roster appears, without the Captain.
+	await user.click(dialogBody.querySelector('[data-testid="add-scope-pick-roles"]') as Element);
+	await waitFor(() => {
+		expect(dialogBody.querySelector('[data-testid="add-role-picker"]')).toBeTruthy();
+	});
+	expect(dialogBody.querySelector('[data-testid="add-role-captain"]')).toBeNull();
+	expect(dialogBody.querySelector('[data-testid="add-role-security-engineer"]')).toBeTruthy();
+
+	// Nothing picked yet, so there is nothing to submit.
+	const submit = dialogBody.querySelector(
+		'[data-testid="add-to-project-submit"]',
+	) as HTMLButtonElement;
+	expect(submit.disabled).toBe(true);
+
+	await user.click(
+		dialogBody.querySelector('[data-testid="add-role-security-engineer"]') as Element,
+	);
+	await user.click(dialogBody.querySelector('[data-testid="add-role-qa-engineer"]') as Element);
+	await waitFor(() => expect(submit.textContent).toContain('Add 2 roles'));
+	await user.click(submit);
+
+	// The success toast names the count, and a CEO task was created carrying only
+	// the chosen roles.
+	await findByText(/The CEO is adding 2 roles from the App Team team/);
+	await waitFor(async () => {
+		const rows = await ctx.db.query<{ title: string; description: string; labels: string[] }>(
+			`SELECT t.title, t.description, t.labels FROM tasks t
+			 JOIN projects p ON p.id = t.project_id
+			 WHERE p.slug = $1 AND t.labels::jsonb ? 'add-marketplace-roles'`,
+			[projectSlug],
+		);
+		expect(rows.rows.length).toBe(1);
+		expect(rows.rows[0].description).toContain('role="security-engineer"');
+		expect(rows.rows[0].description).toContain('role="qa-engineer"');
+		expect(rows.rows[0].description).not.toContain('role="engineer"');
 	});
 });

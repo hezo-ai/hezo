@@ -355,6 +355,51 @@ describe('template resolver', () => {
 		expect(result).toContain('Inspect before you write');
 	});
 
+	// A marketing-lead delegated the content rewrites to content-writer as a sub-task,
+	// then the admin posted further feedback on the parent ticket — and the lead did
+	// that work itself instead of forwarding it to the still-open sub-task, so two
+	// agents were producing one deliverable and the delegate kept working from a brief
+	// that had been silently superseded. The prompt previously covered only the initial
+	// delegation decision and the cancel-then-absorb variant.
+	it('routes post-delegation feedback to the delegate rather than letting the manager absorb it', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		expect(result).toContain(
+			'New instructions on work you have already delegated get routed to the delegate',
+		);
+		// Being the parent ticket's assignee is the exact rationalisation that produced
+		// the incident, so the rule names it and holds for as long as the child is open.
+		expect(result).toContain("Being the parent ticket's assignee does **not** make you");
+		expect(result).toContain('While that sub-task is non-terminal you do not write, edit');
+		// The routing mechanics: persist the change on the sub-task, then wake its owner.
+		// `update_task` alone creates no wake, which is why both halves are spelled out.
+		expect(result).toContain('update_task');
+		expect(result).toContain('`@<assignee>` comment');
+		expect(result).toContain('the active mention is the wake');
+		// A closed sub-task means fresh work for the same report — still not the
+		// manager's to execute — and taking work back is a cancellation, not a silent
+		// absorption.
+		expect(result).toContain('it is still not yours to execute');
+		expect(result).toContain('that is a **cancellation**');
+		// A multi-ask comment must not be split in the manager's favour: an ask touching
+		// the same material the delegate is producing routes with the rest.
+		expect(result).toContain(
+			'A comment carrying several asks does not license doing any of them yourself',
+		);
+		expect(result).toContain('it routes with the rest');
+		// The ownership question is re-asked on every later instruction, not just the
+		// first read of the ticket.
+		expect(result).toContain('The ownership question is re-asked on **every** later instruction');
+	});
+
+	it('carves the delegated case out of the "mention on your own ticket is your work" rule', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		// The "Assigned to you" branch tells an agent to do what the comment asks *in
+		// this run* — read literally, that is an instruction to execute feedback that
+		// belongs to an in-flight delegate. Landing it, not producing it, is the job.
+		expect(result).toContain('"do what it asks" means making sure it **lands**');
+		expect(result).toContain("duplicates your report's in-flight work");
+	});
+
 	it('tells every agent the run is headless and not to point the user at terminal/adapter commands', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		expect(result).toContain('### Your Run Is Headless');

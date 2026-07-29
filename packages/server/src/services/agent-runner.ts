@@ -38,7 +38,7 @@ import { signAgentAssetUrl } from '../lib/asset-urls';
 import { broadcastProjectUpdate, broadcastRowChange } from '../lib/broadcast';
 import { withProjectGitLock } from '../lib/git-lock';
 import { detectUnlinkedTeammateAsks, extractMentionSlugs } from '../lib/mentions';
-import { withTransaction } from '../lib/sql';
+import { terminalStatusParams, withTransaction } from '../lib/sql';
 import { logger } from '../logger';
 import { signAgentJwt } from '../middleware/auth';
 import { pauseAgentForBudget } from './agent-runtime-status';
@@ -740,6 +740,7 @@ async function buildRunContext(
 	const wakingCommentId =
 		typeof wakeupPayload?.comment_id === 'string' ? wakeupPayload.comment_id : undefined;
 	const spawnedFrom = task ? await loadSpawnedFromTask(deps.db, task) : null;
+	const openSubTasks = task ? await loadOpenSubTasks(deps.db, task) : [];
 	let basePrompt: string;
 	if (progressUpdate) {
 		basePrompt = buildProgressUpdatePrompt(resolvedPrompt, progressUpdate);
@@ -768,6 +769,7 @@ async function buildRunContext(
 			replyContext,
 			commentWakeContext,
 			spawnedFrom,
+			openSubTasks,
 			recentComments,
 			wakingCommentId,
 		});
@@ -2162,6 +2164,7 @@ export interface BuildTaskPromptContext {
 	replyContext?: ReplyContext | null;
 	commentWakeContext?: CommentWakeContext | null;
 	spawnedFrom?: SpawnedFromTask | null;
+	openSubTasks?: OpenSubTask[];
 	recentComments?: RenderableComment[];
 	wakingCommentId?: string;
 }
@@ -2240,6 +2243,7 @@ export function buildTaskPrompt(
 	ctx: BuildTaskPromptContext = {},
 ): string {
 	const { mentionContext, replyContext, commentWakeContext, spawnedFrom, recentComments } = ctx;
+	const openSubTasks = ctx.openSubTasks ?? [];
 	const parts = [systemPrompt, '', '---', ''];
 
 	if (replyContext && wakeupPayload?.source === WakeupSource.Reply) {
@@ -2255,6 +2259,16 @@ export function buildTaskPrompt(
 	parts.push(`**Status:** ${task.status}`);
 	if (spawnedFrom?.parentLine) parts.push(spawnedFrom.parentLine);
 	if (spawnedFrom?.spawnLine) parts.push(spawnedFrom.spawnLine);
+	if (openSubTasks.length > 0) {
+		parts.push(
+			'**Open sub-tasks** (already delegated — route new instructions to these tickets, do not do their work yourself):',
+		);
+		for (const sub of openSubTasks) {
+			parts.push(
+				`- ${sub.identifier} — ${sub.title} (${sub.status}, assigned to ${sub.assignee_name ?? 'unassigned'})`,
+			);
+		}
+	}
 	parts.push('');
 
 	if (task.rules) {
@@ -2505,6 +2519,40 @@ export async function loadSpawnedFromTask(db: Db, task: TaskInfo): Promise<Spawn
 			? `**Spawned from:** ${spawningTask.identifier} — ${spawningTask.title} (provenance only; this ticket is your own work)`
 			: null,
 	};
+}
+
+/** A non-terminal sub-task of the ticket a run is on — work already delegated out. */
+export interface OpenSubTask {
+	identifier: string;
+	title: string;
+	status: string;
+	assignee_name: string | null;
+}
+
+/** Cap on the sub-tasks listed in the prompt; a fan-out wider than this is already unusual. */
+const OPEN_SUB_TASKS_LIMIT = 20;
+
+/**
+ * The current ticket's still-open sub-tasks, so the run prompt can say what this
+ * agent has already delegated. `loadSpawnedFromTask` renders the ticket's lineage
+ * *upward* (parent / spawned-from); this is the downward half, and it is what makes
+ * the "route new instructions to the delegate, don't absorb their work" rule in
+ * SHARED_INSTRUCTIONS checkable from the prompt rather than from memory. One extra
+ * query per run start (not per request), bounded by OPEN_SUB_TASKS_LIMIT.
+ */
+export async function loadOpenSubTasks(db: Db, task: TaskInfo): Promise<OpenSubTask[]> {
+	const terminal = terminalStatusParams(2, true);
+	const r = await db.query<OpenSubTask>(
+		`SELECT i.identifier, i.title, i.status::text AS status, m.display_name AS assignee_name
+		 FROM tasks i
+		 LEFT JOIN members m ON m.id = i.assignee_id
+		 WHERE i.parent_task_id = $1
+		   AND i.status NOT IN (${terminal.placeholders})
+		 ORDER BY i.created_at ASC
+		 LIMIT ${OPEN_SUB_TASKS_LIMIT}`,
+		[task.id, ...terminal.values],
+	);
+	return r.rows;
 }
 
 /**
