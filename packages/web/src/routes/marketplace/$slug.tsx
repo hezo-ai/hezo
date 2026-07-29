@@ -245,9 +245,6 @@ function AddToProjectDialog({
 									</li>
 								))}
 							</ul>
-							<p className="text-[12px] text-text-2 mt-2">
-								The Captain isn't listed - every project already has one.
-							</p>
 						</div>
 					)}
 				</fieldset>
