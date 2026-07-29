@@ -9,6 +9,7 @@
  * get a JSON 503 STARTING so they retry.
  */
 
+import type { StartupFailureRecord } from './startup-failure';
 import type { StartupProgress } from './startup-progress';
 import type { StaticAsset } from './static-assets';
 import { HEZO_VERSION } from './version';
@@ -25,6 +26,12 @@ export interface StartupServingDeps {
 	progress: StartupProgress;
 	/** Loads the embedded SPA bundle; `null` in dev where Vite serves the SPA. */
 	loadBundle: () => Promise<Map<string, StaticAsset> | null>;
+	/**
+	 * Why the PREVIOUS boot died, when it died fatally (see `startup-failure.ts`).
+	 * Under a restart policy the same failure repeats, so surfacing it here is what
+	 * turns an endless boot screen into an actionable message.
+	 */
+	lastFailure?: StartupFailureRecord | null;
 }
 
 /** Paths that must keep machine-readable JSON semantics while booting. */
@@ -63,7 +70,14 @@ export async function serveStartupRequest(
 	// handler takes over.
 	if (path === '/api/status') {
 		const { phase, message, detail } = deps.progress;
-		return Response.json({ starting: true, phase, message, detail, version: HEZO_VERSION });
+		return Response.json({
+			starting: true,
+			phase,
+			message,
+			detail,
+			version: HEZO_VERSION,
+			...(deps.lastFailure ? { last_failure: deps.lastFailure } : {}),
+		});
 	}
 
 	// Other API/MCP/WebSocket surfaces stay machine-readable so clients retry.

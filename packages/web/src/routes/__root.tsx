@@ -131,7 +131,14 @@ function AppShell() {
 	// The server is still booting (compiled binary serves the SPA shell during
 	// startup). Show the boot phase and keep polling rather than the bare spinner.
 	if (status?.starting) {
-		return <StartingScreen phase={status.phase} message={status.message} detail={status.detail} />;
+		return (
+			<StartingScreen
+				phase={status.phase}
+				message={status.message}
+				detail={status.detail}
+				lastFailure={status.lastFailure}
+			/>
+		);
 	}
 
 	// Only the FIRST load (nothing fetched yet, never errored) shows the full-screen

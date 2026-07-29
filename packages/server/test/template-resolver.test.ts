@@ -426,6 +426,25 @@ describe('template resolver', () => {
 		expect(result).toContain('Format as proper markdown');
 	});
 
+	it('tells every agent to check whether its work directly affects another open task', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		// General cross-task impact rule: before acting, judge whether this change would
+		// directly affect what another open task specifies — including when it overlaps or
+		// duplicates that task's deliverable, not just data dependencies or shared-surface
+		// collisions.
+		expect(result).toContain(
+			'Before you change anything, check whether it directly affects another open task',
+		);
+		expect(result).toContain("overlaps or duplicates that task's own deliverable");
+		// The affected task must not be left stale: the agent has discretion over how it
+		// proceeds, but must at minimum reconcile the other task (comment its owner /
+		// update_task) and/or ask the admin for a human decision.
+		expect(result).toContain('never leave that task stale');
+		expect(result).toContain('you have runtime discretion over');
+		expect(result).toContain('update the affected task');
+		expect(result).toContain('ask the admin');
+	});
+
 	it('scopes inline code to code tokens and forbids backticking linkable references', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		// The old wording told agents to backtick "filenames and identifiers",

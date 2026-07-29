@@ -115,10 +115,22 @@ export const LEGACY_RUN_LOG_VACUUM_KEY = 'run_log_chunks:legacy_vacuum_done';
  * lock the operator did not ask for, and autovacuum reuses the space. The
  * marker is set only after success so a failed attempt retries next boot.
  */
-export async function runLegacyRunLogVacuumOnce(db: Db, backend: StorageBackend): Promise<void> {
+export async function runLegacyRunLogVacuumOnce(
+	db: Db,
+	backend: StorageBackend,
+	options: {
+		/**
+		 * Called once the reclaim is committed to running (past the marker check,
+		 * embedded only). Startup uses it to name the step on the loading screen -
+		 * a VACUUM FULL over a multi-GB table would otherwise look like a hang.
+		 */
+		onStart?: () => void;
+	} = {},
+): Promise<void> {
 	const done = await getSystemMeta(db, LEGACY_RUN_LOG_VACUUM_KEY);
 	if (done !== null) return;
 	if (backend === 'embedded') {
+		options.onStart?.();
 		const before = await relationBytes(db);
 		try {
 			await db.query('VACUUM (FULL, ANALYZE) heartbeat_runs');

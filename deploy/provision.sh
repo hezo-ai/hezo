@@ -9,7 +9,7 @@
 #   • you can also just SSH into a box and run it by hand
 #
 # What it does, idempotently:
-#   1. ensures a swap file exists (default 4 GB) so low-RAM hosts don't get OOM-killed
+#   1. ensures a swap file exists (default 6 GB) so low-RAM hosts don't get OOM-killed
 #   2. installs Docker Engine and starts it (Hezo needs the host Docker socket)
 #   3. downloads the arch-matched `hezo` binary from GitHub Releases
 #   4. installs Caddy as a reverse proxy with automatic HTTPS + WebSocket passthrough
@@ -38,8 +38,8 @@
 #                          /etc/hezo/hezo.env on first provision; omit for local disk.
 #   HEZO_DATABASE_POOL_SIZE  connection-pool size for the external database (2-100).
 #   HEZO_SWAP_SIZE         size of the swap file this script creates so low-RAM hosts
-#                          don't OOM (default 4G; accepts 4G / 4096M). Set 0 to disable.
-#                          Auto-shrinks to fit the disk when 4G plus headroom won't fit,
+#                          don't OOM (default 6G; accepts 6G / 6144M). Set 0 to disable.
+#                          Auto-shrinks to fit the disk when 6G plus headroom won't fit,
 #                          and is skipped when the host already has active swap.
 #   HEZO_RELEASE_TAG       pin a release tag (default: latest)
 #   HEZO_IMAGE_BUILD       set to 1 when baking a machine image (e.g. the DigitalOcean
@@ -89,7 +89,7 @@ cat >/usr/local/sbin/hezo-ensure-swap.sh <<'EOF'
 # boot: a no-op when the host already has active swap. Never aborts the caller —
 # a host that forbids swapon just logs a warning and exits 0.
 #
-#   HEZO_SWAP_SIZE  desired size (default 4G; accepts 4G / 4096M / integer MiB).
+#   HEZO_SWAP_SIZE  desired size (default 6G; accepts 6G / 6144M / integer MiB).
 #                   Set 0/off/none to disable. Auto-shrinks to fit the disk.
 set -uo pipefail
 
@@ -99,7 +99,7 @@ FLOOR_MIB=512     # don't bother creating swap smaller than this
 
 log() { echo "[hezo-swap] $*"; }
 
-REQUEST="${HEZO_SWAP_SIZE:-4G}"
+REQUEST="${HEZO_SWAP_SIZE:-6G}"
 case "${REQUEST,,}" in
 	0 | off | none | no | false | disabled)
 		log "swap disabled (HEZO_SWAP_SIZE=${REQUEST})"
@@ -113,7 +113,7 @@ if [[ -n "$(swapon --show=NAME --noheadings 2>/dev/null)" ]]; then
 	exit 0
 fi
 
-# Parse the requested size to MiB (4G / 4096M / bare integer MiB).
+# Parse the requested size to MiB (6G / 6144M / bare integer MiB).
 size_to_mib() {
 	local v="${1,,}" num unit
 	num="${v%[gm]}"
@@ -188,7 +188,7 @@ chmod +x /usr/local/sbin/hezo-ensure-swap.sh
 # Docker + Caddy installs. Skipped for machine-image builds (see the heredoc note
 # above); the first-boot unit creates it on the end user's real first boot instead.
 if [[ "${HEZO_IMAGE_BUILD:-}" != "1" ]]; then
-	HEZO_SWAP_SIZE="${HEZO_SWAP_SIZE:-4G}" /usr/local/sbin/hezo-ensure-swap.sh || log "swap setup skipped"
+	HEZO_SWAP_SIZE="${HEZO_SWAP_SIZE:-6G}" /usr/local/sbin/hezo-ensure-swap.sh || log "swap setup skipped"
 fi
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 import { expect, test, vi } from 'vitest';
-import { renderApp } from './helpers/render';
+import { clickUntil, renderApp } from './helpers/render';
 import {
 	type SeededWorkspace,
 	seedComment,
@@ -133,10 +133,17 @@ test('downloads the document from the task-sidebar preview panel', async () => {
 			params: { projectId: ctx.projectSlug, taskId: ctx.taskId },
 		});
 
-		// The panel opens from the doc mention in the comment.
-		const mention = await findByTestId('doc-mention-link', undefined, { timeout: 15_000 });
-		await user.click(mention);
-		await findByTestId('preview-panel');
+		// The panel opens from the doc mention in the comment. The thread re-renders
+		// as its queries settle, which can replace the mention node after it is
+		// located — clicking a handle captured beforehand then lands on a detached
+		// element and the panel never opens. Click the live node until it does.
+		await findByTestId('doc-mention-link', undefined, { timeout: 15_000 });
+		await clickUntil(
+			user,
+			() => document.querySelector('[data-testid="doc-mention-link"]'),
+			() => !!document.querySelector('[data-testid="preview-panel"]'),
+			{ label: 'the doc mention' },
+		);
 
 		// The control renders only once the panel's doc query has resolved.
 		const trigger = await findByTestId('doc-download', undefined, { timeout: 15_000 });

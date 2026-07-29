@@ -19,11 +19,11 @@ keys, and the spend.
 
 **Low-RAM host?** Agent containers are memory-hungry, so on a small box (under ~2 GB
 RAM) add swap or the kernel may OOM-kill Hezo. The
-[one-click deploy](/docs/deployment/one-click) sets up a 4 GB swap file for you; on a
+[one-click deploy](/docs/deployment/one-click) sets up a 6 GB swap file for you; on a
 manual install, add one yourself:
 
 ```sh
-sudo fallocate -l 4G /swapfile && sudo chmod 600 /swapfile
+sudo fallocate -l 6G /swapfile && sudo chmod 600 /swapfile
 sudo mkswap /swapfile && sudo swapon /swapfile
 echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 ```
@@ -353,6 +353,33 @@ You can always upgrade by replacing the binary yourself. On startup Hezo runs an
 required database migrations automatically - the embedded database is migrated on a
 copy and swapped in only on success (the previous copy is kept aside), so an upgrade
 is safe to roll back. See [Backup & recovery](/docs/deployment/backup-and-recovery).
+
+### If an upgrade sits on "Running database migrations…"
+
+Migrations run in the **server**, not the browser. The screen you see is the web UI
+reporting the server's boot progress, and it names the step in flight - copying the
+database aside, writing the pre-migration backup, then each migration as it is
+applied. A large instance can legitimately spend a few minutes there, and the screen
+shows an elapsed timer so you can tell it is still moving.
+
+Two messages mean it is **not** just slow:
+
+- **"The server restarted while starting up"** - the process is dying and your
+  service manager is restarting it, so the same boot is being retried over and over.
+- **"The previous start failed…"** with a reason - the last boot hit a fatal error
+  (a failed migration, unreachable database, broken asset storage). The reason shown
+  is what to fix.
+
+Check the service log for what actually happened:
+
+```sh
+journalctl -u hezo -n 200 --no-pager
+```
+
+The most common cause on a small VPS is the host running out of memory: the log
+shows the worker exiting with **code 137** (the kernel killed it) with no error of
+Hezo's own. Give the host more RAM or add swap - the provisioning script sets up a
+4 GB swap file for this reason, and `swapon --show` tells you whether it is active.
 
 ## Keeping the host patched
 
