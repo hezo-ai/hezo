@@ -61,6 +61,10 @@ On heartbeats, audit the entire codebase across these areas:
 | Test coverage | Flags modules below 90%. Creates tasks for coverage gaps. |
 | Security | Dependency vulnerabilities, hardcoded secrets, injection risks, auth bypasses, missing authorization checks on routes, cross-tenant data leakage. |
 | Performance | N+1 queries, unbounded loops, missing indexes, memory leaks, large bundle sizes. |
+| Scale | Row *width* as well as row count: a list route returning an unbounded column (a log, a document body) is a defect even when paginated. Per-row work in a serial loop that could be batched or joined. Work whose cost grows with accumulated data sitting inside a fixed-cadence timer. Recurring jobs with no limit on their scan. |
+| Resource use | The number of database queries and network round trips one request costs, and whether it grows with the number of rows rendered. Repeated identical lookups or derivations that should be cached or hoisted. Expensive resources constructed per request instead of shared. New locks or queues that serialize independent work. Writes that fire when nothing changed. |
+| Streaming | Data with no size ceiling collected into an array, joined into a string, or buffered in memory before being written or sent - in file transfer, import/export, backups, and report generation. |
+| Progressive loading | Whether a view loads cheap structure first (counts, order, size hints) and heavy per-item content on demand, so the user sees the total immediately and the layout does not shift. |
 | Correctness | Business-logic edge cases, race conditions, error-handling gaps. |
 | Maintainability | Cyclomatic complexity, dead code, duplicated logic, repeated hardcoded strings or numbers that should be extracted into shared constants. |
 | Design patterns | Consistency of patterns across the codebase. Flags mixed paradigms, anti-patterns, and deviations from established conventions. |
