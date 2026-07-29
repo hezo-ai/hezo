@@ -62,9 +62,9 @@
 				"design",
 				"analytics"
 			],
-			"version": 4,
+			"version": 5,
 			"roster_count": 7,
-			"latest_notes": "Renamed the team to Social Media Marketing."
+			"latest_notes": "Captain now checks the team marketplace for a proven, fully-written role before authoring a hire's system prompt from scratch."
 		},
 		{
 			"slug": "investment",
@@ -127,9 +127,9 @@
 				"report",
 				"review"
 			],
-			"version": 4,
+			"version": 5,
 			"roster_count": 6,
-			"latest_notes": "Renamed the team to Investment Portfolio."
+			"latest_notes": "Captain now checks the team marketplace for a proven, fully-written role before authoring a hire's system prompt from scratch."
 		},
 		{
 			"slug": "software-development",
@@ -211,9 +211,9 @@
 				"testing",
 				"security review"
 			],
-			"version": 9,
+			"version": 10,
 			"roster_count": 10,
-			"latest_notes": "The Architect, DevOps Engineer and Security Engineer now carry the same code-quality principles the Engineer and QA already had, and those principles gain concrete guidance on designing for load and data volume: bounded list results, budgeting the resource calls a request makes, progressive loading (cheap structure first, heavy content on demand), sharing resources rather than multiplying them, streaming instead of buffering, indexing what the query actually asks for, and treating deletion of a user's data as the operator's decision rather than a default."
+			"latest_notes": "Captain now checks the team marketplace for a proven, fully-written role before authoring a hire's system prompt from scratch."
 		}
 	]
 }

@@ -4,7 +4,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { getMarketplaceTeam } from '../src/services/marketplace';
-import { applyMarketplaceTeamToTeam } from '../src/services/team-template-apply';
+import {
+	applyMarketplaceRoleToTeam,
+	applyMarketplaceTeamToTeam,
+} from '../src/services/team-template-apply';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestTeam } from './helpers/app';
 
@@ -235,6 +238,90 @@ describe('POST /api/projects/:projectId/marketplace-team', () => {
 	});
 });
 
+describe('POST /api/projects/:projectId/marketplace-team with a role subset', () => {
+	async function blankProject(name: string): Promise<string> {
+		const res = await app.request('/api/projects', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name, description: 'Start blank.' }),
+		});
+		return (await res.json()).data.slug as string;
+	}
+	function addRoles(projectSlug: string, body: Record<string, unknown>): Promise<Response> {
+		return app.request(`/api/projects/${projectSlug}/marketplace-team`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ slug: 'software-development', ...body }),
+		});
+	}
+
+	it('kicks off a CEO task naming only the chosen roles', async () => {
+		const projectSlug = await blankProject('Subset Co');
+		const res = await addRoles(projectSlug, { roles: ['security-engineer', 'qa-engineer'] });
+		expect(res.status).toBe(201);
+		const added = (await res.json()).data;
+
+		const task = await db.query<{ title: string; description: string; labels: string[] }>(
+			`SELECT title, description, labels FROM tasks WHERE id = $1`,
+			[added.task_id],
+		);
+		const { title, description, labels } = task.rows[0];
+		expect(labels).toContain('add-marketplace-roles');
+		expect(labels).not.toContain('add-marketplace-team');
+		expect(title).toBe('Add 2 roles from the App Team team');
+		// One apply_marketplace_agent call per chosen role, and nothing about the rest.
+		expect(description).toContain('role="security-engineer"');
+		expect(description).toContain('role="qa-engineer"');
+		expect(description).not.toContain('role="engineer"');
+		expect(description).not.toContain('apply_marketplace_team');
+		// Asking the admin when a role does not fit is part of the instructions.
+		expect(description).toContain('@admin');
+	});
+
+	it('titles a single-role add after the role', async () => {
+		const projectSlug = await blankProject('Single Role Co');
+		const res = await addRoles(projectSlug, { roles: ['researcher'] });
+		expect(res.status).toBe(201);
+		const task = await db.query<{ title: string }>(`SELECT title FROM tasks WHERE id = $1`, [
+			(await res.json()).data.task_id,
+		]);
+		expect(task.rows[0].title).toBe('Add the "Researcher" role from the App Team team');
+	});
+
+	it('404s on a role that is not in the roster', async () => {
+		const projectSlug = await blankProject('Bad Role Co');
+		const res = await addRoles(projectSlug, { roles: ['engineer', 'nope'] });
+		expect(res.status).toBe(404);
+		expect((await res.json()).error.message).toContain('nope');
+	});
+
+	it('rejects the Captain, which is never a roster role', async () => {
+		const projectSlug = await blankProject('Captain Pick Co');
+		const res = await addRoles(projectSlug, { roles: ['captain'] });
+		expect(res.status).toBe(404);
+	});
+
+	it('rejects an explicit empty roles array rather than adding the whole team', async () => {
+		const projectSlug = await blankProject('Empty Roles Co');
+		const res = await addRoles(projectSlug, { roles: [] });
+		expect(res.status).toBe(400);
+		// Nothing was enqueued.
+		const tasks = await db.query<{ n: number }>(
+			`SELECT COUNT(*)::int AS n FROM tasks t
+			 JOIN projects p ON p.id = t.project_id
+			 WHERE p.slug = $1 AND t.labels::jsonb ? 'add-marketplace-roles'`,
+			[projectSlug],
+		);
+		expect(tasks.rows[0].n).toBe(0);
+	});
+
+	it('rejects a non-array roles value', async () => {
+		const projectSlug = await blankProject('Bad Roles Type Co');
+		const res = await addRoles(projectSlug, { roles: 'engineer' });
+		expect(res.status).toBe(400);
+	});
+});
+
 describe('applyMarketplaceTeamToTeam re-import (version update)', () => {
 	async function engineerPrompt(teamId: string): Promise<string | undefined> {
 		const r = await db.query<{ content: string }>(
@@ -288,5 +375,119 @@ describe('applyMarketplaceTeamToTeam re-import (version update)', () => {
 		const refreshed = await engineerPrompt(teamId);
 		expect(refreshed).not.toBe('STALE ENGINEER PROMPT');
 		expect(refreshed).toContain('You are an Engineer at');
+	});
+});
+
+describe('applyMarketplaceRoleToTeam (single role onto an existing team)', () => {
+	async function blankTeam(name: string): Promise<string> {
+		const res = await createTestTeam(db, { name });
+		return (await res.json()).data.id as string;
+	}
+	async function agentSlugs(teamId: string): Promise<string[]> {
+		const r = await db.query<{ slug: string }>(
+			`SELECT ma.slug FROM member_agents ma JOIN members m ON m.id = ma.id
+			 WHERE m.team_id = $1 ORDER BY ma.slug`,
+			[teamId],
+		);
+		return r.rows.map((x) => x.slug);
+	}
+	async function promptOf(teamId: string, slug: string): Promise<string | undefined> {
+		const r = await db.query<{ content: string }>(
+			`SELECT d.content FROM documents d
+			 JOIN member_agents ma ON ma.id = d.member_agent_id
+			 WHERE d.type = $1 AND d.team_id = $2 AND ma.slug = $3`,
+			[DocumentType.AgentSystemPrompt, teamId, slug],
+		);
+		return r.rows[0]?.content;
+	}
+	async function managerSlugOf(teamId: string, slug: string): Promise<string | null> {
+		const r = await db.query<{ manager: string | null }>(
+			`SELECT mgr.slug AS manager FROM member_agents ma
+			 JOIN members m ON m.id = ma.id
+			 LEFT JOIN member_agents mgr ON mgr.id = ma.reports_to
+			 WHERE m.team_id = $1 AND ma.slug = $2`,
+			[teamId, slug],
+		);
+		return r.rows[0]?.manager ?? null;
+	}
+
+	it('adds exactly one inline role and leaves the Captain untouched', async () => {
+		const teamId = await blankTeam('One Role Co');
+		const def = await getMarketplaceTeam('software-development');
+		if (!def) throw new Error('missing def');
+
+		const before = await agentSlugs(teamId);
+		expect(before).toContain('captain');
+		const captainPromptBefore = await promptOf(teamId, 'captain');
+
+		const res = await applyMarketplaceRoleToTeam(db, teamId, def, 'security-engineer');
+		expect(res).toEqual({
+			added: true,
+			skipped: false,
+			reports_to_slug: 'captain',
+			reports_to_fell_back: true,
+		});
+
+		// Exactly one new member, and it is the one asked for.
+		const after = await agentSlugs(teamId);
+		expect(after).toEqual([...before, 'security-engineer'].sort());
+
+		// Provisioned inline, like a hire — not as a catalog agent type.
+		const row = await db.query<{ agent_type_id: string | null; title: string }>(
+			`SELECT ma.agent_type_id, ma.title FROM member_agents ma JOIN members m ON m.id = ma.id
+			 WHERE m.team_id = $1 AND ma.slug = 'security-engineer'`,
+			[teamId],
+		);
+		expect(row.rows[0].agent_type_id).toBeNull();
+		expect(row.rows[0].title).toBe('Security Engineer');
+		expect(await promptOf(teamId, 'security-engineer')).toContain('{{team_name}}');
+
+		// The whole-team path applies the def's Captain override; this one must not.
+		expect(await promptOf(teamId, 'captain')).toBe(captainPromptBefore);
+	});
+
+	it('wires the real manager when the role reports to someone already on the team', async () => {
+		const teamId = await blankTeam('Real Manager Co');
+		const def = await getMarketplaceTeam('software-development');
+		if (!def) throw new Error('missing def');
+
+		// The engineer reports to the architect, so add the architect first.
+		const first = await applyMarketplaceRoleToTeam(db, teamId, def, 'architect');
+		expect(first).toMatchObject({ added: true, reports_to_slug: 'captain' });
+
+		const second = await applyMarketplaceRoleToTeam(db, teamId, def, 'engineer');
+		expect(second).toMatchObject({
+			added: true,
+			reports_to_slug: 'architect',
+			reports_to_fell_back: false,
+		});
+		expect(await managerSlugOf(teamId, 'engineer')).toBe('architect');
+	});
+
+	it('skips a slug the team already has instead of duplicating it', async () => {
+		const teamId = await blankTeam('Dup Role Co');
+		const def = await getMarketplaceTeam('software-development');
+		if (!def) throw new Error('missing def');
+
+		await applyMarketplaceRoleToTeam(db, teamId, def, 'researcher');
+		const again = await applyMarketplaceRoleToTeam(db, teamId, def, 'researcher');
+		expect(again).toMatchObject({ added: false, skipped: true, reports_to_slug: null });
+
+		const count = await db.query<{ n: number }>(
+			`SELECT COUNT(*)::int AS n FROM member_agents ma JOIN members m ON m.id = ma.id
+			 WHERE m.team_id = $1 AND ma.slug = 'researcher'`,
+			[teamId],
+		);
+		expect(count.rows[0].n).toBe(1);
+	});
+
+	it('errors on a role that is not in the roster', async () => {
+		const teamId = await blankTeam('Unknown Role Co');
+		const def = await getMarketplaceTeam('software-development');
+		if (!def) throw new Error('missing def');
+
+		const res = await applyMarketplaceRoleToTeam(db, teamId, def, 'captain');
+		expect(res).toHaveProperty('error');
+		expect(await agentSlugs(teamId)).not.toContain('security-engineer');
 	});
 });

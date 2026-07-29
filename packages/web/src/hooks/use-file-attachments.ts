@@ -1,5 +1,5 @@
 import { ATTACHMENT_MAX_BYTES, isAllowedAttachmentExtension } from '@hezo/shared';
-import { type DragEventHandler, useCallback, useMemo, useRef, useState } from 'react';
+import { type DragEventHandler, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 /**
  * Minimal shape the attachments UI needs from an uploaded file. Any upload
@@ -23,6 +23,9 @@ export interface ErrorChip {
 	filename: string;
 	message: string;
 }
+
+/** How long a validation-error chip stays on screen before auto-dismissing. */
+const ERROR_CHIP_TTL_MS = 5000;
 
 export interface DropZoneHandlers {
 	onDragEnter: DragEventHandler;
@@ -63,10 +66,28 @@ export function useFileAttachments<T extends UploadedAttachment>({
 		[value, metaById],
 	);
 
+	// Pending auto-dismiss timers for the error chips, cleared on unmount. An
+	// untracked timer outlives the component and fires setState on it 5s later —
+	// harmless-looking in the browser, but under a test runner the DOM
+	// environment is gone by then and React throws "window is not defined" as an
+	// unhandled exception that fails the whole file.
+	const errorTimers = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+	useEffect(() => {
+		const timers = errorTimers.current;
+		return () => {
+			for (const t of timers) clearTimeout(t);
+			timers.clear();
+		};
+	}, []);
+
 	const pushError = useCallback((filename: string, message: string) => {
 		const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 		setErrors((prev) => [...prev, { id, filename, message }]);
-		setTimeout(() => setErrors((prev) => prev.filter((e) => e.id !== id)), 5000);
+		const timer = setTimeout(() => {
+			errorTimers.current.delete(timer);
+			setErrors((prev) => prev.filter((e) => e.id !== id));
+		}, ERROR_CHIP_TTL_MS);
+		errorTimers.current.add(timer);
 	}, []);
 
 	const handleFiles = useCallback(

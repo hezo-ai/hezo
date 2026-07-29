@@ -4,6 +4,7 @@ import {
 	ContainerStatus,
 	isAllowedProjectIconStoredMime,
 	isArchiveFilter,
+	type MarketplaceRosterAgent,
 	MemberType,
 	PROJECT_ICON_MAX_BYTES,
 	PROJECT_ICON_MAX_DIMENSION,
@@ -39,7 +40,10 @@ import {
 import { loadCoordinationContext } from '../services/internal-intake';
 import type { JobManager } from '../services/job-manager';
 import { getMarketplaceTeam } from '../services/marketplace';
-import { enqueueAddMarketplaceTeamTask } from '../services/marketplace-add-team';
+import {
+	enqueueAddMarketplaceRolesTask,
+	enqueueAddMarketplaceTeamTask,
+} from '../services/marketplace-add-team';
 import { createProjectWithTeam } from '../services/project-create';
 import { createProjectIntake, getOpenProjectIntakeForHome } from '../services/project-intake';
 import { getProjectProgress } from '../services/projects';
@@ -300,25 +304,55 @@ projectsRoutes.post('/projects', async (c) => {
 	);
 });
 
-// Add a marketplace team's roster to an EXISTING project's team. Rather than
-// provisioning silently, this kicks off one CEO task in the project that fetches
-// the team, auto-hires its members (via the apply_marketplace_team tool — the admin
-// already opted in, so no per-hire approval), and reconciles the merged roster in
-// the same run. Admin-gated; project-scoped middleware resolves the team.
+// Add a marketplace team to an EXISTING project's team — the whole roster, or just
+// the roles named in `roles`. Rather than provisioning silently, this kicks off one
+// CEO task in the project that fetches the team, auto-hires the chosen members (the
+// admin already opted in, so no per-hire approval), and fits them to the existing
+// roster in the same run. Admin-gated; project-scoped middleware resolves the team.
 projectsRoutes.post('/projects/:projectId/marketplace-team', async (c) => {
 	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const body = await c.req.json<{ slug?: string }>();
+	const body = await c.req.json<{ slug?: string; roles?: unknown }>();
 	const slug = body.slug?.trim();
 	if (!slug) return err(c, 'INVALID_REQUEST', 'slug is required', 400);
+
+	if (body.roles !== undefined && !Array.isArray(body.roles)) {
+		return err(c, 'INVALID_REQUEST', 'roles must be an array of role slugs', 400);
+	}
+	const roleSlugs = Array.isArray(body.roles)
+		? [...new Set(body.roles.map((r) => String(r).trim()).filter((r) => r.length > 0))]
+		: [];
 
 	const teamDef = await getMarketplaceTeam(slug);
 	if (!teamDef) return err(c, 'NOT_FOUND', `Marketplace team "${slug}" not found`, 404);
 
-	const result = await enqueueAddMarketplaceTeamTask(db, teamId, teamDef);
+	// Only roster roles are addable. The Captain is never in `roster` (it is the
+	// separate `captain` override, and every project already has a Captain), so
+	// resolving against the roster is also what rejects `captain` and the other
+	// reserved slugs.
+	const roles: MarketplaceRosterAgent[] = [];
+	for (const roleSlug of roleSlugs) {
+		const role = teamDef.roster.find((r) => r.slug === roleSlug);
+		if (!role) {
+			return err(c, 'NOT_FOUND', `Role "${roleSlug}" is not in the "${slug}" team's roster`, 404);
+		}
+		roles.push(role);
+	}
+
+	// An explicit empty `roles: []` is a client bug, not "add the whole team" —
+	// silently adding 10 agents when the user picked none would be the worst
+	// possible reading.
+	if (Array.isArray(body.roles) && roles.length === 0) {
+		return err(c, 'INVALID_REQUEST', 'roles must name at least one role', 400);
+	}
+
+	const result =
+		roles.length > 0
+			? await enqueueAddMarketplaceRolesTask(db, teamId, teamDef, roles)
+			: await enqueueAddMarketplaceTeamTask(db, teamId, teamDef);
 	if (!result) {
 		return err(c, 'CONFLICT', 'This project cannot receive a team (no CEO or project found)', 409);
 	}
