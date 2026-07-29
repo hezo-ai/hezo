@@ -42,6 +42,15 @@ export interface SystemTaskLinkContent {
 	text?: string;
 }
 
+export interface SystemParentChangeContent {
+	kind: 'parent_change';
+	from_identifier?: string | null;
+	to_identifier?: string | null;
+	from_project_slug?: string | null;
+	to_project_slug?: string | null;
+	text?: string;
+}
+
 export interface SystemRunFailedContent {
 	kind: 'run_failed';
 	agent_slug?: string;
@@ -73,6 +82,7 @@ export interface SystemGenericContent {
 export type SystemContent =
 	| SystemStatusChangeContent
 	| SystemTaskLinkContent
+	| SystemParentChangeContent
 	| SystemRunFailedContent
 	| SystemRepoDesignatedContent
 	| SystemGenericContent;

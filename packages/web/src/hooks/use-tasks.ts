@@ -190,17 +190,25 @@ interface UpdateTaskVars {
 	labels?: string[];
 	progress_summary?: string | null;
 	rules?: string | null;
+	/** A task identifier or UUID to nest under; null promotes to top level. */
+	parent_task_id?: string | null;
 }
 
 export function useUpdateTask(projectId: string, taskId: string) {
 	// Status flips only after the server confirms (children-closed and outstanding-activity
 	// assertions run server-side, plus status changes trigger automations we can't predict),
 	// so it's omitted from the optimistic apply and picked up by the response merge.
+	//
+	// parent_task_id gets the same treatment, and needs it more: we send an
+	// identifier but the column holds a UUID, so an optimistic apply would put
+	// "BE-2" where every reader expects a UUID until the response landed. The
+	// server also rejects moves we cannot fully predict here (cycle, sub-tree
+	// depth, a closed destination).
 	return useSimpleOptimisticUpdate<Task, UpdateTaskVars>(
 		`/api/projects/${projectId}/tasks/${taskId}`,
 		queryKeys.projects.task(projectId, taskId),
 		{
-			omitOptimistic: ['status'],
+			omitOptimistic: ['status', 'parent_task_id'],
 			invalidateOnSettled: [queryKeys.projects.tasks(projectId)],
 			errorMessage: 'Failed to update task',
 		},

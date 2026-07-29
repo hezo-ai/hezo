@@ -359,3 +359,63 @@ test('null content renders an empty fallback (no throw), with the actor badge', 
 	// actor badge for an admin still renders, proving the fallback branch ran.
 	expect(await findByTestId('actor-badge-human')).toBeTruthy();
 });
+
+test('parent_change links both ends of a move', async () => {
+	const { findByTestId } = renderNode(
+		<SystemComment
+			comment={comment({
+				kind: 'parent_change',
+				from_identifier: 'OP-4',
+				to_identifier: 'OP-9',
+				from_project_slug: 'ops',
+				to_project_slug: 'ops',
+				text: 'Alice moved this task from OP-4 to OP-9',
+			})}
+			projectId="ops"
+		/>,
+	);
+	const from = await findByTestId('parent-change-from');
+	const to = await findByTestId('parent-change-to');
+	expect(from.getAttribute('href')).toBe('/projects/ops/tasks/op-4');
+	expect(to.getAttribute('href')).toBe('/projects/ops/tasks/op-9');
+	expect((await findByTestId('parent-change-comment')).textContent).toContain('moved this task');
+});
+
+test('parent_change on a promotion has no destination link', async () => {
+	const { findByTestId, queryByTestId } = renderNode(
+		<SystemComment
+			comment={comment({
+				kind: 'parent_change',
+				from_identifier: 'OP-4',
+				to_identifier: null,
+				from_project_slug: 'ops',
+				to_project_slug: null,
+			})}
+			projectId="ops"
+		/>,
+	);
+	expect(await findByTestId('parent-change-from')).toBeTruthy();
+	expect(queryByTestId('parent-change-to')).toBeNull();
+	expect((await findByTestId('parent-change-comment')).textContent).toContain(
+		'promoted this task to top level',
+	);
+});
+
+test('parent_change renders an end without a project slug as plain text', async () => {
+	const { findByTestId, queryByTestId } = renderNode(
+		<SystemComment
+			comment={comment({
+				kind: 'parent_change',
+				from_identifier: null,
+				to_identifier: 'OP-9',
+				from_project_slug: null,
+				to_project_slug: null,
+			})}
+			projectId="ops"
+		/>,
+	);
+	expect(queryByTestId('parent-change-to')).toBeNull();
+	expect((await findByTestId('parent-change-comment')).textContent).toContain(
+		'nested this task under OP-9',
+	);
+});

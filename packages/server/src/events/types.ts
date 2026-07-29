@@ -22,7 +22,7 @@ interface Actor {
 	actorApiKeyId?: string | null;
 }
 
-export type TaskUpdateField = 'title' | 'status' | 'assignee';
+export type TaskUpdateField = 'title' | 'status' | 'assignee' | 'parent';
 
 export type DomainEvent =
 	| ({ type: 'task.created'; taskId: string; identifier: string } & Scope & Actor)

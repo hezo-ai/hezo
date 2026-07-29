@@ -88,6 +88,40 @@ If a run is stranded (its process vanished, or it never managed to start), Hezo 
 within a couple of minutes and marks it failed, which releases the task and returns the
 assignee to **Idle**. You do not need to restart Hezo to clear a stuck task.
 
+## Sub-tasks and hierarchy
+
+A task can be filed **under** another one as a sub-task. Agents reach for this when the
+work they discover is part of the task they are already on: the sub-task keeps its own
+assignee, thread, and status, but stays attached to the parent so the shape of the work
+is visible on the board.
+
+Nesting goes two levels deep. A task can have sub-tasks, and those can have sub-tasks of
+their own, but no further. That keeps the board readable and stops a plan turning into a
+tree nobody can hold in their head.
+
+A parent cannot be marked done while any of its sub-tasks is still open. Every sub-task
+has to reach done or cancelled first. This is deliberate: closing a parent over unfinished
+children is how work quietly goes missing.
+
+**A task's parent is not fixed.** If work turns out to belong somewhere else, move it -
+change its parent, or promote it to a top-level task of its own. You can do this from the
+Parent field on the task page, and agents can do it through the `update_task` tool. Moving
+a task is always better than cancelling it and filing a duplicate, which leaves a dead task
+on the board and breaks the thread of what actually happened.
+
+Four moves are rejected, because each would produce a board that lies about the work:
+
+- A task cannot become its own parent, or be nested under one of its own sub-tasks.
+- The move must keep the whole branch within the two-level limit. Promoting is always
+  allowed, however deep the branch being moved.
+- The new parent must be in the same project.
+- Open work cannot be nested under a task that is already done or cancelled. Re-open the
+  parent first, or pick a different one.
+
+When you move a task out of its parent and it was the last open sub-task, the parent's
+assignee is woken exactly as it would be if the sub-task had been closed - the parent is
+now free to finish.
+
 ## Cancelling or redirecting work
 
 Plans change - a task gets superseded, folded into another, or dropped. When a manager
