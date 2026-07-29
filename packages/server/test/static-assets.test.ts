@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { loadStaticBundle } from '../src/static-assets';
+import { afterEach, describe, expect, it } from 'vitest';
+import { loadStaticBundle, resetStaticBundleCache } from '../src/static-assets';
 
 // `static-bundle.json` ships as an empty stub `{}` in source/dev (written by
 // scripts/ensure-bundles.ts so the literal import resolves). loadStaticBundle
@@ -9,15 +9,26 @@ import { loadStaticBundle } from '../src/static-assets';
 // where bundle-static.ts has filled the JSON. Covered indirectly via the
 // startup-serving fake-bundle tests.
 describe('loadStaticBundle', () => {
+	afterEach(() => resetStaticBundleCache());
+
 	it('returns null when the embedded bundle is the empty stub', async () => {
 		const result = await loadStaticBundle();
 		expect(result).toBeNull();
 	});
 
-	it('returns null deterministically on repeated calls (empty stub is not cached)', async () => {
-		const a = await loadStaticBundle();
-		const b = await loadStaticBundle();
-		expect(a).toBeNull();
-		expect(b).toBeNull();
+	// The absent-bundle verdict is memoized as well as the present one. This is
+	// called on every non-API request, so without caching the negative, dev
+	// re-attempted an import guaranteed to fail for the life of the process -
+	// once per request forever.
+	it('returns null deterministically on repeated calls', async () => {
+		expect(await loadStaticBundle()).toBeNull();
+		expect(await loadStaticBundle()).toBeNull();
+		expect(await loadStaticBundle()).toBeNull();
+	});
+
+	it('re-resolves after the cache is reset', async () => {
+		expect(await loadStaticBundle()).toBeNull();
+		resetStaticBundleCache();
+		expect(await loadStaticBundle()).toBeNull();
 	});
 });

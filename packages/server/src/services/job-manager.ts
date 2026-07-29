@@ -249,6 +249,12 @@ const INBOX_RETENTION_DAYS = Number(process.env.HEZO_INBOX_RETENTION_DAYS ?? 30)
 // visible progress and resumes promptly after a restart.
 const LOG_COMPACTION_CRON = process.env.HEZO_LOG_COMPACTION_CRON ?? '*/10 * * * * *';
 
+// Database housekeeping: refresh planner statistics on the embedded backend and
+// sweep terminal scheduler bookkeeping. Nightly, off-peak - neither is urgent,
+// and both are cheap enough that the point is only to stop them never running.
+// Statistics drift on the scale of days, not seconds.
+const DB_MAINTENANCE_CRON = process.env.HEZO_DB_MAINTENANCE_CRON ?? '0 30 4 * * *';
+
 /** Rate limit on the "job is overrunning its interval" warning. */
 const SKIP_WARN_INTERVAL_MS = 60_000;
 // Lower bound on how often a heartbeat can fire (`HEARTBEAT_INTERVAL_FLOOR_MIN`,
@@ -498,6 +504,11 @@ export class JobManager {
 			cron: BUDGET_RESUME_CRON,
 			log: cronLog,
 			onTick: () => this.guarded('budget-resume', () => this.processBudgetResumes()),
+		});
+		this.cron.createJob('db-maintenance', {
+			cron: DB_MAINTENANCE_CRON,
+			log: cronLog,
+			onTick: () => this.guarded('db-maintenance', () => this.runDbMaintenance()),
 		});
 		this.cron.createJob('update-check', {
 			cron: UPDATE_CHECK_CRON,
@@ -2731,6 +2742,22 @@ export class JobManager {
 			this.cancelLiveRunsForProject(projectId, reason);
 			await failProjectRuns(this.buildContainerDeps(), projectId, projectSlug, teamId, reason);
 		}
+	}
+
+	/**
+	 * Nightly database housekeeping. Deliberately narrow: refresh planner
+	 * statistics (embedded only - PGlite has no auto-ANALYZE, so the indexes the
+	 * hot queries need silently stop being chosen as an instance grows), and
+	 * delete terminal wakeup rows past their retention window. Nothing here
+	 * touches run logs, cost entries or audit history - those are the user's
+	 * record, and reclaiming them stays an explicit operator action.
+	 */
+	private async runDbMaintenance(): Promise<void> {
+		const { analyzeHotTables, sweepTerminalWakeups } = await import('./db-maintenance');
+		const swept = await sweepTerminalWakeups(this.deps.db);
+		if (swept > 0) log.debug(`Swept ${swept} terminal wakeup row(s)`);
+		const analyzed = await analyzeHotTables(this.deps.db);
+		if (analyzed > 0) log.debug(`Refreshed planner statistics on ${analyzed} table(s)`);
 	}
 
 	private async archiveInboxItems(): Promise<void> {

@@ -2381,6 +2381,29 @@ and dropped the column) leaves the legacy dead-TOAST graveyard behind — a one-
 marker-gated `VACUUM (FULL, ANALYZE) heartbeat_runs` at startup
 (`runLegacyRunLogVacuumOnce`, embedded only) reclaims it on the first post-upgrade boot.
 
+**Nightly database maintenance** (`services/db-maintenance.ts`, the `db-maintenance` cron,
+default 04:30). Two deliberately narrow jobs:
+
+- **`analyzeHotTables`** refreshes planner statistics on the **embedded** backend only.
+  PGlite has no autovacuum and therefore no auto-ANALYZE, so as an instance grows the
+  planner keeps costing queries against statistics gathered when the tables were small and
+  silently stops choosing the indexes added for them — the composite indexes in migration
+  `047` would degrade to sequential scans at exactly the size where they matter. It reads
+  nothing and deletes nothing. A no-op on external Postgres, where autovacuum already does
+  it. The table list is explicit (the hot ones), and a test asserts every name resolves —
+  the per-table catch means a typo would otherwise degrade to a warning and that table
+  would silently never be analyzed.
+- **`sweepTerminalWakeups`** deletes terminal `agent_wakeup_requests` rows older than the
+  retention window (7 days), bounded per pass so a backlog drains over several ticks. This
+  is the **only** table swept automatically, and it qualifies on a specific test: it is
+  internal scheduler bookkeeping with no user-facing surface — nothing renders it, exports
+  it, or links to it. Run logs, cost entries and audit history are the user's record and an
+  instance may keep all of it; reclaiming those stays an explicit operator action (run-log
+  compaction above). `ACTIVE_WAKEUP_STATUSES` / `TERMINAL_WAKEUP_STATUSES` live in
+  `@hezo/shared` beside the enum with a test asserting they partition it exactly, so adding
+  a status fails the build until someone classifies it — `deferred` is **active** (a
+  cleared blocker re-queues it) and must never be swept.
+
 **Storage abstraction & transactions.** All app code takes the `Db` interface
 (`query`/`exec`/`transaction`/`acquireSessionLock`/`close`); the drivers live in
 `src/db/drivers/` (`PgliteDb`, `PostgresDb`) and are constructed only by
@@ -2700,6 +2723,13 @@ shapes.
   (connectors: ensure / auth-start — project-scoped and instance-admin
   (`/connectors/:id/auth-start`) / device / callbacks), `skills`.
 - **Ops** — `health`, `updates`, `preview` (HMAC-signed file URLs), public assets.
+
+**Request-body ceiling.** `/api/*` carries a global `bodyLimit` at the largest size any
+route legitimately needs (the 10 MB attachment cap). Only the handful of upload routes were
+capped before, so a JSON body had no bound at all and one request could ask the process to
+buffer arbitrarily much before a handler saw it. It is a backstop, never the binding
+constraint: the upload routes keep their own tighter, type-specific limits and their more
+specific errors. `/mcp` and `/mcp/assets` sit outside `/api` and carry their own limits.
 
 **Pagination.** Most list routes are offset-paginated (`page`/`per_page`, `meta.total`)
 via `lib/pagination.ts`. The **activity log** is the exception and pages by **keyset**

@@ -743,6 +743,32 @@ export const WakeupStatus = {
 } as const;
 export type WakeupStatus = (typeof WakeupStatus)[keyof typeof WakeupStatus];
 
+/**
+ * Wakeup states the dispatcher may still act on. `deferred` counts as active:
+ * a wakeup blocked on an open dependency is re-queued when the blocker clears.
+ */
+export const ACTIVE_WAKEUP_STATUSES: readonly WakeupStatus[] = [
+	WakeupStatus.Queued,
+	WakeupStatus.Claimed,
+	WakeupStatus.Deferred,
+];
+
+/**
+ * Wakeup states nothing will look at again. Listed explicitly rather than
+ * derived as "everything not active" so a newly added status is not silently
+ * classified as disposable - these are the rows the maintenance sweep deletes,
+ * and the failure mode of guessing wrong is deleting work that was still
+ * pending. A test asserts the two lists partition the enum exactly, so adding a
+ * status fails the build until someone decides which side it belongs on.
+ */
+export const TERMINAL_WAKEUP_STATUSES: readonly WakeupStatus[] = [
+	WakeupStatus.Completed,
+	WakeupStatus.Failed,
+	WakeupStatus.Skipped,
+	WakeupStatus.Coalesced,
+	WakeupStatus.Cancelled,
+];
+
 export const WakeupSkipReason = {
 	TaskBusy: 'task_busy',
 	ProjectAtCapacity: 'project_at_capacity',

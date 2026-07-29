@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+	ACTIVE_WAKEUP_STATUSES,
+	TERMINAL_WAKEUP_STATUSES,
+	WakeupStatus,
+} from '../src/types/common';
+import {
 	CONNECTOR_CAPABILITIES,
 	getConnectorCapability,
 } from '../src/types/connector-capabilities';
@@ -32,5 +37,26 @@ describe('connector capabilities', () => {
 			expect(cap.id).toBe(key);
 			expect(cap.mcpServer.transport).toBeTruthy();
 		}
+	});
+});
+
+describe('wakeup status partitioning', () => {
+	// The maintenance sweep deletes rows whose status is in
+	// TERMINAL_WAKEUP_STATUSES, so a status that belongs in neither list would be
+	// invisible to the scheduler's "still active" checks *and* to the sweep, and
+	// one that lands in both would be deleted while still pending. Adding a
+	// status must therefore be a deliberate choice, not a default.
+	it('splits every WakeupStatus into exactly one of active or terminal', () => {
+		const all = Object.values(WakeupStatus).sort();
+		const partitioned = [...ACTIVE_WAKEUP_STATUSES, ...TERMINAL_WAKEUP_STATUSES].sort();
+		expect(partitioned).toEqual(all);
+		for (const status of ACTIVE_WAKEUP_STATUSES) {
+			expect(TERMINAL_WAKEUP_STATUSES).not.toContain(status);
+		}
+	});
+
+	it('treats deferred as active, since a cleared blocker re-queues it', () => {
+		expect(ACTIVE_WAKEUP_STATUSES).toContain(WakeupStatus.Deferred);
+		expect(TERMINAL_WAKEUP_STATUSES).not.toContain(WakeupStatus.Deferred);
 	});
 });

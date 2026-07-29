@@ -548,6 +548,23 @@ export function buildApp(
 	// untouched. Streamed responses are not buffered to compress them.
 	app.use('*', compress());
 
+	// Ceiling on every request body the API accepts. Only the handful of upload
+	// routes were capped, so a JSON body had no bound at all - one request could
+	// ask the process to buffer arbitrarily much before a handler ever saw it.
+	// Set at the largest any route legitimately needs (the 10 MB attachment
+	// limit) so this is a backstop and never the binding constraint: the upload
+	// routes keep their own tighter, type-specific limits, and a body that
+	// exceeds those still gets their more specific error. `/mcp` and `/mcp/assets`
+	// carry their own limits and sit outside `/api`.
+	app.use(
+		'/api/*',
+		bodyLimit({
+			maxSize: ATTACHMENT_MAX_BYTES,
+			onError: (c) =>
+				c.json({ error: { code: 'TOO_LARGE', message: 'Request body exceeds 10 MB' } }, 413),
+		}),
+	);
+
 	app.use('*', async (c, next) => {
 		c.set('db', db);
 		c.set('assetStore', assets);
@@ -773,27 +790,48 @@ export function buildApp(
 			return new Response(asset.body, { headers: { 'Content-Type': asset.type } });
 		}
 
-		// Filesystem fallback (dev / `bun run`).
-		if (existsSync(webDistDir)) {
-			const fullPath = join(webDistDir, filePath);
-			if (existsSync(fullPath)) {
-				const ext = extname(fullPath).toLowerCase();
-				return new Response(readFileSync(fullPath), {
-					headers: { 'Content-Type': STATIC_MIME[ext] || 'application/octet-stream' },
-				});
-			}
-			const indexPath = join(webDistDir, 'index.html');
-			if (existsSync(indexPath)) {
-				return new Response(readFileSync(indexPath), {
-					headers: { 'Content-Type': 'text/html; charset=utf-8' },
-				});
-			}
+		// Filesystem fallback (dev / `bun run`). Read straight through rather than
+		// stat-then-read: `existsSync` + `readFileSync` was two syscalls per
+		// request for one file (three on the index fallback), and the stat told us
+		// nothing the read does not. Reads stay uncached so a `vite build` during
+		// dev is picked up on the next request.
+		const fullPath = join(webDistDir, filePath);
+		const body = readFileIfPresent(fullPath);
+		if (body) {
+			const ext = extname(fullPath).toLowerCase();
+			return new Response(body, {
+				headers: { 'Content-Type': STATIC_MIME[ext] || 'application/octet-stream' },
+			});
+		}
+		// SPA fallback: any unmatched path renders the client-side router.
+		const index = readFileIfPresent(join(webDistDir, 'index.html'));
+		if (index) {
+			return new Response(index, {
+				headers: { 'Content-Type': 'text/html; charset=utf-8' },
+			});
 		}
 
 		return c.text('Not found', 404);
 	});
 
 	return app;
+}
+
+/**
+ * Read a file, or `null` when it is not there. Collapses the stat-then-read pair
+ * the static fallback used to do into one syscall, and closes the window between
+ * them (a file deleted after the `existsSync` threw out of the handler).
+ * Anything other than "not present" still throws - a permissions or IO error is
+ * a real fault and must not be reported to the browser as a 404.
+ */
+function readFileIfPresent(path: string): Buffer<ArrayBuffer> | null {
+	try {
+		return readFileSync(path);
+	} catch (e) {
+		const code = (e as NodeJS.ErrnoException).code;
+		if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'EISDIR') return null;
+		throw e;
+	}
 }
 
 async function cleanupOrphanRunSockets(_db: Db, dataDir: string): Promise<void> {

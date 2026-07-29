@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { AwsClient } from 'aws4fetch';
+import { asBodyBytes } from '../lib/bytes';
 import type { ParsedAssetStorageUrl } from './url';
 
 /**
@@ -118,12 +119,13 @@ export class S3Client {
 		for (const [name, value] of Object.entries(meta)) {
 			headers[`x-amz-meta-${name}`] = value;
 		}
-		const ab = new ArrayBuffer(body.byteLength);
-		new Uint8Array(ab).set(body);
+		// Re-view the Buffer rather than copying it into a fresh ArrayBuffer: the
+		// copy doubled peak memory for the duration of every upload, up to the
+		// 10 MB attachment cap, per concurrent request. See `asBodyBytes`.
 		const res = await this.request(`${this.bucketUrl}/${encodeKey(key)}`, {
 			method: 'PUT',
 			headers,
-			body: ab,
+			body: asBodyBytes(body),
 		});
 		if (!res.ok) await this.fail('PutObject', res);
 	}
