@@ -22,6 +22,36 @@ import { authContext, registerTools, resolveScope, type ToolDef } from './tools'
 
 let mcpServer: McpServer | null = null;
 let toolDefs: ToolDef[] = [];
+/**
+ * The in-memory client/server pair that fronts the tool registry, created once
+ * and shared by every request.
+ *
+ * A Protocol owns exactly one transport, so linking a fresh pair per request
+ * made overlapping requests collide on the shared server: the second caller's
+ * `connect()` rejected, and its client then waited out the full SDK request
+ * timeout for an `initialize` reply no server would send. The SDK multiplexes
+ * concurrent requests over a single transport by JSON-RPC id, so one long-lived
+ * link serves them all. Delivery is synchronous on the caller's stack, which is
+ * what keeps the per-request auth context flowing into the tool handlers.
+ */
+let proxyClient: Promise<Client> | null = null;
+
+function getProxyClient(server: McpServer): Promise<Client> {
+	if (!proxyClient) {
+		proxyClient = (async () => {
+			const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+			const client = new Client({ name: 'hezo-proxy', version: '0.1.0' });
+			await server.connect(serverTransport);
+			await client.connect(clientTransport);
+			return client;
+		})().catch((e) => {
+			// Don't cache a failed link — let the next request build a new one.
+			proxyClient = null;
+			throw e;
+		});
+	}
+	return proxyClient;
+}
 
 export function initMcpServer(
 	db: Db,
@@ -34,6 +64,8 @@ export function initMcpServer(
 	serverPort?: number,
 ): ToolDef[] {
 	mcpServer = new McpServer({ name: 'hezo', version: '0.1.0' });
+	// A new server needs a new link; the old pair belongs to the discarded one.
+	proxyClient = null;
 	toolDefs = registerTools(
 		mcpServer,
 		db,
@@ -153,29 +185,21 @@ export async function handleMcpRequest(c: Context<Env>): Promise<Response> {
 		});
 	}
 
-	const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-	const serverConnection = mcpServer.connect(serverTransport);
-	const client = new Client({ name: 'hezo-proxy', version: '0.1.0' });
-	await client.connect(clientTransport);
+	const client = await getProxyClient(mcpServer);
 
-	try {
-		let result: unknown;
-		if (body.method === 'tools/list') {
-			result = await client.listTools();
-		} else if (body.method === 'tools/call') {
-			result = await authContext.run(auth, () => client.callTool(body.params));
-		} else {
-			return c.json({
-				jsonrpc: '2.0',
-				id: body.id,
-				error: { code: -32601, message: `Unknown method: ${body.method}` },
-			});
-		}
-		return c.json({ jsonrpc: '2.0', id: body.id, result });
-	} finally {
-		await client.close();
-		await serverConnection;
+	let result: unknown;
+	if (body.method === 'tools/list') {
+		result = await client.listTools();
+	} else if (body.method === 'tools/call') {
+		result = await authContext.run(auth, () => client.callTool(body.params));
+	} else {
+		return c.json({
+			jsonrpc: '2.0',
+			id: body.id,
+			error: { code: -32601, message: `Unknown method: ${body.method}` },
+		});
 	}
+	return c.json({ jsonrpc: '2.0', id: body.id, result });
 }
 
 /**
