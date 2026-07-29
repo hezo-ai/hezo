@@ -18,6 +18,7 @@ import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { fireCommentWakeups } from '../services/comment-wakeups';
 import { parseEffortFromCommentBody } from '../services/effort';
+import { invalidateSecretsVault } from '../services/egress';
 import {
 	addCommentReaction,
 	loadReactionsForTask,
@@ -609,6 +610,7 @@ commentsRoutes.post(
 				[name, encryptedValue, category, allowedHosts, allowBodySubstitution],
 			);
 			const secretId = upsert.rows[0].id;
+			invalidateSecretsVault();
 
 			const updated = await db.query(
 				`UPDATE task_comments

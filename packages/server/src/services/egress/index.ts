@@ -13,6 +13,8 @@ export {
 	type RunProxyScope,
 } from './proxy';
 export {
+	bindSecretsVaultToMasterKey,
+	invalidateSecretsVault,
 	loadAllSecrets,
 	PLACEHOLDER_PROBE_REGEX,
 	type ResolvedSecret,

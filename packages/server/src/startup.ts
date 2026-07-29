@@ -88,7 +88,7 @@ import { ContainerLogStreamer } from './services/container-logs';
 import type { ContainerDeps } from './services/containers';
 import { DockerClient } from './services/docker';
 import { extractBundledDockerContext } from './services/docker-assets';
-import { EgressProxy, loadOrCreateCA } from './services/egress';
+import { bindSecretsVaultToMasterKey, EgressProxy, loadOrCreateCA } from './services/egress';
 import { ImageBuildTracker, setSharedImageBuildTracker } from './services/image-build-tracker';
 import {
 	pruneStaleBundledImages,
@@ -317,6 +317,8 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		bindHostRef: bindHost,
 		authEnabled: config.egressProxyAuth,
 	});
+	// Decrypted secrets must never outlive the unlock that produced them.
+	bindSecretsVaultToMasterKey(masterKeyManager);
 	// Verify a container can actually reach back to the host — the MCP server
 	// (firewall signal) and a listener at the egress/SSH bind host. On native-Linux
 	// Docker a host firewall or a loopback bind silently blocks this, leaving every

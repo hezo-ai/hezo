@@ -10,6 +10,7 @@ import type { MasterKeyManager } from '../../src/crypto/master-key';
 import type { Db } from '../../src/db/database';
 import { type HezoCA, loadOrCreateCA } from '../../src/services/egress/ca';
 import { EgressProxy } from '../../src/services/egress/proxy';
+import { invalidateSecretsVault } from '../../src/services/egress/substitution';
 import { createTestApp, createTestProject, createTestTeam } from '../helpers/app';
 import { mintCertFromCA } from '../helpers/self-signed-cert';
 
@@ -77,6 +78,9 @@ async function insertSecret(name: string, value: string, allowedHosts: string[])
 		 SET encrypted_value = EXCLUDED.encrypted_value, allowed_hosts = EXCLUDED.allowed_hosts`,
 		[name, encrypt(value, key), allowedHosts],
 	);
+	// Seeded by raw SQL, which bypasses the routes that invalidate the
+	// decrypted-vault cache — so drop it here the way those routes do.
+	invalidateSecretsVault();
 }
 
 /** Open a CONNECT tunnel through the proxy and complete the TLS handshake to the

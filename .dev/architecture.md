@@ -1573,7 +1573,20 @@ assumes the agent itself may misbehave; the egress proxy is the choke point.
 `['api.stripe.com']`, `*.googleapis.com` wildcards) or the `allow_all_hosts` escape hatch.
 They are **instance-global** — `name` is globally unique and the egress proxy resolves the
 placeholder by name with no project context — bounded per-secret by `allowed_hosts`. The
-master key (§ 10) decrypts at request time. Connectors, by contrast, are project-scoped
+master key (§ 10) decrypts at request time.
+
+The decrypted vault is **cached in server memory** rather than re-read and re-decrypted per
+request. `loadAllSecrets` runs for every proxied request carrying a placeholder — every MCP
+call an agent makes — and cost two queries plus an AES-256-GCM decrypt of the whole vault
+each time, on the one serialized database handle. Invalidation has three layers on purpose:
+every path that writes `secrets` calls `invalidateSecretsVault()`; the cache is dropped
+whenever the master key changes state, so decrypted material never outlives its unlock; and
+a short TTL means a write path that forgets the first degrades to seconds of staleness
+rather than a permanent stale read. Concurrent misses share one load. The values live only
+in server memory on the proxy path, exactly as they did transiently before — nothing here
+is reachable from an agent run, so the red line is untouched.
+
+Connectors, by contrast, are project-scoped
 (`mcp_connections.project_id`, NULL = global); a credential does **not** follow its
 connector's scope (moving a connector between scopes leaves its credential untouched).
 Instead the credential *name* carries the project signal (see the API-key row below), so a
