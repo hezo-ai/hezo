@@ -11,7 +11,7 @@ Hezo organises agents like a company. A few roles coordinate; the rest do the wo
 ## The CEO
 
 The **CEO** is the global executive, and your main point of contact. There is
-exactly one CEO, and it lives in [HQ](/docs/concepts/projects-and-teams#hq--the-home-team) -
+exactly one CEO, and it lives in [HQ](/docs/concepts/projects-and-teams#hq---the-home-team) -
 so it can see and act across every project. You chat with the CEO to get things done
 across the whole instance:
 
@@ -52,7 +52,7 @@ The Coach's behaviour comes from its
 [system prompt](https://github.com/hezo-ai/hezo/blob/main/agents/_instance/coach.md).
 
 Both the CEO and the Coach are global singletons that live in
-[HQ](/docs/concepts/projects-and-teams#hq--the-home-team), the one special team, and
+[HQ](/docs/concepts/projects-and-teams#hq---the-home-team), the one special team, and
 act across every project's team. They are never part of a project template.
 
 ## The Captain
