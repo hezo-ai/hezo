@@ -144,7 +144,7 @@ import {
 	prepareHireProposal,
 } from '../services/hire-proposal';
 import { insertHireProposalComment } from '../services/hire-proposal-comment';
-import { getMarketplaceTeam } from '../services/marketplace';
+import { getMarketplaceCatalog, getMarketplaceTeam } from '../services/marketplace';
 import { createProjectWithTeam } from '../services/project-create';
 import { completeProjectIntakeAfterProvisioning } from '../services/project-intake';
 import { ProjectProgressError, updateProjectProgress } from '../services/projects';
@@ -165,7 +165,10 @@ import {
 	createTaskBatch,
 	TASK_COLUMNS_BARE,
 } from '../services/tasks';
-import { applyMarketplaceTeamToTeam } from '../services/team-template-apply';
+import {
+	applyMarketplaceRoleToTeam,
+	applyMarketplaceTeamToTeam,
+} from '../services/team-template-apply';
 import { resolveSystemPrompt } from '../services/template-resolver';
 import { createWakeup } from '../services/wakeup';
 import type { WebSocketManager } from '../services/ws';
@@ -241,6 +244,8 @@ const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'update_goal_progress',
 	'update_project_progress',
 	'update_project_custom_prompt',
+	'apply_marketplace_team',
+	'apply_marketplace_agent',
 ]);
 
 /** A handler result that signals failure rather than a persisted write. */
@@ -2294,8 +2299,31 @@ export function registerTools(
 
 	tool(
 		server,
+		'list_marketplace_teams',
+		'Browse the team marketplace: every ready-made team available to this instance, with its name, description, summary, role count, and version. Callable by the CEO or a team Captain. Use it before staffing a team - the marketplace carries proven, fully-written roles, so check whether one already covers the role you need (then pull its prompt with get_marketplace_team) instead of authoring a system prompt from scratch. You can take a whole roster (apply_marketplace_team) or lift out a single role (apply_marketplace_agent).',
+		{},
+		async () => {
+			const catalog = await getMarketplaceCatalog();
+			// `keywords` is search vocabulary for the New Project picker - long, and
+			// noise in an agent's context. Deliberately omitted.
+			return {
+				teams: catalog.map((t) => ({
+					slug: t.slug,
+					name: t.name,
+					description: t.description,
+					summary: t.summary,
+					version: t.version,
+					roster_count: t.roster_count,
+				})),
+			};
+		},
+		db,
+	);
+
+	tool(
+		server,
 		'get_marketplace_team',
-		"Fetch one marketplace team's full definition: its version, changelog, and every role's title, reporting line, and CURRENT system prompt (including the Captain override). CEO-only. Use this when adding/updating a team so you can compare the marketplace's prompts to the agents you already have and decide what to refresh.",
+		"Fetch one marketplace team's full definition: its version, changelog, and every role's title, reporting line, and CURRENT system prompt (including the Captain override). Callable by the CEO or a team Captain. Use it when adding/updating a team, to compare the marketplace's prompts to the agents you already have and decide what to refresh; and when hiring, to start a role from a proven marketplace prompt instead of writing one from scratch - find candidate teams with list_marketplace_teams first.",
 		{
 			slug: z.string().describe('The marketplace team slug (e.g. "software-development").'),
 		},
@@ -2367,6 +2395,59 @@ export function registerTools(
 				refreshed: result.updated_slugs ?? [],
 				skipped: result.skipped_slugs,
 				captain_updated: result.builtin_updated_slugs.length > 0,
+				version: teamDef.version,
+			};
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'apply_marketplace_agent',
+		"Add ONE role from a marketplace team to a project's team. CEO-only. Use this when the admin wants a single role (e.g. just the security engineer) rather than a whole roster - it provisions that one member directly, a direct add rather than an approval-gated hire proposal, and leaves the rest of the roster, including the Captain, untouched. The team already having that slug is a no-op (skipped). The role's prompt was written for its home team, so AFTER this returns you MUST fit it to this project: rewrite its system prompt and team context (update_agent_system_prompt, set_agent_team_context) so every teammate and hand-off they name is an agent that actually exists here, set a real manager with set_agent_reports_to, and update the existing agents whose work now flows through it. When the role's own manager is not on this team the reporting line is wired to the Captain as a placeholder and reports_to_fell_back comes back true - re-point it. Returns whether the role was added or skipped, plus the reporting line applied.",
+		{
+			project: projectArg(),
+			slug: z
+				.string()
+				.describe('The marketplace team slug the role comes from (e.g. "software-development").'),
+			role: z
+				.string()
+				.describe(
+					'The roster role slug to add (e.g. "security-engineer"), as listed by get_marketplace_team. The Captain is not a roster role and cannot be added this way.',
+				),
+		},
+		async (args, db, auth) => {
+			// CEO-only: this is the tool the add-marketplace-agent CEO task calls.
+			if (auth.type === AuthType.Agent) {
+				const caller = await db.query<{ slug: string }>(
+					'SELECT slug FROM member_agents WHERE id = $1',
+					[auth.memberId],
+				);
+				if (caller.rows[0]?.slug !== CEO_AGENT_SLUG) {
+					return { error: 'Only the CEO can add a marketplace role' };
+				}
+			}
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+
+			const slug = String(args.slug ?? '').trim();
+			if (!slug) return { error: '`slug` is required' };
+			const roleSlug = String(args.role ?? '').trim();
+			if (!roleSlug) return { error: '`role` is required' };
+
+			const teamDef = await getMarketplaceTeam(slug);
+			if (!teamDef) return { error: `Marketplace team "${slug}" not found` };
+
+			const result = await applyMarketplaceRoleToTeam(db, scope.teamId, teamDef, roleSlug, {
+				wsManager,
+			});
+			if ('error' in result) return result;
+			return {
+				role: roleSlug,
+				added: result.added,
+				skipped: result.skipped,
+				reports_to: result.reports_to_slug,
+				reports_to_fell_back: result.reports_to_fell_back,
 				version: teamDef.version,
 			};
 		},

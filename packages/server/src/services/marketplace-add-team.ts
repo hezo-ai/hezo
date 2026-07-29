@@ -1,4 +1,4 @@
-import type { MarketplaceTeamDef } from '@hezo/shared';
+import type { MarketplaceRosterAgent, MarketplaceTeamDef } from '@hezo/shared';
 import { TaskPriority, TaskStatus, WakeupSource } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { allocateTaskIdentifier } from '../lib/task-identifier';
@@ -9,6 +9,7 @@ import { createWakeup } from './wakeup';
 const log = logger.child('marketplace-add-team');
 
 const ADD_TEAM_LABEL = 'add-marketplace-team';
+const ADD_ROLES_LABEL = 'add-marketplace-roles';
 
 export interface AddMarketplaceTeamTaskResult {
 	task_id: string;
@@ -37,16 +38,64 @@ The admin chose to add the **${teamDef.name}** marketplace team (${teamDef.roste
 }
 
 /**
- * Kicks off a single CEO-owned task in the given team's project that adds a
- * marketplace team's roster (via the `apply_marketplace_team` tool — auto-hire, no
- * approval) and reconciles it with the existing roster, all in one run. Returns
- * the created task's id/identifier, or null when the team has no CEO/project
- * (e.g. HQ). The admin already opted in by adding the team, so no approval gate.
+ * Body for adding a SUBSET of a team's roster. Deliberately not a variant of
+ * `buildAddTeamBody`: the two are different jobs. Taking a whole team is mostly
+ * mechanical (add, or refresh on a version update); taking three roles out of it
+ * means their prompts reference teammates that were left behind, so fitting them to
+ * the existing roster is the work, and declining is a legitimate outcome.
  */
-export async function enqueueAddMarketplaceTeamTask(
+function buildAddRolesBody(
+	projectSlug: string,
+	teamDef: MarketplaceTeamDef,
+	roles: MarketplaceRosterAgent[],
+): string {
+	const list = roles
+		.map((r) => `   - **${r.title}** (\`${r.slug}\`) - ${r.role_description}`)
+		.join('\n');
+	const calls = roles
+		.map(
+			(r) =>
+				`\`apply_marketplace_agent(project="${projectSlug}", slug="${teamDef.slug}", role="${r.slug}")\``,
+		)
+		.join(', ');
+	const noun = roles.length === 1 ? 'role' : 'roles';
+
+	return `## Add ${roles.length} ${noun} from the ${teamDef.name} team (v${teamDef.version})
+
+The admin chose **specific ${noun}** from the **${teamDef.name}** marketplace team rather than the whole roster:
+
+${list}
+
+They have already approved the hire, so do NOT file hire proposals. But these ${noun} are being lifted out of a roster they were written for, and the rest of that team is **not** coming with them, so they do not slot in as-is. Fitting them to this project is the work.
+
+1. **Read both sides.** Call \`get_marketplace_team(slug="${teamDef.slug}")\` and read the chosen ${noun} in full - \`title\`, \`role_description\`, \`summary\`, \`team_context\`, \`system_prompt\` - noting which teammates, hand-offs and reporting lines they assume. Then \`list_agents(project="${projectSlug}")\` for the roster they are joining.
+
+2. **Decide whether each one fits - before you add it.** Post a comment with an active \`@admin\` and stop when:
+   - an existing agent already covers that responsibility (adding a second one splits ownership);
+   - the role's way of working depends on teammates this project does not have, and dropping those steps would change what the role actually is;
+   - there is no sensible manager for it here.
+
+   State the specific question and what you would do either way. You will be re-woken when they reply. Do not guess a role into the team. If some of the chosen ${noun} are clear and others are not, add the clear ones and ask about the rest.
+
+3. **Add them.** ${calls}. Each call provisions exactly one role and leaves the rest of the roster - including this project's Captain - untouched. A role the team already has is reported as \`skipped\`, not duplicated. When a role's own manager is not on this team, the reporting line is wired to the Captain as a placeholder and \`reports_to_fell_back\` comes back true - that is for you to fix in step 4, not a decision.
+
+4. **Fit them to this team.** Mandatory - a role added and left unreconciled will @-mention agents that do not exist and hand work to nobody.
+   - Rewrite each new agent's \`system_prompt\` (\`update_agent_system_prompt\`) and \`team_context\` (\`set_agent_team_context\`) so every teammate, manager and hand-off they name is an agent that actually exists here. Keep every required substitution variable - \`{{team_name}}\`, \`{{reports_to}}\`, \`{{skills_context}}\`, \`{{project_docs_context}}\`, \`{{team_preferences_context}}\` - or the update is rejected. Where the home team split a workflow across roles this project does not have, fold the parts these ${noun} must still own into their prompts rather than leaving dangling references.
+   - Set each one's real manager with \`set_agent_reports_to\`.
+   - Write each one's \`set_agent_summary\`.
+   - Update the \`team_context\` of the existing agents whose work now flows through them, so each hand-off is described from both sides.
+   - Make sure every new role's output is verified by someone other than its author, and that anything they now take over is not still claimed by another agent's prompt.
+   - Call \`set_team_summary\` to describe the team with the new ${noun} in it.
+
+5. Move this task to **done** once the ${noun} are added and the roster reads coherently.`;
+}
+
+async function enqueueCeoTask(
 	db: Db,
 	teamId: string,
-	teamDef: MarketplaceTeamDef,
+	title: string,
+	buildBody: (projectSlug: string) => string,
+	label: string,
 ): Promise<AddMarketplaceTeamTaskResult | null> {
 	const ctx = await loadTeamCoordinationContext(db, teamId);
 	if (!ctx) return null;
@@ -70,11 +119,11 @@ export async function enqueueAddMarketplaceTeamTask(
 			ctx.ceoMemberId,
 			number,
 			identifier,
-			`Add the "${teamDef.name}" team to this project`,
-			buildAddTeamBody(projectSlug, teamDef),
+			title,
+			buildBody(projectSlug),
 			TaskStatus.Backlog,
 			TaskPriority.High,
-			JSON.stringify(['internal', ADD_TEAM_LABEL]),
+			JSON.stringify(['internal', label]),
 		],
 	);
 	const taskId = insert.rows[0].id;
@@ -84,8 +133,56 @@ export async function enqueueAddMarketplaceTeamTask(
 			task_id: taskId,
 		});
 	} catch (e) {
-		log.error('Failed to wake CEO for add-marketplace-team task:', e);
+		log.error(`Failed to wake CEO for ${label} task:`, e);
 	}
 
 	return { task_id: taskId, task_identifier: identifier };
+}
+
+/**
+ * Kicks off a single CEO-owned task in the given team's project that adds a
+ * marketplace team's roster (via the `apply_marketplace_team` tool — auto-hire, no
+ * approval) and reconciles it with the existing roster, all in one run. Returns
+ * the created task's id/identifier, or null when the team has no CEO/project
+ * (e.g. HQ). The admin already opted in by adding the team, so no approval gate.
+ */
+export async function enqueueAddMarketplaceTeamTask(
+	db: Db,
+	teamId: string,
+	teamDef: MarketplaceTeamDef,
+): Promise<AddMarketplaceTeamTaskResult | null> {
+	return enqueueCeoTask(
+		db,
+		teamId,
+		`Add the "${teamDef.name}" team to this project`,
+		(projectSlug) => buildAddTeamBody(projectSlug, teamDef),
+		ADD_TEAM_LABEL,
+	);
+}
+
+/**
+ * Same as `enqueueAddMarketplaceTeamTask` but for a chosen SUBSET of the roster —
+ * the CEO adds each role with `apply_marketplace_agent` and fits it to the existing
+ * team, and is explicitly licensed to stop and ask `@admin` when a role does not
+ * obviously belong. `roles` must be non-empty and drawn from the def's roster (the
+ * caller validates that, which is also what rejects the Captain: it is never in
+ * `roster`).
+ */
+export async function enqueueAddMarketplaceRolesTask(
+	db: Db,
+	teamId: string,
+	teamDef: MarketplaceTeamDef,
+	roles: MarketplaceRosterAgent[],
+): Promise<AddMarketplaceTeamTaskResult | null> {
+	const title =
+		roles.length === 1
+			? `Add the "${roles[0].title}" role from the ${teamDef.name} team`
+			: `Add ${roles.length} roles from the ${teamDef.name} team`;
+	return enqueueCeoTask(
+		db,
+		teamId,
+		title,
+		(projectSlug) => buildAddRolesBody(projectSlug, teamDef, roles),
+		ADD_ROLES_LABEL,
+	);
 }

@@ -1,3 +1,4 @@
+import type { MarketplaceRosterAgent } from '@hezo/shared';
 import * as Dialog from '@radix-ui/react-dialog';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { ChevronRight, Loader2, Store } from 'lucide-react';
@@ -88,6 +89,7 @@ function MarketplaceTeamDetail() {
 						onOpenChange={setAddOpen}
 						slug={slug}
 						teamName={team.name}
+						roster={team.roster}
 					/>
 				</>
 			)}
@@ -95,31 +97,65 @@ function MarketplaceTeamDetail() {
 	);
 }
 
+/**
+ * Pick a project to add this marketplace team to, either whole or as a subset of its
+ * roles. The roster checkboxes are driven by the def's `roster`, which never contains
+ * the Captain (`RESERVED_ROSTER_SLUGS` forbids it) — that is also the product rule:
+ * every project already has a Captain, so it is not selectable.
+ */
 function AddToProjectDialog({
 	open,
 	onOpenChange,
 	slug,
 	teamName,
+	roster,
 }: {
 	open: boolean;
 	onOpenChange: (v: boolean) => void;
 	slug: string;
 	teamName: string;
+	roster: MarketplaceRosterAgent[];
 }) {
 	const { projects } = useAllVisibleProjects();
 	const [projectId, setProjectId] = useState('');
+	const [wholeTeam, setWholeTeam] = useState(true);
+	const [picked, setPicked] = useState<string[]>([]);
 	const selected = projects.find((p) => p.slug === projectId);
 	const add = useAddMarketplaceTeam(selected?.slug ?? '');
 	const navigate = useNavigate();
-	const canSubmit = projectId.length > 0 && !add.isPending;
+	const roles = [...roster].sort((a, b) => a.sort_order - b.sort_order);
+	const canSubmit = projectId.length > 0 && (wholeTeam || picked.length > 0) && !add.isPending;
+
+	function reset() {
+		setProjectId('');
+		setWholeTeam(true);
+		setPicked([]);
+	}
+
+	function togglePicked(roleSlug: string) {
+		setPicked((prev) =>
+			prev.includes(roleSlug) ? prev.filter((s) => s !== roleSlug) : [...prev, roleSlug],
+		);
+	}
 
 	async function submit() {
 		if (!selected) return;
-		const res = await add.mutateAsync(slug);
+		// Send the roles in roster order rather than click order, so the CEO reads
+		// them in the same order the team page lists them.
+		const chosen = roles.filter((r) => picked.includes(r.slug));
+		const res = await add.mutateAsync({
+			slug,
+			roles: wholeTeam ? undefined : chosen.map((r) => r.slug),
+		});
 		onOpenChange(false);
-		setProjectId('');
+		reset();
 		const href = `/projects/${selected.slug}/tasks/${res.task_identifier.toLowerCase()}`;
-		toast.success(`The CEO is adding the ${teamName} team to ${selected.name}.`, {
+		const what = wholeTeam
+			? `the ${teamName} team`
+			: chosen.length === 1
+				? `the ${chosen[0].title} role`
+				: `${chosen.length} roles from the ${teamName} team`;
+		toast.success(`The CEO is adding ${what} to ${selected.name}.`, {
 			link: {
 				label: 'View task',
 				href,
@@ -139,8 +175,9 @@ function AddToProjectDialog({
 					Add the {teamName} team to a project
 				</Dialog.Title>
 				<Dialog.Description className="text-[13px] text-text-2 mb-4">
-					The CEO opens a task in the project to hire this team's roles and reconcile the roster. If
-					the project already has these roles, it updates them to this version instead.
+					The CEO opens a task in the project to hire the roles you choose and fit them to the team
+					that's already there. If the project already has these roles, it updates them to this
+					version instead.
 				</Dialog.Description>
 				<label className="flex flex-col gap-1 text-[13px] font-medium text-text-1">
 					Project
@@ -158,6 +195,63 @@ function AddToProjectDialog({
 						))}
 					</select>
 				</label>
+
+				<fieldset className="mt-4">
+					<legend className="text-[13px] font-medium text-text-1 mb-1.5">What to add</legend>
+					<label className="flex items-start gap-2 text-[13px] py-1 cursor-pointer">
+						<input
+							type="radio"
+							name="add-scope"
+							className="mt-0.5"
+							checked={wholeTeam}
+							onChange={() => setWholeTeam(true)}
+							data-testid="add-scope-whole-team"
+						/>
+						<span>
+							The whole team
+							<span className="text-text-2"> ({roles.length} roles)</span>
+						</span>
+					</label>
+					<label className="flex items-start gap-2 text-[13px] py-1 cursor-pointer">
+						<input
+							type="radio"
+							name="add-scope"
+							className="mt-0.5"
+							checked={!wholeTeam}
+							onChange={() => setWholeTeam(false)}
+							data-testid="add-scope-pick-roles"
+						/>
+						<span>Choose roles</span>
+					</label>
+
+					{!wholeTeam && (
+						<div className="mt-2 pl-6" data-testid="add-role-picker">
+							<ul className="max-h-[220px] overflow-y-auto rounded-md border border-border divide-y divide-border/60">
+								{roles.map((r) => (
+									<li key={r.slug}>
+										<label className="flex items-start gap-2 px-3 py-2 text-[13px] cursor-pointer">
+											<input
+												type="checkbox"
+												className="mt-0.5"
+												checked={picked.includes(r.slug)}
+												onChange={() => togglePicked(r.slug)}
+												data-testid={`add-role-${r.slug}`}
+											/>
+											<span className="min-w-0">
+												<span className="font-medium">{r.title}</span>
+												<span className="block text-[12px] text-text-2">{r.role_description}</span>
+											</span>
+										</label>
+									</li>
+								))}
+							</ul>
+							<p className="text-[12px] text-text-2 mt-2">
+								The Captain isn't listed - every project already has one.
+							</p>
+						</div>
+					)}
+				</fieldset>
+
 				{add.error && (
 					<p className="text-[13px] text-danger mt-2">
 						{(add.error as { message?: string }).message || 'Failed to add team'}
@@ -168,7 +262,13 @@ function AddToProjectDialog({
 						Cancel
 					</Button>
 					<Button onClick={submit} disabled={!canSubmit} data-testid="add-to-project-submit">
-						{add.isPending ? 'Starting…' : 'Add team'}
+						{add.isPending
+							? 'Starting…'
+							: wholeTeam
+								? 'Add team'
+								: picked.length === 1
+									? 'Add role'
+									: `Add ${picked.length} roles`}
 					</Button>
 				</div>
 			</DialogContent>
