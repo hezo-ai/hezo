@@ -1,4 +1,4 @@
-import { ATTACHMENT_MAX_BYTES } from '@hezo/shared';
+import { API_BODY_MAX_BYTES, ATTACHMENT_MAX_BYTES } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
@@ -30,7 +30,7 @@ describe('global /api body limit', () => {
 		const res = await app.request('/api/projects', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: 'x'.repeat(ATTACHMENT_MAX_BYTES + 1024),
+			body: 'x'.repeat(API_BODY_MAX_BYTES + 1024),
 		});
 		expect(res.status).toBe(413);
 		const body = await res.json();
@@ -42,6 +42,22 @@ describe('global /api body limit', () => {
 		// must reach its handler and get its handler's own answer.
 		const res = await app.request('/api/projects', { headers: authHeader(token) });
 		expect(res.status).toBe(200);
+	});
+
+	it('does not pre-empt a route that polices its own size', async () => {
+		// A body between the largest per-route cap and the global ceiling must
+		// still reach its handler, so the route can answer with its own specific
+		// error rather than an opaque 413. This is the regression that setting the
+		// ceiling to ATTACHMENT_MAX_BYTES introduced: it also meant a *valid*
+		// maximum-size attachment was rejected for its multipart envelope.
+		expect(API_BODY_MAX_BYTES).toBeGreaterThan(ATTACHMENT_MAX_BYTES);
+		const res = await app.request('/api/projects', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'x'.repeat(ATTACHMENT_MAX_BYTES + 1) }),
+		});
+		// The handler's own answer, whatever it is - just not the middleware's.
+		expect(res.status).not.toBe(413);
 	});
 
 	it('does not cap non-API routes', async () => {

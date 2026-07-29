@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { extname, join, resolve } from 'node:path';
-import { ATTACHMENT_MAX_BYTES } from '@hezo/shared';
+import { API_BODY_MAX_BYTES, ATTACHMENT_MAX_BYTES } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { compress } from 'hono/compress';
@@ -551,17 +551,26 @@ export function buildApp(
 	// Ceiling on every request body the API accepts. Only the handful of upload
 	// routes were capped, so a JSON body had no bound at all - one request could
 	// ask the process to buffer arbitrarily much before a handler ever saw it.
-	// Set at the largest any route legitimately needs (the 10 MB attachment
-	// limit) so this is a backstop and never the binding constraint: the upload
-	// routes keep their own tighter, type-specific limits, and a body that
-	// exceeds those still gets their more specific error. `/mcp` and `/mcp/assets`
-	// carry their own limits and sit outside `/api`.
+	// Deliberately well above every per-route cap (see `API_BODY_MAX_BYTES`) so
+	// it is a pure backstop and never the binding constraint: routes that police
+	// their own size still answer with their own specific error, and a
+	// legitimately-sized upload is never rejected for its multipart envelope.
+	// `/mcp` and `/mcp/assets` sit outside `/api` - the agent surface is not
+	// capped here.
 	app.use(
 		'/api/*',
 		bodyLimit({
-			maxSize: ATTACHMENT_MAX_BYTES,
+			maxSize: API_BODY_MAX_BYTES,
 			onError: (c) =>
-				c.json({ error: { code: 'TOO_LARGE', message: 'Request body exceeds 10 MB' } }, 413),
+				c.json(
+					{
+						error: {
+							code: 'TOO_LARGE',
+							message: `Request body exceeds ${API_BODY_MAX_BYTES / (1024 * 1024)} MB`,
+						},
+					},
+					413,
+				),
 		}),
 	);
 

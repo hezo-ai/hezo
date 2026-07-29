@@ -208,6 +208,22 @@ export const TEST_CONTAINERS_ENV = 'HEZO_TEST_CONTAINERS';
 export const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
 export const ATTACHMENT_SIGNED_URL_TTL_SECONDS = 3600;
 
+/**
+ * Ceiling on any `/api` request body - a backstop against an unbounded body, not
+ * a per-route policy. It MUST stay comfortably above every per-route cap:
+ *
+ * - A route that validates size itself (comment attachments) answers a too-large
+ *   file with its own specific `400`. If the global limit trips first the caller
+ *   gets an opaque `413` instead, and the route's rule stops being reachable.
+ * - The caps above measure the *file*; the request carries it in a multipart
+ *   envelope with a boundary and part headers, so a legitimately-sized upload is
+ *   always somewhat larger on the wire. A global limit set to exactly
+ *   `ATTACHMENT_MAX_BYTES` therefore rejects a *valid* maximum-size attachment.
+ *
+ * A test asserts this stays greater than every per-route cap.
+ */
+export const API_BODY_MAX_BYTES = 32 * 1024 * 1024;
+
 // Project icons are normalized client-side to a square PNG no larger than
 // PROJECT_ICON_MAX_DIMENSION on each side before upload; the server enforces
 // both caps defensively. The byte cap is generous for a 512×512 PNG (~1 MB).

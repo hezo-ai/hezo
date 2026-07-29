@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
 	ACTIVE_WAKEUP_STATUSES,
+	API_BODY_MAX_BYTES,
+	ATTACHMENT_MAX_BYTES,
+	PROJECT_ICON_MAX_BYTES,
 	TERMINAL_WAKEUP_STATUSES,
 	WakeupStatus,
 } from '../src/types/common';
@@ -36,6 +39,22 @@ describe('connector capabilities', () => {
 		for (const [key, cap] of Object.entries(CONNECTOR_CAPABILITIES)) {
 			expect(cap.id).toBe(key);
 			expect(cap.mcpServer.transport).toBeTruthy();
+		}
+	});
+});
+
+describe('API body ceiling', () => {
+	// The ceiling is a DoS backstop, not a policy. If it ever drops to (or below)
+	// a per-route cap, two things break at once: a route that answers a too-large
+	// file with its own specific 400 starts returning an opaque 413 instead, and
+	// a *valid* maximum-size upload is rejected because its multipart envelope
+	// pushes the request past the file's own size.
+	it('stays clear of every per-route cap', () => {
+		for (const perRoute of [ATTACHMENT_MAX_BYTES, PROJECT_ICON_MAX_BYTES]) {
+			expect(API_BODY_MAX_BYTES).toBeGreaterThan(perRoute);
+			// Envelope overhead plus room for a route to raise its own cap without
+			// silently colliding with this one.
+			expect(API_BODY_MAX_BYTES).toBeGreaterThanOrEqual(perRoute * 2);
 		}
 	});
 });

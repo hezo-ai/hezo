@@ -2724,12 +2724,17 @@ shapes.
   (`/connectors/:id/auth-start`) / device / callbacks), `skills`.
 - **Ops** — `health`, `updates`, `preview` (HMAC-signed file URLs), public assets.
 
-**Request-body ceiling.** `/api/*` carries a global `bodyLimit` at the largest size any
-route legitimately needs (the 10 MB attachment cap). Only the handful of upload routes were
-capped before, so a JSON body had no bound at all and one request could ask the process to
-buffer arbitrarily much before a handler saw it. It is a backstop, never the binding
-constraint: the upload routes keep their own tighter, type-specific limits and their more
-specific errors. `/mcp` and `/mcp/assets` sit outside `/api` and carry their own limits.
+**Request-body ceiling.** `/api/*` carries a global `bodyLimit` at `API_BODY_MAX_BYTES`
+(32 MB). Only the handful of upload routes were capped before, so a JSON body had no bound
+at all and one request could ask the process to buffer arbitrarily much before a handler
+saw it. It is a **backstop, never a policy**, and must stay well clear of every per-route
+cap for two reasons a test pins: a route that polices its own size answers a too-large file
+with its own specific `4xx`, which an earlier global trip would replace with an opaque
+`413`; and the per-route caps measure the *file* while the request carries it in a
+multipart envelope, so a ceiling set to exactly `ATTACHMENT_MAX_BYTES` rejects a
+legitimately-sized maximum attachment. Reads are unaffected - this bounds request bodies,
+not responses. `/mcp` and `/mcp/assets` sit outside `/api`: the agent surface is not capped
+here.
 
 **Pagination.** Most list routes are offset-paginated (`page`/`per_page`, `meta.total`)
 via `lib/pagination.ts`. The **activity log** is the exception and pages by **keyset**
