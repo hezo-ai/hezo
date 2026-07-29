@@ -968,8 +968,25 @@ per stream so overlapping flushes can never duplicate a delta, with the running 
 snapshot updated on `heartbeat_runs` in the same transaction. Readers concatenate the
 chunks (`string_agg` ordered by `seq`) back into the API's `log_text` field. INSERT-only
 writes replaced the old whole-blob `UPDATE heartbeat_runs.log_text` pattern, whose per-flush
-dead TOAST copies were the dominant source of database bloat. The same stream broadcasts
-live over the `project-runs:<projectId>` WebSocket room from the in-memory buffer.
+dead TOAST copies were the dominant source of database bloat. The delta itself is read by
+character **offset** (`CappedLogBuffer.sliceFrom`), never by building the whole log and
+slicing it: the buffer grows toward its 10 MB cap and the flusher runs twice a second per
+run, so materializing it per flush was O(total) work on a fixed cadence — the in-memory
+twin of the write amplification the chunk table fixed.
+
+The same stream broadcasts live over the `project-runs:<projectId>` WebSocket room from the
+in-memory buffer, **coalesced**: consecutive lines on one stream accumulate for ~100ms (or
+until a burst ceiling) and go out as a single frame whose text is newline-joined. The client
+already splits an incoming payload on `\n`, so this needs no protocol change; only
+same-stream lines merge, so stdout/stderr ordering is preserved. A newly-subscribing client
+is replayed a **line-aligned tail** of the buffer rather than the whole thing (`replay` runs
+for every live stream in the room, so a project with ten concurrent runs would otherwise push
+ten full logs into one socket on tab open); the pending batch is drained first, since the
+snapshot replaces the client's buffer and a line arriving after it would render twice. The
+full log stays available from the REST run endpoint, which is what the run view seeds from.
+Sockets carry a `backpressureLimit` with `closeOnBackpressureLimit`, so a client that falls
+irrecoverably behind is dropped and recovers through the existing reconnect-and-resubscribe
+path instead of growing an unbounded send queue.
 
 **System prompt composition.** The agent's stored template (its `agent_system_prompt`
 document, loaded from its **home** team) is resolved per run by
