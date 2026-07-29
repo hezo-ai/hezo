@@ -1,5 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog';
-import { Globe } from 'lucide-react';
+import { Languages } from 'lucide-react';
 import { useState } from 'react';
 import { useI18n } from '../../lib/i18n';
 import { Button } from '../ui/button';
@@ -30,7 +30,11 @@ export function LocaleSwitcher() {
 					title={t('locale.settings.title')}
 					data-testid="locale-switcher"
 				>
-					<Globe className="w-4 h-4" />
+					{/* The translate glyph (a latin "A" and a CJK character), not a globe:
+					    a globe reads as "worldwide / global scope" - which is what it means
+					    everywhere else in this app (global agents, the global HQ project) -
+					    rather than "change the language". */}
+					<Languages className="w-4 h-4" />
 				</button>
 			</Dialog.Trigger>
 			{/* No Dialog.Description: the form's own labels and live previews say
