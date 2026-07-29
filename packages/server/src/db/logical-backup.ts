@@ -1,5 +1,9 @@
-import { gunzipSync, gzipSync } from 'node:zlib';
-import { formatBytes, type ProgressCallback } from '../lib/progress';
+import { createReadStream, createWriteStream } from 'node:fs';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import { StringDecoder } from 'node:string_decoder';
+import { createGunzip, createGzip } from 'node:zlib';
+import type { ProgressCallback } from '../lib/progress';
 import type { Db, Queryable } from './database';
 import { checksumOfMigration, type Migration, runMigrations } from './migrate';
 import { BackupNewerThanAppError, RestorePreconditionError } from './migrate-errors';
@@ -183,11 +187,23 @@ function decodeValue(value: unknown, udt: string): unknown {
 	return value;
 }
 
-/** Dump the whole database as a gzipped logical backup buffer. */
-export async function dumpLogicalBackup(
+/**
+ * Yield the backup as newline-terminated JSONL lines, a page of rows at a time.
+ *
+ * This is the memory-safe core of the dump, and it must stay a generator. The
+ * dump used to accumulate every row of the database into one `string[]`, join it
+ * into a single giant string, then gzip that — three full copies of the
+ * uncompressed database resident at once, on top of V8's per-string overhead for
+ * millions of array entries. On a small VPS that is an OOM kill (exit 137), and
+ * because the pre-migration backup runs on the startup path, the kill lands
+ * mid-upgrade: the supervisor restarts, dumps again, is killed again, forever.
+ * Streaming keeps resident memory at roughly one page (~4MB) regardless of how
+ * large the instance is.
+ */
+export async function* streamLogicalBackupLines(
 	db: Db,
 	meta: { hezoVersion: string; migrations: Record<string, Migration> },
-): Promise<Buffer> {
+): AsyncGenerator<string> {
 	const tables = await introspectTables(db);
 	const applied = await db.query<{ filename: string; checksum: string }>(
 		`SELECT filename, checksum FROM _migrations ORDER BY id`,
@@ -206,7 +222,7 @@ export async function dumpLogicalBackup(
 			})),
 	};
 
-	const lines: string[] = [JSON.stringify(header)];
+	yield `${JSON.stringify(header)}\n`;
 	for (const table of tables) {
 		if (table.name === '_migrations') continue;
 		const cols = table.columns.filter((c) => !c.generated);
@@ -252,7 +268,10 @@ export async function dumpLogicalBackup(
 					for (const col of cols) {
 						encoded[col.name] = encodeValue(row[col.name], col.udt);
 					}
-					lines.push(JSON.stringify({ t: table.name, r: encoded }));
+					// Yielding per row (rather than per page) is what lets the consumer
+					// apply back-pressure: the gzip stream and the file write decide how
+					// fast rows are produced, so nothing queues up behind a slow disk.
+					yield `${JSON.stringify({ t: table.name, r: encoded })}\n`;
 				}
 				if (!orderBy || page.rows.length < pageRows) break;
 				offset += pageRows;
@@ -262,42 +281,49 @@ export async function dumpLogicalBackup(
 			throw new Error(`Dumping table "${table.name}" failed: ${causeMsg}`, { cause: err });
 		}
 	}
-
-	return gzipSync(`${lines.join('\n')}\n`);
 }
 
 /**
- * Decompress a logical backup to its JSONL text; null when the bytes aren't
- * gzip at all (a legacy physical pgdata tarball, or a wrong file entirely).
- * Exposed separately from the header parse so a caller restoring a multi-GB
- * backup decompresses it once and hands the text to `restoreLogicalBackup`
- * rather than paying for a second pass.
+ * Write a logical backup straight to `filePath`, gzipped, in constant memory.
+ *
+ * This is the only dump form: the startup pre-migration backup and the `hezo
+ * backup` CLI both use it. Collecting the whole dump into a Buffer first is what
+ * OOM-killed small hosts mid-upgrade, so that form no longer exists.
  */
-export function decompressLogicalBackup(bytes: Buffer): string | null {
-	try {
-		return gunzipSync(bytes).toString('utf8');
-	} catch {
-		return null;
-	}
+export async function dumpLogicalBackupToFile(
+	db: Db,
+	filePath: string,
+	meta: { hezoVersion: string; migrations: Record<string, Migration> },
+): Promise<void> {
+	await pipeline(
+		Readable.from(streamLogicalBackupLines(db, meta), { objectMode: false }),
+		createGzip(),
+		createWriteStream(filePath),
+	);
 }
 
-/** Parse just the header line of a decompressed backup; null if not this format. */
-export function parseLogicalBackupHeader(text: string): LogicalBackupHeader | null {
-	const firstLine = text.slice(0, text.indexOf('\n'));
+/**
+ * Read just the header of a gzipped backup FILE, decompressing only as far as
+ * the first newline. Null when the file isn't a logical backup at all - which is
+ * how the restore CLI identifies its input, and rejects anything else, without
+ * decompressing a multi-GB body.
+ */
+export async function peekLogicalBackupHeaderFromFile(
+	filePath: string,
+): Promise<LogicalBackupHeader | null> {
+	const iterator = linesOfGzipFile(filePath)[Symbol.asyncIterator]();
 	try {
-		const header = JSON.parse(firstLine) as LogicalBackupHeader;
+		const first = await iterator.next();
+		if (first.done) return null;
+		const header = JSON.parse(first.value) as LogicalBackupHeader;
 		return typeof header.formatVersion === 'number' && Array.isArray(header.migrations)
 			? header
 			: null;
 	} catch {
 		return null;
+	} finally {
+		await iterator.return?.(undefined);
 	}
-}
-
-/** Parse just the header from a logical backup buffer; null if not this format. */
-export function readLogicalBackupHeader(bytes: Buffer): LogicalBackupHeader | null {
-	const text = decompressLogicalBackup(bytes);
-	return text === null ? null : parseLogicalBackupHeader(text);
 }
 
 export interface RestoreLogicalBackupOptions {
@@ -320,28 +346,89 @@ export interface RestoreLogicalBackupOptions {
  * self-referencing rows) never matters; migration-seeded rows are truncated
  * first so the backup's rows are authoritative.
  */
-export async function restoreLogicalBackup(
+/**
+ * Lines of a gzipped backup file, decompressed incrementally off disk so the
+ * uncompressed body never exists as a single string.
+ *
+ * `StringDecoder` (not `chunk.toString()`) because a gzip chunk boundary lands
+ * mid-codepoint often enough to matter - the dump carries arbitrary user text.
+ */
+async function* linesOfGzipFile(
+	filePath: string,
+	onBytes?: (compressedBytes: number) => void,
+): AsyncGenerator<string> {
+	const file = createReadStream(filePath);
+	let compressed = 0;
+	file.on('data', (chunk: string | Buffer) => {
+		compressed += typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.length;
+		onBytes?.(compressed);
+	});
+	const decoder = new StringDecoder('utf8');
+	let carry = '';
+	for await (const chunk of file.pipe(createGunzip())) {
+		carry += decoder.write(chunk as Buffer);
+		let start = 0;
+		for (;;) {
+			const nl = carry.indexOf('\n', start);
+			if (nl === -1) break;
+			yield carry.slice(start, nl);
+			start = nl + 1;
+		}
+		carry = carry.slice(start);
+	}
+	carry += decoder.end();
+	if (carry) yield carry;
+}
+
+/**
+ * Restore from a gzipped backup FILE, streaming it off disk.
+ *
+ * This is the only restore form. It replaced one that took the backup as a
+ * Buffer or string, which needed the whole compressed buffer, the whole
+ * uncompressed buffer AND the whole uncompressed string resident at once.
+ * Restore is the recovery path, so it has to work on a host that is already
+ * short on memory - including one that just failed an upgrade for that reason.
+ */
+export async function restoreLogicalBackupFromFile(
 	db: Db,
-	backup: Buffer | string,
+	filePath: string,
 	binaryMigrations: Record<string, Migration>,
 	options: RestoreLogicalBackupOptions = {},
 ): Promise<RestoreSummary> {
+	let compressedBytes = 0;
+	return restoreFromLines(
+		db,
+		linesOfGzipFile(filePath, (bytes) => {
+			compressedBytes = bytes;
+		}),
+		binaryMigrations,
+		options,
+		() => compressedBytes,
+	);
+}
+
+/**
+ * The restore engine, driven by a line stream.
+ *
+ * Rows are inserted as they are read, never collected first: the dump writes
+ * one table at a time, so a batch is flushed when it reaches the row cap or the
+ * byte target, and whenever the stream moves to a different table. Buffering
+ * every row of the database as decoded objects before the first INSERT (which
+ * this used to do) is a multiple of the database in resident memory.
+ */
+async function restoreFromLines(
+	db: Db,
+	lines: AsyncIterable<string>,
+	binaryMigrations: Record<string, Migration>,
+	options: RestoreLogicalBackupOptions,
+	consumedBytes?: () => number,
+): Promise<RestoreSummary> {
 	const progress: ProgressCallback = options.onProgress ?? (() => {});
-	let text: string;
-	if (typeof backup === 'string') {
-		text = backup;
-	} else {
-		// gunzip is one blocking call with no observable interior, so this phase
-		// is announced rather than counted.
-		progress({
-			phase: 'decompress',
-			label: 'Decompressing the database backup',
-			detail: formatBytes(backup.byteLength),
-		});
-		text = gunzipSync(backup).toString('utf8');
-	}
-	const newline = text.indexOf('\n');
-	const header = JSON.parse(text.slice(0, newline)) as LogicalBackupHeader;
+	const iterator = lines[Symbol.asyncIterator]();
+
+	const first = await iterator.next();
+	if (first.done) throw new RestorePreconditionError('The backup is empty.');
+	const header = JSON.parse(first.value) as LogicalBackupHeader;
 	if (header.formatVersion !== FORMAT_VERSION) {
 		throw new RestorePreconditionError(
 			`This backup uses format v${header.formatVersion}; this Hezo build reads v${FORMAT_VERSION}. ` +
@@ -395,37 +482,8 @@ export async function restoreLogicalBackup(
 	const tables = await introspectTables(db);
 	const tableMeta = new Map(tables.map((t) => [t.name, t]));
 
-	// Group data lines by table (the file is written table-by-table), keeping
-	// each row's encoded size so inserts can be batched by bytes as well as
-	// row count.
-	const rowsByTable = new Map<string, Array<{ row: Record<string, unknown>; bytes: number }>>();
-	const body = text.slice(newline + 1);
-	// The row total isn't known until the whole body is read, so completion is
-	// reported as the fraction of the body consumed.
-	const reportParsed = (parsed: number, consumed: number) =>
-		progress({
-			phase: 'parse',
-			label: 'Reading rows from the backup',
-			done: parsed,
-			unit: 'rows',
-			ratio: body.length > 0 ? consumed / body.length : 1,
-		});
-	let parsedRows = 0;
-	let consumedChars = 0;
-	reportParsed(0, 0);
-	for (const line of body.split('\n')) {
-		consumedChars += line.length + 1;
-		if (!line) continue;
-		const { t, r } = JSON.parse(line) as { t: string; r: Record<string, unknown> };
-		const list = rowsByTable.get(t) ?? [];
-		list.push({ row: r, bytes: line.length });
-		rowsByTable.set(t, list);
-		parsedRows += 1;
-		if (parsedRows % PARSE_PROGRESS_ROWS === 0) reportParsed(parsedRows, consumedChars);
-	}
-	reportParsed(parsedRows, body.length);
-
 	let totalRows = 0;
+	const seenTables = new Set<string>();
 	await db.transaction(async (tx) => {
 		progress({ phase: 'prepare', label: 'Preparing the target schema' });
 		// Drop every FK so insert order (and self-references) never matter;
@@ -449,18 +507,25 @@ export async function restoreLogicalBackup(
 			await tx.exec(`TRUNCATE ${quoteIdent(table.name)}`);
 		}
 
+		// The row total isn't known up front when streaming, so progress reports a
+		// running count (plus compressed bytes consumed, where the source knows).
 		const reportLoaded = (table: string) =>
 			progress({
 				phase: 'load',
 				label: 'Loading rows',
 				done: totalRows,
-				total: parsedRows,
 				unit: 'rows',
+				bytes: consumedBytes?.(),
 				detail: table,
 			});
 		reportLoaded('');
 
-		for (const [tableName, rows] of rowsByTable) {
+		// Column metadata is resolved once per table and cached, since a table's
+		// rows arrive contiguously but the cache also makes a re-visit cheap.
+		const columnCache = new Map<string, { colMeta: ColumnMeta[]; colList: string }>();
+		const columnsFor = (tableName: string) => {
+			const cached = columnCache.get(tableName);
+			if (cached) return cached;
 			const meta = tableMeta.get(tableName);
 			if (!meta) {
 				throw new RestorePreconditionError(
@@ -477,27 +542,64 @@ export async function restoreLogicalBackup(
 				}
 				return col;
 			});
-			const colList = colMeta.map((c) => quoteIdent(c.name)).join(', ');
+			const resolved = { colMeta, colList: colMeta.map((c) => quoteIdent(c.name)).join(', ') };
+			columnCache.set(tableName, resolved);
+			return resolved;
+		};
 
-			for (const { start, end } of planInsertBatches(rows.map((r) => r.bytes))) {
-				const batch = rows.slice(start, end);
-				const params: unknown[] = [];
-				const tuples = batch.map(({ row }) => {
-					const placeholders = colMeta.map((col) => {
-						params.push(decodeValue(row[col.name], col.udt));
-						const cast = col.udt === 'jsonb' || col.udt === 'json' ? `::${col.udt}` : '';
-						return `$${params.length}${cast}`;
-					});
-					return `(${placeholders.join(', ')})`;
+		let pendingTable: string | null = null;
+		let pending: Array<Record<string, unknown>> = [];
+		let pendingBytes = 0;
+
+		const flush = async () => {
+			if (pendingTable === null || pending.length === 0) return;
+			const { colMeta, colList } = columnsFor(pendingTable);
+			const params: unknown[] = [];
+			const tuples = pending.map((row) => {
+				const placeholders = colMeta.map((col) => {
+					params.push(decodeValue(row[col.name], col.udt));
+					const cast = col.udt === 'jsonb' || col.udt === 'json' ? `::${col.udt}` : '';
+					return `$${params.length}${cast}`;
 				});
-				await tx.query(
-					`INSERT INTO ${quoteIdent(tableName)} (${colList}) VALUES ${tuples.join(', ')}`,
-					params,
-				);
-				totalRows += batch.length;
-				reportLoaded(tableName);
+				return `(${placeholders.join(', ')})`;
+			});
+			await tx.query(
+				`INSERT INTO ${quoteIdent(pendingTable)} (${colList}) VALUES ${tuples.join(', ')}`,
+				params,
+			);
+			totalRows += pending.length;
+			reportLoaded(pendingTable);
+			pending = [];
+			pendingBytes = 0;
+		};
+
+		for (let next = await iterator.next(); !next.done; next = await iterator.next()) {
+			const line = next.value;
+			if (!line) continue;
+			const { t, r } = JSON.parse(line) as { t: string; r: Record<string, unknown> };
+
+			// A different table always closes the open batch - one INSERT never
+			// spans two tables.
+			if (t !== pendingTable) {
+				await flush();
+				pendingTable = t;
+				// Validate eagerly so an unknown table fails on its first row rather
+				// than after the whole stream has been read.
+				columnsFor(t);
+				seenTables.add(t);
+			} else if (
+				pending.length >= INSERT_BATCH_SIZE ||
+				pendingBytes + line.length > BATCH_TARGET_BYTES
+			) {
+				// Same batching rule as `planInsertBatches`, applied incrementally.
+				await flush();
 			}
+
+			pending.push(r);
+			pendingBytes += line.length;
+			if (totalRows % PARSE_PROGRESS_ROWS === 0) reportLoaded(t);
 		}
+		await flush();
 
 		progress({ phase: 'constraints', label: 'Restoring foreign keys and sequences' });
 		for (const fk of fks.rows) {
@@ -520,5 +622,5 @@ export async function restoreLogicalBackup(
 		}
 	});
 
-	return { tables: rowsByTable.size, rows: totalRows };
+	return { tables: seenTables.size, rows: totalRows };
 }

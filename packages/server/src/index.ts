@@ -29,10 +29,12 @@ import { isAutoUpdateEnabled } from './services/updater';
 import type { WebSocketManager, WsData, WsSocket } from './services/ws';
 import { handleWsSubscribe, handleWsUnsubscribe } from './services/ws-subscribe-handler';
 import { type StartupResult, startup } from './startup';
+import { clearStartupFailure, readStartupFailure, recordStartupFailure } from './startup-failure';
 import { getStartupProgress, markStartupError, setStartupPhase } from './startup-progress';
 import { serveStartupRequest } from './startup-serving';
 import { loadStaticBundle } from './static-assets';
 import { runSupervisor } from './supervisor';
+import { HEZO_VERSION } from './version';
 
 const log = logger.child('server');
 
@@ -175,6 +177,18 @@ let startupGeneration = 0;
 const thisStartupGeneration = ++startupGeneration;
 
 let serverReady = false;
+/**
+ * Why the previous boot died, if it died fatally. Read ONCE here, before
+ * `startup()` runs, so it describes the last boot rather than this one; the
+ * pre-ready handler serves it on /api/status so a restart loop explains itself
+ * instead of looking like a boot that never finishes.
+ */
+const previousStartupFailure = readStartupFailure(config.dataDir);
+if (previousStartupFailure) {
+	log.warn(
+		`Previous start failed during "${previousStartupFailure.phase}" on ${previousStartupFailure.version}: ${previousStartupFailure.message}`,
+	);
+}
 let serveFetch: (
 	req: Request,
 	server: Bun.Server<WsConnectionData>,
@@ -225,6 +239,9 @@ void (async () => {
 		containerLogStreamerRef = result.containerLogStreamer;
 		serverReady = true;
 		setStartupPhase('ready');
+		// This boot got through, so a breadcrumb from an earlier failure is stale —
+		// drop it rather than warn about a problem that is now fixed.
+		clearStartupFailure(config.dataDir);
 		// Update-restart unlock handoff: in a supervised worker, keep the
 		// supervisor's in-memory copy of the unlock key current and, on a locked
 		// boot right after an update install, ask for it back so the instance
@@ -261,6 +278,14 @@ void (async () => {
 			err instanceof AssetStorageError
 		) {
 			log.error(`\n${err.message}\n`);
+			// Under `Restart=always` this exit is immediately undone, so without a
+			// breadcrumb the operator sees only the boot screen looping. Leave the
+			// reason for the next boot to surface on /api/status.
+			recordStartupFailure(config.dataDir, {
+				message: err.message,
+				phase: getStartupProgress().phase,
+				version: HEZO_VERSION,
+			});
 			process.exit(1);
 		}
 		if (err instanceof PgDataCorruptError) {
@@ -289,6 +314,7 @@ export default {
 			return serveStartupRequest(req, {
 				progress: getStartupProgress(),
 				loadBundle: loadStaticBundle,
+				lastFailure: previousStartupFailure,
 			});
 		}
 		if (url.pathname === '/ws') {

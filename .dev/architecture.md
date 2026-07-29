@@ -2244,12 +2244,29 @@ working-tree Dockerfile so edits take effect immediately. The version is also su
 port immediately, so requests can arrive before the app exists. Until `serverReady` flips,
 the entry delegates to `serveStartupRequest` (`startup-serving.ts`): browser navigations and
 static assets are served from the embedded SPA bundle, and `/api/status` answers **200** with
-`{ starting: true, phase, message }` read from a boot-progress singleton (`startup-progress.ts`,
-advanced through `database → migrations → seed → pricing → workspace`). The web UI
-(`useStatus` → `StartingScreen`) renders a loading screen naming the current phase and keeps
-polling, flipping to the master-key gate the moment boot finishes — so a browser that connects
-mid-boot never sees a raw JSON error. Other API/MCP/WebSocket surfaces still get a JSON **503
-STARTING** so machine clients retry; `/health` always answers 200.
+`{ starting: true, phase, message, detail }` read from a boot-progress singleton
+(`startup-progress.ts`, advanced through `database → migrations → seed → pricing →
+workspace`). The web UI (`useStatus` → `StartingScreen`) renders a loading screen naming the
+current phase and keeps polling, flipping to the master-key gate the moment boot finishes —
+so a browser that connects mid-boot never sees a raw JSON error. Other API/MCP/WebSocket
+surfaces still get a JSON **503 STARTING** so machine clients retry; `/health` always answers 200.
+
+`detail` names the **step in flight** within a phase, because a phase alone cannot distinguish
+a slow boot from a hung one: the migration runners report the pgdata copy / pre-migration
+backup, then each migration as `Applying <file> (n of m)`, and the one-time legacy run-log
+VACUUM names itself under the `seed` phase. Two further signals make a **crash loop** legible,
+which is otherwise indistinguishable from a boot that never finishes (the process dies, the
+restart policy brings it back, and the browser just sees the boot screen again):
+
+- **Fatal-exit breadcrumb** (`startup-failure.ts`). The operator-actionable failures
+  (`MigrationFailedError`, `DbNewerThanAppError`, `ExternalDbError`, `AssetStorageError`)
+  `process.exit(1)`, so their reason never reaches the browser. Each writes
+  `<dataDir>/.last-startup-error.json` on the way out; the **next** boot reads it before
+  `startup()` runs and serves it as `last_failure` on `/api/status`, and the boot screen shows
+  it. Cleared once a boot reaches `ready`.
+- **Restart counter** (client-side, in `StartingScreen`). A boot phase moving *backwards*
+  means a fresh process answered the poll. This is the only signal available for a kill the
+  process cannot observe — an OOM `SIGKILL` (exit 137) writes no breadcrumb.
 
 **Migrations.** Real, tracked, **append-only** SQL under `packages/server/migrations/`
 (`001_initial_schema.sql` is the frozen baseline — never edit a shipped migration; each is
@@ -2384,6 +2401,39 @@ legacy-migrated rows can each carry a whole multi-MB run log) would
 otherwise breach in a single flat-size page and hard-crash the WASM instance. The
 subcommands' teardown closes are best-effort (`closeQuietly` in `cli.ts`), so closing an
 already-crashed engine can never mask the original dump/restore error.
+
+**Both directions are streamed, never buffered** — the format is designed so neither side
+ever holds the database in memory:
+
+- **Dump.** `streamLogicalBackupLines` is an async generator yielding one JSONL line at a
+  time; `dumpLogicalBackupToFile` pipes it through gzip straight to the destination file, so
+  resident memory stays at roughly one page regardless of instance size. Every caller that
+  ends up with a file on disk uses it — the `hezo backup` subcommands and the
+  external-Postgres **pre-migration backup**. There is no buffer-returning form.
+- **Restore.** `restoreLogicalBackupFromFile` decompresses incrementally off disk
+  (`linesOfGzipFile`, via `StringDecoder` — gzip chunk boundaries land mid-codepoint and the
+  dump carries arbitrary user text) and inserts rows **as they are read**: a batch flushes on
+  the row cap, the byte target, or a change of table, all inside the one restore transaction.
+  There is deliberately no separate parse phase and no row *total* in the progress output —
+  knowing the total up front is only possible by reading everything first, which is the bug.
+  `peekLogicalBackupHeaderFromFile` decompresses only as far as the header, which is how the
+  restore CLI identifies a backup, and rejects anything else, without touching the body. There is no buffer-taking form.
+
+This matters most on the **startup** path, where the pre-migration backup runs. Collecting
+the whole database into a `string[]`, joining it, and gzipping that held three uncompressed
+copies at once, which OOM-killed small hosts (exit 137) *mid-upgrade* — and since the kill
+lands before the migration is applied, the restart policy replayed the identical kill on
+every boot, leaving the instance in an unbreakable loop showing "Running database
+migrations…". Restore was worse still (compressed buffer + uncompressed buffer +
+uncompressed string + line array + every decoded row before the first INSERT) and is the
+**recovery** path, so it has to work on a host that is already short on memory.
+
+The same rule applies to the **updater**: `downloadAndStage` streams the release asset to
+`staged.part` while hashing incrementally, and only renames it into the staged path once the
+SHA256 matches — so an unverified binary is never stageable and a >100MB asset is never
+resident. Asset blobs (`assets/blob-backup.ts`) are bounded by construction instead: each is
+capped at `ATTACHMENT_MAX_BYTES` (10MB), rows are enumerated a page at a time, and copies run
+with bounded concurrency.
 Restore replays the binary's own migrations up to exactly the recorded set, then loads
 data in one transaction with FK constraints dropped/re-added around the inserts (insert
 order and self-references never matter) and serial sequences resumed; migration-seeded
@@ -2398,19 +2448,21 @@ and hosted storage in either direction — direction is expressed purely by whic
 (copy-only). `--no-assets` writes the legacy database-only bare `.backup.gz` file (the
 artifact internal callers still use), `--no-database` an assets-only bundle, and
 `--strict-assets` fails restore on any blob with no verifying row. Restore auto-detects the
-input: a directory is a bundle, a file with a logical header is a `.backup.gz`, otherwise a
-legacy physical pgdata tarball (`db/backup.ts` `dumpDataDir`/`restoreDataDir`, embedded
-only). Restoring a large instance is minutes of work inside two loops (row inserts, blob
+input: a directory is a bundle, a file whose header parses is a `.backup.gz`, and anything
+else is refused with a message naming the expected format. The physical pgdata tarball
+(`db/backup.ts`) is **gone** — it only ever loaded into embedded PGlite, so it was never a
+backup that could restore onto both backends; converting one needs a Hezo old enough to read
+it, then a fresh `hezo backup`. Restoring a large instance is minutes of work inside two loops (row inserts, blob
 copies), so both engines emit `ProgressState` updates through an optional `onProgress`
 callback and `runRestore` renders them (`lib/progress.ts`): a phase line per step
-(read/decompress/wipe/schema/prepare/constraints) and a live counter with percentage and
-ETA for the countable ones (rows parsed, rows loaded per table, blobs copied). Rendering
+(read/wipe/schema/prepare/constraints) and a live counter with percentage and
+ETA for the countable ones (rows loaded per table, blobs copied). Rendering
 adapts to the stream — one line rewritten in place (`\r` + erase-to-EOL) on a TTY, throttled
 appended lines into a pipe or log file — and the engines themselves stay terminal-agnostic.
-The CLI decompresses a single-file `.backup.gz` **once** (`decompressLogicalBackup` +
-`parseLogicalBackupHeader`, then handing the text to `restoreLogicalBackup`, which accepts
-`Buffer | string`) rather than gunzipping a multi-GB backup for the header and again for the
-load. External startup migrations write a bare logical `.backup.gz` into `<dataDir>/backups/`
+The CLI identifies a single-file `.backup.gz` from its header alone
+(`peekLogicalBackupHeaderFromFile`, which stops at the first newline) and then streams the
+body through `restoreLogicalBackupFromFile`, so a multi-GB backup is never decompressed for
+the header and again for the load, and never held in memory. External startup migrations write a bare logical `.backup.gz` into `<dataDir>/backups/`
 automatically before applying (last 5 kept; a failed backup aborts the migration); the
 embedded path keeps its stronger copy-swap instead. The `hezo backup`/`hezo restore`
 subcommands resolve the data dir with the same precedence as the server (`HEZO_DATA_DIR` >

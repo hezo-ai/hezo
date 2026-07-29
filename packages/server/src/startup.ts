@@ -181,8 +181,13 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	}
 
 	await db.exec(BASE_SCHEMA);
+	// The detail callback keeps the loading screen naming the step in flight (the
+	// pgdata copy, then each migration). Without it a multi-minute migration on a
+	// large instance is indistinguishable from a hung server.
 	setStartupPhase('migrations');
-	db = await runAvailableMigrations(db, config.dataDir);
+	db = await runAvailableMigrations(db, config.dataDir, (detail) =>
+		setStartupPhase('migrations', detail),
+	);
 	setStartupPhase('seed');
 	await runSeed(db);
 
@@ -195,7 +200,15 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	// table — once, on the first post-upgrade boot.
 	try {
 		const { runLegacyRunLogVacuumOnce } = await import('./db/run-log-chunks.js');
-		await runLegacyRunLogVacuumOnce(db, storageInfo.backend);
+		await runLegacyRunLogVacuumOnce(db, storageInfo.backend, {
+			// Fires only when the reclaim actually runs (marker-gated), so instances
+			// that skip it never show the message.
+			onStart: () =>
+				setStartupPhase(
+					'seed',
+					'Reclaiming disk space from old run logs - one time only, can take a few minutes',
+				),
+		});
 	} catch (err) {
 		log.error('One-time legacy run-log reclaim failed (will retry next startup):', err);
 	}
@@ -790,7 +803,11 @@ async function loadMigrations(): Promise<Record<string, Migration> | null> {
 	return loadAllMigrations();
 }
 
-async function runAvailableMigrations(db: Db, dataDir: string): Promise<Db> {
+async function runAvailableMigrations(
+	db: Db,
+	dataDir: string,
+	onProgress?: (detail: string) => void,
+): Promise<Db> {
 	const migrations = await loadMigrations();
 	if (!migrations) {
 		log.warn('No migrations found. Run build:migrations or add migration files.');
@@ -803,6 +820,7 @@ async function runAvailableMigrations(db: Db, dataDir: string): Promise<Db> {
 		const { applyPendingMigrationsExternal } = await import('./db/migrate-external.js');
 		await applyPendingMigrationsExternal(db, migrations, {
 			backup: { dir: join(dataDir, 'backups'), version: HEZO_VERSION },
+			onProgress,
 		});
 		return db;
 	}
@@ -811,7 +829,7 @@ async function runAvailableMigrations(db: Db, dataDir: string): Promise<Db> {
 	// untouched (a downgraded binary can run against it as-is). Returns the live
 	// handle to use, which is a fresh one after a successful swap.
 	const { applyPendingMigrations } = await import('./db/migrate-runner.js');
-	return applyPendingMigrations(db, dataDir, migrations);
+	return applyPendingMigrations(db, dataDir, migrations, { onProgress });
 }
 
 async function runSeed(db: Db): Promise<void> {
