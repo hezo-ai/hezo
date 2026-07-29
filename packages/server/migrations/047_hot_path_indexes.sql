@@ -28,12 +28,24 @@
 --    overwhelming majority and the dispatcher never looks at them, so keeping
 --    them out holds the index to the working set.
 --
--- 5. `tasks (team_id, LOWER(identifier))`
+-- 5. `audit_log (created_at DESC, id DESC)` and
+--    `audit_log (project_id, created_at DESC, id DESC)`
+--    The activity feed pages by `(created_at, id)` rather than LIMIT/OFFSET with
+--    a `COUNT(*)`: the instance-scoped view has no other predicate, so counting
+--    it to render a page number was a full scan of the largest never-pruned
+--    table on every page load. Keyset needs the sort columns in the index, in
+--    the sort's own direction and including the tiebreak - the existing
+--    `idx_audit_created` / `idx_audit_project_created` cover the leading columns
+--    but leave `id` to a sort step, and the seek predicate
+--    `(created_at, id) < ($1, $2)` cannot be an index range scan without it.
+--
+-- 6. `tasks (team_id, LOWER(identifier))`
 --    `resolveTaskId` compares `LOWER(identifier) = LOWER($2)` and so cannot use
 --    `idx_tasks_identifier(team_id, identifier)`. It runs at the top of
 --    essentially every task and comment request.
 --
--- All five are additive; no data is read, moved or dropped.
+-- All are additive; the indexes they sit beside stay, and no data is read,
+-- moved or dropped.
 
 CREATE INDEX IF NOT EXISTS idx_runs_member_finished
     ON heartbeat_runs (member_id, finished_at DESC);
@@ -47,6 +59,12 @@ CREATE INDEX IF NOT EXISTS idx_runs_task_started
 CREATE INDEX IF NOT EXISTS idx_wakeups_pending
     ON agent_wakeup_requests (status, created_at)
     WHERE status IN ('queued', 'claimed');
+
+CREATE INDEX IF NOT EXISTS idx_audit_created_id
+    ON audit_log (created_at DESC, id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_audit_project_created_id
+    ON audit_log (project_id, created_at DESC, id DESC);
 
 CREATE INDEX IF NOT EXISTS idx_tasks_identifier_lower
     ON tasks (team_id, LOWER(identifier));

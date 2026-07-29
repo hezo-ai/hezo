@@ -29,6 +29,22 @@ export function nextOffsetPageParam(lastPage: { meta: PaginationMeta }): number 
 	return page * per_page < total ? page + 1 : undefined;
 }
 
+/**
+ * Meta for keyset-paginated feeds. Used where the collection only grows and a
+ * total would cost a full-table `COUNT(*)` per page load to render a number
+ * nobody acts on - and where rows landing mid-read would drift every later
+ * offset. The cursor is opaque; pass it straight back.
+ */
+export interface CursorMeta {
+	has_more: boolean;
+	next_cursor: string | null;
+}
+
+/** `getNextPageParam` for cursor-paginated `useInfiniteQuery` lists. */
+export function nextCursorPageParam(lastPage: { meta: CursorMeta }): string | undefined {
+	return lastPage.meta.has_more ? (lastPage.meta.next_cursor ?? undefined) : undefined;
+}
+
 class ApiClient {
 	private token: string | null = readStored(TOKEN_KEY);
 
@@ -91,7 +107,20 @@ class ApiClient {
 		return this.request<T>('GET', this.withQuery(path, params));
 	}
 
-	/** GET that preserves `{ data, meta }` pagination envelopes from the API. */
+	/** GET a keyset-paginated list (see `CursorMeta`). */
+	async getCursorPaginated<TItem>(
+		path: string,
+		params?: Record<string, string | undefined>,
+	): Promise<{ data: TItem[]; meta: CursorMeta }> {
+		const json = await this.fetchJson<{ data?: TItem[]; meta?: CursorMeta }>(
+			'GET',
+			this.withQuery(path, params),
+		);
+		const data = json.data ?? [];
+		return { data, meta: json.meta ?? { has_more: false, next_cursor: null } };
+	}
+
+	/** GET that preserves `{ data, meta }` offset-pagination envelopes from the API. */
 	async getPaginated<TItem>(
 		path: string,
 		params?: Record<string, string | undefined>,

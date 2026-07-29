@@ -2695,11 +2695,27 @@ shapes.
 - **Tasks & collaboration** — `tasks`, `goals` (CRUD + `/goals/runs` + `/goals/:id/history`),
   `comments`, `mentions`, `assets`, `inbox`, `search` (full-text).
 - **Money & governance** — `costs` (project-scoped, `group_by=day` for charts),
-  `model-pricing`, `approvals`, `audit-log`.
+  `model-pricing`, `approvals`, `audit-log` (**keyset**-paginated, see below).
 - **Integrations & secrets** — `ai-providers`, `secrets`, `connectors`, `oauth`
   (connectors: ensure / auth-start — project-scoped and instance-admin
   (`/connectors/:id/auth-start`) / device / callbacks), `skills`.
 - **Ops** — `health`, `updates`, `preview` (HMAC-signed file URLs), public assets.
+
+**Pagination.** Most list routes are offset-paginated (`page`/`per_page`, `meta.total`)
+via `lib/pagination.ts`. The **activity log** is the exception and pages by **keyset**
+(`?limit=&cursor=`, `meta.has_more` + `meta.next_cursor`) because `audit_log` only grows
+and is never pruned: its global view carries no scope predicate, so producing `total`
+meant a full sequential scan of the largest table on the instance for every page load —
+to render a number nothing consumed. Offsets also drift, since rows land while someone
+reads. The cursor is opaque (`<created_at ISO>|<id>`) and the seek is
+`(created_at, id) < ($1, $2)` ordered `created_at DESC, id DESC`, so the order is total
+and no row can be skipped or repeated across a page boundary; `has_more` is exact because
+the query over-fetches one row rather than counting. Migration `047` adds the two indexes
+the seek needs (`audit_log (created_at DESC, id DESC)` and the `project_id`-leading
+variant) — the pre-existing indexes stopped at the leading column and left `id` to a sort
+step, which a range scan cannot use. Both web views drive it through `useInfiniteQuery`
+with a "Load older activity" control; the global view previously fetched a fixed newest-100
+slice with no way to reach anything older.
 
 One non-REST surface shares the port: the **MCP endpoint** (`POST /mcp`, Streamable
 HTTP), whose tools mirror the REST surface and enforce the same authorization. It is the

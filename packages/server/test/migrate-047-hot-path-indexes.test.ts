@@ -8,6 +8,8 @@ const EXPECTED_INDEXES = [
 	'idx_runs_member_started',
 	'idx_runs_task_started',
 	'idx_wakeups_pending',
+	'idx_audit_created_id',
+	'idx_audit_project_created_id',
 	'idx_tasks_identifier_lower',
 ];
 
@@ -18,6 +20,7 @@ describe('047_hot_path_indexes migration', () => {
 	let taskId: string;
 	let runId: string;
 	let wakeupId: string;
+	const auditIds: string[] = [];
 
 	beforeAll(async () => {
 		h = await createDataPreservationHarness();
@@ -60,6 +63,18 @@ describe('047_hot_path_indexes migration', () => {
 			[memberId, teamId],
 		);
 		wakeupId = wakeup.rows[0].id;
+
+		// Three audit rows sharing one timestamp - exactly the case the `id`
+		// tiebreak exists for, and the one a created_at-only order gets wrong.
+		for (let i = 0; i < 3; i++) {
+			const row = await h.db.query<{ id: string }>(
+				`INSERT INTO audit_log (project_id, actor_type, action, entity_type, details, created_at)
+				 VALUES ($1, 'admin', 'update', 'task', '{}'::jsonb, TIMESTAMPTZ '2026-01-01 00:00:00Z')
+				 RETURNING id`,
+				[project.rows[0].id],
+			);
+			auditIds.push(row.rows[0].id);
+		}
 
 		await h.applyTarget(TARGET);
 	});
@@ -110,6 +125,44 @@ describe('047_hot_path_indexes migration', () => {
 			[taskId],
 		);
 		expect(task.rows[0].identifier).toBe('AC-1');
+	});
+
+	it('preserves pre-existing audit rows', async () => {
+		const kept = await h.db.query<{ id: string }>(
+			`SELECT id FROM audit_log WHERE id = ANY($1::uuid[])`,
+			[auditIds],
+		);
+		expect(kept.rows.length).toBe(3);
+	});
+
+	// The point of the audit indexes is the seek predicate the activity feed
+	// pages with, now that it is keyset rather than LIMIT/OFFSET + COUNT(*).
+	it('serves the keyset seek, walking every audit row exactly once across pages', async () => {
+		const seen: string[] = [];
+		let cursor: { created_at: string; id: string } | null = null;
+
+		for (let page = 0; page < 5; page++) {
+			const rows = cursor
+				? await h.db.query<{ id: string; created_at: string }>(
+						`SELECT id, created_at FROM audit_log
+						 WHERE (created_at, id) < ($1::timestamptz, $2::uuid)
+						 ORDER BY created_at DESC, id DESC LIMIT 2`,
+						[cursor.created_at, cursor.id],
+					)
+				: await h.db.query<{ id: string; created_at: string }>(
+						`SELECT id, created_at FROM audit_log
+						 ORDER BY created_at DESC, id DESC LIMIT 2`,
+					);
+			if (rows.rows.length === 0) break;
+			for (const row of rows.rows) seen.push(row.id);
+			const last = rows.rows[rows.rows.length - 1];
+			cursor = { created_at: new Date(last.created_at).toISOString(), id: last.id };
+		}
+
+		// Every seeded row appears once, despite all three sharing a timestamp.
+		expect(seen.length).toBe(3);
+		expect(new Set(seen).size).toBe(3);
+		expect(seen.slice().sort()).toEqual(auditIds.slice().sort());
 	});
 
 	it('still serves the queries the indexes were added for', async () => {
