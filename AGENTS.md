@@ -302,6 +302,30 @@ The web app's message catalogs (`packages/web/src/lib/i18n/catalog/*.json`) are 
 
 That changes the failure mode. A machine pass fails by translating things it shouldn't; an authored pass fails by **omission** — a key added to `en.json` and copy-pasted unchanged into the rest, which renders English inside an otherwise translated screen. `test/i18n-catalog.test.ts` is what catches that (it is how `settings.skills` was found sitting untranslated in all eleven languages), including an `IDENTICAL_TO_ENGLISH_OK` allowlist for words that genuinely coincide. **Adding an allowlist entry to quiet the test is the mistake it exists to prevent** — every entry is a claim that the two really are the same word.
 
+### A string change cascades to every language (check on every code change)
+
+**A user-facing string is not changed until it is changed in all twelve languages.** Adding, rewording, splitting, or deleting a string in `en.json` is only half the work; the other eleven catalogs need the same edit, translated. The same applies in the other direction: a component that starts rendering a new hardcoded literal has silently made the UI English for eleven languages, so **new UI copy goes through `t()` and a catalog key, never a bare literal**.
+
+Concretely, before a change is done:
+
+- **New string** → add the key to `en.json` **and** author it in all eleven non-English catalogs.
+- **Reworded string** → retranslate it everywhere. A changed English source with stale translations underneath is worse than an untranslated key, because nothing flags it.
+- **Renamed key** → rename in all twelve; a key left behind in ten catalogs is dead weight that reads as coverage.
+- **Deleted string** → delete the key from all twelve.
+- **New hardcoded literal in a component** → it is a missing catalog key, not a shortcut. Wire it through `t()`.
+
+The mechanical half is enforced: `packages/web/test/i18n-catalog.test.ts` fails on a key missing from a catalog, an empty value, a value left identical to its English source outside the allowlist, a dropped `{placeholder}`, an em/en dash, or the word "ticket". It cannot tell you whether a translation is *right*, or notice a string that never became a key at all — that judgement is the pass this section asks for.
+
+**The acknowledgment is enforced at commit time.** The `commit-msg` hook (`.husky/commit-msg` → `scripts/check-translations-ack.ts`) rejects any commit that stages string-bearing code — anything under `packages/web/src/` or `packages/shared/src/` — unless the commit message carries a **`Translations-Checked:` trailer** recording the cascade pass you actually did. Write what you checked, not a rubber stamp - bare values (`yes`, `n/a`, `done`, anything under 10 characters) are rejected:
+
+```
+Translations-Checked: added settings.locale.* to all 12 catalogs
+Translations-Checked: reworded onboarding.language.subtitle; retranslated in all 11 non-English catalogs
+Translations-Checked: no user-facing strings added or changed; catalogs untouched
+```
+
+The trailer must be true — it is the audit record that the cascade happened. Never write it without doing the pass, and **never bypass the hook with `--no-verify`**. Server-only, test-only, docs-only, merge, revert, and fixup commits are exempt (no trailer needed). The hook shares its machinery with the `Docs-Checked:` hook (`scripts/commit-ack.ts`) and its classification rules are unit-tested in `packages/server/test/translations-ack-hook.test.ts`; if you add a new string-bearing top-level path, add it to `STRING_BEARING_PATTERNS` in `scripts/check-translations-ack.ts` in the same change.
+
 Rules for any catalog edit:
 
 - **Never translated:** `Hezo`, `Captain`, `CEO`, `Coach`, `HQ`, `MCP`, agent role names, marketplace team names, and any CLI/command text. Role and team names must match the app's `marketplace/teams/*.json` rosters — translating one side desyncs them.
