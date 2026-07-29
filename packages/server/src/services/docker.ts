@@ -1,6 +1,6 @@
 import { request as httpRequest } from 'node:http';
 import { Readable } from 'node:stream';
-import { stripNulBytes } from '../lib/sql';
+import { DockerFrameDecoder, demuxDockerStream } from './docker-frames';
 
 const SOCKET_PATH = '/var/run/docker.sock';
 const API_VERSION = 'v1.44';
@@ -76,8 +76,28 @@ export interface ExecLogChunk {
 	text: string;
 }
 
+/**
+ * The captured output of an exec.
+ *
+ * **Populated only on the buffered path** — when `ExecStartOpts.onChunk` is
+ * omitted. A streamed exec deliberately retains nothing (see `onChunk`), so
+ * both fields come back empty; consume the chunks instead.
+ */
+export interface ExecResult {
+	stdout: string;
+	stderr: string;
+}
+
 export interface ExecStartOpts {
 	signal?: AbortSignal;
+	/**
+	 * Per-frame callback. Supplying it switches `execStart` to the streaming
+	 * path, which does **not** retain the output — the returned `ExecResult` is
+	 * empty. An agent run's raw stream-json transcript reaches hundreds of MB
+	 * (every tool result in full, strictly larger than the capped rendered log),
+	 * so anything the caller needs from the stream must be derived incrementally
+	 * here rather than scanned afterwards.
+	 */
 	onChunk?: (chunk: ExecLogChunk) => void | Promise<void>;
 }
 
@@ -494,10 +514,7 @@ export class DockerClient {
 		return data.Id;
 	}
 
-	async execStart(
-		execId: string,
-		opts: ExecStartOpts = {},
-	): Promise<{ stdout: string; stderr: string }> {
+	async execStart(execId: string, opts: ExecStartOpts = {}): Promise<ExecResult> {
 		const res = await this.requestStream(
 			'POST',
 			`/exec/${execId}/start`,
@@ -514,7 +531,8 @@ export class DockerClient {
 			return demuxDockerStream(raw);
 		}
 
-		return streamDockerExec(res, opts.onChunk, opts.signal);
+		await streamDockerExec(res, opts.onChunk, opts.signal);
+		return { stdout: '', stderr: '' };
 	}
 
 	async execInspect(execId: string): Promise<{ ExitCode: number; Running: boolean; Pid: number }> {
@@ -698,60 +716,23 @@ export function parseHezoProcessList(stdout: string): ContainerProcessInfo[] {
 	return procs;
 }
 
-function demuxDockerStream(raw: Uint8Array): { stdout: string; stderr: string } {
-	const stdout: Uint8Array[] = [];
-	const stderr: Uint8Array[] = [];
-	let offset = 0;
-
-	while (offset + 8 <= raw.length) {
-		const streamType = raw[offset];
-		const size =
-			(raw[offset + 4] << 24) | (raw[offset + 5] << 16) | (raw[offset + 6] << 8) | raw[offset + 7];
-		offset += 8;
-
-		if (offset + size > raw.length) break;
-
-		const chunk = raw.slice(offset, offset + size);
-		if (streamType === 1) {
-			stdout.push(chunk);
-		} else if (streamType === 2) {
-			stderr.push(chunk);
-		}
-		offset += size;
-	}
-
-	const decoder = new TextDecoder();
-	return {
-		stdout: stripNulBytes(decoder.decode(concatUint8Arrays(stdout))),
-		stderr: stripNulBytes(decoder.decode(concatUint8Arrays(stderr))),
-	};
-}
-
+/**
+ * Forward every frame of a live exec attach stream to `onChunk`, retaining
+ * nothing. See `ExecStartOpts.onChunk` for why the transcript is not kept.
+ */
 async function streamDockerExec(
 	res: Response,
 	onChunk: (c: ExecLogChunk) => void | Promise<void>,
 	signal?: AbortSignal,
-): Promise<{ stdout: string; stderr: string }> {
+): Promise<void> {
 	const reader = res.body?.getReader();
-	if (!reader) return { stdout: '', stderr: '' };
+	if (!reader) return;
 
-	const decoder = new TextDecoder();
-	const stdoutParts: string[] = [];
-	const stderrParts: string[] = [];
-	let buffer = new Uint8Array(0);
+	const frames = new DockerFrameDecoder();
 
 	const drainFrames = async () => {
-		while (buffer.length >= 8) {
-			const streamType = buffer[0];
-			const size = (buffer[4] << 24) | (buffer[5] << 16) | (buffer[6] << 8) | buffer[7];
-			if (buffer.length < 8 + size) break;
-			const payload = buffer.slice(8, 8 + size);
-			buffer = buffer.slice(8 + size);
-			const text = stripNulBytes(decoder.decode(payload));
-			const stream: 'stdout' | 'stderr' = streamType === 2 ? 'stderr' : 'stdout';
-			if (stream === 'stdout') stdoutParts.push(text);
-			else stderrParts.push(text);
-			await onChunk({ stream, text });
+		for (let frame = frames.next(); frame !== null; frame = frames.next()) {
+			await onChunk(frame);
 		}
 	};
 
@@ -763,30 +744,13 @@ async function streamDockerExec(
 			const { done, value } = await reader.read();
 			if (done) break;
 			if (value) {
-				const next = new Uint8Array(buffer.length + value.length);
-				next.set(buffer);
-				next.set(value, buffer.length);
-				buffer = next;
+				frames.push(value);
 				await drainFrames();
 			}
 		}
 		await drainFrames();
+		for (const frame of frames.flush()) await onChunk(frame);
 	} finally {
 		reader.releaseLock();
 	}
-
-	return { stdout: stdoutParts.join(''), stderr: stderrParts.join('') };
-}
-
-function concatUint8Arrays(arrays: Uint8Array[]): Uint8Array {
-	if (arrays.length === 0) return new Uint8Array(0);
-	if (arrays.length === 1) return arrays[0];
-	const totalLength = arrays.reduce((acc, arr) => acc + arr.length, 0);
-	const result = new Uint8Array(totalLength);
-	let offset = 0;
-	for (const arr of arrays) {
-		result.set(arr, offset);
-		offset += arr.length;
-	}
-	return result;
 }

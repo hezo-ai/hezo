@@ -23,7 +23,7 @@ afterAll(async () => {
 });
 
 describe('execStart over node:http (Bun runtime)', () => {
-	test('streams multiplexed chunks through onChunk and returns the demuxed whole', async () => {
+	test('streams multiplexed chunks through onChunk and retains no transcript', async () => {
 		sim.onExecStart('exec-stream', {
 			frames: [
 				{ stream: 'stdout', text: 'hello ' },
@@ -44,8 +44,8 @@ describe('execStart over node:http (Bun runtime)', () => {
 			{ stream: 'stderr', text: 'warn!' },
 			{ stream: 'stdout', text: 'world' },
 		]);
-		expect(result.stdout).toBe('hello world');
-		expect(result.stderr).toBe('warn!');
+		// A streamed exec keeps nothing — see ExecStartOpts.onChunk.
+		expect(result).toEqual({ stdout: '', stderr: '' });
 	});
 
 	test('buffers and demuxes without onChunk', async () => {

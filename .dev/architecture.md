@@ -952,7 +952,16 @@ the cached `container_status`: a container pruned externally or lost to a Docker
 reconciled (status flipped, `container_id` nulled, project update broadcast) and the run
 fails fast with a clear message rather than tripping over a raw 404 mid-exec. It captures
 interleaved stdout/stderr (recorded in full, `[stderr]`-prefixed, with a 10 MB
-runaway-output backstop) into **append-only log chunks**: the debounced flusher
+runaway-output backstop) into **append-only log chunks**. The exec transport itself
+**retains nothing**: `execStart` with an `onChunk` callback forwards each frame and returns
+an empty `ExecResult`, because a run's raw stream-json output (every tool result in full)
+is strictly larger than the capped rendered log and was, held alongside it, the largest
+single consumer of server memory. Anything derived from the raw stream is computed
+incrementally in the callback. Framing for both the exec stream and the container-log
+follower is decoded by the shared `DockerFrameDecoder` (`services/docker-frames.ts`),
+which reads at an offset rather than reallocating the pending buffer per socket read, and
+decodes per stream with `TextDecoder({stream:true})` so a codepoint straddling a frame
+boundary is not corrupted. Persistence is via the debounced flusher
 (`services/log-stream-broker.ts`) persists only the text appended since the last successful
 flush as an INSERT into `heartbeat_run_log_chunks` (`db/run-log-chunks.ts`), serialized
 per stream so overlapping flushes can never duplicate a delta, with the running token/cost
@@ -1289,8 +1298,11 @@ if the CLI force-terminated still-running background work (Claude Code's headles
 `--print` mode prints "Background tasks still running after Ns; terminating" and kills a
 `run_in_background` job or a `Workflow` fan-out that never synthesized), the run
 **abandoned unfinished work** and is marked `failed` regardless of earlier output
-(`detectTerminatedBackgroundWork` scans the CLI's own diagnostic output — stderr and
-non-JSON stdout lines — so an agent that merely echoes the phrase can't trip it). This is
+(`services/background-termination.ts` scans the CLI's own diagnostic output — stderr and
+non-JSON stdout lines — so an agent that merely echoes the phrase can't trip it). The scan
+is **incremental**, fed from the same per-chunk callback the log pipeline uses: the exec
+transport retains no output at all (see below), so the verdict is accumulated as the run
+streams rather than computed from a kept transcript. This is
 a backstop to `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0` (which lifts the wait ceiling) for
 CLI versions that ignore the override. The completeness **stop-hook** (§ 6) is a separate
 gate that blocks the agent from ending its turn with unfinished work.

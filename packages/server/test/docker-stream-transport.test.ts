@@ -23,7 +23,7 @@ afterAll(async () => {
 });
 
 describe('execStart over node:http', () => {
-	it('streams multiplexed chunks through onChunk and returns the demuxed whole', async () => {
+	it('streams multiplexed chunks through onChunk and retains no transcript', async () => {
 		sim.onExecStart('exec-stream', {
 			frames: [
 				{ stream: 'stdout', text: 'hello ' },
@@ -44,8 +44,9 @@ describe('execStart over node:http', () => {
 			{ stream: 'stderr', text: 'warn!' },
 			{ stream: 'stdout', text: 'world' },
 		]);
-		expect(result.stdout).toBe('hello world');
-		expect(result.stderr).toBe('warn!');
+		// A streamed exec keeps nothing: an agent run's raw stream-json transcript
+		// reaches hundreds of MB, so callers derive what they need from the chunks.
+		expect(result).toEqual({ stdout: '', stderr: '' });
 	});
 
 	it('buffers and demuxes without onChunk', async () => {

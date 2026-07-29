@@ -17,7 +17,6 @@ import {
 	acquireCredentialLock,
 	buildProviderEnv,
 	buildSubscriptionMount,
-	detectTerminatedBackgroundWork,
 	getHostPromptPath,
 	getHostSubscriptionRoot,
 	type RunnerDeps,
@@ -124,6 +123,11 @@ afterAll(async () => {
 // by flipping the run's produced_output flag during exec — the same thing the
 // MCP tool layer does mid-run — so exit-0 mocks read as genuine successes.
 // `producesOutput: false` simulates a no-op run (e.g. a plan-only termination).
+interface ExecChunk {
+	stream: 'stdout' | 'stderr';
+	text: string;
+}
+
 function createMockDocker(overrides: Record<string, any> = {}): DockerClient {
 	const {
 		execStart: execStartOverride,
@@ -164,7 +168,22 @@ function createMockDocker(overrides: Record<string, any> = {}): DockerClient {
 					[taskId, noWorkReason],
 				);
 			}
-			return (innerExecStart as (...a: unknown[]) => unknown)(...args);
+			const produced = (await (innerExecStart as (...a: unknown[]) => unknown)(...args)) as {
+				stdout?: string;
+				stderr?: string;
+			};
+			// Deliver through onChunk exactly as the real client does. A streamed
+			// exec retains nothing, so everything the runner derives from output
+			// (the parser, the background-termination backstop) must come off the
+			// chunks; a mock that only returned strings would test a contract
+			// production does not offer. Tests still declare output as a return
+			// value for brevity, and overrides that drive onChunk themselves
+			// return empty strings so nothing is delivered twice.
+			const opts = args[1] as { onChunk?: (c: ExecChunk) => void | Promise<void> } | undefined;
+			if (!opts?.onChunk) return produced;
+			if (produced?.stdout) await opts.onChunk({ stream: 'stdout', text: produced.stdout });
+			if (produced?.stderr) await opts.onChunk({ stream: 'stderr', text: produced.stderr });
+			return { stdout: '', stderr: '' };
 		},
 	} as unknown as DockerClient;
 	// Transparently answer the run-user probe (`id -u node`) + ownership chowns so the
@@ -387,7 +406,6 @@ describe('runAgent', () => {
 
 		expect(result.success).toBe(true);
 		expect(result.exitCode).toBe(0);
-		expect(result.stdout).toBe('task completed');
 		expect(result.heartbeatRunId).toBeDefined();
 
 		// Verify heartbeat run was recorded
@@ -2758,41 +2776,5 @@ describe('shellQuoteArg', () => {
 		expect(shellQuoteArg('$FOO')).toBe(`'$FOO'`);
 		expect(shellQuoteArg('a"b')).toBe(`'a"b'`);
 		expect(shellQuoteArg('a|b')).toBe(`'a|b'`);
-	});
-});
-
-describe('detectTerminatedBackgroundWork', () => {
-	it('matches the CLI diagnostic on stderr', () => {
-		expect(
-			detectTerminatedBackgroundWork(
-				'done',
-				'Background tasks still running after 600s; terminating. Set CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 to wait indefinitely.',
-			),
-		).toBe(true);
-	});
-
-	it('matches a bare non-JSON diagnostic line on stdout', () => {
-		expect(
-			detectTerminatedBackgroundWork(
-				'{"type":"result","subtype":"success"}\nBackground tasks still running after 30s; terminating.\n',
-				'',
-			),
-		).toBe(true);
-	});
-
-	it('ignores the phrase when it rides inside a stream-json stdout event', () => {
-		const line = JSON.stringify({
-			type: 'assistant',
-			message: {
-				content: [
-					{ type: 'text', text: 'Background tasks still running after 600s; terminating.' },
-				],
-			},
-		});
-		expect(detectTerminatedBackgroundWork(`${line}\n`, '')).toBe(false);
-	});
-
-	it('returns false for ordinary output', () => {
-		expect(detectTerminatedBackgroundWork('all done\n', '')).toBe(false);
 	});
 });

@@ -1969,7 +1969,6 @@ export class JobManager {
 							{
 								success: false,
 								exitCode: -1,
-								stdout: '',
 								stderr: err instanceof Error ? err.message : String(err),
 								durationMs: 0,
 								heartbeatRunId: registeredRunId,
@@ -2294,7 +2293,6 @@ export class JobManager {
 					await this.onProgressUpdateComplete(memberId, teamId, wakeupId, {
 						success: false,
 						exitCode: -1,
-						stdout: '',
 						stderr: err instanceof Error ? err.message : String(err),
 						durationMs: 0,
 						heartbeatRunId: registeredRunId,
