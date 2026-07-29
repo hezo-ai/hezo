@@ -16,6 +16,7 @@ import type { MasterKeyManager } from '../crypto/master-key';
 import type { Db } from '../db/database';
 import { trackBackground } from '../lib/background';
 import { broadcastProjectUpdate, broadcastRowChange } from '../lib/broadcast';
+import { forEachConcurrent } from '../lib/concurrency';
 import { ref } from '../lib/log-ref';
 import { stripNulBytes, terminalStatusParams } from '../lib/sql';
 import { logger } from '../logger';
@@ -76,6 +77,12 @@ export interface ContainerDeps {
 	egressCAPath?: string | null;
 	/** Test seam: override host egress-MTU detection. Defaults to the real probe. */
 	detectEgressMtu?: () => Promise<number | null>;
+	/**
+	 * How often a running container's working-set memory is sampled, in ms.
+	 * Defaults to {@link MEMORY_CHECK_INTERVAL_MS}. Tests set 0 to check on
+	 * every pass.
+	 */
+	memoryCheckIntervalMs?: number;
 }
 
 /** In-container path the egress CA is bind-mounted to. */
@@ -229,6 +236,7 @@ export function consumeFinalMemoryLine(projectId: string): string | null {
 	const entry = memoryUsageState.get(projectId);
 	if (!entry) return null;
 	memoryUsageState.delete(projectId);
+	lastMemoryCheckAt.delete(projectId);
 	return `→ Final container memory: ${formatMemoryLine(entry)}`;
 }
 
@@ -639,6 +647,7 @@ export async function teardownContainer(
 
 	removeProjectWorkspace(dataDir, teamId, projectId);
 	memoryUsageState.delete(projectId);
+	lastMemoryCheckAt.delete(projectId);
 
 	if (teardownContainerId) {
 		log.info(
@@ -835,10 +844,17 @@ export async function syncContainerStatus(
 			[status, annotatedLogs, errorMessage, projectId],
 		);
 	} else {
-		await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
-			status,
-			projectId,
-		]);
+		// Only write on an actual transition. This runs for every project with a
+		// container on every sync tick, and `projects` carries `container_last_logs`
+		// — so an unconditional rewrite of an unchanged row produced a dead tuple
+		// per project per tick, with no autovacuum on the embedded backend to
+		// reclaim them. Same write-amplification shape the run-log chunk table
+		// fixed, in a different table.
+		await db.query(
+			`UPDATE projects SET container_status = $1::container_status
+			 WHERE id = $2 AND container_status IS DISTINCT FROM $1::container_status`,
+			[status, projectId],
+		);
 	}
 
 	return status;
@@ -925,6 +941,7 @@ async function enforceContainerMemoryLimit(
 	);
 
 	memoryUsageState.delete(projectId);
+	lastMemoryCheckAt.delete(projectId);
 
 	await failProjectRuns(deps, projectId, projectSlug, teamId, 'container_error').catch((e) =>
 		log.error('Failed to fail project runs after memory-limit stop:', e),
@@ -950,7 +967,15 @@ export async function syncAllContainerStatuses(
 	);
 
 	const transitions: ContainerTransition[] = [];
-	for (const project of projects.rows) {
+	const now = Date.now();
+
+	// Liveness runs every tick; the memory check does not. `containerStats` is
+	// the expensive call, and a container's working set does not meaningfully
+	// change inside a second — polling it at 1Hz per project put a serial fan-out
+	// of Docker round trips on the same socket the live exec streams use, which
+	// is what made a tick overrun its period once a handful of projects existed.
+	const projectsToSync = projects.rows;
+	await forEachConcurrent(projectsToSync, CONTAINER_SYNC_CONCURRENCY, async (project) => {
 		const oldStatus = project.container_status;
 		let newStatus = await syncContainerStatus(
 			db,
@@ -961,7 +986,10 @@ export async function syncAllContainerStatuses(
 			oldStatus,
 		);
 
-		if (newStatus === ContainerStatus.Running) {
+		if (
+			newStatus === ContainerStatus.Running &&
+			dueForMemoryCheck(project.id, now, deps.memoryCheckIntervalMs)
+		) {
 			const overrideStatus = await enforceContainerMemoryLimit(
 				deps,
 				project.id,
@@ -985,9 +1013,25 @@ export async function syncAllContainerStatuses(
 			});
 			await broadcastProjectUpdate(db, wsManager, project.team_id, project.id);
 		}
-	}
+	});
 
 	return transitions;
+}
+
+/** Projects checked in parallel per sync pass — enough to keep the pass short without burying the Docker socket. */
+const CONTAINER_SYNC_CONCURRENCY = 4;
+
+/** How often a running container's working-set memory is sampled. */
+const MEMORY_CHECK_INTERVAL_MS = 15_000;
+
+const lastMemoryCheckAt = new Map<string, number>();
+
+function dueForMemoryCheck(projectId: string, now: number, intervalMs?: number): boolean {
+	const interval = intervalMs ?? MEMORY_CHECK_INTERVAL_MS;
+	const last = lastMemoryCheckAt.get(projectId) ?? 0;
+	if (now - last < interval) return false;
+	lastMemoryCheckAt.set(projectId, now);
+	return true;
 }
 
 /**

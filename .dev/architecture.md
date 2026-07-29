@@ -916,7 +916,17 @@ countdown matches the enforced cadence. Alongside it the API derives `has_action
 false the next heartbeat would no-op, so the UI shows a dash rather than a countdown.
 
 **Dispatch.** `JobManager` runs a ~1 Hz cron that also does container sync, container
-health, and orphan recovery. Per project-concurrency-limited, it: loads queued wakeups →
+health, and orphan recovery. Container sync separates its two costs: liveness
+(`inspectContainer`) runs every pass, while the working-set **memory sample**
+(`containerStats`, the expensive call, and issued with `one-shot=true` so the daemon
+answers from its current sample instead of waiting for the next collector tick) runs on a
+~15s per-project interval — a container's memory does not move meaningfully inside a
+second, and the serial per-project fan-out shared a socket with the live exec streams.
+Projects are swept with bounded concurrency, and the status write is conditional
+(`IS DISTINCT FROM`), so an unchanged project costs no row rewrite. `guarded()` still
+drops a tick whose predecessor is in flight, but now **says so** (rate-limited): a
+silently-skipped tick is stale state with no signal. Per project-concurrency-limited, it:
+loads queued wakeups →
 runs the **pre-run budget gate** (`activateAgent`; over-budget skips the run with no
 `heartbeat_runs` row and pauses the agent) → claims the wakeup → invokes the runner →
 absorbs sibling queued wakeups for the same task → marks the run terminal → reconciles

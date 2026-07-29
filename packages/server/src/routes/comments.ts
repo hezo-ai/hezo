@@ -114,7 +114,12 @@ async function getCommentsFull(
      LEFT JOIN user_icons ui ON ui.user_id = ic.author_user_id
      LEFT JOIN agent_icons ai ON ai.member_id = ic.author_member_id
      WHERE ic.task_id = $1
-     ORDER BY ic.created_at ASC`,
+     -- id breaks ties deterministically: comments created in the same instant
+     -- (a seeded thread, a burst of system comments) otherwise come back in
+     -- whatever order the plan happens to produce, so the thread can reorder
+     -- between two identical requests and a deep link lands on the wrong row.
+     -- The (task_id, created_at) index still serves the sort.
+     ORDER BY ic.created_at ASC, ic.id ASC`,
 		[taskId],
 	);
 
@@ -178,7 +183,12 @@ async function getCommentSkeletons(
        GROUP BY cat.comment_id
      ) att ON att.comment_id = ic.id
      WHERE ic.task_id = $1
-     ORDER BY ic.created_at ASC`,
+     -- id breaks ties deterministically: comments created in the same instant
+     -- (a seeded thread, a burst of system comments) otherwise come back in
+     -- whatever order the plan happens to produce, so the thread can reorder
+     -- between two identical requests and a deep link lands on the wrong row.
+     -- The (task_id, created_at) index still serves the sort.
+     ORDER BY ic.created_at ASC, ic.id ASC`,
 		[taskId],
 	);
 

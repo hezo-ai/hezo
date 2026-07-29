@@ -448,9 +448,14 @@ export class DockerClient {
 	 * which avoids flagging containers that are merely reading/writing files.
 	 */
 	async containerStats(containerId: string): Promise<ContainerMemoryStats | null> {
+		// `one-shot=true` returns the daemon's current sample immediately. Without
+		// it, `stream=false` still waits for the collector's next tick — roughly a
+		// second per call, serialized across every project on every sync pass, on
+		// the same socket the live exec streams use. One-shot omits the previous-CPU
+		// snapshot, which only matters for CPU percentages; this reads memory.
 		const res = await this.request(
 			'GET',
-			`/containers/${containerId}/stats?stream=false`,
+			`/containers/${containerId}/stats?stream=false&one-shot=true`,
 			undefined,
 			AbortSignal.timeout(DOCKER_REQUEST_TIMEOUT_MS),
 		);

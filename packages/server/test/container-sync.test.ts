@@ -27,7 +27,11 @@ import {
 } from './helpers/app';
 
 function deps(docker: DockerClient, wsManager?: WebSocketManager): ContainerDeps {
-	return { db, docker, dataDir: '/tmp/hezo-test-unused', wsManager };
+	// Production samples container memory every 15s rather than on every sync
+	// pass (the stats call is the expensive one and a working set does not move
+	// meaningfully inside a second). These tests drive the sync directly and
+	// assert on that sampling, so they opt out of the throttle.
+	return { db, docker, dataDir: '/tmp/hezo-test-unused', wsManager, memoryCheckIntervalMs: 0 };
 }
 
 let db: Db;
