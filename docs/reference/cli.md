@@ -102,8 +102,8 @@ hezo restore <backup> [--wipe] [--data-dir <path>] \
   [--no-assets] [--no-database] [--strict-assets]
 ```
 
-`<backup>` is a bundle directory (database + assets), a `.backup.gz` file (database
-only), or a legacy pre-upgrade `.tar.gz` snapshot (embedded only). Restore writes into
+`<backup>` is a bundle directory (database + assets) or a `.backup.gz` file (database
+only). Restore writes into
 whichever backends you point it at: the embedded database (default) or an external one
 (`--database-url`), and local asset files (default) or an S3-compatible bucket
 (`--asset-storage-url`). Setting different targets than the source is exactly how you

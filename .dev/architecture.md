@@ -2417,8 +2417,7 @@ ever holds the database in memory:
   There is deliberately no separate parse phase and no row *total* in the progress output —
   knowing the total up front is only possible by reading everything first, which is the bug.
   `peekLogicalBackupHeaderFromFile` decompresses only as far as the header, which is how the
-  restore CLI distinguishes a logical backup from a legacy pgdata tarball without touching
-  the body. There is no buffer-taking form.
+  restore CLI identifies a backup, and rejects anything else, without touching the body. There is no buffer-taking form.
 
 This matters most on the **startup** path, where the pre-migration backup runs. Collecting
 the whole database into a `string[]`, joining it, and gzipping that held three uncompressed
@@ -2449,9 +2448,11 @@ and hosted storage in either direction — direction is expressed purely by whic
 (copy-only). `--no-assets` writes the legacy database-only bare `.backup.gz` file (the
 artifact internal callers still use), `--no-database` an assets-only bundle, and
 `--strict-assets` fails restore on any blob with no verifying row. Restore auto-detects the
-input: a directory is a bundle, a file with a logical header is a `.backup.gz`, otherwise a
-legacy physical pgdata tarball (`db/backup.ts` `dumpDataDir`/`restoreDataDir`, embedded
-only). Restoring a large instance is minutes of work inside two loops (row inserts, blob
+input: a directory is a bundle, a file whose header parses is a `.backup.gz`, and anything
+else is refused with a message naming the expected format. The physical pgdata tarball
+(`db/backup.ts`) is **gone** — it only ever loaded into embedded PGlite, so it was never a
+backup that could restore onto both backends; converting one needs a Hezo old enough to read
+it, then a fresh `hezo backup`. Restoring a large instance is minutes of work inside two loops (row inserts, blob
 copies), so both engines emit `ProgressState` updates through an optional `onProgress`
 callback and `runRestore` renders them (`lib/progress.ts`): a phase line per step
 (read/wipe/schema/prepare/constraints) and a live counter with percentage and

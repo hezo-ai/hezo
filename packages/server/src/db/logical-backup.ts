@@ -304,9 +304,9 @@ export async function dumpLogicalBackupToFile(
 
 /**
  * Read just the header of a gzipped backup FILE, decompressing only as far as
- * the first newline. Null when the file isn't a logical backup at all (a legacy
- * physical pgdata tarball, or the wrong file entirely) - which is how the
- * restore CLI tells the two apart without decompressing a multi-GB body.
+ * the first newline. Null when the file isn't a logical backup at all - which is
+ * how the restore CLI identifies its input, and rejects anything else, without
+ * decompressing a multi-GB body.
  */
 export async function peekLogicalBackupHeaderFromFile(
 	filePath: string,

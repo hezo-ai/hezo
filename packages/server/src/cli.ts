@@ -421,8 +421,11 @@ export async function runBackup(argv: string[] = process.argv): Promise<boolean>
  *   and hosted storage. `--no-assets` / `--no-database` restore only one half.
  * - **Portable logical backup** (`.backup.gz`) — database only; restores onto
  *   EITHER backend. Requires an empty target or `--wipe`.
- * - **Legacy pgdata tarball** (pre-logical snapshots) — embedded only; wipes
- *   `pgdata` and reloads the physical snapshot.
+ *
+ * Physical pgdata tarballs (the pre-logical snapshot format) are not accepted:
+ * they only ever loaded into embedded PGlite, so they were never a backup you
+ * could restore onto both backends. Restoring one needs a Hezo old enough to
+ * have written it.
  *
  * Asset blobs are verified by sha256 against the target rows when present.
  * Returns `true` when it handled the invocation so the caller skips normal
@@ -439,7 +442,7 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 	const program = new Command()
 		.name('hezo restore')
 		.description(
-			'Restore a backup: a "hezo backup" bundle (database + assets), a logical .backup.gz, or a legacy pgdata .tar.gz',
+			'Restore a backup: a "hezo backup" bundle (database + assets), or a logical .backup.gz',
 		)
 		.argument('<backup>', 'path to a backup bundle directory or file')
 		.option('--data-dir <path>', 'Data directory (env: HEZO_DATA_DIR)', DEFAULT_DATA_DIR)
@@ -543,7 +546,7 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 		return true;
 	}
 
-	// Single-file backups: logical .backup.gz, or a legacy pgdata tarball.
+	// Single-file backup: a logical .backup.gz.
 	const { stat } = await import('node:fs/promises');
 	progress.report({
 		phase: 'read',
@@ -559,23 +562,15 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 	const header = await peekLogicalBackupHeaderFromFile(backupPath);
 
 	if (!header) {
-		// Legacy physical pgdata tarball — embedded only.
-		if (databaseUrl) {
-			progress.finish();
-			console.error(
-				'This file is a legacy pgdata snapshot, which only restores into the embedded ' +
-					'database. To move data into an external Postgres, take a portable backup with ' +
-					'`hezo backup` and restore that instead.',
-			);
-			process.exit(1);
-		}
-		const { restoreDataDir } = await import('./db/backup.js');
-		try {
-			await restoreDataDir(dataDir, backupPath, { onProgress: progress.report });
-		} finally {
-			progress.finish();
-		}
-		return true;
+		progress.finish();
+		console.error(
+			`${backupPath} is not a Hezo logical backup. Point at a ".backup.gz" written by ` +
+				'`hezo backup`, or at a backup bundle directory.\n\n' +
+				'If this is a legacy pgdata snapshot (the pre-logical .tar.gz format), restore it ' +
+				'with the Hezo version that wrote it, then take a portable backup with `hezo backup` ' +
+				'so it can be restored onto either storage backend from here on.',
+		);
+		process.exit(1);
 	}
 
 	const migrations = await loadAllMigrations();
