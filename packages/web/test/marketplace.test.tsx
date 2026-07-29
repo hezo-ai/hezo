@@ -1,7 +1,7 @@
+import { createTestProject, createTestTeam } from '@hezo/server/test/helpers/app';
 import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
-import { renderApp } from './helpers/render';
-import { seedWorkspace } from './helpers/seed';
+import { getTestContext, renderApp } from './helpers/render';
 
 test('marketplace list renders the available teams', async () => {
 	const { findByTestId, findByText } = await renderApp({ initialPath: '/marketplace' });
@@ -54,9 +54,17 @@ test('Add to a project can add the whole team or a chosen subset of roles', asyn
 	let projectSlug = '';
 	const { findByTestId, findByText, user, ctx } = await renderApp({
 		initialPath: '/marketplace/software-development',
+		// A Blank team (Captain only), not seedWorkspace's 10-agent App Team: this
+		// test just needs one project to appear in the dialog's dropdown, and this
+		// file shares a shard with the asset suites, whose PGlite is already the
+		// heaviest in the web tier.
 		seed: async () => {
-			const ws = await seedWorkspace();
-			projectSlug = ws.internalSlug;
+			const { db } = getTestContext();
+			const team = (await (await createTestTeam(db, { name: 'Demo Team' })).json()).data;
+			const project = (
+				await (await createTestProject(db, team.id, { name: 'Demo Project' })).json()
+			).data;
+			projectSlug = project.slug;
 		},
 	});
 
