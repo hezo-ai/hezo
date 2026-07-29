@@ -24,6 +24,7 @@ import {
 	assertChildrenAllClosed,
 	assertNoOutstandingActivity,
 	assertNoUnansweredAdminMentions,
+	resolveParentAssignment,
 } from '../lib/task-relationships';
 import {
 	buildSearchRelevanceOrderSql,
@@ -33,8 +34,13 @@ import {
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { cancelCoachWorkForTask, terminateRunsForTask } from '../services/run-termination';
-import { triggerStatusAutomations } from '../services/task-automation';
-import { recordAssigneeChange, recordTaskLinks, recordTitleChange } from '../services/task-events';
+import { triggerStatusAutomations, wakeTaskIfChildrenClosed } from '../services/task-automation';
+import {
+	recordAssigneeChange,
+	recordParentChange,
+	recordTaskLinks,
+	recordTitleChange,
+} from '../services/task-events';
 import {
 	type CreateTaskCaller,
 	CreateTaskError,
@@ -479,8 +485,9 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 		status: string;
 		project_id: string;
 		assignee_id: string | null;
+		parent_task_id: string | null;
 	}>(
-		'SELECT id, title, status, project_id, assignee_id FROM tasks WHERE id = $1 AND team_id = $2',
+		'SELECT id, title, status, project_id, assignee_id, parent_task_id FROM tasks WHERE id = $1 AND team_id = $2',
 		[taskId, teamId],
 	);
 	if (existing.rows.length === 0) {
@@ -498,6 +505,7 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 		rules?: string | null;
 		branch_name?: string | null;
 		runtime_type?: string | null;
+		parent_task_id?: string | null;
 	}>();
 
 	const auth = c.get('auth');
@@ -542,6 +550,38 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 		body.status = await coerceTargetStatusForBlockers(db, taskId, body.status);
 	}
 
+	// `parent_task_id` is the one field on this route where an explicit null is
+	// meaningful: null promotes the task to top level, a value nests it, and an
+	// absent key leaves the parent alone. (Contrast `assignee_id` below, which
+	// rejects null outright.) Deliberately not wrapped in a transaction: every
+	// other guard here is read-then-write too, `PostgresDb.txQueue` is
+	// process-wide so one on this path would queue behind every other request,
+	// and the residual race is bounded because every tree walk is depth-capped.
+	const oldParentTaskId = existing.rows[0].parent_task_id;
+	let newParentTaskId: { value: string | null } | null = null;
+	if (body.parent_task_id !== undefined) {
+		const assignment = await resolveParentAssignment(
+			db,
+			teamId,
+			{
+				taskId,
+				projectId: existing.rows[0].project_id,
+				currentParentTaskId: oldParentTaskId,
+				status: existing.rows[0].status,
+			},
+			body.parent_task_id,
+		);
+		if (!assignment.ok) {
+			return err(
+				c,
+				assignment.code,
+				assignment.message,
+				assignment.code === 'NOT_FOUND' ? 404 : 400,
+			);
+		}
+		if (assignment.changed) newParentTaskId = { value: assignment.parentTaskId };
+	}
+
 	const sets: string[] = [];
 	const params: unknown[] = [];
 	let idx = 1;
@@ -578,6 +618,11 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 		}
 		sets.push(`assignee_id = $${idx}`);
 		params.push(body.assignee_id);
+		idx++;
+	}
+	if (newParentTaskId) {
+		sets.push(`parent_task_id = $${idx}`);
+		params.push(newParentTaskId.value);
 		idx++;
 	}
 	if (body.labels !== undefined) {
@@ -683,6 +728,48 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 			});
 		} catch (e) {
 			log.error('Failed to record title change:', e);
+		}
+	}
+
+	if (newParentTaskId) {
+		try {
+			const ends = await recordParentChange(
+				db,
+				teamId,
+				taskId,
+				oldParentTaskId,
+				newParentTaskId.value,
+				actorMemberId,
+				actorApiKeyId,
+				c.get('wsManager'),
+			);
+			events?.emit({
+				type: 'task.updated',
+				teamId,
+				projectId,
+				actorType,
+				actorMemberId,
+				actorApiKeyId,
+				taskId,
+				field: 'parent',
+				from: oldParentTaskId,
+				to: newParentTaskId.value,
+				fromLabel: ends?.fromIdentifier ?? null,
+				toLabel: ends?.toIdentifier ?? null,
+			});
+		} catch (e) {
+			log.error('Failed to record parent change:', e);
+		}
+		// Moving a task out clears the old parent's child-closure gate exactly as
+		// closing it would, so the old parent's assignee gets the same wakeup. The
+		// new parent gets nothing: gaining a child can only add an open child, never
+		// clear a gate.
+		if (oldParentTaskId) {
+			trackBackground(
+				wakeTaskIfChildrenClosed(db, teamId, oldParentTaskId).catch((e) =>
+					log.error('Failed to wake former parent after re-parent:', e),
+				),
+			);
 		}
 	}
 

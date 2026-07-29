@@ -2,6 +2,7 @@ import { TaskStatus, WakeupStatus } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
+import { waitForBackground } from '../src/lib/background';
 import type { Env } from '../src/lib/types';
 import { triggerStatusAutomations } from '../src/services/task-automation';
 import { safeClose } from './helpers';
@@ -337,6 +338,76 @@ describe('parent cascade — sub-task closure wakes parent agent', () => {
 		);
 
 		const wakeups = await listWakeups(architectId, top.id);
+		expect(wakeups.find((w) => w.payload.reason === 'children_closed')).toBeUndefined();
+	});
+});
+
+// Moving a sub-task out clears the parent's child-closure gate exactly as
+// closing it would, so it owes the parent's assignee the same wakeup.
+describe('parent cascade — re-parenting a sub-task away wakes the former parent', () => {
+	// The wakeup is fire-and-forget, so every assertion below (including the
+	// negative ones, which would otherwise pass vacuously) has to drain the
+	// background tracker first.
+	async function reparent(taskId: string, parentTaskId: string | null): Promise<Response> {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ parent_task_id: parentTaskId }),
+		});
+		await waitForBackground();
+		return res;
+	}
+
+	it('wakes the former parent when its only open sub-task is moved elsewhere', async () => {
+		const formerParent = await createTask('reparent former', architectId);
+		const newParent = await createTask('reparent destination', engineerId);
+		const child = await createTask('reparent mover', uiDesignerId, formerParent.id);
+		await clearWakeups(architectId);
+
+		expect((await reparent(child.id, newParent.id)).status).toBe(200);
+
+		const wakeups = await listWakeups(architectId, formerParent.id);
+		const childrenClosed = wakeups.find((w) => w.payload.reason === 'children_closed');
+		expect(childrenClosed).toBeDefined();
+		expect(childrenClosed?.source).toBe('assignment');
+		expect(childrenClosed?.status).toBe(WakeupStatus.Queued);
+		expect(childrenClosed?.idempotency_key).toBe(`children-closed:${formerParent.id}`);
+	});
+
+	it('wakes the former parent when its only open sub-task is promoted to top level', async () => {
+		const formerParent = await createTask('promote former', architectId);
+		const child = await createTask('promote mover', uiDesignerId, formerParent.id);
+		await clearWakeups(architectId);
+
+		expect((await reparent(child.id, null)).status).toBe(200);
+
+		const wakeups = await listWakeups(architectId, formerParent.id);
+		expect(wakeups.find((w) => w.payload.reason === 'children_closed')).toBeDefined();
+	});
+
+	it('does not wake the former parent while a sibling sub-task is still open', async () => {
+		const formerParent = await createTask('reparent sibling former', architectId);
+		const newParent = await createTask('reparent sibling destination', engineerId);
+		const mover = await createTask('reparent sibling mover', uiDesignerId, formerParent.id);
+		await createTask('reparent sibling stays', engineerId, formerParent.id);
+		await clearWakeups(architectId);
+
+		expect((await reparent(mover.id, newParent.id)).status).toBe(200);
+
+		const wakeups = await listWakeups(architectId, formerParent.id);
+		expect(wakeups.find((w) => w.payload.reason === 'children_closed')).toBeUndefined();
+	});
+
+	// Gaining a child can only add an open child, never clear a gate.
+	it('does not wake the new parent', async () => {
+		const formerParent = await createTask('no-wake former', uiDesignerId);
+		const newParent = await createTask('no-wake destination', architectId);
+		const child = await createTask('no-wake mover', engineerId, formerParent.id);
+		await clearWakeups(architectId);
+
+		expect((await reparent(child.id, newParent.id)).status).toBe(200);
+
+		const wakeups = await listWakeups(architectId, newParent.id);
 		expect(wakeups.find((w) => w.payload.reason === 'children_closed')).toBeUndefined();
 	});
 });

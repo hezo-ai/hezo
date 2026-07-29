@@ -320,6 +320,63 @@ describe('assignee change system events', () => {
 	});
 });
 
+// The three text variants and the no-op case are covered end to end in
+// task-reparenting.test.ts; what matters here is actor attribution and the
+// payload the web renderer reads to build its links.
+describe('parent change system events', () => {
+	it('names the actor and carries both ends with their project slugs', async () => {
+		const first = await createTask('Parent change from');
+		const second = await createTask('Parent change to');
+		const mover = await createTask('Parent change mover');
+
+		await app.request(`/api/projects/${projectSlug}/tasks/${mover.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ parent_task_id: first.id }),
+		});
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${mover.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ parent_task_id: second.id }),
+		});
+		expect(res.status).toBe(200);
+
+		const events = await systemComments(mover.id, 'parent_change');
+		expect(events.length).toBe(2);
+		const ev = events[events.length - 1];
+		expect(ev.content.from_id).toBe(first.id);
+		expect(ev.content.to_id).toBe(second.id);
+		expect(ev.content.from_identifier).toBe(first.identifier);
+		expect(ev.content.to_identifier).toBe(second.identifier);
+		expect(ev.content.from_project_slug).toBe(projectSlug);
+		expect(ev.content.to_project_slug).toBe(projectSlug);
+		expect(ev.content.text).toContain('Test Admin');
+	});
+
+	it('leaves the to end null on a promotion', async () => {
+		const parent = await createTask('Promotion source');
+		const child = await createTask('Promotion subject');
+
+		await app.request(`/api/projects/${projectSlug}/tasks/${child.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ parent_task_id: parent.id }),
+		});
+		await app.request(`/api/projects/${projectSlug}/tasks/${child.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ parent_task_id: null }),
+		});
+
+		const events = await systemComments(child.id, 'parent_change');
+		const ev = events[events.length - 1];
+		expect(ev.content.to_id).toBeNull();
+		expect(ev.content.to_identifier).toBeNull();
+		expect(ev.content.to_project_slug).toBeNull();
+		expect(ev.content.from_identifier).toBe(parent.identifier);
+	});
+});
+
 describe('task link system events', () => {
 	it('creates a link comment on the target the first time another task mentions it', async () => {
 		const target = await createTask('Target ticket');

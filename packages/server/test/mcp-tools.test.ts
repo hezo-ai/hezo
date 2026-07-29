@@ -1756,6 +1756,147 @@ describe('MCP tool: create_task sub-task depth', () => {
 	});
 });
 
+describe('MCP tool: update_task re-parenting', () => {
+	async function newTask(title: string, parentTaskId?: string) {
+		const task = (await callToolViaMcp('create_task', {
+			project: projectId,
+			title,
+			assignee_id: agentId,
+			...(parentTaskId ? { parent_task_id: parentTaskId } : {}),
+		})) as { id: string; identifier: string; error?: string };
+		expect(task.error).toBeUndefined();
+		return task;
+	}
+
+	// The load-bearing case: `update_task` builds its SQL generically from the
+	// arg keys, so an unresolved identifier would hit the uuid column directly.
+	it('resolves a parent passed by identifier', async () => {
+		const parent = await newTask('MCP reparent parent');
+		const mover = await newTask('MCP reparent mover');
+
+		const updated = (await callToolViaMcp('update_task', {
+			project: projectId,
+			task_id: mover.identifier,
+			parent_task_id: parent.identifier,
+		})) as { parent_task_id: string | null; error?: string };
+		expect(updated.error).toBeUndefined();
+		expect(updated.parent_task_id).toBe(parent.id);
+	});
+
+	it('promotes to top level with null', async () => {
+		const parent = await newTask('MCP promote parent');
+		const child = await newTask('MCP promote child', parent.id);
+
+		const updated = (await callToolViaMcp('update_task', {
+			project: projectId,
+			task_id: child.identifier,
+			parent_task_id: null,
+		})) as { parent_task_id: string | null; error?: string };
+		expect(updated.error).toBeUndefined();
+		expect(updated.parent_task_id).toBeNull();
+	});
+
+	it('promotes to top level with an empty string', async () => {
+		const parent = await newTask('MCP promote parent 2');
+		const child = await newTask('MCP promote child 2', parent.id);
+
+		const updated = (await callToolViaMcp('update_task', {
+			project: projectId,
+			task_id: child.identifier,
+			parent_task_id: '',
+		})) as { parent_task_id: string | null; error?: string };
+		expect(updated.error).toBeUndefined();
+		expect(updated.parent_task_id).toBeNull();
+	});
+
+	it('reports no change when the parent is already that task', async () => {
+		const parent = await newTask('MCP noop parent');
+		const child = await newTask('MCP noop child', parent.id);
+
+		const updated = (await callToolViaMcp('update_task', {
+			project: projectId,
+			task_id: child.identifier,
+			parent_task_id: parent.identifier,
+		})) as { unchanged?: boolean };
+		expect(updated.unchanged).toBe(true);
+	});
+
+	it('rejects an unknown parent', async () => {
+		const mover = await newTask('MCP unknown parent mover');
+		const result = (await callToolViaMcp('update_task', {
+			project: projectId,
+			task_id: mover.identifier,
+			parent_task_id: 'ZZ-999999',
+		})) as { error?: string };
+		expect(result.error).toMatch(/parent task not found/i);
+	});
+
+	it('rejects nesting a task under its own sub-task', async () => {
+		const top = await newTask('MCP cycle top');
+		const child = await newTask('MCP cycle child', top.id);
+
+		const result = (await callToolViaMcp('update_task', {
+			project: projectId,
+			task_id: top.identifier,
+			parent_task_id: child.identifier,
+		})) as { error?: string };
+		expect(result.error).toMatch(/one of its own sub-tasks/);
+	});
+
+	it('rejects a move that would push the sub-tree past the depth cap', async () => {
+		const mover = await newTask('MCP depth mover');
+		await newTask('MCP depth mover child', mover.id);
+		const root = await newTask('MCP depth root');
+		const mid = await newTask('MCP depth mid', root.id);
+
+		const result = (await callToolViaMcp('update_task', {
+			project: projectId,
+			task_id: mover.identifier,
+			parent_task_id: mid.identifier,
+		})) as { error?: string };
+		expect(result.error).toMatch(/2 levels deep/);
+	});
+
+	it('rejects an open task under a completed parent', async () => {
+		const parent = await newTask('MCP closed parent');
+		const mover = await newTask('MCP open mover');
+		await callToolViaMcp('update_task', {
+			project: projectId,
+			task_id: parent.identifier,
+			status: 'done',
+		});
+
+		const result = (await callToolViaMcp('update_task', {
+			project: projectId,
+			task_id: mover.identifier,
+			parent_task_id: parent.identifier,
+		})) as { error?: string };
+		expect(result.error).toMatch(/already done/);
+	});
+
+	it('records the move on the task thread', async () => {
+		const parent = await newTask('MCP recorded parent');
+		const mover = await newTask('MCP recorded mover');
+
+		await callToolViaMcp('update_task', {
+			project: projectId,
+			task_id: mover.identifier,
+			parent_task_id: parent.identifier,
+		});
+
+		const comments = await db.query<{ content: Record<string, unknown> }>(
+			`SELECT content FROM task_comments
+			  WHERE task_id = $1 AND content_type = 'system' AND content->>'kind' = 'parent_change'`,
+			[mover.id],
+		);
+		expect(comments.rows).toHaveLength(1);
+		expect(comments.rows[0].content).toMatchObject({
+			to_id: parent.id,
+			to_identifier: parent.identifier,
+		});
+	});
+});
+
 describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard', () => {
 	it('list_tasks never returns the embedding column', async () => {
 		const rows = (await callToolViaMcp('list_tasks', {

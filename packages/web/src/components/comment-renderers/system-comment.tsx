@@ -3,6 +3,7 @@ import { Link } from '@tanstack/react-router';
 import { repoWebUrl } from '../../lib/github';
 import type {
 	SystemContent,
+	SystemParentChangeContent,
 	SystemRepoDesignatedContent,
 	SystemRunFailedContent,
 	SystemStatusChangeContent,
@@ -28,6 +29,9 @@ function isRunFailed(c: SystemContent): c is SystemRunFailedContent {
 }
 function isRepoDesignated(c: SystemContent): c is SystemRepoDesignatedContent {
 	return c.kind === 'repo_designated';
+}
+function isParentChange(c: SystemContent): c is SystemParentChangeContent {
+	return c.kind === 'parent_change';
 }
 
 export function SystemComment({ comment, projectId }: Props) {
@@ -63,6 +67,10 @@ export function SystemComment({ comment, projectId }: Props) {
 
 	if (content && isRepoDesignated(content)) {
 		return <RepoDesignatedBody content={content} timestamp={timestamp} />;
+	}
+
+	if (content && isParentChange(content)) {
+		return <ParentChangeBody comment={comment} content={content} timestamp={timestamp} />;
 	}
 
 	const text = content
@@ -130,6 +138,63 @@ function StatusChangeBody({
 				{actorName} changed status from <em className="italic">{formatTaskStatus(from)}</em> to{' '}
 				<em className="italic">{formatTaskStatus(to)}</em>
 			</span>
+			<ActorBadge actorType={comment.author_type} name={actorName} />
+			{timestamp}
+		</div>
+	);
+}
+
+function ParentChangeBody({
+	comment,
+	content,
+	timestamp,
+}: {
+	comment: CommentDataOf<'system'>;
+	content: SystemParentChangeContent;
+	timestamp: React.ReactNode;
+}) {
+	const actorName = comment.author_name ?? 'Admin';
+
+	// The recorder carries each end's project slug so the identifiers can link
+	// without a second fetch. An end missing its slug still renders as plain text.
+	const end = (identifier?: string | null, projectSlug?: string | null, testId?: string) => {
+		if (!identifier) return null;
+		if (!projectSlug) return <span className="text-xs text-text-2">{identifier}</span>;
+		return (
+			<Link
+				to="/projects/$projectId/tasks/$taskId"
+				params={{ projectId: projectSlug, taskId: identifier.toLowerCase() }}
+				className="text-xs text-info-soft-fg hover:underline"
+				data-testid={testId}
+			>
+				{identifier}
+			</Link>
+		);
+	};
+
+	const from = end(content.from_identifier, content.from_project_slug, 'parent-change-from');
+	const to = end(content.to_identifier, content.to_project_slug, 'parent-change-to');
+
+	const body =
+		from && to ? (
+			<>
+				{actorName} moved this task from {from} to {to}
+			</>
+		) : to ? (
+			<>
+				{actorName} nested this task under {to}
+			</>
+		) : from ? (
+			<>
+				{actorName} promoted this task to top level (was under {from})
+			</>
+		) : (
+			<>{actorName} promoted this task to top level</>
+		);
+
+	return (
+		<div className="flex items-baseline gap-2 leading-[26px]" data-testid="parent-change-comment">
+			<span className="text-xs text-text-2">{body}</span>
 			<ActorBadge actorType={comment.author_type} name={actorName} />
 			{timestamp}
 		</div>

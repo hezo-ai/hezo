@@ -120,7 +120,21 @@ async function wakeParentIfChildrenClosed(db: Db, teamId: string, taskId: string
 	);
 	const parentTaskId = parentRow.rows[0]?.parent_task_id;
 	if (!parentTaskId) return;
+	await wakeTaskIfChildrenClosed(db, teamId, parentTaskId);
+}
 
+/**
+ * The parent half of the gate above, addressed directly.
+ *
+ * Re-parenting needs this: moving a task away clears the old parent's gate just
+ * as closing it would, but by then the row's `parent_task_id` already names the
+ * *new* parent, so the lookup above would wake the wrong task.
+ */
+export async function wakeTaskIfChildrenClosed(
+	db: Db,
+	teamId: string,
+	parentTaskId: string,
+): Promise<void> {
 	const childrenCheck = await assertChildrenAllClosed(db, teamId, parentTaskId);
 	if (!childrenCheck.ok) return;
 

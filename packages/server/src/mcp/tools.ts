@@ -96,6 +96,7 @@ import {
 	assertChildrenAllClosed,
 	assertNoOutstandingActivity,
 	assertNoUnansweredAdminMentions,
+	resolveParentAssignment,
 } from '../lib/task-relationships';
 import type { AuthInfo } from '../lib/types';
 import { logger } from '../logger';
@@ -155,8 +156,8 @@ import {
 } from '../services/reactions';
 import { listReviewComments } from '../services/review-comments';
 import { recordSkillRevisionIfChanged } from '../services/skill-revisions';
-import { triggerStatusAutomations } from '../services/task-automation';
-import { recordTaskLinks } from '../services/task-events';
+import { triggerStatusAutomations, wakeTaskIfChildrenClosed } from '../services/task-automation';
+import { recordParentChange, recordTaskLinks } from '../services/task-events';
 import {
 	type CreateTaskCaller,
 	CreateTaskError,
@@ -1553,7 +1554,7 @@ export function registerTools(
 	tool(
 		server,
 		'update_task',
-		'Update an task. Agents can use this to change status, update progress, set rules, and record branch names. To finish a ticket, set status to `done` - that is the final completed state and wakes Coach to review the ticket for prompt-learning (the task stays `done`). Use `cancelled` for abandoned work. Setting `done` is rejected for agent callers while the task has an @admin question no human has answered yet - keep the task `in_progress` or move it to `review` until the admin replies. Re-opening a completed task (`done`/`cancelled`) is admin-only. As an agent caller, reassigning is limited to yourself or your direct subordinates; to hand work to a peer or manager use create_comment with @<agent-slug> instead. In description, progress_summary, and rules, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.',
+		'Update an task. Agents can use this to change status, update progress, set rules, and record branch names. To finish a ticket, set status to `done` - that is the final completed state and wakes Coach to review the ticket for prompt-learning (the task stays `done`). Use `cancelled` for abandoned work. Setting `done` is rejected for agent callers while the task has an @admin question no human has answered yet - keep the task `in_progress` or move it to `review` until the admin replies. Re-opening a completed task (`done`/`cancelled`) is admin-only. As an agent caller, reassigning is limited to yourself or your direct subordinates; to hand work to a peer or manager use create_comment with @<agent-slug> instead. Set `parent_task_id` to move this task under a different parent, or to an empty string to promote it to a top-level task; prefer that over cancelling a mis-filed sub-task and re-filing it as a new top-level task. In description, progress_summary, and rules, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.',
 		{
 			project: projectArg(),
 			task_id: z.string().describe('Task identifier or UUID'),
@@ -1584,16 +1585,24 @@ export function registerTools(
 				.describe(
 					'Override the AI runtime for this task (claude_code, codex, gemini). Pass an empty string to clear.',
 				),
+			parent_task_id: z
+				.string()
+				.nullable()
+				.optional()
+				.describe(
+					'Move this task under a different parent - a task identifier (e.g. "BE-2") or UUID. Pass an empty string or null to promote it to a top-level task. Omit to leave the parent unchanged. The parent must be in the same project, cannot be the task itself or one of its own sub-tasks, and the whole sub-tree being moved must still fit within the depth cap of 2. An open task cannot be nested under a parent that is already done or cancelled.',
+				),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveTaskScope(db, auth, args);
 			if ('error' in scope) return scope;
-			const { teamId, taskId } = scope;
+			const { teamId, taskId, projectId } = scope;
 
 			const currentRowResult = await db.query<{
 				status: string;
 				assignee_id: string | null;
-			}>('SELECT status, assignee_id FROM tasks WHERE id = $1', [taskId]);
+				parent_task_id: string | null;
+			}>('SELECT status, assignee_id, parent_task_id FROM tasks WHERE id = $1', [taskId]);
 			const currentRow = currentRowResult.rows[0];
 
 			const scopeDenied = assertRunTaskScope(auth, taskId, args.status as string | undefined);
@@ -1656,6 +1665,40 @@ export function registerTools(
 				}
 			}
 
+			// Placed after the status guards (matching the REST handler) so a combined
+			// {status, parent_task_id} call reports the status problem first.
+			//
+			// The generic SQL builder below writes whatever sits on `args`, so an
+			// identifier like "BE-2" would reach the uuid column unresolved and come
+			// back as "invalid input syntax for type uuid". Normalize in place here,
+			// mirroring the assignee resolution above. A surviving null is exactly
+			// the promote-to-top-level semantics the builder should emit; deleting
+			// the key on a no-op is what keeps an unchanged row from being rewritten.
+			const oldParentTaskId = currentRow?.parent_task_id ?? null;
+			let parentChangedTo: string | null = null;
+			let parentChanged = false;
+			if (args.parent_task_id !== undefined) {
+				const assignment = await resolveParentAssignment(
+					db,
+					teamId,
+					{
+						taskId,
+						projectId,
+						currentParentTaskId: oldParentTaskId,
+						status: currentRow?.status ?? '',
+					},
+					args.parent_task_id as string | null,
+				);
+				if (!assignment.ok) return { error: assignment.message };
+				if (assignment.changed) {
+					args.parent_task_id = assignment.parentTaskId;
+					parentChangedTo = assignment.parentTaskId;
+					parentChanged = true;
+				} else {
+					delete args.parent_task_id;
+				}
+			}
+
 			const sets: string[] = [];
 			const params: unknown[] = [];
 			let idx = 1;
@@ -1709,6 +1752,35 @@ export function registerTools(
 						wsManager,
 					).catch((e) => log.error('Failed to record task links from description:', e)),
 				);
+			}
+
+			if (parentChanged) {
+				// Awaited: a human watching the task page depends on the broadcast that
+				// lands with this comment.
+				try {
+					await recordParentChange(
+						db,
+						teamId,
+						taskId,
+						oldParentTaskId,
+						parentChangedTo,
+						actorMemberId,
+						actorApiKeyId,
+						wsManager,
+					);
+				} catch (e) {
+					log.error('Failed to record parent change:', e);
+				}
+				// Moving a task out clears the former parent's child-closure gate just
+				// as closing it would. The new parent gets nothing: gaining a child can
+				// only add an open child, never clear a gate.
+				if (oldParentTaskId) {
+					trackBackground(
+						wakeTaskIfChildrenClosed(db, teamId, oldParentTaskId).catch((e) =>
+							log.error('Failed to wake former parent after re-parent:', e),
+						),
+					);
+				}
 			}
 
 			if (args.status && currentStatus) {

@@ -183,6 +183,28 @@ for **agent callers only** — no active `@admin` mention on the task lacking a 
 replies on the task or closes it themselves; reading the mention does not count).
 `cancelled` is deliberately ungated.
 
+**Task hierarchy is mutable.** `tasks.parent_task_id` is a nullable self-FK
+(`ON DELETE SET NULL`, `idx_tasks_parent`) and can be changed after creation through the
+same two update paths (REST PATCH and MCP `update_task`) that own every other field: a
+value nests, an explicit `null` (or `''` over MCP) promotes to top level, an absent key
+leaves it alone. Both surfaces call one shared guard, `resolveParentAssignment` in
+`lib/task-relationships.ts`, which resolves the identifier-or-UUID and then rejects a
+self-parent, a parent inside the moving task's own sub-tree (the only parent-cycle guard
+in the system — `wouldCreateCycle` covers the *dependency* graph only), a parent in a
+different project, a move that would breach the depth cap, and nesting an **open** task
+under a terminal parent (which would break the invariant `assertChildrenAllClosed`
+protects, leaving live work invisible under a reviewed, closed parent).
+The depth rule is `depth(newParent) + 1 + height(movingSubtree) <= MAX_SUB_TASK_DEPTH`,
+measured in one round trip by `measureParentPlacement` — two recursive CTEs walking up from
+the proposed parent and down from the mover, each `team_id`-filtered (because `resolveTaskId`
+passes any well-formed UUID through unvalidated) and depth-capped. `assertChildDepthAllowed`
+is now a thin caller of that rule with `movingHeight` 0, which is exactly the create-path
+behaviour it had before. A successful move records a `parent_change` system comment
+(`recordParentChange`) and, when the mover was the former parent's last open sub-task, fires
+that parent's `children_closed` wakeup via `wakeTaskIfChildrenClosed` — the same gate a close
+would have cleared. The terminal-parent rule is deliberately **not** applied on the create
+path, where filing a follow-up sub-task under a closed parent remains legal.
+
 **Goals.** `goals` are per-project objectives the Captain tracks (`project_id NOT NULL`;
 the `is_internal` HQ project has none, enforced in the service). Each carries a SMART
 `title`/`description`, a `target_date`, a `check_frequency` enum (`daily`/`weekly`/`monthly`,

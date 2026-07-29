@@ -173,6 +173,7 @@ function TaskDetailPage() {
 						<TaskSidebar
 							task={task}
 							projectId={projectId}
+							taskId={taskId}
 							agents={agents}
 							lock={lock}
 							comments={comments}

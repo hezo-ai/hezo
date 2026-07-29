@@ -16,7 +16,7 @@ import type { Agent } from '../../hooks/use-agents';
 import type { CommentSkeleton } from '../../hooks/use-comments';
 import type { ExecutionLockState } from '../../hooks/use-execution-locks';
 import { useQueuedWakeups } from '../../hooks/use-queued-wakeups';
-import type { Task, useUpdateTask } from '../../hooks/use-tasks';
+import { type Task, useTaskAncestors, type useUpdateTask } from '../../hooks/use-tasks';
 import { TASK_RUN_STATUS_META } from '../../lib/status-meta';
 import { AgentLink } from '../agent-link';
 import { AgentStatusLabel } from '../agent-status-label';
@@ -26,6 +26,7 @@ import { ConfirmDialog } from '../ui/confirm-dialog';
 import { InfoTooltip } from '../ui/info-tooltip';
 import { RelativeTime } from '../ui/relative-time';
 import { AgentQueueSection } from './agent-queue-section';
+import { ChangeParentDialog } from './change-parent-dialog';
 
 const EFFORT_LEVELS: { value: AgentEffort; label: string }[] = [
 	{ value: AgentEffort.Minimal, label: 'Minimal' },
@@ -38,6 +39,8 @@ const EFFORT_LEVELS: { value: AgentEffort; label: string }[] = [
 interface TaskSidebarProps {
 	task: Task;
 	projectId: string;
+	/** Route-param task id (the lowercased identifier), for query keys. */
+	taskId: string;
 	agents: Agent[] | undefined;
 	lock: ExecutionLockState | undefined;
 	comments: CommentSkeleton[] | undefined;
@@ -50,6 +53,7 @@ interface TaskSidebarProps {
 export function TaskSidebar({
 	task,
 	projectId,
+	taskId,
 	agents,
 	lock,
 	comments,
@@ -61,6 +65,7 @@ export function TaskSidebar({
 	const [assigneeOpen, setAssigneeOpen] = useState(false);
 	const [closeOpen, setCloseOpen] = useState(false);
 	const [reopenOpen, setReopenOpen] = useState(false);
+	const [changeParentOpen, setChangeParentOpen] = useState(false);
 	const assigneeRef = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
@@ -75,6 +80,15 @@ export function TaskSidebar({
 	}, [assigneeOpen]);
 
 	const { data: queued } = useQueuedWakeups(projectId, task.id);
+
+	// The task row carries `parent_task_id` as a UUID; the ancestor chain is what
+	// gives us the identifier to render and link. The breadcrumb already requests
+	// it against the same key, so react-query serves both from one fetch. Keyed by
+	// the route-param taskId, not task.id.
+	const { data: ancestors } = useTaskAncestors(projectId, taskId);
+	const parentIdentifier = task.parent_task_id
+		? (ancestors?.[ancestors.length - 1]?.identifier ?? null)
+		: null;
 
 	const assignedAgent = agents?.find((a) => a.id === task.assignee_id);
 	const effectiveDefaultEffort: AgentEffort =
@@ -250,6 +264,36 @@ export function TaskSidebar({
 
 				<div>
 					<span className="text-text-3 block mb-1 uppercase tracking-wider font-medium">
+						Parent
+					</span>
+					<div className="flex items-center gap-2 flex-wrap">
+						{parentIdentifier ? (
+							<Link
+								to="/projects/$projectId/tasks/$taskId"
+								params={{ projectId, taskId: parentIdentifier.toLowerCase() }}
+								className="text-[13px] text-text-1 hover:text-info-soft-fg transition-colors"
+								data-testid="task-parent-link"
+							>
+								{parentIdentifier}
+							</Link>
+						) : (
+							<span className="text-[13px] text-text-1" data-testid="task-parent-none">
+								None
+							</span>
+						)}
+						<button
+							type="button"
+							onClick={() => setChangeParentOpen(true)}
+							className="text-[11px] text-text-3 hover:text-text-1 border border-border rounded px-1.5 py-0.5 transition-colors"
+							data-testid="task-parent-change"
+						>
+							Change
+						</button>
+					</div>
+				</div>
+
+				<div>
+					<span className="text-text-3 block mb-1 uppercase tracking-wider font-medium">
 						Project
 					</span>
 					{task.project_name && task.project_slug ? (
@@ -342,6 +386,15 @@ export function TaskSidebar({
 					await updateTask.mutateAsync({ status: TaskStatus.Backlog });
 					scrollToBottom();
 				}}
+			/>
+
+			<ChangeParentDialog
+				open={changeParentOpen}
+				onOpenChange={setChangeParentOpen}
+				projectId={projectId}
+				task={task}
+				currentParentIdentifier={parentIdentifier}
+				updateTask={updateTask}
 			/>
 		</>
 	);
