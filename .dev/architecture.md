@@ -2601,6 +2601,37 @@ by `packages/server/scripts/build-mcp-reference.ts` (run under `bun run build:do
 `mcp-reference.test.ts`) and committed as `docs/reference/mcp-api.md`. Authorization for
 both the REST and MCP surfaces is § 10.
 
+**Transport internals** (`mcp/server.ts`). The endpoint is a plain Hono route, not an SDK
+transport binding: it reads the JSON-RPC body itself and short-circuits the cases that must
+not reach the tool registry — a notification (no `id`) gets `202` with an empty body, as the
+streamable-http contract requires and rmcp clients depend on; `initialize` is answered
+directly, since the registry's connection has already negotiated initialization; and an
+unapproved caller is served the onboarding tools (`register`, `connection_status`) and
+nothing else. Only `tools/list` and `tools/call` from an authenticated principal reach the
+registry.
+
+Those two are proxied to the singleton `McpServer` over an **`InMemoryTransport` pair that
+is linked once and shared by every request**, with the per-request principal carried into
+the tool handlers through an `AsyncLocalStorage` (`authContext`) rather than through the
+transport. Sharing the link is load-bearing in both directions:
+
+- An SDK `Protocol` owns exactly one transport, so linking a pair **per request** meant the
+  second of any two overlapping requests threw `Already connected to a transport` from a
+  floating promise, and its client then waited out the full SDK request timeout (60s) for an
+  `initialize` reply no server would ever send. That made the endpoint effectively
+  single-flight under concurrency and stalled every agent behind it. One long-lived link
+  avoids it outright: the SDK multiplexes concurrent requests over a single transport by
+  JSON-RPC id.
+- `InMemoryTransport.send` invokes the peer's `onmessage` **synchronously**, on the caller's
+  stack, which is what keeps each request's `authContext` store visible to the handler it
+  dispatches. Any change that makes delivery asynchronous, or that hoists the auth context
+  out of the call stack, breaks per-request authorization on a shared link.
+
+The link is rebuilt on `initMcpServer` (a new server needs a new pair) and a failed link is
+not cached, so the next request retries. `mcp-concurrency.test.ts` guards the invariant; it
+has to bypass the DB-backed auth lookup, because the test database serialises those queries
+and would otherwise prevent requests from ever overlapping.
+
 ---
 
 ## 14. Testing
