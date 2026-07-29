@@ -1,5 +1,8 @@
 import {
+	coerceLocaleSettings,
 	DEFAULT_MAX_CHAT_HISTORY_SIZE,
+	type LocaleSettings,
+	type LocaleSettingsPatch,
 	MAX_CHAT_HISTORY_SIZE_MAX,
 	MAX_CHAT_HISTORY_SIZE_MIN,
 } from '@hezo/shared';
@@ -12,6 +15,17 @@ import type { Db } from '../db/database';
 
 export const INSTANCE_BASE_URL_KEY = 'instance_base_url';
 export const MAX_CHAT_HISTORY_SIZE_KEY = 'max_chat_history_size';
+
+/**
+ * Locale keys. One key per axis rather than a single JSON blob, so a partial
+ * update touches exactly the row it names and a corrupt value degrades only
+ * that axis.
+ */
+export const LOCALE_KEYS: Record<keyof LocaleSettings, string> = {
+	language: 'instance_language',
+	date_format: 'instance_date_format',
+	number_format: 'instance_number_format',
+};
 
 export async function getSystemMeta(db: Db, key: string): Promise<string | null> {
 	const result = await db.query<{ value: string }>('SELECT value FROM system_meta WHERE key = $1', [
@@ -94,4 +108,47 @@ export function normalizeBaseUrl(raw: string): string | null {
 	if (url.search !== '' || url.hash !== '') return null;
 	if (url.username !== '' || url.password !== '') return null;
 	return url.origin;
+}
+
+/**
+ * The instance's display locale — language plus the date and money formats.
+ * Global by design: one instance renders in one language, chosen during
+ * onboarding and editable afterwards in global settings.
+ *
+ * Readable and writable before the master key exists. The master key encrypts
+ * the `secrets` vault, not the database, and `system_meta` is where the
+ * master-key canary itself lives — so the onboarding screen that runs ahead of
+ * the vault can persist the operator's choice immediately rather than buffering
+ * it somewhere that a page refresh would drop.
+ *
+ * A missing or corrupt row degrades to the default rather than throwing, so one
+ * bad value can't break every rendered date on the instance.
+ */
+export async function getInstanceLocale(db: Db): Promise<LocaleSettings> {
+	const entries = await Promise.all(
+		Object.entries(LOCALE_KEYS).map(async ([field, key]) => [field, await getSystemMeta(db, key)]),
+	);
+	return coerceLocaleSettings(Object.fromEntries(entries.filter(([, value]) => value !== null)));
+}
+
+/** Apply a validated partial locale update. Absent fields are left alone. */
+export async function setInstanceLocale(
+	db: Db,
+	patch: LocaleSettingsPatch,
+): Promise<LocaleSettings> {
+	for (const [field, key] of Object.entries(LOCALE_KEYS)) {
+		const value = patch[field as keyof LocaleSettingsPatch];
+		if (value !== undefined) await setSystemMeta(db, key, value);
+	}
+	return getInstanceLocale(db);
+}
+
+/**
+ * Whether the operator has explicitly chosen a locale. Drives the onboarding
+ * gate: an instance that has never been asked shows the language screen, and
+ * one that has does not ask again. Distinct from "the locale equals the
+ * default", which an operator may legitimately have chosen.
+ */
+export async function instanceLocaleIsConfigured(db: Db): Promise<boolean> {
+	return (await getSystemMeta(db, LOCALE_KEYS.language)) !== null;
 }
