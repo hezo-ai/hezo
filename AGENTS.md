@@ -281,6 +281,21 @@ The remaining Playwright suite is small but still subject to a 1 Hz agent wakeup
 - **Sequence `page.request` after in-flight UI mutations.** `page.request.<method>` uses a separate APIRequestContext from the page's fetch; the two can land in either order. `await page.waitForResponse(...)` the UI mutation before firing the API mutation.
 - **Don't raise timeouts to mask a race.** A bumped timeout signals "this is genuinely slow" to the next reader; it's almost always a missing matcher scope or a missing `await`.
 
+## Code design
+
+Write the second occurrence as shared code, not a copy. These are decision rules, not style preferences, and they apply to every change — not just new features.
+
+- **Two call sites means extract.** The moment the same logic — a validation rule, a format, a lookup, a request shape, a piece of UI — is needed in a second place, it moves to one home and both places call it. Copy-paste-and-tweak is the failure mode this exists to prevent: the copies drift, and the bug gets fixed in one of them.
+- **Pick the home by reach**, the same way agent guidance does (see the *Where guidance goes* bullet in **Layout**). Needed by server *and* web, or by a pure-logic test → `@hezo/shared`. Several server modules → `packages/server/src/lib/` or `services/`. Several components → `packages/web/src/lib/` or `hooks/`. One consumer → keep it local until there is a second.
+- **Validation lives once and runs twice.** A rule the client checks for inline feedback and the server enforces for real is **one** exported function in `@hezo/shared`, called from both. Two hand-written copies of one rule will disagree, and the client's copy is the one that silently gets stale.
+- **Table over branch.** When behaviour varies by an enum, express it as a `Record<Enum, Descriptor>` and read from it — don't repeat a `switch`/`if` chain at each call site, which duplicates the same decision N times. The `Record<Enum, …>` makes an unhandled enum value a compile error and makes a new case one row.
+- **Extend the existing seam before adding a parallel one.** A new instance setting extends `routes/instance-settings.ts` and the `system-meta` helpers; new date behaviour extends `packages/web/src/lib/format-date.ts`; a new chat app implements `ChatChannelAdapter`. A second stack doing an existing stack's job is how a codebase ends up with two of everything. If the existing seam genuinely doesn't fit, **widen it** rather than routing around it.
+- **Preserve public signatures when changing internals.** When a shared helper's behaviour grows, keep its exported shape and delegate inward, so its consumers don't churn.
+- **Generate what would otherwise be hand-synced**, and guard the remainder with a drift test (the `marketplace/`, `docs/reference/mcp-api.md`, and `llms.txt` surfaces all work this way). Anything a human must remember to update in two places eventually gets updated in one.
+- **Follow the idiom already in the file.** A React context provider copies `lib/theme.tsx`; a settings row copies `InstanceSettingsSection`; a mutation picks one of the three documented strategies (**Web frontend mutations**). Novel structure needs a reason beyond preference.
+
+**Don't over-rotate.** A shared abstraction with one real caller and a speculative second is worse than the duplication it avoids — it fixes the shape of the code before you know the shape of the problem. Extract on the second *real* occurrence, not the first imagined one.
+
 ## Type safety
 
 No `any` in source code. Use specific types, `unknown`, `Record<string, unknown>`, or generics. If a library lacks types, install them (`@types/*`) — don't fall back to `any` or `declare const` hacks. `any` is acceptable only in test files for unpredictable JSON.
