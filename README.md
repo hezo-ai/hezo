@@ -22,12 +22,6 @@
 </p>
 
 <p align="center">
-  <a href="https://ssh.cloud.google.com/cloudshell/editor?cloudshell_git_repo=https://github.com/hezo-ai/hezo&cloudshell_workspace=deploy/gcp&cloudshell_tutorial=tutorial.md"><img src="https://img.shields.io/badge/Deploy_on-Google_Cloud-4285F4?style=for-the-badge&logo=googlecloud&logoColor=white" alt="Deploy on Google Cloud" height="28" /></a>
-  <a href="https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create/review?templateURL=https://hezo-deploy.s3.us-east-1.amazonaws.com/hezo.cfn.yaml&stackName=hezo"><img src="https://img.shields.io/badge/Deploy_on-AWS-FF9900?style=for-the-badge&logo=amazonwebservices&logoColor=white" alt="Deploy on AWS" height="28" /></a>
-  <a href="./docs/deployment/one-click.md"><img src="https://img.shields.io/badge/Deploy_on-DigitalOcean-0080FF?style=for-the-badge&logo=digitalocean&logoColor=white" alt="Deploy on DigitalOcean" height="28" /></a>
-</p>
-
-<p align="center">
   <strong>Your own team of AI agents. Built to deliver.</strong>
 </p>
 
