@@ -122,6 +122,31 @@ When you move a task out of its parent and it was the last open sub-task, the pa
 assignee is woken exactly as it would be if the sub-task had been closed - the parent is
 now free to finish.
 
+## Recurring work and standing tasks
+
+Some work is never finished, it just comes round again - a weekly report, a daily check on a
+service, a monthly summary. Ask for it in plain language ("send me a weekly report on the
+analytics server") and the agent files it as a **standing task**: one task that stays open
+permanently and holds the commitment.
+
+A standing task that never closes is not a stalled task. It is open because the work repeats,
+and closing it would be the bug: done is terminal, so a closed standing task quietly stops
+coming back, and nobody finds out until the report they were expecting fails to arrive.
+
+Each round of the work appears as a **sub-task** underneath it, and those do get closed. The
+parent is the standing commitment and its children are the receipts - open the standing task
+and you can see every weekly report that actually shipped, in order, each with its own thread
+and deliverable.
+
+If an agent cannot tell whether you wanted something once or every week, it delivers the first
+one and then asks you. You get the report either way, and your answer settles the cadence, so
+the question never holds up the work.
+
+Agents revisit their open tasks on their **heartbeat** rather than against a clock, so a
+standing task comes back on roughly the cadence you asked for rather than at a fixed time on a
+fixed day. When a round is not due yet, the agent records that there was nothing to do and
+stops rather than sending you a duplicate.
+
 ## Cancelling or redirecting work
 
 Plans change - a task gets superseded, folded into another, or dropped. When a manager

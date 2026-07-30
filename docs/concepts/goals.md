@@ -36,11 +36,11 @@ dismissed. You stay in control of which goals the team actually tracks.
 > timed-trigger system to configure; repeating work runs on the **heartbeat**: agents wake on
 > their own cadence and revisit the open tasks assigned to them. Recurring operational work -
 > a daily monitoring sweep, a weekly report - is a **standing task**: an ordinary task that
-> stays open and is never marked done, so the heartbeat brings its assignee back to it every
-> time (with a sub-task per iteration where useful). Goals are different: they track the
-> **outcomes you want** - on each due check the Captain assesses progress and turns the
-> assessment into steering (a comment on an in-flight task) or new tasks. A goal's check
-> frequency schedules the Captain's re-assessment, not the work itself.
+> stays open and is never marked done, with each round filed as a sub-task under it (see
+> [Recurring work and standing tasks](/docs/concepts/tasks#recurring-work-and-standing-tasks)).
+> Goals are different: they track the **outcomes you want** - on each due check the Captain
+> assesses progress and turns the assessment into steering (a comment on an in-flight task) or
+> new tasks. A goal's check frequency schedules the Captain's re-assessment, not the work itself.
 
 ## The Progress page
 
