@@ -23,7 +23,7 @@ test('the HQ menu is viewable on /home when no project has been created', async 
 	// HQ project's own menu: its name link, the coordination info tooltip that
 	// marks the internal HQ shape, and the Container link the user needs.
 	await findByTestId('project-menu', undefined, { timeout: 15_000 });
-	await findByTestId('project-sidebar-name');
+	await findByTestId('project-sidebar-dashboard');
 	await findByTestId('project-sidebar-info');
 	const containerLinks = await findAllByRole('link', { name: 'Container' });
 	expect(containerLinks.length).toBeGreaterThan(0);
@@ -58,6 +58,6 @@ test('/home shows no project menu once a project exists (menu follows the route)
 	// menu-less (the menu only appears on a project-scoped route).
 	await waitFor(() => {
 		expect(queryByTestId('project-menu')).toBeNull();
-		expect(queryByTestId('project-sidebar-name')).toBeNull();
+		expect(queryByTestId('project-sidebar-dashboard')).toBeNull();
 	});
 });
