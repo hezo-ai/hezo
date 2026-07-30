@@ -41,6 +41,12 @@ interface CommentRow {
 		actor_id?: string | null;
 		source_task_id?: string;
 		source_identifier?: string;
+		from_preview?: string;
+		to_preview?: string;
+		from_truncated?: boolean;
+		to_truncated?: boolean;
+		from_length?: number;
+		to_length?: number;
 	};
 	author_member_id: string | null;
 	created_at: string;
@@ -270,6 +276,119 @@ describe('title change system events', () => {
 
 		const after = await systemComments(task.id, 'title_change');
 		expect(after.length).toBe(before);
+	});
+});
+
+describe('description change system events', () => {
+	async function patchDescription(taskId: string, description: string, authToken = token) {
+		return app.request(`/api/projects/${projectSlug}/tasks/${taskId}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(authToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ description }),
+		});
+	}
+
+	it('records an added description with bounded previews and full lengths', async () => {
+		const task = await createTask('Describe me');
+
+		const res = await patchDescription(task.id, 'The first body.');
+		expect(res.status).toBe(200);
+
+		const events = await systemComments(task.id, 'description_change');
+		expect(events.length).toBe(1);
+		const ev = events[0];
+		expect(ev.content.text).toContain('Test Admin');
+		expect(ev.content.text).toContain('added a description');
+		expect(ev.content.from_preview).toBe('');
+		expect(ev.content.to_preview).toBe('The first body.');
+		expect(ev.content.from_length).toBe(0);
+		expect(ev.content.to_length).toBe('The first body.'.length);
+		expect(ev.content.from_truncated).toBe(false);
+		expect(ev.content.to_truncated).toBe(false);
+		expect(ev.author_member_id).not.toBeNull();
+	});
+
+	it('records an edit with both ends and says "updated"', async () => {
+		const task = await createTask('Edit me', 'Original body.');
+
+		const res = await patchDescription(task.id, 'Replacement body.');
+		expect(res.status).toBe(200);
+
+		const events = await systemComments(task.id, 'description_change');
+		const ev = events[events.length - 1];
+		expect(ev.content.text).toContain('updated the description');
+		expect(ev.content.from_preview).toBe('Original body.');
+		expect(ev.content.to_preview).toBe('Replacement body.');
+	});
+
+	it('says "cleared" when the description is emptied', async () => {
+		const task = await createTask('Clear me', 'Something to remove.');
+
+		const res = await patchDescription(task.id, '');
+		expect(res.status).toBe(200);
+
+		const events = await systemComments(task.id, 'description_change');
+		const ev = events[events.length - 1];
+		expect(ev.content.text).toContain('cleared the description');
+		expect(ev.content.to_preview).toBe('');
+		expect(ev.content.to_length).toBe(0);
+	});
+
+	it('caps each preview and flags it as truncated, without carrying the body', async () => {
+		const long = 'x'.repeat(500);
+		const task = await createTask('Long body');
+
+		const res = await patchDescription(task.id, long);
+		expect(res.status).toBe(200);
+
+		const events = await systemComments(task.id, 'description_change');
+		const ev = events[events.length - 1];
+		expect(ev.content.to_preview?.length).toBe(200);
+		expect(ev.content.to_truncated).toBe(true);
+		expect(ev.content.to_length).toBe(500);
+		// The whole payload stays small — the body must never ride along.
+		expect(JSON.stringify(ev.content).length).toBeLessThan(long.length);
+	});
+
+	it('does not record an event when the description is unchanged', async () => {
+		const task = await createTask('Untouched', 'Stable body.');
+		const before = (await systemComments(task.id, 'description_change')).length;
+
+		const res = await patchDescription(task.id, 'Stable body.');
+		expect(res.status).toBe(200);
+
+		const after = await systemComments(task.id, 'description_change');
+		expect(after.length).toBe(before);
+	});
+
+	it('treats an empty description on a task created without one as unchanged', async () => {
+		const task = await createTask('Never described');
+
+		const res = await patchDescription(task.id, '');
+		expect(res.status).toBe(200);
+
+		const events = await systemComments(task.id, 'description_change');
+		expect(events.length).toBe(0);
+	});
+
+	it('records an agent-authored description edit attributed to the agent', async () => {
+		const task = await createTask('Agent edits', 'Before the agent.');
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+			task.id,
+		);
+
+		const res = await patchDescription(task.id, 'After the agent.', agentToken);
+		expect(res.status).toBe(200);
+
+		const events = await systemComments(task.id, 'description_change');
+		const ev = events[events.length - 1];
+		expect(ev.content.text).toContain('Status Bot');
+		expect(ev.content.actor_id).toBe(agentId);
+		expect(ev.author_member_id).toBe(agentId);
 	});
 });
 

@@ -37,6 +37,7 @@ import { cancelCoachWorkForTask, terminateRunsForTask } from '../services/run-te
 import { triggerStatusAutomations, wakeTaskIfChildrenClosed } from '../services/task-automation';
 import {
 	recordAssigneeChange,
+	recordDescriptionChange,
 	recordParentChange,
 	recordTaskLinks,
 	recordTitleChange,
@@ -482,12 +483,13 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 	const existing = await db.query<{
 		id: string;
 		title: string;
+		description: string | null;
 		status: string;
 		project_id: string;
 		assignee_id: string | null;
 		parent_task_id: string | null;
 	}>(
-		'SELECT id, title, status, project_id, assignee_id, parent_task_id FROM tasks WHERE id = $1 AND team_id = $2',
+		'SELECT id, title, description, status, project_id, assignee_id, parent_task_id FROM tasks WHERE id = $1 AND team_id = $2',
 		[taskId, teamId],
 	);
 	if (existing.rows.length === 0) {
@@ -689,6 +691,42 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 	const projectId = existing.rows[0].project_id;
 
 	if (body.description !== undefined) {
+		// `''` and NULL are the same "no description", so re-sending either over an
+		// already-empty description is not an edit and records nothing. The recorder
+		// applies the same rule; this guard keeps the no-op off the audit log too.
+		if (body.description !== (existing.rows[0].description ?? '')) {
+			// Awaited: the client's onSettled invalidation refetches the comment feed
+			// straight away and has to see this row (same reason as the rename below).
+			try {
+				await recordDescriptionChange(
+					db,
+					teamId,
+					taskId,
+					existing.rows[0].description,
+					body.description,
+					actorMemberId,
+					actorApiKeyId,
+					c.get('wsManager'),
+				);
+				// The bodies deliberately stay off the audit row — a description has no
+				// size ceiling, and the thread comment already carries bounded previews.
+				events?.emit({
+					type: 'task.updated',
+					teamId,
+					projectId,
+					actorType,
+					actorMemberId,
+					actorApiKeyId,
+					taskId,
+					field: 'description',
+					from: null,
+					to: null,
+				});
+			} catch (e) {
+				log.error('Failed to record description change:', e);
+			}
+		}
+
 		trackBackground(
 			recordTaskLinks(
 				db,

@@ -194,6 +194,7 @@ function TaskDetailPage() {
 						projectId={projectId}
 						taskId={taskId}
 						taskProjectSlug={taskProjectSlug}
+						updateTask={updateTask}
 					/>
 
 					<TaskSummary

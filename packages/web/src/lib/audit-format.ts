@@ -54,6 +54,9 @@ export function describeAuditEntry(entry: AuditEntry): string {
 			if (field === 'title') {
 				return `Renamed ${id} from "${str(d, 'from') ?? ''}" to "${str(d, 'to') ?? ''}"`;
 			}
+			// No from/to: the description bodies deliberately never reach the audit
+			// row (see TaskUpdateField), so there is nothing to quote here.
+			if (field === 'description') return `Updated the description of ${id}`;
 			if (field === 'status') {
 				return `Changed status of ${id} from ${statusLabel(str(d, 'from'))} to ${statusLabel(str(d, 'to'))}`;
 			}

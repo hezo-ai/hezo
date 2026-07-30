@@ -364,6 +364,85 @@ test('assignee dropdown closes on outside click and has no unassign option', asy
 	expect(assigneeBox.querySelector('.absolute')).toBeNull();
 });
 
+test('can rename a task from the header, and Escape abandons the edit', async () => {
+	const seeded = { projectSlug: '', taskId: '' };
+	const { findByTestId, findByText, router, user } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Rename Project' });
+			const task = await seedTask(ws, project, { title: 'Original title' });
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
+	});
+
+	// Escape leaves the stored title alone.
+	await user.click(await findByTestId('task-title-edit'));
+	const escapeInput = (await findByTestId('task-title-input')) as HTMLInputElement;
+	await user.clear(escapeInput);
+	await user.type(escapeInput, 'Discarded title{Escape}');
+	expect((await findByTestId('task-title')).textContent).toBe('Original title');
+
+	await user.click(await findByTestId('task-title-edit'));
+	const input = (await findByTestId('task-title-input')) as HTMLInputElement;
+	await user.clear(input);
+	await user.type(input, 'Renamed in place{Enter}');
+
+	expect((await findByTestId('task-title')).textContent).toBe('Renamed in place');
+	// And the rename lands in the thread as a meta comment.
+	await findByText(/renamed from/i, undefined, { timeout: 10_000 });
+});
+
+test('can add a description on a task that has none, then edit it', async () => {
+	const seeded = { projectSlug: '', taskId: '' };
+	const { findByTestId, findByText, router, user } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Describe Project' });
+			const task = await seedTask(ws, project, { title: 'Undescribed Task' });
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
+	});
+
+	// The card renders even with no description — it is the only way to add one.
+	const card = await findByTestId('task-description-card');
+	await findByTestId('task-description-empty');
+
+	await user.click(await findByTestId('task-description-edit'));
+	const textarea = card.querySelector('textarea') as HTMLTextAreaElement;
+	await user.type(textarea, 'A freshly written body.');
+	const save = Array.from(card.querySelectorAll('button')).find((b) => b.textContent === 'Save')!;
+	await user.click(save);
+
+	await findByText('A freshly written body.');
+	await findByText(/added a description/i, undefined, { timeout: 10_000 });
+
+	await user.click(await findByTestId('task-description-edit'));
+	const second = card.querySelector('textarea') as HTMLTextAreaElement;
+	await user.clear(second);
+	await user.type(second, 'A replacement body.');
+	const saveAgain = Array.from(card.querySelectorAll('button')).find(
+		(b) => b.textContent === 'Save',
+	)!;
+	await user.click(saveAgain);
+
+	await findByText('A replacement body.');
+	await findByText(/updated the description/i, undefined, { timeout: 10_000 });
+});
+
 test('task description renders markdown', async () => {
 	const seeded = { projectSlug: '', taskId: '' };
 	const description = [
