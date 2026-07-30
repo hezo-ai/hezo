@@ -83,14 +83,26 @@ describe('PATCH /projects/:projectId — validation + reshaping', () => {
 		projectSlug = data.slug; // keep the handle current for later tests
 	});
 
-	it('ignores the removed max_concurrent_runs field (concurrency is instance-level)', async () => {
-		const { status } = await patch({ max_concurrent_runs: 4 });
+	it('accepts a max_concurrent_runs override and rejects an out-of-range one', async () => {
+		const { status, body } = await patch({ max_concurrent_runs: 4 });
 		expect(status).toBe(200);
+		expect((body.data as { max_concurrent_runs: number }).max_concurrent_runs).toBe(4);
+
+		expect((await patch({ max_concurrent_runs: 0 })).status).toBe(400);
+		expect((await patch({ max_concurrent_runs: 2.5 })).status).toBe(400);
+		expect((await patch({ max_concurrent_runs: 101 })).status).toBe(400);
+
+		// Back to inheriting the global default, so later tests see a clean row.
+		const cleared = await patch({ max_concurrent_runs: null });
+		expect(cleared.status).toBe(200);
+		expect((cleared.body.data as { max_concurrent_runs: number | null }).max_concurrent_runs).toBe(
+			null,
+		);
 	});
 
-	it('rejects a memory_limit_gib below 1', async () => {
-		const { status } = await patch({ memory_limit_gib: 0 });
-		expect(status).toBe(400);
+	it('rejects a memory_limit_gib below the 0.5 floor', async () => {
+		expect((await patch({ memory_limit_gib: 0 })).status).toBe(400);
+		expect((await patch({ memory_limit_gib: 0.4 })).status).toBe(400);
 	});
 
 	it('accepts a valid memory_limit_gib override', async () => {

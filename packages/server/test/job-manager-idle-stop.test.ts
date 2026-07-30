@@ -198,6 +198,22 @@ describe('container-idle-stop', () => {
 		expect(stops).toContain(CONTAINER_ID);
 	});
 
+	it('a run-limit-skipped wakeup DOES hold the container (it dispatches into this same one)', async () => {
+		// The inverse of the container-capacity case above, and the reason
+		// 'project_at_run_limit' is deliberately absent from BUSY_PROJECTS_SQL's
+		// exclusion list: a run-limit skip is only reachable when this project
+		// already has an active run, so its container is legitimately in use and
+		// the wakeup dispatches into that same warm container as a slot frees.
+		await db.query(
+			`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, payload, last_skipped_at, last_skipped_reason)
+			 VALUES ($1, $2, 'mention'::wakeup_source, 'queued'::wakeup_status,
+			         jsonb_build_object('task_id', $3::text), now(), 'project_at_run_limit')`,
+			[agentId, teamId, taskId],
+		);
+		const { stops } = await runIdlePass();
+		expect(stops).toEqual([]);
+	});
+
 	it('a chat session with recent activity holds the container; a stale one does not', async () => {
 		const conversation = await db.query<{ id: string }>(
 			`INSERT INTO chat_conversations (member_id, team_id, project_id, title)

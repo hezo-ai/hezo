@@ -1120,30 +1120,61 @@ not required to be up between runs. `runAgent` establishes it at the start of ev
 `ensureProjectContainerRunning` (running → reuse; stopped → start in place; missing/stale row →
 provision), chat sessions do the same, and the `container-idle-stop` cron (1/min) stops any
 container idle past the operator's timeout (`container_idle_timeout_min` in `system_meta`,
-default 15 minutes, `0` = always-on) — so a quiet instance runs zero containers. "Idle" means:
+default 1 minute, `0` = always-on) — so a quiet instance runs zero containers. "Idle" means:
 no active (queued/running) run, no run finished inside the window, no queued wakeup that could
-dispatch (capacity-skipped wakeups deliberately don't pin containers), and no chat session with
-recent `last_activity_at` or an in-flight turn; `projects.container_last_started_at` floors the
+dispatch (**container**-capacity-skipped wakeups deliberately don't pin containers; a
+`project_at_run_limit` skip *does* pin, since it is only reachable when the project already has
+an active run and the wakeup will dispatch into that same warm container), and no chat session
+with recent `last_activity_at` or an in-flight turn; `projects.container_last_started_at` floors the
 check so a fresh start always gets one full window. Every lifecycle *decision* — ensure-running
 and the cron's check-then-stop (which re-verifies the predicate plus the scheduler's in-memory
 run/pending refcounts under the lock) — serializes per project through
 `withContainerLifecycleLock` (`services/containers.ts`), so a start and a stop can never
-interleave: worst case is a wasted stop/start cycle, never a failed run. Concurrency is bounded
-by one **global active-container limit** (`max_active_containers` in `system_meta`; when unset,
-the default is computed from host memory as
+interleave: worst case is a wasted stop/start cycle, never a failed run.
+
+Concurrency is bounded by **two independent gates**, answering different questions; neither
+subsumes the other (`services/run-concurrency.ts` is the single source of truth for both).
+
+The first is the **global active-container limit** — the *memory* bound
+(`max_active_containers` in `system_meta`; when unset, the default is computed from host memory as
 `((RAM + swap) - HOST_RESERVED_MEMORY_GB) / default_ram_cap_per_container_gb`, clamped to [1,100] —
 the 1GiB reserve keeps the OS, Hezo's own process and the embedded database off the containers'
-budget, since none of them live inside one): dispatch passes a run whose project container is already active (no new
-container needed) and queues one that would need another container past the cap
-(`WakeupSkipReason.InstanceAtCapacity`, retried by the 5s dispatcher; an in-memory
-`pendingContainerStarts` refcount covers the window before the DB row reads Running). Dispatch
-drains FIFO by `created_at` with no per-project fair-share — a deep backlog in one project
-consumes freed slots first; that scheduler is the hook if this ever needs fairness. The chat
-path is *not* gated: its container counts toward the limit once running, but starting a chat is
-never refused — busy agents must not lock the operator out of the control surface. All three
-knobs (limit, per-container RAM cap, idle timeout) live on the global Settings → Concurrency
-page (`GET/PATCH /api/instance-settings`; `PATCH {max_active_containers: null}` resets to the
-computed default). The project's
+budget, since none of them live inside one). Every container is memory-capped, so total host
+demand never exceeds `N × cap` no matter how many runs share one. Dispatch passes a run whose
+project container is already active (no new container needed) and queues one that would need
+another container past the cap (`WakeupSkipReason.InstanceAtCapacity`, retried by the 5s
+dispatcher; an in-memory `pendingContainerStarts` refcount covers the window before the DB row
+reads Running).
+
+The second is the **per-project run limit** — a *throughput* bound, bounding how many of one
+project's agents contend for its shared container's CPU, git worktree and egress proxy
+(`projects.max_concurrent_runs`, NULL = the `default_max_runs_per_project` system_meta default,
+itself defaulting to 3 = the 1GB cap divided by `RAM_PER_RUN_MB`). Migration 048 dropped an
+earlier per-project column for being mistaken for the memory bound; 049 reintroduced it
+explicitly as this different thing, and the host bound above is unchanged by it. Over the limit,
+dispatch skips with `WakeupSkipReason.ProjectAtRunLimit`. The gate
+(`JobManager.isProjectAtRunLimit`) combines the DB count with the in-memory `activeProjectRuns`
+refcount via `max()`, **not** a sum: `acquireProjectRun` runs before `runAgent` inserts the queued
+row and is released after the row is terminal, so the in-memory window strictly contains the DB
+window and each owned run is counted exactly once. The DB term still matters — it is the only
+truthful signal for rows a previous process left active until `reconcileOnStartup` sweeps them —
+and `max()` also absorbs `countActiveRunsInProject`'s blind spot for task-less progress-update
+runs (`task_id IS NULL`, dropped by its join). It is enforced at all four dispatch sites
+(`dispatchWakeupNow`, `processWakeups`, `activateAgent`, `tryDispatchProgressUpdate`) plus the
+`progress_update_now` transient/terminal split, which treats it as transient and re-queues.
+
+Dispatch drains FIFO by `created_at` with no per-project fair-share — a deep backlog in one
+project consumes freed slots first; that scheduler is the hook if this ever needs fairness. The
+chat path is *not* gated: its container counts toward the container limit once running, but
+starting a chat is never refused — busy agents must not lock the operator out of the control
+surface. Four knobs (container limit, per-project run limit, per-container RAM cap, idle timeout)
+live on the global Settings → Concurrency page (`GET/PATCH /api/instance-settings`;
+`PATCH {max_active_containers: null}` resets to the computed default), and each project overrides
+its own run limit and memory cap on its Settings → Concurrency page
+(`PATCH /api/projects/:projectId` with `max_concurrent_runs` / `memory_limit_gib`; null clears
+back to inherit). The RAM cap is fractional to one decimal place with a 0.5 GB floor, stored
+`DOUBLE PRECISION` (not NUMERIC, which both drivers return as a string) and rounded to an integer
+byte count before it reaches Docker's `HostConfig.Memory`. The project's
 `<dataDir>/teams/<teamId>/projects/<projectId>/workspace/` (id-keyed, never slugs) bind-mounts
 to `/workspace`, with one subdirectory per linked repo. For each task the runner creates a `git worktree` at
 `/worktrees/<task-identifier>/<repo-name>` on branch `hezo/<task-identifier>`, persisted
@@ -1315,7 +1346,7 @@ and repair it. `GET /api/projects/:projectId/repos/:repoId/git-state` reads it �
 default branch, HEAD, dirty flag, and ahead/behind vs. the last-fetched `origin/<default>` (all
 computed locally, no network fetch), plus the active `/worktrees/<task>/<repo>` worktrees joined
 to their tasks and the project's active (queued/running) agent-run count (`active_runs`, from
-`getProjectConcurrency`) so the panel can disable the reset controls proactively instead of only
+`countActiveRunsInProject`) so the panel can disable the reset controls proactively instead of only
 failing them server-side — and returns `{ container_running: false }` when the container is stopped
 rather than auto-starting one, since a passive inspect must not trigger a provision. It also
 re-checks and returns `can_push` (`refreshRepoPushAccess`), computed **before** the
@@ -1329,7 +1360,7 @@ so gitignored build artifacts survive — after a best-effort fetch; the escape 
 dangling metadata; the branch refs survive), and `reclone` (wipe the clone via
 `removeRepoFromWorkspace` then re-run `performRepoSetup`, reusing its
 `pending`→`ready`/`failed` lifecycle). Reset is
-**blocked (409) while any agent run is active on the project** (`getProjectConcurrency`) — it
+**blocked (409) while any agent run is active on the project** (`countActiveRunsInProject`) — it
 mutates the shared `.git` a live worktree prep also touches, and reclone deletes worktrees a run
 may hold — and `discard_local`/`prune_worktrees` additionally require a running container. Every
 read and reset runs under the same per-project git lock (`withProjectGitLock`, extracted to

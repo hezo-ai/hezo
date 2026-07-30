@@ -20,6 +20,7 @@ export interface QueuedWakeup {
 export interface QueuedDispatchState {
 	task_busy: boolean;
 	instance_at_capacity: boolean;
+	project_at_run_limit: boolean;
 }
 
 export interface QueuedWakeupsState {

@@ -182,13 +182,20 @@ export function shouldKeepOldContainers(): boolean {
 }
 
 // The per-container working-set ceiling is the instance-wide
-// `default_ram_cap_per_container_gb` setting (system_meta, default 2GB),
+// `default_ram_cap_per_container_gb` setting (system_meta, default 1GB),
 // overridable per project via `projects.memory_limit_gib` (NULL = inherit).
-// The old hardcoded 16GiB default was a no-op on small hosts — 8x physical
-// RAM on a 2GB VPS — so a runaway in-container process triggered a *global*
-// OOM kill instead of a contained cgroup one.
+// Both are fractional to one decimal place with a 0.5GB floor. The old
+// hardcoded 16GiB default was a no-op on small hosts — 8x physical RAM on a
+// 2GB VPS — so a runaway in-container process triggered a *global* OOM kill
+// instead of a contained cgroup one.
 
-const memoryLimitBytes = (gib: number) => gib * 1024 ** 3;
+// Rounded because caps are fractional and Docker's HostConfig.Memory must be an
+// integer byte count: 0.7 * 1024**3 is 751619276.8. Rounding (not flooring) also
+// keeps whole-GiB caps byte-identical to what they produced before.
+const memoryLimitBytes = (gib: number) => Math.round(gib * 1024 ** 3);
+
+/** A cap for display: one decimal place, with no trailing ".0" on whole values. */
+const formatCapGib = (gib: number) => String(Math.round(gib * 10) / 10);
 
 /**
  * Headroom the cgroup hard cap sits above the project's working-set ceiling.
@@ -238,7 +245,7 @@ const memoryUsageState = new Map<string, MemoryUsageEntry>();
 
 function formatMemoryLine(entry: MemoryUsageEntry): string {
 	const usedGiB = (entry.lastUsedBytes / 1024 ** 3).toFixed(2);
-	return `${usedGiB} / ${entry.limitGib} GiB`;
+	return `${usedGiB} / ${formatCapGib(entry.limitGib)} GiB`;
 }
 
 /**
@@ -760,12 +767,19 @@ export async function stopContainerGracefully(
  * instance's cost tracks activity inside the window, not table history. A
  * project is busy when it has: an active (queued/running) run; a run finished
  * inside the idle window (idx_runs_finished); a queued wakeup that could
- * actually dispatch — capacity-skipped wakeups deliberately do NOT hold a
- * container, else a backlog waiting on the container cap would pin containers
- * warm forever ('project_at_capacity' is the pre-rename legacy value, re-stamped
- * within seconds of an upgrade); or a live chat session with recent activity or
- * an in-flight (pending/streaming) turn (idx_chat_messages_inflight).
- * `$1` is the idle window in minutes everywhere.
+ * actually dispatch — CONTAINER-capacity-skipped wakeups deliberately do NOT
+ * hold a container, else a backlog waiting on the container cap would pin
+ * containers warm forever ('project_at_capacity' is the pre-rename legacy value
+ * of 'instance_at_capacity', re-stamped within seconds of an upgrade); or a live
+ * chat session with recent activity or an in-flight (pending/streaming) turn
+ * (idx_chat_messages_inflight). `$1` is the idle window in minutes everywhere.
+ *
+ * Note which capacity reason is excluded and which is not: 'project_at_run_limit'
+ * is deliberately ABSENT from the NOT IN lists, so such a wakeup does keep its
+ * container warm. That is the inverse case — a run-limit skip is only reachable
+ * when the project already has an active run, so its container is legitimately
+ * in use and the wakeup dispatches into that same warm container as soon as a
+ * slot frees. Adding it to the exclusions would be a bug, not a tidy-up.
  */
 const UUID_RE = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
 const BUSY_PROJECTS_SQL = `
@@ -1058,9 +1072,9 @@ async function enforceContainerMemoryLimit(
 
 	const usedGiB = (stats.usedBytes / 1024 ** 3).toFixed(2);
 	const errorMessage =
-		`Container was using ${usedGiB} GiB of RAM, above the ${memoryLimitGib} GiB safety limit, ` +
+		`Container was using ${usedGiB} GiB of RAM, above the ${formatCapGib(memoryLimitGib)} GiB safety limit, ` +
 		`and was stopped automatically to keep your machine responsive. Restart the container ` +
-		`to try again, or raise the limit on the project settings page.`;
+		`to try again, or raise the limit on the project's Concurrency settings page.`;
 
 	const lastLogs = await captureContainerLogs(docker, containerId, projectSlug);
 

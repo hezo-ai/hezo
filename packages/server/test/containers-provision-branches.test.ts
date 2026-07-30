@@ -392,13 +392,35 @@ describe('provisionContainer', () => {
 		expect(hc.Init).toBe(true);
 		expect(hc.CapDrop).toEqual(['ALL']);
 		expect(hc.PidsLimit).toBe(4096);
-		// Hard cap = the instance-wide ram cap (default 2 GB, no per-project
-		// override set) + 512 MiB headroom, no swap escape valve — the stats
-		// poller stops the container at the ceiling itself; the cgroup is the
-		// between-ticks backstop.
-		const expectedCap = 2 * 1024 ** 3 + 512 * 1024 ** 2;
+		// Hard cap = the global ram cap (default 1 GB, no per-project override
+		// set) + 512 MiB headroom, no swap escape valve — the stats poller stops
+		// the container at the ceiling itself; the cgroup is the between-ticks
+		// backstop.
+		const expectedCap = 1 * 1024 ** 3 + 512 * 1024 ** 2;
 		expect(hc.Memory).toBe(expectedCap);
 		expect(hc.MemorySwap).toBe(expectedCap);
+	});
+
+	it('turns a fractional memory_limit_gib into an integer byte count', async () => {
+		await resetContainerRow();
+		// 0.7 * 1024**3 is 751619276.8 — Docker rejects a float, so the cgroup
+		// value has to be rounded before it reaches HostConfig.
+		await db.query('UPDATE projects SET memory_limit_gib = 0.7 WHERE id = $1', [projectId]);
+		try {
+			const { docker, created } = recordingDocker();
+
+			await provisionContainer(baseDeps(docker), await projectRow(), teamSlug);
+
+			const hc = created[0].config.HostConfig;
+			const expectedCap = Math.round(0.7 * 1024 ** 3) + 512 * 1024 ** 2;
+			expect(hc.Memory).toBe(expectedCap);
+			expect(hc.MemorySwap).toBe(expectedCap);
+			// Numeric equality alone would pass on a float, so pin the type too.
+			expect(Number.isInteger(hc.Memory)).toBe(true);
+			expect(Number.isInteger(hc.MemorySwap)).toBe(true);
+		} finally {
+			await db.query('UPDATE projects SET memory_limit_gib = NULL WHERE id = $1', [projectId]);
+		}
 	});
 
 	it('derives the cgroup cap from a project-specific memory_limit_gib', async () => {

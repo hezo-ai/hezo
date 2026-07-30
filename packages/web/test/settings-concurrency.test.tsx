@@ -9,7 +9,7 @@ afterEach(() => setHostMemoryForTest(null));
 
 test('concurrency settings page shows the computed default, saves, and resets to automatic', async () => {
 	// The incident's reference host: ~2GB RAM + 6GB swap → 8GB, less the 1GB
-	// system reserve = 7 usable, / 2GB cap = 3.
+	// system reserve = 7 usable, / the 1GB default cap = 7.
 	setHostMemoryForTest({ totalRamBytes: 1.92 * GIB, totalSwapBytes: 6 * GIB });
 
 	const { findByTestId, findByRole, queryByTestId, user } = await renderApp({
@@ -20,32 +20,32 @@ test('concurrency settings page shows the computed default, saves, and resets to
 
 	// Unset → the effective value is the host-memory-computed default.
 	const maxInput = (await findByTestId('max-active-containers-input')) as HTMLInputElement;
-	expect(maxInput.value).toBe('3');
+	expect(maxInput.value).toBe('7');
 	const formula = await findByTestId('max-active-containers-formula');
-	expect(formula.textContent).toContain('= 3');
+	expect(formula.textContent).toContain('= 7');
 	// The reserve is spelled out, so the operator can see where the memory went.
 	expect(formula.textContent).toContain('1 GB');
 	expect(queryByTestId('max-active-containers-reset')).toBeNull();
 
 	// An explicit value wins and offers a reset back to automatic.
 	await user.clear(maxInput);
-	await user.type(maxInput, '7');
+	await user.type(maxInput, '9');
 	await user.click(await findByTestId('max-active-containers-save'));
-	await waitFor(() => expect(maxInput.value).toBe('7'));
+	await waitFor(() => expect(maxInput.value).toBe('9'));
 	const reset = await findByTestId('max-active-containers-reset');
 
 	const { apiBase, token } = getTestContext();
 	const auth = { Authorization: `Bearer ${token}` };
 	let res = await apiBase('/api/instance-settings', { headers: auth });
 	let data = (await res.json()).data;
-	expect(data.max_active_containers).toBe(7);
+	expect(data.max_active_containers).toBe(9);
 	expect(data.max_active_containers_is_set).toBe(true);
 
 	await user.click(reset);
-	await waitFor(() => expect(maxInput.value).toBe('3'));
+	await waitFor(() => expect(maxInput.value).toBe('7'));
 	res = await apiBase('/api/instance-settings', { headers: auth });
 	data = (await res.json()).data;
-	expect(data.max_active_containers).toBe(3);
+	expect(data.max_active_containers).toBe(7);
 	expect(data.max_active_containers_is_set).toBe(false);
 });
 
@@ -58,7 +58,7 @@ test('raising the ram cap lowers the automatic container limit and persists', as
 	await findByRole('heading', { name: 'Concurrency' });
 
 	const ramInput = (await findByTestId('ram-cap-input')) as HTMLInputElement;
-	expect(ramInput.value).toBe('2');
+	expect(ramInput.value).toBe('1');
 	await user.clear(ramInput);
 	await user.type(ramInput, '3');
 	await user.click(await findByTestId('ram-cap-save'));
@@ -79,6 +79,53 @@ test('raising the ram cap lowers the automatic container limit and persists', as
 	expect(data.max_active_containers).toBe(2);
 });
 
+test('accepts a fractional ram cap and the automatic limit follows it', async () => {
+	setHostMemoryForTest({ totalRamBytes: 1.92 * GIB, totalSwapBytes: 6 * GIB });
+
+	const { findByTestId, findByRole, user } = await renderApp({
+		initialPath: '/settings/concurrency',
+	});
+	await findByRole('heading', { name: 'Concurrency' });
+
+	const ramInput = (await findByTestId('ram-cap-input')) as HTMLInputElement;
+	await user.clear(ramInput);
+	await user.type(ramInput, '0.5');
+	await user.click(await findByTestId('ram-cap-save'));
+	await waitFor(() => expect(ramInput.value).toBe('0.5'));
+
+	// 7 usable GB / 0.5GB per container = 14.
+	const formula = await findByTestId('max-active-containers-formula');
+	await waitFor(() => expect(formula.textContent).toContain('= 14'));
+
+	const { apiBase, token } = getTestContext();
+	const res = await apiBase('/api/instance-settings', {
+		headers: { Authorization: `Bearer ${token}` },
+	});
+	const data = (await res.json()).data;
+	expect(data.default_ram_cap_per_container_gb).toBe(0.5);
+	expect(data.max_active_containers).toBe(14);
+});
+
+test('saves the global per-project run limit', async () => {
+	const { findByTestId, findByRole, user } = await renderApp({
+		initialPath: '/settings/concurrency',
+	});
+	await findByRole('heading', { name: 'Concurrency' });
+
+	const input = (await findByTestId('max-runs-input')) as HTMLInputElement;
+	expect(input.value).toBe('3');
+	await user.clear(input);
+	await user.type(input, '6');
+	await user.click(await findByTestId('max-runs-save'));
+	await waitFor(() => expect(input.value).toBe('6'));
+
+	const { apiBase, token } = getTestContext();
+	const res = await apiBase('/api/instance-settings', {
+		headers: { Authorization: `Bearer ${token}` },
+	});
+	expect((await res.json()).data.default_max_runs_per_project).toBe(6);
+});
+
 test('saves the container idle timeout, including 0 for always-on', async () => {
 	const { findByTestId, findByRole, user } = await renderApp({
 		initialPath: '/settings/concurrency',
@@ -86,7 +133,7 @@ test('saves the container idle timeout, including 0 for always-on', async () => 
 	await findByRole('heading', { name: 'Concurrency' });
 
 	const input = (await findByTestId('container-idle-timeout-input')) as HTMLInputElement;
-	expect(input.value).toBe('15');
+	expect(input.value).toBe('1');
 	await user.clear(input);
 	await user.type(input, '0');
 	await user.click(await findByTestId('container-idle-timeout-save'));

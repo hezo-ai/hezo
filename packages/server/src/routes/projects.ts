@@ -4,10 +4,15 @@ import {
 	ContainerStatus,
 	isAllowedProjectIconStoredMime,
 	isArchiveFilter,
+	MAX_RUNS_PER_PROJECT_MAX,
+	MAX_RUNS_PER_PROJECT_MIN,
 	type MarketplaceRosterAgent,
 	MemberType,
 	PROJECT_ICON_MAX_BYTES,
 	PROJECT_ICON_MAX_DIMENSION,
+	RAM_CAP_PER_CONTAINER_GB_MAX,
+	RAM_CAP_PER_CONTAINER_GB_MIN,
+	roundRamCapGb,
 	wsRoom,
 } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
@@ -547,6 +552,7 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 		name?: string;
 		description?: string;
 		memory_limit_gib?: number | null;
+		max_concurrent_runs?: number | null;
 		daily_budget_cents?: number;
 		weekly_budget_cents?: number;
 		monthly_budget_cents?: number;
@@ -578,15 +584,42 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 	}
 	if (body.memory_limit_gib !== undefined) {
 		// null clears the per-project override — the container inherits the
-		// instance-wide default ram cap.
+		// global default ram cap. Fractional to one decimal place.
 		if (
 			body.memory_limit_gib !== null &&
-			(!Number.isInteger(body.memory_limit_gib) || body.memory_limit_gib < 1)
+			(!Number.isFinite(body.memory_limit_gib) ||
+				body.memory_limit_gib < RAM_CAP_PER_CONTAINER_GB_MIN ||
+				body.memory_limit_gib > RAM_CAP_PER_CONTAINER_GB_MAX)
 		) {
-			return err(c, 'INVALID_REQUEST', 'memory_limit_gib must be an integer ≥ 1 or null', 400);
+			return err(
+				c,
+				'INVALID_REQUEST',
+				`memory_limit_gib must be a number between ${RAM_CAP_PER_CONTAINER_GB_MIN} and ${RAM_CAP_PER_CONTAINER_GB_MAX}, or null`,
+				400,
+			);
 		}
 		sets.push(`memory_limit_gib = $${idx}`);
-		params.push(body.memory_limit_gib);
+		params.push(body.memory_limit_gib === null ? null : roundRamCapGb(body.memory_limit_gib));
+		idx++;
+	}
+	if (body.max_concurrent_runs !== undefined) {
+		// null clears the per-project override — the project inherits the global
+		// default run limit (system_meta `default_max_runs_per_project`).
+		if (
+			body.max_concurrent_runs !== null &&
+			(!Number.isInteger(body.max_concurrent_runs) ||
+				body.max_concurrent_runs < MAX_RUNS_PER_PROJECT_MIN ||
+				body.max_concurrent_runs > MAX_RUNS_PER_PROJECT_MAX)
+		) {
+			return err(
+				c,
+				'INVALID_REQUEST',
+				`max_concurrent_runs must be an integer between ${MAX_RUNS_PER_PROJECT_MIN} and ${MAX_RUNS_PER_PROJECT_MAX}, or null`,
+				400,
+			);
+		}
+		sets.push(`max_concurrent_runs = $${idx}`);
+		params.push(body.max_concurrent_runs);
 		idx++;
 	}
 	// Budget limits: 0 = unlimited. Validate the *merged* trio (incoming ?? stored)

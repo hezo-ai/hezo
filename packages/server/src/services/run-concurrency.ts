@@ -1,14 +1,26 @@
 import { ContainerStatus, HeartbeatRunStatus } from '@hezo/shared';
 import type { Db } from '../db/database';
-import { getMaxActiveContainers } from '../lib/system-meta';
+import { getDefaultMaxRunsPerProject, getMaxActiveContainers } from '../lib/system-meta';
 
 /**
- * DB-backed concurrency checks — the single source of truth for the two run
- * rules: at most one active (queued/running) agent run per task, and at most
- * `max_active_containers` (system_meta; default computed from host memory)
- * simultaneously RUNNING project containers across the instance. The container
- * cap is the memory guarantee: every container is memory-capped, so total
- * demand never exceeds `N × cap` no matter how many runs share a container.
+ * DB-backed concurrency checks — the single source of truth for the three run
+ * rules:
+ *
+ * 1. at most one active (queued/running) agent run per task;
+ * 2. at most `max_active_containers` (system_meta; default computed from host
+ *    memory) simultaneously RUNNING project containers across the instance;
+ * 3. at most `projects.max_concurrent_runs` (NULL = the system_meta default)
+ *    active runs inside any one project.
+ *
+ * Rules 2 and 3 answer different questions and neither subsumes the other. The
+ * container cap is the *memory* guarantee: every container is memory-capped, so
+ * total host demand never exceeds `N × cap` no matter how many runs share a
+ * container. The per-project run limit is a *throughput* guarantee, bounding how
+ * many of one project's agents contend for that shared container's CPU, git
+ * worktree and egress proxy. Migration 048 dropped an earlier per-project column
+ * for being mistaken for the former; rule 3 is not that, and the host bound is
+ * unchanged by it.
+ *
  * Shared by the scheduler (`JobManager`, which layers its in-memory dispatch
  * guards on top) and the stateless run-now route.
  *
@@ -66,10 +78,18 @@ export async function isContainerCapacityBlockedInDb(db: Db, projectId: string):
 }
 
 /**
- * Active (queued/running) runs inside one project. Not a capacity input — the
- * cap is instance-wide — but the repo routes gate destructive git operations
- * (reset, re-clone) on the project being quiet, and the idle-stop recheck uses
- * the same figure.
+ * Active (queued/running) runs inside one project — the DB half of the
+ * per-project run limit (rule 3), and also what the repo routes gate
+ * destructive git operations (reset, re-clone) on and what the idle-stop
+ * recheck reads.
+ *
+ * Blind spot, deliberate: progress-update runs carry `task_id = NULL` and so
+ * are dropped by the join, making this an *under*-count for capacity purposes.
+ * The scheduler covers them with its in-memory refcount (see
+ * `JobManager.isProjectAtRunLimit`). Widening the join here would also change
+ * what the repo routes mean by "quiet" — a progress-update run holds no
+ * worktree, so counting it there would newly block a legitimate re-clone. Two
+ * callers, two meanings; the query stays honest about what it counts.
  */
 export async function countActiveRunsInProject(db: Db, projectId: string): Promise<number> {
 	const row = await db.query<{ active: number }>(
@@ -80,6 +100,33 @@ export async function countActiveRunsInProject(db: Db, projectId: string): Promi
 		[projectId, HeartbeatRunStatus.Queued, HeartbeatRunStatus.Running],
 	);
 	return row.rows[0]?.active ?? 0;
+}
+
+/**
+ * The effective cap on simultaneous active runs in one project: the project's
+ * own `max_concurrent_runs` override, else the global default. Structural
+ * mirror of how `services/containers.ts` resolves the memory cap
+ * (`projects.memory_limit_gib ?? getDefaultRamCapPerContainerGb`).
+ */
+export async function getProjectRunLimit(db: Db, projectId: string): Promise<number> {
+	const row = await db.query<{ max_concurrent_runs: number | null }>(
+		'SELECT max_concurrent_runs FROM projects WHERE id = $1',
+		[projectId],
+	);
+	return row.rows[0]?.max_concurrent_runs ?? (await getDefaultMaxRunsPerProject(db));
+}
+
+/**
+ * Stateless per-project run-limit gate (route-side mirror of the scheduler's
+ * in-memory-guarded check): is this project already running as many agents at
+ * once as it is allowed to?
+ */
+export async function isProjectAtRunLimitInDb(db: Db, projectId: string): Promise<boolean> {
+	const [active, limit] = await Promise.all([
+		countActiveRunsInProject(db, projectId),
+		getProjectRunLimit(db, projectId),
+	]);
+	return active >= limit;
 }
 
 /**

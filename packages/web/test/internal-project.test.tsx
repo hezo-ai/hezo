@@ -124,6 +124,15 @@ test('HQ /documents and /assets render while /settings still redirects to /tasks
 	});
 	await new Promise((r) => setTimeout(r, 200));
 	expect(router.state.location.pathname).toBe(`/projects/${HQ_PROJECT_SLUG}/tasks`);
+
+	// So does Concurrency, which discloses under Settings and so has no HQ entry.
+	// HQ still gets both limits server-side; it just inherits the globals.
+	await router.navigate({
+		to: '/projects/$projectId/concurrency',
+		params: { projectId: HQ_PROJECT_SLUG },
+	});
+	await new Promise((r) => setTimeout(r, 200));
+	expect(router.state.location.pathname).toBe(`/projects/${HQ_PROJECT_SLUG}/tasks`);
 });
 
 test('the HQ assets library lists a file the CEO saved there', async () => {

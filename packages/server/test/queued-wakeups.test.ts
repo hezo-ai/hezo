@@ -16,6 +16,7 @@ import {
 	removeSeededContainerProject,
 	seedRunningContainerProject,
 	setMaxActiveContainersForTest,
+	setProjectRunLimitForTest,
 } from './helpers/capacity';
 
 let app: Hono<Env>;
@@ -152,6 +153,7 @@ interface WakeupRow {
 interface DispatchState {
 	task_busy: boolean;
 	instance_at_capacity: boolean;
+	project_at_run_limit: boolean;
 }
 
 beforeAll(async () => {
@@ -217,6 +219,7 @@ describe('GET /teams/:teamId/tasks/:taskId/queued-wakeups', () => {
 		const { body } = await listQueued(taskId);
 		expect(body.data.dispatch.task_busy).toBe(false);
 		expect(body.data.dispatch.instance_at_capacity).toBe(false);
+		expect(body.data.dispatch.project_at_run_limit).toBe(false);
 		expect(body.data.wakeups[0].run_now_blocked).toBeNull();
 	});
 
@@ -247,6 +250,30 @@ describe('GET /teams/:teamId/tasks/:taskId/queued-wakeups', () => {
 		await db.query(`UPDATE projects SET container_status = 'running' WHERE id = $1`, [projectId]);
 		await removeSeededContainerProject(db, 'cap-filler-get');
 		await clearMaxActiveContainersForTest(db);
+	});
+
+	it('reports project_at_run_limit when the project is at its own ceiling', async () => {
+		await clearWakeups(taskId);
+		await clearRuns();
+		// A run on a different task, so task_busy does not short-circuit the chain
+		// before the run-limit branch is reached.
+		const otherTask = await db.query<{ id: string }>(
+			`INSERT INTO tasks (team_id, project_id, number, identifier, title)
+			 VALUES ($1, $2, 8801, 'QW-8801', 'Other') RETURNING id`,
+			[teamId, projectId],
+		);
+		await setProjectRunLimitForTest(db, projectId, 1);
+		await insertRunningRun(agentA, otherTask.rows[0].id);
+		await insertQueuedWakeup(agentB, taskId);
+
+		const { body } = await listQueued(taskId);
+		expect(body.data.dispatch.task_busy).toBe(false);
+		expect(body.data.dispatch.instance_at_capacity).toBe(false);
+		expect(body.data.dispatch.project_at_run_limit).toBe(true);
+
+		await setProjectRunLimitForTest(db, projectId, null);
+		await clearRuns();
+		await db.query('DELETE FROM tasks WHERE id = $1', [otherTask.rows[0].id]);
 	});
 
 	it('a project whose container is already running is never at capacity', async () => {

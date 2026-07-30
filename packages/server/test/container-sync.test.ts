@@ -357,8 +357,8 @@ describe('syncAllContainerStatuses', () => {
 		);
 		expect(result.rows[0].container_status).toBe('error');
 		expect(result.rows[0].container_error).toContain('17.00 GiB');
-		// Fresh projects inherit the instance-wide ram cap (default 2 GB).
-		expect(result.rows[0].container_error).toContain('2 GiB');
+		// Fresh projects inherit the global ram cap (default 1 GB).
+		expect(result.rows[0].container_error).toContain('1 GiB');
 		expect(result.rows[0].container_error).toMatch(/restart/i);
 
 		expect(mockWsManager.broadcast).toHaveBeenCalled();

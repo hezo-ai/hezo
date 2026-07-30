@@ -351,24 +351,45 @@ describe('PATCH /api/projects/:projectId', () => {
 		expect((await res.json()).data.description).toBe('Refreshed description.');
 	});
 
-	it('ignores the removed max_concurrent_runs field (concurrency is instance-level now)', async () => {
-		const res = await ctx.app.request(`/api/projects/${projectSlug}`, {
-			method: 'PATCH',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ max_concurrent_runs: 3 }),
-		});
-		expect(res.status).toBe(200);
-		expect((await res.json()).data.max_concurrent_runs).toBeUndefined();
+	it('persists a max_concurrent_runs override and clears it with null', async () => {
+		const patchRuns = (value: number | null) =>
+			ctx.app.request(`/api/projects/${projectSlug}`, {
+				method: 'PATCH',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ max_concurrent_runs: value }),
+			});
+
+		const set = await patchRuns(5);
+		expect(set.status).toBe(200);
+		expect((await set.json()).data.max_concurrent_runs).toBe(5);
+
+		// null = inherit the global default again.
+		const cleared = await patchRuns(null);
+		expect(cleared.status).toBe(200);
+		expect((await cleared.json()).data.max_concurrent_runs).toBeNull();
+
+		const bad = await patchRuns(0);
+		expect(bad.status).toBe(400);
+		expect((await bad.json()).error.message).toContain('max_concurrent_runs');
 	});
 
-	it('rejects an invalid memory_limit_gib and accepts a valid one', async () => {
+	it('rejects an invalid memory_limit_gib and accepts a fractional one', async () => {
 		const bad = await ctx.app.request(`/api/projects/${projectSlug}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ memory_limit_gib: 0.4 }), // below the 0.5 floor
+		});
+		expect(bad.status).toBe(400);
+		expect((await bad.json()).error.message).toContain('memory_limit_gib');
+
+		// Fractional caps are valid now — 1.5 used to be a 400.
+		const fractional = await ctx.app.request(`/api/projects/${projectSlug}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ memory_limit_gib: 1.5 }),
 		});
-		expect(bad.status).toBe(400);
-		expect((await bad.json()).error.message).toContain('memory_limit_gib');
+		expect(fractional.status).toBe(200);
+		expect((await fractional.json()).data.memory_limit_gib).toBe(1.5);
 
 		const good = await ctx.app.request(`/api/projects/${projectSlug}`, {
 			method: 'PATCH',

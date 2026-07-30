@@ -2,12 +2,17 @@ import {
 	CONTAINER_IDLE_TIMEOUT_MIN_MAX,
 	CONTAINER_IDLE_TIMEOUT_MIN_MIN,
 	DEFAULT_CONTAINER_IDLE_TIMEOUT_MIN,
+	DEFAULT_MAX_RUNS_PER_PROJECT,
 	DEFAULT_RAM_CAP_PER_CONTAINER_GB,
 	HOST_RESERVED_MEMORY_GB,
 	MAX_ACTIVE_CONTAINERS_MAX,
 	MAX_ACTIVE_CONTAINERS_MIN,
+	MAX_RUNS_PER_PROJECT_MAX,
+	MAX_RUNS_PER_PROJECT_MIN,
 	RAM_CAP_PER_CONTAINER_GB_MAX,
 	RAM_CAP_PER_CONTAINER_GB_MIN,
+	RAM_CAP_PER_CONTAINER_GB_STEP,
+	RAM_PER_RUN_MB,
 	usableMemoryGibForContainers,
 } from '@hezo/shared';
 import { createFileRoute } from '@tanstack/react-router';
@@ -36,6 +41,14 @@ const MAX_CONTAINERS_POINTS: readonly MessageKey[] = [
 	'concurrency.maxContainers.point.queue',
 	'concurrency.maxContainers.point.automatic',
 	'concurrency.maxContainers.point.range',
+];
+
+const MAX_RUNS_POINTS: readonly MessageKey[] = [
+	'concurrency.maxRuns.point.scope',
+	'concurrency.maxRuns.point.queue',
+	'concurrency.maxRuns.point.sizing',
+	'concurrency.maxRuns.point.override',
+	'concurrency.maxRuns.point.range',
 ];
 
 const RAM_CAP_POINTS: readonly MessageKey[] = [
@@ -114,6 +127,23 @@ function ConcurrencySettingsPage() {
 						}}
 					/>
 					{settings === undefined ? null : <MaxActiveContainersForm settings={settings} />}
+				</section>
+
+				<section className="border border-border rounded-md p-4 bg-surface mb-4">
+					<label className="block text-[13px] font-medium mb-1" htmlFor="max-runs-input">
+						{t('concurrency.maxRuns.label')}
+					</label>
+					<Points
+						keys={MAX_RUNS_POINTS}
+						vars={{
+							min: MAX_RUNS_PER_PROJECT_MIN,
+							max: MAX_RUNS_PER_PROJECT_MAX,
+							default: DEFAULT_MAX_RUNS_PER_PROJECT,
+							perRun: RAM_PER_RUN_MB,
+							cap: DEFAULT_RAM_CAP_PER_CONTAINER_GB,
+						}}
+					/>
+					{settings === undefined ? null : <MaxRunsPerProjectForm settings={settings} />}
 				</section>
 
 				<section className="border border-border rounded-md p-4 bg-surface mb-4">
@@ -258,6 +288,67 @@ function MaxActiveContainersForm({ settings }: { settings: InstanceSettings }) {
 	);
 }
 
+function MaxRunsPerProjectForm({ settings }: { settings: InstanceSettings }) {
+	const { t } = useI18n();
+	const updateSettings = useUpdateInstanceSettings();
+	const [value, setValue] = useState(String(settings.default_max_runs_per_project));
+	const [error, setError] = useState<string | null>(null);
+
+	async function handleSave() {
+		setError(null);
+		const n = Number.parseInt(value, 10);
+		if (Number.isNaN(n) || n < MAX_RUNS_PER_PROJECT_MIN || n > MAX_RUNS_PER_PROJECT_MAX) {
+			setError(
+				t('concurrency.rangeError', {
+					min: MAX_RUNS_PER_PROJECT_MIN,
+					max: MAX_RUNS_PER_PROJECT_MAX,
+				}),
+			);
+			return;
+		}
+		try {
+			const result = await updateSettings.mutateAsync({ default_max_runs_per_project: n });
+			setValue(String(result.default_max_runs_per_project));
+		} catch (e) {
+			setError((e as ApiError).message);
+		}
+	}
+
+	const dirty = value.trim() !== String(settings.default_max_runs_per_project);
+
+	return (
+		<>
+			<div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+				<Input
+					id="max-runs-input"
+					data-testid="max-runs-input"
+					type="number"
+					inputMode="numeric"
+					min={MAX_RUNS_PER_PROJECT_MIN}
+					max={MAX_RUNS_PER_PROJECT_MAX}
+					value={value}
+					onChange={(e) => setValue(e.target.value)}
+					className="sm:w-40"
+				/>
+				<Button
+					size="sm"
+					data-testid="max-runs-save"
+					onClick={handleSave}
+					disabled={!dirty || updateSettings.isPending}
+				>
+					{updateSettings.isPending && <Loader2 className="w-3 h-3 animate-spin" />}{' '}
+					{t('common.save')}
+				</Button>
+			</div>
+			{error && (
+				<p className="text-[13px] text-danger mt-1.5" data-testid="max-runs-error">
+					{error}
+				</p>
+			)}
+		</>
+	);
+}
+
 function RamCapForm({ settings }: { settings: InstanceSettings }) {
 	const { t } = useI18n();
 	const updateSettings = useUpdateInstanceSettings();
@@ -266,10 +357,11 @@ function RamCapForm({ settings }: { settings: InstanceSettings }) {
 
 	async function handleSave() {
 		setError(null);
-		const n = Number.parseInt(value, 10);
+		// parseFloat, not parseInt: caps are fractional, and parseInt('0.5') is 0.
+		const n = Number.parseFloat(value);
 		if (Number.isNaN(n) || n < RAM_CAP_PER_CONTAINER_GB_MIN || n > RAM_CAP_PER_CONTAINER_GB_MAX) {
 			setError(
-				t('concurrency.rangeError', {
+				t('concurrency.decimalRangeError', {
 					min: RAM_CAP_PER_CONTAINER_GB_MIN,
 					max: RAM_CAP_PER_CONTAINER_GB_MAX,
 				}),
@@ -293,7 +385,8 @@ function RamCapForm({ settings }: { settings: InstanceSettings }) {
 					id="ram-cap-input"
 					data-testid="ram-cap-input"
 					type="number"
-					inputMode="numeric"
+					inputMode="decimal"
+					step={RAM_CAP_PER_CONTAINER_GB_STEP}
 					min={RAM_CAP_PER_CONTAINER_GB_MIN}
 					max={RAM_CAP_PER_CONTAINER_GB_MAX}
 					value={value}

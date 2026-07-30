@@ -16,8 +16,10 @@ export interface Project {
 	task_prefix: string;
 	description: string;
 	is_internal?: boolean;
-	/** Per-project container memory override in GiB; null = inherit the instance-wide ram cap. */
+	/** Per-project container memory override in GB; null = inherit the global ram cap. */
 	memory_limit_gib: number | null;
+	/** Per-project cap on simultaneous runs; null = inherit the global default. */
+	max_concurrent_runs: number | null;
 	daily_budget_cents: number;
 	weekly_budget_cents: number;
 	monthly_budget_cents: number;
@@ -238,8 +240,10 @@ export function useCreateProjectWithTeam() {
 interface UpdateProjectVars {
 	name?: string;
 	description?: string;
-	/** null clears the override back to the instance-wide default ram cap. */
+	/** null clears the override back to the global default ram cap. */
 	memory_limit_gib?: number | null;
+	/** null clears the override back to the global default run limit. */
+	max_concurrent_runs?: number | null;
 	daily_budget_cents?: number;
 	weekly_budget_cents?: number;
 	monthly_budget_cents?: number;

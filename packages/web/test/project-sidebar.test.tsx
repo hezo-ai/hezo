@@ -51,7 +51,7 @@ test('the project menu leads with Inbox, lists the project pages, and has a Team
 	expect(queryByTestId('project-sidebar-back')).toBeNull();
 });
 
-test('Git, Container and Activity nest under Settings, disclosed when Settings is the active route', async () => {
+test('Git, Concurrency, Container and Activity nest under Settings, disclosed when Settings is the active route', async () => {
 	let ws!: SeededWorkspace;
 	let projectSlug = '';
 	const { container, findByTestId, router } = await renderApp({
@@ -70,10 +70,11 @@ test('Git, Container and Activity nest under Settings, disclosed when Settings i
 	});
 	await findByTestId('project-sidebar-name', undefined, { timeout: 15_000 });
 	expect(within(getNav(container)).queryByRole('link', { name: 'Git' })).toBeNull();
+	expect(within(getNav(container)).queryByRole('link', { name: 'Concurrency' })).toBeNull();
 	expect(within(getNav(container)).queryByRole('link', { name: 'Container' })).toBeNull();
 	expect(within(getNav(container)).queryByRole('link', { name: 'Activity' })).toBeNull();
 
-	// Selecting Settings discloses Git, Container and Activity beneath it.
+	// Selecting Settings discloses Git, Concurrency, Container and Activity beneath it.
 	await router.navigate({
 		to: '/projects/$projectId/settings',
 		params: { projectId: projectSlug },
@@ -81,6 +82,7 @@ test('Git, Container and Activity nest under Settings, disclosed when Settings i
 	await waitFor(() =>
 		expect(within(getNav(container)).getByRole('link', { name: 'Git' })).toBeTruthy(),
 	);
+	expect(within(getNav(container)).getByRole('link', { name: 'Concurrency' })).toBeTruthy();
 	expect(within(getNav(container)).getByRole('link', { name: 'Container' })).toBeTruthy();
 	expect(within(getNav(container)).getByRole('link', { name: 'Activity' })).toBeTruthy();
 	expect(within(getNav(container)).getByRole('link', { name: 'Settings' })).toBeTruthy();

@@ -72,7 +72,12 @@ import { detectOrphans, healStaleRunState, STALE_STATE_GRACE_SECONDS } from './o
 import type { PricingService } from './pricing';
 import { collectCandidateRunIds, decideSweepKills } from './process-sweeper';
 import { ensureRepoSetupAction } from './repo-setup';
-import { getActiveContainers, isTaskBusyInDb } from './run-concurrency';
+import {
+	countActiveRunsInProject,
+	getActiveContainers,
+	getProjectRunLimit,
+	isTaskBusyInDb,
+} from './run-concurrency';
 import type { SshAgentServer } from './ssh-agent';
 import { reportTelemetry } from './telemetry';
 import { ensureUpdateStaged, isSupervisedWorker, readUpdateState } from './updater';
@@ -144,6 +149,7 @@ export type DispatchNowResult =
 			reason:
 				| 'task_busy'
 				| 'instance_at_capacity'
+				| 'project_at_run_limit'
 				| 'agent_busy'
 				| 'blocked'
 				| 'not_queued'
@@ -160,6 +166,7 @@ export type ProgressUpdateDispatchReason =
 	| 'no_due_goals'
 	| 'agent_busy'
 	| 'instance_at_capacity'
+	| 'project_at_run_limit'
 	| 'over_budget'
 	| 'launch_conflict';
 
@@ -167,6 +174,26 @@ export type ProgressUpdateDispatchReason =
 export type TryProgressUpdateResult =
 	| { dispatched: true }
 	| { dispatched: false; reason: ProgressUpdateDispatchReason };
+
+/**
+ * Which non-launch outcomes of a manual `progress_update_now` are TRANSIENT —
+ * the run will become possible on its own, so the wakeup is re-queued with this
+ * skip reason rather than completed. Any reason absent here is terminal by
+ * dispatch time (goals no longer due, over budget, no Captain) and the queued
+ * run is retired as a no-op.
+ *
+ * A table rather than a branch chain: adding a dispatch reason is one row, and
+ * the transient/terminal call is made once instead of in a condition and a
+ * ternary that have to agree. Getting it wrong silently retires a user's
+ * "Run now" instead of retrying it.
+ */
+const TRANSIENT_PROGRESS_UPDATE_SKIPS: Partial<
+	Record<ProgressUpdateDispatchReason, WakeupSkipReason>
+> = {
+	agent_busy: WakeupSkipReason.AgentRunning,
+	instance_at_capacity: WakeupSkipReason.InstanceAtCapacity,
+	project_at_run_limit: WakeupSkipReason.ProjectAtRunLimit,
+};
 
 /** What the manual `dispatchProgressUpdateNow` path returns to the route: a single
  * attempt outcome, or — for a transient conflict — a queued wakeup that runs when
@@ -296,13 +323,15 @@ export class JobManager {
 	// before launchTask, cleared in the launchTask finally. Closes the race window between
 	// dispatch and createHeartbeatRun where the DB-backed check is not yet authoritative.
 	private activeTaskRuns = new Set<string>();
-	// Refcount of dispatched runs per project, scoped at the project level so the
-	// number of concurrent runs entering a project's shared container never
-	// exceeds its configured ceiling. Incremented synchronously in activateAgent
-	// before launchTask and decremented in the launchTask finally — this closes
-	// the race window where the DB-backed count is not yet authoritative. A Set
-	// would be wrong here: with several runs in flight, the first to finish would
-	// free the guard for the rest.
+	// Refcount of dispatched runs per project, so the number of concurrent runs
+	// entering a project's shared container never exceeds the ceiling set by
+	// `projects.max_concurrent_runs` (NULL = the system_meta default). Read by
+	// isProjectAtRunLimit alongside the DB count, and by the idle-stop recheck.
+	// Incremented synchronously in activateAgent before launchTask and
+	// decremented in the launchTask finally — this closes the race window where
+	// the DB-backed count is not yet authoritative. A Set would be wrong here:
+	// with several runs in flight, the first to finish would free the guard for
+	// the rest.
 	private activeProjectRuns = new Map<string, number>();
 	/** Projects whose container is being lazy-started by an in-flight dispatch —
 	 * counted against the active-container cap before the DB row reads Running. */
@@ -351,12 +380,13 @@ export class JobManager {
 	/**
 	 * Dispatch a single queued wakeup immediately, bypassing the cron's
 	 * coalescing window. Applies the exact per-wakeup gating `processWakeups`
-	 * does — task busy, project at capacity, and source-gated dependency blockers
-	 * — so the run rules and the scheduler's blocker policy stay respected. The
-	 * in-memory `activeTaskRuns`/`activeProjectRuns` guards (checked inside
-	 * `isTaskBusy`/`isProjectAtCapacity` and set synchronously by `activateAgent`)
-	 * make back-to-back calls race-safe. Returns a discriminated result the
-	 * route maps to 200 / 409 / 404.
+	 * does — task busy, host at container capacity, project at its run limit,
+	 * agent busy, and source-gated dependency blockers — so the run rules and the
+	 * scheduler's blocker policy stay respected. The in-memory
+	 * `activeTaskRuns`/`activeProjectRuns` guards (checked inside
+	 * `isTaskBusy`/`isProjectAtRunLimit` and set synchronously by
+	 * `activateAgent`) make back-to-back calls race-safe. Returns a discriminated
+	 * result the route maps to 200 / 409 / 404.
 	 */
 	async dispatchWakeupNow(wakeupId: string): Promise<DispatchNowResult> {
 		const { db } = this.deps;
@@ -400,6 +430,16 @@ export class JobManager {
 					null,
 				);
 				return { dispatched: false, reason: 'instance_at_capacity' };
+			}
+			if (await this.isProjectAtRunLimit(project?.id ?? null)) {
+				await this.markWakeupSkipped(
+					wakeup.id,
+					WakeupSkipReason.ProjectAtRunLimit,
+					wakeupTaskId,
+					wakeup.team_id,
+					null,
+				);
+				return { dispatched: false, reason: 'project_at_run_limit' };
 			}
 			if (project && (await this.isAgentBusyInProject(wakeup.member_id, project.id))) {
 				await this.markWakeupSkipped(
@@ -1211,6 +1251,37 @@ export class JobManager {
 		return runningProjectIds.size + pendingExtra >= limit;
 	}
 
+	/**
+	 * Is this project already running its own maximum number of simultaneous
+	 * agents? Narrower than {@link isContainerCapacityBlocked}: that one asks
+	 * whether the *host* can afford another container, this one whether the
+	 * *project* may put another run into a container that is typically already
+	 * up. Task-less callers pass null and are not gated (same convention).
+	 *
+	 * The two signals are combined with `max()`, not a sum, because they overlap
+	 * on their whole intersection. `max()` is correct because the in-memory
+	 * window strictly *contains* the DB window for every run this process owns:
+	 * `acquireProjectRun` runs synchronously before `launchTask`, hence before
+	 * `runAgent` inserts the queued row, and `releaseProjectRun` runs from
+	 * `launchTask`'s settle handler after `runAgent` has driven the row terminal
+	 * on every path. So each owned run is counted exactly once.
+	 *
+	 * The DB term is not redundant: it is the only truthful signal for rows a
+	 * *previous* process left queued/running, until `reconcileOnStartup` sweeps
+	 * them. It also lets `max()` absorb `countActiveRunsInProject`'s task-less
+	 * blind spot for free — a progress-update run contributes 0 to the DB count
+	 * but 1 to the refcount.
+	 */
+	private async isProjectAtRunLimit(projectId: string | null): Promise<boolean> {
+		if (!projectId) return false;
+		const [dbActive, limit] = await Promise.all([
+			countActiveRunsInProject(this.deps.db, projectId),
+			getProjectRunLimit(this.deps.db, projectId),
+		]);
+		const inMemory = this.activeProjectRuns.get(projectId) ?? 0;
+		return Math.max(dbActive, inMemory) >= limit;
+	}
+
 	private acquirePendingContainerStart(projectId: string): void {
 		this.pendingContainerStarts.set(
 			projectId,
@@ -1352,6 +1423,19 @@ export class JobManager {
 					await this.markWakeupSkipped(
 						wakeup.id,
 						WakeupSkipReason.InstanceAtCapacity,
+						wakeupTaskId,
+						wakeup.team_id,
+						null,
+					);
+					continue;
+				}
+				if (await this.isProjectAtRunLimit(project?.id ?? null)) {
+					log.debug(
+						`Skipping wakeup ${wakeup.id} — project ${project ? ref(project.slug, project.id) : 'unknown'} is at its concurrent-run limit`,
+					);
+					await this.markWakeupSkipped(
+						wakeup.id,
+						WakeupSkipReason.ProjectAtRunLimit,
 						wakeupTaskId,
 						wakeup.team_id,
 						null,
@@ -1696,13 +1780,10 @@ export class JobManager {
 				// already claimed by the dispatcher, so the transient branch must re-queue it,
 				// not just stamp a skip reason — otherwise it would stick in `claimed`.)
 				if (wakeupPayload?.trigger === 'progress_update_now' && wakeupId) {
-					if (result.reason === 'agent_busy' || result.reason === 'instance_at_capacity') {
+					const skipReason = TRANSIENT_PROGRESS_UPDATE_SKIPS[result.reason];
+					if (skipReason) {
 						// Still transient — re-queue so a later cron tick retries once the
-						// Captain frees / capacity clears.
-						const skipReason =
-							result.reason === 'instance_at_capacity'
-								? WakeupSkipReason.InstanceAtCapacity
-								: WakeupSkipReason.AgentRunning;
+						// Captain frees / capacity clears / a run slot opens.
 						await db.query(
 							`UPDATE agent_wakeup_requests
 							 SET status = $1::wakeup_status, claimed_at = NULL,
@@ -1793,6 +1874,16 @@ export class JobManager {
 		if (await this.isContainerCapacityBlocked(task.project_id)) {
 			log.debug(
 				`Instance is at its active-container limit — re-queuing wakeup for ${ref(agent.rows[0].slug, memberId)}`,
+			);
+			await this.requeueWakeup(wakeupId);
+			return;
+		}
+		// The project's own ceiling on simultaneous agents. Re-queue rather than
+		// stamp a skip reason: by this point the dispatcher has already claimed the
+		// wakeup, so a bare skip would strand it in `claimed` forever.
+		if (await this.isProjectAtRunLimit(task.project_id)) {
+			log.debug(
+				`Project ${task.project_id} is at its concurrent-run limit — re-queuing wakeup for ${ref(agent.rows[0].slug, memberId)}`,
 			);
 			await this.requeueWakeup(wakeupId);
 			return;
@@ -2289,15 +2380,18 @@ export class JobManager {
 		if (dueGoals.length === 0) return { dispatched: false, reason: 'no_due_goals' };
 
 		// Don't start a progress update while the Captain is already running in this
-		// project, the instance is at its global run capacity, or the Captain/project
-		// is over budget. The scheduled caller falls through — the goals remain due
-		// for the next heartbeat. A stopped container is no blocker: the runner
-		// lazy-starts it.
+		// project, the instance is at its global container capacity, the project is
+		// at its own concurrent-run limit, or the Captain/project is over budget.
+		// The scheduled caller falls through — the goals remain due for the next
+		// heartbeat. A stopped container is no blocker: the runner lazy-starts it.
 		if (await this.isAgentBusyInProject(memberId, projectRow.id)) {
 			return { dispatched: false, reason: 'agent_busy' };
 		}
 		if (await this.isContainerCapacityBlocked(projectRow.id)) {
 			return { dispatched: false, reason: 'instance_at_capacity' };
+		}
+		if (await this.isProjectAtRunLimit(projectRow.id)) {
+			return { dispatched: false, reason: 'project_at_run_limit' };
 		}
 		if (await checkOverBudget(db, memberId, projectRow.id)) {
 			return { dispatched: false, reason: 'over_budget' };

@@ -797,6 +797,15 @@ export const TERMINAL_WAKEUP_STATUSES: readonly WakeupStatus[] = [
 export const WakeupSkipReason = {
 	TaskBusy: 'task_busy',
 	InstanceAtCapacity: 'instance_at_capacity',
+	/**
+	 * The task's project is already running its own maximum number of
+	 * simultaneous agents. Distinct from `instance_at_capacity`: that one waits
+	 * on a container slot elsewhere on the host, this one waits on a run slot in
+	 * a container that is already up. Deliberately NOT the legacy
+	 * `project_at_capacity` string, which is a pre-rename alias of
+	 * `instance_at_capacity` and still read as such.
+	 */
+	ProjectAtRunLimit: 'project_at_run_limit',
 	AgentRunning: 'agent_running',
 	OverBudget: 'over_budget',
 } as const;

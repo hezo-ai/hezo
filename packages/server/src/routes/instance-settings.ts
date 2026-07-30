@@ -5,6 +5,8 @@ import {
 	MAX_ACTIVE_CONTAINERS_MIN,
 	MAX_CHAT_HISTORY_SIZE_MAX,
 	MAX_CHAT_HISTORY_SIZE_MIN,
+	MAX_RUNS_PER_PROJECT_MAX,
+	MAX_RUNS_PER_PROJECT_MIN,
 	parseLocaleSettingsPatch,
 	RAM_CAP_PER_CONTAINER_GB_MAX,
 	RAM_CAP_PER_CONTAINER_GB_MIN,
@@ -18,6 +20,7 @@ import {
 	computeAutoMaxActiveContainers,
 	deleteSystemMeta,
 	getContainerIdleTimeoutMin,
+	getDefaultMaxRunsPerProject,
 	getDefaultRamCapPerContainerGb,
 	getInstanceBaseUrl,
 	getInstanceLocale,
@@ -28,6 +31,7 @@ import {
 	instanceLocaleIsConfigured,
 	normalizeBaseUrl,
 	setContainerIdleTimeoutMin,
+	setDefaultMaxRunsPerProject,
 	setDefaultRamCapPerContainerGb,
 	setInstanceLocale,
 	setMaxActiveContainers,
@@ -56,6 +60,7 @@ async function instanceSettingsPayload(db: Db) {
 		max_active_containers_is_set: explicitMaxActive !== null,
 		max_active_containers_computed_default: await computeAutoMaxActiveContainers(db),
 		default_ram_cap_per_container_gb: await getDefaultRamCapPerContainerGb(db),
+		default_max_runs_per_project: await getDefaultMaxRunsPerProject(db),
 		container_idle_timeout_min: await getContainerIdleTimeoutMin(db),
 		host_total_ram_bytes: totalRamBytes,
 		host_total_swap_bytes: totalSwapBytes,
@@ -118,6 +123,23 @@ function integerRangeError(field: string, value: unknown, min: number, max: numb
 	return null;
 }
 
+/**
+ * The fractional sibling of {@link integerRangeError}, for settings that accept
+ * decimals (today: the ram cap). Deliberately does not police decimal places -
+ * the setting's clamp normalizes to one, and this endpoint's contract is
+ * already "the server validates and normalizes; the response echoes what was
+ * stored", which the settings page relies on to re-seed its inputs.
+ */
+function numberRangeError(field: string, value: unknown, min: number, max: number): string | null {
+	if (typeof value !== 'number' || !Number.isFinite(value)) {
+		return `${field} must be a number`;
+	}
+	if (value < min || value > max) {
+		return `${field} must be between ${min} and ${max}`;
+	}
+	return null;
+}
+
 instanceSettingsRoutes.patch('/instance-settings', async (c) => {
 	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
@@ -128,6 +150,7 @@ instanceSettingsRoutes.patch('/instance-settings', async (c) => {
 		max_chat_history_size?: unknown;
 		max_active_containers?: unknown;
 		default_ram_cap_per_container_gb?: unknown;
+		default_max_runs_per_project?: unknown;
 		container_idle_timeout_min?: unknown;
 	};
 	const body = await c.req.json<PatchBody>().catch(() => ({}) as PatchBody);
@@ -137,6 +160,7 @@ instanceSettingsRoutes.patch('/instance-settings', async (c) => {
 		'max_chat_history_size',
 		'max_active_containers',
 		'default_ram_cap_per_container_gb',
+		'default_max_runs_per_project',
 		'container_idle_timeout_min',
 	] as const;
 	if (!knownFields.some((f) => f in body)) {
@@ -171,7 +195,8 @@ instanceSettingsRoutes.patch('/instance-settings', async (c) => {
 	}
 
 	if ('default_ram_cap_per_container_gb' in body) {
-		const invalid = integerRangeError(
+		// Fractional to one decimal place; setDefault… clamps and rounds.
+		const invalid = numberRangeError(
 			'default_ram_cap_per_container_gb',
 			body.default_ram_cap_per_container_gb,
 			RAM_CAP_PER_CONTAINER_GB_MIN,
@@ -179,6 +204,17 @@ instanceSettingsRoutes.patch('/instance-settings', async (c) => {
 		);
 		if (invalid) return err(c, 'INVALID_REQUEST', invalid, 400);
 		await setDefaultRamCapPerContainerGb(db, body.default_ram_cap_per_container_gb as number);
+	}
+
+	if ('default_max_runs_per_project' in body) {
+		const invalid = integerRangeError(
+			'default_max_runs_per_project',
+			body.default_max_runs_per_project,
+			MAX_RUNS_PER_PROJECT_MIN,
+			MAX_RUNS_PER_PROJECT_MAX,
+		);
+		if (invalid) return err(c, 'INVALID_REQUEST', invalid, 400);
+		await setDefaultMaxRunsPerProject(db, body.default_max_runs_per_project as number);
 	}
 
 	if ('container_idle_timeout_min' in body) {

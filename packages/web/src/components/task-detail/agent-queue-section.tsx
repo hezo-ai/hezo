@@ -183,6 +183,8 @@ function RunningAgentRow({
 function runNowBlockReason(wakeup: QueuedWakeup, dispatch: QueuedDispatchState): string | null {
 	if (dispatch.task_busy) return 'This ticket already has a run in progress';
 	if (dispatch.instance_at_capacity) return 'Hezo is at its active-container limit';
+	if (dispatch.project_at_run_limit)
+		return 'This project is already running its maximum number of agents';
 	if (wakeup.agent_busy) return 'This agent is currently running on another task in this project';
 	if (wakeup.run_now_blocked === 'blocked_by_dependency') return 'Blocked by an open dependency';
 	return null;

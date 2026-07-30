@@ -6,6 +6,7 @@ import {
 	DEFAULT_CONTAINER_IDLE_TIMEOUT_MIN,
 	DEFAULT_MAX_ACTIVE_CONTAINERS,
 	DEFAULT_MAX_CHAT_HISTORY_SIZE,
+	DEFAULT_MAX_RUNS_PER_PROJECT,
 	DEFAULT_RAM_CAP_PER_CONTAINER_GB,
 	type LocaleSettings,
 	type LocaleSettingsPatch,
@@ -13,8 +14,11 @@ import {
 	MAX_ACTIVE_CONTAINERS_MIN,
 	MAX_CHAT_HISTORY_SIZE_MAX,
 	MAX_CHAT_HISTORY_SIZE_MIN,
+	MAX_RUNS_PER_PROJECT_MAX,
+	MAX_RUNS_PER_PROJECT_MIN,
 	RAM_CAP_PER_CONTAINER_GB_MAX,
 	RAM_CAP_PER_CONTAINER_GB_MIN,
+	roundRamCapGb,
 } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { getHostMemory } from './host-memory';
@@ -29,6 +33,7 @@ export const MAX_CHAT_HISTORY_SIZE_KEY = 'max_chat_history_size';
 export const MAX_ACTIVE_CONTAINERS_KEY = 'max_active_containers';
 export const RAM_CAP_PER_CONTAINER_KEY = 'default_ram_cap_per_container_gb';
 export const CONTAINER_IDLE_TIMEOUT_KEY = 'container_idle_timeout_min';
+export const MAX_RUNS_PER_PROJECT_KEY = 'default_max_runs_per_project';
 
 /**
  * Locale keys. One key per axis rather than a single JSON blob, so a partial
@@ -160,7 +165,7 @@ export function clampRamCapPerContainerGb(value: number): number {
 	if (!Number.isFinite(value)) return DEFAULT_RAM_CAP_PER_CONTAINER_GB;
 	return Math.min(
 		RAM_CAP_PER_CONTAINER_GB_MAX,
-		Math.max(RAM_CAP_PER_CONTAINER_GB_MIN, Math.round(value)),
+		Math.max(RAM_CAP_PER_CONTAINER_GB_MIN, roundRamCapGb(value)),
 	);
 }
 
@@ -168,12 +173,14 @@ export function clampRamCapPerContainerGb(value: number): number {
  * The instance-wide default memory cap per project container, in GB. Applied
  * as the Docker cgroup limit to every container without a per-project
  * override, and used as the divisor of the automatic max-active-containers
- * default. Falls back to 2 when unset or malformed.
+ * default. Fractional to one decimal place. Falls back to the default when
+ * unset or malformed.
  */
 export async function getDefaultRamCapPerContainerGb(db: Db): Promise<number> {
 	const raw = await getSystemMeta(db, RAM_CAP_PER_CONTAINER_KEY);
 	if (raw === null) return DEFAULT_RAM_CAP_PER_CONTAINER_GB;
-	const parsed = Number.parseInt(raw, 10);
+	// parseFloat, not parseInt: caps are fractional, and parseInt('0.5') is 0.
+	const parsed = Number.parseFloat(raw);
 	if (Number.isNaN(parsed)) return DEFAULT_RAM_CAP_PER_CONTAINER_GB;
 	return clampRamCapPerContainerGb(parsed);
 }
@@ -181,6 +188,36 @@ export async function getDefaultRamCapPerContainerGb(db: Db): Promise<number> {
 export async function setDefaultRamCapPerContainerGb(db: Db, value: number): Promise<number> {
 	const clamped = clampRamCapPerContainerGb(value);
 	await setSystemMeta(db, RAM_CAP_PER_CONTAINER_KEY, String(clamped));
+	return clamped;
+}
+
+/**
+ * Clamp to the allowed per-project run-limit range. Exported so the settings
+ * route validates with the same bounds the reader enforces.
+ */
+export function clampMaxRunsPerProject(value: number): number {
+	if (!Number.isFinite(value)) return DEFAULT_MAX_RUNS_PER_PROJECT;
+	return Math.min(MAX_RUNS_PER_PROJECT_MAX, Math.max(MAX_RUNS_PER_PROJECT_MIN, Math.round(value)));
+}
+
+/**
+ * The global default cap on simultaneous active runs within one project, which
+ * `projects.max_concurrent_runs` overrides per project (NULL = inherit this).
+ * A throughput knob, not a memory bound - see the constant's doc block. Unlike
+ * max_active_containers there is no host-derived default to compute, so there
+ * is no `clear`/`_is_set` pair: absent key simply means the constant.
+ */
+export async function getDefaultMaxRunsPerProject(db: Db): Promise<number> {
+	const raw = await getSystemMeta(db, MAX_RUNS_PER_PROJECT_KEY);
+	if (raw === null) return DEFAULT_MAX_RUNS_PER_PROJECT;
+	const parsed = Number.parseInt(raw, 10);
+	if (Number.isNaN(parsed)) return DEFAULT_MAX_RUNS_PER_PROJECT;
+	return clampMaxRunsPerProject(parsed);
+}
+
+export async function setDefaultMaxRunsPerProject(db: Db, value: number): Promise<number> {
+	const clamped = clampMaxRunsPerProject(value);
+	await setSystemMeta(db, MAX_RUNS_PER_PROJECT_KEY, String(clamped));
 	return clamped;
 }
 

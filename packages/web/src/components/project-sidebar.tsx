@@ -120,6 +120,14 @@ export function ProjectSidebar({
 		label: 'Skills',
 		testId: 'project-sidebar-skills',
 	};
+	// Concurrency — this project's overrides for the run limit and its container's
+	// memory cap — discloses under Settings, next to Container.
+	const concurrencyPage = {
+		to: '/projects/$projectId/concurrency',
+		params: projectParams,
+		label: 'Concurrency',
+		testId: 'project-sidebar-concurrency',
+	};
 	// Custom Prompt — the project-wide instruction block injected into every agent's
 	// prompt — discloses under Settings, alongside Skills.
 	const customPromptPage = {
@@ -193,13 +201,14 @@ export function ProjectSidebar({
 						params: projectParams,
 						label: t('nav.settings'),
 						testId: 'project-sidebar-settings',
-						// Git, Connectors, Skills, Container and Activity disclose under Settings
+						// Git, Connectors, Skills, Concurrency, Container and Activity disclose under Settings
 						// when it (or one of them) is the active route.
 						subItems: [
 							gitPage,
 							connectorsPage,
 							skillsPage,
 							customPromptPage,
+							concurrencyPage,
 							containerPage,
 							activityPage,
 						],

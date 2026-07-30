@@ -93,7 +93,9 @@ export function TaskHeader({ task, projectId, taskId, taskProjectSlug }: TaskHea
 						{task.queued_wakeup.reason === 'instance_at_capacity' ||
 						task.queued_wakeup.reason === 'project_at_capacity'
 							? 'Queued — at the container limit'
-							: 'Run queued'}
+							: task.queued_wakeup.reason === 'project_at_run_limit'
+								? "Queued — at the project's run limit"
+								: 'Run queued'}
 					</Badge>
 				)}
 				{task.run_count > 0 && (

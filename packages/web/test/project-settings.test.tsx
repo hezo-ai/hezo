@@ -106,22 +106,19 @@ test('cancel button discards edits', async () => {
 	expect(queryByText('Should Not Save')).toBeNull();
 });
 
-test('edits the per-project memory limit and persists it', async () => {
-	const projectName = uniqueName('Memory Limit Project');
+test('the memory limit has moved off General onto the project Concurrency page', async () => {
+	// A negative assertion, so the move cannot be half-done: leaving the field on
+	// both pages would give two controls writing the same column.
+	const projectName = uniqueName('Memory Moved Project');
 	let ws!: SeededWorkspace;
 	let projectSlug = '';
-	let projectId = '';
 
-	const { findByRole, findByTestId, getByRole, ctx, user, router } = await renderApp({
+	const { findByRole, queryByTestId, user, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			ws = await seedWorkspace();
-			const project = await seedProject(ws, {
-				name: projectName,
-				description: 'Memory limit settings.',
-			});
+			const project = await seedProject(ws, { name: projectName, description: 'General only.' });
 			projectSlug = project.slug;
-			projectId = project.id;
 		},
 	});
 
@@ -130,48 +127,9 @@ test('edits the per-project memory limit and persists it', async () => {
 		params: { projectId: projectSlug },
 	});
 
-	// Read view shows the no-override state: the container inherits the
-	// instance-wide ram cap ("Default (2 GB)").
-	const readValue = await findByTestId('memory-limit-gib-value', undefined, { timeout: 8_000 });
-	expect(readValue.textContent).toContain('Default');
-
 	await user.click(await findByRole('button', { name: 'Edit' }));
-	const input = (await findByTestId('memory-limit-gib-input', undefined, {
-		timeout: 8_000,
-	})) as HTMLInputElement;
-	await user.clear(input);
-	await user.type(input, '24');
-	await user.click(getByRole('button', { name: 'Save' }));
-
-	await waitFor(
-		async () => {
-			const row = await ctx.db.query<{ memory_limit_gib: number | null }>(
-				'SELECT memory_limit_gib FROM projects WHERE id = $1',
-				[projectId],
-			);
-			expect(row.rows[0]?.memory_limit_gib).toBe(24);
-		},
-		{ timeout: 8_000 },
-	);
-
-	// Clearing the field removes the override — back to inherit (NULL).
-	await user.click(await findByRole('button', { name: 'Edit' }));
-	const input2 = (await findByTestId('memory-limit-gib-input', undefined, {
-		timeout: 8_000,
-	})) as HTMLInputElement;
-	await user.clear(input2);
-	await user.click(getByRole('button', { name: 'Save' }));
-
-	await waitFor(
-		async () => {
-			const row = await ctx.db.query<{ memory_limit_gib: number | null }>(
-				'SELECT memory_limit_gib FROM projects WHERE id = $1',
-				[projectId],
-			);
-			expect(row.rows[0]?.memory_limit_gib).toBeNull();
-		},
-		{ timeout: 8_000 },
-	);
+	expect(queryByTestId('memory-limit-gib-input')).toBeNull();
+	expect(queryByTestId('memory-limit-gib-value')).toBeNull();
 });
 
 test('edits the project budget limits from settings and persists them', async () => {

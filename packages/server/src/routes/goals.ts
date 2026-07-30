@@ -103,6 +103,8 @@ const PROGRESS_UPDATE_MESSAGES: Record<ProgressUpdateDispatchReason, string> = {
 	agent_busy: 'The Captain is already running in this project.',
 	instance_at_capacity:
 		'Hezo is at its active-container limit; the run will start when a container goes idle.',
+	project_at_run_limit:
+		'This project is already running its maximum number of agents; the run will start when one finishes.',
 	over_budget: 'The Captain or project is over its budget.',
 	launch_conflict: 'A progress-update run is already starting.',
 };

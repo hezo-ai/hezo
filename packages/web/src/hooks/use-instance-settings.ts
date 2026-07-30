@@ -10,9 +10,12 @@ export interface InstanceSettings {
 	max_active_containers: number;
 	/** True when the operator explicitly set a value (vs the automatic default). */
 	max_active_containers_is_set: boolean;
-	/** The host-memory-computed default: (RAM + swap) / ram cap per container. */
+	/** The host-memory-computed default: (RAM + swap - reserve) / ram cap per container. */
 	max_active_containers_computed_default: number;
+	/** Fractional to one decimal place. */
 	default_ram_cap_per_container_gb: number;
+	/** Global default cap on simultaneous runs within one project; projects may override. */
+	default_max_runs_per_project: number;
 	container_idle_timeout_min: number;
 	host_total_ram_bytes: number;
 	host_total_swap_bytes: number;
@@ -24,6 +27,7 @@ export type InstanceSettingsUpdate = Partial<{
 	/** null resets to the automatic (host-memory-computed) default. */
 	max_active_containers: number | null;
 	default_ram_cap_per_container_gb: number;
+	default_max_runs_per_project: number;
 	container_idle_timeout_min: number;
 }>;
 

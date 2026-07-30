@@ -2,6 +2,7 @@ import type { Db } from '../../src/db/database';
 import {
 	deleteSystemMeta,
 	MAX_ACTIVE_CONTAINERS_KEY,
+	MAX_RUNS_PER_PROJECT_KEY,
 	setSystemMeta,
 } from '../../src/lib/system-meta';
 
@@ -37,4 +38,23 @@ export async function clearMaxActiveContainersForTest(db: Db): Promise<void> {
 /** Delete a filler project seeded by {@link seedRunningContainerProject}. */
 export async function removeSeededContainerProject(db: Db, slug: string): Promise<void> {
 	await db.query(`DELETE FROM teams WHERE slug = $1`, [slug]);
+}
+
+/** Set the global default cap on simultaneous runs per project (system_meta). */
+export async function setDefaultMaxRunsPerProjectForTest(db: Db, limit: number): Promise<void> {
+	await setSystemMeta(db, MAX_RUNS_PER_PROJECT_KEY, String(limit));
+}
+
+/** Remove the explicit global run-limit default — the shipped constant applies. */
+export async function clearDefaultMaxRunsPerProjectForTest(db: Db): Promise<void> {
+	await deleteSystemMeta(db, MAX_RUNS_PER_PROJECT_KEY);
+}
+
+/** Set (or clear, with null) one project's run-limit override. */
+export async function setProjectRunLimitForTest(
+	db: Db,
+	projectId: string,
+	limit: number | null,
+): Promise<void> {
+	await db.query(`UPDATE projects SET max_concurrent_runs = $2 WHERE id = $1`, [projectId, limit]);
 }

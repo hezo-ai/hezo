@@ -20,6 +20,7 @@ import {
 	removeSeededContainerProject,
 	seedRunningContainerProject,
 	setMaxActiveContainersForTest,
+	setProjectRunLimitForTest,
 } from './helpers/capacity';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
@@ -262,6 +263,40 @@ describe('JobManager progress-update flows', () => {
 			await removeSeededContainerProject(ctx.db, 'cap-filler-progress');
 			await clearMaxActiveContainersForTest(ctx.db);
 			manager.shutdown();
+		});
+
+		it('returns project_at_run_limit when the project is already at its own ceiling', async () => {
+			const manager = createJobManager();
+			await insertDueGoal('Run-limit goal');
+			// This project may run one agent at a time, and something else already is.
+			// The run must belong to a *different* member, or the agent-busy gate
+			// (checked first) would fire instead and mask the one under test.
+			await setProjectRunLimitForTest(ctx.db, projectId, 1);
+			const other = await ctx.db.query<{ id: string }>(
+				`INSERT INTO members (team_id, member_type, display_name)
+				 VALUES ($1, 'agent', 'Run Limit Filler') RETURNING id`,
+				[teamId],
+			);
+			const runId = await ctx.db.query<{ id: string }>(
+				`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status)
+				 VALUES ($1, $2, $3, 'running'::heartbeat_run_status) RETURNING id`,
+				[teamId, other.rows[0].id, planningTaskId],
+			);
+			try {
+				const result = await internals(manager).tryDispatchProgressUpdate(
+					captainId,
+					teamId,
+					await captainRow(),
+					undefined,
+					{},
+				);
+				expect(result).toEqual({ dispatched: false, reason: 'project_at_run_limit' });
+			} finally {
+				await ctx.db.query('DELETE FROM heartbeat_runs WHERE id = $1', [runId.rows[0].id]);
+				await ctx.db.query('DELETE FROM members WHERE id = $1', [other.rows[0].id]);
+				await setProjectRunLimitForTest(ctx.db, projectId, null);
+				manager.shutdown();
+			}
 		});
 
 		it('a missing container no longer blocks dispatch — the budget gate is reached', async () => {
@@ -558,6 +593,50 @@ describe('JobManager progress-update flows', () => {
 			await removeSeededContainerProject(ctx.db, 'cap-filler-manual');
 			await clearMaxActiveContainersForTest(ctx.db);
 			manager.shutdown();
+		});
+
+		it('re-queues a manual progress_update_now wakeup while the project is at its run limit', async () => {
+			// The run limit is transient like agent_busy and instance_at_capacity, so
+			// the wakeup must go back to `queued` for a later retry. Treating it as
+			// terminal would silently retire the user's "Run now" instead.
+			const manager = createJobManager();
+			await insertDueGoal('Manual run-limit goal');
+			await setProjectRunLimitForTest(ctx.db, projectId, 1);
+			const other = await ctx.db.query<{ id: string }>(
+				`INSERT INTO members (team_id, member_type, display_name)
+				 VALUES ($1, 'agent', 'Manual Run Limit Filler') RETURNING id`,
+				[teamId],
+			);
+			const runId = await ctx.db.query<{ id: string }>(
+				`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status)
+				 VALUES ($1, $2, $3, 'running'::heartbeat_run_status) RETURNING id`,
+				[teamId, other.rows[0].id, planningTaskId],
+			);
+			const wakeupId = await insertClaimedWakeup({ trigger: 'progress_update_now' });
+
+			try {
+				await internals(manager).activateAgent(
+					captainId,
+					teamId,
+					wakeupId,
+					{ trigger: 'progress_update_now' },
+					'on_demand',
+				);
+
+				const w = await wakeupRow(wakeupId);
+				expect(w.status).toBe(WakeupStatus.Queued);
+				expect(w.last_skipped_reason).toBe(WakeupSkipReason.ProjectAtRunLimit);
+				// It must NOT have fallen through to task selection.
+				const runs = await ctx.db.query('SELECT 1 FROM heartbeat_runs WHERE member_id = $1', [
+					captainId,
+				]);
+				expect(runs.rows.length).toBe(0);
+			} finally {
+				await ctx.db.query('DELETE FROM heartbeat_runs WHERE id = $1', [runId.rows[0].id]);
+				await ctx.db.query('DELETE FROM members WHERE id = $1', [other.rows[0].id]);
+				await setProjectRunLimitForTest(ctx.db, projectId, null);
+				manager.shutdown();
+			}
 		});
 
 		it('completes a container-down manual progress_update_now via the budget gate, never task selection', async () => {

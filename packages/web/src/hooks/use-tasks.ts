@@ -8,8 +8,18 @@ import { useSimpleOptimisticUpdate } from './use-optimistic-mutation';
 import { toast } from './use-toast';
 
 export interface QueuedWakeup {
-	/** `project_at_capacity` is the pre-rename legacy value, kept for the upgrade window. */
-	reason: 'task_busy' | 'instance_at_capacity' | 'project_at_capacity' | 'agent_running';
+	/**
+	 * `project_at_capacity` is the pre-rename legacy value of
+	 * `instance_at_capacity`, kept for the upgrade window. Not to be confused with
+	 * `project_at_run_limit`, which is a genuinely different condition: waiting on
+	 * a run slot in a container that is already up, not on a container slot.
+	 */
+	reason:
+		| 'task_busy'
+		| 'instance_at_capacity'
+		| 'project_at_capacity'
+		| 'project_at_run_limit'
+		| 'agent_running';
 	since: string;
 	blocker_task_id: string | null;
 	blocker_identifier: string | null;

@@ -38,6 +38,7 @@ import { Route as ProjectsProjectIdDocumentsRouteImport } from './routes/project
 import { Route as ProjectsProjectIdCustomPromptRouteImport } from './routes/projects/$projectId/custom-prompt'
 import { Route as ProjectsProjectIdContainerRouteImport } from './routes/projects/$projectId/container'
 import { Route as ProjectsProjectIdConnectorsRouteImport } from './routes/projects/$projectId/connectors'
+import { Route as ProjectsProjectIdConcurrencyRouteImport } from './routes/projects/$projectId/concurrency'
 import { Route as ProjectsProjectIdBudgetRouteImport } from './routes/projects/$projectId/budget'
 import { Route as ProjectsProjectIdAuditLogRouteImport } from './routes/projects/$projectId/audit-log'
 import { Route as ProjectsProjectIdAssetsRouteImport } from './routes/projects/$projectId/assets'
@@ -209,6 +210,12 @@ const ProjectsProjectIdConnectorsRoute =
     path: '/connectors',
     getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
+const ProjectsProjectIdConcurrencyRoute =
+  ProjectsProjectIdConcurrencyRouteImport.update({
+    id: '/concurrency',
+    path: '/concurrency',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
+  } as any)
 const ProjectsProjectIdBudgetRoute = ProjectsProjectIdBudgetRouteImport.update({
   id: '/budget',
   path: '/budget',
@@ -354,6 +361,7 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId/assets': typeof ProjectsProjectIdAssetsRoute
   '/projects/$projectId/audit-log': typeof ProjectsProjectIdAuditLogRoute
   '/projects/$projectId/budget': typeof ProjectsProjectIdBudgetRoute
+  '/projects/$projectId/concurrency': typeof ProjectsProjectIdConcurrencyRoute
   '/projects/$projectId/connectors': typeof ProjectsProjectIdConnectorsRoute
   '/projects/$projectId/container': typeof ProjectsProjectIdContainerRoute
   '/projects/$projectId/custom-prompt': typeof ProjectsProjectIdCustomPromptRoute
@@ -403,6 +411,7 @@ export interface FileRoutesByTo {
   '/projects/$projectId/assets': typeof ProjectsProjectIdAssetsRoute
   '/projects/$projectId/audit-log': typeof ProjectsProjectIdAuditLogRoute
   '/projects/$projectId/budget': typeof ProjectsProjectIdBudgetRoute
+  '/projects/$projectId/concurrency': typeof ProjectsProjectIdConcurrencyRoute
   '/projects/$projectId/connectors': typeof ProjectsProjectIdConnectorsRoute
   '/projects/$projectId/container': typeof ProjectsProjectIdContainerRoute
   '/projects/$projectId/custom-prompt': typeof ProjectsProjectIdCustomPromptRoute
@@ -454,6 +463,7 @@ export interface FileRoutesById {
   '/projects/$projectId/assets': typeof ProjectsProjectIdAssetsRoute
   '/projects/$projectId/audit-log': typeof ProjectsProjectIdAuditLogRoute
   '/projects/$projectId/budget': typeof ProjectsProjectIdBudgetRoute
+  '/projects/$projectId/concurrency': typeof ProjectsProjectIdConcurrencyRoute
   '/projects/$projectId/connectors': typeof ProjectsProjectIdConnectorsRoute
   '/projects/$projectId/container': typeof ProjectsProjectIdContainerRoute
   '/projects/$projectId/custom-prompt': typeof ProjectsProjectIdCustomPromptRoute
@@ -507,6 +517,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/assets'
     | '/projects/$projectId/audit-log'
     | '/projects/$projectId/budget'
+    | '/projects/$projectId/concurrency'
     | '/projects/$projectId/connectors'
     | '/projects/$projectId/container'
     | '/projects/$projectId/custom-prompt'
@@ -556,6 +567,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/assets'
     | '/projects/$projectId/audit-log'
     | '/projects/$projectId/budget'
+    | '/projects/$projectId/concurrency'
     | '/projects/$projectId/connectors'
     | '/projects/$projectId/container'
     | '/projects/$projectId/custom-prompt'
@@ -606,6 +618,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/assets'
     | '/projects/$projectId/audit-log'
     | '/projects/$projectId/budget'
+    | '/projects/$projectId/concurrency'
     | '/projects/$projectId/connectors'
     | '/projects/$projectId/container'
     | '/projects/$projectId/custom-prompt'
@@ -848,6 +861,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdConnectorsRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
+    '/projects/$projectId/concurrency': {
+      id: '/projects/$projectId/concurrency'
+      path: '/concurrency'
+      fullPath: '/projects/$projectId/concurrency'
+      preLoaderRoute: typeof ProjectsProjectIdConcurrencyRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
     '/projects/$projectId/budget': {
       id: '/projects/$projectId/budget'
       path: '/budget'
@@ -1062,6 +1082,7 @@ interface ProjectsProjectIdRouteRouteChildren {
   ProjectsProjectIdAssetsRoute: typeof ProjectsProjectIdAssetsRoute
   ProjectsProjectIdAuditLogRoute: typeof ProjectsProjectIdAuditLogRoute
   ProjectsProjectIdBudgetRoute: typeof ProjectsProjectIdBudgetRoute
+  ProjectsProjectIdConcurrencyRoute: typeof ProjectsProjectIdConcurrencyRoute
   ProjectsProjectIdConnectorsRoute: typeof ProjectsProjectIdConnectorsRoute
   ProjectsProjectIdContainerRoute: typeof ProjectsProjectIdContainerRoute
   ProjectsProjectIdCustomPromptRoute: typeof ProjectsProjectIdCustomPromptRoute
@@ -1087,6 +1108,7 @@ const ProjectsProjectIdRouteRouteChildren: ProjectsProjectIdRouteRouteChildren =
     ProjectsProjectIdAssetsRoute: ProjectsProjectIdAssetsRoute,
     ProjectsProjectIdAuditLogRoute: ProjectsProjectIdAuditLogRoute,
     ProjectsProjectIdBudgetRoute: ProjectsProjectIdBudgetRoute,
+    ProjectsProjectIdConcurrencyRoute: ProjectsProjectIdConcurrencyRoute,
     ProjectsProjectIdConnectorsRoute: ProjectsProjectIdConnectorsRoute,
     ProjectsProjectIdContainerRoute: ProjectsProjectIdContainerRoute,
     ProjectsProjectIdCustomPromptRoute: ProjectsProjectIdCustomPromptRoute,

@@ -75,11 +75,51 @@ export const MAX_ACTIVE_CONTAINERS_MAX = 100;
  * Instance-wide default memory cap per project container, in GB. Dual role:
  * the Docker cgroup memory limit applied to every container that doesn't carry
  * a per-project override, and the divisor in the automatic max-active-container
- * default ((RAM + swap) / cap). Stored in system_meta; absent key = default.
+ * default. Stored in system_meta; absent key = default.
+ *
+ * 1 GB holds DEFAULT_MAX_RUNS_PER_PROJECT runs at RAM_PER_RUN_MB each - the
+ * three defaults are one sizing story and should move together.
  */
-export const DEFAULT_RAM_CAP_PER_CONTAINER_GB = 2;
-export const RAM_CAP_PER_CONTAINER_GB_MIN = 1;
+export const DEFAULT_RAM_CAP_PER_CONTAINER_GB = 1;
+export const RAM_CAP_PER_CONTAINER_GB_MIN = 0.5;
 export const RAM_CAP_PER_CONTAINER_GB_MAX = 512;
+/** Caps are fractional to one decimal place; the UI input steps by this much. */
+export const RAM_CAP_PER_CONTAINER_GB_STEP = 0.1;
+
+/**
+ * Normalize a ram cap to the one decimal place the setting is stored at. Shared
+ * because three call sites must agree: the server's system_meta clamp, the
+ * per-project PATCH validation, and the web forms.
+ */
+export function roundRamCapGb(value: number): number {
+	if (!Number.isFinite(value)) return DEFAULT_RAM_CAP_PER_CONTAINER_GB;
+	return Math.round(value * 10) / 10;
+}
+
+/**
+ * Per-project cap on simultaneous active (queued/running) agent runs. The
+ * global default lives in system_meta; `projects.max_concurrent_runs` overrides
+ * it (NULL = inherit).
+ *
+ * This is a THROUGHPUT knob, not a memory bound - the memory bound remains
+ * `max_active_containers × ram cap`, which holds no matter how many runs share
+ * a container. Migration 048 dropped an earlier per-project column precisely
+ * because it was being mistaken for the latter; this one is not that.
+ *
+ * 3 is the 1 GB default cap divided by RAM_PER_RUN_MB, so a default-sized
+ * container comfortably holds its default run limit.
+ */
+export const DEFAULT_MAX_RUNS_PER_PROJECT = 3;
+export const MAX_RUNS_PER_PROJECT_MIN = 1;
+export const MAX_RUNS_PER_PROJECT_MAX = 100;
+
+/**
+ * Working-set estimate for one agent run: its coding CLI plus the helper
+ * processes it spawns. The rationale behind the two defaults above, and the
+ * divisor the settings pages show their arithmetic with. Deliberately not used
+ * in any runtime gate - the run limit is an operator setting, not a computation.
+ */
+export const RAM_PER_RUN_MB = 300;
 
 /**
  * Host memory, in GiB, that the automatic max-active-containers default never
@@ -111,8 +151,9 @@ export function usableMemoryGibForContainers(
  * containers fit in the host memory left over after the system reserve, so
  * total container demand can never exceed what the host actually has spare. The
  * reference 1.92GiB-RAM + 6GiB-swap host rounds to 8GiB and yields
- * (8 - 1) / 2 = 3. Pure math (shared so the web settings page can render the
- * same formula); byte inputs come from the server's host-memory probe.
+ * (8 - 1) / 1 = 7 at the default cap. Pure math (shared so the web settings page
+ * can render the same formula); byte inputs come from the server's host-memory
+ * probe.
  */
 export function computeDefaultMaxActiveContainers(
 	totalRamBytes: number,
@@ -120,7 +161,16 @@ export function computeDefaultMaxActiveContainers(
 	ramCapGb: number,
 ): number {
 	const usableGib = usableMemoryGibForContainers(totalRamBytes, totalSwapBytes);
-	const computed = Math.floor(usableGib / Math.max(1, ramCapGb));
+	// Divide in integer tenths rather than floats, now that caps are fractional:
+	// Math.floor(8 / 1.6) is 4 in IEEE754 (the quotient lands on 4.999999999999999)
+	// where the answer is 5. Exact for every value the [MIN, MAX] clamp can
+	// produce. The MIN floor also guards a zero or negative cap from dividing by
+	// zero — it used to be a hardcoded 1, which silently ignored any sub-1GB cap.
+	const capTenths = Math.max(
+		Math.round(RAM_CAP_PER_CONTAINER_GB_MIN * 10),
+		Math.round(ramCapGb * 10),
+	);
+	const computed = Math.floor((usableGib * 10) / capTenths);
 	return Math.min(MAX_ACTIVE_CONTAINERS_MAX, Math.max(MAX_ACTIVE_CONTAINERS_MIN, computed));
 }
 
@@ -129,8 +179,12 @@ export function computeDefaultMaxActiveContainers(
  * runs, assistant chat) before the idle-stop cron stops it. Containers restart
  * on demand when a run or chat needs them. 0 = never stop (always-on).
  * Stored in system_meta; absent key = default. Clamped to [MIN, MAX].
+ *
+ * Kept short because restarting is cheap (the container is started in place,
+ * not reprovisioned) while an idle container holds its whole ram cap against
+ * the active-container limit, keeping a slot from a project that wants to work.
  */
-export const DEFAULT_CONTAINER_IDLE_TIMEOUT_MIN = 15;
+export const DEFAULT_CONTAINER_IDLE_TIMEOUT_MIN = 1;
 export const CONTAINER_IDLE_TIMEOUT_MIN_MIN = 0;
 export const CONTAINER_IDLE_TIMEOUT_MIN_MAX = 10080;
 

@@ -29,11 +29,16 @@ export function TaskRunDot({ hasActiveRun, queuedWakeup }: TaskRunDotProps) {
 		);
 	}
 	if (queuedWakeup) {
+		// The container limit and the project's run limit are distinct waits and
+		// have distinct fixes (global settings vs the project's own page), so they
+		// must not collapse into one message.
 		const label =
 			queuedWakeup.reason === 'instance_at_capacity' ||
 			queuedWakeup.reason === 'project_at_capacity'
 				? 'Run queued — at the container limit'
-				: 'Run queued — waiting';
+				: queuedWakeup.reason === 'project_at_run_limit'
+					? "Run queued — at the project's run limit"
+					: 'Run queued — waiting';
 		return (
 			<Tooltip content={label}>
 				<span

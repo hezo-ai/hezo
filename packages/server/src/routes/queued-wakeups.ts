@@ -9,6 +9,7 @@ import { logger } from '../logger';
 import {
 	getBusyAgentIdsInProject,
 	isContainerCapacityBlockedInDb,
+	isProjectAtRunLimitInDb,
 	isTaskBusyInDb,
 } from '../services/run-concurrency';
 import { recordWakeupCancelled, resolveActorName } from '../services/task-events';
@@ -56,12 +57,17 @@ queuedWakeupsRoutes.get('/projects/:projectId/tasks/:taskId/queued-wakeups', asy
 	);
 	const projectId = projRow.rows[0]?.project_id ?? null;
 
+	// One chain, not parallel checks, so precedence matches the scheduler's gate
+	// order (task busy -> host container capacity -> project run limit).
 	let taskBusy = false;
 	let instanceAtCapacity = false;
+	let projectAtRunLimit = false;
 	if (await isTaskBusyInDb(db, taskId)) {
 		taskBusy = true;
 	} else if (projectId && (await isContainerCapacityBlockedInDb(db, projectId))) {
 		instanceAtCapacity = true;
+	} else if (projectId && (await isProjectAtRunLimitInDb(db, projectId))) {
+		projectAtRunLimit = true;
 	}
 
 	// agent_busy is per-agent (each wakeup has its own member), so it lives on
@@ -86,6 +92,7 @@ queuedWakeupsRoutes.get('/projects/:projectId/tasks/:taskId/queued-wakeups', asy
 		dispatch: {
 			task_busy: taskBusy,
 			instance_at_capacity: instanceAtCapacity,
+			project_at_run_limit: projectAtRunLimit,
 		},
 	});
 });
@@ -95,6 +102,8 @@ const DISPATCH_CONFLICT_MESSAGES: Record<string, string> = {
 	task_busy: 'This ticket already has a run in progress',
 	instance_at_capacity:
 		'Hezo is at its active-container limit; the run will start when a container goes idle',
+	project_at_run_limit:
+		'This project is already running its maximum number of agents; the run will start when one finishes',
 	agent_busy: 'This agent is currently running on another task in this project',
 	blocked: 'This ticket is blocked by an open dependency',
 	not_queued: 'Wakeup is no longer queued and cannot be run',
