@@ -64,6 +64,9 @@ export const PROVIDER_LOGOS: Partial<Record<AiProvider, FC<LogoProps>>> = {
 	[Provider.DeepSeek]: DeepSeekLogo,
 	[Provider.ZAi]: ZAiLogo,
 	[Provider.Kimi]: KimiLogo,
+	// Same vendor, same mark — the two Kimi cards are distinguished by their
+	// runtime label, not by the logo.
+	[Provider.KimiCode]: KimiLogo,
 	[Provider.XAi]: XaiLogo,
 };
 

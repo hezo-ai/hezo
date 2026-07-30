@@ -4,6 +4,7 @@ import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
+import { seedRunningContainerProject, setMaxActiveContainersForTest } from './helpers/capacity';
 
 // The manual "Run now" endpoint reuses the scheduled progress-update logic
 // (`dispatchProgressUpdateNow` → `tryDispatchProgressUpdate`). These cover the deterministic
@@ -51,7 +52,7 @@ describe('POST /projects/:projectId/goals/run-now', () => {
 		expect(body.reason).toBe('no_due_goals');
 	});
 
-	it('queues the run (200, queued) when a goal is due but the container is down', async () => {
+	it('queues the run (200, queued) when a goal is due but the container limit is reached', async () => {
 		// A freshly created goal has never been checked, so it is immediately due.
 		const create = await app.request(`/api/projects/${projectSlug}/goals`, {
 			method: 'POST',
@@ -64,14 +65,21 @@ describe('POST /projects/:projectId/goals/run-now', () => {
 		});
 		expect(create.status).toBe(201);
 
+		// A container that is down is no longer a transient conflict (the runner
+		// lazy-starts it); the queued path now comes from the container limit:
+		// cap 1, consumed by a filler project's running container.
+		await setMaxActiveContainersForTest(db, 1);
+		await seedRunningContainerProject(db, 'cap-goals-runnow');
+
 		const res = await app.request(`/api/projects/${projectSlug}/goals/run-now`, {
 			method: 'POST',
 			headers: jsonHeaders(),
 			body: '{}',
 		});
-		// Past the "nothing due" check it hits run-gating — the test project has no running
-		// container (a transient conflict) — so instead of a 409 the run is queued to fire once
-		// the Captain is free. Proves the Captain and the due goal were both resolved.
+		// Past the "nothing due" check it hits run-gating — starting this project's
+		// container would exceed the cap (a transient conflict) — so instead of a
+		// 409 the run is queued to fire once a slot frees. Proves the Captain and
+		// the due goal were both resolved.
 		expect(res.status).toBe(200);
 		const body = (await res.json()).data;
 		expect(body.queued).toBe(true);

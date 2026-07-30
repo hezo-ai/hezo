@@ -152,6 +152,37 @@ describe('applyPendingMigrations', () => {
 		}
 	});
 
+	it('reports each step so the boot screen can name the work in flight', async () => {
+		const dir = tempDir();
+		await seedExistingInstance(dir);
+
+		const steps: string[] = [];
+		let db: Db = new PgliteDb(await openPersistentDb(dir));
+		db = await applyPendingMigrations(
+			db,
+			dir,
+			{
+				'001_posts.sql': V1,
+				'002_extract_authors.sql': V2_EXTRACT_AUTHORS,
+				'003_tags.sql': 'CREATE TABLE tags (id INT);',
+			},
+			{ onProgress: (detail) => steps.push(detail) },
+		);
+		try {
+			// The pgdata copy dominates the wall clock on a large instance, so it has
+			// to announce itself before the first migration runs.
+			expect(steps[0]).toMatch(/^Copying the database aside/);
+			// Only the PENDING migrations are counted — 001 is already applied.
+			expect(steps).toContain('Applying 002_extract_authors.sql (1 of 2)');
+			expect(steps).toContain('Applying 003_tags.sql (2 of 2)');
+			expect(steps.at(-1)).toBe('Swapping in the migrated database');
+			// The detail lines are display-safe: no filesystem paths leak to the UI.
+			for (const step of steps) expect(step).not.toContain(dir);
+		} finally {
+			await safeClose(db);
+		}
+	});
+
 	it('is a no-op when nothing is pending', async () => {
 		const dir = tempDir();
 		await seedExistingInstance(dir);

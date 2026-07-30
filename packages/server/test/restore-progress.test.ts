@@ -7,13 +7,7 @@ import { restoreAssetBlobs } from '../src/assets/blob-backup';
 import { LocalAssetStore } from '../src/assets/drivers/local';
 import { createMemoryDb } from '../src/db/client';
 import type { Db } from '../src/db/database';
-import {
-	decompressLogicalBackup,
-	dumpLogicalBackup,
-	parseLogicalBackupHeader,
-	readLogicalBackupHeader,
-	restoreLogicalBackup,
-} from '../src/db/logical-backup';
+import { dumpLogicalBackupToFile, restoreLogicalBackupFromFile } from '../src/db/logical-backup';
 import { runMigrations } from '../src/db/migrate';
 import { openDatabase } from '../src/db/open';
 import { BASE_SCHEMA } from '../src/db/schema';
@@ -295,39 +289,40 @@ describe('progress reporter', () => {
 describe('database restore progress emission', () => {
 	const migrations = allMigrations();
 	let ctx: Awaited<ReturnType<typeof createTestApp>>;
-	let bytes: Buffer;
+	let dir: string;
+	let backupFile: string;
 
 	beforeAll(async () => {
 		ctx = await createTestApp();
-		bytes = await dumpLogicalBackup(ctx.db, { hezoVersion: 'test', migrations });
+		dir = mkdtempSync(join(tmpdir(), 'hezo-restore-progress-'));
+		backupFile = join(dir, 'source.backup.gz');
+		await dumpLogicalBackupToFile(ctx.db, backupFile, { hezoVersion: 'test', migrations });
 	}, 120_000);
 
 	afterAll(async () => {
+		rmSync(dir, { recursive: true, force: true });
 		await safeClose(ctx.db);
 	});
 
-	it('reports every phase, with a row counter that reaches the total', async () => {
+	it('reports every phase, with a row counter that climbs to the restored total', async () => {
 		const restored = await createMemoryDb();
 		const states: ProgressState[] = [];
 		try {
-			const summary = await restoreLogicalBackup(restored, bytes, migrations, {
+			const summary = await restoreLogicalBackupFromFile(restored, backupFile, migrations, {
 				onProgress: (s) => states.push({ ...s }),
 			});
 
 			// The phases an operator watching a long restore should see, in order.
+			// There is deliberately no separate parse phase: rows are parsed and
+			// inserted in one pass, so the restore never holds the whole database
+			// in memory. Reading everything first (which is what made a row *total*
+			// knowable up front) is the bug, not the feature.
 			expect([...new Set(states.map((s) => s.phase))]).toEqual([
-				'decompress',
 				'schema',
-				'parse',
 				'prepare',
 				'load',
 				'constraints',
 			]);
-
-			// The parse counter climbs and finishes at 100%.
-			const parse = states.filter((s) => s.phase === 'parse');
-			expect(parse[0]).toMatchObject({ done: 0, unit: 'rows' });
-			expect(progressRatio(parse[parse.length - 1])).toBe(1);
 
 			// The load counter is monotonic and lands exactly on the restored rows.
 			const load = states.filter((s) => s.phase === 'load');
@@ -336,9 +331,11 @@ describe('database restore progress emission', () => {
 			expect(done).toEqual([...done].sort((a, b) => a - b));
 			expect(done[0]).toBe(0);
 			expect(done[done.length - 1]).toBe(summary.rows);
-			expect(load[load.length - 1].total).toBe(summary.rows);
 			// The table being loaded is named, so a stall is attributable.
 			expect(load.some((s) => (s.detail ?? '').length > 0)).toBe(true);
+			// Compressed bytes consumed climb alongside the rows, which is the only
+			// completion signal available without reading the file twice.
+			expect(load.some((s) => (s.bytes ?? 0) > 0)).toBe(true);
 		} finally {
 			await safeClose(restored as { close: () => Promise<void> });
 		}
@@ -348,44 +345,19 @@ describe('database restore progress emission', () => {
 		const target = await createMemoryDb();
 		try {
 			const first: ProgressState[] = [];
-			await restoreLogicalBackup(target, bytes, migrations, {
+			await restoreLogicalBackupFromFile(target, backupFile, migrations, {
 				onProgress: (s) => first.push({ ...s }),
 			});
 			expect(first.some((s) => s.phase === 'wipe')).toBe(false);
 
 			const second: ProgressState[] = [];
-			await restoreLogicalBackup(target, bytes, migrations, {
+			await restoreLogicalBackupFromFile(target, backupFile, migrations, {
 				wipe: true,
 				onProgress: (s) => second.push({ ...s }),
 			});
 			expect(second.some((s) => s.phase === 'wipe')).toBe(true);
 		} finally {
 			await safeClose(target as { close: () => Promise<void> });
-		}
-	}, 120_000);
-
-	it('accepts pre-decompressed text so a large backup is only gunzipped once', async () => {
-		const text = decompressLogicalBackup(bytes);
-		expect(text).not.toBeNull();
-		// The split header parse matches the buffer-level reader it composes into.
-		expect(parseLogicalBackupHeader(text as string)).toEqual(readLogicalBackupHeader(bytes));
-		// Not gzip at all (a legacy pgdata tarball, or a wrong file) → null, which
-		// is how the CLI still detects the legacy-snapshot path.
-		expect(decompressLogicalBackup(Buffer.from('not gzip'))).toBeNull();
-
-		const restored = await createMemoryDb();
-		const states: ProgressState[] = [];
-		try {
-			const summary = await restoreLogicalBackup(restored, text as string, migrations, {
-				onProgress: (s) => states.push({ ...s }),
-			});
-			expect(summary.rows).toBeGreaterThan(0);
-			// Text in → nothing to decompress, so no decompress phase is claimed.
-			expect(states.some((s) => s.phase === 'decompress')).toBe(false);
-			const teams = await restored.query<{ c: number }>(`SELECT COUNT(*)::int AS c FROM teams`);
-			expect(teams.rows[0].c).toBeGreaterThan(0);
-		} finally {
-			await safeClose(restored as { close: () => Promise<void> });
 		}
 	}, 120_000);
 });

@@ -27,6 +27,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Db } from '../db/database';
+import { forEachConcurrent } from '../lib/concurrency';
 import type { ProgressCallback } from '../lib/progress';
 import { logger } from '../logger';
 import { AssetNotFoundError, type AssetStore } from './store';
@@ -86,32 +87,6 @@ interface AssetRow {
 interface BundleBlobRef {
 	projectId: string;
 	assetId: string;
-}
-
-/**
- * Run `fn` over `items` with at most `limit` in flight. A rejection propagates
- * (aborting the copy); other in-flight tasks settle but no new ones start.
- */
-async function forEachConcurrent<T>(
-	items: T[],
-	limit: number,
-	fn: (item: T) => Promise<void>,
-): Promise<void> {
-	let next = 0;
-	const workerCount = Math.min(limit, items.length);
-	const workers: Promise<void>[] = [];
-	for (let i = 0; i < workerCount; i++) {
-		workers.push(
-			(async () => {
-				for (;;) {
-					const idx = next++;
-					if (idx >= items.length) return;
-					await fn(items[idx]);
-				}
-			})(),
-		);
-	}
-	await Promise.all(workers);
 }
 
 /** Every `assets` row, paged, ordered stably. Read-only; caller ensures a quiescent DB. */

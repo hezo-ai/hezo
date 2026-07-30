@@ -26,6 +26,22 @@ const USE_PREVIEW = process.env.HEZO_E2E_PREVIEW === '1';
 const webCommand = (port: number) =>
 	USE_PREVIEW ? `bunx vite preview --port ${port} --strictPort` : 'bun run dev';
 
+// Playwright defaults each webServer to 60s, and — unlike a test — a webServer
+// that misses its window is NOT covered by `retries`: the boot fails, the whole
+// shard dies, and zero tests run. So the flake tolerance the rest of this file
+// buys (two retries, halved workers, the preview build) stops exactly where the
+// process starts, on the tightest budget in the config.
+//
+// The backend is the slow one: `--reset` means PGlite initdb plus every
+// migration plus seeding before /api/status answers. Measured cold on a fast
+// 8-core box that is ~10s — comfortable against 60s alone, but all three servers
+// here boot concurrently against a 2-core CI runner, which is the same
+// contention the preview-build note above exists to describe. A cold runner that
+// lands 6x slower than a laptop is not a race to be fixed; it is a cold start
+// that needs a budget, so give it the same 180s the tests get rather than a
+// third of it.
+const WEB_SERVER_TIMEOUT_MS = 180_000;
+
 export default defineConfig({
 	tsconfig: './tsconfig.json',
 	testDir: './test/browser',
@@ -123,6 +139,7 @@ export default defineConfig({
 			// only mounted inside startup, so polling it waits for full readiness.
 			url: `http://localhost:${SERVER_PORT}/api/status`,
 			reuseExistingServer: false,
+			timeout: WEB_SERVER_TIMEOUT_MS,
 			env: {
 				SKIP_AI_KEY_VALIDATION: '1',
 				HEZO_SKIP_DOCKER: '1',
@@ -157,6 +174,7 @@ export default defineConfig({
 			cwd: './packages/web',
 			port: WEB_PORT,
 			reuseExistingServer: false,
+			timeout: WEB_SERVER_TIMEOUT_MS,
 			env: {
 				HEZO_WEB_PORT: String(WEB_PORT),
 				HEZO_SERVER_PORT: String(SERVER_PORT),
@@ -167,6 +185,7 @@ export default defineConfig({
 			cwd: './packages/web',
 			port: GATE_WEB_PORT,
 			reuseExistingServer: false,
+			timeout: WEB_SERVER_TIMEOUT_MS,
 			env: {
 				HEZO_WEB_PORT: String(GATE_WEB_PORT),
 				HEZO_SERVER_PORT: String(GATE_SERVER_PORT),

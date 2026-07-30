@@ -21,6 +21,7 @@ import {
 	formatReactionLine,
 	loadAgentAttachmentsForComments,
 	loadMentionContext,
+	loadOpenSubTasks,
 	loadReplyContext,
 	loadSpawnedFromTask,
 	type MentionContext,
@@ -759,6 +760,76 @@ describe('loadSpawnedFromTask', () => {
 		await db.query('DELETE FROM heartbeat_runs WHERE id = $1', [run.rows[0].id]);
 		await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [wakeup.rows[0].id]);
 		await db.query('DELETE FROM tasks WHERE id = $1', [spawnTask.id]);
+	});
+});
+
+// --------------------------------------------------------------------------
+// loadOpenSubTasks + its buildTaskPrompt block — the downward half of a
+// ticket's lineage. A manager that cannot see what it already delegated
+// re-does its report's in-flight work when fresh feedback lands on the parent
+// ticket; SHARED_INSTRUCTIONS tells it to route that feedback instead, and
+// this block is what makes the rule checkable from the prompt.
+// --------------------------------------------------------------------------
+describe('loadOpenSubTasks', () => {
+	async function createSubTask(title: string): Promise<{ id: string; identifier: string }> {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks`, {
+			method: 'POST',
+			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title,
+				description: 'delegated slice',
+				assignee_id: agentId,
+				parent_task_id: taskId,
+			}),
+		});
+		return (await res.json()).data;
+	}
+
+	it('returns only the non-terminal children, and renders them in the task prompt', async () => {
+		const open = await createSubTask('Rewrite the openers');
+		const closed = await createSubTask('Already delivered');
+		await db.query(`UPDATE tasks SET status = 'done'::task_status WHERE id = $1`, [closed.id]);
+
+		const subs = await loadOpenSubTasks(db, makeTask());
+		expect(subs.map((s) => s.identifier)).toEqual([open.identifier]);
+		expect(subs[0].title).toBe('Rewrite the openers');
+		expect(subs[0].status).toBe('backlog');
+		// The assignee is the whole point of the line — it names who to route to.
+		expect(subs[0].assignee_name).toBeTruthy();
+
+		const prompt = buildTaskPrompt('SYS', makeTask(), undefined, { openSubTasks: subs });
+		expect(prompt).toContain('**Open sub-tasks**');
+		expect(prompt).toContain('do not do their work yourself');
+		expect(prompt).toContain(`- ${open.identifier} — Rewrite the openers (backlog, assigned to`);
+		// A finished child is not in flight, so it must not appear as something to
+		// route to — its work is fresh work, filed as a new sub-task.
+		expect(prompt).not.toContain(closed.identifier);
+
+		await db.query('DELETE FROM tasks WHERE id = ANY($1::uuid[])', [[open.id, closed.id]]);
+	});
+
+	it('renders an unassigned child rather than dropping it', async () => {
+		const orphan = await createSubTask('Nobody owns this yet');
+		await db.query('UPDATE tasks SET assignee_id = NULL WHERE id = $1', [orphan.id]);
+
+		const subs = await loadOpenSubTasks(db, makeTask());
+		expect(subs).toHaveLength(1);
+		expect(subs[0].assignee_name).toBeNull();
+		expect(buildTaskPrompt('SYS', makeTask(), undefined, { openSubTasks: subs })).toContain(
+			`- ${orphan.identifier} — Nobody owns this yet (backlog, assigned to unassigned)`,
+		);
+
+		await db.query('DELETE FROM tasks WHERE id = $1', [orphan.id]);
+	});
+
+	it('omits the block entirely for a ticket with no open children', async () => {
+		expect(await loadOpenSubTasks(db, makeTask())).toEqual([]);
+		expect(buildTaskPrompt('SYS', makeTask(), undefined, { openSubTasks: [] })).not.toContain(
+			'Open sub-tasks',
+		);
+		// Callers that never pass the field at all behave the same way.
+		expect(buildTaskPrompt('SYS', makeTask())).not.toContain('Open sub-tasks');
 	});
 });
 

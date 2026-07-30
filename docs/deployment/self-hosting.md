@@ -17,6 +17,17 @@ keys, and the spend.
 - Your **master key** (created on first run; see
   [First-run setup](/docs/getting-started/first-run)).
 
+**Low-RAM host?** Agent containers are memory-hungry, so on a small box (under ~2 GB
+RAM) add swap or the kernel may OOM-kill Hezo. The
+[one-click deploy](/docs/deployment/one-click) sets up a 6 GB swap file for you; on a
+manual install, add one yourself:
+
+```sh
+sudo fallocate -l 6G /swapfile && sudo chmod 600 /swapfile
+sudo mkswap /swapfile && sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+```
+
 ## The data directory
 
 Everything Hezo keeps lives in one place - the **data directory** (default `~/.hezo/`):
@@ -342,3 +353,79 @@ You can always upgrade by replacing the binary yourself. On startup Hezo runs an
 required database migrations automatically - the embedded database is migrated on a
 copy and swapped in only on success (the previous copy is kept aside), so an upgrade
 is safe to roll back. See [Backup & recovery](/docs/deployment/backup-and-recovery).
+
+### If an upgrade sits on "Running database migrations…"
+
+Migrations run in the **server**, not the browser. The screen you see is the web UI
+reporting the server's boot progress, and it names the step in flight - copying the
+database aside, writing the pre-migration backup, then each migration as it is
+applied. A large instance can legitimately spend a few minutes there, and the screen
+shows an elapsed timer so you can tell it is still moving.
+
+Two messages mean it is **not** just slow:
+
+- **"The server restarted while starting up"** - the process is dying and your
+  service manager is restarting it, so the same boot is being retried over and over.
+- **"The previous start failed…"** with a reason - the last boot hit a fatal error
+  (a failed migration, unreachable database, broken asset storage). The reason shown
+  is what to fix.
+
+Check the service log for what actually happened:
+
+```sh
+journalctl -u hezo -n 200 --no-pager
+```
+
+The most common cause on a small VPS is the host running out of memory: the log
+shows the worker exiting with **code 137** (the kernel killed it) with no error of
+Hezo's own. Give the host more RAM or add swap - the provisioning script sets up a
+4 GB swap file for this reason, and `swapon --show` tells you whether it is active.
+
+## Keeping the host patched
+
+This section is about patching the **operating system** under Hezo, not Hezo
+itself. On Ubuntu and Debian, `unattended-upgrades` installs security updates on
+its own daily schedule. After each one a helper called `needrestart` runs from
+the package manager's hook and, in the automatic mode Ubuntu uses there,
+restarts every service still running against a library the upgrade replaced.
+That is the right default for most daemons: a patched file on disk does nothing
+for a process that still has the old code mapped in memory.
+
+Hezo is the exception, because it cannot bring itself back. Its master key is
+held in memory only and never written to disk, so any restart outside the in-app
+update flow above brings the instance up **locked**, with agent execution
+stopped until someone opens the browser gate and unlocks it. An unattended
+restart therefore turns a routine background patch into an outage lasting until
+you happen to notice - a couple of minutes if you are at your desk, the whole
+night if it lands at 3am.
+
+The one-click deploy installs an exemption at
+`/etc/needrestart/conf.d/hezo.conf` so that never happens:
+
+```perl
+$nrconf{override_rc} = { qr(^hezo\.service$) => 0 };
+```
+
+Patches still download and install on the usual schedule. `needrestart` still
+*reports* that Hezo wants a restart - it simply no longer performs one, so the
+restart is yours to make at a moment when you can unlock right afterwards. If
+you set the service up by hand rather than through the one-click deploy, write
+that file yourself.
+
+**The trade-off is that you have to come back for it.** Until you restart, Hezo
+keeps running against the pre-patch copy of the library, so a fix for something
+like a C-library vulnerability is not yet live in the running process. Check for
+a pending restart whenever you are on the box:
+
+```sh
+sudo needrestart -b -r l      # lists services running against replaced libraries
+```
+
+If `hezo.service` is listed, restart it and unlock it in the browser:
+
+```sh
+sudo systemctl restart hezo
+```
+
+Kernel upgrades need a full reboot, which locks Hezo the same way, so they are a
+natural moment to take both together.

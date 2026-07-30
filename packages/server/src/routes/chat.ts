@@ -164,25 +164,28 @@ chatRoutes.post('/chat/messages', async (c) => {
 	if (!manager) return err(c, 'UNAVAILABLE', 'CEO chat is not available', 503);
 
 	const body = await c.req.json().catch(() => ({}));
-	const text = typeof body.text === 'string' ? body.text.trim() : '';
-	const attachmentIds: string[] = Array.isArray(body.attachment_ids)
-		? body.attachment_ids.filter((id: unknown): id is string => typeof id === 'string')
-		: [];
-	// A message needs either text or at least one attachment.
-	if (!text && attachmentIds.length === 0) {
+	// Either one message (`text` + `attachment_ids`) or an ordered batch
+	// (`messages`) — the chatbox flushes its queue as a batch so several messages
+	// post as their own bubbles and a single reply answers all of them.
+	const batch = parseMessageBatch(body);
+	if (!batch) {
 		return err(c, 'BAD_REQUEST', 'Message text or an attachment is required', 400);
 	}
+	if (batch.length > MAX_BATCH_MESSAGES) {
+		return err(c, 'BAD_REQUEST', `At most ${MAX_BATCH_MESSAGES} messages per turn`, 400);
+	}
+	const allAttachmentIds = batch.flatMap((m) => m.attachmentIds);
 
 	// Every attachment must be an HQ-project asset (i.e. uploaded via /chat/assets).
-	if (attachmentIds.length > 0) {
+	if (allAttachmentIds.length > 0) {
 		const db = c.get('db');
 		const hqProjectId = await resolveHqProjectId(db);
 		if (!hqProjectId) return err(c, 'UNAVAILABLE', 'HQ project not found', 503);
 		const matched = await db.query<{ id: string }>(
-			`SELECT id FROM assets WHERE id = ANY($1::uuid[]) AND project_id = $2`,
-			[attachmentIds, hqProjectId],
+			`SELECT DISTINCT id FROM assets WHERE id = ANY($1::uuid[]) AND project_id = $2`,
+			[allAttachmentIds, hqProjectId],
 		);
-		if (matched.rows.length !== attachmentIds.length) {
+		if (matched.rows.length !== new Set(allAttachmentIds).size) {
 			return err(c, 'BAD_REQUEST', 'One or more attachments are invalid', 400);
 		}
 	}
@@ -211,16 +214,17 @@ chatRoutes.post('/chat/messages', async (c) => {
 
 	try {
 		const result = await manager.sendTurn({
-			text,
+			text: batch[0].text,
 			channel: ChatChannel.Web,
 			conversationId,
 			authorUserId,
-			attachmentIds,
+			messages: batch,
 		});
 		return ok(
 			c,
 			{
 				user_message_id: result.userMessageId,
+				user_message_ids: result.userMessageIds,
 				assistant_message_id: result.assistantMessageId,
 				conversation_id: result.conversationId,
 			},
@@ -230,6 +234,35 @@ chatRoutes.post('/chat/messages', async (c) => {
 		return err(c, 'CEO_UNAVAILABLE', (e as Error).message, 503);
 	}
 });
+
+/** Hard cap on a single turn's queued-message batch. */
+const MAX_BATCH_MESSAGES = 20;
+
+/**
+ * Normalize a send body into an ordered batch of user messages. Accepts the
+ * single-message shape (`text` / `attachment_ids`) or the batch shape
+ * (`messages: [{ text, attachment_ids }]`). Returns null when nothing sendable
+ * is present — every message needs text or at least one attachment.
+ */
+function parseMessageBatch(
+	body: Record<string, unknown>,
+): Array<{ text: string; attachmentIds: string[] }> | null {
+	const ids = (raw: unknown): string[] =>
+		Array.isArray(raw) ? raw.filter((id): id is string => typeof id === 'string') : [];
+	const raw = Array.isArray(body.messages)
+		? body.messages
+		: [{ text: body.text, attachment_ids: body.attachment_ids }];
+	const batch: Array<{ text: string; attachmentIds: string[] }> = [];
+	for (const entry of raw) {
+		if (typeof entry !== 'object' || entry === null) return null;
+		const m = entry as Record<string, unknown>;
+		const text = typeof m.text === 'string' ? m.text.trim() : '';
+		const attachmentIds = ids(m.attachment_ids);
+		if (!text && attachmentIds.length === 0) return null;
+		batch.push({ text, attachmentIds });
+	}
+	return batch.length > 0 ? batch : null;
+}
 
 // List conversation threads (open by default), newest activity first — drives the
 // web thread switcher.

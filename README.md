@@ -9,17 +9,20 @@
 [![Update hezo submodule](https://github.com/hezo-ai/hezo/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/hezo-ai/main/actions/workflows/main.yml)
 [![Coverage Status](https://coveralls.io/repos/github/hezo-ai/hezo/badge.svg?branch=main)](https://coveralls.io/github/hezo-ai/hezo?branch=main)
 [![License: GPL v3](https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg)](./LICENSE.md)
+[![Languages: 12](https://img.shields.io/badge/languages-12-brightgreen.svg)](./docs/concepts/languages-and-formats.md)
 
 </div>
 
 <p align="center">
-  <a href="https://ssh.cloud.google.com/cloudshell/editor?cloudshell_git_repo=https://github.com/hezo-ai/hezo&cloudshell_workspace=deploy/gcp&cloudshell_tutorial=tutorial.md"><img src="https://img.shields.io/badge/Deploy_on-Google_Cloud-4285F4?style=for-the-badge&logo=googlecloud&logoColor=white" alt="Deploy on Google Cloud" height="28" /></a>
-  <a href="https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create/review?templateURL=https://hezo-deploy.s3.us-east-1.amazonaws.com/hezo.cfn.yaml&stackName=hezo"><img src="https://img.shields.io/badge/Deploy_on-AWS-FF9900?style=for-the-badge&logo=amazonwebservices&logoColor=white" alt="Deploy on AWS" height="28" /></a>
-  <a href="./docs/deployment/one-click.md"><img src="https://img.shields.io/badge/Deploy_on-DigitalOcean-0080FF?style=for-the-badge&logo=digitalocean&logoColor=white" alt="Deploy on DigitalOcean" height="28" /></a>
+  <sub>
+    🌐
+    English · Deutsch · Français · Español · Italiano · Português (Brasil) ·
+    Nederlands · Polski · Svenska · 简体中文 · 日本語 · 한국어
+  </sub>
 </p>
 
 <p align="center">
-  <strong>Your own team of AI agents. Built to ship.</strong>
+  <strong>Your own team of AI agents. Built to deliver.</strong>
 </p>
 
 <p align="center">
@@ -150,6 +153,7 @@ parts.
 - **MCP, in and out** - a [built-in MCP server](./docs/mcp/hezo-mcp-server.md), [external MCP servers](./docs/mcp/connecting-mcp-servers.md) scoped per instance, team, or project.
 - **Chat from anywhere** - run the CEO from [Telegram](./docs/chat/telegram.md), [Slack](./docs/chat/slack.md), and [Discord](./docs/chat/discord.md), as a [private assistant or a coworker](./docs/chat/overview.md#two-modes-assistant-and-coworker) in your team channels.
 - **Your data, in your storage** - [embedded Postgres](./docs/concepts/your-data.md), optional [hosted Postgres](./docs/deployment/configuration.md), local or [S3-compatible](./docs/deployment/configuration.md#storing-assets-in-s3-compatible-object-storage) [asset storage](./docs/concepts/assets.md#where-asset-files-live), data-preserving upgrades.
+- **Speaks your language** - the web app runs in [12 languages](./docs/concepts/languages-and-formats.md), picked from your browser on first run and set before anything else; [date and currency formats](./docs/concepts/languages-and-formats.md#date-and-currency-formats) are chosen independently, so ISO dates with German prose is a valid combination.
 - **Self-hosted & easy to run** - a [single binary](./docs/getting-started/installation.md), [deployable anywhere Docker runs](./docs/deployment/self-hosting.md), [one-click cloud-init](./docs/deployment/one-click.md), [secure remote access](./docs/deployment/secure-remote-access.md), [safe-rollback backups](./docs/deployment/backup-and-recovery.md), [in-app self-update](./docs/deployment/self-hosting.md#updating), a mobile-first web app.
 
 ## Agents never hold your secrets
@@ -190,21 +194,18 @@ model's first-party agentic tooling, not a lowest-common-denominator wrapper.
 | **Google** | Gemini | Gemini CLI | API key or subscription |
 | **xAI** | Grok | Grok Build | API key |
 | **Kimi** (Moonshot) | Kimi | Claude Code | API key |
+| **Kimi Code** (Moonshot) | Kimi | Kimi Code | API key |
 | **DeepSeek** | DeepSeek | Claude Code | API key |
 | **Z.ai** | GLM | Claude Code | API key |
+| **OpenRouter** | Many, via one account | OpenCode | API key |
+| **Ollama** | Whatever you run locally | Claude Code | Server URL (no key) |
+| **LM Studio** | Whatever you run locally | Claude Code | Server URL (no key) |
+
+Ollama and LM Studio run agents **entirely on your own hardware** at no per-token cost -
+point Hezo at your server URL and leave the key blank.
 
 Full details (subscriptions vs. API keys, mixing providers, per-agent overrides) in
 [AI model support](./docs/ai-models.md).
-
-## How Hezo compares
-
-|  | Agents in terminal tabs | Hosted agent platforms | Agent frameworks / SDKs | **Hezo** |
-|---|---|---|---|---|
-| Runs on | Your machine, by hand | Someone else's cloud | Wherever you build it | **Hardware you own** |
-| Your secrets | Live in your shell | Held by the vendor | You wire them up | **Never exposed to the agent** |
-| Many agents | Tabs and willpower | Varies | You build it | **An org chart, built in** |
-| Spend control | Watch the meter | Vendor billing | Do it yourself | **Hard budget caps** |
-| You provide | Prompts, by hand | Vendor config | Code | **Goals and rules** |
 
 ## Development
 

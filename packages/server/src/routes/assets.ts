@@ -23,6 +23,7 @@ import { insertAssetWithUniqueName, upsertProjectAsset } from '../lib/asset-name
 import { assetSortOrderBy } from '../lib/asset-sort';
 import { signAssetUrl, verifyAssetUrl } from '../lib/asset-urls';
 import { broadcastChange, broadcastCommentFamilyChange } from '../lib/broadcast';
+import { asBodyBytes } from '../lib/bytes';
 import { readImageDimensions } from '../lib/image-dimensions';
 import { ref } from '../lib/log-ref';
 import {
@@ -595,8 +596,6 @@ publicAssetsRoutes.get('/api/assets/:assetId', async (c) => {
 	// filename is the basename only (a `/` in the header parameter would be
 	// misread as a path by download managers).
 	const filenameSafe = assetBasename(original_filename).replace(/"/g, '');
-	const ab = new ArrayBuffer(buf.byteLength);
-	new Uint8Array(ab).set(buf);
 	const headers: Record<string, string> = {
 		'Content-Type': content_type,
 		'Content-Length': String(buf.byteLength),
@@ -612,7 +611,10 @@ publicAssetsRoutes.get('/api/assets/:assetId', async (c) => {
 	// script can't reach the app's same-origin credentials.
 	const csp = assetServeCsp(content_type);
 	if (csp) headers['Content-Security-Policy'] = csp;
-	return c.body(new Uint8Array(ab), 200, headers);
+	// Re-view the Buffer rather than copying it into a fresh ArrayBuffer: the copy
+	// doubled peak memory per download, on a route serving files up to the 10 MB
+	// attachment cap, concurrently. See `asBodyBytes`.
+	return c.body(asBodyBytes(buf), 200, headers);
 });
 
 // Re-export the allowed extensions for tests

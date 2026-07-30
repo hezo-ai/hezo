@@ -9,6 +9,7 @@ import {
 	derivePasswordKeyPair,
 	deriveUnlockKey,
 	generatePasswordSalt,
+	type LocaleSettings,
 	type MasterKeyState,
 	signAuthMessage,
 } from '@hezo/shared';
@@ -28,6 +29,33 @@ export interface StatusResponse {
 	message?: string;
 	/** Optional extra context for the loading screen. */
 	detail?: string;
+	/**
+	 * The instance display locale. Public because every pre-auth screen (the
+	 * language step, the master-key gate, the login form) renders in it before
+	 * any credential exists. Absent while the server is booting — no database is
+	 * open yet — so callers fall back to their stored render hint.
+	 */
+	locale?: LocaleSettings;
+	/**
+	 * Whether the operator has ever chosen a locale. Drives the onboarding
+	 * language gate; distinct from "the locale equals the default", which an
+	 * operator may legitimately have picked.
+	 */
+	localeConfigured?: boolean;
+	/**
+	 * Why the PREVIOUS boot died, when it died fatally. Present only while
+	 * `starting` — a restart loop repeats the same failure, so this is what turns
+	 * an endless boot screen into something actionable.
+	 */
+	lastFailure?: StartupFailure;
+}
+
+/** Mirrors `StartupFailureRecord` in `packages/server/src/startup-failure.ts`. */
+export interface StartupFailure {
+	message: string;
+	phase: string;
+	version: string;
+	at: string;
 }
 
 /** The password below is the minimum the UI will accept before deriving a verifier. */
@@ -48,6 +76,7 @@ export async function checkStatus(): Promise<StatusResponse> {
 	const res = await fetch('/api/status');
 	const body = (await res.json()) as StatusResponse & {
 		error?: { code?: string; message?: string };
+		last_failure?: StartupFailure;
 	};
 	// While booting, the server answers 200 with `starting: true` and a live phase
 	// instead of `masterKeyState`. Surface it so the UI can render a loading screen.
@@ -58,6 +87,7 @@ export async function checkStatus(): Promise<StatusResponse> {
 			message: body.message,
 			detail: body.detail,
 			version: body.version,
+			lastFailure: body.last_failure,
 		};
 	}
 	if (!res.ok) {

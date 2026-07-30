@@ -1,11 +1,12 @@
 {
 	"name": "@hezo/web",
-	"version": "0.33.0",
+	"version": "0.38.0",
 	"private": true,
 	"type": "module",
 	"scripts": {
 		"dev": "vite",
 		"build": "vite build",
+		"build:icons": "bun run scripts/generate-icons.ts",
 		"preview": "vite preview",
 		"test": "vitest run",
 		"typecheck": "tsc --noEmit"

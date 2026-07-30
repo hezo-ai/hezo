@@ -54,6 +54,9 @@ export function describeAuditEntry(entry: AuditEntry): string {
 			if (field === 'title') {
 				return `Renamed ${id} from "${str(d, 'from') ?? ''}" to "${str(d, 'to') ?? ''}"`;
 			}
+			// No from/to: the description bodies deliberately never reach the audit
+			// row (see TaskUpdateField), so there is nothing to quote here.
+			if (field === 'description') return `Updated the description of ${id}`;
 			if (field === 'status') {
 				return `Changed status of ${id} from ${statusLabel(str(d, 'from'))} to ${statusLabel(str(d, 'to'))}`;
 			}
@@ -61,6 +64,14 @@ export function describeAuditEntry(entry: AuditEntry): string {
 				const from = str(d, 'from_label') ?? 'Unassigned';
 				const to = str(d, 'to_label') ?? 'Unassigned';
 				return `Reassigned ${id} from ${from} to ${to}`;
+			}
+			if (field === 'parent') {
+				const from = str(d, 'from_label');
+				const to = str(d, 'to_label');
+				if (from && to) return `Moved ${id} from ${from} to ${to}`;
+				if (to) return `Moved ${id} under ${to}`;
+				if (from) return `Moved ${id} out of ${from} to top level`;
+				return `Moved ${id} to top level`;
 			}
 			return `${verb} task ${id}`;
 		}

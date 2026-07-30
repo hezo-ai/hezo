@@ -1,5 +1,122 @@
 # Changelog
 
+## 0.38.0 - 2026-07-30
+
+### Features
+
+- **i18n:** fail the catalog guard on keys that never reach a screen ([#872](https://github.com/hezo-ai/hezo/pull/872))
+- **agents:** file recurring asks as standing tasks with a child per round ([#873](https://github.com/hezo-ai/hezo/pull/873))
+- run containers on demand with a global container limit and RAM caps ([#871](https://github.com/hezo-ai/hezo/pull/871))
+- **runtimes:** add Kimi Code as a runtime alongside Kimi on Claude Code ([#869](https://github.com/hezo-ai/hezo/pull/869))
+- make Hezo locale-aware (language, date format, currency format) ([#862](https://github.com/hezo-ai/hezo/pull/862))
+- **tasks:** let a task's parent be changed or cleared ([#866](https://github.com/hezo-ai/hezo/pull/866))
+- **prompts:** route post-delegation feedback to the delegate instead of absorbing it ([#865](https://github.com/hezo-ai/hezo/pull/865))
+- **marketplace:** add individual roles from a team to a project ([#864](https://github.com/hezo-ai/hezo/pull/864))
+
+### Bug Fixes
+
+- **web:** let users dismiss the reconnecting toast, with a 20s snooze ([#870](https://github.com/hezo-ai/hezo/pull/870))
+- **web:** drop inline Model pricing blurb duplicated by the help dialog ([#867](https://github.com/hezo-ai/hezo/pull/867))
+
+### Other
+
+- Remove duplicate deploy badges from README header ([#868](https://github.com/hezo-ai/hezo/pull/868))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.37.0...0.38.0
+
+## 0.37.0 - 2026-07-29
+
+### Features
+
+- **agents:** check cross-task impact before acting ([#860](https://github.com/hezo-ai/hezo/pull/860))
+
+### Bug Fixes
+
+- stop the MCP endpoint stalling under concurrent agent requests ([#859](https://github.com/hezo-ai/hezo/pull/859))
+- **startup:** stop the OOM crash-loop on upgrade, and stream backup/restore both ways ([#858](https://github.com/hezo-ai/hezo/pull/858))
+- **web:** show the HQ menu on /home before the first project exists ([#857](https://github.com/hezo-ai/hezo/pull/857))
+
+### Performance
+
+- server stack review - memory, DB throughput, egress and control-plane load at 10 concurrent agents ([#861](https://github.com/hezo-ai/hezo/pull/861))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.36.0...0.37.0
+
+## 0.36.0 - 2026-07-28
+
+### Features
+
+- **ai-providers:** add Ollama + LM Studio, surface OpenRouter in the add dialog ([#852](https://github.com/hezo-ai/hezo/pull/852))
+- **marketplace:** export a live team as a downloadable bundle ([#850](https://github.com/hezo-ai/hezo/pull/850))
+
+### Bug Fixes
+
+- **web:** repair the truncated PWA icons and give the maskable one a safe zone ([#855](https://github.com/hezo-ai/hezo/pull/855))
+- **deploy:** stop unattended upgrades restarting Hezo into a locked state ([#854](https://github.com/hezo-ai/hezo/pull/854))
+- **deploy:** provision swap so low-RAM VPSes don't OOM-kill Hezo ([#853](https://github.com/hezo-ai/hezo/pull/853))
+- **web:** sort the Done task list by last-updated, newest first ([#851](https://github.com/hezo-ai/hezo/pull/851))
+- **agents:** wake the approver on a stranded "awaiting sign-off" handoff ([#849](https://github.com/hezo-ai/hezo/pull/849))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.35.0...0.36.0
+
+## 0.35.0 - 2026-07-27
+
+### Features
+
+- **mcp:** page large project docs via read_project_doc byte windows ([#846](https://github.com/hezo-ai/hezo/pull/846))
+- **chat:** queue messages while the CEO replies, hold to interrupt ([#842](https://github.com/hezo-ai/hezo/pull/842))
+- **web:** show project icons and agent avatars across dashboard and inbox ([#843](https://github.com/hezo-ai/hezo/pull/843))
+
+### Bug Fixes
+
+- **mentions:** reserve the line-leading address shape for active mentions ([#841](https://github.com/hezo-ai/hezo/pull/841))
+- **oauth,egress:** stop MCP token-refresh log flood and demote SSE teardown noise ([#844](https://github.com/hezo-ai/hezo/pull/844))
+- **web:** wrap long links in chat bubbles; remember the last chat thread ([#840](https://github.com/hezo-ai/hezo/pull/840))
+
+### Documentation
+
+- make project doc description an overall summary, not a content inventory ([#847](https://github.com/hezo-ai/hezo/pull/847))
+
+### Other
+
+- Update product headline to "Built to deliver." ([#845](https://github.com/hezo-ai/hezo/pull/845))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.34.0...0.35.0
+
+## 0.34.0 - 2026-07-27
+
+### Features
+
+- **connectors:** granular method access for MCP connectors ([#836](https://github.com/hezo-ai/hezo/pull/836))
+- **web:** demote the GitHub connector on teams that don't touch code ([#835](https://github.com/hezo-ai/hezo/pull/835))
+- **web:** drag to re-order projects in the project rail ([#830](https://github.com/hezo-ai/hezo/pull/830))
+- **mentions:** catch baton-passing passive handoffs and narrated live mentions ([#829](https://github.com/hezo-ai/hezo/pull/829))
+- **web:** offer document download on the preview panel and preview tab ([#826](https://github.com/hezo-ai/hezo/pull/826))
+- **restore:** show progress while restoring large databases and asset bundles ([#824](https://github.com/hezo-ai/hezo/pull/824))
+- extend the headline with "Built to ship." ([#822](https://github.com/hezo-ai/hezo/pull/822))
+- suggest shippable-MVP goal when App Team builds an app ([#821](https://github.com/hezo-ai/hezo/pull/821))
+- **web:** beautify the "can't reach the server" screen ([#819](https://github.com/hezo-ai/hezo/pull/819))
+
+### Bug Fixes
+
+- **repos:** make repo push access visible instead of silently denied ([#837](https://github.com/hezo-ai/hezo/pull/837))
+- **ci:** keep fork pull requests green when GHCR isn't writable ([#833](https://github.com/hezo-ai/hezo/pull/833))
+- **db:** honour libpq sslmode semantics for external Postgres ([#832](https://github.com/hezo-ai/hezo/pull/832))
+- **tasks:** stop the assignee reading "Running" when no agent is running ([#831](https://github.com/hezo-ai/hezo/pull/831))
+- **web:** make the New Project team list fill the dialog, and open teams in it ([#827](https://github.com/hezo-ai/hezo/pull/827))
+- **marketplace:** team suggestions match whole words, ranked on team-authored keywords ([#825](https://github.com/hezo-ai/hezo/pull/825))
+- **web:** deliver the container-provisioning-complete signal in situ ([#823](https://github.com/hezo-ai/hezo/pull/823))
+
+### Documentation
+
+- ban em and en dashes from user-facing prose ([#838](https://github.com/hezo-ai/hezo/pull/838))
+
+### Other
+
+- Rebrand tagline; rename marketplace teams to Social Media Marketing and Investment Portfolio ([#820](https://github.com/hezo-ai/hezo/pull/820))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.33.0...0.34.0
+
 ## 0.33.0 - 2026-07-23
 
 ### Features

@@ -21,8 +21,10 @@ import {
 } from '../../hooks/use-instance-credentials';
 import { useMe } from '../../hooks/use-me';
 import { toast } from '../../hooks/use-toast';
+import { useI18n } from '../../lib/i18n';
 
 function InstanceCredentialsPage() {
+	const { t } = useI18n();
 	const { data: me } = useMe();
 	const { focus } = Route.useSearch();
 	const {
@@ -162,7 +164,7 @@ function InstanceCredentialsPage() {
 			header: '',
 			render: (r) => (
 				<span className="flex items-center gap-2 justify-end">
-					<Tooltip content="Edit">
+					<Tooltip content={t('common.edit')}>
 						<button
 							type="button"
 							onClick={() => openEdit(r)}

@@ -11,6 +11,7 @@ import type { Db } from '../src/db/database';
 import { type HezoCA, loadOrCreateCA } from '../src/services/egress/ca';
 import { PortAllocator } from '../src/services/egress/port-allocator';
 import { EgressProxy } from '../src/services/egress/proxy';
+import { invalidateSecretsVault } from '../src/services/egress/substitution';
 import { safeClose } from './helpers';
 import { createTestApp, createTestProject, createTestTeam } from './helpers/app';
 
@@ -397,6 +398,9 @@ async function insertSecret(
 		     allow_body_substitution = EXCLUDED.allow_body_substitution`,
 		[name, enc, allowedHosts, allowBodySubstitution],
 	);
+	// Seeded by raw SQL, which bypasses the routes that invalidate the
+	// decrypted-vault cache — so drop it here the way those routes do.
+	invalidateSecretsVault();
 }
 
 async function startUpstream(): Promise<Server> {

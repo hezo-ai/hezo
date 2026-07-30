@@ -7,6 +7,7 @@ import { useAgents } from '../hooks/use-agents';
 import { useContainerHealth } from '../hooks/use-container-health';
 import { useInboxUnreadCount } from '../hooks/use-inbox-count';
 import { useProjectMeta } from '../hooks/use-projects';
+import { useI18n } from '../lib/i18n';
 import { agentPageParams } from './agent-link';
 import { AgentStatusLabel } from './agent-status-label';
 import { CreateTaskDialog } from './create-task-dialog';
@@ -19,10 +20,20 @@ import { Tooltip } from './ui/tooltip';
  * follow; the backing team's agents close it out under a Team section. The team
  * is presented as the project's own — there is no separate team-level view.
  */
-export function ProjectSidebar({ onCollapse }: { onCollapse?: () => void } = {}) {
+export function ProjectSidebar({
+	onCollapse,
+	projectSlug,
+}: {
+	onCollapse?: () => void;
+	projectSlug?: string;
+} = {}) {
+	const { t } = useI18n();
 	const active = useActiveProject();
 	const navigate = useNavigate();
-	const projectId = active?.slug ?? '';
+	// The shell passes an explicit slug so the menu can fall back to HQ on a
+	// non-project route (e.g. /home before the first project is created); on a
+	// project route it passes the active slug, so the two agree.
+	const projectId = projectSlug ?? active?.slug ?? '';
 	const project = useProjectMeta(projectId);
 	const health = useContainerHealth(project);
 	const { data: inboxCount } = useInboxUnreadCount(projectId);
@@ -34,11 +45,12 @@ export function ProjectSidebar({ onCollapse }: { onCollapse?: () => void } = {})
 	const isInternalProject = project?.is_internal ?? false;
 	const hasNoGoals = !isInternalProject && project != null && (project.open_goal_count ?? 0) === 0;
 
-	if (!active) return null;
+	if (!projectId) return null;
 
 	const isInternal = project?.is_internal ?? false;
 	const projectParams = { projectId };
-	const containerFailed = health?.kind === 'stopped' || health?.kind === 'error';
+	// `stopped` is the normal on-demand resting state — only genuine errors flag.
+	const containerFailed = health?.kind === 'error';
 	const containerProvisioning = health?.kind === 'provisioning' || health?.kind === 'rebuilding';
 
 	const enabledAgents = (agents ?? []).filter((a) => a.admin_status !== AgentAdminStatus.Disabled);
@@ -144,7 +156,7 @@ export function ProjectSidebar({ onCollapse }: { onCollapse?: () => void } = {})
 		{
 			to: '/projects/$projectId/tasks',
 			params: projectParams,
-			label: 'Tasks',
+			label: t('nav.tasks'),
 			count: project?.open_task_count,
 			testId: 'project-sidebar-tasks',
 			action: {
@@ -159,12 +171,12 @@ export function ProjectSidebar({ onCollapse }: { onCollapse?: () => void } = {})
 		{
 			to: '/projects/$projectId/documents',
 			params: projectParams,
-			label: 'Documents',
+			label: t('nav.documents'),
 		},
 		{
 			to: '/projects/$projectId/assets',
 			params: projectParams,
-			label: 'Assets',
+			label: t('nav.assets'),
 		},
 		...(isInternal
 			? // HQ has no Settings — keep Container and Activity at the top level.
@@ -173,13 +185,13 @@ export function ProjectSidebar({ onCollapse }: { onCollapse?: () => void } = {})
 					{
 						to: '/projects/$projectId/budget',
 						params: projectParams,
-						label: 'Budget',
+						label: t('nav.budget'),
 						testId: 'project-sidebar-budget',
 					},
 					{
 						to: '/projects/$projectId/settings',
 						params: projectParams,
-						label: 'Settings',
+						label: t('nav.settings'),
 						testId: 'project-sidebar-settings',
 						// Git, Connectors, Skills, Container and Activity disclose under Settings
 						// when it (or one of them) is the active route.

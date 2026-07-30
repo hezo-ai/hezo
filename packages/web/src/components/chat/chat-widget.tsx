@@ -11,25 +11,32 @@ import {
 	FileVideo,
 	History,
 	Image as ImageIcon,
+	ListPlus,
 	Loader2,
 	Lock,
 	Maximize2,
 	MessageSquare,
 	Minimize2,
 	Plus,
+	StepForward,
 	X,
 } from 'lucide-react';
-import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { useAutoGrowTextarea } from '../../hooks/use-auto-grow-textarea';
 import {
 	type ChatConversationSummary,
 	type ChatMessage,
+	type QueuedChatMessage,
+	readStoredThreadId,
 	useChat,
 	useChatConversations,
+	writeStoredThreadId,
 } from '../../hooks/use-chat';
 import { useContainerHealth } from '../../hooks/use-container-health';
 import { useDraggableFab } from '../../hooks/use-draggable-fab';
 import { useFileAttachments } from '../../hooks/use-file-attachments';
+import { LONG_PRESS_MS, useLongPress } from '../../hooks/use-long-press';
+import { useMediaQuery } from '../../hooks/use-media-query';
 import { useHqProject } from '../../hooks/use-projects';
 import { useUploadChatAttachment } from '../../hooks/use-upload-chat-attachment';
 import { copyToClipboard } from '../../lib/clipboard';
@@ -47,10 +54,20 @@ import { Tooltip } from '../ui/tooltip';
 /**
  * Floating chat with the CEO, pinned bottom-right (on portrait mobile screens
  * the launcher can be dragged elsewhere). Talks to the single global CEO
- * conversation; messages stream in over the `chat:global` WebSocket room. Sending a
- * new message while a reply is in flight interrupts it (handled server-side) and
- * starts a fresh turn. The CEO is the instance-level singleton living in the HQ
- * team, so every reply is labelled `CEO · HQ`.
+ * conversation; messages stream in over the `chat:global` WebSocket room. The CEO
+ * is the instance-level singleton living in the HQ team, so every reply is
+ * labelled `CEO · HQ`.
+ *
+ * The composer stays usable while a reply streams, and the send button is the
+ * only thing that changes to say what will happen — no banner above the input:
+ *
+ * - **Queue** (the default, and what Enter or a tap does): the message parks as a
+ *   dashed bubble and can be pulled back out until the queue flushes. The whole
+ *   queue then posts as ONE turn, so a single reply answers all of it.
+ * - **Send now** (deliberate: hold the button, or ⌘/Ctrl+Enter): posts straight
+ *   away, which server-side aborts the in-flight reply and starts a fresh turn.
+ *   Only offered while a reply is actually running — before that there is
+ *   nothing to interrupt, so holding does nothing and pressing queues.
  */
 interface ChatWidgetProps {
 	/** Open state is lifted to the shell so sibling surfaces (the floating
@@ -66,9 +83,11 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 	// moves). Must be called before the `if (!open)` early return below.
 	const fab = useDraggableFab('chat');
 	// The selected thread (undefined = the default web thread). The switcher lets the
-	// operator create/switch/close parallel conversation threads.
+	// operator create/switch/close parallel conversation threads. Seeded from the
+	// last thread they switched to, so reopening the chat resumes it rather than
+	// jumping back to the default thread.
 	const [selectedConversationId, setSelectedConversationId] = useState<string | undefined>(
-		undefined,
+		readStoredThreadId,
 	);
 	const {
 		messages,
@@ -78,14 +97,33 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 		loaded,
 		unread,
 		compactedCount,
+		queue,
+		enqueue,
+		dequeue,
 		conversationId: activeConversationId,
 	} = useChat(open, selectedConversationId);
-	const { conversations, createThread, closeThread } = useChatConversations(open);
+	const {
+		conversations,
+		loaded: threadsLoaded,
+		createThread,
+		closeThread,
+	} = useChatConversations(open);
+	// The one writer for the thread selection — dropdown, rail, new thread, and the
+	// fall-back-to-default paths all go through it, so what's rendered and what's
+	// remembered can never drift. `undefined` (back to the server's default web
+	// thread) clears the memory rather than pinning the default's id, keeping the
+	// untouched-switcher case behaving exactly as it did before.
+	const selectThread = useCallback((id: string | undefined) => {
+		setSelectedConversationId(id);
+		writeStoredThreadId(id);
+	}, []);
 	const hq = useHqProject();
 	const hqHealth = useContainerHealth(hq);
-	// The CEO can only act while the HQ container is up. When it isn't, the chat
-	// stays openable but swaps its body for the container state + a link to fix it.
-	const blockedHealth = hqHealth && hqHealth.kind !== 'healthy' ? hqHealth : null;
+	// A stopped HQ container is no blocker — sending a message lazy-starts it.
+	// Only genuine errors and in-flight transitions (provisioning/rebuilding)
+	// swap the chat body for the container state + a link to fix it.
+	const blockedHealth =
+		hqHealth && hqHealth.kind !== 'healthy' && hqHealth.kind !== 'stopped' ? hqHealth : null;
 	const [draft, setDraft] = useState('');
 	const [copied, setCopied] = useState(false);
 	// Files staged for the next message; the reusable attachment kit owns the
@@ -123,6 +161,17 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 		el.scrollTop = el.scrollHeight;
 	}, [lastId, lastLen, streaming, open, expanded]);
 
+	// A remembered thread can be closed later (from the ✕ here, another tab, or its
+	// own platform), and the server still serves a closed thread's history by id —
+	// so a stale id would restore as a thread that reads fine but rejects every
+	// send. Once the thread list has loaded, a selection it doesn't list is dropped
+	// back to the default thread.
+	useEffect(() => {
+		if (!open || !threadsLoaded || !selectedConversationId) return;
+		if (conversations.some((t) => t.id === selectedConversationId)) return;
+		selectThread(undefined);
+	}, [open, threadsLoaded, selectedConversationId, conversations, selectThread]);
+
 	// Escape closes the chat from any open state (anchored or the expanded modal).
 	useEffect(() => {
 		if (!open) return;
@@ -157,33 +206,80 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 	// conversation; there is no special "Main" default anymore.
 	const threadLabel = (t: (typeof conversations)[number]) => t.title?.trim() || 'New thread';
 
-	const submit = () => {
+	// The thread is busy from the moment a send leaves until its reply settles.
+	// `canInterrupt` narrows that to a reply that is actually running: during
+	// `sending` the turn hasn't started server-side yet, so there is nothing to
+	// abort and the only honest option is to queue.
+	const busy = sending || streaming;
+	const canInterrupt = streaming && !sending;
+	const hasContent = draft.trim().length > 0 || visibleAttachments.length > 0;
+	const canSubmit = !activeReadOnly && hasContent && uploading.length === 0;
+
+	/**
+	 * Commit the draft. `sendNow` is the deliberate interrupt (button held, or
+	 * ⌘/Ctrl+Enter); everything else queues while the thread is busy. A `sendNow`
+	 * that arrives before the turn has started still queues — see `canInterrupt`.
+	 */
+	const submit = (sendNow = false) => {
+		// A message needs text or at least one attachment; files still uploading
+		// block. Coworker (team-channel) threads are read-only here — never send.
+		if (!canSubmit) return;
 		const text = draft.trim();
-		// A message needs text or at least one attachment. Block while a send is in
-		// flight or a reply is streaming — prevents the impatient double-click
-		// (seeing the optimistic bubble "stuck" during the egress check) that used
-		// to spawn duplicate CEO turns. Files still uploading also block the send.
-		// Coworker (team-channel) threads are read-only here — never send.
-		if (
-			activeReadOnly ||
-			(!text && visibleAttachments.length === 0) ||
-			uploading.length > 0 ||
-			sending ||
-			streaming
-		) {
-			return;
-		}
 		const attachments = visibleAttachments;
 		setDraft('');
 		setPendingAttachmentIds([]);
+		if (busy && !(sendNow && canInterrupt)) {
+			enqueue(text, attachments);
+			return;
+		}
 		send(text, attachments).catch(() => undefined);
 	};
+
+	// Holding the button arms the interrupt; `armed` flips at the threshold so the
+	// button can say what a release will do before the finger lifts.
+	const longPress = useLongPress({
+		onPress: () => submit(false),
+		onLongPress: () => submit(true),
+		enabled: canInterrupt && canSubmit,
+	});
+	// ⌘/Ctrl is the keyboard route to the same armed state, tracked globally so the
+	// button morphs on the modifier alone — the consequence is visible before Enter.
+	const [modifierHeld, setModifierHeld] = useState(false);
+	useEffect(() => {
+		if (!open) return;
+		const isModifier = (e: KeyboardEvent) => e.key === 'Meta' || e.key === 'Control';
+		const onDown = (e: KeyboardEvent) => isModifier(e) && setModifierHeld(true);
+		const onUp = (e: KeyboardEvent) => isModifier(e) && setModifierHeld(false);
+		// Tabbing away can swallow the keyup, which would strand the button armed.
+		const onBlur = () => setModifierHeld(false);
+		window.addEventListener('keydown', onDown);
+		window.addEventListener('keyup', onUp);
+		window.addEventListener('blur', onBlur);
+		return () => {
+			window.removeEventListener('keydown', onDown);
+			window.removeEventListener('keyup', onUp);
+			window.removeEventListener('blur', onBlur);
+		};
+	}, [open]);
+
+	// Touch has no modifier key, so the tooltip teaches the gesture instead of a shortcut.
+	const coarsePointer = useMediaQuery('(pointer: coarse)');
+	const armed = canInterrupt && canSubmit && (longPress.armed || modifierHeld);
+	const buttonHint = !busy
+		? 'Send message'
+		: armed
+			? 'Send now - stops the current reply'
+			: !canInterrupt
+				? 'Queue - sends when the CEO is ready'
+				: coarsePointer
+					? 'Queue - hold to send now'
+					: 'Queue (Enter) - hold, or Cmd/Ctrl Enter, to send now';
 
 	const handleNewThread = async () => {
 		const res = (await createThread().catch(() => null)) as {
 			conversation?: { id: string };
 		} | null;
-		if (res?.conversation?.id) setSelectedConversationId(res.conversation.id);
+		if (res?.conversation?.id) selectThread(res.conversation.id);
 	};
 	// Close a thread (defaults to the active one). If it was the active thread, fall
 	// back to the default web thread afterwards.
@@ -191,7 +287,7 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 		const target = id ?? activeConversationId;
 		if (!target) return;
 		await closeThread(target).catch(() => undefined);
-		if (target === activeConversationId) setSelectedConversationId(undefined);
+		if (target === activeConversationId) selectThread(undefined);
 	};
 
 	// Copy the whole conversation as plain text, each turn labelled by speaker.
@@ -274,6 +370,16 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 								<Dots />
 							</span>
 						)}
+						{/* Parked messages live at the bottom of the thread, so the count rides
+						    up here to survive scrolling away from them. */}
+						{queue.length > 0 && (
+							<span
+								data-testid="chat-queue-count"
+								className="rounded-sm border border-purple-soft-fg bg-purple-soft px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-purple-soft-fg"
+							>
+								{queue.length} queued
+							</span>
+						)}
 					</div>
 					<div className="flex items-center gap-1">
 						{/* Copy the full transcript to the clipboard. Disabled until there's
@@ -354,7 +460,7 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 										>
 											<button
 												type="button"
-												onClick={() => setSelectedConversationId(t.id)}
+												onClick={() => selectThread(t.id)}
 												className="min-w-0 flex-1 truncate text-left"
 											>
 												{threadLabel(t)}
@@ -398,7 +504,7 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 												>
 													<button
 														type="button"
-														onClick={() => setSelectedConversationId(t.id)}
+														onClick={() => selectThread(t.id)}
 														className="flex min-w-0 flex-1 items-center gap-1 truncate text-left"
 													>
 														<span className="truncate">{threadLabel(t)}</span>
@@ -433,7 +539,7 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 								data-testid="chat-thread-select"
 								aria-label="Conversation thread"
 								value={activeConversationId ?? ''}
-								onChange={(e) => setSelectedConversationId(e.target.value || undefined)}
+								onChange={(e) => selectThread(e.target.value || undefined)}
 								className="min-w-0 flex-1 truncate rounded-md border border-border bg-surface px-2 py-1 text-xs text-text-1"
 							>
 								{conversations.length === 0 && <option value="">New thread</option>}
@@ -534,6 +640,7 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 									{messages.map((m) => (
 										<MessageBubble key={m.id} message={m} projectSlug={hq?.slug} />
 									))}
+									{queue.length > 0 && <QueuedMessages queue={queue} onRemove={dequeue} />}
 								</div>
 
 								<div className="border-t border-border p-3">
@@ -584,7 +691,7 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 											onKeyDown={(e) => {
 												if (e.key === 'Enter' && !e.shiftKey) {
 													e.preventDefault();
-													submit();
+													submit(e.metaKey || e.ctrlKey);
 												}
 											}}
 											rows={1}
@@ -592,27 +699,64 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 											placeholder={
 												activeReadOnly
 													? `Read-only — reply from ${channelDisplayName(activeThread?.channel ?? '')}`
-													: 'Ask the CEO anything, across every project…'
+													: busy
+														? 'Queue your next message…'
+														: 'Ask the CEO anything, across every project…'
 											}
 											data-testid="chat-input"
-											className="max-h-32 min-h-[2.25rem] flex-1 resize-none overflow-y-auto bg-transparent px-2 py-2 text-[13px] leading-5 text-text-1 outline-none placeholder:text-text-3"
+											// `min-w-0` lets the row absorb the send button's widened labelled
+											// states: a textarea's intrinsic min width would otherwise push
+											// the composer past the panel edge on a 375px viewport.
+											className="max-h-32 min-h-[2.25rem] min-w-0 flex-1 resize-none overflow-y-auto bg-transparent px-2 py-2 text-[13px] leading-5 text-text-1 outline-none placeholder:text-text-3"
 										/>
-										<button
-											type="button"
-											onClick={submit}
-											disabled={
-												activeReadOnly ||
-												(!draft.trim() && visibleAttachments.length === 0) ||
-												uploading.length > 0 ||
-												sending ||
-												streaming
-											}
-											aria-label="Send message"
-											data-testid="chat-send"
-											className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-solid text-accent-solid-fg transition-colors hover:bg-accent-hover disabled:opacity-40"
-										>
-											<ArrowRight className="h-4 w-4" />
-										</button>
+										<Tooltip content={buttonHint} side="top">
+											<button
+												type="button"
+												{...longPress.handlers}
+												disabled={!canSubmit}
+												aria-label={buttonHint}
+												data-testid="chat-send"
+												data-mode={!busy ? 'send' : armed ? 'send-now' : 'queue'}
+												// `overflow-hidden` clips the hold sweep to the pill; the label
+												// sits above it. Width animates as it morphs between the bare
+												// circle and the two labelled states.
+												className={`relative flex h-9 shrink-0 items-center justify-center gap-1.5 overflow-hidden rounded-full text-[11px] font-semibold uppercase tracking-wide transition-colors disabled:opacity-40 ${
+													busy && !armed
+														? 'w-auto px-3 bg-purple-soft text-purple-soft-fg hover:bg-purple-soft/80'
+														: busy
+															? 'w-auto px-3 bg-accent-solid text-accent-solid-fg hover:bg-accent-hover'
+															: 'w-9 bg-accent-solid text-accent-solid-fg hover:bg-accent-hover'
+												}`}
+											>
+												{/* The hold's own progress bar: accent sweeps across the soft
+												    violet over LONG_PRESS_MS, then `armed` flips the whole pill. */}
+												{busy && !armed && longPress.pressing && (
+													<span
+														aria-hidden
+														data-testid="chat-send-sweep"
+														style={
+															{ '--chat-hold-ms': `${LONG_PRESS_MS}ms` } as React.CSSProperties
+														}
+														className="chat-hold-sweep absolute inset-0 bg-accent-solid/25"
+													/>
+												)}
+												<span className="relative flex items-center gap-1.5">
+													{!busy ? (
+														<ArrowRight className="h-4 w-4" />
+													) : armed ? (
+														<>
+															<StepForward className="h-3.5 w-3.5" />
+															Send now
+														</>
+													) : (
+														<>
+															<ListPlus className="h-3.5 w-3.5" />
+															Queue
+														</>
+													)}
+												</span>
+											</button>
+										</Tooltip>
 									</div>
 								</div>
 							</FileDropZone>
@@ -643,6 +787,56 @@ function channelChip(t: ChatConversationSummary): string | null {
 	const inTopic = t.external_thread_id?.includes(':') ?? false;
 	if (t.channel === 'telegram') return inTopic ? 'TG TOPIC' : 'TG DM';
 	return `${t.channel.toUpperCase()} DM`;
+}
+
+/**
+ * Messages parked for the next turn, rendered at the tail of the thread exactly
+ * where they will land. Dashed and violet: clearly the operator's own voice,
+ * clearly not sent yet. Each carries its own remove control, which exists for
+ * precisely as long as removal is possible — once the queue flushes these become
+ * ordinary sent bubbles and there is nothing left to pull back.
+ */
+function QueuedMessages({
+	queue,
+	onRemove,
+}: {
+	queue: readonly QueuedChatMessage[];
+	onRemove: (id: string) => void;
+}) {
+	return (
+		<div className="flex flex-col gap-1.5" data-testid="chat-queue">
+			<span className="text-eyebrow self-end px-1 text-purple-soft-fg">
+				Up next{' '}
+				<span className="font-normal normal-case tracking-normal text-text-3">
+					sends when the reply finishes
+				</span>
+			</span>
+			{queue.map((m) => (
+				<div key={m.id} className="flex items-center justify-end gap-1.5">
+					<button
+						type="button"
+						onClick={() => onRemove(m.id)}
+						aria-label={`Remove "${m.text}" from the queue`}
+						data-testid="chat-queue-remove"
+						className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-border text-text-3 hover:border-border-strong hover:text-text-1"
+					>
+						<X className="h-3 w-3" />
+					</button>
+					<div
+						data-testid="chat-queued-message"
+						className="max-w-[80%] rounded-2xl rounded-br-sm border border-dashed border-purple-soft-fg bg-purple-soft px-3.5 py-2 text-sm leading-relaxed text-text-2 whitespace-pre-wrap"
+					>
+						{m.text}
+						{m.attachments.length > 0 && (
+							<span className="mt-1 block text-[11px] text-text-3">
+								{m.attachments.length} file{m.attachments.length > 1 ? 's' : ''} attached
+							</span>
+						)}
+					</div>
+				</div>
+			))}
+		</div>
+	);
 }
 
 /** The small uppercase eyebrow above each bubble ("YOU" / "CEO · HQ"). */
@@ -711,7 +905,12 @@ function MessageBubble({
 		>
 			<RoleLabel>You</RoleLabel>
 			{message.content.length > 0 && (
-				<div className="rounded-2xl rounded-br-sm bg-inverse px-3.5 py-2.5 text-sm leading-relaxed text-inverse-fg whitespace-pre-wrap">
+				// wrap-anywhere (not break-words): the bubble is a fit-content flex
+				// item, so an unbreakable token — a pasted URL — would otherwise set a
+				// min-content width wider than the panel and push the message list into
+				// horizontal scroll. `anywhere` is the one overflow-wrap value that also
+				// shrinks the intrinsic size, keeping the bubble inside max-w-[90%].
+				<div className="rounded-2xl rounded-br-sm bg-inverse px-3.5 py-2.5 text-sm leading-relaxed text-inverse-fg whitespace-pre-wrap wrap-anywhere">
 					{message.content}
 				</div>
 			)}

@@ -2,6 +2,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import {
 	type ClientRequest,
 	createServer as createHttpServer,
+	Agent as HttpAgent,
 	type Server as HttpServer,
 	request as httpRequest,
 	type IncomingMessage,
@@ -360,12 +361,21 @@ class RunProxyInstance {
 	 * connection), so not pooling them is what keeps them from outliving the run and
 	 * accumulating against a remote MCP host. */
 	private readonly upstreamAgent: HttpsAgent;
+	/**
+	 * The plain-HTTP counterpart. Without it these requests fell through to
+	 * Node's `globalAgent`, which is process-global, pools by default, and is
+	 * owned by nobody — so a socket opened for one run could outlive it, which is
+	 * exactly the leak #283 fixed on the HTTPS side. Same keep-alive-off posture,
+	 * so teardown stays a matter of aborting in-flight requests.
+	 */
+	private readonly upstreamHttpAgent: HttpAgent;
 
 	constructor(private readonly cfg: RunProxyConfig) {
 		this.upstreamAgent = new HttpsAgent({
 			keepAlive: false,
 			...(cfg.upstreamTrustedCAs ? { ca: cfg.upstreamTrustedCAs } : {}),
 		});
+		this.upstreamHttpAgent = new HttpAgent({ keepAlive: false });
 	}
 
 	/** Debug-gated lifecycle logging. Enable with `HEZO_EGRESS_DEBUG=1` to trace
@@ -514,6 +524,7 @@ class RunProxyInstance {
 		this.liveUpstreams.clear();
 		// Tear down the run's upstream agent so nothing it holds outlives the run.
 		this.upstreamAgent.destroy();
+		this.upstreamHttpAgent.destroy();
 
 		const closables: Array<Promise<void>> = [];
 		for (const [host, { server, port }] of this.hostServers.entries()) {
@@ -897,7 +908,9 @@ class RunProxyInstance {
 				method,
 				path,
 				headers,
-				...(isSSL ? { servername: host, agent: this.upstreamAgent } : {}),
+				...(isSSL
+					? { servername: host, agent: this.upstreamAgent }
+					: { agent: this.upstreamHttpAgent }),
 			},
 			(upstreamRes) => {
 				res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers);
@@ -939,7 +952,9 @@ class RunProxyInstance {
 				method,
 				path,
 				headers: outHeaders,
-				...(isSSL ? { servername: host, agent: this.upstreamAgent } : {}),
+				...(isSSL
+					? { servername: host, agent: this.upstreamAgent }
+					: { agent: this.upstreamHttpAgent }),
 			},
 			(upstreamRes) => {
 				res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers);
@@ -954,9 +969,22 @@ class RunProxyInstance {
 	/** A connection to the real upstream failed (refused, DNS, timeout, TLS).
 	 * Logs the target and the error's system-level fields so the cause is
 	 * diagnosable — `code` distinguishes ECONNREFUSED (upstream refused) from
-	 * ENOTFOUND (DNS) from ETIMEDOUT — then returns a 502 to the agent. */
+	 * ENOTFOUND (DNS) from ETIMEDOUT — then returns a 502 to the agent.
+	 *
+	 * One shape reaching here is not a failure: `this.closed`, i.e. our own
+	 * `close()` aborting in-flight upstreams at run end (proxy.ts `close`). A
+	 * long-lived Streamable-HTTP SSE channel is always in flight at that point, so
+	 * every run touching a hosted MCP would otherwise report a failure per stream
+	 * on the way out. That case logs at debug; everything else still warns.
+	 *
+	 * `headers_sent` rides on the metadata rather than gating the level: it
+	 * separates "the upstream never answered" (a genuine connect/DNS/TLS failure)
+	 * from "the response had started and the stream died mid-flight", and the two
+	 * are worth telling apart in a report without silencing either. */
 	private onForwardError(res: ServerResponse, err: Error, target?: UpstreamTarget): void {
-		log.warn('egress upstream request failed', this.failureMeta(err, target));
+		const meta = { ...this.failureMeta(err, target), headers_sent: res.headersSent };
+		if (this.closed) log.debug('egress upstream aborted by run teardown', meta);
+		else log.warn('egress upstream request failed', meta);
 		this.finishError(res, err);
 	}
 

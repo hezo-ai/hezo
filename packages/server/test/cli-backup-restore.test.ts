@@ -7,11 +7,9 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { BUNDLE_ASSETS_DIR, BUNDLE_DB_NAME, BUNDLE_MANIFEST_NAME } from '../src/assets/blob-backup';
 import { LocalAssetStore } from '../src/assets/drivers/local';
 import { runBackup, runRestore } from '../src/cli';
-import { backupDataDir } from '../src/db/backup';
 import type { Db } from '../src/db/database';
-import type { PgliteDb } from '../src/db/drivers/pglite';
 import { instanceLockPath, removeInstanceLock, writeInstanceLock } from '../src/db/instance-lock';
-import { readLogicalBackupHeader } from '../src/db/logical-backup';
+import { peekLogicalBackupHeaderFromFile } from '../src/db/logical-backup';
 import { runMigrations } from '../src/db/migrate';
 import { openDatabase } from '../src/db/open';
 import { BASE_SCHEMA } from '../src/db/schema';
@@ -139,7 +137,7 @@ describe('hezo backup / hezo restore subcommands', () => {
 			await runBackup(argv('backup', '--data-dir', sourceDir, '--no-assets', '--output', output)),
 		).toBe(true);
 		expect(existsSync(output)).toBe(true);
-		const header = readLogicalBackupHeader(await readFile(output));
+		const header = await peekLogicalBackupHeaderFromFile(output);
 		expect(header?.formatVersion).toBe(1);
 		expect(header?.migrations.length).toBeGreaterThan(0);
 		expect(
@@ -176,61 +174,44 @@ describe('hezo backup / hezo restore subcommands', () => {
 		}
 	}, 120_000);
 
-	it('restores a legacy pgdata tarball into the embedded database', async () => {
-		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-		const sourceDir = makeTempDir();
-		const opened = await openDatabase({ dataDir: sourceDir });
-		let tarPath: string;
-		try {
-			await opened.db.exec('CREATE TABLE legacy_probe (id SERIAL PRIMARY KEY, name TEXT)');
-			await opened.db.exec("INSERT INTO legacy_probe (name) VALUES ('alpha')");
-			tarPath = await backupDataDir(opened.db as PgliteDb, sourceDir, {
-				version: '0.0.1',
-				pending: [],
-			});
-		} finally {
-			await safeClose(opened.db as { close: () => Promise<void> });
-		}
-
-		const targetDir = makeTempDir();
-		expect(await runRestore(argv('restore', tarPath, '--data-dir', targetDir))).toBe(true);
-
-		const restored = await openDatabase({ dataDir: targetDir });
-		try {
-			const rows = await restored.db.query<{ name: string }>('SELECT name FROM legacy_probe');
-			expect(rows.rows.map((r) => r.name)).toEqual(['alpha']);
-		} finally {
-			await safeClose(restored.db as { close: () => Promise<void> });
-		}
-	}, 120_000);
-
-	it('refuses to restore a legacy tarball into an external database and exits 1', async () => {
+	it('refuses a file that is not a logical backup and points at the fix', async () => {
 		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
 			throw new Error(`process.exit(${code})`);
 		}) as never);
 
-		// Any non-logical file reads as a legacy snapshot (header parse → null).
+		// Anything whose header doesn't parse — including a legacy pgdata tarball,
+		// which is no longer restorable — is rejected rather than guessed at.
 		const dir = makeTempDir();
 		const fakeTar = join(dir, 'legacy.tar.gz');
 		writeFileSync(fakeTar, 'definitely not a logical backup');
 
-		// --database-url flag variant (pickDatabaseUrl CLI branch).
+		// Embedded target.
+		const targetDir = makeTempDir();
+		await expect(runRestore(argv('restore', fakeTar, '--data-dir', targetDir))).rejects.toThrow(
+			'process.exit(1)',
+		);
+		expect(exitSpy).toHaveBeenCalledWith(1);
+		// The message names the format expected and how to convert an old snapshot.
+		const said = (needle: string) => errorSpy.mock.calls.some((c) => String(c[0]).includes(needle));
+		expect(said('.backup.gz')).toBe(true);
+		expect(said('legacy pgdata snapshot')).toBe(true);
+		expect(said('hezo backup')).toBe(true);
+		// Nothing was written to the target data dir — a rejected restore is inert.
+		expect(existsSync(join(targetDir, 'pgdata'))).toBe(false);
+
+		// External target: same refusal (--database-url flag variant).
+		errorSpy.mockClear();
 		await expect(
 			runRestore(argv('restore', fakeTar, '--database-url', 'postgres://u:p@h:5432/db')),
 		).rejects.toThrow('process.exit(1)');
-		expect(exitSpy).toHaveBeenCalledWith(1);
-		expect(errorSpy.mock.calls.some((c) => String(c[0]).includes('legacy pgdata snapshot'))).toBe(
-			true,
-		);
+		expect(said('.backup.gz')).toBe(true);
 
 		// Env variant — HEZO_DATABASE_URL wins over the (absent) flag.
 		errorSpy.mockClear();
 		process.env.HEZO_DATABASE_URL = 'postgres://u:p@h:5432/db';
 		await expect(runRestore(argv('restore', fakeTar))).rejects.toThrow('process.exit(1)');
-		expect(errorSpy.mock.calls.some((c) => String(c[0]).includes('legacy pgdata snapshot'))).toBe(
-			true,
-		);
+		expect(said('.backup.gz')).toBe(true);
 	});
 
 	it('backs up a bundle (database + assets) and restores both into a fresh data dir', async () => {
@@ -292,7 +273,7 @@ describe('hezo backup / hezo restore subcommands', () => {
 			await runBackup(argv('backup', '--data-dir', sourceDir, '--no-assets', '--output', output)),
 		).toBe(true);
 		expect((await stat(output)).isFile()).toBe(true);
-		expect(readLogicalBackupHeader(await readFile(output))?.formatVersion).toBe(1);
+		expect((await peekLogicalBackupHeaderFromFile(output))?.formatVersion).toBe(1);
 	}, 120_000);
 
 	it('backs up assets-only with --no-database and restores just the blobs', async () => {
@@ -337,7 +318,7 @@ describe('hezo backup / hezo restore subcommands', () => {
 
 		const output = join(makeTempDir(), 'env-datadir.backup.gz');
 		expect(await runBackup(argv('backup', '--no-assets', '--output', output))).toBe(true);
-		const header = readLogicalBackupHeader(await readFile(output));
+		const header = await peekLogicalBackupHeaderFromFile(output);
 		expect(header?.formatVersion).toBe(1);
 		expect(header?.migrations.length).toBeGreaterThan(0);
 

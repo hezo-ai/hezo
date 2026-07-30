@@ -1,6 +1,6 @@
 import { request as httpRequest } from 'node:http';
 import { Readable } from 'node:stream';
-import { stripNulBytes } from '../lib/sql';
+import { DockerFrameDecoder, demuxDockerStream } from './docker-frames';
 
 const SOCKET_PATH = '/var/run/docker.sock';
 const API_VERSION = 'v1.44';
@@ -31,6 +31,18 @@ const KILL_EXEC_TIMEOUT_MS = 5_000;
  * that a wedged daemon can't stall startup reconciliation.
  */
 const SWEEP_EXEC_TIMEOUT_MS = 10_000;
+
+/**
+ * Bound on the container control calls (create/start/stop/remove/exec-create and
+ * the label listing). #186 timed out the three sync-loop calls; these had none at
+ * all, so a wedged daemon hung them forever - and they sit on the provisioning
+ * and run-launch paths, where a hang is indistinguishable from a slow start.
+ * Generous rather than tight: creating and starting a container is legitimately
+ * slower than an inspect. `pullImage` is deliberately excluded - an image pull is
+ * legitimately minutes long - as are the streaming calls, which carry their own
+ * per-call signals.
+ */
+const DOCKER_CONTROL_TIMEOUT_MS = 60_000;
 
 /**
  * Every env-marker value interpolated into an in-container `sh -c` script must
@@ -76,8 +88,28 @@ export interface ExecLogChunk {
 	text: string;
 }
 
+/**
+ * The captured output of an exec.
+ *
+ * **Populated only on the buffered path** — when `ExecStartOpts.onChunk` is
+ * omitted. A streamed exec deliberately retains nothing (see `onChunk`), so
+ * both fields come back empty; consume the chunks instead.
+ */
+export interface ExecResult {
+	stdout: string;
+	stderr: string;
+}
+
 export interface ExecStartOpts {
 	signal?: AbortSignal;
+	/**
+	 * Per-frame callback. Supplying it switches `execStart` to the streaming
+	 * path, which does **not** retain the output — the returned `ExecResult` is
+	 * empty. An agent run's raw stream-json transcript reaches hundreds of MB
+	 * (every tool result in full, strictly larger than the capped rendered log),
+	 * so anything the caller needs from the stream must be derived incrementally
+	 * here rather than scanned afterwards.
+	 */
 	onChunk?: (chunk: ExecLogChunk) => void | Promise<void>;
 }
 
@@ -327,6 +359,7 @@ export class DockerClient {
 			'POST',
 			`/containers/create?name=${encodeURIComponent(name)}`,
 			config,
+			AbortSignal.timeout(DOCKER_CONTROL_TIMEOUT_MS),
 		);
 		if (!res.ok) {
 			const text = await res.text();
@@ -336,7 +369,12 @@ export class DockerClient {
 	}
 
 	async startContainer(containerId: string): Promise<void> {
-		const res = await this.request('POST', `/containers/${containerId}/start`);
+		const res = await this.request(
+			'POST',
+			`/containers/${containerId}/start`,
+			undefined,
+			AbortSignal.timeout(DOCKER_CONTROL_TIMEOUT_MS),
+		);
 		if (!res.ok && res.status !== 304) {
 			const text = await res.text();
 			throw new Error(`Docker startContainer failed (${res.status}): ${text}`);
@@ -344,7 +382,12 @@ export class DockerClient {
 	}
 
 	async stopContainer(containerId: string, timeoutSec = 10): Promise<void> {
-		const res = await this.request('POST', `/containers/${containerId}/stop?t=${timeoutSec}`);
+		const res = await this.request(
+			'POST',
+			`/containers/${containerId}/stop?t=${timeoutSec}`,
+			undefined,
+			AbortSignal.timeout(DOCKER_CONTROL_TIMEOUT_MS),
+		);
 		if (!res.ok && res.status !== 304) {
 			const text = await res.text();
 			throw new Error(`Docker stopContainer failed (${res.status}): ${text}`);
@@ -368,7 +411,12 @@ export class DockerClient {
 	 */
 	async listContainersByLabel(label: string): Promise<Array<{ Id: string; Names: string[] }>> {
 		const filters = encodeURIComponent(JSON.stringify({ label: [label] }));
-		const res = await this.request('GET', `/containers/json?all=true&filters=${filters}`);
+		const res = await this.request(
+			'GET',
+			`/containers/json?all=true&filters=${filters}`,
+			undefined,
+			AbortSignal.timeout(DOCKER_CONTROL_TIMEOUT_MS),
+		);
 		if (!res.ok) {
 			const text = await res.text();
 			throw new Error(`Docker listContainers failed (${res.status}): ${text}`);
@@ -404,7 +452,12 @@ export class DockerClient {
 	 */
 	async findContainerByNamePrefix(prefix: string): Promise<ContainerInfo | null> {
 		const filters = encodeURIComponent(JSON.stringify({ name: [prefix] }));
-		const res = await this.request('GET', `/containers/json?all=true&filters=${filters}`);
+		const res = await this.request(
+			'GET',
+			`/containers/json?all=true&filters=${filters}`,
+			undefined,
+			AbortSignal.timeout(DOCKER_CONTROL_TIMEOUT_MS),
+		);
 		if (!res.ok) {
 			const text = await res.text();
 			throw new Error(`Docker listContainers failed (${res.status}): ${text}`);
@@ -428,9 +481,14 @@ export class DockerClient {
 	 * which avoids flagging containers that are merely reading/writing files.
 	 */
 	async containerStats(containerId: string): Promise<ContainerMemoryStats | null> {
+		// `one-shot=true` returns the daemon's current sample immediately. Without
+		// it, `stream=false` still waits for the collector's next tick — roughly a
+		// second per call, serialized across every project on every sync pass, on
+		// the same socket the live exec streams use. One-shot omits the previous-CPU
+		// snapshot, which only matters for CPU percentages; this reads memory.
 		const res = await this.request(
 			'GET',
-			`/containers/${containerId}/stats?stream=false`,
+			`/containers/${containerId}/stats?stream=false&one-shot=true`,
 			undefined,
 			AbortSignal.timeout(DOCKER_REQUEST_TIMEOUT_MS),
 		);
@@ -485,7 +543,12 @@ export class DockerClient {
 	}
 
 	async execCreate(containerId: string, config: ExecConfig): Promise<string> {
-		const res = await this.request('POST', `/containers/${containerId}/exec`, config);
+		const res = await this.request(
+			'POST',
+			`/containers/${containerId}/exec`,
+			config,
+			AbortSignal.timeout(DOCKER_CONTROL_TIMEOUT_MS),
+		);
 		if (!res.ok) {
 			const text = await res.text();
 			throw new Error(`Docker execCreate failed (${res.status}): ${text}`);
@@ -494,10 +557,7 @@ export class DockerClient {
 		return data.Id;
 	}
 
-	async execStart(
-		execId: string,
-		opts: ExecStartOpts = {},
-	): Promise<{ stdout: string; stderr: string }> {
+	async execStart(execId: string, opts: ExecStartOpts = {}): Promise<ExecResult> {
 		const res = await this.requestStream(
 			'POST',
 			`/exec/${execId}/start`,
@@ -514,11 +574,17 @@ export class DockerClient {
 			return demuxDockerStream(raw);
 		}
 
-		return streamDockerExec(res, opts.onChunk, opts.signal);
+		await streamDockerExec(res, opts.onChunk, opts.signal);
+		return { stdout: '', stderr: '' };
 	}
 
 	async execInspect(execId: string): Promise<{ ExitCode: number; Running: boolean; Pid: number }> {
-		const res = await this.request('GET', `/exec/${execId}/json`);
+		const res = await this.request(
+			'GET',
+			`/exec/${execId}/json`,
+			undefined,
+			AbortSignal.timeout(DOCKER_CONTROL_TIMEOUT_MS),
+		);
 		if (!res.ok) {
 			const text = await res.text();
 			throw new Error(`Docker execInspect failed (${res.status}): ${text}`);
@@ -698,60 +764,23 @@ export function parseHezoProcessList(stdout: string): ContainerProcessInfo[] {
 	return procs;
 }
 
-function demuxDockerStream(raw: Uint8Array): { stdout: string; stderr: string } {
-	const stdout: Uint8Array[] = [];
-	const stderr: Uint8Array[] = [];
-	let offset = 0;
-
-	while (offset + 8 <= raw.length) {
-		const streamType = raw[offset];
-		const size =
-			(raw[offset + 4] << 24) | (raw[offset + 5] << 16) | (raw[offset + 6] << 8) | raw[offset + 7];
-		offset += 8;
-
-		if (offset + size > raw.length) break;
-
-		const chunk = raw.slice(offset, offset + size);
-		if (streamType === 1) {
-			stdout.push(chunk);
-		} else if (streamType === 2) {
-			stderr.push(chunk);
-		}
-		offset += size;
-	}
-
-	const decoder = new TextDecoder();
-	return {
-		stdout: stripNulBytes(decoder.decode(concatUint8Arrays(stdout))),
-		stderr: stripNulBytes(decoder.decode(concatUint8Arrays(stderr))),
-	};
-}
-
+/**
+ * Forward every frame of a live exec attach stream to `onChunk`, retaining
+ * nothing. See `ExecStartOpts.onChunk` for why the transcript is not kept.
+ */
 async function streamDockerExec(
 	res: Response,
 	onChunk: (c: ExecLogChunk) => void | Promise<void>,
 	signal?: AbortSignal,
-): Promise<{ stdout: string; stderr: string }> {
+): Promise<void> {
 	const reader = res.body?.getReader();
-	if (!reader) return { stdout: '', stderr: '' };
+	if (!reader) return;
 
-	const decoder = new TextDecoder();
-	const stdoutParts: string[] = [];
-	const stderrParts: string[] = [];
-	let buffer = new Uint8Array(0);
+	const frames = new DockerFrameDecoder();
 
 	const drainFrames = async () => {
-		while (buffer.length >= 8) {
-			const streamType = buffer[0];
-			const size = (buffer[4] << 24) | (buffer[5] << 16) | (buffer[6] << 8) | buffer[7];
-			if (buffer.length < 8 + size) break;
-			const payload = buffer.slice(8, 8 + size);
-			buffer = buffer.slice(8 + size);
-			const text = stripNulBytes(decoder.decode(payload));
-			const stream: 'stdout' | 'stderr' = streamType === 2 ? 'stderr' : 'stdout';
-			if (stream === 'stdout') stdoutParts.push(text);
-			else stderrParts.push(text);
-			await onChunk({ stream, text });
+		for (let frame = frames.next(); frame !== null; frame = frames.next()) {
+			await onChunk(frame);
 		}
 	};
 
@@ -763,30 +792,13 @@ async function streamDockerExec(
 			const { done, value } = await reader.read();
 			if (done) break;
 			if (value) {
-				const next = new Uint8Array(buffer.length + value.length);
-				next.set(buffer);
-				next.set(value, buffer.length);
-				buffer = next;
+				frames.push(value);
 				await drainFrames();
 			}
 		}
 		await drainFrames();
+		for (const frame of frames.flush()) await onChunk(frame);
 	} finally {
 		reader.releaseLock();
 	}
-
-	return { stdout: stdoutParts.join(''), stderr: stderrParts.join('') };
-}
-
-function concatUint8Arrays(arrays: Uint8Array[]): Uint8Array {
-	if (arrays.length === 0) return new Uint8Array(0);
-	if (arrays.length === 1) return arrays[0];
-	const totalLength = arrays.reduce((acc, arr) => acc + arr.length, 0);
-	const result = new Uint8Array(totalLength);
-	let offset = 0;
-	for (const arr of arrays) {
-		result.set(arr, offset);
-		offset += arr.length;
-	}
-	return result;
 }

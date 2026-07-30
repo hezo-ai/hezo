@@ -47,12 +47,55 @@ If the project was originally created from that same team, the CEO recognizes th
 update** rather than a duplicate add: it refreshes the existing roles to the newer prompts,
 preserving any customizations you've made, instead of creating parallel copies.
 
+## Adding only some of a team's roles
+
+You don't have to take the whole roster. The same **Add to a project** dialog asks what you want to
+add: **the whole team**, or **just the roles you choose** from a checklist. So you can bring only
+the Security Engineer, or the Content Editor and the Trend Researcher, into a project that already
+has its own team. The Captain isn't on the list - every project already has one.
+
+Picking a subset changes what the CEO does. Those roles are being lifted out of a roster they were
+written for, and the rest of that team isn't coming with them, so their prompts assume teammates
+your project may not have. The CEO:
+
+1. reads each chosen role and compares it against the team it is joining;
+2. **asks you first** when a role doesn't clearly belong - when an existing agent already covers
+   that responsibility, when the role's way of working depends on teammates your project doesn't
+   have, or when there is no sensible manager for it. It posts the question on the task and waits.
+   If some of your picks are clear and others aren't, it adds the clear ones and asks about the rest;
+3. hires them, leaving the rest of the project's roster untouched;
+4. rewrites each one's prompt around the teammates it actually has, gives it a manager, and updates
+   the agents whose work now flows through it.
+
+So what you get is fitted to your project, not a copy of what's in the catalog. A role your project
+already has is skipped rather than duplicated.
+
+The CEO also draws on the marketplace when you talk to it about hiring: asked to staff a team, it
+checks the catalog for a proven role that matches before writing a new one from scratch, and tells
+you which one it started from.
+
 ## Versions and updates
 
 Each team carries a whole-number **version** and a changelog. Because your instance always reads
 the live marketplace, improvements to the default teams become available automatically - you
 don't need to upgrade Hezo to get them. New projects launched from a team always use its latest
 version, and you can bring an existing team up to date by adding it to the project again.
+
+## Exporting your team
+
+Once you've shaped a team - refined its roster, adjusted reporting lines, tuned each role's
+prompt and settings - you can package that whole state as a **team bundle** and share it. On the
+Team page, the **Export team** button (next to **Hire agent**) opens a short dialog that explains
+what's about to happen, then downloads a single JSON file describing your team.
+
+The bundle captures the team name, description, and summary; every role, from the Captain to each
+teammate, with its reporting line; and each role's system prompt, effort, budgets, and settings.
+It's the same self-contained format the marketplace ships. It does **not** include skills,
+connections, secrets, or project data - those are configured per project, not carried by a team.
+
+To have your team added to the marketplace, send the downloaded file to the Hezo authors on
+GitHub. They review it, generate a changelog, and publish it so anyone can launch a project from
+your team.
 
 ## Where teams come from
 

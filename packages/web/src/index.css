@@ -237,6 +237,30 @@ html.dark,
 	}
 }
 
+/* Hold-to-arm sweep on the chat composer's Queue button. Pressing and holding
+   fills the button with the accent over the long-press threshold, so the gesture
+   shows its own progress before the button flips to "Send now" (see
+   use-long-press.ts, whose LONG_PRESS_MS sets `--chat-hold-ms`). Under
+   reduced-motion the sweep is dropped entirely — a snap-to-full fill would read
+   as already armed; the label + colour swap at the threshold still carries it. */
+@keyframes chat-hold-sweep {
+	from {
+		transform: scaleX(0);
+	}
+	to {
+		transform: scaleX(1);
+	}
+}
+.chat-hold-sweep {
+	transform-origin: left center;
+	animation: chat-hold-sweep var(--chat-hold-ms, 450ms) linear forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+	.chat-hold-sweep {
+		display: none;
+	}
+}
+
 @theme {
 	--color-bg: var(--bg);
 	--color-surface: var(--surface);

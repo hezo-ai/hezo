@@ -62,6 +62,7 @@ import {
 	groupAssets,
 } from '../../../lib/asset-folders';
 import { copyToClipboard } from '../../../lib/clipboard';
+import { useI18n } from '../../../lib/i18n';
 
 interface AssetsSearch {
 	file?: string;
@@ -245,6 +246,7 @@ interface ErrorChip {
 }
 
 function ProjectAssetsPage() {
+	const { t } = useI18n();
 	const { projectId } = Route.useParams();
 	const {
 		file: focusFile,
@@ -606,7 +608,7 @@ function ProjectAssetsPage() {
 							}. This cannot be undone.`
 						: 'The file will be permanently removed. This cannot be undone.'
 				}
-				confirmLabel="Delete"
+				confirmLabel={t('common.delete')}
 				variant="danger"
 				onConfirm={async () => {
 					if (!pendingDelete) return;

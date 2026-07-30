@@ -100,8 +100,11 @@ a bundle. A backup taken by a *newer* Hezo than the running binary is refused wi
 instructions to upgrade first. On the next server start, normal migrations bring the
 restored database forward to the binary's current schema.
 
-Legacy physical snapshots (`.tar.gz` files from older Hezo versions) still restore with
-the same command, into the embedded database only.
+Physical `.tar.gz` snapshots written by older Hezo versions are **no longer restorable**.
+They only ever loaded into the embedded database, so they could never be restored onto
+external Postgres or moved between storage backends. If you still hold one, restore it with
+a Hezo version old enough to read it, then take a fresh `hezo backup` - that artifact
+restores onto either backend and is the format going forward.
 
 ### Watching a large restore
 

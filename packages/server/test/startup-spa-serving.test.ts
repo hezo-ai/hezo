@@ -52,6 +52,16 @@ describe('buildApp SPA serving (filesystem fallback)', () => {
 		expect(res.headers.get('Content-Type')).toBe('image/svg+xml');
 	});
 
+	it.runIf(hasDist)('serves a PWA icon bitmap with the png content-type', async () => {
+		// The maskable icon is what Android installs to the home screen; extname
+		// '.png' -> 'image/png' in STATIC_MIME. Served from the embedded bundle in a
+		// compiled binary, so a missing MIME mapping breaks the installed icon only
+		// in production.
+		const res = await ctx.app.request('/icons/icon-512-maskable.png');
+		expect(res.status).toBe(200);
+		expect(res.headers.get('Content-Type')).toBe('image/png');
+	});
+
 	it.runIf(hasDist)('serves the PWA manifest with the manifest content-type', async () => {
 		// manifest.webmanifest ships in web/dist; extname '.webmanifest' must map to
 		// 'application/manifest+json' or Chrome rejects the manifest and the app is

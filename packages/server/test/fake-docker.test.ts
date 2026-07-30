@@ -111,16 +111,27 @@ describe('createFakeDockerClient — synthetic exec with onChunk', () => {
 		const docker = createFakeDockerClient();
 		const execId = await docker.execCreate('cid', { Cmd: ['agent'] });
 		const chunks: ExecLogChunk[] = [];
-		const result = await docker.execStart(execId, {
+		await docker.execStart(execId, {
 			onChunk: (c) => {
 				chunks.push(c);
 			},
 		});
 		expect(chunks.length).toBe(4);
 		expect(chunks.every((c) => c.stream === 'stdout')).toBe(true);
-		expect(result.stdout).toContain('[synthetic] starting agent run');
-		expect(result.stdout).toContain('[synthetic] task complete');
-		expect(result.stderr).toBe('');
+		const streamed = chunks.map((c) => c.text).join('');
+		expect(streamed).toContain('[synthetic] starting agent run');
+		expect(streamed).toContain('[synthetic] task complete');
+	});
+
+	// Locks the streaming contract the real client honours: a streamed exec
+	// retains nothing, so anything a caller needs must come off the chunks. A
+	// fake that returned the transcript would let a test pass against a
+	// contract production does not offer.
+	it('retains no transcript on the streaming path', async () => {
+		const docker = createFakeDockerClient();
+		const execId = await docker.execCreate('cid', { Cmd: ['agent'] });
+		const result = await docker.execStart(execId, { onChunk: () => {} });
+		expect(result).toEqual({ stdout: '', stderr: '' });
 	});
 
 	it('marks the heartbeat run as having produced output when run id env + db are present', async () => {

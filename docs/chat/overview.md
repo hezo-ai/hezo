@@ -12,6 +12,37 @@ up a project or a task, get a status read across the org, or just think out loud
 long-term memory, so it remembers your preferences and past decisions across the
 conversation.
 
+## Sending while the CEO is still replying
+
+You don't have to wait for a reply to finish before typing the next thing. While the
+CEO is working, the send button changes to **Queue**:
+
+- **Press Enter (or tap Queue)** and your message is parked, not sent. It shows up at
+  the bottom of the conversation as a dashed bubble, and the header shows how many
+  are waiting.
+- **Changed your mind?** Every queued message has a **✕** next to it. Removing one
+  drops it completely - it never reaches the CEO. The **✕** disappears once the
+  queue has been sent, because by then there is nothing to take back.
+- **When the reply finishes**, everything you queued is sent together, and the CEO
+  answers all of it in one go rather than replying to your first message before it
+  has seen the rest.
+
+### Cutting in
+
+Sometimes you want to stop the CEO mid-answer - you spotted a mistake, or you meant
+something else. That is deliberate, so it takes a deliberate action:
+
+- **Hold the send button.** Hold it down and it fills up, then changes to
+  **Send now**. Let go and the current reply stops where it is (it stays in the
+  conversation, marked as interrupted) and your message starts a fresh answer. Let go
+  early, or drag your finger or cursor off the button, and nothing is interrupted.
+- **Or press Cmd+Enter** (**Ctrl+Enter** on Windows and Linux) for the same thing
+  from the keyboard.
+
+Anything already queued stays queued behind the message you cut in with. The queue
+lives in your browser, so it is per conversation thread and does not survive a page
+reload.
+
 ## Conversation threads
 
 The chatbox supports **multiple parallel threads**, so you can keep separate lines of
@@ -23,6 +54,11 @@ planning, another for an ad-hoc question, and so on.
 - **Close** the active thread with the **✕** button (your main thread can't be closed).
 
 Each thread keeps its own recent history and streams independently.
+
+The chatbox remembers the thread you switched to, so closing and reopening it - or
+reloading the page - picks that conversation back up instead of dropping you on your main
+thread. The memory is per browser. If the thread you were on has been closed since (by you
+here, in another tab, or on its own chat app), the chatbox falls back to your main thread.
 
 ## How threads work across chat apps
 

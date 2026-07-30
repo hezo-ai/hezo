@@ -48,7 +48,8 @@ Hezo is single-tenant by design at three independent layers:
    across all teams.
 2. **The runtime assumes it owns the host**
    (`services/docker.ts`, `services/containers.ts`, `services/egress/*`):
-   exclusive `/var/run/docker.sock`, one long-lived container per project,
+   exclusive `/var/run/docker.sock`, one container per project (started on
+   demand, idle-stopped),
    in-memory per-process egress port allocators (front 20000–29999, host MITM
    30000–39999, dev 10000–19999), `/tmp/hezo-<hash>/` run sockets.
 3. **Security boundary — decisive for untrusted signup.** Agents execute
@@ -440,8 +441,8 @@ hypervisor — the provisioner interface keeps that door open.
 > doing background agent work, **LLM API token spend likely dwarfs compute**.
 > The credential/billing model (bring-your-own-key vs. a pooled platform key
 > with metering) deserves at least as much design effort as the substrate;
-> Hezo's per-project/per-agent budget caps and
-> `projects.max_concurrent_runs` are the existing levers.
+> Hezo's per-project/per-agent budget caps and the instance-wide
+> `max_active_containers` cap are the existing levers.
 
 ## Quotas, rate limiting, abuse
 

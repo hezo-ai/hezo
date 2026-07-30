@@ -5,6 +5,7 @@ import { buildMeta, parsePagination } from '../lib/pagination';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireAdminEquivalent } from '../middleware/auth';
+import { invalidateSecretsVault } from '../services/egress';
 
 /** Trim, lowercase, and drop empties so the egress allowlist match (which
  * lowercases the request host) sees clean entries. Mirrors the normalization
@@ -124,6 +125,7 @@ secretsRoutes.post('/secrets', async (c) => {
 			allowBodySubstitution,
 		],
 	);
+	invalidateSecretsVault();
 	const created = result.rows[0] as { id: string; name: string };
 	c.get('events').emit({
 		type: 'secret.created',
@@ -204,6 +206,7 @@ secretsRoutes.patch('/secrets/:secretId', async (c) => {
 		 RETURNING id, name, category, allowed_hosts, allow_all_hosts, allow_body_substitution, created_at, updated_at`,
 		params,
 	);
+	invalidateSecretsVault();
 	const updated = result.rows[0] as { id: string; name: string };
 	c.get('events').emit({
 		type: 'secret.updated',
@@ -245,6 +248,7 @@ secretsRoutes.delete('/secrets/:secretId', async (c) => {
 	if (result.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'Secret not found', 404);
 	}
+	invalidateSecretsVault();
 	c.get('events').emit({
 		type: 'secret.deleted',
 		teamId: null,

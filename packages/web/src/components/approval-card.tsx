@@ -4,8 +4,10 @@ import { Check, Loader2, Pencil, X } from 'lucide-react';
 import { useState } from 'react';
 import type { Approval } from '../hooks/use-approvals';
 import { useResolveApproval } from '../hooks/use-approvals';
+import { defaultAvatarForSlug } from '../lib/default-avatars';
 import { approvalTypeColor } from '../lib/status-meta';
 import { RepoSetupApprovalModal } from './repo-setup-approval-modal';
+import { Avatar, getInitials } from './ui/avatar';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 
@@ -190,7 +192,18 @@ function CardBody({
 				)}
 			</div>
 			{approval.requested_by_name && (
-				<p className="text-xs text-text-2 mb-1">From: {approval.requested_by_name}</p>
+				// A div, not a p: Avatar renders a div and cannot legally nest in a p.
+				<div className="text-xs text-text-2 mb-1">
+					<Avatar
+						size="sm"
+						initials={getInitials(approval.requested_by_name)}
+						imageUrl={
+							approval.requested_by_icon_url ?? defaultAvatarForSlug(approval.requested_by_slug)
+						}
+						className="mr-1.5 align-middle"
+					/>
+					<span className="align-middle">From: {approval.requested_by_name}</span>
+				</div>
 			)}
 			<div className="text-sm text-text-3 break-words">
 				<ApprovalMessage approval={approval} />

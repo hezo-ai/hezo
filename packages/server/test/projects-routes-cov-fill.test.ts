@@ -351,22 +351,14 @@ describe('PATCH /api/projects/:projectId', () => {
 		expect((await res.json()).data.description).toBe('Refreshed description.');
 	});
 
-	it('rejects a non-integer max_concurrent_runs and accepts a valid one', async () => {
-		const bad = await ctx.app.request(`/api/projects/${projectSlug}`, {
-			method: 'PATCH',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ max_concurrent_runs: 0 }),
-		});
-		expect(bad.status).toBe(400);
-		expect((await bad.json()).error.message).toContain('max_concurrent_runs');
-
-		const good = await ctx.app.request(`/api/projects/${projectSlug}`, {
+	it('ignores the removed max_concurrent_runs field (concurrency is instance-level now)', async () => {
+		const res = await ctx.app.request(`/api/projects/${projectSlug}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ max_concurrent_runs: 3 }),
 		});
-		expect(good.status).toBe(200);
-		expect((await good.json()).data.max_concurrent_runs).toBe(3);
+		expect(res.status).toBe(200);
+		expect((await res.json()).data.max_concurrent_runs).toBeUndefined();
 	});
 
 	it('rejects an invalid memory_limit_gib and accepts a valid one', async () => {

@@ -53,7 +53,7 @@ manager (agents bring their own models and runtimes).
 | Realtime | WebSocket row-change events → client invalidates React Query keys |
 | Agent interface | MCP (Streamable HTTP) at `POST /mcp` via `@modelcontextprotocol/sdk` |
 | Crypto | AES-256-GCM at rest; master key held in memory only |
-| Containers | Docker Engine API, one container per project |
+| Containers | Docker Engine API, one container per project — started on demand, stopped after an idle timeout |
 
 **Monorepo** — Bun workspaces + Turborepo. **Three** packages plus a root `agents/`
 tree:
@@ -162,8 +162,8 @@ place a genuine per-repo write restriction is represented.
 an agent-maintained `progress_summary`. Numbering is atomic via `project_task_counters`.
 `task_dependencies` is the many-to-many blocking graph (`UNIQUE`, no self-blocks).
 `task_comments` is **polymorphic** over a `content_type` enum + `content` JSONB — `text`,
-`system` (timeline entries like `status_change`/`task_link`), `run` (auto-written
-on run completion), `preview`, `action`,
+`system` (timeline entries like `status_change`/`title_change`/`description_change`/`task_link`),
+`run` (auto-written on run completion), `preview`, `action`,
 `connect_required`, `credential_request`. Each comment carries a `public_id` slug for
 `#comment-<id>` deep-links. A human-authored comment keeps `author_member_id` null by
 convention but records **which** human in `author_user_id` (nullable FK to `users`), so the
@@ -175,6 +175,13 @@ emoji reactions, keyed by a non-null `member_id` (unlike a comment's nullable
 a team they can access but aren't a member of resolves to their **HQ (default-team)**
 membership (`resolveReactorMemberId`) — the same cross-team identity HQ agents use to act in
 other teams' projects — so a superuser can react anywhere, not only in HQ or teams they created.
+Title and description edits are recorded on the thread from **both** update paths
+(`recordTitleChange` / `recordDescriptionChange` in `services/task-events.ts`), so an agent's
+edit leaves the same entry a human's does. A `description_change` payload carries a capped
+preview of each end plus the full lengths, never the bodies: the comments skeleton route and
+the MCP `list_comments` tool both return a system comment's `content` whole, so a stored body
+would ride into every comment fetch and every agent prompt for the life of the task. The
+matching `task.updated` audit event omits both ends for the same reason.
 Marking a task `done` is gated in both update paths (REST PATCH and MCP `update_task`,
 shared helpers in `lib/task-relationships.ts`): every sub-task terminal, no outstanding
 pinged-agent activity by others (active runs, pending mention/comment/reply wakeups), and —
@@ -182,6 +189,28 @@ for **agent callers only** — no active `@admin` mention on the task lacking a 
 `text` comment (an unanswered ask holds the task in a non-terminal status until a human
 replies on the task or closes it themselves; reading the mention does not count).
 `cancelled` is deliberately ungated.
+
+**Task hierarchy is mutable.** `tasks.parent_task_id` is a nullable self-FK
+(`ON DELETE SET NULL`, `idx_tasks_parent`) and can be changed after creation through the
+same two update paths (REST PATCH and MCP `update_task`) that own every other field: a
+value nests, an explicit `null` (or `''` over MCP) promotes to top level, an absent key
+leaves it alone. Both surfaces call one shared guard, `resolveParentAssignment` in
+`lib/task-relationships.ts`, which resolves the identifier-or-UUID and then rejects a
+self-parent, a parent inside the moving task's own sub-tree (the only parent-cycle guard
+in the system — `wouldCreateCycle` covers the *dependency* graph only), a parent in a
+different project, a move that would breach the depth cap, and nesting an **open** task
+under a terminal parent (which would break the invariant `assertChildrenAllClosed`
+protects, leaving live work invisible under a reviewed, closed parent).
+The depth rule is `depth(newParent) + 1 + height(movingSubtree) <= MAX_SUB_TASK_DEPTH`,
+measured in one round trip by `measureParentPlacement` — two recursive CTEs walking up from
+the proposed parent and down from the mover, each `team_id`-filtered (because `resolveTaskId`
+passes any well-formed UUID through unvalidated) and depth-capped. `assertChildDepthAllowed`
+is now a thin caller of that rule with `movingHeight` 0, which is exactly the create-path
+behaviour it had before. A successful move records a `parent_change` system comment
+(`recordParentChange`) and, when the mover was the former parent's last open sub-task, fires
+that parent's `children_closed` wakeup via `wakeTaskIfChildrenClosed` — the same gate a close
+would have cleared. The terminal-parent rule is deliberately **not** applied on the create
+path, where filing a follow-up sub-task under a closed parent remains legal.
 
 **Goals.** `goals` are per-project objectives the Captain tracks (`project_id NOT NULL`;
 the `is_internal` HQ project has none, enforced in the service). Each carries a SMART
@@ -237,7 +266,7 @@ status flip, and code worktree. They fire on the Captain's heartbeat when goals 
 the Goals page's **Run now** button (`POST /projects/:projectId/goals/run-now` →
 `JobManager.dispatchProgressUpdateNow`, which resolves the project's Captain and reuses the same
 due-goal logic). If **Run now** hits a *transient* conflict — the Captain is already running, the
-project is at its concurrency limit, the container is still coming up, or a launch race — the run is
+instance is at its active-container limit, or a launch race — the run is
 **queued** rather than erroring: a task-less `agent_wakeup_requests` row tagged
 `payload.trigger='progress_update_now'` (deduped per Captain by `createProgressUpdateWakeup`, so
 "Run now" is idempotent) that the 5s dispatcher retries until the Captain frees up. This trigger tag
@@ -373,12 +402,16 @@ interrupted run still counts against budgets.
 **Docs, skills, assets.** `documents` is one table backing three Markdown kinds by
 `type` (`project_doc`, `team_preferences`, `agent_system_prompt`), each with partial
 unique scoping and full revision history in `document_revisions`. Project docs additionally
-carry a `description` (a one-line "what this is", migration 037) surfaced in the Documents
+carry a `description` (a short overall "what this is" summary, one or two sentences, migration 037) surfaced in the Documents
 list/header, in `list_project_docs` / `read_project_doc`, and — in place of the long-unused
 `title` column — in the `{{project_docs_context}}` run manifest; agents set it via
 `write_project_doc`, admins via the doc PUT, both threaded through `upsertDocument` with a
 `COALESCE` so an omitted value leaves the existing description untouched (a description-only
-edit records no revision). The `team_preferences`
+edit records no revision). `read_project_doc` returns the body in UTF-8 byte windows
+sized under the MCP result cap (an `offset`/`max_bytes` request plus a `next_offset`
+cursor and `total_bytes`/`returned_bytes`/`truncated` flags), so an agent pages a doc of
+any size instead of hitting `result_too_large`; the window end is snapped to a codepoint
+boundary so a multi-byte character is never split. The `team_preferences`
 document is the project's **Custom Prompt** — a per-team instruction block injected verbatim
 into every in-project agent's prompt via `{{team_preferences_context}}`; it is edited from the
 web **Settings → Custom Prompt** page (`PATCH /api/projects/:projectId/custom-prompt`) and, for
@@ -532,7 +565,9 @@ and `asset.deleted` domain events feed the audit log (doc archival rides
 live-refreshes. `project_icons`
 (1:1 with `projects`, `ON DELETE CASCADE`) holds an optional per-project icon image —
 unlike assets the **bytes live in the DB** (a `BYTEA` column) in a dedicated table so the
-hot `projects.*` list query never pulls the blob; it is rendered in the project rail and
+hot `projects.*` list query never pulls the blob; it is rendered on every surface that draws
+a project avatar — the project rail (including the pinned HQ entry, which falls back to a
+building glyph when HQ has no icon) and the home dashboard's Active cards and Other rows — and
 served from a public HMAC-signed read route (`GET /api/projects/:projectId/icon`, the `sig`
 query param is the credential since an `<img>` carries no bearer token). The serialized
 project carries a freshly-signed `icon_url` (null when unset); the client normalizes any
@@ -542,18 +577,24 @@ admin) reuse the same mechanism for agent avatars and the admin's own avatar —
 `BYTEA` table, a freshly-signed `icon_url` threaded onto the serialized agent/user row, and
 a public HMAC-signed read route (`GET /api/agents/:agentId/icon`, `GET /api/users/:userId/icon`).
 The signing/verification is generalized in `lib/entity-icon-urls.ts` (a `basePath` +
-per-entity `keyPurpose`), the client control in `components/icon-upload-section.tsx`; agent
-icons are edited on the agent Settings page (project-access-gated, like other agent config)
-and rendered on the roster/org-chart/agent header, user icons on the global Settings → Users
-page (superuser-gated). No MCP tool — icon upload is a human-only UI action (as for
-`project_icons`). The **CEO and Coach** — the HQ singletons that are identical across every
+per-entity `keyPurpose`), which also owns `signAuthorIconUrl` — the shared resolver every
+*feed* uses to turn a row's author/requester into a signed avatar URL (user icon when the
+actor is human, else the agent icon; best-effort, so a signing failure yields null and the
+row degrades to initials rather than failing the request). The comments feed
+(`routes/comments.ts`), the admin-mentions inbox (`routes/inbox.ts` → `author_icon_url`) and
+the approvals listing (`routes/approvals.ts` → `requested_by_slug` + `requested_by_icon_url`)
+all go through it. The client control is `components/icon-upload-section.tsx`; agent
+icons are edited on the agent Settings page (project-access-gated, like other agent config),
+user icons on the global Settings → Users page (superuser-gated). No MCP tool — icon upload
+is a human-only UI action (as for `project_icons`). The **CEO and Coach** — the HQ singletons that are identical across every
 project — ship a **built-in default avatar** (a committed image under
 `packages/web/public/avatars/`, bundled into the web app); the client resolves an agent's
 effective avatar as `uploaded icon_url ?? defaultAvatarForSlug(slug) ?? initials`
 (`web/src/lib/default-avatars.ts`), so a user upload always overrides the built-in default and
 per-project roles (e.g. the Captain) get no shared default — they show initials until an avatar
 is uploaded. Every agent-avatar surface (org chart, agent header, budget rows, agent-authored
-comments) applies this resolution.
+comments, and the admin inbox — both the home "Needs you" rows and the full inbox's mention /
+approval cards) applies this resolution.
 
 **Governance & misc.** `approvals` (polymorphic board decisions), `audit_log`
 (append-only, project + instance scopes — `project_id` set scopes a row to one project,
@@ -657,6 +698,23 @@ message interrupts the in-flight reply (kept as `interrupted`) and only the late
 turn survives a process restart, so `reconcileOnStartup` clears orphaned non-terminal
 `chat_messages` (deletes empty `streaming`/`pending` placeholders, marks partial ones
 `interrupted`) — an abandoned turn never lingers as a stuck "thinking" bubble.
+
+**Chatbox message queue (client-side) + the batched turn it flushes.** The composer stays usable
+while a reply streams. Enter (or a tap of the send button) **queues** into a per-thread list held
+in `useChat` — client state only, never a `chat_messages` row, so a reload drops it; that is the
+deliberate trade against a `queued` status + migration. A queued message renders as a dashed
+bubble at the tail of the thread and can be removed until dispatch. When the thread goes idle
+(reply complete, failed, *or* interrupted, so nothing is stranded by a bad turn) the whole queue
+flushes as **one** `POST /api/chat/messages` carrying an ordered `messages: [{text,
+attachment_ids}]` batch. `sendTurn`'s `messages` param inserts each as its own complete user row
+(own bubble, own attachments, all broadcast) and then runs a **single** assistant turn, whose
+prompt therefore sees every queued message — N separate turns would yield N replies, the first
+answering stale context. The route (`parseMessageBatch`) accepts the single-message shape too, so
+external channel ingest is unchanged; `MAX_BATCH_MESSAGES` caps a batch at 20. **Interrupting is
+the deliberate path**: holding the send button past `LONG_PRESS_MS` (`use-long-press.ts`), or
+⌘/Ctrl+Enter, posts immediately, and the existing interrupt above does the rest server-side. It is
+only offered while a reply is actually running (`streaming && !sending`) — during the pre-flight
+window there is no turn to abort, so the control queues and says so.
 
 **Automatic, agent-driven chat memory.** Each turn's prompt carries the agent's **long-term
 memory** (`chat_memories`, one markdown row per member, no revision history) plus the full
@@ -816,6 +874,43 @@ override. `marketplace/index.json` is the catalog listing.
   `update_agent_system_prompt` where roles carry local customizations) instead of adding
   duplicates. Because instances always fetch the live catalog, a new team `version` reaches them
   automatically.
+- **Adding only SOME of the roster.** The same route takes an optional `roles: string[]`. Omitted →
+  the whole-team path above. Present → each slug is resolved against `teamDef.roster` (404 on the
+  first unknown; an explicit `[]` is a 400, never "all"), and resolving against `roster` is also what
+  rejects `captain` and the other `RESERVED_ROSTER_SLUGS` — the Captain lives in the separate
+  `captain` override and every project already has one. It enqueues `enqueueAddMarketplaceRolesTask`
+  (`marketplace-add-team.ts`, label `add-marketplace-roles`; both enqueues share `enqueueCeoTask`),
+  whose body has the CEO call the **`apply_marketplace_agent`** MCP tool once per role →
+  `applyMarketplaceRoleToTeam` (`team-template-apply.ts`). Two deliberate differences from the
+  whole-team provisioning path: the def's **Captain override is never applied** (borrowing worker
+  roles must not rewrite the target team's Captain), and the reporting line **falls back to the
+  Captain** when the role's own manager is absent — `insertRosterAgents` otherwise leaves
+  `reports_to` null, which a subset add hits constantly (the App Team `engineer` reports to
+  `architect`). The tool returns `reports_to_fell_back` so the CEO re-points it. The task body is the
+  substance: these prompts/`team_context` were authored for a roster that is not coming with them and
+  @-mention agents that may not exist in the target, so reconciliation is mandatory, and the CEO is
+  explicitly licensed to stop and `@admin` when a role does not clearly belong (an allowed stop — the
+  reply re-wakes it), adding the clear roles and asking about the rest.
+- **Marketplace as a hiring source.** `list_marketplace_teams` (catalog discovery, CEO or Captain)
+  plus the relaxed `get_marketplace_team` let a hiring conversation reach for a proven, fully-written
+  role instead of authoring one from scratch. Guidance lives in `agents/_partials/captain/hire-workflow.md`
+  (a partial, since only the seeded Captain/CEO file hires — runtime hires never do) and
+  `agents/_instance/ceo.md` § Roster changes. Both `apply_marketplace_*` tools are in
+  `MCP_WRITE_TOOLS`, so a run that only provisions is not recorded as a no-op.
+- **Export a live team as a bundle.** `GET /api/projects/:projectId/team-bundle`
+  (`services/team-bundle-export.ts`, `exportTeamBundle`) serializes a project's current team
+  into a self-contained `MarketplaceTeamDef` — the inverse of `applyMarketplaceTeamToTeam`. It
+  reads the team's `member_agents` + their `agent_system_prompt` documents, emits the Captain as
+  the top-level `captain` override and the rest as `roster` (reserved slugs / cross-team instance
+  agents excluded; each `reports_to` mapped back to the Captain, a roster slug, or null), derives
+  discovery `keywords` from the team's text (`generateTeamKeywords` in `@hezo/shared` — readable
+  words, not stems, since only the built-in teams carry a hand-authored list), and stamps
+  `version: 1` + a fresh `content_hash` (via `computeContentHash`, reused from the build). It
+  ships **only** roster + prompts — never skills, MCP servers, secrets, or project config. The
+  Team page's **Export team** button (beside Hire agent) fetches it and downloads the JSON
+  client-side; a user submits that file to the Hezo authors on GitHub, whose `build:marketplace`
+  re-derives the hash/version/validation when it lands in the repo. Read-only, project-access
+  gated. (Parallels a future `get_team_bundle` MCP tool if one is added.)
 - **Shipped teams.** Three: **App Team** (`software-development`, the full app-building roster),
   **Social Media Marketing** (`influencer` — brand-strategist, trend-researcher, content-writer,
   media-producer, content-editor, distribution-manager), and **Investment Portfolio**
@@ -873,7 +968,17 @@ countdown matches the enforced cadence. Alongside it the API derives `has_action
 false the next heartbeat would no-op, so the UI shows a dash rather than a countdown.
 
 **Dispatch.** `JobManager` runs a ~1 Hz cron that also does container sync, container
-health, and orphan recovery. Per project-concurrency-limited, it: loads queued wakeups →
+health, and orphan recovery. Container sync separates its two costs: liveness
+(`inspectContainer`) runs every pass, while the working-set **memory sample**
+(`containerStats`, the expensive call, and issued with `one-shot=true` so the daemon
+answers from its current sample instead of waiting for the next collector tick) runs on a
+~15s per-project interval — a container's memory does not move meaningfully inside a
+second, and the serial per-project fan-out shared a socket with the live exec streams.
+Projects are swept with bounded concurrency, and the status write is conditional
+(`IS DISTINCT FROM`), so an unchanged project costs no row rewrite. `guarded()` still
+drops a tick whose predecessor is in flight, but now **says so** (rate-limited): a
+silently-skipped tick is stale state with no signal. Per project-concurrency-limited, it:
+loads queued wakeups →
 runs the **pre-run budget gate** (`activateAgent`; over-budget skips the run with no
 `heartbeat_runs` row and pauses the agent) → claims the wakeup → invokes the runner →
 absorbs sibling queued wakeups for the same task → marks the run terminal → reconciles
@@ -909,15 +1014,50 @@ the cached `container_status`: a container pruned externally or lost to a Docker
 reconciled (status flipped, `container_id` nulled, project update broadcast) and the run
 fails fast with a clear message rather than tripping over a raw 404 mid-exec. It captures
 interleaved stdout/stderr (recorded in full, `[stderr]`-prefixed, with a 10 MB
-runaway-output backstop) into **append-only log chunks**: the debounced flusher
+runaway-output backstop) into **append-only log chunks**. The exec transport itself
+**retains nothing**: `execStart` with an `onChunk` callback forwards each frame and returns
+an empty `ExecResult`, because a run's raw stream-json output (every tool result in full)
+is strictly larger than the capped rendered log and was, held alongside it, the largest
+single consumer of server memory. Anything derived from the raw stream is computed
+incrementally in the callback. Framing for both the exec stream and the container-log
+follower is decoded by the shared `DockerFrameDecoder` (`services/docker-frames.ts`),
+which reads at an offset rather than reallocating the pending buffer per socket read, and
+decodes per stream with `TextDecoder({stream:true})` so a codepoint straddling a frame
+boundary is not corrupted. Persistence is via the debounced flusher
 (`services/log-stream-broker.ts`) persists only the text appended since the last successful
 flush as an INSERT into `heartbeat_run_log_chunks` (`db/run-log-chunks.ts`), serialized
 per stream so overlapping flushes can never duplicate a delta, with the running token/cost
-snapshot updated on `heartbeat_runs` in the same transaction. Readers concatenate the
-chunks (`string_agg` ordered by `seq`) back into the API's `log_text` field. INSERT-only
+snapshot updated on `heartbeat_runs` in **the same statement** — a data-modifying CTE, not
+a transaction: both drivers serialize every transaction block process-wide, so at ten
+concurrent runs the old three-statement block put ~20 globally-serialized transactions a
+second in front of every user request, and a single statement is already atomic, which is
+all the exactly-once delta contract needs. Readers concatenate the
+chunks (`string_agg` ordered by `seq`) back into the API's `log_text` field — but only
+where the whole log is actually wanted. The paginated runs list ships `log_length` instead
+(`per_page` reaches 200, so a page carrying full logs could materialize gigabytes), and
+every caller that wants an excerpt — `get_run_log`, a task's latest-run view, the orphan
+detector's failure tail — uses `readRunLogTail`, which walks back from the newest chunk
+until the budget is covered rather than aggregating the whole log and slicing it. INSERT-only
 writes replaced the old whole-blob `UPDATE heartbeat_runs.log_text` pattern, whose per-flush
-dead TOAST copies were the dominant source of database bloat. The same stream broadcasts
-live over the `project-runs:<projectId>` WebSocket room from the in-memory buffer.
+dead TOAST copies were the dominant source of database bloat. The delta itself is read by
+character **offset** (`CappedLogBuffer.sliceFrom`), never by building the whole log and
+slicing it: the buffer grows toward its 10 MB cap and the flusher runs twice a second per
+run, so materializing it per flush was O(total) work on a fixed cadence — the in-memory
+twin of the write amplification the chunk table fixed.
+
+The same stream broadcasts live over the `project-runs:<projectId>` WebSocket room from the
+in-memory buffer, **coalesced**: consecutive lines on one stream accumulate for ~100ms (or
+until a burst ceiling) and go out as a single frame whose text is newline-joined. The client
+already splits an incoming payload on `\n`, so this needs no protocol change; only
+same-stream lines merge, so stdout/stderr ordering is preserved. A newly-subscribing client
+is replayed a **line-aligned tail** of the buffer rather than the whole thing (`replay` runs
+for every live stream in the room, so a project with ten concurrent runs would otherwise push
+ten full logs into one socket on tab open); the pending batch is drained first, since the
+snapshot replaces the client's buffer and a line arriving after it would render twice. The
+full log stays available from the REST run endpoint, which is what the run view seeds from.
+Sockets carry a `backpressureLimit` with `closeOnBackpressureLimit`, so a client that falls
+irrecoverably behind is dropped and recovers through the existing reconnect-and-resubscribe
+path instead of growing an unbounded send queue.
 
 **System prompt composition.** The agent's stored template (its `agent_system_prompt`
 document, loaded from its **home** team) is resolved per run by
@@ -964,7 +1104,14 @@ run's log when the comments don't explain a struggle.
 
 **Task prompt.** After the system prompt, `buildTaskPrompt` (`agent-runner.ts`) appends the
 run's task block: the current task's identifier/title/priority/status, plus its `rules`,
-`description`, and `progress_summary`. It also injects the **latest 3 comments** inline (the
+`description`, and `progress_summary`. The block also carries the ticket's **lineage** in both
+directions: upward from `loadSpawnedFromTask` (a `**Parent ticket:**` line, and a
+`**Spawned from:**` provenance line when a run on a different ticket created this one), and
+downward from `loadOpenSubTasks` — an `**Open sub-tasks**` list naming each non-terminal child
+with its assignee and status. The downward half exists so a manager can see what it has already
+delegated: `SHARED_INSTRUCTIONS` tells it to route fresh feedback to an in-flight sub-task
+rather than absorbing the deliverable, and without the list that rule depends on the agent
+remembering its own earlier fan-out. It also injects the **latest 3 comments** inline (the
 comment that woke the run tagged) as a head-start — small enough to carry on every run, while
 the `SHARED_INSTRUCTIONS` "read the thread before you act" rule still directs the agent to
 `list_comments` for the full thread before acting, since instructions posted after a task is
@@ -975,9 +1122,37 @@ one comment source that surfaced no reference to what triggered it). The Coach's
 review is the one path that instead embeds the **full** comment history (both share
 `loadCommentHistory`/`renderCommentHistory`).
 
-**Containers & worktrees.** One container per project; the project's
-`<dataDir>/teams/<slug>/projects/<slug>/workspace/` bind-mounts to `/workspace`, with one
-subdirectory per linked repo. For each task the runner creates a `git worktree` at
+**Containers & worktrees.** One container per project, **run on demand**: the container is
+not required to be up between runs. `runAgent` establishes it at the start of every run via
+`ensureProjectContainerRunning` (running → reuse; stopped → start in place; missing/stale row →
+provision), chat sessions do the same, and the `container-idle-stop` cron (1/min) stops any
+container idle past the operator's timeout (`container_idle_timeout_min` in `system_meta`,
+default 15 minutes, `0` = always-on) — so a quiet instance runs zero containers. "Idle" means:
+no active (queued/running) run, no run finished inside the window, no queued wakeup that could
+dispatch (capacity-skipped wakeups deliberately don't pin containers), and no chat session with
+recent `last_activity_at` or an in-flight turn; `projects.container_last_started_at` floors the
+check so a fresh start always gets one full window. Every lifecycle *decision* — ensure-running
+and the cron's check-then-stop (which re-verifies the predicate plus the scheduler's in-memory
+run/pending refcounts under the lock) — serializes per project through
+`withContainerLifecycleLock` (`services/containers.ts`), so a start and a stop can never
+interleave: worst case is a wasted stop/start cycle, never a failed run. Concurrency is bounded
+by one **global active-container limit** (`max_active_containers` in `system_meta`; when unset,
+the default is computed from host memory as
+`((RAM + swap) - HOST_RESERVED_MEMORY_GB) / default_ram_cap_per_container_gb`, clamped to [1,100] —
+the 1GiB reserve keeps the OS, Hezo's own process and the embedded database off the containers'
+budget, since none of them live inside one): dispatch passes a run whose project container is already active (no new
+container needed) and queues one that would need another container past the cap
+(`WakeupSkipReason.InstanceAtCapacity`, retried by the 5s dispatcher; an in-memory
+`pendingContainerStarts` refcount covers the window before the DB row reads Running). Dispatch
+drains FIFO by `created_at` with no per-project fair-share — a deep backlog in one project
+consumes freed slots first; that scheduler is the hook if this ever needs fairness. The chat
+path is *not* gated: its container counts toward the limit once running, but starting a chat is
+never refused — busy agents must not lock the operator out of the control surface. All three
+knobs (limit, per-container RAM cap, idle timeout) live on the global Settings → Concurrency
+page (`GET/PATCH /api/instance-settings`; `PATCH {max_active_containers: null}` resets to the
+computed default). The project's
+`<dataDir>/teams/<teamId>/projects/<projectId>/workspace/` (id-keyed, never slugs) bind-mounts
+to `/workspace`, with one subdirectory per linked repo. For each task the runner creates a `git worktree` at
 `/worktrees/<task-identifier>/<repo-name>` on branch `hezo/<task-identifier>`, persisted
 across runs and torn down when the task reaches a terminal status (`done`/`cancelled`). That
 teardown (`removeTaskWorktrees`, a host-side `rmSync`) fires from `triggerStatusAutomations`,
@@ -1024,8 +1199,10 @@ its abort handler on the *response* stream's end, never on the `ClientRequest`'s
 that had already been detached.
 
 **Container hardening.** Each project container is created with a hardened `HostConfig`
-(`provisionContainer`): a cgroup memory cap (`Memory`=`MemorySwap`= the project's
-`memory_limit_gib` + 512 MiB headroom, so no swap escape valve) as a hard backstop *behind*
+(`provisionContainer`): a cgroup memory cap (`Memory`=`MemorySwap`= the effective RAM cap +
+512 MiB headroom, so no swap escape valve — the per-project `memory_limit_gib` override when
+set, else the instance-wide `default_ram_cap_per_container_gb`, default 2 GB) as a hard
+backstop *behind*
 the sync-loop stats poller that stays the graceful early-stop at the configured ceiling;
 `PidsLimit` (4096) as a fork-bomb guard; `Init: true` so a real init reaps zombies under the
 `sleep infinity` PID 1; and `CapDrop: ['ALL']` with a minimal add-back
@@ -1246,8 +1423,11 @@ if the CLI force-terminated still-running background work (Claude Code's headles
 `--print` mode prints "Background tasks still running after Ns; terminating" and kills a
 `run_in_background` job or a `Workflow` fan-out that never synthesized), the run
 **abandoned unfinished work** and is marked `failed` regardless of earlier output
-(`detectTerminatedBackgroundWork` scans the CLI's own diagnostic output — stderr and
-non-JSON stdout lines — so an agent that merely echoes the phrase can't trip it). This is
+(`services/background-termination.ts` scans the CLI's own diagnostic output — stderr and
+non-JSON stdout lines — so an agent that merely echoes the phrase can't trip it). The scan
+is **incremental**, fed from the same per-chunk callback the log pipeline uses: the exec
+transport retains no output at all (see below), so the verdict is accumulated as the run
+streams rather than computed from a kept transcript. This is
 a backstop to `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0` (which lifts the wait ceiling) for
 CLI versions that ignore the override. The completeness **stop-hook** (§ 6) is a separate
 gate that blocks the agent from ending its turn with unfinished work.
@@ -1263,15 +1443,68 @@ agents back to `idle` once a window rolls over or a limit is raised.
 
 ## 6. AI providers, runtimes & the completeness stop-hook
 
-**Providers → runtimes.** `AiProvider` has **eight** values — `anthropic`, `openai`,
-`google`, `deepseek`, `z_ai`, `openrouter`, `kimi`, `x_ai` — and `AgentRuntime` has **five** —
-`claude_code`, `codex`, `gemini`, `opencode`, `grok`. The mapping is data-driven in
+**Providers → runtimes.** `AiProvider` has **eleven** values — `anthropic`, `openai`,
+`google`, `deepseek`, `z_ai`, `openrouter`, `kimi`, `kimi_code`, `x_ai`, `ollama`, `lmstudio` — and
+`AgentRuntime` has **six** — `claude_code`, `codex`, `gemini`, `opencode`, `grok`, `kimi`. The mapping
+is data-driven in
 `packages/shared/src/types/common.ts` (`PROVIDER_RUNTIME_ADAPTERS`, `PROVIDER_TO_RUNTIME`,
 `PROVIDERS_BY_RUNTIME`): Anthropic + DeepSeek + Z.ai + Kimi → `claude_code` (DeepSeek/Z.ai/Kimi
 inject `ANTHROPIC_BASE_URL` + model defaults to point Claude Code at their Anthropic-compatible
 gateway — Kimi at `api.moonshot.ai/anthropic`, model `kimi-k2.7-code`), OpenAI → `codex`,
 Google → `gemini`, OpenRouter → `opencode`, xAI → `grok` (its own first-party Grok Build CLI,
-`XAI_API_KEY` direct to `api.x.ai`, model `grok-4.5`).
+`XAI_API_KEY` direct to `api.x.ai`, model `grok-4.5`), Kimi Code → `kimi` (Moonshot's own CLI,
+see below), Ollama + LM Studio → `claude_code` (local runners, see below).
+
+**Moonshot's models are reachable two ways, and both are supported.** `kimi` drives
+Claude Code against Moonshot's Anthropic-compatible gateway (above); `kimi_code` drives
+Moonshot's first-party **Kimi Code CLI** (`kimi`, npm `@moonshot-ai/kimi-code`) on the
+`kimi` runtime. They are siblings — same account, same API key, same models, different
+harness — so an operator may configure either or both and choose per agent
+(`member_agents.model_override_provider`) or per task (`tasks.runtime_type`). The
+`AgentRuntime.Kimi` value reuses the `kimi` label that has existed in the `agent_runtime`
+enum since `001_initial_schema.sql`: it was the original standalone Kimi runtime, retired by
+migration `010` when Kimi moved onto Claude Code, and Postgres cannot drop enum labels — so
+the new runtime needed no enum change (only the `kimi_code` provider did, in `048`).
+
+Three things make this runtime unlike the Claude-Code-driven providers:
+
+- **Credential delivery is env-only via the `KIMI_MODEL_*` family.** Kimi Code deliberately
+  does not read provider API keys from the shell environment; they are expected to live in
+  `config.toml`. The documented exception is that family, which *is* shell-read and registers
+  a temporary in-memory provider for the launch. Hezo uses it so the key stays in env and is
+  never written to a file the agent can read. `KIMI_MODEL_NAME` is what activates the family,
+  so it is always set and `buildProviderEnv` overrides it with the run's selected model.
+  `KIMI_MODEL_CAPABILITIES` must include `image_in`, or the CLI's `downgradeUnsupportedMedia`
+  step silently replaces every image part with a placeholder string — which would break
+  `read_project_asset`, the only path by which an agent ever receives an image.
+- **`KIMI_CODE_HOME` is a real variable the CLI consumes**, unlike the Hezo-internal markers
+  the Claude Code entries use in `SUBSCRIPTION_LAYOUTS`. It relocates the entire data root
+  (config, `mcp.json`, credentials, per-session logs) to the per-run directory. That is the
+  only isolation mechanism available — there is no `--mcp-config`-style flag — and it is also
+  what makes the session-log reads below possible.
+- **No token usage on stdout.** Like Grok, the `stream-json` stream carries none, so cost is
+  recovered post-run by `extractKimiUsageFromSessionLog` from the per-session `wire.jsonl`
+  under that home, then priced from `model_pricing` like every other runtime. The runner's
+  `recoverOffStreamRunUsage` dispatches both file-based recoveries and scrubs the file
+  afterwards (each can carry the provider credential).
+
+**Local providers carry their endpoint on the credential, not in `staticEnv`.** Ollama and
+LM Studio serve Anthropic's Messages API natively, so they reuse the Claude Code runtime
+with no shim — but their endpoint is the operator's own machine and therefore cannot live in
+a compile-time constant. The URL is stored per-config in `ai_provider_configs.metadata ->
+'base_url'` (no new column), surfaces on `AiProviderCredential.baseUrl`
+(`readConfigBaseUrl` in `services/ai-provider-keys.ts`), and is consumed in three places:
+`buildProviderEnv` stamps it as `ANTHROPIC_BASE_URL` (and blanks `ANTHROPIC_API_KEY`, since
+Claude Code would otherwise prefer an inherited key over `ANTHROPIC_AUTH_TOKEN`);
+`providerDirectUpstreamHosts(provider, baseUrl)` adds its host to NO_PROXY so local traffic
+skips the MITM proxy; and the ai-providers routes build `<baseUrl>/v1/models` for both key
+verification and the live model list (`resolveCatalogEndpoint`, branching on
+`AI_PROVIDER_INFO[p].local`). `encrypted_credential` is NOT NULL, so a config with no
+operator-supplied token stores the runner's sentinel (`ollama` / `lmstudio`) instead.
+`claudeCodeProviderUsesCustomEndpoint` returns true for them, so the Stop-hook judge and the
+Claude Code subagent default track the run's selected model — the only workable choice, since
+the models an operator has pulled are unknowable here. With no `model_pricing` rows, local
+runs price at `$0`, which for local inference is correct rather than the usual fail-low.
 
 **Provider config.** `ai_provider_configs` is instance-level (shared across teams), one
 row per `(provider, label)`, each inlining an encrypted credential. `auth_method`
@@ -1304,20 +1537,33 @@ catalog as autocomplete suggestions.
 (`minimal|low|medium|high|max`) from the wakeup payload → `member_agents.default_effort` →
 global `medium`. Each runtime maps it natively: `claude_code` appends
 `think`/`think hard`/`ultrathink`; `codex` passes `-c model_reasoning_effort=`; `gemini`
-sets `GEMINI_REASONING_EFFORT`; `opencode`/`grok` steer effort through the portable prompt
+sets `GEMINI_REASONING_EFFORT`; `kimi` sets `KIMI_MODEL_THINKING_EFFORT` (it has no
+`minimal`, which maps to `low`); `opencode`/`grok` steer effort through the portable prompt
 directive. It's also exposed as `HEZO_AGENT_EFFORT`.
 
-**Per-runtime wiring** lives in the MCP injectors (`services/mcp-injectors/`, five
-adapters in `index.ts`: ClaudeCode, Codex, Gemini, OpenCode, Grok). Each builds the
+**Per-runtime wiring** lives in the MCP injectors (`services/mcp-injectors/`, six
+adapters in `index.ts`: ClaudeCode, Codex, Gemini, OpenCode, Grok, Kimi). Each builds the
 CLI invocation (headless prefix, prompt delivery, stream/auto-approve args), injects MCP
-servers, and wires the stop-hook. OpenCode and Grok take the prompt as a CLI **argument**
-(`HEZO_PROMPT_MODE=arg`, `RUNTIME_PROMPT_DELIVERY`); the rest read it on stdin. Grok writes
-its MCP servers into a per-run `config.toml` (`$GROK_HOME`, relocated via
+servers, and wires the stop-hook. OpenCode, Grok and Kimi Code take the prompt as a CLI
+**argument** (`HEZO_PROMPT_MODE=arg`, `RUNTIME_PROMPT_DELIVERY`); the rest read it on stdin.
+Grok writes its MCP servers into a per-run `config.toml` (`$GROK_HOME`, relocated via
 `SUBSCRIPTION_LAYOUTS`) with inline bearer headers, plus `[cli] auto_update=false`; shared
-TOML rendering for the Codex config lives in `mcp-injectors/toml.ts`. **Grok reports no
-token usage on its stream** — the runner points it at a per-run `--debug-file` and parses
-the `process_conversation_turn` tracing spans for cost (`extractGrokUsageFromDebugLog`),
-then scrubs the file (it also holds the `XAI_API_KEY`).
+TOML rendering for the Codex config lives in `mcp-injectors/toml.ts`. Kimi Code splits its
+configuration in two — MCP servers in `mcp.json`, the `[[hooks]]` Stop entry and
+`[permission.rules]` in `config.toml`, both under `$KIMI_CODE_HOME` — and is the only adapter
+whose per-server tool filter maps one-to-one onto the descriptor (`enabledTools` /
+`disabledTools` are native keys). Its bearer travels by env-var name
+(`bearerTokenEnvVar`), so `bearerTokenStorage` is `'env-var'` and `validateInjection`
+enforces that no token reaches a file. Kimi Code's `[[hooks]]` entries accept **exactly four
+keys** (`event`, `matcher`, `command`, `timeout`) and the CLI refuses to load a config
+carrying any other, which would break every run on that runtime rather than just the hook.
+**Grok and Kimi Code report no token usage on their streams** — for Grok the runner points at
+a per-run `--debug-file` and parses the `process_conversation_turn` tracing spans
+(`extractGrokUsageFromDebugLog`); for Kimi Code it reads the per-session `wire.jsonl` under
+the run home (`extractKimiUsageFromSessionLog`, counting turn-scoped records and never
+summing cumulative session totals). `recoverOffStreamRunUsage` dispatches both and scrubs the
+file afterwards — Grok's holds the `XAI_API_KEY`, and a wire log plausibly captures the
+Moonshot bearer.
 
 **Runtime timeout hardening.** Each CLI ships default timeouts that would cut off Hezo's
 legitimately long agent/background work; every runtime is relaxed at its own config surface
@@ -1334,18 +1580,25 @@ reconnect/retry, not a kill, so they're left at default. **Gemini** (`settings.j
 per-MCP-server `timeout`. **OpenCode** (`opencode.json`) raises the per-MCP-server `timeout`
 from its 5 s (!) default to 10 min; its bash tool has a non-configurable 10-min hard cap.
 **Grok** (`config.toml`) raises `[toolset.bash].timeout_secs` and per-`[mcp_servers.*]`
-`startup_timeout_sec` (its bash already auto-backgrounds on timeout rather than killing). All
-values live as named constants in each `mcp-injectors/*.ts` adapter.
+`startup_timeout_sec` (its bash already auto-backgrounds on timeout rather than killing).
+**Kimi Code** (`mcp.json`) raises per-server `startupTimeoutMs`/`toolTimeoutMs` from its 30 s /
+60 s defaults; these are set per-server rather than through the global
+`KIMI_MCP_*_TIMEOUT_MS` env vars so one slow connector can't be masked by a blanket override.
+All values live as named constants in each `mcp-injectors/*.ts` adapter.
 
 **Completeness stop-hook.** Every run is gated by a judge that fires when the agent tries
 to end its turn and **blocks** it (keeping the same headless exec alive) when it's bailing
 on failing tests, calling problems "out of scope", deferring without filing a sub-task,
 abandoning a plan it announced in the thread without revising it there, ending the run
-with a handoff/active @-mention only in its final message (which is delivered to no one)
-instead of a posted comment, or marking a ticket done on the strength of its own review
-while an approval the thread established as required — the admin's final approval or a named
-approver's sign-off — was never granted (an inherited approval-chain requirement, distinct
-from an unanswered question the agent itself posted; a rework/detour does not discharge it). It **allows** the stop when the agent is legitimately parked on
+with a handoff only in its final message (which is delivered to no one) instead of a posted
+comment — an active @-mention or baton-passing address, or a **stative "awaiting <named
+approver> sign-off" recap** that names who signs off next but posts no active mention (the
+recap blocks whether the ticket is left non-terminal or marked terminal; rule 11's
+own-review close-gate reaches only the terminal case) — or marking a ticket done on the
+strength of its own review while an approval the thread established as required — the admin's
+final approval or a named approver's sign-off — was never granted (an inherited
+approval-chain requirement, distinct from an unanswered question the agent itself posted; a
+rework/detour does not discharge it). It **allows** the stop when the agent is legitimately parked on
 input it can't obtain itself — an `@admin` comment awaiting a reply, a `request_credential`,
 or a filed hire proposal / opened approval pending an admin decision — with the task left
 non-terminal; the admin's reply or resolution auto-wakes the agent (a hire resolution queues
@@ -1361,11 +1614,24 @@ only when the run pins none, so a provider model upgrade (e.g. Kimi `kimi-k2.7-c
 needs no code change; Anthropic keeps its stable, cheaper Sonnet constant. Wiring differs by
 runtime's native hook: Claude Code uses a `type: "prompt"` `Stop` hook (makes the judge call
 itself, resolving the model via `judgeModelForProvider` over `CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER`);
-Codex/Gemini use command scripts (`buildCodexJudgeScript`/`buildGeminiJudgeScript`) that
+Codex/Gemini/Kimi Code use command scripts (`buildJudgeScriptForRuntime` over `JUDGE_SPECS`) that
 call the provider API. Every runtime's judge short-circuits on `stop_hook_active` — allow
 the stop once the turn has already been continued once — so a persistent verdict can't loop
 the same headless exec: the Codex/Gemini scripts guard it in code, and the Claude Code prompt
-hook now instructs the judge to do the same. For Claude Code the `$ARGUMENTS` placeholder is
+hook now instructs the judge to do the same.
+
+**Kimi Code needs two substitutes to run the same judge.** Its `Stop` hook *is* blockable
+(one of only three such events), but its stdin payload carries only `hook_event_name`,
+`session_id` and `cwd` — neither the agent's final message nor `stop_hook_active`. So its
+`JUDGE_SPECS` entry sets `sessionLogLookup` (read the last assistant message from the run's own
+`wire.jsonl` under `$KIMI_CODE_HOME` — the same file the usage scrape parses) and
+`loopGuardFile` (a `.hezo-stop-blocked` marker in that home, written before emitting a block
+and checked on entry, standing in for the absent flag so the one-block ceiling is real rather
+than nominal). Both are opt-in fields that stay unset for every other runtime. A block is
+signalled on all three channels Kimi documents — exit code 2 (its "intentional block"; any
+other non-zero is treated as a broken script and fails open), the reason on stderr, and the
+decision JSON on stdout — so the verdict survives whichever channel the installed version
+honours. For Claude Code the `$ARGUMENTS` placeholder is
 the raw Stop-hook input JSON, which carries both `stop_hook_active` and the agent's final
 message in `last_assistant_message`; the prompt points the judge explicitly at that field so a
 weaker judge model (e.g. DeepSeek judging itself) evaluates the message — the text rule 10
@@ -1389,11 +1655,19 @@ otherwise no-op run to a success and is why the one-block judge ceiling is accep
 (2) an **unlinked bold/leading-line address that reads like an ask** (`**slug** — … when you
 resume …`, the name after a short routing label like `Next step: slug — …`, or an
 action-assignment heading/label line like `## Required actions for slug` — where the phrase on
-the line is itself the ask signal, since the imperative list below it carries none — via
+the line is itself the ask signal, since the imperative list below it carries none — or a **name
+bound directly to a sign-off/approval gate mid-sentence** (`awaiting slug sign-off`, `needs
+slug's approval`, `slug to sign off` — the completion-report handoff that names who signs off
+next but sits inside the sentence rather than opening a line, so the address-position forms miss
+it; the binding is itself the ask signal) via
 `detectUnlinkedTeammateAsks`, gated on directed-ask intent — an explicit request signal such as a
-second-person pronoun, `please` or a `?`, or a baton-passing status line such as "ready for
-review" / "all yours", which is what catches a report whose closing handoff block is present but
-passive throughout; a bold name written for mere emphasis is never touched) is the wakes-no-one
+second-person pronoun, `please` or a `?`, or a baton-passing status line, which is what catches a
+report whose closing handoff block is present but passive throughout. The baton-passing set covers
+both the phrasings that name the recipient ("ready for review", "all yours", "handing this back",
+"passing this to …", "take it from here") and the ones that name only the gate being waited on
+("awaiting review", "for review", "pending approval", "sign-off needed") — the latter is the same
+handoff with its `ready` opener dropped, and it carries no pronoun, no imperative and no `?` at
+all; a bold name written for mere emphasis is never touched) is the wakes-no-one
 trap — but the net does **not** rewrite the
 agent's words or auto-deliver it (guessing intent to force a wake overreaches). `create_comment`
 already warns the agent interactively when it posts such a comment; the final-message path skips
@@ -1414,8 +1688,8 @@ to the agent in a `warning` field on the already-persisted result. They **never 
 comment** — the agent fixes it in place with `update_comment`. The checks (all in
 `lib/mentions.ts`, scoped by `resolveWarnableSlugs` = the task team's roster + HQ + `@admin`,
 minus the author): `detectUnlinkedTeammateReferences` (a teammate addressed by bold/bare name,
-which notifies nobody), `detectPassiveTeammateAsks` (a `@@slug` address whose text reads as an
-ask), and `detectNarratedActiveMentions` — the inverse failure, where an **active** `@slug` is
+which notifies nobody), `detectPassiveTeammateAsks` (a `@@slug` address that should have been
+active), and `detectNarratedActiveMentions` — the inverse failure, where an **active** `@slug` is
 used to *describe a mention living in another comment* ("the @admin mention in TASK-7#comment-9")
 and so fires a real wake here instead of pointing there. The offered fix for that one is
 **backticks**, not the passive form: `@@admin` renders as the bare word `admin` and loses the
@@ -1423,6 +1697,18 @@ token being quoted, while `` `@admin` `` keeps the literal text inert. Because t
 backticked-entity check would otherwise tell the author to un-backtick exactly that token,
 `detectQuotedMentionTokens` subtracts backticked-and-narrated slugs from its candidates, so the
 two advisories can never contradict each other.
+
+`detectPassiveTeammateAsks` gates its two addressing forms differently, because they differ in
+how ambiguous they are. A **leading-line** `@@slug — …` (including one behind a routing label,
+`Next step: @@slug — …`) is flagged **unconditionally, with no ask gate**: opening a line with a
+teammate reference and a separator is the *address* shape, and the address shape is reserved for
+active mentions — a reference you only mean to make belongs inside a sentence. This is what
+catches `@@admin — release is done.`, which is asking the admin to register the fact but carries
+no pronoun, no `please` and no `?`, so no ask gate could see it. An **emphasised** `**@@slug**`
+stays gated on `readsAsAsk` over its own paragraph(s), since bold marks attribution and headings
+as much as address. `SHARED_INSTRUCTIONS` teaches the matching rules: an active mention's shape
+is a line opening `@<slug> - ` then the ask, several recipients get one such line each, and a
+line never opens with `@@<slug> - `.
 
 ---
 
@@ -1438,7 +1724,20 @@ assumes the agent itself may misbehave; the egress proxy is the choke point.
 `['api.stripe.com']`, `*.googleapis.com` wildcards) or the `allow_all_hosts` escape hatch.
 They are **instance-global** — `name` is globally unique and the egress proxy resolves the
 placeholder by name with no project context — bounded per-secret by `allowed_hosts`. The
-master key (§ 10) decrypts at request time. Connectors, by contrast, are project-scoped
+master key (§ 10) decrypts at request time.
+
+The decrypted vault is **cached in server memory** rather than re-read and re-decrypted per
+request. `loadAllSecrets` runs for every proxied request carrying a placeholder — every MCP
+call an agent makes — and cost two queries plus an AES-256-GCM decrypt of the whole vault
+each time, on the one serialized database handle. Invalidation has three layers on purpose:
+every path that writes `secrets` calls `invalidateSecretsVault()`; the cache is dropped
+whenever the master key changes state, so decrypted material never outlives its unlock; and
+a short TTL means a write path that forgets the first degrades to seconds of staleness
+rather than a permanent stale read. Concurrent misses share one load. The values live only
+in server memory on the proxy path, exactly as they did transiently before — nothing here
+is reachable from an agent run, so the red line is untouched.
+
+Connectors, by contrast, are project-scoped
 (`mcp_connections.project_id`, NULL = global); a credential does **not** follow its
 connector's scope (moving a connector between scopes leaves its credential untouched).
 Instead the credential *name* carries the project signal (see the API-key row below), so a
@@ -1651,7 +1950,16 @@ single **generic** refresh fn is registered at startup (`registerGenericOAuthRef
 handles any connection carrying `token_url` + `client_id` in its metadata (decrypting the
 host-only client secret when present), so refresh is now **real** for broker connections
 rather than the historically GitHub-inert no-op; a provider-specific fn still wins over the
-generic one where registered. Deleting a project (or its team) purges the project's
+generic one where registered. Every flow that mints a connection therefore has to persist
+**both** `token_url` and `client_id` on its metadata — the auth-code and MCP DCR callbacks
+included, not just the device-flow broker. Omitting `client_id` makes the generic fn throw
+before any network call, and because a failed refresh is swallowed and never advances
+`expires_at`, the connection silently keeps serving its original access token until the
+upstream 401s. A failed refresh now backs off per connection (30 s doubling to a 15 min
+ceiling, cleared on success) so a structurally broken connection can't re-attempt on every
+proxied request, and records the reason on the backing connector's `mcp_connections.auth_error`
+(cleared on the next success) so it surfaces on the Connectors page rather than only in the
+log. Deleting a project (or its team) purges the project's
 connections and their token secrets (access, refresh, and client secret) before the cascade,
 so no encrypted token orphans in the vault.
 
@@ -2026,6 +2334,20 @@ transient state** (`creating` / `stopping` — deliberately not the `null` of a 
 project, which would poll forever). That bounds the damage of a missed transition to a few
 seconds of stale banner instead of "stuck until the operator reloads the page."
 
+**Connection indicator.** `useConnectionMonitor` (`hooks/use-connection-status.ts`) drives a
+module-level store from two signals - `navigator.onLine` (catches a dropped network an
+already-open half-open socket hasn't noticed) and the socket's own `connected` flag (catches a
+server that went away while the route is intact) - gated on "connected at least once" and
+debounced ~2s so a mobile radio blip doesn't flash. The store is a module singleton rather than
+a context because the writer lives inside `SocketProvider` while the reader, the global
+`<Toaster />`, mounts outside the provider and the router in `main.tsx`. The indicator renders
+as a persistent, non-auto-dismissing toast ("Connection lost / Reconnecting…" plus **Retry
+now**, wired to the socket client's `reconnect()`). It is **user-dismissable** - close button or
+right swipe, both through Radix's `onOpenChange` into `dismissConnectionOffline()` - which
+hides it for `DISMISS_SNOOZE_MS` (20s) and then re-surfaces it if the socket is still down;
+reconnect attempts continue untouched underneath, so the snooze only silences the notice. A heal
+discards the snooze, so a fresh drop always surfaces immediately.
+
 **Lazy comments feed.** A task's comment thread can be long, so the feed
 (`components/task-detail/comments-section.tsx`, virtualized with react-virtuoso) loads in
 two payloads off the one `GET …/tasks/:taskId/comments` route. On mount it fetches a
@@ -2049,6 +2371,36 @@ optimistic mutation and WS invalidation are unchanged.
 task `status`; security-sensitive mutations like credential fulfillment **must** stay
 here), and **invalidate + refetch** (validation-heavy / long-running work). Errors toast
 on rollback; successes are confirmed by the UI change itself.
+
+**Locale.** The instance has one display locale - language, date field order, and money
+punctuation - chosen on a first-run screen that runs *ahead of master-key generation* and
+editable afterwards at Settings › Languages & formats. It is global (no per-user override)
+and lives in three `system_meta` keys, so it needed no migration.
+
+Three axes rather than one BCP-47 tag: field order and month language are independent (there
+is no `Intl` locale meaning "German month names in ISO order"), so `formatDateIn`
+(`@hezo/shared` › `i18n/format.ts`) builds dates field-by-field from a
+`Record<DateFormat, Descriptor>` table. Money is presentation-only - runs are always priced
+in USD - so `formatMoneyUsd` picks separators via a representative locale with
+`currencyDisplay: 'narrowSymbol'` and never converts.
+
+The locale rides on the **public** `/api/status` payload, because every pre-auth screen
+renders in it before a credential exists (the boot-time status handler omits it - no DB is
+open yet). `I18nProvider` (`lib/i18n`) wraps `ThemeProvider` in `main.tsx`, above both the
+router and the `Toaster`; it seeds from a localStorage *render hint* to avoid a first-paint
+flash, then adopts the server value - but only once `localeConfigured` is true, since the
+pre-choice default would otherwise overwrite `navigator.languages` detection.
+`lib/format-date.ts` keeps its exported signatures and reads the active locale from module
+state (sound because the locale is global and the provider is its only writer), so its
+consumers were untouched. Catalogs are committed JSON per language, statically imported, with
+lookup falling back language → English → the key.
+
+`PATCH /api/instance-settings/locale` is the single write path. It is listed in
+`PUBLIC_PATHS` but self-authenticating: open only while no admin password is enrolled (the
+same window `POST /api/auth/setup` is open in), superuser-only after, resolving the bearer
+in-route via `requireAdminEquivalentBearer`. The globe button that hosts the editor appears
+only on pre-auth surfaces; an unauthorized save there applies to that browser alone rather
+than failing.
 
 **Responsive.** Mobile-first is mandatory — build the mobile layout first, enhance with
 `sm:`/`md:`/`lg:`. Three breakpoints (mobile <768px, tablet 768–1023px, desktop 1024px+).
@@ -2074,11 +2426,53 @@ surfaces a dismissible bottom card: Chrome/Android replays the captured `beforei
 one-tap install (`useInstallPrompt`), while iOS Safari — which has no programmatic prompt — shows
 the manual Share → Add to Home Screen steps. Already-installed (standalone) and recently-dismissed
 states stay silent. Serving requires `.webmanifest` → `application/manifest+json` in both static MIME
-maps (`startup.ts`, `scripts/bundle-static.ts`).
+maps (`startup.ts`, `scripts/bundle-static.ts`), and `.png` for the icons themselves.
+
+**Icon variants.** `packages/web/brand/icon-geometry.ts` is the source of truth for every icon
+bitmap; `packages/web/scripts/generate-icons.ts` rasterizes it via Playwright's Chromium into
+`public/icons/`. Four variants exist because the manifest's three `purpose` values are genuinely
+different jobs, and one bitmap cannot serve them:
+
+- `any` (192, 512) — rounded plate, frame at full size. The unmasked face: browser tabs, favicon.
+- `maskable` (192, 512) — **full bleed, no self-rounding**, lockup shrunk into Android's safe zone.
+  The launcher supplies the only rounded edge, so nothing nests inside its silhouette.
+- `monochrome` (512) — the maskable lockup as alpha only, for Android 13+ themed icons. No
+  background: the system tints the alpha channel, so a filled plate would tint solid.
+- `apple` (180) — full bleed, not self-rounded (iOS applies its own superellipse), fully opaque
+  (iOS composites transparency against black).
+
+Each manifest entry carries a **single** `purpose`; a combined `"any maskable"` claims one bitmap
+is correct for two jobs and is what produced a clipped, white-banded icon on One UI.
+
+**The safe-zone solve.** Android guarantees only the central 80% circle (radius `0.4 × 514`)
+survives every launcher mask. A rounded square's furthest point from centre is its outer corner
+arc, `(H - R) × √2 + R`, so tight corners throw the frame's extremes far out along the diagonal —
+the brand frame as drawn in `logo.svg` reaches 138% of that budget. Rounding the corners pulls the
+extremes in and buys size: `solveFrameSide()` inverts the equation, and at a corner ratio of 0.55
+the frame solves to 334 units against 291 at the brand's own 0.115, for the identical budget. The
+masked variants therefore keep the frame with softened corners rather than dropping it or shrinking
+the whole lockup.
+
+**Generation is author-run.** `bun run build:icons` regenerates and the output is **committed** —
+it is deliberately not part of `bun run build` or `bun run dev`, both of which run in every CI job
+and on every contributor machine and must not require a browser binary (same posture as
+`build:marketplace`). Drift is caught by `packages/web/test/pwa-icons.test.ts`, which decodes the
+committed PNGs with a dependency-free reader (`test/helpers/png.ts`, `node:zlib` over IDAT) and
+asserts dimensions, edge-to-edge painting, full-bleed opacity, and safe-zone reach. That test
+exists because both faults it covers actually shipped: every icon was missing its bottom 87 pixels
+(an out-of-band generator screenshotted headless Chromium at a window size whose viewport paints
+shorter than the image it writes), and the maskable variant had no safe zone at all.
 
 ---
 
 ## 12. Build, release, migrations & upgrades
+
+**Author-run generators.** Two build steps are **not** wired into `bun run build` or CI, because
+their output is committed and regenerating them requires a tool the ordinary build must not
+depend on: `build:marketplace` (recompiles `marketplace/teams/*.json`, also run by `bun run dev`)
+and `build:icons` (`packages/web/scripts/generate-icons.ts`, needs a Chromium binary). Both are run
+by authors, both commit their output, and both are guarded by a drift test rather than by being
+re-run in CI — `marketplace-build.test.ts` and `pwa-icons.test.ts` respectively.
 
 **Single binary.** `bun build --compile` (`scripts/build.ts`) produces one executable per
 platform (linux/darwin/windows × x64/arm64) plus a `SHA256SUMS` manifest;
@@ -2115,12 +2509,29 @@ working-tree Dockerfile so edits take effect immediately. The version is also su
 port immediately, so requests can arrive before the app exists. Until `serverReady` flips,
 the entry delegates to `serveStartupRequest` (`startup-serving.ts`): browser navigations and
 static assets are served from the embedded SPA bundle, and `/api/status` answers **200** with
-`{ starting: true, phase, message }` read from a boot-progress singleton (`startup-progress.ts`,
-advanced through `database → migrations → seed → pricing → workspace`). The web UI
-(`useStatus` → `StartingScreen`) renders a loading screen naming the current phase and keeps
-polling, flipping to the master-key gate the moment boot finishes — so a browser that connects
-mid-boot never sees a raw JSON error. Other API/MCP/WebSocket surfaces still get a JSON **503
-STARTING** so machine clients retry; `/health` always answers 200.
+`{ starting: true, phase, message, detail }` read from a boot-progress singleton
+(`startup-progress.ts`, advanced through `database → migrations → seed → pricing →
+workspace`). The web UI (`useStatus` → `StartingScreen`) renders a loading screen naming the
+current phase and keeps polling, flipping to the master-key gate the moment boot finishes —
+so a browser that connects mid-boot never sees a raw JSON error. Other API/MCP/WebSocket
+surfaces still get a JSON **503 STARTING** so machine clients retry; `/health` always answers 200.
+
+`detail` names the **step in flight** within a phase, because a phase alone cannot distinguish
+a slow boot from a hung one: the migration runners report the pgdata copy / pre-migration
+backup, then each migration as `Applying <file> (n of m)`, and the one-time legacy run-log
+VACUUM names itself under the `seed` phase. Two further signals make a **crash loop** legible,
+which is otherwise indistinguishable from a boot that never finishes (the process dies, the
+restart policy brings it back, and the browser just sees the boot screen again):
+
+- **Fatal-exit breadcrumb** (`startup-failure.ts`). The operator-actionable failures
+  (`MigrationFailedError`, `DbNewerThanAppError`, `ExternalDbError`, `AssetStorageError`)
+  `process.exit(1)`, so their reason never reaches the browser. Each writes
+  `<dataDir>/.last-startup-error.json` on the way out; the **next** boot reads it before
+  `startup()` runs and serves it as `last_failure` on `/api/status`, and the boot screen shows
+  it. Cleared once a boot reaches `ready`.
+- **Restart counter** (client-side, in `StartingScreen`). A boot phase moving *backwards*
+  means a fresh process answered the poll. This is the only signal available for a kill the
+  process cannot observe — an OOM `SIGKILL` (exit 137) writes no breadcrumb.
 
 **Migrations.** Real, tracked, **append-only** SQL under `packages/server/migrations/`
 (`001_initial_schema.sql` is the frozen baseline — never edit a shipped migration; each is
@@ -2149,7 +2560,13 @@ Database card on the Storage settings subpage: `POST /api/database-info/compact-
 {older_than_days}` writes a `log_compaction:active` marker in `system_meta` (also the "in
 progress" flag the panel's button disables on) and kicks the drain. The `log-compaction`
 cron (`services/log-compaction.ts`, guarded so a manual kick and the scheduled tick never
-overlap) drains the backlog a bounded batch at a time — replacing each old, finished,
+overlap) drains the backlog a bounded batch at a time. **Nothing starts a pass on its own** —
+the cron is a no-op without the operator's marker, because run logs are the user's history
+and an instance may deliberately keep all of it; a test asserts this. Each batch selects ids
+and sizes only and reads each run's tail (never the whole log, which reaches the 10 MB cap),
+and commits **per run** rather than wrapping the batch in one transaction: every transaction
+block serializes process-wide, so a single 50-run transaction stalled every agent and every
+request for its duration. Each pass replaces one old, finished,
 large-enough run's chunks with a single compacted chunk (a "compacted" notice + the run's
 `invocation_command` + the end-of-run summary/`[done]` line) and stamping
 `log_compacted_at` (migration `040`, partial index `idx_runs_compaction`; eligibility
@@ -2167,6 +2584,29 @@ Migration `041` (which moved logs from the old `heartbeat_runs.log_text` blob in
 and dropped the column) leaves the legacy dead-TOAST graveyard behind — a one-time,
 marker-gated `VACUUM (FULL, ANALYZE) heartbeat_runs` at startup
 (`runLegacyRunLogVacuumOnce`, embedded only) reclaims it on the first post-upgrade boot.
+
+**Nightly database maintenance** (`services/db-maintenance.ts`, the `db-maintenance` cron,
+default 04:30). Two deliberately narrow jobs:
+
+- **`analyzeHotTables`** refreshes planner statistics on the **embedded** backend only.
+  PGlite has no autovacuum and therefore no auto-ANALYZE, so as an instance grows the
+  planner keeps costing queries against statistics gathered when the tables were small and
+  silently stops choosing the indexes added for them — the composite indexes in migration
+  `047` would degrade to sequential scans at exactly the size where they matter. It reads
+  nothing and deletes nothing. A no-op on external Postgres, where autovacuum already does
+  it. The table list is explicit (the hot ones), and a test asserts every name resolves —
+  the per-table catch means a typo would otherwise degrade to a warning and that table
+  would silently never be analyzed.
+- **`sweepTerminalWakeups`** deletes terminal `agent_wakeup_requests` rows older than the
+  retention window (7 days), bounded per pass so a backlog drains over several ticks. This
+  is the **only** table swept automatically, and it qualifies on a specific test: it is
+  internal scheduler bookkeeping with no user-facing surface — nothing renders it, exports
+  it, or links to it. Run logs, cost entries and audit history are the user's record and an
+  instance may keep all of it; reclaiming those stays an explicit operator action (run-log
+  compaction above). `ACTIVE_WAKEUP_STATUSES` / `TERMINAL_WAKEUP_STATUSES` live in
+  `@hezo/shared` beside the enum with a test asserting they partition it exactly, so adding
+  a status fails the build until someone classifies it — `deferred` is **active** (a
+  cleared blocker re-queues it) and must never be swept.
 
 **Storage abstraction & transactions.** All app code takes the `Db` interface
 (`query`/`exec`/`transaction`/`acquireSessionLock`/`close`); the drivers live in
@@ -2255,6 +2695,39 @@ legacy-migrated rows can each carry a whole multi-MB run log) would
 otherwise breach in a single flat-size page and hard-crash the WASM instance. The
 subcommands' teardown closes are best-effort (`closeQuietly` in `cli.ts`), so closing an
 already-crashed engine can never mask the original dump/restore error.
+
+**Both directions are streamed, never buffered** — the format is designed so neither side
+ever holds the database in memory:
+
+- **Dump.** `streamLogicalBackupLines` is an async generator yielding one JSONL line at a
+  time; `dumpLogicalBackupToFile` pipes it through gzip straight to the destination file, so
+  resident memory stays at roughly one page regardless of instance size. Every caller that
+  ends up with a file on disk uses it — the `hezo backup` subcommands and the
+  external-Postgres **pre-migration backup**. There is no buffer-returning form.
+- **Restore.** `restoreLogicalBackupFromFile` decompresses incrementally off disk
+  (`linesOfGzipFile`, via `StringDecoder` — gzip chunk boundaries land mid-codepoint and the
+  dump carries arbitrary user text) and inserts rows **as they are read**: a batch flushes on
+  the row cap, the byte target, or a change of table, all inside the one restore transaction.
+  There is deliberately no separate parse phase and no row *total* in the progress output —
+  knowing the total up front is only possible by reading everything first, which is the bug.
+  `peekLogicalBackupHeaderFromFile` decompresses only as far as the header, which is how the
+  restore CLI identifies a backup, and rejects anything else, without touching the body. There is no buffer-taking form.
+
+This matters most on the **startup** path, where the pre-migration backup runs. Collecting
+the whole database into a `string[]`, joining it, and gzipping that held three uncompressed
+copies at once, which OOM-killed small hosts (exit 137) *mid-upgrade* — and since the kill
+lands before the migration is applied, the restart policy replayed the identical kill on
+every boot, leaving the instance in an unbreakable loop showing "Running database
+migrations…". Restore was worse still (compressed buffer + uncompressed buffer +
+uncompressed string + line array + every decoded row before the first INSERT) and is the
+**recovery** path, so it has to work on a host that is already short on memory.
+
+The same rule applies to the **updater**: `downloadAndStage` streams the release asset to
+`staged.part` while hashing incrementally, and only renames it into the staged path once the
+SHA256 matches — so an unverified binary is never stageable and a >100MB asset is never
+resident. Asset blobs (`assets/blob-backup.ts`) are bounded by construction instead: each is
+capped at `ATTACHMENT_MAX_BYTES` (10MB), rows are enumerated a page at a time, and copies run
+with bounded concurrency.
 Restore replays the binary's own migrations up to exactly the recorded set, then loads
 data in one transaction with FK constraints dropped/re-added around the inserts (insert
 order and self-references never matter) and serial sequences resumed; migration-seeded
@@ -2269,19 +2742,21 @@ and hosted storage in either direction — direction is expressed purely by whic
 (copy-only). `--no-assets` writes the legacy database-only bare `.backup.gz` file (the
 artifact internal callers still use), `--no-database` an assets-only bundle, and
 `--strict-assets` fails restore on any blob with no verifying row. Restore auto-detects the
-input: a directory is a bundle, a file with a logical header is a `.backup.gz`, otherwise a
-legacy physical pgdata tarball (`db/backup.ts` `dumpDataDir`/`restoreDataDir`, embedded
-only). Restoring a large instance is minutes of work inside two loops (row inserts, blob
+input: a directory is a bundle, a file whose header parses is a `.backup.gz`, and anything
+else is refused with a message naming the expected format. The physical pgdata tarball
+(`db/backup.ts`) is **gone** — it only ever loaded into embedded PGlite, so it was never a
+backup that could restore onto both backends; converting one needs a Hezo old enough to read
+it, then a fresh `hezo backup`. Restoring a large instance is minutes of work inside two loops (row inserts, blob
 copies), so both engines emit `ProgressState` updates through an optional `onProgress`
 callback and `runRestore` renders them (`lib/progress.ts`): a phase line per step
-(read/decompress/wipe/schema/prepare/constraints) and a live counter with percentage and
-ETA for the countable ones (rows parsed, rows loaded per table, blobs copied). Rendering
+(read/wipe/schema/prepare/constraints) and a live counter with percentage and
+ETA for the countable ones (rows loaded per table, blobs copied). Rendering
 adapts to the stream — one line rewritten in place (`\r` + erase-to-EOL) on a TTY, throttled
 appended lines into a pipe or log file — and the engines themselves stay terminal-agnostic.
-The CLI decompresses a single-file `.backup.gz` **once** (`decompressLogicalBackup` +
-`parseLogicalBackupHeader`, then handing the text to `restoreLogicalBackup`, which accepts
-`Buffer | string`) rather than gunzipping a multi-GB backup for the header and again for the
-load. External startup migrations write a bare logical `.backup.gz` into `<dataDir>/backups/`
+The CLI identifies a single-file `.backup.gz` from its header alone
+(`peekLogicalBackupHeaderFromFile`, which stops at the first newline) and then streams the
+body through `restoreLogicalBackupFromFile`, so a multi-GB backup is never decompressed for
+the header and again for the load, and never held in memory. External startup migrations write a bare logical `.backup.gz` into `<dataDir>/backups/`
 automatically before applying (last 5 kept; a failed backup aborts the migration); the
 embedded path keeps its stronger copy-swap instead. The `hezo backup`/`hezo restore`
 subcommands resolve the data dir with the same precedence as the server (`HEZO_DATA_DIR` >
@@ -2438,7 +2913,8 @@ mounted in `startup.ts` — read the modules under `packages/server/src/routes/`
 shapes.
 
 - **Auth & identity** — `auth` (challenge-response, § 10), `me`, `api-keys`,
-  `instance-settings`, `preferences`, `ui-state`.
+  `instance-settings` (incl. `PATCH /instance-settings/locale` — self-authenticating: open
+  pre-onboarding, superuser after; § 11), `preferences`, `ui-state`.
 - **Projects & teams** — `projects` (creation/intake, the 1:1 team reached *through* the
   project — there is no bare `GET /teams`; includes `GET …/dashboard` for the per-project
   at-a-glance aggregate), `team-templates`, `agent-types`, `repos`,
@@ -2448,11 +2924,39 @@ shapes.
 - **Tasks & collaboration** — `tasks`, `goals` (CRUD + `/goals/runs` + `/goals/:id/history`),
   `comments`, `mentions`, `assets`, `inbox`, `search` (full-text).
 - **Money & governance** — `costs` (project-scoped, `group_by=day` for charts),
-  `model-pricing`, `approvals`, `audit-log`.
+  `model-pricing`, `approvals`, `audit-log` (**keyset**-paginated, see below).
 - **Integrations & secrets** — `ai-providers`, `secrets`, `connectors`, `oauth`
   (connectors: ensure / auth-start — project-scoped and instance-admin
   (`/connectors/:id/auth-start`) / device / callbacks), `skills`.
 - **Ops** — `health`, `updates`, `preview` (HMAC-signed file URLs), public assets.
+
+**Request-body ceiling.** `/api/*` carries a global `bodyLimit` at `API_BODY_MAX_BYTES`
+(32 MB). Only the handful of upload routes were capped before, so a JSON body had no bound
+at all and one request could ask the process to buffer arbitrarily much before a handler
+saw it. It is a **backstop, never a policy**, and must stay well clear of every per-route
+cap for two reasons a test pins: a route that polices its own size answers a too-large file
+with its own specific `4xx`, which an earlier global trip would replace with an opaque
+`413`; and the per-route caps measure the *file* while the request carries it in a
+multipart envelope, so a ceiling set to exactly `ATTACHMENT_MAX_BYTES` rejects a
+legitimately-sized maximum attachment. Reads are unaffected - this bounds request bodies,
+not responses. `/mcp` and `/mcp/assets` sit outside `/api`: the agent surface is not capped
+here.
+
+**Pagination.** Most list routes are offset-paginated (`page`/`per_page`, `meta.total`)
+via `lib/pagination.ts`. The **activity log** is the exception and pages by **keyset**
+(`?limit=&cursor=`, `meta.has_more` + `meta.next_cursor`) because `audit_log` only grows
+and is never pruned: its global view carries no scope predicate, so producing `total`
+meant a full sequential scan of the largest table on the instance for every page load —
+to render a number nothing consumed. Offsets also drift, since rows land while someone
+reads. The cursor is opaque (`<created_at ISO>|<id>`) and the seek is
+`(created_at, id) < ($1, $2)` ordered `created_at DESC, id DESC`, so the order is total
+and no row can be skipped or repeated across a page boundary; `has_more` is exact because
+the query over-fetches one row rather than counting. Migration `047` adds the two indexes
+the seek needs (`audit_log (created_at DESC, id DESC)` and the `project_id`-leading
+variant) — the pre-existing indexes stopped at the leading column and left `id` to a sort
+step, which a range scan cannot use. Both web views drive it through `useInfiniteQuery`
+with a "Load older activity" control; the global view previously fetched a fixed newest-100
+slice with no way to reach anything older.
 
 One non-REST surface shares the port: the **MCP endpoint** (`POST /mcp`, Streamable
 HTTP), whose tools mirror the REST surface and enforce the same authorization. It is the
@@ -2472,6 +2976,37 @@ tool-by-tool page with parameters and return shapes — is generated from the sa
 by `packages/server/scripts/build-mcp-reference.ts` (run under `bun run build:docs`, guarded by
 `mcp-reference.test.ts`) and committed as `docs/reference/mcp-api.md`. Authorization for
 both the REST and MCP surfaces is § 10.
+
+**Transport internals** (`mcp/server.ts`). The endpoint is a plain Hono route, not an SDK
+transport binding: it reads the JSON-RPC body itself and short-circuits the cases that must
+not reach the tool registry — a notification (no `id`) gets `202` with an empty body, as the
+streamable-http contract requires and rmcp clients depend on; `initialize` is answered
+directly, since the registry's connection has already negotiated initialization; and an
+unapproved caller is served the onboarding tools (`register`, `connection_status`) and
+nothing else. Only `tools/list` and `tools/call` from an authenticated principal reach the
+registry.
+
+Those two are proxied to the singleton `McpServer` over an **`InMemoryTransport` pair that
+is linked once and shared by every request**, with the per-request principal carried into
+the tool handlers through an `AsyncLocalStorage` (`authContext`) rather than through the
+transport. Sharing the link is load-bearing in both directions:
+
+- An SDK `Protocol` owns exactly one transport, so linking a pair **per request** meant the
+  second of any two overlapping requests threw `Already connected to a transport` from a
+  floating promise, and its client then waited out the full SDK request timeout (60s) for an
+  `initialize` reply no server would ever send. That made the endpoint effectively
+  single-flight under concurrency and stalled every agent behind it. One long-lived link
+  avoids it outright: the SDK multiplexes concurrent requests over a single transport by
+  JSON-RPC id.
+- `InMemoryTransport.send` invokes the peer's `onmessage` **synchronously**, on the caller's
+  stack, which is what keeps each request's `authContext` store visible to the handler it
+  dispatches. Any change that makes delivery asynchronous, or that hoists the auth context
+  out of the call stack, breaks per-request authorization on a shared link.
+
+The link is rebuilt on `initMcpServer` (a new server needs a new pair) and a failed link is
+not cached, so the next request retries. `mcp-concurrency.test.ts` guards the invariant; it
+has to bypass the DB-backed auth lookup, because the test database serialises those queries
+and would otherwise prevent requests from ever overlapping.
 
 ---
 

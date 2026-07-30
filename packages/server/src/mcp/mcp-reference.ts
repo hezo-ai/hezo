@@ -99,17 +99,29 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 		returns:
 			'An array of local templates (`id`, `name`, `description`, `is_builtin`, `agent_types[]` where each entry has `slug`, `name`, `role_description`). Only the built-in Blank template and custom saved templates appear here - the default specialist rosters live in the marketplace (`get_marketplace_team`).',
 	},
+	list_marketplace_teams: {
+		category: 'Projects',
+		returns:
+			'`{ teams }` - every marketplace team available to this instance, each with `slug`, `name`, `description`, `summary`, `version`, and `roster_count`. Search keywords are omitted. Fetch one team’s full roster and prompts with `get_marketplace_team`.',
+		auth: 'CEO or a team Captain.',
+	},
 	get_marketplace_team: {
 		category: 'Projects',
 		returns:
 			'The marketplace team’s `slug`, `name`, `version`, `changelog[]`, `captain` (`system_prompt`, `team_context`), and `roster[]` (each with `slug`, `title`, `reports_to_slug`, `role_description`, `summary`, `team_context`, `system_prompt`). Returns `{ error }` if the slug is unknown.',
-		auth: 'CEO only.',
+		auth: 'CEO or a team Captain.',
 	},
 	apply_marketplace_team: {
 		category: 'Projects',
 		returns:
 			'`{ added, refreshed, skipped, captain_updated, version }` - the roster slugs added, refreshed in place (with `refresh_existing`), and skipped. Provisions members directly (no approval flow). Returns `{ error }` if the slug is unknown.',
 		auth: 'CEO only - use only for a team the admin already chose; reconcile the merged roster afterwards.',
+	},
+	apply_marketplace_agent: {
+		category: 'Projects',
+		returns:
+			'`{ role, added, skipped, reports_to, reports_to_fell_back, version }` for the single role provisioned. `skipped` is true when the team already had that slug. `reports_to_fell_back` is true when the role’s own manager is not on this team, so the line was wired to the Captain as a placeholder. Returns `{ error }` if the team slug or role slug is unknown.',
+		auth: 'CEO only - use only for a role the admin already chose; fit the role’s prompt and reporting line to the existing roster afterwards.',
 	},
 	update_project_progress: {
 		category: 'Projects',
@@ -145,7 +157,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 		category: 'Tasks',
 		returns:
 			'The updated task row (may carry a `warning` string), `{ unchanged: true }` when no fields changed, `null` if not found, or `{ error }` on a validation failure.',
-		auth: '`done` is the final completed state; marking a ticket `done` wakes Coach to review it but the task stays `done`. `cancelled` is for abandoned work. Agents cannot set `done` while an @admin mention on the task is unanswered by a human; human admins are exempt. Only the admin can re-open a completed (`done`/`cancelled`) task. An agent run is scoped to its own task and may reassign only to itself or a direct subordinate.',
+		auth: '`done` is the final completed state; marking a ticket `done` wakes Coach to review it but the task stays `done`. `cancelled` is for abandoned work. Agents cannot set `done` while an @admin mention on the task is unanswered by a human; human admins are exempt. Only the admin can re-open a completed (`done`/`cancelled`) task. An agent run is scoped to its own task and may reassign only to itself or a direct subordinate. A `parent_task_id` change is rejected when the new parent is in a different project, is the task itself or one of its own sub-tasks, would push the moved sub-tree past the depth cap of 2, or is already done or cancelled while the task being moved is still open. Moving a task out of its former parent wakes that parent when it was the last open sub-task, exactly as closing it would.',
 	},
 	add_task_blocker: {
 		category: 'Tasks',
@@ -290,7 +302,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	update_dashboard_widget_order: {
 		category: 'Projects',
 		returns:
-			'`{ order: DashboardWidgetId[] }` — the sanitised order after the update, with any missing widget ids appended at the end.',
+			'`{ order: DashboardWidgetId[] }` - the sanitised order after the update, with any missing widget ids appended at the end.',
 	},
 	set_agent_summary: {
 		category: 'Agent prompts & context',
@@ -402,17 +414,17 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_project_docs: {
 		category: 'Project docs & assets',
 		returns:
-			"`{ files: [{ id, filename, description, updated_at }] }` - the markdown project docs, where `description` is the one-line \"what this is\" summary (`''` if unset). The `filter` param defaults to `'active'` (archived docs excluded); with `'archived'` or `'all'` each entry also carries `archived: boolean`.",
+			"`{ files: [{ id, filename, description, updated_at }] }` - the markdown project docs, where `description` is the overall \"what this is\" summary (`''` if unset). The `filter` param defaults to `'active'` (archived docs excluded); with `'archived'` or `'all'` each entry also carries `archived: boolean`.",
 	},
 	read_project_doc: {
 		category: 'Project docs & assets',
 		returns:
-			"`{ filename, content }` (the full markdown body), plus `description` when the doc has a one-line summary set, plus `review_comments: [{ id, quote, occurrence, comment, created_at }]` when the admin has left pending review feedback on the doc (each comment anchors to an exact `quote` snippet; `occurrence` disambiguates repeats). Any write to the doc deletes all of its review comments, so capture them before writing. Returns `{ error }` if the file is not found or its archive state doesn't match `filter` (default `'active'`, so archived docs need `filter: 'archived'` or `'all'`; an archived read carries `archived: true`).",
+			"`{ filename, content, offset, returned_bytes, total_bytes, next_offset, truncated }`. `content` is a UTF-8 byte window of the markdown body starting at `offset` (default 0). A doc that fits in one read comes back whole (`offset: 0`, `next_offset: null`, `truncated: false`, `returned_bytes === total_bytes`). A larger doc is paged: `truncated` is true, `next_offset` is the byte offset to pass back as `offset` on the next call, and a `paging_hint` string spells out the loop - keep calling until `next_offset` is null, concatenating each `content`. The optional `max_bytes` param shrinks a window. `description` is included when the doc has an overall summary set. `review_comments: [{ id, quote, occurrence, comment, created_at }]` is included when the admin has left pending review feedback (each anchors to an exact `quote` snippet; `occurrence` disambiguates repeats); any write to the doc deletes all of its review comments, so capture them before writing. Returns `{ error }` if the file is not found or its archive state doesn't match `filter` (default `'active'`, so archived docs need `filter: 'archived'` or `'all'`; an archived read carries `archived: true`).",
 	},
 	write_project_doc: {
 		category: 'Project docs & assets',
 		returns:
-			"`{ written: true, id, filename }`, or `{ error }` if the filename is not `.md` or the doc is archived (unarchive first - archived docs are read-only). Make all edits in one consolidated write: a content-changing write deletes ALL pending review comments on the doc (read them first) and records a document revision, so many partial writes lose review context and bury the revision history. The optional `description` sets the doc's one-line \"what this is\" summary (shown in the Documents list and doc header; omit to leave it unchanged). The optional `changelog` is stored as that revision's changelog and shown in the document's history - put update/status notes there, not in the document body.",
+			"`{ written: true, id, filename }`, or `{ error }` if the filename is not `.md` or the doc is archived (unarchive first - archived docs are read-only). Make all edits in one consolidated write: a content-changing write deletes ALL pending review comments on the doc (read them first) and records a document revision, so many partial writes lose review context and bury the revision history. The optional `description` sets the doc's overall \"what this is\" summary - one or two sentences describing the doc's stable purpose, not its current contents (shown in the Documents list and doc header; omit to leave it unchanged). The optional `changelog` is stored as that revision's changelog and shown in the document's history - put update/status notes there, not in the document body.",
 	},
 	archive_project_doc: {
 		category: 'Project docs & assets',
@@ -609,6 +621,9 @@ export function generateMcpReference(
 		'  full-resource inspection tools, e.g. `get_agent_system_prompts`); over the',
 		'  cap you get `{ "error": "result_too_large", … }`. Narrow it with filters, a',
 		'  single-resource `get_*`, `before` pagination, or `excerpt_chars`.',
+		'  `read_project_doc` never returns that error for a big doc: it returns a UTF-8',
+		'  byte window with a `next_offset` cursor so you can page the rest (see its',
+		'  entry below).',
 		'- **Excerpts (`excerpt_chars`):** list tools accept `excerpt_chars` to truncate long',
 		'  text fields, adding `_truncated`/`_length` companions.',
 		'- **Pagination (`before`):** `list_comments` walks older items by passing the oldest',

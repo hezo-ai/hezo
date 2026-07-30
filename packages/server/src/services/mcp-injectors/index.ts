@@ -3,6 +3,7 @@ import { claudeCodeAdapter } from './claude-code';
 import { codexAdapter } from './codex';
 import { geminiAdapter } from './gemini';
 import { grokAdapter } from './grok';
+import { kimiAdapter } from './kimi';
 import { opencodeAdapter } from './opencode';
 import type { RuntimeMcpAdapter } from './types';
 
@@ -17,6 +18,7 @@ export const MCP_ADAPTERS: Record<AgentRuntime, RuntimeMcpAdapter> = {
 	[AgentRuntime.Gemini]: geminiAdapter,
 	[AgentRuntime.OpenCode]: opencodeAdapter,
 	[AgentRuntime.Grok]: grokAdapter,
+	[AgentRuntime.Kimi]: kimiAdapter,
 };
 
 export type {

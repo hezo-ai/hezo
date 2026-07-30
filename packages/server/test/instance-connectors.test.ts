@@ -269,6 +269,16 @@ describe('instance connector OAuth (admin auth-start)', () => {
 		);
 		expect(secretRow.rows[0].name).toMatch(/^OAUTH_MCP_/);
 
+		// The DCR client id has to land on the connection metadata, not just in
+		// mcp_connections.config.dcr — the generic host-side refresh reads it from
+		// there and cannot refresh the token without it.
+		const meta = await db.query<{ metadata: Record<string, unknown> }>(
+			`SELECT metadata FROM oauth_connections WHERE id = $1`,
+			[after!.oauth_connection_id],
+		);
+		expect(meta.rows[0].metadata.client_id).toBe(fake.lastClientId());
+		expect(meta.rows[0].metadata.token_url).toBeTruthy();
+
 		// Authorized → injected into runs again.
 		const forRun = await loadConnectorsForRun(db);
 		expect(forRun.find((r) => r.name === 'higgsfield')?.oauth_connection_id).toBeTruthy();

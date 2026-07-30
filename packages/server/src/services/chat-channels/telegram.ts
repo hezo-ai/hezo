@@ -1,4 +1,5 @@
 import { ChatChannel } from '@hezo/shared';
+import { BoundedMap } from '../../lib/bounded-map';
 import { getInstanceBaseUrl } from '../../lib/system-meta';
 import { logger } from '../../logger';
 import { readObservedContext, recordObservedMessage } from './observed-messages';
@@ -97,6 +98,9 @@ function senderName(from: TelegramUser | undefined): string {
  * no history API — the bot can only replay what it has witnessed). Group invite
  * is the authorization; replies anchor to the triggering message.
  */
+/** Ceiling on the per-workspace name/reply caches below. */
+const NAME_CACHE_MAX = 2_000;
+
 export class TelegramAdapter implements ChatChannelAdapter {
 	readonly channel = ChatChannel.Telegram;
 
@@ -108,7 +112,8 @@ export class TelegramAdapter implements ChatChannelAdapter {
 	private designatedGroupId: string | null = null;
 	// Last mention/reply message id per thread, so `deliver` can anchor the CEO's
 	// answer to the message that asked (best-effort visual threading in groups).
-	private replyTargets = new Map<string, number>();
+	// Bounded: one entry per thread ever seen would otherwise never be released.
+	private replyTargets = new BoundedMap<string, number>(NAME_CACHE_MAX);
 
 	constructor(private readonly deps: ChatChannelAdapterDeps) {}
 

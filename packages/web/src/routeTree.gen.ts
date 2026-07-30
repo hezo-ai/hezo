@@ -17,8 +17,10 @@ import { Route as HomeIndexRouteImport } from './routes/home/index'
 import { Route as SettingsUsersRouteImport } from './routes/settings/users'
 import { Route as SettingsStorageRouteImport } from './routes/settings/storage'
 import { Route as SettingsSkillsRouteImport } from './routes/settings/skills'
+import { Route as SettingsLocaleRouteImport } from './routes/settings/locale'
 import { Route as SettingsCredentialsRouteImport } from './routes/settings/credentials'
 import { Route as SettingsConnectorsRouteImport } from './routes/settings/connectors'
+import { Route as SettingsConcurrencyRouteImport } from './routes/settings/concurrency'
 import { Route as SettingsChatboxRouteImport } from './routes/settings/chatbox'
 import { Route as SettingsChatChannelsRouteImport } from './routes/settings/chat-channels'
 import { Route as SettingsAuditLogRouteImport } from './routes/settings/audit-log'
@@ -98,6 +100,11 @@ const SettingsSkillsRoute = SettingsSkillsRouteImport.update({
   path: '/skills',
   getParentRoute: () => SettingsRouteRoute,
 } as any)
+const SettingsLocaleRoute = SettingsLocaleRouteImport.update({
+  id: '/locale',
+  path: '/locale',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
 const SettingsCredentialsRoute = SettingsCredentialsRouteImport.update({
   id: '/credentials',
   path: '/credentials',
@@ -106,6 +113,11 @@ const SettingsCredentialsRoute = SettingsCredentialsRouteImport.update({
 const SettingsConnectorsRoute = SettingsConnectorsRouteImport.update({
   id: '/connectors',
   path: '/connectors',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsConcurrencyRoute = SettingsConcurrencyRouteImport.update({
+  id: '/concurrency',
+  path: '/concurrency',
   getParentRoute: () => SettingsRouteRoute,
 } as any)
 const SettingsChatboxRoute = SettingsChatboxRouteImport.update({
@@ -335,8 +347,10 @@ export interface FileRoutesByFullPath {
   '/settings/audit-log': typeof SettingsAuditLogRoute
   '/settings/chat-channels': typeof SettingsChatChannelsRoute
   '/settings/chatbox': typeof SettingsChatboxRoute
+  '/settings/concurrency': typeof SettingsConcurrencyRoute
   '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
+  '/settings/locale': typeof SettingsLocaleRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/settings/storage': typeof SettingsStorageRoute
   '/settings/users': typeof SettingsUsersRoute
@@ -383,8 +397,10 @@ export interface FileRoutesByTo {
   '/settings/audit-log': typeof SettingsAuditLogRoute
   '/settings/chat-channels': typeof SettingsChatChannelsRoute
   '/settings/chatbox': typeof SettingsChatboxRoute
+  '/settings/concurrency': typeof SettingsConcurrencyRoute
   '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
+  '/settings/locale': typeof SettingsLocaleRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/settings/storage': typeof SettingsStorageRoute
   '/settings/users': typeof SettingsUsersRoute
@@ -433,8 +449,10 @@ export interface FileRoutesById {
   '/settings/audit-log': typeof SettingsAuditLogRoute
   '/settings/chat-channels': typeof SettingsChatChannelsRoute
   '/settings/chatbox': typeof SettingsChatboxRoute
+  '/settings/concurrency': typeof SettingsConcurrencyRoute
   '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
+  '/settings/locale': typeof SettingsLocaleRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/settings/storage': typeof SettingsStorageRoute
   '/settings/users': typeof SettingsUsersRoute
@@ -485,8 +503,10 @@ export interface FileRouteTypes {
     | '/settings/audit-log'
     | '/settings/chat-channels'
     | '/settings/chatbox'
+    | '/settings/concurrency'
     | '/settings/connectors'
     | '/settings/credentials'
+    | '/settings/locale'
     | '/settings/skills'
     | '/settings/storage'
     | '/settings/users'
@@ -533,8 +553,10 @@ export interface FileRouteTypes {
     | '/settings/audit-log'
     | '/settings/chat-channels'
     | '/settings/chatbox'
+    | '/settings/concurrency'
     | '/settings/connectors'
     | '/settings/credentials'
+    | '/settings/locale'
     | '/settings/skills'
     | '/settings/storage'
     | '/settings/users'
@@ -582,8 +604,10 @@ export interface FileRouteTypes {
     | '/settings/audit-log'
     | '/settings/chat-channels'
     | '/settings/chatbox'
+    | '/settings/concurrency'
     | '/settings/connectors'
     | '/settings/credentials'
+    | '/settings/locale'
     | '/settings/skills'
     | '/settings/storage'
     | '/settings/users'
@@ -690,6 +714,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsSkillsRouteImport
       parentRoute: typeof SettingsRouteRoute
     }
+    '/settings/locale': {
+      id: '/settings/locale'
+      path: '/locale'
+      fullPath: '/settings/locale'
+      preLoaderRoute: typeof SettingsLocaleRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
     '/settings/credentials': {
       id: '/settings/credentials'
       path: '/credentials'
@@ -702,6 +733,13 @@ declare module '@tanstack/react-router' {
       path: '/connectors'
       fullPath: '/settings/connectors'
       preLoaderRoute: typeof SettingsConnectorsRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/concurrency': {
+      id: '/settings/concurrency'
+      path: '/concurrency'
+      fullPath: '/settings/concurrency'
+      preLoaderRoute: typeof SettingsConcurrencyRouteImport
       parentRoute: typeof SettingsRouteRoute
     }
     '/settings/chatbox': {
@@ -981,8 +1019,10 @@ interface SettingsRouteRouteChildren {
   SettingsAuditLogRoute: typeof SettingsAuditLogRoute
   SettingsChatChannelsRoute: typeof SettingsChatChannelsRoute
   SettingsChatboxRoute: typeof SettingsChatboxRoute
+  SettingsConcurrencyRoute: typeof SettingsConcurrencyRoute
   SettingsConnectorsRoute: typeof SettingsConnectorsRoute
   SettingsCredentialsRoute: typeof SettingsCredentialsRoute
+  SettingsLocaleRoute: typeof SettingsLocaleRoute
   SettingsSkillsRoute: typeof SettingsSkillsRoute
   SettingsStorageRoute: typeof SettingsStorageRoute
   SettingsUsersRoute: typeof SettingsUsersRoute
@@ -997,8 +1037,10 @@ const SettingsRouteRouteChildren: SettingsRouteRouteChildren = {
   SettingsAuditLogRoute: SettingsAuditLogRoute,
   SettingsChatChannelsRoute: SettingsChatChannelsRoute,
   SettingsChatboxRoute: SettingsChatboxRoute,
+  SettingsConcurrencyRoute: SettingsConcurrencyRoute,
   SettingsConnectorsRoute: SettingsConnectorsRoute,
   SettingsCredentialsRoute: SettingsCredentialsRoute,
+  SettingsLocaleRoute: SettingsLocaleRoute,
   SettingsSkillsRoute: SettingsSkillsRoute,
   SettingsStorageRoute: SettingsStorageRoute,
   SettingsUsersRoute: SettingsUsersRoute,

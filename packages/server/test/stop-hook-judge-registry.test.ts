@@ -209,6 +209,16 @@ describe('stop-hook rules block handoffs left only in the final message', () => 
 		expect(STOP_HOOK_RULES).toContain('written passively (@@<slug>)');
 	});
 
+	it('blocks a stative sign-off recap that names an approver but posts no @-mention', () => {
+		// The screenshot incident: "the ticket stays in review awaiting Captain sign-off"
+		// left the ticket non-terminal (so rule 11 never fires) and @-mentioned no one.
+		// Rule 10 now blocks that stative recap by treating the named approver as the
+		// next actor, whether the ticket is left non-terminal or marked terminal.
+		expect(STOP_HOOK_RULES).toContain('STATIVE sign-off recap counts the same');
+		expect(STOP_HOOK_RULES).toContain('awaiting Captain sign-off');
+		expect(STOP_HOOK_RULES).toContain('Treat the named approver as the next actor and block');
+	});
+
 	it('the block reason routes the agent to create_comment without duplicate reposts', () => {
 		expect(STOP_HOOK_RULES).toContain('post the handoff as a create_comment on the current task');
 		expect(STOP_HOOK_RULES).toContain('end the turn without reposting');

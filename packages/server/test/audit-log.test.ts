@@ -110,7 +110,7 @@ describe('audit log', () => {
 		expect(body.data).toEqual([]);
 	});
 
-	it('supports pagination', async () => {
+	it('walks every row exactly once across cursor pages', async () => {
 		for (let i = 0; i < 5; i++) {
 			await auditLog(db, {
 				projectId,
@@ -123,16 +123,55 @@ describe('audit log', () => {
 			});
 		}
 
-		const res = await app.request(`/api/projects/${projectSlug}/audit-log?page=1&per_page=2`, {
+		const seen: string[] = [];
+		let cursor: string | null = null;
+		let pages = 0;
+		// Rows share a created_at to the millisecond here, so this also proves the
+		// id tiebreak keeps the seek total - without it a page boundary landing
+		// mid-timestamp would drop or repeat rows.
+		do {
+			const url = `/api/projects/${projectSlug}/audit-log?limit=2${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+			const res = await app.request(url, { headers: authHeader(token) });
+			expect(res.status).toBe(200);
+			const body = await res.json();
+			expect(body.data.length).toBeLessThanOrEqual(2);
+			expect(body.meta.has_more).toBe(typeof body.meta.next_cursor === 'string');
+			for (const row of body.data) seen.push(row.id as string);
+			cursor = body.meta.next_cursor;
+			pages++;
+			expect(pages).toBeLessThan(20);
+		} while (cursor);
+
+		expect(pages).toBeGreaterThan(1);
+		expect(seen.length).toBeGreaterThanOrEqual(5);
+		expect(new Set(seen).size).toBe(seen.length);
+
+		// The walk must match a single unpaginated read of the same feed.
+		const all = await app.request(`/api/projects/${projectSlug}/audit-log?limit=200`, {
 			headers: authHeader(token),
 		});
-		expect(res.status).toBe(200);
-		const body = await res.json();
-		expect(body.data.length).toBeLessThanOrEqual(2);
-		expect(body.meta).toBeDefined();
-		expect(body.meta.page).toBe(1);
-		expect(body.meta.per_page).toBe(2);
-		expect(body.meta.total).toBeGreaterThanOrEqual(5);
+		const allBody = await all.json();
+		expect(allBody.meta.has_more).toBe(false);
+		expect(seen).toEqual(allBody.data.map((e: Record<string, unknown>) => e.id));
+	});
+
+	it('rejects a malformed cursor instead of silently restarting the feed', async () => {
+		// Both halves land in a typed SQL comparison, so a bad one would otherwise
+		// 500 on the cast; and quietly falling back to page 1 would replay rows the
+		// client already has with no way to tell that from a real result.
+		for (const cursor of [
+			'garbage',
+			'2026-01-01T00:00:00.000Z|not-a-uuid',
+			'nope|' + crypto.randomUUID(),
+		]) {
+			const res = await app.request(
+				`/api/projects/${projectSlug}/audit-log?cursor=${encodeURIComponent(cursor)}`,
+				{ headers: authHeader(token) },
+			);
+			expect(res.status).toBe(400);
+			const body = await res.json();
+			expect(body.error.code).toBe('invalid_cursor');
+		}
 	});
 
 	it('scopes the per-project view to its project only', async () => {

@@ -20,6 +20,10 @@
  *   - `codex`: the `-c model_reasoning_effort=<level>` CLI flag. Codex supports
  *     `minimal|low|medium|high`; `max` is mapped to `high`.
  *   - `gemini`: the `GEMINI_REASONING_EFFORT` env var.
+ *   - `kimi`: the `KIMI_MODEL_THINKING_EFFORT` env var. Kimi Code accepts
+ *     `low|medium|high|xhigh|max`; it has no `minimal`, which maps to `low`.
+ *   - `opencode` / `grok`: no stable native knob, so effort is steered through
+ *     the prompt directive alone.
  */
 
 import {
@@ -76,6 +80,18 @@ const CODEX_REASONING_EFFORT: Record<AgentEffort, string> = {
 	[AgentEffort.Max]: 'high',
 };
 
+// Kimi Code accepts `low|medium|high|xhigh|max`. It has no `minimal`, so the
+// lowest Hezo level maps to `low`; `max` maps straight through. `xhigh` is
+// deliberately unused — Hezo's ladder tops out at `max`, and reaching past
+// `high` for the `max` level would make the two indistinguishable.
+const KIMI_THINKING_EFFORT: Record<AgentEffort, string> = {
+	[AgentEffort.Minimal]: 'low',
+	[AgentEffort.Low]: 'low',
+	[AgentEffort.Medium]: 'medium',
+	[AgentEffort.High]: 'high',
+	[AgentEffort.Max]: 'max',
+};
+
 const GENERIC_PROMPT_DIRECTIVE: Record<AgentEffort, string> = {
 	[AgentEffort.Minimal]: '',
 	[AgentEffort.Low]: 'Think briefly before answering.',
@@ -114,5 +130,16 @@ export function applyEffortToRuntime(
 		// portable prompt directive like OpenCode.
 		case AgentRuntime.Grok:
 			return { extraArgs: [], extraEnv: [], promptDirective: GENERIC_PROMPT_DIRECTIVE[effort] };
+		// Kimi Code exposes a real, documented thinking-effort knob as an env var
+		// (part of the shell-read KIMI_MODEL_* family), so unlike OpenCode/Grok it
+		// gets a native lever rather than prompt-only steering. The prompt directive
+		// rides along too — it costs nothing and keeps behaviour consistent when a
+		// model ignores the knob.
+		case AgentRuntime.Kimi:
+			return {
+				extraArgs: [],
+				extraEnv: [`KIMI_MODEL_THINKING_EFFORT=${KIMI_THINKING_EFFORT[effort]}`],
+				promptDirective: GENERIC_PROMPT_DIRECTIVE[effort],
+			};
 	}
 }

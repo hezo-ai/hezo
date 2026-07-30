@@ -4,6 +4,7 @@ export * from './credentials/suggest-allowed-hosts.js';
 export * from './crypto/auth.js';
 export * from './crypto/mnemonic.js';
 export * from './documents/text.js';
+export * from './i18n/format.js';
 export * from './marketplace.js';
 export * from './mcp/method-access.js';
 export * from './mentions/index.js';

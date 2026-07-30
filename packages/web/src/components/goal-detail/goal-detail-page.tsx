@@ -4,12 +4,14 @@ import {
 	HeartbeatRunStatus,
 } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
-import { Archive, ArchiveRestore, ChevronRight, Pencil } from 'lucide-react';
+import { ChevronRight, Pencil } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { useGoal, useGoalHistory, useGoalRunActivity, useUpdateGoal } from '../../hooks/use-goals';
+import { useGoal, useGoalHistory, useGoalRunActivity } from '../../hooks/use-goals';
 import { formatDateTime, formatRelativeTime } from '../../lib/format-date';
+import { useI18n } from '../../lib/i18n';
 import { agentPageParams } from '../agent-link';
 import { CreateGoalDialog } from '../create-goal-dialog';
+import { GoalArchiveButton } from '../goal-archive-button';
 import { GoalHealthPill } from '../goal-health-pill';
 import { GoalProgressChart } from '../goal-progress-chart';
 import { InfiniteScrollSentinel } from '../infinite-scroll-sentinel';
@@ -145,6 +147,7 @@ function GoalRunRow({ projectId, run }: { projectId: string; run: GoalRunActivit
 }
 
 function GoalRunsFeed({ projectId, goalId }: { projectId: string; goalId: string }) {
+	const { t } = useI18n();
 	const {
 		data: runPages,
 		isLoading,
@@ -167,7 +170,7 @@ function GoalRunsFeed({ projectId, goalId }: { projectId: string; goalId: string
 				Progress update runs
 			</h2>
 			{isLoading ? (
-				<div className="py-6 text-center text-[13px] text-text-3">Loading...</div>
+				<div className="py-6 text-center text-[13px] text-text-3">{t('common.loading')}</div>
 			) : runs.length === 0 ? (
 				<div
 					data-testid="goal-runs-empty"
@@ -195,13 +198,13 @@ function GoalRunsFeed({ projectId, goalId }: { projectId: string; goalId: string
 }
 
 export function GoalDetailPage({ projectId, goalId }: GoalDetailPageProps) {
+	const { t } = useI18n();
 	const { data: goal, isLoading } = useGoal(projectId, goalId);
 	const { data: history } = useGoalHistory(projectId, goalId);
-	const updateGoal = useUpdateGoal(projectId, goalId);
 	const [editOpen, setEditOpen] = useState(false);
 
 	if (isLoading) {
-		return <div className="py-8 text-center text-[13px] text-text-2">Loading...</div>;
+		return <div className="py-8 text-center text-[13px] text-text-2">{t('common.loading')}</div>;
 	}
 	if (!goal) {
 		return (
@@ -253,17 +256,7 @@ export function GoalDetailPage({ projectId, goalId }: GoalDetailPageProps) {
 					>
 						<Pencil className="h-4 w-4" />
 					</button>
-					<button
-						type="button"
-						onClick={() => updateGoal.mutate({ archived: !isArchived })}
-						disabled={updateGoal.isPending}
-						aria-label={isArchived ? 'Unarchive goal' : 'Archive goal'}
-						title={isArchived ? 'Unarchive goal' : 'Archive goal'}
-						data-testid="goal-archive"
-						className="p-1 text-text-3 transition-colors hover:text-text-1 disabled:opacity-50"
-					>
-						{isArchived ? <ArchiveRestore className="h-4 w-4" /> : <Archive className="h-4 w-4" />}
-					</button>
+					<GoalArchiveButton projectId={projectId} goal={goal} />
 				</div>
 			</div>
 

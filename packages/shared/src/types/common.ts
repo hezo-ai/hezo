@@ -7,6 +7,15 @@ export const AgentRuntime = {
 	Gemini: 'gemini',
 	OpenCode: 'opencode',
 	Grok: 'grok',
+	// Moonshot's first-party Kimi Code CLI (`kimi`). The `kimi` label predates
+	// this entry: it was the original standalone Kimi runtime, retired by
+	// migration 010 when Kimi moved onto Claude Code. Reusing the label means the
+	// DB `agent_runtime` enum needs no ALTER TYPE, and no rows select it (010
+	// nulled every `tasks.runtime_type = 'kimi'` pin). Note this runtime is
+	// *additional* to — not a replacement for — Kimi on Claude Code: the `kimi`
+	// provider still drives `claude` against Moonshot's Anthropic-compatible
+	// gateway, and the `kimi_code` provider drives the native CLI.
+	Kimi: 'kimi',
 } as const;
 export type AgentRuntime = (typeof AgentRuntime)[keyof typeof AgentRuntime];
 
@@ -207,6 +216,22 @@ export const TEST_CONTAINERS_ENV = 'HEZO_TEST_CONTAINERS';
 
 export const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
 export const ATTACHMENT_SIGNED_URL_TTL_SECONDS = 3600;
+
+/**
+ * Ceiling on any `/api` request body - a backstop against an unbounded body, not
+ * a per-route policy. It MUST stay comfortably above every per-route cap:
+ *
+ * - A route that validates size itself (comment attachments) answers a too-large
+ *   file with its own specific `400`. If the global limit trips first the caller
+ *   gets an opaque `413` instead, and the route's rule stops being reachable.
+ * - The caps above measure the *file*; the request carries it in a multipart
+ *   envelope with a boundary and part headers, so a legitimately-sized upload is
+ *   always somewhat larger on the wire. A global limit set to exactly
+ *   `ATTACHMENT_MAX_BYTES` therefore rejects a *valid* maximum-size attachment.
+ *
+ * A test asserts this stays greater than every per-route cap.
+ */
+export const API_BODY_MAX_BYTES = 32 * 1024 * 1024;
 
 // Project icons are normalized client-side to a square PNG no larger than
 // PROJECT_ICON_MAX_DIMENSION on each side before upload; the server enforces
@@ -672,6 +697,13 @@ export interface AdminMentionItem {
 	author_member_id: string | null;
 	author_display_name: string;
 	author_slug: string | null;
+	/**
+	 * Freshly-signed avatar URL for the author (their `user_icons` image when a
+	 * human, its `agent_icons` image when an agent), or null when neither has an
+	 * upload. The built-in CEO/Coach default is resolved client-side from
+	 * `author_slug`; this only carries the upload.
+	 */
+	author_icon_url: string | null;
 	created_at: string;
 	read_at: string | null;
 }
@@ -736,12 +768,37 @@ export const WakeupStatus = {
 } as const;
 export type WakeupStatus = (typeof WakeupStatus)[keyof typeof WakeupStatus];
 
+/**
+ * Wakeup states the dispatcher may still act on. `deferred` counts as active:
+ * a wakeup blocked on an open dependency is re-queued when the blocker clears.
+ */
+export const ACTIVE_WAKEUP_STATUSES: readonly WakeupStatus[] = [
+	WakeupStatus.Queued,
+	WakeupStatus.Claimed,
+	WakeupStatus.Deferred,
+];
+
+/**
+ * Wakeup states nothing will look at again. Listed explicitly rather than
+ * derived as "everything not active" so a newly added status is not silently
+ * classified as disposable - these are the rows the maintenance sweep deletes,
+ * and the failure mode of guessing wrong is deleting work that was still
+ * pending. A test asserts the two lists partition the enum exactly, so adding a
+ * status fails the build until someone decides which side it belongs on.
+ */
+export const TERMINAL_WAKEUP_STATUSES: readonly WakeupStatus[] = [
+	WakeupStatus.Completed,
+	WakeupStatus.Failed,
+	WakeupStatus.Skipped,
+	WakeupStatus.Coalesced,
+	WakeupStatus.Cancelled,
+];
+
 export const WakeupSkipReason = {
 	TaskBusy: 'task_busy',
-	ProjectAtCapacity: 'project_at_capacity',
+	InstanceAtCapacity: 'instance_at_capacity',
 	AgentRunning: 'agent_running',
 	OverBudget: 'over_budget',
-	ContainerDown: 'container_down',
 } as const;
 export type WakeupSkipReason = (typeof WakeupSkipReason)[keyof typeof WakeupSkipReason];
 
@@ -1294,7 +1351,10 @@ export const AiProvider = {
 	ZAi: 'z_ai',
 	OpenRouter: 'openrouter',
 	Kimi: 'kimi',
+	KimiCode: 'kimi_code',
 	XAi: 'x_ai',
+	Ollama: 'ollama',
+	LmStudio: 'lmstudio',
 } as const;
 export type AiProvider = (typeof AiProvider)[keyof typeof AiProvider];
 
@@ -1368,6 +1428,18 @@ export const GEMINI_RUNTIME_ENV = {
 	GEMINI_CLI_TRUST_WORKSPACE: 'true',
 } as const;
 
+/**
+ * Moonshot's default coding model, shared by both ways of running Kimi: the
+ * `kimi` provider (Claude Code against the Anthropic-compatible gateway) and the
+ * `kimi_code` provider (Moonshot's own CLI). It is only a *default* — an agent or
+ * task may select any model the provider catalog returns, which is why both
+ * adapters let the run's selected model override it.
+ *
+ * Keep a `model_pricing` row for whatever this points at: runs are priced solely
+ * from that table, so an unpriced model records $0.
+ */
+export const KIMI_DEFAULT_MODEL = 'kimi-k2.7-code';
+
 export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapter> = {
 	[AiProvider.Anthropic]: {
 		runtime: AgentRuntime.ClaudeCode,
@@ -1427,18 +1499,56 @@ export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapte
 	// ENABLE_TOOL_SEARCH and CLAUDE_CODE_AUTO_COMPACT_WINDOW are Moonshot's
 	// documented Claude Code settings
 	// (https://platform.kimi.ai/docs/guide/agent-support).
+	//
+	// This is one of TWO ways to run Kimi models; `kimi_code` below is the other,
+	// driving Moonshot's own CLI. Both are supported and neither supersedes the
+	// other — pick per agent (`model_override_provider`) or per task
+	// (`tasks.runtime_type`).
 	[AiProvider.Kimi]: {
 		runtime: AgentRuntime.ClaudeCode,
 		staticEnv: {
 			ANTHROPIC_BASE_URL: 'https://api.moonshot.ai/anthropic',
-			ANTHROPIC_DEFAULT_OPUS_MODEL: 'kimi-k2.7-code',
-			ANTHROPIC_DEFAULT_SONNET_MODEL: 'kimi-k2.7-code',
-			ANTHROPIC_DEFAULT_HAIKU_MODEL: 'kimi-k2.7-code',
-			CLAUDE_CODE_SUBAGENT_MODEL: 'kimi-k2.7-code',
+			ANTHROPIC_DEFAULT_OPUS_MODEL: KIMI_DEFAULT_MODEL,
+			ANTHROPIC_DEFAULT_SONNET_MODEL: KIMI_DEFAULT_MODEL,
+			ANTHROPIC_DEFAULT_HAIKU_MODEL: KIMI_DEFAULT_MODEL,
+			CLAUDE_CODE_SUBAGENT_MODEL: KIMI_DEFAULT_MODEL,
 			ENABLE_TOOL_SEARCH: 'false',
 			CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
 		},
 		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'ANTHROPIC_AUTH_TOKEN' },
+	},
+	// Kimi Code — the same Moonshot models reached through Moonshot's own
+	// first-party CLI (`kimi`) instead of Claude Code. Sibling of `kimi` above,
+	// not a replacement.
+	//
+	// Credential delivery is the unusual part. Kimi Code deliberately does NOT
+	// read provider API keys from the shell environment; they are expected to
+	// live in `config.toml` under `[providers.<name>]`. The one documented
+	// exception is the `KIMI_MODEL_*` family, which IS shell-read and registers a
+	// temporary in-memory provider for the launch. Hezo uses that family so the
+	// key stays in env only — writing it into a config file the agent can read
+	// would breach the plaintext-secret rule (only the run CLI's own
+	// model-provider credential may be in-run, and only via env).
+	//
+	// `KIMI_MODEL_NAME` is what ACTIVATES the family, so it must always be set;
+	// `buildProviderEnv` overrides it with the run's selected model when there is
+	// one. `KIMI_MODEL_CAPABILITIES` must include `image_in` or the CLI's
+	// `downgradeUnsupportedMedia` step silently replaces every image part with
+	// "[image omitted: current model has no image input]" — which would break
+	// `read_project_asset`, the only path by which an agent ever sees an image.
+	// Capabilities resolve as a union of declared + auto-detected, so declaring
+	// can only add.
+	[AiProvider.KimiCode]: {
+		runtime: AgentRuntime.Kimi,
+		staticEnv: {
+			KIMI_MODEL_PROVIDER_TYPE: 'kimi',
+			KIMI_MODEL_BASE_URL: 'https://api.moonshot.ai/v1',
+			KIMI_MODEL_NAME: KIMI_DEFAULT_MODEL,
+			KIMI_MODEL_CAPABILITIES: 'image_in,thinking',
+			KIMI_DISABLE_TELEMETRY: '1',
+			KIMI_CODE_NO_AUTO_UPDATE: '1',
+		},
+		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'KIMI_MODEL_API_KEY' },
 	},
 	// xAI Grok Build runs on its own first-party `grok` CLI (its own runtime),
 	// authenticated by XAI_API_KEY sent direct to api.x.ai (the sanctioned
@@ -1451,6 +1561,22 @@ export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapte
 		runtime: AgentRuntime.Grok,
 		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'XAI_API_KEY' },
 	},
+	// Local, self-hosted runners. Both serve Anthropic's Messages API natively
+	// (Ollama `/v1/messages`; LM Studio the same since 0.4.1), so they run on the
+	// Claude Code runtime exactly like DeepSeek/Z.ai/Kimi — with one structural
+	// difference: the endpoint is the operator's own machine, so it CANNOT live in
+	// `staticEnv`. The base URL is stored per-config and injected at run time from
+	// the credential (see `buildProviderEnv`), which is why there is no
+	// `ANTHROPIC_BASE_URL` here. Model defaults are likewise omitted: whatever the
+	// operator has pulled locally is the model, selected per agent.
+	[AiProvider.Ollama]: {
+		runtime: AgentRuntime.ClaudeCode,
+		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'ANTHROPIC_AUTH_TOKEN' },
+	},
+	[AiProvider.LmStudio]: {
+		runtime: AgentRuntime.ClaudeCode,
+		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'ANTHROPIC_AUTH_TOKEN' },
+	},
 };
 
 /** Default upstream API hostnames per provider (for egress NO_PROXY). */
@@ -1462,7 +1588,15 @@ const PROVIDER_UPSTREAM_HOSTS: Record<AiProvider, readonly string[]> = {
 	[AiProvider.ZAi]: ['api.z.ai'],
 	[AiProvider.OpenRouter]: ['openrouter.ai'],
 	[AiProvider.Kimi]: ['api.moonshot.ai'],
+	// Same upstream as `kimi`, reached at `/v1` (OpenAI-shaped) by the native CLI
+	// rather than at `/anthropic` by Claude Code.
+	[AiProvider.KimiCode]: ['api.moonshot.ai'],
 	[AiProvider.XAi]: ['api.x.ai'],
+	// Local runners have no fixed upstream — the real host comes from the config's
+	// stored base URL, passed to `providerDirectUpstreamHosts` at run time. These
+	// are only the fallback for a config that somehow carries no URL.
+	[AiProvider.Ollama]: ['localhost'],
+	[AiProvider.LmStudio]: ['localhost'],
 };
 
 /**
@@ -1470,9 +1604,19 @@ const PROVIDER_UPSTREAM_HOSTS: Record<AiProvider, readonly string[]> = {
  * LLM credentials are injected via container env (not `__HEZO_SECRET_*`
  * placeholders); MITM breaks some Anthropic-compatible APIs, so provider
  * traffic goes direct while git/MCP placeholders still use the proxy.
+ *
+ * `configuredBaseUrl` is the operator-supplied endpoint carried on the
+ * credential, used by the local providers (Ollama / LM Studio) whose host is
+ * per-install and therefore absent from `staticEnv`. It takes precedence over
+ * both the static override and the default table; an unparseable value falls
+ * through to them rather than throwing.
  */
-export function providerDirectUpstreamHosts(provider: AiProvider): readonly string[] {
-	const baseUrl = PROVIDER_RUNTIME_ADAPTERS[provider].staticEnv?.ANTHROPIC_BASE_URL;
+export function providerDirectUpstreamHosts(
+	provider: AiProvider,
+	configuredBaseUrl?: string | null,
+): readonly string[] {
+	const baseUrl =
+		configuredBaseUrl || PROVIDER_RUNTIME_ADAPTERS[provider].staticEnv?.ANTHROPIC_BASE_URL;
 	if (baseUrl) {
 		try {
 			return [new URL(baseUrl).hostname];
@@ -1517,9 +1661,24 @@ export function claudeCodeModelArg(provider: AiProvider, model: string): string 
  */
 export function claudeCodeProviderUsesCustomEndpoint(provider: AiProvider): boolean {
 	const adapter = PROVIDER_RUNTIME_ADAPTERS[provider];
-	return (
-		adapter.runtime === AgentRuntime.ClaudeCode && Boolean(adapter.staticEnv?.ANTHROPIC_BASE_URL)
-	);
+	if (adapter.runtime !== AgentRuntime.ClaudeCode) return false;
+	// Local providers reach a custom endpoint too, but carry it on the credential
+	// rather than in `staticEnv`, so the base-URL probe alone would miss them. The
+	// cost rationale for excluding Anthropic above does not apply here: local
+	// inference is free, so tracking the run's model costs nothing, and the pinned
+	// alternative would be a model the operator may not even have pulled.
+	if (isLocalAiProvider(provider)) return true;
+	return Boolean(adapter.staticEnv?.ANTHROPIC_BASE_URL);
+}
+
+/**
+ * True for providers served by a runner on hardware the operator controls
+ * (Ollama, LM Studio) rather than a vendor's hosted API. These are configured
+ * with a base URL instead of a fixed endpoint, need no real credential, and
+ * cost nothing per token.
+ */
+export function isLocalAiProvider(provider: AiProvider): boolean {
+	return Boolean(AI_PROVIDER_INFO[provider]?.local);
 }
 
 /**
@@ -1573,6 +1732,7 @@ export const RUNTIME_COMMANDS: Record<AgentRuntime, string> = {
 	[AgentRuntime.Gemini]: 'gemini',
 	[AgentRuntime.OpenCode]: 'opencode',
 	[AgentRuntime.Grok]: 'grok',
+	[AgentRuntime.Kimi]: 'kimi',
 };
 
 /**
@@ -1590,6 +1750,9 @@ export const RUNTIME_PROMPT_DELIVERY: Record<AgentRuntime, 'stdin' | 'arg'> = {
 	// `grok -p <PROMPT>` (aka --single) takes the prompt as the value of the
 	// trailing `-p` flag, so the bridge appends `"$(cat $HEZO_PROMPT_FILE)"`.
 	[AgentRuntime.Grok]: 'arg',
+	// `kimi -p <PROMPT>` (--prompt) is the same shape as Grok: the prompt is the
+	// flag's value, not stdin. Kimi Code has no stdin-as-prompt mode at all.
+	[AgentRuntime.Kimi]: 'arg',
 };
 
 /**
@@ -1605,6 +1768,14 @@ export const RUNTIME_AUTO_APPROVE_ARGS: Record<AgentRuntime, readonly string[]> 
 	// Grok's Claude-Code-style permission modes; bypassPermissions skips every
 	// approval prompt so a headless `docker exec` run never hangs on one.
 	[AgentRuntime.Grok]: ['--permission-mode', 'bypassPermissions'],
+	// Kimi Code needs nothing here, and must not be given anything: `--prompt`
+	// is mutually exclusive with `--yolo`/`--auto`/`--plan`, so passing one would
+	// make the CLI reject the invocation outright. `-p` already applies the `auto`
+	// permission policy to tool calls on its own. If a future version still gates
+	// some call under `auto`, the escape hatches are the undocumented
+	// `--yes`/`--auto-approve` flags or `[permission.rules]` in the injected
+	// config.toml — not a flag that conflicts with `--prompt`.
+	[AgentRuntime.Kimi]: [],
 };
 
 /**
@@ -1625,6 +1796,7 @@ export const RUNTIME_DISALLOWED_TOOLS_ARGS: Record<AgentRuntime, readonly string
 	[AgentRuntime.Gemini]: [],
 	[AgentRuntime.OpenCode]: [],
 	[AgentRuntime.Grok]: [],
+	[AgentRuntime.Kimi]: [],
 };
 
 /**
@@ -1641,6 +1813,8 @@ export const RUNTIME_DISALLOWED_TOOLS_ARGS: Record<AgentRuntime, readonly string
  * - **OpenCode** — the top-level `tools` map, deny-the-namespace then re-allow.
  * - **Claude Code** — `permissions.deny` in the settings file, addressing tools
  *   as `mcp__<server>__<tool>`.
+ * - **Kimi Code** — per-server `enabledTools` / `disabledTools` keys in
+ *   `mcp.json`, which map one-to-one onto the descriptor's own fields.
  * - **Codex / Grok** — no per-server tool filter is documented for either CLI.
  *   Emitting a guessed TOML key would risk the CLI rejecting the whole config
  *   and breaking every run on that runtime, which is a far worse failure than
@@ -1652,6 +1826,7 @@ export const RUNTIME_SUPPORTS_MCP_TOOL_FILTER: Record<AgentRuntime, boolean> = {
 	[AgentRuntime.Gemini]: true,
 	[AgentRuntime.OpenCode]: true,
 	[AgentRuntime.Grok]: false,
+	[AgentRuntime.Kimi]: true,
 };
 
 /**
@@ -1675,6 +1850,12 @@ export const RUNTIME_STREAM_ARGS: Record<AgentRuntime, readonly string[]> = {
 	// `--debug-file` tracing spans (added per-run in the runner). See
 	// `extractGrokUsageFromDebugLog` in agent-stream-parser.ts.
 	[AgentRuntime.Grok]: ['--output-format', 'streaming-json'],
+	// Kimi Code's `stream-json` emits one JSON object per line discriminated by
+	// `role` (assistant / tool / meta); it is accepted only alongside `--prompt`.
+	// Like Grok — and unlike everything else — its stream carries NO token usage,
+	// so cost is recovered post-run from the per-run session log. See
+	// `extractKimiUsageFromSessionLog` in agent-stream-parser.ts.
+	[AgentRuntime.Kimi]: ['--output-format', 'stream-json'],
 };
 
 /**
@@ -1690,6 +1871,8 @@ export const RUNTIME_HEADLESS_PREFIX_ARGS: Record<AgentRuntime, readonly string[
 	[AgentRuntime.OpenCode]: ['run'],
 	// `grok` runs headless directly (the `-p` flag, added as a suffix arg).
 	[AgentRuntime.Grok]: [],
+	// `kimi` likewise runs headless directly via the trailing `-p` flag.
+	[AgentRuntime.Kimi]: [],
 };
 
 /**
@@ -1707,11 +1890,26 @@ export const RUNTIME_HEADLESS_SUFFIX_ARGS: Record<AgentRuntime, readonly string[
 	// Grok takes the prompt as the value of `-p` (single-turn/print mode); the
 	// bridge appends `"$(cat $HEZO_PROMPT_FILE)"` right after it (arg delivery).
 	[AgentRuntime.Grok]: ['-p'],
+	// Kimi Code is the same shape: `-p`/`--prompt` runs one prompt headlessly and
+	// streams to stdout, with the prompt appended as the flag's value.
+	[AgentRuntime.Kimi]: ['-p'],
 };
 
 export interface AiProviderVerifyEndpoint {
 	url: string | ((apiKey: string) => string);
 	headers: Record<string, string> | ((apiKey: string) => Record<string, string>);
+}
+
+/**
+ * Marks a provider as a locally-hosted runner and carries the two things that
+ * differ from a vendor API: where it listens by default, and the throwaway token
+ * to store when the operator supplies none (`encrypted_credential` is NOT NULL,
+ * and these runners either ignore the token entirely or only check it when the
+ * operator has explicitly turned auth on).
+ */
+export interface AiProviderLocalInfo {
+	defaultBaseUrl: string;
+	authTokenSentinel: string;
 }
 
 export interface AiProviderInfo {
@@ -1720,6 +1918,12 @@ export interface AiProviderInfo {
 	supportsSubscription?: boolean;
 	keyPrefix?: string;
 	keyPlaceholder: string;
+	/**
+	 * Present only for locally-hosted providers. When set, the operator supplies
+	 * a base URL and `verifyEndpoint` is unused - verification and the model list
+	 * are built from that URL instead (see the ai-providers routes).
+	 */
+	local?: AiProviderLocalInfo;
 	verifyEndpoint: AiProviderVerifyEndpoint;
 }
 
@@ -1798,6 +2002,19 @@ export const AI_PROVIDER_INFO: Record<AiProvider, AiProviderInfo> = {
 			headers: (apiKey) => ({ Authorization: `Bearer ${apiKey}` }),
 		},
 	},
+	// The same Moonshot account and the same API key as `kimi` above — the only
+	// difference is which CLI drives the models, which is exactly what
+	// `runtimeLabel` tells the operator on the provider card. Both may be
+	// configured at once; pick between them per agent or per task.
+	[AiProvider.KimiCode]: {
+		name: 'Kimi Code',
+		runtimeLabel: 'Kimi Code',
+		keyPlaceholder: 'sk-...',
+		verifyEndpoint: {
+			url: 'https://api.moonshot.ai/v1/models',
+			headers: (apiKey) => ({ Authorization: `Bearer ${apiKey}` }),
+		},
+	},
 	[AiProvider.XAi]: {
 		name: 'xAI',
 		runtimeLabel: 'Grok Build',
@@ -1807,6 +2024,30 @@ export const AI_PROVIDER_INFO: Record<AiProvider, AiProviderInfo> = {
 		// default-model dropdown (grok-4.5, grok-build-0.1, …); standard `data[]`.
 		verifyEndpoint: {
 			url: 'https://api.x.ai/v1/models',
+			headers: (apiKey) => ({ Authorization: `Bearer ${apiKey}` }),
+		},
+	},
+	// Local runners. `verifyEndpoint` is a formality for these two - the routes
+	// branch on `local` first and build `<baseUrl>/v1/models` from the operator's
+	// configured URL - but the field is required by the interface, so it points at
+	// the default port and stays correct for an out-of-the-box install.
+	[AiProvider.Ollama]: {
+		name: 'Ollama',
+		runtimeLabel: 'Claude Code',
+		keyPlaceholder: 'not required',
+		local: { defaultBaseUrl: 'http://localhost:11434', authTokenSentinel: 'ollama' },
+		verifyEndpoint: {
+			url: 'http://localhost:11434/v1/models',
+			headers: (apiKey) => ({ Authorization: `Bearer ${apiKey}` }),
+		},
+	},
+	[AiProvider.LmStudio]: {
+		name: 'LM Studio',
+		runtimeLabel: 'Claude Code',
+		keyPlaceholder: 'not required',
+		local: { defaultBaseUrl: 'http://localhost:1234', authTokenSentinel: 'lmstudio' },
+		verifyEndpoint: {
+			url: 'http://localhost:1234/v1/models',
 			headers: (apiKey) => ({ Authorization: `Bearer ${apiKey}` }),
 		},
 	},
@@ -1870,3 +2111,97 @@ function isChatModelId(provider: AiProvider, id: string): boolean {
 	}
 	return true;
 }
+
+/**
+ * Locale settings — the instance-wide display preferences chosen during
+ * onboarding (before the master key exists) and editable afterwards from global
+ * settings. Three independent axes, deliberately not collapsed into one BCP-47
+ * tag: an operator can read German while preferring ISO dates, and the currency
+ * convention is a separate question again.
+ *
+ * The formatting that consumes these lives in `../i18n/format.js`.
+ */
+
+export const Language = {
+	En: 'en',
+	De: 'de',
+	Fr: 'fr',
+	Es: 'es',
+	It: 'it',
+	PtBr: 'pt-BR',
+	Nl: 'nl',
+	Pl: 'pl',
+	Sv: 'sv',
+	ZhHans: 'zh-Hans',
+	Ja: 'ja',
+	Ko: 'ko',
+} as const;
+export type Language = (typeof Language)[keyof typeof Language];
+
+/** Every supported language, in the order the picker lists them. */
+export const LANGUAGES: readonly Language[] = Object.values(Language);
+
+/**
+ * Endonyms: each language is named the way its own speakers write it, because a
+ * reader who can't yet read the UI still has to find their own language in the
+ * list. "Deutsch", never "German".
+ */
+export const LANGUAGE_LABELS: Record<Language, string> = {
+	[Language.En]: 'English',
+	[Language.De]: 'Deutsch',
+	[Language.Fr]: 'Français',
+	[Language.Es]: 'Español',
+	[Language.It]: 'Italiano',
+	[Language.PtBr]: 'Português (Brasil)',
+	[Language.Nl]: 'Nederlands',
+	[Language.Pl]: 'Polski',
+	[Language.Sv]: 'Svenska',
+	[Language.ZhHans]: '简体中文',
+	[Language.Ja]: '日本語',
+	[Language.Ko]: '한국어',
+};
+
+/** Field order for a rendered date. Month names still follow the language. */
+export const DateFormat = {
+	/** 29/07/2026 */
+	Dmy: 'dmy',
+	/** 07/29/2026 */
+	Mdy: 'mdy',
+	/** 2026-07-29 */
+	Ymd: 'ymd',
+	/** 29 Jul 2026 */
+	DMonY: 'd-mon-y',
+} as const;
+export type DateFormat = (typeof DateFormat)[keyof typeof DateFormat];
+
+export const DATE_FORMATS: readonly DateFormat[] = Object.values(DateFormat);
+
+/**
+ * How a money amount is punctuated. Presentation only — Hezo costs are always
+ * USD (providers bill in USD and budgets are stored as USD cents), so this
+ * never converts a currency, it only picks separators and symbol placement.
+ */
+export const NumberFormat = {
+	/** $1,234.56 */
+	DotComma: 'dot-comma',
+	/** 1.234,56 $ */
+	CommaDot: 'comma-dot',
+	/** 1 234,56 $ */
+	SpaceComma: 'space-comma',
+} as const;
+export type NumberFormat = (typeof NumberFormat)[keyof typeof NumberFormat];
+
+export const NUMBER_FORMATS: readonly NumberFormat[] = Object.values(NumberFormat);
+
+/** Snake_case to match the REST/`system_meta` surface these travel over. */
+export interface LocaleSettings {
+	language: Language;
+	date_format: DateFormat;
+	number_format: NumberFormat;
+}
+
+export const DEFAULT_LOCALE_SETTINGS: LocaleSettings = {
+	language: Language.En,
+	date_format: DateFormat.Mdy,
+	number_format: NumberFormat.DotComma,
+};

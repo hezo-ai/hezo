@@ -33,8 +33,20 @@ const HANDOFF_INTENT_RES: RegExp[] = [
 	/\byours\b/i,
 	// "handing this back", "handed off to the captain", "hand it over"
 	/\bhand(?:ing|ed|s)?\s+(?:this|it|these|them|off|over|back)\b/i,
+	// "passing this to marketing", "passed it back", "passing the draft along" —
+	// the same verb class as `hand …` above, which alone missed the `pass` form.
+	/\bpass(?:ing|ed|es)?\s+(?:this|it|these|them|the\s+\w+)\s+(?:to|over|back|along)\b/i,
 	// "take it from here", "takes it from here"
 	/\btak(?:e|es|ing)\s+it\s+from\s+here\b/i,
+	// The gate-word forms of the same handoff, which name the thing being waited
+	// on instead of the person: "awaiting review", "awaiting final sign-off",
+	// "for review", "pending approval", "sign-off needed". `ready for review`
+	// above only covers the variant that opens with `ready`; a closing handoff
+	// block just as often drops it ("@@marketing-lead — for review.").
+	/\bawaiting\s+(?:\w+\s+){0,2}(?:review|approval|sign-?off|feedback|confirmation|decision)\b/i,
+	/\b(?:for|pending)\s+(?:your\s+)?(?:review|approval|sign-?off|feedback|confirmation|decision)\b/i,
+	/\bsign-?off\s+(?:needed|required|requested)\b/i,
+	/\b(?:needs|requires)\s+(?:your\s+)?sign-?off\b/i,
 ];
 
 /**
@@ -102,6 +114,48 @@ function hasActionAssignmentLine(stripped: string, namePattern: string): boolean
 		if (isHeading || isBoldLine || isLabelLine) return true;
 	}
 	return false;
+}
+
+// The sign-off/approval OBJECT of a gated handoff — the thing an approver grants.
+const SIGNOFF_OBJECT_RE = String.raw`(?:sign-?\s?offs?|approvals?|reviews?)`;
+// Gate words that put a NAMED approver on the hook for the sign-off object that
+// follows them: "awaiting <name> sign-off", "needs the <name>'s approval",
+// "pending <name> review", "for <name> sign-off", "waiting on <name> approval".
+const SIGNOFF_GATE_LEAD_RE = String.raw`(?:awaiting|await|pending|needs?|needing|requires?|requiring|for|blocked\s+on|waiting\s+(?:on|for))`;
+// Pending-action verbs the named approver must still perform — "<name> to sign
+// off", "<name> must approve", "<name> still needs to review". The verb list is
+// the ACTION, gated below by a REQUIRED modal so a past/granted "<name> approved
+// …" (no modal) is never matched.
+const SIGNOFF_PENDING_ACTION_RE = String.raw`(?:sign-?\s?off|approve|review)`;
+
+/**
+ * Whether `stripped` binds the teammate named by `namePattern` DIRECTLY to a
+ * sign-off/approval gate — the mid-sentence handoff the address-position forms
+ * (bold, leading-line, action-assignment line) all miss because the name sits
+ * inside the sentence rather than opening a line. Two binding directions:
+ *
+ *   - gate → name → object:  "awaiting Captain sign-off", "needs the
+ *     marketing-lead's approval", "pending Captain review", "for Captain sign-off".
+ *   - name → pending action:  "Captain to sign off", "Captain must approve",
+ *     "Captain still needs to review" — the modal ("to"/"must"/"needs to"/…) is
+ *     REQUIRED, so a past/granted "Captain approved the plan" is NOT flagged.
+ *
+ * The binding of the name to the gate is itself the ask signal, so this needs no
+ * separate readsAsAsk pass. It fires ONLY when the name is bound to the gate,
+ * never when a gate word merely co-occurs with a non-addressed name elsewhere in
+ * the sentence ("The doc went out for review last week; the architect wrote the
+ * brief." → no match).
+ */
+function hasNameBoundSignoffGate(stripped: string, namePattern: string): boolean {
+	const gateNameObject = new RegExp(
+		String.raw`\b${SIGNOFF_GATE_LEAD_RE}\s+(?:the\s+)?${namePattern}(?:['’]s)?\s+${SIGNOFF_OBJECT_RE}\b`,
+		'i',
+	);
+	const namePendingAction = new RegExp(
+		String.raw`\b${namePattern}(?:['’]s)?\s+(?:(?:still\s+)?(?:needs?|has)\s+to\s+|to\s+|must\s+|should\s+)${SIGNOFF_PENDING_ACTION_RE}\b`,
+		'i',
+	);
+	return gateNameObject.test(stripped) || namePendingAction.test(stripped);
 }
 
 export function extractMentionSlugs(content: unknown): string[] {
@@ -248,14 +302,22 @@ export function detectUnlinkedTeammateReferences(content: unknown, knownSlugs: s
 }
 
 /**
- * Flags teammate slugs addressed with the PASSIVE mention form (`@@slug`) where
- * the surrounding text reads like an ask — an active `@slug` was almost certainly
- * intended, yet `@@` links without notifying, so the handoff stalls silently. To
- * avoid warning on a deliberate passive reference, a slug is flagged only when it
- * is BOTH addressed (a leading-line `@@slug —` or an emphasised `**@@slug**`) AND
- * its address paragraph reads as an ask (see readsAsAsk). A slug
- * that is also actively `@`-mentioned anywhere is never flagged — it already
- * notifies. Mirrors detectUnlinkedTeammateReferences for the passive form.
+ * Flags teammate slugs addressed with the PASSIVE mention form (`@@slug`) where an
+ * active `@slug` was almost certainly intended — `@@` links without notifying, so
+ * the handoff stalls silently. Two addressing forms, gated differently:
+ *
+ * - A **leading-line address** (`@@slug — …`, optionally after a routing label) is
+ *   flagged unconditionally. Opening a line with a teammate reference and a
+ *   separator is the address shape, reserved for active mentions; a genuine
+ *   passive reference goes inside the sentence. `@@admin — release is done.` is
+ *   the canonical miss — it is asking the admin to register the fact, but carries
+ *   no pronoun, no `please` and no `?`, so no ask gate can see it.
+ * - An **emphasised** `**@@slug**` is ambiguous (bold marks attribution and
+ *   headings too), so it keeps the directed-ask gate over its own paragraph(s)
+ *   (see readsAsAsk) and a bold name written for emphasis is never flagged.
+ *
+ * A slug that is also actively `@`-mentioned anywhere is never flagged — it
+ * already notifies. Mirrors detectUnlinkedTeammateReferences for the passive form.
  */
 export function detectPassiveTeammateAsks(content: unknown, knownSlugs: string[]): string[] {
 	const text = flattenTextFields(content);
@@ -278,13 +340,23 @@ export function detectPassiveTeammateAsks(content: unknown, knownSlugs: string[]
 			flagged.add(slug);
 			continue;
 		}
-		// Addressed by the passive form: emphasised `**@@slug**`/`__@@slug__` or a
-		// leading-line `@@slug —` — the @@-prefixed analogue of the sibling's forms.
-		const bold = new RegExp(String.raw`(\*\*|__)@@${s}\1`, 'i');
-		const lead = leadingAddressRegex(`@@${s}`);
-		if (!bold.test(stripped) && !lead.test(stripped)) continue;
-		// Only warn when the paragraph(s) carrying this passive mention read as an
-		// ask — scoped to those paragraphs so a `you` elsewhere never leaks in.
+		// Leading-line address (`@@slug — …`, optionally after a routing label): the
+		// line-opening name-then-separator shape IS the address form, and the only
+		// reason to write it is to hand the named teammate the next action — so the
+		// passive marking is wrong on sight, with no ask gate. There is no legitimate
+		// passive use of it: a reference you merely mean to *make* belongs inside the
+		// sentence (`as @@slug noted, …`), not opening a line. This is the shape that
+		// strands the most work, because the status vocabulary it attracts
+		// (`@@admin — release is done.`) is exactly what the ask gate cannot see.
+		if (leadingAddressRegex(`@@${s}`).test(stripped)) {
+			flagged.add(slug);
+			continue;
+		}
+		// Emphasised `**@@slug**`/`__@@slug__` is genuinely ambiguous — bold is used
+		// for attribution and headings as much as for address — so it keeps the ask
+		// gate, scoped to the paragraph(s) carrying the mention so a `you` elsewhere
+		// never leaks in.
+		if (!new RegExp(String.raw`(\*\*|__)@@${s}\1`, 'i').test(stripped)) continue;
 		const block = passiveMentionParagraphs(stripped, s);
 		if (block && readsAsAsk(block)) flagged.add(slug);
 	}
@@ -302,16 +374,18 @@ function passiveMentionParagraphs(stripped: string, escapedSlug: string): string
 
 /**
  * Flags teammate slugs addressed with the UNLINKED form — bold (`**slug**` /
- * `__slug__`) or a leading-line address (`slug —` / `slug:`), no `@` prefix at
- * all — where the surrounding text reads like an ask, so an active `@slug` was
- * almost certainly intended yet the bare/bold name renders as inert text and
- * wakes no one, stranding the handoff silently. This is the precise, ask-gated
- * subset of detectUnlinkedTeammateReferences: it adds the same directed-ask gate
- * detectPassiveTeammateAsks uses (see readsAsAsk) so a bold name written for
- * mere emphasis or attribution is never flagged. A slug also reached by an
- * active `@`-mention anywhere is skipped — it already notifies. The runner's
+ * `__slug__`), a leading-line address (`slug —` / `slug:`), or a name bound
+ * directly to a sign-off/approval gate (`awaiting slug sign-off`, `slug to
+ * approve`), no `@` prefix at all — where the surrounding text reads like an ask,
+ * so an active `@slug` was almost certainly intended yet the bare/bold name
+ * renders as inert text and wakes no one, stranding the handoff silently. The
+ * bold/leading forms add the same directed-ask gate detectPassiveTeammateAsks
+ * uses (see readsAsAsk) so a name written for mere emphasis or attribution is
+ * never flagged; the action-assignment line and the name-bound sign-off gate are
+ * self-gating (the binding IS the ask). A slug also reached by an active
+ * `@`-mention anywhere is skipped — it already notifies. The runner's
  * handoff-delivery net uses these to warn (in the run log) that a run ended with a
- * stranded bold-name handoff, mirroring create_comment's interactive warning.
+ * stranded bare-name handoff, mirroring create_comment's interactive warning.
  */
 export function detectUnlinkedTeammateAsks(content: unknown, knownSlugs: string[]): string[] {
 	const text = flattenTextFields(content);
@@ -332,6 +406,15 @@ export function detectUnlinkedTeammateAsks(content: unknown, knownSlugs: string[
 		// with the trailing guard, keeps a slug from matching inside a longer
 		// hyphenated slug (`engineer` in `qa-engineer` / `engineer-lead`).
 		if (hasActionAssignmentLine(stripped, String.raw`(?<![\w@-])${s}(?![\w-])`)) {
+			flagged.add(slug);
+			continue;
+		}
+		// Name-bound sign-off gate: a mid-sentence handoff the address-position
+		// forms miss because the name sits inside the sentence rather than opening a
+		// line — `awaiting slug sign-off`, `needs slug's approval`, `slug to sign
+		// off`. The binding of the name to the sign-off gate is itself the ask
+		// signal, so like the action-assignment line it needs no readsAsAsk pass.
+		if (hasNameBoundSignoffGate(stripped, String.raw`(?<![\w@-])${s}(?![\w-])`)) {
 			flagged.add(slug);
 			continue;
 		}

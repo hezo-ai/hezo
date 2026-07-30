@@ -52,6 +52,8 @@ export function useCreateAiProvider() {
 			api_key: string;
 			label?: string;
 			auth_method?: string;
+			/** Locally-hosted providers only (Ollama, LM Studio): the operator's server URL. */
+			base_url?: string;
 		}) => api.post<AiProviderConfig>('/api/ai-providers', data),
 		onSuccess: invalidateAll,
 	});

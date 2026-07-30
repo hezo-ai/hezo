@@ -1,8 +1,9 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { extname, join, resolve } from 'node:path';
-import { ATTACHMENT_MAX_BYTES } from '@hezo/shared';
+import { API_BODY_MAX_BYTES, ATTACHMENT_MAX_BYTES } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
+import { compress } from 'hono/compress';
 import { LocalAssetStore } from './assets/drivers/local';
 import { openAssetStorage } from './assets/open';
 import type { AssetStore } from './assets/store';
@@ -21,7 +22,11 @@ import { DomainEventBus } from './events/bus';
 import type { AssetStorageInfo } from './lib/asset-storage-info';
 import { trackBackground } from './lib/background';
 import type { StorageInfo } from './lib/db-info';
-import { getInstanceBaseUrl } from './lib/system-meta';
+import {
+	getInstanceBaseUrl,
+	getInstanceLocale,
+	instanceLocaleIsConfigured,
+} from './lib/system-meta';
 import type { Env } from './lib/types';
 import { generateLlmsTxt } from './mcp/llms-txt';
 import { ONBOARDING_TOOLS } from './mcp/onboarding';
@@ -88,7 +93,7 @@ import { ContainerLogStreamer } from './services/container-logs';
 import type { ContainerDeps } from './services/containers';
 import { DockerClient } from './services/docker';
 import { extractBundledDockerContext } from './services/docker-assets';
-import { EgressProxy, loadOrCreateCA } from './services/egress';
+import { bindSecretsVaultToMasterKey, EgressProxy, loadOrCreateCA } from './services/egress';
 import { ImageBuildTracker, setSharedImageBuildTracker } from './services/image-build-tracker';
 import {
 	pruneStaleBundledImages,
@@ -181,8 +186,13 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	}
 
 	await db.exec(BASE_SCHEMA);
+	// The detail callback keeps the loading screen naming the step in flight (the
+	// pgdata copy, then each migration). Without it a multi-minute migration on a
+	// large instance is indistinguishable from a hung server.
 	setStartupPhase('migrations');
-	db = await runAvailableMigrations(db, config.dataDir);
+	db = await runAvailableMigrations(db, config.dataDir, (detail) =>
+		setStartupPhase('migrations', detail),
+	);
 	setStartupPhase('seed');
 	await runSeed(db);
 
@@ -195,7 +205,15 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	// table — once, on the first post-upgrade boot.
 	try {
 		const { runLegacyRunLogVacuumOnce } = await import('./db/run-log-chunks.js');
-		await runLegacyRunLogVacuumOnce(db, storageInfo.backend);
+		await runLegacyRunLogVacuumOnce(db, storageInfo.backend, {
+			// Fires only when the reclaim actually runs (marker-gated), so instances
+			// that skip it never show the message.
+			onStart: () =>
+				setStartupPhase(
+					'seed',
+					'Reclaiming disk space from old run logs - one time only, can take a few minutes',
+				),
+		});
 	} catch (err) {
 		log.error('One-time legacy run-log reclaim failed (will retry next startup):', err);
 	}
@@ -304,6 +322,8 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		bindHostRef: bindHost,
 		authEnabled: config.egressProxyAuth,
 	});
+	// Decrypted secrets must never outlive the unlock that produced them.
+	bindSecretsVaultToMasterKey(masterKeyManager);
 	// Verify a container can actually reach back to the host — the MCP server
 	// (firewall signal) and a listener at the egress/SSH bind host. On native-Linux
 	// Docker a host firewall or a loopback bind silently blocks this, leaving every
@@ -524,6 +544,40 @@ export function buildApp(
 		return c.text('Internal Server Error', 500);
 	});
 
+	// Compress text responses. Nothing was compressed before: every JSON payload
+	// and every SPA asset shipped raw, which on a self-hosted instance reached
+	// over a link the operator does not control. Hono's middleware honours
+	// Accept-Encoding and skips responses that are already encoded, so
+	// pre-compressed asset bodies (images, gzipped bundles) pass through
+	// untouched. Streamed responses are not buffered to compress them.
+	app.use('*', compress());
+
+	// Ceiling on every request body the API accepts. Only the handful of upload
+	// routes were capped, so a JSON body had no bound at all - one request could
+	// ask the process to buffer arbitrarily much before a handler ever saw it.
+	// Deliberately well above every per-route cap (see `API_BODY_MAX_BYTES`) so
+	// it is a pure backstop and never the binding constraint: routes that police
+	// their own size still answer with their own specific error, and a
+	// legitimately-sized upload is never rejected for its multipart envelope.
+	// `/mcp` and `/mcp/assets` sit outside `/api` - the agent surface is not
+	// capped here.
+	app.use(
+		'/api/*',
+		bodyLimit({
+			maxSize: API_BODY_MAX_BYTES,
+			onError: (c) =>
+				c.json(
+					{
+						error: {
+							code: 'TOO_LARGE',
+							message: `Request body exceeds ${API_BODY_MAX_BYTES / (1024 * 1024)} MB`,
+						},
+					},
+					413,
+				),
+		}),
+	);
+
 	app.use('*', async (c, next) => {
 		c.set('db', db);
 		c.set('assetStore', assets);
@@ -579,12 +633,19 @@ export function buildApp(
 		// passwordSet tells the gate whether to show the login screen (true) or the
 		// create-password flow (false). Only meaningful once unlocked; cheap enough
 		// to always compute.
+		const db = c.get('db');
 		const passwordSet =
-			masterKeyManager.getState() === 'unlocked' ? await adminPasswordIsSet(c.get('db')) : false;
+			masterKeyManager.getState() === 'unlocked' ? await adminPasswordIsSet(db) : false;
+		// Locale rides on the public status payload because every pre-auth screen
+		// (the language step, the master-key gate, the login form) has to render in
+		// the operator's language before any credential exists. It is a display
+		// preference, not sensitive. `configured` drives the onboarding gate.
 		return c.json({
 			masterKeyState: masterKeyManager.getState(),
 			passwordSet,
 			version: HEZO_VERSION,
+			locale: await getInstanceLocale(db),
+			localeConfigured: await instanceLocaleIsConfigured(db),
 		});
 	};
 	app.get('/api/status', statusHandler);
@@ -749,27 +810,48 @@ export function buildApp(
 			return new Response(asset.body, { headers: { 'Content-Type': asset.type } });
 		}
 
-		// Filesystem fallback (dev / `bun run`).
-		if (existsSync(webDistDir)) {
-			const fullPath = join(webDistDir, filePath);
-			if (existsSync(fullPath)) {
-				const ext = extname(fullPath).toLowerCase();
-				return new Response(readFileSync(fullPath), {
-					headers: { 'Content-Type': STATIC_MIME[ext] || 'application/octet-stream' },
-				});
-			}
-			const indexPath = join(webDistDir, 'index.html');
-			if (existsSync(indexPath)) {
-				return new Response(readFileSync(indexPath), {
-					headers: { 'Content-Type': 'text/html; charset=utf-8' },
-				});
-			}
+		// Filesystem fallback (dev / `bun run`). Read straight through rather than
+		// stat-then-read: `existsSync` + `readFileSync` was two syscalls per
+		// request for one file (three on the index fallback), and the stat told us
+		// nothing the read does not. Reads stay uncached so a `vite build` during
+		// dev is picked up on the next request.
+		const fullPath = join(webDistDir, filePath);
+		const body = readFileIfPresent(fullPath);
+		if (body) {
+			const ext = extname(fullPath).toLowerCase();
+			return new Response(body, {
+				headers: { 'Content-Type': STATIC_MIME[ext] || 'application/octet-stream' },
+			});
+		}
+		// SPA fallback: any unmatched path renders the client-side router.
+		const index = readFileIfPresent(join(webDistDir, 'index.html'));
+		if (index) {
+			return new Response(index, {
+				headers: { 'Content-Type': 'text/html; charset=utf-8' },
+			});
 		}
 
 		return c.text('Not found', 404);
 	});
 
 	return app;
+}
+
+/**
+ * Read a file, or `null` when it is not there. Collapses the stat-then-read pair
+ * the static fallback used to do into one syscall, and closes the window between
+ * them (a file deleted after the `existsSync` threw out of the handler).
+ * Anything other than "not present" still throws - a permissions or IO error is
+ * a real fault and must not be reported to the browser as a 404.
+ */
+function readFileIfPresent(path: string): Buffer<ArrayBuffer> | null {
+	try {
+		return readFileSync(path);
+	} catch (e) {
+		const code = (e as NodeJS.ErrnoException).code;
+		if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'EISDIR') return null;
+		throw e;
+	}
 }
 
 async function cleanupOrphanRunSockets(_db: Db, dataDir: string): Promise<void> {
@@ -790,7 +872,11 @@ async function loadMigrations(): Promise<Record<string, Migration> | null> {
 	return loadAllMigrations();
 }
 
-async function runAvailableMigrations(db: Db, dataDir: string): Promise<Db> {
+async function runAvailableMigrations(
+	db: Db,
+	dataDir: string,
+	onProgress?: (detail: string) => void,
+): Promise<Db> {
 	const migrations = await loadMigrations();
 	if (!migrations) {
 		log.warn('No migrations found. Run build:migrations or add migration files.');
@@ -803,6 +889,7 @@ async function runAvailableMigrations(db: Db, dataDir: string): Promise<Db> {
 		const { applyPendingMigrationsExternal } = await import('./db/migrate-external.js');
 		await applyPendingMigrationsExternal(db, migrations, {
 			backup: { dir: join(dataDir, 'backups'), version: HEZO_VERSION },
+			onProgress,
 		});
 		return db;
 	}
@@ -811,7 +898,7 @@ async function runAvailableMigrations(db: Db, dataDir: string): Promise<Db> {
 	// untouched (a downgraded binary can run against it as-is). Returns the live
 	// handle to use, which is a fresh one after a successful swap.
 	const { applyPendingMigrations } = await import('./db/migrate-runner.js');
-	return applyPendingMigrations(db, dataDir, migrations);
+	return applyPendingMigrations(db, dataDir, migrations, { onProgress });
 }
 
 async function runSeed(db: Db): Promise<void> {

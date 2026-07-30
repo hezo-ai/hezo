@@ -5,6 +5,7 @@ import {
 	DASHBOARD_WIDGET_IDS,
 	isAllowedProjectIconStoredMime,
 	isArchiveFilter,
+	type MarketplaceRosterAgent,
 	MemberType,
 	PROJECT_ICON_MAX_BYTES,
 	PROJECT_ICON_MAX_DIMENSION,
@@ -40,11 +41,15 @@ import {
 import { loadCoordinationContext } from '../services/internal-intake';
 import type { JobManager } from '../services/job-manager';
 import { getMarketplaceTeam } from '../services/marketplace';
-import { enqueueAddMarketplaceTeamTask } from '../services/marketplace-add-team';
+import {
+	enqueueAddMarketplaceRolesTask,
+	enqueueAddMarketplaceTeamTask,
+} from '../services/marketplace-add-team';
 import { createProjectWithTeam } from '../services/project-create';
 import { sanitizeWidgetOrder } from '../services/project-dashboard';
 import { createProjectIntake, getOpenProjectIntakeForHome } from '../services/project-intake';
 import { getProjectProgress } from '../services/projects';
+import { exportTeamBundle, TeamBundleExportError } from '../services/team-bundle-export';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -301,29 +306,78 @@ projectsRoutes.post('/projects', async (c) => {
 	);
 });
 
-// Add a marketplace team's roster to an EXISTING project's team. Rather than
-// provisioning silently, this kicks off one CEO task in the project that fetches
-// the team, auto-hires its members (via the apply_marketplace_team tool — the admin
-// already opted in, so no per-hire approval), and reconciles the merged roster in
-// the same run. Admin-gated; project-scoped middleware resolves the team.
+// Add a marketplace team to an EXISTING project's team — the whole roster, or just
+// the roles named in `roles`. Rather than provisioning silently, this kicks off one
+// CEO task in the project that fetches the team, auto-hires the chosen members (the
+// admin already opted in, so no per-hire approval), and fits them to the existing
+// roster in the same run. Admin-gated; project-scoped middleware resolves the team.
 projectsRoutes.post('/projects/:projectId/marketplace-team', async (c) => {
 	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const body = await c.req.json<{ slug?: string }>();
+	const body = await c.req.json<{ slug?: string; roles?: unknown }>();
 	const slug = body.slug?.trim();
 	if (!slug) return err(c, 'INVALID_REQUEST', 'slug is required', 400);
+
+	if (body.roles !== undefined && !Array.isArray(body.roles)) {
+		return err(c, 'INVALID_REQUEST', 'roles must be an array of role slugs', 400);
+	}
+	const roleSlugs = Array.isArray(body.roles)
+		? [...new Set(body.roles.map((r) => String(r).trim()).filter((r) => r.length > 0))]
+		: [];
 
 	const teamDef = await getMarketplaceTeam(slug);
 	if (!teamDef) return err(c, 'NOT_FOUND', `Marketplace team "${slug}" not found`, 404);
 
-	const result = await enqueueAddMarketplaceTeamTask(db, teamId, teamDef);
+	// Only roster roles are addable. The Captain is never in `roster` (it is the
+	// separate `captain` override, and every project already has a Captain), so
+	// resolving against the roster is also what rejects `captain` and the other
+	// reserved slugs.
+	const roles: MarketplaceRosterAgent[] = [];
+	for (const roleSlug of roleSlugs) {
+		const role = teamDef.roster.find((r) => r.slug === roleSlug);
+		if (!role) {
+			return err(c, 'NOT_FOUND', `Role "${roleSlug}" is not in the "${slug}" team's roster`, 404);
+		}
+		roles.push(role);
+	}
+
+	// An explicit empty `roles: []` is a client bug, not "add the whole team" —
+	// silently adding 10 agents when the user picked none would be the worst
+	// possible reading.
+	if (Array.isArray(body.roles) && roles.length === 0) {
+		return err(c, 'INVALID_REQUEST', 'roles must name at least one role', 400);
+	}
+
+	const result =
+		roles.length > 0
+			? await enqueueAddMarketplaceRolesTask(db, teamId, teamDef, roles)
+			: await enqueueAddMarketplaceTeamTask(db, teamId, teamDef);
 	if (!result) {
 		return err(c, 'CONFLICT', 'This project cannot receive a team (no CEO or project found)', 409);
 	}
 	return ok(c, result, 201);
+});
+
+// Export the project's team as a self-contained marketplace team bundle
+// (MarketplaceTeamDef JSON). Read-only — any member with project access may
+// download it; the client prompts a file download and the user can send the
+// bundle to the Hezo authors for inclusion in the marketplace. Parallels a
+// future `get_team_bundle` MCP tool should one be added.
+projectsRoutes.get('/projects/:projectId/team-bundle', async (c) => {
+	const teamId = c.get('teamId') as string;
+	const db = c.get('db');
+	try {
+		const bundle = await exportTeamBundle(db, teamId);
+		return ok(c, bundle);
+	} catch (e) {
+		if (e instanceof TeamBundleExportError) {
+			return err(c, 'CONFLICT', e.message, 409);
+		}
+		throw e;
+	}
 });
 
 // CEO-assisted project creation: open a conversation in HQ where the CEO scopes
@@ -535,8 +589,7 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 	const body = await c.req.json<{
 		name?: string;
 		description?: string;
-		max_concurrent_runs?: number;
-		memory_limit_gib?: number;
+		memory_limit_gib?: number | null;
 		daily_budget_cents?: number;
 		weekly_budget_cents?: number;
 		monthly_budget_cents?: number;
@@ -566,17 +619,14 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 		params.push(body.description);
 		idx++;
 	}
-	if (body.max_concurrent_runs !== undefined) {
-		if (!Number.isInteger(body.max_concurrent_runs) || body.max_concurrent_runs < 1) {
-			return err(c, 'INVALID_REQUEST', 'max_concurrent_runs must be an integer ≥ 1', 400);
-		}
-		sets.push(`max_concurrent_runs = $${idx}`);
-		params.push(body.max_concurrent_runs);
-		idx++;
-	}
 	if (body.memory_limit_gib !== undefined) {
-		if (!Number.isInteger(body.memory_limit_gib) || body.memory_limit_gib < 1) {
-			return err(c, 'INVALID_REQUEST', 'memory_limit_gib must be an integer ≥ 1', 400);
+		// null clears the per-project override — the container inherits the
+		// instance-wide default ram cap.
+		if (
+			body.memory_limit_gib !== null &&
+			(!Number.isInteger(body.memory_limit_gib) || body.memory_limit_gib < 1)
+		) {
+			return err(c, 'INVALID_REQUEST', 'memory_limit_gib must be an integer ≥ 1 or null', 400);
 		}
 		sets.push(`memory_limit_gib = $${idx}`);
 		params.push(body.memory_limit_gib);
@@ -887,10 +937,12 @@ projectsRoutes.post('/projects/:projectId/container/start', async (c) => {
 	const containerId = result.rows[0].container_id;
 	try {
 		await docker.startContainer(containerId);
-		await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
-			ContainerStatus.Running,
-			projectId,
-		]);
+		await db.query(
+			`UPDATE projects
+			 SET container_status = $1::container_status, container_last_started_at = now()
+			 WHERE id = $2`,
+			[ContainerStatus.Running, projectId],
+		);
 		c.get('containerLogStreamer').subscribe(projectId, containerId, c.get('logs'), docker);
 		await broadcastProjectUpdate(db, c.get('wsManager'), teamId, projectId);
 		await wakeAgentsWithPendingWork(db, projectId, teamId);

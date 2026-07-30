@@ -11,6 +11,7 @@ import {
 	useReorderProjects,
 } from '../hooks/use-projects';
 import { moveItem, useSortableRail } from '../hooks/use-sortable-rail';
+import { useI18n } from '../lib/i18n';
 import { CreateProjectWithTeamDialog } from './create-project-with-team-dialog';
 import { Avatar, avatarColorFromString, getInitials } from './ui/avatar';
 import { CountOverlayBadge } from './ui/count-overlay-badge';
@@ -41,6 +42,7 @@ import { Tooltip } from './ui/tooltip';
  * create button nor the pinned HQ entry takes part.
  */
 export function ProjectRail({ showHome = false }: { showHome?: boolean } = {}) {
+	const { t } = useI18n();
 	const { data: me } = useMe();
 	const { projects } = useAllVisibleProjects();
 	const hq = useHqProject();
@@ -65,14 +67,14 @@ export function ProjectRail({ showHome = false }: { showHome?: boolean } = {}) {
 			<nav
 				className="w-[60px] shrink-0 h-full border-r border-border bg-surface-2 flex flex-col items-center py-3"
 				data-testid="project-rail"
-				aria-label="Projects"
+				aria-label={t('nav.projects')}
 			>
 				{showHome && (
 					<div className="shrink-0 pb-2 mb-1 w-full flex justify-center border-b border-border">
-						<Tooltip content="Home" side="right">
+						<Tooltip content={t('nav.home')} side="right">
 							<Link
 								to="/home"
-								aria-label="Home"
+								aria-label={t('nav.home')}
 								data-testid="project-rail-home"
 								className="w-9 h-9 rounded-md flex items-center justify-center text-text-2 hover:text-text-1 hover:bg-surface border border-border bg-surface transition-colors"
 							>
@@ -164,11 +166,20 @@ export function ProjectRail({ showHome = false }: { showHome?: boolean } = {}) {
 								params={{ projectId: hq.slug }}
 								aria-label={hq.name}
 								data-testid="project-rail-hq"
-								className={`relative w-9 h-9 rounded-full flex items-center justify-center text-text-2 hover:text-text-1 hover:bg-surface border border-border bg-surface transition-colors ${
-									hqActive ? 'ring-2 ring-inverse ring-offset-1 ring-offset-surface-2' : ''
-								}`}
+								// A full-bleed icon drops the border and surface fill (the same rule
+								// `Avatar` follows): keeping them would leave a grey ring between the
+								// image and the active ring. Without an icon, HQ keeps its glyph.
+								className={`relative w-9 h-9 rounded-full flex items-center justify-center overflow-hidden transition-colors ${
+									hq.icon_url
+										? ''
+										: 'text-text-2 hover:text-text-1 hover:bg-surface border border-border bg-surface'
+								} ${hqActive ? 'ring-2 ring-inverse ring-offset-1 ring-offset-surface-2' : ''}`}
 							>
-								<Building2 className="w-4 h-4" />
+								{hq.icon_url ? (
+									<img src={hq.icon_url} alt="" className="w-full h-full object-cover" />
+								) : (
+									<Building2 className="w-4 h-4" />
+								)}
 								<CountOverlayBadge
 									count={hqInbox?.unread ?? 0}
 									testId="project-rail-hq-inbox-badge"

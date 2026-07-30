@@ -2,6 +2,7 @@ import { createFileRoute, Link } from '@tanstack/react-router';
 import { Globe, Plus, UserPlus } from 'lucide-react';
 import { agentPageParams } from '../../../../components/agent-link';
 import { AgentStatusLabel } from '../../../../components/agent-status-label';
+import { ExportTeamButton } from '../../../../components/export-team-dialog';
 import { OrgChartTree } from '../../../../components/org-chart-tree';
 import { Button } from '../../../../components/ui/button';
 import { EmptyState } from '../../../../components/ui/empty-state';
@@ -10,6 +11,7 @@ import { StatusDot } from '../../../../components/ui/status-dot';
 import { useAgents } from '../../../../hooks/use-agents';
 import { useOrgChart } from '../../../../hooks/use-org-chart';
 import { useTeam } from '../../../../hooks/use-teams';
+import { useI18n } from '../../../../lib/i18n';
 
 /** HQ agents (CEO/Coach) shown as virtual members, linking to their HQ pages. */
 function GlobalAgentsBox({ projectId }: { projectId: string }) {
@@ -43,11 +45,13 @@ function GlobalAgentsBox({ projectId }: { projectId: string }) {
 }
 
 function TeamPage() {
+	const { t } = useI18n();
 	const { projectId } = Route.useParams();
 	const { data: orgChart, isLoading } = useOrgChart(projectId);
 	const { data: team } = useTeam(projectId);
 
-	if (isLoading) return <div className="text-text-2 text-[13px] py-8 text-center">Loading...</div>;
+	if (isLoading)
+		return <div className="text-text-2 text-[13px] py-8 text-center">{t('common.loading')}</div>;
 
 	const roots = orgChart?.admin.children ?? [];
 	const hasMembers = roots.length > 0;
@@ -55,12 +59,13 @@ function TeamPage() {
 	return (
 		<div className="grid grid-cols-1 lg:grid-cols-[1fr_240px] lg:gap-6">
 			<div className="min-w-0">
-				<div className="flex items-center justify-end mb-4">
+				<div className="flex items-center justify-end gap-2 mb-4">
 					<Link to="/projects/$projectId/agents/hire" params={{ projectId }}>
 						<Button>
 							<UserPlus className="w-4 h-4" /> Hire agent
 						</Button>
 					</Link>
+					<ExportTeamButton projectId={projectId} />
 				</div>
 
 				<div

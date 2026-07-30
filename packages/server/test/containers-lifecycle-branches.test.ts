@@ -710,7 +710,8 @@ describe('memory-limit enforcement edge cases', () => {
 		);
 		expect(row.rows[0].container_status).toBe('error');
 		expect(row.rows[0].container_error).toContain('20.00 GiB');
-		expect(row.rows[0].container_error).toContain('16 GiB');
+		// No per-project override → the instance-wide default cap (2 GB) applies.
+		expect(row.rows[0].container_error).toContain('2 GiB');
 		expect(transitions).toEqual([
 			expect.objectContaining({ projectId, oldStatus: 'running', newStatus: 'error' }),
 		]);

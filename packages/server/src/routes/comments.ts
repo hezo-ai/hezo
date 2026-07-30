@@ -5,7 +5,7 @@ import type { MasterKeyManager } from '../crypto/master-key';
 import { signAssetUrl } from '../lib/asset-urls';
 import { broadcastChange, broadcastCommentFamilyChange } from '../lib/broadcast';
 import { validateCredentialValue } from '../lib/credential-validator';
-import { AGENT_ICON_URL, signVersionedIconUrl, USER_ICON_URL } from '../lib/entity-icon-urls';
+import { signAuthorIconUrl } from '../lib/entity-icon-urls';
 import {
 	apiKeyIdFromAuth,
 	resolveActor,
@@ -18,6 +18,7 @@ import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { fireCommentWakeups } from '../services/comment-wakeups';
 import { parseEffortFromCommentBody } from '../services/effort';
+import { invalidateSecretsVault } from '../services/egress';
 import {
 	addCommentReaction,
 	loadReactionsForTask,
@@ -47,27 +48,12 @@ async function attachAuthorIcons(
 	rows: Record<string, unknown>[],
 ): Promise<void> {
 	for (const row of rows) {
-		let url: string | null = null;
-		try {
-			if (row.author_user_id) {
-				url = await signVersionedIconUrl(
-					USER_ICON_URL,
-					row.author_user_id as string,
-					row.author_user_icon_updated_at,
-					masterKeyManager,
-				);
-			} else if (row.author_member_id) {
-				url = await signVersionedIconUrl(
-					AGENT_ICON_URL,
-					row.author_member_id as string,
-					row.author_agent_icon_updated_at,
-					masterKeyManager,
-				);
-			}
-		} catch {
-			url = null;
-		}
-		row.author_icon_url = url;
+		row.author_icon_url = await signAuthorIconUrl(masterKeyManager, {
+			userId: row.author_user_id,
+			memberId: row.author_member_id,
+			userIconUpdatedAt: row.author_user_icon_updated_at,
+			agentIconUpdatedAt: row.author_agent_icon_updated_at,
+		});
 		delete row.author_user_id;
 		delete row.author_user_icon_updated_at;
 		delete row.author_agent_icon_updated_at;
@@ -119,15 +105,22 @@ async function getCommentsFull(
             ic.author_member_id,
             ic.author_api_key_id,
             ic.author_user_id,
-            (SELECT ui.updated_at FROM user_icons ui WHERE ui.user_id = ic.author_user_id) AS author_user_icon_updated_at,
-            (SELECT ai.updated_at FROM agent_icons ai WHERE ai.member_id = ic.author_member_id) AS author_agent_icon_updated_at,
+            ui.updated_at AS author_user_icon_updated_at,
+            ai.updated_at AS author_agent_icon_updated_at,
             ic.parent_comment_id
      FROM task_comments ic
      LEFT JOIN members m ON m.id = ic.author_member_id
      LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
      LEFT JOIN api_keys ca ON ca.id = ic.author_api_key_id
+     LEFT JOIN user_icons ui ON ui.user_id = ic.author_user_id
+     LEFT JOIN agent_icons ai ON ai.member_id = ic.author_member_id
      WHERE ic.task_id = $1
-     ORDER BY ic.created_at ASC`,
+     -- id breaks ties deterministically: comments created in the same instant
+     -- (a seeded thread, a burst of system comments) otherwise come back in
+     -- whatever order the plan happens to produce, so the thread can reorder
+     -- between two identical requests and a deep link lands on the wrong row.
+     -- The (task_id, created_at) index still serves the sort.
+     ORDER BY ic.created_at ASC, ic.id ASC`,
 		[taskId],
 	);
 
@@ -171,18 +164,32 @@ async function getCommentSkeletons(
             ic.author_member_id,
             ic.author_api_key_id,
             ic.author_user_id,
-            (SELECT ui.updated_at FROM user_icons ui WHERE ui.user_id = ic.author_user_id) AS author_user_icon_updated_at,
-            (SELECT ai.updated_at FROM agent_icons ai WHERE ai.member_id = ic.author_member_id) AS author_agent_icon_updated_at,
+            ui.updated_at AS author_user_icon_updated_at,
+            ai.updated_at AS author_agent_icon_updated_at,
             ic.parent_comment_id,
             CASE WHEN ic.content_type = 'text'
                  THEN COALESCE(length(ic.content->>'text'), 0) ELSE NULL END AS text_length,
-            (SELECT count(*)::int FROM comment_attachments cat WHERE cat.comment_id = ic.id) AS attachment_count
+            COALESCE(att.n, 0) AS attachment_count
      FROM task_comments ic
      LEFT JOIN members m ON m.id = ic.author_member_id
      LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
      LEFT JOIN api_keys ca ON ca.id = ic.author_api_key_id
+     LEFT JOIN user_icons ui ON ui.user_id = ic.author_user_id
+     LEFT JOIN agent_icons ai ON ai.member_id = ic.author_member_id
+     LEFT JOIN (
+       SELECT cat.comment_id, count(*)::int AS n
+       FROM comment_attachments cat
+       JOIN task_comments tc ON tc.id = cat.comment_id
+       WHERE tc.task_id = $1
+       GROUP BY cat.comment_id
+     ) att ON att.comment_id = ic.id
      WHERE ic.task_id = $1
-     ORDER BY ic.created_at ASC`,
+     -- id breaks ties deterministically: comments created in the same instant
+     -- (a seeded thread, a burst of system comments) otherwise come back in
+     -- whatever order the plan happens to produce, so the thread can reorder
+     -- between two identical requests and a deep link lands on the wrong row.
+     -- The (task_id, created_at) index still serves the sort.
+     ORDER BY ic.created_at ASC, ic.id ASC`,
 		[taskId],
 	);
 
@@ -603,6 +610,7 @@ commentsRoutes.post(
 				[name, encryptedValue, category, allowedHosts, allowBodySubstitution],
 			);
 			const secretId = upsert.rows[0].id;
+			invalidateSecretsVault();
 
 			const updated = await db.query(
 				`UPDATE task_comments

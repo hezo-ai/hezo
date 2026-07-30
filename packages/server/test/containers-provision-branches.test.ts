@@ -392,23 +392,24 @@ describe('provisionContainer', () => {
 		expect(hc.Init).toBe(true);
 		expect(hc.CapDrop).toEqual(['ALL']);
 		expect(hc.PidsLimit).toBe(4096);
-		// Hard cap = project ceiling (default 16 GiB) + 512 MiB headroom, no swap
-		// escape valve — the stats poller stops the container at the ceiling
-		// itself; the cgroup is the between-ticks backstop.
-		const expectedCap = 16 * 1024 ** 3 + 512 * 1024 ** 2;
+		// Hard cap = the instance-wide ram cap (default 2 GB, no per-project
+		// override set) + 512 MiB headroom, no swap escape valve — the stats
+		// poller stops the container at the ceiling itself; the cgroup is the
+		// between-ticks backstop.
+		const expectedCap = 2 * 1024 ** 3 + 512 * 1024 ** 2;
 		expect(hc.Memory).toBe(expectedCap);
 		expect(hc.MemorySwap).toBe(expectedCap);
 	});
 
 	it('derives the cgroup cap from a project-specific memory_limit_gib', async () => {
 		await resetContainerRow();
-		await db.query('UPDATE projects SET memory_limit_gib = 2 WHERE id = $1', [projectId]);
+		await db.query('UPDATE projects SET memory_limit_gib = 8 WHERE id = $1', [projectId]);
 		try {
 			const { docker, created } = recordingDocker();
 
 			await provisionContainer(baseDeps(docker), await projectRow(), teamSlug);
 
-			const expectedCap = 2 * 1024 ** 3 + 512 * 1024 ** 2;
+			const expectedCap = 8 * 1024 ** 3 + 512 * 1024 ** 2;
 			expect(created[0].config.HostConfig.Memory).toBe(expectedCap);
 			expect(created[0].config.HostConfig.MemorySwap).toBe(expectedCap);
 		} finally {

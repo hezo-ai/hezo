@@ -55,7 +55,7 @@ import { LocalAssetStore } from '../assets/drivers/local';
 import type { AssetStore } from '../assets/store';
 import type { MasterKeyManager } from '../crypto/master-key';
 import type { Db } from '../db/database';
-import { runLogLengthSql, runLogTextSql } from '../db/run-log-chunks';
+import { readRunLogTail, runLogLengthSql } from '../db/run-log-chunks';
 import type { DomainEventBus } from '../events/bus';
 import { assertNoActiveRun } from '../lib/active-run';
 import { isHqInstanceAgent, isVirtualHqMemberInTeam } from '../lib/agent-roles';
@@ -97,6 +97,7 @@ import {
 	assertChildrenAllClosed,
 	assertNoOutstandingActivity,
 	assertNoUnansweredAdminMentions,
+	resolveParentAssignment,
 } from '../lib/task-relationships';
 import type { AuthInfo } from '../lib/types';
 import { logger } from '../logger';
@@ -145,7 +146,7 @@ import {
 	prepareHireProposal,
 } from '../services/hire-proposal';
 import { insertHireProposalComment } from '../services/hire-proposal-comment';
-import { getMarketplaceTeam } from '../services/marketplace';
+import { getMarketplaceCatalog, getMarketplaceTeam } from '../services/marketplace';
 import { createProjectWithTeam } from '../services/project-create';
 import { sanitizeWidgetOrder } from '../services/project-dashboard';
 import { completeProjectIntakeAfterProvisioning } from '../services/project-intake';
@@ -157,8 +158,13 @@ import {
 } from '../services/reactions';
 import { listReviewComments } from '../services/review-comments';
 import { recordSkillRevisionIfChanged } from '../services/skill-revisions';
-import { triggerStatusAutomations } from '../services/task-automation';
-import { recordTaskLinks } from '../services/task-events';
+import { triggerStatusAutomations, wakeTaskIfChildrenClosed } from '../services/task-automation';
+import {
+	recordDescriptionChange,
+	recordParentChange,
+	recordTaskLinks,
+	recordTitleChange,
+} from '../services/task-events';
 import {
 	type CreateTaskCaller,
 	CreateTaskError,
@@ -167,7 +173,10 @@ import {
 	createTaskBatch,
 	TASK_COLUMNS_BARE,
 } from '../services/tasks';
-import { applyMarketplaceTeamToTeam } from '../services/team-template-apply';
+import {
+	applyMarketplaceRoleToTeam,
+	applyMarketplaceTeamToTeam,
+} from '../services/team-template-apply';
 import { resolveSystemPrompt } from '../services/template-resolver';
 import { createWakeup } from '../services/wakeup';
 import type { WebSocketManager } from '../services/ws';
@@ -244,6 +253,8 @@ const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'update_project_progress',
 	'update_project_custom_prompt',
 	'update_dashboard_widget_order',
+	'apply_marketplace_team',
+	'apply_marketplace_agent',
 ]);
 
 /** A handler result that signals failure rather than a persisted write. */
@@ -296,11 +307,12 @@ async function buildPassiveMentionWarning(
 	const named = offenders.map((s) => `@@${s}`).join(', ');
 	const fixes = offenders.map((s) => `@${s}`).join(', ');
 	return (
-		`You addressed ${named} with the passive form (@@) but the text reads like an ask - ` +
-		`that renders as a link and notifies no one, so no wakeup or admin-inbox alert was ` +
-		`created. If you need them to act on this ticket, edit this comment or post a follow-up ` +
-		`with an active mention (${fixes}); if you only meant to refer to them, leave the ` +
-		`passive form as-is.`
+		`You addressed ${named} with the passive form (@@) - that renders as a link and ` +
+		`notifies no one, so no wakeup or admin-inbox alert was created. If you need them to ` +
+		`act on this ticket, edit this comment or post a follow-up with an active mention ` +
+		`(${fixes}). If you only meant to refer to them, keep the passive form but move the ` +
+		`reference inside the sentence: a line that opens with a teammate reference and a ` +
+		`dash is an address, and the address form is reserved for active mentions.`
 	);
 }
 
@@ -557,10 +569,13 @@ const SKILL_COLUMNS = `id, name, slug, description, content, source_url,
 const APPROVAL_COLUMNS = `id, team_id, type, status, requested_by_member_id,
 	resolution_note, resolved_at, created_at, payload`;
 
-// Cap MCP tool result payloads at 24 000 bytes — comfortably under the
-// Claude Code harness's ~25k-token tool-result limit. Oversized results would
-// otherwise be persisted to disk by the harness and become unreadable for the
-// agent (the persisted file itself trips the same cap).
+// Cap MCP tool result payloads at 64 000 bytes, comfortably under a typical agent
+// runtime's tool-result limit (e.g. the Claude Code harness's ~25k-token ceiling).
+// An oversized result is discarded whole and replaced with a `result_too_large`
+// error, because a runtime that instead persists a large result to disk would make
+// it unreadable anyway (the persisted file trips the same cap). A few single-
+// resource readers raise this via MCP_RESULT_BYTE_LIMIT_OVERRIDES; read_project_doc
+// keeps this cap and pages a large doc into byte windows rather than tripping it.
 export const MCP_RESULT_BYTE_LIMIT = 64_000;
 
 // A few inspection tools return a single, inherently large resource rather than
@@ -572,6 +587,12 @@ export const MCP_RESULT_BYTE_LIMIT = 64_000;
 export const MCP_RESULT_BYTE_LIMIT_OVERRIDES: Readonly<Record<string, number>> = {
 	get_agent_system_prompts: 131_072,
 };
+
+// Headroom reserved for the JSON result envelope (field names, pretty-print
+// indentation, string-escaping inflation of newlines/quotes/backslashes, and any
+// review_comments) when read_project_doc sizes a content window under its effective
+// result cap, so the serialized window stays under the byte guard.
+const DOC_READ_ENVELOPE_RESERVE = 4_096;
 
 // Inline-image cap for read_project_asset. A raster asset at or under this many
 // bytes is returned as an actual MCP image content block (base64) so a
@@ -613,6 +634,20 @@ export function excerpt(text: string | null | undefined, maxChars: number): Exce
 	const lastSpace = slice.lastIndexOf(' ');
 	const cut = lastSpace > maxChars * 0.5 ? slice.slice(0, lastSpace) : slice;
 	return { excerpt: cut, truncated: true, length };
+}
+
+/**
+ * Largest index <= `end` that does not fall inside a multi-byte UTF-8 codepoint,
+ * so a Buffer slice taken at this index never splits a character. UTF-8
+ * continuation bytes match 0b10xxxxxx; back off them onto the preceding lead byte.
+ * Used to window read_project_doc content on codepoint boundaries: applied to the
+ * window start (slice includes it, keeping the whole leading codepoint) and to the
+ * window end (slice excludes it, dropping a partial trailing codepoint).
+ */
+function utf8FloorBoundary(buf: Buffer, end: number): number {
+	let e = Math.max(0, Math.min(end, buf.length));
+	while (e > 0 && e < buf.length && (buf[e] & 0xc0) === 0x80) e--;
+	return e;
 }
 
 /**
@@ -1532,7 +1567,7 @@ export function registerTools(
 	tool(
 		server,
 		'update_task',
-		'Update an task. Agents can use this to change status, update progress, set rules, and record branch names. To finish a ticket, set status to `done` - that is the final completed state and wakes Coach to review the ticket for prompt-learning (the task stays `done`). Use `cancelled` for abandoned work. Setting `done` is rejected for agent callers while the task has an @admin question no human has answered yet - keep the task `in_progress` or move it to `review` until the admin replies. Re-opening a completed task (`done`/`cancelled`) is admin-only. As an agent caller, reassigning is limited to yourself or your direct subordinates; to hand work to a peer or manager use create_comment with @<agent-slug> instead. In description, progress_summary, and rules, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.',
+		'Update an task. Agents can use this to change status, update progress, set rules, and record branch names. To finish a ticket, set status to `done` - that is the final completed state and wakes Coach to review the ticket for prompt-learning (the task stays `done`). Use `cancelled` for abandoned work. Setting `done` is rejected for agent callers while the task has an @admin question no human has answered yet - keep the task `in_progress` or move it to `review` until the admin replies. Re-opening a completed task (`done`/`cancelled`) is admin-only. As an agent caller, reassigning is limited to yourself or your direct subordinates; to hand work to a peer or manager use create_comment with @<agent-slug> instead. Set `parent_task_id` to move this task under a different parent, or to an empty string to promote it to a top-level task; prefer that over cancelling a mis-filed sub-task and re-filing it as a new top-level task. In description, progress_summary, and rules, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.',
 		{
 			project: projectArg(),
 			task_id: z.string().describe('Task identifier or UUID'),
@@ -1563,16 +1598,29 @@ export function registerTools(
 				.describe(
 					'Override the AI runtime for this task (claude_code, codex, gemini). Pass an empty string to clear.',
 				),
+			parent_task_id: z
+				.string()
+				.nullable()
+				.optional()
+				.describe(
+					'Move this task under a different parent - a task identifier (e.g. "BE-2") or UUID. Pass an empty string or null to promote it to a top-level task. Omit to leave the parent unchanged. The parent must be in the same project, cannot be the task itself or one of its own sub-tasks, and the whole sub-tree being moved must still fit within the depth cap of 2. An open task cannot be nested under a parent that is already done or cancelled.',
+				),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveTaskScope(db, auth, args);
 			if ('error' in scope) return scope;
-			const { teamId, taskId } = scope;
+			const { teamId, taskId, projectId } = scope;
 
 			const currentRowResult = await db.query<{
+				title: string;
+				description: string | null;
 				status: string;
 				assignee_id: string | null;
-			}>('SELECT status, assignee_id FROM tasks WHERE id = $1', [taskId]);
+				parent_task_id: string | null;
+			}>(
+				'SELECT title, description, status, assignee_id, parent_task_id FROM tasks WHERE id = $1',
+				[taskId],
+			);
 			const currentRow = currentRowResult.rows[0];
 
 			const scopeDenied = assertRunTaskScope(auth, taskId, args.status as string | undefined);
@@ -1580,6 +1628,11 @@ export function registerTools(
 
 			const currentStatus = currentRow?.status;
 			const previousAssigneeId = currentRow?.assignee_id ?? null;
+
+			// Normalize the title the way the REST route does (`tasks.ts`), so both
+			// surfaces store the same value and the rename recorder treats the same
+			// whitespace-only edits as no-ops.
+			if (typeof args.title === 'string') args.title = args.title.trim();
 
 			// Accept a teammate slug (what an agent holds) or a member UUID; every
 			// downstream check + the UPDATE below consumes the resolved member id.
@@ -1635,6 +1688,40 @@ export function registerTools(
 				}
 			}
 
+			// Placed after the status guards (matching the REST handler) so a combined
+			// {status, parent_task_id} call reports the status problem first.
+			//
+			// The generic SQL builder below writes whatever sits on `args`, so an
+			// identifier like "BE-2" would reach the uuid column unresolved and come
+			// back as "invalid input syntax for type uuid". Normalize in place here,
+			// mirroring the assignee resolution above. A surviving null is exactly
+			// the promote-to-top-level semantics the builder should emit; deleting
+			// the key on a no-op is what keeps an unchanged row from being rewritten.
+			const oldParentTaskId = currentRow?.parent_task_id ?? null;
+			let parentChangedTo: string | null = null;
+			let parentChanged = false;
+			if (args.parent_task_id !== undefined) {
+				const assignment = await resolveParentAssignment(
+					db,
+					teamId,
+					{
+						taskId,
+						projectId,
+						currentParentTaskId: oldParentTaskId,
+						status: currentRow?.status ?? '',
+					},
+					args.parent_task_id as string | null,
+				);
+				if (!assignment.ok) return { error: assignment.message };
+				if (assignment.changed) {
+					args.parent_task_id = assignment.parentTaskId;
+					parentChangedTo = assignment.parentTaskId;
+					parentChanged = true;
+				} else {
+					delete args.parent_task_id;
+				}
+			}
+
 			const sets: string[] = [];
 			const params: unknown[] = [];
 			let idx = 1;
@@ -1676,7 +1763,45 @@ export function registerTools(
 			const actorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 			const actorApiKeyId = apiKeyIdFromAuth(auth);
 
+			// Renames and description edits are recorded on this surface too, so an
+			// agent's edit leaves the same thread entry a human's does. Awaited for the
+			// same reason as the parent change below: a human watching the task page
+			// depends on the broadcast that lands with the comment.
+			if (args.title !== undefined && currentRow) {
+				try {
+					await recordTitleChange(
+						db,
+						teamId,
+						taskId,
+						currentRow.title,
+						args.title as string,
+						actorMemberId,
+						actorApiKeyId,
+						wsManager,
+					);
+				} catch (e) {
+					log.error('Failed to record title change:', e);
+				}
+			}
+
 			if (args.description !== undefined) {
+				if (currentRow) {
+					try {
+						await recordDescriptionChange(
+							db,
+							teamId,
+							taskId,
+							currentRow.description,
+							args.description as string,
+							actorMemberId,
+							actorApiKeyId,
+							wsManager,
+						);
+					} catch (e) {
+						log.error('Failed to record description change:', e);
+					}
+				}
+
 				trackBackground(
 					recordTaskLinks(
 						db,
@@ -1688,6 +1813,35 @@ export function registerTools(
 						wsManager,
 					).catch((e) => log.error('Failed to record task links from description:', e)),
 				);
+			}
+
+			if (parentChanged) {
+				// Awaited: a human watching the task page depends on the broadcast that
+				// lands with this comment.
+				try {
+					await recordParentChange(
+						db,
+						teamId,
+						taskId,
+						oldParentTaskId,
+						parentChangedTo,
+						actorMemberId,
+						actorApiKeyId,
+						wsManager,
+					);
+				} catch (e) {
+					log.error('Failed to record parent change:', e);
+				}
+				// Moving a task out clears the former parent's child-closure gate just
+				// as closing it would. The new parent gets nothing: gaining a child can
+				// only add an open child, never clear a gate.
+				if (oldParentTaskId) {
+					trackBackground(
+						wakeTaskIfChildrenClosed(db, teamId, oldParentTaskId).catch((e) =>
+							log.error('Failed to wake former parent after re-parent:', e),
+						),
+					);
+				}
 			}
 
 			if (args.status && currentStatus) {
@@ -2273,8 +2427,31 @@ export function registerTools(
 
 	tool(
 		server,
+		'list_marketplace_teams',
+		'Browse the team marketplace: every ready-made team available to this instance, with its name, description, summary, role count, and version. Callable by the CEO or a team Captain. Use it before staffing a team - the marketplace carries proven, fully-written roles, so check whether one already covers the role you need (then pull its prompt with get_marketplace_team) instead of authoring a system prompt from scratch. You can take a whole roster (apply_marketplace_team) or lift out a single role (apply_marketplace_agent).',
+		{},
+		async () => {
+			const catalog = await getMarketplaceCatalog();
+			// `keywords` is search vocabulary for the New Project picker - long, and
+			// noise in an agent's context. Deliberately omitted.
+			return {
+				teams: catalog.map((t) => ({
+					slug: t.slug,
+					name: t.name,
+					description: t.description,
+					summary: t.summary,
+					version: t.version,
+					roster_count: t.roster_count,
+				})),
+			};
+		},
+		db,
+	);
+
+	tool(
+		server,
 		'get_marketplace_team',
-		"Fetch one marketplace team's full definition: its version, changelog, and every role's title, reporting line, and CURRENT system prompt (including the Captain override). CEO-only. Use this when adding/updating a team so you can compare the marketplace's prompts to the agents you already have and decide what to refresh.",
+		"Fetch one marketplace team's full definition: its version, changelog, and every role's title, reporting line, and CURRENT system prompt (including the Captain override). Callable by the CEO or a team Captain. Use it when adding/updating a team, to compare the marketplace's prompts to the agents you already have and decide what to refresh; and when hiring, to start a role from a proven marketplace prompt instead of writing one from scratch - find candidate teams with list_marketplace_teams first.",
 		{
 			slug: z.string().describe('The marketplace team slug (e.g. "software-development").'),
 		},
@@ -2346,6 +2523,59 @@ export function registerTools(
 				refreshed: result.updated_slugs ?? [],
 				skipped: result.skipped_slugs,
 				captain_updated: result.builtin_updated_slugs.length > 0,
+				version: teamDef.version,
+			};
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'apply_marketplace_agent',
+		"Add ONE role from a marketplace team to a project's team. CEO-only. Use this when the admin wants a single role (e.g. just the security engineer) rather than a whole roster - it provisions that one member directly, a direct add rather than an approval-gated hire proposal, and leaves the rest of the roster, including the Captain, untouched. The team already having that slug is a no-op (skipped). The role's prompt was written for its home team, so AFTER this returns you MUST fit it to this project: rewrite its system prompt and team context (update_agent_system_prompt, set_agent_team_context) so every teammate and hand-off they name is an agent that actually exists here, set a real manager with set_agent_reports_to, and update the existing agents whose work now flows through it. When the role's own manager is not on this team the reporting line is wired to the Captain as a placeholder and reports_to_fell_back comes back true - re-point it. Returns whether the role was added or skipped, plus the reporting line applied.",
+		{
+			project: projectArg(),
+			slug: z
+				.string()
+				.describe('The marketplace team slug the role comes from (e.g. "software-development").'),
+			role: z
+				.string()
+				.describe(
+					'The roster role slug to add (e.g. "security-engineer"), as listed by get_marketplace_team. The Captain is not a roster role and cannot be added this way.',
+				),
+		},
+		async (args, db, auth) => {
+			// CEO-only: this is the tool the add-marketplace-agent CEO task calls.
+			if (auth.type === AuthType.Agent) {
+				const caller = await db.query<{ slug: string }>(
+					'SELECT slug FROM member_agents WHERE id = $1',
+					[auth.memberId],
+				);
+				if (caller.rows[0]?.slug !== CEO_AGENT_SLUG) {
+					return { error: 'Only the CEO can add a marketplace role' };
+				}
+			}
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+
+			const slug = String(args.slug ?? '').trim();
+			if (!slug) return { error: '`slug` is required' };
+			const roleSlug = String(args.role ?? '').trim();
+			if (!roleSlug) return { error: '`role` is required' };
+
+			const teamDef = await getMarketplaceTeam(slug);
+			if (!teamDef) return { error: `Marketplace team "${slug}" not found` };
+
+			const result = await applyMarketplaceRoleToTeam(db, scope.teamId, teamDef, roleSlug, {
+				wsManager,
+			});
+			if ('error' in result) return result;
+			return {
+				role: roleSlug,
+				added: result.added,
+				skipped: result.skipped,
+				reports_to: result.reports_to_slug,
+				reports_to_fell_back: result.reports_to_fell_back,
 				version: teamDef.version,
 			};
 		},
@@ -2548,26 +2778,25 @@ export function registerTools(
 				status: string;
 				exit_code: number | null;
 				task_id: string | null;
-				log_text: string;
 			}>(
-				`SELECT id, status, exit_code, task_id,
-				        ${runLogTextSql('heartbeat_runs.id')} AS log_text
+				`SELECT id, status, exit_code, task_id
 				 FROM heartbeat_runs WHERE id = $1 AND team_id = $2`,
 				[runId, scope.teamId],
 			);
 			if (r.rows.length === 0) return { error: `Run not found in this project: ${runId}` };
 			const run = r.rows[0];
-			const full = run.log_text ?? '';
 			const max = (args.excerpt_chars as number | undefined) ?? 12_000;
-			const truncated = full.length > max;
+			// Read the tail from storage rather than aggregating the whole log and
+			// slicing it here: a run's log reaches 10 MB and this returns ~12 KB.
+			const tail = await readRunLogTail(db, run.id, max);
 			return {
 				id: run.id,
 				status: run.status,
 				exit_code: run.exit_code,
 				task_id: run.task_id,
-				log: truncated ? full.slice(full.length - max) : full,
-				length: full.length,
-				truncated,
+				log: tail.text,
+				length: tail.length,
+				truncated: tail.truncated,
 			};
 		},
 		db,
@@ -4961,11 +5190,27 @@ export function registerTools(
 	tool(
 		server,
 		'read_project_doc',
-		"Read a markdown project doc by filename (e.g. \"spec.md\") - the high-level project context (PRDs, specs, architecture decisions, research) that list_project_docs returns; the full body comes back inline as `content`. These docs live in the project-doc store in the database, NOT on the filesystem: there is no /workspace/.hezo/project-docs path, so do not reach for the Read/cat file tools - always load a doc through this tool by its bare filename. Archived docs are not readable by default - set filter: 'archived' or 'all' to read one. When the admin has left review feedback on the doc, the result includes `review_comments` - each anchors a `comment` to a `quote` (an exact text snippet; `occurrence` disambiguates repeated snippets). Action them when asked to. IMPORTANT: any write to the doc deletes ALL of its review comments, so capture every comment from this result BEFORE your first write_project_doc call - after one write they are gone. For non-markdown assets (mockups, wireframes, diagrams) use read_project_asset instead.",
+		"Read a markdown project doc by filename (e.g. \"spec.md\") - the high-level project context (PRDs, specs, architecture decisions, research) that list_project_docs returns; the full body comes back inline as `content`. These docs live in the project-doc store in the database, NOT on the filesystem: there is no /workspace/.hezo/project-docs path, so do not reach for the Read/cat file tools - always load a doc through this tool by its bare filename. Archived docs are not readable by default - set filter: 'archived' or 'all' to read one. When the admin has left review feedback on the doc, the result includes `review_comments` - each anchors a `comment` to a `quote` (an exact text snippet; `occurrence` disambiguates repeated snippets). Action them when asked to. IMPORTANT: any write to the doc deletes ALL of its review comments, so capture every comment from this result BEFORE your first write_project_doc call - after one write they are gone. For non-markdown assets (mockups, wireframes, diagrams) use read_project_asset instead. Large docs come back one byte-window at a time: when `truncated` is true, call again with `offset` set to the returned `next_offset` and keep going until `next_offset` is null.",
 		{
 			project: projectArg(),
 			filename: z.string().describe('Filename to read (e.g. "spec.md")'),
 			filter: archiveFilterArg(),
+			offset: z
+				.number()
+				.int()
+				.min(0)
+				.optional()
+				.describe(
+					'Byte offset to start reading from (default 0). To page through a doc too large for one read, pass back the `next_offset` from the previous call. Snapped down to a UTF-8 character boundary so a window never begins mid-character.',
+				),
+			max_bytes: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe(
+					'Max bytes of content to return in this window (default and ceiling is the read budget, so a normal-size doc comes back whole). Clamped to the budget; the returned slice ends on a UTF-8 character boundary, so it can come back a few bytes short.',
+				),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -4992,26 +5237,73 @@ export function registerTools(
 				documentId: doc.id,
 			});
 			const descriptionField = doc.description ? { description: doc.description } : {};
-			if (reviewComments.length === 0)
+			const reviewCommentsField =
+				reviewComments.length > 0
+					? {
+							review_comments: reviewComments.map((r) => ({
+								id: r.id,
+								quote: r.quote,
+								occurrence: r.occurrence,
+								comment: r.comment,
+								created_at: r.created_at,
+							})),
+						}
+					: {};
+
+			// Window the body so the serialized result stays under this tool's cap,
+			// letting an agent page an arbitrarily large doc via offset/next_offset
+			// instead of tripping the generic result_too_large guard. Byte units keep
+			// next_offset exact; utf8FloorBoundary keeps every window on a codepoint
+			// boundary (the cap is bytes, but String.slice cuts UTF-16 units).
+			const effectiveLimit =
+				MCP_RESULT_BYTE_LIMIT_OVERRIDES.read_project_doc ?? MCP_RESULT_BYTE_LIMIT;
+			const buf = Buffer.from(doc.content, 'utf8');
+			const total = buf.length;
+			const start = utf8FloorBoundary(
+				buf,
+				Math.max(0, Math.min((args.offset as number | undefined) ?? 0, total)),
+			);
+			const requested = (args.max_bytes as number | undefined) ?? effectiveLimit;
+			let budget = Math.min(requested, effectiveLimit - DOC_READ_ENVELOPE_RESERVE);
+			let end = utf8FloorBoundary(buf, start + budget);
+
+			const build = (e: number) => {
+				const nextOffset = e < total ? e : null;
 				return {
 					filename: doc.slug,
 					...descriptionField,
-					content: doc.content,
+					content: buf.subarray(start, e).toString('utf8'),
+					offset: start,
+					returned_bytes: e - start,
+					total_bytes: total,
+					next_offset: nextOffset,
+					truncated: start > 0 || e < total,
+					...(nextOffset !== null
+						? {
+								paging_hint: `Doc is larger than one read. Returned bytes ${start}-${e} of ${total}. Call read_project_doc again with offset: ${e}; repeat until next_offset is null.`,
+							}
+						: {}),
 					...archivedField,
+					...reviewCommentsField,
 				};
-			return {
-				filename: doc.slug,
-				...descriptionField,
-				content: doc.content,
-				...archivedField,
-				review_comments: reviewComments.map((r) => ({
-					id: r.id,
-					quote: r.quote,
-					occurrence: r.occurrence,
-					comment: r.comment,
-					created_at: r.created_at,
-				})),
 			};
+
+			let result = build(end);
+			// A byte-accurate content window can still serialize larger than its byte
+			// count (JSON escaping inflates newlines/quotes, and review_comments add
+			// bytes). Measure with the same serialization the wrapper guard uses and
+			// trim the window until it fits. Terminates because the budget strictly
+			// shrinks; if the metadata alone (huge review_comments) exceeds the cap,
+			// content trims to empty and the generic guard reports result_too_large.
+			while (
+				end > start &&
+				Buffer.byteLength(JSON.stringify(result, null, 2), 'utf8') > effectiveLimit
+			) {
+				budget = Math.max(0, Math.floor(budget * 0.9) - 1);
+				end = utf8FloorBoundary(buf, start + budget);
+				result = build(end);
+			}
+			return result;
 		},
 		db,
 	);
@@ -5019,7 +5311,7 @@ export function registerTools(
 	tool(
 		server,
 		'write_project_doc',
-		"Write a project documentation file. Project docs are markdown only - the filename must end in .md. For high-level project context: PRD, spec, implementation plan, research. Make ALL desired edits in ONE consolidated write per run, for two reasons: (1) writing a doc deletes ALL of its pending review comments (the admin's highlight feedback returned by read_project_doc) - a single write clears the whole review, so capture every comment in your context before the first write; (2) docs are revisioned - every content-changing write records a revision, so many partial writes bury the history in noise. Pass a `changelog` summarizing what changed in this write and why - it becomes that revision's entry in the document's history; keep update/changelog logs OUT of the document body and put them in `changelog` instead. Also pass a one-line `description` of what the doc is and when to read it - it shows next to the filename in the Documents list and the doc header so teammates and future runs can tell what the doc holds at a glance; keep it short and out of the body. Non-markdown files (mockups, wireframes, images, PDFs) live in the project assets library instead - reference those as `assets/<filename>`. In content, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.",
+		"Write a project documentation file. Project docs are markdown only - the filename must end in .md. For high-level project context: PRD, spec, implementation plan, research. Make ALL desired edits in ONE consolidated write per run, for two reasons: (1) writing a doc deletes ALL of its pending review comments (the admin's highlight feedback returned by read_project_doc) - a single write clears the whole review, so capture every comment in your context before the first write; (2) docs are revisioned - every content-changing write records a revision, so many partial writes bury the history in noise. Pass a `changelog` summarizing what changed in this write and why - it becomes that revision's entry in the document's history; keep update/changelog logs OUT of the document body and put them in `changelog` instead. Also pass a `description`: an overall summary of what the doc is and when to read it, in no more than one or two sentences, shown next to the filename in the Documents list and the doc header so teammates and future runs can tell what the doc is at a glance. Describe the doc's stable purpose, NOT its current contents: do not list its sections, findings, dates, counts, or latest revisions (those live in the body and the `changelog`), so the description stays steady across updates. Keep it short and out of the body. Non-markdown files (mockups, wireframes, images, PDFs) live in the project assets library instead - reference those as `assets/<filename>`. In content, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.",
 		{
 			project: projectArg(),
 			filename: z.string().describe('Markdown filename to write (e.g. "spec.md")'),
@@ -5028,7 +5320,7 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					'One-line summary of what this doc is and when to read it (e.g. "How we track and report campaign analytics each week"). Shown next to the filename in the Documents list and the doc header, so teammates and future runs can tell what the doc holds without opening it. Keep it to a sentence; it is NOT the changelog and NOT part of the body. Omit to leave any existing description unchanged.',
+					'An overall summary of what this doc is and when to read it, in no more than one or two sentences (e.g. "How we track and report campaign analytics each week"). Describe its stable purpose, not its current contents: do NOT list the sections, findings, dates, counts, or latest revisions here (those belong in the body and the `changelog`), so the description stays steady across updates. Shown next to the filename in the Documents list and the doc header so teammates and future runs can tell what the doc is without opening it. It is NOT the changelog and NOT part of the body. Omit to leave any existing description unchanged.',
 				),
 			changelog: z
 				.string()

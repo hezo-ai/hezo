@@ -82,6 +82,33 @@ describe('template resolver', () => {
 		expect(result).toContain('fixed done state');
 	});
 
+	it('tells every agent to file a repeating ask as a standing task, not a one-off it closes', async () => {
+		const result = await resolveSystemPrompt(db, 'Base prompt.', { teamId });
+		// Intake trigger: the agent must recognise a repeating ask when the work is
+		// handed to it, not just know abstractly that standing tasks exist.
+		expect(result).toContain('A repeating ask is a standing task');
+		// Name the failure being prevented — closing the task discards the recurrence
+		// irrecoverably, since `done` is terminal and only the admin can re-open it.
+		expect(result).toContain('the recurrence is not paused, it is gone');
+		// Each round is a child task that DOES close, under a parent that never does.
+		expect(result).toContain('One round per visit, filed as a child task that does close');
+		// The child is worked in its OWN run — assertRunTaskScope rejects flipping a
+		// different ticket to in_progress inside the standing task's run.
+		expect(result).toContain('Its **own** run then picks it up');
+		// A never-closing task nested under a parent would block that parent forever
+		// (assertChildrenAllClosed), so standing tasks stay top-level.
+		expect(result).toContain('Keep standing tasks **top-level**');
+		// The task carries its own cadence + last-round record, so the next visit
+		// (possibly a different agent) can tell whether this round already happened.
+		expect(result).toContain('A standing task carries its own schedule');
+		// The heartbeat fires far more often than most cadences: no-op rather than
+		// shipping a duplicate round early.
+		expect(result).toContain('Not due yet? Stop.');
+		// Ambiguous asks resolve by delivering first and asking alongside — the
+		// question must never withhold the deliverable.
+		expect(result).toContain('Deliver once, then ask');
+	});
+
 	it('appends the credential-handling guidance to every runtime prompt', async () => {
 		const result = await resolveSystemPrompt(db, 'Base prompt.', { teamId });
 		// The paste form is the only channel — never accept a plaintext secret in chat.
@@ -355,6 +382,51 @@ describe('template resolver', () => {
 		expect(result).toContain('Inspect before you write');
 	});
 
+	// A marketing-lead delegated the content rewrites to content-writer as a sub-task,
+	// then the admin posted further feedback on the parent ticket — and the lead did
+	// that work itself instead of forwarding it to the still-open sub-task, so two
+	// agents were producing one deliverable and the delegate kept working from a brief
+	// that had been silently superseded. The prompt previously covered only the initial
+	// delegation decision and the cancel-then-absorb variant.
+	it('routes post-delegation feedback to the delegate rather than letting the manager absorb it', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		expect(result).toContain(
+			'New instructions on work you have already delegated get routed to the delegate',
+		);
+		// Being the parent ticket's assignee is the exact rationalisation that produced
+		// the incident, so the rule names it and holds for as long as the child is open.
+		expect(result).toContain("Being the parent ticket's assignee does **not** make you");
+		expect(result).toContain('While that sub-task is non-terminal you do not write, edit');
+		// The routing mechanics: persist the change on the sub-task, then wake its owner.
+		// `update_task` alone creates no wake, which is why both halves are spelled out.
+		expect(result).toContain('update_task');
+		expect(result).toContain('`@<assignee>` comment');
+		expect(result).toContain('the active mention is the wake');
+		// A closed sub-task means fresh work for the same report — still not the
+		// manager's to execute — and taking work back is a cancellation, not a silent
+		// absorption.
+		expect(result).toContain('it is still not yours to execute');
+		expect(result).toContain('that is a **cancellation**');
+		// A multi-ask comment must not be split in the manager's favour: an ask touching
+		// the same material the delegate is producing routes with the rest.
+		expect(result).toContain(
+			'A comment carrying several asks does not license doing any of them yourself',
+		);
+		expect(result).toContain('it routes with the rest');
+		// The ownership question is re-asked on every later instruction, not just the
+		// first read of the ticket.
+		expect(result).toContain('The ownership question is re-asked on **every** later instruction');
+	});
+
+	it('carves the delegated case out of the "mention on your own ticket is your work" rule', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		// The "Assigned to you" branch tells an agent to do what the comment asks *in
+		// this run* — read literally, that is an instruction to execute feedback that
+		// belongs to an in-flight delegate. Landing it, not producing it, is the job.
+		expect(result).toContain('"do what it asks" means making sure it **lands**');
+		expect(result).toContain("duplicates your report's in-flight work");
+	});
+
 	it('tells every agent the run is headless and not to point the user at terminal/adapter commands', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		expect(result).toContain('### Your Run Is Headless');
@@ -424,6 +496,25 @@ describe('template resolver', () => {
 		// comment hygiene (no-redundant-comments + comment-formatting)
 		expect(result).toContain("Don't repost when nothing changed");
 		expect(result).toContain('Format as proper markdown');
+	});
+
+	it('tells every agent to check whether its work directly affects another open task', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		// General cross-task impact rule: before acting, judge whether this change would
+		// directly affect what another open task specifies — including when it overlaps or
+		// duplicates that task's deliverable, not just data dependencies or shared-surface
+		// collisions.
+		expect(result).toContain(
+			'Before you change anything, check whether it directly affects another open task',
+		);
+		expect(result).toContain("overlaps or duplicates that task's own deliverable");
+		// The affected task must not be left stale: the agent has discretion over how it
+		// proceeds, but must at minimum reconcile the other task (comment its owner /
+		// update_task) and/or ask the admin for a human decision.
+		expect(result).toContain('never leave that task stale');
+		expect(result).toContain('you have runtime discretion over');
+		expect(result).toContain('update the affected task');
+		expect(result).toContain('ask the admin');
 	});
 
 	it('scopes inline code to code tokens and forbids backticking linkable references', async () => {
@@ -529,6 +620,62 @@ describe('template resolver', () => {
 		// the exact bug shape: bold name + imperative reads as an address but pings nobody
 		expect(result).toContain('**devops-engineer**');
 		expect(result).toContain('emphasis is not a substitute for `@`');
+	});
+
+	it('mention discipline gives an active mention one canonical shape: `@<slug> - ` then the ask', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		// the shape rule itself: slug opens the line, hyphen, then the request
+		expect(result).toContain('Every active mention has one shape');
+		expect(result).toContain('A line starting with `@<slug> - ` is an active mention');
+		// the corollary that keeps the shape from swallowing plain references
+		expect(result).toContain('a teammate you are only naming does not get this shape at all');
+		// the worked example teaches the hyphen separator, not an em dash
+		expect(result).toContain('`@<slug> - please re-run the fixture and confirm it passes.`');
+	});
+
+	it('mention discipline requires multiple recipients to be mentioned one per line', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		// the antipattern: two slugs sharing one ask, so neither owns anything
+		expect(result).toContain('one `@<slug>` per line, one ask per line');
+		expect(result).toContain('`@<slug-a> @<slug-b> - please review`');
+		expect(result).toContain('both wait and neither moves, or both do the same work twice');
+		// the fenced worked example renders as real lines, not a literal \n
+		expect(result).toContain(
+			'\n  @<slug-a> - please re-check the totals in section 3 and correct them in place.\n',
+		);
+		// a teammate who owes nothing stays out of the block entirely
+		expect(result).toContain('A teammate who owes none does not get a line');
+	});
+
+	it('mention discipline forbids opening a line with a passive `@@<slug> - ` address', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		expect(result).toContain('Never open a line with `@@<slug> - `');
+		expect(result).toContain('The address shape is reserved for active mentions');
+		// the canonical miss, and why "it was only a status line" is not a defence
+		expect(result).toContain('`@@admin - release is done.`');
+		expect(result).toContain('asking the admin to register that fact');
+		// the escape hatch: a genuine reference goes inside a sentence, not at line head
+		expect(result).toContain('never at the head of its own line');
+		// a routing label in front of it is the same mistake
+		expect(result).toContain('`Next step: @@<slug> - …` is the identical mistake');
+		// and the detector backs the rule unconditionally
+		expect(result).toContain('warns on this shape every time, ask or no ask');
+	});
+
+	it('teaches the hyphen separator consistently across the mention examples', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		// The shape rule teaches `@<slug> - ask`, so no mention-address example in the
+		// section may still model an em dash — a contradicted example teaches the
+		// contradiction.
+		for (const example of [
+			'`**devops-engineer** - please update the PR`',
+			'`@<slug>` - please address the required actions above',
+			'`@@<slug> - verification confirms PASS',
+			'`@<slug-a> - signed off, the correction can be made in-line.`',
+			'`@@<slug-b> - strong work on the rewrite.',
+		]) {
+			expect(result).toContain(example);
+		}
 	});
 
 	it('mention discipline makes routing/triage handoffs an active @, not a passive reference', async () => {

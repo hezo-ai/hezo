@@ -915,9 +915,15 @@ describe('heartbeat runs', () => {
 		expect(res.status).toBe(200);
 		const runs = (await res.json()).data;
 		expect(runs).toHaveLength(2);
-		expect(runs[0].log_text).toBe('newer');
+		// Newest first, identified by log size rather than log content: the list
+		// carries `log_length` and never the log itself, since `per_page` reaches
+		// 200 and a run's log reaches 10 MB.
+		expect(runs[0].id).toBe(seeded.rows[1].id);
+		expect(runs[0].log_text).toBeUndefined();
+		expect(runs[0].log_length).toBe('newer'.length);
 		expect(runs[0].created_tasks).toEqual([]);
-		expect(runs[1].log_text).toBe('older');
+		expect(runs[1].id).toBe(seeded.rows[0].id);
+		expect(runs[1].log_length).toBe('older'.length);
 	});
 
 	it('fetches a single run, 404s for unknown agent/run', async () => {

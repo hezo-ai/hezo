@@ -32,6 +32,7 @@ import {
 } from '../../hooks/use-instance-connectors';
 import { useMe } from '../../hooks/use-me';
 import { useAllVisibleProjects } from '../../hooks/use-projects';
+import { useI18n } from '../../lib/i18n';
 
 // Scope sentinel: create against / re-scope to "all projects" (a global
 // connector, project_id null). Any other option value is a concrete project id.
@@ -273,6 +274,7 @@ function InstanceConnectorRow({
 	focused,
 	focusRef,
 }: InstanceConnectorRowProps) {
+	const { t } = useI18n();
 	const deleteConnector = useDeleteInstanceConnector();
 	const authStart = useInstanceAuthStart();
 	const updateScope = useUpdateInstanceConnectorScope();
@@ -376,7 +378,11 @@ function InstanceConnectorRow({
 							disabled={authStart.isPending}
 							data-testid="instance-connector-connect"
 						>
-							{authStart.isPending ? 'Starting…' : status === 'failed' ? 'Retry' : 'Connect'}
+							{authStart.isPending
+								? 'Starting…'
+								: status === 'failed'
+									? t('common.retry')
+									: 'Connect'}
 						</Button>
 					)}
 					<button
@@ -404,9 +410,9 @@ function InstanceConnectorRow({
 			{connector.kind === 'saas' && status === 'active' && (
 				<AdminMethodAccess connector={connector} />
 			)}
-			{connector.auth_error && status === 'failed' && (
-				<p className="text-xs text-danger mt-1">{connector.auth_error}</p>
-			)}
+			{/* Not gated on status === 'failed': a stale-token refresh failure is
+			    recorded on a row that stays 'active', and would otherwise be invisible. */}
+			{connector.auth_error && <p className="text-xs text-danger mt-1">{connector.auth_error}</p>}
 			{rowError && <p className="text-xs text-danger mt-1">{rowError}</p>}
 			{rowInfo && <p className="text-xs text-text-3 mt-1">{rowInfo}</p>}
 			<ConfirmDialog

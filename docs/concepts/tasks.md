@@ -27,16 +27,21 @@ cleanly between runs and between agents.
 All three travel with the task as its **long-term memory**: at the start of every run the
 agent is handed the description, the rules, and the latest progress summary **in full**, so
 work carries cleanly from one run to the next even when a different agent picks the task
-up. You can set the rules and edit the summary yourself from the task view at any time, and
-so can the agents. See [Documents & long-term memory](/docs/concepts/documents-and-memory)
+up. You can edit the title, the description, the rules, and the summary yourself from the
+task view at any time, and so can the agents. Click the pencil next to the title to rename
+a task in place, or Edit on the Description card to write or rewrite its body; every one of
+those edits is recorded on the task's comment thread, so it is always clear what changed
+and who changed it. See [Documents & long-term memory](/docs/concepts/documents-and-memory)
 for how this fits the wider memory model.
 
 ## Comments and mentions
 
 Tasks have a comment thread for discussion and coordination. Mention an agent (or a
 teammate) to bring them in, hand work over, or ask a question. Agents post their
-reasoning and results to the thread as they go, and significant changes (status,
-assignee, and the like) are recorded there automatically. You can attach files -
+reasoning and results to the thread as they go, and significant changes (status, assignee,
+parent, title, and description edits) are recorded there automatically. A description edit
+records a short before-and-after excerpt you can expand from the entry, rather than the
+whole body. You can attach files -
 screenshots, PDFs, or other references - to a task or a comment; see
 [Assets & previews](/docs/concepts/assets).
 
@@ -87,6 +92,65 @@ else is active on the task.
 If a run is stranded (its process vanished, or it never managed to start), Hezo notices
 within a couple of minutes and marks it failed, which releases the task and returns the
 assignee to **Idle**. You do not need to restart Hezo to clear a stuck task.
+
+## Sub-tasks and hierarchy
+
+A task can be filed **under** another one as a sub-task. Agents reach for this when the
+work they discover is part of the task they are already on: the sub-task keeps its own
+assignee, thread, and status, but stays attached to the parent so the shape of the work
+is visible on the board.
+
+Nesting goes two levels deep. A task can have sub-tasks, and those can have sub-tasks of
+their own, but no further. That keeps the board readable and stops a plan turning into a
+tree nobody can hold in their head.
+
+A parent cannot be marked done while any of its sub-tasks is still open. Every sub-task
+has to reach done or cancelled first. This is deliberate: closing a parent over unfinished
+children is how work quietly goes missing.
+
+**A task's parent is not fixed.** If work turns out to belong somewhere else, move it -
+change its parent, or promote it to a top-level task of its own. You can do this from the
+Parent field on the task page, and agents can do it through the `update_task` tool. Moving
+a task is always better than cancelling it and filing a duplicate, which leaves a dead task
+on the board and breaks the thread of what actually happened.
+
+Four moves are rejected, because each would produce a board that lies about the work:
+
+- A task cannot become its own parent, or be nested under one of its own sub-tasks.
+- The move must keep the whole branch within the two-level limit. Promoting is always
+  allowed, however deep the branch being moved.
+- The new parent must be in the same project.
+- Open work cannot be nested under a task that is already done or cancelled. Re-open the
+  parent first, or pick a different one.
+
+When you move a task out of its parent and it was the last open sub-task, the parent's
+assignee is woken exactly as it would be if the sub-task had been closed - the parent is
+now free to finish.
+
+## Recurring work and standing tasks
+
+Some work is never finished, it just comes round again - a weekly report, a daily check on a
+service, a monthly summary. Ask for it in plain language ("send me a weekly report on the
+analytics server") and the agent files it as a **standing task**: one task that stays open
+permanently and holds the commitment.
+
+A standing task that never closes is not a stalled task. It is open because the work repeats,
+and closing it would be the bug: done is terminal, so a closed standing task quietly stops
+coming back, and nobody finds out until the report they were expecting fails to arrive.
+
+Each round of the work appears as a **sub-task** underneath it, and those do get closed. The
+parent is the standing commitment and its children are the receipts - open the standing task
+and you can see every weekly report that actually shipped, in order, each with its own thread
+and deliverable.
+
+If an agent cannot tell whether you wanted something once or every week, it delivers the first
+one and then asks you. You get the report either way, and your answer settles the cadence, so
+the question never holds up the work.
+
+Agents revisit their open tasks on their **heartbeat** rather than against a clock, so a
+standing task comes back on roughly the cadence you asked for rather than at a fixed time on a
+fixed day. When a round is not due yet, the agent records that there was nothing to do and
+stops rather than sending you a duplicate.
 
 ## Cancelling or redirecting work
 

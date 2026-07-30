@@ -15,6 +15,7 @@ import type React from 'react';
 import { expect, test } from 'vitest';
 import type { CommentDataOf } from '../src/components/comment-renderers/comment-data';
 import { SystemComment } from '../src/components/comment-renderers/system-comment';
+import { I18nProvider } from '../src/lib/i18n';
 
 function renderNode(node: React.ReactNode) {
 	const rootRoute = createRootRoute({ component: () => node });
@@ -22,8 +23,12 @@ function renderNode(node: React.ReactNode) {
 		routeTree: rootRoute,
 		history: createMemoryHistory({ initialEntries: ['/'] }),
 	});
-	// biome-ignore lint/suspicious/noExplicitAny: opaque router type at the test boundary.
-	return render(<RouterProvider router={router as any} />);
+	return render(
+		<I18nProvider>
+			{/* biome-ignore lint/suspicious/noExplicitAny: opaque router type at the test boundary. */}
+			<RouterProvider router={router as any} />
+		</I18nProvider>,
+	);
 }
 
 type Content = CommentDataOf<'system'>['content'];
@@ -302,6 +307,61 @@ test('task_link without projectId does NOT use the task_link branch (renders gen
 	expect(el.textContent).toContain('SRC-4');
 });
 
+// ─── description_change ───────────────────────────────────────────────────
+
+test('description_change renders the sentence and hides the previews until expanded', async () => {
+	const { findByText, findByTestId, queryByTestId } = renderSystem(
+		comment({
+			kind: 'description_change',
+			text: 'Alice updated the description',
+			from_preview: 'The old body.',
+			to_preview: 'The new body.',
+			from_truncated: false,
+			to_truncated: false,
+			from_length: 13,
+			to_length: 13,
+		}),
+	);
+
+	await findByText('Alice updated the description');
+	expect(queryByTestId('description-change-before')).toBeNull();
+
+	(await findByTestId('description-change-toggle')).click();
+
+	expect((await findByTestId('description-change-before')).textContent).toBe('The old body.');
+	expect((await findByTestId('description-change-after')).textContent).toBe('The new body.');
+});
+
+test('description_change marks a truncated preview with an ellipsis', async () => {
+	const { findByTestId } = renderSystem(
+		comment({
+			kind: 'description_change',
+			text: 'Alice added a description',
+			from_preview: '',
+			to_preview: 'x'.repeat(200),
+			from_truncated: false,
+			to_truncated: true,
+			from_length: 0,
+			to_length: 500,
+		}),
+	);
+
+	(await findByTestId('description-change-toggle')).click();
+
+	const after = await findByTestId('description-change-after');
+	expect(after.textContent).toBe(`${'x'.repeat(200)}…`);
+	// The "before" end is empty on an added description, so it renders nothing.
+	expect(document.querySelector('[data-testid="description-change-before"]')).toBeNull();
+});
+
+test('description_change with no previews offers no toggle', async () => {
+	const { findByText, queryByTestId } = renderSystem(
+		comment({ kind: 'description_change', text: 'Alice cleared the description' }),
+	);
+	await findByText('Alice cleared the description');
+	expect(queryByTestId('description-change-toggle')).toBeNull();
+});
+
 // ─── generic fallback ─────────────────────────────────────────────────────
 
 test('generic system content renders its text field', async () => {
@@ -358,4 +418,64 @@ test('null content renders an empty fallback (no throw), with the actor badge', 
 	// content null AND comment.content null → text === '' (empty span); the
 	// actor badge for an admin still renders, proving the fallback branch ran.
 	expect(await findByTestId('actor-badge-human')).toBeTruthy();
+});
+
+test('parent_change links both ends of a move', async () => {
+	const { findByTestId } = renderNode(
+		<SystemComment
+			comment={comment({
+				kind: 'parent_change',
+				from_identifier: 'OP-4',
+				to_identifier: 'OP-9',
+				from_project_slug: 'ops',
+				to_project_slug: 'ops',
+				text: 'Alice moved this task from OP-4 to OP-9',
+			})}
+			projectId="ops"
+		/>,
+	);
+	const from = await findByTestId('parent-change-from');
+	const to = await findByTestId('parent-change-to');
+	expect(from.getAttribute('href')).toBe('/projects/ops/tasks/op-4');
+	expect(to.getAttribute('href')).toBe('/projects/ops/tasks/op-9');
+	expect((await findByTestId('parent-change-comment')).textContent).toContain('moved this task');
+});
+
+test('parent_change on a promotion has no destination link', async () => {
+	const { findByTestId, queryByTestId } = renderNode(
+		<SystemComment
+			comment={comment({
+				kind: 'parent_change',
+				from_identifier: 'OP-4',
+				to_identifier: null,
+				from_project_slug: 'ops',
+				to_project_slug: null,
+			})}
+			projectId="ops"
+		/>,
+	);
+	expect(await findByTestId('parent-change-from')).toBeTruthy();
+	expect(queryByTestId('parent-change-to')).toBeNull();
+	expect((await findByTestId('parent-change-comment')).textContent).toContain(
+		'promoted this task to top level',
+	);
+});
+
+test('parent_change renders an end without a project slug as plain text', async () => {
+	const { findByTestId, queryByTestId } = renderNode(
+		<SystemComment
+			comment={comment({
+				kind: 'parent_change',
+				from_identifier: null,
+				to_identifier: 'OP-9',
+				from_project_slug: null,
+				to_project_slug: null,
+			})}
+			projectId="ops"
+		/>,
+	);
+	expect(queryByTestId('parent-change-to')).toBeNull();
+	expect((await findByTestId('parent-change-comment')).textContent).toContain(
+		'nested this task under OP-9',
+	);
 });

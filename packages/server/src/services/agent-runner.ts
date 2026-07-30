@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+	type Dirent,
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
 	AgentRuntime,
@@ -38,7 +46,7 @@ import { signAgentAssetUrl } from '../lib/asset-urls';
 import { broadcastProjectUpdate, broadcastRowChange } from '../lib/broadcast';
 import { withProjectGitLock } from '../lib/git-lock';
 import { detectUnlinkedTeammateAsks, extractMentionSlugs } from '../lib/mentions';
-import { withTransaction } from '../lib/sql';
+import { terminalStatusParams, withTransaction } from '../lib/sql';
 import { logger } from '../logger';
 import { signAgentJwt } from '../middleware/auth';
 import { pauseAgentForBudget } from './agent-runtime-status';
@@ -46,12 +54,14 @@ import {
 	type AgentRunUsage,
 	createAgentStreamParser,
 	extractGrokUsageFromDebugLog,
+	extractKimiUsageFromSessionLog,
 } from './agent-stream-parser';
 import {
 	type AiProviderCredential,
 	getProviderCredentialAndModel,
 	updateAiProviderCredential,
 } from './ai-provider-keys';
+import { BackgroundTerminationDetector } from './background-termination';
 import { checkOverBudget, recordRunCost } from './budget';
 import { postAgentComment, resolveWarnableSlugs } from './comment-wakeups';
 import { loadConnectorDescriptors } from './connectors/connections';
@@ -62,13 +72,14 @@ import {
 	type ProbeResult,
 	shouldAbortForConnectivity,
 } from './container-connectivity-status';
+import type { ContainerLogStreamer } from './container-logs';
 import {
 	type ContainerRunUser,
 	chownToRunUser,
 	ensureContainerDirReady,
 	resolveContainerRunUser,
 } from './container-user';
-import { syncContainerStatus } from './containers';
+import { ensureProjectContainerRunning } from './containers';
 import type { DockerClient, ExecLogChunk } from './docker';
 import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
@@ -151,16 +162,26 @@ interface ProjectInfo {
 	slug: string;
 	team_id: string;
 	team_slug: string;
-	container_id: string;
-	container_status: string;
+	container_id: string | null;
+	container_status: string | null;
 	designated_repo_id: string | null;
 	is_internal: boolean;
 }
 
+/**
+ * ProjectInfo once the runner has ensured the project container is running —
+ * containers start on demand at run start, so callers may hand runAgent a
+ * project whose container is stopped or was never provisioned.
+ */
+type RunningProjectInfo = ProjectInfo & { container_id: string };
+
 export interface RunResult {
 	success: boolean;
 	exitCode: number;
-	stdout: string;
+	/**
+	 * Failure text for the run, not the exec's stderr — a streamed exec retains
+	 * no output at all (see `ExecStartOpts.onChunk`). Empty on success.
+	 */
 	stderr: string;
 	durationMs: number;
 	heartbeatRunId?: string;
@@ -180,6 +201,8 @@ export interface RunnerDeps {
 	sshAgentServer?: SshAgentServer;
 	egressProxy?: EgressProxy | null;
 	egressCAPath?: string | null;
+	/** When present, a container the runner lazy-starts resubscribes its log stream. */
+	containerLogStreamer?: ContainerLogStreamer;
 	/** Latest container→host connectivity outcome. When present and the egress
 	 * proxy is unreachable from containers, the run aborts instead of silently
 	 * falling through to direct egress. Absent → fail open (back-compat). */
@@ -237,13 +260,35 @@ export function buildProviderEnv(
 			trimmedModel && claudeCodeProviderUsesCustomEndpoint(provider)
 				? claudeCodeModelArg(provider, trimmedModel)
 				: null;
+		// Kimi Code selects its model from `KIMI_MODEL_NAME`, not only from
+		// `--model`: that variable is what activates the shell-read `KIMI_MODEL_*`
+		// credential family in the first place, so it must always be set, and the
+		// run's selected model has to land there rather than only on the CLI flag.
+		// The staticEnv value (KIMI_DEFAULT_MODEL) stays the fallback when the run
+		// pins nothing.
+		const kimiModelOverride =
+			trimmedModel && adapter.runtime === AgentRuntime.Kimi ? trimmedModel : null;
 		for (const [key, value] of Object.entries(adapter.staticEnv)) {
 			if (subagentOverride && key === 'CLAUDE_CODE_SUBAGENT_MODEL') {
 				out.push(`${key}=${subagentOverride}`);
+			} else if (kimiModelOverride && key === 'KIMI_MODEL_NAME') {
+				out.push(`${key}=${kimiModelOverride}`);
 			} else {
 				out.push(`${key}=${value}`);
 			}
 		}
+	}
+	// Locally-hosted providers (Ollama, LM Studio) reach an endpoint that is
+	// per-install, so it cannot sit in `staticEnv` like the hosted third-party
+	// Anthropic-compatible providers above. It rides on the credential instead and
+	// is stamped here.
+	if (credential.baseUrl && adapter.runtime === AgentRuntime.ClaudeCode) {
+		out.push(`ANTHROPIC_BASE_URL=${credential.baseUrl}`);
+		// These runners authenticate (when they authenticate at all) from
+		// ANTHROPIC_AUTH_TOKEN. Claude Code prefers ANTHROPIC_API_KEY when both are
+		// present, so an inherited key from the host environment would silently win
+		// and get sent to the operator's local server. Blank it explicitly.
+		out.push('ANTHROPIC_API_KEY=');
 	}
 	const varName = adapter.credentialEnvByAuthMethod[credential.authMethod];
 	if (varName) out.push(`${varName}=${credential.value}`);
@@ -328,39 +373,109 @@ export function getHostPromptPath(
 // XAI_API_KEY in plaintext). See `extractGrokUsageFromDebugLog`.
 const GROK_DEBUG_BASENAME = 'debug.log';
 
+// Basename of Kimi Code's per-session wire log, written under
+// `$KIMI_CODE_HOME/sessions/<workspace>/<session>/agents/<agent>/`. Kimi Code's
+// `stream-json` stdout carries no token usage at all, so — as with Grok — cost is
+// recovered from this file. The path depth is an upstream implementation detail,
+// so the runner searches the per-run home rather than reconstructing it.
+const KIMI_SESSION_LOG_BASENAME = 'wire.jsonl';
+
+// Depth cap for the wire-log search. The real path sits 5 levels below the home
+// dir; 8 leaves room for an upstream layout change without ever letting a
+// symlink loop or a surprise `node_modules` turn run teardown into a full-disk
+// walk.
+const KIMI_SESSION_LOG_MAX_DEPTH = 8;
+
+/** Collect every `wire.jsonl` beneath `root`, depth-bounded and best-effort. */
+function findKimiSessionLogs(root: string, depth = 0): string[] {
+	if (depth > KIMI_SESSION_LOG_MAX_DEPTH) return [];
+	let entries: Dirent[];
+	try {
+		entries = readdirSync(root, { withFileTypes: true });
+	} catch {
+		return [];
+	}
+	const out: string[] = [];
+	for (const entry of entries) {
+		const full = join(root, entry.name);
+		// `withFileTypes` reports a symlink as neither file nor directory, so
+		// following one is opt-in — and we never opt in. That is what makes the
+		// depth cap sufficient to bound this walk.
+		if (entry.isDirectory()) out.push(...findKimiSessionLogs(full, depth + 1));
+		else if (entry.isFile() && entry.name === KIMI_SESSION_LOG_BASENAME) out.push(full);
+	}
+	return out;
+}
+
 /**
- * Recover a Grok run's token usage from its per-run `--debug-file` and then
- * delete the file (it holds the XAI_API_KEY in plaintext). A no-op for every
- * other runtime (returns null, so the caller keeps the parser's stream usage).
- * Best-effort: a missing or unreadable log yields null (⇒ $0), and the home
- * mount is removed at run cleanup regardless.
+ * Recover a run's token usage for the runtimes that report none on stdout.
+ *
+ * Two runtimes need this and they need it for the same structural reason — their
+ * stream carries no usage — so the dispatch lives here rather than being copied
+ * per runtime:
+ *
+ *   - **Grok** — the per-run `--debug-file`.
+ *   - **Kimi Code** — the per-session `wire.jsonl` under the per-run home.
+ *
+ * Both files are scrubbed after parsing: Grok's holds the XAI_API_KEY in
+ * plaintext, and a "wire" log plausibly captures request headers (i.e. the
+ * Moonshot bearer token), so neither should outlive the run on the host.
+ *
+ * Returns null for every other runtime, so the caller keeps the parser's stream
+ * usage. Best-effort throughout: a missing or unreadable log yields null (⇒ $0
+ * rather than a failed run), and the home mount is removed at cleanup regardless.
  */
-function extractGrokRunUsage(
+export function recoverOffStreamRunUsage(
 	runtimeType: AgentRuntime,
 	homeMount: RuntimeHomeMount | null,
 	priceFn: ((model: string | undefined, tokens: CostTokens) => number) | undefined,
 	onError: (msg: string) => void,
 ): AgentRunUsage | null {
-	if (runtimeType !== AgentRuntime.Grok || !homeMount) return null;
-	const debugPath = join(homeMount.hostDir, GROK_DEBUG_BASENAME);
-	try {
-		if (!existsSync(debugPath)) return null;
-		return extractGrokUsageFromDebugLog(readFileSync(debugPath, 'utf8'), priceFn);
-	} catch (e) {
-		onError(`failed to read grok debug log for usage: ${(e as Error).message}`);
-		return null;
-	} finally {
+	if (!homeMount) return null;
+	if (runtimeType === AgentRuntime.Grok) {
+		const debugPath = join(homeMount.hostDir, GROK_DEBUG_BASENAME);
 		try {
-			rmSync(debugPath, { force: true });
-		} catch {
-			// The whole home mount is removed at cleanup; a failed scrub here is not fatal.
+			if (!existsSync(debugPath)) return null;
+			return extractGrokUsageFromDebugLog(readFileSync(debugPath, 'utf8'), priceFn);
+		} catch (e) {
+			onError(`failed to read grok debug log for usage: ${(e as Error).message}`);
+			return null;
+		} finally {
+			try {
+				rmSync(debugPath, { force: true });
+			} catch {
+				// The whole home mount is removed at cleanup; a failed scrub here is not fatal.
+			}
 		}
 	}
+	if (runtimeType === AgentRuntime.Kimi) {
+		const logPaths = findKimiSessionLogs(join(homeMount.hostDir, 'sessions'));
+		if (logPaths.length === 0) return null;
+		try {
+			// The home dir is per-run, so in practice there is exactly one session.
+			// Concatenating tolerates a resumed or sub-agent session without
+			// double-counting: the extractor dedupes by record identity, not by file.
+			const contents = logPaths.map((p) => readFileSync(p, 'utf8')).join('\n');
+			return extractKimiUsageFromSessionLog(contents, priceFn);
+		} catch (e) {
+			onError(`failed to read kimi session log for usage: ${(e as Error).message}`);
+			return null;
+		} finally {
+			for (const p of logPaths) {
+				try {
+					rmSync(p, { force: true });
+				} catch {
+					// See above — cleanup removes the mount regardless.
+				}
+			}
+		}
+	}
+	return null;
 }
 
 // Deliver the prompt either on stdin (default) or as a trailing arg (OpenCode,
-// Kimi), selected per runtime via the HEZO_PROMPT_MODE env var. The bridge
-// wrapper script honors the same env var.
+// Grok, Kimi Code), selected per runtime via the HEZO_PROMPT_MODE env var — see
+// RUNTIME_PROMPT_DELIVERY. The bridge wrapper script honors the same env var.
 const PROMPT_DELIVERY_SH =
 	'if [ "$HEZO_PROMPT_MODE" = arg ]; then exec "$@" "$(cat "$HEZO_PROMPT_FILE")"; else exec "$@" < "$HEZO_PROMPT_FILE"; fi';
 
@@ -556,7 +671,10 @@ export async function buildRuntimeInvocation(
 			// architecture § Asset storage). Connector MCP servers live on their own
 			// remote hosts (reached via HTTPS CONNECT) and still traverse the proxy.
 			'host.docker.internal',
-			...providerDirectUpstreamHosts(provider),
+			// For a locally-hosted provider the upstream is the operator's own machine,
+			// known only from the config's stored base URL — pass it so that host
+			// bypasses the MITM proxy like any other model-provider endpoint.
+			...providerDirectUpstreamHosts(provider, credential.baseUrl),
 		];
 		const noProxy = [...new Set(noProxyHosts)].join(',');
 		env.push(
@@ -643,7 +761,7 @@ async function buildRunContext(
 	deps: RunnerDeps,
 	agent: AgentInfo,
 	task: TaskInfo | null,
-	project: ProjectInfo,
+	project: RunningProjectInfo,
 	wakeupPayload: Record<string, unknown> | undefined,
 	credential: AiProviderCredential,
 	provider: AiProvider,
@@ -721,6 +839,7 @@ async function buildRunContext(
 	const wakingCommentId =
 		typeof wakeupPayload?.comment_id === 'string' ? wakeupPayload.comment_id : undefined;
 	const spawnedFrom = task ? await loadSpawnedFromTask(deps.db, task) : null;
+	const openSubTasks = task ? await loadOpenSubTasks(deps.db, task) : [];
 	let basePrompt: string;
 	if (progressUpdate) {
 		basePrompt = buildProgressUpdatePrompt(resolvedPrompt, progressUpdate);
@@ -749,6 +868,7 @@ async function buildRunContext(
 			replyContext,
 			commentWakeContext,
 			spawnedFrom,
+			openSubTasks,
 			recentComments,
 			wakingCommentId,
 		});
@@ -827,37 +947,6 @@ function abortedRunStatus(reason: RunAbortReason | null): HeartbeatRunStatus {
 function abortErrorMessage(reason: RunAbortReason | null): string | undefined {
 	if (reason === 'run_timeout') return 'run reached its time limit';
 	return reason ?? undefined;
-}
-
-/**
- * Claude Code's headless `--print` mode caps how long it waits for still-running
- * background tasks (a `run_in_background` job, a Workflow fan-out that hasn't
- * synthesized yet) and then FORCE-KILLS them, printing a diagnostic line like
- * "Background tasks still running after 600s; terminating." to its own output.
- * `CLAUDE_CODE_QUIET_ENV` sets `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0` to lift
- * that ceiling, but an older CLI (or one that ignores the override) still
- * terminates the work — and the CLI then exits 0 with a NON-error `result`, so a
- * run that already wrote something earlier (e.g. a progress update) would be
- * counted a success even though its actual deliverable was killed mid-flight.
- * This is the runner-side backstop: detect the diagnostic so the run is failed.
- *
- * Matched only against the CLI's own diagnostic output — stderr, plus non-JSON
- * stdout lines. The stream-json events an agent's text rides in are JSON objects
- * (they start with `{`), so an agent that merely echoes this phrase in its
- * message can't trip the backstop.
- */
-const BACKGROUND_TERMINATION_MARKER = /Background tasks still running after .*?terminating/i;
-
-export function detectTerminatedBackgroundWork(stdout: string, stderr: string): boolean {
-	if (BACKGROUND_TERMINATION_MARKER.test(stderr)) return true;
-	for (const line of stdout.split('\n')) {
-		const trimmed = line.trim();
-		// Skip the JSON stream events (agent-authored text lives inside these); a
-		// CLI diagnostic is a bare line that never starts with `{`.
-		if (trimmed === '' || trimmed.startsWith('{')) continue;
-		if (BACKGROUND_TERMINATION_MARKER.test(trimmed)) return true;
-	}
-	return false;
 }
 
 function extractTriggeredBy(payload: Record<string, unknown> | undefined): TriggeredBy | null {
@@ -953,33 +1042,16 @@ export async function runAgent(
 			replace: true,
 		}),
 		onFlush: async (delta) => {
-			// Append only the new log text as a chunk row (never rewrite the whole
+			// Append only the new log text as chunk rows (never rewrite the whole
 			// log — the old full-blob UPDATE pattern left a dead TOAST copy per
 			// flush). The running usage persists alongside so a crash mid-run still
 			// leaves a non-zero token/cost snapshot, flagged partial until a clean
-			// completion. One transaction: the broker re-sends the same delta after
-			// a failed flush, so chunk + usage must land all-or-nothing to stay
-			// exactly-once.
+			// completion. One statement, so it is atomic without a transaction:
+			// the broker re-sends the same delta after a failed flush, so chunk +
+			// usage must land all-or-nothing to stay exactly-once, and every
+			// transaction block serializes process-wide on both drivers.
 			if (delta.length === 0 && !currentUsage) return;
-			await deps.db.transaction(async (tx) => {
-				if (delta.length > 0) await appendRunLogChunks(tx, heartbeatRunId, delta);
-				if (currentUsage) {
-					await tx.query(
-						`UPDATE heartbeat_runs
-						 SET input_tokens = COALESCE($1, input_tokens),
-						     output_tokens = COALESCE($2, output_tokens),
-						     cost_cents = COALESCE($3, cost_cents),
-						     usage_partial = true
-						 WHERE id = $4`,
-						[
-							currentUsage.inputTokens,
-							currentUsage.outputTokens,
-							currentUsage.costCents,
-							heartbeatRunId,
-						],
-					);
-				}
-			});
+			await appendRunLogChunks(deps.db, heartbeatRunId, delta, currentUsage);
 		},
 	});
 
@@ -1004,7 +1076,6 @@ export async function runAgent(
 		return {
 			success: false,
 			exitCode: -1,
-			stdout: '',
 			stderr: message,
 			durationMs,
 			heartbeatRunId,
@@ -1030,7 +1101,6 @@ export async function runAgent(
 		return {
 			success: false,
 			exitCode: -1,
-			stdout: '',
 			stderr: abortErrorMessage(reason) ?? 'Aborted',
 			durationMs,
 			heartbeatRunId,
@@ -1038,32 +1108,44 @@ export async function runAgent(
 		};
 	};
 
-	if (!project.container_id || project.container_status !== ContainerStatus.Running) {
-		return finalizeFailure(
-			'Project container is not running. Start the container from the Project page and retry.',
-		);
+	// Containers run on demand: start (or provision) the project's container for
+	// this run rather than requiring it to already be up. ensureProjectContainerRunning
+	// inspects Docker live — a stale `running` row whose container is gone is
+	// repaired by re-provisioning — and serializes per project, so concurrent runs
+	// dispatching into the same stopped project start exactly one container.
+	if (project.container_status !== ContainerStatus.Running) {
+		emit('stdout', '[runner] Starting the project container…\n');
 	}
-
-	// The cached container_status can lag reality — Docker may have been restarted
-	// or the container pruned externally, leaving the row marked "running" while
-	// execCreate would 404 mid-run. Verify liveness against Docker and reconcile the
-	// DB (syncContainerStatus nulls the id + flips status on a 404 or exit) before we
-	// commit to the run, then broadcast so the banner / sidebar / Container page
-	// correct at once.
-	const liveStatus = await syncContainerStatus(
-		deps.db,
-		deps.docker,
-		project.id,
-		project.slug,
-		project.container_id,
-		project.container_status,
-	);
-	if (liveStatus !== ContainerStatus.Running) {
+	let containerId: string;
+	try {
+		containerId = await ensureProjectContainerRunning(
+			{
+				db: deps.db,
+				docker: deps.docker,
+				dataDir: deps.dataDir,
+				wsManager: deps.wsManager,
+				masterKeyManager: deps.masterKeyManager,
+				logs: deps.logs,
+				containerLogStreamer: deps.containerLogStreamer,
+				sshAgentServer: deps.sshAgentServer,
+				egressCAPath: deps.egressCAPath,
+			},
+			project.id,
+		);
+	} catch (e) {
+		const message = e instanceof Error ? e.message : String(e);
 		await broadcastProjectUpdate(deps.db, deps.wsManager, project.team_id, project.id);
 		return finalizeFailure(
-			'Project container is not running. Start the container from the Project page and retry.',
+			`Could not start the project container: ${message}. See the Container page for logs.`,
 		);
 	}
+	// The run may have been aborted (e.g. timed out) while a slow provision ran.
+	if (signal?.aborted) return finalizeAbort();
+	const runningProject: RunningProjectInfo = {
+		...project,
+		container_id: containerId,
+		container_status: ContainerStatus.Running,
+	};
 
 	let provider: AiProvider;
 	let runtimeType: AgentRuntime;
@@ -1129,7 +1211,7 @@ export async function runAgent(
 		// ssh socket owner, and the chowns that give the run-user ownership of the
 		// host-written config/worktree dirs. Defaults to root for an image with no
 		// `node` user, which makes those chowns a harmless no-op.
-		const runUser = await resolveContainerRunUser(deps.docker, project.container_id);
+		const runUser = await resolveContainerRunUser(deps.docker, containerId);
 
 		let sshSocketContainerPath: string | null = null;
 		let sshSocketHostPath: string | null = null;
@@ -1208,7 +1290,7 @@ export async function runAgent(
 			deps,
 			agent,
 			task,
-			project,
+			runningProject,
 			wakeupPayload,
 			credential,
 			provider,
@@ -1311,7 +1393,16 @@ export async function runAgent(
 
 			// Progress-update runs only call MCP tools; they need no code worktree.
 			const prep = task
-				? await prepareWorktrees(deps, project, task, heartbeatRunId, bridge, runUser, emit, signal)
+				? await prepareWorktrees(
+						deps,
+						runningProject,
+						task,
+						heartbeatRunId,
+						bridge,
+						runUser,
+						emit,
+						signal,
+					)
 				: {
 						workingDir: '/workspace',
 						designatedRepo: null as RepoRow | null,
@@ -1338,7 +1429,7 @@ export async function runAgent(
 
 			emit('stdout', `${invocationCommand}\n`);
 
-			const execId = await deps.docker.execCreate(project.container_id, {
+			const execId = await deps.docker.execCreate(containerId, {
 				Cmd: context.execCmd,
 				Env: context.env,
 				WorkingDir: prep.workingDir,
@@ -1347,7 +1438,13 @@ export async function runAgent(
 				AttachStderr: true,
 			});
 
+			// Scanned incrementally rather than over a retained transcript: the raw
+			// exec output is the full stream-json stream and never kept (see
+			// ExecStartOpts.onChunk).
+			const backgroundTermination = new BackgroundTerminationDetector();
+
 			const onChunk = async (chunk: ExecLogChunk) => {
+				backgroundTermination.push(chunk.stream, chunk.text);
 				const rendered =
 					chunk.stream === 'stdout' ? parser.onStdout(chunk.text) : parser.onStderr(chunk.text);
 				if (rendered) emit(chunk.stream, rendered);
@@ -1356,7 +1453,7 @@ export async function runAgent(
 				currentUsage = parser.getUsage();
 			};
 
-			const { stdout, stderr } = await deps.docker.execStart(execId, { signal, onChunk });
+			await deps.docker.execStart(execId, { signal, onChunk });
 			const tail = parser.flush();
 			if (tail) emit('stdout', tail);
 			const execInfo = await deps.docker.execInspect(execId);
@@ -1378,11 +1475,11 @@ export async function runAgent(
 				);
 			}
 
-			// Grok emits no usage on its stream; recover it from the `--debug-file`
-			// (readable host-side in the home mount), then scrub the file — it also
-			// holds the XAI_API_KEY in plaintext. Falls back to null (⇒ $0) if the
-			// log is missing/unparseable; the home mount is removed at cleanup anyway.
-			const runUsage = extractGrokRunUsage(runtimeType, context.homeMount, priceFn, (msg) =>
+			// Grok and Kimi Code emit no usage on their streams; recover it from the
+			// file each writes into the per-run home mount, then scrub that file (both
+			// can carry the provider credential). Falls back to null (⇒ $0) if the log
+			// is missing/unparseable; the home mount is removed at cleanup anyway.
+			const runUsage = recoverOffStreamRunUsage(runtimeType, context.homeMount, priceFn, (msg) =>
 				log.error(`Run ${heartbeatRunId}: ${msg}`),
 			);
 
@@ -1508,7 +1605,7 @@ export async function runAgent(
 									const fixes = strandedAsks.map((s) => `@${s}`).join(', ');
 									emit(
 										'stdout',
-										`\n[runner] WARNING: this run's final message addresses ${named} by bold/bare name — that renders as text and wakes no one, so the handoff was NOT delivered. Post a comment with an active mention (${fixes}) to reach them.\n`,
+										`\n[runner] WARNING: this run's final message addresses ${named} by name only, with no active @-mention — a bare or bold name, or a sign-off gate like "awaiting <name> sign-off", renders as text and wakes no one, so the handoff was NOT delivered. Post a comment with an active mention (${fixes}) to reach them.\n`,
 									);
 								}
 							} else if (directQuestionWake && !posted.rows.some((c) => c.task_id === task.id)) {
@@ -1559,9 +1656,7 @@ export async function runAgent(
 			// though it exits 0 and may have written something earlier. Fail it so it
 			// surfaces and is retried rather than silently counting as done.
 			const backgroundWorkTerminated =
-				exitedClean &&
-				runtimeType === AgentRuntime.ClaudeCode &&
-				detectTerminatedBackgroundWork(stdout, stderr);
+				exitedClean && runtimeType === AgentRuntime.ClaudeCode && backgroundTermination.finish();
 
 			const success =
 				exitedClean && (producedOutput || reportedNoWork) && !backgroundWorkTerminated;
@@ -1602,7 +1697,7 @@ export async function runAgent(
 			);
 
 			await cleanupRunArtifacts();
-			return { success, exitCode: execInfo.ExitCode, stdout, stderr, durationMs, heartbeatRunId };
+			return { success, exitCode: execInfo.ExitCode, stderr: '', durationMs, heartbeatRunId };
 		} catch (error) {
 			const durationMs = Date.now() - startTime;
 			const isAbort = (error as Error).name === 'AbortError';
@@ -1619,7 +1714,7 @@ export async function runAgent(
 			// it — and best-effort so a kill failure never masks the run result.
 			if (isAbort && reason !== 'container_stopped' && reason !== 'container_error') {
 				try {
-					await deps.docker.killRunProcesses(project.container_id, heartbeatRunId);
+					await deps.docker.killRunProcesses(containerId, heartbeatRunId);
 				} catch (killError) {
 					log.error(
 						`Run ${heartbeatRunId}: failed to kill container processes on abort:`,
@@ -1650,7 +1745,6 @@ export async function runAgent(
 			return {
 				success: false,
 				exitCode: -1,
-				stdout: '',
 				stderr: errorMessage,
 				durationMs,
 				heartbeatRunId,
@@ -1663,7 +1757,7 @@ export async function runAgent(
 }
 
 function failedResult(stderr: string, startTime: number): RunResult {
-	return { success: false, exitCode: -1, stdout: '', stderr, durationMs: Date.now() - startTime };
+	return { success: false, exitCode: -1, stderr, durationMs: Date.now() - startTime };
 }
 
 function abortedResult(startTime: number): RunResult {
@@ -1694,7 +1788,7 @@ async function anyWorktreeChanged(
 
 async function prepareWorktrees(
 	deps: RunnerDeps,
-	project: ProjectInfo,
+	project: RunningProjectInfo,
 	task: TaskInfo,
 	heartbeatRunId: string,
 	bridge: BridgeRunnerArgs | null,
@@ -2190,6 +2284,7 @@ export interface BuildTaskPromptContext {
 	replyContext?: ReplyContext | null;
 	commentWakeContext?: CommentWakeContext | null;
 	spawnedFrom?: SpawnedFromTask | null;
+	openSubTasks?: OpenSubTask[];
 	recentComments?: RenderableComment[];
 	wakingCommentId?: string;
 }
@@ -2268,6 +2363,7 @@ export function buildTaskPrompt(
 	ctx: BuildTaskPromptContext = {},
 ): string {
 	const { mentionContext, replyContext, commentWakeContext, spawnedFrom, recentComments } = ctx;
+	const openSubTasks = ctx.openSubTasks ?? [];
 	const parts = [systemPrompt, '', '---', ''];
 
 	if (replyContext && wakeupPayload?.source === WakeupSource.Reply) {
@@ -2283,6 +2379,16 @@ export function buildTaskPrompt(
 	parts.push(`**Status:** ${task.status}`);
 	if (spawnedFrom?.parentLine) parts.push(spawnedFrom.parentLine);
 	if (spawnedFrom?.spawnLine) parts.push(spawnedFrom.spawnLine);
+	if (openSubTasks.length > 0) {
+		parts.push(
+			'**Open sub-tasks** (already delegated — route new instructions to these tickets, do not do their work yourself):',
+		);
+		for (const sub of openSubTasks) {
+			parts.push(
+				`- ${sub.identifier} — ${sub.title} (${sub.status}, assigned to ${sub.assignee_name ?? 'unassigned'})`,
+			);
+		}
+	}
 	parts.push('');
 
 	if (task.rules) {
@@ -2533,6 +2639,40 @@ export async function loadSpawnedFromTask(db: Db, task: TaskInfo): Promise<Spawn
 			? `**Spawned from:** ${spawningTask.identifier} — ${spawningTask.title} (provenance only; this ticket is your own work)`
 			: null,
 	};
+}
+
+/** A non-terminal sub-task of the ticket a run is on — work already delegated out. */
+export interface OpenSubTask {
+	identifier: string;
+	title: string;
+	status: string;
+	assignee_name: string | null;
+}
+
+/** Cap on the sub-tasks listed in the prompt; a fan-out wider than this is already unusual. */
+const OPEN_SUB_TASKS_LIMIT = 20;
+
+/**
+ * The current ticket's still-open sub-tasks, so the run prompt can say what this
+ * agent has already delegated. `loadSpawnedFromTask` renders the ticket's lineage
+ * *upward* (parent / spawned-from); this is the downward half, and it is what makes
+ * the "route new instructions to the delegate, don't absorb their work" rule in
+ * SHARED_INSTRUCTIONS checkable from the prompt rather than from memory. One extra
+ * query per run start (not per request), bounded by OPEN_SUB_TASKS_LIMIT.
+ */
+export async function loadOpenSubTasks(db: Db, task: TaskInfo): Promise<OpenSubTask[]> {
+	const terminal = terminalStatusParams(2, true);
+	const r = await db.query<OpenSubTask>(
+		`SELECT i.identifier, i.title, i.status::text AS status, m.display_name AS assignee_name
+		 FROM tasks i
+		 LEFT JOIN members m ON m.id = i.assignee_id
+		 WHERE i.parent_task_id = $1
+		   AND i.status NOT IN (${terminal.placeholders})
+		 ORDER BY i.created_at ASC
+		 LIMIT ${OPEN_SUB_TASKS_LIMIT}`,
+		[task.id, ...terminal.values],
+	);
+	return r.rows;
 }
 
 /**

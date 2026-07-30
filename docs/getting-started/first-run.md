@@ -7,9 +7,25 @@ section: Getting started
 # First-run setup
 
 The first time you open Hezo at **http://localhost:3100**, a short setup flow gets you
-to a working instance: create your master key, set an admin password, and connect a model.
+to a working instance: pick your language, create your master key, set an admin password,
+and connect a model.
 
-## 1. Create your master key
+## 1. Pick your language
+
+Hezo's web app runs in twelve languages, and this comes first on purpose - everything after
+it is the product itself, and reading master-key instructions in a language you don't speak
+is a bad way to start.
+
+Hezo guesses from your browser, so the screen usually arrives already answered and you can
+just continue. Alongside the language you pick a **date format** and a **currency format**;
+each option shows you a real example rather than a pattern to decode.
+
+The choice applies to the whole instance and is saved straight away, so a refresh
+mid-setup won't lose it. You can change it later in **Settings -> Languages & formats**, and
+a globe button in the top right stays available throughout setup. See
+[Languages & formats](/docs/concepts/languages-and-formats).
+
+## 2. Create your master key
 
 Hezo encrypts everything sensitive (model keys, OAuth tokens, signing keys) at rest.
 The encryption key is derived from a **master key**: a twelve-word phrase generated
@@ -30,7 +46,7 @@ it from the browser each time. You can pass it to a single startup non-interacti
 the server (see [Deploying to the cloud](/docs/deployment/cloud) and
 [Master key & encryption](/docs/security/master-key)).
 
-## 2. Set an admin password
+## 3. Set an admin password
 
 After the master key unlocks, you create an **admin password**. This is how you sign in
 from here on - the master key unlocks the *instance*, your password signs *you* in. Your
@@ -44,13 +60,18 @@ To sign out, use **Log out** at the bottom of the **Settings** menu - it clears 
 session and returns you to the admin-password sign-in screen. (The instance itself stays
 unlocked; signing back in only needs your password.)
 
-## 3. Connect a model
+## 4. Connect a model
 
-Agents need a model to run. Add at least one **AI provider** - paste an API key (or
-connect a subscription where supported) for Anthropic (Claude), OpenAI (ChatGPT),
-Google (Gemini), xAI (Grok), DeepSeek, Z.ai, or Kimi. Don't have a key yet? The connect form walks
-you through creating one, with links to each provider's key console (also listed in
-[AI model support](/docs/ai-models)).
+Agents need a model to run. Add at least one **AI provider**. You can either:
+
+- **Paste an API key** (or connect a subscription where supported) for Anthropic (Claude),
+  OpenAI (ChatGPT), Google (Gemini), xAI (Grok), DeepSeek, Z.ai, Kimi, Kimi Code, or
+  OpenRouter.
+- **Point Hezo at your own machine** with Ollama or LM Studio - give it the server URL and
+  leave the key blank. Nothing is billed per token.
+
+Don't have a key yet? The connect form walks you through creating one, with links to each
+provider's key console (also listed in [AI model support](/docs/ai-models)).
 
 You can add more than one provider and switch between them later, including giving an
 individual agent its own model. See [AI model support](/docs/ai-models).

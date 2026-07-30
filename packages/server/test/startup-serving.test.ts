@@ -50,6 +50,29 @@ describe('serveStartupRequest (pre-ready handler)', () => {
 		expect(typeof body.version).toBe('string');
 	});
 
+	it('carries the previous boot failure on /api/status so a restart loop explains itself', async () => {
+		const res = await serveStartupRequest(req('/api/status'), {
+			...withBundle(null),
+			lastFailure: {
+				message: 'Migration 046_add_local_model_providers.sql failed: out of disk',
+				phase: 'migrations',
+				version: '0.36.0',
+				at: '2026-07-29T07:03:00.000Z',
+			},
+		});
+		const body = (await res.json()) as {
+			last_failure?: { message: string; phase: string; version: string };
+		};
+		expect(body.last_failure?.phase).toBe('migrations');
+		expect(body.last_failure?.version).toBe('0.36.0');
+		expect(body.last_failure?.message).toContain('out of disk');
+	});
+
+	it('omits last_failure entirely when the previous boot was clean', async () => {
+		const res = await serveStartupRequest(req('/api/status'), withBundle(null));
+		expect(Object.hasOwn((await res.json()) as object, 'last_failure')).toBe(false);
+	});
+
 	it('keeps /health answering 200 during boot', async () => {
 		const res = await serveStartupRequest(req('/health'), withBundle(null));
 		expect(res.status).toBe(200);

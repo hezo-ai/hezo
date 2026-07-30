@@ -47,6 +47,15 @@ test('describes a rename with from/to titles', () => {
 	expect(describeAuditEntry(e)).toBe('Renamed OP-1 from "Foo" to "Bar"');
 });
 
+test('describes a description edit without quoting either body', () => {
+	const e = entry({
+		action: 'updated',
+		entity_type: 'task',
+		details: { field: 'description', from: null, to: null },
+	});
+	expect(describeAuditEntry(e)).toBe('Updated the description of OP-1');
+});
+
 test('describes a reassignment with resolved names', () => {
 	const e = entry({
 		action: 'updated',
@@ -54,6 +63,33 @@ test('describes a reassignment with resolved names', () => {
 		details: { field: 'assignee', from_label: 'Bob', to_label: 'Alice' },
 	});
 	expect(describeAuditEntry(e)).toBe('Reassigned OP-1 from Bob to Alice');
+});
+
+test('describes a move between two parents', () => {
+	const e = entry({
+		action: 'updated',
+		entity_type: 'task',
+		details: { field: 'parent', from_label: 'OP-4', to_label: 'OP-9' },
+	});
+	expect(describeAuditEntry(e)).toBe('Moved OP-1 from OP-4 to OP-9');
+});
+
+test('describes a promotion to top level', () => {
+	const e = entry({
+		action: 'updated',
+		entity_type: 'task',
+		details: { field: 'parent', from_label: 'OP-4', to_label: null },
+	});
+	expect(describeAuditEntry(e)).toBe('Moved OP-1 out of OP-4 to top level');
+});
+
+test('describes a first nesting', () => {
+	const e = entry({
+		action: 'updated',
+		entity_type: 'task',
+		details: { field: 'parent', from_label: null, to_label: 'OP-9' },
+	});
+	expect(describeAuditEntry(e)).toBe('Moved OP-1 under OP-9');
 });
 
 test('describes an agent run against its referenced task', () => {

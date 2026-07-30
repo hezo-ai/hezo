@@ -13,13 +13,31 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
  * top-right toast stack without threading the socket through the whole tree.
  */
 export interface ConnectionState {
-	/** True once the socket has dropped (after connecting at least once). */
+	/**
+	 * True when the disconnect should be *surfaced*: the socket has dropped (after
+	 * connecting at least once) and the user has not snoozed the indicator.
+	 */
 	offline: boolean;
 	/** Force an immediate reconnect — wired to the socket client's `reconnect()`. */
 	retry: (() => void) | null;
 }
 
 const ONLINE: ConnectionState = { offline: false, retry: null };
+
+/**
+ * How long a user dismissal (close button or swipe) hides the indicator for. The
+ * connection itself is unaffected — reconnect attempts continue underneath — so
+ * this is purely "stop telling me for a bit". If the socket is still down when
+ * the snooze expires the indicator comes back.
+ */
+export const DISMISS_SNOOZE_MS = 20_000;
+
+/** Raw connection health, independent of whether it's currently being shown. */
+let disconnected = false;
+let retryAction: (() => void) | null = null;
+/** Set by `dismissConnectionOffline`, cleared by the timer below or by healing. */
+let snoozed = false;
+let snoozeTimer: ReturnType<typeof setTimeout> | null = null;
 
 let state: ConnectionState = ONLINE;
 const listeners = new Set<(s: ConnectionState) => void>();
@@ -28,18 +46,59 @@ function emit() {
 	for (const l of listeners) l(state);
 }
 
+function clearSnooze() {
+	snoozed = false;
+	if (snoozeTimer !== null) {
+		clearTimeout(snoozeTimer);
+		snoozeTimer = null;
+	}
+}
+
+/**
+ * Recompute the public snapshot from the raw flags. `useSyncExternalStore`
+ * compares snapshots by reference, so this must only mint a new object when the
+ * visible state actually changed — otherwise every call re-renders readers.
+ */
+function publish() {
+	const next: ConnectionState =
+		disconnected && !snoozed ? { offline: true, retry: retryAction } : ONLINE;
+	if (next.offline === state.offline && next.retry === state.retry) return;
+	state = next;
+	emit();
+}
+
 /** Mark the connection as lost, carrying the retry action for "Retry now". */
 export function setConnectionOffline(retry: () => void): void {
-	if (state.offline && state.retry === retry) return;
-	state = { offline: true, retry };
-	emit();
+	disconnected = true;
+	retryAction = retry;
+	publish();
 }
 
 /** Mark the connection as healthy again (also used to reset on provider unmount). */
 export function setConnectionOnline(): void {
-	if (!state.offline && state.retry === null) return;
-	state = ONLINE;
-	emit();
+	disconnected = false;
+	retryAction = null;
+	// A fresh drop after a heal is a new event, so it must surface immediately
+	// rather than inheriting the previous drop's snooze.
+	clearSnooze();
+	publish();
+}
+
+/**
+ * Hide the indicator for `DISMISS_SNOOZE_MS`, then re-surface it if the socket is
+ * still down. No-op while online, so a stray dismissal can't pre-snooze a future
+ * disconnect.
+ */
+export function dismissConnectionOffline(): void {
+	if (!disconnected) return;
+	clearSnooze();
+	snoozed = true;
+	snoozeTimer = setTimeout(() => {
+		snoozeTimer = null;
+		snoozed = false;
+		publish();
+	}, DISMISS_SNOOZE_MS);
+	publish();
 }
 
 export function useConnectionStatus(): ConnectionState {

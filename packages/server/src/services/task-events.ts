@@ -237,6 +237,80 @@ export async function recordTitleChange(
 	}
 }
 
+/**
+ * Chars of each end kept on a description-change payload.
+ *
+ * The bodies themselves must never ride along: both the comments skeleton route
+ * and the MCP `list_comments` tool hand back a system comment's `content` in
+ * full, so full descriptions on the payload would inflate every comment fetch
+ * and every agent's prompt context for the life of the task. Two bounded
+ * previews cost ~400 chars per edit instead.
+ */
+const DESCRIPTION_PREVIEW_CHARS = 200;
+
+function descriptionPreview(text: string): { preview: string; truncated: boolean } {
+	if (text.length <= DESCRIPTION_PREVIEW_CHARS) return { preview: text, truncated: false };
+	return { preview: text.slice(0, DESCRIPTION_PREVIEW_CHARS), truncated: true };
+}
+
+/**
+ * Record a description edit on the task's own thread. Unlike a rename, the two
+ * ends are unbounded, so the payload carries a capped preview of each plus the
+ * full lengths — enough for the thread to show what changed without copying the
+ * bodies into every comment fetch.
+ */
+export async function recordDescriptionChange(
+	db: Db,
+	teamId: string,
+	taskId: string,
+	oldDescription: string | null,
+	newDescription: string | null,
+	actorMemberId: string | null,
+	actorApiKeyId: string | null,
+	wsManager: WebSocketManager | undefined,
+): Promise<void> {
+	const from = oldDescription ?? '';
+	const to = newDescription ?? '';
+	if (from === to) return;
+
+	const actorName = await resolveActorName(db, actorMemberId, actorApiKeyId);
+	const verb =
+		from === ''
+			? 'added a description'
+			: to === ''
+				? 'cleared the description'
+				: 'updated the description';
+	const text = `${actorName} ${verb}`;
+	const fromEnd = descriptionPreview(from);
+	const toEnd = descriptionPreview(to);
+
+	const r = await db.query<Record<string, unknown>>(
+		`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, content_type, content)
+		 VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb)
+		 RETURNING *, (SELECT project_id FROM tasks WHERE id = $1) AS project_id`,
+		[
+			taskId,
+			actorMemberId,
+			actorApiKeyId,
+			CommentContentType.System,
+			JSON.stringify({
+				kind: 'description_change',
+				from_preview: fromEnd.preview,
+				to_preview: toEnd.preview,
+				from_truncated: fromEnd.truncated,
+				to_truncated: toEnd.truncated,
+				from_length: from.length,
+				to_length: to.length,
+				actor_id: actorMemberId,
+				text,
+			}),
+		],
+	);
+	if (r.rows[0] && wsManager) {
+		broadcastRowChange(wsManager, wsRoom.team(teamId), 'task_comments', 'INSERT', r.rows[0]);
+	}
+}
+
 export async function recordAssigneeChange(
 	db: Db,
 	teamId: string,
@@ -278,6 +352,80 @@ export async function recordAssigneeChange(
 		broadcastRowChange(wsManager, wsRoom.team(teamId), 'task_comments', 'INSERT', r.rows[0]);
 	}
 	return { fromName, toName };
+}
+
+/**
+ * Record a change of parentage on the task's own thread.
+ *
+ * Both ends are looked up in one query rather than one each, and the project
+ * slugs ride along on the payload so the web renderer can link the identifiers
+ * without a second fetch (the same trick `recordTaskLinks` uses below).
+ */
+export async function recordParentChange(
+	db: Db,
+	teamId: string,
+	taskId: string,
+	oldParentId: string | null,
+	newParentId: string | null,
+	actorMemberId: string | null,
+	actorApiKeyId: string | null,
+	wsManager: WebSocketManager | undefined,
+): Promise<{ fromIdentifier: string | null; toIdentifier: string | null } | null> {
+	if (oldParentId === newParentId) return null;
+
+	const lookupIds = [oldParentId, newParentId].filter((id): id is string => id !== null);
+	const [ends, actorName] = await Promise.all([
+		lookupIds.length > 0
+			? db.query<{ id: string; identifier: string; project_slug: string }>(
+					`SELECT t.id, t.identifier, p.slug AS project_slug
+					   FROM tasks t JOIN projects p ON p.id = t.project_id
+					  WHERE t.id = ANY($1::uuid[])`,
+					[lookupIds],
+				)
+			: Promise.resolve({ rows: [] as { id: string; identifier: string; project_slug: string }[] }),
+		resolveActorName(db, actorMemberId, actorApiKeyId),
+	]);
+	const byId = new Map(ends.rows.map((r) => [r.id, r]));
+	const from = oldParentId ? (byId.get(oldParentId) ?? null) : null;
+	const to = newParentId ? (byId.get(newParentId) ?? null) : null;
+	const fromIdentifier = from?.identifier ?? null;
+	const toIdentifier = to?.identifier ?? null;
+
+	const text =
+		fromIdentifier && toIdentifier
+			? `${actorName} moved this task from ${fromIdentifier} to ${toIdentifier}`
+			: toIdentifier
+				? `${actorName} nested this task under ${toIdentifier}`
+				: fromIdentifier
+					? `${actorName} promoted this task to top level (was under ${fromIdentifier})`
+					: `${actorName} promoted this task to top level`;
+
+	const r = await db.query<Record<string, unknown>>(
+		`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, content_type, content)
+		 VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb)
+		 RETURNING *, (SELECT project_id FROM tasks WHERE id = $1) AS project_id`,
+		[
+			taskId,
+			actorMemberId,
+			actorApiKeyId,
+			CommentContentType.System,
+			JSON.stringify({
+				kind: 'parent_change',
+				from_id: oldParentId,
+				to_id: newParentId,
+				from_identifier: fromIdentifier,
+				to_identifier: toIdentifier,
+				from_project_slug: from?.project_slug ?? null,
+				to_project_slug: to?.project_slug ?? null,
+				actor_id: actorMemberId,
+				text,
+			}),
+		],
+	);
+	if (r.rows[0] && wsManager) {
+		broadcastRowChange(wsManager, wsRoom.team(teamId), 'task_comments', 'INSERT', r.rows[0]);
+	}
+	return { fromIdentifier, toIdentifier };
 }
 
 export async function recordTaskLinks(

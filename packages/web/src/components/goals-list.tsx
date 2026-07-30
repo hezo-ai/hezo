@@ -1,15 +1,6 @@
 import { GOAL_CHECK_FREQUENCY_LABELS, type GoalWithProject } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
-import {
-	Archive,
-	ArchiveRestore,
-	Clock,
-	Pencil,
-	Plus,
-	RotateCw,
-	Target,
-	Trash2,
-} from 'lucide-react';
+import { Clock, Pencil, Plus, RotateCw, Target, Trash2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import {
 	GOAL_EXPLAINER_TOOLTIP,
@@ -21,10 +12,11 @@ import {
 	useGoals,
 	useResolveGoalSuggestion,
 	useRunProgressUpdateNow,
-	useUpdateGoal,
 } from '../hooks/use-goals';
+import { useI18n } from '../lib/i18n';
 import { RunCommentBody } from './comment-renderers/run-comment';
 import { CreateGoalDialog } from './create-goal-dialog';
+import { GoalArchiveButton } from './goal-archive-button';
 import { GoalHealthPill } from './goal-health-pill';
 import { GoalSmartGuidance } from './goal-smart-guidance';
 import { InfiniteScrollSentinel } from './infinite-scroll-sentinel';
@@ -58,7 +50,6 @@ function GoalPanel({
 	goal: GoalWithProject;
 	onEdit: (goal: GoalWithProject) => void;
 }) {
-	const updateGoal = useUpdateGoal(projectId, goal.id);
 	const isArchived = !!goal.archived_at;
 	const percent = Math.max(0, Math.min(100, Math.round(goal.progress_percent)));
 
@@ -96,17 +87,7 @@ function GoalPanel({
 					>
 						<Pencil className="w-4 h-4" />
 					</button>
-					<button
-						type="button"
-						onClick={() => updateGoal.mutate({ archived: !isArchived })}
-						disabled={updateGoal.isPending}
-						aria-label={isArchived ? 'Unarchive goal' : 'Archive goal'}
-						title={isArchived ? 'Unarchive goal' : 'Archive goal'}
-						data-testid="goal-archive"
-						className="text-text-3 hover:text-text-1 transition-colors p-1 disabled:opacity-50"
-					>
-						{isArchived ? <ArchiveRestore className="w-4 h-4" /> : <Archive className="w-4 h-4" />}
-					</button>
+					<GoalArchiveButton projectId={projectId} goal={goal} />
 				</div>
 			</div>
 
@@ -365,6 +346,7 @@ function SuggestedGoals({
 }
 
 export function GoalsList({ projectId }: GoalsListProps) {
+	const { t } = useI18n();
 	const [view, setView] = useState<GoalView>('active');
 	const [createOpen, setCreateOpen] = useState(false);
 	const [editingGoal, setEditingGoal] = useState<GoalWithProject | null>(null);
@@ -383,7 +365,7 @@ export function GoalsList({ projectId }: GoalsListProps) {
 	if (isLoading) {
 		return (
 			<div data-testid="goals-list-loading" className="text-text-2 text-[13px] py-8 text-center">
-				Loading...
+				{t('common.loading')}
 			</div>
 		);
 	}
@@ -416,7 +398,7 @@ export function GoalsList({ projectId }: GoalsListProps) {
 			<ProjectProgressSummary projectId={projectId} />
 			<div className="mb-4 flex flex-wrap items-center justify-between gap-2">
 				<div className="flex items-center gap-1.5">
-					<h1 className="text-lg font-semibold text-text-1">Goals</h1>
+					<h1 className="text-lg font-semibold text-text-1">{t('nav.goals')}</h1>
 					<HelpDialog
 						title="What makes a good goal?"
 						triggerLabel="What makes a good goal?"

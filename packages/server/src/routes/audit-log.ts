@@ -1,7 +1,8 @@
 import type { Context } from 'hono';
 import { Hono } from 'hono';
 import type { Db } from '../db/database';
-import { buildMeta, parsePagination } from '../lib/pagination';
+import { buildCursorPage, encodeCursor, parseCursorPagination } from '../lib/pagination';
+import { err } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireAdminEquivalent } from '../middleware/auth';
 
@@ -18,7 +19,10 @@ async function queryAuditLog(
 	db: Db,
 	scope: { kind: 'project'; projectId: string } | { kind: 'instance' },
 ): Promise<Response> {
-	const { page, perPage, offset } = parsePagination(c);
+	const { limit, cursor, invalidCursor } = parseCursorPagination(c);
+	if (invalidCursor) {
+		return err(c, 'invalid_cursor', 'The pagination cursor is malformed.', 400);
+	}
 	// Egress substitution events are no longer recorded; any rows left in older
 	// databases are excluded so the activity feed stays free of that noise.
 	const conditions: string[] = [`al.entity_type <> 'egress_request'`];
@@ -51,15 +55,20 @@ async function queryAuditLog(
 		params.push(to);
 	}
 
+	// Keyset, not offset. The instance view has no scope predicate, so counting it
+	// to render a page number was a full scan of the largest never-pruned table on
+	// every page load - and nothing consumed the total. `(created_at, id)` is a
+	// total order, so no row is skipped or repeated when rows land mid-read.
+	if (cursor) {
+		conditions.push(`(al.created_at, al.id) < ($${idx}::timestamptz, $${idx + 1}::uuid)`);
+		params.push(cursor.value, cursor.id);
+		idx += 2;
+	}
+
 	const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-	const countResult = await db.query<{ count: number }>(
-		`SELECT count(*)::int AS count FROM audit_log al ${where}`,
-		params,
-	);
-	const total = countResult.rows[0].count;
-
-	const dataParams = [...params, perPage, offset];
+	// Over-fetch one row: that is what makes `has_more` exact without a count.
+	const dataParams = [...params, limit + 1];
 	const result = await db.query(
 		`SELECT al.id, al.project_id, al.actor_type, al.actor_member_id,
 		        al.actor_api_key_id,
@@ -77,12 +86,15 @@ async function queryAuditLog(
 		 LEFT JOIN tasks tk ON al.entity_type = 'task' AND tk.id = al.entity_id
 		 LEFT JOIN tasks tr ON tr.id = NULLIF(al.details->>'task_id', '')::uuid
 		 ${where}
-		 ORDER BY al.created_at DESC
-		 LIMIT $${idx} OFFSET $${idx + 1}`,
+		 ORDER BY al.created_at DESC, al.id DESC
+		 LIMIT $${idx}`,
 		dataParams,
 	);
 
-	return c.json({ data: result.rows, meta: buildMeta(page, perPage, total) });
+	const page = buildCursorPage(result.rows, limit, (row) =>
+		encodeCursor(new Date(row.created_at as string | Date).toISOString(), row.id as string),
+	);
+	return c.json(page);
 }
 
 // Per-project view — a filtered slice of the instance log scoped to the project.

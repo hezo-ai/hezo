@@ -20,6 +20,7 @@ import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import { loadOrCreateCA } from '../src/services/egress/ca';
 import { EgressProxy } from '../src/services/egress/proxy';
+import { invalidateSecretsVault } from '../src/services/egress/substitution';
 import { safeClose } from './helpers';
 import { createTestApp, createTestTeam, projectSlugFor } from './helpers/app';
 
@@ -270,6 +271,9 @@ async function insertSecret(name: string, value: string, allowedHosts: string[])
 		     allowed_hosts = EXCLUDED.allowed_hosts`,
 		[name, enc, allowedHosts],
 	);
+	// Seeded by raw SQL, which bypasses the routes that invalidate the
+	// decrypted-vault cache — so drop it here the way those routes do.
+	invalidateSecretsVault();
 }
 
 async function startHttpsUpstream(rootCa: { cert: string; key: string }): Promise<HttpsServer> {

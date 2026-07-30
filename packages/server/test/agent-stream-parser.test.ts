@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	createAgentStreamParser,
 	extractGrokUsageFromDebugLog,
+	extractKimiUsageFromSessionLog,
 	type PriceModelFn,
 } from '../src/services/agent-stream-parser';
 
@@ -22,6 +23,12 @@ const RATES: Record<string, ModelRate> = {
 	},
 	'gemini-2.5-flash': { inputPerToken: 0.000005, outputPerToken: 0.00001 },
 	'grok-4.5': { inputPerToken: 0.00001, outputPerToken: 0.00003, cacheReadPerToken: 0.000001 },
+	'kimi-k2.7-code': {
+		inputPerToken: 0.0000074,
+		outputPerToken: 0.0000035,
+		cacheReadPerToken: 0.0000002,
+		cacheCreationPerToken: 0.000001,
+	},
 };
 const price: PriceModelFn = (model: string | undefined, tokens: CostTokens) => {
 	const rate = model ? RATES[model] : undefined;
@@ -692,5 +699,201 @@ describe('extractGrokUsageFromDebugLog', () => {
 	it('returns null when the log has no usable span', () => {
 		expect(extractGrokUsageFromDebugLog('no token spans here\n')).toBeNull();
 		expect(extractGrokUsageFromDebugLog('')).toBeNull();
+	});
+});
+
+describe('kimi stream parser', () => {
+	const line = (o: unknown) => `${JSON.stringify(o)}\n`;
+
+	it('renders assistant text and tool calls, and reports no stream usage', () => {
+		const parser = createAgentStreamParser(AgentRuntime.Kimi, price);
+		let out = '';
+		out += parser.onStdout(line({ role: 'assistant', content: 'Looking at the repo.' }));
+		out += parser.onStdout(
+			line({
+				role: 'assistant',
+				content: '',
+				tool_calls: [
+					{
+						type: 'function',
+						id: 'c1',
+						// `arguments` arrives as a JSON *string* on the wire.
+						function: { name: 'Read', arguments: '{"path":"/workspace/a.ts"}' },
+					},
+				],
+			}),
+		);
+		out += parser.onStdout(line({ role: 'tool', tool_call_id: 'c1', content: 'file contents' }));
+
+		expect(out).toContain('Looking at the repo.');
+		// The JSON-string arguments are parsed so the log reads like every other
+		// runtime rather than showing a quoted blob.
+		expect(out).toContain('[tool] Read(path=/workspace/a.ts)');
+		expect(out).toContain('[tool-result] file contents');
+		// Usage is recovered post-run from the session log, never from the stream.
+		expect(parser.getUsage()).toBeNull();
+	});
+
+	it('tracks the last assistant message for the handoff-delivery net', () => {
+		const parser = createAgentStreamParser(AgentRuntime.Kimi);
+		parser.onStdout(line({ role: 'assistant', content: 'first' }));
+		parser.onStdout(line({ role: 'tool', tool_call_id: 'c1', content: 'noise' }));
+		parser.onStdout(line({ role: 'assistant', content: '@admin please review' }));
+		expect(parser.getFinalAssistantMessage()).toBe('@admin please review');
+	});
+
+	it('classifies a retry meta event as a terminal error and logs it', () => {
+		const parser = createAgentStreamParser(AgentRuntime.Kimi);
+		const out = parser.onStdout(
+			line({
+				role: 'meta',
+				type: 'turn.step.retrying',
+				failed_attempt: 1,
+				max_attempts: 5,
+				status_code: 401,
+				error_message: '401 unauthorized',
+			}),
+		);
+		expect(out).toContain('[system] retrying after error (attempt 1/5)');
+		expect(parser.getTerminalError()).toMatch(/authentication failed/i);
+	});
+
+	it('drops session.resume_hint noise from the run log', () => {
+		const parser = createAgentStreamParser(AgentRuntime.Kimi);
+		const out = parser.onStdout(
+			line({ role: 'meta', type: 'session.resume_hint', session_id: 's1', content: 'kimi -c' }),
+		);
+		expect(out).toBe('');
+	});
+});
+
+describe('extractKimiUsageFromSessionLog', () => {
+	const rec = (o: Record<string, unknown>) => JSON.stringify(o);
+
+	it('sums per-turn records and prices each bucket at its own rate', () => {
+		const log = [
+			rec({
+				type: 'usage.record',
+				scope: 'turn',
+				request_id: 'r1',
+				model: 'kimi-k2.7-code',
+				usage: { inputOther: 1000, output: 200, inputCacheRead: 500, inputCacheCreation: 100 },
+			}),
+			rec({
+				type: 'usage.record',
+				scope: 'turn',
+				request_id: 'r2',
+				model: 'kimi-k2.7-code',
+				usage: { inputOther: 300, output: 50, inputCacheRead: 0, inputCacheCreation: 0 },
+			}),
+			'not json at all',
+		].join('\n');
+
+		const usage = extractKimiUsageFromSessionLog(log, price);
+		expect(usage).not.toBeNull();
+		// inputTokens is the full input side: other + cache read + cache creation.
+		expect(usage?.inputTokens).toBe(1300 + 500 + 100);
+		expect(usage?.outputTokens).toBe(250);
+		// `inputOther` is already the non-cached remainder, so unlike Codex/Grok the
+		// cached portion is NOT subtracted out of the input bucket.
+		const expected = costCentsFromRate(RATES['kimi-k2.7-code'], {
+			inputTokens: 1300,
+			cacheReadTokens: 500,
+			cacheCreationTokens: 100,
+			outputTokens: 250,
+		});
+		expect(usage?.costCents).toBeCloseTo(expected, 8);
+	});
+
+	it('dedups repeated records by request id', () => {
+		const dup = rec({
+			scope: 'turn',
+			request_id: 'r1',
+			model: 'kimi-k2.7-code',
+			usage: { inputOther: 100, output: 10 },
+		});
+		const usage = extractKimiUsageFromSessionLog([dup, dup].join('\n'), price);
+		expect(usage?.inputTokens).toBe(100);
+		expect(usage?.outputTokens).toBe(10);
+	});
+
+	it('never sums cumulative session-scoped totals — takes the last instead', () => {
+		// Session records are running totals; summing them would multiply the bill.
+		const log = [
+			rec({
+				scope: 'session',
+				id: 's1',
+				model: 'kimi-k2.7-code',
+				usage: { inputOther: 100, output: 10 },
+			}),
+			rec({
+				scope: 'session',
+				id: 's2',
+				model: 'kimi-k2.7-code',
+				usage: { inputOther: 300, output: 30 },
+			}),
+		].join('\n');
+		const usage = extractKimiUsageFromSessionLog(log, price);
+		expect(usage?.inputTokens).toBe(300);
+		expect(usage?.outputTokens).toBe(30);
+	});
+
+	it('prefers turn records and ignores the cumulative session record beside them', () => {
+		const log = [
+			rec({
+				scope: 'turn',
+				request_id: 'r1',
+				model: 'kimi-k2.7-code',
+				usage: { inputOther: 100, output: 10 },
+			}),
+			rec({
+				scope: 'turn',
+				request_id: 'r2',
+				model: 'kimi-k2.7-code',
+				usage: { inputOther: 200, output: 20 },
+			}),
+			rec({
+				scope: 'session',
+				id: 's1',
+				model: 'kimi-k2.7-code',
+				usage: { inputOther: 300, output: 30 },
+			}),
+		].join('\n');
+		const usage = extractKimiUsageFromSessionLog(log, price);
+		expect(usage?.inputTokens).toBe(300);
+		expect(usage?.outputTokens).toBe(30);
+	});
+
+	it('accepts the snake_case spelling used by the older kimi-cli logs', () => {
+		// Upstream ships two engine generations with duplicated logging paths, so
+		// both spellings are tolerated rather than silently pricing to $0.
+		const log = rec({
+			request_id: 'r1',
+			model_id: 'kimi-k2.7-code',
+			token_usage: { input_other: 400, output: 40, input_cache_read: 60 },
+		});
+		const usage = extractKimiUsageFromSessionLog(log, price);
+		expect(usage?.inputTokens).toBe(460);
+		expect(usage?.outputTokens).toBe(40);
+	});
+
+	it('returns null when the log carries no usage record (⇒ $0, fail-low)', () => {
+		expect(extractKimiUsageFromSessionLog('')).toBeNull();
+		expect(extractKimiUsageFromSessionLog('{"role":"assistant","content":"hi"}')).toBeNull();
+		// An object with a `usage` key but no recognised bucket must not contribute
+		// a phantom zero record.
+		expect(extractKimiUsageFromSessionLog('{"usage":{"something_else":1}}')).toBeNull();
+	});
+
+	it('prices to $0 for a model with no pricing row rather than guessing', () => {
+		const log = rec({
+			scope: 'turn',
+			request_id: 'r1',
+			model: 'kimi-unpriced',
+			usage: { inputOther: 1000, output: 100 },
+		});
+		const usage = extractKimiUsageFromSessionLog(log, price);
+		expect(usage?.inputTokens).toBe(1000);
+		expect(usage?.costCents).toBe(0);
 	});
 });

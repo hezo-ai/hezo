@@ -4,6 +4,7 @@ import { MCP_ADAPTERS, type McpDescriptor, validateInjection } from '../src/serv
 import {
 	STOP_HOOK_JUDGE_MODEL_ANTHROPIC,
 	STOP_HOOK_JUDGE_MODEL_DEEPSEEK,
+	STOP_HOOK_JUDGE_MODEL_KIMI,
 	STOP_HOOK_JUDGE_MODEL_ZAI,
 	STOP_HOOK_RULES,
 } from '../src/services/stop-hook-prompt';
@@ -664,6 +665,130 @@ describe('grok adapter', () => {
 	});
 });
 
+describe('kimi adapter', () => {
+	const adapter = MCP_ADAPTERS[AgentRuntime.Kimi];
+	const KIMI_HOME = '/workspace/.hezo/subscription/kimi-code/run-1';
+	const HOMES = { hostHomeDir: KIMI_HOME, containerHomeDir: KIMI_HOME };
+
+	const readJson = (contents: string): { mcpServers: Record<string, Record<string, unknown>> } =>
+		JSON.parse(contents) as { mcpServers: Record<string, Record<string, unknown>> };
+	const fileNamed = (injection: { files: readonly { hostPath: string }[] }, name: string) =>
+		injection.files.find((f) => f.hostPath.endsWith(name));
+
+	it('declares env-var bearer storage and a required home dir', () => {
+		// env-var (not inline) because Kimi Code natively supports
+		// `bearerTokenEnvVar`; validateInjection then enforces no token in a file.
+		expect(adapter.capabilities.requiresHomeDir).toBe(true);
+		expect(adapter.capabilities.bearerTokenStorage).toBe('env-var');
+	});
+
+	it('throws when no host home dir is provided', () => {
+		expect(() =>
+			adapter.build([HEZO_DESCRIPTOR], { hostHomeDir: null, containerHomeDir: null }),
+		).toThrow(/hostHomeDir/);
+	});
+
+	it('writes mcp.json referencing the bearer by env var, never inlining the token', () => {
+		const injection = adapter.build([HEZO_DESCRIPTOR], HOMES);
+
+		// There is no --mcp-config flag; $KIMI_CODE_HOME is the only isolation
+		// mechanism, so the adapter contributes no CLI args.
+		expect(injection.cliArgs).toEqual([]);
+
+		const mcp = fileNamed(injection, 'mcp.json');
+		expect(mcp).toBeDefined();
+		expect(mcp?.mode).toBe(0o600);
+		const parsed = readJson(mcp?.contents ?? '');
+		expect(parsed.mcpServers.hezo.url).toBe(URL);
+		expect(parsed.mcpServers.hezo.bearerTokenEnvVar).toBe('HEZO_MCP_BEARER_TOKEN_HEZO');
+		expect(mcp?.contents).not.toContain(TOKEN);
+
+		// The value travels via env instead.
+		expect(injection.envEntries).toContain(`HEZO_MCP_BEARER_TOKEN_HEZO=${TOKEN}`);
+		expect(() => validateInjection(adapter, injection)).not.toThrow();
+	});
+
+	it('raises the per-server MCP timeouts well above the CLI defaults', () => {
+		// Kimi Code defaults to 30s startup / 60s per tool call; Hezo MCP tools
+		// routinely exceed the latter.
+		const injection = adapter.build([HEZO_DESCRIPTOR], HOMES);
+		const parsed = readJson(fileNamed(injection, 'mcp.json')?.contents ?? '');
+		expect(parsed.mcpServers.hezo.startupTimeoutMs).toBe(120_000);
+		expect(parsed.mcpServers.hezo.toolTimeoutMs).toBe(1_800_000);
+	});
+
+	it('writes config.toml with a four-key [[hooks]] Stop entry and an allow-all permission rule', () => {
+		const injection = adapter.build([HEZO_DESCRIPTOR], HOMES);
+		const toml = fileNamed(injection, 'config.toml');
+		expect(toml?.mode).toBe(0o600);
+		const contents = toml?.contents ?? '';
+
+		expect(contents).toContain('[[hooks]]');
+		expect(contents).toContain('event = "Stop"');
+		expect(contents).toContain(`command = "node ${KIMI_HOME}/stop-hook-judge.mjs"`);
+		expect(contents).toContain('timeout = 30');
+		expect(contents).toContain('[permission.rules]');
+
+		// Kimi refuses to LOAD a config whose [[hooks]] entry carries any key beyond
+		// these four, which would break every run on this runtime rather than just
+		// the hook. Assert the exact key set.
+		const hookBlock = contents.slice(contents.indexOf('[[hooks]]'));
+		const keys = [...hookBlock.matchAll(/^(\w+)\s*=/gm)].map((m) => m[1]);
+		expect(keys.sort()).toEqual(['command', 'event', 'timeout']);
+	});
+
+	it('writes an executable judge script carrying the shared rules', () => {
+		const injection = adapter.build([HEZO_DESCRIPTOR], HOMES);
+		const judge = fileNamed(injection, 'stop-hook-judge.mjs');
+		expect(judge).toBeDefined();
+		expect(judge?.mode).toBe(0o700);
+		expect(judge?.contents).toContain(STOP_HOOK_JUDGE_MODEL_KIMI);
+		expect(judge?.contents).toContain('api.moonshot.ai/v1/chat/completions');
+		expect(judge?.contents).toContain('KIMI_MODEL_API_KEY');
+		// The rules body is shared verbatim across every runtime that judges.
+		expect(judge?.contents).toContain(JSON.stringify(STOP_HOOK_RULES).slice(1, 60));
+	});
+
+	it('gives the judge a session-log lookup and a marker-file loop guard', () => {
+		// Kimi's Stop payload carries neither the final assistant message nor
+		// stop_hook_active, so both substitutes must be present or the judge is
+		// either blind or unbounded.
+		const injection = adapter.build([HEZO_DESCRIPTOR], HOMES);
+		const judge = fileNamed(injection, 'stop-hook-judge.mjs')?.contents ?? '';
+		expect(judge).toContain('KIMI_CODE_HOME');
+		expect(judge).toContain('wire.jsonl');
+		expect(judge).toContain('.hezo-stop-blocked');
+		expect(judge).toContain('alreadyBlocked()');
+		expect(judge).toContain('markBlocked()');
+		// Exit code 2 is Kimi's documented "intentional block"; 0 would discard it.
+		expect(judge).toContain('process.exitCode = 2');
+	});
+
+	it('renders a stdio MCP server with command/args/env', () => {
+		const stdio: McpDescriptor = {
+			kind: 'stdio',
+			name: 'local-srv',
+			command: '/usr/bin/srv',
+			args: ['--port', '7'],
+			env: { TOKEN: 'x' },
+		};
+		const injection = adapter.build([stdio], HOMES);
+		const parsed = readJson(fileNamed(injection, 'mcp.json')?.contents ?? '');
+		expect(parsed.mcpServers['local-srv'].command).toBe('/usr/bin/srv');
+		expect(parsed.mcpServers['local-srv'].args).toEqual(['--port', '7']);
+		expect(parsed.mcpServers['local-srv'].env).toEqual({ TOKEN: 'x' });
+	});
+
+	it('still writes the Stop hook with an empty descriptor list, and no mcp.json', () => {
+		// A run with no connectors must still be judged; an empty mcpServers map is
+		// not meaningfully different from no file.
+		const injection = adapter.build([], HOMES);
+		expect(fileNamed(injection, 'config.toml')?.contents).toContain('event = "Stop"');
+		expect(fileNamed(injection, 'mcp.json')).toBeUndefined();
+		expect(injection.envEntries).toEqual([]);
+	});
+});
+
 /**
  * A connector whose method allowlist withholds two of its four tools. The
  * descriptor carries both views of the restriction because the runtimes disagree
@@ -746,6 +871,32 @@ describe('per-connector MCP method filtering', () => {
 			const injection = adapter.build([HEZO_DESCRIPTOR], HOMES);
 			const config = JSON.parse(injection.files[0].contents) as Record<string, unknown>;
 			expect(config.tools).toBeUndefined();
+		});
+	});
+
+	describe('kimi', () => {
+		it('emits both enabledTools and disabledTools per server in mcp.json', () => {
+			// Kimi Code supports both views natively, so unlike every other runtime
+			// the descriptor maps across one-to-one with no reshaping.
+			const adapter = MCP_ADAPTERS[AgentRuntime.Kimi];
+			const injection = adapter.build([HEZO_DESCRIPTOR, RESTRICTED_DESCRIPTOR], HOMES);
+			const mcp = injection.files.find((f) => f.hostPath.endsWith('mcp.json'));
+			const parsed = JSON.parse(mcp?.contents ?? '') as {
+				mcpServers: Record<string, { enabledTools?: string[]; disabledTools?: string[] }>;
+			};
+			expect(parsed.mcpServers.linear.enabledTools).toEqual(['get_issue', 'list_issues']);
+			expect(parsed.mcpServers.linear.disabledTools).toEqual(['save_issue', 'delete_comment']);
+		});
+
+		it('emits no filter at all for an unrestricted server', () => {
+			const adapter = MCP_ADAPTERS[AgentRuntime.Kimi];
+			const injection = adapter.build([HEZO_DESCRIPTOR], HOMES);
+			const mcp = injection.files.find((f) => f.hostPath.endsWith('mcp.json'));
+			const parsed = JSON.parse(mcp?.contents ?? '') as {
+				mcpServers: Record<string, Record<string, unknown>>;
+			};
+			expect(parsed.mcpServers.hezo.enabledTools).toBeUndefined();
+			expect(parsed.mcpServers.hezo.disabledTools).toBeUndefined();
 		});
 	});
 

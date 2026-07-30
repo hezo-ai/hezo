@@ -45,11 +45,17 @@ uses the portable [cloud-init snippet](#deploy-it) below.
 
 On first boot the snippet:
 
+- creates a **6 GB swap file** so a low-RAM server doesn't get OOM-killed while
+  installing and running (auto-shrunk to fit the disk, and skipped if the box already
+  has swap - size it with `HEZO_SWAP_SIZE`, or set `0` to disable),
 - installs **Docker** and starts it (Hezo runs each project's agents in a container),
 - downloads the latest **`hezo`** binary for the server's CPU architecture,
 - puts **Caddy** in front for **automatic HTTPS** with a real certificate - no domain
   required (see [How the HTTPS URL works](#how-the-https-url-works)),
-- runs Hezo under **systemd** so it restarts on boot and after a crash, and
+- runs Hezo under **systemd** so it restarts on boot and after a crash,
+- exempts Hezo from the automatic service restarts that follow an **unattended
+  security upgrade**, so a background patch never leaves it sitting locked (see
+  [Keeping the host patched](/docs/deployment/self-hosting#keeping-the-host-patched)), and
 - locks the **firewall** down so only the web ports (80/443) are public.
 
 It deliberately does **not** set your master key - that's generated in your browser
@@ -59,6 +65,7 @@ setup screen; you take it from there.
 ## Deploy it
 
 1. **Create an Ubuntu server** on your provider - 2 GB RAM or more is a good start.
+   The deploy also adds a 6 GB swap file, so it still comes up on a smaller box.
 2. **Paste the snippet below** into the provider's user-data field (each provider
    calls it something slightly different - see [Where to paste it](#where-to-paste-it)).
 3. **Create the server and wait ~2 minutes** for first boot to finish.
@@ -72,6 +79,9 @@ package_update: true
 packages:
   - curl
 runcmd:
+  # To change the swap size (default 6G; set 0 to disable), uncomment and edit this
+  # before the curl line runs:
+  # - [ sh, -c, "echo 'HEZO_SWAP_SIZE=2G' >> /etc/environment" ]
   # To use your own domain instead of sslip.io, point an A record at this server, then
   # uncomment the next line and set your domain (do it before the curl line runs):
   # - [ sh, -c, "echo 'HEZO_DOMAIN_OVERRIDE=hezo.example.com' >> /etc/environment" ]

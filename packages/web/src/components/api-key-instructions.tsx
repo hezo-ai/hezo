@@ -6,6 +6,32 @@ import {
 } from './provider-instructions';
 
 /**
+ * Shared by the two Kimi providers. Hezo can drive Moonshot's models either
+ * through Claude Code (`kimi`) or through Moonshot's own Kimi Code CLI
+ * (`kimi_code`); both authenticate with the same key from the same console, so
+ * the walkthrough is identical and is written once.
+ */
+const KIMI_KEY_INSTRUCTIONS: ProviderInstructionContent = {
+	title: 'How to get your Kimi API key',
+	steps: [
+		<>
+			Sign in to the{' '}
+			<InstructionsLink href="https://platform.kimi.ai/">Kimi Open Platform</InstructionsLink>{' '}
+			(Moonshot AI's developer console).
+		</>,
+		<>
+			Open{' '}
+			<InstructionsLink href="https://platform.kimi.ai/console/api-keys">API keys</InstructionsLink>{' '}
+			and click <strong>Create API key</strong>.
+		</>,
+		<>
+			Copy the key (starts with <code>sk-</code>) and paste it below.
+		</>,
+	],
+	footer: <>The Kimi API is prepaid — top up a small balance on the platform before agents run.</>,
+};
+
+/**
  * Per-provider "how to get an API key" walkthroughs, each linking to the
  * provider's own key console. Deliberately a full record (not Partial): adding
  * a provider without its key instructions should fail the typecheck.
@@ -155,29 +181,11 @@ export const API_KEY_INSTRUCTIONS: Record<AiProvider, ProviderInstructionContent
 			</>
 		),
 	},
-	[AiProvider.Kimi]: {
-		title: 'How to get your Kimi API key',
-		steps: [
-			<>
-				Sign in to the{' '}
-				<InstructionsLink href="https://platform.kimi.ai/">Kimi Open Platform</InstructionsLink>{' '}
-				(Moonshot AI's developer console).
-			</>,
-			<>
-				Open{' '}
-				<InstructionsLink href="https://platform.kimi.ai/console/api-keys">
-					API keys
-				</InstructionsLink>{' '}
-				and click <strong>Create API key</strong>.
-			</>,
-			<>
-				Copy the key (starts with <code>sk-</code>) and paste it below.
-			</>,
-		],
-		footer: (
-			<>The Kimi API is prepaid — top up a small balance on the platform before agents run.</>
-		),
-	},
+	// `kimi` and `kimi_code` are the same Moonshot account and the same key; they
+	// differ only in which CLI drives the models. One shared block, referenced
+	// twice, so the two can never drift apart.
+	[AiProvider.Kimi]: KIMI_KEY_INSTRUCTIONS,
+	[AiProvider.KimiCode]: KIMI_KEY_INSTRUCTIONS,
 	[AiProvider.XAi]: {
 		title: 'How to get your xAI API key',
 		steps: [
@@ -200,6 +208,60 @@ export const API_KEY_INSTRUCTIONS: Record<AiProvider, ProviderInstructionContent
 			<>
 				Runs use xAI's <strong>Grok Build</strong> CLI on the <code>grok-4.5</code> model. API usage
 				is billed per token — add credits under the console's Billing settings before agents run.
+			</>
+		),
+	},
+	// The two local runners take setup steps rather than key-console links: there
+	// is no key to fetch, and the thing that actually needs getting right is the
+	// server URL as seen from inside the agent container.
+	[AiProvider.Ollama]: {
+		title: 'How to connect your Ollama server',
+		steps: [
+			<>
+				Install <InstructionsLink href="https://ollama.com/download">Ollama</InstructionsLink> and
+				pull a model, for example <code>ollama pull qwen3-coder</code>.
+			</>,
+			<>
+				Start the server with <code>ollama serve</code>. It listens on{' '}
+				<code>http://localhost:11434</code> by default.
+			</>,
+			<>
+				Set <strong>Server URL</strong> to an address the agent container can reach —{' '}
+				<code>http://host.docker.internal:11434</code> for a server on this machine. Leave the API
+				key blank.
+			</>,
+		],
+		footer: (
+			<>
+				Ollama serves Anthropic's Messages API, so agents run on the <strong>Claude Code</strong>{' '}
+				CLI. Runs on your own hardware cost nothing per token, so they record <code>$0</code>. Pick
+				a model with strong tool-calling - weaker local models struggle with agentic work.
+			</>
+		),
+	},
+	[AiProvider.LmStudio]: {
+		title: 'How to connect your LM Studio server',
+		steps: [
+			<>
+				Install <InstructionsLink href="https://lmstudio.ai/download">LM Studio</InstructionsLink>{' '}
+				and download a model from its Discover tab.
+			</>,
+			<>
+				Open the <strong>Developer</strong> tab and start the local server. It listens on{' '}
+				<code>http://localhost:1234</code> by default.
+			</>,
+			<>
+				Set <strong>Server URL</strong> to an address the agent container can reach —{' '}
+				<code>http://host.docker.internal:1234</code> for a server on this machine. Leave the API
+				key blank unless you enabled <strong>Require Authentication</strong>.
+			</>,
+		],
+		footer: (
+			<>
+				LM Studio serves Anthropic's Messages API from version 0.4.1, so agents run on the{' '}
+				<strong>Claude Code</strong> CLI. Runs on your own hardware cost nothing per token, so they
+				record <code>$0</code>. Pick a model with strong tool-calling - weaker local models struggle
+				with agentic work.
 			</>
 		),
 	},

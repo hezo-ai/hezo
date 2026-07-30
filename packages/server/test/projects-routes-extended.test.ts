@@ -83,16 +83,9 @@ describe('PATCH /projects/:projectId — validation + reshaping', () => {
 		projectSlug = data.slug; // keep the handle current for later tests
 	});
 
-	it('rejects a non-integer max_concurrent_runs', async () => {
-		const { status, body } = await patch({ max_concurrent_runs: 0 });
-		expect(status).toBe(400);
-		expect((body.error as { message: string }).message).toMatch(/max_concurrent_runs/);
-	});
-
-	it('accepts a valid max_concurrent_runs', async () => {
-		const { status, body } = await patch({ max_concurrent_runs: 4 });
+	it('ignores the removed max_concurrent_runs field (concurrency is instance-level)', async () => {
+		const { status } = await patch({ max_concurrent_runs: 4 });
 		expect(status).toBe(200);
-		expect((body.data as { max_concurrent_runs: number }).max_concurrent_runs).toBe(4);
 	});
 
 	it('rejects a memory_limit_gib below 1', async () => {
@@ -100,10 +93,16 @@ describe('PATCH /projects/:projectId — validation + reshaping', () => {
 		expect(status).toBe(400);
 	});
 
-	it('accepts a valid memory_limit_gib', async () => {
+	it('accepts a valid memory_limit_gib override', async () => {
 		const { status, body } = await patch({ memory_limit_gib: 8 });
 		expect(status).toBe(200);
 		expect((body.data as { memory_limit_gib: number }).memory_limit_gib).toBe(8);
+	});
+
+	it('clears the memory override with null — back to the instance default', async () => {
+		const { status, body } = await patch({ memory_limit_gib: null });
+		expect(status).toBe(200);
+		expect((body.data as { memory_limit_gib: number | null }).memory_limit_gib).toBeNull();
 	});
 
 	it('updates budget windows when consistent', async () => {

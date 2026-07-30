@@ -2,6 +2,7 @@ import { generateMnemonic } from '@hezo/shared';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 import { MasterKeyForm } from '../src/components/master-key-gate';
+import { withI18n } from './helpers/i18n';
 
 // Mirror the timing constants in master-key-gate.tsx.
 const SAVE_COUNTDOWN_SECONDS = 5;
@@ -41,7 +42,7 @@ afterEach(() => {
 });
 
 test('setup generates a 12-word master key in a numbered grid', async () => {
-	render(<MasterKeyForm state="unset" embedded />);
+	render(withI18n(<MasterKeyForm state="unset" embedded />));
 
 	fireEvent.click(screen.getByRole('button', { name: /generate master key/i }));
 
@@ -68,7 +69,7 @@ test('copy writes the space-joined phrase and reveals Continue', async () => {
 		writable: true,
 	});
 
-	render(<MasterKeyForm state="unset" embedded />);
+	render(withI18n(<MasterKeyForm state="unset" embedded />));
 	fireEvent.click(screen.getByRole('button', { name: /generate master key/i }));
 	await screen.findAllByTestId('mnemonic-word');
 	fireEvent.click(screen.getByRole('button', { name: /copy to clipboard/i }));
@@ -82,7 +83,7 @@ test('copy writes the space-joined phrase and reveals Continue', async () => {
 });
 
 test('unlock rejects an invalid phrase inline without authenticating', async () => {
-	render(<MasterKeyForm state="locked" embedded />);
+	render(withI18n(<MasterKeyForm state="locked" embedded />));
 
 	fireEvent.change(screen.getByLabelText(/master key/i), {
 		target: { value: 'not a valid phrase at all here please thanks' },
@@ -93,7 +94,7 @@ test('unlock rejects an invalid phrase inline without authenticating', async () 
 });
 
 test('generated words are masked (password-style) by default', async () => {
-	render(<MasterKeyForm state="unset" embedded />);
+	render(withI18n(<MasterKeyForm state="unset" embedded />));
 	fireEvent.click(screen.getByRole('button', { name: /generate master key/i }));
 
 	const words = await screen.findAllByTestId('mnemonic-word');
@@ -105,7 +106,7 @@ test('generated words are masked (password-style) by default', async () => {
 });
 
 test('the eye toggle reveals and re-hides the words', async () => {
-	render(<MasterKeyForm state="unset" embedded />);
+	render(withI18n(<MasterKeyForm state="unset" embedded />));
 	fireEvent.click(screen.getByRole('button', { name: /generate master key/i }));
 	await screen.findAllByTestId('mnemonic-word');
 
@@ -126,7 +127,7 @@ test('the eye toggle reveals and re-hides the words', async () => {
 
 test('the confirm step shows a masked entry field with a toggle', async () => {
 	vi.useFakeTimers();
-	render(<MasterKeyForm state="unset" embedded />);
+	render(withI18n(<MasterKeyForm state="unset" embedded />));
 	fireEvent.click(screen.getByRole('button', { name: /generate master key/i }));
 	screen.getAllByTestId('mnemonic-word');
 	await copyAndContinue();
@@ -138,7 +139,7 @@ test('the confirm step shows a masked entry field with a toggle', async () => {
 
 test('the confirm step rejects a phrase that does not match the generated key', async () => {
 	vi.useFakeTimers();
-	render(<MasterKeyForm state="unset" embedded />);
+	render(withI18n(<MasterKeyForm state="unset" embedded />));
 	fireEvent.click(screen.getByRole('button', { name: /generate master key/i }));
 	screen.getAllByTestId('mnemonic-word');
 	await copyAndContinue();
@@ -155,7 +156,7 @@ test('the confirm step rejects a phrase that does not match the generated key', 
 
 test('Back returns from confirm to the generated key', async () => {
 	vi.useFakeTimers();
-	render(<MasterKeyForm state="unset" embedded />);
+	render(withI18n(<MasterKeyForm state="unset" embedded />));
 	fireEvent.click(screen.getByRole('button', { name: /generate master key/i }));
 	screen.getAllByTestId('mnemonic-word');
 	await copyAndContinue();
@@ -170,7 +171,7 @@ test('Back returns from confirm to the generated key', async () => {
 
 test('the refresh control replaces the phrase and re-masks it', async () => {
 	vi.useFakeTimers();
-	render(<MasterKeyForm state="unset" embedded />);
+	render(withI18n(<MasterKeyForm state="unset" embedded />));
 	fireEvent.click(screen.getByRole('button', { name: /generate master key/i }));
 	screen.getAllByTestId('mnemonic-word');
 	const first = revealedPhrase();

@@ -1,4 +1,5 @@
-// Testing decision tree, points 1 (real CSS layout / boundingBox) and 5 (a real
+// Testing decision tree, points 1 (real CSS layout / boundingBox), 3 (a native
+// pointer drag with pointer capture — the swipe-to-dismiss gesture) and 5 (a real
 // WebSocket stream): the disconnect toast is driven by the live socket dropping
 // on a genuine `offline` transition, and the assertions read real positions
 // (top-right, below the header, clear of the bottom-right chat launcher) that
@@ -6,7 +7,11 @@
 
 import { expect, test } from './fixtures';
 
-test('shows a top-right reconnecting toast when the socket drops, and clears when it heals', async ({
+// Mirrors DISMISS_SNOOZE_MS in packages/web/src/hooks/use-connection-status.ts
+// (kept local: importing the hook module would pull React into the Node runner).
+const DISMISS_SNOOZE_MS = 20_000;
+
+test('shows a top-right reconnecting toast when the socket drops, clears when it heals, and can be dismissed by swipe or close', async ({
 	sharedPage,
 	sharedWorkspace,
 }) => {
@@ -58,4 +63,31 @@ test('shows a top-right reconnecting toast when the socket drops, and clears whe
 	// Restore the network → the socket reconnects → the toast clears.
 	await context.setOffline(false);
 	await expect(toast).toBeHidden({ timeout: 15000 });
+
+	// Drop it again to exercise dismissal: the toast is in the way of the app, so it
+	// must be clearable while still offline. Swipe right past Radix's swipe
+	// threshold — a real pointer drag with pointer capture, which happy-dom cannot
+	// model; the snooze *timing* is covered in packages/web/test/connection-status.
+	await context.setOffline(true);
+	await expect(toast).toBeVisible({ timeout: 10000 });
+	const swipeBox = await toast.boundingBox();
+	if (!swipeBox) throw new Error('missing toast box');
+	const midY = swipeBox.y + swipeBox.height / 2;
+	await page.mouse.move(swipeBox.x + swipeBox.width / 2, midY);
+	await page.mouse.down();
+	await page.mouse.move(swipeBox.x + swipeBox.width / 2 + 200, midY, { steps: 10 });
+	await page.mouse.up();
+	await expect(toast).toBeHidden();
+
+	// The snooze holds it down while the socket is still failing to reconnect, so a
+	// dismissal isn't undone by the next reconnect attempt a second later.
+	await page.waitForTimeout(5000);
+	await expect(toast).toBeHidden();
+
+	// And the close button is the non-gesture route to the same dismissal.
+	await expect(toast).toBeVisible({ timeout: DISMISS_SNOOZE_MS });
+	await page.getByTestId('connection-dismiss').click();
+	await expect(toast).toBeHidden();
+
+	await context.setOffline(false);
 });

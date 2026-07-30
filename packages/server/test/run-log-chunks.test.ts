@@ -4,6 +4,7 @@ import {
 	appendRunLogChunks,
 	LEGACY_RUN_LOG_VACUUM_KEY,
 	MAX_RUN_LOG_CHUNK_CHARS,
+	readRunLogTail,
 	readRunLogText,
 	replaceRunLog,
 	runLegacyRunLogVacuumOnce,
@@ -174,5 +175,112 @@ describe('runLegacyRunLogVacuumOnce', () => {
 			// biome-ignore lint/suspicious/noExplicitAny: test-only spy
 			(db as any).query = origQuery;
 		}
+	});
+});
+
+describe('appendRunLogChunks usage stamping', () => {
+	// The flush is one statement so it is atomic without a transaction — every
+	// transaction block serializes process-wide on both drivers, and this runs
+	// twice a second per live run.
+	it('appends the delta and stamps the running usage in a single statement', async () => {
+		const runId = await seedRun();
+		await appendRunLogChunks(db, runId, 'streaming\n', {
+			inputTokens: 120,
+			outputTokens: 34,
+			costCents: 7,
+		});
+
+		expect(await readRunLogText(db, runId)).toBe('streaming\n');
+		const row = await db.query<{
+			input_tokens: number;
+			output_tokens: number;
+			cost_cents: number;
+			usage_partial: boolean;
+		}>(
+			'SELECT input_tokens, output_tokens, cost_cents, usage_partial FROM heartbeat_runs WHERE id = $1',
+			[runId],
+		);
+		expect(row.rows[0]).toMatchObject({
+			input_tokens: 120,
+			output_tokens: 34,
+			cost_cents: 7,
+			usage_partial: true,
+		});
+	});
+
+	// A capped-but-dirty stream still flushes so its usage snapshot keeps landing.
+	it('stamps usage with no delta, and leaves the log untouched', async () => {
+		const runId = await seedRun();
+		await appendRunLogChunks(db, runId, 'only line\n');
+		await appendRunLogChunks(db, runId, '', { inputTokens: 5, outputTokens: 6, costCents: 1 });
+
+		expect(await readRunLogText(db, runId)).toBe('only line\n');
+		const row = await db.query<{ input_tokens: number; usage_partial: boolean }>(
+			'SELECT input_tokens, usage_partial FROM heartbeat_runs WHERE id = $1',
+			[runId],
+		);
+		expect(row.rows[0]).toMatchObject({ input_tokens: 5, usage_partial: true });
+	});
+
+	it('keeps seq monotonic across many appends, including oversized ones', async () => {
+		const runId = await seedRun();
+		await appendRunLogChunks(db, runId, 'a\n');
+		await appendRunLogChunks(db, runId, 'b'.repeat(MAX_RUN_LOG_CHUNK_CHARS + 10));
+		await appendRunLogChunks(db, runId, 'c\n', {
+			inputTokens: 1,
+			outputTokens: 1,
+			costCents: 0,
+		});
+
+		const seqs = await db.query<{ seq: number }>(
+			'SELECT seq FROM heartbeat_run_log_chunks WHERE run_id = $1 ORDER BY seq',
+			[runId],
+		);
+		expect(seqs.rows.map((r) => r.seq)).toEqual([0, 1, 2, 3]);
+		const text = await readRunLogText(db, runId);
+		expect(text.startsWith('a\n')).toBe(true);
+		expect(text.endsWith('c\n')).toBe(true);
+	});
+});
+
+describe('readRunLogTail', () => {
+	it('returns only the tail, with the full length alongside', async () => {
+		const runId = await seedRun();
+		for (let i = 0; i < 200; i++) await appendRunLogChunks(db, runId, `line ${i}\n`);
+		const whole = await readRunLogText(db, runId);
+
+		const tail = await readRunLogTail(db, runId, 50);
+		expect(tail.text).toBe(whole.slice(whole.length - 50));
+		expect(tail.length).toBe(whole.length);
+		expect(tail.truncated).toBe(true);
+	});
+
+	it('returns the whole log, untruncated, when it fits the budget', async () => {
+		const runId = await seedRun();
+		await appendRunLogChunks(db, runId, 'short\n');
+
+		const tail = await readRunLogTail(db, runId, 1_000);
+		expect(tail).toEqual({ text: 'short\n', length: 6, truncated: false });
+	});
+
+	it('reports an empty log without reading chunks', async () => {
+		const runId = await seedRun();
+		expect(await readRunLogTail(db, runId, 100)).toEqual({
+			text: '',
+			length: 0,
+			truncated: false,
+		});
+	});
+
+	// The widening loop only matters when the tail budget spans more chunks than
+	// the first page reads; many small chunks is exactly that case.
+	it('widens its read until the budget is covered across many small chunks', async () => {
+		const runId = await seedRun();
+		for (let i = 0; i < 300; i++) await appendRunLogChunks(db, runId, 'x'.repeat(20));
+		const whole = await readRunLogText(db, runId);
+
+		const tail = await readRunLogTail(db, runId, 4_000);
+		expect(tail.text).toBe(whole.slice(whole.length - 4_000));
+		expect(tail.length).toBe(whole.length);
 	});
 });

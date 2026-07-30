@@ -33,6 +33,7 @@ import {
 	ContainerConnectivityStatus,
 	type ProbeResult,
 } from '../src/services/container-connectivity-status';
+import { ensureProjectContainerRunning } from '../src/services/containers';
 import type { DockerClient } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { PricingService, upsertManualRate } from '../src/services/pricing';
@@ -430,47 +431,109 @@ describe('runAgent lifecycle — full success bookkeeping', () => {
 		expect(result.stderr).toContain('No deepseek credential configured');
 	});
 
-	it('fails fast when the project container is not running', async () => {
+	it('lazy-starts a stopped container and the run proceeds', async () => {
+		// Runs never assume a running container: a stopped one is started in
+		// place before the exec, and the start is stamped on the project row.
+		await db.query(
+			`UPDATE projects SET container_status = $1::container_status, container_id = $2,
+			     container_error = NULL, container_last_started_at = NULL WHERE id = $3`,
+			[ContainerStatus.Stopped, 'lazy-lc', projectId],
+		);
+		const startCalls: string[] = [];
+		let started = false;
+		const docker = makeDocker({
+			inspectContainer: async (id: string) => ({
+				Id: id,
+				State: started
+					? { Status: 'running', Running: true, Pid: 1, ExitCode: 0 }
+					: { Status: 'exited', Running: false, Pid: 0, ExitCode: 0 },
+				Config: { Image: 'test' },
+			}),
+			startContainer: async (id: string) => {
+				startCalls.push(id);
+				started = true;
+			},
+		});
 		const result = await runAgent(
-			baseDeps(makeDocker()),
+			baseDeps(docker),
 			makeAgent(),
 			makeTask(),
-			makeProject({ container_status: ContainerStatus.Stopped }),
+			makeProject({ container_id: 'lazy-lc', container_status: ContainerStatus.Stopped }),
 		);
-		expect(result.success).toBe(false);
-		expect(result.stderr).toContain('not running');
-		const run = await db.query<{ status: string; log_text: string | null }>(
-			`SELECT status, ${runLogTextSql('heartbeat_runs.id')} AS log_text FROM heartbeat_runs WHERE id = $1`,
-			[result.heartbeatRunId],
-		);
-		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
-		expect(run.rows[0].log_text).toContain('not running');
+		expect(result.success).toBe(true);
+		expect(startCalls).toEqual(['lazy-lc']);
+
+		const proj = await db.query<{
+			container_status: string;
+			container_last_started_at: string | null;
+		}>('SELECT container_status, container_last_started_at FROM projects WHERE id = $1', [
+			projectId,
+		]);
+		expect(proj.rows[0].container_status).toBe(ContainerStatus.Running);
+		expect(proj.rows[0].container_last_started_at).not.toBeNull();
 	});
 
-	it('reconciles a cached-running container that vanished from Docker and fails the run', async () => {
+	it('concurrent ensures serialize on the lifecycle lock — exactly one container is provisioned', async () => {
+		await db.query(
+			`UPDATE projects SET container_status = NULL, container_id = NULL,
+			     container_error = NULL WHERE id = $1`,
+			[projectId],
+		);
+		let createCalls = 0;
+		const docker = makeDocker({
+			inspectContainer: async (id: string) => ({
+				Id: id,
+				State: { Status: 'running', Running: true, Pid: 1, ExitCode: 0 },
+				Config: { Image: 'test' },
+			}),
+			createContainer: async () => {
+				createCalls++;
+				return { Id: `once-lc-${createCalls}`, Warnings: [] };
+			},
+		});
+		const containerDeps = { db, docker, dataDir };
+		const [a, b] = await Promise.all([
+			ensureProjectContainerRunning(containerDeps, projectId),
+			ensureProjectContainerRunning(containerDeps, projectId),
+		]);
+		// The second ensure waited on the lock, re-read the row the first wrote,
+		// found the container running, and reused it.
+		expect(createCalls).toBe(1);
+		expect(a).toBe('once-lc-1');
+		expect(b).toBe('once-lc-1');
+	});
+
+	it('re-provisions a cached-running container that vanished from Docker and the run proceeds', async () => {
 		await db.query(
 			`UPDATE projects SET container_status = $1::container_status, container_id = $2,
 			     container_error = NULL WHERE id = $3`,
 			[ContainerStatus.Running, 'gone-lc', projectId],
 		);
-		const { broadcasts, wsManager } = recordingWs();
-		const docker = makeDocker({ inspectContainer: async () => null });
+		const created: string[] = [];
+		const docker = makeDocker({
+			inspectContainer: async () => null,
+			createContainer: async () => {
+				created.push('reborn-lc');
+				return { Id: 'reborn-lc', Warnings: [] };
+			},
+		});
 		const result = await runAgent(
-			baseDeps(docker, { wsManager }),
+			baseDeps(docker),
 			makeAgent(),
 			makeTask(),
 			makeProject({ container_id: 'gone-lc' }),
 		);
-		expect(result.success).toBe(false);
-		expect(result.stderr).toContain('not running');
+		// The stale row is repaired by provisioning a fresh container — the run
+		// rides it instead of failing.
+		expect(result.success).toBe(true);
+		expect(created).toEqual(['reborn-lc']);
 
 		const proj = await db.query<{ container_status: string; container_id: string | null }>(
 			'SELECT container_status, container_id FROM projects WHERE id = $1',
 			[projectId],
 		);
-		expect(proj.rows[0].container_status).toBe(ContainerStatus.Error);
-		expect(proj.rows[0].container_id).toBeNull();
-		expect(broadcasts.some((b) => b.event?.table === 'projects')).toBe(true);
+		expect(proj.rows[0].container_status).toBe(ContainerStatus.Running);
+		expect(proj.rows[0].container_id).toBe('reborn-lc');
 	});
 
 	it('stamps triggered_by actor details on the run comment and skips the prompt directive at minimal effort', async () => {

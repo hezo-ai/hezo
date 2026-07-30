@@ -28,8 +28,9 @@ RUN echo 'node ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/node \
 ENV PATH="/root/.local/bin:${PATH}"
 
 # Install AI coding CLIs
-#   @anthropic-ai/claude-code → claude (also drives DeepSeek, Z.ai, and Kimi via
-#                                       their Anthropic-compatible endpoints)
+#   @anthropic-ai/claude-code → claude (also drives DeepSeek, Z.ai, and the `kimi`
+#                                       provider via their Anthropic-compatible
+#                                       endpoints)
 #   @openai/codex             → codex
 #   @google/gemini-cli        → gemini
 #   opencode-ai               → opencode
@@ -37,6 +38,18 @@ RUN npm install -g @anthropic-ai/claude-code \
     && npm install -g @openai/codex \
     && npm install -g @google/gemini-cli \
     && npm install -g opencode-ai
+
+# Moonshot Kimi Code (`kimi`) — the native CLI behind the `kimi_code` provider,
+# alongside (not instead of) the `kimi` provider's Claude Code path above. Pinned
+# for reproducibility like GROK_VERSION: upstream ships two engine generations
+# with duplicated MCP/hook/media paths, so a bump must be re-verified against the
+# stream-json line shapes, the `[[hooks]]` Stop contract, and the session-log
+# usage fields (see `extractKimiUsageFromSessionLog`). Requires Node >= 22.19,
+# which the node:24 base satisfies; `kimi --version` fails the build if not.
+# At run time KIMI_CODE_HOME is overridden per-run to the agent's config dir.
+ARG KIMI_CODE_VERSION=0.30.0
+RUN npm install -g @moonshot-ai/kimi-code@${KIMI_CODE_VERSION} \
+    && kimi --version
 
 # xAI Grok Build (`grok`) — a standalone static binary (no npm). The installer
 # downloads to $HOME/.grok/downloads and symlinks GROK_BIN_DIR; install under a

@@ -29,6 +29,7 @@ import {
 	useOAuthConnections,
 } from '../../../hooks/use-oauth-connections';
 import { useProject } from '../../../hooks/use-projects';
+import { useI18n } from '../../../lib/i18n';
 import { queryKeys } from '../../../lib/query-keys';
 
 interface ConnectorsSearch {
@@ -503,6 +504,7 @@ interface ConnectorRowProps {
 }
 
 function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowProps) {
+	const { t } = useI18n();
 	const { data: me } = useMe();
 	const queryClient = useQueryClient();
 	const status = connectorStatus(connector);
@@ -672,7 +674,10 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 							Skill file imported
 						</p>
 					)}
-					{connector.auth_error && status !== 'active' && (
+					{/* Shown for an active connector too: a token whose refresh keeps
+					    failing leaves the row activated but unusable, and the error is
+					    the only signal the operator gets. Cleared on reconnect. */}
+					{connector.auth_error && (
 						<p className="text-xs text-danger-soft-fg mt-2">{connector.auth_error}</p>
 					)}
 					{error && <p className="text-xs text-danger-soft-fg mt-2">{error}</p>}
@@ -712,7 +717,11 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 									disabled={authStart.isPending}
 									data-testid="connector-connect"
 								>
-									{authStart.isPending ? 'Starting…' : status === 'failed' ? 'Retry' : 'Connect'}
+									{authStart.isPending
+										? 'Starting…'
+										: status === 'failed'
+											? t('common.retry')
+											: 'Connect'}
 								</Button>
 							)}
 							{isApi && !isStaticKeyApi && !brokerOpen && (

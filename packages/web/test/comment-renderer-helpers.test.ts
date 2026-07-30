@@ -3,6 +3,7 @@ import {
 	AlertTriangle,
 	ArrowRightLeft,
 	Dot,
+	FileText,
 	Link2,
 	Pencil,
 	Terminal,
@@ -145,6 +146,12 @@ describe('inlineEventIcon', () => {
 		expect(
 			inlineEventIcon(base({ content_type: 'system', content: { kind: 'title_change' } })),
 		).toBe(Pencil);
+	});
+
+	test('system description_change → FileText', () => {
+		expect(
+			inlineEventIcon(base({ content_type: 'system', content: { kind: 'description_change' } })),
+		).toBe(FileText);
 	});
 
 	test('system assignee_change → UserRoundCog', () => {

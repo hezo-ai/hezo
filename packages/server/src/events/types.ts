@@ -22,7 +22,12 @@ interface Actor {
 	actorApiKeyId?: string | null;
 }
 
-export type TaskUpdateField = 'title' | 'status' | 'assignee';
+/**
+ * `description` carries no from/to: a description has no size ceiling, so the
+ * bodies stay off the audit row (the task thread's description-change comment
+ * holds bounded previews instead).
+ */
+export type TaskUpdateField = 'title' | 'description' | 'status' | 'assignee' | 'parent';
 
 export type DomainEvent =
 	| ({ type: 'task.created'; taskId: string; identifier: string } & Scope & Actor)

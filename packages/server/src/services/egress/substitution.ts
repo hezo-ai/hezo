@@ -66,16 +66,83 @@ interface RequestInputs {
 	body?: string | null;
 }
 
+/**
+ * Decrypted-vault cache.
+ *
+ * `loadAllSecrets` runs for every proxied request carrying a placeholder — i.e.
+ * every MCP call an agent makes — and used to cost two DB queries plus an
+ * AES-256-GCM decrypt of *every* secret in the vault, on the one serialized
+ * database handle shared with the rest of the process. At ten concurrent runs
+ * that was the single largest per-request cost in the egress path.
+ *
+ * Invalidation has three layers, deliberately:
+ * 1. `invalidateSecretsVault()`, called by every path that writes the `secrets`
+ *    table, so an admin's change takes effect on the next request.
+ * 2. Clearing on master-key state change (see `bindSecretsVaultToMasterKey`) —
+ *    decrypted material must never outlive the unlock that produced it.
+ * 3. A short TTL, so a write path that forgets (1) degrades to seconds of
+ *    staleness rather than a permanent stale read. A cache whose correctness
+ *    rests entirely on every call site remembering to invalidate is a bug
+ *    waiting for the next contributor.
+ *
+ * The values live only in server memory on the proxy path, exactly as they did
+ * transiently before; nothing here is reachable from an agent run.
+ */
+const VAULT_CACHE_TTL_MS = 5_000;
+
+interface VaultCacheEntry {
+	secrets: Map<string, ResolvedSecret>;
+	loadedAt: number;
+}
+
+let vaultCache: VaultCacheEntry | null = null;
+let vaultInflight: Promise<Map<string, ResolvedSecret>> | null = null;
+
+/** Drop the cached vault. Call after any write to the `secrets` table. */
+export function invalidateSecretsVault(): void {
+	vaultCache = null;
+}
+
+/**
+ * Clear the vault whenever the master key changes state, so decrypted values
+ * never survive a lock or a re-unlock with different key material.
+ */
+export function bindSecretsVaultToMasterKey(masterKeyManager: MasterKeyManager): void {
+	masterKeyManager.onUnlock(() => invalidateSecretsVault());
+}
+
 export async function loadAllSecrets(
 	scope: SubstitutionScope,
 ): Promise<Map<string, ResolvedSecret>> {
 	const key = scope.masterKeyManager.getKey();
 	if (!key) {
+		invalidateSecretsVault();
 		const err = new Error('LOCKED');
 		err.name = 'MasterKeyLocked';
 		throw err;
 	}
 
+	const cached = vaultCache;
+	if (cached && Date.now() - cached.loadedAt < VAULT_CACHE_TTL_MS) return cached.secrets;
+
+	// Coalesce concurrent misses: ten agents hitting the proxy at once would
+	// otherwise each run the full read-and-decrypt before any of them caches.
+	if (vaultInflight) return vaultInflight;
+	const load = readAndDecryptVault(scope, key);
+	vaultInflight = load;
+	try {
+		const secrets = await load;
+		vaultCache = { secrets, loadedAt: Date.now() };
+		return secrets;
+	} finally {
+		if (vaultInflight === load) vaultInflight = null;
+	}
+}
+
+async function readAndDecryptVault(
+	scope: SubstitutionScope,
+	key: Buffer,
+): Promise<Map<string, ResolvedSecret>> {
 	await refreshExpiringTokens({ db: scope.db, masterKeyManager: scope.masterKeyManager });
 
 	// All secrets are instance-global; any run may emit any placeholder, still

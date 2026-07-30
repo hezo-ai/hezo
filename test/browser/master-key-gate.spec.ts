@@ -16,7 +16,35 @@ test.describe.configure({ mode: 'serial' });
 let server: ChildProcess | null = null;
 let dataDir: string;
 
+/**
+ * Shape of `/api/status`. While the boot sequence runs, the pre-ready handler
+ * answers 200 with `starting: true` and the current phase; once the real app is
+ * serving, the payload carries `masterKeyState` instead.
+ */
+interface GateStatus {
+	starting?: boolean;
+	phase?: string;
+	detail?: string;
+	masterKeyState?: string;
+}
+
+async function fetchGateStatus(): Promise<GateStatus | null> {
+	try {
+		const res = await fetch(`http://localhost:${GATE_SERVER_PORT}/api/status`);
+		if (!res.ok) return null;
+		return (await res.json()) as GateStatus;
+	} catch {
+		return null; // Not listening yet.
+	}
+}
+
 async function startGateServer(opts: { reset: boolean }): Promise<void> {
+	// A previous attempt (a Playwright retry re-enters the test body without
+	// running afterAll) may still hold the fixed port. Leaving it up would let the
+	// readiness poll below succeed against the *stale* server while the newly
+	// spawned one fails to bind, so every retry would assert against the wrong
+	// instance's state.
+	await stopGateServer();
 	const args = [
 		'run',
 		'src/index.ts',
@@ -45,17 +73,27 @@ async function startGateServer(opts: { reset: boolean }): Promise<void> {
 		},
 		stdio: 'ignore',
 	});
+	// A 200 from /api/status is NOT readiness: the pre-ready handler answers it
+	// from the moment the socket accepts, while migrations, seeding and workspace
+	// setup are still running and the SPA is showing a boot progress screen. Wait
+	// for the real app's payload so the first assertion isn't racing the migration
+	// replay a `--reset` start always performs.
 	const deadline = Date.now() + 60_000;
+	let lastPhase = 'unknown';
 	while (Date.now() < deadline) {
-		try {
-			const res = await fetch(`http://localhost:${GATE_SERVER_PORT}/api/status`);
-			if (res.ok) return;
-		} catch {
-			// Not listening yet.
+		const status = await fetchGateStatus();
+		if (status) {
+			if (status.phase === 'error') {
+				throw new Error(`master-key-gate server failed to start: ${status.detail ?? 'unknown'}`);
+			}
+			if (!status.starting && status.masterKeyState) return;
+			lastPhase = status.phase ?? lastPhase;
 		}
 		await new Promise((r) => setTimeout(r, 250));
 	}
-	throw new Error('master-key-gate server did not become ready on :3102');
+	throw new Error(
+		`master-key-gate server did not become ready on :${GATE_SERVER_PORT} (last phase: ${lastPhase})`,
+	);
 }
 
 async function stopGateServer(): Promise<void> {
@@ -87,6 +125,14 @@ test('setup → password → provider, then restart → unlock → password logi
 	await startGateServer({ reset: true });
 	await page.goto('/');
 
+	// Phase 0 — the language step comes BEFORE the master key on a fresh
+	// instance: every screen after it is already product UI, so an operator who
+	// cannot read English would otherwise meet their master key first. This
+	// assertion is the ordering guarantee.
+	await expect(page.getByTestId('setup-step-language')).toBeVisible();
+	await expect(page.getByTestId('master-key-setup')).toHaveCount(0);
+	await page.getByTestId('locale-save').click();
+
 	// Phase A — unset: the pre-active vault setup screen at mobile viewport.
 	await expect(page.getByTestId('master-key-setup')).toBeVisible();
 	await page.getByRole('button', { name: /generate master key/i }).click();
@@ -117,9 +163,15 @@ test('setup → password → provider, then restart → unlock → password logi
 	// wizard resumes at the provider step.
 	await expect(page.getByTestId('setup-step-ai-provider')).toBeVisible();
 	const status = await page.request.get(`http://localhost:${GATE_SERVER_PORT}/api/status`);
-	const statusBody = (await status.json()) as { masterKeyState: string; passwordSet: boolean };
+	const statusBody = (await status.json()) as {
+		masterKeyState: string;
+		passwordSet: boolean;
+		localeConfigured: boolean;
+	};
 	expect(statusBody.masterKeyState).toBe('unlocked');
 	expect(statusBody.passwordSet).toBe(true);
+	// The locale chosen in Phase 0 was persisted before the master key existed.
+	expect(statusBody.localeConfigured).toBe(true);
 
 	// Phase B — restart on the same data dir without a boot key: locked vault.
 	await stopGateServer();
@@ -127,6 +179,11 @@ test('setup → password → provider, then restart → unlock → password logi
 	await page.reload();
 
 	const entry = page.getByLabel(/master key/i);
+	// The language step must NOT reappear: it is gated on the locale never
+	// having been chosen, and the choice from Phase 0 is persisted in
+	// system_meta - which is writable before the master key exists. A restarted
+	// instance goes straight to the unlock screen.
+	await expect(page.getByTestId('setup-step-language')).toHaveCount(0);
 	await expect(page.getByTestId('master-key-unlock')).toBeVisible();
 
 	// A valid-but-wrong phrase signs with the wrong keypair — server rejects.

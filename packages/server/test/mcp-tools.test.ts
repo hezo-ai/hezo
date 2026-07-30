@@ -996,6 +996,172 @@ describe('MCP tool handlers: additional data queries via DB', () => {
 		expect(read.description).toBeUndefined();
 	});
 
+	it('pages a doc larger than one read window and reassembles it exactly', async () => {
+		// ~196KB, well over the 64KB per-result cap, so it must span several windows.
+		// Distinct per-line content means a mis-stitched window would corrupt the join.
+		const big = Array.from({ length: 4000 }, (_, i) => `line ${i}: ${'x'.repeat(40)}`).join('\n');
+		const totalBytes = Buffer.byteLength(big, 'utf8');
+		expect(totalBytes).toBeGreaterThan(64_000);
+
+		const w = (await callToolViaMcp('write_project_doc', {
+			project: projectId,
+			filename: 'big-doc.md',
+			content: big,
+		})) as { written?: boolean; error?: string };
+		expect(w.error).toBeUndefined();
+		expect(w.written).toBe(true);
+
+		let offset = 0;
+		let assembled = '';
+		let windows = 0;
+		for (let i = 0; i < 100; i++) {
+			const win = (await callToolViaMcp('read_project_doc', {
+				project: projectId,
+				filename: 'big-doc.md',
+				offset,
+			})) as {
+				content: string;
+				offset: number;
+				returned_bytes: number;
+				total_bytes: number;
+				next_offset: number | null;
+				truncated: boolean;
+				error?: string;
+			};
+			expect(win.error).toBeUndefined();
+			expect(win.total_bytes).toBe(totalBytes);
+			expect(win.offset).toBe(offset);
+			// returned_bytes is the byte length of the window, never the UTF-16 length.
+			expect(win.returned_bytes).toBe(Buffer.byteLength(win.content, 'utf8'));
+			assembled += win.content;
+			windows++;
+			if (win.next_offset === null) break;
+			expect(win.truncated).toBe(true);
+			expect(win.next_offset).toBe(offset + win.returned_bytes);
+			offset = win.next_offset;
+		}
+		expect(windows).toBeGreaterThan(1);
+		expect(assembled).toBe(big);
+	});
+
+	it('never splits a multi-byte codepoint at a window boundary', async () => {
+		// 100 ASCII bytes then a run of 4-byte emoji. A raw byte cut at 150 lands
+		// inside the 13th emoji (bytes 148-151), so a naive slice would corrupt it.
+		const content = `${'a'.repeat(100)}${'😀'.repeat(5000)}`;
+		const w = (await callToolViaMcp('write_project_doc', {
+			project: projectId,
+			filename: 'emoji-doc.md',
+			content,
+		})) as { error?: string };
+		expect(w.error).toBeUndefined();
+
+		const first = (await callToolViaMcp('read_project_doc', {
+			project: projectId,
+			filename: 'emoji-doc.md',
+			offset: 0,
+			max_bytes: 150,
+		})) as { content: string; returned_bytes: number; next_offset: number | null };
+		// Snapped down to the last whole emoji before byte 150: 100 'a' + 12 emoji = 148 bytes.
+		expect(Buffer.byteLength(first.content, 'utf8')).toBeLessThanOrEqual(150);
+		expect(first.returned_bytes).toBe(148);
+		expect(first.content).not.toContain('�'); // no replacement char = codepoint intact
+		expect(first.next_offset).toBe(first.returned_bytes);
+
+		// Page to the end in small windows and confirm exact, uncorrupted reassembly.
+		let offset = 0;
+		let assembled = '';
+		for (let i = 0; i < 2000; i++) {
+			const win = (await callToolViaMcp('read_project_doc', {
+				project: projectId,
+				filename: 'emoji-doc.md',
+				offset,
+				max_bytes: 150,
+			})) as { content: string; next_offset: number | null };
+			assembled += win.content;
+			if (win.next_offset === null) break;
+			offset = win.next_offset;
+		}
+		expect(assembled).toBe(content);
+		expect(assembled).not.toContain('�');
+	});
+
+	it('returns a doc that fits whole with no paging', async () => {
+		const content = '# Small\n\nJust a little content.';
+		await callToolViaMcp('write_project_doc', {
+			project: projectId,
+			filename: 'small-doc.md',
+			content,
+		});
+		const r = (await callToolViaMcp('read_project_doc', {
+			project: projectId,
+			filename: 'small-doc.md',
+		})) as {
+			content: string;
+			offset: number;
+			returned_bytes: number;
+			total_bytes: number;
+			next_offset: number | null;
+			truncated: boolean;
+			paging_hint?: string;
+		};
+		const bytes = Buffer.byteLength(content, 'utf8');
+		expect(r.content).toBe(content);
+		expect(r.offset).toBe(0);
+		expect(r.next_offset).toBeNull();
+		expect(r.truncated).toBe(false);
+		expect(r.returned_bytes).toBe(bytes);
+		expect(r.total_bytes).toBe(bytes);
+		expect(r.paging_hint).toBeUndefined();
+	});
+
+	it('clamps a window to max_bytes', async () => {
+		await callToolViaMcp('write_project_doc', {
+			project: projectId,
+			filename: 'clamp-doc.md',
+			content: 'y'.repeat(1000),
+		});
+		const r = (await callToolViaMcp('read_project_doc', {
+			project: projectId,
+			filename: 'clamp-doc.md',
+			max_bytes: 100,
+		})) as {
+			content: string;
+			offset: number;
+			returned_bytes: number;
+			next_offset: number | null;
+			truncated: boolean;
+		};
+		expect(r.returned_bytes).toBe(100);
+		expect(r.offset).toBe(0);
+		expect(r.next_offset).toBe(100);
+		expect(r.truncated).toBe(true);
+		expect(r.content).toBe('y'.repeat(100));
+	});
+
+	it('returns an empty tail when offset is past the end', async () => {
+		await callToolViaMcp('write_project_doc', {
+			project: projectId,
+			filename: 'tail-doc.md',
+			content: 'z'.repeat(50),
+		});
+		const r = (await callToolViaMcp('read_project_doc', {
+			project: projectId,
+			filename: 'tail-doc.md',
+			offset: 9999,
+		})) as {
+			content: string;
+			offset: number;
+			returned_bytes: number;
+			total_bytes: number;
+			next_offset: number | null;
+		};
+		expect(r.content).toBe('');
+		expect(r.returned_bytes).toBe(0);
+		expect(r.next_offset).toBeNull();
+		expect(r.total_bytes).toBe(50);
+		expect(r.offset).toBe(50); // clamped down to total_bytes
+	});
+
 	it('create_skill inserts correctly', async () => {
 		const r = await db.query(
 			`INSERT INTO skills (name, slug, content, is_active)
@@ -1587,6 +1753,147 @@ describe('MCP tool: create_task sub-task depth', () => {
 			parent_task_id: 'ZZ-999999',
 		})) as { error?: string };
 		expect(result.error).toMatch(/parent task/i);
+	});
+});
+
+describe('MCP tool: update_task re-parenting', () => {
+	async function newTask(title: string, parentTaskId?: string) {
+		const task = (await callToolViaMcp('create_task', {
+			project: projectId,
+			title,
+			assignee_id: agentId,
+			...(parentTaskId ? { parent_task_id: parentTaskId } : {}),
+		})) as { id: string; identifier: string; error?: string };
+		expect(task.error).toBeUndefined();
+		return task;
+	}
+
+	// The load-bearing case: `update_task` builds its SQL generically from the
+	// arg keys, so an unresolved identifier would hit the uuid column directly.
+	it('resolves a parent passed by identifier', async () => {
+		const parent = await newTask('MCP reparent parent');
+		const mover = await newTask('MCP reparent mover');
+
+		const updated = (await callToolViaMcp('update_task', {
+			project: projectId,
+			task_id: mover.identifier,
+			parent_task_id: parent.identifier,
+		})) as { parent_task_id: string | null; error?: string };
+		expect(updated.error).toBeUndefined();
+		expect(updated.parent_task_id).toBe(parent.id);
+	});
+
+	it('promotes to top level with null', async () => {
+		const parent = await newTask('MCP promote parent');
+		const child = await newTask('MCP promote child', parent.id);
+
+		const updated = (await callToolViaMcp('update_task', {
+			project: projectId,
+			task_id: child.identifier,
+			parent_task_id: null,
+		})) as { parent_task_id: string | null; error?: string };
+		expect(updated.error).toBeUndefined();
+		expect(updated.parent_task_id).toBeNull();
+	});
+
+	it('promotes to top level with an empty string', async () => {
+		const parent = await newTask('MCP promote parent 2');
+		const child = await newTask('MCP promote child 2', parent.id);
+
+		const updated = (await callToolViaMcp('update_task', {
+			project: projectId,
+			task_id: child.identifier,
+			parent_task_id: '',
+		})) as { parent_task_id: string | null; error?: string };
+		expect(updated.error).toBeUndefined();
+		expect(updated.parent_task_id).toBeNull();
+	});
+
+	it('reports no change when the parent is already that task', async () => {
+		const parent = await newTask('MCP noop parent');
+		const child = await newTask('MCP noop child', parent.id);
+
+		const updated = (await callToolViaMcp('update_task', {
+			project: projectId,
+			task_id: child.identifier,
+			parent_task_id: parent.identifier,
+		})) as { unchanged?: boolean };
+		expect(updated.unchanged).toBe(true);
+	});
+
+	it('rejects an unknown parent', async () => {
+		const mover = await newTask('MCP unknown parent mover');
+		const result = (await callToolViaMcp('update_task', {
+			project: projectId,
+			task_id: mover.identifier,
+			parent_task_id: 'ZZ-999999',
+		})) as { error?: string };
+		expect(result.error).toMatch(/parent task not found/i);
+	});
+
+	it('rejects nesting a task under its own sub-task', async () => {
+		const top = await newTask('MCP cycle top');
+		const child = await newTask('MCP cycle child', top.id);
+
+		const result = (await callToolViaMcp('update_task', {
+			project: projectId,
+			task_id: top.identifier,
+			parent_task_id: child.identifier,
+		})) as { error?: string };
+		expect(result.error).toMatch(/one of its own sub-tasks/);
+	});
+
+	it('rejects a move that would push the sub-tree past the depth cap', async () => {
+		const mover = await newTask('MCP depth mover');
+		await newTask('MCP depth mover child', mover.id);
+		const root = await newTask('MCP depth root');
+		const mid = await newTask('MCP depth mid', root.id);
+
+		const result = (await callToolViaMcp('update_task', {
+			project: projectId,
+			task_id: mover.identifier,
+			parent_task_id: mid.identifier,
+		})) as { error?: string };
+		expect(result.error).toMatch(/2 levels deep/);
+	});
+
+	it('rejects an open task under a completed parent', async () => {
+		const parent = await newTask('MCP closed parent');
+		const mover = await newTask('MCP open mover');
+		await callToolViaMcp('update_task', {
+			project: projectId,
+			task_id: parent.identifier,
+			status: 'done',
+		});
+
+		const result = (await callToolViaMcp('update_task', {
+			project: projectId,
+			task_id: mover.identifier,
+			parent_task_id: parent.identifier,
+		})) as { error?: string };
+		expect(result.error).toMatch(/already done/);
+	});
+
+	it('records the move on the task thread', async () => {
+		const parent = await newTask('MCP recorded parent');
+		const mover = await newTask('MCP recorded mover');
+
+		await callToolViaMcp('update_task', {
+			project: projectId,
+			task_id: mover.identifier,
+			parent_task_id: parent.identifier,
+		});
+
+		const comments = await db.query<{ content: Record<string, unknown> }>(
+			`SELECT content FROM task_comments
+			  WHERE task_id = $1 AND content_type = 'system' AND content->>'kind' = 'parent_change'`,
+			[mover.id],
+		);
+		expect(comments.rows).toHaveLength(1);
+		expect(comments.rows[0].content).toMatchObject({
+			to_id: parent.id,
+			to_identifier: parent.identifier,
+		});
 	});
 });
 

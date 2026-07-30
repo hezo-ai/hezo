@@ -15,9 +15,12 @@ import {
 
 // The screenshot case: an agent ends a comment with `@@admin — …` (the passive
 // mention form). It renders as a bare-word link, so it LOOKS like a ping, but @@
-// notifies no one — the handoff stalls. We warn only when the text next to the
-// passive mention reads like an ask (an active @admin was intended), never on a
-// deliberate passive reference.
+// notifies no one — the handoff stalls. Two addressing forms, gated differently:
+// a LEADING-LINE `@@slug — …` always warns (opening a line with a teammate
+// reference and a separator is the address shape, which is reserved for active
+// mentions — a genuine reference goes mid-sentence), while an EMPHASISED
+// `**@@slug**` warns only when its paragraph reads as an ask, since bold marks
+// attribution and headings as much as address.
 
 describe('detectPassiveTeammateAsks', () => {
 	const slugs = ['architect', 'qa-engineer', 'engineer', 'admin'];
@@ -61,10 +64,13 @@ describe('detectPassiveTeammateAsks', () => {
 		]);
 	});
 
-	it('does not flag a routing-label passive handoff with no ask intent', () => {
+	it('flags a routing-label passive handoff even with no ask intent', () => {
+		// A routing label in front of the name does not change what the shape is: the
+		// line still opens with a teammate address, which is reserved for active
+		// mentions. The label makes it MORE of a handoff, not less.
 		expect(
 			detectPassiveTeammateAsks('**Next step:** @@architect — merged and shipped.', slugs),
-		).toEqual([]);
+		).toEqual(['architect']);
 	});
 
 	it('does not flag a teammate named after an unrelated label phrase', () => {
@@ -199,19 +205,98 @@ describe('detectPassiveTeammateAsks', () => {
 		);
 	});
 
-	it('scopes the baton-passing signal to the addressing paragraph', () => {
-		// The readiness line is about the work, in its own paragraph; the passive
-		// address is a plain recap and must not inherit the other paragraph's signal.
+	it('flags the content-writer screenshot: a passive sign-off handoff on a finished draft', () => {
+		// The exact stalled handoff: a completion report ends with a passive
+		// `@@marketing-lead — ready for review.`, which renders as the bare word
+		// `marketing-lead` (a delivered-LOOKING link) and wakes no one. The trailing
+		// sentence is pure status, so `ready for` is the only ask signal present.
 		expect(
 			detectPassiveTeammateAsks(
-				'The doc is ready for the admin.\n\n@@architect — merged and shipped.',
+				'hiddentao.com canonical draft complete at assets/community-posts/article.md ' +
+					'(2,801 words, 10 sections).\n\n' +
+					'@@marketing-lead — ready for review. Dev.to adaptation follows after this ' +
+					'version is approved.',
+				['marketing-lead', 'captain', 'admin'],
+			),
+		).toEqual(['marketing-lead']);
+	});
+
+	it('flags a passive handoff that names the gate instead of the person', () => {
+		// The same closing-handoff shape with the `ready` opener dropped — the line
+		// names only what is being waited on. Each of these was silent until the
+		// gate-word signals joined the baton-passing set.
+		for (const line of [
+			'@@marketing-lead — awaiting review.',
+			'@@marketing-lead — awaiting final sign-off.',
+			'@@marketing-lead — for review.',
+			'@@marketing-lead — pending approval before publication.',
+			'@@marketing-lead — sign-off needed before publication.',
+			'@@marketing-lead — needs signoff.',
+		]) {
+			expect(detectPassiveTeammateAsks(line, ['marketing-lead', 'admin'])).toEqual([
+				'marketing-lead',
+			]);
+		}
+	});
+
+	it('flags a passive address that passes the baton on ("passing this to …")', () => {
+		// `pass` is the same verb class as the `hand …` signal, which alone missed it.
+		expect(
+			detectPassiveTeammateAsks('@@architect — passing this back after the rewrite.', slugs),
+		).toEqual(['architect']);
+		expect(
+			detectPassiveTeammateAsks('**@@architect** — passed it back for the rewrite.', slugs),
+		).toEqual(['architect']);
+	});
+
+	it('does not flag a gate word in narration around a non-addressed passive reference', () => {
+		// "for review" is the signal, but nothing addresses the teammate — the passive
+		// mention sits mid-sentence as attribution, so the address gate rejects it
+		// before the ask gate is ever consulted.
+		expect(
+			detectPassiveTeammateAsks(
+				'The doc went out for review last week; @@architect wrote the brief.',
 				slugs,
 			),
 		).toEqual([]);
 	});
 
-	it('does not flag a passive FYI with no ask intent', () => {
-		expect(detectPassiveTeammateAsks('@@admin — release is done.', slugs)).toEqual([]);
+	it('scopes the baton-passing signal to the emphasised address paragraph', () => {
+		// The readiness line is about the work, in its own paragraph; the emphasised
+		// address is a plain recap and must not inherit the other paragraph's signal.
+		// (The emphasised form is the one still gated on ask intent — a leading-line
+		// address is flagged on sight, see below.)
+		expect(
+			detectPassiveTeammateAsks(
+				'The doc is ready for the admin.\n\n**@@architect** merged and shipped.',
+				slugs,
+			),
+		).toEqual([]);
+	});
+
+	it('flags a line-leading passive address even when the line is pure status', () => {
+		// The canonical miss: `@@admin — release is done.` is not a note filed for the
+		// record, it asks the admin to register the fact — but it carries no pronoun,
+		// no `please` and no `?`, so no ask gate could ever see it. The line-opening
+		// address shape is reserved for active mentions, so the passive marking is
+		// wrong on sight and warns with no ask gate at all.
+		expect(detectPassiveTeammateAsks('@@admin — release is done.', slugs)).toEqual(['admin']);
+		expect(detectPassiveTeammateAsks('@@architect — merged and shipped.', slugs)).toEqual([
+			'architect',
+		]);
+		// Every addressing separator counts, not just the dash.
+		expect(detectPassiveTeammateAsks('@@admin: release is done.', slugs)).toEqual(['admin']);
+	});
+
+	it('does not flag a passive reference that lives inside the sentence', () => {
+		// The escape hatch the rule leaves open: a reference you genuinely only mean to
+		// MAKE goes mid-sentence, where it is not an address and never warns.
+		expect(
+			detectPassiveTeammateAsks(
+				'Release is done; @@admin signed the changelog off earlier.',
+				slugs,
+			),
+		).toEqual([]);
 	});
 
 	it('does not flag a mid-prose passive reference', () => {
@@ -235,10 +320,11 @@ describe('detectPassiveTeammateAsks', () => {
 		expect(detectPassiveTeammateAsks('```\n@@admin — can you approve?\n```', slugs)).toEqual([]);
 	});
 
-	it('scopes the ask signal to the paragraph carrying the passive mention', () => {
-		// The "you" lives in a different paragraph than @@admin, so no ask is inferred.
+	it('scopes the ask signal to the paragraph carrying the emphasised mention', () => {
+		// The "you" lives in a different paragraph than **@@admin**, so no ask is
+		// inferred for the emphasised form (the gated one).
 		expect(
-			detectPassiveTeammateAsks('@@admin — release is done.\n\nthanks, you all rock', slugs),
+			detectPassiveTeammateAsks('**@@admin** shipped the release.\n\nthanks, you all rock', slugs),
 		).toEqual([]);
 	});
 });
@@ -407,7 +493,7 @@ describe('MCP create_comment / update_comment warn on passive-mention asks', () 
 		expect(result.warning).toContain('active mention');
 	});
 
-	it('does not warn on a passive @@admin reference with no ask intent', async () => {
+	it('warns on a line-leading passive @@admin address even with no ask intent', async () => {
 		const taskId = await insertTask(architectId, 'Passive admin FYI');
 		const { token: agentToken } = await mintAgentToken(
 			db,
@@ -422,7 +508,11 @@ describe('MCP create_comment / update_comment warn on passive-mention asks', () 
 			task_id: taskId,
 			content: '@@admin — release is done.',
 		});
-		expect(result.warning).toBeUndefined();
+		expect(result.warning).toContain('@@admin');
+		expect(result.warning).toContain('@admin');
+		// The warning explains the escape hatch: move the reference into the sentence.
+		expect(result.warning).toContain('move the');
+		// Still passive, so it genuinely notified no one — that is the bug being flagged.
 		expect(await adminMentionCount(result.id!)).toBe(0);
 	});
 

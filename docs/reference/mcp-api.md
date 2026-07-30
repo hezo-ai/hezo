@@ -39,6 +39,9 @@ connect, authenticate, and register for access, see
   full-resource inspection tools, e.g. `get_agent_system_prompts`); over the
   cap you get `{ "error": "result_too_large", … }`. Narrow it with filters, a
   single-resource `get_*`, `before` pagination, or `excerpt_chars`.
+  `read_project_doc` never returns that error for a big doc: it returns a UTF-8
+  byte window with a `next_offset` cursor so you can page the rest (see its
+  entry below).
 - **Excerpts (`excerpt_chars`):** list tools accept `excerpt_chars` to truncate long
   text fields, adding `_truncated`/`_length` companions.
 - **Pagination (`before`):** `list_comments` walks older items by passing the oldest
@@ -159,11 +162,23 @@ List local team templates: the built-in Blank template plus any custom templates
 
 **Returns:** An array of local templates (`id`, `name`, `description`, `is_builtin`, `agent_types[]` where each entry has `slug`, `name`, `role_description`). Only the built-in Blank template and custom saved templates appear here - the default specialist rosters live in the marketplace (`get_marketplace_team`).
 
+### `list_marketplace_teams`
+
+_Read-only._
+
+Browse the team marketplace: every ready-made team available to this instance, with its name, description, summary, role count, and version. Callable by the CEO or a team Captain. Use it before staffing a team - the marketplace carries proven, fully-written roles, so check whether one already covers the role you need (then pull its prompt with get_marketplace_team) instead of authoring a system prompt from scratch. You can take a whole roster (apply_marketplace_team) or lift out a single role (apply_marketplace_agent).
+
+**Parameters:** none.
+
+**Returns:** `{ teams }` - every marketplace team available to this instance, each with `slug`, `name`, `description`, `summary`, `version`, and `roster_count`. Search keywords are omitted. Fetch one team’s full roster and prompts with `get_marketplace_team`.
+
+**Authorization:** CEO or a team Captain.
+
 ### `get_marketplace_team`
 
 _Read-only._
 
-Fetch one marketplace team's full definition: its version, changelog, and every role's title, reporting line, and CURRENT system prompt (including the Captain override). CEO-only. Use this when adding/updating a team so you can compare the marketplace's prompts to the agents you already have and decide what to refresh.
+Fetch one marketplace team's full definition: its version, changelog, and every role's title, reporting line, and CURRENT system prompt (including the Captain override). Callable by the CEO or a team Captain. Use it when adding/updating a team, to compare the marketplace's prompts to the agents you already have and decide what to refresh; and when hiring, to start a role from a proven marketplace prompt instead of writing one from scratch - find candidate teams with list_marketplace_teams first.
 
 **Parameters:**
 
@@ -173,11 +188,11 @@ Fetch one marketplace team's full definition: its version, changelog, and every 
 
 **Returns:** The marketplace team’s `slug`, `name`, `version`, `changelog[]`, `captain` (`system_prompt`, `team_context`), and `roster[]` (each with `slug`, `title`, `reports_to_slug`, `role_description`, `summary`, `team_context`, `system_prompt`). Returns `{ error }` if the slug is unknown.
 
-**Authorization:** CEO only.
+**Authorization:** CEO or a team Captain.
 
 ### `apply_marketplace_team`
 
-_Read-only._
+_Write tool._
 
 Add or update a marketplace team's roster on a project's team. CEO-only. Fetches the named marketplace team and provisions its members directly onto the project's existing team - a direct add, not an approval-gated hire proposal, so use it only for a team the admin already chose. Roles the team already has are SKIPPED by default; pass refresh_existing=true to instead refresh those roles' descriptions and system prompts to this team's current versions (use this when the project was created from an earlier version of THIS SAME team - it is a version update, not a duplicate add). refresh_existing overwrites prompts, so before using it on roles that may carry local customizations, read them (get_agent_system_prompt) and the new versions (get_marketplace_team) and refresh selectively with update_agent_system_prompt instead. After it returns, reconcile the merged roster. Returns the roles added, refreshed, and skipped.
 
@@ -192,6 +207,24 @@ Add or update a marketplace team's roster on a project's team. CEO-only. Fetches
 **Returns:** `{ added, refreshed, skipped, captain_updated, version }` - the roster slugs added, refreshed in place (with `refresh_existing`), and skipped. Provisions members directly (no approval flow). Returns `{ error }` if the slug is unknown.
 
 **Authorization:** CEO only - use only for a team the admin already chose; reconcile the merged roster afterwards.
+
+### `apply_marketplace_agent`
+
+_Write tool._
+
+Add ONE role from a marketplace team to a project's team. CEO-only. Use this when the admin wants a single role (e.g. just the security engineer) rather than a whole roster - it provisions that one member directly, a direct add rather than an approval-gated hire proposal, and leaves the rest of the roster, including the Captain, untouched. The team already having that slug is a no-op (skipped). The role's prompt was written for its home team, so AFTER this returns you MUST fit it to this project: rewrite its system prompt and team context (update_agent_system_prompt, set_agent_team_context) so every teammate and hand-off they name is an agent that actually exists here, set a real manager with set_agent_reports_to, and update the existing agents whose work now flows through it. When the role's own manager is not on this team the reporting line is wired to the Captain as a placeholder and reports_to_fell_back comes back true - re-point it. Returns whether the role was added or skipped, plus the reporting line applied.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `slug` | `string` | Yes | The marketplace team slug the role comes from (e.g. "software-development"). |
+| `role` | `string` | Yes | The roster role slug to add (e.g. "security-engineer"), as listed by get_marketplace_team. The Captain is not a roster role and cannot be added this way. |
+
+**Returns:** `{ role, added, skipped, reports_to, reports_to_fell_back, version }` for the single role provisioned. `skipped` is true when the team already had that slug. `reports_to_fell_back` is true when the role’s own manager is not on this team, so the line was wired to the Captain as a placeholder. Returns `{ error }` if the team slug or role slug is unknown.
+
+**Authorization:** CEO only - use only for a role the admin already chose; fit the role’s prompt and reporting line to the existing roster afterwards.
 
 ### `list_projects`
 
@@ -222,7 +255,7 @@ Save the user's preferred widget order for the project dashboard. Pass the full 
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `order` | `string[]` | Yes | Ordered list of widget ids. Valid values: goals, team_snapshot, in_progress, spend. |
 
-**Returns:** `{ order: DashboardWidgetId[] }` — the sanitised order after the update, with any missing widget ids appended at the end.
+**Returns:** `{ order: DashboardWidgetId[] }` - the sanitised order after the update, with any missing widget ids appended at the end.
 
 ## Tasks
 
@@ -305,7 +338,7 @@ Create multiple tasks in one call (max 50). Items are created in order; each has
 
 _Write tool._
 
-Update an task. Agents can use this to change status, update progress, set rules, and record branch names. To finish a ticket, set status to `done` - that is the final completed state and wakes Coach to review the ticket for prompt-learning (the task stays `done`). Use `cancelled` for abandoned work. Setting `done` is rejected for agent callers while the task has an @admin question no human has answered yet - keep the task `in_progress` or move it to `review` until the admin replies. Re-opening a completed task (`done`/`cancelled`) is admin-only. As an agent caller, reassigning is limited to yourself or your direct subordinates; to hand work to a peer or manager use create_comment with @<agent-slug> instead. In description, progress_summary, and rules, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.
+Update an task. Agents can use this to change status, update progress, set rules, and record branch names. To finish a ticket, set status to `done` - that is the final completed state and wakes Coach to review the ticket for prompt-learning (the task stays `done`). Use `cancelled` for abandoned work. Setting `done` is rejected for agent callers while the task has an @admin question no human has answered yet - keep the task `in_progress` or move it to `review` until the admin replies. Re-opening a completed task (`done`/`cancelled`) is admin-only. As an agent caller, reassigning is limited to yourself or your direct subordinates; to hand work to a peer or manager use create_comment with @<agent-slug> instead. Set `parent_task_id` to move this task under a different parent, or to an empty string to promote it to a top-level task; prefer that over cancelling a mis-filed sub-task and re-filing it as a new top-level task. In description, progress_summary, and rules, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.
 
 **Parameters:**
 
@@ -322,10 +355,11 @@ Update an task. Agents can use this to change status, update progress, set rules
 | `rules` | `string` | No | How-to-work-on guardrails for this ticket - approach constraints that shape execution (e.g. "run tests before committing", "consult the architect before auth changes"). Not a channel for passing project domain knowledge to other agents; put that in description instead. |
 | `branch_name` | `string` | No | Git branch name for this task |
 | `runtime_type` | `string` | No | Override the AI runtime for this task (claude_code, codex, gemini). Pass an empty string to clear. |
+| `parent_task_id` | `string` \| `null` | No | Move this task under a different parent - a task identifier (e.g. "BE-2") or UUID. Pass an empty string or null to promote it to a top-level task. Omit to leave the parent unchanged. The parent must be in the same project, cannot be the task itself or one of its own sub-tasks, and the whole sub-tree being moved must still fit within the depth cap of 2. An open task cannot be nested under a parent that is already done or cancelled. |
 
 **Returns:** The updated task row (may carry a `warning` string), `{ unchanged: true }` when no fields changed, `null` if not found, or `{ error }` on a validation failure.
 
-**Authorization:** `done` is the final completed state; marking a ticket `done` wakes Coach to review it but the task stays `done`. `cancelled` is for abandoned work. Agents cannot set `done` while an @admin mention on the task is unanswered by a human; human admins are exempt. Only the admin can re-open a completed (`done`/`cancelled`) task. An agent run is scoped to its own task and may reassign only to itself or a direct subordinate.
+**Authorization:** `done` is the final completed state; marking a ticket `done` wakes Coach to review it but the task stays `done`. `cancelled` is for abandoned work. Agents cannot set `done` while an @admin mention on the task is unanswered by a human; human admins are exempt. Only the admin can re-open a completed (`done`/`cancelled`) task. An agent run is scoped to its own task and may reassign only to itself or a direct subordinate. A `parent_task_id` change is rejected when the new parent is in a different project, is the task itself or one of its own sub-tasks, would push the moved sub-tree past the depth cap of 2, or is already done or cancelled while the task being moved is still open. Moving a task out of its former parent wakes that parent when it was the last open sub-task, exactly as closing it would.
 
 ### `add_task_blocker`
 
@@ -1120,7 +1154,7 @@ List project documentation files (PRD, spec, implementation plan, etc.). Each en
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `filter` | `active` \| `archived` \| `all` | No | Which archive states to consider: 'active' (default - archived items are excluded), 'archived' (only archived), or 'all'. |
 
-**Returns:** `{ files: [{ id, filename, description, updated_at }] }` - the markdown project docs, where `description` is the one-line "what this is" summary (`''` if unset). The `filter` param defaults to `'active'` (archived docs excluded); with `'archived'` or `'all'` each entry also carries `archived: boolean`.
+**Returns:** `{ files: [{ id, filename, description, updated_at }] }` - the markdown project docs, where `description` is the overall "what this is" summary (`''` if unset). The `filter` param defaults to `'active'` (archived docs excluded); with `'archived'` or `'all'` each entry also carries `archived: boolean`.
 
 ### `list_project_assets`
 
@@ -1241,7 +1275,7 @@ Restore an archived project asset to active. It reappears in list_project_assets
 
 _Read-only._
 
-Read a markdown project doc by filename (e.g. "spec.md") - the high-level project context (PRDs, specs, architecture decisions, research) that list_project_docs returns; the full body comes back inline as `content`. These docs live in the project-doc store in the database, NOT on the filesystem: there is no /workspace/.hezo/project-docs path, so do not reach for the Read/cat file tools - always load a doc through this tool by its bare filename. Archived docs are not readable by default - set filter: 'archived' or 'all' to read one. When the admin has left review feedback on the doc, the result includes `review_comments` - each anchors a `comment` to a `quote` (an exact text snippet; `occurrence` disambiguates repeated snippets). Action them when asked to. IMPORTANT: any write to the doc deletes ALL of its review comments, so capture every comment from this result BEFORE your first write_project_doc call - after one write they are gone. For non-markdown assets (mockups, wireframes, diagrams) use read_project_asset instead.
+Read a markdown project doc by filename (e.g. "spec.md") - the high-level project context (PRDs, specs, architecture decisions, research) that list_project_docs returns; the full body comes back inline as `content`. These docs live in the project-doc store in the database, NOT on the filesystem: there is no /workspace/.hezo/project-docs path, so do not reach for the Read/cat file tools - always load a doc through this tool by its bare filename. Archived docs are not readable by default - set filter: 'archived' or 'all' to read one. When the admin has left review feedback on the doc, the result includes `review_comments` - each anchors a `comment` to a `quote` (an exact text snippet; `occurrence` disambiguates repeated snippets). Action them when asked to. IMPORTANT: any write to the doc deletes ALL of its review comments, so capture every comment from this result BEFORE your first write_project_doc call - after one write they are gone. For non-markdown assets (mockups, wireframes, diagrams) use read_project_asset instead. Large docs come back one byte-window at a time: when `truncated` is true, call again with `offset` set to the returned `next_offset` and keep going until `next_offset` is null.
 
 **Parameters:**
 
@@ -1250,14 +1284,16 @@ Read a markdown project doc by filename (e.g. "spec.md") - the high-level projec
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `filename` | `string` | Yes | Filename to read (e.g. "spec.md") |
 | `filter` | `active` \| `archived` \| `all` | No | Which archive states to consider: 'active' (default - archived items are excluded), 'archived' (only archived), or 'all'. |
+| `offset` | `integer` | No | Byte offset to start reading from (default 0). To page through a doc too large for one read, pass back the `next_offset` from the previous call. Snapped down to a UTF-8 character boundary so a window never begins mid-character. |
+| `max_bytes` | `integer` | No | Max bytes of content to return in this window (default and ceiling is the read budget, so a normal-size doc comes back whole). Clamped to the budget; the returned slice ends on a UTF-8 character boundary, so it can come back a few bytes short. |
 
-**Returns:** `{ filename, content }` (the full markdown body), plus `description` when the doc has a one-line summary set, plus `review_comments: [{ id, quote, occurrence, comment, created_at }]` when the admin has left pending review feedback on the doc (each comment anchors to an exact `quote` snippet; `occurrence` disambiguates repeats). Any write to the doc deletes all of its review comments, so capture them before writing. Returns `{ error }` if the file is not found or its archive state doesn't match `filter` (default `'active'`, so archived docs need `filter: 'archived'` or `'all'`; an archived read carries `archived: true`).
+**Returns:** `{ filename, content, offset, returned_bytes, total_bytes, next_offset, truncated }`. `content` is a UTF-8 byte window of the markdown body starting at `offset` (default 0). A doc that fits in one read comes back whole (`offset: 0`, `next_offset: null`, `truncated: false`, `returned_bytes === total_bytes`). A larger doc is paged: `truncated` is true, `next_offset` is the byte offset to pass back as `offset` on the next call, and a `paging_hint` string spells out the loop - keep calling until `next_offset` is null, concatenating each `content`. The optional `max_bytes` param shrinks a window. `description` is included when the doc has an overall summary set. `review_comments: [{ id, quote, occurrence, comment, created_at }]` is included when the admin has left pending review feedback (each anchors to an exact `quote` snippet; `occurrence` disambiguates repeats); any write to the doc deletes all of its review comments, so capture them before writing. Returns `{ error }` if the file is not found or its archive state doesn't match `filter` (default `'active'`, so archived docs need `filter: 'archived'` or `'all'`; an archived read carries `archived: true`).
 
 ### `write_project_doc`
 
 _Write tool._
 
-Write a project documentation file. Project docs are markdown only - the filename must end in .md. For high-level project context: PRD, spec, implementation plan, research. Make ALL desired edits in ONE consolidated write per run, for two reasons: (1) writing a doc deletes ALL of its pending review comments (the admin's highlight feedback returned by read_project_doc) - a single write clears the whole review, so capture every comment in your context before the first write; (2) docs are revisioned - every content-changing write records a revision, so many partial writes bury the history in noise. Pass a `changelog` summarizing what changed in this write and why - it becomes that revision's entry in the document's history; keep update/changelog logs OUT of the document body and put them in `changelog` instead. Also pass a one-line `description` of what the doc is and when to read it - it shows next to the filename in the Documents list and the doc header so teammates and future runs can tell what the doc holds at a glance; keep it short and out of the body. Non-markdown files (mockups, wireframes, images, PDFs) live in the project assets library instead - reference those as `assets/<filename>`. In content, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.
+Write a project documentation file. Project docs are markdown only - the filename must end in .md. For high-level project context: PRD, spec, implementation plan, research. Make ALL desired edits in ONE consolidated write per run, for two reasons: (1) writing a doc deletes ALL of its pending review comments (the admin's highlight feedback returned by read_project_doc) - a single write clears the whole review, so capture every comment in your context before the first write; (2) docs are revisioned - every content-changing write records a revision, so many partial writes bury the history in noise. Pass a `changelog` summarizing what changed in this write and why - it becomes that revision's entry in the document's history; keep update/changelog logs OUT of the document body and put them in `changelog` instead. Also pass a `description`: an overall summary of what the doc is and when to read it, in no more than one or two sentences, shown next to the filename in the Documents list and the doc header so teammates and future runs can tell what the doc is at a glance. Describe the doc's stable purpose, NOT its current contents: do not list its sections, findings, dates, counts, or latest revisions (those live in the body and the `changelog`), so the description stays steady across updates. Keep it short and out of the body. Non-markdown files (mockups, wireframes, images, PDFs) live in the project assets library instead - reference those as `assets/<filename>`. In content, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.
 
 **Parameters:**
 
@@ -1266,10 +1302,10 @@ Write a project documentation file. Project docs are markdown only - the filenam
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `filename` | `string` | Yes | Markdown filename to write (e.g. "spec.md") |
 | `content` | `string` | Yes | File content (markdown) |
-| `description` | `string` | No | One-line summary of what this doc is and when to read it (e.g. "How we track and report campaign analytics each week"). Shown next to the filename in the Documents list and the doc header, so teammates and future runs can tell what the doc holds without opening it. Keep it to a sentence; it is NOT the changelog and NOT part of the body. Omit to leave any existing description unchanged. |
+| `description` | `string` | No | An overall summary of what this doc is and when to read it, in no more than one or two sentences (e.g. "How we track and report campaign analytics each week"). Describe its stable purpose, not its current contents: do NOT list the sections, findings, dates, counts, or latest revisions here (those belong in the body and the `changelog`), so the description stays steady across updates. Shown next to the filename in the Documents list and the doc header so teammates and future runs can tell what the doc is without opening it. It is NOT the changelog and NOT part of the body. Omit to leave any existing description unchanged. |
 | `changelog` | `string` | No | Markdown summary of what changed in THIS update and why - recorded as the revision's changelog and shown in the document's revision history. Put update/status notes here, never in the document body. Reference tickets/docs/agents by bare identifier as in content. |
 
-**Returns:** `{ written: true, id, filename }`, or `{ error }` if the filename is not `.md` or the doc is archived (unarchive first - archived docs are read-only). Make all edits in one consolidated write: a content-changing write deletes ALL pending review comments on the doc (read them first) and records a document revision, so many partial writes lose review context and bury the revision history. The optional `description` sets the doc's one-line "what this is" summary (shown in the Documents list and doc header; omit to leave it unchanged). The optional `changelog` is stored as that revision's changelog and shown in the document's history - put update/status notes there, not in the document body.
+**Returns:** `{ written: true, id, filename }`, or `{ error }` if the filename is not `.md` or the doc is archived (unarchive first - archived docs are read-only). Make all edits in one consolidated write: a content-changing write deletes ALL pending review comments on the doc (read them first) and records a document revision, so many partial writes lose review context and bury the revision history. The optional `description` sets the doc's overall "what this is" summary - one or two sentences describing the doc's stable purpose, not its current contents (shown in the Documents list and doc header; omit to leave it unchanged). The optional `changelog` is stored as that revision's changelog and shown in the document's history - put update/status notes there, not in the document body.
 
 ### `archive_project_doc`
 

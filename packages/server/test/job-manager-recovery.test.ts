@@ -581,12 +581,15 @@ describe('JobManager recovery & maintenance', () => {
 			stopped.shutdown();
 		});
 
-		it('ensureHqContainerRunning starts the stopped HQ container and no-ops without an HQ project', async () => {
+		it('ensureHqContainerRunning is first-boot-only: it skips a stopped HQ container and no-ops without an HQ project', async () => {
 			const { db } = ctx;
 			const hq = await db.query<{ id: string }>(
 				'SELECT id FROM projects WHERE is_internal = true LIMIT 1',
 			);
 			const hqId = hq.rows[0].id;
+			// An idle-stopped (already-provisioned) HQ container is left alone —
+			// lazy start covers the next use in under a second; eagerly waking it
+			// would just hand the idle-stop cron a container to reclaim.
 			await db.query(
 				`UPDATE projects SET container_status = 'stopped'::container_status, container_id = 'hq-box'
 				 WHERE id = $1`,
@@ -609,12 +612,12 @@ describe('JobManager recovery & maintenance', () => {
 			});
 
 			await manager.ensureHqContainerRunning();
-			expect(startCalls).toEqual(['hq-box']);
+			expect(startCalls).toEqual([]);
 			const row = await db.query<{ container_status: string }>(
 				'SELECT container_status::text AS container_status FROM projects WHERE id = $1',
 				[hqId],
 			);
-			expect(row.rows[0].container_status).toBe(ContainerStatus.Running);
+			expect(row.rows[0].container_status).toBe(ContainerStatus.Stopped);
 
 			// Hide the HQ project: the warm-up returns without touching Docker.
 			await db.query('UPDATE projects SET is_internal = false WHERE id = $1', [hqId]);

@@ -15,6 +15,7 @@ import {
 	Trash2,
 } from 'lucide-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { useI18n } from '../lib/i18n';
 import { readStored, writeStored } from '../lib/safe-storage';
 import { DocumentDownloadMenu } from './document-download-menu';
 import { DocumentBody } from './document-review/document-body';
@@ -63,7 +64,7 @@ interface DocsLibraryProps {
 	docTitle?: ReactNode;
 
 	/**
-	 * The selected doc's one-line description. `undefined` means the doc type has
+	 * The selected doc's description. `undefined` means the doc type has
 	 * no description (e.g. the repo-backed AGENTS.md) — the description block and
 	 * its editor are hidden. `''` is a project doc with none set yet: view mode
 	 * shows nothing, edit mode shows the input with a placeholder.
@@ -165,6 +166,7 @@ export function DocsLibrary({
 	projectId,
 	projectSlug,
 }: DocsLibraryProps) {
+	const { t } = useI18n();
 	const [mode, setMode] = useState<'view' | 'edit'>('view');
 	const [modeKey, setModeKey] = useState<string | null>(selectedKey);
 	const [draft, setDraft] = useState('');
@@ -326,7 +328,7 @@ export function DocsLibrary({
 
 					<div className="md:overflow-y-auto md:min-h-0" data-testid="doc-list-scroller">
 						{isLoadingList ? (
-							<div className="text-text-2 text-[13px] py-4">Loading...</div>
+							<div className="text-text-2 text-[13px] py-4">{t('common.loading')}</div>
 						) : items.length === 0 ? (
 							<div className="text-text-2 text-[13px] py-4">No documents</div>
 						) : visibleItems.length === 0 ? (
@@ -392,7 +394,7 @@ export function DocsLibrary({
 						description={emptyDescription}
 					/>
 				) : isLoadingDoc || docContent == null ? (
-					<div className="text-text-2 text-[13px] py-4">Loading...</div>
+					<div className="text-text-2 text-[13px] py-4">{t('common.loading')}</div>
 				) : (
 					<div className="flex flex-col">
 						{viewerBanner}
@@ -458,10 +460,10 @@ export function DocsLibrary({
 												variant="ghost"
 												size="sm"
 												onClick={() => setMode('edit')}
-												aria-label="Edit"
+												aria-label={t('common.edit')}
 											>
 												<Pencil className="w-3.5 h-3.5" />
-												<span className="hidden sm:inline">Edit</span>
+												<span className="hidden sm:inline">{t('common.edit')}</span>
 											</Button>
 										)}
 										{onShowHistory && (
@@ -609,10 +611,10 @@ export function DocsLibrary({
 											>
 												Description
 											</label>
-											<Tooltip content="Agents fill this in when they write the doc — you can edit it here anytime.">
+											<Tooltip content="An overall summary of what the doc is - 1-2 sentences, not a list of its current contents. Agents fill it in when they write the doc; you can edit it here anytime.">
 												<Info
 													className="w-3.5 h-3.5 text-text-3"
-													aria-label="Agents set the description when they write the doc; you can edit it here anytime."
+													aria-label="An overall summary of what the doc is, in 1-2 sentences; agents set it when they write the doc and you can edit it here anytime."
 												/>
 											</Tooltip>
 										</div>
@@ -620,7 +622,7 @@ export function DocsLibrary({
 											id="doc-description-input"
 											value={descDraft}
 											onChange={(e) => setDescDraft(e.target.value)}
-											placeholder="What this doc is and when to read it"
+											placeholder="What this doc is and when to read it (1-2 sentences)"
 											data-testid="doc-description-input"
 										/>
 									</div>
@@ -645,7 +647,7 @@ export function DocsLibrary({
 				onOpenChange={setDeleteOpen}
 				title="Delete this document?"
 				description="The document will be permanently removed."
-				confirmLabel="Delete"
+				confirmLabel={t('common.delete')}
 				variant="danger"
 				onConfirm={handleConfirmDelete}
 			/>

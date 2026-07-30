@@ -28,6 +28,10 @@ export default defineConfig({
 			// `@hezo/server/test` entry must come first so it wins over the
 			// broader `@hezo/server` prefix.
 			'@hezo/server/test': resolve(ROOT, 'packages/server/test'),
+			// `@hezo/server/src/...` is the tsc-visible form (node resolution walks
+			// the workspace symlink into the real package dir), so alias it too —
+			// before the broader prefix — for tests importing server internals.
+			'@hezo/server/src': resolve(ROOT, 'packages/server/src'),
 			'@hezo/server': resolve(ROOT, 'packages/server/src'),
 			'@hezo/web': resolve(__dir, 'src'),
 			'@hezo/shared': resolve(ROOT, 'packages/shared/src/index.ts'),

@@ -169,6 +169,10 @@ oauthRoutes.get('/oauth/callback', async (c) => {
 				resource_url: payload.resourceUrl,
 				token_url: payload.manualConfig.token_url,
 				authorize_url: payload.manualConfig.authorize_url,
+				// The generic host-side refresh reads token_url + client_id straight off
+				// this metadata, so the client id the exchange just used has to be kept.
+				// Omitting it leaves the connection permanently unrefreshable.
+				client_id: payload.manualConfig.client_id,
 			},
 		},
 	);
@@ -644,6 +648,9 @@ oauthRoutes.get('/oauth/mcp-callback', async (c) => {
 				resource_url: payload.resourceUrl,
 				token_url: payload.manualConfig.token_url,
 				authorize_url: payload.manualConfig.authorize_url,
+				// Same as the plain auth-code callback: without client_id the generic
+				// refresh throws before any network call and the token goes stale.
+				client_id: payload.manualConfig.client_id,
 			},
 		});
 	} catch (e) {

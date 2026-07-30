@@ -194,7 +194,11 @@ export function useUpdateGoal(projectId: string, goalId: string) {
 			return { ...current, ...rest };
 		},
 		mergeResponse: (current, updated) => (current ? { ...current, ...updated } : current),
-		invalidateOnSettled: [queryKeys.projects.goalsFiltered(projectId, undefined)],
+		// The `goals(projectId)` prefix, not `goalsFiltered(projectId, undefined)`: the list
+		// queries carry a filter object in the key slot, and react-query's partial match
+		// compares that slot element-wise — `undefined` never matches `{include_archived:false}`,
+		// so archiving used to leave the card on screen until the WebSocket broadcast landed.
+		invalidateOnSettled: [queryKeys.projects.goals(projectId)],
 		errorMessage: 'Failed to update goal',
 	});
 }

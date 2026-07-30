@@ -1,7 +1,7 @@
 import { AuthType, TaskStatus, TERMINAL_TASK_STATUSES, WakeupSource, wsRoom } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
 import type { Db } from '../db/database';
-import { runLogTextSql } from '../db/run-log-chunks';
+import { readRunLogTail } from '../db/run-log-chunks';
 import { assertNoActiveRun } from '../lib/active-run';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
@@ -24,6 +24,7 @@ import {
 	assertChildrenAllClosed,
 	assertNoOutstandingActivity,
 	assertNoUnansweredAdminMentions,
+	resolveParentAssignment,
 } from '../lib/task-relationships';
 import {
 	buildSearchRelevanceOrderSql,
@@ -33,8 +34,14 @@ import {
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { cancelCoachWorkForTask, terminateRunsForTask } from '../services/run-termination';
-import { triggerStatusAutomations } from '../services/task-automation';
-import { recordAssigneeChange, recordTaskLinks, recordTitleChange } from '../services/task-events';
+import { triggerStatusAutomations, wakeTaskIfChildrenClosed } from '../services/task-automation';
+import {
+	recordAssigneeChange,
+	recordDescriptionChange,
+	recordParentChange,
+	recordTaskLinks,
+	recordTitleChange,
+} from '../services/task-events';
 import {
 	type CreateTaskCaller,
 	CreateTaskError,
@@ -47,6 +54,12 @@ import { createWakeup } from '../services/wakeup';
 const log = logger.child('routes');
 
 const MAX_BATCH_TASKS = 50;
+
+/**
+ * Log excerpt returned with a task's latest run. The task view renders a
+ * preview, not the whole log — the run page fetches that from its own endpoint.
+ */
+const LATEST_RUN_LOG_TAIL_CHARS = 64 * 1024;
 
 async function buildCreateTaskCaller(c: Context<Env>, teamId: string): Promise<CreateTaskCaller> {
 	const auth = c.get('auth');
@@ -437,9 +450,9 @@ tasksRoutes.get('/projects/:projectId/tasks/:taskId/latest-run', async (c) => {
 	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
 	if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 
-	const result = await db.query(
+	const result = await db.query<{ id: string } & Record<string, unknown>>(
 		`SELECT hr.id, hr.member_id, hr.status, hr.started_at, hr.finished_at,
-		        hr.exit_code, ${runLogTextSql('hr.id')} AS log_text, hr.invocation_command, hr.working_dir,
+		        hr.exit_code, hr.invocation_command, hr.working_dir,
 		        i.project_id AS project_id,
 		        ma.title AS agent_title, ma.slug AS agent_slug
 		 FROM heartbeat_runs hr
@@ -454,7 +467,11 @@ tasksRoutes.get('/projects/:projectId/tasks/:taskId/latest-run', async (c) => {
 	if (result.rows.length === 0) {
 		return ok(c, null);
 	}
-	return ok(c, result.rows[0]);
+	// The log is fetched separately as a bounded tail rather than joined in: a
+	// run's log reaches 10 MB and this view renders an excerpt.
+	const row = result.rows[0];
+	const tail = await readRunLogTail(db, row.id, LATEST_RUN_LOG_TAIL_CHARS);
+	return ok(c, { ...row, log_text: tail.text, log_length: tail.length });
 });
 
 tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
@@ -466,11 +483,13 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 	const existing = await db.query<{
 		id: string;
 		title: string;
+		description: string | null;
 		status: string;
 		project_id: string;
 		assignee_id: string | null;
+		parent_task_id: string | null;
 	}>(
-		'SELECT id, title, status, project_id, assignee_id FROM tasks WHERE id = $1 AND team_id = $2',
+		'SELECT id, title, description, status, project_id, assignee_id, parent_task_id FROM tasks WHERE id = $1 AND team_id = $2',
 		[taskId, teamId],
 	);
 	if (existing.rows.length === 0) {
@@ -488,6 +507,7 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 		rules?: string | null;
 		branch_name?: string | null;
 		runtime_type?: string | null;
+		parent_task_id?: string | null;
 	}>();
 
 	const auth = c.get('auth');
@@ -532,6 +552,38 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 		body.status = await coerceTargetStatusForBlockers(db, taskId, body.status);
 	}
 
+	// `parent_task_id` is the one field on this route where an explicit null is
+	// meaningful: null promotes the task to top level, a value nests it, and an
+	// absent key leaves the parent alone. (Contrast `assignee_id` below, which
+	// rejects null outright.) Deliberately not wrapped in a transaction: every
+	// other guard here is read-then-write too, `PostgresDb.txQueue` is
+	// process-wide so one on this path would queue behind every other request,
+	// and the residual race is bounded because every tree walk is depth-capped.
+	const oldParentTaskId = existing.rows[0].parent_task_id;
+	let newParentTaskId: { value: string | null } | null = null;
+	if (body.parent_task_id !== undefined) {
+		const assignment = await resolveParentAssignment(
+			db,
+			teamId,
+			{
+				taskId,
+				projectId: existing.rows[0].project_id,
+				currentParentTaskId: oldParentTaskId,
+				status: existing.rows[0].status,
+			},
+			body.parent_task_id,
+		);
+		if (!assignment.ok) {
+			return err(
+				c,
+				assignment.code,
+				assignment.message,
+				assignment.code === 'NOT_FOUND' ? 404 : 400,
+			);
+		}
+		if (assignment.changed) newParentTaskId = { value: assignment.parentTaskId };
+	}
+
 	const sets: string[] = [];
 	const params: unknown[] = [];
 	let idx = 1;
@@ -568,6 +620,11 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 		}
 		sets.push(`assignee_id = $${idx}`);
 		params.push(body.assignee_id);
+		idx++;
+	}
+	if (newParentTaskId) {
+		sets.push(`parent_task_id = $${idx}`);
+		params.push(newParentTaskId.value);
 		idx++;
 	}
 	if (body.labels !== undefined) {
@@ -634,6 +691,42 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 	const projectId = existing.rows[0].project_id;
 
 	if (body.description !== undefined) {
+		// `''` and NULL are the same "no description", so re-sending either over an
+		// already-empty description is not an edit and records nothing. The recorder
+		// applies the same rule; this guard keeps the no-op off the audit log too.
+		if (body.description !== (existing.rows[0].description ?? '')) {
+			// Awaited: the client's onSettled invalidation refetches the comment feed
+			// straight away and has to see this row (same reason as the rename below).
+			try {
+				await recordDescriptionChange(
+					db,
+					teamId,
+					taskId,
+					existing.rows[0].description,
+					body.description,
+					actorMemberId,
+					actorApiKeyId,
+					c.get('wsManager'),
+				);
+				// The bodies deliberately stay off the audit row — a description has no
+				// size ceiling, and the thread comment already carries bounded previews.
+				events?.emit({
+					type: 'task.updated',
+					teamId,
+					projectId,
+					actorType,
+					actorMemberId,
+					actorApiKeyId,
+					taskId,
+					field: 'description',
+					from: null,
+					to: null,
+				});
+			} catch (e) {
+				log.error('Failed to record description change:', e);
+			}
+		}
+
 		trackBackground(
 			recordTaskLinks(
 				db,
@@ -673,6 +766,48 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 			});
 		} catch (e) {
 			log.error('Failed to record title change:', e);
+		}
+	}
+
+	if (newParentTaskId) {
+		try {
+			const ends = await recordParentChange(
+				db,
+				teamId,
+				taskId,
+				oldParentTaskId,
+				newParentTaskId.value,
+				actorMemberId,
+				actorApiKeyId,
+				c.get('wsManager'),
+			);
+			events?.emit({
+				type: 'task.updated',
+				teamId,
+				projectId,
+				actorType,
+				actorMemberId,
+				actorApiKeyId,
+				taskId,
+				field: 'parent',
+				from: oldParentTaskId,
+				to: newParentTaskId.value,
+				fromLabel: ends?.fromIdentifier ?? null,
+				toLabel: ends?.toIdentifier ?? null,
+			});
+		} catch (e) {
+			log.error('Failed to record parent change:', e);
+		}
+		// Moving a task out clears the old parent's child-closure gate exactly as
+		// closing it would, so the old parent's assignee gets the same wakeup. The
+		// new parent gets nothing: gaining a child can only add an open child, never
+		// clear a gate.
+		if (oldParentTaskId) {
+			trackBackground(
+				wakeTaskIfChildrenClosed(db, teamId, oldParentTaskId).catch((e) =>
+					log.error('Failed to wake former parent after re-parent:', e),
+				),
+			);
 		}
 	}
 

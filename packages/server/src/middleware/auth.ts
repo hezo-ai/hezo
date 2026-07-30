@@ -37,6 +37,11 @@ const PUBLIC_PATHS = [
 	// lookup, so they bypass the bearer-token auth middleware.
 	'/api/api-keys/register',
 	'/api/api-keys/status',
+	// The onboarding language screen runs before any credential exists. The
+	// route re-checks initialization itself and requires superuser once an admin
+	// password is enrolled, so this is only open in the same window where
+	// /api/auth/setup already lets anyone claim the instance.
+	'/api/instance-settings/locale',
 ];
 
 /**
@@ -78,8 +83,12 @@ export async function verifyToken(
 
 		if (result.rows[0].status !== ApiKeyStatus.Approved) return null;
 
-		// Update last_used_at
-		await db.query('UPDATE api_keys SET last_used_at = now() WHERE id = $1', [result.rows[0].id]);
+		// `last_used_at` is a coarse "when was this key last seen" signal for the
+		// admin list, so it is written at most once a minute per key rather than on
+		// every request. An agent's MCP traffic is many requests a second, and each
+		// one was a row write - plus a dead tuple - for a timestamp nobody reads at
+		// that resolution.
+		await touchApiKeyLastUsed(db, result.rows[0].id);
 
 		return {
 			type: AuthType.ApiKey,
@@ -164,6 +173,18 @@ export async function verifyToken(
 	} catch {
 		return null;
 	}
+}
+
+/** Coarsest useful resolution for the api-key "last seen" timestamp. */
+const API_KEY_TOUCH_INTERVAL_MS = 60_000;
+const apiKeyTouchedAt = new Map<string, number>();
+
+async function touchApiKeyLastUsed(db: Db, apiKeyId: string): Promise<void> {
+	const now = Date.now();
+	const last = apiKeyTouchedAt.get(apiKeyId) ?? 0;
+	if (now - last < API_KEY_TOUCH_INTERVAL_MS) return;
+	apiKeyTouchedAt.set(apiKeyId, now);
+	await db.query('UPDATE api_keys SET last_used_at = now() WHERE id = $1', [apiKeyId]);
 }
 
 export const authMiddleware = createMiddleware<Env>(async (c, next) => {
@@ -482,6 +503,31 @@ export function isAdminEquivalent(auth: AuthInfo): boolean {
  * and ordinary agent runs. (API keys are MCP-only — `authMiddleware` rejects them
  * on REST before any handler runs — so on REST this is effectively superuser-only.)
  */
+/**
+ * The same gate as {@link requireAdminEquivalent}, but for a route listed in
+ * `PUBLIC_PATHS` — where `authMiddleware` never ran, so `c.var.auth` is unset
+ * and the route has to resolve the bearer itself (the self-authenticating
+ * idiom `POST /api/auth/password` also uses). Composes the existing
+ * `verifyToken` + `isAdminEquivalent` rather than reimplementing either.
+ */
+export async function requireAdminEquivalentBearer(c: Context<Env>): Promise<Response | null> {
+	const header = c.req.header('Authorization');
+	if (!header?.startsWith('Bearer ')) {
+		return c.json(
+			{ error: { code: 'UNAUTHORIZED', message: 'Missing authorization header' } },
+			401,
+		);
+	}
+	const auth = await verifyToken(header.slice(7), c.get('db'), c.get('masterKeyManager'));
+	if (!auth) {
+		return c.json({ error: { code: 'UNAUTHORIZED', message: 'Invalid or expired token' } }, 401);
+	}
+	if (!isAdminEquivalent(auth)) {
+		return c.json({ error: { code: 'FORBIDDEN', message: 'Admin access required' } }, 403);
+	}
+	return null;
+}
+
 export function requireAdminEquivalent(c: Context<Env>): Response | null {
 	const auth = c.get('auth');
 	if (!isAdminEquivalent(auth)) {

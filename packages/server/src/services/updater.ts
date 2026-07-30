@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { createWriteStream, existsSync } from 'node:fs';
 import {
 	chmod,
 	copyFile,
@@ -13,6 +13,8 @@ import {
 	writeFile,
 } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { UpdateState } from '@hezo/shared';
 import { logger } from '../logger';
 import { HEZO_VERSION } from '../version';
@@ -212,20 +214,48 @@ export async function downloadAndStage(version: string, dataDir: string): Promis
 		if (!binRes.ok) throw new Error(`asset download failed: HTTP ${binRes.status}`);
 		if (!sumsRes.ok) throw new Error(`SHA256SUMS download failed: HTTP ${sumsRes.status}`);
 
-		const bytes = Buffer.from(await binRes.arrayBuffer());
 		const expected = expectedSha(await sumsRes.text(), asset);
 		if (!expected) throw new Error(`no SHA256 entry for ${asset}`);
-		const actual = createHash('sha256').update(bytes).digest('hex');
-		if (!timingSafeHexEqual(actual, expected))
-			throw new Error('SHA256 mismatch — refusing to stage');
+		if (!binRes.body) throw new Error('asset download returned no body');
 
+		// Stream to a sidecar file, hashing as the bytes land. The release binary
+		// is >100MB, so buffering it whole to hash it is a real allocation on a
+		// small host — and this runs on a schedule, unattended. The file is only
+		// moved into the staged path AFTER the hash matches, so an unverified
+		// binary is never stageable.
 		const staged = stagedPath(dataDir);
-		await writeFile(staged, bytes);
+		const partial = `${staged}.part`;
+		const hash = createHash('sha256');
+		let size = 0;
+		try {
+			await pipeline(
+				// The DOM `ReadableStream` from `fetch` and node:stream/web's are
+				// structurally the same at runtime but distinct nominal types.
+				Readable.fromWeb(binRes.body as unknown as Parameters<typeof Readable.fromWeb>[0]),
+				async function* (source) {
+					for await (const chunk of source) {
+						const buf = chunk as Buffer;
+						hash.update(buf);
+						size += buf.length;
+						yield buf;
+					}
+				},
+				createWriteStream(partial),
+			);
+
+			const actual = hash.digest('hex');
+			if (!timingSafeHexEqual(actual, expected))
+				throw new Error('SHA256 mismatch — refusing to stage');
+		} catch (err) {
+			await rm(partial, { force: true }).catch(() => undefined);
+			throw err;
+		}
+		await rename(partial, staged);
 		if (process.platform !== 'win32') await chmod(staged, 0o755);
 		if (process.platform === 'darwin') await stripQuarantine(staged);
 
 		await writeState(dataDir, { state: UpdateState.Staged, targetVersion: version, asset });
-		log.info(`Staged update ${version} (${asset}, ${bytes.length} bytes)`);
+		log.info(`Staged update ${version} (${asset}, ${size} bytes)`);
 	} catch (err) {
 		await writeState(dataDir, {
 			state: UpdateState.Error,

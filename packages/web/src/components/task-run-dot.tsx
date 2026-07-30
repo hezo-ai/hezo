@@ -30,8 +30,9 @@ export function TaskRunDot({ hasActiveRun, queuedWakeup }: TaskRunDotProps) {
 	}
 	if (queuedWakeup) {
 		const label =
+			queuedWakeup.reason === 'instance_at_capacity' ||
 			queuedWakeup.reason === 'project_at_capacity'
-				? 'Run queued — project at capacity'
+				? 'Run queued — at the container limit'
 				: 'Run queued — waiting';
 		return (
 			<Tooltip content={label}>

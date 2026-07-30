@@ -368,7 +368,7 @@ function NewProjectDocForm({
 			/>
 			<Input
 				label="Description"
-				placeholder="What this doc is and when to read it"
+				placeholder="What this doc is and when to read it (1-2 sentences)"
 				value={description}
 				onChange={(e) => setDescription(e.target.value)}
 			/>

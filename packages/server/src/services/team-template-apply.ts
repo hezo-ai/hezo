@@ -581,3 +581,101 @@ export async function applyMarketplaceTeamToTeam(
 		builtin_updated_slugs: captainResult.updated ? [CAPTAIN_AGENT_SLUG] : [],
 	};
 }
+
+/** Outcome of provisioning a single marketplace role onto an existing team. */
+export interface ApplyMarketplaceRoleResult {
+	/** True when the member was created; false when the team already had the slug. */
+	added: boolean;
+	/** True when the team already had this slug, so nothing was written. */
+	skipped: boolean;
+	/** The reporting line actually wired, after the fallback below. */
+	reports_to_slug: string | null;
+	/**
+	 * True when the role's own manager (e.g. the App Team engineer's `architect`)
+	 * is not on this team, so the line was pointed at the Captain instead. The
+	 * caller reconciles it to a better manager.
+	 */
+	reports_to_fell_back: boolean;
+}
+
+/**
+ * Provisions ONE role from a marketplace team onto an existing team — the
+ * per-role counterpart of `applyMarketplaceTeamToTeam`, used when the admin picks
+ * a single role out of a team's roster rather than taking the whole roster.
+ *
+ * Two deliberate differences from the whole-team path:
+ *
+ * 1. **The Captain is never touched.** The team path applies the def's Captain
+ *    override, which rewrites the target team's Captain prompt — right when you
+ *    are adopting a whole team, wrong when you are borrowing one worker role.
+ * 2. **The reporting line falls back to the Captain.** `insertRosterAgents`
+ *    silently leaves `reports_to` null when `reports_to_slug` names a role the
+ *    team does not have, which a single-role add hits constantly (the App Team
+ *    engineer reports to `architect`). Every team has a Captain, so point it
+ *    there and report that it happened.
+ *
+ * No coherence review is enqueued: the caller (the CEO's add-role task) reconciles
+ * the roster in-task, the same contract as `enqueueReconcile: false` above.
+ */
+export async function applyMarketplaceRoleToTeam(
+	db: Db,
+	teamId: string,
+	teamDef: MarketplaceTeamDef,
+	roleSlug: string,
+	options: { wsManager?: WebSocketManager } = {},
+): Promise<ApplyMarketplaceRoleResult | { error: string }> {
+	const role = teamDef.roster.find((r) => r.slug === roleSlug);
+	if (!role) {
+		return { error: `Role "${roleSlug}" is not in the "${teamDef.slug}" team's roster` };
+	}
+
+	const existing = await db.query<{ slug: string }>(
+		`SELECT ma.slug FROM member_agents ma
+		 JOIN members m ON m.id = ma.id
+		 WHERE m.team_id = $1`,
+		[teamId],
+	);
+	const existingSlugs = new Set(existing.rows.map((r) => r.slug));
+
+	// Point the line at the Captain when the role's own manager is absent here.
+	const wantedManager = role.reports_to_slug;
+	const managerPresent = wantedManager !== null && existingSlugs.has(wantedManager);
+	const reportsToSlug = managerPresent ? wantedManager : CAPTAIN_AGENT_SLUG;
+
+	const def: RosterAgentDef = {
+		slug: role.slug,
+		title: role.title,
+		role_description: role.role_description,
+		summary: role.summary,
+		team_context: role.team_context,
+		system_prompt: role.system_prompt,
+		default_effort: role.default_effort,
+		heartbeat_interval_min: role.heartbeat_interval_min,
+		run_timeout_min: role.run_timeout_min,
+		monthly_budget_cents: role.monthly_budget_cents,
+		daily_budget_cents: role.daily_budget_cents,
+		weekly_budget_cents: role.weekly_budget_cents,
+		touches_code: role.touches_code,
+		reports_to_slug: reportsToSlug,
+		// Marketplace roles are not catalog agent types — provisioned inline, like hires.
+		agent_type_id: null,
+	};
+
+	let created: string[] = [];
+	await withTransaction(db, async () => {
+		const inserted = await insertRosterAgents(db, teamId, [def], {
+			skipExistingSlugs: true,
+			updateExisting: false,
+			wsManager: options.wsManager,
+		});
+		created = inserted.created_slugs;
+	});
+
+	const added = created.length > 0;
+	return {
+		added,
+		skipped: !added,
+		reports_to_slug: added ? reportsToSlug : null,
+		reports_to_fell_back: added && !managerPresent,
+	};
+}

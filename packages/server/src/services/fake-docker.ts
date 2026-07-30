@@ -1,5 +1,5 @@
 import type { Db } from '../db/database';
-import type { DockerClient, ExecLogChunk, ExecStartOpts } from './docker';
+import type { DockerClient, ExecLogChunk, ExecResult, ExecStartOpts } from './docker';
 
 const SYNTHETIC_EXEC_SCRIPT: Array<{
 	stream: 'stdout' | 'stderr';
@@ -12,19 +12,19 @@ const SYNTHETIC_EXEC_SCRIPT: Array<{
 	{ stream: 'stdout', text: '[synthetic] task complete\n', delayMs: 10 },
 ];
 
-async function runSyntheticExec(opts: ExecStartOpts): Promise<{ stdout: string; stderr: string }> {
-	let stdoutAcc = '';
-	let stderrAcc = '';
+/**
+ * Retains nothing, exactly like the real streaming `execStart` — a fake that
+ * returned the transcript would let a test pass against a contract production
+ * does not honour.
+ */
+async function runSyntheticExec(opts: ExecStartOpts): Promise<void> {
 	for (const entry of SYNTHETIC_EXEC_SCRIPT) {
 		if (opts.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-		if (entry.stream === 'stdout') stdoutAcc += entry.text;
-		else stderrAcc += entry.text;
 		await opts.onChunk?.(entry as ExecLogChunk);
 		if (entry.delayMs) {
 			await new Promise((r) => setTimeout(r, entry.delayMs));
 		}
 	}
-	return { stdout: stdoutAcc, stderr: stderrAcc };
 }
 
 const RUN_ID_ENV_PREFIX = 'HEZO_HEARTBEAT_RUN_ID=';
@@ -87,20 +87,24 @@ export function createFakeDockerClient(db?: Db): DockerClient {
 			execRunIds.set(execId, runEntry ? runEntry.slice(RUN_ID_ENV_PREFIX.length) : null);
 			return execId;
 		},
-		execStart: async (
-			execId: string,
-			opts?: ExecStartOpts,
-		): Promise<{ stdout: string; stderr: string }> => {
+		execStart: async (execId: string, opts?: ExecStartOpts): Promise<ExecResult> => {
 			const runId = execRunIds.get(execId) ?? null;
 			execRunIds.delete(execId);
 			if (!opts?.onChunk) return { stdout: '', stderr: '' };
-			const result = await runSyntheticExec(opts);
+			await runSyntheticExec(opts);
 			if (db && runId) {
 				await db.query('UPDATE heartbeat_runs SET produced_output = true WHERE id = $1', [runId]);
 			}
-			return result;
+			return { stdout: '', stderr: '' };
 		},
 		execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+		// A container that is comfortably under any limit. Omitting this made the
+		// container-sync memory check throw `containerStats is not a function` on
+		// every pass under HEZO_SKIP_DOCKER - a warning on a green run, and worse,
+		// `enforceContainerMemoryLimit` never actually ran in any harness that
+		// uses the fake, so nothing exercised it.
+		containerStats: async (id: string) =>
+			containers.has(id) ? { usedBytes: 64 * 1024 * 1024, rawUsageBytes: 96 * 1024 * 1024 } : null,
 		killRunProcesses: async () => {},
 		killProcessesByEnvMarker: async () => {},
 		// Empty scan = the startup dangling-process sweep is a clean no-op in

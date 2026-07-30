@@ -8,7 +8,7 @@ import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import {
 	getBusyAgentIdsInProject,
-	isProjectAtCapacityInDb,
+	isContainerCapacityBlockedInDb,
 	isTaskBusyInDb,
 } from '../services/run-concurrency';
 import { recordWakeupCancelled, resolveActorName } from '../services/task-events';
@@ -46,10 +46,10 @@ queuedWakeupsRoutes.get('/projects/:projectId/tasks/:taskId/queued-wakeups', asy
 		[teamId, WakeupStatus.Queued, taskId],
 	);
 
-	// Live run-now gating. Task busy state and project capacity are shared by
-	// every wakeup on this task, so compute them once; dependency-blocker state
-	// is per-wakeup because shouldDeferWakeupForBlockers only gates certain
-	// wakeup sources.
+	// Live run-now gating. Task busy state and the global run capacity are
+	// shared by every wakeup on this task, so compute them once;
+	// dependency-blocker state is per-wakeup because shouldDeferWakeupForBlockers
+	// only gates certain wakeup sources.
 	const projRow = await db.query<{ project_id: string }>(
 		'SELECT project_id FROM tasks WHERE id = $1',
 		[taskId],
@@ -57,11 +57,11 @@ queuedWakeupsRoutes.get('/projects/:projectId/tasks/:taskId/queued-wakeups', asy
 	const projectId = projRow.rows[0]?.project_id ?? null;
 
 	let taskBusy = false;
-	let projectAtCapacity = false;
+	let instanceAtCapacity = false;
 	if (await isTaskBusyInDb(db, taskId)) {
 		taskBusy = true;
-	} else if (projectId && (await isProjectAtCapacityInDb(db, projectId))) {
-		projectAtCapacity = true;
+	} else if (projectId && (await isContainerCapacityBlockedInDb(db, projectId))) {
+		instanceAtCapacity = true;
 	}
 
 	// agent_busy is per-agent (each wakeup has its own member), so it lives on
@@ -85,10 +85,20 @@ queuedWakeupsRoutes.get('/projects/:projectId/tasks/:taskId/queued-wakeups', asy
 		wakeups,
 		dispatch: {
 			task_busy: taskBusy,
-			project_at_capacity: projectAtCapacity,
+			instance_at_capacity: instanceAtCapacity,
 		},
 	});
 });
+
+// Shared by both manual-dispatch handlers below; keys mirror DispatchNowResult.
+const DISPATCH_CONFLICT_MESSAGES: Record<string, string> = {
+	task_busy: 'This ticket already has a run in progress',
+	instance_at_capacity:
+		'Hezo is at its active-container limit; the run will start when a container goes idle',
+	agent_busy: 'This agent is currently running on another task in this project',
+	blocked: 'This ticket is blocked by an open dependency',
+	not_queued: 'Wakeup is no longer queued and cannot be run',
+};
 
 queuedWakeupsRoutes.post(
 	'/projects/:projectId/tasks/:taskId/queued-wakeups/:wakeupId/cancel',
@@ -206,14 +216,12 @@ queuedWakeupsRoutes.post(
 			if (result.reason === 'not_found') {
 				return err(c, 'NOT_FOUND', 'Queued wakeup not found', 404);
 			}
-			const messages: Record<string, string> = {
-				task_busy: 'This ticket already has a run in progress',
-				project_at_capacity: 'This project is at its concurrent-run limit',
-				agent_busy: 'This agent is currently running on another task in this project',
-				blocked: 'This ticket is blocked by an open dependency',
-				not_queued: 'Wakeup is no longer queued and cannot be run',
-			};
-			return err(c, 'CONFLICT', messages[result.reason] ?? 'Unable to start queued run', 409);
+			return err(
+				c,
+				'CONFLICT',
+				DISPATCH_CONFLICT_MESSAGES[result.reason] ?? 'Unable to start queued run',
+				409,
+			);
 		}
 
 		return ok(c, { dispatched: true });
@@ -258,14 +266,12 @@ queuedWakeupsRoutes.post('/projects/:projectId/tasks/:taskId/runs/:runId/retry',
 		if (result.reason === 'not_found') {
 			return err(c, 'NOT_FOUND', 'Queued wakeup not found', 404);
 		}
-		const messages: Record<string, string> = {
-			task_busy: 'This ticket already has a run in progress',
-			project_at_capacity: 'This project is at its concurrent-run limit',
-			agent_busy: 'This agent is currently running on another task in this project',
-			blocked: 'This ticket is blocked by an open dependency',
-			not_queued: 'Wakeup is no longer queued and cannot be run',
-		};
-		return err(c, 'CONFLICT', messages[result.reason] ?? 'Unable to start retry run', 409);
+		return err(
+			c,
+			'CONFLICT',
+			DISPATCH_CONFLICT_MESSAGES[result.reason] ?? 'Unable to start retry run',
+			409,
+		);
 	}
 
 	return ok(c, { dispatched: true });

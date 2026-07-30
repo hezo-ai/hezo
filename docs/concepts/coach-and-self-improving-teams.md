@@ -14,7 +14,7 @@ the same mistake doesn't happen twice.
 ## What the Coach is
 
 The **Coach** is one of two global roles that live in
-[HQ](/docs/concepts/projects-and-teams#hq--the-home-team) (the other is the
+[HQ](/docs/concepts/projects-and-teams#hq---the-home-team) (the other is the
 [CEO](/docs/concepts/roles-and-coordination#the-ceo)). There is exactly one Coach for the
 whole instance, it isn't a member of any single project team, and it reports to you - the
 admin. Unlike a worker, it doesn't pick up tasks, write features, or review code. Its sole

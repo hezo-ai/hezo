@@ -1,6 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { ATTACHMENT_SIGNED_URL_TTL_SECONDS } from '@hezo/shared';
-import { deriveKey } from '../crypto/encryption';
 import type { MasterKeyManager } from '../crypto/master-key';
 
 // An entity icon (an agent's or the admin user's avatar) is rendered in an
@@ -11,13 +10,12 @@ import type { MasterKeyManager } from '../crypto/master-key';
 // signing key, so a signature for one entity kind can never be replayed on
 // another.
 
-async function getSigningKey(
-	masterKeyManager: MasterKeyManager,
-	keyPurpose: string,
-): Promise<Buffer> {
-	const unlockKeyHex = masterKeyManager.getUnlockKeyHex();
-	if (!unlockKeyHex) throw new Error('Master key not available');
-	return deriveKey(unlockKeyHex, keyPurpose);
+/**
+ * Memoized on the manager: this runs once per signed URL, and a feed signs one
+ * per row, so deriving here would put an HKDF round trip on every row rendered.
+ */
+function getSigningKey(masterKeyManager: MasterKeyManager, keyPurpose: string): Promise<Buffer> {
+	return masterKeyManager.getDerivedKey(keyPurpose);
 }
 
 /**
@@ -75,6 +73,47 @@ export async function signVersionedIconUrl(
 	if (typeof iconUpdatedAt === 'string' || iconUpdatedAt instanceof Date) {
 		const version = Math.floor(new Date(iconUpdatedAt).getTime() / 1000);
 		return signEntityIconUrl(config.basePath, config.keyPurpose, id, masterKeyManager, version);
+	}
+	return null;
+}
+
+/**
+ * The signed avatar URL for whoever authored/requested a row in a feed: a human
+ * resolves to their `user_icons` image (keyed by `userId`), an agent to its
+ * `agent_icons` image (keyed by `memberId`); an API-key author has neither.
+ *
+ * Best-effort by design — a signing failure (e.g. the master key being
+ * unavailable) yields null so the row degrades to its initials fallback rather
+ * than failing the whole feed. The avatar is purely cosmetic.
+ */
+export async function signAuthorIconUrl(
+	masterKeyManager: MasterKeyManager,
+	author: {
+		userId?: unknown;
+		memberId?: unknown;
+		userIconUpdatedAt?: unknown;
+		agentIconUpdatedAt?: unknown;
+	},
+): Promise<string | null> {
+	try {
+		if (author.userId) {
+			return await signVersionedIconUrl(
+				USER_ICON_URL,
+				author.userId as string,
+				author.userIconUpdatedAt,
+				masterKeyManager,
+			);
+		}
+		if (author.memberId) {
+			return await signVersionedIconUrl(
+				AGENT_ICON_URL,
+				author.memberId as string,
+				author.agentIconUpdatedAt,
+				masterKeyManager,
+			);
+		}
+	} catch {
+		return null;
 	}
 	return null;
 }

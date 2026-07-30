@@ -32,16 +32,26 @@ export interface LogStreamConfig {
 	debounceMs?: number;
 }
 
+/** A run of consecutive lines on one stream, coalesced into a single WS frame. */
+interface PendingBroadcast {
+	stream: LogStream;
+	lines: string[];
+}
+
 interface LogStreamEntry {
 	config: LogStreamConfig;
 	buffer: CappedLogBuffer;
 	dirty: boolean;
 	flushTimer: ReturnType<typeof setTimeout> | null;
 	ended: boolean;
-	/** Chars of `buffer.toString()` already persisted by a successful onFlush. */
+	/** Chars of the buffer already persisted by a successful onFlush. */
 	persistedChars: number;
 	/** Tail of the serialized flush chain — every flush awaits its predecessor. */
 	flushing: Promise<void> | null;
+	/** Lines awaiting their coalesced broadcast, in emission order. */
+	pending: PendingBroadcast[];
+	pendingLines: number;
+	broadcastTimer: ReturnType<typeof setTimeout> | null;
 }
 
 // Backstop against a runaway run flooding memory/DB — not a content truncation.
@@ -49,6 +59,29 @@ interface LogStreamEntry {
 // output; see agent-stream-parser.ts) is recorded end-to-end without the cap firing.
 const DEFAULT_CAP_BYTES = 10_000_000;
 const DEFAULT_DEBOUNCE_MS = 500;
+
+/**
+ * How long lines accumulate before going out as one frame. A verbose agent emits
+ * hundreds of lines a second, and each one used to cost a `JSON.stringify` plus a
+ * `send` per subscriber. The client already splits a payload back apart on `\n`,
+ * so coalescing is invisible to it and needs no protocol change; only lines on
+ * the same stream merge, which keeps stdout/stderr ordering intact.
+ */
+const BROADCAST_BATCH_MS = 100;
+
+/** Flush early on a burst, so a batch is bounded by content and not just by the timer. */
+const MAX_PENDING_BROADCAST_LINES = 500;
+
+/**
+ * Cap on the snapshot replayed to a newly-subscribed client. `replay` runs for
+ * every live stream in the room, so a project with ten concurrent runs would
+ * otherwise push ten whole logs — up to the 10 MB cap each — into one socket the
+ * moment a tab opens. The full log stays available from the REST run endpoint,
+ * which is what the run view seeds from anyway.
+ */
+const REPLAY_TAIL_CHARS = 256 * 1024;
+
+const REPLAY_TRIM_NOTICE = '...[earlier output trimmed — open the run to see the full log]';
 
 export class LogStreamBroker {
 	private streams = new Map<string, LogStreamEntry>();
@@ -63,6 +96,7 @@ export class LogStreamBroker {
 		const existing = this.streams.get(config.streamId);
 		if (existing) {
 			if (existing.flushTimer) clearTimeout(existing.flushTimer);
+			if (existing.broadcastTimer) clearTimeout(existing.broadcastTimer);
 			this.removeFromRoomIndex(existing.config.room, config.streamId);
 		}
 
@@ -74,6 +108,9 @@ export class LogStreamBroker {
 			ended: false,
 			persistedChars: 0,
 			flushing: null,
+			pending: [],
+			pendingLines: 0,
+			broadcastTimer: null,
 		};
 		this.streams.set(config.streamId, entry);
 
@@ -97,12 +134,7 @@ export class LogStreamBroker {
 		for (const lineText of lines) {
 			const wasTruncated = entry.buffer.isTruncated;
 			entry.buffer.append(stream, lineText);
-			if (!wasTruncated && this.wsManager) {
-				this.wsManager.broadcast(
-					entry.config.room,
-					entry.config.buildMessage({ stream, text: lineText }),
-				);
-			}
+			if (!wasTruncated) this.queueBroadcast(entry, stream, lineText);
 		}
 
 		if (entry.config.onFlush) {
@@ -117,7 +149,60 @@ export class LogStreamBroker {
 		for (const streamId of streamIds) {
 			const entry = this.streams.get(streamId);
 			if (!entry) continue;
-			send(entry.config.buildSnapshot(entry.buffer.toString()));
+			// Anything still queued belongs in the snapshot rather than arriving
+			// after it — the snapshot replaces the client's buffer wholesale.
+			this.flushBroadcast(entry);
+			send(entry.config.buildSnapshot(this.snapshotText(entry)));
+		}
+	}
+
+	/**
+	 * The replayed snapshot: the tail of the buffer, cut at a line boundary and
+	 * flagged when earlier output was left out.
+	 */
+	private snapshotText(entry: LogStreamEntry): string {
+		const total = entry.buffer.length;
+		if (total <= REPLAY_TAIL_CHARS) return entry.buffer.toString();
+		const tail = entry.buffer.sliceFrom(total - REPLAY_TAIL_CHARS);
+		// Drop the partial first line so the client never renders half a line.
+		const firstBreak = tail.indexOf('\n');
+		const aligned = firstBreak === -1 ? tail : tail.slice(firstBreak + 1);
+		return `${REPLAY_TRIM_NOTICE}\n${aligned}`;
+	}
+
+	private queueBroadcast(entry: LogStreamEntry, stream: LogStream, text: string): void {
+		if (!this.wsManager) return;
+		const last = entry.pending[entry.pending.length - 1];
+		if (last && last.stream === stream) last.lines.push(text);
+		else entry.pending.push({ stream, lines: [text] });
+		entry.pendingLines++;
+
+		if (entry.pendingLines >= MAX_PENDING_BROADCAST_LINES) {
+			this.flushBroadcast(entry);
+			return;
+		}
+		if (entry.broadcastTimer) return;
+		entry.broadcastTimer = setTimeout(() => {
+			entry.broadcastTimer = null;
+			this.flushBroadcast(entry);
+		}, BROADCAST_BATCH_MS);
+	}
+
+	private flushBroadcast(entry: LogStreamEntry): void {
+		if (entry.broadcastTimer) {
+			clearTimeout(entry.broadcastTimer);
+			entry.broadcastTimer = null;
+		}
+		if (entry.pending.length === 0) return;
+		const groups = entry.pending;
+		entry.pending = [];
+		entry.pendingLines = 0;
+		if (!this.wsManager) return;
+		for (const group of groups) {
+			this.wsManager.broadcast(
+				entry.config.room,
+				entry.config.buildMessage({ stream: group.stream, text: group.lines.join('\n') }),
+			);
 		}
 	}
 
@@ -136,6 +221,9 @@ export class LogStreamBroker {
 			clearTimeout(entry.flushTimer);
 			entry.flushTimer = null;
 		}
+		// The last partial batch still has to reach subscribers; the stream is
+		// about to be dropped from the index, so nothing else would send it.
+		this.flushBroadcast(entry);
 		await this.flushDelta(entry);
 		if (entry.dirty) {
 			log.warn(
@@ -186,11 +274,13 @@ export class LogStreamBroker {
 		const next = prev.then(async () => {
 			if (!entry.dirty || !entry.config.onFlush) return;
 			entry.dirty = false;
-			const text = entry.buffer.toString();
-			const delta = text.slice(entry.persistedChars);
+			// Offset-addressed, never `toString().slice(...)`: materializing the
+			// whole log to find its tail is O(total) twice a second, per run.
+			const length = entry.buffer.length;
+			const delta = entry.buffer.sliceFrom(entry.persistedChars);
 			try {
 				await entry.config.onFlush(delta);
-				entry.persistedChars = text.length;
+				entry.persistedChars = length;
 			} catch {
 				entry.dirty = true;
 			}

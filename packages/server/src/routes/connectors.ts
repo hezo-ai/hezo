@@ -28,6 +28,7 @@ import type {
 	MethodDiscoveryDeps,
 	MethodDiscoveryResult,
 } from '../services/connectors/method-discovery';
+import { invalidateSecretsVault } from '../services/egress';
 import { installLocalMcpById } from '../services/mcp-installer';
 
 const log = logger.child('connectors-route');
@@ -628,6 +629,7 @@ connectorsRoutes.post('/projects/:projectId/connectors/:id/revoke', async (c) =>
 			.catch((e) =>
 				log.warn('failed to delete api-key secret on revoke', { error: (e as Error).message }),
 			);
+		invalidateSecretsVault();
 	}
 	if (existing.rows[0].oauth_connection_id) {
 		const { deleteConnection } = await import('../services/oauth/connection-store');
@@ -815,6 +817,7 @@ connectorsRoutes.post('/projects/:projectId/connectors/:id/api-key', async (c) =
 		);
 		return markApiKeyActive(db, conn.id, secret.rows[0].id, apiKeyConfig);
 	});
+	invalidateSecretsVault();
 	if (!updated) return err(c, 'NOT_FOUND', 'connector not found', 404);
 
 	broadcastChange(c, wsRoom.team(teamId), 'mcp_connections', 'UPDATE', {

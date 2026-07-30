@@ -8,6 +8,7 @@ import {
 	useUpdateConnectorMethods,
 } from '../hooks/use-connectors';
 import { toast } from '../hooks/use-toast';
+import { useI18n } from '../lib/i18n';
 import { Button } from './ui/button';
 import { DialogContent } from './ui/dialog';
 import { Input } from './ui/input';
@@ -43,6 +44,7 @@ export function ConnectorMethodsDialog({
 	connectorLabel,
 	data,
 }: Props) {
+	const { t } = useI18n();
 	const update = useUpdateConnectorMethods(scope);
 	const [draft, setDraft] = useState<Set<string>>(
 		() => new Set(data.enabled_methods ?? data.methods.map((m) => m.name)),
@@ -170,7 +172,7 @@ export function ConnectorMethodsDialog({
 							disabled={update.isPending}
 							data-testid="connector-methods-save"
 						>
-							{update.isPending ? 'Saving…' : 'Save'}
+							{update.isPending ? 'Saving…' : t('common.save')}
 						</Button>
 					</div>
 				</div>

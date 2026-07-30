@@ -1,6 +1,7 @@
 import { createTestApp } from '@hezo/server/test/helpers/app';
 import { Toaster } from '@hezo/web/components/ui/toast';
 import { api } from '@hezo/web/lib/api';
+import { I18nProvider } from '@hezo/web/lib/i18n';
 import { queryClient as singletonQueryClient } from '@hezo/web/lib/query-client';
 import { ThemeProvider } from '@hezo/web/lib/theme';
 // __root.tsx re-wraps the React tree with the singleton query client, so any
@@ -202,7 +203,7 @@ afterEach(async () => {
 	await Promise.all([activeQueryClient?.cancelQueries(), singletonQueryClient.cancelQueries()]);
 	await new Promise((resolve) => setTimeout(resolve, 0));
 
-	globalThis.fetch = tornDownFetch as typeof globalThis.fetch;
+	globalThis.fetch = tornDownFetch as unknown as typeof globalThis.fetch;
 	if (activeQueryClient) {
 		activeQueryClient.clear();
 		activeQueryClient = null;
@@ -256,12 +257,16 @@ export async function renderApp(options: RenderOptions) {
 
 	const tree = (
 		<QueryClientProvider client={activeQueryClient}>
-			<ThemeProvider>
-				<RouterProvider router={router} />
-				{/* Mirrors main.tsx: the Toaster mounts beside (not inside) the
-				    router, so toast assertions work like production. */}
-				<Toaster />
-			</ThemeProvider>
+			{/* Mirrors main.tsx, where I18nProvider wraps ThemeProvider so it also
+			    covers the Toaster. */}
+			<I18nProvider>
+				<ThemeProvider>
+					<RouterProvider router={router} />
+					{/* Mirrors main.tsx: the Toaster mounts beside (not inside) the
+					    router, so toast assertions work like production. */}
+					<Toaster />
+				</ThemeProvider>
+			</I18nProvider>
 		</QueryClientProvider>
 	);
 	const utils = render(options.strictMode ? <StrictMode>{tree}</StrictMode> : tree);

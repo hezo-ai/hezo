@@ -4,6 +4,7 @@ import { afterEach, expect, test } from 'vitest';
 import { MasterKeyForm } from '../src/components/master-key-gate';
 import { api } from '../src/lib/api';
 import { clearPendingSetupToken, getPendingSetupToken } from '../src/lib/auth';
+import { withI18n } from './helpers/i18n';
 // Importing the harness registers its beforeEach: an in-process Hono + PGlite
 // backend (enrolled and unlocked) with fetch rerouted to it. The form is
 // rendered with state="locked", so the client runs the unlock flow — derive
@@ -18,7 +19,7 @@ test('unlock derives keys client-side and completes the challenge dance', async 
 	api.clearToken();
 	clearPendingSetupToken();
 
-	render(<MasterKeyForm state="locked" embedded />);
+	render(withI18n(<MasterKeyForm state="locked" embedded />));
 	fireEvent.change(screen.getByLabelText(/master key/i), {
 		target: { value: ctx.mnemonic },
 	});
@@ -34,7 +35,7 @@ test('unlock derives keys client-side and completes the challenge dance', async 
 });
 
 test('a wrong-but-valid phrase shows the server rejection inline', async () => {
-	render(<MasterKeyForm state="locked" embedded />);
+	render(withI18n(<MasterKeyForm state="locked" embedded />));
 	fireEvent.change(screen.getByLabelText(/master key/i), {
 		target: { value: generateMnemonic() },
 	});

@@ -32,7 +32,7 @@ architect, engineers, QA, and more). See
 
 ## 3. Watch the team work
 
-Open the project from the rail — it lands on the **Dashboard**, where you can see action
+Open the project from the rail - it lands on the **Dashboard**, where you can see action
 items waiting on you, current spend, work in progress, a progress snippet, and goals at a
 glance. The Captain plans the work into tasks and the agents start picking them up. You'll
 see tasks move across the board, agents comment as they go, and runs stream their logs

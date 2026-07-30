@@ -624,6 +624,35 @@ test('an active non-GitHub connector renders Disconnect and revokes', async () =
 	await findByTestId('connector-connect');
 });
 
+test('an active connector still surfaces a recorded auth error', async () => {
+	// A token whose refresh keeps failing (the resolver records it on the connector)
+	// leaves the row activated but unusable. The error used to be gated on a
+	// non-active status, so exactly the case worth seeing was the one hidden.
+	let slug = '';
+	const { findByText, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			slug = ws.internalSlug;
+			const connector = await seedSaasConnector(ws, {
+				name: 'linear',
+				url: 'https://mcp.linear.example/mcp',
+			});
+			const oauth = await seedGithubOAuth(['repo']);
+			await markConnectorActive(connector.id, oauth.id);
+			const { db } = getTestContext();
+			await db.query(`UPDATE mcp_connections SET auth_error = $2 WHERE id = $1`, [
+				connector.id,
+				'token refresh: generic refresh needs token_url + client_id in connection metadata',
+			]);
+		},
+	});
+	await router.navigate({ to: CONNECTORS_ROUTE, params: { projectId: slug } });
+
+	await findByText('linear');
+	await findByText(/token refresh: generic refresh needs token_url/);
+});
+
 test('a pending connector offers Remove, which deletes it from the project', async () => {
 	let slug = '';
 	const { findByText, getByTestId, router } = await renderApp({

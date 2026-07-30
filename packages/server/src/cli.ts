@@ -310,14 +310,17 @@ export async function runBackup(argv: string[] = process.argv): Promise<boolean>
 	// Embedded backend: never open a second cluster over a live server's files.
 	if (!databaseUrl) await assertNoLiveEmbeddedServer(dataDir, 'backup');
 
-	const { mkdir, writeFile } = await import('node:fs/promises');
+	const { mkdir } = await import('node:fs/promises');
 	const { openDatabase } = await import('./db/open.js');
 	const stamp = new Date().toISOString().replace(/[:.]/g, '-');
 
-	const dumpDatabase = async (
+	// Streams straight to `outFile`: a logical dump held in memory first is a
+	// multi-GB allocation on a real instance, which OOM-kills small hosts.
+	const dumpDatabaseToFile = async (
 		db: import('./db/database').Db,
 		sourceLabel: string,
-	): Promise<Buffer> => {
+		outFile: string,
+	): Promise<void> => {
 		// A data dir (or external database) that isn't a Hezo instance has no
 		// `_migrations` bookkeeping. For embedded storage `openPersistentDb` happily
 		// creates an empty database on open, so without this guard the dump would
@@ -339,8 +342,9 @@ export async function runBackup(argv: string[] = process.argv): Promise<boolean>
 		const { loadAllMigrations } = await import('./db/load-migrations.js');
 		const migrations = await loadAllMigrations();
 		if (!migrations) throw new Error('No migrations found — cannot determine the schema version.');
-		const { dumpLogicalBackup } = await import('./db/logical-backup.js');
-		return dumpLogicalBackup(db, { hezoVersion: HEZO_VERSION, migrations });
+		const { dumpLogicalBackupToFile } = await import('./db/logical-backup.js');
+		await mkdir(resolve(outFile, '..'), { recursive: true });
+		await dumpLogicalBackupToFile(db, outFile, { hezoVersion: HEZO_VERSION, migrations });
 	};
 
 	// --no-assets keeps the exact legacy single-file artifact (the DB-only
@@ -348,12 +352,10 @@ export async function runBackup(argv: string[] = process.argv): Promise<boolean>
 	if (!withAssets) {
 		const opened = await openDatabase({ dataDir, databaseUrl });
 		try {
-			const bytes = await dumpDatabase(opened.db, opened.storage.display);
 			const output = resolve(
 				(opts.output as string | undefined) ?? `${dataDir}/backups/hezo-${stamp}.backup.gz`,
 			);
-			await mkdir(resolve(output, '..'), { recursive: true });
-			await writeFile(output, bytes);
+			await dumpDatabaseToFile(opened.db, opened.storage.display, output);
 			console.log(`Wrote logical backup of ${opened.storage.backend} database → ${output}`);
 		} finally {
 			await closeQuietly(opened.db);
@@ -374,9 +376,10 @@ export async function runBackup(argv: string[] = process.argv): Promise<boolean>
 	try {
 		let databaseFile: string | null = null;
 		if (withDatabase) {
-			await writeFile(
+			await dumpDatabaseToFile(
+				opened.db,
+				opened.storage.display,
 				join(bundleDir, blob.BUNDLE_DB_NAME),
-				await dumpDatabase(opened.db, opened.storage.display),
 			);
 			databaseFile = blob.BUNDLE_DB_NAME;
 		}
@@ -418,8 +421,11 @@ export async function runBackup(argv: string[] = process.argv): Promise<boolean>
  *   and hosted storage. `--no-assets` / `--no-database` restore only one half.
  * - **Portable logical backup** (`.backup.gz`) — database only; restores onto
  *   EITHER backend. Requires an empty target or `--wipe`.
- * - **Legacy pgdata tarball** (pre-logical snapshots) — embedded only; wipes
- *   `pgdata` and reloads the physical snapshot.
+ *
+ * Physical pgdata tarballs (the pre-logical snapshot format) are not accepted:
+ * they only ever loaded into embedded PGlite, so they were never a backup you
+ * could restore onto both backends. Restoring one needs a Hezo old enough to
+ * have written it.
  *
  * Asset blobs are verified by sha256 against the target rows when present.
  * Returns `true` when it handled the invocation so the caller skips normal
@@ -436,7 +442,7 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 	const program = new Command()
 		.name('hezo restore')
 		.description(
-			'Restore a backup: a "hezo backup" bundle (database + assets), a logical .backup.gz, or a legacy pgdata .tar.gz',
+			'Restore a backup: a "hezo backup" bundle (database + assets), or a logical .backup.gz',
 		)
 		.argument('<backup>', 'path to a backup bundle directory or file')
 		.option('--data-dir <path>', 'Data directory (env: HEZO_DATA_DIR)', DEFAULT_DATA_DIR)
@@ -487,7 +493,7 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 		const restoreDb = withDatabase && manifest.database !== null;
 		const restoreAssets = withAssets && manifest.assets !== null;
 
-		const { readFile, stat } = await import('node:fs/promises');
+		const { stat } = await import('node:fs/promises');
 		const { openAssetStorage } = await import('./assets/open.js');
 
 		const opened = await openDatabase({ dataDir, databaseUrl });
@@ -499,15 +505,14 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 				if (!migrations) {
 					throw new Error('No migrations found — cannot reproduce the backup schema.');
 				}
-				const { restoreLogicalBackup } = await import('./db/logical-backup.js');
+				const { restoreLogicalBackupFromFile } = await import('./db/logical-backup.js');
 				const dbPath = join(backupPath, blob.BUNDLE_DB_NAME);
 				progress.report({
 					phase: 'read',
 					label: 'Reading the database backup',
 					detail: formatBytes((await stat(dbPath)).size),
 				});
-				const dbBytes = await readFile(dbPath);
-				const summary = await restoreLogicalBackup(opened.db, dbBytes, migrations, {
+				const summary = await restoreLogicalBackupFromFile(opened.db, dbPath, migrations, {
 					wipe: opts.wipe === true,
 					onProgress: progress.report,
 				});
@@ -541,42 +546,31 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 		return true;
 	}
 
-	// Single-file backups (unchanged): logical .backup.gz, or a legacy pgdata tarball.
-	const { readFile, stat } = await import('node:fs/promises');
+	// Single-file backup: a logical .backup.gz.
+	const { stat } = await import('node:fs/promises');
 	progress.report({
 		phase: 'read',
 		label: 'Reading the backup',
 		detail: formatBytes((await stat(backupPath)).size),
 	});
-	const bytes = await readFile(backupPath);
 
-	const { decompressLogicalBackup, parseLogicalBackupHeader, restoreLogicalBackup } = await import(
+	const { peekLogicalBackupHeaderFromFile, restoreLogicalBackupFromFile } = await import(
 		'./db/logical-backup.js'
 	);
-	// Decompress once here and hand the text to the restore: on a multi-GB
-	// backup a second gunzip inside it would be minutes of duplicated work.
-	progress.report({ phase: 'decompress', label: 'Decompressing the backup' });
-	const text = decompressLogicalBackup(bytes);
-	const header = text === null ? null : parseLogicalBackupHeader(text);
+	// Only decompress as far as the header to tell the two formats apart; the
+	// restore then streams the body off disk rather than holding it in memory.
+	const header = await peekLogicalBackupHeaderFromFile(backupPath);
 
-	if (!header || text === null) {
-		// Legacy physical pgdata tarball — embedded only.
-		if (databaseUrl) {
-			progress.finish();
-			console.error(
-				'This file is a legacy pgdata snapshot, which only restores into the embedded ' +
-					'database. To move data into an external Postgres, take a portable backup with ' +
-					'`hezo backup` and restore that instead.',
-			);
-			process.exit(1);
-		}
-		const { restoreDataDir } = await import('./db/backup.js');
-		try {
-			await restoreDataDir(dataDir, backupPath, { onProgress: progress.report });
-		} finally {
-			progress.finish();
-		}
-		return true;
+	if (!header) {
+		progress.finish();
+		console.error(
+			`${backupPath} is not a Hezo logical backup. Point at a ".backup.gz" written by ` +
+				'`hezo backup`, or at a backup bundle directory.\n\n' +
+				'If this is a legacy pgdata snapshot (the pre-logical .tar.gz format), restore it ' +
+				'with the Hezo version that wrote it, then take a portable backup with `hezo backup` ' +
+				'so it can be restored onto either storage backend from here on.',
+		);
+		process.exit(1);
 	}
 
 	const migrations = await loadAllMigrations();
@@ -584,7 +578,7 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 
 	const opened = await openDatabase({ dataDir, databaseUrl });
 	try {
-		const summary = await restoreLogicalBackup(opened.db, text, migrations, {
+		const summary = await restoreLogicalBackupFromFile(opened.db, backupPath, migrations, {
 			wipe: opts.wipe === true,
 			onProgress: progress.report,
 		});

@@ -33,7 +33,7 @@ import { getConnection } from '../services/oauth/connection-store';
 import { performRepoSetup } from '../services/repo-provisioning';
 import { refreshRepoPushAccess } from '../services/repo-push-access';
 import { removeRepoFromWorkspace } from '../services/repo-sync';
-import { getProjectConcurrency } from '../services/run-concurrency';
+import { countActiveRunsInProject } from '../services/run-concurrency';
 import { type BridgeRunnerArgs, withProvisionBridge } from '../services/ssh-agent';
 import {
 	CONTAINER_WORKSPACE_ROOT,
@@ -405,7 +405,7 @@ reposRoutes.get('/projects/:projectId/repos/:repoId/git-state', async (c) => {
 
 	// Reset actions are blocked while any run is active on the project; surface the
 	// count so the panel can gate its buttons instead of failing the reset reactively.
-	const { active } = await getProjectConcurrency(db, projectId);
+	const active = await countActiveRunsInProject(db, projectId);
 
 	return ok(c, {
 		container_running: true,
@@ -453,7 +453,7 @@ reposRoutes.post('/projects/:projectId/repos/:repoId/reset', async (c) => {
 	if (!repo) return err(c, 'NOT_FOUND', 'Repo not found', 404);
 
 	// Never reset while a run may hold a worktree in this project's shared .git.
-	const { active } = await getProjectConcurrency(db, projectId);
+	const active = await countActiveRunsInProject(db, projectId);
 	if (active > 0) {
 		return err(
 			c,

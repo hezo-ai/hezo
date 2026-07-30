@@ -1,5 +1,6 @@
 import { ChatChannel } from '@hezo/shared';
 import { trackBackground } from '../../lib/background';
+import { BoundedMap } from '../../lib/bounded-map';
 import { logger } from '../../logger';
 import { splitMessageForLimit } from './format';
 import { SlackSocketClient } from './slack-socket';
@@ -122,13 +123,18 @@ interface SlackApiResult {
  * trusted server code; all calls go direct to slack.com (never the agent egress
  * proxy).
  */
+/** Ceiling on the per-workspace name/reply caches below. */
+const NAME_CACHE_MAX = 2_000;
+
 export class SlackAdapter implements ChatChannelAdapter {
 	readonly channel = ChatChannel.Slack;
 
 	private socket: SlackSocketClient | null = null;
 	private botUserId: string | null = null;
-	private userNames = new Map<string, string>();
-	private channelNames = new Map<string, string>();
+	// Bounded: these key on ids from the workspace, so an unbounded map would
+	// grow for the life of the process on any busy Slack.
+	private userNames = new BoundedMap<string, string>(NAME_CACHE_MAX);
+	private channelNames = new BoundedMap<string, string>(NAME_CACHE_MAX);
 
 	constructor(private readonly deps: ChatChannelAdapterDeps) {}
 

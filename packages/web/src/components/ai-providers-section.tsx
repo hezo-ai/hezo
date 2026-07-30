@@ -11,6 +11,7 @@ import {
 	useVerifyAiProvider,
 } from '../hooks/use-ai-providers';
 import { toast } from '../hooks/use-toast';
+import { useI18n } from '../lib/i18n';
 import { AddAiProviderDialog } from './add-ai-provider-dialog';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -185,6 +186,7 @@ export function AiProvidersSection() {
 }
 
 function ProviderNameCell({ config }: { config: AiProviderConfig }) {
+	const { t } = useI18n();
 	const [editing, setEditing] = useState(false);
 	const [value, setValue] = useState(config.label);
 	const update = useUpdateAiProviderConfig(config.id);
@@ -250,7 +252,7 @@ function ProviderNameCell({ config }: { config: AiProviderConfig }) {
 				disabled={update.isPending}
 				className="w-28 sm:w-36 rounded-md border border-border bg-surface-2 px-2 py-1 font-mono text-xs text-text-1 outline-none focus:border-border-strong disabled:opacity-50"
 			/>
-			<Tooltip content="Save">
+			<Tooltip content={t('common.save')}>
 				<button
 					type="button"
 					onClick={submit}
@@ -265,7 +267,7 @@ function ProviderNameCell({ config }: { config: AiProviderConfig }) {
 					)}
 				</button>
 			</Tooltip>
-			<Tooltip content="Cancel">
+			<Tooltip content={t('common.cancel')}>
 				<button
 					type="button"
 					onClick={cancel}

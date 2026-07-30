@@ -7,6 +7,23 @@ import { buildUpdateSet, withTransaction } from '../lib/sql';
 export interface AiProviderCredential {
 	value: string;
 	authMethod: AiAuthMethod;
+	/**
+	 * Operator-supplied endpoint for the locally-hosted providers (Ollama, LM
+	 * Studio), read from `ai_provider_configs.metadata -> 'base_url'`. Null for
+	 * every hosted provider, whose endpoint is fixed in
+	 * `PROVIDER_RUNTIME_ADAPTERS[...].staticEnv` instead. Carried on the credential
+	 * because it is per-install and so cannot live in a compile-time constant; the
+	 * runner reads it to set `ANTHROPIC_BASE_URL` and to keep the host out of the
+	 * egress proxy.
+	 */
+	baseUrl: string | null;
+}
+
+/** Read the stored base URL off a config's jsonb metadata, if it has one. */
+export function readConfigBaseUrl(metadata: unknown): string | null {
+	if (!metadata || typeof metadata !== 'object') return null;
+	const raw = (metadata as Record<string, unknown>).base_url;
+	return typeof raw === 'string' && raw.trim() ? raw.trim() : null;
 }
 
 export interface AiProviderConfig {
@@ -68,7 +85,7 @@ export async function getProviderCredential(
 ): Promise<AiProviderCredential | null> {
 	const result = await getProviderCredentialAndModel(db, masterKeyManager, provider);
 	if (!result) return null;
-	return { value: result.value, authMethod: result.authMethod };
+	return { value: result.value, authMethod: result.authMethod, baseUrl: result.baseUrl };
 }
 
 export interface AiProviderCredentialAndModel extends AiProviderCredential {
@@ -114,8 +131,9 @@ export async function getProviderCredentialAndModel(
 		auth_method: AiAuthMethod;
 		encrypted_credential: string;
 		default_model: string | null;
+		metadata: Record<string, unknown> | null;
 	}>(
-		`SELECT id, auth_method, encrypted_credential, default_model
+		`SELECT id, auth_method, encrypted_credential, default_model, metadata
 		 FROM ai_provider_configs
 		 WHERE provider = $1::ai_provider AND status = $2
 		 ORDER BY is_default DESC, created_at ASC
@@ -131,6 +149,7 @@ export async function getProviderCredentialAndModel(
 		value: decrypt(row.encrypted_credential, encryptionKey),
 		authMethod: row.auth_method,
 		defaultModel: row.default_model,
+		baseUrl: readConfigBaseUrl(row.metadata),
 	};
 }
 
@@ -218,7 +237,12 @@ export async function getProviderConfigCredential(
 	db: Db,
 	masterKeyManager: MasterKeyManager,
 	configId: string,
-): Promise<{ provider: string; authMethod: string; value: string } | null> {
+): Promise<{
+	provider: string;
+	authMethod: string;
+	value: string;
+	baseUrl: string | null;
+} | null> {
 	const encryptionKey = masterKeyManager.getKey();
 	if (!encryptionKey) throw new Error('Master key not available');
 
@@ -226,8 +250,9 @@ export async function getProviderConfigCredential(
 		provider: string;
 		auth_method: string;
 		encrypted_credential: string;
+		metadata: Record<string, unknown> | null;
 	}>(
-		`SELECT provider, auth_method, encrypted_credential
+		`SELECT provider, auth_method, encrypted_credential, metadata
 		 FROM ai_provider_configs
 		 WHERE id = $1`,
 		[configId],
@@ -240,5 +265,6 @@ export async function getProviderConfigCredential(
 		provider: row.provider,
 		authMethod: row.auth_method,
 		value: decrypt(row.encrypted_credential, encryptionKey),
+		baseUrl: readConfigBaseUrl(row.metadata),
 	};
 }
