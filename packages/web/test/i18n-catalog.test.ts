@@ -3,12 +3,55 @@
 // mode this catches is a key added to en.json and then copy-pasted unchanged
 // into the others - which silently renders English inside an otherwise
 // translated screen, and which `value !== key` would happily pass.
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { LANGUAGES } from '@hezo/shared';
 import { describe, expect, test } from 'vitest';
 import en from '../src/lib/i18n/catalog/en.json';
 import { CATALOGS } from '../src/lib/i18n/catalogs';
 
 const EN_KEYS = Object.keys(en).sort();
+
+// cwd is the package dir under both documented invocations (`scripts/test.ts`
+// runs vitest with `cwd: packages/web`, and a single file runs as
+// `cd packages/web && bunx vitest run ...`). Deliberately not derived from
+// `import.meta.url`: vite rewrites that to a `/@fs/...` URL that
+// `fileURLToPath` rejects - the same hazard `vitest.config.ts` documents for
+// the migrations dir.
+const SRC_DIR = resolve(process.cwd(), 'src');
+const CATALOG_DIR = resolve(SRC_DIR, 'lib/i18n/catalog');
+
+/** `plural()` composes `key.one` / `key.other` from a stem at runtime. */
+const PLURAL_CATEGORIES = new Set(['zero', 'one', 'two', 'few', 'many', 'other']);
+
+/** Every dotted string literal in the app source, catalogs excluded. */
+function collectKeyLiterals(): Set<string> {
+	const literals = new Set<string>();
+	const walk = (dir: string) => {
+		for (const entry of readdirSync(dir, { withFileTypes: true })) {
+			const full = join(dir, entry.name);
+			if (entry.isDirectory()) {
+				if (full !== CATALOG_DIR) walk(full);
+				continue;
+			}
+			if (!/\.tsx?$/.test(entry.name)) continue;
+			const text = readFileSync(full, 'utf8');
+			for (const match of text.matchAll(/['"`]([a-zA-Z0-9_-]+(?:\.[a-zA-Z0-9_-]+)+)['"`]/g)) {
+				literals.add(match[1]);
+			}
+		}
+	};
+	walk(SRC_DIR);
+	return literals;
+}
+
+/** A catalog key counts as referenced directly, or as a `plural()` stem. */
+function isReferenced(key: string, literals: Set<string>): boolean {
+	if (literals.has(key)) return true;
+	const lastDot = key.lastIndexOf('.');
+	if (lastDot === -1) return false;
+	return PLURAL_CATEGORIES.has(key.slice(lastDot + 1)) && literals.has(key.slice(0, lastDot));
+}
 
 describe('message catalogs', () => {
 	test('ships a catalog for every supported language', () => {
@@ -71,7 +114,6 @@ describe('message catalogs', () => {
 	 */
 	const IDENTICAL_TO_ENGLISH_OK: Record<string, readonly string[]> = {
 		'nav.budget': ['de', 'fr', 'it', 'nl', 'sv'],
-		'nav.agents': ['fr', 'nl'],
 		'nav.documents': ['fr'],
 		'nav.home': ['it'],
 		'theme.system': ['de', 'sv'],
@@ -124,6 +166,50 @@ describe('message catalogs', () => {
 				expect(tokensOf(translated ?? ''), `${language}.${key} placeholder drift`).toEqual(
 					tokensOf(source),
 				);
+			}
+		}
+	});
+
+	test('every key is referenced somewhere in the app source', () => {
+		// The mirror of the checks above, and the only one that catches a
+		// *hardcoded literal*: a key authored in all twelve catalogs but referenced
+		// nowhere almost always means the component still renders the English word
+		// inline, so the catalog reads as coverage it does not have. That is how
+		// theme.system sat translated in twelve languages while theme-switcher.tsx
+		// rendered `label: 'System'`.
+		//
+		// Scanning for dotted string *literals* rather than `t(...)` call shapes is
+		// deliberate. Keys reach the catalog three ways - a direct `t('x')`, a
+		// `labelKey: MessageKey` table read as `t(item.labelKey)`
+		// (settings-sidebar.tsx), and a `plural('x')` stem - and
+		// `MessageKey = keyof typeof en` already type-checks any literal that lands
+		// in a key position. Matching call shapes would need a new pattern per
+		// indirection; matching literals does not.
+		//
+		// There is deliberately no allowlist. An exemption here would be a standing
+		// claim that a translated string is meant to reach no screen.
+		const literals = collectKeyLiterals();
+		const orphans = EN_KEYS.filter((key) => !isReferenced(key, literals));
+		expect(
+			orphans,
+			`authored in all ${LANGUAGES.length} catalogs but referenced nowhere - wire each through t(), or delete it from every catalog`,
+		).toEqual([]);
+	});
+
+	test('no value carries characters from the wrong script', () => {
+		// Authoring twelve languages by hand makes it easy to slip a hangul
+		// syllable into the Japanese column while working down a row - a typo no
+		// reader of either language would miss, and one no other check here can
+		// see. Japanese kanji and the zh-Hans ideographs are CJK, outside both
+		// ranges, so this never fires on them.
+		for (const language of LANGUAGES) {
+			for (const [key, value] of Object.entries(CATALOGS[language] ?? {})) {
+				if (language !== 'ko') {
+					expect(value, `${language}.${key} contains hangul - stray Korean?`).not.toMatch(/[가-힯]/);
+				}
+				if (language !== 'ja') {
+					expect(value, `${language}.${key} contains kana - stray Japanese?`).not.toMatch(/[぀-ヿ]/);
+				}
 			}
 		}
 	});

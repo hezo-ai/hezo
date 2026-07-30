@@ -2,6 +2,7 @@ import * as AlertDialog from '@radix-ui/react-alert-dialog';
 import { Loader2, X } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { useShortcut } from '../../hooks/use-shortcut';
+import { useI18n } from '../../lib/i18n';
 import { dialogContentClassName, dialogOverlayClassName } from './dialog';
 import { kbdSizeClass, ShortcutKbd } from './shortcut-kbd';
 
@@ -28,11 +29,14 @@ export function ConfirmDialog({
 	title,
 	description,
 	confirmLabel = 'Confirm',
-	cancelLabel = 'Cancel',
+	// Defaulted in the body, not in the parameter list: a default value cannot
+	// call a hook. The prop stays an optional string, so callers don't churn.
+	cancelLabel,
 	variant = 'default',
 	onConfirm,
 	loading: externalLoading,
 }: ConfirmDialogProps) {
+	const { t } = useI18n();
 	const [internalLoading, setInternalLoading] = useState(false);
 	const loading = externalLoading ?? internalLoading;
 	const actionRef = useRef<HTMLButtonElement>(null);
@@ -63,7 +67,7 @@ export function ConfirmDialog({
 							type="button"
 							disabled={loading}
 							className="absolute right-3 top-3 z-10 -m-1 p-2 text-text-2 hover:text-text-1 disabled:opacity-50 disabled:pointer-events-none sm:right-4 sm:top-4"
-							aria-label="Close"
+							aria-label={t('common.close')}
 							data-testid="confirm-dialog-close"
 						>
 							<X className="h-4 w-4" />
@@ -81,7 +85,7 @@ export function ConfirmDialog({
 							aria-keyshortcuts="Escape"
 							className="inline-flex items-center justify-center gap-2 font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none cursor-pointer bg-surface-2 text-text-2 border border-border hover:text-text-1 hover:bg-surface-3 px-2.5 py-1 text-xs rounded-md"
 						>
-							{cancelLabel}
+							{cancelLabel ?? t('common.cancel')}
 							<ShortcutKbd shortcut="Escape" sizeClassName={kbdSizeClass.sm} />
 						</AlertDialog.Cancel>
 						<AlertDialog.Action

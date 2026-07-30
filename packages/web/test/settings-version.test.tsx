@@ -6,6 +6,9 @@ import { afterEach, expect, test, vi } from 'vitest';
 import { VersionDisplay } from '../src/components/version-display';
 import type { UpdateStatusInfo } from '../src/hooks/use-update-check';
 import { api } from '../src/lib/api';
+// The version card's confirm dialog resolves its cancel/close labels through
+// `t()`, so the tree needs the i18n context the app shell always provides.
+import { I18nProvider } from '../src/lib/i18n';
 import { queryClient } from '../src/lib/query-client';
 import { queryKeys } from '../src/lib/query-keys';
 import { renderApp } from './helpers/render';
@@ -113,7 +116,9 @@ function renderVersion(status: Partial<UpdateStatusInfo> = {}, isSuperuser = tru
 	qc.setQueryData(queryKeys.me(), { type: 'admin', is_superuser: isSuperuser });
 	return render(
 		<QueryClientProvider client={qc}>
-			<VersionDisplay />
+			<I18nProvider>
+				<VersionDisplay />
+			</I18nProvider>
 		</QueryClientProvider>,
 	);
 }
@@ -213,7 +218,9 @@ test('advances from "Downloading new version…" to "Install & restart" via poll
 	qc.setQueryData(queryKeys.me(), { type: 'admin', is_superuser: true });
 	const { findByTestId, queryByTestId } = render(
 		<QueryClientProvider client={qc}>
-			<VersionDisplay />
+			<I18nProvider>
+				<VersionDisplay />
+			</I18nProvider>
 		</QueryClientProvider>,
 	);
 

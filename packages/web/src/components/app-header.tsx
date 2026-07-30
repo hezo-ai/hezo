@@ -3,6 +3,7 @@ import { Inbox, Plus, Search, Settings, Store } from 'lucide-react';
 import { useState } from 'react';
 import { useActiveProject } from '../hooks/use-active-project';
 import { useGlobalInboxUnreadCount } from '../hooks/use-inbox-count';
+import { useI18n } from '../lib/i18n';
 import { CreateTaskDialog } from './create-task-dialog';
 import { CountOverlayBadge } from './ui/count-overlay-badge';
 import { Logo } from './ui/logo';
@@ -26,6 +27,7 @@ export function AppHeader({
 	onOpenDrawer: () => void;
 	onOpenSearch: () => void;
 }) {
+	const { t } = useI18n();
 	const inboxUnread = useGlobalInboxUnreadCount();
 	// The mobile "New task" entry point: a create-task dialog with a project
 	// picker defaulting to the currently viewed project. Scoped `lg:hidden`
@@ -54,8 +56,8 @@ export function AppHeader({
 				{/* At lg+ the rail/sidebar are persistent — the logo links home. */}
 				<Link
 					to="/home"
-					aria-label="Home"
-					title="Home"
+					aria-label={t('nav.home')}
+					title={t('nav.home')}
 					data-testid="app-header-home"
 					className="hidden lg:flex items-center justify-center w-8 h-8"
 				>
@@ -120,8 +122,8 @@ export function AppHeader({
 				</Link>
 				<Link
 					to="/settings"
-					aria-label="Settings"
-					title="Settings"
+					aria-label={t('nav.settings')}
+					title={t('nav.settings')}
 					data-testid="app-header-settings"
 					className={iconLinkClass}
 				>

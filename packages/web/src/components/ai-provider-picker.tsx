@@ -1,5 +1,6 @@
 import { AI_PROVIDER_INFO, type AiProvider } from '@hezo/shared';
 import { useState } from 'react';
+import { useI18n } from '../lib/i18n';
 import { ProviderCardGrid } from './provider-card-grid';
 import { ADD_PROVIDER_ORDER, ProviderConfigForm } from './provider-config-form';
 import { ProviderLogo } from './provider-logos';
@@ -13,6 +14,7 @@ import { BackLink } from './ui/back-link';
  * picker the settings modal reuses without that onboarding chrome.
  */
 export function AiProviderPicker() {
+	const { t } = useI18n();
 	const [provider, setProvider] = useState<AiProvider | null>(null);
 
 	if (!provider) {
@@ -38,7 +40,7 @@ export function AiProviderPicker() {
 			<ProviderConfigForm
 				key={provider}
 				provider={provider}
-				submitLabel="Save"
+				submitLabel={t('common.save')}
 				onCancel={() => setProvider(null)}
 				onDone={() => setProvider(null)}
 			/>

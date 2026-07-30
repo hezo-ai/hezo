@@ -8,6 +8,7 @@ import { Archive, ArchiveRestore, ChevronRight, Pencil } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useGoal, useGoalHistory, useGoalRunActivity, useUpdateGoal } from '../../hooks/use-goals';
 import { formatDateTime, formatRelativeTime } from '../../lib/format-date';
+import { useI18n } from '../../lib/i18n';
 import { agentPageParams } from '../agent-link';
 import { CreateGoalDialog } from '../create-goal-dialog';
 import { GoalHealthPill } from '../goal-health-pill';
@@ -145,6 +146,7 @@ function GoalRunRow({ projectId, run }: { projectId: string; run: GoalRunActivit
 }
 
 function GoalRunsFeed({ projectId, goalId }: { projectId: string; goalId: string }) {
+	const { t } = useI18n();
 	const {
 		data: runPages,
 		isLoading,
@@ -167,7 +169,7 @@ function GoalRunsFeed({ projectId, goalId }: { projectId: string; goalId: string
 				Progress update runs
 			</h2>
 			{isLoading ? (
-				<div className="py-6 text-center text-[13px] text-text-3">Loading...</div>
+				<div className="py-6 text-center text-[13px] text-text-3">{t('common.loading')}</div>
 			) : runs.length === 0 ? (
 				<div
 					data-testid="goal-runs-empty"
@@ -195,13 +197,14 @@ function GoalRunsFeed({ projectId, goalId }: { projectId: string; goalId: string
 }
 
 export function GoalDetailPage({ projectId, goalId }: GoalDetailPageProps) {
+	const { t } = useI18n();
 	const { data: goal, isLoading } = useGoal(projectId, goalId);
 	const { data: history } = useGoalHistory(projectId, goalId);
 	const updateGoal = useUpdateGoal(projectId, goalId);
 	const [editOpen, setEditOpen] = useState(false);
 
 	if (isLoading) {
-		return <div className="py-8 text-center text-[13px] text-text-2">Loading...</div>;
+		return <div className="py-8 text-center text-[13px] text-text-2">{t('common.loading')}</div>;
 	}
 	if (!goal) {
 		return (

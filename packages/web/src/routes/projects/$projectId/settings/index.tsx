@@ -12,8 +12,10 @@ import { useInstanceSettings } from '../../../../hooks/use-instance-settings';
 import { useMe } from '../../../../hooks/use-me';
 import { useArchiveProject, useProject, useUpdateProject } from '../../../../hooks/use-projects';
 import { useScrollToHash } from '../../../../hooks/use-scroll-to-hash';
+import { useI18n } from '../../../../lib/i18n';
 
 function ProjectSettingsPage() {
+	const { t } = useI18n();
 	const { projectId } = Route.useParams();
 	const { data: project } = useProject(projectId);
 	const { data: me } = useMe();
@@ -91,7 +93,11 @@ function ProjectSettingsPage() {
 						</p>
 						<div className="flex gap-2">
 							<Button type="submit" size="sm" disabled={updateProject.isPending}>
-								{updateProject.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Save'}
+								{updateProject.isPending ? (
+									<Loader2 className="w-3 h-3 animate-spin" />
+								) : (
+									t('common.save')
+								)}
 							</Button>
 							<Button type="button" variant="ghost" size="sm" onClick={() => setEditing(false)}>
 								Cancel

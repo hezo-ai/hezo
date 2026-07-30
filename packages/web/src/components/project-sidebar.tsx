@@ -7,6 +7,7 @@ import { useAgents } from '../hooks/use-agents';
 import { useContainerHealth } from '../hooks/use-container-health';
 import { useInboxUnreadCount } from '../hooks/use-inbox-count';
 import { useProjectMeta } from '../hooks/use-projects';
+import { useI18n } from '../lib/i18n';
 import { agentPageParams } from './agent-link';
 import { AgentStatusLabel } from './agent-status-label';
 import { CreateTaskDialog } from './create-task-dialog';
@@ -26,6 +27,7 @@ export function ProjectSidebar({
 	onCollapse?: () => void;
 	projectSlug?: string;
 } = {}) {
+	const { t } = useI18n();
 	const active = useActiveProject();
 	const navigate = useNavigate();
 	// The shell passes an explicit slug so the menu can fall back to HQ on a
@@ -154,7 +156,7 @@ export function ProjectSidebar({
 		{
 			to: '/projects/$projectId/tasks',
 			params: projectParams,
-			label: 'Tasks',
+			label: t('nav.tasks'),
 			count: project?.open_task_count,
 			testId: 'project-sidebar-tasks',
 			action: {
@@ -169,12 +171,12 @@ export function ProjectSidebar({
 		{
 			to: '/projects/$projectId/documents',
 			params: projectParams,
-			label: 'Documents',
+			label: t('nav.documents'),
 		},
 		{
 			to: '/projects/$projectId/assets',
 			params: projectParams,
-			label: 'Assets',
+			label: t('nav.assets'),
 		},
 		...(isInternal
 			? // HQ has no Settings — keep Container and Activity at the top level.
@@ -183,13 +185,13 @@ export function ProjectSidebar({
 					{
 						to: '/projects/$projectId/budget',
 						params: projectParams,
-						label: 'Budget',
+						label: t('nav.budget'),
 						testId: 'project-sidebar-budget',
 					},
 					{
 						to: '/projects/$projectId/settings',
 						params: projectParams,
-						label: 'Settings',
+						label: t('nav.settings'),
 						testId: 'project-sidebar-settings',
 						// Git, Connectors, Skills, Container and Activity disclose under Settings
 						// when it (or one of them) is the active route.

@@ -1,5 +1,6 @@
 import { X } from 'lucide-react';
 import type { FormEvent, ReactNode } from 'react';
+import { useI18n } from '../../lib/i18n';
 
 interface InPlaceFormProps {
 	/** Panel heading, e.g. "Add connector" or "Edit credential". */
@@ -34,6 +35,7 @@ export function InPlaceForm({
 	className = '',
 	'data-testid': testId = 'in-place-form',
 }: InPlaceFormProps) {
+	const { t } = useI18n();
 	return (
 		<section
 			className={`mb-4 rounded-lg border border-border bg-surface-2 p-3 sm:p-4 ${className}`}
@@ -44,7 +46,7 @@ export function InPlaceForm({
 				<button
 					type="button"
 					onClick={onClose}
-					aria-label="Close"
+					aria-label={t('common.close')}
 					data-testid="in-place-form-close"
 					className="-m-1 p-1 text-text-3 hover:text-text-1 transition-colors"
 				>
