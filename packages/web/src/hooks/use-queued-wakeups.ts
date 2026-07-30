@@ -19,7 +19,7 @@ export interface QueuedWakeup {
 /** Live "can this task accept a run now" state, shared by every queued wakeup on the task. */
 export interface QueuedDispatchState {
 	task_busy: boolean;
-	project_at_capacity: boolean;
+	instance_at_capacity: boolean;
 }
 
 export interface QueuedWakeupsState {

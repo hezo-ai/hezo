@@ -47,7 +47,8 @@ export function ProjectSidebar({
 
 	const isInternal = project?.is_internal ?? false;
 	const projectParams = { projectId };
-	const containerFailed = health?.kind === 'stopped' || health?.kind === 'error';
+	// `stopped` is the normal on-demand resting state — only genuine errors flag.
+	const containerFailed = health?.kind === 'error';
 	const containerProvisioning = health?.kind === 'provisioning' || health?.kind === 'rebuilding';
 
 	const enabledAgents = (agents ?? []).filter((a) => a.admin_status !== AgentAdminStatus.Disabled);

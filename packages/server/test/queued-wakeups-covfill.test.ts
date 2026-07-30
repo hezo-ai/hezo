@@ -1,6 +1,7 @@
 import type { Hono } from 'hono';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
+import { waitForBackground } from '../src/lib/background';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
 import {
@@ -10,6 +11,12 @@ import {
 	createTestTeam,
 	projectSlugFor,
 } from './helpers/app';
+import {
+	clearMaxActiveContainersForTest,
+	removeSeededContainerProject,
+	seedRunningContainerProject,
+	setMaxActiveContainersForTest,
+} from './helpers/capacity';
 
 let app: Hono<Env>;
 let db: Db;
@@ -72,6 +79,19 @@ async function clearWakeups(forTaskId: string): Promise<void> {
 	]);
 }
 
+afterEach(async () => {
+	// Same drain as queued-wakeups.test.ts: dispatched tests now launch real
+	// background runs (lazy-start); settle them and sweep their leftovers so
+	// later assertions see only their own rows.
+	await waitForBackground();
+	await db.query(
+		`DELETE FROM agent_wakeup_requests WHERE team_id = $1 AND status = 'queued'::wakeup_status`,
+		[teamId],
+	);
+	await db.query('UPDATE execution_locks SET released_at = now() WHERE released_at IS NULL');
+	await clearRuns();
+});
+
 async function insertRunningRun(memberId: string, forTaskId: string): Promise<string> {
 	const r = await db.query<{ id: string }>(
 		`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
@@ -114,7 +134,7 @@ async function listQueued(forTaskId: string) {
 					agent_busy: boolean;
 					run_now_blocked: string | null;
 				}>;
-				dispatch: { task_busy: boolean; project_at_capacity: boolean };
+				dispatch: { task_busy: boolean; instance_at_capacity: boolean };
 			};
 		},
 	};
@@ -190,7 +210,7 @@ describe('GET queued-wakeups', () => {
 		expect(alpha.last_skipped_reason).toBe('task_busy');
 		expect(wakeups[1].coalesced_count).toBe(3);
 		expect(dispatch.task_busy).toBe(false);
-		expect(dispatch.project_at_capacity).toBe(false);
+		expect(dispatch.instance_at_capacity).toBe(false);
 		expect(alpha.agent_busy).toBe(false);
 		expect(alpha.run_now_blocked).toBeNull();
 	});
@@ -203,14 +223,19 @@ describe('GET queued-wakeups', () => {
 
 		const { body } = await listQueued(taskId);
 		expect(body.data.dispatch.task_busy).toBe(true);
-		expect(body.data.dispatch.project_at_capacity).toBe(false);
+		expect(body.data.dispatch.instance_at_capacity).toBe(false);
 		await clearRuns();
 	});
 
-	it('reports project_at_capacity and per-agent busy state', async () => {
+	it('reports instance_at_capacity and per-agent busy state', async () => {
 		await clearWakeups(taskId);
 		await clearRuns();
-		await db.query('UPDATE projects SET max_concurrent_runs = 1 WHERE id = $1', [projectId]);
+		// Container semantics: this project's container is stopped and a filler
+		// project's running container consumes the single slot. Per-agent busy
+		// state is independent of the container gate.
+		await setMaxActiveContainersForTest(db, 1);
+		await db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [projectId]);
+		await seedRunningContainerProject(db, 'cap-covfill-get');
 		const sibling = await createTask('Covfill Busy Sibling');
 		await insertRunningRun(agentA, sibling);
 		const busy = await insertQueuedWakeup(agentA, taskId);
@@ -218,12 +243,14 @@ describe('GET queued-wakeups', () => {
 
 		const { body } = await listQueued(taskId);
 		expect(body.data.dispatch.task_busy).toBe(false);
-		expect(body.data.dispatch.project_at_capacity).toBe(true);
+		expect(body.data.dispatch.instance_at_capacity).toBe(true);
 		const byId = Object.fromEntries(body.data.wakeups.map((w) => [w.id, w]));
 		expect(byId[busy].agent_busy).toBe(true);
 		expect(byId[free].agent_busy).toBe(false);
 
-		await db.query('UPDATE projects SET max_concurrent_runs = 3 WHERE id = $1', [projectId]);
+		await db.query(`UPDATE projects SET container_status = 'running' WHERE id = $1`, [projectId]);
+		await removeSeededContainerProject(db, 'cap-covfill-get');
+		await clearMaxActiveContainersForTest(db);
 		await clearRuns();
 	});
 
@@ -337,19 +364,21 @@ describe('POST run-now', () => {
 		await clearRuns();
 	});
 
-	it('409s when the project is at capacity', async () => {
+	it('409s when the container limit is reached', async () => {
 		await clearWakeups(taskId);
 		await clearRuns();
-		await db.query('UPDATE projects SET max_concurrent_runs = 1 WHERE id = $1', [projectId]);
-		const sibling = await createTask('Covfill Capacity Sibling');
-		await insertRunningRun(agentA, sibling);
+		await setMaxActiveContainersForTest(db, 1);
+		await db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [projectId]);
+		await seedRunningContainerProject(db, 'cap-covfill-runnow');
 		const wakeupId = await insertQueuedWakeup(agentB, taskId);
 
 		const res = await runNow(taskId, wakeupId);
 		expect(res.status).toBe(409);
 		const body = (await res.json()) as { error: { message: string } };
-		expect(body.error.message).toContain('concurrent-run limit');
-		await db.query('UPDATE projects SET max_concurrent_runs = 3 WHERE id = $1', [projectId]);
+		expect(body.error.message).toContain('active-container limit');
+		await db.query(`UPDATE projects SET container_status = 'running' WHERE id = $1`, [projectId]);
+		await removeSeededContainerProject(db, 'cap-covfill-runnow');
+		await clearMaxActiveContainersForTest(db);
 		await clearRuns();
 	});
 
@@ -422,13 +451,18 @@ describe('POST runs/:runId/retry', () => {
 		expect(res.status).toBe(200);
 		expect((await res.json()).data.dispatched).toBe(true);
 
+		// The dispatch launches a background run (lazy-start); settle it so its
+		// failure-chain wakeups can't race the assertions, then pin them to the
+		// retry's own on_demand wakeup.
+		await waitForBackground();
 		const wakeup = await db.query<{
 			member_id: string;
 			source: string;
 			status: string;
 			payload: { source_run_id?: string; triggered_by?: { name: string } };
 		}>(
-			"SELECT member_id, source, status, payload FROM agent_wakeup_requests WHERE payload->>'task_id' = $1",
+			`SELECT member_id, source, status, payload FROM agent_wakeup_requests
+			 WHERE payload->>'task_id' = $1 AND source = 'on_demand'`,
 			[taskId],
 		);
 		expect(wakeup.rows).toHaveLength(1);

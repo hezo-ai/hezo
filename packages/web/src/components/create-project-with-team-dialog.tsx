@@ -294,9 +294,11 @@ export function CreateProjectWithTeamDialog({
 	const navigate = useNavigate();
 	const hq = useHqProject();
 	const hqHealth = useContainerHealth(hq);
-	// Project intake/creation is driven by the CEO in HQ, so it can't proceed
-	// until the HQ container is running. Block the form until then.
-	const blockedHealth = hqHealth && hqHealth.kind !== 'healthy' ? hqHealth : null;
+	// Project intake/creation is CEO-driven, but a stopped HQ container is no
+	// blocker — the intake run lazy-starts it. Block the form only on errors and
+	// in-flight transitions.
+	const blockedHealth =
+		hqHealth && hqHealth.kind !== 'healthy' && hqHealth.kind !== 'stopped' ? hqHealth : null;
 
 	// The unified option list across the three sources. HQ (the internal team) is
 	// already excluded from `projects` by useAllVisibleProjects.

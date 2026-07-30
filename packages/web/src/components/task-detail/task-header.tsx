@@ -90,8 +90,9 @@ export function TaskHeader({ task, projectId, taskId, taskProjectSlug }: TaskHea
 				{!task.has_active_run && task.queued_wakeup && (
 					<Badge color="blue" className="gap-1" testId="task-queued-badge">
 						<span className="inline-block w-1.5 h-1.5 rounded-full bg-info-soft-fg" />
-						{task.queued_wakeup.reason === 'project_at_capacity'
-							? 'Queued — project at capacity'
+						{task.queued_wakeup.reason === 'instance_at_capacity' ||
+						task.queued_wakeup.reason === 'project_at_capacity'
+							? 'Queued — at the container limit'
 							: 'Run queued'}
 					</Badge>
 				)}

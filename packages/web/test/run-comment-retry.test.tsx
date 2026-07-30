@@ -289,16 +289,16 @@ test('succeeded run-entry comment shows no Retry button', async () => {
 	expect(queryByTestId('retry-failed-run')).toBeNull();
 });
 
-test('failed run-entry comment disables Retry while the container is not running', async () => {
+test('failed run-entry comment disables Retry while the container has an error', async () => {
 	const seeded: Seeded = { projectSlug: '', taskId: '', agentSlug: '' };
 	const retryCalls: string[] = [];
 
 	const { findByTestId, user, router } = await setup({
 		seeded,
 		retryCalls,
-		// The exact stale state from the incident: the run failed and the container
-		// is gone, so a retry would only fail again.
-		containerStatus: 'stopped',
+		// An errored container needs fixing before a retry can succeed. (A merely
+		// stopped container no longer disables Retry — the runner lazy-starts it.)
+		containerStatus: 'error',
 		comments: ({ task, agent }) => [
 			runComment('c1', task.id, FAILED_RUN_ID, agent, '2026-05-20T11:30:00Z'),
 		],
@@ -312,7 +312,7 @@ test('failed run-entry comment disables Retry while the container is not running
 		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
-	// The button still renders (this is the latest failed run), but the not-running
+	// The button still renders (this is the latest failed run), but the errored
 	// container makes it inert so a click can't dispatch a doomed retry.
 	const retryButton = (await findByTestId('retry-failed-run', undefined, {
 		timeout: 20_000,

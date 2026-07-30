@@ -57,6 +57,7 @@
 	"settings.auditLog": "Registro de atividades",
 	"settings.adminPassword": "Senha de administrador",
 	"settings.chatbox": "Chat",
+	"settings.concurrency": "Execução simultânea",
 	"settings.archivedProjects": "Projetos arquivados",
 	"settings.logOut": "Sair",
 	"theme.label": "Tema",

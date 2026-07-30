@@ -25,6 +25,12 @@ import {
 	createTestProject,
 	createTestTeam,
 } from './helpers/app';
+import {
+	clearMaxActiveContainersForTest,
+	removeSeededContainerProject,
+	seedRunningContainerProject,
+	setMaxActiveContainersForTest,
+} from './helpers/capacity';
 
 // This suite drives the run-scheduling, task-selection, dispatch, and budget /
 // container-transition branches of JobManager that the existing
@@ -287,37 +293,29 @@ describe('JobManager — extended coverage', () => {
 			manager.shutdown();
 		});
 
-		it('returns project_at_capacity and records the skip when the project is at its run limit', async () => {
+		it('returns instance_at_capacity when starting a container would exceed the limit', async () => {
 			const manager = createJobManager();
-			await db.query('UPDATE projects SET max_concurrent_runs = 1 WHERE id = $1', [projectId]);
-
-			const sibRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
-				method: 'POST',
-				headers: { ...authHeader(token), ...json },
-				body: JSON.stringify({ project_id: projectId, title: 'Sib busy', assignee_id: agentId }),
-			});
-			const sibId = (await sibRes.json()).data.id as string;
-			await db.query(
-				`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
-				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now())`,
-				[agentId, teamId, sibId, HeartbeatRunStatus.Running],
-			);
+			// Container semantics: this project's container is stopped, the limit is
+			// 1, and a filler project's running container consumes the only slot.
+			await setMaxActiveContainersForTest(db, 1);
+			await db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [projectId]);
+			await seedRunningContainerProject(db, 'cap-filler-dispatch');
 			const wakeupId = await insertQueuedWakeup(agentId);
 
 			const result = await manager.dispatchWakeupNow(wakeupId);
-			expect(result).toEqual({ dispatched: false, reason: 'project_at_capacity' });
+			expect(result).toEqual({ dispatched: false, reason: 'instance_at_capacity' });
 			const ws = await wakeupStatus(wakeupId);
 			expect(ws.status).toBe(WakeupStatus.Queued);
-			expect(ws.last_skipped_reason).toBe(WakeupSkipReason.ProjectAtCapacity);
+			expect(ws.last_skipped_reason).toBe(WakeupSkipReason.InstanceAtCapacity);
 
-			await db.query('UPDATE projects SET max_concurrent_runs = 3 WHERE id = $1', [projectId]);
-			await db.query('DELETE FROM tasks WHERE id = $1', [sibId]);
+			await db.query(`UPDATE projects SET container_status = 'running' WHERE id = $1`, [projectId]);
+			await removeSeededContainerProject(db, 'cap-filler-dispatch');
+			await clearMaxActiveContainersForTest(db);
 			manager.shutdown();
 		});
 
 		it('returns agent_busy when the same agent already runs in the project', async () => {
 			const manager = createJobManager();
-			await db.query('UPDATE projects SET max_concurrent_runs = 3 WHERE id = $1', [projectId]);
 
 			const sibRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 				method: 'POST',
@@ -386,7 +384,7 @@ describe('JobManager — extended coverage', () => {
 			// tasks broadcast.
 			await db.query('UPDATE tasks SET assignee_id = $1 WHERE id = $2', [agentId, taskId]);
 			await db.query(
-				`UPDATE projects SET container_id = 'test-container', container_status = 'running', max_concurrent_runs = 3 WHERE id = $1`,
+				`UPDATE projects SET container_id = 'test-container', container_status = 'running' WHERE id = $1`,
 				[projectId],
 			);
 			const throwingWs = {
@@ -421,7 +419,6 @@ describe('JobManager — extended coverage', () => {
 	describe('processWakeups gating branches', () => {
 		it('skips a task wakeup with agent_running when the agent already runs in the project', async () => {
 			const manager = createJobManager();
-			await db.query('UPDATE projects SET max_concurrent_runs = 3 WHERE id = $1', [projectId]);
 
 			const sibRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 				method: 'POST',
@@ -514,7 +511,7 @@ describe('JobManager — extended coverage', () => {
 			await db.query(
 				`UPDATE projects
 				 SET container_id = 'test-container', container_status = 'running',
-				     max_concurrent_runs = 3, designated_repo_id = $2
+				     designated_repo_id = $2
 				 WHERE id = $1`,
 				[projectId, repo.rows[0].id],
 			);
@@ -529,21 +526,13 @@ describe('JobManager — extended coverage', () => {
 			);
 		});
 
-		it('re-queues the wakeup when the project is at capacity at activation time', async () => {
+		it('re-queues the wakeup when the container limit is reached at activation time', async () => {
 			const manager = createJobManager();
-			await db.query('UPDATE projects SET max_concurrent_runs = 1 WHERE id = $1', [projectId]);
-
-			const sibRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
-				method: 'POST',
-				headers: { ...authHeader(token), ...json },
-				body: JSON.stringify({ project_id: projectId, title: 'Cap sib', assignee_id: agentId }),
-			});
-			const sibId = (await sibRes.json()).data.id as string;
-			await db.query(
-				`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
-				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now())`,
-				[secondAgentId, teamId, sibId, HeartbeatRunStatus.Running],
-			);
+			// The project's container is stopped and a filler project's running
+			// container consumes the single slot, so activation must re-queue.
+			await setMaxActiveContainersForTest(db, 1);
+			await db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [projectId]);
+			await seedRunningContainerProject(db, 'cap-filler-activate');
 			const wakeupId = await insertQueuedWakeup(agentId, 'mention');
 			await db.query("UPDATE agent_wakeup_requests SET status = 'claimed' WHERE id = $1", [
 				wakeupId,
@@ -568,8 +557,9 @@ describe('JobManager — extended coverage', () => {
 			expect(r.rows[0].status).toBe(WakeupStatus.Queued);
 			expect(r.rows[0].claimed_at).toBeNull();
 
-			await db.query('UPDATE projects SET max_concurrent_runs = 3 WHERE id = $1', [projectId]);
-			await db.query('DELETE FROM tasks WHERE id = $1', [sibId]);
+			await db.query(`UPDATE projects SET container_status = 'running' WHERE id = $1`, [projectId]);
+			await removeSeededContainerProject(db, 'cap-filler-activate');
+			await clearMaxActiveContainersForTest(db);
 			manager.shutdown();
 		});
 

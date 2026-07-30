@@ -57,6 +57,7 @@
 	"settings.auditLog": "활동 로그",
 	"settings.adminPassword": "관리자 비밀번호",
 	"settings.chatbox": "채팅",
+	"settings.concurrency": "동시 실행",
 	"settings.archivedProjects": "보관된 프로젝트",
 	"settings.logOut": "로그아웃",
 	"theme.label": "테마",

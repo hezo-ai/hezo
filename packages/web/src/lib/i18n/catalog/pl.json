@@ -57,6 +57,7 @@
 	"settings.auditLog": "Dziennik aktywności",
 	"settings.adminPassword": "Hasło administratora",
 	"settings.chatbox": "Czat",
+	"settings.concurrency": "Współbieżność",
 	"settings.archivedProjects": "Zarchiwizowane projekty",
 	"settings.logOut": "Wyloguj się",
 	"theme.label": "Motyw",

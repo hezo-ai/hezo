@@ -38,8 +38,7 @@ function fakeProject(teamId: string, o: FakeProjectOpts) {
 		repo_count: 0,
 		open_task_count: 0,
 		is_internal: false,
-		max_concurrent_runs: 1,
-		memory_limit_gib: 16,
+		memory_limit_gib: null,
 		created_at: new Date().toISOString(),
 	};
 }
@@ -137,7 +136,7 @@ test('stopped container with no logs shows the "not running and no logs were cap
 		}),
 	);
 
-	await r.findByText('Stopped', undefined, { timeout: 20_000 });
+	await r.findByText('Stopped (starts on demand)', undefined, { timeout: 20_000 });
 	await r.findByText('Container is not running and no logs were captured.');
 });
 
@@ -151,7 +150,7 @@ test('a never-provisioned container (no container_id) shows the "No container pr
 		}),
 	);
 
-	await r.findByText('No container', undefined, { timeout: 20_000 });
+	await r.findByText('Starts on demand', undefined, { timeout: 20_000 });
 	await r.findByText('No container provisioned.');
 });
 

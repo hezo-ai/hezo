@@ -119,9 +119,11 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 	}, []);
 	const hq = useHqProject();
 	const hqHealth = useContainerHealth(hq);
-	// The CEO can only act while the HQ container is up. When it isn't, the chat
-	// stays openable but swaps its body for the container state + a link to fix it.
-	const blockedHealth = hqHealth && hqHealth.kind !== 'healthy' ? hqHealth : null;
+	// A stopped HQ container is no blocker — sending a message lazy-starts it.
+	// Only genuine errors and in-flight transitions (provisioning/rebuilding)
+	// swap the chat body for the container state + a link to fix it.
+	const blockedHealth =
+		hqHealth && hqHealth.kind !== 'healthy' && hqHealth.kind !== 'stopped' ? hqHealth : null;
 	const [draft, setDraft] = useState('');
 	const [copied, setCopied] = useState(false);
 	// Files staged for the next message; the reusable attachment kit owns the

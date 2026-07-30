@@ -15,6 +15,12 @@ import { ContainerLogStreamer } from '../src/services/container-logs';
 import { JobManager, type JobManagerDeps } from '../src/services/job-manager';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { authHeader, createStubDocker, createTestProject, createTestTeam } from './helpers/app';
+import {
+	clearMaxActiveContainersForTest,
+	removeSeededContainerProject,
+	seedRunningContainerProject,
+	setMaxActiveContainersForTest,
+} from './helpers/capacity';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
 // The Captain's progress-update ("Run now" / scheduled goal-check) flows:
@@ -102,8 +108,7 @@ beforeAll(async () => {
 	captainId = captain.rows[0].id;
 
 	await db.query(
-		`UPDATE projects SET container_id = 'progress-box', container_status = 'running',
-		        max_concurrent_runs = 3
+		`UPDATE projects SET container_id = 'progress-box', container_status = 'running'
 		 WHERE id = $1`,
 		[projectId],
 	);
@@ -125,8 +130,7 @@ afterEach(async () => {
 		[AgentRuntimeStatus.Idle, captainId],
 	);
 	await ctx.db.query(
-		`UPDATE projects SET container_id = 'progress-box', container_status = 'running',
-		        max_concurrent_runs = 3
+		`UPDATE projects SET container_id = 'progress-box', container_status = 'running'
 		 WHERE id = $1`,
 		[projectId],
 	);
@@ -237,20 +241,16 @@ describe('JobManager progress-update flows', () => {
 			manager.shutdown();
 		});
 
-		it('returns project_at_capacity when the project run limit is reached', async () => {
+		it('returns instance_at_capacity when starting the container would exceed the limit', async () => {
 			const manager = createJobManager();
 			await insertDueGoal('Capacity goal');
-			await ctx.db.query('UPDATE projects SET max_concurrent_runs = 1 WHERE id = $1', [projectId]);
-			const other = await ctx.db.query<{ id: string }>(
-				`SELECT ma.id FROM member_agents ma JOIN members m ON m.id = ma.id
-				 WHERE m.team_id = $1 AND ma.slug <> 'captain' LIMIT 1`,
-				[teamId],
-			);
-			await ctx.db.query(
-				`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
-				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now())`,
-				[other.rows[0].id, teamId, planningTaskId, HeartbeatRunStatus.Running],
-			);
+			// Container semantics: the Captain's project container is stopped and a
+			// filler project's running container holds the single slot.
+			await setMaxActiveContainersForTest(ctx.db, 1);
+			await ctx.db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [
+				projectId,
+			]);
+			await seedRunningContainerProject(ctx.db, 'cap-filler-progress');
 			const result = await internals(manager).tryDispatchProgressUpdate(
 				captainId,
 				teamId,
@@ -258,18 +258,29 @@ describe('JobManager progress-update flows', () => {
 				undefined,
 				{},
 			);
-			expect(result).toEqual({ dispatched: false, reason: 'project_at_capacity' });
-			await ctx.db.query('DELETE FROM heartbeat_runs WHERE member_id = $1', [other.rows[0].id]);
+			expect(result).toEqual({ dispatched: false, reason: 'instance_at_capacity' });
+			await removeSeededContainerProject(ctx.db, 'cap-filler-progress');
+			await clearMaxActiveContainersForTest(ctx.db);
 			manager.shutdown();
 		});
 
-		it('returns container_down when the container is not running', async () => {
+		it('a missing container no longer blocks dispatch — the budget gate is reached', async () => {
 			const manager = createJobManager();
 			await insertDueGoal('Container-down goal');
+			// The old code returned container_down here before ever checking the
+			// budget; with lazy-start there is no container gate, so the (later)
+			// budget gate must be what fires.
 			await ctx.db.query(
 				'UPDATE projects SET container_id = NULL, container_status = NULL WHERE id = $1',
 				[projectId],
 			);
+			await ctx.db.query('UPDATE member_agents SET daily_budget_cents = 100 WHERE id = $1', [
+				captainId,
+			]);
+			await ctx.db.query(
+				'INSERT INTO cost_entries (member_id, project_id, amount_cents) VALUES ($1, $2, 500)',
+				[captainId, projectId],
+			);
 			const result = await internals(manager).tryDispatchProgressUpdate(
 				captainId,
 				teamId,
@@ -277,7 +288,7 @@ describe('JobManager progress-update flows', () => {
 				undefined,
 				{},
 			);
-			expect(result).toEqual({ dispatched: false, reason: 'container_down' });
+			expect(result).toEqual({ dispatched: false, reason: 'over_budget' });
 			manager.shutdown();
 		});
 
@@ -518,20 +529,14 @@ describe('JobManager progress-update flows', () => {
 			manager.shutdown();
 		});
 
-		it('re-queues a manual progress_update_now wakeup while the project is at capacity', async () => {
+		it('re-queues a manual progress_update_now wakeup while the container limit is reached', async () => {
 			const manager = createJobManager();
 			await insertDueGoal('Manual capacity goal');
-			await ctx.db.query('UPDATE projects SET max_concurrent_runs = 1 WHERE id = $1', [projectId]);
-			const other = await ctx.db.query<{ id: string }>(
-				`SELECT ma.id FROM member_agents ma JOIN members m ON m.id = ma.id
-				 WHERE m.team_id = $1 AND ma.slug <> 'captain' LIMIT 1`,
-				[teamId],
-			);
-			await ctx.db.query(
-				`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
-				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now())`,
-				[other.rows[0].id, teamId, planningTaskId, HeartbeatRunStatus.Running],
-			);
+			await setMaxActiveContainersForTest(ctx.db, 1);
+			await ctx.db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [
+				projectId,
+			]);
+			await seedRunningContainerProject(ctx.db, 'cap-filler-manual');
 			const wakeupId = await insertClaimedWakeup({ trigger: 'progress_update_now' });
 
 			await internals(manager).activateAgent(
@@ -544,18 +549,35 @@ describe('JobManager progress-update flows', () => {
 
 			const w = await wakeupRow(wakeupId);
 			expect(w.status).toBe(WakeupStatus.Queued);
-			expect(w.last_skipped_reason).toBe(WakeupSkipReason.ProjectAtCapacity);
-			await ctx.db.query('DELETE FROM heartbeat_runs WHERE member_id = $1', [other.rows[0].id]);
+			expect(w.last_skipped_reason).toBe(WakeupSkipReason.InstanceAtCapacity);
+			// It must NOT have fallen through to task selection.
+			const runs = await ctx.db.query('SELECT 1 FROM heartbeat_runs WHERE member_id = $1', [
+				captainId,
+			]);
+			expect(runs.rows.length).toBe(0);
+			await removeSeededContainerProject(ctx.db, 'cap-filler-manual');
+			await clearMaxActiveContainersForTest(ctx.db);
 			manager.shutdown();
 		});
 
-		it('re-queues a manual progress_update_now wakeup while the container is down', async () => {
+		it('completes a container-down manual progress_update_now via the budget gate, never task selection', async () => {
 			const manager = createJobManager();
 			await insertDueGoal('Manual transient goal');
+			// Container down is no longer a transient requeue reason — the runner
+			// lazy-starts containers. Prove the gate is gone with a terminal budget
+			// outcome (which completes the wakeup as a no-op), and that a manual
+			// progress wakeup still never falls through to task selection.
 			await ctx.db.query(
 				'UPDATE projects SET container_id = NULL, container_status = NULL WHERE id = $1',
 				[projectId],
 			);
+			await ctx.db.query('UPDATE member_agents SET daily_budget_cents = 100 WHERE id = $1', [
+				captainId,
+			]);
+			await ctx.db.query(
+				'INSERT INTO cost_entries (member_id, project_id, amount_cents) VALUES ($1, $2, 500)',
+				[captainId, projectId],
+			);
 			const wakeupId = await insertClaimedWakeup({ trigger: 'progress_update_now' });
 
 			await internals(manager).activateAgent(
@@ -567,9 +589,7 @@ describe('JobManager progress-update flows', () => {
 			);
 
 			const w = await wakeupRow(wakeupId);
-			expect(w.status).toBe(WakeupStatus.Queued);
-			expect(w.claimed_at).toBeNull();
-			expect(w.last_skipped_reason).toBe(WakeupSkipReason.ContainerDown);
+			expect(w.status).toBe(WakeupStatus.Completed);
 			// It must NOT have fallen through to task selection.
 			const runs = await ctx.db.query('SELECT 1 FROM heartbeat_runs WHERE member_id = $1', [
 				captainId,

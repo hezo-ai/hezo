@@ -57,6 +57,7 @@
 	"settings.auditLog": "Activiteitenlog",
 	"settings.adminPassword": "Beheerderswachtwoord",
 	"settings.chatbox": "Chat",
+	"settings.concurrency": "Gelijktijdige uitvoering",
 	"settings.archivedProjects": "Gearchiveerde projecten",
 	"settings.logOut": "Uitloggen",
 	"theme.label": "Thema",

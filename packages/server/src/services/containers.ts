@@ -17,8 +17,10 @@ import type { Db } from '../db/database';
 import { trackBackground } from '../lib/background';
 import { broadcastProjectUpdate, broadcastRowChange } from '../lib/broadcast';
 import { forEachConcurrent } from '../lib/concurrency';
+import { withKeyedLock } from '../lib/keyed-lock';
 import { ref } from '../lib/log-ref';
 import { stripNulBytes, terminalStatusParams } from '../lib/sql';
+import { getDefaultRamCapPerContainerGb } from '../lib/system-meta';
 import { logger } from '../logger';
 import { setAgentIdleIfNoActiveRuns } from './agent-runtime-status';
 import type { ContainerLogStreamer } from './container-logs';
@@ -54,6 +56,21 @@ export interface ContainerTransition {
 }
 
 const log = logger.child('containers');
+
+/**
+ * Serializes container lifecycle *decisions* per project: ensure-running
+ * (start/provision at run or chat start) and the idle-stop cron's
+ * check-then-stop. Without it, two runs dispatching into the same stopped
+ * project could both provision (two containers, one orphaned), and idle-stop
+ * could stop a container between a dispatch's capacity check and its exec.
+ * Never held across an agent exec — only across the brief inspect/start/
+ * provision/stop step — so it is not a throughput ceiling on runs themselves.
+ * Keyed by project id; in-process only (single-server assumption).
+ */
+const containerLifecycleLocks = new Map<string, Promise<unknown>>();
+export function withContainerLifecycleLock<T>(projectId: string, fn: () => Promise<T>): Promise<T> {
+	return withKeyedLock(containerLifecycleLocks, projectId, fn);
+}
 
 export interface ProjectRow {
 	id: string;
@@ -164,13 +181,12 @@ export function shouldKeepOldContainers(): boolean {
 	return keepOldContainersFlag;
 }
 
-/**
- * Default per-container working-set ceiling, used when a project has not set
- * its own `projects.memory_limit_gib`. The sync loop stops the container when
- * working-set memory crosses this threshold and records an explanation in
- * `container_error`. Override per project from the Settings page.
- */
-export const DEFAULT_MEMORY_LIMIT_GIB = 16;
+// The per-container working-set ceiling is the instance-wide
+// `default_ram_cap_per_container_gb` setting (system_meta, default 2GB),
+// overridable per project via `projects.memory_limit_gib` (NULL = inherit).
+// The old hardcoded 16GiB default was a no-op on small hosts — 8x physical
+// RAM on a 2GB VPS — so a runaway in-container process triggered a *global*
+// OOM kill instead of a contained cgroup one.
 
 const memoryLimitBytes = (gib: number) => gib * 1024 ** 3;
 
@@ -398,11 +414,12 @@ export async function provisionContainer(
 		// cgroup hard cap = the project's working-set ceiling + headroom; the
 		// sync-loop stats poller remains the graceful early-stop at the ceiling
 		// itself (see MEMORY_HARD_CAP_HEADROOM_BYTES).
-		const limitRow = await db.query<{ memory_limit_gib: number }>(
+		const limitRow = await db.query<{ memory_limit_gib: number | null }>(
 			'SELECT memory_limit_gib FROM projects WHERE id = $1',
 			[project.id],
 		);
-		const memoryLimitGib = limitRow.rows[0]?.memory_limit_gib ?? DEFAULT_MEMORY_LIMIT_GIB;
+		const memoryLimitGib =
+			limitRow.rows[0]?.memory_limit_gib ?? (await getDefaultRamCapPerContainerGb(db));
 		const memoryHardCapBytes = memoryLimitBytes(memoryLimitGib) + MEMORY_HARD_CAP_HEADROOM_BYTES;
 
 		const { Id } = await docker.createContainer(containerName, {
@@ -450,7 +467,10 @@ export async function provisionContainer(
 		);
 
 		await db.query(
-			'UPDATE projects SET container_id = $1, container_status = $2::container_status, container_error = NULL WHERE id = $3',
+			`UPDATE projects
+			 SET container_id = $1, container_status = $2::container_status,
+			     container_error = NULL, container_last_started_at = now()
+			 WHERE id = $3`,
 			[Id, ContainerStatus.Running, project.id],
 		);
 
@@ -581,37 +601,64 @@ export async function ensureProjectContainerRunning(
 	deps: ContainerDeps,
 	projectId: string,
 ): Promise<string> {
-	const { db, docker } = deps;
-	const res = await db.query<ProjectRow & { team_slug: string }>(
-		`SELECT p.id, p.team_id, p.slug, p.docker_base_image, p.container_id, p.container_status,
-		        p.dev_ports, c.slug AS team_slug
-		 FROM projects p JOIN teams c ON c.id = p.team_id
-		 WHERE p.id = $1`,
-		[projectId],
-	);
-	const proj = res.rows[0];
-	if (!proj) throw new Error('Project not found');
+	// The whole inspect→start/provision step runs under the per-project lifecycle
+	// lock so every caller (agent runner, chat session, repo provisioning) is
+	// covered without call-site changes: concurrent ensures serialize, and the
+	// second caller sees a running container instead of double-provisioning.
+	return withContainerLifecycleLock(projectId, async () => {
+		const { db, docker } = deps;
+		const res = await db.query<ProjectRow & { team_slug: string }>(
+			`SELECT p.id, p.team_id, p.slug, p.docker_base_image, p.container_id, p.container_status,
+			        p.dev_ports, c.slug AS team_slug
+			 FROM projects p JOIN teams c ON c.id = p.team_id
+			 WHERE p.id = $1`,
+			[projectId],
+		);
+		const proj = res.rows[0];
+		if (!proj) throw new Error('Project not found');
 
-	if (proj.container_id) {
-		const info = await docker.inspectContainer(proj.container_id);
-		if (info?.State.Running) return proj.container_id;
-		if (info) {
-			// Container exists but is stopped — start it in place.
-			await docker.startContainer(proj.container_id);
-			await db.query(
-				'UPDATE projects SET container_status = $1::container_status, container_error = NULL WHERE id = $2',
-				[ContainerStatus.Running, proj.id],
-			);
-			if (deps.containerLogStreamer && deps.logs) {
-				deps.containerLogStreamer.subscribe(proj.id, proj.container_id, deps.logs, docker);
+		if (proj.container_id) {
+			const info = await docker.inspectContainer(proj.container_id);
+			if (info?.State.Running) {
+				// Docker is the truth; if the row lags (e.g. an out-of-band start),
+				// reconcile it and stamp the start floor so the idle-stop cron can
+				// see — and eventually reclaim — this container.
+				if (proj.container_status !== ContainerStatus.Running) {
+					await db.query(
+						`UPDATE projects
+						 SET container_status = $1::container_status, container_error = NULL,
+						     container_last_started_at = now()
+						 WHERE id = $2`,
+						[ContainerStatus.Running, proj.id],
+					);
+					await broadcastProjectUpdate(db, deps.wsManager, proj.team_id, proj.id);
+				}
+				return proj.container_id;
 			}
-			await broadcastProjectUpdate(db, deps.wsManager, proj.team_id, proj.id);
-			return proj.container_id;
+			if (info) {
+				// Container exists but is stopped — start it in place.
+				await docker.startContainer(proj.container_id);
+				await db.query(
+					`UPDATE projects
+					 SET container_status = $1::container_status, container_error = NULL,
+					     container_last_started_at = now()
+					 WHERE id = $2`,
+					[ContainerStatus.Running, proj.id],
+				);
+				if (deps.containerLogStreamer && deps.logs) {
+					deps.containerLogStreamer.subscribe(proj.id, proj.container_id, deps.logs, docker);
+				}
+				await broadcastProjectUpdate(db, deps.wsManager, proj.team_id, proj.id);
+				log.info(
+					`project ${ref(proj.slug, proj.id)} container ${ref(proj.slug, proj.container_id.slice(0, 12))} started on demand`,
+				);
+				return proj.container_id;
+			}
 		}
-	}
 
-	// No container id, or the stored id no longer exists in Docker — provision.
-	return provisionContainer(deps, proj, proj.team_slug);
+		// No container id, or the stored id no longer exists in Docker — provision.
+		return provisionContainer(deps, proj, proj.team_slug);
+	});
 }
 
 export async function teardownContainer(
@@ -705,6 +752,105 @@ export async function stopContainerGracefully(
 	);
 
 	await broadcastProjectUpdate(db, wsManager, teamId, projectId);
+}
+
+/**
+ * Activity that holds a project's container up, shared by the idle-stop cron's
+ * candidate scan and its under-lock recheck. Evaluated activity-side so an idle
+ * instance's cost tracks activity inside the window, not table history. A
+ * project is busy when it has: an active (queued/running) run; a run finished
+ * inside the idle window (idx_runs_finished); a queued wakeup that could
+ * actually dispatch — capacity-skipped wakeups deliberately do NOT hold a
+ * container, else a backlog waiting on the container cap would pin containers
+ * warm forever ('project_at_capacity' is the pre-rename legacy value, re-stamped
+ * within seconds of an upgrade); or a live chat session with recent activity or
+ * an in-flight (pending/streaming) turn (idx_chat_messages_inflight).
+ * `$1` is the idle window in minutes everywhere.
+ */
+const UUID_RE = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
+const BUSY_PROJECTS_SQL = `
+	SELECT DISTINCT t.project_id FROM heartbeat_runs hr
+	 JOIN tasks t ON t.id = hr.task_id
+	 WHERE hr.status IN ('queued', 'running')
+	UNION
+	SELECT DISTINCT t.project_id FROM heartbeat_runs hr
+	 JOIN tasks t ON t.id = hr.task_id
+	 WHERE hr.finished_at > now() - ($1 * interval '1 minute')
+	UNION
+	SELECT DISTINCT t.project_id FROM agent_wakeup_requests w
+	 JOIN tasks t ON t.id = (w.payload->>'task_id')::uuid
+	 WHERE w.status = 'queued'
+	   AND w.payload->>'task_id' ~ '${UUID_RE}'
+	   AND (w.last_skipped_reason IS NULL
+	     OR w.last_skipped_reason NOT IN ('instance_at_capacity', 'project_at_capacity'))
+	UNION
+	SELECT DISTINCT (w.payload->>'project_id')::uuid AS project_id FROM agent_wakeup_requests w
+	 WHERE w.status = 'queued'
+	   AND w.payload->>'project_id' ~ '${UUID_RE}'
+	   AND (w.last_skipped_reason IS NULL
+	     OR w.last_skipped_reason NOT IN ('instance_at_capacity', 'project_at_capacity'))
+	UNION
+	SELECT cs.project_id FROM chat_sessions cs
+	 WHERE cs.status IN ('starting', 'running')
+	   AND (cs.last_activity_at > now() - ($1 * interval '1 minute')
+	     OR EXISTS (SELECT 1 FROM chat_messages cm
+	                WHERE cm.session_id = cs.id AND cm.status IN ('pending', 'streaming')))
+`;
+
+/**
+ * The per-candidate predicate the idle-stop cron applies: container running,
+ * up for at least one full idle window (the start-time floor — a manual start
+ * or fresh provision is never stopped early; NULL-started rows never match, so
+ * they are never idle-stopped), and no busy signal. `extraSql` narrows to one
+ * project for the under-lock recheck.
+ */
+const IDLE_CANDIDATE_SQL = (extraSql: string, limitSql: string) => `
+	WITH busy AS (${BUSY_PROJECTS_SQL})
+	SELECT p.id, p.slug, p.team_id, p.container_id
+	FROM projects p
+	WHERE p.container_status = 'running'::container_status
+	  AND p.container_id IS NOT NULL
+	  AND p.container_last_started_at IS NOT NULL
+	  AND p.container_last_started_at < now() - ($1 * interval '1 minute')
+	  AND p.id NOT IN (SELECT project_id FROM busy)
+	  ${extraSql}
+	${limitSql}
+`;
+
+export interface IdleContainerCandidate {
+	id: string;
+	slug: string;
+	team_id: string;
+	container_id: string;
+}
+
+/** Projects whose running container has been idle past the timeout. */
+export async function findIdleContainerCandidates(
+	db: Db,
+	timeoutMin: number,
+	limit: number,
+): Promise<IdleContainerCandidate[]> {
+	const res = await db.query<IdleContainerCandidate>(IDLE_CANDIDATE_SQL('', 'LIMIT $2'), [
+		timeoutMin,
+		limit,
+	]);
+	return res.rows;
+}
+
+/**
+ * Re-verify one candidate immediately before stopping it (run under the
+ * project's lifecycle lock, after the caller's in-memory checks).
+ */
+export async function isProjectIdleForContainerStop(
+	db: Db,
+	projectId: string,
+	timeoutMin: number,
+): Promise<boolean> {
+	const res = await db.query(IDLE_CANDIDATE_SQL('AND p.id = $2', 'LIMIT 1'), [
+		timeoutMin,
+		projectId,
+	]);
+	return res.rows.length > 0;
 }
 
 /**
@@ -861,8 +1007,8 @@ export async function syncContainerStatus(
 }
 
 /**
- * If the container's working-set memory crosses the per-project memory ceiling
- * (`projects.memory_limit_gib`, default {@link DEFAULT_MEMORY_LIMIT_GIB}), stop
+ * If the container's working-set memory crosses its effective memory ceiling
+ * (`projects.memory_limit_gib` override, else the instance-wide ram cap), stop
  * it and record an explanatory message in `container_error`. The banner and
  * container page both surface that field. Returns the synthesised status when the
  * container was stopped, or null when it was within budget or stats were unavailable.
@@ -961,10 +1107,14 @@ export async function syncAllContainerStatuses(
 		team_id: string;
 		container_id: string;
 		container_status: string | null;
-		memory_limit_gib: number;
+		memory_limit_gib: number | null;
 	}>(
 		'SELECT id, slug, team_id, container_id, container_status, memory_limit_gib FROM projects WHERE container_id IS NOT NULL',
 	);
+
+	// Effective per-container ceiling: the project override, else the
+	// instance-wide default — read once per pass, not once per project.
+	const defaultRamCapGib = await getDefaultRamCapPerContainerGb(db);
 
 	const transitions: ContainerTransition[] = [];
 	const now = Date.now();
@@ -996,7 +1146,7 @@ export async function syncAllContainerStatuses(
 				project.slug,
 				project.team_id,
 				project.container_id,
-				project.memory_limit_gib,
+				project.memory_limit_gib ?? defaultRamCapGib,
 			);
 			if (overrideStatus !== null) {
 				newStatus = overrideStatus;

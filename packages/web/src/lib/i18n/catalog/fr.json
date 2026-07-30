@@ -57,6 +57,7 @@
 	"settings.auditLog": "Journal d'activité",
 	"settings.adminPassword": "Mot de passe administrateur",
 	"settings.chatbox": "Messagerie",
+	"settings.concurrency": "Exécution simultanée",
 	"settings.archivedProjects": "Projets archivés",
 	"settings.logOut": "Se déconnecter",
 	"theme.label": "Thème",

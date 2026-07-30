@@ -21,6 +21,12 @@ import {
 	updateGoal,
 } from '../src/services/goals';
 import { authHeader, createTestProject, createTestTeam } from './helpers/app';
+import {
+	clearMaxActiveContainersForTest,
+	removeSeededContainerProject,
+	seedRunningContainerProject,
+	setMaxActiveContainersForTest,
+} from './helpers/capacity';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
 let ctx: ServerTestContext;
@@ -779,9 +785,13 @@ describe('run-now dispatch and queued-run lifecycle', () => {
 		}
 	});
 
-	it('queues when a goal is due but the container is down, then supports cancel', async () => {
+	it('queues when a goal is due but the container limit is reached, then supports cancel', async () => {
 		// The project's due goals already exist from the cadence tests, so run-now
-		// passes the "nothing due" gate and hits the container-down conflict → queued.
+		// passes the "nothing due" gate. A down container no longer conflicts (the
+		// runner lazy-starts it), so the transient conflict is the container
+		// limit: cap 1, held by a filler project's running container.
+		await setMaxActiveContainersForTest(ctx.db, 1);
+		await seedRunningContainerProject(ctx.db, 'cap-goals-more');
 		const res = await ctx.app.request(`/api/projects/${projectSlug}/goals/run-now`, {
 			method: 'POST',
 			headers: jsonHeaders(),
@@ -827,6 +837,9 @@ describe('run-now dispatch and queued-run lifecycle', () => {
 			{ method: 'POST', headers: jsonHeaders(), body: '{}' },
 		);
 		expect(again.status).toBe(409);
+
+		await removeSeededContainerProject(ctx.db, 'cap-goals-more');
+		await clearMaxActiveContainersForTest(ctx.db);
 	});
 
 	it('reports no_due_goals as a valid 200 no-op once nothing is due', async () => {

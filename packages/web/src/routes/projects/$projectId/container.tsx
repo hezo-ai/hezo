@@ -89,6 +89,15 @@ function ContainerPage() {
 
 	return (
 		<div className="flex flex-col gap-5">
+			{/* Containers run on demand: agent runs and chats start this container
+			    automatically, and it stops again after the global idle timeout
+			    (Settings → Concurrency). The controls below are manual overrides. */}
+			<p className="text-[13px] text-text-2 max-w-[680px]">
+				This container starts automatically whenever an agent run or the assistant needs it, and
+				stops after sitting idle (configurable in Settings → Concurrency). Starting or stopping it
+				here is a manual override.
+			</p>
+
 			{/* Controls */}
 			<div className="flex flex-col gap-3 rounded-lg border border-border-subtle bg-surface px-4 py-3 sm:flex-row sm:items-center">
 				<div className="flex items-center gap-3">
@@ -294,12 +303,14 @@ function ContainerPage() {
 }
 
 function ContainerStatusBadge({ status }: { status: string | null }) {
-	if (!status) return <Badge color="gray">No container</Badge>;
+	// `null` (never provisioned) and `stopped` are both the normal resting
+	// state: the container starts on demand when a run or chat needs it.
+	if (!status) return <Badge color="neutral">Starts on demand</Badge>;
 	const config: Record<string, { color: string; label: string }> = {
 		creating: { color: 'warning', label: 'Provisioning' },
 		running: { color: 'success', label: 'Running' },
 		stopping: { color: 'warning', label: 'Stopping' },
-		stopped: { color: 'neutral', label: 'Stopped' },
+		stopped: { color: 'neutral', label: 'Stopped (starts on demand)' },
 		error: { color: 'danger', label: 'Error' },
 	};
 	const { color, label } = config[status] ?? { color: 'neutral', label: status };

@@ -546,8 +546,7 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 	const body = await c.req.json<{
 		name?: string;
 		description?: string;
-		max_concurrent_runs?: number;
-		memory_limit_gib?: number;
+		memory_limit_gib?: number | null;
 		daily_budget_cents?: number;
 		weekly_budget_cents?: number;
 		monthly_budget_cents?: number;
@@ -577,17 +576,14 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 		params.push(body.description);
 		idx++;
 	}
-	if (body.max_concurrent_runs !== undefined) {
-		if (!Number.isInteger(body.max_concurrent_runs) || body.max_concurrent_runs < 1) {
-			return err(c, 'INVALID_REQUEST', 'max_concurrent_runs must be an integer ≥ 1', 400);
-		}
-		sets.push(`max_concurrent_runs = $${idx}`);
-		params.push(body.max_concurrent_runs);
-		idx++;
-	}
 	if (body.memory_limit_gib !== undefined) {
-		if (!Number.isInteger(body.memory_limit_gib) || body.memory_limit_gib < 1) {
-			return err(c, 'INVALID_REQUEST', 'memory_limit_gib must be an integer ≥ 1', 400);
+		// null clears the per-project override — the container inherits the
+		// instance-wide default ram cap.
+		if (
+			body.memory_limit_gib !== null &&
+			(!Number.isInteger(body.memory_limit_gib) || body.memory_limit_gib < 1)
+		) {
+			return err(c, 'INVALID_REQUEST', 'memory_limit_gib must be an integer ≥ 1 or null', 400);
 		}
 		sets.push(`memory_limit_gib = $${idx}`);
 		params.push(body.memory_limit_gib);
@@ -898,10 +894,12 @@ projectsRoutes.post('/projects/:projectId/container/start', async (c) => {
 	const containerId = result.rows[0].container_id;
 	try {
 		await docker.startContainer(containerId);
-		await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
-			ContainerStatus.Running,
-			projectId,
-		]);
+		await db.query(
+			`UPDATE projects
+			 SET container_status = $1::container_status, container_last_started_at = now()
+			 WHERE id = $2`,
+			[ContainerStatus.Running, projectId],
+		);
 		c.get('containerLogStreamer').subscribe(projectId, containerId, c.get('logs'), docker);
 		await broadcastProjectUpdate(db, c.get('wsManager'), teamId, projectId);
 		await wakeAgentsWithPendingWork(db, projectId, teamId);

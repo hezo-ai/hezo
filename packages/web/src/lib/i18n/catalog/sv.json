@@ -57,6 +57,7 @@
 	"settings.auditLog": "Aktivitetslogg",
 	"settings.adminPassword": "Administratörslösenord",
 	"settings.chatbox": "Chatt",
+	"settings.concurrency": "Samtidig körning",
 	"settings.archivedProjects": "Arkiverade projekt",
 	"settings.logOut": "Logga ut",
 	"theme.label": "Tema",

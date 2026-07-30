@@ -57,6 +57,7 @@
 	"settings.auditLog": "Aktivitätsprotokoll",
 	"settings.adminPassword": "Admin-Passwort",
 	"settings.chatbox": "Chatbox",
+	"settings.concurrency": "Parallelität",
 	"settings.archivedProjects": "Archivierte Projekte",
 	"settings.logOut": "Abmelden",
 	"theme.label": "Design",

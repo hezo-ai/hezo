@@ -15,6 +15,12 @@ import {
 	createTestProject,
 	createTestTeam,
 } from './helpers/app';
+import {
+	clearMaxActiveContainersForTest,
+	removeSeededContainerProject,
+	seedRunningContainerProject,
+	setMaxActiveContainersForTest,
+} from './helpers/capacity';
 
 // The queued manual progress-update run ("Run now" while the Captain is busy). Covers the queue
 // dedup that must NOT cross-coalesce with the Captain's scheduled task-less heartbeat wakeup, the
@@ -116,6 +122,11 @@ async function wakeupRow(id: string) {
 describe('queued manual progress-update run', () => {
 	it('does not cross-coalesce with the Captain scheduled heartbeat wakeup', async () => {
 		await createDueGoal('Coalesce guard goal');
+		// Block dispatch on the container limit so run-now takes the queued path
+		// (the pre-lazy-start code got the same outcome from the container being
+		// down; that is no longer a blocker).
+		await setMaxActiveContainersForTest(db, 1);
+		await seedRunningContainerProject(db, 'cap-goals-coalesce');
 
 		// A pre-existing task-less scheduled heartbeat wakeup for the same Captain.
 		const heartbeat = await db.query<{ id: string }>(
@@ -160,6 +171,8 @@ describe('queued manual progress-update run', () => {
 		await db.query(`DELETE FROM agent_wakeup_requests WHERE id = ANY($1)`, [
 			[heartbeatId, body.wakeup_id],
 		]);
+		await removeSeededContainerProject(db, 'cap-goals-coalesce');
+		await clearMaxActiveContainersForTest(db);
 	});
 
 	it('cancel returns 404 for an unknown wakeup id', async () => {
@@ -170,21 +183,27 @@ describe('queued manual progress-update run', () => {
 		expect(res.status).toBe(404);
 	});
 
-	it('re-queues (not falls through to task work) when the container is down at dispatch', async () => {
-		// Due goal + no running container ⇒ tryDispatchProgressUpdate returns container_down.
+	it('re-queues (not falls through to task work) when the container limit is reached at dispatch', async () => {
+		// A container that is down is no longer a blocker (the runner lazy-starts
+		// it); the transient re-queue case is now the container LIMIT. This
+		// project's container is down, the limit is 1, and a filler project's
+		// running container holds the only slot.
+		await createDueGoal('Capacity re-queue goal');
 		const wakeupId = await insertProgressWakeup();
 		const manager = createJobManager();
+		await setMaxActiveContainersForTest(db, 1);
+		await seedRunningContainerProject(db, 'cap-goals-filler');
 
 		// Drive activateAgent through the public run-now dispatch (task-less path).
 		await manager.dispatchWakeupNow(wakeupId);
 
-		// The guard re-queued the wakeup with a container_down skip reason instead of letting
-		// the Captain fall through to picking up a task.
+		// The guard re-queued the wakeup with an instance_at_capacity skip reason
+		// instead of letting the Captain fall through to picking up a task.
 		const ws = await wakeupRow(wakeupId);
 		expect(ws.status).toBe(WakeupStatus.Queued);
-		expect(ws.last_skipped_reason).toBe(WakeupSkipReason.ContainerDown);
+		expect(ws.last_skipped_reason).toBe(WakeupSkipReason.InstanceAtCapacity);
 
-		// No progress-update run was started (still no container).
+		// No progress-update run was started.
 		const runs = await db.query<{ c: number }>(
 			`SELECT COUNT(*)::int AS c FROM heartbeat_runs WHERE member_id = $1`,
 			[captainId],
@@ -192,6 +211,8 @@ describe('queued manual progress-update run', () => {
 		expect(runs.rows[0].c).toBe(0);
 
 		manager.shutdown();
+		await removeSeededContainerProject(db, 'cap-goals-filler');
+		await clearMaxActiveContainersForTest(db);
 		await db.query(`DELETE FROM agent_wakeup_requests WHERE id = $1`, [wakeupId]);
 	});
 

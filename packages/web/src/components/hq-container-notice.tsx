@@ -56,7 +56,7 @@ function noticeTitle(health: Exclude<ContainerHealth, { kind: 'healthy' }>): str
 				? 'Stopping the HQ container…'
 				: 'Starting the HQ container…';
 		case 'stopped':
-			return 'The HQ container isn’t running';
+			return 'The HQ container is asleep — it starts automatically when needed';
 		case 'error':
 			return 'The HQ container has an error';
 	}

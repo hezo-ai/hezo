@@ -5,7 +5,6 @@ import {
 	AiProvider,
 	ContainerStatus,
 	HeartbeatRunStatus,
-	WsMessageType,
 } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -112,6 +111,14 @@ beforeAll(async () => {
 		}),
 	});
 	taskId = (await taskRes.json()).data.id;
+
+	// The lazy-start ensure resolves the container from the DB row, so pin it to
+	// the id the docker mocks assume (running under the default inspect).
+	await db.query(
+		`UPDATE projects SET container_id = 'container-123', container_status = 'running'::container_status
+		 WHERE id = $1`,
+		[projectId],
+	);
 });
 
 afterAll(async () => {
@@ -239,29 +246,34 @@ function makeProject(overrides: Record<string, unknown> = {}) {
 }
 
 describe('runAgent', () => {
-	it('returns failure when container is not running and records it in the run log', async () => {
-		const broadcasts: Array<{ room: string; event: any }> = [];
-		const wsManager = {
-			broadcast: (room: string, event: any) => {
-				broadcasts.push({ room, event });
+	it('lazy-starts a stopped container, narrates it in the run log, and proceeds', async () => {
+		await db.query(
+			`UPDATE projects SET container_status = 'stopped'::container_status, container_id = 'c-1',
+			     container_error = NULL WHERE id = $1`,
+			[projectId],
+		);
+		const startCalls: string[] = [];
+		let started = false;
+		const docker = createMockDocker({
+			inspectContainer: async (id: string) => ({
+				Id: id,
+				State: started
+					? { Status: 'running', Running: true, Pid: 1, ExitCode: 0 }
+					: { Status: 'exited', Running: false, Pid: 0, ExitCode: 0 },
+				Config: { Image: 'test' },
+			}),
+			startContainer: async (id: string) => {
+				startCalls.push(id);
+				started = true;
 			},
-			subscribe: () => {},
-			unsubscribe: () => {},
-			unsubscribeAll: () => {},
-			getRoomSize: () => 0,
-			getTotalConnections: () => 0,
-		} as any;
-
-		const logs = new LogStreamBroker();
-		logs.setWsManager(wsManager);
+		});
 		const deps: RunnerDeps = {
 			db,
-			docker: createMockDocker(),
+			docker,
 			masterKeyManager,
 			serverPort: 3000,
 			dataDir: '/tmp/test-data',
-			wsManager,
-			logs,
+			logs: new LogStreamBroker(),
 		};
 
 		const result = await runAgent(
@@ -271,56 +283,50 @@ describe('runAgent', () => {
 			makeProject({ container_status: ContainerStatus.Stopped, container_id: 'c-1' }),
 		);
 
-		expect(result.success).toBe(false);
-		expect(result.exitCode).toBe(-1);
-		expect(result.stderr).toContain('not running');
-		expect(result.heartbeatRunId).toBeDefined();
+		expect(result.success).toBe(true);
+		expect(startCalls).toEqual(['c-1']);
 
-		const run = await db.query<{ status: string; log_text: string; error: string | null }>(
-			`SELECT status, ${runLogTextSql('heartbeat_runs.id')} AS log_text, error FROM heartbeat_runs WHERE id = $1`,
+		const run = await db.query<{ log_text: string }>(
+			`SELECT ${runLogTextSql('heartbeat_runs.id')} AS log_text FROM heartbeat_runs WHERE id = $1`,
 			[result.heartbeatRunId],
 		);
-		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
-		expect(run.rows[0].log_text).toContain('[runner]');
-		expect(run.rows[0].log_text).toContain('not running');
-		expect(run.rows[0].error).toContain('not running');
+		expect(run.rows[0].log_text).toContain('Starting the project container');
 
-		const logBroadcasts = broadcasts.filter((b) => b.event.type === 'run_log');
-		expect(logBroadcasts.some((b) => b.event.text.includes('not running'))).toBe(true);
+		const proj = await db.query<{ container_status: string }>(
+			'SELECT container_status FROM projects WHERE id = $1',
+			[projectId],
+		);
+		expect(proj.rows[0].container_status).toBe(ContainerStatus.Running);
+
+		await db.query(
+			`UPDATE projects SET container_id = 'container-123', container_status = 'running'::container_status WHERE id = $1`,
+			[projectId],
+		);
 	});
 
-	it('reconciles and fails the run when a cached-running container has vanished from Docker', async () => {
+	it('re-provisions when a cached-running container has vanished from Docker and proceeds', async () => {
 		// The DB still says running, but Docker 404s on inspect — the exact stale
-		// state after an external `docker rm` or a Docker daemon restart. The runner
-		// must catch this before execCreate, flip the row to error, null the id, and
-		// broadcast so the UI corrects — rather than trip over a raw 404 mid-run.
-		const broadcasts: Array<{ room: string; event: any }> = [];
-		const wsManager = {
-			broadcast: (room: string, event: any) => {
-				broadcasts.push({ room, event });
-			},
-			subscribe: () => {},
-			unsubscribe: () => {},
-			unsubscribeAll: () => {},
-			getRoomSize: () => 0,
-			getTotalConnections: () => 0,
-		} as any;
-
-		// The cached state the runner reads: running, with a container id Docker no
-		// longer knows about.
+		// state after an external `docker rm` or a Docker daemon restart. The
+		// runner repairs the row by provisioning a fresh container and rides it.
 		await db.query(
 			`UPDATE projects SET container_status = $1::container_status, container_id = $2,
 			     container_error = NULL WHERE id = $3`,
 			[ContainerStatus.Running, 'gone-1', projectId],
 		);
 
+		const created: string[] = [];
 		const deps: RunnerDeps = {
 			db,
-			docker: createMockDocker({ inspectContainer: async () => null }),
+			docker: createMockDocker({
+				inspectContainer: async () => null,
+				createContainer: async () => {
+					created.push('reborn-1');
+					return { Id: 'reborn-1', Warnings: [] };
+				},
+			}),
 			masterKeyManager,
 			serverPort: 3000,
 			dataDir: '/tmp/test-data',
-			wsManager,
 			logs: new LogStreamBroker(),
 		};
 
@@ -331,36 +337,38 @@ describe('runAgent', () => {
 			makeProject({ container_status: ContainerStatus.Running, container_id: 'gone-1' }),
 		);
 
-		expect(result.success).toBe(false);
-		expect(result.stderr).toContain('not running');
-
-		const run = await db.query<{ status: string; log_text: string }>(
-			`SELECT status, ${runLogTextSql('heartbeat_runs.id')} AS log_text FROM heartbeat_runs WHERE id = $1`,
-			[result.heartbeatRunId],
-		);
-		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
-		expect(run.rows[0].log_text).toContain('not running');
+		expect(result.success).toBe(true);
+		expect(created).toEqual(['reborn-1']);
 
 		// The stale row was reconciled against Docker reality.
 		const proj = await db.query<{ container_status: string; container_id: string | null }>(
 			'SELECT container_status, container_id FROM projects WHERE id = $1',
 			[projectId],
 		);
-		expect(proj.rows[0].container_status).toBe(ContainerStatus.Error);
-		expect(proj.rows[0].container_id).toBeNull();
+		expect(proj.rows[0].container_status).toBe(ContainerStatus.Running);
+		expect(proj.rows[0].container_id).toBe('reborn-1');
 
-		// And the correction was broadcast so the banner/sidebar/Container page update.
-		expect(
-			broadcasts.some(
-				(b) => b.event.type === WsMessageType.RowChange && b.event.table === 'projects',
-			),
-		).toBe(true);
+		await db.query(
+			`UPDATE projects SET container_id = 'container-123', container_status = 'running'::container_status WHERE id = $1`,
+			[projectId],
+		);
 	});
 
-	it('returns failure when container_id is null and records it in the run log', async () => {
+	it('provisions from scratch when the project has no container and proceeds', async () => {
+		await db.query(
+			`UPDATE projects SET container_status = NULL, container_id = NULL,
+			     container_error = NULL WHERE id = $1`,
+			[projectId],
+		);
+		const created: string[] = [];
 		const deps: RunnerDeps = {
 			db,
-			docker: createMockDocker(),
+			docker: createMockDocker({
+				createContainer: async () => {
+					created.push('fresh-1');
+					return { Id: 'fresh-1', Warnings: [] };
+				},
+			}),
 			masterKeyManager,
 			serverPort: 3000,
 			dataDir: '/tmp/test-data',
@@ -371,19 +379,24 @@ describe('runAgent', () => {
 			deps,
 			makeAgent(),
 			makeTask(),
-			makeProject({ container_id: null }),
+			makeProject({ container_id: null, container_status: null }),
 		);
 
-		expect(result.success).toBe(false);
-		expect(result.stderr).toContain('not running');
+		expect(result.success).toBe(true);
+		expect(created).toEqual(['fresh-1']);
 		expect(result.heartbeatRunId).toBeDefined();
 
-		const run = await db.query<{ status: string; log_text: string }>(
-			`SELECT status, ${runLogTextSql('heartbeat_runs.id')} AS log_text FROM heartbeat_runs WHERE id = $1`,
-			[result.heartbeatRunId],
+		const proj = await db.query<{ container_status: string; container_id: string | null }>(
+			'SELECT container_status, container_id FROM projects WHERE id = $1',
+			[projectId],
 		);
-		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
-		expect(run.rows[0].log_text).toContain('not running');
+		expect(proj.rows[0].container_status).toBe(ContainerStatus.Running);
+		expect(proj.rows[0].container_id).toBe('fresh-1');
+
+		await db.query(
+			`UPDATE projects SET container_id = 'container-123', container_status = 'running'::container_status WHERE id = $1`,
+			[projectId],
+		);
 	});
 
 	it('runs successfully and creates a heartbeat run', async () => {

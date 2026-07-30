@@ -226,9 +226,11 @@ function NeedsYouMention({ mention }: { mention: AdminMentionItem }) {
 function WelcomeCard({ onCreate }: { onCreate: () => void }) {
 	const hq = useHqProject();
 	const hqHealth = useContainerHealth(hq);
-	// A project is scoped by the CEO in HQ, so the first project can't be created
-	// until the HQ container is up — surface that wait here rather than at click.
-	const blockedHealth = hqHealth && hqHealth.kind !== 'healthy' ? hqHealth : null;
+	// Project scoping is CEO-driven, but a stopped (or never-provisioned) HQ
+	// container is no blocker — the first use lazy-starts it. Only errors and
+	// in-flight transitions surface a wait here.
+	const blockedHealth =
+		hqHealth && hqHealth.kind !== 'healthy' && hqHealth.kind !== 'stopped' ? hqHealth : null;
 
 	return (
 		<Card className="mb-6 p-0 overflow-hidden" data-testid="home-welcome-card">

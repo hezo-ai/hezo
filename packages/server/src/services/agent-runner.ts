@@ -72,13 +72,14 @@ import {
 	type ProbeResult,
 	shouldAbortForConnectivity,
 } from './container-connectivity-status';
+import type { ContainerLogStreamer } from './container-logs';
 import {
 	type ContainerRunUser,
 	chownToRunUser,
 	ensureContainerDirReady,
 	resolveContainerRunUser,
 } from './container-user';
-import { syncContainerStatus } from './containers';
+import { ensureProjectContainerRunning } from './containers';
 import type { DockerClient, ExecLogChunk } from './docker';
 import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
@@ -161,11 +162,18 @@ interface ProjectInfo {
 	slug: string;
 	team_id: string;
 	team_slug: string;
-	container_id: string;
-	container_status: string;
+	container_id: string | null;
+	container_status: string | null;
 	designated_repo_id: string | null;
 	is_internal: boolean;
 }
+
+/**
+ * ProjectInfo once the runner has ensured the project container is running —
+ * containers start on demand at run start, so callers may hand runAgent a
+ * project whose container is stopped or was never provisioned.
+ */
+type RunningProjectInfo = ProjectInfo & { container_id: string };
 
 export interface RunResult {
 	success: boolean;
@@ -193,6 +201,8 @@ export interface RunnerDeps {
 	sshAgentServer?: SshAgentServer;
 	egressProxy?: EgressProxy | null;
 	egressCAPath?: string | null;
+	/** When present, a container the runner lazy-starts resubscribes its log stream. */
+	containerLogStreamer?: ContainerLogStreamer;
 	/** Latest container→host connectivity outcome. When present and the egress
 	 * proxy is unreachable from containers, the run aborts instead of silently
 	 * falling through to direct egress. Absent → fail open (back-compat). */
@@ -751,7 +761,7 @@ async function buildRunContext(
 	deps: RunnerDeps,
 	agent: AgentInfo,
 	task: TaskInfo | null,
-	project: ProjectInfo,
+	project: RunningProjectInfo,
 	wakeupPayload: Record<string, unknown> | undefined,
 	credential: AiProviderCredential,
 	provider: AiProvider,
@@ -1098,32 +1108,44 @@ export async function runAgent(
 		};
 	};
 
-	if (!project.container_id || project.container_status !== ContainerStatus.Running) {
-		return finalizeFailure(
-			'Project container is not running. Start the container from the Project page and retry.',
-		);
+	// Containers run on demand: start (or provision) the project's container for
+	// this run rather than requiring it to already be up. ensureProjectContainerRunning
+	// inspects Docker live — a stale `running` row whose container is gone is
+	// repaired by re-provisioning — and serializes per project, so concurrent runs
+	// dispatching into the same stopped project start exactly one container.
+	if (project.container_status !== ContainerStatus.Running) {
+		emit('stdout', '[runner] Starting the project container…\n');
 	}
-
-	// The cached container_status can lag reality — Docker may have been restarted
-	// or the container pruned externally, leaving the row marked "running" while
-	// execCreate would 404 mid-run. Verify liveness against Docker and reconcile the
-	// DB (syncContainerStatus nulls the id + flips status on a 404 or exit) before we
-	// commit to the run, then broadcast so the banner / sidebar / Container page
-	// correct at once.
-	const liveStatus = await syncContainerStatus(
-		deps.db,
-		deps.docker,
-		project.id,
-		project.slug,
-		project.container_id,
-		project.container_status,
-	);
-	if (liveStatus !== ContainerStatus.Running) {
+	let containerId: string;
+	try {
+		containerId = await ensureProjectContainerRunning(
+			{
+				db: deps.db,
+				docker: deps.docker,
+				dataDir: deps.dataDir,
+				wsManager: deps.wsManager,
+				masterKeyManager: deps.masterKeyManager,
+				logs: deps.logs,
+				containerLogStreamer: deps.containerLogStreamer,
+				sshAgentServer: deps.sshAgentServer,
+				egressCAPath: deps.egressCAPath,
+			},
+			project.id,
+		);
+	} catch (e) {
+		const message = e instanceof Error ? e.message : String(e);
 		await broadcastProjectUpdate(deps.db, deps.wsManager, project.team_id, project.id);
 		return finalizeFailure(
-			'Project container is not running. Start the container from the Project page and retry.',
+			`Could not start the project container: ${message}. See the Container page for logs.`,
 		);
 	}
+	// The run may have been aborted (e.g. timed out) while a slow provision ran.
+	if (signal?.aborted) return finalizeAbort();
+	const runningProject: RunningProjectInfo = {
+		...project,
+		container_id: containerId,
+		container_status: ContainerStatus.Running,
+	};
 
 	let provider: AiProvider;
 	let runtimeType: AgentRuntime;
@@ -1189,7 +1211,7 @@ export async function runAgent(
 		// ssh socket owner, and the chowns that give the run-user ownership of the
 		// host-written config/worktree dirs. Defaults to root for an image with no
 		// `node` user, which makes those chowns a harmless no-op.
-		const runUser = await resolveContainerRunUser(deps.docker, project.container_id);
+		const runUser = await resolveContainerRunUser(deps.docker, containerId);
 
 		let sshSocketContainerPath: string | null = null;
 		let sshSocketHostPath: string | null = null;
@@ -1268,7 +1290,7 @@ export async function runAgent(
 			deps,
 			agent,
 			task,
-			project,
+			runningProject,
 			wakeupPayload,
 			credential,
 			provider,
@@ -1371,7 +1393,16 @@ export async function runAgent(
 
 			// Progress-update runs only call MCP tools; they need no code worktree.
 			const prep = task
-				? await prepareWorktrees(deps, project, task, heartbeatRunId, bridge, runUser, emit, signal)
+				? await prepareWorktrees(
+						deps,
+						runningProject,
+						task,
+						heartbeatRunId,
+						bridge,
+						runUser,
+						emit,
+						signal,
+					)
 				: {
 						workingDir: '/workspace',
 						designatedRepo: null as RepoRow | null,
@@ -1398,7 +1429,7 @@ export async function runAgent(
 
 			emit('stdout', `${invocationCommand}\n`);
 
-			const execId = await deps.docker.execCreate(project.container_id, {
+			const execId = await deps.docker.execCreate(containerId, {
 				Cmd: context.execCmd,
 				Env: context.env,
 				WorkingDir: prep.workingDir,
@@ -1683,7 +1714,7 @@ export async function runAgent(
 			// it — and best-effort so a kill failure never masks the run result.
 			if (isAbort && reason !== 'container_stopped' && reason !== 'container_error') {
 				try {
-					await deps.docker.killRunProcesses(project.container_id, heartbeatRunId);
+					await deps.docker.killRunProcesses(containerId, heartbeatRunId);
 				} catch (killError) {
 					log.error(
 						`Run ${heartbeatRunId}: failed to kill container processes on abort:`,
@@ -1757,7 +1788,7 @@ async function anyWorktreeChanged(
 
 async function prepareWorktrees(
 	deps: RunnerDeps,
-	project: ProjectInfo,
+	project: RunningProjectInfo,
 	task: TaskInfo,
 	heartbeatRunId: string,
 	bridge: BridgeRunnerArgs | null,

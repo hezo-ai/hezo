@@ -28,6 +28,7 @@ import { broadcastRowChange } from '../lib/broadcast';
 import type { StorageBackend } from '../lib/db-info';
 import { shouldDeferWakeupForBlockers } from '../lib/dependencies';
 import { ref } from '../lib/log-ref';
+import { getContainerIdleTimeoutMin } from '../lib/system-meta';
 import { logger } from '../logger';
 import { getLatestInfo } from '../routes/updates';
 import { exitToApplyUpdate } from '../runtime-control';
@@ -52,11 +53,15 @@ import {
 	type ContainerTransition,
 	ensureProjectContainerRunning,
 	failProjectRuns,
+	findIdleContainerCandidates,
+	isProjectIdleForContainerStop,
 	provisionContainer,
 	rebuildContainer,
+	stopContainerGracefully,
 	syncAllContainerStatuses,
 	verifyContainerWorkspace,
 	wakeAgentsWithPendingWork,
+	withContainerLifecycleLock,
 } from './containers';
 import type { ContainerProcessInfo, DockerClient } from './docker';
 import type { EgressProxy } from './egress';
@@ -67,7 +72,7 @@ import { detectOrphans, healStaleRunState, STALE_STATE_GRACE_SECONDS } from './o
 import type { PricingService } from './pricing';
 import { collectCandidateRunIds, decideSweepKills } from './process-sweeper';
 import { ensureRepoSetupAction } from './repo-setup';
-import { getProjectConcurrency, isTaskBusyInDb } from './run-concurrency';
+import { getActiveContainers, isTaskBusyInDb } from './run-concurrency';
 import type { SshAgentServer } from './ssh-agent';
 import { reportTelemetry } from './telemetry';
 import { ensureUpdateStaged, isSupervisedWorker, readUpdateState } from './updater';
@@ -105,6 +110,9 @@ interface RunDispatchContext {
 	memberId: string;
 	taskId: string;
 	projectId: string;
+	/** This dispatch will lazy-start the project's container — it holds a
+	 * pending-container-start slot until the run settles. */
+	pendingContainerStart?: boolean;
 }
 
 interface RunningTask {
@@ -135,7 +143,7 @@ export type DispatchNowResult =
 			dispatched: false;
 			reason:
 				| 'task_busy'
-				| 'project_at_capacity'
+				| 'instance_at_capacity'
 				| 'agent_busy'
 				| 'blocked'
 				| 'not_queued'
@@ -151,8 +159,7 @@ export type ProgressUpdateDispatchReason =
 	| 'captain_disabled'
 	| 'no_due_goals'
 	| 'agent_busy'
-	| 'project_at_capacity'
-	| 'container_down'
+	| 'instance_at_capacity'
 	| 'over_budget'
 	| 'launch_conflict';
 
@@ -236,6 +243,18 @@ const BUDGET_RESUME_CRON = process.env.HEZO_BUDGET_RESUME_CRON ?? '*/30 * * * * 
 // slows page loads enough to time out browser/component specs. Both are env-
 // configurable so the E2E server can dial them down — see playwright.config.ts.
 const CONTAINER_SYNC_CRON = process.env.HEZO_CONTAINER_SYNC_CRON ?? '* * * * * *';
+
+/**
+ * Idle-container reaper cadence: once a minute (offset to :15 to avoid the
+ * top-of-minute pile-up with other jobs). The state it watches — "did the idle
+ * window elapse" — changes on minute granularity, so a faster tick would only
+ * burn queries. Env-overridable so E2E can dial it down.
+ */
+const CONTAINER_IDLE_STOP_CRON = process.env.HEZO_CONTAINER_IDLE_STOP_CRON ?? '15 * * * * *';
+
+/** Containers stopped per idle-stop tick — a bound, not a target; the next
+ * tick continues where this one stopped. */
+const IDLE_STOP_BATCH_LIMIT = 10;
 const ORPHAN_DETECTION_CRON = process.env.HEZO_ORPHAN_DETECTION_CRON ?? '*/30 * * * * *';
 // The reactive budget pauses, which the heartbeat scheduler must not wake (the
 // budget-resume sweep lifts them back to `idle` once the window rolls over).
@@ -285,6 +304,9 @@ export class JobManager {
 	// would be wrong here: with several runs in flight, the first to finish would
 	// free the guard for the rest.
 	private activeProjectRuns = new Map<string, number>();
+	/** Projects whose container is being lazy-started by an in-flight dispatch —
+	 * counted against the active-container cap before the DB row reads Running. */
+	private pendingContainerStarts = new Map<string, number>();
 	private deps: JobManagerDeps;
 	private started = false;
 
@@ -369,15 +391,15 @@ export class JobManager {
 				return { dispatched: false, reason: 'task_busy' };
 			}
 			const project = await this.resolveProjectForTask(wakeupTaskId);
-			if (project && (await this.isProjectAtCapacity(project.id))) {
+			if (await this.isContainerCapacityBlocked(project?.id ?? null)) {
 				await this.markWakeupSkipped(
 					wakeup.id,
-					WakeupSkipReason.ProjectAtCapacity,
+					WakeupSkipReason.InstanceAtCapacity,
 					wakeupTaskId,
 					wakeup.team_id,
 					null,
 				);
-				return { dispatched: false, reason: 'project_at_capacity' };
+				return { dispatched: false, reason: 'instance_at_capacity' };
 			}
 			if (project && (await this.isAgentBusyInProject(wakeup.member_id, project.id))) {
 				await this.markWakeupSkipped(
@@ -490,6 +512,11 @@ export class JobManager {
 			log: cronLog,
 			onTick: () => this.guarded('container-sync', () => this.syncContainerStatuses()),
 		});
+		this.cron.createJob('container-idle-stop', {
+			cron: CONTAINER_IDLE_STOP_CRON,
+			log: cronLog,
+			onTick: () => this.guarded('container-idle-stop', () => this.stopIdleContainers()),
+		});
 		this.cron.createJob('inbox-archive', {
 			cron: INBOX_ARCHIVE_CRON,
 			log: cronLog,
@@ -582,6 +609,7 @@ export class JobManager {
 	private releaseRunDispatch(ctx: RunDispatchContext): void {
 		this.activeTaskRuns.delete(ctx.taskId);
 		this.releaseProjectRun(ctx.projectId);
+		if (ctx.pendingContainerStart) this.releasePendingContainerStart(ctx.projectId);
 	}
 
 	cancelTask(key: string, reason?: unknown): boolean {
@@ -816,8 +844,14 @@ export class JobManager {
 			log.warn('Docker not reachable at startup; skipping HQ container warm-up');
 			return;
 		}
+		// First-boot only: warm HQ when it has never been provisioned, so the first
+		// CEO chat / onboarding message isn't stuck behind a minutes-long image
+		// pull. Once a container exists (running or idle-stopped), lazy start covers
+		// every later use in under a second — eagerly starting it here would just
+		// wake a container the idle-stop cron reclaims minutes later.
 		const hq = await this.deps.db.query<{ id: string }>(
-			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
+			`SELECT id FROM projects
+			 WHERE team_id = $1 AND is_internal = true AND container_id IS NULL`,
 			[DEFAULT_TEAM_ID],
 		);
 		const hqProjectId = hq.rows[0]?.id;
@@ -830,7 +864,8 @@ export class JobManager {
 	 * running. Covers the host-reboot / Docker-restart case where the server
 	 * never got to mark the container as stopped. Missing containers are
 	 * re-provisioned from scratch; stopped ones are started in place. Projects
-	 * the user explicitly stopped (container_status = stopped) are left alone.
+	 * stopped deliberately — by the operator or by the idle-stop cron (both write
+	 * container_status = stopped) — are left alone to lazy-start on demand.
 	 */
 	private async restartStoppedRunningContainers(docker: DockerClient): Promise<void> {
 		const { db, wsManager, containerLogStreamer, logs } = this.deps;
@@ -890,7 +925,10 @@ export class JobManager {
 				if (info.State.Running) continue;
 
 				await docker.startContainer(row.container_id);
-				await db.query('UPDATE projects SET container_error = NULL WHERE id = $1', [row.id]);
+				await db.query(
+					'UPDATE projects SET container_error = NULL, container_last_started_at = now() WHERE id = $1',
+					[row.id],
+				);
 				containerLogStreamer.subscribe(row.id, row.container_id, logs, docker);
 				broadcastRowChange(wsManager, wsRoom.team(row.team_id), 'projects', 'UPDATE', {
 					id: row.id,
@@ -1086,7 +1124,10 @@ export class JobManager {
 			if (info === null || !info.State.Running) continue;
 
 			await db.query(
-				`UPDATE projects SET container_id = $1, container_status = $2::container_status WHERE id = $3`,
+				`UPDATE projects
+				 SET container_id = $1, container_status = $2::container_status,
+				     container_last_started_at = now()
+				 WHERE id = $3`,
 				[info.Id, ContainerStatus.Running, project.id],
 			);
 			containerLogStreamer.subscribe(project.id, info.Id, logs, docker);
@@ -1145,14 +1186,42 @@ export class JobManager {
 		return isTaskBusyInDb(this.deps.db, taskId);
 	}
 
-	private async isProjectAtCapacity(projectId: string): Promise<boolean> {
-		const { limit, active } = await getProjectConcurrency(this.deps.db, projectId);
-		// The in-memory refcount leads the DB during the dispatch window; once a
-		// run's row lands both refer to the same run, so `max` dedupes rather than
-		// double-counting. Using the larger of the two never under-counts, so the
-		// ceiling is never exceeded.
-		const inFlight = Math.max(this.activeProjectRuns.get(projectId) ?? 0, active);
-		return inFlight >= limit;
+	/**
+	 * Would running in `projectId` need a container start that exceeds the
+	 * instance's active-container cap? A project whose container is already
+	 * running — or already being lazy-started by a concurrent dispatch — is
+	 * never blocked: its run consumes no new container slot. Task-less callers
+	 * pass null and are gated on the total alone (activateAgent re-checks with
+	 * the chosen task's project). The in-memory pending-start refcounts lead
+	 * the DB while a lazy start is in flight and are deduped against projects
+	 * whose container already reads Running, so the ceiling is never exceeded.
+	 */
+	private async isContainerCapacityBlocked(projectId: string | null): Promise<boolean> {
+		const { limit, runningProjectIds } = await getActiveContainers(this.deps.db);
+		if (
+			projectId &&
+			(runningProjectIds.has(projectId) || this.pendingContainerStarts.has(projectId))
+		) {
+			return false;
+		}
+		let pendingExtra = 0;
+		for (const id of this.pendingContainerStarts.keys()) {
+			if (!runningProjectIds.has(id)) pendingExtra++;
+		}
+		return runningProjectIds.size + pendingExtra >= limit;
+	}
+
+	private acquirePendingContainerStart(projectId: string): void {
+		this.pendingContainerStarts.set(
+			projectId,
+			(this.pendingContainerStarts.get(projectId) ?? 0) + 1,
+		);
+	}
+
+	private releasePendingContainerStart(projectId: string): void {
+		const next = (this.pendingContainerStarts.get(projectId) ?? 0) - 1;
+		if (next > 0) this.pendingContainerStarts.set(projectId, next);
+		else this.pendingContainerStarts.delete(projectId);
 	}
 
 	private acquireProjectRun(projectId: string): void {
@@ -1278,13 +1347,11 @@ export class JobManager {
 					continue;
 				}
 				const project = await this.resolveProjectForTask(wakeupTaskId);
-				if (project && (await this.isProjectAtCapacity(project.id))) {
-					log.debug(
-						`Skipping wakeup ${wakeup.id} — project ${ref(project.slug, project.id)} is at run capacity`,
-					);
+				if (await this.isContainerCapacityBlocked(project?.id ?? null)) {
+					log.debug(`Skipping wakeup ${wakeup.id} — instance is at its active-container limit`);
 					await this.markWakeupSkipped(
 						wakeup.id,
-						WakeupSkipReason.ProjectAtCapacity,
+						WakeupSkipReason.InstanceAtCapacity,
 						wakeupTaskId,
 						wakeup.team_id,
 						null,
@@ -1306,8 +1373,10 @@ export class JobManager {
 				}
 			} else if (this.isMemberRunning(wakeup.member_id)) {
 				// Task-less wakeup (e.g. queued heartbeat) — picks a task inside
-				// activateAgent, so we can't pre-check a project lock. Fall back to
-				// per-agent dedup to avoid stacking idle pings.
+				// activateAgent, so we can't pre-check a task lock or a project's
+				// container here (activateAgent re-checks the container cap once the
+				// task is chosen). Fall back to per-agent dedup to avoid stacking
+				// idle pings.
 				log.debug(`Skipping wakeup ${wakeup.id} — agent ${wakeup.member_id} already running`);
 				await this.markWakeupSkipped(
 					wakeup.id,
@@ -1627,19 +1696,13 @@ export class JobManager {
 				// already claimed by the dispatcher, so the transient branch must re-queue it,
 				// not just stamp a skip reason — otherwise it would stick in `claimed`.)
 				if (wakeupPayload?.trigger === 'progress_update_now' && wakeupId) {
-					if (
-						result.reason === 'agent_busy' ||
-						result.reason === 'project_at_capacity' ||
-						result.reason === 'container_down'
-					) {
+					if (result.reason === 'agent_busy' || result.reason === 'instance_at_capacity') {
 						// Still transient — re-queue so a later cron tick retries once the
-						// Captain frees / the container comes up / capacity clears.
+						// Captain frees / capacity clears.
 						const skipReason =
-							result.reason === 'project_at_capacity'
-								? WakeupSkipReason.ProjectAtCapacity
-								: result.reason === 'container_down'
-									? WakeupSkipReason.ContainerDown
-									: WakeupSkipReason.AgentRunning;
+							result.reason === 'instance_at_capacity'
+								? WakeupSkipReason.InstanceAtCapacity
+								: WakeupSkipReason.AgentRunning;
 						await db.query(
 							`UPDATE agent_wakeup_requests
 							 SET status = $1::wakeup_status, claimed_at = NULL,
@@ -1727,9 +1790,9 @@ export class JobManager {
 			await this.requeueWakeup(wakeupId);
 			return;
 		}
-		if (await this.isProjectAtCapacity(task.project_id)) {
+		if (await this.isContainerCapacityBlocked(task.project_id)) {
 			log.debug(
-				`Project ${task.project_id} is at run capacity — re-queuing wakeup for ${ref(agent.rows[0].slug, memberId)}`,
+				`Instance is at its active-container limit — re-queuing wakeup for ${ref(agent.rows[0].slug, memberId)}`,
 			);
 			await this.requeueWakeup(wakeupId);
 			return;
@@ -1851,28 +1914,17 @@ export class JobManager {
 			return;
 		}
 
-		if (!projectRow.container_id) {
-			// container_id stays NULL until the container reaches running, so a
-			// 'creating' status here means provisioning is in flight (often minutes
-			// on a first image build). Re-queue and retry once it's up rather than
-			// burning the wakeup — otherwise a task assigned at project-creation time
-			// (e.g. the CEO's coherence pass) would never start.
-			if (projectRow.container_status === ContainerStatus.Creating) {
-				log.debug(
-					`Container for project ${ref(projectRow.slug, task.project_id)} still provisioning — re-queuing wakeup`,
-				);
-				await this.requeueWakeup(wakeupId);
-				return;
-			}
+		// container_id stays NULL until the container reaches running, so a
+		// 'creating' status here means another actor's provisioning is in flight
+		// (often minutes on a first image build). Re-queue and retry once it's up
+		// rather than holding a global run slot for the wait. Every other
+		// no-container state (never provisioned, stopped, errored) falls through —
+		// the runner starts or provisions the container on demand at run start.
+		if (!projectRow.container_id && projectRow.container_status === ContainerStatus.Creating) {
 			log.debug(
-				`No container for project ${ref(projectRow.slug, task.project_id)} — wakeup failed`,
+				`Container for project ${ref(projectRow.slug, task.project_id)} still provisioning — re-queuing wakeup`,
 			);
-			if (wakeupId) {
-				await db.query(
-					'UPDATE agent_wakeup_requests SET status = $1::wakeup_status WHERE id = $2',
-					[WakeupStatus.Failed, wakeupId],
-				);
-			}
+			await this.requeueWakeup(wakeupId);
 			return;
 		}
 
@@ -1928,6 +1980,7 @@ export class JobManager {
 			sshAgentServer: this.deps.sshAgentServer,
 			egressProxy: this.deps.egressProxy ?? null,
 			egressCAPath: this.deps.egressCAPath ?? null,
+			containerLogStreamer: this.deps.containerLogStreamer,
 			pricing: this.deps.pricing,
 		};
 		const timeoutMs = agent.rows[0].run_timeout_min * 60 * 1000;
@@ -1937,6 +1990,12 @@ export class JobManager {
 		const lockedTaskId = task.id;
 		this.activeTaskRuns.add(lockedTaskId);
 		this.acquireProjectRun(projectId);
+		// Launching into a project whose container isn't running will lazy-start
+		// one — hold a pending-start slot so the container cap counts it during
+		// the window before the DB row reads Running. Released with the dispatch
+		// guards when the run settles.
+		const pendingContainerStart = projectRow.container_status !== ContainerStatus.Running;
+		if (pendingContainerStart) this.acquirePendingContainerStart(projectId);
 
 		const launched = this.launchTask(
 			taskKey,
@@ -2028,7 +2087,7 @@ export class JobManager {
 				}
 			},
 			timeoutMs,
-			{ memberId, taskId: lockedTaskId, projectId },
+			{ memberId, taskId: lockedTaskId, projectId, pendingContainerStart },
 		);
 
 		if (!launched) {
@@ -2037,6 +2096,7 @@ export class JobManager {
 			// task badge doesn't stick, and re-queue for a later slot.
 			this.activeTaskRuns.delete(lockedTaskId);
 			this.releaseProjectRun(projectId);
+			if (pendingContainerStart) this.releasePendingContainerStart(projectId);
 			await db.query(
 				'UPDATE execution_locks SET released_at = now() WHERE task_id = $1 AND member_id = $2 AND released_at IS NULL',
 				[lockedTaskId, memberId],
@@ -2228,17 +2288,16 @@ export class JobManager {
 		const dueGoals = await getDueGoals(db, projectRow.id);
 		if (dueGoals.length === 0) return { dispatched: false, reason: 'no_due_goals' };
 
-		// Don't start a progress update while the Captain is already running in this project, the
-		// project is at capacity, the container isn't up, or the Captain/project is over budget.
-		// The scheduled caller falls through — the goals remain due for the next heartbeat.
+		// Don't start a progress update while the Captain is already running in this
+		// project, the instance is at its global run capacity, or the Captain/project
+		// is over budget. The scheduled caller falls through — the goals remain due
+		// for the next heartbeat. A stopped container is no blocker: the runner
+		// lazy-starts it.
 		if (await this.isAgentBusyInProject(memberId, projectRow.id)) {
 			return { dispatched: false, reason: 'agent_busy' };
 		}
-		if (await this.isProjectAtCapacity(projectRow.id)) {
-			return { dispatched: false, reason: 'project_at_capacity' };
-		}
-		if (!projectRow.container_id || projectRow.container_status !== ContainerStatus.Running) {
-			return { dispatched: false, reason: 'container_down' };
+		if (await this.isContainerCapacityBlocked(projectRow.id)) {
+			return { dispatched: false, reason: 'instance_at_capacity' };
 		}
 		if (await checkOverBudget(db, memberId, projectRow.id)) {
 			return { dispatched: false, reason: 'over_budget' };
@@ -2281,11 +2340,16 @@ export class JobManager {
 			sshAgentServer: this.deps.sshAgentServer,
 			egressProxy: this.deps.egressProxy ?? null,
 			egressCAPath: this.deps.egressCAPath ?? null,
+			containerLogStreamer: this.deps.containerLogStreamer,
 			pricing: this.deps.pricing,
 		};
 		const timeoutMs = agentRow.run_timeout_min * 60 * 1000;
 		const key = `progressupdate:${memberId}:${projectRow.id}`;
 		this.acquireProjectRun(projectRow.id);
+		// Same pending-start accounting as activateAgent: a progress-update run
+		// into a stopped project lazy-starts its container.
+		const pendingContainerStart = projectRow.container_status !== ContainerStatus.Running;
+		if (pendingContainerStart) this.acquirePendingContainerStart(projectRow.id);
 
 		const launched = this.launchTask(
 			key,
@@ -2340,6 +2404,7 @@ export class JobManager {
 					return null;
 				} finally {
 					this.releaseProjectRun(projectRow.id);
+					if (pendingContainerStart) this.releasePendingContainerStart(projectRow.id);
 					void trackBackground(this.guarded('wakeups', () => this.processWakeups()));
 				}
 			},
@@ -2351,6 +2416,7 @@ export class JobManager {
 			// scheduled path the requeued wakeup retries; on the manual path wakeupId is undefined
 			// so requeueWakeup no-ops and the caller surfaces the conflict.
 			this.releaseProjectRun(projectRow.id);
+			if (pendingContainerStart) this.releasePendingContainerStart(projectRow.id);
 			await setAgentIdleIfNoActiveRuns(db, memberId, teamId, undefined, this.deps.wsManager);
 			await this.requeueWakeup(wakeupId);
 			return { dispatched: false, reason: 'launch_conflict' };
@@ -2447,16 +2513,15 @@ export class JobManager {
 			},
 		);
 
-		// A transient conflict (Captain already running, project at capacity,
-		// container still coming up, or a launch race) is queued rather than
-		// surfaced as an error: the 5s dispatcher retries the wakeup and the run
-		// fires once the Captain frees up. Terminal reasons (no project/captain,
-		// disabled, over budget, nothing due) fall through unchanged.
+		// A transient conflict (Captain already running, the instance at its global
+		// run capacity, or a launch race) is queued rather than surfaced as an
+		// error: the 5s dispatcher retries the wakeup and the run fires once the
+		// Captain frees up. Terminal reasons (no project/captain, disabled, over
+		// budget, nothing due) fall through unchanged.
 		if (
 			!result.dispatched &&
 			(result.reason === 'agent_busy' ||
-				result.reason === 'project_at_capacity' ||
-				result.reason === 'container_down' ||
+				result.reason === 'instance_at_capacity' ||
 				result.reason === 'launch_conflict')
 		) {
 			const projRow = await db.query<{ id: string }>(
@@ -2727,6 +2792,54 @@ export class JobManager {
 
 		for (const transition of transitions) {
 			await this.handleContainerTransition(transition);
+		}
+	}
+
+	/**
+	 * Stop containers idle past the operator-configured timeout, so an instance
+	 * with no work runs zero containers. Bounded per tick; each stop re-verifies
+	 * the busy predicate under the project's lifecycle lock, so a concurrent
+	 * dispatch's lazy start and this stop can never interleave — the in-memory
+	 * checks close the window before a dispatched run has any DB row, and
+	 * `isProjectIdleForContainerStop` re-runs the DB predicate last. A timeout
+	 * of 0 disables the reaper entirely (always-on containers).
+	 */
+	private async stopIdleContainers(): Promise<void> {
+		const { db, docker } = this.deps;
+		const timeoutMin = await getContainerIdleTimeoutMin(db);
+		if (timeoutMin === 0) return;
+		if (!(await docker.ping())) {
+			log.debug('Docker not reachable; skipping idle-container pass');
+			return;
+		}
+
+		const candidates = await findIdleContainerCandidates(db, timeoutMin, IDLE_STOP_BATCH_LIMIT);
+		let stopped = 0;
+		for (const candidate of candidates) {
+			try {
+				await withContainerLifecycleLock(candidate.id, async () => {
+					if ((this.activeProjectRuns.get(candidate.id) ?? 0) > 0) return;
+					if (this.pendingContainerStarts.has(candidate.id)) return;
+					if (this.getLiveRunsForProject(candidate.id).length > 0) return;
+					if (!(await isProjectIdleForContainerStop(db, candidate.id, timeoutMin))) return;
+					log.info(
+						`project ${ref(candidate.slug, candidate.id)} idle for ${timeoutMin}min — stopping container ${ref(candidate.slug, candidate.container_id.slice(0, 12))}`,
+					);
+					await stopContainerGracefully(
+						this.buildContainerDeps(),
+						candidate.id,
+						candidate.slug,
+						candidate.team_id,
+						candidate.container_id,
+					);
+					stopped++;
+				});
+			} catch (err) {
+				log.error(`Idle-stop failed for project ${ref(candidate.slug, candidate.id)}:`, err);
+			}
+		}
+		if (candidates.length > 0) {
+			log.debug(`Idle-container pass: ${stopped}/${candidates.length} candidate(s) stopped`);
 		}
 	}
 

@@ -30,7 +30,10 @@ export function ContainerStatusBanner({ projectId }: { projectId: string }) {
 		};
 	}, []);
 
-	if (!project || !health || health.kind === 'healthy') return null;
+	// `stopped` is the normal resting state — containers start on demand when a
+	// run or chat needs them — so it gets no banner at all; only genuine errors
+	// and in-flight transitions are surfaced.
+	if (!project || !health || health.kind === 'healthy' || health.kind === 'stopped') return null;
 
 	// The shared base image is (re)building. Surface the rebuilding status with a
 	// determinate progress bar — the build gates every container that needs the
@@ -84,10 +87,9 @@ export function ContainerStatusBanner({ projectId }: { projectId: string }) {
 		);
 	}
 
-	// Stopped or errored — the container needs a rebuild. The banner body links to
-	// the container page; the Restart button rebuilds in place without navigating.
-	const hasError = health.kind === 'error';
-	const message = `${project.name} container is not running`;
+	// Errored — the container needs attention. The banner body links to the
+	// container page; the Restart button rebuilds in place without navigating.
+	const message = `${project.name} container hit an error`;
 
 	const rebuild = async (e: React.MouseEvent) => {
 		e.preventDefault();
@@ -102,9 +104,7 @@ export function ContainerStatusBanner({ projectId }: { projectId: string }) {
 		}
 	};
 
-	const tone = hasError
-		? 'bg-danger/10 text-danger hover:bg-danger/20'
-		: 'bg-warning/10 text-warning hover:bg-warning/20';
+	const tone = 'bg-danger/10 text-danger hover:bg-danger/20';
 
 	return (
 		<div ref={bannerRef} className={BANNER_OUTER}>

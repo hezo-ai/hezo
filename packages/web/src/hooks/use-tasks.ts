@@ -8,7 +8,8 @@ import { useSimpleOptimisticUpdate } from './use-optimistic-mutation';
 import { toast } from './use-toast';
 
 export interface QueuedWakeup {
-	reason: 'task_busy' | 'project_at_capacity' | 'agent_running';
+	/** `project_at_capacity` is the pre-rename legacy value, kept for the upgrade window. */
+	reason: 'task_busy' | 'instance_at_capacity' | 'project_at_capacity' | 'agent_running';
 	since: string;
 	blocker_task_id: string | null;
 	blocker_identifier: string | null;

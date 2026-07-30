@@ -101,8 +101,8 @@ const PROGRESS_UPDATE_MESSAGES: Record<ProgressUpdateDispatchReason, string> = {
 	captain_disabled: 'The Captain is currently disabled.',
 	no_due_goals: 'No goals are due for a progress update right now.',
 	agent_busy: 'The Captain is already running in this project.',
-	project_at_capacity: 'This project is at its concurrent-run limit.',
-	container_down: 'The project container is not running yet.',
+	instance_at_capacity:
+		'Hezo is at its active-container limit; the run will start when a container goes idle.',
 	over_budget: 'The Captain or project is over its budget.',
 	launch_conflict: 'A progress-update run is already starting.',
 };

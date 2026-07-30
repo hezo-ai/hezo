@@ -57,6 +57,7 @@
 	"settings.auditLog": "アクティビティログ",
 	"settings.adminPassword": "管理者パスワード",
 	"settings.chatbox": "チャット",
+	"settings.concurrency": "同時実行",
 	"settings.archivedProjects": "アーカイブ済みプロジェクト",
 	"settings.logOut": "ログアウト",
 	"theme.label": "テーマ",
