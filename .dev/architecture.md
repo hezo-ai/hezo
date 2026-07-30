@@ -1137,8 +1137,10 @@ run/pending refcounts under the lock) — serializes per project through
 `withContainerLifecycleLock` (`services/containers.ts`), so a start and a stop can never
 interleave: worst case is a wasted stop/start cycle, never a failed run. Concurrency is bounded
 by one **global active-container limit** (`max_active_containers` in `system_meta`; when unset,
-the default is computed from host memory as `(RAM + swap) / default_ram_cap_per_container_gb`,
-clamped to [1,100]): dispatch passes a run whose project container is already active (no new
+the default is computed from host memory as
+`((RAM + swap) - HOST_RESERVED_MEMORY_GB) / default_ram_cap_per_container_gb`, clamped to [1,100] —
+the 1GiB reserve keeps the OS, Hezo's own process and the embedded database off the containers'
+budget, since none of them live inside one): dispatch passes a run whose project container is already active (no new
 container needed) and queues one that would need another container past the cap
 (`WakeupSkipReason.InstanceAtCapacity`, retried by the 5s dispatcher; an in-memory
 `pendingContainerStarts` refcount covers the window before the DB row reads Running). Dispatch

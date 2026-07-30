@@ -144,7 +144,8 @@ describe('concurrency settings', () => {
 
 	beforeAll(() => {
 		// Pin the host-memory probe to the incident's reference host: a "2GB"
-		// droplet (1.92GiB MemTotal) with 6GiB swap → auto default 8 / 2 = 4.
+		// droplet (1.92GiB MemTotal) with 6GiB swap → round to 8GiB, less the 1GiB
+		// system reserve = 7 usable, so the auto default is floor(7 / 2) = 3.
 		setHostMemoryForTest({ totalRamBytes: 1.92 * GIB, totalSwapBytes: 6 * GIB });
 	});
 	afterAll(() => setHostMemoryForTest(null));
@@ -173,20 +174,22 @@ describe('concurrency settings', () => {
 
 	it('computes the default max_active_containers from host memory when unset', async () => {
 		const data = await getSettings();
-		expect(data.max_active_containers).toBe(4); // round(1.92 + 6) = 8 GiB / 2 GB
+		expect(data.max_active_containers).toBe(3); // (round(1.92 + 6) - 1 reserved) / 2 GB
 		expect(data.max_active_containers_is_set).toBe(false);
-		expect(data.max_active_containers_computed_default).toBe(4);
+		expect(data.max_active_containers_computed_default).toBe(3);
 		expect(data.default_ram_cap_per_container_gb).toBe(2);
 		expect(data.container_idle_timeout_min).toBe(15);
 		expect(data.host_total_swap_bytes).toBe(6 * GIB);
 	});
 
 	it('raising the ram cap lowers the computed default', async () => {
-		const res = await patchSettings({ default_ram_cap_per_container_gb: 4 });
+		// A 3GB cap, not 4: floor(7 / 4) would be 1, which is also the MIN clamp,
+		// so the assertion would pass even if the division broke.
+		const res = await patchSettings({ default_ram_cap_per_container_gb: 3 });
 		expect(res.status).toBe(200);
 		const data = await getSettings();
-		expect(data.default_ram_cap_per_container_gb).toBe(4);
-		expect(data.max_active_containers).toBe(2); // 8 GiB / 4 GB
+		expect(data.default_ram_cap_per_container_gb).toBe(3);
+		expect(data.max_active_containers).toBe(2); // 7 usable GiB / 3 GB
 		expect(data.max_active_containers_is_set).toBe(false);
 		await patchSettings({ default_ram_cap_per_container_gb: 2 });
 	});
@@ -197,14 +200,14 @@ describe('concurrency settings', () => {
 		const data = await getSettings();
 		expect(data.max_active_containers).toBe(7);
 		expect(data.max_active_containers_is_set).toBe(true);
-		expect(data.max_active_containers_computed_default).toBe(4);
+		expect(data.max_active_containers_computed_default).toBe(3);
 	});
 
 	it('null resets max_active_containers back to the computed default', async () => {
 		const res = await patchSettings({ max_active_containers: null });
 		expect(res.status).toBe(200);
 		const data = await getSettings();
-		expect(data.max_active_containers).toBe(4);
+		expect(data.max_active_containers).toBe(3);
 		expect(data.max_active_containers_is_set).toBe(false);
 	});
 
