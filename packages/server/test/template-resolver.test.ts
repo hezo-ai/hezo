@@ -82,6 +82,33 @@ describe('template resolver', () => {
 		expect(result).toContain('fixed done state');
 	});
 
+	it('tells every agent to file a repeating ask as a standing task, not a one-off it closes', async () => {
+		const result = await resolveSystemPrompt(db, 'Base prompt.', { teamId });
+		// Intake trigger: the agent must recognise a repeating ask when the work is
+		// handed to it, not just know abstractly that standing tasks exist.
+		expect(result).toContain('A repeating ask is a standing task');
+		// Name the failure being prevented — closing the task discards the recurrence
+		// irrecoverably, since `done` is terminal and only the admin can re-open it.
+		expect(result).toContain('the recurrence is not paused, it is gone');
+		// Each round is a child task that DOES close, under a parent that never does.
+		expect(result).toContain('One round per visit, filed as a child task that does close');
+		// The child is worked in its OWN run — assertRunTaskScope rejects flipping a
+		// different ticket to in_progress inside the standing task's run.
+		expect(result).toContain('Its **own** run then picks it up');
+		// A never-closing task nested under a parent would block that parent forever
+		// (assertChildrenAllClosed), so standing tasks stay top-level.
+		expect(result).toContain('Keep standing tasks **top-level**');
+		// The task carries its own cadence + last-round record, so the next visit
+		// (possibly a different agent) can tell whether this round already happened.
+		expect(result).toContain('A standing task carries its own schedule');
+		// The heartbeat fires far more often than most cadences: no-op rather than
+		// shipping a duplicate round early.
+		expect(result).toContain('Not due yet? Stop.');
+		// Ambiguous asks resolve by delivering first and asking alongside — the
+		// question must never withhold the deliverable.
+		expect(result).toContain('Deliver once, then ask');
+	});
+
 	it('appends the credential-handling guidance to every runtime prompt', async () => {
 		const result = await resolveSystemPrompt(db, 'Base prompt.', { teamId });
 		// The paste form is the only channel — never accept a plaintext secret in chat.
