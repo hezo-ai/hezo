@@ -8,7 +8,8 @@ const GIB = 1024 ** 3;
 afterEach(() => setHostMemoryForTest(null));
 
 test('concurrency settings page shows the computed default, saves, and resets to automatic', async () => {
-	// The incident's reference host: ~2GB RAM + 6GB swap → 8GB / 2GB cap = 4.
+	// The incident's reference host: ~2GB RAM + 6GB swap → 8GB, less the 1GB
+	// system reserve = 7 usable, / 2GB cap = 3.
 	setHostMemoryForTest({ totalRamBytes: 1.92 * GIB, totalSwapBytes: 6 * GIB });
 
 	const { findByTestId, findByRole, queryByTestId, user } = await renderApp({
@@ -19,9 +20,11 @@ test('concurrency settings page shows the computed default, saves, and resets to
 
 	// Unset → the effective value is the host-memory-computed default.
 	const maxInput = (await findByTestId('max-active-containers-input')) as HTMLInputElement;
-	expect(maxInput.value).toBe('4');
+	expect(maxInput.value).toBe('3');
 	const formula = await findByTestId('max-active-containers-formula');
-	expect(formula.textContent).toContain('= 4');
+	expect(formula.textContent).toContain('= 3');
+	// The reserve is spelled out, so the operator can see where the memory went.
+	expect(formula.textContent).toContain('1 GB');
 	expect(queryByTestId('max-active-containers-reset')).toBeNull();
 
 	// An explicit value wins and offers a reset back to automatic.
@@ -39,10 +42,10 @@ test('concurrency settings page shows the computed default, saves, and resets to
 	expect(data.max_active_containers_is_set).toBe(true);
 
 	await user.click(reset);
-	await waitFor(() => expect(maxInput.value).toBe('4'));
+	await waitFor(() => expect(maxInput.value).toBe('3'));
 	res = await apiBase('/api/instance-settings', { headers: auth });
 	data = (await res.json()).data;
-	expect(data.max_active_containers).toBe(4);
+	expect(data.max_active_containers).toBe(3);
 	expect(data.max_active_containers_is_set).toBe(false);
 });
 
@@ -57,11 +60,13 @@ test('raising the ram cap lowers the automatic container limit and persists', as
 	const ramInput = (await findByTestId('ram-cap-input')) as HTMLInputElement;
 	expect(ramInput.value).toBe('2');
 	await user.clear(ramInput);
-	await user.type(ramInput, '4');
+	await user.type(ramInput, '3');
 	await user.click(await findByTestId('ram-cap-save'));
-	await waitFor(() => expect(ramInput.value).toBe('4'));
+	await waitFor(() => expect(ramInput.value).toBe('3'));
 
-	// The automatic limit follows the new divisor: 8GB / 4GB = 2.
+	// The automatic limit follows the new divisor: 7 usable GB / 3GB = 2. A 4GB
+	// cap would floor to 1, which is also the MIN clamp, so the assertion would
+	// pass even with the division broken.
 	const formula = await findByTestId('max-active-containers-formula');
 	await waitFor(() => expect(formula.textContent).toContain('= 2'));
 
@@ -70,7 +75,7 @@ test('raising the ram cap lowers the automatic container limit and persists', as
 		headers: { Authorization: `Bearer ${token}` },
 	});
 	const data = (await res.json()).data;
-	expect(data.default_ram_cap_per_container_gb).toBe(4);
+	expect(data.default_ram_cap_per_container_gb).toBe(3);
 	expect(data.max_active_containers).toBe(2);
 });
 
