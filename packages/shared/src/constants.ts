@@ -59,6 +59,58 @@ export const MAX_CHAT_HISTORY_SIZE_MIN = 8 * 1024;
 export const MAX_CHAT_HISTORY_SIZE_MAX = 256 * 1024;
 
 /**
+ * Instance-wide cap on simultaneously ACTIVE (running) project containers,
+ * including the assistant chat's container. Combined with the per-container RAM
+ * cap, this bounds total memory demand at `N × cap` no matter how many runs
+ * share a container. Stored in system_meta; when the key is absent the
+ * effective default is COMPUTED from host memory via
+ * {@link computeDefaultMaxActiveContainers} — the constant below is only the
+ * last-resort fallback when host memory is unreadable. Clamped to [MIN, MAX].
+ */
+export const DEFAULT_MAX_ACTIVE_CONTAINERS = 3;
+export const MAX_ACTIVE_CONTAINERS_MIN = 1;
+export const MAX_ACTIVE_CONTAINERS_MAX = 100;
+
+/**
+ * Instance-wide default memory cap per project container, in GB. Dual role:
+ * the Docker cgroup memory limit applied to every container that doesn't carry
+ * a per-project override, and the divisor in the automatic max-active-container
+ * default ((RAM + swap) / cap). Stored in system_meta; absent key = default.
+ */
+export const DEFAULT_RAM_CAP_PER_CONTAINER_GB = 2;
+export const RAM_CAP_PER_CONTAINER_GB_MIN = 1;
+export const RAM_CAP_PER_CONTAINER_GB_MAX = 512;
+
+/**
+ * The automatic max-active-containers default: how many ram-cap-sized
+ * containers fit in the host's total virtual memory (RAM + swap), so total
+ * container demand can never exceed what the host actually has. The reference
+ * 1.92GiB-RAM + 6GiB-swap host rounds to 8GiB and yields 8 / 2 = 4. Pure math
+ * (shared so the web settings page can render the same formula); byte inputs
+ * come from the server's host-memory probe.
+ */
+export function computeDefaultMaxActiveContainers(
+	totalRamBytes: number,
+	totalSwapBytes: number,
+	ramCapGb: number,
+): number {
+	const gib = 1024 ** 3;
+	const totalGib = Math.round((totalRamBytes + totalSwapBytes) / gib);
+	const computed = Math.floor(totalGib / Math.max(1, ramCapGb));
+	return Math.min(MAX_ACTIVE_CONTAINERS_MAX, Math.max(MAX_ACTIVE_CONTAINERS_MIN, computed));
+}
+
+/**
+ * Minutes a project's container keeps running after its last activity (agent
+ * runs, assistant chat) before the idle-stop cron stops it. Containers restart
+ * on demand when a run or chat needs them. 0 = never stop (always-on).
+ * Stored in system_meta; absent key = default. Clamped to [MIN, MAX].
+ */
+export const DEFAULT_CONTAINER_IDLE_TIMEOUT_MIN = 15;
+export const CONTAINER_IDLE_TIMEOUT_MIN_MIN = 0;
+export const CONTAINER_IDLE_TIMEOUT_MIN_MAX = 10080;
+
+/**
  * The "latest few" messages kept in the active window after a compaction flush.
  * Internal constant (not an operator setting): everything older than this tail
  * is summarized into long-term memory and dropped from the chatbox.

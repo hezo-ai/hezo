@@ -8,6 +8,7 @@ import { Button } from '../../../../components/ui/button';
 import { ConfirmDialog } from '../../../../components/ui/confirm-dialog';
 import { Input } from '../../../../components/ui/input';
 import { Textarea } from '../../../../components/ui/textarea';
+import { useInstanceSettings } from '../../../../hooks/use-instance-settings';
 import { useMe } from '../../../../hooks/use-me';
 import { useArchiveProject, useProject, useUpdateProject } from '../../../../hooks/use-projects';
 import { useScrollToHash } from '../../../../hooks/use-scroll-to-hash';
@@ -16,6 +17,8 @@ function ProjectSettingsPage() {
 	const { projectId } = Route.useParams();
 	const { data: project } = useProject(projectId);
 	const { data: me } = useMe();
+	const { data: instanceSettings } = useInstanceSettings();
+	const defaultRamCap = instanceSettings?.default_ram_cap_per_container_gb;
 	const updateProject = useUpdateProject(projectId);
 	const archiveProject = useArchiveProject(projectId);
 	const navigate = useNavigate();
@@ -24,8 +27,8 @@ function ProjectSettingsPage() {
 
 	const [name, setName] = useState('');
 	const [description, setDescription] = useState('');
-	const [maxRuns, setMaxRuns] = useState('1');
-	const [memoryLimit, setMemoryLimit] = useState('16');
+	// '' = no override: the container inherits the instance-wide ram cap.
+	const [memoryLimit, setMemoryLimit] = useState('');
 	const [editing, setEditing] = useState(false);
 	const [archiveOpen, setArchiveOpen] = useState(false);
 
@@ -35,24 +38,23 @@ function ProjectSettingsPage() {
 		if (!project) return;
 		setName(project.name);
 		setDescription(project.description ?? '');
-		setMaxRuns(String(project.max_concurrent_runs));
-		setMemoryLimit(String(project.memory_limit_gib));
+		setMemoryLimit(project.memory_limit_gib === null ? '' : String(project.memory_limit_gib));
 		setEditing(true);
 	}
 
 	async function handleSave(e: React.FormEvent) {
 		e.preventDefault();
-		const parsedMaxRuns = Number(maxRuns);
-		const parsedMemoryLimit = Number(memoryLimit);
+		const trimmedMemory = memoryLimit.trim();
+		const parsedMemoryLimit = Number(trimmedMemory);
 		await updateProject.mutateAsync({
 			name: name.trim() || undefined,
 			description: description.trim(),
-			max_concurrent_runs:
-				Number.isInteger(parsedMaxRuns) && parsedMaxRuns >= 1 ? parsedMaxRuns : undefined,
 			memory_limit_gib:
-				Number.isInteger(parsedMemoryLimit) && parsedMemoryLimit >= 1
-					? parsedMemoryLimit
-					: undefined,
+				trimmedMemory === ''
+					? null
+					: Number.isInteger(parsedMemoryLimit) && parsedMemoryLimit >= 1
+						? parsedMemoryLimit
+						: undefined,
 		});
 		setEditing(false);
 	}
@@ -73,30 +75,19 @@ function ProjectSettingsPage() {
 							rows={4}
 						/>
 						<Input
-							label="Max concurrent runs"
-							type="number"
-							min={1}
-							className="w-28"
-							value={maxRuns}
-							onChange={(e) => setMaxRuns(e.target.value)}
-							data-testid="max-concurrent-runs-input"
-						/>
-						<p className="text-xs text-text-3 -mt-1">
-							Agents that may run at once in this project. Different agents work different tickets
-							in parallel; one ticket still runs a single agent at a time.
-						</p>
-						<Input
 							label="Container memory limit (GiB)"
 							type="number"
 							min={1}
-							className="w-28"
+							className="w-40"
 							value={memoryLimit}
 							onChange={(e) => setMemoryLimit(e.target.value)}
+							placeholder={defaultRamCap ? `Default (${defaultRamCap} GB)` : 'Default'}
 							data-testid="memory-limit-gib-input"
 						/>
 						<p className="text-xs text-text-3 -mt-1">
-							The container is auto-stopped when it exceeds this RSS budget. Raise it on
-							memory-heavy projects; lower it to fail fast on runaway workloads.
+							Overrides the global RAM cap for this project's container. The container is
+							auto-stopped when it exceeds this budget. Leave empty to use the global default from
+							Settings → Concurrency.
 						</p>
 						<div className="flex gap-2">
 							<Button type="submit" size="sm" disabled={updateProject.isPending}>
@@ -117,14 +108,15 @@ function ProjectSettingsPage() {
 								<span className="text-text-2">Description:</span> {project.description}
 							</div>
 						)}
-						<div data-testid="max-concurrent-runs-value">
-							<span className="text-text-2">Max concurrent runs:</span>{' '}
-							{project.max_concurrent_runs}
-						</div>
 						<div data-testid="memory-limit-gib-value">
 							<span className="text-text-2">Container memory limit:</span>{' '}
-							{project.memory_limit_gib} GiB
+							{project.memory_limit_gib === null
+								? `Default${defaultRamCap ? ` (${defaultRamCap} GB)` : ''}`
+								: `${project.memory_limit_gib} GiB`}
 						</div>
+						<p className="text-xs text-text-3">
+							The concurrent-run limit is global - see Settings → Concurrency.
+						</p>
 						<Button variant="ghost" size="sm" onClick={startEditing} className="mt-2">
 							Edit
 						</Button>

@@ -10,6 +10,12 @@ import {
 	createTestTeam,
 	projectSlugFor,
 } from './helpers/app';
+import {
+	clearMaxActiveContainersForTest,
+	removeSeededContainerProject,
+	seedRunningContainerProject,
+	setMaxActiveContainersForTest,
+} from './helpers/capacity';
 
 let app: Hono<Env>;
 let db: Db;
@@ -130,7 +136,7 @@ interface WakeupRow {
 
 interface DispatchState {
 	task_busy: boolean;
-	project_at_capacity: boolean;
+	instance_at_capacity: boolean;
 }
 
 beforeAll(async () => {
@@ -195,7 +201,7 @@ describe('GET /teams/:teamId/tasks/:taskId/queued-wakeups', () => {
 
 		const { body } = await listQueued(taskId);
 		expect(body.data.dispatch.task_busy).toBe(false);
-		expect(body.data.dispatch.project_at_capacity).toBe(false);
+		expect(body.data.dispatch.instance_at_capacity).toBe(false);
 		expect(body.data.wakeups[0].run_now_blocked).toBeNull();
 	});
 
@@ -210,32 +216,35 @@ describe('GET /teams/:teamId/tasks/:taskId/queued-wakeups', () => {
 		await clearRuns();
 	});
 
-	it('reports project_at_capacity when the project is at its run limit', async () => {
+	it('reports instance_at_capacity when starting the container would exceed the limit', async () => {
 		await clearWakeups(taskId);
 		await clearRuns();
-		await db.query('UPDATE projects SET max_concurrent_runs = 1 WHERE id = $1', [projectId]);
-		const sibling = await createTask('Busy Sibling');
-		await insertRunningRun(agentA, sibling);
+		// Container semantics: this project's container is stopped and a filler
+		// project's running container consumes the single slot.
+		await setMaxActiveContainersForTest(db, 1);
+		await db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [projectId]);
+		await seedRunningContainerProject(db, 'cap-filler-get');
 		await insertQueuedWakeup(agentB, taskId);
 
 		const { body } = await listQueued(taskId);
 		expect(body.data.dispatch.task_busy).toBe(false);
-		expect(body.data.dispatch.project_at_capacity).toBe(true);
-		await db.query('UPDATE projects SET max_concurrent_runs = 3 WHERE id = $1', [projectId]);
-		await clearRuns();
+		expect(body.data.dispatch.instance_at_capacity).toBe(true);
+		await db.query(`UPDATE projects SET container_status = 'running' WHERE id = $1`, [projectId]);
+		await removeSeededContainerProject(db, 'cap-filler-get');
+		await clearMaxActiveContainersForTest(db);
 	});
 
-	it('still has capacity while running runs stay below the limit', async () => {
+	it('a project whose container is already running is never at capacity', async () => {
 		await clearWakeups(taskId);
 		await clearRuns();
-		await db.query('UPDATE projects SET max_concurrent_runs = 3 WHERE id = $1', [projectId]);
-		const sibling = await createTask('One Of Three');
-		await insertRunningRun(agentA, sibling);
+		// Even with the limit fully consumed by this project's own container, a
+		// run into it needs no new container slot.
+		await setMaxActiveContainersForTest(db, 1);
 		await insertQueuedWakeup(agentB, taskId);
 
 		const { body } = await listQueued(taskId);
-		expect(body.data.dispatch.project_at_capacity).toBe(false);
-		await clearRuns();
+		expect(body.data.dispatch.instance_at_capacity).toBe(false);
+		await clearMaxActiveContainersForTest(db);
 	});
 
 	it('flags run_now_blocked per source when the task has an open dependency', async () => {
@@ -256,7 +265,6 @@ describe('GET /teams/:teamId/tasks/:taskId/queued-wakeups', () => {
 	it('flags agent_busy per agent when that agent runs on another task in the project', async () => {
 		await clearWakeups(taskId);
 		await clearRuns();
-		await db.query('UPDATE projects SET max_concurrent_runs = 3 WHERE id = $1', [projectId]);
 		// Agent Alpha is running on a sibling task, so its dispatch slot is taken
 		// even though the project still has capacity. Agent Beta is free.
 		const sibling = await createTask('Agent-busy GET Sibling');
@@ -269,7 +277,7 @@ describe('GET /teams/:teamId/tasks/:taskId/queued-wakeups', () => {
 		expect(byId[busy].agent_busy).toBe(true);
 		expect(byId[free].agent_busy).toBe(false);
 		expect(body.data.dispatch.task_busy).toBe(false);
-		expect(body.data.dispatch.project_at_capacity).toBe(false);
+		expect(body.data.dispatch.instance_at_capacity).toBe(false);
 		await clearRuns();
 	});
 });
@@ -323,12 +331,12 @@ describe('POST /teams/:teamId/tasks/:taskId/queued-wakeups/:wakeupId/run-now', (
 		await clearRuns();
 	});
 
-	it('returns 409 and records project_at_capacity when the project is at its run limit', async () => {
+	it('returns 409 and records instance_at_capacity when the container limit is reached', async () => {
 		await clearWakeups(taskId);
 		await clearRuns();
-		await db.query('UPDATE projects SET max_concurrent_runs = 1 WHERE id = $1', [projectId]);
-		const sibling = await createTask('Run-now Busy Sibling');
-		await insertRunningRun(agentA, sibling);
+		await setMaxActiveContainersForTest(db, 1);
+		await db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [projectId]);
+		await seedRunningContainerProject(db, 'cap-filler-runnow');
 		const wakeupId = await insertQueuedWakeup(agentB, taskId);
 
 		const res = await runNow(taskId, wakeupId);
@@ -339,15 +347,16 @@ describe('POST /teams/:teamId/tasks/:taskId/queued-wakeups/:wakeupId/run-now', (
 			[wakeupId],
 		);
 		expect(row.rows[0].status).toBe('queued');
-		expect(row.rows[0].last_skipped_reason).toBe('project_at_capacity');
-		await db.query('UPDATE projects SET max_concurrent_runs = 3 WHERE id = $1', [projectId]);
+		expect(row.rows[0].last_skipped_reason).toBe('instance_at_capacity');
+		await db.query(`UPDATE projects SET container_status = 'running' WHERE id = $1`, [projectId]);
+		await removeSeededContainerProject(db, 'cap-filler-runnow');
+		await clearMaxActiveContainersForTest(db);
 		await clearRuns();
 	});
 
 	it('returns 409 and leaks no lock when the agent already runs in the project', async () => {
 		await clearWakeups(taskId);
 		await clearRuns();
-		await db.query('UPDATE projects SET max_concurrent_runs = 3 WHERE id = $1', [projectId]);
 		// The same agent is already running on a sibling task in this project, so
 		// its per agent+project dispatch slot is taken even though capacity remains.
 		const sibling = await createTask('Agent-busy Sibling');

@@ -1,12 +1,16 @@
-import { HeartbeatRunStatus } from '@hezo/shared';
+import { ContainerStatus, HeartbeatRunStatus } from '@hezo/shared';
 import type { Db } from '../db/database';
+import { getMaxActiveContainers } from '../lib/system-meta';
 
 /**
  * DB-backed concurrency checks — the single source of truth for the two run
  * rules: at most one active (queued/running) agent run per task, and at most
- * `projects.max_concurrent_runs` per project. Shared by the scheduler
- * (`JobManager`, which layers its in-memory dispatch guards on top) and the
- * stateless run-now route.
+ * `max_active_containers` (system_meta; default computed from host memory)
+ * simultaneously RUNNING project containers across the instance. The container
+ * cap is the memory guarantee: every container is memory-capped, so total
+ * demand never exceeds `N × cap` no matter how many runs share a container.
+ * Shared by the scheduler (`JobManager`, which layers its in-memory dispatch
+ * guards on top) and the stateless run-now route.
  *
  * `lib/active-run.ts` and the `has_active_run` flag in `routes/tasks.ts` run
  * similar task-scoped checks for assignee-lock / badge purposes; they have
@@ -24,39 +28,58 @@ export async function isTaskBusyInDb(db: Db, taskId: string): Promise<boolean> {
 	return active.rows.length > 0;
 }
 
-export interface ProjectConcurrency {
-	/** Configured ceiling on simultaneous agent runs for the project. */
+export interface ActiveContainers {
+	/** Configured (or host-memory-computed) ceiling on running containers. */
 	limit: number;
-	/** Active (queued/running) runs currently counted against that ceiling. */
-	active: number;
+	/** Project ids whose container currently reads Running in the DB. */
+	runningProjectIds: Set<string>;
 }
 
 /**
- * Read a project's concurrency ceiling alongside its current active-run count
- * in a single query. The scheduler reconciles `active` against its in-memory
- * dispatch refcount (taking the larger of the two) before comparing to `limit`.
+ * Read the instance-wide container ceiling alongside the set of projects with
+ * a running container. Returning the id set (not just a count) lets callers
+ * both dedupe their in-memory pending-start guards against it and pass a run
+ * whose target container is already up. The projects table is tiny, so this is
+ * a cheap scan.
  */
-export async function getProjectConcurrency(
-	db: Db,
-	projectId: string,
-): Promise<ProjectConcurrency> {
-	const row = await db.query<{ limit: number; active: number }>(
-		`SELECT p.max_concurrent_runs AS limit,
-		        (SELECT count(*)::int FROM heartbeat_runs r
-		           JOIN tasks t ON t.id = r.task_id
-		          WHERE t.project_id = p.id
-		            AND r.status IN ($2::heartbeat_run_status, $3::heartbeat_run_status)) AS active
-		 FROM projects p
-		 WHERE p.id = $1`,
-		[projectId, HeartbeatRunStatus.Queued, HeartbeatRunStatus.Running],
-	);
-	const r = row.rows[0];
-	return { limit: r?.limit ?? 1, active: r?.active ?? 0 };
+export async function getActiveContainers(db: Db): Promise<ActiveContainers> {
+	const [limit, rows] = await Promise.all([
+		getMaxActiveContainers(db),
+		db.query<{ id: string }>(
+			`SELECT id FROM projects WHERE container_status = $1::container_status`,
+			[ContainerStatus.Running],
+		),
+	]);
+	return { limit, runningProjectIds: new Set(rows.rows.map((r) => r.id)) };
 }
 
-export async function isProjectAtCapacityInDb(db: Db, projectId: string): Promise<boolean> {
-	const { limit, active } = await getProjectConcurrency(db, projectId);
-	return active >= limit;
+/**
+ * Stateless container-capacity gate (route-side mirror of the scheduler's
+ * in-memory-guarded check): would running in `projectId` need a container
+ * start that exceeds the cap? A project whose container is already running is
+ * never blocked — its run consumes no new container slot.
+ */
+export async function isContainerCapacityBlockedInDb(db: Db, projectId: string): Promise<boolean> {
+	const { limit, runningProjectIds } = await getActiveContainers(db);
+	if (runningProjectIds.has(projectId)) return false;
+	return runningProjectIds.size >= limit;
+}
+
+/**
+ * Active (queued/running) runs inside one project. Not a capacity input — the
+ * cap is instance-wide — but the repo routes gate destructive git operations
+ * (reset, re-clone) on the project being quiet, and the idle-stop recheck uses
+ * the same figure.
+ */
+export async function countActiveRunsInProject(db: Db, projectId: string): Promise<number> {
+	const row = await db.query<{ active: number }>(
+		`SELECT count(*)::int AS active FROM heartbeat_runs r
+		 JOIN tasks t ON t.id = r.task_id
+		 WHERE t.project_id = $1
+		   AND r.status IN ($2::heartbeat_run_status, $3::heartbeat_run_status)`,
+		[projectId, HeartbeatRunStatus.Queued, HeartbeatRunStatus.Running],
+	);
+	return row.rows[0]?.active ?? 0;
 }
 
 /**

@@ -16,6 +16,29 @@ Each project's container is a private workspace holding that project's code and 
 Because the sandbox is per project, one project's agents can't see or touch another's
 work - the blast radius of anything going wrong is contained to a single project.
 
+## Containers run only when there is work
+
+A container starts automatically the moment an agent run or an assistant chat needs it,
+and stops again after sitting idle (15 minutes by default). A quiet instance runs zero
+containers. Two global limits in **Settings > Concurrency** bound what a burst of agent
+activity can consume:
+
+- **Maximum active containers** - how many project containers may run at the same time
+  (including the assistant chat's container). When unset, Hezo sizes it automatically
+  from the machine's memory: (RAM + swap) divided by the RAM cap below. Runs that would
+  need another container past the limit wait in the queue and start as containers go
+  idle; the assistant chat always starts.
+- **RAM cap per container** - the memory limit applied to every container (2 GB by
+  default; projects that need more can override it in their own settings). A container
+  over its cap is stopped, or has its biggest process killed by the kernel, instead of
+  taking down the whole server.
+
+As a sizing rule of thumb, one working agent (its coding CLI plus the helper tools it
+spawns) typically uses 300-350 MB of memory, and the container cap bounds the total
+regardless of how many agents share it. The idle timeout is configurable on the same
+page; note that stopping an idle container also stops any dev or preview servers running
+inside it, and setting the timeout to 0 keeps containers always on.
+
 From inside the container, agents **cannot** reach:
 
 - your **host filesystem** (only the project's own workspace is available), or
@@ -40,7 +63,8 @@ turned away - it never gets a secret substituted, so the guarantee holds even th
 ## Resource and privilege limits
 
 Each container also runs with guardrails so a runaway or misbehaving agent can't exhaust the
-host: a **memory cap** (per project, with the running total shown while an agent works), a
+host: a **memory cap** (the global RAM cap per container, overridable per project, with
+the running total shown while an agent works), a
 **process limit** that stops fork bombs, and a **reduced set of Linux capabilities** (the
 container starts with all capabilities dropped and only the few the workload needs added
 back). A proper init process runs as PID 1 so exited helper processes are always cleaned up.

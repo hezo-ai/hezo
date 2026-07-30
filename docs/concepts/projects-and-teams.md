@@ -15,6 +15,10 @@ project. You don't manage teams separately; you reach a team through its project
 This keeps things clean: a project's agents, tasks, budget, container, and connections
 all belong to that project and nothing leaks between them.
 
+A project's container runs only while there is work: it starts automatically when an
+agent run or the assistant needs it and stops again after sitting idle, so projects you
+aren't actively using cost nothing.
+
 ## Project icon
 
 By default a project shows its initials wherever it is listed. To give it a distinct look,

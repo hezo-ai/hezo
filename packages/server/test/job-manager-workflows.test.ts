@@ -17,6 +17,12 @@ import {
 	createTestProject,
 	createTestTeam,
 } from './helpers/app';
+import {
+	clearMaxActiveContainersForTest,
+	removeSeededContainerProject,
+	seedRunningContainerProject,
+	setMaxActiveContainersForTest,
+} from './helpers/capacity';
 
 let app: Hono<Env>;
 let db: Db;
@@ -193,26 +199,13 @@ describe('JobManager workflow methods', () => {
 			await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [wakeupId]);
 		});
 
-		it('records project_at_capacity on a task wakeup when the project is at its run limit', async () => {
+		it('records instance_at_capacity on a task wakeup when the container limit is reached', async () => {
 			const manager = createJobManager();
-			await db.query('UPDATE projects SET max_concurrent_runs = 1 WHERE id = $1', [projectId]);
-
-			const otherTaskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
-				method: 'POST',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					project_id: projectId,
-					title: 'Sibling busy task',
-					assignee_id: agentId,
-				}),
-			});
-			const otherTask = (await otherTaskRes.json()).data as { id: string; identifier: string };
-
-			await db.query(
-				`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
-				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now())`,
-				[agentId, teamId, otherTask.id, HeartbeatRunStatus.Running],
-			);
+			// Container semantics: the wakeup's project container is stopped and a
+			// filler project's running container consumes the single slot.
+			await setMaxActiveContainersForTest(db, 1);
+			await db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [projectId]);
+			await seedRunningContainerProject(db, 'cap-filler-wakeups');
 
 			const wakeupRes = await db.query<{ id: string }>(
 				`INSERT INTO agent_wakeup_requests
@@ -235,7 +228,7 @@ describe('JobManager workflow methods', () => {
 				[wakeupId],
 			);
 			expect(wakeup.rows[0].status).toBe(WakeupStatus.Queued);
-			expect(wakeup.rows[0].last_skipped_reason).toBe('project_at_capacity');
+			expect(wakeup.rows[0].last_skipped_reason).toBe('instance_at_capacity');
 			expect(wakeup.rows[0].last_skipped_blocker_task_id).toBeNull();
 
 			const taskRes = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}`, {
@@ -248,12 +241,18 @@ describe('JobManager workflow methods', () => {
 				} | null;
 			};
 			expect(task.queued_wakeup).not.toBeNull();
-			expect(task.queued_wakeup?.reason).toBe('project_at_capacity');
+			expect(task.queued_wakeup?.reason).toBe('instance_at_capacity');
 
 			manager.shutdown();
-			await db.query('UPDATE projects SET max_concurrent_runs = 3 WHERE id = $1', [projectId]);
-			await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [wakeupId]);
-			await db.query('DELETE FROM heartbeat_runs WHERE task_id = $1', [otherTask.id]);
+			await db.query(`UPDATE projects SET container_status = 'running' WHERE id = $1`, [projectId]);
+			await removeSeededContainerProject(db, 'cap-filler-wakeups');
+			await clearMaxActiveContainersForTest(db);
+			// Drain everything still queued: the capacity block skipped not just our
+			// wakeup but any background ones (task-assignment pings), which earlier
+			// tests used to leave settled — later tests assume none are pending.
+			await db.query(`DELETE FROM agent_wakeup_requests WHERE team_id = $1 AND status = 'queued'`, [
+				teamId,
+			]);
 		});
 
 		it('clears last_skipped_* state when a wakeup is finally claimed', async () => {
@@ -301,6 +300,11 @@ describe('JobManager workflow methods', () => {
 			);
 			const wakeupId = wakeupRes.rows[0].id;
 
+			const runsBefore = await db.query<{ count: string }>(
+				'SELECT count(*)::text AS count FROM heartbeat_runs WHERE task_id = $1',
+				[taskId],
+			);
+
 			await (manager as any).processWakeups();
 
 			// The wakeup is returned to the queue (not failed) so it retries once the
@@ -316,7 +320,7 @@ describe('JobManager workflow methods', () => {
 				'SELECT count(*)::text AS count FROM heartbeat_runs WHERE task_id = $1',
 				[taskId],
 			);
-			expect(runs.rows[0].count).toBe('0');
+			expect(runs.rows[0].count).toBe(runsBefore.rows[0].count);
 
 			manager.shutdown();
 			await db.query(
@@ -454,14 +458,24 @@ describe('JobManager workflow methods', () => {
 			await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [wakeupId]);
 		});
 
-		it('marks wakeup as failed when project has no container', async () => {
+		it('launches (lazy-starting the container) when the project has no container', async () => {
 			const manager = createJobManager();
 
 			// Assign the task to the agent (project has no container_id yet)
 			await db.query('UPDATE tasks SET assignee_id = $1 WHERE id = $2', [agentId, taskId]);
 
-			// Ensure project has no container_id
-			await db.query('UPDATE projects SET container_id = NULL WHERE id = $1', [projectId]);
+			// No container at all: the old code failed the wakeup here; with
+			// lazy-start the activation falls through and launches — the runner
+			// provisions the container as part of the run.
+			await db.query(
+				'UPDATE projects SET container_id = NULL, container_status = NULL WHERE id = $1',
+				[projectId],
+			);
+
+			const runsBefore = await db.query<{ count: string }>(
+				'SELECT count(*)::text AS count FROM heartbeat_runs WHERE task_id = $1',
+				[taskId],
+			);
 
 			const wakeupRes = await db.query<{ id: string }>(
 				`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, created_at)
@@ -472,15 +486,27 @@ describe('JobManager workflow methods', () => {
 			const wakeupId = wakeupRes.rows[0].id;
 
 			await (manager as any).activateAgent(agentId, teamId, wakeupId);
+			await waitForBackground();
 
-			const result = await db.query<{ status: string }>(
-				'SELECT status FROM agent_wakeup_requests WHERE id = $1',
-				[wakeupId],
+			// The old fast-path failed the wakeup WITHOUT ever creating a run. The
+			// proof of lazy-start is that a real run row exists — under the stub
+			// docker its provision then fails, which is the run's own outcome (and
+			// what a real deployment would surface on the task), not a dispatch
+			// refusal.
+			const runsAfter = await db.query<{ count: string }>(
+				'SELECT count(*)::text AS count FROM heartbeat_runs WHERE task_id = $1',
+				[taskId],
 			);
-			expect(result.rows[0].status).toBe(WakeupStatus.Failed);
+			expect(Number(runsAfter.rows[0].count)).toBeGreaterThan(Number(runsBefore.rows[0].count));
 
 			manager.shutdown();
 			await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [wakeupId]);
+			await db.query('DELETE FROM heartbeat_runs WHERE task_id = $1', [taskId]);
+			await db.query(
+				`UPDATE projects SET container_id = 'test-container', container_status = 'running' WHERE id = $1`,
+				[projectId],
+			);
+			await db.query('UPDATE execution_locks SET released_at = now() WHERE released_at IS NULL');
 		});
 
 		it('creates an execution lock and launches a task when project has container', async () => {
@@ -2110,7 +2136,10 @@ describe('JobManager workflow methods', () => {
 			);
 		});
 
-		it('starts the stopped HQ container in place and marks it running', async () => {
+		it('leaves an idle-stopped HQ container alone — lazy start covers later use', async () => {
+			// The warm-up is first-boot-only: once a container exists (running or
+			// stopped), eagerly starting it would just wake a container the
+			// idle-stop cron reclaims minutes later.
 			const hq = await hqProject();
 			await db.query(
 				`UPDATE projects SET container_status = 'stopped'::container_status, container_id = 'hq-box'
@@ -2134,12 +2163,12 @@ describe('JobManager workflow methods', () => {
 
 			await manager.ensureHqContainerRunning();
 
-			expect(startCalls).toEqual(['hq-box']);
+			expect(startCalls).toEqual([]);
 			const row = await db.query<{ container_status: string }>(
 				'SELECT container_status FROM projects WHERE id = $1',
 				[hq.id],
 			);
-			expect(row.rows[0].container_status).toBe('running');
+			expect(row.rows[0].container_status).toBe('stopped');
 
 			manager.shutdown();
 		});
@@ -2317,99 +2346,69 @@ describe('JobManager workflow methods', () => {
 		});
 	});
 
-	describe('per-project serialisation and cross-project parallelism', () => {
-		it('isProjectAtCapacity returns true once running runs reach the limit', async () => {
+	describe('container-capacity gating and cross-project parallelism', () => {
+		it('isContainerCapacityBlocked trips when a new container would exceed the limit', async () => {
 			const manager = createJobManager();
-			await db.query('UPDATE projects SET max_concurrent_runs = 1 WHERE id = $1', [projectId]);
+			await setMaxActiveContainersForTest(db, 1);
+			await db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [projectId]);
+			await seedRunningContainerProject(db, 'cap-check-a');
 
-			const otherTaskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
-				method: 'POST',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					project_id: projectId,
-					title: 'Sibling task in same project',
-					assignee_id: agentId,
-				}),
-			});
-			const otherTaskId = (await otherTaskRes.json()).data.id;
+			expect(await (manager as any).isContainerCapacityBlocked(projectId)).toBe(true);
 
-			await db.query(
-				`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
-				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now())`,
-				[agentId, teamId, otherTaskId, HeartbeatRunStatus.Running],
-			);
-
-			const busy = await (manager as any).isProjectAtCapacity(projectId);
-			expect(busy).toBe(true);
-
-			await db.query(
-				"UPDATE heartbeat_runs SET status = 'succeeded', finished_at = now() WHERE task_id = $1",
-				[otherTaskId],
-			);
-			const busyAfter = await (manager as any).isProjectAtCapacity(projectId);
-			expect(busyAfter).toBe(false);
+			// The filler's container stops — the slot frees and the block lifts.
+			await db.query(`UPDATE projects SET container_status = 'stopped' WHERE slug = 'cap-check-a'`);
+			expect(await (manager as any).isContainerCapacityBlocked(projectId)).toBe(false);
 
 			manager.shutdown();
-			await db.query('UPDATE projects SET max_concurrent_runs = 3 WHERE id = $1', [projectId]);
-			await db.query('DELETE FROM heartbeat_runs WHERE task_id = $1', [otherTaskId]);
-			await db.query('DELETE FROM tasks WHERE id = $1', [otherTaskId]);
+			await db.query(`UPDATE projects SET container_status = 'running' WHERE id = $1`, [projectId]);
+			await removeSeededContainerProject(db, 'cap-check-a');
+			await clearMaxActiveContainersForTest(db);
 		});
 
-		it('isProjectAtCapacity stays false while running runs are below the limit', async () => {
+		it('a project whose container is already running is never capacity-blocked', async () => {
 			const manager = createJobManager();
-			await db.query('UPDATE projects SET max_concurrent_runs = 3 WHERE id = $1', [projectId]);
+			// The project's own running container fills the single slot — but a run
+			// into it needs no NEW container, so it must pass.
+			await setMaxActiveContainersForTest(db, 1);
+			expect(await (manager as any).isContainerCapacityBlocked(projectId)).toBe(false);
+			manager.shutdown();
+			await clearMaxActiveContainersForTest(db);
+		});
 
-			const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
-				method: 'POST',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					project_id: projectId,
-					title: 'One of three slots',
-					assignee_id: agentId,
-				}),
-			});
-			const oneOfThree = (await taskRes.json()).data.id;
-			await db.query(
-				`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
-				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now())`,
-				[agentId, teamId, oneOfThree, HeartbeatRunStatus.Running],
-			);
+		it('pending lazy-starts hold a slot and let same-project dispatches piggyback', async () => {
+			const manager = createJobManager();
+			await setMaxActiveContainersForTest(db, 1);
+			await db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [projectId]);
+			(manager as any).acquirePendingContainerStart(projectId);
 
-			expect(await (manager as any).isProjectAtCapacity(projectId)).toBe(false);
+			// The same project piggybacks on the in-flight start…
+			expect(await (manager as any).isContainerCapacityBlocked(projectId)).toBe(false);
+			// …while a different project is blocked by the slot it holds.
+			expect(
+				await (manager as any).isContainerCapacityBlocked('00000000-0000-0000-0000-0000000000aa'),
+			).toBe(true);
+
+			(manager as any).releasePendingContainerStart(projectId);
+			expect(
+				await (manager as any).isContainerCapacityBlocked('00000000-0000-0000-0000-0000000000aa'),
+			).toBe(false);
 
 			manager.shutdown();
-			await db.query('DELETE FROM heartbeat_runs WHERE task_id = $1', [oneOfThree]);
-			await db.query('DELETE FROM tasks WHERE id = $1', [oneOfThree]);
+			await db.query(`UPDATE projects SET container_status = 'running' WHERE id = $1`, [projectId]);
+			await clearMaxActiveContainersForTest(db);
 		});
 
-		it('re-queues a wakeup when its project is already at its run limit', async () => {
+		it('re-queues a wakeup when the container limit is reached', async () => {
 			const manager = createJobManager();
-			await db.query('UPDATE projects SET max_concurrent_runs = 1 WHERE id = $1', [projectId]);
-
-			// An active run in project A at the limit blocks a wakeup targeting
-			// another task in project A.
-			const sibTaskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
-				method: 'POST',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					project_id: projectId,
-					title: 'Second task in project A',
-					assignee_id: agentId,
-				}),
-			});
-			const sibTaskId = (await sibTaskRes.json()).data.id;
-
-			await db.query(
-				`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
-				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now())`,
-				[agentId, teamId, taskId, HeartbeatRunStatus.Running],
-			);
+			await setMaxActiveContainersForTest(db, 1);
+			await db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [projectId]);
+			await seedRunningContainerProject(db, 'cap-filler-requeue');
 
 			const wakeupRes = await db.query<{ id: string }>(
 				`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, created_at, payload)
 				 VALUES ($1, $2, 'mention', 'queued', now() - interval '30 seconds', $3::jsonb)
 				 RETURNING id`,
-				[agentId, teamId, JSON.stringify({ task_id: sibTaskId })],
+				[agentId, teamId, JSON.stringify({ task_id: taskId })],
 			);
 			const wakeupId = wakeupRes.rows[0].id;
 
@@ -2422,15 +2421,14 @@ describe('JobManager workflow methods', () => {
 			expect(status.rows[0].status).toBe(WakeupStatus.Queued);
 
 			manager.shutdown();
-			await db.query('UPDATE projects SET max_concurrent_runs = 3 WHERE id = $1', [projectId]);
+			await db.query(`UPDATE projects SET container_status = 'running' WHERE id = $1`, [projectId]);
+			await removeSeededContainerProject(db, 'cap-filler-requeue');
+			await clearMaxActiveContainersForTest(db);
 			await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [wakeupId]);
-			await db.query('DELETE FROM heartbeat_runs WHERE task_id = $1', [taskId]);
-			await db.query('DELETE FROM tasks WHERE id = $1', [sibTaskId]);
 		});
 
 		it('the per-agent lock is gone: agent busy in project A does not block a wakeup for project B', async () => {
 			const manager = createJobManager();
-			await db.query('UPDATE projects SET max_concurrent_runs = 1 WHERE id = $1', [projectId]);
 
 			// Project B lives in a SECOND team (a team owns exactly one project), so
 			// it is genuinely distinct from project A. We never dispatch on it — we just
@@ -2478,13 +2476,15 @@ describe('JobManager workflow methods', () => {
 			});
 
 			// The legacy per-agent check would have skipped this wakeup. The
-			// per-project capacity check should not: project B has no active run.
+			// container-capacity check doesn't consider per-agent business at all:
+			// with a free container slot, project B is not blocked by the agent's
+			// activity in project A.
 			expect(manager.isMemberRunning(agentId)).toBe(true);
-			expect(await (manager as any).isProjectAtCapacity(projectId)).toBe(true);
-			expect(await (manager as any).isProjectAtCapacity(projectBId)).toBe(false);
+			await setMaxActiveContainersForTest(db, 2);
+			expect(await (manager as any).isContainerCapacityBlocked(projectBId)).toBe(false);
+			await clearMaxActiveContainersForTest(db);
 
 			manager.shutdown();
-			await db.query('UPDATE projects SET max_concurrent_runs = 3 WHERE id = $1', [projectId]);
 			// Project B lives in its own team, so it cannot interfere with project A's
 			// tests; the whole context is torn down in afterAll. Leave its rows in place
 			// rather than untangle the team/agent/planning-task FK chain.

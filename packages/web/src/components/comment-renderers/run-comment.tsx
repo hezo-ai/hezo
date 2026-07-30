@@ -81,8 +81,9 @@ function containerNotReadyReason(health: ContainerHealth | null): string {
 		case 'provisioning':
 			return 'Container is starting up — retry will be available once it is running';
 		default:
-			// stopped, error, or the project index has not loaded yet.
-			return 'Container is not running — start it from the Container page to retry';
+			// error, or the project index has not loaded yet (stopped never blocks —
+			// the retry lazy-starts the container).
+			return 'Container hit an error — fix it from the Container page to retry';
 	}
 }
 
@@ -98,10 +99,10 @@ function RunRetryButton({
 	const retry = useRetryFailedRun({ projectId, taskId });
 	const project = useProjectMeta(projectId);
 	const health = useContainerHealth(project);
-	// A run can only be dispatched into a healthy container (running, and not mid
-	// base-image rebuild). Mirror the runtime gate so a click can't queue a retry
-	// that would immediately fail on a missing/stopped container.
-	const containerReady = health?.kind === 'healthy';
+	// A stopped container is fine — the runner lazy-starts it. Only block while
+	// an error needs fixing or a provision/rebuild is in flight, mirroring the
+	// runtime gate.
+	const containerReady = health?.kind === 'healthy' || health?.kind === 'stopped';
 	return (
 		<Tooltip content={containerReady ? 'Retry this run' : containerNotReadyReason(health)}>
 			<button

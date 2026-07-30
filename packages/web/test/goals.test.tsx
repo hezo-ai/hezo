@@ -449,13 +449,30 @@ test('Run now queues when the Captain is busy, and the queued run can be cancell
 	let projectSlug = '';
 	const { findByTestId, findByText, queryByTestId, user, router } = await renderApp({
 		initialPath: '/',
-		seed: async () => {
+		seed: async (ctx) => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Queue Demo' });
 			projectSlug = project.slug;
-			// A freshly-seeded goal is immediately due; no running container in tests means the run
-			// is queued instead of started.
+			// A freshly-seeded goal is immediately due. A missing container no
+			// longer queues (the runner lazy-starts it), so block on the container
+			// limit instead: cap 1, this project's container stopped, a filler
+			// project's running container holding the only slot.
 			await seedGoal(ws, project, { title: 'Ship it', measurement: 'shipped' });
+			await ctx.db.query(
+				`INSERT INTO system_meta (key, value) VALUES ('max_active_containers', '1')
+				 ON CONFLICT (key) DO UPDATE SET value = '1'`,
+			);
+			await ctx.db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [
+				project.id,
+			]);
+			const filler = await ctx.db.query<{ id: string }>(
+				`INSERT INTO teams (name, slug) VALUES ('cap-goals-web', 'cap-goals-web') RETURNING id`,
+			);
+			await ctx.db.query(
+				`INSERT INTO projects (team_id, name, slug, task_prefix, container_id, container_status, container_last_started_at)
+				 VALUES ($1, 'cap-goals-web', 'cap-goals-web', 'CGW', 'cid-goals-web', 'running', now())`,
+				[filler.rows[0].id],
+			);
 		},
 	});
 

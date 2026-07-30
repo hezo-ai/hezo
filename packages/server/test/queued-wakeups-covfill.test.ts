@@ -10,6 +10,12 @@ import {
 	createTestTeam,
 	projectSlugFor,
 } from './helpers/app';
+import {
+	clearMaxActiveContainersForTest,
+	removeSeededContainerProject,
+	seedRunningContainerProject,
+	setMaxActiveContainersForTest,
+} from './helpers/capacity';
 
 let app: Hono<Env>;
 let db: Db;
@@ -114,7 +120,7 @@ async function listQueued(forTaskId: string) {
 					agent_busy: boolean;
 					run_now_blocked: string | null;
 				}>;
-				dispatch: { task_busy: boolean; project_at_capacity: boolean };
+				dispatch: { task_busy: boolean; instance_at_capacity: boolean };
 			};
 		},
 	};
@@ -190,7 +196,7 @@ describe('GET queued-wakeups', () => {
 		expect(alpha.last_skipped_reason).toBe('task_busy');
 		expect(wakeups[1].coalesced_count).toBe(3);
 		expect(dispatch.task_busy).toBe(false);
-		expect(dispatch.project_at_capacity).toBe(false);
+		expect(dispatch.instance_at_capacity).toBe(false);
 		expect(alpha.agent_busy).toBe(false);
 		expect(alpha.run_now_blocked).toBeNull();
 	});
@@ -203,14 +209,19 @@ describe('GET queued-wakeups', () => {
 
 		const { body } = await listQueued(taskId);
 		expect(body.data.dispatch.task_busy).toBe(true);
-		expect(body.data.dispatch.project_at_capacity).toBe(false);
+		expect(body.data.dispatch.instance_at_capacity).toBe(false);
 		await clearRuns();
 	});
 
-	it('reports project_at_capacity and per-agent busy state', async () => {
+	it('reports instance_at_capacity and per-agent busy state', async () => {
 		await clearWakeups(taskId);
 		await clearRuns();
-		await db.query('UPDATE projects SET max_concurrent_runs = 1 WHERE id = $1', [projectId]);
+		// Container semantics: this project's container is stopped and a filler
+		// project's running container consumes the single slot. Per-agent busy
+		// state is independent of the container gate.
+		await setMaxActiveContainersForTest(db, 1);
+		await db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [projectId]);
+		await seedRunningContainerProject(db, 'cap-covfill-get');
 		const sibling = await createTask('Covfill Busy Sibling');
 		await insertRunningRun(agentA, sibling);
 		const busy = await insertQueuedWakeup(agentA, taskId);
@@ -218,12 +229,14 @@ describe('GET queued-wakeups', () => {
 
 		const { body } = await listQueued(taskId);
 		expect(body.data.dispatch.task_busy).toBe(false);
-		expect(body.data.dispatch.project_at_capacity).toBe(true);
+		expect(body.data.dispatch.instance_at_capacity).toBe(true);
 		const byId = Object.fromEntries(body.data.wakeups.map((w) => [w.id, w]));
 		expect(byId[busy].agent_busy).toBe(true);
 		expect(byId[free].agent_busy).toBe(false);
 
-		await db.query('UPDATE projects SET max_concurrent_runs = 3 WHERE id = $1', [projectId]);
+		await db.query(`UPDATE projects SET container_status = 'running' WHERE id = $1`, [projectId]);
+		await removeSeededContainerProject(db, 'cap-covfill-get');
+		await clearMaxActiveContainersForTest(db);
 		await clearRuns();
 	});
 
@@ -337,19 +350,21 @@ describe('POST run-now', () => {
 		await clearRuns();
 	});
 
-	it('409s when the project is at capacity', async () => {
+	it('409s when the container limit is reached', async () => {
 		await clearWakeups(taskId);
 		await clearRuns();
-		await db.query('UPDATE projects SET max_concurrent_runs = 1 WHERE id = $1', [projectId]);
-		const sibling = await createTask('Covfill Capacity Sibling');
-		await insertRunningRun(agentA, sibling);
+		await setMaxActiveContainersForTest(db, 1);
+		await db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [projectId]);
+		await seedRunningContainerProject(db, 'cap-covfill-runnow');
 		const wakeupId = await insertQueuedWakeup(agentB, taskId);
 
 		const res = await runNow(taskId, wakeupId);
 		expect(res.status).toBe(409);
 		const body = (await res.json()) as { error: { message: string } };
-		expect(body.error.message).toContain('concurrent-run limit');
-		await db.query('UPDATE projects SET max_concurrent_runs = 3 WHERE id = $1', [projectId]);
+		expect(body.error.message).toContain('active-container limit');
+		await db.query(`UPDATE projects SET container_status = 'running' WHERE id = $1`, [projectId]);
+		await removeSeededContainerProject(db, 'cap-covfill-runnow');
+		await clearMaxActiveContainersForTest(db);
 		await clearRuns();
 	});
 

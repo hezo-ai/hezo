@@ -121,15 +121,23 @@ test('disables run-now with a capacity reason when the project is at its run lim
 			const captain = ws.agents.find((a) => a.slug === 'captain') ?? ws.agents[0];
 			const queuedAgent = ws.agents.find((a) => a.id !== captain.id) ?? ws.agents[0];
 			const project = await seedProject(ws, { name: 'At Capacity Demo' });
-			// Cap the project at a single concurrent run.
-			await ctx.db.query('UPDATE projects SET max_concurrent_runs = 1 WHERE id = $1', [project.id]);
-
-			// A sibling ticket is already running, so the project's one slot is taken.
-			const sibling = await seedTask(ws, project, { title: 'Occupying Slot' });
+			// Container semantics: cap the instance at one active container, park
+			// this project's container, and let a filler project's running
+			// container hold the only slot.
 			await ctx.db.query(
-				`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
-				 VALUES ($1, $2, $3, 'running'::heartbeat_run_status, now())`,
-				[captain.id, ws.team.id, sibling.id],
+				`INSERT INTO system_meta (key, value) VALUES ('max_active_containers', '1')
+				 ON CONFLICT (key) DO UPDATE SET value = '1'`,
+			);
+			await ctx.db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [
+				project.id,
+			]);
+			const filler = await ctx.db.query<{ id: string }>(
+				`INSERT INTO teams (name, slug) VALUES ('cap-filler-web', 'cap-filler-web') RETURNING id`,
+			);
+			await ctx.db.query(
+				`INSERT INTO projects (team_id, name, slug, task_prefix, container_id, container_status, container_last_started_at)
+				 VALUES ($1, 'cap-filler-web', 'cap-filler-web', 'CFW', 'cid-filler', 'running', now())`,
+				[filler.rows[0].id],
 			);
 
 			const task = await seedTask(ws, project, { title: 'Waiting Task', assignee_id: captain.id });
@@ -158,7 +166,7 @@ test('disables run-now with a capacity reason when the project is at its run lim
 	await waitFor(() => {
 		expect(playBtn.getAttribute('aria-disabled')).toBe('true');
 	});
-	expect(playBtn.getAttribute('aria-label')).toMatch(/concurrent-run limit/i);
+	expect(playBtn.getAttribute('aria-label')).toMatch(/active-container limit/i);
 });
 
 test('disables run-now when the queued agent is already running on another task in the project', async () => {
@@ -171,8 +179,7 @@ test('disables run-now when the queued agent is already running on another task 
 			const captain = ws.agents.find((a) => a.slug === 'captain') ?? ws.agents[0];
 			const queuedAgent = ws.agents.find((a) => a.id !== captain.id) ?? ws.agents[0];
 			const project = await seedProject(ws, { name: 'Agent Busy Demo' });
-			// Plenty of capacity, so the only blocker is the agent's own slot.
-			await ctx.db.query('UPDATE projects SET max_concurrent_runs = 3 WHERE id = $1', [project.id]);
+			// Plenty of container capacity, so the only blocker is the agent's own slot.
 
 			// The queued agent is already running on a sibling task in this project.
 			const sibling = await seedTask(ws, project, { title: 'Occupying Agent Slot' });

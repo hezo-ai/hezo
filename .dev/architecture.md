@@ -53,7 +53,7 @@ manager (agents bring their own models and runtimes).
 | Realtime | WebSocket row-change events → client invalidates React Query keys |
 | Agent interface | MCP (Streamable HTTP) at `POST /mcp` via `@modelcontextprotocol/sdk` |
 | Crypto | AES-256-GCM at rest; master key held in memory only |
-| Containers | Docker Engine API, one container per project |
+| Containers | Docker Engine API, one container per project — started on demand, stopped after an idle timeout |
 
 **Monorepo** — Bun workspaces + Turborepo. **Three** packages plus a root `agents/`
 tree:
@@ -259,7 +259,7 @@ status flip, and code worktree. They fire on the Captain's heartbeat when goals 
 the Goals page's **Run now** button (`POST /projects/:projectId/goals/run-now` →
 `JobManager.dispatchProgressUpdateNow`, which resolves the project's Captain and reuses the same
 due-goal logic). If **Run now** hits a *transient* conflict — the Captain is already running, the
-project is at its concurrency limit, the container is still coming up, or a launch race — the run is
+instance is at its active-container limit, or a launch race — the run is
 **queued** rather than erroring: a task-less `agent_wakeup_requests` row tagged
 `payload.trigger='progress_update_now'` (deduped per Captain by `createProgressUpdateWakeup`, so
 "Run now" is idempotent) that the 5s dispatcher retries until the Captain frees up. This trigger tag
@@ -1115,9 +1115,35 @@ one comment source that surfaced no reference to what triggered it). The Coach's
 review is the one path that instead embeds the **full** comment history (both share
 `loadCommentHistory`/`renderCommentHistory`).
 
-**Containers & worktrees.** One container per project; the project's
-`<dataDir>/teams/<slug>/projects/<slug>/workspace/` bind-mounts to `/workspace`, with one
-subdirectory per linked repo. For each task the runner creates a `git worktree` at
+**Containers & worktrees.** One container per project, **run on demand**: the container is
+not required to be up between runs. `runAgent` establishes it at the start of every run via
+`ensureProjectContainerRunning` (running → reuse; stopped → start in place; missing/stale row →
+provision), chat sessions do the same, and the `container-idle-stop` cron (1/min) stops any
+container idle past the operator's timeout (`container_idle_timeout_min` in `system_meta`,
+default 15 minutes, `0` = always-on) — so a quiet instance runs zero containers. "Idle" means:
+no active (queued/running) run, no run finished inside the window, no queued wakeup that could
+dispatch (capacity-skipped wakeups deliberately don't pin containers), and no chat session with
+recent `last_activity_at` or an in-flight turn; `projects.container_last_started_at` floors the
+check so a fresh start always gets one full window. Every lifecycle *decision* — ensure-running
+and the cron's check-then-stop (which re-verifies the predicate plus the scheduler's in-memory
+run/pending refcounts under the lock) — serializes per project through
+`withContainerLifecycleLock` (`services/containers.ts`), so a start and a stop can never
+interleave: worst case is a wasted stop/start cycle, never a failed run. Concurrency is bounded
+by one **global active-container limit** (`max_active_containers` in `system_meta`; when unset,
+the default is computed from host memory as `(RAM + swap) / default_ram_cap_per_container_gb`,
+clamped to [1,100]): dispatch passes a run whose project container is already active (no new
+container needed) and queues one that would need another container past the cap
+(`WakeupSkipReason.InstanceAtCapacity`, retried by the 5s dispatcher; an in-memory
+`pendingContainerStarts` refcount covers the window before the DB row reads Running). Dispatch
+drains FIFO by `created_at` with no per-project fair-share — a deep backlog in one project
+consumes freed slots first; that scheduler is the hook if this ever needs fairness. The chat
+path is *not* gated: its container counts toward the limit once running, but starting a chat is
+never refused — busy agents must not lock the operator out of the control surface. All three
+knobs (limit, per-container RAM cap, idle timeout) live on the global Settings → Concurrency
+page (`GET/PATCH /api/instance-settings`; `PATCH {max_active_containers: null}` resets to the
+computed default). The project's
+`<dataDir>/teams/<teamId>/projects/<projectId>/workspace/` (id-keyed, never slugs) bind-mounts
+to `/workspace`, with one subdirectory per linked repo. For each task the runner creates a `git worktree` at
 `/worktrees/<task-identifier>/<repo-name>` on branch `hezo/<task-identifier>`, persisted
 across runs and torn down when the task reaches a terminal status (`done`/`cancelled`). That
 teardown (`removeTaskWorktrees`, a host-side `rmSync`) fires from `triggerStatusAutomations`,
@@ -1164,8 +1190,10 @@ its abort handler on the *response* stream's end, never on the `ClientRequest`'s
 that had already been detached.
 
 **Container hardening.** Each project container is created with a hardened `HostConfig`
-(`provisionContainer`): a cgroup memory cap (`Memory`=`MemorySwap`= the project's
-`memory_limit_gib` + 512 MiB headroom, so no swap escape valve) as a hard backstop *behind*
+(`provisionContainer`): a cgroup memory cap (`Memory`=`MemorySwap`= the effective RAM cap +
+512 MiB headroom, so no swap escape valve — the per-project `memory_limit_gib` override when
+set, else the instance-wide `default_ram_cap_per_container_gb`, default 2 GB) as a hard
+backstop *behind*
 the sync-loop stats poller that stays the graceful early-stop at the configured ceiling;
 `PidsLimit` (4096) as a fork-bomb guard; `Init: true` so a real init reaps zombies under the
 `sleep infinity` PID 1; and `CapDrop: ['ALL']` with a minimal add-back

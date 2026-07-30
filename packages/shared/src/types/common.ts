@@ -787,10 +787,9 @@ export const TERMINAL_WAKEUP_STATUSES: readonly WakeupStatus[] = [
 
 export const WakeupSkipReason = {
 	TaskBusy: 'task_busy',
-	ProjectAtCapacity: 'project_at_capacity',
+	InstanceAtCapacity: 'instance_at_capacity',
 	AgentRunning: 'agent_running',
 	OverBudget: 'over_budget',
-	ContainerDown: 'container_down',
 } as const;
 export type WakeupSkipReason = (typeof WakeupSkipReason)[keyof typeof WakeupSkipReason];
 

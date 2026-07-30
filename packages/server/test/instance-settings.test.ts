@@ -1,6 +1,7 @@
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
+import { setHostMemoryForTest } from '../src/lib/host-memory';
 import { getSystemMeta, INSTANCE_BASE_URL_KEY } from '../src/lib/system-meta';
 import type { Env } from '../src/lib/types';
 import { signAdminJwt } from '../src/middleware/auth';
@@ -135,5 +136,105 @@ describe('PATCH /api/instance-settings', () => {
 		expect(res.status).toBe(200);
 		expect((await res.json()).data.base_url).toBeNull();
 		expect(await getBaseUrl()).toBeNull();
+	});
+});
+
+describe('concurrency settings', () => {
+	const GIB = 1024 ** 3;
+
+	beforeAll(() => {
+		// Pin the host-memory probe to the incident's reference host: a "2GB"
+		// droplet (1.92GiB MemTotal) with 6GiB swap → auto default 8 / 2 = 4.
+		setHostMemoryForTest({ totalRamBytes: 1.92 * GIB, totalSwapBytes: 6 * GIB });
+	});
+	afterAll(() => setHostMemoryForTest(null));
+
+	function patchSettings(body: Record<string, unknown>, authToken = token) {
+		return app.request('/api/instance-settings', {
+			method: 'PATCH',
+			headers: { ...authHeader(authToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify(body),
+		});
+	}
+
+	async function getSettings(): Promise<{
+		max_active_containers: number;
+		max_active_containers_is_set: boolean;
+		max_active_containers_computed_default: number;
+		default_ram_cap_per_container_gb: number;
+		container_idle_timeout_min: number;
+		host_total_ram_bytes: number;
+		host_total_swap_bytes: number;
+	}> {
+		const res = await app.request('/api/instance-settings', { headers: authHeader(token) });
+		expect(res.status).toBe(200);
+		return (await res.json()).data;
+	}
+
+	it('computes the default max_active_containers from host memory when unset', async () => {
+		const data = await getSettings();
+		expect(data.max_active_containers).toBe(4); // round(1.92 + 6) = 8 GiB / 2 GB
+		expect(data.max_active_containers_is_set).toBe(false);
+		expect(data.max_active_containers_computed_default).toBe(4);
+		expect(data.default_ram_cap_per_container_gb).toBe(2);
+		expect(data.container_idle_timeout_min).toBe(15);
+		expect(data.host_total_swap_bytes).toBe(6 * GIB);
+	});
+
+	it('raising the ram cap lowers the computed default', async () => {
+		const res = await patchSettings({ default_ram_cap_per_container_gb: 4 });
+		expect(res.status).toBe(200);
+		const data = await getSettings();
+		expect(data.default_ram_cap_per_container_gb).toBe(4);
+		expect(data.max_active_containers).toBe(2); // 8 GiB / 4 GB
+		expect(data.max_active_containers_is_set).toBe(false);
+		await patchSettings({ default_ram_cap_per_container_gb: 2 });
+	});
+
+	it('an explicitly set value wins over the computed default', async () => {
+		const res = await patchSettings({ max_active_containers: 7 });
+		expect(res.status).toBe(200);
+		const data = await getSettings();
+		expect(data.max_active_containers).toBe(7);
+		expect(data.max_active_containers_is_set).toBe(true);
+		expect(data.max_active_containers_computed_default).toBe(4);
+	});
+
+	it('null resets max_active_containers back to the computed default', async () => {
+		const res = await patchSettings({ max_active_containers: null });
+		expect(res.status).toBe(200);
+		const data = await getSettings();
+		expect(data.max_active_containers).toBe(4);
+		expect(data.max_active_containers_is_set).toBe(false);
+	});
+
+	it('updates and persists the idle timeout, including 0 (never stop)', async () => {
+		expect((await patchSettings({ container_idle_timeout_min: 45 })).status).toBe(200);
+		expect((await getSettings()).container_idle_timeout_min).toBe(45);
+		expect((await patchSettings({ container_idle_timeout_min: 0 })).status).toBe(200);
+		expect((await getSettings()).container_idle_timeout_min).toBe(0);
+	});
+
+	it.each([
+		['a zero container cap', { max_active_containers: 0 }],
+		['a negative container cap', { max_active_containers: -1 }],
+		['an over-max container cap', { max_active_containers: 101 }],
+		['a non-integer container cap', { max_active_containers: 2.5 }],
+		['a string container cap', { max_active_containers: '3' }],
+		['a zero ram cap', { default_ram_cap_per_container_gb: 0 }],
+		['an over-max ram cap', { default_ram_cap_per_container_gb: 513 }],
+		['a non-integer ram cap', { default_ram_cap_per_container_gb: 1.5 }],
+		['a negative idle timeout', { container_idle_timeout_min: -1 }],
+		['an over-max idle timeout', { container_idle_timeout_min: 10081 }],
+		['a non-integer idle timeout', { container_idle_timeout_min: 1.5 }],
+	])('rejects %s', async (_name, body) => {
+		const res = await patchSettings(body);
+		expect(res.status).toBe(400);
+		expect((await res.json()).error.code).toBe('INVALID_REQUEST');
+	});
+
+	it('rejects non-superusers', async () => {
+		const res = await patchSettings({ max_active_containers: 5 }, nonSuperuserToken);
+		expect(res.status).toBe(403);
 	});
 });

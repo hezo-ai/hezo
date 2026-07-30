@@ -133,7 +133,7 @@ beforeAll(async () => {
 	await db.query(
 		`UPDATE projects
 		 SET designated_repo_id = $1, container_id = 'sched-container',
-		     container_status = 'running', max_concurrent_runs = 3
+		     container_status = 'running'
 		 WHERE id = $2`,
 		[repoRes.rows[0].id, projectId],
 	);
@@ -164,8 +164,7 @@ afterEach(async () => {
 		[agentId, secondAgentId],
 	]);
 	await ctx.db.query(
-		`UPDATE projects SET container_id = 'sched-container', container_status = 'running',
-		        max_concurrent_runs = 3
+		`UPDATE projects SET container_id = 'sched-container', container_status = 'running'
 		 WHERE id = $1`,
 		[projectId],
 	);
