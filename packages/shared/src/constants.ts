@@ -82,21 +82,45 @@ export const RAM_CAP_PER_CONTAINER_GB_MIN = 1;
 export const RAM_CAP_PER_CONTAINER_GB_MAX = 512;
 
 /**
+ * Host memory, in GiB, that the automatic max-active-containers default never
+ * hands to containers. The OS, Hezo's own Bun process (API, MCP endpoint, egress
+ * proxy, Docker control plane) and — on the default embedded backend — Postgres
+ * all live *outside* every container and still need memory; sizing the limit off
+ * the full RAM + swap total treated that overhead as free and oversubscribed
+ * small hosts. A floor, not a share: it does not scale with host size.
+ */
+export const HOST_RESERVED_MEMORY_GB = 1;
+
+/**
+ * Host memory available to containers: total virtual memory (RAM + swap),
+ * rounded to whole GiB, less {@link HOST_RESERVED_MEMORY_GB}. Split out from
+ * {@link computeDefaultMaxActiveContainers} so the web settings page can render
+ * the same usable figure instead of re-deriving the rounding.
+ */
+export function usableMemoryGibForContainers(
+	totalRamBytes: number,
+	totalSwapBytes: number,
+): number {
+	const gib = 1024 ** 3;
+	const totalGib = Math.round((totalRamBytes + totalSwapBytes) / gib);
+	return Math.max(0, totalGib - HOST_RESERVED_MEMORY_GB);
+}
+
+/**
  * The automatic max-active-containers default: how many ram-cap-sized
- * containers fit in the host's total virtual memory (RAM + swap), so total
- * container demand can never exceed what the host actually has. The reference
- * 1.92GiB-RAM + 6GiB-swap host rounds to 8GiB and yields 8 / 2 = 4. Pure math
- * (shared so the web settings page can render the same formula); byte inputs
- * come from the server's host-memory probe.
+ * containers fit in the host memory left over after the system reserve, so
+ * total container demand can never exceed what the host actually has spare. The
+ * reference 1.92GiB-RAM + 6GiB-swap host rounds to 8GiB and yields
+ * (8 - 1) / 2 = 3. Pure math (shared so the web settings page can render the
+ * same formula); byte inputs come from the server's host-memory probe.
  */
 export function computeDefaultMaxActiveContainers(
 	totalRamBytes: number,
 	totalSwapBytes: number,
 	ramCapGb: number,
 ): number {
-	const gib = 1024 ** 3;
-	const totalGib = Math.round((totalRamBytes + totalSwapBytes) / gib);
-	const computed = Math.floor(totalGib / Math.max(1, ramCapGb));
+	const usableGib = usableMemoryGibForContainers(totalRamBytes, totalSwapBytes);
+	const computed = Math.floor(usableGib / Math.max(1, ramCapGb));
 	return Math.min(MAX_ACTIVE_CONTAINERS_MAX, Math.max(MAX_ACTIVE_CONTAINERS_MIN, computed));
 }
 
