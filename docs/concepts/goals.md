@@ -137,9 +137,14 @@ is no longer worth tracking.
 ## Archiving
 
 The Progress page defaults to an **Active** view and has an **Archived** filter to see the rest.
-Archiving a goal (from its edit/archive control) sets it aside without deleting it: an archived
-goal is **no longer checked** - the Captain skips it entirely and never updates its status or
-files work for it. Unarchive it any time to bring it back into rotation.
+Archiving a goal (from the archive button on its card, or the same button on the goal's own page)
+sets it aside without deleting it: an archived goal is **no longer checked** - the Captain skips it
+entirely and never updates its status or files work for it.
+
+Because that quietly retires something the team is working toward, archiving **asks you to confirm
+first**, naming the goal in the prompt so you can tell it apart from the card next to it. Nothing
+is sent until you confirm. Unarchiving needs no confirmation - it is the undo of that action - and
+brings the goal straight back into rotation.
 
 ## Goals and the board
 
