@@ -179,52 +179,43 @@ export function ModelPricingSection() {
 	return (
 		<section className="mt-10 pt-8 border-t border-border">
 			<div className="flex items-start justify-between gap-3 mb-4">
-				<div>
-					<div className="flex items-center gap-1.5">
-						<h2 className="text-base font-medium">Model pricing</h2>
-						<HelpDialog
-							title="How run costs are calculated"
-							triggerLabel="How run costs are calculated"
-							data-testid="model-pricing-help"
-						>
-							<div className="flex flex-col gap-3 text-sm text-text-2 leading-relaxed">
-								<p>
-									<span className="font-semibold text-text-1">
-										Every run is priced from this table.
-									</span>{' '}
-									Hezo multiplies the token counts each runtime reports by these per-model rates.
-									Dollar figures a runtime emits itself (e.g.{' '}
-									<span className="font-mono">total_cost_usd</span>) are ignored — they are
-									client-side estimates from the CLI's own rate card, which is wrong for third-party
-									endpoints.
-								</p>
-								<p>
-									Rates refresh from <span className="font-mono">pricepertoken.com</span> daily and
-									at startup; the Refresh button forces one now.
-								</p>
-								<p>
-									<span className="font-semibold text-text-1">
-										Costs are a conservative upper-bound estimate.
-									</span>{' '}
-									The catalog carries no cache pricing, so cached reads and writes are billed at the
-									full input rate. Providers charge cache reads at a steep discount, so real bills
-									are usually lower than the recorded figures — never higher.
-								</p>
-								<p>
-									A manual override wins over the catalog for its model and <em>can</em> set cache
-									rates — add one for exact billing, to correct a rate, or to price a model the
-									catalog lacks.
-								</p>
-							</div>
-						</HelpDialog>
-					</div>
-					<p className="text-[13px] text-text-2 mt-1 max-w-[680px]">
-						Every agent run is priced from this table: the run's token counts times these per-token
-						rates. Rates refresh daily from <span className="font-mono">pricepertoken.com</span>,
-						which carries no cache pricing — cached reads/writes are billed at the full input rate,
-						so recorded costs are a conservative upper-bound estimate. A manual override wins for
-						its model and can set cache rates for exact billing.
-					</p>
+				<div className="flex items-center gap-1.5">
+					<h2 className="text-base font-medium">Model pricing</h2>
+					<HelpDialog
+						title="How run costs are calculated"
+						triggerLabel="How run costs are calculated"
+						data-testid="model-pricing-help"
+					>
+						<div className="flex flex-col gap-3 text-sm text-text-2 leading-relaxed">
+							<p>
+								<span className="font-semibold text-text-1">
+									Every run is priced from this table.
+								</span>{' '}
+								Hezo multiplies the token counts each runtime reports by these per-model rates.
+								Dollar figures a runtime emits itself (e.g.{' '}
+								<span className="font-mono">total_cost_usd</span>) are ignored — they are
+								client-side estimates from the CLI's own rate card, which is wrong for third-party
+								endpoints.
+							</p>
+							<p>
+								Rates refresh from <span className="font-mono">pricepertoken.com</span> daily and at
+								startup; the Refresh button forces one now.
+							</p>
+							<p>
+								<span className="font-semibold text-text-1">
+									Costs are a conservative upper-bound estimate.
+								</span>{' '}
+								The catalog carries no cache pricing, so cached reads and writes are billed at the
+								full input rate. Providers charge cache reads at a steep discount, so real bills are
+								usually lower than the recorded figures — never higher.
+							</p>
+							<p>
+								A manual override wins over the catalog for its model and <em>can</em> set cache
+								rates — add one for exact billing, to correct a rate, or to price a model the
+								catalog lacks.
+							</p>
+						</div>
+					</HelpDialog>
 				</div>
 				<div className="flex items-center gap-2 shrink-0">
 					<Button
