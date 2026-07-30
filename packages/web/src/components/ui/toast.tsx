@@ -1,6 +1,6 @@
 import * as RadixToast from '@radix-ui/react-toast';
 import { Loader2, WifiOff, X } from 'lucide-react';
-import { useConnectionStatus } from '../../hooks/use-connection-status';
+import { dismissConnectionOffline, useConnectionStatus } from '../../hooks/use-connection-status';
 import { toast, useToasts } from '../../hooks/use-toast';
 
 const ERROR_DURATION_MS = 6000;
@@ -13,18 +13,22 @@ export function Toaster() {
 
 	return (
 		<RadixToast.Provider swipeDirection="right" duration={ERROR_DURATION_MS}>
-			{/* Persistent connection indicator, pinned above transient toasts. It is
-			    controlled (open + no onOpenChange) and never auto-dismisses
-			    (duration Infinity), so it stays until the socket heals; swipe is
-			    suppressed so it can't be shoved off while still offline. */}
+			{/* Persistent connection indicator, pinned above transient toasts. It never
+			    auto-dismisses (duration Infinity), so it stays until the socket heals
+			    or the user clears it — via the close button or a right swipe, both of
+			    which route through onOpenChange into a 20s snooze. Reconnect attempts
+			    continue underneath; if the socket is still down when the snooze
+			    expires the indicator comes back. */}
 			{offline && (
 				<RadixToast.Root
 					open
 					type="background"
 					duration={Number.POSITIVE_INFINITY}
-					onSwipeStart={(e) => e.preventDefault()}
+					onOpenChange={(open) => {
+						if (!open) dismissConnectionOffline();
+					}}
 					data-testid="connection-toast"
-					className="border border-danger bg-surface text-text-1 rounded-md shadow-md px-3 py-2.5 flex items-start gap-3 data-[state=open]:animate-in data-[state=open]:slide-in-from-right-2 data-[state=closed]:animate-out data-[state=closed]:fade-out"
+					className="border border-danger bg-surface text-text-1 rounded-md shadow-md px-3 py-2.5 flex items-start gap-3 data-[state=open]:animate-in data-[state=open]:slide-in-from-right-2 data-[state=closed]:animate-out data-[state=closed]:fade-out data-[swipe=move]:translate-x-[var(--radix-toast-swipe-move-x)] data-[swipe=cancel]:translate-x-0 data-[swipe=cancel]:transition-transform data-[swipe=end]:animate-out data-[swipe=end]:fade-out"
 				>
 					<WifiOff className="w-4 h-4 text-danger shrink-0 mt-0.5" aria-hidden="true" />
 					<div className="flex-1 min-w-0">
@@ -44,6 +48,15 @@ export function Toaster() {
 							Retry now
 						</button>
 					</div>
+					{/* Tap target is padded out to ~32px so it stays comfortable on mobile,
+					    where this indicator is most often in the way. */}
+					<RadixToast.Close
+						aria-label="Dismiss"
+						data-testid="connection-dismiss"
+						className="text-text-3 hover:text-text-1 shrink-0 -m-1.5 p-1.5"
+					>
+						<X className="w-3.5 h-3.5" />
+					</RadixToast.Close>
 				</RadixToast.Root>
 			)}
 			{toasts.map((t) => (
