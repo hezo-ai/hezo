@@ -5,6 +5,9 @@ import { expect, test } from 'vitest';
 import { DatabaseSection } from '../src/components/database-section';
 import type { DatabaseInfo } from '../src/hooks/use-database-info';
 import type { RunLogUsage } from '../src/hooks/use-run-log-compaction';
+// The section's confirm dialog resolves its cancel/close labels through `t()`,
+// so the tree needs the i18n context the app shell always provides.
+import { I18nProvider } from '../src/lib/i18n';
 import { queryKeys } from '../src/lib/query-keys';
 import { renderApp } from './helpers/render';
 
@@ -63,7 +66,9 @@ function renderCard(
 	);
 	return render(
 		<QueryClientProvider client={qc}>
-			<DatabaseSection />
+			<I18nProvider>
+				<DatabaseSection />
+			</I18nProvider>
 		</QueryClientProvider>,
 	);
 }

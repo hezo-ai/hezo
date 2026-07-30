@@ -11,6 +11,7 @@ import { StatusDot } from '../../../../components/ui/status-dot';
 import { useAgents } from '../../../../hooks/use-agents';
 import { useOrgChart } from '../../../../hooks/use-org-chart';
 import { useTeam } from '../../../../hooks/use-teams';
+import { useI18n } from '../../../../lib/i18n';
 
 /** HQ agents (CEO/Coach) shown as virtual members, linking to their HQ pages. */
 function GlobalAgentsBox({ projectId }: { projectId: string }) {
@@ -44,11 +45,13 @@ function GlobalAgentsBox({ projectId }: { projectId: string }) {
 }
 
 function TeamPage() {
+	const { t } = useI18n();
 	const { projectId } = Route.useParams();
 	const { data: orgChart, isLoading } = useOrgChart(projectId);
 	const { data: team } = useTeam(projectId);
 
-	if (isLoading) return <div className="text-text-2 text-[13px] py-8 text-center">Loading...</div>;
+	if (isLoading)
+		return <div className="text-text-2 text-[13px] py-8 text-center">{t('common.loading')}</div>;
 
 	const roots = orgChart?.admin.children ?? [];
 	const hasMembers = roots.length > 0;

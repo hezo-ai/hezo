@@ -23,6 +23,7 @@ import {
 	useRunProgressUpdateNow,
 	useUpdateGoal,
 } from '../hooks/use-goals';
+import { useI18n } from '../lib/i18n';
 import { RunCommentBody } from './comment-renderers/run-comment';
 import { CreateGoalDialog } from './create-goal-dialog';
 import { GoalHealthPill } from './goal-health-pill';
@@ -365,6 +366,7 @@ function SuggestedGoals({
 }
 
 export function GoalsList({ projectId }: GoalsListProps) {
+	const { t } = useI18n();
 	const [view, setView] = useState<GoalView>('active');
 	const [createOpen, setCreateOpen] = useState(false);
 	const [editingGoal, setEditingGoal] = useState<GoalWithProject | null>(null);
@@ -383,7 +385,7 @@ export function GoalsList({ projectId }: GoalsListProps) {
 	if (isLoading) {
 		return (
 			<div data-testid="goals-list-loading" className="text-text-2 text-[13px] py-8 text-center">
-				Loading...
+				{t('common.loading')}
 			</div>
 		);
 	}
@@ -416,7 +418,7 @@ export function GoalsList({ projectId }: GoalsListProps) {
 			<ProjectProgressSummary projectId={projectId} />
 			<div className="mb-4 flex flex-wrap items-center justify-between gap-2">
 				<div className="flex items-center gap-1.5">
-					<h1 className="text-lg font-semibold text-text-1">Goals</h1>
+					<h1 className="text-lg font-semibold text-text-1">{t('nav.goals')}</h1>
 					<HelpDialog
 						title="What makes a good goal?"
 						triggerLabel="What makes a good goal?"

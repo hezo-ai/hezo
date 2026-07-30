@@ -8,6 +8,7 @@ import { Loader2 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 import { useCreateGoal, useUpdateGoal } from '../hooks/use-goals';
+import { useI18n } from '../lib/i18n';
 import { GoalSmartGuidance } from './goal-smart-guidance';
 import { Button } from './ui/button';
 import { DialogContent } from './ui/dialog';
@@ -73,6 +74,7 @@ function FieldLabel({
 }
 
 export function CreateGoalDialog({ projectId, open, onOpenChange, goal }: CreateGoalDialogProps) {
+	const { t } = useI18n();
 	const isEdit = !!goal;
 	const [title, setTitle] = useState('');
 	const [measurement, setMeasurement] = useState('');
@@ -230,7 +232,7 @@ export function CreateGoalDialog({ projectId, open, onOpenChange, goal }: Create
 						</Button>
 						<Button type="submit" shortcut="mod+Enter" disabled={!title.trim() || pending}>
 							{pending && <Loader2 className="w-4 h-4 animate-spin" />}
-							{isEdit ? 'Save' : 'Create'}
+							{isEdit ? t('common.save') : 'Create'}
 						</Button>
 					</div>
 				</form>

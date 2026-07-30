@@ -2,6 +2,7 @@ import { Link } from '@tanstack/react-router';
 import { Check, Trash2, X } from 'lucide-react';
 import { useState } from 'react';
 import { useResolveAssetDeletion } from '../../hooks/use-comments';
+import { useI18n } from '../../lib/i18n';
 import { Button } from '../ui/button';
 import { ConfirmDialog } from '../ui/confirm-dialog';
 import type { CommentDataOf } from './comment-data';
@@ -20,6 +21,7 @@ interface Props {
  * optimistic.
  */
 export function AssetDeletionRequestComment({ comment, projectId, taskId }: Props) {
+	const { t } = useI18n();
 	const content = comment.content ?? {};
 	const assets = Array.isArray(content.assets) ? content.assets : [];
 	const reason = content.reason ?? '';
@@ -134,7 +136,7 @@ export function AssetDeletionRequestComment({ comment, projectId, taskId }: Prop
 				onOpenChange={setConfirmOpen}
 				title={`Permanently delete ${assets.length} asset${assets.length === 1 ? '' : 's'}?`}
 				description="Comments that attach or reference them will lose the file. This cannot be undone."
-				confirmLabel="Delete"
+				confirmLabel={t('common.delete')}
 				variant="danger"
 				loading={resolve.isPending}
 				onConfirm={() => submit(true)}

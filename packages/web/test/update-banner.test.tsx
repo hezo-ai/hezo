@@ -6,6 +6,9 @@ import { afterEach, expect, test, vi } from 'vitest';
 import { UpdateBanner } from '../src/components/update-banner';
 import type { UpdateStatusInfo } from '../src/hooks/use-update-check';
 import { api } from '../src/lib/api';
+// The banner's confirm dialog resolves its cancel/close labels through `t()`,
+// so the tree needs the i18n context the app shell always provides.
+import { I18nProvider } from '../src/lib/i18n';
 
 const BASE: UpdateStatusInfo = {
 	current: '0.1.0',
@@ -37,7 +40,9 @@ function renderBanner(status: Partial<UpdateStatusInfo> = {}, isSuperuser = true
 		qc,
 		...render(
 			<QueryClientProvider client={qc}>
-				<UpdateBanner />
+				<I18nProvider>
+					<UpdateBanner />
+				</I18nProvider>
 			</QueryClientProvider>,
 		),
 	};
@@ -198,7 +203,9 @@ test('surfaces "Install & restart" once a background download stages — via pol
 	qc.setQueryData(['me'], { type: 'admin', is_superuser: true });
 	const { findByTestId, queryByTestId } = render(
 		<QueryClientProvider client={qc}>
-			<UpdateBanner />
+			<I18nProvider>
+				<UpdateBanner />
+			</I18nProvider>
 		</QueryClientProvider>,
 	);
 

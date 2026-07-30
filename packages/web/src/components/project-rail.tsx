@@ -11,6 +11,7 @@ import {
 	useReorderProjects,
 } from '../hooks/use-projects';
 import { moveItem, useSortableRail } from '../hooks/use-sortable-rail';
+import { useI18n } from '../lib/i18n';
 import { CreateProjectWithTeamDialog } from './create-project-with-team-dialog';
 import { Avatar, avatarColorFromString, getInitials } from './ui/avatar';
 import { CountOverlayBadge } from './ui/count-overlay-badge';
@@ -41,6 +42,7 @@ import { Tooltip } from './ui/tooltip';
  * create button nor the pinned HQ entry takes part.
  */
 export function ProjectRail({ showHome = false }: { showHome?: boolean } = {}) {
+	const { t } = useI18n();
 	const { data: me } = useMe();
 	const { projects } = useAllVisibleProjects();
 	const hq = useHqProject();
@@ -65,14 +67,14 @@ export function ProjectRail({ showHome = false }: { showHome?: boolean } = {}) {
 			<nav
 				className="w-[60px] shrink-0 h-full border-r border-border bg-surface-2 flex flex-col items-center py-3"
 				data-testid="project-rail"
-				aria-label="Projects"
+				aria-label={t('nav.projects')}
 			>
 				{showHome && (
 					<div className="shrink-0 pb-2 mb-1 w-full flex justify-center border-b border-border">
-						<Tooltip content="Home" side="right">
+						<Tooltip content={t('nav.home')} side="right">
 							<Link
 								to="/home"
-								aria-label="Home"
+								aria-label={t('nav.home')}
 								data-testid="project-rail-home"
 								className="w-9 h-9 rounded-md flex items-center justify-center text-text-2 hover:text-text-1 hover:bg-surface border border-border bg-surface transition-colors"
 							>

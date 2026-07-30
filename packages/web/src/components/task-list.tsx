@@ -9,6 +9,7 @@ import { AlertTriangle, AtSign, ChevronDown, ListPlus, Plus, Search } from 'luci
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAgents } from '../hooks/use-agents';
 import { type Task, useInfiniteTasks, useTasks } from '../hooks/use-tasks';
+import { useI18n } from '../lib/i18n';
 import { nestTasksForDisplay } from '../lib/nest-tasks-for-display';
 import {
 	clearStoredTaskFilters,
@@ -131,6 +132,7 @@ function TaskListSection({
 }
 
 export function TaskList({ projectId }: TaskListProps) {
+	const { t } = useI18n();
 	const navigate = useNavigate();
 	const { data: agents } = useAgents(projectId);
 	const [expanded, setExpanded] = useState(false);
@@ -583,7 +585,7 @@ export function TaskList({ projectId }: TaskListProps) {
 					data-testid="task-list-loading"
 					className="text-text-2 text-[13px] py-8 text-center mb-6"
 				>
-					Loading...
+					{t('common.loading')}
 				</div>
 			) : hasNoTasksAtAll ? (
 				<EmptyState

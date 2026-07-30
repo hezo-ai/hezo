@@ -1,6 +1,7 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
 import type { ComponentPropsWithoutRef, ReactNode } from 'react';
+import { useI18n } from '../../lib/i18n';
 
 // z-[90]/overlay z-[80] keep dialogs above the full-screen mobile surfaces that
 // can host their triggers — the task-detail preview panel (z-[60]) and the review
@@ -89,6 +90,7 @@ export function DialogContent({
 	children,
 	...props
 }: DialogContentProps) {
+	const { t } = useI18n();
 	const contentClass = fullscreen ? fullscreenContentClassName : dialogContentClassName[size];
 	return (
 		<Dialog.Portal>
@@ -105,7 +107,7 @@ export function DialogContent({
 								<button
 									type="button"
 									className="-m-1 p-2 text-text-2 hover:text-text-1"
-									aria-label="Close"
+									aria-label={t('common.close')}
 									data-testid="dialog-close"
 								>
 									<X className="h-4 w-4" />

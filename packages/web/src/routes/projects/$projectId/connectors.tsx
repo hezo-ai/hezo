@@ -29,6 +29,7 @@ import {
 	useOAuthConnections,
 } from '../../../hooks/use-oauth-connections';
 import { useProject } from '../../../hooks/use-projects';
+import { useI18n } from '../../../lib/i18n';
 import { queryKeys } from '../../../lib/query-keys';
 
 interface ConnectorsSearch {
@@ -503,6 +504,7 @@ interface ConnectorRowProps {
 }
 
 function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowProps) {
+	const { t } = useI18n();
 	const { data: me } = useMe();
 	const queryClient = useQueryClient();
 	const status = connectorStatus(connector);
@@ -715,7 +717,11 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 									disabled={authStart.isPending}
 									data-testid="connector-connect"
 								>
-									{authStart.isPending ? 'Starting…' : status === 'failed' ? 'Retry' : 'Connect'}
+									{authStart.isPending
+										? 'Starting…'
+										: status === 'failed'
+											? t('common.retry')
+											: 'Connect'}
 								</Button>
 							)}
 							{isApi && !isStaticKeyApi && !brokerOpen && (

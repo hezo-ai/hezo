@@ -4,6 +4,7 @@ import { Clock, Loader2, Pencil, TriangleAlert } from 'lucide-react';
 import { type Ref, useState } from 'react';
 import { type EntityBudgetStatus, useBudgetStatus, type WindowStatus } from '../../hooks/use-costs';
 import { useProject, useUpdateProject } from '../../hooks/use-projects';
+import { useI18n } from '../../lib/i18n';
 import { Button } from '../ui/button';
 import { SectionHeader } from '../ui/section-header';
 import { BudgetWindowsEditor } from './budget-windows-editor';
@@ -200,6 +201,7 @@ export function ProjectBudgetPanel({
 	sectionRef?: Ref<HTMLElement>;
 	sectionId?: string;
 }) {
+	const { t } = useI18n();
 	const { data: project } = useProject(projectId);
 	const { data: status } = useBudgetStatus(projectId, { enabled: variant === 'spend' });
 	const updateProject = useUpdateProject(projectId);
@@ -274,7 +276,11 @@ export function ProjectBudgetPanel({
 							disabled={updateProject.isPending}
 							onClick={() => void save()}
 						>
-							{updateProject.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Save'}
+							{updateProject.isPending ? (
+								<Loader2 className="h-3 w-3 animate-spin" />
+							) : (
+								t('common.save')
+							)}
 						</Button>
 						<Button type="button" variant="ghost" size="sm" onClick={() => setEditing(false)}>
 							Cancel

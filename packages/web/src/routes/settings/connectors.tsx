@@ -32,6 +32,7 @@ import {
 } from '../../hooks/use-instance-connectors';
 import { useMe } from '../../hooks/use-me';
 import { useAllVisibleProjects } from '../../hooks/use-projects';
+import { useI18n } from '../../lib/i18n';
 
 // Scope sentinel: create against / re-scope to "all projects" (a global
 // connector, project_id null). Any other option value is a concrete project id.
@@ -273,6 +274,7 @@ function InstanceConnectorRow({
 	focused,
 	focusRef,
 }: InstanceConnectorRowProps) {
+	const { t } = useI18n();
 	const deleteConnector = useDeleteInstanceConnector();
 	const authStart = useInstanceAuthStart();
 	const updateScope = useUpdateInstanceConnectorScope();
@@ -376,7 +378,11 @@ function InstanceConnectorRow({
 							disabled={authStart.isPending}
 							data-testid="instance-connector-connect"
 						>
-							{authStart.isPending ? 'Starting…' : status === 'failed' ? 'Retry' : 'Connect'}
+							{authStart.isPending
+								? 'Starting…'
+								: status === 'failed'
+									? t('common.retry')
+									: 'Connect'}
 						</Button>
 					)}
 					<button
