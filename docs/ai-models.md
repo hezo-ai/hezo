@@ -19,6 +19,7 @@ and your agents run on the models you choose.
 | **Google** | Gemini | Gemini | API key or subscription |
 | **xAI** | Grok | Grok Build | API key |
 | **Kimi** (Moonshot) | Kimi | Claude Code | API key |
+| **Kimi Code** (Moonshot) | Kimi | Kimi Code | API key |
 | **DeepSeek** | DeepSeek | Claude Code | API key |
 | **Z.ai** | GLM | Claude Code | API key |
 | **OpenRouter** | Many, via one account | OpenCode | API key |
@@ -31,6 +32,21 @@ xAI each use their own CLI (xAI runs on its **Grok Build** CLI, on the `grok-4.5
 Kimi, DeepSeek, and Z.ai run through Claude Code against their Anthropic-compatible
 endpoints; OpenRouter runs through the **OpenCode** CLI; and Ollama and LM Studio run
 through Claude Code against your own machine.
+
+### Two ways to run Kimi
+
+Moonshot's models are available through either of two entries in the provider list, and you
+can add both:
+
+- **Kimi** runs them through **Claude Code**, pointed at Moonshot's Anthropic-compatible
+  endpoint.
+- **Kimi Code** runs them through **Kimi Code**, Moonshot's own command-line agent.
+
+They use the same account, the same API key and the same models - only the harness differs.
+Neither replaces the other, so if you already run Kimi, adding Kimi Code changes nothing
+about your existing setup. Pick between them per agent (in the agent's settings) or per task
+(by pinning the task's runtime); otherwise whichever provider you have marked as default is
+used.
 
 ## Local models
 
@@ -93,6 +109,7 @@ form in Hezo walks you through these same steps inline.
 | **Google** | [Google AI Studio → API keys](https://aistudio.google.com/apikey) | Free tier with strict rate limits; enable billing on the key's Google Cloud project for sustained use |
 | **xAI** | [xAI Console → API keys](https://console.x.ai/) | Billed per token; add credits first |
 | **Kimi** (Moonshot) | [Kimi Open Platform → API keys](https://platform.kimi.ai/console/api-keys) | Prepaid balance |
+| **Kimi Code** (Moonshot) | [Kimi Open Platform → API keys](https://platform.kimi.ai/console/api-keys) | Same key as Kimi above |
 | **DeepSeek** | [DeepSeek Platform → API keys](https://platform.deepseek.com/api_keys) | Prepaid balance |
 | **Z.ai** | [Z.ai platform → API keys](https://z.ai/manage-apikey/apikey-list) | Prepaid balance ([billing page](https://z.ai/manage-apikey/billing)) |
 | **OpenRouter** | [OpenRouter → Keys](https://openrouter.ai/keys) | Prepaid credits, billed per token |

@@ -106,6 +106,12 @@ export function createAgentStreamParser(
 		// `extractGrokUsageFromDebugLog`), so this parser's getUsage() stays null.
 		case AgentRuntime.Grok:
 			return createGrokParser();
+		// Kimi Code's `stream-json` is role-discriminated JSONL and, like Grok,
+		// carries no token usage; usage is recovered post-run from the per-session
+		// `wire.jsonl` (see the runner and `extractKimiUsageFromSessionLog`), so this
+		// parser's getUsage() stays null.
+		case AgentRuntime.Kimi:
+			return createKimiParser();
 		default:
 			return createPassthroughParser();
 	}
@@ -248,6 +254,8 @@ export function createAgentChatParser(
 			return createGenericChatParser(price);
 		case AgentRuntime.Grok:
 			return createGrokChatParser();
+		case AgentRuntime.Kimi:
+			return createKimiChatParser();
 		default:
 			return { onStdout: () => [], flush: () => [], getUsage: () => null };
 	}
@@ -1103,6 +1111,270 @@ export function extractGrokUsageFromDebugLog(
 		outputTokens: output,
 	});
 	return { inputTokens: input, outputTokens: output, costCents };
+}
+
+// ---------------------------------------------------------------------------
+// Kimi Code (`kimi --output-format stream-json`)
+//
+// One JSON object per stdout line, discriminated by `role`:
+//   {"role":"assistant","content":"…","tool_calls":[{"type":"function","id":"…",
+//     "function":{"name":"…","arguments":"…"}}]}
+//   {"role":"tool","tool_call_id":"…","content":"…"}
+//   {"role":"meta","type":"turn.step.retrying"|"session.resume_hint"|"system.version",…}
+//
+// Thinking content and tool progress go to STDERR, not this stream, so there is
+// no [thinking] rendering here — stderr passes through untouched.
+//
+// Like Grok, the stream carries NO token usage, so getUsage() stays null and cost
+// comes from `extractKimiUsageFromSessionLog` post-run.
+// ---------------------------------------------------------------------------
+
+interface KimiToolCall {
+	id?: string;
+	type?: string;
+	function?: { name?: string; arguments?: string };
+}
+
+interface KimiEvent {
+	role?: string;
+	content?: unknown;
+	tool_calls?: KimiToolCall[];
+	tool_call_id?: string;
+	type?: string;
+	version?: string;
+	error_name?: string;
+	error_message?: string;
+	status_code?: number;
+	failed_attempt?: number;
+	next_attempt?: number;
+	max_attempts?: number;
+}
+
+/** Kimi writes `content` as a plain string, but tolerate Claude-style blocks. */
+function kimiContentText(content: unknown): string {
+	if (typeof content === 'string') return content;
+	return extractToolResultText(content);
+}
+
+function createKimiParser(): AgentStreamParser {
+	let terminalError: string | null = null;
+	let finalAssistantMessage: string | null = null;
+
+	const renderEvent = (raw: unknown): string[] => {
+		const event = raw as KimiEvent;
+		const out: string[] = [];
+
+		if (event.role === 'assistant') {
+			const text = kimiContentText(event.content).trim();
+			if (text) {
+				// Every assistant line is a candidate; the last one wins, which is what
+				// the runner's handoff-delivery net needs.
+				finalAssistantMessage = text;
+				out.push(text);
+			}
+			for (const call of event.tool_calls ?? []) {
+				const name = call.function?.name ?? 'tool';
+				// `arguments` is a JSON *string* on the wire; parse it so the log renders
+				// `name(a=1, b=2)` like every other runtime rather than a quoted blob.
+				let args: unknown = call.function?.arguments;
+				if (typeof args === 'string') {
+					try {
+						args = JSON.parse(args);
+					} catch {
+						// Leave it as the raw string — renderToolInput stringifies it fine.
+					}
+				}
+				out.push(formatToolUse(name, args));
+			}
+			return out;
+		}
+
+		if (event.role === 'tool') {
+			const body = kimiContentText(event.content).replace(/\s+/g, ' ').trim();
+			return [body ? `[tool-result] ${body}` : '[tool-result]'];
+		}
+
+		if (event.role === 'meta') {
+			if (event.type === 'turn.step.retrying') {
+				// A retry is the only place Kimi surfaces an upstream failure on stdout
+				// (402/401 land here), so it is both logged and classified. It is not
+				// necessarily fatal — the CLI retries — but if the run then fails, this
+				// is the most useful cause to report.
+				const msg = extractErrorMessage(undefined, event.error_message ?? event.error_name);
+				if (msg) terminalError = classifyRuntimeError(msg) ?? terminalError;
+				const attempt =
+					event.failed_attempt && event.max_attempts
+						? ` (attempt ${event.failed_attempt}/${event.max_attempts})`
+						: '';
+				return [`[system] retrying after error${attempt}${msg ? `: ${msg}` : ''}`];
+			}
+			// `session.resume_hint` is a "how to resume this session" convenience for
+			// interactive users; it is pure noise in a headless run log. Drop it.
+			return [];
+		}
+
+		return [];
+	};
+
+	return createJsonlParser(
+		renderEvent,
+		() => null,
+		() => terminalError,
+		() => finalAssistantMessage,
+	);
+}
+
+function createKimiChatParser(): AgentChatParser {
+	const render = (raw: unknown): AgentChatTurnEvent[] => {
+		const event = raw as KimiEvent;
+		if (event.role !== 'assistant') return [];
+		const text = kimiContentText(event.content);
+		return text ? [{ text }] : [];
+	};
+	const reader = createJsonlEventReader(render);
+	return { onStdout: reader.onStdout, flush: reader.flush, getUsage: () => null };
+}
+
+/** Numeric field probe tolerant of camelCase and snake_case spellings. */
+function pickNumber(source: Record<string, unknown>, keys: readonly string[]): number | null {
+	for (const key of keys) {
+		const v = source[key];
+		if (typeof v === 'number' && Number.isFinite(v)) return v;
+	}
+	return null;
+}
+
+function pickString(source: Record<string, unknown>, keys: readonly string[]): string | undefined {
+	for (const key of keys) {
+		const v = source[key];
+		if (typeof v === 'string' && v.trim()) return v;
+	}
+	return undefined;
+}
+
+const KIMI_INPUT_KEYS = ['inputOther', 'input_other'] as const;
+const KIMI_OUTPUT_KEYS = ['output'] as const;
+const KIMI_CACHE_READ_KEYS = ['inputCacheRead', 'input_cache_read'] as const;
+const KIMI_CACHE_CREATION_KEYS = ['inputCacheCreation', 'input_cache_creation'] as const;
+const KIMI_MODEL_KEYS = ['model', 'model_id', 'modelId', 'model_name'] as const;
+const KIMI_SCOPE_KEYS = ['scope', 'kind', 'level'] as const;
+const KIMI_RECORD_ID_KEYS = ['request_id', 'requestId', 'id'] as const;
+
+/**
+ * Recover a Kimi Code run's token usage from its per-session `wire.jsonl`.
+ *
+ * Kimi Code emits no usage on stdout (see `createKimiParser`), but its session
+ * log records usage per API call with the buckets Hezo needs:
+ * `inputOther` / `output` / `inputCacheRead` / `inputCacheCreation`.
+ *
+ * Two hazards this handles:
+ *
+ *  1. **Turn- vs session-scoped records.** Session-scoped records are *cumulative
+ *     totals*, so summing them alongside per-turn records double-counts. When any
+ *     scope-tagged turn record is present, only those are summed; otherwise the
+ *     last session-scoped record is taken as the authoritative total. Untagged
+ *     records are summed, which is the natural reading of a wire log (one record
+ *     per request).
+ *  2. **Duplicate records.** As with Grok's spans, a record may be echoed; entries
+ *     are keyed by request id (last write wins) before summing.
+ *
+ * Field spellings are probed in both camelCase and snake_case. That is deliberate
+ * hedging, not indecision: the CLI ships two engine generations with duplicated
+ * logging paths, and the older `kimi-cli` used the snake_case spelling. Accepting
+ * both costs nothing and avoids a silent $0 on an upstream version bump.
+ *
+ * Returns null when the log carries no usable record — the caller then records $0,
+ * failing low rather than inventing a number.
+ */
+export function extractKimiUsageFromSessionLog(
+	contents: string,
+	price: PriceModelFn = NO_PRICE,
+): AgentRunUsage | null {
+	interface Rec {
+		input: number;
+		output: number;
+		cacheRead: number;
+		cacheCreation: number;
+		model?: string;
+		sessionScoped: boolean;
+	}
+	const byId = new Map<string, Rec>();
+	let counter = 0;
+
+	for (const line of contents.split('\n')) {
+		const trimmed = line.trim();
+		if (trimmed === '') continue;
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(trimmed);
+		} catch {
+			continue;
+		}
+		if (!parsed || typeof parsed !== 'object') continue;
+		const record = parsed as Record<string, unknown>;
+
+		// The buckets live under `usage` (Kimi Code) or `token_usage` (older
+		// kimi-cli). Anything without one of those is not a usage record.
+		const rawUsage = (record.usage ?? record.token_usage) as unknown;
+		if (!rawUsage || typeof rawUsage !== 'object') continue;
+		const usage = rawUsage as Record<string, unknown>;
+
+		const input = pickNumber(usage, KIMI_INPUT_KEYS);
+		const output = pickNumber(usage, KIMI_OUTPUT_KEYS);
+		const cacheRead = pickNumber(usage, KIMI_CACHE_READ_KEYS);
+		const cacheCreation = pickNumber(usage, KIMI_CACHE_CREATION_KEYS);
+		// Require at least one recognised bucket, so an unrelated object that
+		// happens to carry a `usage` key can't contribute a phantom zero record.
+		if (input === null && output === null && cacheRead === null && cacheCreation === null) {
+			continue;
+		}
+
+		const scope = pickString(record, KIMI_SCOPE_KEYS) ?? pickString(usage, KIMI_SCOPE_KEYS) ?? '';
+		const id = pickString(record, KIMI_RECORD_ID_KEYS) ?? `#${counter++}`;
+		byId.set(id, {
+			input: input ?? 0,
+			output: output ?? 0,
+			cacheRead: cacheRead ?? 0,
+			cacheCreation: cacheCreation ?? 0,
+			model: pickString(record, KIMI_MODEL_KEYS) ?? pickString(usage, KIMI_MODEL_KEYS),
+			sessionScoped: scope.toLowerCase().includes('session'),
+		});
+	}
+	if (byId.size === 0) return null;
+
+	const all = [...byId.values()];
+	const turnScoped = all.filter((r) => !r.sessionScoped);
+	// Prefer per-turn records; fall back to the LAST cumulative total, never the
+	// sum of cumulative totals.
+	const counted = turnScoped.length > 0 ? turnScoped : all.slice(-1);
+
+	let input = 0;
+	let output = 0;
+	let cacheRead = 0;
+	let cacheCreation = 0;
+	let model: string | undefined;
+	for (const r of counted) {
+		input += r.input;
+		output += r.output;
+		cacheRead += r.cacheRead;
+		cacheCreation += r.cacheCreation;
+		if (r.model) model = r.model;
+	}
+
+	// `inputOther` is the non-cached remainder ("other" than cache), so unlike
+	// Codex/Grok it must NOT have the cached portion subtracted out — each bucket
+	// is billed at its own rate directly.
+	const costCents = price(model, {
+		inputTokens: input,
+		cacheReadTokens: cacheRead,
+		cacheCreationTokens: cacheCreation,
+		outputTokens: output,
+	});
+	return {
+		inputTokens: input + cacheRead + cacheCreation,
+		outputTokens: output,
+		costCents,
+	};
 }
 
 // ---------------------------------------------------------------------------
