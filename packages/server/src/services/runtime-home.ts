@@ -104,6 +104,19 @@ export const SUBSCRIPTION_LAYOUTS: Partial<Record<AiProvider, SubscriptionLayout
 		envVarName: 'HEZO_CLAUDE_CONFIG_DIR',
 		rotates: false,
 	},
+	// Kimi Code (the `kimi` CLI) — unlike every entry above, `KIMI_CODE_HOME` is a
+	// REAL variable the CLI consumes, not a Hezo-internal marker. It relocates the
+	// entire data root: config.toml, mcp.json, credentials, and the per-session
+	// logs. That is what makes three things possible at once — per-run config
+	// isolation (there is no `--mcp-config`-style flag to point at a file), the
+	// Stop hook's lookup of the run's own session log, and the post-run token-usage
+	// scrape that cost accounting depends on. Api-key only (KIMI_MODEL_API_KEY via
+	// env), so no authFileRelative.
+	[AiProvider.KimiCode]: {
+		dirName: 'kimi-code',
+		envVarName: 'KIMI_CODE_HOME',
+		rotates: false,
+	},
 	// The local providers are Claude Code-driven too, so they need the same per-run
 	// config dir — without an entry here `ensureRuntimeHomeDir` returns null, no
 	// settings.json is written, and the completeness Stop hook silently never

@@ -6,6 +6,32 @@ import {
 } from './provider-instructions';
 
 /**
+ * Shared by the two Kimi providers. Hezo can drive Moonshot's models either
+ * through Claude Code (`kimi`) or through Moonshot's own Kimi Code CLI
+ * (`kimi_code`); both authenticate with the same key from the same console, so
+ * the walkthrough is identical and is written once.
+ */
+const KIMI_KEY_INSTRUCTIONS: ProviderInstructionContent = {
+	title: 'How to get your Kimi API key',
+	steps: [
+		<>
+			Sign in to the{' '}
+			<InstructionsLink href="https://platform.kimi.ai/">Kimi Open Platform</InstructionsLink>{' '}
+			(Moonshot AI's developer console).
+		</>,
+		<>
+			Open{' '}
+			<InstructionsLink href="https://platform.kimi.ai/console/api-keys">API keys</InstructionsLink>{' '}
+			and click <strong>Create API key</strong>.
+		</>,
+		<>
+			Copy the key (starts with <code>sk-</code>) and paste it below.
+		</>,
+	],
+	footer: <>The Kimi API is prepaid — top up a small balance on the platform before agents run.</>,
+};
+
+/**
  * Per-provider "how to get an API key" walkthroughs, each linking to the
  * provider's own key console. Deliberately a full record (not Partial): adding
  * a provider without its key instructions should fail the typecheck.
@@ -155,29 +181,11 @@ export const API_KEY_INSTRUCTIONS: Record<AiProvider, ProviderInstructionContent
 			</>
 		),
 	},
-	[AiProvider.Kimi]: {
-		title: 'How to get your Kimi API key',
-		steps: [
-			<>
-				Sign in to the{' '}
-				<InstructionsLink href="https://platform.kimi.ai/">Kimi Open Platform</InstructionsLink>{' '}
-				(Moonshot AI's developer console).
-			</>,
-			<>
-				Open{' '}
-				<InstructionsLink href="https://platform.kimi.ai/console/api-keys">
-					API keys
-				</InstructionsLink>{' '}
-				and click <strong>Create API key</strong>.
-			</>,
-			<>
-				Copy the key (starts with <code>sk-</code>) and paste it below.
-			</>,
-		],
-		footer: (
-			<>The Kimi API is prepaid — top up a small balance on the platform before agents run.</>
-		),
-	},
+	// `kimi` and `kimi_code` are the same Moonshot account and the same key; they
+	// differ only in which CLI drives the models. One shared block, referenced
+	// twice, so the two can never drift apart.
+	[AiProvider.Kimi]: KIMI_KEY_INSTRUCTIONS,
+	[AiProvider.KimiCode]: KIMI_KEY_INSTRUCTIONS,
 	[AiProvider.XAi]: {
 		title: 'How to get your xAI API key',
 		steps: [

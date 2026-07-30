@@ -1406,17 +1406,50 @@ agents back to `idle` once a window rolls over or a limit is raised.
 
 ## 6. AI providers, runtimes & the completeness stop-hook
 
-**Providers → runtimes.** `AiProvider` has **ten** values — `anthropic`, `openai`,
-`google`, `deepseek`, `z_ai`, `openrouter`, `kimi`, `x_ai`, `ollama`, `lmstudio` — and
-`AgentRuntime` has **five** — `claude_code`, `codex`, `gemini`, `opencode`, `grok`. The mapping
+**Providers → runtimes.** `AiProvider` has **eleven** values — `anthropic`, `openai`,
+`google`, `deepseek`, `z_ai`, `openrouter`, `kimi`, `kimi_code`, `x_ai`, `ollama`, `lmstudio` — and
+`AgentRuntime` has **six** — `claude_code`, `codex`, `gemini`, `opencode`, `grok`, `kimi`. The mapping
 is data-driven in
 `packages/shared/src/types/common.ts` (`PROVIDER_RUNTIME_ADAPTERS`, `PROVIDER_TO_RUNTIME`,
 `PROVIDERS_BY_RUNTIME`): Anthropic + DeepSeek + Z.ai + Kimi → `claude_code` (DeepSeek/Z.ai/Kimi
 inject `ANTHROPIC_BASE_URL` + model defaults to point Claude Code at their Anthropic-compatible
 gateway — Kimi at `api.moonshot.ai/anthropic`, model `kimi-k2.7-code`), OpenAI → `codex`,
 Google → `gemini`, OpenRouter → `opencode`, xAI → `grok` (its own first-party Grok Build CLI,
-`XAI_API_KEY` direct to `api.x.ai`, model `grok-4.5`), Ollama + LM Studio → `claude_code`
-(local runners, see below).
+`XAI_API_KEY` direct to `api.x.ai`, model `grok-4.5`), Kimi Code → `kimi` (Moonshot's own CLI,
+see below), Ollama + LM Studio → `claude_code` (local runners, see below).
+
+**Moonshot's models are reachable two ways, and both are supported.** `kimi` drives
+Claude Code against Moonshot's Anthropic-compatible gateway (above); `kimi_code` drives
+Moonshot's first-party **Kimi Code CLI** (`kimi`, npm `@moonshot-ai/kimi-code`) on the
+`kimi` runtime. They are siblings — same account, same API key, same models, different
+harness — so an operator may configure either or both and choose per agent
+(`member_agents.model_override_provider`) or per task (`tasks.runtime_type`). The
+`AgentRuntime.Kimi` value reuses the `kimi` label that has existed in the `agent_runtime`
+enum since `001_initial_schema.sql`: it was the original standalone Kimi runtime, retired by
+migration `010` when Kimi moved onto Claude Code, and Postgres cannot drop enum labels — so
+the new runtime needed no enum change (only the `kimi_code` provider did, in `048`).
+
+Three things make this runtime unlike the Claude-Code-driven providers:
+
+- **Credential delivery is env-only via the `KIMI_MODEL_*` family.** Kimi Code deliberately
+  does not read provider API keys from the shell environment; they are expected to live in
+  `config.toml`. The documented exception is that family, which *is* shell-read and registers
+  a temporary in-memory provider for the launch. Hezo uses it so the key stays in env and is
+  never written to a file the agent can read. `KIMI_MODEL_NAME` is what activates the family,
+  so it is always set and `buildProviderEnv` overrides it with the run's selected model.
+  `KIMI_MODEL_CAPABILITIES` must include `image_in`, or the CLI's `downgradeUnsupportedMedia`
+  step silently replaces every image part with a placeholder string — which would break
+  `read_project_asset`, the only path by which an agent ever receives an image.
+- **`KIMI_CODE_HOME` is a real variable the CLI consumes**, unlike the Hezo-internal markers
+  the Claude Code entries use in `SUBSCRIPTION_LAYOUTS`. It relocates the entire data root
+  (config, `mcp.json`, credentials, per-session logs) to the per-run directory. That is the
+  only isolation mechanism available — there is no `--mcp-config`-style flag — and it is also
+  what makes the session-log reads below possible.
+- **No token usage on stdout.** Like Grok, the `stream-json` stream carries none, so cost is
+  recovered post-run by `extractKimiUsageFromSessionLog` from the per-session `wire.jsonl`
+  under that home, then priced from `model_pricing` like every other runtime. The runner's
+  `recoverOffStreamRunUsage` dispatches both file-based recoveries and scrubs the file
+  afterwards (each can carry the provider credential).
 
 **Local providers carry their endpoint on the credential, not in `staticEnv`.** Ollama and
 LM Studio serve Anthropic's Messages API natively, so they reuse the Claude Code runtime
@@ -1467,20 +1500,33 @@ catalog as autocomplete suggestions.
 (`minimal|low|medium|high|max`) from the wakeup payload → `member_agents.default_effort` →
 global `medium`. Each runtime maps it natively: `claude_code` appends
 `think`/`think hard`/`ultrathink`; `codex` passes `-c model_reasoning_effort=`; `gemini`
-sets `GEMINI_REASONING_EFFORT`; `opencode`/`grok` steer effort through the portable prompt
+sets `GEMINI_REASONING_EFFORT`; `kimi` sets `KIMI_MODEL_THINKING_EFFORT` (it has no
+`minimal`, which maps to `low`); `opencode`/`grok` steer effort through the portable prompt
 directive. It's also exposed as `HEZO_AGENT_EFFORT`.
 
-**Per-runtime wiring** lives in the MCP injectors (`services/mcp-injectors/`, five
-adapters in `index.ts`: ClaudeCode, Codex, Gemini, OpenCode, Grok). Each builds the
+**Per-runtime wiring** lives in the MCP injectors (`services/mcp-injectors/`, six
+adapters in `index.ts`: ClaudeCode, Codex, Gemini, OpenCode, Grok, Kimi). Each builds the
 CLI invocation (headless prefix, prompt delivery, stream/auto-approve args), injects MCP
-servers, and wires the stop-hook. OpenCode and Grok take the prompt as a CLI **argument**
-(`HEZO_PROMPT_MODE=arg`, `RUNTIME_PROMPT_DELIVERY`); the rest read it on stdin. Grok writes
-its MCP servers into a per-run `config.toml` (`$GROK_HOME`, relocated via
+servers, and wires the stop-hook. OpenCode, Grok and Kimi Code take the prompt as a CLI
+**argument** (`HEZO_PROMPT_MODE=arg`, `RUNTIME_PROMPT_DELIVERY`); the rest read it on stdin.
+Grok writes its MCP servers into a per-run `config.toml` (`$GROK_HOME`, relocated via
 `SUBSCRIPTION_LAYOUTS`) with inline bearer headers, plus `[cli] auto_update=false`; shared
-TOML rendering for the Codex config lives in `mcp-injectors/toml.ts`. **Grok reports no
-token usage on its stream** — the runner points it at a per-run `--debug-file` and parses
-the `process_conversation_turn` tracing spans for cost (`extractGrokUsageFromDebugLog`),
-then scrubs the file (it also holds the `XAI_API_KEY`).
+TOML rendering for the Codex config lives in `mcp-injectors/toml.ts`. Kimi Code splits its
+configuration in two — MCP servers in `mcp.json`, the `[[hooks]]` Stop entry and
+`[permission.rules]` in `config.toml`, both under `$KIMI_CODE_HOME` — and is the only adapter
+whose per-server tool filter maps one-to-one onto the descriptor (`enabledTools` /
+`disabledTools` are native keys). Its bearer travels by env-var name
+(`bearerTokenEnvVar`), so `bearerTokenStorage` is `'env-var'` and `validateInjection`
+enforces that no token reaches a file. Kimi Code's `[[hooks]]` entries accept **exactly four
+keys** (`event`, `matcher`, `command`, `timeout`) and the CLI refuses to load a config
+carrying any other, which would break every run on that runtime rather than just the hook.
+**Grok and Kimi Code report no token usage on their streams** — for Grok the runner points at
+a per-run `--debug-file` and parses the `process_conversation_turn` tracing spans
+(`extractGrokUsageFromDebugLog`); for Kimi Code it reads the per-session `wire.jsonl` under
+the run home (`extractKimiUsageFromSessionLog`, counting turn-scoped records and never
+summing cumulative session totals). `recoverOffStreamRunUsage` dispatches both and scrubs the
+file afterwards — Grok's holds the `XAI_API_KEY`, and a wire log plausibly captures the
+Moonshot bearer.
 
 **Runtime timeout hardening.** Each CLI ships default timeouts that would cut off Hezo's
 legitimately long agent/background work; every runtime is relaxed at its own config surface
@@ -1497,8 +1543,11 @@ reconnect/retry, not a kill, so they're left at default. **Gemini** (`settings.j
 per-MCP-server `timeout`. **OpenCode** (`opencode.json`) raises the per-MCP-server `timeout`
 from its 5 s (!) default to 10 min; its bash tool has a non-configurable 10-min hard cap.
 **Grok** (`config.toml`) raises `[toolset.bash].timeout_secs` and per-`[mcp_servers.*]`
-`startup_timeout_sec` (its bash already auto-backgrounds on timeout rather than killing). All
-values live as named constants in each `mcp-injectors/*.ts` adapter.
+`startup_timeout_sec` (its bash already auto-backgrounds on timeout rather than killing).
+**Kimi Code** (`mcp.json`) raises per-server `startupTimeoutMs`/`toolTimeoutMs` from its 30 s /
+60 s defaults; these are set per-server rather than through the global
+`KIMI_MCP_*_TIMEOUT_MS` env vars so one slow connector can't be masked by a blanket override.
+All values live as named constants in each `mcp-injectors/*.ts` adapter.
 
 **Completeness stop-hook.** Every run is gated by a judge that fires when the agent tries
 to end its turn and **blocks** it (keeping the same headless exec alive) when it's bailing
@@ -1528,11 +1577,24 @@ only when the run pins none, so a provider model upgrade (e.g. Kimi `kimi-k2.7-c
 needs no code change; Anthropic keeps its stable, cheaper Sonnet constant. Wiring differs by
 runtime's native hook: Claude Code uses a `type: "prompt"` `Stop` hook (makes the judge call
 itself, resolving the model via `judgeModelForProvider` over `CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER`);
-Codex/Gemini use command scripts (`buildCodexJudgeScript`/`buildGeminiJudgeScript`) that
+Codex/Gemini/Kimi Code use command scripts (`buildJudgeScriptForRuntime` over `JUDGE_SPECS`) that
 call the provider API. Every runtime's judge short-circuits on `stop_hook_active` — allow
 the stop once the turn has already been continued once — so a persistent verdict can't loop
 the same headless exec: the Codex/Gemini scripts guard it in code, and the Claude Code prompt
-hook now instructs the judge to do the same. For Claude Code the `$ARGUMENTS` placeholder is
+hook now instructs the judge to do the same.
+
+**Kimi Code needs two substitutes to run the same judge.** Its `Stop` hook *is* blockable
+(one of only three such events), but its stdin payload carries only `hook_event_name`,
+`session_id` and `cwd` — neither the agent's final message nor `stop_hook_active`. So its
+`JUDGE_SPECS` entry sets `sessionLogLookup` (read the last assistant message from the run's own
+`wire.jsonl` under `$KIMI_CODE_HOME` — the same file the usage scrape parses) and
+`loopGuardFile` (a `.hezo-stop-blocked` marker in that home, written before emitting a block
+and checked on entry, standing in for the absent flag so the one-block ceiling is real rather
+than nominal). Both are opt-in fields that stay unset for every other runtime. A block is
+signalled on all three channels Kimi documents — exit code 2 (its "intentional block"; any
+other non-zero is treated as a broken script and fails open), the reason on stderr, and the
+decision JSON on stdout — so the verdict survives whichever channel the installed version
+honours. For Claude Code the `$ARGUMENTS` placeholder is
 the raw Stop-hook input JSON, which carries both `stop_hook_active` and the agent's final
 message in `last_assistant_message`; the prompt points the judge explicitly at that field so a
 weaker judge model (e.g. DeepSeek judging itself) evaluates the message — the text rule 10

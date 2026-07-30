@@ -110,3 +110,30 @@ describe('applyEffortToRuntime — Gemini', () => {
 		expect(r.extraArgs).toEqual([]);
 	});
 });
+
+describe('applyEffortToRuntime — Kimi Code', () => {
+	it('sets KIMI_MODEL_THINKING_EFFORT env var', () => {
+		const r = applyEffortToRuntime(AgentRuntime.Kimi, AgentEffort.High);
+		expect(r.extraEnv).toEqual(['KIMI_MODEL_THINKING_EFFORT=high']);
+		expect(r.extraArgs).toEqual([]);
+	});
+
+	it('maps minimal to low, since Kimi has no minimal level', () => {
+		const r = applyEffortToRuntime(AgentRuntime.Kimi, AgentEffort.Minimal);
+		expect(r.extraEnv).toEqual(['KIMI_MODEL_THINKING_EFFORT=low']);
+	});
+
+	it('passes max straight through rather than reaching for xhigh', () => {
+		// Kimi accepts an `xhigh` above `high`, but using it for `max` would make the
+		// two top Hezo levels indistinguishable.
+		const r = applyEffortToRuntime(AgentRuntime.Kimi, AgentEffort.Max);
+		expect(r.extraEnv).toEqual(['KIMI_MODEL_THINKING_EFFORT=max']);
+	});
+
+	it('also carries the portable prompt directive', () => {
+		// The native knob is the primary lever, but the directive rides along so
+		// behaviour stays consistent if a model ignores it.
+		const r = applyEffortToRuntime(AgentRuntime.Kimi, AgentEffort.Max);
+		expect(r.promptDirective.length).toBeGreaterThan(0);
+	});
+});

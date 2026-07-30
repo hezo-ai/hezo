@@ -65,7 +65,8 @@ unlocked; signing back in only needs your password.)
 Agents need a model to run. Add at least one **AI provider**. You can either:
 
 - **Paste an API key** (or connect a subscription where supported) for Anthropic (Claude),
-  OpenAI (ChatGPT), Google (Gemini), xAI (Grok), DeepSeek, Z.ai, Kimi, or OpenRouter.
+  OpenAI (ChatGPT), Google (Gemini), xAI (Grok), DeepSeek, Z.ai, Kimi, Kimi Code, or
+  OpenRouter.
 - **Point Hezo at your own machine** with Ollama or LM Studio - give it the server URL and
   leave the key blank. Nothing is billed per token.
 

@@ -56,7 +56,8 @@ agent can't hurt you. A few guarantees sit underneath everything:
 - **Bring your own models, each via a real agentic runtime.** Claude, ChatGPT, Gemini,
   Grok, DeepSeek, Z.ai, Kimi, and OpenRouter are all supported - Claude, ChatGPT, Gemini, and
   Grok through their own first-party command-line tooling, DeepSeek, Z.ai, and Kimi through
-  Claude Code against their Anthropic-compatible endpoints, and OpenRouter through OpenCode -
+  Claude Code against their Anthropic-compatible endpoints (Kimi can alternatively run on
+  Moonshot's own Kimi Code CLI), and OpenRouter through OpenCode -
   not a lowest-common-denominator wrapper. You can also run **entirely on your own hardware**
   with Ollama or LM Studio, at no per-token cost. You can give any individual agent its own
   model. See [AI model support](/docs/ai-models).

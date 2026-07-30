@@ -7,6 +7,15 @@ export const AgentRuntime = {
 	Gemini: 'gemini',
 	OpenCode: 'opencode',
 	Grok: 'grok',
+	// Moonshot's first-party Kimi Code CLI (`kimi`). The `kimi` label predates
+	// this entry: it was the original standalone Kimi runtime, retired by
+	// migration 010 when Kimi moved onto Claude Code. Reusing the label means the
+	// DB `agent_runtime` enum needs no ALTER TYPE, and no rows select it (010
+	// nulled every `tasks.runtime_type = 'kimi'` pin). Note this runtime is
+	// *additional* to — not a replacement for — Kimi on Claude Code: the `kimi`
+	// provider still drives `claude` against Moonshot's Anthropic-compatible
+	// gateway, and the `kimi_code` provider drives the native CLI.
+	Kimi: 'kimi',
 } as const;
 export type AgentRuntime = (typeof AgentRuntime)[keyof typeof AgentRuntime];
 
@@ -1343,6 +1352,7 @@ export const AiProvider = {
 	ZAi: 'z_ai',
 	OpenRouter: 'openrouter',
 	Kimi: 'kimi',
+	KimiCode: 'kimi_code',
 	XAi: 'x_ai',
 	Ollama: 'ollama',
 	LmStudio: 'lmstudio',
@@ -1419,6 +1429,18 @@ export const GEMINI_RUNTIME_ENV = {
 	GEMINI_CLI_TRUST_WORKSPACE: 'true',
 } as const;
 
+/**
+ * Moonshot's default coding model, shared by both ways of running Kimi: the
+ * `kimi` provider (Claude Code against the Anthropic-compatible gateway) and the
+ * `kimi_code` provider (Moonshot's own CLI). It is only a *default* — an agent or
+ * task may select any model the provider catalog returns, which is why both
+ * adapters let the run's selected model override it.
+ *
+ * Keep a `model_pricing` row for whatever this points at: runs are priced solely
+ * from that table, so an unpriced model records $0.
+ */
+export const KIMI_DEFAULT_MODEL = 'kimi-k2.7-code';
+
 export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapter> = {
 	[AiProvider.Anthropic]: {
 		runtime: AgentRuntime.ClaudeCode,
@@ -1478,18 +1500,56 @@ export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapte
 	// ENABLE_TOOL_SEARCH and CLAUDE_CODE_AUTO_COMPACT_WINDOW are Moonshot's
 	// documented Claude Code settings
 	// (https://platform.kimi.ai/docs/guide/agent-support).
+	//
+	// This is one of TWO ways to run Kimi models; `kimi_code` below is the other,
+	// driving Moonshot's own CLI. Both are supported and neither supersedes the
+	// other — pick per agent (`model_override_provider`) or per task
+	// (`tasks.runtime_type`).
 	[AiProvider.Kimi]: {
 		runtime: AgentRuntime.ClaudeCode,
 		staticEnv: {
 			ANTHROPIC_BASE_URL: 'https://api.moonshot.ai/anthropic',
-			ANTHROPIC_DEFAULT_OPUS_MODEL: 'kimi-k2.7-code',
-			ANTHROPIC_DEFAULT_SONNET_MODEL: 'kimi-k2.7-code',
-			ANTHROPIC_DEFAULT_HAIKU_MODEL: 'kimi-k2.7-code',
-			CLAUDE_CODE_SUBAGENT_MODEL: 'kimi-k2.7-code',
+			ANTHROPIC_DEFAULT_OPUS_MODEL: KIMI_DEFAULT_MODEL,
+			ANTHROPIC_DEFAULT_SONNET_MODEL: KIMI_DEFAULT_MODEL,
+			ANTHROPIC_DEFAULT_HAIKU_MODEL: KIMI_DEFAULT_MODEL,
+			CLAUDE_CODE_SUBAGENT_MODEL: KIMI_DEFAULT_MODEL,
 			ENABLE_TOOL_SEARCH: 'false',
 			CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
 		},
 		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'ANTHROPIC_AUTH_TOKEN' },
+	},
+	// Kimi Code — the same Moonshot models reached through Moonshot's own
+	// first-party CLI (`kimi`) instead of Claude Code. Sibling of `kimi` above,
+	// not a replacement.
+	//
+	// Credential delivery is the unusual part. Kimi Code deliberately does NOT
+	// read provider API keys from the shell environment; they are expected to
+	// live in `config.toml` under `[providers.<name>]`. The one documented
+	// exception is the `KIMI_MODEL_*` family, which IS shell-read and registers a
+	// temporary in-memory provider for the launch. Hezo uses that family so the
+	// key stays in env only — writing it into a config file the agent can read
+	// would breach the plaintext-secret rule (only the run CLI's own
+	// model-provider credential may be in-run, and only via env).
+	//
+	// `KIMI_MODEL_NAME` is what ACTIVATES the family, so it must always be set;
+	// `buildProviderEnv` overrides it with the run's selected model when there is
+	// one. `KIMI_MODEL_CAPABILITIES` must include `image_in` or the CLI's
+	// `downgradeUnsupportedMedia` step silently replaces every image part with
+	// "[image omitted: current model has no image input]" — which would break
+	// `read_project_asset`, the only path by which an agent ever sees an image.
+	// Capabilities resolve as a union of declared + auto-detected, so declaring
+	// can only add.
+	[AiProvider.KimiCode]: {
+		runtime: AgentRuntime.Kimi,
+		staticEnv: {
+			KIMI_MODEL_PROVIDER_TYPE: 'kimi',
+			KIMI_MODEL_BASE_URL: 'https://api.moonshot.ai/v1',
+			KIMI_MODEL_NAME: KIMI_DEFAULT_MODEL,
+			KIMI_MODEL_CAPABILITIES: 'image_in,thinking',
+			KIMI_DISABLE_TELEMETRY: '1',
+			KIMI_CODE_NO_AUTO_UPDATE: '1',
+		},
+		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'KIMI_MODEL_API_KEY' },
 	},
 	// xAI Grok Build runs on its own first-party `grok` CLI (its own runtime),
 	// authenticated by XAI_API_KEY sent direct to api.x.ai (the sanctioned
@@ -1529,6 +1589,9 @@ const PROVIDER_UPSTREAM_HOSTS: Record<AiProvider, readonly string[]> = {
 	[AiProvider.ZAi]: ['api.z.ai'],
 	[AiProvider.OpenRouter]: ['openrouter.ai'],
 	[AiProvider.Kimi]: ['api.moonshot.ai'],
+	// Same upstream as `kimi`, reached at `/v1` (OpenAI-shaped) by the native CLI
+	// rather than at `/anthropic` by Claude Code.
+	[AiProvider.KimiCode]: ['api.moonshot.ai'],
 	[AiProvider.XAi]: ['api.x.ai'],
 	// Local runners have no fixed upstream — the real host comes from the config's
 	// stored base URL, passed to `providerDirectUpstreamHosts` at run time. These
@@ -1670,6 +1733,7 @@ export const RUNTIME_COMMANDS: Record<AgentRuntime, string> = {
 	[AgentRuntime.Gemini]: 'gemini',
 	[AgentRuntime.OpenCode]: 'opencode',
 	[AgentRuntime.Grok]: 'grok',
+	[AgentRuntime.Kimi]: 'kimi',
 };
 
 /**
@@ -1687,6 +1751,9 @@ export const RUNTIME_PROMPT_DELIVERY: Record<AgentRuntime, 'stdin' | 'arg'> = {
 	// `grok -p <PROMPT>` (aka --single) takes the prompt as the value of the
 	// trailing `-p` flag, so the bridge appends `"$(cat $HEZO_PROMPT_FILE)"`.
 	[AgentRuntime.Grok]: 'arg',
+	// `kimi -p <PROMPT>` (--prompt) is the same shape as Grok: the prompt is the
+	// flag's value, not stdin. Kimi Code has no stdin-as-prompt mode at all.
+	[AgentRuntime.Kimi]: 'arg',
 };
 
 /**
@@ -1702,6 +1769,14 @@ export const RUNTIME_AUTO_APPROVE_ARGS: Record<AgentRuntime, readonly string[]> 
 	// Grok's Claude-Code-style permission modes; bypassPermissions skips every
 	// approval prompt so a headless `docker exec` run never hangs on one.
 	[AgentRuntime.Grok]: ['--permission-mode', 'bypassPermissions'],
+	// Kimi Code needs nothing here, and must not be given anything: `--prompt`
+	// is mutually exclusive with `--yolo`/`--auto`/`--plan`, so passing one would
+	// make the CLI reject the invocation outright. `-p` already applies the `auto`
+	// permission policy to tool calls on its own. If a future version still gates
+	// some call under `auto`, the escape hatches are the undocumented
+	// `--yes`/`--auto-approve` flags or `[permission.rules]` in the injected
+	// config.toml — not a flag that conflicts with `--prompt`.
+	[AgentRuntime.Kimi]: [],
 };
 
 /**
@@ -1722,6 +1797,7 @@ export const RUNTIME_DISALLOWED_TOOLS_ARGS: Record<AgentRuntime, readonly string
 	[AgentRuntime.Gemini]: [],
 	[AgentRuntime.OpenCode]: [],
 	[AgentRuntime.Grok]: [],
+	[AgentRuntime.Kimi]: [],
 };
 
 /**
@@ -1738,6 +1814,8 @@ export const RUNTIME_DISALLOWED_TOOLS_ARGS: Record<AgentRuntime, readonly string
  * - **OpenCode** — the top-level `tools` map, deny-the-namespace then re-allow.
  * - **Claude Code** — `permissions.deny` in the settings file, addressing tools
  *   as `mcp__<server>__<tool>`.
+ * - **Kimi Code** — per-server `enabledTools` / `disabledTools` keys in
+ *   `mcp.json`, which map one-to-one onto the descriptor's own fields.
  * - **Codex / Grok** — no per-server tool filter is documented for either CLI.
  *   Emitting a guessed TOML key would risk the CLI rejecting the whole config
  *   and breaking every run on that runtime, which is a far worse failure than
@@ -1749,6 +1827,7 @@ export const RUNTIME_SUPPORTS_MCP_TOOL_FILTER: Record<AgentRuntime, boolean> = {
 	[AgentRuntime.Gemini]: true,
 	[AgentRuntime.OpenCode]: true,
 	[AgentRuntime.Grok]: false,
+	[AgentRuntime.Kimi]: true,
 };
 
 /**
@@ -1772,6 +1851,12 @@ export const RUNTIME_STREAM_ARGS: Record<AgentRuntime, readonly string[]> = {
 	// `--debug-file` tracing spans (added per-run in the runner). See
 	// `extractGrokUsageFromDebugLog` in agent-stream-parser.ts.
 	[AgentRuntime.Grok]: ['--output-format', 'streaming-json'],
+	// Kimi Code's `stream-json` emits one JSON object per line discriminated by
+	// `role` (assistant / tool / meta); it is accepted only alongside `--prompt`.
+	// Like Grok — and unlike everything else — its stream carries NO token usage,
+	// so cost is recovered post-run from the per-run session log. See
+	// `extractKimiUsageFromSessionLog` in agent-stream-parser.ts.
+	[AgentRuntime.Kimi]: ['--output-format', 'stream-json'],
 };
 
 /**
@@ -1787,6 +1872,8 @@ export const RUNTIME_HEADLESS_PREFIX_ARGS: Record<AgentRuntime, readonly string[
 	[AgentRuntime.OpenCode]: ['run'],
 	// `grok` runs headless directly (the `-p` flag, added as a suffix arg).
 	[AgentRuntime.Grok]: [],
+	// `kimi` likewise runs headless directly via the trailing `-p` flag.
+	[AgentRuntime.Kimi]: [],
 };
 
 /**
@@ -1804,6 +1891,9 @@ export const RUNTIME_HEADLESS_SUFFIX_ARGS: Record<AgentRuntime, readonly string[
 	// Grok takes the prompt as the value of `-p` (single-turn/print mode); the
 	// bridge appends `"$(cat $HEZO_PROMPT_FILE)"` right after it (arg delivery).
 	[AgentRuntime.Grok]: ['-p'],
+	// Kimi Code is the same shape: `-p`/`--prompt` runs one prompt headlessly and
+	// streams to stdout, with the prompt appended as the flag's value.
+	[AgentRuntime.Kimi]: ['-p'],
 };
 
 export interface AiProviderVerifyEndpoint {
@@ -1908,6 +1998,19 @@ export const AI_PROVIDER_INFO: Record<AiProvider, AiProviderInfo> = {
 		keyPlaceholder: 'sk-...',
 		// Moonshot's OpenAI-compatible catalog. Drives both key verification and
 		// the default-model dropdown; returns the standard `data[]` shape.
+		verifyEndpoint: {
+			url: 'https://api.moonshot.ai/v1/models',
+			headers: (apiKey) => ({ Authorization: `Bearer ${apiKey}` }),
+		},
+	},
+	// The same Moonshot account and the same API key as `kimi` above — the only
+	// difference is which CLI drives the models, which is exactly what
+	// `runtimeLabel` tells the operator on the provider card. Both may be
+	// configured at once; pick between them per agent or per task.
+	[AiProvider.KimiCode]: {
+		name: 'Kimi Code',
+		runtimeLabel: 'Kimi Code',
+		keyPlaceholder: 'sk-...',
 		verifyEndpoint: {
 			url: 'https://api.moonshot.ai/v1/models',
 			headers: (apiKey) => ({ Authorization: `Bearer ${apiKey}` }),

@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+	type Dirent,
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
 	AgentRuntime,
@@ -46,6 +54,7 @@ import {
 	type AgentRunUsage,
 	createAgentStreamParser,
 	extractGrokUsageFromDebugLog,
+	extractKimiUsageFromSessionLog,
 } from './agent-stream-parser';
 import {
 	type AiProviderCredential,
@@ -241,9 +250,19 @@ export function buildProviderEnv(
 			trimmedModel && claudeCodeProviderUsesCustomEndpoint(provider)
 				? claudeCodeModelArg(provider, trimmedModel)
 				: null;
+		// Kimi Code selects its model from `KIMI_MODEL_NAME`, not only from
+		// `--model`: that variable is what activates the shell-read `KIMI_MODEL_*`
+		// credential family in the first place, so it must always be set, and the
+		// run's selected model has to land there rather than only on the CLI flag.
+		// The staticEnv value (KIMI_DEFAULT_MODEL) stays the fallback when the run
+		// pins nothing.
+		const kimiModelOverride =
+			trimmedModel && adapter.runtime === AgentRuntime.Kimi ? trimmedModel : null;
 		for (const [key, value] of Object.entries(adapter.staticEnv)) {
 			if (subagentOverride && key === 'CLAUDE_CODE_SUBAGENT_MODEL') {
 				out.push(`${key}=${subagentOverride}`);
+			} else if (kimiModelOverride && key === 'KIMI_MODEL_NAME') {
+				out.push(`${key}=${kimiModelOverride}`);
 			} else {
 				out.push(`${key}=${value}`);
 			}
@@ -344,39 +363,109 @@ export function getHostPromptPath(
 // XAI_API_KEY in plaintext). See `extractGrokUsageFromDebugLog`.
 const GROK_DEBUG_BASENAME = 'debug.log';
 
+// Basename of Kimi Code's per-session wire log, written under
+// `$KIMI_CODE_HOME/sessions/<workspace>/<session>/agents/<agent>/`. Kimi Code's
+// `stream-json` stdout carries no token usage at all, so — as with Grok — cost is
+// recovered from this file. The path depth is an upstream implementation detail,
+// so the runner searches the per-run home rather than reconstructing it.
+const KIMI_SESSION_LOG_BASENAME = 'wire.jsonl';
+
+// Depth cap for the wire-log search. The real path sits 5 levels below the home
+// dir; 8 leaves room for an upstream layout change without ever letting a
+// symlink loop or a surprise `node_modules` turn run teardown into a full-disk
+// walk.
+const KIMI_SESSION_LOG_MAX_DEPTH = 8;
+
+/** Collect every `wire.jsonl` beneath `root`, depth-bounded and best-effort. */
+function findKimiSessionLogs(root: string, depth = 0): string[] {
+	if (depth > KIMI_SESSION_LOG_MAX_DEPTH) return [];
+	let entries: Dirent[];
+	try {
+		entries = readdirSync(root, { withFileTypes: true });
+	} catch {
+		return [];
+	}
+	const out: string[] = [];
+	for (const entry of entries) {
+		const full = join(root, entry.name);
+		// `withFileTypes` reports a symlink as neither file nor directory, so
+		// following one is opt-in — and we never opt in. That is what makes the
+		// depth cap sufficient to bound this walk.
+		if (entry.isDirectory()) out.push(...findKimiSessionLogs(full, depth + 1));
+		else if (entry.isFile() && entry.name === KIMI_SESSION_LOG_BASENAME) out.push(full);
+	}
+	return out;
+}
+
 /**
- * Recover a Grok run's token usage from its per-run `--debug-file` and then
- * delete the file (it holds the XAI_API_KEY in plaintext). A no-op for every
- * other runtime (returns null, so the caller keeps the parser's stream usage).
- * Best-effort: a missing or unreadable log yields null (⇒ $0), and the home
- * mount is removed at run cleanup regardless.
+ * Recover a run's token usage for the runtimes that report none on stdout.
+ *
+ * Two runtimes need this and they need it for the same structural reason — their
+ * stream carries no usage — so the dispatch lives here rather than being copied
+ * per runtime:
+ *
+ *   - **Grok** — the per-run `--debug-file`.
+ *   - **Kimi Code** — the per-session `wire.jsonl` under the per-run home.
+ *
+ * Both files are scrubbed after parsing: Grok's holds the XAI_API_KEY in
+ * plaintext, and a "wire" log plausibly captures request headers (i.e. the
+ * Moonshot bearer token), so neither should outlive the run on the host.
+ *
+ * Returns null for every other runtime, so the caller keeps the parser's stream
+ * usage. Best-effort throughout: a missing or unreadable log yields null (⇒ $0
+ * rather than a failed run), and the home mount is removed at cleanup regardless.
  */
-function extractGrokRunUsage(
+export function recoverOffStreamRunUsage(
 	runtimeType: AgentRuntime,
 	homeMount: RuntimeHomeMount | null,
 	priceFn: ((model: string | undefined, tokens: CostTokens) => number) | undefined,
 	onError: (msg: string) => void,
 ): AgentRunUsage | null {
-	if (runtimeType !== AgentRuntime.Grok || !homeMount) return null;
-	const debugPath = join(homeMount.hostDir, GROK_DEBUG_BASENAME);
-	try {
-		if (!existsSync(debugPath)) return null;
-		return extractGrokUsageFromDebugLog(readFileSync(debugPath, 'utf8'), priceFn);
-	} catch (e) {
-		onError(`failed to read grok debug log for usage: ${(e as Error).message}`);
-		return null;
-	} finally {
+	if (!homeMount) return null;
+	if (runtimeType === AgentRuntime.Grok) {
+		const debugPath = join(homeMount.hostDir, GROK_DEBUG_BASENAME);
 		try {
-			rmSync(debugPath, { force: true });
-		} catch {
-			// The whole home mount is removed at cleanup; a failed scrub here is not fatal.
+			if (!existsSync(debugPath)) return null;
+			return extractGrokUsageFromDebugLog(readFileSync(debugPath, 'utf8'), priceFn);
+		} catch (e) {
+			onError(`failed to read grok debug log for usage: ${(e as Error).message}`);
+			return null;
+		} finally {
+			try {
+				rmSync(debugPath, { force: true });
+			} catch {
+				// The whole home mount is removed at cleanup; a failed scrub here is not fatal.
+			}
 		}
 	}
+	if (runtimeType === AgentRuntime.Kimi) {
+		const logPaths = findKimiSessionLogs(join(homeMount.hostDir, 'sessions'));
+		if (logPaths.length === 0) return null;
+		try {
+			// The home dir is per-run, so in practice there is exactly one session.
+			// Concatenating tolerates a resumed or sub-agent session without
+			// double-counting: the extractor dedupes by record identity, not by file.
+			const contents = logPaths.map((p) => readFileSync(p, 'utf8')).join('\n');
+			return extractKimiUsageFromSessionLog(contents, priceFn);
+		} catch (e) {
+			onError(`failed to read kimi session log for usage: ${(e as Error).message}`);
+			return null;
+		} finally {
+			for (const p of logPaths) {
+				try {
+					rmSync(p, { force: true });
+				} catch {
+					// See above — cleanup removes the mount regardless.
+				}
+			}
+		}
+	}
+	return null;
 }
 
 // Deliver the prompt either on stdin (default) or as a trailing arg (OpenCode,
-// Kimi), selected per runtime via the HEZO_PROMPT_MODE env var. The bridge
-// wrapper script honors the same env var.
+// Grok, Kimi Code), selected per runtime via the HEZO_PROMPT_MODE env var — see
+// RUNTIME_PROMPT_DELIVERY. The bridge wrapper script honors the same env var.
 const PROMPT_DELIVERY_SH =
 	'if [ "$HEZO_PROMPT_MODE" = arg ]; then exec "$@" "$(cat "$HEZO_PROMPT_FILE")"; else exec "$@" < "$HEZO_PROMPT_FILE"; fi';
 
@@ -1355,11 +1444,11 @@ export async function runAgent(
 				);
 			}
 
-			// Grok emits no usage on its stream; recover it from the `--debug-file`
-			// (readable host-side in the home mount), then scrub the file — it also
-			// holds the XAI_API_KEY in plaintext. Falls back to null (⇒ $0) if the
-			// log is missing/unparseable; the home mount is removed at cleanup anyway.
-			const runUsage = extractGrokRunUsage(runtimeType, context.homeMount, priceFn, (msg) =>
+			// Grok and Kimi Code emit no usage on their streams; recover it from the
+			// file each writes into the per-run home mount, then scrub that file (both
+			// can carry the provider credential). Falls back to null (⇒ $0) if the log
+			// is missing/unparseable; the home mount is removed at cleanup anyway.
+			const runUsage = recoverOffStreamRunUsage(runtimeType, context.homeMount, priceFn, (msg) =>
 				log.error(`Run ${heartbeatRunId}: ${msg}`),
 			);
 

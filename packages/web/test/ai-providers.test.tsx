@@ -52,12 +52,16 @@ test('Add provider modal shows a card for every offered provider (incl. OpenRout
 		'Google',
 		'DeepSeek',
 		'Kimi',
+		'Kimi Code',
 		'xAI',
 		'OpenRouter',
 		'Ollama',
 		'LM Studio',
 	]) {
-		expect(within(dialog).getByRole('button', { name: new RegExp(name) })).toBeTruthy();
+		// Exact accessible-name match, not `new RegExp(name)`: a substring pattern
+		// makes any provider whose name prefixes another ambiguous, which is exactly
+		// what "Kimi" vs "Kimi Code" would do.
+		expect(within(dialog).getByRole('button', { name })).toBeTruthy();
 	}
 	// Cards show only the logo + name now — the runtime label is no longer on them.
 	expect(queryAllByText('Grok Build').length).toBe(0);
@@ -128,7 +132,7 @@ test('the add picker renders a brand logo for every offered provider (OpenAI, De
 	const dialog = await findByRole('dialog');
 	// Every card renders an inline brand SVG in its logo slot — including the ones
 	// that used to fall back to a bare wordmark (OpenAI, DeepSeek, z.ai, Kimi).
-	for (const name of ['Anthropic', 'OpenAI', 'Google', 'DeepSeek', 'z.ai', 'Kimi']) {
+	for (const name of ['Anthropic', 'OpenAI', 'Google', 'DeepSeek', 'z.ai', 'Kimi', 'Kimi Code']) {
 		const card = within(dialog).getByRole('button', { name });
 		expect(card.querySelector('svg')).toBeTruthy();
 	}

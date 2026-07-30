@@ -25,6 +25,7 @@ export const ADD_PROVIDER_ORDER: readonly AiProvider[] = [
 	AiProvider.OpenAI,
 	AiProvider.Google,
 	AiProvider.Kimi,
+	AiProvider.KimiCode,
 	AiProvider.XAi,
 	AiProvider.OpenRouter,
 	AiProvider.Ollama,

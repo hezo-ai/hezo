@@ -31,6 +31,7 @@ import {
 	AiProvider,
 	claudeCodeModelArg,
 	claudeCodeProviderUsesCustomEndpoint,
+	KIMI_DEFAULT_MODEL,
 } from '@hezo/shared';
 
 export const STOP_HOOK_JUDGE_MODEL_ANTHROPIC = 'claude-sonnet-4-6';
@@ -38,9 +39,11 @@ export const STOP_HOOK_JUDGE_MODEL_DEEPSEEK = 'deepseek-v4-pro';
 export const STOP_HOOK_JUDGE_MODEL_ZAI = 'GLM-4.7';
 export const STOP_HOOK_JUDGE_MODEL_OPENAI = 'gpt-4o-mini';
 export const STOP_HOOK_JUDGE_MODEL_GOOGLE = 'gemini-1.5-flash';
-// Kimi runs on Claude Code against Moonshot's Anthropic-compatible endpoint, so
-// the native `type:"prompt"` Stop hook judges with Moonshot's own model.
-export const STOP_HOOK_JUDGE_MODEL_KIMI = 'kimi-k2.7-code';
+// Shared by BOTH ways of running Kimi. On the `kimi` provider (Claude Code
+// against Moonshot's Anthropic-compatible endpoint) the native `type:"prompt"`
+// Stop hook judges with it; on the `kimi_code` provider (Moonshot's own CLI) the
+// command-script judge calls Moonshot's OpenAI-compatible endpoint with it.
+export const STOP_HOOK_JUDGE_MODEL_KIMI = KIMI_DEFAULT_MODEL;
 
 /**
  * Judge model for the Claude Code `type:"prompt"` Stop hook, keyed by provider.
@@ -207,6 +210,23 @@ interface JudgeRuntimeSpec {
 	 * own `block`/`allow` verdict.
 	 */
 	blockDecision: string;
+	/**
+	 * Process exit code to set when blocking, for runtimes whose hook runner reads
+	 * the *exit code* rather than (or as well as) stdout JSON.
+	 *
+	 * Kimi Code documents exit 2 as "intentional block", 0 as allow, and any other
+	 * non-zero as a script error that fails open — so returning 0 alongside a block
+	 * verdict would silently discard it. Left unset for Codex/Gemini, which read
+	 * the decision off stdout and treat a non-zero exit as a broken hook.
+	 */
+	blockExitCode?: number;
+	/**
+	 * Also write the block reason to stderr. Kimi Code documents stderr as the
+	 * source of the reason shown to the model; emitting it there as well as on
+	 * stdout costs nothing and means the reason survives whichever channel the
+	 * installed version actually reads.
+	 */
+	blockReasonToStderr?: boolean;
 	/** API key env var(s), checked in order; first non-empty wins. */
 	apiKeyEnvVars: string[];
 	/**
@@ -215,6 +235,40 @@ interface JudgeRuntimeSpec {
 	 * runtime whose Stop payload shape is undocumented degrade gracefully.
 	 */
 	inputFields: string[];
+	/**
+	 * Recover the final assistant message from the run's own session log when
+	 * `inputFields` yields nothing.
+	 *
+	 * Kimi Code's Stop payload carries only `hook_event_name` / `session_id` /
+	 * `cwd` — the agent's final message is not passed under any field name — so
+	 * without this the judge would have nothing to evaluate and would always fail
+	 * open. The script walks `$KIMI_CODE_HOME` (a per-run directory Hezo owns) for
+	 * the session's JSONL and takes the last assistant message. Set only for
+	 * runtimes whose payload genuinely lacks the message; every other runtime
+	 * leaves it unset and keeps the cheaper stdin-only path.
+	 */
+	sessionLogLookup?: {
+		/** Env var holding the runtime's data root. */
+		homeEnvVar: string;
+		/** Basename of the per-session JSONL to search for under that root. */
+		logBasename: string;
+	};
+	/**
+	 * Use a marker file rather than `stop_hook_active` as the "already continued
+	 * once" signal.
+	 *
+	 * The judge is allowed to block a turn at most once per run — otherwise a
+	 * persistent verdict loops the same exec indefinitely, re-waking the agent
+	 * into redundant work. Most runtimes flag the second invocation on stdin with
+	 * `stop_hook_active`; Kimi Code does not set it, leaving that ceiling inert.
+	 * When set, the script treats the marker's existence as the flag and writes it
+	 * immediately before emitting a block. The marker lives in the per-run home,
+	 * so it cannot leak across runs.
+	 */
+	loopGuardFile?: {
+		homeEnvVar: string;
+		basename: string;
+	};
 	/** Judge model identifier passed to the upstream API. */
 	model: string;
 	/**
@@ -231,12 +285,93 @@ interface JudgeRuntimeSpec {
 
 function buildJudgeScript(spec: JudgeRuntimeSpec): string {
 	const apiKeyExpr = spec.apiKeyEnvVars.map((v) => `process.env.${v}`).join(' || ');
+	const guard = spec.loopGuardFile;
+	const lookup = spec.sessionLogLookup;
+	// Both extras are emitted as no-op constants when unset, so the script body
+	// stays a single shared shape across every runtime rather than forking.
+	const extrasDecl = `
+const GUARD_HOME_ENV = ${JSON.stringify(guard?.homeEnvVar ?? '')};
+const GUARD_BASENAME = ${JSON.stringify(guard?.basename ?? '')};
+const LOG_HOME_ENV = ${JSON.stringify(lookup?.homeEnvVar ?? '')};
+const LOG_BASENAME = ${JSON.stringify(lookup?.logBasename ?? '')};
+
+function guardPath() {
+	if (!GUARD_HOME_ENV || !GUARD_BASENAME) return null;
+	const home = process.env[GUARD_HOME_ENV];
+	return home ? path.join(home, GUARD_BASENAME) : null;
+}
+
+// True when this hook has already blocked once in this run. Stands in for
+// \`stop_hook_active\` on runtimes that never set it.
+function alreadyBlocked() {
+	const p = guardPath();
+	if (!p) return false;
+	try { return fs.existsSync(p); } catch { return false; }
+}
+
+function markBlocked() {
+	const p = guardPath();
+	if (!p) return;
+	try { fs.writeFileSync(p, '1'); } catch { /* best effort — see alreadyBlocked */ }
+}
+
+// Depth-bounded, symlink-free search; mirrors the runner's own session-log walk.
+function findLogs(dir, depth) {
+	if (depth > 8) return [];
+	let entries;
+	try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return []; }
+	const out = [];
+	for (const e of entries) {
+		const full = path.join(dir, e.name);
+		if (e.isDirectory()) out.push(...findLogs(full, depth + 1));
+		else if (e.isFile() && e.name === LOG_BASENAME) out.push(full);
+	}
+	return out;
+}
+
+// Last assistant message from the run's own session log, for runtimes whose Stop
+// payload omits it. Prefers the file whose path contains the session id when the
+// run has more than one session dir.
+function messageFromSessionLog(sessionId) {
+	if (!LOG_HOME_ENV || !LOG_BASENAME) return undefined;
+	const home = process.env[LOG_HOME_ENV];
+	if (!home) return undefined;
+	let files = findLogs(home, 0);
+	if (files.length === 0) return undefined;
+	if (sessionId) {
+		const scoped = files.filter((f) => f.includes(sessionId));
+		if (scoped.length > 0) files = scoped;
+	}
+	let latest;
+	for (const f of files) {
+		let contents;
+		try { contents = fs.readFileSync(f, 'utf8'); } catch { continue; }
+		for (const line of contents.split('\\n')) {
+			const t = line.trim();
+			if (!t) continue;
+			let rec;
+			try { rec = JSON.parse(t); } catch { continue; }
+			if (!rec || rec.role !== 'assistant') continue;
+			const c = rec.content;
+			if (typeof c === 'string' && c.trim()) latest = c;
+		}
+	}
+	return latest;
+}
+`;
+	// ESM imports, not `require`: the script is written as `.mjs`, so Node loads it
+	// as a module where `require` is undefined. Getting this wrong throws at load,
+	// which every runtime reads as a broken hook and fails open — the judge would
+	// silently never fire.
 	return `#!/usr/bin/env node
+import fs from 'node:fs';
+import path from 'node:path';
+
 const SYSTEM_PROMPT = ${JSON.stringify(STOP_HOOK_RULES)};
 const JUDGE_MODEL = ${JSON.stringify(spec.model)};
 const MESSAGE_FIELDS = ${JSON.stringify(spec.inputFields)};
 const apiKey = ${apiKeyExpr};
-
+${extrasDecl}
 async function readStdin() {
 	let buf = '';
 	for await (const chunk of process.stdin) buf += chunk;
@@ -251,12 +386,15 @@ async function main() {
 	try { input = JSON.parse(raw); } catch { return; }
 	// The turn was already continued once by this hook — allow the stop now so a
 	// persistent judge can't loop the agent indefinitely (re-waking it into
-	// redundant reposts / repeated work). Both runtimes flag this on stdin.
+	// redundant reposts / repeated work). Most runtimes flag this on stdin; for
+	// the ones that don't, the marker file carries the same signal.
 	if (input && input.stop_hook_active) return;
+	if (alreadyBlocked()) return;
 	let message;
 	for (const f of MESSAGE_FIELDS) {
 		if (typeof input[f] === 'string' && input[f].trim()) { message = input[f]; break; }
 	}
+	if (!message) message = messageFromSessionLog(input && input.session_id);
 	if (!message) return; // no final message available — fail open
 
 	let verdict;
@@ -270,7 +408,12 @@ async function main() {
 	} catch { return; }
 
 	if (verdict && verdict.decision === 'block' && typeof verdict.reason === 'string' && verdict.reason.length > 0) {
+		// Mark BEFORE emitting, so a crash between the two still costs at most one
+		// extra continuation rather than an unbounded loop.
+		markBlocked();
 		process.stdout.write(JSON.stringify({ decision: ${JSON.stringify(spec.blockDecision)}, reason: verdict.reason }));
+		${spec.blockReasonToStderr ? 'process.stderr.write(verdict.reason);' : ''}
+		${spec.blockExitCode === undefined ? '' : `process.exitCode = ${spec.blockExitCode};`}
 	}
 }
 
@@ -346,6 +489,40 @@ const JUDGE_SPECS: Partial<Record<AgentRuntime, JudgeRuntimeSpec>> = {
 			signal: AbortSignal.timeout(25_000),
 		})`,
 		extractTextExpr: `data && data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts && data.candidates[0].content.parts[0] && data.candidates[0].content.parts[0].text`,
+	},
+	// Kimi Code `Stop` hook → Moonshot's OpenAI-compatible Chat Completions.
+	//
+	// Kimi's Stop hook is genuinely blockable (one of only three such events, with
+	// UserPromptSubmit and PreToolUse), and a blocked stop feeds the reason back as
+	// a new user message — the same continue-the-turn semantics as Codex. But its
+	// payload is thinner than any other runtime's: it carries `hook_event_name`,
+	// `session_id` and `cwd` and nothing else we need. Hence the two extras:
+	//
+	//  - `inputFields` is still probed first (cheap, and future-proof if upstream
+	//    starts passing the message), but realistically `sessionLogLookup` is what
+	//    supplies the final message;
+	//  - `loopGuardFile` replaces the absent `stop_hook_active` so the one-block
+	//    ceiling is real rather than nominal.
+	//
+	// Both read `$KIMI_CODE_HOME`, which the runner points at a per-run directory
+	// (see SUBSCRIPTION_LAYOUTS), so neither can leak across runs. The API key is
+	// `KIMI_MODEL_API_KEY` — the same shell-read var the CLI itself authenticates
+	// with — so no extra credential is injected for the judge.
+	[AgentRuntime.Kimi]: {
+		...openAiCompatJudgeSpec({
+			baseUrl: 'https://api.moonshot.ai/v1',
+			apiKeyEnvVars: ['KIMI_MODEL_API_KEY'],
+			model: STOP_HOOK_JUDGE_MODEL_KIMI,
+			inputFields: ['last_assistant_message', 'last_message', 'assistant_message'],
+		}),
+		// Kimi reads the block off the exit code (2 = intentional block; any other
+		// non-zero is treated as a broken script and fails open) and the reason off
+		// stderr. Emit all three channels so the verdict survives regardless of
+		// which one the installed version honours.
+		blockExitCode: 2,
+		blockReasonToStderr: true,
+		sessionLogLookup: { homeEnvVar: 'KIMI_CODE_HOME', logBasename: 'wire.jsonl' },
+		loopGuardFile: { homeEnvVar: 'KIMI_CODE_HOME', basename: '.hezo-stop-blocked' },
 	},
 };
 

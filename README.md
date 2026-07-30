@@ -194,6 +194,7 @@ model's first-party agentic tooling, not a lowest-common-denominator wrapper.
 | **Google** | Gemini | Gemini CLI | API key or subscription |
 | **xAI** | Grok | Grok Build | API key |
 | **Kimi** (Moonshot) | Kimi | Claude Code | API key |
+| **Kimi Code** (Moonshot) | Kimi | Kimi Code | API key |
 | **DeepSeek** | DeepSeek | Claude Code | API key |
 | **Z.ai** | GLM | Claude Code | API key |
 | **OpenRouter** | Many, via one account | OpenCode | API key |

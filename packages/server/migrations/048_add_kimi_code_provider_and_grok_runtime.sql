@@ -1,0 +1,48 @@
+-- Two additive enum extensions for the AI provider/runtime roster.
+--
+-- 1. `ai_provider` += 'kimi_code'
+--
+-- The same Moonshot models as the existing `kimi` provider, but driven through
+-- Moonshot's own first-party Kimi Code CLI instead of through Claude Code against
+-- their Anthropic-compatible gateway.
+--
+-- The two are siblings, not a replacement. `kimi` is left completely untouched —
+-- existing configs, agent model overrides and task runtime pins on it keep
+-- working exactly as before — and an operator may configure either or both,
+-- choosing between them per agent (`member_agents.model_override_provider`) or
+-- per task (`tasks.runtime_type`).
+--
+-- Note what is NOT here: the Kimi Code *runtime* needs no enum change, because it
+-- deliberately reuses the `kimi` label that has existed in `agent_runtime` since
+-- 001_initial_schema.sql. That label was the original standalone Kimi runtime,
+-- retired by 010_retire_xai_provider_and_kimi_runtime.sql when Kimi moved onto
+-- Claude Code. Postgres cannot drop enum values so the label survived, and 010
+-- also nulled every `tasks.runtime_type = 'kimi'` pin — so no row selects it today
+-- and reusing it cannot collide with live data.
+--
+-- 2. `agent_runtime` += 'grok'
+--
+-- A latent bug fix that predates the Kimi Code work, grouped here because it is
+-- the same one-line, zero-risk enum extension against the same pair of enums.
+--
+-- The xAI Grok Build runtime was reinstated in TypeScript (`AgentRuntime.Grok`,
+-- `PROVIDER_RUNTIME_ADAPTERS['x_ai'].runtime = Grok`) without a matching enum
+-- extension: `agent_runtime` has never been altered since 001 created it as
+-- ('claude_code', 'codex', 'gemini', 'opencode', 'kimi'). Three sites write a
+-- resolved runtime into an enum-typed column:
+--   * routes/tasks.ts                  — PATCH task, `runtime_type = $N::agent_runtime`
+--   * mcp/tools.ts                     — the MCP task-update equivalent
+--   * services/chat-session-manager.ts — INSERT chat_sessions, `$5::agent_runtime`
+-- so on an instance using the xAI provider, pinning a task to the Grok runtime or
+-- opening a CEO chat session on it fails the cast outright with
+-- `invalid input value for enum agent_runtime: "grok"`.
+--
+-- Both changes are purely additive and data-preserving. No existing row
+-- references either new value (nothing could ever have written 'grok'), so this
+-- only makes them selectable; existing rows keep their values and no column is
+-- rewritten. Postgres 12+ (PGlite is PG16) permits ALTER TYPE ... ADD VALUE inside
+-- a transaction as long as the new value is not *used* in the same transaction —
+-- these statements only add, so they are safe under the runner's per-migration
+-- BEGIN/COMMIT.
+ALTER TYPE ai_provider ADD VALUE IF NOT EXISTS 'kimi_code';
+ALTER TYPE agent_runtime ADD VALUE IF NOT EXISTS 'grok';
