@@ -53,9 +53,6 @@ test('model pricing lists the baked catalog plus overrides and creates an overri
 	await findByRole('heading', { name: 'AI providers' });
 	await findByRole('heading', { name: 'Model pricing' });
 
-	// The blurb states the single source and the conservative posture.
-	await findByText(/Rates refresh daily from/);
-
 	// The migration-baked catalog renders alongside the seeded manual row.
 	await findByText('claude-opus-4.8', undefined, { timeout: 10_000 });
 	await findByText('seeded-custom-model');
@@ -121,9 +118,11 @@ test('the Model pricing help dialog explains table-only pricing and the conserva
 		initialPath: '/settings/ai-providers',
 	});
 
-	// The explanation lives behind the help button, not inline.
+	// The explanation lives behind the help button, not inline — the old inline
+	// paragraph duplicating the dialog must not render under the heading.
 	const help = await findByTestId('model-pricing-help', undefined, { timeout: 10_000 });
 	expect(queryByText('How run costs are calculated')).toBeNull();
+	expect(queryByText(/Every agent run is priced from this table/)).toBeNull();
 
 	await user.click(help);
 
