@@ -2,12 +2,14 @@
 // monitor that drives it (debounce + connected-once gate), and the persistent
 // toast the Toaster renders from it. The monitor consumes only a boolean + a
 // stable callback, so it's driven directly by a prop here (no real socket).
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { Toaster } from '../src/components/ui/toast';
 import {
 	type ConnectionState,
+	DISMISS_SNOOZE_MS,
+	dismissConnectionOffline,
 	OFFLINE_DEBOUNCE_MS,
 	setConnectionOffline,
 	setConnectionOnline,
@@ -41,6 +43,86 @@ describe('connection store', () => {
 		act(() => setConnectionOnline());
 		expect(latest.offline).toBe(false);
 		expect(latest.retry).toBeNull();
+	});
+});
+
+describe('dismiss snooze', () => {
+	afterEach(() => {
+		vi.useRealTimers();
+		setConnectionOnline();
+	});
+
+	test('hides the indicator for the snooze window, then re-surfaces it if still down', () => {
+		vi.useFakeTimers();
+		render(<Reader />);
+		const retry = () => {};
+		act(() => setConnectionOffline(retry));
+		expect(latest.offline).toBe(true);
+
+		act(() => dismissConnectionOffline());
+		expect(latest.offline).toBe(false);
+
+		act(() => vi.advanceTimersByTime(DISMISS_SNOOZE_MS - 1));
+		expect(latest.offline).toBe(false); // still snoozed
+
+		// The connection never healed, so the indicator comes back with its retry.
+		act(() => vi.advanceTimersByTime(1));
+		expect(latest.offline).toBe(true);
+		expect(latest.retry).toBe(retry);
+	});
+
+	test('a heal during the snooze leaves nothing to re-surface', () => {
+		vi.useFakeTimers();
+		render(<Reader />);
+		act(() => setConnectionOffline(() => {}));
+		act(() => dismissConnectionOffline());
+		act(() => setConnectionOnline());
+
+		act(() => vi.advanceTimersByTime(DISMISS_SNOOZE_MS * 2));
+		expect(latest.offline).toBe(false);
+	});
+
+	test('a drop after a heal surfaces immediately — it does not inherit the snooze', () => {
+		vi.useFakeTimers();
+		render(<Reader />);
+		act(() => setConnectionOffline(() => {}));
+		act(() => dismissConnectionOffline());
+		act(() => setConnectionOnline());
+
+		act(() => setConnectionOffline(() => {}));
+		expect(latest.offline).toBe(true);
+	});
+
+	test('dismissing while online is a no-op and cannot pre-snooze a later drop', () => {
+		vi.useFakeTimers();
+		render(<Reader />);
+		act(() => dismissConnectionOffline());
+		act(() => setConnectionOffline(() => {}));
+		expect(latest.offline).toBe(true);
+	});
+
+	test('the monitor does not re-surface a dismissed disconnect before the snooze expires', () => {
+		vi.useFakeTimers();
+		const reconnect = vi.fn();
+		const ui = (connected: boolean) => (
+			<>
+				<Monitor connected={connected} reconnect={reconnect} />
+				<Reader />
+			</>
+		);
+		const { rerender } = render(ui(true));
+		rerender(ui(false));
+		act(() => vi.advanceTimersByTime(OFFLINE_DEBOUNCE_MS));
+		expect(latest.offline).toBe(true);
+
+		act(() => dismissConnectionOffline());
+		// The socket stays down and the monitor keeps running throughout.
+		act(() => vi.advanceTimersByTime(DISMISS_SNOOZE_MS - 1));
+		rerender(ui(false));
+		expect(latest.offline).toBe(false);
+
+		act(() => vi.advanceTimersByTime(1));
+		expect(latest.offline).toBe(true);
 	});
 });
 
@@ -133,5 +215,28 @@ describe('connection toast (Toaster)', () => {
 
 		await user.click(screen.getByTestId('connection-retry'));
 		expect(retry).toHaveBeenCalledTimes(1);
+	});
+
+	test('the close button clears the banner and it returns after the snooze', () => {
+		// Fake timers must be installed before the dismissal so the snooze timeout is
+		// the fake one. That rules out userEvent (it awaits real-time delays between
+		// its synthesized events), so the click goes through fireEvent instead.
+		vi.useFakeTimers();
+		try {
+			render(<Toaster />);
+			act(() => setConnectionOffline(() => {}));
+			expect(screen.getByTestId('connection-toast')).toBeTruthy();
+
+			act(() => {
+				fireEvent.click(screen.getByTestId('connection-dismiss'));
+			});
+			expect(screen.queryByTestId('connection-toast')).toBeNull();
+
+			// Still offline when the snooze expires, so it comes back on its own.
+			act(() => vi.advanceTimersByTime(DISMISS_SNOOZE_MS));
+			expect(screen.getByTestId('connection-toast')).toBeTruthy();
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });
