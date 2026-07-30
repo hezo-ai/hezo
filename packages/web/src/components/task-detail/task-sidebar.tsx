@@ -254,7 +254,7 @@ export function TaskSidebar({
 					</span>
 					{task.project_name && task.project_slug ? (
 						<Link
-							to="/projects/$projectId"
+							to="/projects/$projectId/dashboard"
 							params={{ projectId: task.project_slug }}
 							className="text-[13px] text-text-1 hover:text-info-soft-fg transition-colors"
 						>

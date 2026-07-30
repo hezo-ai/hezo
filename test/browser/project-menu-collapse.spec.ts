@@ -16,7 +16,7 @@ test('the project menu collapses to a rail-docked expand tab and restores', asyn
 	await waitForPageLoad(page);
 
 	// Expanded by default: the menu shows, no expand tab yet.
-	await expect(page.getByTestId('project-sidebar-name')).toBeVisible({ timeout: 20000 });
+	await expect(page.getByTestId('project-sidebar-dashboard')).toBeVisible({ timeout: 20000 });
 	await expect(page.getByTestId('project-sidebar-expand')).toHaveCount(0);
 
 	// The collapse button hugs the menu panel's top-right corner (absolute
@@ -38,29 +38,28 @@ test('the project menu collapses to a rail-docked expand tab and restores', asyn
 	await page.getByTestId('project-sidebar-collapse').click();
 
 	// The menu is gone and the slim expand tab appears.
-	await expect(page.getByTestId('project-sidebar-name')).toHaveCount(0);
+	await expect(page.getByTestId('project-sidebar-dashboard')).toHaveCount(0);
 	const tab = page.getByTestId('project-sidebar-expand');
 	await expect(tab).toBeVisible();
 
-	// It's docked flush under the app header, against the project rail's right edge.
-	const header = await page.locator('header').first().boundingBox();
+	// It's docked where the menu used to start, against the project rail's right edge.
 	const rail = await page.getByTestId('project-rail').boundingBox();
 	const tabBox = await tab.boundingBox();
-	expect(header).not.toBeNull();
+	expect(menu).not.toBeNull();
 	expect(rail).not.toBeNull();
 	expect(tabBox).not.toBeNull();
-	if (header && rail && tabBox) {
+	if (menu && rail && tabBox) {
 		// Left edge sits at the rail's right edge (±1px sub-pixel rounding).
 		expect(Math.abs(tabBox.x - (rail.x + rail.width))).toBeLessThanOrEqual(1);
-		// Top edge sits flush under the header (±1px).
-		expect(Math.abs(tabBox.y - (header.y + header.height))).toBeLessThanOrEqual(1);
+		// Top edge stays aligned with the menu's former top edge (±1px).
+		expect(Math.abs(tabBox.y - menu.y)).toBeLessThanOrEqual(1);
 		// It's the intended slim tab, not a tall button.
 		expect(tabBox.height).toBeLessThanOrEqual(24);
 	}
 
 	// Expand restores the menu and removes the tab.
 	await tab.click();
-	await expect(page.getByTestId('project-sidebar-name')).toBeVisible();
+	await expect(page.getByTestId('project-sidebar-dashboard')).toBeVisible();
 	await expect(page.getByTestId('project-sidebar-expand')).toHaveCount(0);
 });
 
@@ -80,6 +79,6 @@ test('the mobile drawer is unaffected — no collapse affordance there', async (
 	await page.getByTestId('mobile-nav-toggle').click();
 	const drawer = page.getByTestId('mobile-nav-drawer');
 	await expect(drawer).toBeVisible();
-	await expect(drawer.getByTestId('project-sidebar-name')).toBeVisible({ timeout: 20000 });
+	await expect(drawer.getByTestId('project-sidebar-dashboard')).toBeVisible({ timeout: 20000 });
 	await expect(drawer.getByTestId('project-sidebar-collapse')).toHaveCount(0);
 });

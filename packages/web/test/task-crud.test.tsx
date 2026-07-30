@@ -429,11 +429,12 @@ test('project badge and metadata label both link to the project page', async () 
 	});
 
 	await findByRole('heading', { name: 'Project Link Task' });
-	const expectedHref = `/projects/${seeded.projectSlug}`;
+	// Project landing is the dashboard (index redirects there; sidebar title links there).
+	const expectedHref = `/projects/${seeded.projectSlug}/dashboard`;
 	const projectLinks = Array.from(container.querySelectorAll('a')).filter(
 		(a) => a.textContent === seeded.projectName,
 	) as HTMLAnchorElement[];
-	// At least two: the badge in main and the metadata in sidebar
+	// At least two: the project-menu title and the metadata in the task sidebar
 	expect(projectLinks.length).toBeGreaterThanOrEqual(2);
 	for (const link of projectLinks) {
 		expect(link.getAttribute('href')).toBe(expectedHref);

@@ -13,7 +13,7 @@ test('left nav + content spans the viewport on a wide screen', async ({ page, fr
 
 	// The project sidebar only mounts at lg+ (1700px clears that); its presence
 	// confirms the well holds the full rail + sidebar + content layout.
-	await expect(page.getByTestId('project-sidebar-name')).toBeVisible({ timeout: 20000 });
+	await expect(page.getByTestId('project-sidebar-dashboard')).toBeVisible({ timeout: 20000 });
 
 	const box = await page.getByTestId('content-well').boundingBox();
 	expect(box).not.toBeNull();
