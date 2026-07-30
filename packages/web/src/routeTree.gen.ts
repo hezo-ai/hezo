@@ -9,64 +9,74 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as IndexRouteImport } from './routes/index'
 import { Route as SettingsRouteRouteImport } from './routes/settings/route'
-import { Route as HomeIndexRouteImport } from './routes/home/index'
+import { Route as IndexRouteImport } from './routes/index'
+import { Route as SettingsIndexRouteImport } from './routes/settings/index'
 import { Route as MarketplaceIndexRouteImport } from './routes/marketplace/index'
+import { Route as HomeIndexRouteImport } from './routes/home/index'
+import { Route as SettingsUsersRouteImport } from './routes/settings/users'
+import { Route as SettingsStorageRouteImport } from './routes/settings/storage'
+import { Route as SettingsSkillsRouteImport } from './routes/settings/skills'
+import { Route as SettingsLocaleRouteImport } from './routes/settings/locale'
+import { Route as SettingsCredentialsRouteImport } from './routes/settings/credentials'
+import { Route as SettingsConnectorsRouteImport } from './routes/settings/connectors'
+import { Route as SettingsConcurrencyRouteImport } from './routes/settings/concurrency'
+import { Route as SettingsChatboxRouteImport } from './routes/settings/chatbox'
+import { Route as SettingsChatChannelsRouteImport } from './routes/settings/chat-channels'
+import { Route as SettingsAuditLogRouteImport } from './routes/settings/audit-log'
+import { Route as SettingsArchivedProjectsRouteImport } from './routes/settings/archived-projects'
+import { Route as SettingsApiKeysRouteImport } from './routes/settings/api-keys'
+import { Route as SettingsAiProvidersRouteImport } from './routes/settings/ai-providers'
+import { Route as SettingsAdminPasswordRouteImport } from './routes/settings/admin-password'
 import { Route as MarketplaceSlugRouteImport } from './routes/marketplace/$slug'
 import { Route as ProjectsProjectIdRouteRouteImport } from './routes/projects/$projectId/route'
-import { Route as SettingsIndexRouteImport } from './routes/settings/index'
-import { Route as SettingsAdminPasswordRouteImport } from './routes/settings/admin-password'
-import { Route as SettingsAiProvidersRouteImport } from './routes/settings/ai-providers'
-import { Route as SettingsApiKeysRouteImport } from './routes/settings/api-keys'
-import { Route as SettingsArchivedProjectsRouteImport } from './routes/settings/archived-projects'
-import { Route as SettingsAuditLogRouteImport } from './routes/settings/audit-log'
-import { Route as SettingsChatChannelsRouteImport } from './routes/settings/chat-channels'
-import { Route as SettingsChatboxRouteImport } from './routes/settings/chatbox'
-import { Route as SettingsConcurrencyRouteImport } from './routes/settings/concurrency'
-import { Route as SettingsConnectorsRouteImport } from './routes/settings/connectors'
-import { Route as SettingsCredentialsRouteImport } from './routes/settings/credentials'
-import { Route as SettingsLocaleRouteImport } from './routes/settings/locale'
-import { Route as SettingsSkillsRouteImport } from './routes/settings/skills'
-import { Route as SettingsStorageRouteImport } from './routes/settings/storage'
-import { Route as SettingsUsersRouteImport } from './routes/settings/users'
-import { Route as HomeInboxIndexRouteImport } from './routes/home/inbox/index'
-import { Route as PreviewProjectIdFilenameRouteImport } from './routes/preview/$projectId/$filename'
 import { Route as ProjectsProjectIdIndexRouteImport } from './routes/projects/$projectId/index'
-import { Route as ProjectsProjectIdAssetsRouteImport } from './routes/projects/$projectId/assets'
-import { Route as ProjectsProjectIdAuditLogRouteImport } from './routes/projects/$projectId/audit-log'
-import { Route as ProjectsProjectIdBudgetRouteImport } from './routes/projects/$projectId/budget'
-import { Route as ProjectsProjectIdConnectorsRouteImport } from './routes/projects/$projectId/connectors'
-import { Route as ProjectsProjectIdContainerRouteImport } from './routes/projects/$projectId/container'
-import { Route as ProjectsProjectIdCustomPromptRouteImport } from './routes/projects/$projectId/custom-prompt'
-import { Route as ProjectsProjectIdDocumentsRouteImport } from './routes/projects/$projectId/documents'
-import { Route as ProjectsProjectIdGitRouteImport } from './routes/projects/$projectId/git'
+import { Route as HomeInboxIndexRouteImport } from './routes/home/inbox/index'
 import { Route as ProjectsProjectIdSkillsRouteImport } from './routes/projects/$projectId/skills'
-import { Route as ProjectsProjectIdAgentsIndexRouteImport } from './routes/projects/$projectId/agents/index'
-import { Route as ProjectsProjectIdAgentsAgentIdRouteRouteImport } from './routes/projects/$projectId/agents/$agentId/route'
-import { Route as ProjectsProjectIdAgentsHireRouteImport } from './routes/projects/$projectId/agents/hire'
-import { Route as ProjectsProjectIdAssetsViewRouteImport } from './routes/projects/$projectId/assets_.view'
-import { Route as ProjectsProjectIdGoalsIndexRouteImport } from './routes/projects/$projectId/goals/index'
-import { Route as ProjectsProjectIdGoalsGoalIdRouteImport } from './routes/projects/$projectId/goals/$goalId'
-import { Route as ProjectsProjectIdInboxIndexRouteImport } from './routes/projects/$projectId/inbox/index'
-import { Route as ProjectsProjectIdSettingsIndexRouteImport } from './routes/projects/$projectId/settings/index'
+import { Route as ProjectsProjectIdGitRouteImport } from './routes/projects/$projectId/git'
+import { Route as ProjectsProjectIdDocumentsRouteImport } from './routes/projects/$projectId/documents'
+import { Route as ProjectsProjectIdCustomPromptRouteImport } from './routes/projects/$projectId/custom-prompt'
+import { Route as ProjectsProjectIdContainerRouteImport } from './routes/projects/$projectId/container'
+import { Route as ProjectsProjectIdConnectorsRouteImport } from './routes/projects/$projectId/connectors'
+import { Route as ProjectsProjectIdBudgetRouteImport } from './routes/projects/$projectId/budget'
+import { Route as ProjectsProjectIdAuditLogRouteImport } from './routes/projects/$projectId/audit-log'
+import { Route as ProjectsProjectIdAssetsRouteImport } from './routes/projects/$projectId/assets'
+import { Route as PreviewProjectIdFilenameRouteImport } from './routes/preview/$projectId/$filename'
 import { Route as ProjectsProjectIdTasksIndexRouteImport } from './routes/projects/$projectId/tasks/index'
-import { Route as ProjectsProjectIdTasksTaskIdRouteImport } from './routes/projects/$projectId/tasks/$taskId'
+import { Route as ProjectsProjectIdSettingsIndexRouteImport } from './routes/projects/$projectId/settings/index'
+import { Route as ProjectsProjectIdInboxIndexRouteImport } from './routes/projects/$projectId/inbox/index'
+import { Route as ProjectsProjectIdGoalsIndexRouteImport } from './routes/projects/$projectId/goals/index'
+import { Route as ProjectsProjectIdAgentsIndexRouteImport } from './routes/projects/$projectId/agents/index'
 import { Route as ProjectsProjectIdTeamSettingsGeneralRouteImport } from './routes/projects/$projectId/team-settings/general'
+import { Route as ProjectsProjectIdTasksTaskIdRouteImport } from './routes/projects/$projectId/tasks/$taskId'
+import { Route as ProjectsProjectIdGoalsGoalIdRouteImport } from './routes/projects/$projectId/goals/$goalId'
+import { Route as ProjectsProjectIdAssetsViewRouteImport } from './routes/projects/$projectId/assets_.view'
+import { Route as ProjectsProjectIdAgentsHireRouteImport } from './routes/projects/$projectId/agents/hire'
+import { Route as ProjectsProjectIdAgentsAgentIdRouteRouteImport } from './routes/projects/$projectId/agents/$agentId/route'
 import { Route as ProjectsProjectIdAgentsAgentIdIndexRouteImport } from './routes/projects/$projectId/agents/$agentId/index'
-import { Route as ProjectsProjectIdAgentsAgentIdChatHistoryRouteImport } from './routes/projects/$projectId/agents/$agentId/chat-history'
 import { Route as ProjectsProjectIdAgentsAgentIdSettingsRouteImport } from './routes/projects/$projectId/agents/$agentId/settings'
+import { Route as ProjectsProjectIdAgentsAgentIdChatHistoryRouteImport } from './routes/projects/$projectId/agents/$agentId/chat-history'
 import { Route as ProjectsProjectIdAgentsAgentIdExecutionsIndexRouteImport } from './routes/projects/$projectId/agents/$agentId/executions/index'
 import { Route as ProjectsProjectIdAgentsAgentIdExecutionsRunIdRouteImport } from './routes/projects/$projectId/agents/$agentId/executions/$runId'
 
+const SettingsRouteRoute = SettingsRouteRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const SettingsRouteRoute = SettingsRouteRouteImport.update({
-  id: '/settings',
-  path: '/settings',
+const SettingsIndexRoute = SettingsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const MarketplaceIndexRoute = MarketplaceIndexRouteImport.update({
+  id: '/marketplace/',
+  path: '/marketplace/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const HomeIndexRoute = HomeIndexRouteImport.update({
@@ -74,10 +84,76 @@ const HomeIndexRoute = HomeIndexRouteImport.update({
   path: '/home/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const MarketplaceIndexRoute = MarketplaceIndexRouteImport.update({
-  id: '/marketplace/',
-  path: '/marketplace/',
-  getParentRoute: () => rootRouteImport,
+const SettingsUsersRoute = SettingsUsersRouteImport.update({
+  id: '/users',
+  path: '/users',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsStorageRoute = SettingsStorageRouteImport.update({
+  id: '/storage',
+  path: '/storage',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsSkillsRoute = SettingsSkillsRouteImport.update({
+  id: '/skills',
+  path: '/skills',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsLocaleRoute = SettingsLocaleRouteImport.update({
+  id: '/locale',
+  path: '/locale',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsCredentialsRoute = SettingsCredentialsRouteImport.update({
+  id: '/credentials',
+  path: '/credentials',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsConnectorsRoute = SettingsConnectorsRouteImport.update({
+  id: '/connectors',
+  path: '/connectors',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsConcurrencyRoute = SettingsConcurrencyRouteImport.update({
+  id: '/concurrency',
+  path: '/concurrency',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsChatboxRoute = SettingsChatboxRouteImport.update({
+  id: '/chatbox',
+  path: '/chatbox',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsChatChannelsRoute = SettingsChatChannelsRouteImport.update({
+  id: '/chat-channels',
+  path: '/chat-channels',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsAuditLogRoute = SettingsAuditLogRouteImport.update({
+  id: '/audit-log',
+  path: '/audit-log',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsArchivedProjectsRoute =
+  SettingsArchivedProjectsRouteImport.update({
+    id: '/archived-projects',
+    path: '/archived-projects',
+    getParentRoute: () => SettingsRouteRoute,
+  } as any)
+const SettingsApiKeysRoute = SettingsApiKeysRouteImport.update({
+  id: '/api-keys',
+  path: '/api-keys',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsAiProvidersRoute = SettingsAiProvidersRouteImport.update({
+  id: '/ai-providers',
+  path: '/ai-providers',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsAdminPasswordRoute = SettingsAdminPasswordRouteImport.update({
+  id: '/admin-password',
+  path: '/admin-password',
+  getParentRoute: () => SettingsRouteRoute,
 } as any)
 const MarketplaceSlugRoute = MarketplaceSlugRouteImport.update({
   id: '/marketplace/$slug',
@@ -89,124 +165,30 @@ const ProjectsProjectIdRouteRoute = ProjectsProjectIdRouteRouteImport.update({
   path: '/projects/$projectId',
   getParentRoute: () => rootRouteImport,
 } as any)
-const SettingsIndexRoute = SettingsIndexRouteImport.update({
+const ProjectsProjectIdIndexRoute = ProjectsProjectIdIndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => SettingsRouteRoute,
-} as any)
-const SettingsAdminPasswordRoute = SettingsAdminPasswordRouteImport.update({
-  id: '/admin-password',
-  path: '/admin-password',
-  getParentRoute: () => SettingsRouteRoute,
-} as any)
-const SettingsAiProvidersRoute = SettingsAiProvidersRouteImport.update({
-  id: '/ai-providers',
-  path: '/ai-providers',
-  getParentRoute: () => SettingsRouteRoute,
-} as any)
-const SettingsApiKeysRoute = SettingsApiKeysRouteImport.update({
-  id: '/api-keys',
-  path: '/api-keys',
-  getParentRoute: () => SettingsRouteRoute,
-} as any)
-const SettingsArchivedProjectsRoute =
-  SettingsArchivedProjectsRouteImport.update({
-    id: '/archived-projects',
-    path: '/archived-projects',
-    getParentRoute: () => SettingsRouteRoute,
-  } as any)
-const SettingsAuditLogRoute = SettingsAuditLogRouteImport.update({
-  id: '/audit-log',
-  path: '/audit-log',
-  getParentRoute: () => SettingsRouteRoute,
-} as any)
-const SettingsChatChannelsRoute = SettingsChatChannelsRouteImport.update({
-  id: '/chat-channels',
-  path: '/chat-channels',
-  getParentRoute: () => SettingsRouteRoute,
-} as any)
-const SettingsChatboxRoute = SettingsChatboxRouteImport.update({
-  id: '/chatbox',
-  path: '/chatbox',
-  getParentRoute: () => SettingsRouteRoute,
-} as any)
-const SettingsConcurrencyRoute = SettingsConcurrencyRouteImport.update({
-  id: '/concurrency',
-  path: '/concurrency',
-  getParentRoute: () => SettingsRouteRoute,
-} as any)
-const SettingsConnectorsRoute = SettingsConnectorsRouteImport.update({
-  id: '/connectors',
-  path: '/connectors',
-  getParentRoute: () => SettingsRouteRoute,
-} as any)
-const SettingsCredentialsRoute = SettingsCredentialsRouteImport.update({
-  id: '/credentials',
-  path: '/credentials',
-  getParentRoute: () => SettingsRouteRoute,
-} as any)
-const SettingsLocaleRoute = SettingsLocaleRouteImport.update({
-  id: '/locale',
-  path: '/locale',
-  getParentRoute: () => SettingsRouteRoute,
-} as any)
-const SettingsSkillsRoute = SettingsSkillsRouteImport.update({
-  id: '/skills',
-  path: '/skills',
-  getParentRoute: () => SettingsRouteRoute,
-} as any)
-const SettingsStorageRoute = SettingsStorageRouteImport.update({
-  id: '/storage',
-  path: '/storage',
-  getParentRoute: () => SettingsRouteRoute,
-} as any)
-const SettingsUsersRoute = SettingsUsersRouteImport.update({
-  id: '/users',
-  path: '/users',
-  getParentRoute: () => SettingsRouteRoute,
+  getParentRoute: () => ProjectsProjectIdRouteRoute,
 } as any)
 const HomeInboxIndexRoute = HomeInboxIndexRouteImport.update({
   id: '/home/inbox/',
   path: '/home/inbox/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const PreviewProjectIdFilenameRoute =
-  PreviewProjectIdFilenameRouteImport.update({
-    id: '/preview/$projectId/$filename',
-    path: '/preview/$projectId/$filename',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const ProjectsProjectIdIndexRoute = ProjectsProjectIdIndexRouteImport.update({
-  id: '/',
-  path: '/',
+const ProjectsProjectIdSkillsRoute = ProjectsProjectIdSkillsRouteImport.update({
+  id: '/skills',
+  path: '/skills',
   getParentRoute: () => ProjectsProjectIdRouteRoute,
 } as any)
-const ProjectsProjectIdAssetsRoute = ProjectsProjectIdAssetsRouteImport.update({
-  id: '/assets',
-  path: '/assets',
+const ProjectsProjectIdGitRoute = ProjectsProjectIdGitRouteImport.update({
+  id: '/git',
+  path: '/git',
   getParentRoute: () => ProjectsProjectIdRouteRoute,
 } as any)
-const ProjectsProjectIdAuditLogRoute =
-  ProjectsProjectIdAuditLogRouteImport.update({
-    id: '/audit-log',
-    path: '/audit-log',
-    getParentRoute: () => ProjectsProjectIdRouteRoute,
-  } as any)
-const ProjectsProjectIdBudgetRoute = ProjectsProjectIdBudgetRouteImport.update({
-  id: '/budget',
-  path: '/budget',
-  getParentRoute: () => ProjectsProjectIdRouteRoute,
-} as any)
-const ProjectsProjectIdConnectorsRoute =
-  ProjectsProjectIdConnectorsRouteImport.update({
-    id: '/connectors',
-    path: '/connectors',
-    getParentRoute: () => ProjectsProjectIdRouteRoute,
-  } as any)
-const ProjectsProjectIdContainerRoute =
-  ProjectsProjectIdContainerRouteImport.update({
-    id: '/container',
-    path: '/container',
+const ProjectsProjectIdDocumentsRoute =
+  ProjectsProjectIdDocumentsRouteImport.update({
+    id: '/documents',
+    path: '/documents',
     getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
 const ProjectsProjectIdCustomPromptRoute =
@@ -215,62 +197,44 @@ const ProjectsProjectIdCustomPromptRoute =
     path: '/custom-prompt',
     getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
-const ProjectsProjectIdDocumentsRoute =
-  ProjectsProjectIdDocumentsRouteImport.update({
-    id: '/documents',
-    path: '/documents',
+const ProjectsProjectIdContainerRoute =
+  ProjectsProjectIdContainerRouteImport.update({
+    id: '/container',
+    path: '/container',
     getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
-const ProjectsProjectIdGitRoute = ProjectsProjectIdGitRouteImport.update({
-  id: '/git',
-  path: '/git',
+const ProjectsProjectIdConnectorsRoute =
+  ProjectsProjectIdConnectorsRouteImport.update({
+    id: '/connectors',
+    path: '/connectors',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
+  } as any)
+const ProjectsProjectIdBudgetRoute = ProjectsProjectIdBudgetRouteImport.update({
+  id: '/budget',
+  path: '/budget',
   getParentRoute: () => ProjectsProjectIdRouteRoute,
 } as any)
-const ProjectsProjectIdSkillsRoute = ProjectsProjectIdSkillsRouteImport.update({
-  id: '/skills',
-  path: '/skills',
+const ProjectsProjectIdAuditLogRoute =
+  ProjectsProjectIdAuditLogRouteImport.update({
+    id: '/audit-log',
+    path: '/audit-log',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
+  } as any)
+const ProjectsProjectIdAssetsRoute = ProjectsProjectIdAssetsRouteImport.update({
+  id: '/assets',
+  path: '/assets',
   getParentRoute: () => ProjectsProjectIdRouteRoute,
 } as any)
-const ProjectsProjectIdAgentsIndexRoute =
-  ProjectsProjectIdAgentsIndexRouteImport.update({
-    id: '/agents/',
-    path: '/agents/',
-    getParentRoute: () => ProjectsProjectIdRouteRoute,
+const PreviewProjectIdFilenameRoute =
+  PreviewProjectIdFilenameRouteImport.update({
+    id: '/preview/$projectId/$filename',
+    path: '/preview/$projectId/$filename',
+    getParentRoute: () => rootRouteImport,
   } as any)
-const ProjectsProjectIdAgentsAgentIdRouteRoute =
-  ProjectsProjectIdAgentsAgentIdRouteRouteImport.update({
-    id: '/agents/$agentId',
-    path: '/agents/$agentId',
-    getParentRoute: () => ProjectsProjectIdRouteRoute,
-  } as any)
-const ProjectsProjectIdAgentsHireRoute =
-  ProjectsProjectIdAgentsHireRouteImport.update({
-    id: '/agents/hire',
-    path: '/agents/hire',
-    getParentRoute: () => ProjectsProjectIdRouteRoute,
-  } as any)
-const ProjectsProjectIdAssetsViewRoute =
-  ProjectsProjectIdAssetsViewRouteImport.update({
-    id: '/assets_/view',
-    path: '/assets/view',
-    getParentRoute: () => ProjectsProjectIdRouteRoute,
-  } as any)
-const ProjectsProjectIdGoalsIndexRoute =
-  ProjectsProjectIdGoalsIndexRouteImport.update({
-    id: '/goals/',
-    path: '/goals/',
-    getParentRoute: () => ProjectsProjectIdRouteRoute,
-  } as any)
-const ProjectsProjectIdGoalsGoalIdRoute =
-  ProjectsProjectIdGoalsGoalIdRouteImport.update({
-    id: '/goals/$goalId',
-    path: '/goals/$goalId',
-    getParentRoute: () => ProjectsProjectIdRouteRoute,
-  } as any)
-const ProjectsProjectIdInboxIndexRoute =
-  ProjectsProjectIdInboxIndexRouteImport.update({
-    id: '/inbox/',
-    path: '/inbox/',
+const ProjectsProjectIdTasksIndexRoute =
+  ProjectsProjectIdTasksIndexRouteImport.update({
+    id: '/tasks/',
+    path: '/tasks/',
     getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
 const ProjectsProjectIdSettingsIndexRoute =
@@ -279,16 +243,22 @@ const ProjectsProjectIdSettingsIndexRoute =
     path: '/settings/',
     getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
-const ProjectsProjectIdTasksIndexRoute =
-  ProjectsProjectIdTasksIndexRouteImport.update({
-    id: '/tasks/',
-    path: '/tasks/',
+const ProjectsProjectIdInboxIndexRoute =
+  ProjectsProjectIdInboxIndexRouteImport.update({
+    id: '/inbox/',
+    path: '/inbox/',
     getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
-const ProjectsProjectIdTasksTaskIdRoute =
-  ProjectsProjectIdTasksTaskIdRouteImport.update({
-    id: '/tasks/$taskId',
-    path: '/tasks/$taskId',
+const ProjectsProjectIdGoalsIndexRoute =
+  ProjectsProjectIdGoalsIndexRouteImport.update({
+    id: '/goals/',
+    path: '/goals/',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
+  } as any)
+const ProjectsProjectIdAgentsIndexRoute =
+  ProjectsProjectIdAgentsIndexRouteImport.update({
+    id: '/agents/',
+    path: '/agents/',
     getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
 const ProjectsProjectIdTeamSettingsGeneralRoute =
@@ -297,22 +267,52 @@ const ProjectsProjectIdTeamSettingsGeneralRoute =
     path: '/team-settings/general',
     getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
+const ProjectsProjectIdTasksTaskIdRoute =
+  ProjectsProjectIdTasksTaskIdRouteImport.update({
+    id: '/tasks/$taskId',
+    path: '/tasks/$taskId',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
+  } as any)
+const ProjectsProjectIdGoalsGoalIdRoute =
+  ProjectsProjectIdGoalsGoalIdRouteImport.update({
+    id: '/goals/$goalId',
+    path: '/goals/$goalId',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
+  } as any)
+const ProjectsProjectIdAssetsViewRoute =
+  ProjectsProjectIdAssetsViewRouteImport.update({
+    id: '/assets_/view',
+    path: '/assets/view',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
+  } as any)
+const ProjectsProjectIdAgentsHireRoute =
+  ProjectsProjectIdAgentsHireRouteImport.update({
+    id: '/agents/hire',
+    path: '/agents/hire',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
+  } as any)
+const ProjectsProjectIdAgentsAgentIdRouteRoute =
+  ProjectsProjectIdAgentsAgentIdRouteRouteImport.update({
+    id: '/agents/$agentId',
+    path: '/agents/$agentId',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
+  } as any)
 const ProjectsProjectIdAgentsAgentIdIndexRoute =
   ProjectsProjectIdAgentsAgentIdIndexRouteImport.update({
     id: '/',
     path: '/',
     getParentRoute: () => ProjectsProjectIdAgentsAgentIdRouteRoute,
   } as any)
-const ProjectsProjectIdAgentsAgentIdChatHistoryRoute =
-  ProjectsProjectIdAgentsAgentIdChatHistoryRouteImport.update({
-    id: '/chat-history',
-    path: '/chat-history',
-    getParentRoute: () => ProjectsProjectIdAgentsAgentIdRouteRoute,
-  } as any)
 const ProjectsProjectIdAgentsAgentIdSettingsRoute =
   ProjectsProjectIdAgentsAgentIdSettingsRouteImport.update({
     id: '/settings',
     path: '/settings',
+    getParentRoute: () => ProjectsProjectIdAgentsAgentIdRouteRoute,
+  } as any)
+const ProjectsProjectIdAgentsAgentIdChatHistoryRoute =
+  ProjectsProjectIdAgentsAgentIdChatHistoryRouteImport.update({
+    id: '/chat-history',
+    path: '/chat-history',
     getParentRoute: () => ProjectsProjectIdAgentsAgentIdRouteRoute,
   } as any)
 const ProjectsProjectIdAgentsAgentIdExecutionsIndexRoute =
@@ -645,6 +645,13 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -652,11 +659,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/settings': {
-      id: '/settings'
-      path: '/settings'
-      fullPath: '/settings'
-      preLoaderRoute: typeof SettingsRouteRouteImport
+    '/settings/': {
+      id: '/settings/'
+      path: '/'
+      fullPath: '/settings/'
+      preLoaderRoute: typeof SettingsIndexRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/marketplace/': {
+      id: '/marketplace/'
+      path: '/marketplace'
+      fullPath: '/marketplace/'
+      preLoaderRoute: typeof MarketplaceIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/home/': {
@@ -666,12 +680,103 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof HomeIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/marketplace/': {
-      id: '/marketplace/'
-      path: '/marketplace'
-      fullPath: '/marketplace/'
-      preLoaderRoute: typeof MarketplaceIndexRouteImport
-      parentRoute: typeof rootRouteImport
+    '/settings/users': {
+      id: '/settings/users'
+      path: '/users'
+      fullPath: '/settings/users'
+      preLoaderRoute: typeof SettingsUsersRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/storage': {
+      id: '/settings/storage'
+      path: '/storage'
+      fullPath: '/settings/storage'
+      preLoaderRoute: typeof SettingsStorageRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/skills': {
+      id: '/settings/skills'
+      path: '/skills'
+      fullPath: '/settings/skills'
+      preLoaderRoute: typeof SettingsSkillsRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/locale': {
+      id: '/settings/locale'
+      path: '/locale'
+      fullPath: '/settings/locale'
+      preLoaderRoute: typeof SettingsLocaleRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/credentials': {
+      id: '/settings/credentials'
+      path: '/credentials'
+      fullPath: '/settings/credentials'
+      preLoaderRoute: typeof SettingsCredentialsRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/connectors': {
+      id: '/settings/connectors'
+      path: '/connectors'
+      fullPath: '/settings/connectors'
+      preLoaderRoute: typeof SettingsConnectorsRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/concurrency': {
+      id: '/settings/concurrency'
+      path: '/concurrency'
+      fullPath: '/settings/concurrency'
+      preLoaderRoute: typeof SettingsConcurrencyRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/chatbox': {
+      id: '/settings/chatbox'
+      path: '/chatbox'
+      fullPath: '/settings/chatbox'
+      preLoaderRoute: typeof SettingsChatboxRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/chat-channels': {
+      id: '/settings/chat-channels'
+      path: '/chat-channels'
+      fullPath: '/settings/chat-channels'
+      preLoaderRoute: typeof SettingsChatChannelsRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/audit-log': {
+      id: '/settings/audit-log'
+      path: '/audit-log'
+      fullPath: '/settings/audit-log'
+      preLoaderRoute: typeof SettingsAuditLogRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/archived-projects': {
+      id: '/settings/archived-projects'
+      path: '/archived-projects'
+      fullPath: '/settings/archived-projects'
+      preLoaderRoute: typeof SettingsArchivedProjectsRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/api-keys': {
+      id: '/settings/api-keys'
+      path: '/api-keys'
+      fullPath: '/settings/api-keys'
+      preLoaderRoute: typeof SettingsApiKeysRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/ai-providers': {
+      id: '/settings/ai-providers'
+      path: '/ai-providers'
+      fullPath: '/settings/ai-providers'
+      preLoaderRoute: typeof SettingsAiProvidersRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/admin-password': {
+      id: '/settings/admin-password'
+      path: '/admin-password'
+      fullPath: '/settings/admin-password'
+      preLoaderRoute: typeof SettingsAdminPasswordRouteImport
+      parentRoute: typeof SettingsRouteRoute
     }
     '/marketplace/$slug': {
       id: '/marketplace/$slug'
@@ -687,110 +792,12 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdRouteRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/settings/': {
-      id: '/settings/'
+    '/projects/$projectId/': {
+      id: '/projects/$projectId/'
       path: '/'
-      fullPath: '/settings/'
-      preLoaderRoute: typeof SettingsIndexRouteImport
-      parentRoute: typeof SettingsRouteRoute
-    }
-    '/settings/admin-password': {
-      id: '/settings/admin-password'
-      path: '/admin-password'
-      fullPath: '/settings/admin-password'
-      preLoaderRoute: typeof SettingsAdminPasswordRouteImport
-      parentRoute: typeof SettingsRouteRoute
-    }
-    '/settings/ai-providers': {
-      id: '/settings/ai-providers'
-      path: '/ai-providers'
-      fullPath: '/settings/ai-providers'
-      preLoaderRoute: typeof SettingsAiProvidersRouteImport
-      parentRoute: typeof SettingsRouteRoute
-    }
-    '/settings/api-keys': {
-      id: '/settings/api-keys'
-      path: '/api-keys'
-      fullPath: '/settings/api-keys'
-      preLoaderRoute: typeof SettingsApiKeysRouteImport
-      parentRoute: typeof SettingsRouteRoute
-    }
-    '/settings/archived-projects': {
-      id: '/settings/archived-projects'
-      path: '/archived-projects'
-      fullPath: '/settings/archived-projects'
-      preLoaderRoute: typeof SettingsArchivedProjectsRouteImport
-      parentRoute: typeof SettingsRouteRoute
-    }
-    '/settings/audit-log': {
-      id: '/settings/audit-log'
-      path: '/audit-log'
-      fullPath: '/settings/audit-log'
-      preLoaderRoute: typeof SettingsAuditLogRouteImport
-      parentRoute: typeof SettingsRouteRoute
-    }
-    '/settings/chat-channels': {
-      id: '/settings/chat-channels'
-      path: '/chat-channels'
-      fullPath: '/settings/chat-channels'
-      preLoaderRoute: typeof SettingsChatChannelsRouteImport
-      parentRoute: typeof SettingsRouteRoute
-    }
-    '/settings/chatbox': {
-      id: '/settings/chatbox'
-      path: '/chatbox'
-      fullPath: '/settings/chatbox'
-      preLoaderRoute: typeof SettingsChatboxRouteImport
-      parentRoute: typeof SettingsRouteRoute
-    }
-    '/settings/concurrency': {
-      id: '/settings/concurrency'
-      path: '/concurrency'
-      fullPath: '/settings/concurrency'
-      preLoaderRoute: typeof SettingsConcurrencyRouteImport
-      parentRoute: typeof SettingsRouteRoute
-    }
-    '/settings/connectors': {
-      id: '/settings/connectors'
-      path: '/connectors'
-      fullPath: '/settings/connectors'
-      preLoaderRoute: typeof SettingsConnectorsRouteImport
-      parentRoute: typeof SettingsRouteRoute
-    }
-    '/settings/credentials': {
-      id: '/settings/credentials'
-      path: '/credentials'
-      fullPath: '/settings/credentials'
-      preLoaderRoute: typeof SettingsCredentialsRouteImport
-      parentRoute: typeof SettingsRouteRoute
-    }
-    '/settings/locale': {
-      id: '/settings/locale'
-      path: '/locale'
-      fullPath: '/settings/locale'
-      preLoaderRoute: typeof SettingsLocaleRouteImport
-      parentRoute: typeof SettingsRouteRoute
-    }
-    '/settings/skills': {
-      id: '/settings/skills'
-      path: '/skills'
-      fullPath: '/settings/skills'
-      preLoaderRoute: typeof SettingsSkillsRouteImport
-      parentRoute: typeof SettingsRouteRoute
-    }
-    '/settings/storage': {
-      id: '/settings/storage'
-      path: '/storage'
-      fullPath: '/settings/storage'
-      preLoaderRoute: typeof SettingsStorageRouteImport
-      parentRoute: typeof SettingsRouteRoute
-    }
-    '/settings/users': {
-      id: '/settings/users'
-      path: '/users'
-      fullPath: '/settings/users'
-      preLoaderRoute: typeof SettingsUsersRouteImport
-      parentRoute: typeof SettingsRouteRoute
+      fullPath: '/projects/$projectId/'
+      preLoaderRoute: typeof ProjectsProjectIdIndexRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
     }
     '/home/inbox/': {
       id: '/home/inbox/'
@@ -799,67 +806,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof HomeInboxIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/preview/$projectId/$filename': {
-      id: '/preview/$projectId/$filename'
-      path: '/preview/$projectId/$filename'
-      fullPath: '/preview/$projectId/$filename'
-      preLoaderRoute: typeof PreviewProjectIdFilenameRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/projects/$projectId/': {
-      id: '/projects/$projectId/'
-      path: '/'
-      fullPath: '/projects/$projectId/'
-      preLoaderRoute: typeof ProjectsProjectIdIndexRouteImport
-      parentRoute: typeof ProjectsProjectIdRouteRoute
-    }
-    '/projects/$projectId/assets': {
-      id: '/projects/$projectId/assets'
-      path: '/assets'
-      fullPath: '/projects/$projectId/assets'
-      preLoaderRoute: typeof ProjectsProjectIdAssetsRouteImport
-      parentRoute: typeof ProjectsProjectIdRouteRoute
-    }
-    '/projects/$projectId/audit-log': {
-      id: '/projects/$projectId/audit-log'
-      path: '/audit-log'
-      fullPath: '/projects/$projectId/audit-log'
-      preLoaderRoute: typeof ProjectsProjectIdAuditLogRouteImport
-      parentRoute: typeof ProjectsProjectIdRouteRoute
-    }
-    '/projects/$projectId/budget': {
-      id: '/projects/$projectId/budget'
-      path: '/budget'
-      fullPath: '/projects/$projectId/budget'
-      preLoaderRoute: typeof ProjectsProjectIdBudgetRouteImport
-      parentRoute: typeof ProjectsProjectIdRouteRoute
-    }
-    '/projects/$projectId/connectors': {
-      id: '/projects/$projectId/connectors'
-      path: '/connectors'
-      fullPath: '/projects/$projectId/connectors'
-      preLoaderRoute: typeof ProjectsProjectIdConnectorsRouteImport
-      parentRoute: typeof ProjectsProjectIdRouteRoute
-    }
-    '/projects/$projectId/container': {
-      id: '/projects/$projectId/container'
-      path: '/container'
-      fullPath: '/projects/$projectId/container'
-      preLoaderRoute: typeof ProjectsProjectIdContainerRouteImport
-      parentRoute: typeof ProjectsProjectIdRouteRoute
-    }
-    '/projects/$projectId/custom-prompt': {
-      id: '/projects/$projectId/custom-prompt'
-      path: '/custom-prompt'
-      fullPath: '/projects/$projectId/custom-prompt'
-      preLoaderRoute: typeof ProjectsProjectIdCustomPromptRouteImport
-      parentRoute: typeof ProjectsProjectIdRouteRoute
-    }
-    '/projects/$projectId/documents': {
-      id: '/projects/$projectId/documents'
-      path: '/documents'
-      fullPath: '/projects/$projectId/documents'
-      preLoaderRoute: typeof ProjectsProjectIdDocumentsRouteImport
+    '/projects/$projectId/skills': {
+      id: '/projects/$projectId/skills'
+      path: '/skills'
+      fullPath: '/projects/$projectId/skills'
+      preLoaderRoute: typeof ProjectsProjectIdSkillsRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
     '/projects/$projectId/git': {
@@ -869,60 +820,67 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdGitRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
-    '/projects/$projectId/skills': {
-      id: '/projects/$projectId/skills'
-      path: '/skills'
-      fullPath: '/projects/$projectId/skills'
-      preLoaderRoute: typeof ProjectsProjectIdSkillsRouteImport
+    '/projects/$projectId/documents': {
+      id: '/projects/$projectId/documents'
+      path: '/documents'
+      fullPath: '/projects/$projectId/documents'
+      preLoaderRoute: typeof ProjectsProjectIdDocumentsRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
-    '/projects/$projectId/agents/': {
-      id: '/projects/$projectId/agents/'
-      path: '/agents'
-      fullPath: '/projects/$projectId/agents/'
-      preLoaderRoute: typeof ProjectsProjectIdAgentsIndexRouteImport
+    '/projects/$projectId/custom-prompt': {
+      id: '/projects/$projectId/custom-prompt'
+      path: '/custom-prompt'
+      fullPath: '/projects/$projectId/custom-prompt'
+      preLoaderRoute: typeof ProjectsProjectIdCustomPromptRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
-    '/projects/$projectId/agents/$agentId': {
-      id: '/projects/$projectId/agents/$agentId'
-      path: '/agents/$agentId'
-      fullPath: '/projects/$projectId/agents/$agentId'
-      preLoaderRoute: typeof ProjectsProjectIdAgentsAgentIdRouteRouteImport
+    '/projects/$projectId/container': {
+      id: '/projects/$projectId/container'
+      path: '/container'
+      fullPath: '/projects/$projectId/container'
+      preLoaderRoute: typeof ProjectsProjectIdContainerRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
-    '/projects/$projectId/agents/hire': {
-      id: '/projects/$projectId/agents/hire'
-      path: '/agents/hire'
-      fullPath: '/projects/$projectId/agents/hire'
-      preLoaderRoute: typeof ProjectsProjectIdAgentsHireRouteImport
+    '/projects/$projectId/connectors': {
+      id: '/projects/$projectId/connectors'
+      path: '/connectors'
+      fullPath: '/projects/$projectId/connectors'
+      preLoaderRoute: typeof ProjectsProjectIdConnectorsRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
-    '/projects/$projectId/assets_/view': {
-      id: '/projects/$projectId/assets_/view'
-      path: '/assets/view'
-      fullPath: '/projects/$projectId/assets/view'
-      preLoaderRoute: typeof ProjectsProjectIdAssetsViewRouteImport
+    '/projects/$projectId/budget': {
+      id: '/projects/$projectId/budget'
+      path: '/budget'
+      fullPath: '/projects/$projectId/budget'
+      preLoaderRoute: typeof ProjectsProjectIdBudgetRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
-    '/projects/$projectId/goals/': {
-      id: '/projects/$projectId/goals/'
-      path: '/goals'
-      fullPath: '/projects/$projectId/goals/'
-      preLoaderRoute: typeof ProjectsProjectIdGoalsIndexRouteImport
+    '/projects/$projectId/audit-log': {
+      id: '/projects/$projectId/audit-log'
+      path: '/audit-log'
+      fullPath: '/projects/$projectId/audit-log'
+      preLoaderRoute: typeof ProjectsProjectIdAuditLogRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
-    '/projects/$projectId/goals/$goalId': {
-      id: '/projects/$projectId/goals/$goalId'
-      path: '/goals/$goalId'
-      fullPath: '/projects/$projectId/goals/$goalId'
-      preLoaderRoute: typeof ProjectsProjectIdGoalsGoalIdRouteImport
+    '/projects/$projectId/assets': {
+      id: '/projects/$projectId/assets'
+      path: '/assets'
+      fullPath: '/projects/$projectId/assets'
+      preLoaderRoute: typeof ProjectsProjectIdAssetsRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
-    '/projects/$projectId/inbox/': {
-      id: '/projects/$projectId/inbox/'
-      path: '/inbox'
-      fullPath: '/projects/$projectId/inbox/'
-      preLoaderRoute: typeof ProjectsProjectIdInboxIndexRouteImport
+    '/preview/$projectId/$filename': {
+      id: '/preview/$projectId/$filename'
+      path: '/preview/$projectId/$filename'
+      fullPath: '/preview/$projectId/$filename'
+      preLoaderRoute: typeof PreviewProjectIdFilenameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/projects/$projectId/tasks/': {
+      id: '/projects/$projectId/tasks/'
+      path: '/tasks'
+      fullPath: '/projects/$projectId/tasks/'
+      preLoaderRoute: typeof ProjectsProjectIdTasksIndexRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
     '/projects/$projectId/settings/': {
@@ -932,18 +890,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdSettingsIndexRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
-    '/projects/$projectId/tasks/': {
-      id: '/projects/$projectId/tasks/'
-      path: '/tasks'
-      fullPath: '/projects/$projectId/tasks/'
-      preLoaderRoute: typeof ProjectsProjectIdTasksIndexRouteImport
+    '/projects/$projectId/inbox/': {
+      id: '/projects/$projectId/inbox/'
+      path: '/inbox'
+      fullPath: '/projects/$projectId/inbox/'
+      preLoaderRoute: typeof ProjectsProjectIdInboxIndexRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
-    '/projects/$projectId/tasks/$taskId': {
-      id: '/projects/$projectId/tasks/$taskId'
-      path: '/tasks/$taskId'
-      fullPath: '/projects/$projectId/tasks/$taskId'
-      preLoaderRoute: typeof ProjectsProjectIdTasksTaskIdRouteImport
+    '/projects/$projectId/goals/': {
+      id: '/projects/$projectId/goals/'
+      path: '/goals'
+      fullPath: '/projects/$projectId/goals/'
+      preLoaderRoute: typeof ProjectsProjectIdGoalsIndexRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
+    '/projects/$projectId/agents/': {
+      id: '/projects/$projectId/agents/'
+      path: '/agents'
+      fullPath: '/projects/$projectId/agents/'
+      preLoaderRoute: typeof ProjectsProjectIdAgentsIndexRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
     '/projects/$projectId/team-settings/general': {
@@ -953,6 +918,41 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdTeamSettingsGeneralRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
+    '/projects/$projectId/tasks/$taskId': {
+      id: '/projects/$projectId/tasks/$taskId'
+      path: '/tasks/$taskId'
+      fullPath: '/projects/$projectId/tasks/$taskId'
+      preLoaderRoute: typeof ProjectsProjectIdTasksTaskIdRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
+    '/projects/$projectId/goals/$goalId': {
+      id: '/projects/$projectId/goals/$goalId'
+      path: '/goals/$goalId'
+      fullPath: '/projects/$projectId/goals/$goalId'
+      preLoaderRoute: typeof ProjectsProjectIdGoalsGoalIdRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
+    '/projects/$projectId/assets_/view': {
+      id: '/projects/$projectId/assets_/view'
+      path: '/assets/view'
+      fullPath: '/projects/$projectId/assets/view'
+      preLoaderRoute: typeof ProjectsProjectIdAssetsViewRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
+    '/projects/$projectId/agents/hire': {
+      id: '/projects/$projectId/agents/hire'
+      path: '/agents/hire'
+      fullPath: '/projects/$projectId/agents/hire'
+      preLoaderRoute: typeof ProjectsProjectIdAgentsHireRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
+    '/projects/$projectId/agents/$agentId': {
+      id: '/projects/$projectId/agents/$agentId'
+      path: '/agents/$agentId'
+      fullPath: '/projects/$projectId/agents/$agentId'
+      preLoaderRoute: typeof ProjectsProjectIdAgentsAgentIdRouteRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
     '/projects/$projectId/agents/$agentId/': {
       id: '/projects/$projectId/agents/$agentId/'
       path: '/'
@@ -960,18 +960,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdAgentsAgentIdIndexRouteImport
       parentRoute: typeof ProjectsProjectIdAgentsAgentIdRouteRoute
     }
-    '/projects/$projectId/agents/$agentId/chat-history': {
-      id: '/projects/$projectId/agents/$agentId/chat-history'
-      path: '/chat-history'
-      fullPath: '/projects/$projectId/agents/$agentId/chat-history'
-      preLoaderRoute: typeof ProjectsProjectIdAgentsAgentIdChatHistoryRouteImport
-      parentRoute: typeof ProjectsProjectIdAgentsAgentIdRouteRoute
-    }
     '/projects/$projectId/agents/$agentId/settings': {
       id: '/projects/$projectId/agents/$agentId/settings'
       path: '/settings'
       fullPath: '/projects/$projectId/agents/$agentId/settings'
       preLoaderRoute: typeof ProjectsProjectIdAgentsAgentIdSettingsRouteImport
+      parentRoute: typeof ProjectsProjectIdAgentsAgentIdRouteRoute
+    }
+    '/projects/$projectId/agents/$agentId/chat-history': {
+      id: '/projects/$projectId/agents/$agentId/chat-history'
+      path: '/chat-history'
+      fullPath: '/projects/$projectId/agents/$agentId/chat-history'
+      preLoaderRoute: typeof ProjectsProjectIdAgentsAgentIdChatHistoryRouteImport
       parentRoute: typeof ProjectsProjectIdAgentsAgentIdRouteRoute
     }
     '/projects/$projectId/agents/$agentId/executions/': {

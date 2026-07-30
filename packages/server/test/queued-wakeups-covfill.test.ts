@@ -1,6 +1,7 @@
 import type { Hono } from 'hono';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
+import { waitForBackground } from '../src/lib/background';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
 import {
@@ -77,6 +78,19 @@ async function clearWakeups(forTaskId: string): Promise<void> {
 		forTaskId,
 	]);
 }
+
+afterEach(async () => {
+	// Same drain as queued-wakeups.test.ts: dispatched tests now launch real
+	// background runs (lazy-start); settle them and sweep their leftovers so
+	// later assertions see only their own rows.
+	await waitForBackground();
+	await db.query(
+		`DELETE FROM agent_wakeup_requests WHERE team_id = $1 AND status = 'queued'::wakeup_status`,
+		[teamId],
+	);
+	await db.query('UPDATE execution_locks SET released_at = now() WHERE released_at IS NULL');
+	await clearRuns();
+});
 
 async function insertRunningRun(memberId: string, forTaskId: string): Promise<string> {
 	const r = await db.query<{ id: string }>(
@@ -437,13 +451,18 @@ describe('POST runs/:runId/retry', () => {
 		expect(res.status).toBe(200);
 		expect((await res.json()).data.dispatched).toBe(true);
 
+		// The dispatch launches a background run (lazy-start); settle it so its
+		// failure-chain wakeups can't race the assertions, then pin them to the
+		// retry's own on_demand wakeup.
+		await waitForBackground();
 		const wakeup = await db.query<{
 			member_id: string;
 			source: string;
 			status: string;
 			payload: { source_run_id?: string; triggered_by?: { name: string } };
 		}>(
-			"SELECT member_id, source, status, payload FROM agent_wakeup_requests WHERE payload->>'task_id' = $1",
+			`SELECT member_id, source, status, payload FROM agent_wakeup_requests
+			 WHERE payload->>'task_id' = $1 AND source = 'on_demand'`,
 			[taskId],
 		);
 		expect(wakeup.rows).toHaveLength(1);

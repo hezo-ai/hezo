@@ -1,6 +1,7 @@
 import type { Hono } from 'hono';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
+import { waitForBackground } from '../src/lib/background';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
 import {
@@ -70,6 +71,20 @@ async function clearWakeups(forTaskId: string): Promise<void> {
 		forTaskId,
 	]);
 }
+
+afterEach(async () => {
+	// Lazy-start means the dispatch tests launch real background runs against
+	// the fake docker. Drain them — and the failure-chain wakeups/locks they
+	// leave — before the next test asserts on run or wakeup state; on slow CI
+	// runners the async run otherwise bleeds across tests.
+	await waitForBackground();
+	await db.query(
+		`DELETE FROM agent_wakeup_requests WHERE team_id = $1 AND status = 'queued'::wakeup_status`,
+		[teamId],
+	);
+	await db.query('UPDATE execution_locks SET released_at = now() WHERE released_at IS NULL');
+	await clearRuns();
+});
 
 async function insertRunningRun(memberId: string, forTaskId: string): Promise<string> {
 	const r = await db.query<{ id: string }>(
