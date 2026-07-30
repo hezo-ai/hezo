@@ -1,6 +1,6 @@
 import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
-import { renderApp } from './helpers/render';
+import { getTestContext, renderApp } from './helpers/render';
 import {
 	seedGoal,
 	seedProgressUpdateRun,
@@ -443,6 +443,95 @@ test('the Progress page shows a Run now button beside the progress update runs l
 	// erroring — the queued row appears.
 	await user.click(runNow);
 	await findByTestId('progress-update-run-now');
+});
+
+/** Whether the seeded goal is archived server-side, read straight from the DB. */
+async function isArchivedInDb(goalId: string): Promise<boolean> {
+	const { db } = getTestContext();
+	const res = await db.query<{ archived_at: string | null }>(
+		`SELECT archived_at FROM goals WHERE id = $1`,
+		[goalId],
+	);
+	return res.rows[0]?.archived_at !== null;
+}
+
+test('archiving a goal from the Goals list is confirmed first, and cancelling leaves it active', async () => {
+	let projectSlug = '';
+	let goalId = '';
+	const { findByTestId, findByText, getByRole, queryByTestId, queryByText, user, router } =
+		await renderApp({
+			initialPath: '/',
+			seed: async () => {
+				const ws = await seedWorkspace();
+				const project = await seedProject(ws, { name: 'Archive Demo' });
+				projectSlug = project.slug;
+				const goal = await seedGoal(ws, project, {
+					title: 'Reach 100 customers',
+					measurement: '100 paid subscriptions',
+				});
+				goalId = goal.id;
+			},
+		});
+
+	await router.navigate({
+		to: '/projects/$projectId/goals',
+		params: { projectId: projectSlug },
+	});
+
+	// Archiving retires the goal (the Captain stops checking it), so the click opens a
+	// confirmation naming the goal rather than mutating straight away.
+	await user.click(await findByTestId('goal-archive', undefined, { timeout: 10_000 }));
+	const dialog = await findByTestId('confirm-dialog');
+	await findByText('Archive this goal?');
+	expect(dialog.textContent).toContain('Reach 100 customers');
+	expect(await isArchivedInDb(goalId)).toBe(false);
+
+	// Cancelling closes the dialog and leaves the goal untouched on the server.
+	await user.click(getByRole('button', { name: /^Cancel/ }));
+	await waitFor(() => expect(queryByTestId('confirm-dialog')).toBeNull());
+	expect(await isArchivedInDb(goalId)).toBe(false);
+	await findByText('Reach 100 customers');
+
+	// Confirming archives it, and the card drops out of the Active view.
+	await user.click(await findByTestId('goal-archive'));
+	await user.click(await findByTestId('confirm-dialog-confirm'));
+	await waitFor(async () => expect(await isArchivedInDb(goalId)).toBe(true), { timeout: 10_000 });
+	await waitFor(() => expect(queryByText('Reach 100 customers')).toBeNull(), { timeout: 10_000 });
+});
+
+test('the goal detail page confirms archiving, and unarchiving is a single click', async () => {
+	let projectSlug = '';
+	let goalId = '';
+	const { findByTestId, findByText, queryByTestId, queryByText, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Archive Detail Demo' });
+			projectSlug = project.slug;
+			const goal = await seedGoal(ws, project, {
+				title: 'Ship the beta',
+				measurement: 'beta live',
+			});
+			goalId = goal.id;
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/goals/$goalId',
+		params: { projectId: projectSlug, goalId },
+	});
+
+	// Same confirmation on the detail header as on the list card (one shared control).
+	await user.click(await findByTestId('goal-archive', undefined, { timeout: 10_000 }));
+	await findByText('Archive this goal?');
+	await user.click(await findByTestId('confirm-dialog-confirm'));
+	await findByText('Archived', undefined, { timeout: 10_000 });
+
+	// Unarchiving is the undo of a confirmed action, so it fires without a second prompt.
+	await user.click(await findByTestId('goal-archive'));
+	expect(queryByTestId('confirm-dialog')).toBeNull();
+	await waitFor(async () => expect(await isArchivedInDb(goalId)).toBe(false), { timeout: 10_000 });
+	await waitFor(() => expect(queryByText('Archived')).toBeNull(), { timeout: 10_000 });
 });
 
 test('Run now queues when the Captain is busy, and the queued run can be cancelled', async () => {
