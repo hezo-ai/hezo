@@ -2259,6 +2259,36 @@ task `status`; security-sensitive mutations like credential fulfillment **must**
 here), and **invalidate + refetch** (validation-heavy / long-running work). Errors toast
 on rollback; successes are confirmed by the UI change itself.
 
+**Locale.** The instance has one display locale - language, date field order, and money
+punctuation - chosen on a first-run screen that runs *ahead of master-key generation* and
+editable afterwards at Settings › Languages & formats. It is global (no per-user override)
+and lives in three `system_meta` keys, so it needed no migration.
+
+Three axes rather than one BCP-47 tag: field order and month language are independent (there
+is no `Intl` locale meaning "German month names in ISO order"), so `formatDateIn`
+(`@hezo/shared` › `i18n/format.ts`) builds dates field-by-field from a
+`Record<DateFormat, Descriptor>` table. Money is presentation-only - runs are always priced
+in USD - so `formatMoneyUsd` picks separators via a representative locale with
+`currencyDisplay: 'narrowSymbol'` and never converts.
+
+The locale rides on the **public** `/api/status` payload, because every pre-auth screen
+renders in it before a credential exists (the boot-time status handler omits it - no DB is
+open yet). `I18nProvider` (`lib/i18n`) wraps `ThemeProvider` in `main.tsx`, above both the
+router and the `Toaster`; it seeds from a localStorage *render hint* to avoid a first-paint
+flash, then adopts the server value - but only once `localeConfigured` is true, since the
+pre-choice default would otherwise overwrite `navigator.languages` detection.
+`lib/format-date.ts` keeps its exported signatures and reads the active locale from module
+state (sound because the locale is global and the provider is its only writer), so its
+consumers were untouched. Catalogs are committed JSON per language, statically imported, with
+lookup falling back language → English → the key.
+
+`PATCH /api/instance-settings/locale` is the single write path. It is listed in
+`PUBLIC_PATHS` but self-authenticating: open only while no admin password is enrolled (the
+same window `POST /api/auth/setup` is open in), superuser-only after, resolving the bearer
+in-route via `requireAdminEquivalentBearer`. The globe button that hosts the editor appears
+only on pre-auth surfaces; an unauthorized save there applies to that browser alone rather
+than failing.
+
 **Responsive.** Mobile-first is mandatory — build the mobile layout first, enhance with
 `sm:`/`md:`/`lg:`. Three breakpoints (mobile <768px, tablet 768–1023px, desktop 1024px+).
 Every UI change must work at all three, and its browser test must verify mobile
@@ -2761,7 +2791,8 @@ mounted in `startup.ts` — read the modules under `packages/server/src/routes/`
 shapes.
 
 - **Auth & identity** — `auth` (challenge-response, § 10), `me`, `api-keys`,
-  `instance-settings`, `preferences`, `ui-state`.
+  `instance-settings` (incl. `PATCH /instance-settings/locale` — self-authenticating: open
+  pre-onboarding, superuser after; § 11), `preferences`, `ui-state`.
 - **Projects & teams** — `projects` (creation/intake, the 1:1 team reached *through* the
   project — there is no bare `GET /teams`), `team-templates`, `agent-types`, `repos`,
   `project-docs`.

@@ -125,6 +125,14 @@ test('setup → password → provider, then restart → unlock → password logi
 	await startGateServer({ reset: true });
 	await page.goto('/');
 
+	// Phase 0 — the language step comes BEFORE the master key on a fresh
+	// instance: every screen after it is already product UI, so an operator who
+	// cannot read English would otherwise meet their master key first. This
+	// assertion is the ordering guarantee.
+	await expect(page.getByTestId('setup-step-language')).toBeVisible();
+	await expect(page.getByTestId('master-key-setup')).toHaveCount(0);
+	await page.getByTestId('locale-save').click();
+
 	// Phase A — unset: the pre-active vault setup screen at mobile viewport.
 	await expect(page.getByTestId('master-key-setup')).toBeVisible();
 	await page.getByRole('button', { name: /generate master key/i }).click();
@@ -155,9 +163,15 @@ test('setup → password → provider, then restart → unlock → password logi
 	// wizard resumes at the provider step.
 	await expect(page.getByTestId('setup-step-ai-provider')).toBeVisible();
 	const status = await page.request.get(`http://localhost:${GATE_SERVER_PORT}/api/status`);
-	const statusBody = (await status.json()) as { masterKeyState: string; passwordSet: boolean };
+	const statusBody = (await status.json()) as {
+		masterKeyState: string;
+		passwordSet: boolean;
+		localeConfigured: boolean;
+	};
 	expect(statusBody.masterKeyState).toBe('unlocked');
 	expect(statusBody.passwordSet).toBe(true);
+	// The locale chosen in Phase 0 was persisted before the master key existed.
+	expect(statusBody.localeConfigured).toBe(true);
 
 	// Phase B — restart on the same data dir without a boot key: locked vault.
 	await stopGateServer();
@@ -165,6 +179,11 @@ test('setup → password → provider, then restart → unlock → password logi
 	await page.reload();
 
 	const entry = page.getByLabel(/master key/i);
+	// The language step must NOT reappear: it is gated on the locale never
+	// having been chosen, and the choice from Phase 0 is persisted in
+	// system_meta - which is writable before the master key exists. A restarted
+	// instance goes straight to the unlock screen.
+	await expect(page.getByTestId('setup-step-language')).toHaveCount(0);
 	await expect(page.getByTestId('master-key-unlock')).toBeVisible();
 
 	// A valid-but-wrong phrase signs with the wrong keypair — server rejects.

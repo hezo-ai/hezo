@@ -9,8 +9,17 @@
 [![Update hezo submodule](https://github.com/hezo-ai/hezo/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/hezo-ai/main/actions/workflows/main.yml)
 [![Coverage Status](https://coveralls.io/repos/github/hezo-ai/hezo/badge.svg?branch=main)](https://coveralls.io/github/hezo-ai/hezo?branch=main)
 [![License: GPL v3](https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg)](./LICENSE.md)
+[![Languages: 12](https://img.shields.io/badge/languages-12-brightgreen.svg)](./docs/concepts/languages-and-formats.md)
 
 </div>
+
+<p align="center">
+  <sub>
+    🌐
+    English · Deutsch · Français · Español · Italiano · Português (Brasil) ·
+    Nederlands · Polski · Svenska · 简体中文 · 日本語 · 한국어
+  </sub>
+</p>
 
 <p align="center">
   <a href="https://ssh.cloud.google.com/cloudshell/editor?cloudshell_git_repo=https://github.com/hezo-ai/hezo&cloudshell_workspace=deploy/gcp&cloudshell_tutorial=tutorial.md"><img src="https://img.shields.io/badge/Deploy_on-Google_Cloud-4285F4?style=for-the-badge&logo=googlecloud&logoColor=white" alt="Deploy on Google Cloud" height="28" /></a>
@@ -150,6 +159,7 @@ parts.
 - **MCP, in and out** - a [built-in MCP server](./docs/mcp/hezo-mcp-server.md), [external MCP servers](./docs/mcp/connecting-mcp-servers.md) scoped per instance, team, or project.
 - **Chat from anywhere** - run the CEO from [Telegram](./docs/chat/telegram.md), [Slack](./docs/chat/slack.md), and [Discord](./docs/chat/discord.md), as a [private assistant or a coworker](./docs/chat/overview.md#two-modes-assistant-and-coworker) in your team channels.
 - **Your data, in your storage** - [embedded Postgres](./docs/concepts/your-data.md), optional [hosted Postgres](./docs/deployment/configuration.md), local or [S3-compatible](./docs/deployment/configuration.md#storing-assets-in-s3-compatible-object-storage) [asset storage](./docs/concepts/assets.md#where-asset-files-live), data-preserving upgrades.
+- **Speaks your language** - the web app runs in [12 languages](./docs/concepts/languages-and-formats.md), picked from your browser on first run and set before anything else; [date and currency formats](./docs/concepts/languages-and-formats.md#date-and-currency-formats) are chosen independently, so ISO dates with German prose is a valid combination.
 - **Self-hosted & easy to run** - a [single binary](./docs/getting-started/installation.md), [deployable anywhere Docker runs](./docs/deployment/self-hosting.md), [one-click cloud-init](./docs/deployment/one-click.md), [secure remote access](./docs/deployment/secure-remote-access.md), [safe-rollback backups](./docs/deployment/backup-and-recovery.md), [in-app self-update](./docs/deployment/self-hosting.md#updating), a mobile-first web app.
 
 ## Agents never hold your secrets

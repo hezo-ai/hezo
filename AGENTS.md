@@ -281,6 +281,75 @@ The remaining Playwright suite is small but still subject to a 1 Hz agent wakeup
 - **Sequence `page.request` after in-flight UI mutations.** `page.request.<method>` uses a separate APIRequestContext from the page's fetch; the two can land in either order. `await page.waitForResponse(...)` the UI mutation before firing the API mutation.
 - **Don't raise timeouts to mask a race.** A bumped timeout signals "this is genuinely slow" to the next reader; it's almost always a missing matcher scope or a missing `await`.
 
+## Code design
+
+Write the second occurrence as shared code, not a copy. These are decision rules, not style preferences, and they apply to every change — not just new features.
+
+- **Two call sites means extract.** The moment the same logic — a validation rule, a format, a lookup, a request shape, a piece of UI — is needed in a second place, it moves to one home and both places call it. Copy-paste-and-tweak is the failure mode this exists to prevent: the copies drift, and the bug gets fixed in one of them.
+- **Pick the home by reach**, the same way agent guidance does (see the *Where guidance goes* bullet in **Layout**). Needed by server *and* web, or by a pure-logic test → `@hezo/shared`. Several server modules → `packages/server/src/lib/` or `services/`. Several components → `packages/web/src/lib/` or `hooks/`. One consumer → keep it local until there is a second.
+- **Validation lives once and runs twice.** A rule the client checks for inline feedback and the server enforces for real is **one** exported function in `@hezo/shared`, called from both. Two hand-written copies of one rule will disagree, and the client's copy is the one that silently gets stale.
+- **Table over branch.** When behaviour varies by an enum, express it as a `Record<Enum, Descriptor>` and read from it — don't repeat a `switch`/`if` chain at each call site, which duplicates the same decision N times. The `Record<Enum, …>` makes an unhandled enum value a compile error and makes a new case one row.
+- **Extend the existing seam before adding a parallel one.** A new instance setting extends `routes/instance-settings.ts` and the `system-meta` helpers; new date behaviour extends `packages/web/src/lib/format-date.ts`; a new chat app implements `ChatChannelAdapter`. A second stack doing an existing stack's job is how a codebase ends up with two of everything. If the existing seam genuinely doesn't fit, **widen it** rather than routing around it.
+- **Preserve public signatures when changing internals.** When a shared helper's behaviour grows, keep its exported shape and delegate inward, so its consumers don't churn.
+- **Generate what would otherwise be hand-synced**, and guard the remainder with a drift test (the `marketplace/`, `docs/reference/mcp-api.md`, and `llms.txt` surfaces all work this way). Anything a human must remember to update in two places eventually gets updated in one.
+- **Follow the idiom already in the file.** A React context provider copies `lib/theme.tsx`; a settings row copies `InstanceSettingsSection`; a mutation picks one of the three documented strategies (**Web frontend mutations**). Novel structure needs a reason beyond preference.
+
+**Don't over-rotate.** A shared abstraction with one real caller and a speculative second is worse than the duplication it avoids — it fixes the shape of the code before you know the shape of the problem. Extract on the second *real* occurrence, not the first imagined one.
+
+## Translations
+
+The web app's message catalogs (`packages/web/src/lib/i18n/catalog/*.json`) are **hand-authored source files**, not generated — there is no translation API and no build step behind them. `en.json` is the source of truth; the other eleven are written against it by whoever is doing the work, and reviewed like any other code.
+
+That changes the failure mode. A machine pass fails by translating things it shouldn't; an authored pass fails by **omission** — a key added to `en.json` and copy-pasted unchanged into the rest, which renders English inside an otherwise translated screen. `test/i18n-catalog.test.ts` is what catches that (it is how `settings.skills` was found sitting untranslated in all eleven languages), including an `IDENTICAL_TO_ENGLISH_OK` allowlist for words that genuinely coincide. **Adding an allowlist entry to quiet the test is the mistake it exists to prevent** — every entry is a claim that the two really are the same word.
+
+### A string change cascades to every language (check on every code change)
+
+**A user-facing string is not changed until it is changed in all twelve languages.** Adding, rewording, splitting, or deleting a string in `en.json` is only half the work; the other eleven catalogs need the same edit, translated. The same applies in the other direction: a component that starts rendering a new hardcoded literal has silently made the UI English for eleven languages, so **new UI copy goes through `t()` and a catalog key, never a bare literal**.
+
+Concretely, before a change is done:
+
+- **New string** → add the key to `en.json` **and** author it in all eleven non-English catalogs.
+- **Reworded string** → retranslate it everywhere. A changed English source with stale translations underneath is worse than an untranslated key, because nothing flags it.
+- **Renamed key** → rename in all twelve; a key left behind in ten catalogs is dead weight that reads as coverage.
+- **Deleted string** → delete the key from all twelve.
+- **New hardcoded literal in a component** → it is a missing catalog key, not a shortcut. Wire it through `t()`.
+
+The mechanical half is enforced: `packages/web/test/i18n-catalog.test.ts` fails on a key missing from a catalog, an empty value, a value left identical to its English source outside the allowlist, a dropped `{placeholder}`, an em/en dash, or the word "ticket". It cannot tell you whether a translation is *right*, or notice a string that never became a key at all — that judgement is the pass this section asks for.
+
+**The acknowledgment is enforced at commit time.** The `commit-msg` hook (`.husky/commit-msg` → `scripts/check-translations-ack.ts`) rejects any commit that stages string-bearing code — anything under `packages/web/src/` or `packages/shared/src/` — unless the commit message carries a **`Translations-Checked:` trailer** recording the cascade pass you actually did. Write what you checked, not a rubber stamp - bare values (`yes`, `n/a`, `done`, anything under 10 characters) are rejected:
+
+```
+Translations-Checked: added settings.locale.* to all 12 catalogs
+Translations-Checked: reworded onboarding.language.subtitle; retranslated in all 11 non-English catalogs
+Translations-Checked: no user-facing strings added or changed; catalogs untouched
+```
+
+The trailer must be true — it is the audit record that the cascade happened. Never write it without doing the pass, and **never bypass the hook with `--no-verify`**. Server-only, test-only, docs-only, merge, revert, and fixup commits are exempt (no trailer needed). The hook shares its machinery with the `Docs-Checked:` hook (`scripts/commit-ack.ts`) and its classification rules are unit-tested in `packages/server/test/translations-ack-hook.test.ts`; if you add a new string-bearing top-level path, add it to `STRING_BEARING_PATTERNS` in `scripts/check-translations-ack.ts` in the same change.
+
+Rules for any catalog edit:
+
+- **Never translated:** `Hezo`, `Captain`, `CEO`, `Coach`, `HQ`, `MCP`, agent role names, marketplace team names, and any CLI/command text. Role and team names must match the app's `marketplace/teams/*.json` rosters — translating one side desyncs them.
+- **"task", never "ticket" — in every language.** Pick the word for a unit of work, not a support ticket: `Aufgabe` not `Ticket`, `tâche` not `ticket`, `タスク` not `チケット`. The test asserts the literal string, which only catches the English-shaped mistake; the rest is on you.
+- **The em/en dash ban applies to every language**, not just English (**User-facing docs terminology**).
+- **`{placeholder}` tokens are copied verbatim.** A translated `{count}` renders literally.
+- **One term per concept per language.** Whatever a language calls Settings, it calls it that everywhere — French is `Réglages` throughout, so a string referring to the page uses `Réglages` too. Check the existing catalog before inventing a second word.
+- **Watch for repetition the English doesn't have.** French once read "modifier ces réglages … dans les réglages" — correct, consistent, and clumsy. Recast rather than accepting it.
+
+**Register is a per-language decision, already made.** Do not "fix" one language to match another — forcing formal address onto Swedish would be actively wrong, since it is archaic there after the du-reform.
+
+| | Address | Why |
+|---|---|---|
+| de | formal (Sie) | The safe default for business software |
+| fr | formal (vous) | Standard for product UI |
+| es / it | informal (tú / tu) | Modern software convention |
+| nl | informal (je) | Normal for product UI |
+| pt-BR | você | Standard and neutral |
+| pl | informal 2nd person | Now standard in Polish developer tooling |
+| sv | informal (du) | Required — formal address is archaic |
+| zh-Hans / ja / ko | polite-neutral | 您 / です・ます / 해요체 |
+
+These are **unreviewed by native speakers**. The register calls above and the CJK politeness levels in particular deserve a native pass before a release that markets the translations.
+
 ## Type safety
 
 No `any` in source code. Use specific types, `unknown`, `Record<string, unknown>`, or generics. If a library lacks types, install them (`@types/*`) — don't fall back to `any` or `declare const` hacks. `any` is acceptable only in test files for unpredictable JSON.

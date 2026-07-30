@@ -19,6 +19,7 @@ import { PwaInstallPrompt } from '../components/pwa-install-prompt';
 import { ReloadPromptBanner } from '../components/reload-prompt-banner';
 import { ScrollToBottomButton } from '../components/scroll-to-bottom-button';
 import { ScrollToTopButton } from '../components/scroll-to-top-button';
+import { LanguageStep } from '../components/setup/language-step';
 import { CreatePasswordFlow, SetupGate } from '../components/setup/setup-wizard';
 import { StartingScreen } from '../components/starting-screen';
 import { Button } from '../components/ui/button';
@@ -36,6 +37,7 @@ import { useScrollToTop } from '../hooks/use-scroll-to-top';
 import { useStatus } from '../hooks/use-status';
 import { useShellWebSockets } from '../hooks/use-websocket';
 import { api } from '../lib/api';
+import { useSyncInstanceLocale } from '../lib/i18n';
 import { queryClient } from '../lib/query-client';
 
 function RootLayout() {
@@ -110,6 +112,12 @@ export function UnreachableScreen({
 function AppShell() {
 	const { data: status, isPending, isError, error, errorUpdatedAt, refetch } = useStatus();
 	const navigate = useNavigate();
+	// The instance locale rides on /api/status, so the provider adopts it from
+	// the payload already being fetched rather than requesting it again. Absent
+	// while the server is booting, in which case the stored hint stands; and
+	// ignored until actually configured, so the default never overwrites the
+	// browser detection that pre-answers the language step.
+	useSyncInstanceLocale(status?.locale, status?.localeConfigured);
 	// Session probe: only meaningful (and only fired) once the instance is unlocked.
 	// A 401 here means "unlocked but no valid session → show the password login".
 	const me = useMe({ enabled: status?.masterKeyState === 'unlocked', retry: false });
@@ -156,6 +164,16 @@ function AppShell() {
 		// "Retrying…" — that state is surfaced only on the explicit Retry-now button.
 		const message = isNetwork ? "Can't reach the server." : (raw ?? '');
 		return <UnreachableScreen message={message} isNetwork={isNetwork} onRetry={refetch} />;
+	}
+
+	// Step 0 of a fresh instance, ahead of the master key. Only ever shown when
+	// the operator has never chosen a locale AND the instance is brand new
+	// (`unset`): a locked-after-restart instance predates this feature at worst,
+	// and must land on the unlock screen rather than be re-onboarded. The locale
+	// control stays in the corner of every later gate, so this never becomes the
+	// only chance to set it.
+	if (status.masterKeyState === 'unset' && !status.localeConfigured) {
+		return <LanguageStep />;
 	}
 
 	if (status.masterKeyState !== 'unlocked') {

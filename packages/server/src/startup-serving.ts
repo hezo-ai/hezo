@@ -63,6 +63,11 @@ export async function serveStartupRequest(
 
 	// The web UI polls this while booting; answer 200 with the live phase so it
 	// renders a progress screen instead of treating it as an error.
+	//
+	// Deliberately carries no `locale`: the database isn't open yet, so there is
+	// nothing to read it from. The client treats locale as optional here and
+	// renders the boot screen from its stored render hint until the real status
+	// handler takes over.
 	if (path === '/api/status') {
 		const { phase, message, detail } = deps.progress;
 		return Response.json({

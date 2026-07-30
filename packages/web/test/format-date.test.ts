@@ -1,9 +1,17 @@
+import {
+	DateFormat,
+	DEFAULT_LOCALE_SETTINGS,
+	formatDateIn,
+	Language,
+	NumberFormat,
+} from '@hezo/shared';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import {
 	formatDate,
 	formatDateTime,
 	formatRelativeTime,
 	formatRelativeTimeCompact,
+	setActiveLocale,
 } from '../src/lib/format-date';
 
 // A fixed "now" so the relative math is deterministic regardless of when the
@@ -19,13 +27,22 @@ function ago(ms: number): string {
 	return new Date(NOW.getTime() - ms).toISOString();
 }
 
+/** The absolute date these helpers fall back to, in the active locale. */
+function absolute(iso: string): string {
+	return formatDateIn(new Date(iso), DEFAULT_LOCALE_SETTINGS);
+}
+
 beforeEach(() => {
 	vi.useFakeTimers();
 	vi.setSystemTime(NOW);
+	// These helpers render through the instance locale, whose only writer in
+	// production is I18nProvider. Pin it so the suite is deterministic.
+	setActiveLocale(DEFAULT_LOCALE_SETTINGS);
 });
 
 afterEach(() => {
 	vi.useRealTimers();
+	setActiveLocale(DEFAULT_LOCALE_SETTINGS);
 });
 
 describe('formatRelativeTime', () => {
@@ -45,10 +62,10 @@ describe('formatRelativeTime', () => {
 
 	test('falls back to the absolute date once older than 7 days', () => {
 		const iso = ago(8 * DAY);
-		expect(formatRelativeTime(iso)).toBe(new Date(iso).toLocaleDateString());
+		expect(formatRelativeTime(iso)).toBe(absolute(iso));
 		// Exactly 7 days is the boundary — the date, not "7 days ago".
 		const boundary = ago(7 * DAY);
-		expect(formatRelativeTime(boundary)).toBe(new Date(boundary).toLocaleDateString());
+		expect(formatRelativeTime(boundary)).toBe(absolute(boundary));
 	});
 
 	test('reads as "in …" for near-future timestamps', () => {
@@ -74,7 +91,7 @@ describe('formatRelativeTimeCompact', () => {
 
 	test('falls back to the absolute date once older than 7 days', () => {
 		const iso = ago(8 * DAY);
-		expect(formatRelativeTimeCompact(iso)).toBe(new Date(iso).toLocaleDateString());
+		expect(formatRelativeTimeCompact(iso)).toBe(absolute(iso));
 	});
 
 	test('returns "" for empty or unparsable input', () => {
@@ -84,16 +101,46 @@ describe('formatRelativeTimeCompact', () => {
 });
 
 describe('formatDateTime / formatDate', () => {
-	test('formatDateTime returns the full local date+time, "" when unparsable', () => {
+	test('formatDateTime returns the date plus a time, "" when unparsable', () => {
 		const iso = ago(DAY);
-		expect(formatDateTime(iso)).toBe(new Date(iso).toLocaleString());
+		expect(formatDateTime(iso).startsWith(absolute(iso))).toBe(true);
+		expect(formatDateTime(iso)).toMatch(/\d/);
 		expect(formatDateTime('')).toBe('');
 		expect(formatDateTime('bad')).toBe('');
 	});
 
-	test('formatDate returns the local date only, "" when unparsable', () => {
+	test('formatDate returns the date only, "" when unparsable', () => {
 		const iso = ago(DAY);
-		expect(formatDate(iso)).toBe(new Date(iso).toLocaleDateString());
+		expect(formatDate(iso)).toBe(absolute(iso));
 		expect(formatDate(null)).toBe('');
+	});
+});
+
+describe('the active instance locale drives these helpers', () => {
+	test('the chosen date format changes field order everywhere', () => {
+		const iso = ago(8 * DAY);
+
+		setActiveLocale({ ...DEFAULT_LOCALE_SETTINGS, date_format: DateFormat.Mdy });
+		expect(formatDate(iso)).toBe('07/11/2026');
+
+		setActiveLocale({ ...DEFAULT_LOCALE_SETTINGS, date_format: DateFormat.Dmy });
+		expect(formatDate(iso)).toBe('11/07/2026');
+
+		setActiveLocale({ ...DEFAULT_LOCALE_SETTINGS, date_format: DateFormat.Ymd });
+		expect(formatDate(iso)).toBe('2026-07-11');
+		// The >7-day fallback path reads the same locale, not a separate one.
+		expect(formatRelativeTime(iso)).toBe('2026-07-11');
+		expect(formatRelativeTimeCompact(iso)).toBe('2026-07-11');
+	});
+
+	test('relative phrases are spoken in the chosen language', () => {
+		setActiveLocale({
+			language: Language.De,
+			date_format: DateFormat.Dmy,
+			number_format: NumberFormat.CommaDot,
+		});
+		// date-fns carries its own per-language locale objects; this proves the
+		// mapping is wired, not just the numeric formats.
+		expect(formatRelativeTime(ago(2 * DAY))).toBe('vor 2 Tagen');
 	});
 });

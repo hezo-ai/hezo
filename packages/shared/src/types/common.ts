@@ -2009,3 +2009,97 @@ function isChatModelId(provider: AiProvider, id: string): boolean {
 	}
 	return true;
 }
+
+/**
+ * Locale settings — the instance-wide display preferences chosen during
+ * onboarding (before the master key exists) and editable afterwards from global
+ * settings. Three independent axes, deliberately not collapsed into one BCP-47
+ * tag: an operator can read German while preferring ISO dates, and the currency
+ * convention is a separate question again.
+ *
+ * The formatting that consumes these lives in `../i18n/format.js`.
+ */
+
+export const Language = {
+	En: 'en',
+	De: 'de',
+	Fr: 'fr',
+	Es: 'es',
+	It: 'it',
+	PtBr: 'pt-BR',
+	Nl: 'nl',
+	Pl: 'pl',
+	Sv: 'sv',
+	ZhHans: 'zh-Hans',
+	Ja: 'ja',
+	Ko: 'ko',
+} as const;
+export type Language = (typeof Language)[keyof typeof Language];
+
+/** Every supported language, in the order the picker lists them. */
+export const LANGUAGES: readonly Language[] = Object.values(Language);
+
+/**
+ * Endonyms: each language is named the way its own speakers write it, because a
+ * reader who can't yet read the UI still has to find their own language in the
+ * list. "Deutsch", never "German".
+ */
+export const LANGUAGE_LABELS: Record<Language, string> = {
+	[Language.En]: 'English',
+	[Language.De]: 'Deutsch',
+	[Language.Fr]: 'Français',
+	[Language.Es]: 'Español',
+	[Language.It]: 'Italiano',
+	[Language.PtBr]: 'Português (Brasil)',
+	[Language.Nl]: 'Nederlands',
+	[Language.Pl]: 'Polski',
+	[Language.Sv]: 'Svenska',
+	[Language.ZhHans]: '简体中文',
+	[Language.Ja]: '日本語',
+	[Language.Ko]: '한국어',
+};
+
+/** Field order for a rendered date. Month names still follow the language. */
+export const DateFormat = {
+	/** 29/07/2026 */
+	Dmy: 'dmy',
+	/** 07/29/2026 */
+	Mdy: 'mdy',
+	/** 2026-07-29 */
+	Ymd: 'ymd',
+	/** 29 Jul 2026 */
+	DMonY: 'd-mon-y',
+} as const;
+export type DateFormat = (typeof DateFormat)[keyof typeof DateFormat];
+
+export const DATE_FORMATS: readonly DateFormat[] = Object.values(DateFormat);
+
+/**
+ * How a money amount is punctuated. Presentation only — Hezo costs are always
+ * USD (providers bill in USD and budgets are stored as USD cents), so this
+ * never converts a currency, it only picks separators and symbol placement.
+ */
+export const NumberFormat = {
+	/** $1,234.56 */
+	DotComma: 'dot-comma',
+	/** 1.234,56 $ */
+	CommaDot: 'comma-dot',
+	/** 1 234,56 $ */
+	SpaceComma: 'space-comma',
+} as const;
+export type NumberFormat = (typeof NumberFormat)[keyof typeof NumberFormat];
+
+export const NUMBER_FORMATS: readonly NumberFormat[] = Object.values(NumberFormat);
+
+/** Snake_case to match the REST/`system_meta` surface these travel over. */
+export interface LocaleSettings {
+	language: Language;
+	date_format: DateFormat;
+	number_format: NumberFormat;
+}
+
+export const DEFAULT_LOCALE_SETTINGS: LocaleSettings = {
+	language: Language.En,
+	date_format: DateFormat.Mdy,
+	number_format: NumberFormat.DotComma,
+};

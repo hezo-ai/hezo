@@ -22,7 +22,11 @@ import { DomainEventBus } from './events/bus';
 import type { AssetStorageInfo } from './lib/asset-storage-info';
 import { trackBackground } from './lib/background';
 import type { StorageInfo } from './lib/db-info';
-import { getInstanceBaseUrl } from './lib/system-meta';
+import {
+	getInstanceBaseUrl,
+	getInstanceLocale,
+	instanceLocaleIsConfigured,
+} from './lib/system-meta';
 import type { Env } from './lib/types';
 import { generateLlmsTxt } from './mcp/llms-txt';
 import { ONBOARDING_TOOLS } from './mcp/onboarding';
@@ -629,12 +633,19 @@ export function buildApp(
 		// passwordSet tells the gate whether to show the login screen (true) or the
 		// create-password flow (false). Only meaningful once unlocked; cheap enough
 		// to always compute.
+		const db = c.get('db');
 		const passwordSet =
-			masterKeyManager.getState() === 'unlocked' ? await adminPasswordIsSet(c.get('db')) : false;
+			masterKeyManager.getState() === 'unlocked' ? await adminPasswordIsSet(db) : false;
+		// Locale rides on the public status payload because every pre-auth screen
+		// (the language step, the master-key gate, the login form) has to render in
+		// the operator's language before any credential exists. It is a display
+		// preference, not sensitive. `configured` drives the onboarding gate.
 		return c.json({
 			masterKeyState: masterKeyManager.getState(),
 			passwordSet,
 			version: HEZO_VERSION,
+			locale: await getInstanceLocale(db),
+			localeConfigured: await instanceLocaleIsConfigured(db),
 		});
 	};
 	app.get('/api/status', statusHandler);

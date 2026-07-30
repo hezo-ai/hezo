@@ -17,6 +17,7 @@ import { Route as HomeIndexRouteImport } from './routes/home/index'
 import { Route as SettingsUsersRouteImport } from './routes/settings/users'
 import { Route as SettingsStorageRouteImport } from './routes/settings/storage'
 import { Route as SettingsSkillsRouteImport } from './routes/settings/skills'
+import { Route as SettingsLocaleRouteImport } from './routes/settings/locale'
 import { Route as SettingsCredentialsRouteImport } from './routes/settings/credentials'
 import { Route as SettingsConnectorsRouteImport } from './routes/settings/connectors'
 import { Route as SettingsChatboxRouteImport } from './routes/settings/chatbox'
@@ -95,6 +96,11 @@ const SettingsStorageRoute = SettingsStorageRouteImport.update({
 const SettingsSkillsRoute = SettingsSkillsRouteImport.update({
   id: '/skills',
   path: '/skills',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsLocaleRoute = SettingsLocaleRouteImport.update({
+  id: '/locale',
+  path: '/locale',
   getParentRoute: () => SettingsRouteRoute,
 } as any)
 const SettingsCredentialsRoute = SettingsCredentialsRouteImport.update({
@@ -330,6 +336,7 @@ export interface FileRoutesByFullPath {
   '/settings/chatbox': typeof SettingsChatboxRoute
   '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
+  '/settings/locale': typeof SettingsLocaleRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/settings/storage': typeof SettingsStorageRoute
   '/settings/users': typeof SettingsUsersRoute
@@ -377,6 +384,7 @@ export interface FileRoutesByTo {
   '/settings/chatbox': typeof SettingsChatboxRoute
   '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
+  '/settings/locale': typeof SettingsLocaleRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/settings/storage': typeof SettingsStorageRoute
   '/settings/users': typeof SettingsUsersRoute
@@ -426,6 +434,7 @@ export interface FileRoutesById {
   '/settings/chatbox': typeof SettingsChatboxRoute
   '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
+  '/settings/locale': typeof SettingsLocaleRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/settings/storage': typeof SettingsStorageRoute
   '/settings/users': typeof SettingsUsersRoute
@@ -477,6 +486,7 @@ export interface FileRouteTypes {
     | '/settings/chatbox'
     | '/settings/connectors'
     | '/settings/credentials'
+    | '/settings/locale'
     | '/settings/skills'
     | '/settings/storage'
     | '/settings/users'
@@ -524,6 +534,7 @@ export interface FileRouteTypes {
     | '/settings/chatbox'
     | '/settings/connectors'
     | '/settings/credentials'
+    | '/settings/locale'
     | '/settings/skills'
     | '/settings/storage'
     | '/settings/users'
@@ -572,6 +583,7 @@ export interface FileRouteTypes {
     | '/settings/chatbox'
     | '/settings/connectors'
     | '/settings/credentials'
+    | '/settings/locale'
     | '/settings/skills'
     | '/settings/storage'
     | '/settings/users'
@@ -675,6 +687,13 @@ declare module '@tanstack/react-router' {
       path: '/skills'
       fullPath: '/settings/skills'
       preLoaderRoute: typeof SettingsSkillsRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/locale': {
+      id: '/settings/locale'
+      path: '/locale'
+      fullPath: '/settings/locale'
+      preLoaderRoute: typeof SettingsLocaleRouteImport
       parentRoute: typeof SettingsRouteRoute
     }
     '/settings/credentials': {
@@ -963,6 +982,7 @@ interface SettingsRouteRouteChildren {
   SettingsChatboxRoute: typeof SettingsChatboxRoute
   SettingsConnectorsRoute: typeof SettingsConnectorsRoute
   SettingsCredentialsRoute: typeof SettingsCredentialsRoute
+  SettingsLocaleRoute: typeof SettingsLocaleRoute
   SettingsSkillsRoute: typeof SettingsSkillsRoute
   SettingsStorageRoute: typeof SettingsStorageRoute
   SettingsUsersRoute: typeof SettingsUsersRoute
@@ -979,6 +999,7 @@ const SettingsRouteRouteChildren: SettingsRouteRouteChildren = {
   SettingsChatboxRoute: SettingsChatboxRoute,
   SettingsConnectorsRoute: SettingsConnectorsRoute,
   SettingsCredentialsRoute: SettingsCredentialsRoute,
+  SettingsLocaleRoute: SettingsLocaleRoute,
   SettingsSkillsRoute: SettingsSkillsRoute,
   SettingsStorageRoute: SettingsStorageRoute,
   SettingsUsersRoute: SettingsUsersRoute,
