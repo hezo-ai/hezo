@@ -415,7 +415,7 @@ function findKimiSessionLogs(root: string, depth = 0): string[] {
  * usage. Best-effort throughout: a missing or unreadable log yields null (⇒ $0
  * rather than a failed run), and the home mount is removed at cleanup regardless.
  */
-function recoverOffStreamRunUsage(
+export function recoverOffStreamRunUsage(
 	runtimeType: AgentRuntime,
 	homeMount: RuntimeHomeMount | null,
 	priceFn: ((model: string | undefined, tokens: CostTokens) => number) | undefined,
