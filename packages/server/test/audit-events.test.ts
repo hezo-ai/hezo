@@ -145,6 +145,40 @@ describe('audit observer (end-to-end)', () => {
 		expect(entry?.entity_identifier).toBe(created.identifier);
 	});
 
+	it('records a description change without copying the bodies into the row', async () => {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Description task',
+				description: 'The original body.',
+				assignee_slug: CAPTAIN_AGENT_SLUG,
+			}),
+		});
+		const created = (await res.json()).data as { id: string; identifier: string };
+
+		const patch = await app.request(`/api/projects/${projectSlug}/tasks/${created.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ description: 'A rewritten body.' }),
+		});
+		expect(patch.status).toBe(200);
+
+		const rows = await auditRows({ entityType: 'task', action: 'updated' });
+		const entry = rows.find(
+			(e) =>
+				e.entity_id === created.id &&
+				(e.details as Record<string, unknown>).field === 'description',
+		);
+		expect(entry).toBeDefined();
+		const details = entry?.details as Record<string, unknown>;
+		// A description has no size ceiling, so neither end reaches the audit row.
+		expect(details.from).toBeNull();
+		expect(details.to).toBeNull();
+		expect(JSON.stringify(details)).not.toContain('rewritten body');
+	});
+
 	it('folds resolved assignee display names into the audit details', () => {
 		const input = mapEventToAudit({
 			type: 'task.updated',

@@ -162,8 +162,8 @@ place a genuine per-repo write restriction is represented.
 an agent-maintained `progress_summary`. Numbering is atomic via `project_task_counters`.
 `task_dependencies` is the many-to-many blocking graph (`UNIQUE`, no self-blocks).
 `task_comments` is **polymorphic** over a `content_type` enum + `content` JSONB — `text`,
-`system` (timeline entries like `status_change`/`task_link`), `run` (auto-written
-on run completion), `preview`, `action`,
+`system` (timeline entries like `status_change`/`title_change`/`description_change`/`task_link`),
+`run` (auto-written on run completion), `preview`, `action`,
 `connect_required`, `credential_request`. Each comment carries a `public_id` slug for
 `#comment-<id>` deep-links. A human-authored comment keeps `author_member_id` null by
 convention but records **which** human in `author_user_id` (nullable FK to `users`), so the
@@ -175,6 +175,13 @@ emoji reactions, keyed by a non-null `member_id` (unlike a comment's nullable
 a team they can access but aren't a member of resolves to their **HQ (default-team)**
 membership (`resolveReactorMemberId`) — the same cross-team identity HQ agents use to act in
 other teams' projects — so a superuser can react anywhere, not only in HQ or teams they created.
+Title and description edits are recorded on the thread from **both** update paths
+(`recordTitleChange` / `recordDescriptionChange` in `services/task-events.ts`), so an agent's
+edit leaves the same entry a human's does. A `description_change` payload carries a capped
+preview of each end plus the full lengths, never the bodies: the comments skeleton route and
+the MCP `list_comments` tool both return a system comment's `content` whole, so a stored body
+would ride into every comment fetch and every agent prompt for the life of the task. The
+matching `task.updated` audit event omits both ends for the same reason.
 Marking a task `done` is gated in both update paths (REST PATCH and MCP `update_task`,
 shared helpers in `lib/task-relationships.ts`): every sub-task terminal, no outstanding
 pinged-agent activity by others (active runs, pending mention/comment/reply wakeups), and —

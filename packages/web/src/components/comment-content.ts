@@ -51,6 +51,22 @@ export interface SystemParentChangeContent {
 	text?: string;
 }
 
+/**
+ * A description edit. The bodies are deliberately absent: the skeleton feed and
+ * the MCP `list_comments` tool both return a system comment's `content` whole,
+ * so the payload carries a capped preview of each end plus the full lengths.
+ */
+export interface SystemDescriptionChangeContent {
+	kind: 'description_change';
+	from_preview?: string;
+	to_preview?: string;
+	from_truncated?: boolean;
+	to_truncated?: boolean;
+	from_length?: number;
+	to_length?: number;
+	text?: string;
+}
+
 export interface SystemRunFailedContent {
 	kind: 'run_failed';
 	agent_slug?: string;
@@ -83,6 +99,7 @@ export type SystemContent =
 	| SystemStatusChangeContent
 	| SystemTaskLinkContent
 	| SystemParentChangeContent
+	| SystemDescriptionChangeContent
 	| SystemRunFailedContent
 	| SystemRepoDesignatedContent
 	| SystemGenericContent;

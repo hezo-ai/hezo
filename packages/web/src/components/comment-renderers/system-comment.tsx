@@ -1,8 +1,12 @@
 import { formatTaskStatus } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
+import { ChevronDown } from 'lucide-react';
+import { useState } from 'react';
 import { repoWebUrl } from '../../lib/github';
+import { useI18n } from '../../lib/i18n';
 import type {
 	SystemContent,
+	SystemDescriptionChangeContent,
 	SystemParentChangeContent,
 	SystemRepoDesignatedContent,
 	SystemRunFailedContent,
@@ -32,6 +36,9 @@ function isRepoDesignated(c: SystemContent): c is SystemRepoDesignatedContent {
 }
 function isParentChange(c: SystemContent): c is SystemParentChangeContent {
 	return c.kind === 'parent_change';
+}
+function isDescriptionChange(c: SystemContent): c is SystemDescriptionChangeContent {
+	return c.kind === 'description_change';
 }
 
 export function SystemComment({ comment, projectId }: Props) {
@@ -71,6 +78,10 @@ export function SystemComment({ comment, projectId }: Props) {
 
 	if (content && isParentChange(content)) {
 		return <ParentChangeBody comment={comment} content={content} timestamp={timestamp} />;
+	}
+
+	if (content && isDescriptionChange(content)) {
+		return <DescriptionChangeBody comment={comment} content={content} timestamp={timestamp} />;
 	}
 
 	const text = content
@@ -197,6 +208,92 @@ function ParentChangeBody({
 			<span className="text-xs text-text-2">{body}</span>
 			<ActorBadge actorType={comment.author_type} name={actorName} />
 			{timestamp}
+		</div>
+	);
+}
+
+/**
+ * A description edit. The payload carries a capped preview of each end rather
+ * than the bodies (see `SystemDescriptionChangeContent`), so the expanded view
+ * renders them as plain text with a trailing ellipsis where the preview was cut,
+ * never as markdown - it is a quote of what changed, not a second copy of the
+ * description. Stacked at every breakpoint: this sits inside the narrow
+ * inline-event row, so there is no room for side-by-side.
+ */
+function DescriptionChangeBody({
+	comment,
+	content,
+	timestamp,
+}: {
+	comment: CommentDataOf<'system'>;
+	content: SystemDescriptionChangeContent;
+	timestamp: React.ReactNode;
+}) {
+	const { t } = useI18n();
+	const [expanded, setExpanded] = useState(false);
+	const actorName = comment.author_name ?? 'Admin';
+	const from = content.from_preview ?? '';
+	const to = content.to_preview ?? '';
+	const hasPreview = from.length > 0 || to.length > 0;
+
+	const end = (label: string, text: string, truncated: boolean | undefined, testId: string) =>
+		text ? (
+			<div className="min-w-0">
+				<span className="text-[11px] uppercase tracking-wider font-medium text-text-3">
+					{label}
+				</span>
+				<p
+					className="mt-0.5 whitespace-pre-wrap break-words text-xs text-text-2"
+					data-testid={testId}
+				>
+					{truncated ? `${text}…` : text}
+				</p>
+			</div>
+		) : null;
+
+	return (
+		<div className="flex flex-col gap-1" data-testid="description-change-comment">
+			{/* Wraps rather than overflowing: this row carries one more control than
+			    its siblings, and it sits in a column that is only ~340px wide on a
+			    375px viewport. */}
+			<div className="flex flex-wrap items-baseline gap-2 leading-[26px]">
+				<span className="min-w-0 text-xs text-text-2">
+					{content.text ?? `${actorName} updated the description`}
+				</span>
+				<ActorBadge actorType={comment.author_type} name={actorName} />
+				{timestamp}
+				{hasPreview && (
+					<button
+						type="button"
+						onClick={() => setExpanded((v) => !v)}
+						aria-expanded={expanded}
+						aria-label={t('tasks.descriptionChange.toggle')}
+						title={t('tasks.descriptionChange.toggle')}
+						data-testid="description-change-toggle"
+						className="shrink-0 text-text-3 hover:text-text-1"
+					>
+						<ChevronDown
+							className={`w-3.5 h-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`}
+						/>
+					</button>
+				)}
+			</div>
+			{expanded && hasPreview && (
+				<div className="flex flex-col gap-2 rounded-md border border-border bg-surface-2 px-2.5 py-2">
+					{end(
+						t('tasks.descriptionChange.before'),
+						from,
+						content.from_truncated,
+						'description-change-before',
+					)}
+					{end(
+						t('tasks.descriptionChange.after'),
+						to,
+						content.to_truncated,
+						'description-change-after',
+					)}
+				</div>
+			)}
 		</div>
 	);
 }

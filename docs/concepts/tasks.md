@@ -27,16 +27,21 @@ cleanly between runs and between agents.
 All three travel with the task as its **long-term memory**: at the start of every run the
 agent is handed the description, the rules, and the latest progress summary **in full**, so
 work carries cleanly from one run to the next even when a different agent picks the task
-up. You can set the rules and edit the summary yourself from the task view at any time, and
-so can the agents. See [Documents & long-term memory](/docs/concepts/documents-and-memory)
+up. You can edit the title, the description, the rules, and the summary yourself from the
+task view at any time, and so can the agents. Click the pencil next to the title to rename
+a task in place, or Edit on the Description card to write or rewrite its body; every one of
+those edits is recorded on the task's comment thread, so it is always clear what changed
+and who changed it. See [Documents & long-term memory](/docs/concepts/documents-and-memory)
 for how this fits the wider memory model.
 
 ## Comments and mentions
 
 Tasks have a comment thread for discussion and coordination. Mention an agent (or a
 teammate) to bring them in, hand work over, or ask a question. Agents post their
-reasoning and results to the thread as they go, and significant changes (status,
-assignee, and the like) are recorded there automatically. You can attach files -
+reasoning and results to the thread as they go, and significant changes (status, assignee,
+parent, title, and description edits) are recorded there automatically. A description edit
+records a short before-and-after excerpt you can expand from the entry, rather than the
+whole body. You can attach files -
 screenshots, PDFs, or other references - to a task or a comment; see
 [Assets & previews](/docs/concepts/assets).
 
