@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.38.0 - 2026-07-30
+
+### Features
+
+- **i18n:** fail the catalog guard on keys that never reach a screen ([#872](https://github.com/hezo-ai/hezo/pull/872))
+- **agents:** file recurring asks as standing tasks with a child per round ([#873](https://github.com/hezo-ai/hezo/pull/873))
+- run containers on demand with a global container limit and RAM caps ([#871](https://github.com/hezo-ai/hezo/pull/871))
+- **runtimes:** add Kimi Code as a runtime alongside Kimi on Claude Code ([#869](https://github.com/hezo-ai/hezo/pull/869))
+- make Hezo locale-aware (language, date format, currency format) ([#862](https://github.com/hezo-ai/hezo/pull/862))
+- **tasks:** let a task's parent be changed or cleared ([#866](https://github.com/hezo-ai/hezo/pull/866))
+- **prompts:** route post-delegation feedback to the delegate instead of absorbing it ([#865](https://github.com/hezo-ai/hezo/pull/865))
+- **marketplace:** add individual roles from a team to a project ([#864](https://github.com/hezo-ai/hezo/pull/864))
+
+### Bug Fixes
+
+- **web:** let users dismiss the reconnecting toast, with a 20s snooze ([#870](https://github.com/hezo-ai/hezo/pull/870))
+- **web:** drop inline Model pricing blurb duplicated by the help dialog ([#867](https://github.com/hezo-ai/hezo/pull/867))
+
+### Other
+
+- Remove duplicate deploy badges from README header ([#868](https://github.com/hezo-ai/hezo/pull/868))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.37.0...0.38.0
+
 ## 0.37.0 - 2026-07-29
 
 ### Features
