@@ -47,6 +47,15 @@ test('describes a rename with from/to titles', () => {
 	expect(describeAuditEntry(e)).toBe('Renamed OP-1 from "Foo" to "Bar"');
 });
 
+test('describes a description edit without quoting either body', () => {
+	const e = entry({
+		action: 'updated',
+		entity_type: 'task',
+		details: { field: 'description', from: null, to: null },
+	});
+	expect(describeAuditEntry(e)).toBe('Updated the description of OP-1');
+});
+
 test('describes a reassignment with resolved names', () => {
 	const e = entry({
 		action: 'updated',

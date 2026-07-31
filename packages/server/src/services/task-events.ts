@@ -237,6 +237,80 @@ export async function recordTitleChange(
 	}
 }
 
+/**
+ * Chars of each end kept on a description-change payload.
+ *
+ * The bodies themselves must never ride along: both the comments skeleton route
+ * and the MCP `list_comments` tool hand back a system comment's `content` in
+ * full, so full descriptions on the payload would inflate every comment fetch
+ * and every agent's prompt context for the life of the task. Two bounded
+ * previews cost ~400 chars per edit instead.
+ */
+const DESCRIPTION_PREVIEW_CHARS = 200;
+
+function descriptionPreview(text: string): { preview: string; truncated: boolean } {
+	if (text.length <= DESCRIPTION_PREVIEW_CHARS) return { preview: text, truncated: false };
+	return { preview: text.slice(0, DESCRIPTION_PREVIEW_CHARS), truncated: true };
+}
+
+/**
+ * Record a description edit on the task's own thread. Unlike a rename, the two
+ * ends are unbounded, so the payload carries a capped preview of each plus the
+ * full lengths — enough for the thread to show what changed without copying the
+ * bodies into every comment fetch.
+ */
+export async function recordDescriptionChange(
+	db: Db,
+	teamId: string,
+	taskId: string,
+	oldDescription: string | null,
+	newDescription: string | null,
+	actorMemberId: string | null,
+	actorApiKeyId: string | null,
+	wsManager: WebSocketManager | undefined,
+): Promise<void> {
+	const from = oldDescription ?? '';
+	const to = newDescription ?? '';
+	if (from === to) return;
+
+	const actorName = await resolveActorName(db, actorMemberId, actorApiKeyId);
+	const verb =
+		from === ''
+			? 'added a description'
+			: to === ''
+				? 'cleared the description'
+				: 'updated the description';
+	const text = `${actorName} ${verb}`;
+	const fromEnd = descriptionPreview(from);
+	const toEnd = descriptionPreview(to);
+
+	const r = await db.query<Record<string, unknown>>(
+		`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, content_type, content)
+		 VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb)
+		 RETURNING *, (SELECT project_id FROM tasks WHERE id = $1) AS project_id`,
+		[
+			taskId,
+			actorMemberId,
+			actorApiKeyId,
+			CommentContentType.System,
+			JSON.stringify({
+				kind: 'description_change',
+				from_preview: fromEnd.preview,
+				to_preview: toEnd.preview,
+				from_truncated: fromEnd.truncated,
+				to_truncated: toEnd.truncated,
+				from_length: from.length,
+				to_length: to.length,
+				actor_id: actorMemberId,
+				text,
+			}),
+		],
+	);
+	if (r.rows[0] && wsManager) {
+		broadcastRowChange(wsManager, wsRoom.team(teamId), 'task_comments', 'INSERT', r.rows[0]);
+	}
+}
+
 export async function recordAssigneeChange(
 	db: Db,
 	teamId: string,
@@ -354,6 +428,16 @@ export async function recordParentChange(
 	return { fromIdentifier, toIdentifier };
 }
 
+/**
+ * Where in the source task the mention was written.
+ *
+ * A description has no sub-location to point at, so it records exactly as it
+ * always has. A comment does, and its `public_id` is the `#comment-<id>` anchor
+ * the timeline already scrolls to, so the recorded event can link straight at
+ * the sentence that created the relationship instead of only at its task.
+ */
+export type TaskLinkOrigin = { kind: 'description' } | { kind: 'comment'; commentPublicId: string };
+
 export async function recordTaskLinks(
 	db: Db,
 	teamId: string,
@@ -362,6 +446,7 @@ export async function recordTaskLinks(
 	actorMemberId: string | null,
 	actorApiKeyId: string | null,
 	wsManager: WebSocketManager | undefined,
+	origin: TaskLinkOrigin = { kind: 'description' },
 ): Promise<void> {
 	const ids = extractTaskIdentifiers(text);
 	if (ids.length === 0) return;
@@ -396,7 +481,14 @@ export async function recordTaskLinks(
 		);
 		if (exists.rows.length > 0) continue;
 
-		const linkText = `Linked from ${sourceIdentifier} by ${actor.name}`;
+		// `text` stays English on purpose: it is what agents read back through the
+		// MCP comment tools and what the client's generic fallback prints. The web
+		// renderer builds its own sentence from the structured fields below, which
+		// is what lets that sentence be translated.
+		const linkText =
+			origin.kind === 'comment'
+				? `Linked from a comment on ${sourceIdentifier} by ${actor.name}`
+				: `Linked from ${sourceIdentifier} by ${actor.name}`;
 		const r = await db.query<Record<string, unknown>>(
 			`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, content_type, content)
 			 VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb)
@@ -411,6 +503,9 @@ export async function recordTaskLinks(
 					source_task_id: sourceTaskId,
 					source_identifier: sourceIdentifier,
 					source_project_slug: sourceProjectSlug,
+					// Both derived from the one `origin` argument so they cannot disagree.
+					source_kind: origin.kind,
+					source_comment_public_id: origin.kind === 'comment' ? origin.commentPublicId : null,
 					actor_id: actorMemberId,
 					actor_name: actor.name,
 					actor_kind: actor.kind,

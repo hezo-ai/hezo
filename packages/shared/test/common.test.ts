@@ -19,6 +19,7 @@ import {
 	isAgentEffort,
 	isAllowedAttachmentExtension,
 	isAllowedAttachmentMime,
+	isArchiveAssetMime,
 	isArchiveFilter,
 	isBudgetPauseStatus,
 	isChatChannel,
@@ -129,6 +130,23 @@ describe('asset / attachment helpers', () => {
 		expect(assetContentDisposition('image/png')).toBe('inline');
 	});
 
+	it('never serves an archive inline', () => {
+		// The second reason to force a download, distinct from active content: an
+		// archive has nothing to render, so `inline` would be a lie.
+		for (const mime of [
+			'application/zip',
+			'application/x-tar',
+			'application/gzip',
+			'application/x-7z-compressed',
+			'application/vnd.rar',
+		]) {
+			expect(assetContentDisposition(mime), mime).toBe('attachment');
+			expect(isArchiveAssetMime(mime), mime).toBe(true);
+		}
+		expect(isArchiveAssetMime('image/png')).toBe(false);
+		expect(isArchiveAssetMime('application/pdf')).toBe(false);
+	});
+
 	it('forces an attachment for any mime when download is requested', () => {
 		expect(assetContentDisposition('image/png', true)).toBe('attachment');
 		expect(assetContentDisposition('text/html', true)).toBe('attachment');
@@ -232,6 +250,60 @@ describe('asset / attachment helpers', () => {
 		// Unsupported extension → reject.
 		expect(resolveAttachmentContentType('virus.exe', 'text/plain')).toBeNull();
 		expect(resolveAttachmentContentType('noext', 'text/plain')).toBeNull();
+	});
+
+	it('archive extensions are authoritative over whatever the browser declared', () => {
+		// One archive format is spelled several ways depending on OS and browser, so
+		// the extension decides and the declaration is ignored. Windows Chrome/Edge
+		// send `application/x-zip-compressed`, which is not itself allowlisted - if
+		// the declaration won, the most common desktop upload would be rejected.
+		for (const declared of [
+			'application/zip',
+			'application/x-zip-compressed',
+			'multipart/x-zip',
+			'application/octet-stream',
+			'',
+			// Even a hostile declaration cannot change what gets stored.
+			'application/x-msdownload',
+		]) {
+			expect(resolveAttachmentContentType('bundle.zip', declared), declared).toBe(
+				'application/zip',
+			);
+		}
+		expect(resolveAttachmentContentType('logs.tar', 'application/x-gtar')).toBe(
+			'application/x-tar',
+		);
+		expect(resolveAttachmentContentType('dump.gz', 'application/x-gzip')).toBe('application/gzip');
+		// A double extension resolves through its last segment and keeps its name.
+		expect(resolveAttachmentContentType('backup.tar.gz', 'application/x-compressed-tar')).toBe(
+			'application/gzip',
+		);
+		expect(resolveAttachmentContentType('backup.tgz', '')).toBe('application/gzip');
+		expect(resolveAttachmentContentType('files.7z', '')).toBe('application/x-7z-compressed');
+		expect(resolveAttachmentContentType('files.rar', 'application/x-rar-compressed')).toBe(
+			'application/vnd.rar',
+		);
+	});
+
+	it('only an archive extension is authoritative, never an archive declaration', () => {
+		// The rule is one-directional. A .zip always stores application/zip (above),
+		// but a non-archive extension still follows the long-standing declared-wins
+		// rule - which has always let one allowlisted type be declared for another
+		// (a .png could already be stored as application/pdf). Nothing here is
+		// weakened by archives joining the allowlist: the mismatch is still served
+		// as an inert download, and the reverse (a .zip stored as an image) is now
+		// impossible.
+		expect(resolveAttachmentContentType('photo.png', 'application/zip')).toBe('application/zip');
+		// A non-allowlisted spelling is still rejected on a non-archive extension:
+		// the authoritative rule never runs for it, so no alias can sneak through.
+		expect(resolveAttachmentContentType('photo.png', 'application/x-zip-compressed')).toBeNull();
+	});
+
+	it('archive extensions are allowlisted attachments', () => {
+		for (const name of ['a.zip', 'a.tar', 'a.gz', 'a.tgz', 'a.7z', 'a.rar']) {
+			expect(isAllowedAttachmentExtension(name), name).toBe(true);
+		}
+		expect(isAllowedAttachmentMime('application/zip')).toBe(true);
 	});
 
 	it('script extensions are allowlisted attachments', () => {

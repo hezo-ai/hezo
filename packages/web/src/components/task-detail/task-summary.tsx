@@ -1,10 +1,9 @@
 import { ChevronDown } from 'lucide-react';
 import { useState } from 'react';
 import type { Task, useUpdateTask } from '../../hooks/use-tasks';
-import { MarkdownEditor } from '../markdown-editor';
 import { MarkdownProse } from '../markdown-prose';
-import { Button } from '../ui/button';
 import { InfoTooltip } from '../ui/info-tooltip';
+import { MarkdownFieldEditor } from './markdown-field-editor';
 
 type UpdateTaskMutation = ReturnType<typeof useUpdateTask>;
 
@@ -56,7 +55,6 @@ function CollapsibleSummaryCard({
 }: CollapsibleSummaryCardProps) {
 	const [open, setOpen] = useState(false);
 	const [editing, setEditing] = useState(false);
-	const [draft, setDraft] = useState('');
 
 	return (
 		<div data-testid={testId} className={className}>
@@ -82,7 +80,6 @@ function CollapsibleSummaryCard({
 					<button
 						type="button"
 						onClick={() => {
-							setDraft(value ?? '');
 							setEditing(true);
 							setOpen(true);
 						}}
@@ -95,33 +92,15 @@ function CollapsibleSummaryCard({
 			{open && (
 				<div className="mt-2">
 					{editing ? (
-						<div className="flex flex-col gap-2">
-							<MarkdownEditor
-								ariaLabel={editorAriaLabel}
-								projectId={projectId}
-								projectSlug={taskProjectSlug}
-								value={draft}
-								onChange={setDraft}
-								placeholder={editorPlaceholder}
-								className="min-h-[60px]"
-								previewClassName="min-h-[60px]"
-								emptyPreviewText="_(nothing to preview)_"
-							/>
-							<div className="flex gap-2 justify-end">
-								<Button size="sm" variant="secondary" onClick={() => setEditing(false)}>
-									Cancel
-								</Button>
-								<Button
-									size="sm"
-									onClick={() => {
-										onSave(draft || null);
-										setEditing(false);
-									}}
-								>
-									Save
-								</Button>
-							</div>
-						</div>
+						<MarkdownFieldEditor
+							ariaLabel={editorAriaLabel}
+							projectId={projectId}
+							projectSlug={taskProjectSlug}
+							value={value}
+							placeholder={editorPlaceholder}
+							onSave={onSave}
+							onClose={() => setEditing(false)}
+						/>
 					) : value ? (
 						<MarkdownProse projectId={projectId} projectSlug={taskProjectSlug}>
 							{value}

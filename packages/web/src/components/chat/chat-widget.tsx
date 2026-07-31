@@ -5,12 +5,7 @@ import {
 	Check,
 	Copy,
 	ExternalLink,
-	FileAudio,
-	File as FileIcon,
-	FileText,
-	FileVideo,
 	History,
-	Image as ImageIcon,
 	ListPlus,
 	Loader2,
 	Lock,
@@ -40,6 +35,7 @@ import { useMediaQuery } from '../../hooks/use-media-query';
 import { useHqProject } from '../../hooks/use-projects';
 import { useUploadChatAttachment } from '../../hooks/use-upload-chat-attachment';
 import { copyToClipboard } from '../../lib/clipboard';
+import { AssetIcon } from '../asset-icon';
 import {
 	ATTACHMENT_ACCEPT,
 	AttachmentChips,
@@ -922,17 +918,7 @@ function MessageBubble({
 	);
 }
 
-/** Type-based icon for a sent attachment chip. */
-function attachmentIcon(contentType: string) {
-	const cls = 'h-3.5 w-3.5 shrink-0 text-text-3';
-	if (contentType.startsWith('image/')) return <ImageIcon className={cls} />;
-	if (contentType.startsWith('audio/')) return <FileAudio className={cls} />;
-	if (contentType.startsWith('video/')) return <FileVideo className={cls} />;
-	if (contentType === 'application/pdf' || contentType === 'text/plain') {
-		return <FileText className={cls} />;
-	}
-	return <FileIcon className={cls} />;
-}
+const SENT_ATTACHMENT_ICON_CLASSES = 'h-3.5 w-3.5 shrink-0 text-text-3';
 
 /**
  * Read-only linked chips for the files sent with a message, aligned under the
@@ -964,7 +950,7 @@ function SentAttachments({
 						data-testid="chat-message-attachment"
 						className={chipClasses}
 					>
-						{attachmentIcon(a.content_type)}
+						<AssetIcon contentType={a.content_type} className={SENT_ATTACHMENT_ICON_CLASSES} />
 						<span className="max-w-[160px] truncate">{assetBasename(a.original_filename)}</span>
 					</Link>
 				) : (
@@ -976,7 +962,7 @@ function SentAttachments({
 						data-testid="chat-message-attachment"
 						className={chipClasses}
 					>
-						{attachmentIcon(a.content_type)}
+						<AssetIcon contentType={a.content_type} className={SENT_ATTACHMENT_ICON_CLASSES} />
 						<span className="max-w-[160px] truncate">{assetBasename(a.original_filename)}</span>
 						<ExternalLink className="h-3 w-3 shrink-0 text-text-3" />
 					</a>

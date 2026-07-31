@@ -424,7 +424,7 @@ commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments', async (c) => 
 	const authorUserId = auth.type === AuthType.Admin ? auth.userId : null;
 
 	const result = await withTransaction(db, async () => {
-		const inserted = await db.query<{ id: string }>(
+		const inserted = await db.query<{ id: string; public_id: string }>(
 			`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, author_user_id, parent_comment_id, content_type, content)
      VALUES ($1, $2, $3, $4, $5, $6::comment_content_type, $7::jsonb)
      RETURNING *`,
@@ -475,6 +475,7 @@ commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments', async (c) => 
 			authorMemberId,
 			authorApiKeyId,
 			c.get('wsManager'),
+			{ kind: 'comment', commentPublicId: result.rows[0].public_id },
 		).catch((e) => log.error('Failed to record task links from comment:', e));
 	}
 

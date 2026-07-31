@@ -91,16 +91,27 @@ test('status changes and cross-task mentions appear as system entries on the tim
 		{ timeout: 10_000 },
 	);
 
-	// Verify "Linked from <source>" landed on target.
+	// Verify "Linked from a comment on <source>" landed on target. The mention was
+	// written in a comment, so the entry names that origin and links to it.
 	await waitFor(
 		async () => {
 			const items = await findAllByTestId('comment-item');
 			const linked = items.filter((el) =>
-				new RegExp(`Linked from ${sourceIdentifier}`).test(el.textContent ?? ''),
+				new RegExp(`Linked from a comment on ${sourceIdentifier}`).test(el.textContent ?? ''),
 			);
 			expect(linked.length).toBe(1);
 		},
 		{ timeout: 10_000 },
+	);
+
+	// The "a comment" link points at the source task, anchored to the comment that
+	// carried the mention - not merely at the source task.
+	const commentLink = document.querySelector<HTMLAnchorElement>(
+		'[data-testid="task-link-source-comment"]',
+	);
+	expect(commentLink).toBeTruthy();
+	expect(commentLink?.getAttribute('href')).toContain(
+		`/tasks/${sourceIdentifier.toLowerCase()}#comment-`,
 	);
 
 	// Post a second mention from the same source — should NOT add a duplicate
@@ -133,7 +144,7 @@ test('status changes and cross-task mentions appear as system entries on the tim
 		async () => {
 			const items = await findAllByTestId('comment-item');
 			const linked = items.filter((el) =>
-				new RegExp(`Linked from ${sourceIdentifier}`).test(el.textContent ?? ''),
+				new RegExp(`Linked from a comment on ${sourceIdentifier}`).test(el.textContent ?? ''),
 			);
 			expect(linked.length).toBe(1);
 		},
@@ -180,6 +191,53 @@ test('title renames appear as system entries on the timeline', async () => {
 		},
 		{ timeout: 10_000 },
 	);
+});
+
+test('description edits appear as system entries with an expandable before/after', async () => {
+	let teamSlug = '';
+	let projectSlug = '';
+	let taskIdentifier = '';
+
+	const { findByTestId, findAllByTestId, router, user } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Description Project' });
+			const task = await seedTask(ws, project, {
+				title: 'Described ticket',
+				description: 'The original body.',
+				assignee_id: ws.agents[0].id,
+			});
+			await patchTask(ws, task.id, { description: 'The rewritten body.' });
+			teamSlug = ws.team.slug;
+			projectSlug = project.slug;
+			taskIdentifier = task.identifier;
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: {
+			projectId: projectSlug,
+			taskId: taskIdentifier.toLowerCase(),
+		},
+	});
+
+	await waitFor(
+		async () => {
+			const items = await findAllByTestId('comment-item');
+			const match = items.find((el) => /updated the description/i.test(el.textContent ?? ''));
+			expect(match).toBeDefined();
+		},
+		{ timeout: 10_000 },
+	);
+
+	// The bodies stay collapsed until asked for.
+	expect(document.querySelector('[data-testid="description-change-before"]')).toBeNull();
+	await user.click(await findByTestId('description-change-toggle'));
+	expect((await findByTestId('description-change-before')).textContent).toBe('The original body.');
+	expect((await findByTestId('description-change-after')).textContent).toBe('The rewritten body.');
+	expect(teamSlug).toBeTruthy();
 });
 
 test('auto-unblock cascade renders as system attribution, not the patcher', async () => {

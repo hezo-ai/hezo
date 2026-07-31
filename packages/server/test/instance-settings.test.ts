@@ -144,7 +144,8 @@ describe('concurrency settings', () => {
 
 	beforeAll(() => {
 		// Pin the host-memory probe to the incident's reference host: a "2GB"
-		// droplet (1.92GiB MemTotal) with 6GiB swap → auto default 8 / 2 = 4.
+		// droplet (1.92GiB MemTotal) with 6GiB swap → round to 8GiB, less the 1GiB
+		// system reserve = 7 usable, so the auto default is floor(7 / 2) = 3.
 		setHostMemoryForTest({ totalRamBytes: 1.92 * GIB, totalSwapBytes: 6 * GIB });
 	});
 	afterAll(() => setHostMemoryForTest(null));
@@ -173,7 +174,8 @@ describe('concurrency settings', () => {
 
 	it('computes the default max_active_containers from host memory when unset', async () => {
 		const data = await getSettings();
-		// round(1.92 + 6) = 8 GiB, less 1 GB system and 2 GB chat, / 2 GB per container.
+		// round(1.92 + 6) = 8 GiB, less 1 GB for the host and one 2 GB cap for the
+		// assistant's container (which the limit excludes), / 2 GB per container.
 		expect(data.max_active_containers).toBe(2);
 		expect(data.max_active_containers_is_set).toBe(false);
 		expect(data.max_active_containers_computed_default).toBe(2);
@@ -182,13 +184,18 @@ describe('concurrency settings', () => {
 		expect(data.host_total_swap_bytes).toBe(6 * GIB);
 	});
 
-	it('raising the ram cap lowers the computed default', async () => {
-		const res = await patchSettings({ default_ram_cap_per_container_gb: 4 });
-		expect(res.status).toBe(200);
-		const data = await getSettings();
-		expect(data.default_ram_cap_per_container_gb).toBe(4);
-		// (8 - 1 - 4) / 4 floors to 0, clamped up to the minimum.
-		expect(data.max_active_containers).toBe(1);
+	it('changing the ram cap moves the computed default', async () => {
+		// Asserted in both directions. On this host raising the cap lands on 1, which
+		// is also the MIN clamp, so that assertion alone would pass even if the
+		// division broke; the 1GB case is the one that proves it divides.
+		expect((await patchSettings({ default_ram_cap_per_container_gb: 3 })).status).toBe(200);
+		let data = await getSettings();
+		expect(data.default_ram_cap_per_container_gb).toBe(3);
+		expect(data.max_active_containers).toBe(1); // (8 - 1 - 3) / 3 floors to 1
+
+		expect((await patchSettings({ default_ram_cap_per_container_gb: 1 })).status).toBe(200);
+		data = await getSettings();
+		expect(data.max_active_containers).toBe(6); // (8 - 1 - 1) / 1
 		expect(data.max_active_containers_is_set).toBe(false);
 		await patchSettings({ default_ram_cap_per_container_gb: 2 });
 	});

@@ -8,7 +8,8 @@ const GIB = 1024 ** 3;
 afterEach(() => setHostMemoryForTest(null));
 
 test('concurrency settings page shows the computed default, saves, and resets to automatic', async () => {
-	// The incident's reference host: ~2GB RAM + 6GB swap → 8GB / 2GB cap = 4.
+	// The incident's reference host: ~2GB RAM + 6GB swap → 8GB, less the 1GB
+	// system reserve = 7 usable, / 2GB cap = 3.
 	setHostMemoryForTest({ totalRamBytes: 1.92 * GIB, totalSwapBytes: 6 * GIB });
 
 	const { findByTestId, findByRole, queryByTestId, user } = await renderApp({
@@ -24,9 +25,11 @@ test('concurrency settings page shows the computed default, saves, and resets to
 	expect(maxInput.value).toBe('2');
 	const formula = await findByTestId('max-active-containers-formula');
 	expect(formula.textContent).toContain('= 2');
-	// The reserve is shown, not just applied - otherwise the arithmetic on screen
-	// does not add up and reads as a bug.
-	expect(formula.textContent).toContain('chat container');
+	// Both reserves are spelled out, not just applied, so the operator can see
+	// where the memory went - otherwise the arithmetic on screen does not add up
+	// and reads as a bug.
+	expect(formula.textContent).toContain('1 GB for the system');
+	expect(formula.textContent).toContain('2 GB for the assistant');
 	expect(queryByTestId('max-active-containers-reset')).toBeNull();
 
 	// An explicit value wins and offers a reset back to automatic.
@@ -62,21 +65,23 @@ test('raising the ram cap lowers the automatic container limit and persists', as
 	const ramInput = (await findByTestId('ram-cap-input')) as HTMLInputElement;
 	expect(ramInput.value).toBe('2');
 	await user.clear(ramInput);
-	await user.type(ramInput, '4');
+	await user.type(ramInput, '3');
 	await user.click(await findByTestId('ram-cap-save'));
-	await waitFor(() => expect(ramInput.value).toBe('4'));
+	await waitFor(() => expect(ramInput.value).toBe('3'));
 
-	// The automatic limit follows the new divisor and the larger chat reserve:
-	// (8 - 1 - 4) / 4 floors to 0, clamped up to the minimum.
+	// The cap feeds both the chat reserve and the divisor: (8 - 1 - 3) / 3 floors
+	// to 1. That is also the MIN clamp, so the rendered reserve is asserted too -
+	// otherwise this would pass with the division broken.
 	const formula = await findByTestId('max-active-containers-formula');
 	await waitFor(() => expect(formula.textContent).toContain('= 1'));
+	expect(formula.textContent).toContain('3 GB for the assistant');
 
 	const { apiBase, token } = getTestContext();
 	const res = await apiBase('/api/instance-settings', {
 		headers: { Authorization: `Bearer ${token}` },
 	});
 	const data = (await res.json()).data;
-	expect(data.default_ram_cap_per_container_gb).toBe(4);
+	expect(data.default_ram_cap_per_container_gb).toBe(3);
 	expect(data.max_active_containers).toBe(1);
 });
 

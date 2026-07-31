@@ -15,6 +15,7 @@ import type React from 'react';
 import { expect, test } from 'vitest';
 import type { CommentDataOf } from '../src/components/comment-renderers/comment-data';
 import { SystemComment } from '../src/components/comment-renderers/system-comment';
+import { I18nProvider } from '../src/lib/i18n';
 
 function renderNode(node: React.ReactNode) {
 	const rootRoute = createRootRoute({ component: () => node });
@@ -22,8 +23,14 @@ function renderNode(node: React.ReactNode) {
 		routeTree: rootRoute,
 		history: createMemoryHistory({ initialEntries: ['/'] }),
 	});
-	// biome-ignore lint/suspicious/noExplicitAny: opaque router type at the test boundary.
-	return render(<RouterProvider router={router as any} />);
+	return render(
+		// The event sentences resolve through the message catalog, so these need a
+		// provider just as main.tsx supplies one above the router.
+		<I18nProvider>
+			{/* biome-ignore lint/suspicious/noExplicitAny: opaque router type at the test boundary. */}
+			<RouterProvider router={router as any} />
+		</I18nProvider>,
+	);
 }
 
 type Content = CommentDataOf<'system'>['content'];
@@ -197,6 +204,33 @@ test('run_failed: agent_slug present but no projectId → span (no link)', async
 	expect(queryByTestId('run-failed-agent')).toBeNull();
 });
 
+// The status x error-present matrix picks between four separate catalog keys
+// (the status word inflects with the sentence in several languages, so it
+// cannot be a {status} var). The two tests above cover timed_out-with-error and
+// failed-without; these cover the remaining two corners.
+
+test('run_failed: failed status with an error renders the error variant', async () => {
+	const { findByTestId } = renderSystem(
+		comment({ kind: 'run_failed', agent_slug: 'qa', status: 'failed', error: 'exit 1' }),
+		'proj',
+	);
+	const wrapper = await findByTestId('run-failed-comment');
+	expect(wrapper.textContent).toContain('failed');
+	expect(wrapper.textContent).toContain('exit 1');
+	expect(wrapper.textContent).not.toContain('timed out');
+});
+
+test('run_failed: timed_out with no error renders the plain timed-out variant', async () => {
+	const { findByTestId } = renderSystem(
+		comment({ kind: 'run_failed', agent_slug: 'qa', status: 'timed_out' }),
+		'proj',
+	);
+	const wrapper = await findByTestId('run-failed-comment');
+	expect(wrapper.textContent).toContain('timed out.');
+	// No error present, so no ": <error>" clause is appended.
+	expect(wrapper.textContent).not.toContain(':');
+});
+
 // ─── repo_designated ──────────────────────────────────────────────────────
 
 test('repo_designated with a github identifier renders an external link', async () => {
@@ -291,6 +325,61 @@ test('task_link: falls back to comment.author_name then "Admin" when actor_name 
 	expect((await findByText(/Linked from/)).textContent).toContain('CommentAuthor');
 });
 
+test('task_link from a comment deep-links to that comment as well as the task', async () => {
+	const { findByTestId } = renderSystem(
+		comment({
+			kind: 'task_link',
+			source_identifier: 'SRC-5',
+			source_project_slug: 'src-proj',
+			source_kind: 'comment',
+			source_comment_public_id: '20260730120000',
+			actor_name: 'Captain',
+			actor_kind: 'agent',
+			actor_slug: 'captain',
+		}),
+		'cur-proj',
+	);
+	const link = (await findByTestId('task-link-source-comment')) as HTMLAnchorElement;
+	expect(link.textContent).toBe('a comment');
+	expect(link.getAttribute('href')).toContain('/projects/src-proj/tasks/src-5');
+	expect(link.getAttribute('href')).toContain('#comment-20260730120000');
+	// The task itself stays reachable - the clause is added, nothing is replaced.
+	const source = (await findByTestId('task-link-source')) as HTMLAnchorElement;
+	expect(source.getAttribute('href')).toContain('/projects/src-proj/tasks/src-5');
+});
+
+test('task_link from a description renders no comment link', async () => {
+	const { findByText, queryByTestId } = renderSystem(
+		comment({
+			kind: 'task_link',
+			source_identifier: 'SRC-6',
+			source_project_slug: 'src-proj',
+			source_kind: 'description',
+			source_comment_public_id: null,
+			actor_name: 'Captain',
+		}),
+		'cur-proj',
+	);
+	expect((await findByText(/Linked from/)).textContent).toContain('SRC-6');
+	expect(queryByTestId('task-link-source-comment')).toBeNull();
+});
+
+test('task_link recorded before the origin was tracked renders as it always did', async () => {
+	// Rows written by an older build carry neither new field. They must keep the
+	// original one-clause sentence rather than degrading to a broken link.
+	const { findByText, queryByTestId } = renderSystem(
+		comment({
+			kind: 'task_link',
+			source_identifier: 'SRC-7',
+			source_project_slug: 'src-proj',
+			actor_name: 'Captain',
+		}),
+		'cur-proj',
+	);
+	expect((await findByText(/Linked from/)).textContent).toContain('Linked from SRC-7 by Captain');
+	expect(queryByTestId('task-link-source-comment')).toBeNull();
+});
+
 test('task_link without projectId does NOT use the task_link branch (renders generic fallback)', async () => {
 	// The task_link branch requires projectId; without it, the renderer falls
 	// through to the generic text fallback (JSON.stringify of the content).
@@ -300,6 +389,61 @@ test('task_link without projectId does NOT use the task_link branch (renders gen
 	);
 	const el = await findByText(/task_link/);
 	expect(el.textContent).toContain('SRC-4');
+});
+
+// ─── description_change ───────────────────────────────────────────────────
+
+test('description_change renders the sentence and hides the previews until expanded', async () => {
+	const { findByText, findByTestId, queryByTestId } = renderSystem(
+		comment({
+			kind: 'description_change',
+			text: 'Alice updated the description',
+			from_preview: 'The old body.',
+			to_preview: 'The new body.',
+			from_truncated: false,
+			to_truncated: false,
+			from_length: 13,
+			to_length: 13,
+		}),
+	);
+
+	await findByText('Alice updated the description');
+	expect(queryByTestId('description-change-before')).toBeNull();
+
+	(await findByTestId('description-change-toggle')).click();
+
+	expect((await findByTestId('description-change-before')).textContent).toBe('The old body.');
+	expect((await findByTestId('description-change-after')).textContent).toBe('The new body.');
+});
+
+test('description_change marks a truncated preview with an ellipsis', async () => {
+	const { findByTestId } = renderSystem(
+		comment({
+			kind: 'description_change',
+			text: 'Alice added a description',
+			from_preview: '',
+			to_preview: 'x'.repeat(200),
+			from_truncated: false,
+			to_truncated: true,
+			from_length: 0,
+			to_length: 500,
+		}),
+	);
+
+	(await findByTestId('description-change-toggle')).click();
+
+	const after = await findByTestId('description-change-after');
+	expect(after.textContent).toBe(`${'x'.repeat(200)}…`);
+	// The "before" end is empty on an added description, so it renders nothing.
+	expect(document.querySelector('[data-testid="description-change-before"]')).toBeNull();
+});
+
+test('description_change with no previews offers no toggle', async () => {
+	const { findByText, queryByTestId } = renderSystem(
+		comment({ kind: 'description_change', text: 'Alice cleared the description' }),
+	);
+	await findByText('Alice cleared the description');
+	expect(queryByTestId('description-change-toggle')).toBeNull();
 });
 
 // ─── generic fallback ─────────────────────────────────────────────────────

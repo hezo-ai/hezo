@@ -157,7 +157,12 @@ import {
 import { listReviewComments } from '../services/review-comments';
 import { recordSkillRevisionIfChanged } from '../services/skill-revisions';
 import { triggerStatusAutomations, wakeTaskIfChildrenClosed } from '../services/task-automation';
-import { recordParentChange, recordTaskLinks } from '../services/task-events';
+import {
+	recordDescriptionChange,
+	recordParentChange,
+	recordTaskLinks,
+	recordTitleChange,
+} from '../services/task-events';
 import {
 	type CreateTaskCaller,
 	CreateTaskError,
@@ -1604,10 +1609,15 @@ export function registerTools(
 			const { teamId, taskId, projectId } = scope;
 
 			const currentRowResult = await db.query<{
+				title: string;
+				description: string | null;
 				status: string;
 				assignee_id: string | null;
 				parent_task_id: string | null;
-			}>('SELECT status, assignee_id, parent_task_id FROM tasks WHERE id = $1', [taskId]);
+			}>(
+				'SELECT title, description, status, assignee_id, parent_task_id FROM tasks WHERE id = $1',
+				[taskId],
+			);
 			const currentRow = currentRowResult.rows[0];
 
 			const scopeDenied = assertRunTaskScope(auth, taskId, args.status as string | undefined);
@@ -1615,6 +1625,11 @@ export function registerTools(
 
 			const currentStatus = currentRow?.status;
 			const previousAssigneeId = currentRow?.assignee_id ?? null;
+
+			// Normalize the title the way the REST route does (`tasks.ts`), so both
+			// surfaces store the same value and the rename recorder treats the same
+			// whitespace-only edits as no-ops.
+			if (typeof args.title === 'string') args.title = args.title.trim();
 
 			// Accept a teammate slug (what an agent holds) or a member UUID; every
 			// downstream check + the UPDATE below consumes the resolved member id.
@@ -1745,7 +1760,45 @@ export function registerTools(
 			const actorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 			const actorApiKeyId = apiKeyIdFromAuth(auth);
 
+			// Renames and description edits are recorded on this surface too, so an
+			// agent's edit leaves the same thread entry a human's does. Awaited for the
+			// same reason as the parent change below: a human watching the task page
+			// depends on the broadcast that lands with the comment.
+			if (args.title !== undefined && currentRow) {
+				try {
+					await recordTitleChange(
+						db,
+						teamId,
+						taskId,
+						currentRow.title,
+						args.title as string,
+						actorMemberId,
+						actorApiKeyId,
+						wsManager,
+					);
+				} catch (e) {
+					log.error('Failed to record title change:', e);
+				}
+			}
+
 			if (args.description !== undefined) {
+				if (currentRow) {
+					try {
+						await recordDescriptionChange(
+							db,
+							teamId,
+							taskId,
+							currentRow.description,
+							args.description as string,
+							actorMemberId,
+							actorApiKeyId,
+							wsManager,
+						);
+					} catch (e) {
+						log.error('Failed to record description change:', e);
+					}
+				}
+
 				trackBackground(
 					recordTaskLinks(
 						db,
@@ -2921,6 +2974,7 @@ export function registerTools(
 					authorMemberId,
 					authorApiKeyId,
 					wsManager,
+					{ kind: 'comment', commentPublicId: row.public_id },
 				).catch((e) => log.error('Failed to record task links from comment:', e)),
 			);
 			// An agent that addresses a teammate by bold/bare name (no @ prefix)
@@ -3055,6 +3109,7 @@ export function registerTools(
 					auth.memberId,
 					apiKeyIdFromAuth(auth),
 					wsManager,
+					{ kind: 'comment', commentPublicId: r.rows[0].public_id },
 				).catch((e) => log.error('Failed to record task links from edited comment:', e)),
 			);
 			const [teammateWarning, passiveWarning, narratedWarning, backtickWarning] = await Promise.all(
@@ -4558,7 +4613,7 @@ export function registerTools(
 	tool(
 		server,
 		'write_project_asset',
-		'Save a file to the project assets library so a human can open it AND other agents (your teammates and your own future runs) can read it back with read_project_asset - including a binary deliverable or generation output you produced (a rendered image, chart, diagram, screenshot, PDF, dataset, or media file). This is how such a file reaches both the admin and the next agent: a file left on the ephemeral container disk vanishes when the run ends and is invisible to everyone else, so anything a later step or teammate will reuse belongs here. Text formats (.html, .svg, .txt, .md, plus script/text formats stored as plain text: .sh, .py, .js, .ts, .json, .csv, .yaml, .yml) are written with the default encoding "utf8". Binary formats - any type a human can upload (.png, .jpg, .jpeg, .gif, .webp, .pdf, .mp3, .mp4, .webm, …) - MUST pass encoding: "base64" with the file\'s bytes base64-encoded in `content`. For a LARGE binary, upload it instead via a multipart/form-data POST to `/mcp/assets` (fields `file` and `path` for the full destination path, plus optional `overwrite=true` to replace an existing asset in place, same Bearer auth): base64 in a JSON-RPC tool call can be silently truncated by a runtime\'s argument-size cap, whereas the multipart endpoint streams the bytes; the result is identical and shows up in list_project_assets / read_project_asset. When you DO write a binary through this tool, pass `byte_size` (the file\'s exact byte length) so a truncated `content` is rejected instead of stored corrupt. The filename may include a folder path up to 2 levels deep (e.g. "scripts/deploy-check.sh" or "launch/images/hero.png") - folders spring into existence with their first asset. Re-saving the same path overwrites it, so the reference stays stable; overwrite matching is PATH-EXACT ("x.html" and "blog/x.html" are different assets - after a move, write to the new full path or you will fork the file). IMPORTANT: any write to an existing path deletes ALL of its pending review comments (the admin\'s feedback returned by read_project_asset) - capture every comment in your context before the first write, and make all desired edits in one consolidated write. Returns the reference string to drop into a comment as `assets/<path>` (no backticks). HTML opens interactively in a new tab; markdown renders with a rich preview and a view-source toggle; images render inline in the assets library. Use a markdown asset for a standalone deliverable opened from the assets library; use write_project_doc for project context docs (specs, PRDs, research). Mockups and other deliverables belong here, never committed to the source repo.',
+		'Save a file to the project assets library so a human can open it AND other agents (your teammates and your own future runs) can read it back with read_project_asset - including a binary deliverable or generation output you produced (a rendered image, chart, diagram, screenshot, PDF, dataset, or media file). This is how such a file reaches both the admin and the next agent: a file left on the ephemeral container disk vanishes when the run ends and is invisible to everyone else, so anything a later step or teammate will reuse belongs here. Text formats (.html, .svg, .txt, .md, plus script/text formats stored as plain text: .sh, .py, .js, .ts, .json, .csv, .yaml, .yml) are written with the default encoding "utf8". Binary formats - any type a human can upload (.png, .jpg, .jpeg, .gif, .webp, .pdf, .mp3, .mp4, .webm, archives such as .zip/.tar/.tar.gz/.7z, …) - MUST pass encoding: "base64" with the file\'s bytes base64-encoded in `content`. For a LARGE binary, upload it instead via a multipart/form-data POST to `/mcp/assets` (fields `file` and `path` for the full destination path, plus optional `overwrite=true` to replace an existing asset in place, same Bearer auth): base64 in a JSON-RPC tool call can be silently truncated by a runtime\'s argument-size cap, whereas the multipart endpoint streams the bytes; the result is identical and shows up in list_project_assets / read_project_asset. When you DO write a binary through this tool, pass `byte_size` (the file\'s exact byte length) so a truncated `content` is rejected instead of stored corrupt. The filename may include a folder path up to 2 levels deep (e.g. "scripts/deploy-check.sh" or "launch/images/hero.png") - folders spring into existence with their first asset. Re-saving the same path overwrites it, so the reference stays stable; overwrite matching is PATH-EXACT ("x.html" and "blog/x.html" are different assets - after a move, write to the new full path or you will fork the file). IMPORTANT: any write to an existing path deletes ALL of its pending review comments (the admin\'s feedback returned by read_project_asset) - capture every comment in your context before the first write, and make all desired edits in one consolidated write. Returns the reference string to drop into a comment as `assets/<path>` (no backticks). HTML opens interactively in a new tab; markdown renders with a rich preview and a view-source toggle; images render inline in the assets library. Use a markdown asset for a standalone deliverable opened from the assets library; use write_project_doc for project context docs (specs, PRDs, research). Mockups and other deliverables belong here, never committed to the source repo.',
 		{
 			project: projectArg(),
 			filename: z
@@ -4598,7 +4653,7 @@ export function registerTools(
 			if (!contentType || !isAllowedAttachmentMime(contentType)) {
 				return {
 					error:
-						'Unsupported asset type. Allowed: text formats (.html, .svg, .txt, .md, and .sh/.py/.js/.ts/.json/.csv/.yaml/.yml stored as plain text) written with encoding "utf8"; and binary formats (.png, .jpg, .jpeg, .gif, .webp, .pdf, .mp3, .mp4, .webm, …) written with encoding "base64".',
+						'Unsupported asset type. Allowed: text formats (.html, .svg, .txt, .md, and .sh/.py/.js/.ts/.json/.csv/.yaml/.yml stored as plain text) written with encoding "utf8"; and binary formats (.png, .jpg, .jpeg, .gif, .webp, .pdf, .mp3, .mp4, .webm, and archives .zip/.tar/.gz/.tgz/.7z/.rar, …) written with encoding "base64".',
 				};
 			}
 
@@ -4730,7 +4785,7 @@ export function registerTools(
 	tool(
 		server,
 		'read_project_asset',
-		"Read a project asset's contents by path (e.g. \"ui-mockups.html\" or \"scripts/check.sh\") - the files that list_project_assets returns (UI mockups, wireframes, SVG diagrams, text exports, scripts, markdown deliverables). Use the full path exactly as listed, folder prefix included. Text-based assets (HTML, SVG, plain text, markdown) come back inline as `content`. Raster images (PNG/JPEG/GIF/WebP) come back with their pixel `width`/`height` AND the image itself inline, so a vision-capable model can see it to review it - pass `include_image: false` to skip the pixels and get metadata only, and images above ~4 MB return metadata + `url` only. Other binary assets (PDFs, media) are not inlined; the response gives a signed download `url` - fetch it with a plain `curl -fsSL '<url>' -o /tmp/<filename>` (no auth header needed; the URL is valid for 24h, re-call this tool for a fresh one). If an admin has left review comments on the asset they come back as `review_comments`: for text assets (markdown, plain text) each anchors to an exact `quote` (with `occurrence` = 0-based Nth match of that snippet); a comment without a quote applies to the whole file. Capture them all before any write_project_asset to the path - overwriting deletes every review comment. Archived assets are not readable by default - set filter: 'archived' or 'all' to read one. For markdown project docs use read_project_doc instead.",
+		"Read a project asset's contents by path (e.g. \"ui-mockups.html\" or \"scripts/check.sh\") - the files that list_project_assets returns (UI mockups, wireframes, SVG diagrams, text exports, scripts, markdown deliverables). Use the full path exactly as listed, folder prefix included. Text-based assets (HTML, SVG, plain text, markdown) come back inline as `content`. Raster images (PNG/JPEG/GIF/WebP) come back with their pixel `width`/`height` AND the image itself inline, so a vision-capable model can see it to review it - pass `include_image: false` to skip the pixels and get metadata only, and images above ~4 MB return metadata + `url` only. Other binary assets (PDFs, media, archives) are not inlined; the response gives a signed download `url` - fetch it with a plain `curl -fsSL '<url>' -o /tmp/<filename>` (no auth header needed; the URL is valid for 24h, re-call this tool for a fresh one). An archive (.zip, .tar, .tar.gz/.tgz, .7z) is downloaded that same way and then unpacked in your container - `unzip`, `tar` and `7z` are preinstalled. If an admin has left review comments on the asset they come back as `review_comments`: for text assets (markdown, plain text) each anchors to an exact `quote` (with `occurrence` = 0-based Nth match of that snippet); a comment without a quote applies to the whole file. Capture them all before any write_project_asset to the path - overwriting deletes every review comment. Archived assets are not readable by default - set filter: 'archived' or 'all' to read one. For markdown project docs use read_project_doc instead.",
 		{
 			project: projectArg(),
 			filename: z

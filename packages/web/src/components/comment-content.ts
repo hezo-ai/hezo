@@ -34,10 +34,19 @@ export interface SystemStatusChangeContent {
 
 export interface SystemTaskLinkContent {
 	kind: 'task_link';
+	source_task_id?: string;
 	source_identifier?: string;
 	source_project_slug?: string;
+	/**
+	 * Where in the source task the mention was written. Absent on rows recorded
+	 * before the origin was tracked, which render as description-sourced ones do.
+	 */
+	source_kind?: 'description' | 'comment';
+	/** The `#comment-<id>` anchor on the source task, when the origin was a comment. */
+	source_comment_public_id?: string | null;
+	actor_id?: string | null;
 	actor_name?: string;
-	actor_kind?: 'agent' | 'user' | 'admin';
+	actor_kind?: 'agent' | 'user' | 'admin' | 'api_key';
 	actor_slug?: string | null;
 	text?: string;
 }
@@ -48,6 +57,22 @@ export interface SystemParentChangeContent {
 	to_identifier?: string | null;
 	from_project_slug?: string | null;
 	to_project_slug?: string | null;
+	text?: string;
+}
+
+/**
+ * A description edit. The bodies are deliberately absent: the skeleton feed and
+ * the MCP `list_comments` tool both return a system comment's `content` whole,
+ * so the payload carries a capped preview of each end plus the full lengths.
+ */
+export interface SystemDescriptionChangeContent {
+	kind: 'description_change';
+	from_preview?: string;
+	to_preview?: string;
+	from_truncated?: boolean;
+	to_truncated?: boolean;
+	from_length?: number;
+	to_length?: number;
 	text?: string;
 }
 
@@ -83,6 +108,7 @@ export type SystemContent =
 	| SystemStatusChangeContent
 	| SystemTaskLinkContent
 	| SystemParentChangeContent
+	| SystemDescriptionChangeContent
 	| SystemRunFailedContent
 	| SystemRepoDesignatedContent
 	| SystemGenericContent;

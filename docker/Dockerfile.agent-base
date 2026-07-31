@@ -6,6 +6,13 @@ FROM node:24-slim
 # scripting tasks agents routinely hit (e.g. checking a delivered asset's
 # dimensions) without a runtime `sudo apt-get install`.
 #
+# `p7zip-full` covers `.7z`, which humans can attach to a task but which has no
+# extractor in the base image (`tar` and `gzip` are Essential-priority Debian
+# packages and `unzip` is installed above, so the other attachable archive
+# formats already work). `.rar` is deliberately left out: `unrar-free` handles
+# only part of the format and full RAR5 support is non-free, so an agent that
+# actually meets one installs an extractor at runtime.
+#
 # Debian's packaged `git` is sufficient: every git operation (worktree add,
 # status, commit, push) runs inside this container via `docker exec`, and the
 # per-task worktrees are created and consumed entirely with in-container paths,
@@ -14,7 +21,7 @@ FROM node:24-slim
 # building git from source is no longer needed; the distro package keeps the
 # image build fast and cache-friendly.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git curl jq unzip openssh-client ca-certificates python3 python3-pip file imagemagick socat sudo iproute2 \
+    git curl jq unzip p7zip-full openssh-client ca-certificates python3 python3-pip file imagemagick socat sudo iproute2 \
     && rm -rf /var/lib/apt/lists/*
 
 # The container runs as the unprivileged `node` user (so bind-mounted worktree

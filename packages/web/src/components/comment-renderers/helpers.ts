@@ -3,6 +3,7 @@ import {
 	AlertTriangle,
 	ArrowRightLeft,
 	Dot,
+	FileText,
 	Link2,
 	Pencil,
 	Terminal,
@@ -63,6 +64,8 @@ function systemEventIcon(kind: string | undefined): LucideIcon {
 			return ArrowRightLeft;
 		case 'title_change':
 			return Pencil;
+		case 'description_change':
+			return FileText;
 		case 'assignee_change':
 			return UserRoundCog;
 		case 'task_link':

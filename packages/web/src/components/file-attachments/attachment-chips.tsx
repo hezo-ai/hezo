@@ -1,30 +1,12 @@
 import { assetBasename, assetPath } from '@hezo/shared';
-import {
-	ExternalLink,
-	FileAudio,
-	File as FileIcon,
-	FileText,
-	FileVideo,
-	Image as ImageIcon,
-	Loader2,
-	X,
-} from 'lucide-react';
+import { ExternalLink, Loader2, X } from 'lucide-react';
 import type {
 	ErrorChip,
 	UploadedAttachment,
 	UploadingFile,
 } from '../../hooks/use-file-attachments';
+import { AssetIcon } from '../asset-icon';
 import { Tooltip } from '../ui/tooltip';
-
-function iconFor(contentType: string, className = 'h-3.5 w-3.5') {
-	if (contentType.startsWith('image/')) return <ImageIcon className={className} />;
-	if (contentType.startsWith('audio/')) return <FileAudio className={className} />;
-	if (contentType.startsWith('video/')) return <FileVideo className={className} />;
-	if (contentType === 'application/pdf' || contentType === 'text/plain') {
-		return <FileText className={className} />;
-	}
-	return <FileIcon className={className} />;
-}
 
 interface AttachmentChipsProps {
 	attachments: UploadedAttachment[];
@@ -67,7 +49,7 @@ export function AttachmentChips({
 					className="flex items-center gap-1.5 rounded-sm border border-border bg-surface-3 px-2 py-1 text-[12px] text-text-1"
 					data-testid={chipTestId}
 				>
-					{iconFor(a.content_type)}
+					<AssetIcon contentType={a.content_type} className="h-3.5 w-3.5" />
 					<Tooltip content={a.original_filename}>
 						<a
 							href={projectId ? assetPath(projectId, a.original_filename) : a.url}
