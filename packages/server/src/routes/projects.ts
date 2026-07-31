@@ -49,6 +49,7 @@ import {
 import { createProjectWithTeam } from '../services/project-create';
 import { createProjectIntake, getOpenProjectIntakeForHome } from '../services/project-intake';
 import { getProjectProgress } from '../services/projects';
+import { createBundleVault } from '../services/sandbox/bundle-vault';
 import { strandedCommitsExistsSql } from '../services/sandbox/pool-db';
 import { exportTeamBundle, TeamBundleExportError } from '../services/team-bundle-export';
 
@@ -891,6 +892,21 @@ projectsRoutes.delete('/projects/:projectId', async (c) => {
 			.catch((error) => {
 				log.error(
 					`Failed to delete asset blobs for project ${ref(existing.rows[0].slug, projectId)}:`,
+					error,
+				);
+			}),
+	);
+
+	// Recovery bundles go with the project and not a moment sooner. Container
+	// teardown deliberately leaves them: it wipes the local clones, so from that
+	// point the bundle may be the ONLY copy of commits that never reached the
+	// remote. Deleting the project is the operator saying they want it all gone.
+	await trackBackground(
+		createBundleVault(c.get('dataDir'))
+			.removeProject(projectId)
+			.catch((error) => {
+				log.error(
+					`Failed to delete recovery bundles for project ${ref(existing.rows[0].slug, projectId)}:`,
 					error,
 				);
 			}),

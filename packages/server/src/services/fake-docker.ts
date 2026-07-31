@@ -183,6 +183,10 @@ export function createFakeDockerClient(db?: Db, dataDir?: string): ContainerEngi
 		// every HEZO_SKIP_DOCKER harness.
 		listHezoProcesses: async () => [],
 		killPids: async () => {},
+		// No real filesystem quota behind the fake, so it reports "could not tell"
+		// rather than 0 - a fake claiming an empty disk would make the pool's
+		// recycle rung untestable by asserting the opposite of what it guards.
+		diskUsedBytes: async () => null,
 
 		// Resolved through the container's bind mounts, exactly as Docker would.
 		// The fake exists to stand in for a *local daemon*, and a local daemon's
@@ -241,10 +245,13 @@ function lazyHostFiles(resolve: () => Promise<string>): SandboxFiles {
 	return {
 		exists: async (p) => (await bound()).exists(p),
 		read: async (p) => (await bound()).read(p),
+		readBytes: async (p) => (await bound()).readBytes(p),
+		size: async (p) => (await bound()).size(p),
 		remove: async (p) => (await bound()).remove(p),
 		removeDir: async (p) => (await bound()).removeDir(p),
 		findByName: async (d, n, depth) => (await bound()).findByName(d, n, depth),
 		write: async (p, c, o) => (await bound()).write(p, c, o),
+		writeBytes: async (p, c, o) => (await bound()).writeBytes(p, c, o),
 		mkdir: async (p, o) => (await bound()).mkdir(p, o),
 	};
 }

@@ -37,6 +37,34 @@ describe('hostSandboxFiles', () => {
 		expect(await hostSandboxFiles(root).exists('nope.log')).toBe(false);
 	});
 
+	it('round-trips bytes that are not valid UTF-8', async () => {
+		// A git bundle is binary, and a UTF-8 decode replaces every invalid
+		// sequence with U+FFFD - so a bundle moved through `read`/`write` would
+		// arrive corrupted, silently, and only fail later at `git fetch`.
+		const bytes = new Uint8Array([0x50, 0x41, 0x43, 0x4b, 0x00, 0xff, 0xfe, 0x80, 0x7f]);
+		const files = hostSandboxFiles(root);
+		await files.writeBytes('nested/dir/pack.bundle', bytes, { mode: 0o600 });
+		expect(Array.from(await files.readBytes('nested/dir/pack.bundle'))).toEqual(Array.from(bytes));
+		expect(statSync(join(root, 'nested/dir/pack.bundle')).mode & 0o777).toBe(0o600);
+	});
+
+	it('answers a file size without transferring it, and null when absent', async () => {
+		// The point of asking is to decide whether to buffer the file at all, so
+		// a missing file has to be a null rather than a throw.
+		writeFileSync(join(root, 'big.bin'), Buffer.alloc(4096));
+		const files = hostSandboxFiles(root);
+		expect(await files.size('big.bin')).toBe(4096);
+		expect(await files.size('nope.bin')).toBeNull();
+	});
+
+	it('refuses a byte path that escapes the root, exactly as the text ones do', async () => {
+		const files = hostSandboxFiles(root);
+		await expect(files.readBytes('../outside.bin')).rejects.toThrow(/escapes its root/);
+		await expect(files.writeBytes('../outside.bin', new Uint8Array([1]))).rejects.toThrow(
+			/escapes its root/,
+		);
+	});
+
 	it('swallows a delete of something that is not there', async () => {
 		// Callers scrub credential-bearing logs in a `finally`, so a delete that
 		// throws would mask the real error from the block it is unwinding.

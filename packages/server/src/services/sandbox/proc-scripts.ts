@@ -70,6 +70,25 @@ export function buildListHezoProcessesScript(): string {
 	);
 }
 
+/**
+ * Bytes used on the filesystem holding a container's workspace.
+ *
+ * `df` rather than `du`: the question is how close the container is to filling
+ * up, and `df` answers it from the superblock in constant time, where `du` walks
+ * every `node_modules` in every worktree - the exact trees that make the number
+ * interesting in the first place. It is measured once per run, so a walk would be
+ * a per-run cost proportional to how much the container has accumulated.
+ *
+ * `--output=used` reports 1K blocks; the caller multiplies. Runtime-agnostic like
+ * the scripts above - only the transport that carries it differs per engine.
+ */
+export function buildDiskUsageScript(path: string): string {
+	if (!/^\/[A-Za-z0-9._/-]*$/.test(path)) {
+		throw new Error(`unsafe path: ${JSON.stringify(path)}`);
+	}
+	return `df -Pk ${path} 2>/dev/null | awk 'NR==2 {print $3}'`;
+}
+
 /** SIGKILL an explicit pid list. Validates every pid so nothing unexpected reaches the shell. */
 export function buildKillPidsScript(pids: number[]): string {
 	for (const pid of pids) {

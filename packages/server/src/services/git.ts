@@ -1092,9 +1092,13 @@ export function readPushErrors(clone: RepoLoc, maxLines = 40): string | null {
 }
 
 /**
- * Remotes whose refs mean "this commit exists somewhere other than this container".
- * Today that is just `origin`; a future durability backstop adds its own name here
- * rather than at each call site, so what counts as durable is stated once.
+ * Remotes whose refs mean "this commit reached the user's git host".
+ *
+ * Just `origin`, and the durability backstop deliberately did **not** join it.
+ * {@link RECOVERY_REMOTE} means Hezo holds a copy, which is enough to stop
+ * destroying the container but is not the same as the work being on the remote
+ * the human pushes to - a run whose every push was denied must keep reporting
+ * that, however well the copy is kept.
  */
 export const DURABLE_REMOTES = ['origin'] as const;
 
@@ -1204,4 +1208,148 @@ export function describeUnpushedWork(work: UnpushedWork[]): string {
 			`${w.commits} commit${w.commits === 1 ? '' : 's'} on ${w.branch} in ${w.repo.containerPath}`,
 	);
 	return `run ended with committed work that reached no remote (${parts.join('; ')}) — the commits exist only in this container`;
+}
+
+/**
+ * Filename, inside a clone's git dir, of the recovery bundle a run builds when its
+ * commits reached no remote - and that a later run on a *different* container
+ * restores from.
+ *
+ * In the git dir deliberately, beside {@link PUSH_ERROR_LOG_NAME}, for two
+ * reasons. It is real local disk: `git bundle create` **seeks while writing** and
+ * dies (`pack-objects died`) against an object-store-backed mount, so the bundle
+ * has to be built locally and moved as a finished file. And the git dir is
+ * already owned by the run user, so the unelevated git that builds it can write
+ * there without a chown dance.
+ */
+export const RECOVERY_BUNDLE_NAME = 'hezo-recovery.bundle';
+
+/**
+ * The bundle's path relative to the clone root, which is what
+ * {@link SandboxFiles} rooted at the clone addresses it by.
+ *
+ * Uses the *common* git dir literally rather than asking git for it: a clone's
+ * `.git` is a real directory (worktrees are what get a file), which
+ * {@link ensurePushHook} already relies on.
+ */
+export const RECOVERY_BUNDLE_REL_PATH = `.git/${RECOVERY_BUNDLE_NAME}`;
+
+/**
+ * Remote-tracking namespace restored bundle refs land in.
+ *
+ * Deliberately **not** in {@link DURABLE_REMOTES}: a recovered ref means Hezo
+ * holds a copy, not that the user's git host does. Counting it as durable would
+ * make a run whose pushes were all denied report success the moment its work was
+ * vaulted, which is the opposite of what the human needs to see.
+ */
+export const RECOVERY_REMOTE = 'hezo-recovery';
+
+/**
+ * Pack a branch's undelivered commits into a bundle inside the container.
+ *
+ * `--not --remotes=<durable>` makes this a **delta**: the bundle carries only what
+ * no durable remote already has, recording the remote tips as prerequisites. That
+ * is what keeps it kilobytes for an ordinary task rather than a copy of the whole
+ * history, and it is why a container restoring it must have fetched origin first
+ * (run prep always has, before it restores). A clone with no remote at all has no
+ * prerequisites to exclude, so its bundle is the entire branch - correct, and the
+ * case the vault's size cap exists for.
+ *
+ * Never throws: this runs at run finalize, where the run is already being failed
+ * for the unpushed work, and a broken bundle must not mask that.
+ */
+export async function createRecoveryBundle(
+	executor: GitExecutor,
+	repo: RepoLoc,
+	branch: string,
+	remotes: readonly string[] = DURABLE_REMOTES,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+	const res = await executor.exec(
+		[
+			'bundle',
+			'create',
+			RECOVERY_BUNDLE_REL_PATH,
+			`refs/heads/${branch}`,
+			'--not',
+			...remotes.map((r) => `--remotes=${r}`),
+		],
+		{ cwd: repo.containerPath, timeout: 120_000 },
+	);
+	if (res.exitCode !== 0) {
+		return { ok: false, error: formatGitError(res.stderr) || 'git bundle create failed' };
+	}
+	return { ok: true };
+}
+
+/**
+ * Fetch a restored bundle's commits into a clone.
+ *
+ * The refs land under `refs/remotes/{@link RECOVERY_REMOTE}/` rather than on the
+ * branch itself. That is the conservative half of recovery: the commits become
+ * *present* in this clone - so nothing is lost when the container that held them
+ * is destroyed - without silently moving a branch the agent is about to work on.
+ *
+ * `git bundle` verifies its own prerequisites, so a bundle whose base commits this
+ * clone lacks fails here rather than half-applying.
+ *
+ * Non-throwing for the same reason as {@link createRecoveryBundle}: a failed
+ * recovery is reported into the run log and the source container stays pinned,
+ * never an exception out of run prep.
+ */
+export async function fetchRecoveryBundle(
+	executor: GitExecutor,
+	repo: RepoLoc,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+	const res = await executor.exec(
+		[
+			'fetch',
+			'--no-write-fetch-head',
+			RECOVERY_BUNDLE_REL_PATH,
+			`+refs/heads/*:refs/remotes/${RECOVERY_REMOTE}/*`,
+		],
+		{ cwd: repo.containerPath, timeout: 120_000 },
+	);
+	if (res.exitCode !== 0) {
+		return { ok: false, error: formatGitError(res.stderr) || 'git fetch from bundle failed' };
+	}
+	return { ok: true };
+}
+
+/**
+ * Merge recovered commits into the task branch, so the agent's worktree actually
+ * contains the work an earlier container committed.
+ *
+ * Separate from {@link fetchRecoveryBundle} because the two answer different
+ * questions: fetching is about *not losing* the commits, merging is about *using*
+ * them. Fast-forward only - the recovered tip descends from what this clone has
+ * whenever the earlier run was the only writer, which the one-active-run-per-task
+ * rule guarantees. If it is not a fast-forward, something genuinely diverged and
+ * the agent should reconcile it deliberately rather than have a merge commit
+ * appear from a background recovery.
+ */
+export async function fastForwardFromRecovery(
+	executor: GitExecutor,
+	worktree: WorktreeLoc,
+	branch: string,
+): Promise<{ merged: boolean; warning?: string }> {
+	const ref = `refs/remotes/${RECOVERY_REMOTE}/${branch}`;
+	const exists = await executor.exec(['rev-parse', '--verify', '--quiet', ref], {
+		cwd: worktree.containerPath,
+		timeout: 10_000,
+	});
+	if (exists.exitCode !== 0) return { merged: false };
+
+	const res = await executor.exec(['merge', '--ff-only', ref], {
+		cwd: worktree.containerPath,
+		timeout: 60_000,
+	});
+	if (res.exitCode !== 0) {
+		return {
+			merged: false,
+			warning:
+				`recovered commits for ${branch} could not be fast-forwarded into the worktree ` +
+				`(${formatGitError(res.stderr) || 'merge failed'}) — they are present as ${ref}`,
+		};
+	}
+	return { merged: !res.stdout.includes('Already up to date') };
 }

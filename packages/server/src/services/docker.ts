@@ -5,6 +5,7 @@ import { Readable } from 'node:stream';
 import { DockerFrameDecoder, demuxDockerStream } from './docker-frames';
 import type { SandboxFiles } from './sandbox/files';
 import {
+	buildDiskUsageScript,
 	buildKillByEnvMarkerScript,
 	buildKillPidsScript,
 	buildListHezoProcessesScript,
@@ -820,6 +821,29 @@ export class DockerClient implements ContainerEngine {
 	}
 
 	/**
+	 * Bytes used on the filesystem holding `path`, read with `df` inside the
+	 * container. Null when the exec failed or answered something unparseable - an
+	 * unanswerable measurement must not read as an empty container.
+	 */
+	async diskUsedBytes(containerId: string, path: string): Promise<number | null> {
+		const execId = await this.execCreate(containerId, {
+			Cmd: ['sh', '-c', buildDiskUsageScript(path)],
+			AttachStdout: true,
+			AttachStderr: false,
+		});
+		const ac = new AbortController();
+		const timer = setTimeout(() => ac.abort(), SWEEP_EXEC_TIMEOUT_MS);
+		try {
+			const { stdout } = await this.execStart(execId, { signal: ac.signal });
+			return parseDfKilobytes(stdout);
+		} catch {
+			return null;
+		} finally {
+			clearTimeout(timer);
+		}
+	}
+
+	/**
 	 * {@link SandboxFiles} over Docker's archive endpoints, rooted inside the
 	 * container.
 	 *
@@ -849,18 +873,59 @@ export class DockerClient implements ContainerEngine {
 			return { exitCode: ExitCode, stdout };
 		};
 
+		// The byte-level halves of read/write, shared by their UTF-8 and raw
+		// variants: only the encode/decode at the very edge differs, and the
+		// archive round trip is where every real detail lives.
+		const readArchived = async (relPath: string): Promise<Uint8Array> => {
+			const res = await this.requestBinary(
+				'GET',
+				`/containers/${containerId}/archive?path=${encodeURIComponent(abs(relPath))}`,
+			);
+			if (!res.ok) throw new Error(`sandbox file not found: ${relPath}`);
+			const entry = untarFirstFile(new Uint8Array(await res.arrayBuffer()));
+			if (!entry) throw new Error(`sandbox file not found: ${relPath}`);
+			return entry.contents;
+		};
+
+		const writeArchived = async (
+			relPath: string,
+			contents: Uint8Array,
+			opts: { mode?: number; dirMode?: number },
+		): Promise<void> => {
+			const target = abs(relPath);
+			const dir = target.slice(0, Math.max(target.lastIndexOf('/'), 1));
+			const dirMode = (opts.dirMode ?? 0o755).toString(8);
+			// `mkdir -p` applies the mode only to directories it creates, which
+			// matches the host implementation's contract exactly.
+			const made = await run(`mkdir -p -m ${dirMode} ${shellQuote(dir)}`);
+			if (made.exitCode !== 0) throw new Error(`could not create ${dir} in ${containerId}`);
+
+			const name = target.slice(target.lastIndexOf('/') + 1);
+			const archive = tarSingleFile(name, contents, opts.mode ?? 0o644);
+			const res = await this.requestBinary(
+				'PUT',
+				`/containers/${containerId}/archive?path=${encodeURIComponent(dir)}`,
+				archive,
+			);
+			if (!res.ok) {
+				throw new Error(`could not write ${relPath} into ${containerId} (${res.status})`);
+			}
+		};
+
 		return {
 			exists: async (relPath) => (await run(`test -e ${shellQuote(abs(relPath))}`)).exitCode === 0,
 
-			read: async (relPath) => {
-				const res = await this.requestBinary(
-					'GET',
-					`/containers/${containerId}/archive?path=${encodeURIComponent(abs(relPath))}`,
-				);
-				if (!res.ok) throw new Error(`sandbox file not found: ${relPath}`);
-				const entry = untarFirstFile(new Uint8Array(await res.arrayBuffer()));
-				if (!entry) throw new Error(`sandbox file not found: ${relPath}`);
-				return new TextDecoder().decode(entry.contents);
+			read: async (relPath) => new TextDecoder().decode(await readArchived(relPath)),
+
+			readBytes: async (relPath) => readArchived(relPath),
+
+			size: async (relPath) => {
+				// `stat -c %s` rather than the archive endpoint's tar header: the
+				// point of asking is to avoid transferring the file at all.
+				const res = await run(`stat -c %s ${shellQuote(abs(relPath))} 2>/dev/null`);
+				if (res.exitCode !== 0) return null;
+				const bytes = Number.parseInt(res.stdout.trim(), 10);
+				return Number.isFinite(bytes) ? bytes : null;
 			},
 
 			remove: async (relPath) => {
@@ -886,26 +951,10 @@ export class DockerClient implements ContainerEngine {
 					);
 			},
 
-			write: async (relPath, contents, opts = {}) => {
-				const target = abs(relPath);
-				const dir = target.slice(0, Math.max(target.lastIndexOf('/'), 1));
-				const dirMode = (opts.dirMode ?? 0o755).toString(8);
-				// `mkdir -p` applies the mode only to directories it creates, which
-				// matches the host implementation's contract exactly.
-				const made = await run(`mkdir -p -m ${dirMode} ${shellQuote(dir)}`);
-				if (made.exitCode !== 0) throw new Error(`could not create ${dir} in ${containerId}`);
+			write: async (relPath, contents, opts = {}) =>
+				writeArchived(relPath, new TextEncoder().encode(contents), opts),
 
-				const name = target.slice(target.lastIndexOf('/') + 1);
-				const archive = tarSingleFile(name, new TextEncoder().encode(contents), opts.mode ?? 0o644);
-				const res = await this.requestBinary(
-					'PUT',
-					`/containers/${containerId}/archive?path=${encodeURIComponent(dir)}`,
-					archive,
-				);
-				if (!res.ok) {
-					throw new Error(`could not write ${relPath} into ${containerId} (${res.status})`);
-				}
-			},
+			writeBytes: async (relPath, contents, opts = {}) => writeArchived(relPath, contents, opts),
 
 			removeDir: async (relPath) => {
 				// The archive endpoints have no recursive delete, so this is the one
@@ -920,6 +969,16 @@ export class DockerClient implements ContainerEngine {
 			},
 		};
 	}
+}
+
+/**
+ * Turn `df -Pk`'s used column into bytes. Null for anything that is not a plain
+ * number - a container without `df`, or one whose exec produced nothing, has not
+ * reported "empty", it has failed to report.
+ */
+export function parseDfKilobytes(stdout: string): number | null {
+	const kb = Number.parseInt(stdout.trim(), 10);
+	return Number.isFinite(kb) && kb >= 0 ? kb * 1024 : null;
 }
 
 /**

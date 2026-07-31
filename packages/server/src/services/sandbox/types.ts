@@ -220,6 +220,22 @@ export interface ContainerEngine {
 	killPids(containerId: string, pids: number[]): Promise<void>;
 
 	/**
+	 * Bytes used on the filesystem holding `path` inside the container, or null
+	 * when it could not be read.
+	 *
+	 * The pool's recycle rung is decided on this: a container near its disk
+	 * ceiling is replaced rather than reused, because one that fills up *during* a
+	 * run fails that run partway through. Null is not zero - an unanswerable
+	 * measurement must leave the last known figure alone rather than report a
+	 * container as empty.
+	 *
+	 * A per-engine method rather than an exec at the call site, so a backend that
+	 * exposes disk on its control plane can answer without spawning anything -
+	 * and so nothing above the seam has to know which one it is talking to.
+	 */
+	diskUsedBytes(containerId: string, path: string): Promise<number | null>;
+
+	/**
 	 * Read and write a run's artefact files, rooted at an absolute path **inside
 	 * the container**.
 	 *

@@ -6,6 +6,7 @@ import {
 	readdirSync,
 	readFileSync,
 	rmSync,
+	statSync,
 	writeFileSync,
 } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';
@@ -35,6 +36,29 @@ export interface SandboxFiles {
 	exists(relPath: string): Promise<boolean>;
 	/** Contents as UTF-8. Rejects if the file is missing or unreadable. */
 	read(relPath: string): Promise<string>;
+	/**
+	 * Contents as raw bytes. Rejects if the file is missing or unreadable.
+	 *
+	 * Both backends already move bytes underneath - Docker through the daemon's
+	 * archive endpoints, Daytona through its toolbox download - and {@link read}
+	 * is a UTF-8 decode applied at the very end. A git bundle is binary, so that
+	 * decode is lossy for it; this exposes what was always there rather than
+	 * adding a second transport beside it.
+	 *
+	 * **Buffers the whole file**, so a caller must bound the size it asks for
+	 * before calling (see `MAX_RECOVERY_BUNDLE_BYTES`). Streaming would be the
+	 * right shape for an unbounded read; nothing needs one yet, and an unbounded
+	 * buffering read dressed up as a stream would be worse than an honest cap.
+	 */
+	readBytes(relPath: string): Promise<Uint8Array>;
+	/**
+	 * Size in bytes, or null when the file is not there.
+	 *
+	 * Exists so a caller can decide whether it is willing to buffer a file before
+	 * {@link readBytes} buffers it. Asking by reading and measuring afterwards
+	 * would be the check happening after the damage.
+	 */
+	size(relPath: string): Promise<number | null>;
 	/** Best-effort delete. A missing file is not an error. */
 	remove(relPath: string): Promise<void>;
 	/**
@@ -64,6 +88,12 @@ export interface SandboxFiles {
 	write(
 		relPath: string,
 		contents: string,
+		opts?: { mode?: number; dirMode?: number },
+	): Promise<void>;
+	/** {@link write} for raw bytes. Same directory-creation and mode contract. */
+	writeBytes(
+		relPath: string,
+		contents: Uint8Array,
 		opts?: { mode?: number; dirMode?: number },
 	): Promise<void>;
 	/** Create a directory and its parents. `mode` applies to each one created. */
@@ -129,6 +159,14 @@ export function hostSandboxFiles(hostRoot: string): SandboxFiles {
 	return {
 		exists: async (relPath) => existsSync(resolveWithin(hostRoot, relPath)),
 		read: async (relPath) => readFileSync(resolveWithin(hostRoot, relPath), 'utf8'),
+		readBytes: async (relPath) => new Uint8Array(readFileSync(resolveWithin(hostRoot, relPath))),
+		size: async (relPath) => {
+			try {
+				return statSync(resolveWithin(hostRoot, relPath)).size;
+			} catch {
+				return null;
+			}
+		},
 		remove: async (relPath) => {
 			try {
 				rmSync(resolveWithin(hostRoot, relPath), { force: true });
@@ -139,16 +177,9 @@ export function hostSandboxFiles(hostRoot: string): SandboxFiles {
 		},
 		findByName: async (relDir, basename, maxDepth) =>
 			walk(hostRoot, resolveWithin(hostRoot, relDir), basename, maxDepth, 0),
-		write: async (relPath, contents, opts = {}) => {
-			const full = resolveWithin(hostRoot, relPath);
-			makeDirs(hostRoot, dirname(full), opts.dirMode);
-			writeFileSync(full, contents, opts.mode === undefined ? undefined : { mode: opts.mode });
-			// Same umask reasoning as the directories: `writeFileSync`'s mode is
-			// masked, and a credential file that came out 0o000 under a strict
-			// umask would fail the run rather than leak - but it would fail
-			// confusingly, at the CLI, not here.
-			if (opts.mode !== undefined) forceMode(full, opts.mode);
-		},
+		write: async (relPath, contents, opts = {}) => writeHostFile(hostRoot, relPath, contents, opts),
+		writeBytes: async (relPath, contents, opts = {}) =>
+			writeHostFile(hostRoot, relPath, contents, opts),
 		removeDir: async (relPath) => {
 			try {
 				rmSync(resolveWithin(hostRoot, relPath), { recursive: true, force: true });
@@ -160,6 +191,26 @@ export function hostSandboxFiles(hostRoot: string): SandboxFiles {
 			makeDirs(hostRoot, resolveWithin(hostRoot, relPath), opts.mode);
 		},
 	};
+}
+
+/**
+ * The shared body of the host `write`/`writeBytes` pair - identical but for the
+ * payload type, which `writeFileSync` already accepts either of.
+ */
+function writeHostFile(
+	hostRoot: string,
+	relPath: string,
+	contents: string | Uint8Array,
+	opts: { mode?: number; dirMode?: number },
+): void {
+	const full = resolveWithin(hostRoot, relPath);
+	makeDirs(hostRoot, dirname(full), opts.dirMode);
+	writeFileSync(full, contents, opts.mode === undefined ? undefined : { mode: opts.mode });
+	// Same umask reasoning as the directories: `writeFileSync`'s mode is masked,
+	// and a credential file that came out 0o000 under a strict umask would fail
+	// the run rather than leak - but it would fail confusingly, at the CLI, not
+	// here.
+	if (opts.mode !== undefined) forceMode(full, opts.mode);
 }
 
 /**

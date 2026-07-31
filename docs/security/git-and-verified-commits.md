@@ -102,6 +102,25 @@ But if the push itself is rejected, that is reported rather than hidden - the ag
 error immediately, and the run's log carries it too, so a repository whose commits are not
 reaching GitHub is visible without having to go looking for it.
 
+### If a push is rejected
+
+A rejected push is the one case where committed work exists in only one place, so Hezo does
+three things rather than one.
+
+- **The run is marked failed**, even if the agent otherwise finished cleanly. Work that never
+  reached GitHub is not a completed run, and saying so is what puts it in front of you.
+- **A recovery copy is kept.** Hezo packs the undelivered commits and copies them onto your
+  instance, so the next agent to work on that task picks them up automatically - even if it
+  runs in a different container, and even if the original one is long gone. The copy is
+  dropped once the commits do reach GitHub, and is otherwise kept until you delete the
+  project.
+- **The container is held open** if the copy could not be made, so the machine holding the
+  only version of your work is never recycled while it is the only version.
+
+The project's Container page shows when a project is in this state. The fix is almost always
+the connected GitHub account's write access to that repository - once a later run pushes
+successfully, everything clears on its own.
+
 ## Recovering a stuck repository
 
 Occasionally a project's working copy of a repository gets into a state where Hezo's automatic

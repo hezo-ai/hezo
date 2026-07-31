@@ -421,6 +421,31 @@ describe('DaytonaEngine degradations', () => {
 		expect(await new DaytonaEngine(api).containerStats('sbx-1')).toBeNull();
 	});
 
+	it('measures disk with the shared df script, in bytes', async () => {
+		// The same script the Docker engine runs - only the transport differs. A
+		// second copy per adapter is how the two backends silently drift apart.
+		const { api, rec } = fakeApi(
+			{ execute: async (_s, command) => ({ exitCode: 0, output: '3072\n' }) },
+			[SBX],
+		);
+		expect(await new DaytonaEngine(api).diskUsedBytes('sbx-1', '/workspace')).toBe(3 * 1024 * 1024);
+		void rec;
+	});
+
+	it('reports no disk reading rather than zero when df cannot answer', async () => {
+		// Same reasoning as the memory reading above: 0 would mean "this container
+		// is empty" and make the pool reuse a container that is actually full.
+		const { api } = fakeApi(
+			{
+				execute: async () => {
+					throw new Error('sandbox gone');
+				},
+			},
+			[SBX],
+		);
+		expect(await new DaytonaEngine(api).diskUsedBytes('sbx-1', '/workspace')).toBeNull();
+	});
+
 	it('reads the newest memory data point when a series exists', async () => {
 		const { api } = fakeApi({
 			getMetrics: async () =>

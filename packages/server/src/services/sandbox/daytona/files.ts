@@ -127,6 +127,25 @@ export function daytonaSandboxFiles(
 			return new TextDecoder().decode(bytes);
 		},
 
+		async readBytes(relPath) {
+			const bytes = await api.downloadFile(sandbox, abs(relPath));
+			if (bytes === null) throw new Error(`sandbox file not found: ${relPath}`);
+			return bytes;
+		},
+
+		async size(relPath) {
+			// The listing carries the size, so the file itself is never transferred -
+			// which is the whole reason a caller asks before reading.
+			const target = abs(relPath);
+			const name = target.slice(target.lastIndexOf('/') + 1);
+			try {
+				const entries = await api.listFiles(sandbox, parentOf(target));
+				return entries.find((e) => e.name === name && !e.isDir)?.size ?? null;
+			} catch {
+				return null;
+			}
+		},
+
 		async remove(relPath) {
 			try {
 				await api.deleteFile(sandbox, abs(relPath));
@@ -145,6 +164,12 @@ export function daytonaSandboxFiles(
 			const target = abs(relPath);
 			await mkdirp(parentOf(target), opts.dirMode ?? 0o755);
 			await api.uploadFile(sandbox, target, new TextEncoder().encode(contents), opts.mode);
+		},
+
+		async writeBytes(relPath, contents, opts = {}) {
+			const target = abs(relPath);
+			await mkdirp(parentOf(target), opts.dirMode ?? 0o755);
+			await api.uploadFile(sandbox, target, contents, opts.mode);
 		},
 
 		async removeDir(relPath) {

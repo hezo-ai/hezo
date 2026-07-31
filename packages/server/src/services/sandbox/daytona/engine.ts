@@ -1,8 +1,9 @@
 import { randomBytes } from 'node:crypto';
 import { logger } from '../../../logger';
-import { parseHezoProcessList } from '../../docker';
+import { parseDfKilobytes, parseHezoProcessList } from '../../docker';
 import { resolveDigestPinnedRef } from '../image-ref';
 import {
+	buildDiskUsageScript,
 	buildKillByEnvMarkerScript,
 	buildKillPidsScript,
 	buildListHezoProcessesScript,
@@ -485,6 +486,19 @@ export class DaytonaEngine implements ContainerEngine {
 	}
 
 	/**
+	 * Disk used, via the same `df` script the Docker engine runs - the measurement
+	 * is runtime-agnostic and only its transport differs. Daytona exposes no disk
+	 * figure on its control plane, so there is nothing cheaper to prefer.
+	 */
+	async diskUsedBytes(containerId: string, path: string): Promise<number | null> {
+		try {
+			return parseDfKilobytes(await this.runScript(containerId, buildDiskUsageScript(path)));
+		} catch {
+			return null;
+		}
+	}
+
+	/**
 	 * {@link SandboxFiles} over the toolbox file API, rooted inside the sandbox.
 	 *
 	 * There is no bind mount here, so this is the only way a run's artefacts reach
@@ -508,6 +522,8 @@ export class DaytonaEngine implements ContainerEngine {
 		return {
 			exists: async (relPath: string) => (await bound()).exists(relPath),
 			read: async (relPath: string) => (await bound()).read(relPath),
+			readBytes: async (relPath: string) => (await bound()).readBytes(relPath),
+			size: async (relPath: string) => (await bound()).size(relPath),
 			remove: async (relPath: string) => (await bound()).remove(relPath),
 			removeDir: async (relPath: string) => (await bound()).removeDir(relPath),
 			findByName: async (relDir: string, name: string, maxDepth: number) =>
@@ -517,6 +533,11 @@ export class DaytonaEngine implements ContainerEngine {
 				contents: string,
 				opts?: { mode?: number; dirMode?: number },
 			) => (await bound()).write(relPath, contents, opts),
+			writeBytes: async (
+				relPath: string,
+				contents: Uint8Array,
+				opts?: { mode?: number; dirMode?: number },
+			) => (await bound()).writeBytes(relPath, contents, opts),
 			mkdir: async (relPath: string, opts?: { mode?: number }) =>
 				(await bound()).mkdir(relPath, opts),
 		};

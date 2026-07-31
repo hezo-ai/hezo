@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
+import { basename, dirname, join, relative } from 'node:path';
 import {
 	AgentRuntime,
 	AiAuthMethod,
@@ -74,6 +74,7 @@ import {
 	describeUnpushedWork,
 	ensurePushHook,
 	ensureTaskWorktreeWithRetry,
+	fastForwardFromRecovery,
 	fastForwardLocalDefault,
 	fetchRepo,
 	findUnpushedWork,
@@ -82,6 +83,7 @@ import {
 	type RepoLoc,
 	readPushErrors,
 	seedInitialCommitIfEmpty,
+	type UnpushedWorkScan,
 	type WorktreeLoc,
 	worktreeHasChanges,
 } from './git';
@@ -105,10 +107,16 @@ import {
 	subscriptionFiles,
 } from './runtime-home';
 import { resolveRuntimeForTask } from './runtime-resolver';
+import { createBundleVault } from './sandbox/bundle-vault';
 import type { RunEndpoints } from './sandbox/endpoints';
 import type { SandboxFiles } from './sandbox/files';
 import { dockerSandboxHandle } from './sandbox/handle';
-import { setPoolMemberUnpushedFlag } from './sandbox/pool-db';
+import { setPoolMemberDiskUsage, setPoolMemberUnpushedFlag } from './sandbox/pool-db';
+import {
+	releaseRecoveryBundle,
+	restoreRecoveryBundle,
+	saveRecoveryBundle,
+} from './sandbox/recovery';
 import { type RunTunnel, startRunTunnel } from './sandbox/tunnel/run-tunnel';
 import { buildTunnelHostPolicy } from './sandbox/tunnel/split-routing';
 import { collectFinishedWorktrees } from './sandbox/worktree-gc';
@@ -1507,21 +1515,28 @@ export async function runAgent(
 			// is the local `hezo/<task>` tip reachable from a remote-tracking ref -
 			// which the log cannot answer.
 			//
-			// Two things follow from a positive finding, and both matter only once a
-			// project has more than one container (nothing fails at pool size 1, which
-			// is why no existing test caught this): the run is not a success, and the
-			// container is pinned against suspend and destroy so the only copy of the
-			// work is not swept away by the idle cron.
+			// Three things follow from a positive finding, and all of them matter only
+			// once a project has more than one container (nothing fails at pool size 1,
+			// which is why no existing test caught this): the run is not a success, the
+			// commits are copied out to the bundle vault so a later run on a DIFFERENT
+			// container can pick them up, and the container is pinned against suspend
+			// and destroy for as long as it holds the only copy.
 			const unpushed =
 				prep.executor && prep.branch && prep.clones.length > 0
 					? await findUnpushedWork(prep.executor, prep.clones, prep.branch)
 					: { work: [], complete: false };
-			// `complete: false` means the check could not answer, so it may neither
-			// fail the run nor release a pin an earlier run set.
+			// The vault decides the PIN; `origin` decides the RUN. Separating the two is
+			// the point of the vault: a copy Hezo holds means the container is no longer
+			// the only place the work exists, so it may be released - but the work still
+			// has not reached the human's git host, so the run must still fail and say
+			// so. Conflating them would let a vaulted run read as a success.
+			const stranded = await vaultUnpushedWork(deps, project, containerId, unpushed, prep, emit);
 			await setPoolMemberUnpushedFlag(
 				deps.db,
 				containerId,
-				unpushed.work.length > 0 ? true : unpushed.complete ? false : null,
+				// `complete: false` means the check could not answer, so it may neither
+				// fail the run nor release a pin an earlier run set.
+				stranded ? true : unpushed.work.length > 0 ? false : unpushed.complete ? false : null,
 			);
 			const unpushedError =
 				unpushed.work.length > 0 ? describeUnpushedWork(unpushed.work) : undefined;
@@ -1847,6 +1862,79 @@ async function anyWorktreeChanged(
 	return false;
 }
 
+/**
+ * Copy a run's undelivered commits into the bundle vault, and drop stored bundles
+ * whose work has since reached the remote.
+ *
+ * Returns whether any clone is **still** the only place its commits exist - which
+ * is exactly the condition the container pin encodes. A clone whose work was
+ * vaulted is not stranded (Hezo holds a copy); a clone whose bundle could not be
+ * built, was too large, or could not be moved is, and the pin keeps its container
+ * alive until a later run gets the work out.
+ *
+ * Both halves report into the run log rather than throwing: this runs at finalize,
+ * where the run is already being failed for the unpushed work itself, and a
+ * recovery failure must sharpen that error rather than replace it with a stack.
+ */
+async function vaultUnpushedWork(
+	deps: RunnerDeps,
+	project: { id: string },
+	containerId: string,
+	unpushed: UnpushedWorkScan,
+	prep: { executor: GitExecutor | null; clones: RepoLoc[]; branch: string | null },
+	emit: (stream: 'stdout' | 'stderr', text: string) => void,
+): Promise<boolean> {
+	// No executor means no clone was prepared, so the scan found nothing and there
+	// is nothing to copy - but an unanswerable scan still may not clear a pin.
+	if (!prep.executor || !prep.branch) return unpushed.work.length > 0;
+	const vault = createBundleVault(deps.dataDir);
+	let stranded = false;
+
+	for (const item of unpushed.work) {
+		const repoName = basename(item.repo.containerPath);
+		const key = { projectId: project.id, repoName, branch: item.branch };
+		const saved = await saveRecoveryBundle(
+			vault,
+			deps.docker.files(containerId, item.repo.containerPath),
+			prep.executor,
+			item.repo,
+			key,
+		);
+		if (saved.ok) {
+			emit(
+				'stderr',
+				`[system] ${repoName}: kept a recovery copy of ${item.commits} unpushed ` +
+					`commit(s) on ${item.branch} — a later run will pick them up, but they are ` +
+					`still not on the remote.\n`,
+			);
+		} else {
+			stranded = true;
+			emit(
+				'stderr',
+				`[system] ${repoName}: could not keep a recovery copy (${saved.reason}) — this ` +
+					`container is held open because it has the only copy of ${item.commits} ` +
+					`commit(s) on ${item.branch}.\n`,
+			);
+		}
+	}
+
+	// The invalidation half. A clone that answered "nothing unpushed" has its work
+	// on the remote, so any bundle stored for it is a stale copy of safe work -
+	// the one condition under which the vault drops anything.
+	if (unpushed.complete) {
+		const withWork = new Set(unpushed.work.map((w) => w.repo.containerPath));
+		for (const clone of prep.clones) {
+			if (withWork.has(clone.containerPath)) continue;
+			await releaseRecoveryBundle(vault, {
+				projectId: project.id,
+				repoName: basename(clone.containerPath),
+				branch: prep.branch,
+			});
+		}
+	}
+	return stranded;
+}
+
 async function prepareWorktrees(
 	deps: RunnerDeps,
 	project: RunningProjectInfo,
@@ -2012,6 +2100,31 @@ async function prepareWorktrees(
 			const ffWarn = await fastForwardLocalDefault(executor, repoLoc);
 			if (ffWarn) emitSystem('stderr', `${repoName}: ${ffWarn}`);
 
+			// Recover commits an earlier run left in a DIFFERENT container because its
+			// push was denied. This is the half of the durability story that only
+			// matters once a project has more than one container: without it, run 2
+			// silently starts from a remote that never received run 1's work.
+			//
+			// Strictly after the origin fetch above: the stored bundle is a delta whose
+			// prerequisites are the remote tips, so git refuses to apply it to a clone
+			// that has not caught up. That ordering is enforced by git, not just by
+			// this comment.
+			const recovered = await restoreRecoveryBundle(
+				createBundleVault(deps.dataDir),
+				deps.docker.files(project.container_id, repoLoc.containerPath),
+				executor,
+				repoLoc,
+				{ projectId: project.id, repoName, branch: branchName },
+			);
+			if (!recovered.ok) {
+				emitSystem('stderr', `${repoName}: ${recovered.reason}`);
+			} else if (recovered.bytes !== null) {
+				emitSystem(
+					'stdout',
+					`${repoName}: recovered commits an earlier run could not push (${recovered.bytes} bytes)`,
+				);
+			}
+
 			emitSystem('stdout', `git worktree ${repoName}...`);
 			const wt = await ensureTaskWorktreeWithRetry(
 				executor,
@@ -2032,6 +2145,17 @@ async function prepareWorktrees(
 				if (wt.created) {
 					emitSystem('stdout', `git worktree add ${repoName} @ ${branchName}`);
 				}
+				// Bring any recovered commits onto the task branch itself. Fetching them
+				// above made them present (so nothing is lost); this is what makes them
+				// the agent's starting point rather than a ref it would have to know to
+				// look for. Fast-forward only, and non-fatal either way.
+				const replayed = await fastForwardFromRecovery(executor, wtLocOf(repoName), branchName);
+				if (replayed.warning) {
+					emitSystem('stderr', `${repoName}: ${replayed.warning}`);
+				} else if (replayed.merged) {
+					emitSystem('stdout', `${repoName}: replayed recovered commits onto ${branchName}`);
+				}
+
 				// Catch the task branch up to the freshly-fetched trunk so a resumed run
 				// starts from current default instead of forcing the agent to merge by
 				// hand. A merge failure is non-fatal — the worktree is still usable and
@@ -2106,6 +2230,22 @@ async function prepareWorktrees(
 			}
 		} catch (e) {
 			log.error(`Run ${heartbeatRunId}: worktree GC failed:`, e);
+		}
+
+		// Measure what the container is using *after* the GC above, so the figure
+		// the pool recycles on reflects the disk that is actually unavailable
+		// rather than what a reclaim was about to free. A container at the ceiling
+		// is replaced on the next acquire instead of reused, because one that fills
+		// up mid-run fails that run partway through.
+		//
+		// Null means the measurement could not be taken, which leaves the previous
+		// figure alone - reporting an unmeasurable container as empty would defeat
+		// the rung entirely.
+		try {
+			const used = await deps.docker.diskUsedBytes(project.container_id, CONTAINER_WORKSPACE_ROOT);
+			if (used !== null) await setPoolMemberDiskUsage(deps.db, project.container_id, used);
+		} catch (e) {
+			log.error(`Run ${heartbeatRunId}: disk measurement failed:`, e);
 		}
 
 		return {

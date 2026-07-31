@@ -94,6 +94,7 @@ const STUB_DOCKER_METHODS: ContainerEngine = {
 	killProcessesByEnvMarker: async () => {},
 	listHezoProcesses: async () => [],
 	killPids: async () => {},
+	diskUsedBytes: async () => null,
 	// Same bind-resolved view the fake engine gives, so a test that stages a file
 	// through the seam reads it back off disk exactly as a bind mount would.
 	files: (containerId: string, containerRoot: string) =>
@@ -153,10 +154,13 @@ function firstResolvableFiles(
 	return {
 		exists: async (p) => (await pick()).exists(p),
 		read: async (p) => (await pick()).read(p),
+		readBytes: async (p) => (await pick()).readBytes(p),
+		size: async (p) => (await pick()).size(p),
 		remove: async (p) => (await pick()).remove(p),
 		removeDir: async (p) => (await pick()).removeDir(p),
 		findByName: async (d, n, depth) => (await pick()).findByName(d, n, depth),
 		write: async (p, c, o) => (await pick()).write(p, c, o),
+		writeBytes: async (p, c, o) => (await pick()).writeBytes(p, c, o),
 		mkdir: async (p, o) => (await pick()).mkdir(p, o),
 	};
 }

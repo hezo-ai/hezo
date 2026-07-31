@@ -1015,6 +1015,14 @@ Three shared pieces sit alongside it so the two implementations cannot drift:
   *container* path - identical on both backends by rule; only how it is reached differs.
   Nothing above the seam may touch `node:fs` for a run artefact: a host-only file path is
   one that works everywhere except production on a managed backend.
+
+  `readBytes`/`writeBytes` are the raw-byte pair, added for the recovery bundle (§ Agent
+  runtime, Recovery bundles) - a git bundle is binary, and a UTF-8 `read` silently replaces
+  every invalid sequence, so a bundle moved through the text pair would arrive corrupted and
+  only fail later at `git fetch`. Both backends already moved bytes underneath; the decode
+  was applied at the very edge. `size` exists so a caller can decide whether it is willing
+  to buffer a file *before* `readBytes` buffers it - asking by reading and measuring
+  afterwards is the check happening after the damage.
   - **Daytona** implements it over the toolbox file API. Every endpoint was measured
     against the live service and two do not behave as the spec reads: `files/folder`
     answers **201**, and `files/find` matches file **content** rather than names, so
@@ -1043,9 +1051,21 @@ Three shared pieces sit alongside it so the two implementations cannot drift:
   backend renders the intent its own way. Docker maps `elevated` onto `User: root` vs the
   detected run user; Daytona already execs as root, so it renders the unelevated case as
   `runuser -u <user> --` — deprivileging, the inverse render.
-- **`sandbox/proc-scripts.ts`** — the `/proc` scan and kill scripts. They are plain POSIX
-  shell and nothing in them is runtime-specific, only the transport that carries them, so
-  both engines run the identical script rather than each reimplementing the scan.
+- **`sandbox/proc-scripts.ts`** — the `/proc` scan and kill scripts, plus the `df` disk
+  measurement behind `ContainerEngine.diskUsedBytes`. They are plain POSIX shell and nothing
+  in them is runtime-specific, only the transport that carries them, so both engines run the
+  identical script rather than each reimplementing the scan. Every value interpolated into
+  one is validated first (`ENV_MARKER_VALUE_RE` for markers, a path character class for
+  `df`), which is what makes the unquoted interpolation safe.
+
+  Disk is measured with `df` rather than `du`: the question is how close a container is to
+  filling up, which `df` answers from the superblock in constant time, where `du` would walk
+  every `node_modules` in every worktree - exactly the trees that make the number
+  interesting. It runs once per run, **after** the worktree GC, so the figure reflects disk
+  that is actually unavailable rather than what a reclaim was about to free, and it lands in
+  `container_pool_members.disk_used_bytes`. `null` (an unreadable measurement) leaves the
+  previous figure alone; reporting an unmeasurable container as empty would defeat the
+  pool's recycle rung, which had no input at all before this and so could never fire.
 
 **The Daytona adapter** is three files and absorbs four API differences entirely within
 itself: create also *starts* the sandbox (so `startContainer` is a no-op on one already
@@ -1558,25 +1578,66 @@ read: no network call, and it is correct for all four shapes (current, behind, m
 branch under another name, never pushed). What counts as durable is the `DURABLE_REMOTES` parameter
 rather than a hardcoded remote at each call site.
 
-A positive finding does two things. The run is **not** a success — it records
+A positive finding does three things: the run fails, the commits are copied out to the bundle
+vault, and the container is pinned for as long as it still holds the only copy.
+
+The run is **not** a success — it records
 `error = "run ended with committed work that reached no remote …"` even when it exited 0 and
-produced output, precedent being `BackgroundTerminationDetector`'s clean-exit failure. And the
-container is **pinned**: `setPoolMemberUnpushedFlag` (`services/sandbox/pool-db.ts`) sets
+produced output, precedent being `BackgroundTerminationDetector`'s clean-exit failure.
+
+**Recovery bundles (the durability backstop).** `vaultUnpushedWork` (`services/agent-runner.ts`)
+packs each stranded clone's undelivered commits and copies them onto the Hezo instance, so a later
+run on a *different* container can pick the work up. Three modules split the job so neither half
+knows the other's business: `createRecoveryBundle` / `fetchRecoveryBundle` /
+`fastForwardFromRecovery` (`services/git.ts`) are the git operations, `bundle-vault.ts` is the
+store, and `sandbox/recovery.ts` is the seam between them.
+
+- **A bundle, not a mirror remote.** A managed backend's shared store is an object store
+  (`mountpoint-s3`): no append, no rename, no chmod, so `git init --bare` fails outright
+  (`unable to write symref for HEAD`). A bundle is one finished file, which is exactly what such a
+  store supports.
+- **Built on local disk, moved as a finished file.** `git bundle create` seeks while writing and
+  dies (`pack-objects died`) against anything that is not a real filesystem, so it writes to
+  `<clone>/.git/hezo-recovery.bundle` — local disk, already owned by the run user — and the bytes
+  are then copied out through `SandboxFiles`, which is the seam that already exists for
+  container-writes-host-reads and is implemented on every backend. The vault is therefore
+  **backend-agnostic**: no volume mount and nothing per-adapter to keep in step, and the copy lands
+  under `<dataDir>/git-recovery/<projectId>/`, where the operator's backups already are.
+- **A delta, not a copy of the history.** `--not --remotes=origin` packs only what no durable remote
+  has, recording the remote tips as prerequisites — kilobytes for an ordinary task. A clone with no
+  remote to exclude against produces a bundle of the whole branch, which is what
+  `MAX_RECOVERY_BUNDLE_BYTES` (64 MiB, checked via `SandboxFiles.size` *before* the read buffers it)
+  refuses rather than moving.
+- **Restored in run prep, strictly after the origin fetch** (`restoreRecoveryBundle`), because the
+  delta's prerequisites are the remote tips. Refs land under `refs/remotes/hezo-recovery/*` — so the
+  commits are *present* and nothing can be lost by destroying the source container — and
+  `fastForwardFromRecovery` then brings them onto the task branch, fast-forward only.
+- **`RECOVERY_REMOTE` is deliberately not in `DURABLE_REMOTES`.** A recovered ref means Hezo holds a
+  copy, not that the user's git host does.
+
+**The pin and the run failure are decided by different things**, which is the point of the vault.
+`setPoolMemberUnpushedFlag` (`services/sandbox/pool-db.ts`) sets
 `container_pool_members.has_unpushed_commits`, which `planIdleShutdown` excludes from both suspend
-and destroy, so the idle cron cannot sweep away the only copy of the work. The check distinguishes
-"no unpushed work" from "could not tell": a git failure or a missing clone yields `null`, which
-neither fails the run nor **releases** a pin an earlier run set — clearing a pin on an unanswerable
-check would destroy exactly the container the pin exists to protect. A later run that gets the
-commits out clears it.
+and destroy — but it is now set from whether the copy-out **failed**, not from whether the work
+reached `origin`. A vaulted run releases its container (the work exists in two places) and still
+fails (it never reached the remote); a run whose bundle could not be built, was oversized, or could
+not be moved keeps the pin, failing closed. The scan still distinguishes "no unpushed work" from
+"could not tell": a git failure or a missing clone yields `null`, which neither fails the run nor
+releases a pin an earlier run set — clearing a pin on an unanswerable check would destroy exactly
+the container the pin exists to protect.
+
+The vault's invalidation rule is success: a stored bundle is dropped once a later run finds that
+branch carries no unpushed commits, i.e. the work reached `origin` after all. That is the only
+condition under which it discards anything, and it is why container teardown deliberately does
+**not** clear it — teardown wipes the local clones, so from that point the bundle may be the only
+copy. Only deleting the project (`DELETE /api/projects/:projectId` → `removeProject`) clears it.
 
 None of this changes anything while a project has one container: the next run hits the same `.git`
 and the ref is still there. It matters once a project has several — run 1 commits into container A,
 its push is denied, run 2 lands on container B and fetches from a remote that never received the
-commit, and A is destroyed when it goes idle. The recovery half of the plan (falling back to a Hezo
-mirror when `origin` refuses, so a later run can fetch the commits rather than needing the pinned
-container back) is **not** implemented: on a managed backend the shared store is an object store,
-which cannot hold a bare repo at all, so it needs the whole-file bundle transport rather than a
-mirror remote. Until it lands, the pin plus the failed run is what keeps the work from vanishing.
+commit, and A is destroyed when it goes idle. Nothing fails at pool size 1, which is why
+`git-recovery-bundle.test.ts` **destroys the source clone** between saving and restoring rather than
+re-running against the same one.
 
 **Admin git-state & recovery (superuser).** Because a clone's live state lives only in the
 container, the project Git settings page exposes a per-repo, **superuser-only** panel to inspect
