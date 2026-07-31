@@ -1041,6 +1041,10 @@ export class ChatSessionManager {
 			);
 
 			const invocation = await buildRuntimeInvocation({
+				// Chat keeps the direct host address for now; moving it onto the
+				// tunnel is the chat-on-remote change, which also has to handle
+				// resume.
+				endpoints: dockerRunEndpoints(this.deps.serverPort),
 				deps: this.deps,
 				runTeamId: DEFAULT_TEAM_ID,
 				projectId: project.id,

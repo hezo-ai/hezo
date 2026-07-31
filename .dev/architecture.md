@@ -998,6 +998,17 @@ private registry, or a locally-built tag that exists in no registry at all would
 be unable to start a container over a cache-freshness concern. The fallback logs what it
 costs, because the failure it re-admits is otherwise invisible.
 
+**The tunnel is behind a rollout gate.** `HEZO_TUNNEL=1` switches a run's
+`RunEndpoints` from naming the host (`host.docker.internal`) to container loopback,
+where the in-container client listens. It is **off by default**, deliberately: on Docker
+the tunnel replaces a path that already works, and the Docker end of it - the hijacked
+exec socket - has no automated exercise, because a test environment has no daemon.
+Off keeps the shipped behaviour byte-identical while the tunnel earns exposure. A managed
+backend will eventually require it unconditionally, since there is no other way for its
+containers to reach Hezo; flipping the default is a separate, deliberate step. The CEO
+chat still takes the direct address either way - moving it onto the tunnel is part of the
+chat-on-remote work, which also has to handle resume.
+
 **The byte channel a tunnel would ride on differs per backend - measured.** The plan for
 reaching Hezo from a remote container (one exec with stdin attached, carrying a multiplexed
 tunnel) assumed every backend has Docker's `AttachStdin`. Daytona does not: its exec ignores

@@ -110,9 +110,16 @@ import {
 	subscriptionFiles,
 } from './runtime-home';
 import { resolveRuntimeForTask } from './runtime-resolver';
-import { DOCKER_CONTAINER_HOST_ALIAS, dockerRunEndpoints } from './sandbox/endpoints';
+import {
+	DOCKER_CONTAINER_HOST_ALIAS,
+	dockerRunEndpoints,
+	type RunEndpoints,
+	TUNNEL_PORTS,
+} from './sandbox/endpoints';
 import { hostSandboxFiles, type SandboxFiles } from './sandbox/files';
 import { dockerSandboxHandle } from './sandbox/handle';
+import { type RunTunnel, startRunTunnel } from './sandbox/tunnel/run-tunnel';
+import { buildTunnelHostPolicy } from './sandbox/tunnel/split-routing';
 import { type BridgeRunnerArgs, buildBridgeRunnerArgv, type SshAgentServer } from './ssh-agent';
 import { validateSubscriptionBlob } from './subscription-auth';
 import { recordStatusChange } from './task-events';
@@ -346,6 +353,22 @@ export interface RunContext {
 
 const CONTAINER_PROMPT_DIR = '/workspace/.hezo/prompts';
 
+/**
+ * Whether a run reaches Hezo through the tunnel instead of by naming the host.
+ *
+ * **A rollout gate, not a backend switch.** The tunnel is what makes a container
+ * that is not on this machine work at all, so a managed backend will eventually
+ * require it - but on Docker it replaces a path that works today, and the
+ * Docker end of it (the hijacked exec socket) has no automated exercise because
+ * a test environment has no daemon. Defaulting it off keeps the shipped
+ * behaviour byte-identical while the tunnel earns real exposure; flipping the
+ * default is a deliberate, separate step that wants a run against a real
+ * daemon first.
+ */
+export function tunnelEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+	return env.HEZO_TUNNEL === '1';
+}
+
 export function getContainerPromptPath(heartbeatRunId: string): string {
 	return `${CONTAINER_PROMPT_DIR}/${heartbeatRunId}.txt`;
 }
@@ -502,6 +525,12 @@ export interface RuntimeInvocationInput {
 	sshSocketContainerPath: string | null;
 	bridge: BridgeRunnerArgs | null;
 	egress: EgressEnvDescriptor | null;
+	/**
+	 * How the container addresses Hezo. Passed in rather than derived so the run
+	 * path can hand over the tunnel's loopback endpoints without this function
+	 * learning that a tunnel exists.
+	 */
+	endpoints: RunEndpoints;
 	/** Caller-specific env entries (e.g. HEZO_TASK_ID for a run). */
 	extraEnv?: string[];
 }
@@ -536,6 +565,7 @@ export async function buildRuntimeInvocation(
 		sshSocketContainerPath,
 		bridge,
 		egress,
+		endpoints,
 		extraEnv = [],
 	} = input;
 
@@ -564,7 +594,7 @@ export async function buildRuntimeInvocation(
 		{
 			kind: 'http',
 			name: 'hezo',
-			url: `${dockerRunEndpoints(deps.serverPort).hezoBaseUrl}/mcp`,
+			url: `${endpoints.hezoBaseUrl}/mcp`,
 			bearerToken: agentJwt,
 		},
 		...(await loadConnectorDescriptors(deps.db, projectId)),
@@ -761,6 +791,7 @@ async function buildRunContext(
 	egress: EgressEnvDescriptor | null,
 	runUser: ContainerRunUser,
 	progressUpdate: ProgressUpdateContext | null,
+	endpoints: RunEndpoints,
 ): Promise<RunContext> {
 	// The run is scoped to the project's team (the "run team"). For normal agents
 	// this equals the agent's home team; for instance agents (CEO/Coach) that
@@ -868,6 +899,7 @@ async function buildRunContext(
 	const promptFilePath = getContainerPromptPath(heartbeatRunId);
 
 	const { env, cmd, execCmd, subscriptionMount, homeMount } = await buildRuntimeInvocation({
+		endpoints,
 		deps,
 		runTeamId,
 		projectId: project.id,
@@ -1274,6 +1306,42 @@ export async function runAgent(
 			};
 		}
 
+		// The tunnel, when enabled, replaces every host-addressed leg with container
+		// loopback. It is started here because it needs both allocations above -
+		// there is nothing to point the ssh and proxy targets at until they exist.
+		let tunnel: RunTunnel | null = null;
+		let endpoints: RunEndpoints = dockerRunEndpoints(deps.serverPort);
+		if (tunnelEnabled()) {
+			tunnel = await startRunTunnel({
+				engine: deps.docker,
+				containerId,
+				runUser,
+				files: hostSandboxFiles(getWorkspacePath(deps.dataDir, project.team_id, project.id)),
+				configRelPath: join('.hezo', 'tunnel', `${heartbeatRunId}.json`),
+				configContainerPath: `/workspace/.hezo/tunnel/${heartbeatRunId}.json`,
+				addresses: {
+					mcp: { host: '127.0.0.1', port: deps.serverPort },
+					ssh: {
+						host: '127.0.0.1',
+						port: bridge ? bridge.hostPort : 0,
+					},
+					proxy: egressEnv
+						? { host: egressEnv.host, port: egressEnv.port }
+						: { host: '127.0.0.1', port: 0 },
+				},
+				policy: await buildTunnelHostPolicy(deps.db, []),
+			});
+			endpoints = tunnel.endpoints;
+			// Re-point the two descriptors the allocations produced. Their host-side
+			// addresses stay where they were; only what the *container* dials moves.
+			if (bridge) {
+				bridge = { ...bridge, hostName: endpoints.sshHost, hostPort: TUNNEL_PORTS.ssh };
+			}
+			if (egressEnv) {
+				egressEnv = { ...egressEnv, host: endpoints.proxyHost, port: TUNNEL_PORTS.proxy };
+			}
+		}
+
 		const context = await buildRunContext(
 			deps,
 			agent,
@@ -1290,6 +1358,7 @@ export async function runAgent(
 			egressEnv,
 			runUser,
 			progressUpdate ?? null,
+			endpoints,
 		);
 
 		// Rooted at the workspace, which is what makes the prompt path relative and
@@ -1356,6 +1425,10 @@ export async function runAgent(
 					log.error(`Run ${heartbeatRunId} artifact cleanup step '${label}' failed:`, e);
 				}
 			};
+			// First, and unconditionally: a live channel counts as activity on every
+			// backend, so a tunnel left open keeps the container from ever going
+			// idle - a bill rather than an error, with nothing to surface it.
+			await step('close-tunnel', () => tunnel?.close());
 			await step('persist-rotated-auth', persistRotatedAuth);
 			await step('remove-prompt', () => workspaceFiles.remove(promptRelPath));
 			await step('remove-home-mount', () => {
