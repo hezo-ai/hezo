@@ -601,9 +601,7 @@ describe('MCP asset upload (POST /mcp/assets)', () => {
 		expect(read.binary).toBe(true);
 		// Binary contents come back as an absolute signed download URL the agent
 		// curls from inside its container — never a filesystem path.
-		expect(read.url).toMatch(
-			/^http:\/\/host\.docker\.internal:\d+\/api\/assets\/[0-9a-f-]+\?exp=\d+&sig=/,
-		);
+		expect(read.url).toMatch(/^https?:\/\/[^/]+\/api\/assets\/[0-9a-f-]+\?exp=\d+&sig=/);
 	});
 
 	it('an external API key uploads via MCP (naming the project)', async () => {

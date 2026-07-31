@@ -71,13 +71,16 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
-function createManager(stops: string[]): JobManager {
+function createManager(stops: string[], removes: string[] = []): JobManager {
 	return new JobManager({
 		db,
 		docker: createStubDocker({
 			ping: async () => true,
 			stopContainer: async (id: string) => {
 				stops.push(id);
+			},
+			removeContainer: async (id: string) => {
+				removes.push(id);
 			},
 		}),
 		masterKeyManager,
@@ -245,5 +248,66 @@ describe('container-idle-stop', () => {
 		expect(stops).toEqual([]);
 		expect(await containerStatus()).toBe('running');
 		manager.shutdown();
+	});
+
+	it('suspends one idle container and destroys the surplus', async () => {
+		// At most one suspended container per project - exactly the cardinality a
+		// single-container project had. That one rule is what removes a retention
+		// cap, a reap horizon and snapshot storage to watch grow; the price is that
+		// the second and later containers of a burst are always created cold.
+		await db.query(
+			`INSERT INTO container_pool_members (project_id, container_id, state) VALUES
+			   ($1, 'pool-a', 'idle'), ($1, 'pool-b', 'idle'), ($1, 'pool-c', 'idle')`,
+			[projectId],
+		);
+		await db.query(
+			`UPDATE projects SET container_status = 'running',
+			        container_last_started_at = now() - interval '60 minutes' WHERE id = $1`,
+			[projectId],
+		);
+		const stops: string[] = [];
+		const removes: string[] = [];
+		const manager = createManager(stops, removes);
+		await (manager as unknown as { stopIdleContainers(): Promise<void> }).stopIdleContainers();
+		manager.shutdown();
+
+		expect(stops).toHaveLength(1);
+		expect(removes).toHaveLength(2);
+		expect([...stops, ...removes].sort()).toEqual(['pool-a', 'pool-b', 'pool-c']);
+
+		const rows = await db.query<{ container_id: string; state: string }>(
+			`SELECT container_id, state::text AS state FROM container_pool_members WHERE project_id = $1`,
+			[projectId],
+		);
+		// The destroyed members are gone from the table, not left as tombstones the
+		// ladder would have to keep skipping.
+		expect(rows.rows).toHaveLength(1);
+		expect(rows.rows[0]).toMatchObject({ container_id: stops[0], state: 'suspended' });
+		await db.query(`DELETE FROM container_pool_members WHERE project_id = $1`, [projectId]);
+	});
+
+	it('never destroys a container holding commits that reached no durable remote', async () => {
+		// The work exists nowhere else and nothing downstream would report that it
+		// had gone, so the pin outranks the shutdown plan entirely.
+		await db.query(
+			`INSERT INTO container_pool_members (project_id, container_id, state, has_unpushed_commits)
+			 VALUES ($1, 'pool-pinned', 'idle', true), ($1, 'pool-free', 'idle', false)`,
+			[projectId],
+		);
+		await db.query(
+			`UPDATE projects SET container_status = 'running',
+			        container_last_started_at = now() - interval '60 minutes' WHERE id = $1`,
+			[projectId],
+		);
+		const stops: string[] = [];
+		const removes: string[] = [];
+		const manager = createManager(stops, removes);
+		await (manager as unknown as { stopIdleContainers(): Promise<void> }).stopIdleContainers();
+		manager.shutdown();
+
+		expect(removes).not.toContain('pool-pinned');
+		expect(stops).not.toContain('pool-pinned');
+		expect(stops).toEqual(['pool-free']);
+		await db.query(`DELETE FROM container_pool_members WHERE project_id = $1`, [projectId]);
 	});
 });

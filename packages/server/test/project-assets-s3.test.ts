@@ -203,7 +203,8 @@ describe('asset flows with the S3 store active', () => {
 		expect(read.binary).toBe(true);
 		// The URL is absolute for in-container curl; the same signed path serves here.
 		const parsed = new URL(read.url as string);
-		expect(parsed.hostname).toBe('host.docker.internal');
+		// The agent-facing origin is the caller's own tunnel loopback, not a host name.
+		expect(parsed.hostname).toBe('localhost');
 		const served = await app.request(`${parsed.pathname}${parsed.search}`);
 		expect(served.status).toBe(200);
 	});

@@ -35,8 +35,18 @@ import { ContainerGitExecutor, mintGitOpScopeId } from './git-executor';
 import { resolveAgentBaseImage } from './image-registry';
 import type { LogStreamBroker } from './log-stream-broker';
 import { ensureProjectRepos } from './repo-sync';
+import { getActiveContainers } from './run-concurrency';
 import { DOCKER_HOST_GATEWAY_ENTRY } from './sandbox/endpoints';
 import { INSTANCE_LABEL } from './sandbox/orphan-reaper';
+import {
+	claimPoolMember,
+	decidePoolAcquisition,
+	listPoolContainerIds,
+	releasePoolMember,
+	removePoolMember,
+	setPoolMemberState,
+	upsertPoolMember,
+} from './sandbox/pool-db';
 import { type BridgeRunnerArgs, type SshAgentServer, withProvisionBridge } from './ssh-agent';
 import { getOrCreateInstanceId } from './telemetry';
 import { createWakeup } from './wakeup';
@@ -485,6 +495,11 @@ export async function provisionContainer(
 			 WHERE id = $3`,
 			[Id, ContainerStatus.Running, project.id],
 		);
+		// Join the project's pool. Registered here rather than at create so a member
+		// never exists in a state no run could use, and registered for every
+		// container - `projects.container_id` still names one of them for the UI and
+		// for the columns not yet migrated, but the pool is what the ladder reads.
+		await upsertPoolMember(db, project.id, Id, 'idle');
 
 		if (deps.containerLogStreamer && deps.logs) {
 			deps.containerLogStreamer.subscribe(project.id, Id, deps.logs, docker);
@@ -514,24 +529,6 @@ export async function provisionContainer(
 		// re-detects.
 		clearContainerRunUserCache(Id);
 		const runUser = await resolveContainerRunUser(docker, Id);
-		// Create them first. On a local daemon the bind mounts have already brought
-		// them into being, so this is a no-op; on a backend with no bind mounts they
-		// do not exist at all, and the chown below - and every clone and worktree
-		// after it - would fail on a missing path.
-		const mkdirExec = await docker.execCreate(Id, {
-			Cmd: [
-				'mkdir',
-				'-p',
-				CONTAINER_WORKSPACE_ROOT,
-				CONTAINER_WORKTREES_ROOT,
-				`${CONTAINER_WORKSPACE_ROOT}/.previews`,
-				'/run/hezo',
-			],
-			User: 'root',
-			AttachStdout: false,
-			AttachStderr: false,
-		});
-		await docker.execStart(mkdirExec);
 		await chownToRunUser(docker, Id, runUser, [
 			CONTAINER_WORKSPACE_ROOT,
 			CONTAINER_WORKTREES_ROOT,
@@ -689,6 +686,194 @@ export async function ensureProjectContainerRunning(
 	});
 }
 
+/**
+ * Thrown when the pool has nothing to give and the cap forbids another container.
+ *
+ * A distinct error rather than a null return: the dispatcher already refuses to
+ * start a run it has no capacity for (`isContainerCapacityBlockedInDb`), so
+ * reaching here means capacity was taken between that check and this acquire.
+ * The run is requeued rather than failed.
+ */
+export class PoolCapacityError extends Error {
+	constructor(projectId: string) {
+		super(`no container available for project ${projectId} and the container cap is full`);
+		this.name = 'PoolCapacityError';
+	}
+}
+
+/** A container claimed for one run, and the handle that gives it back. */
+export interface AcquiredContainer {
+	containerId: string;
+	/** Idempotent. Returns the container to the pool as idle, recording task affinity. */
+	release(): Promise<void>;
+}
+
+/**
+ * Claim a container for one run.
+ *
+ * This is where the pool stops being a table and starts being the thing that
+ * decides blast radius: a container serves **at most one run at a time**, so a
+ * run that exceeds the memory cap can only take itself down, never every sibling
+ * run in its project the way one shared container did.
+ *
+ * The ladder itself lives in `selectPoolMember` and is pure. What happens here is
+ * the part that cannot be: turning a decision into a claim, under the
+ * per-project lifecycle lock, and re-deciding if another acquire won the race for
+ * the same member.
+ */
+export async function acquireRunContainer(
+	deps: ContainerDeps,
+	projectId: string,
+	taskId: string | null,
+): Promise<AcquiredContainer> {
+	const { db, docker } = deps;
+	const containerId = await withContainerLifecycleLock(projectId, async () => {
+		// Adopt a container the project already names but the pool has no row for.
+		// `projects.container_*` stays authoritative until every lifecycle call site
+		// has moved over (migration 049 is additive), so during that window a live
+		// container can be recorded in one place and not the other. Reading only the
+		// pool would provision a second container beside a perfectly good one -
+		// which is not a fallback path but the two representations of one container
+		// being reconciled, the same UNION `getActiveContainers` already does.
+		await adoptUnpooledContainer(deps, projectId);
+		// Bounded: each iteration either claims a member or removes one from
+		// contention (a lost race retries against a pool one member smaller), so
+		// this cannot spin. The cap is the pool's own size, not a timeout.
+		for (let attempt = 0; attempt < MAX_ACQUIRE_ATTEMPTS; attempt++) {
+			const active = await getActiveContainers(db);
+			const decision = await decidePoolAcquisition(db, projectId, taskId, {
+				runningContainers: active.runningContainers,
+				maxRunningContainers: active.limit,
+			});
+
+			if (decision.kind === 'queue') throw new PoolCapacityError(projectId);
+
+			if (decision.kind === 'create') {
+				const proj = await loadProjectRow(db, projectId);
+				const id = await provisionContainer(deps, proj, proj.team_slug);
+				if (await claimPoolMember(db, id, taskId)) return id;
+				continue;
+			}
+
+			const member = decision.member;
+			if (decision.kind === 'reuse') {
+				// Trusting the row is not enough: a container can be removed out from
+				// under Hezo (an operator, a daemon restart, a provider reaping a
+				// sandbox), and handing a run an id the engine no longer knows fails
+				// it on the first exec with nothing pointing at the cause. Verify,
+				// then drop and re-decide - which is how a stale member gets repaired.
+				const info = await docker.inspectContainer(member.id).catch(() => null);
+				if (!info?.State.Running) {
+					await removePoolMember(db, member.id);
+					continue;
+				}
+			}
+			if (decision.kind === 'resume') {
+				// Resume is a start in place: the writable layer is intact, so the
+				// clones and worktrees this container already built are still there.
+				try {
+					await docker.startContainer(member.id);
+				} catch {
+					// The container is gone from under the row. Drop it and re-decide
+					// rather than handing a run an id the engine no longer knows.
+					await removePoolMember(db, member.id);
+					continue;
+				}
+				await setPoolMemberState(db, member.id, 'idle');
+				await markProjectContainerStarted(deps, projectId, member.id);
+			}
+			if (await claimPoolMember(db, member.id, taskId)) return member.id;
+		}
+		throw new PoolCapacityError(projectId);
+	});
+
+	let released = false;
+	return {
+		containerId,
+		release: async () => {
+			if (released) return;
+			released = true;
+			await releasePoolMember(db, containerId, taskId).catch(() => undefined);
+		},
+	};
+}
+
+/** See {@link acquireRunContainer} - the loop is bounded by contention, not by time. */
+const MAX_ACQUIRE_ATTEMPTS = 8;
+
+/**
+ * Reflect a resume on the project row, which is what the Container page reads.
+ *
+ * `projects.container_*` is still the surface an operator sees, so a container
+ * the pool resumed has to stop reading as stopped there - and the log stream has
+ * to be resubscribed, since the old one died with the container.
+ */
+async function markProjectContainerStarted(
+	deps: ContainerDeps,
+	projectId: string,
+	containerId: string,
+): Promise<void> {
+	const { db, docker } = deps;
+	const res = await db.query<{ team_id: string; slug: string }>(
+		`UPDATE projects
+		    SET container_id = $2,
+		        container_status = $3::container_status,
+		        container_error = NULL,
+		        container_last_started_at = now()
+		  WHERE id = $1
+		 RETURNING team_id, slug`,
+		[projectId, containerId, ContainerStatus.Running],
+	);
+	const row = res.rows[0];
+	if (!row) return;
+	if (deps.containerLogStreamer && deps.logs) {
+		deps.containerLogStreamer.subscribe(projectId, containerId, deps.logs, docker);
+	}
+	await broadcastProjectUpdate(db, deps.wsManager, row.team_id, projectId);
+}
+
+/**
+ * Register `projects.container_id` as a pool member when it is live and unpooled.
+ *
+ * Only when the engine agrees it is running: a stale row naming a container that
+ * no longer exists must fall through to provisioning, which is what repairs it.
+ */
+async function adoptUnpooledContainer(deps: ContainerDeps, projectId: string): Promise<void> {
+	const { db, docker } = deps;
+	const res = await db.query<{ container_id: string | null }>(
+		`SELECT p.container_id FROM projects p
+		  WHERE p.id = $1
+		    AND p.container_id IS NOT NULL
+		    AND NOT EXISTS (
+		      SELECT 1 FROM container_pool_members m WHERE m.container_id = p.container_id
+		    )`,
+		[projectId],
+	);
+	const containerId = res.rows[0]?.container_id;
+	if (!containerId) return;
+	const info = await docker.inspectContainer(containerId).catch(() => null);
+	// A stale row naming a container the engine no longer knows is left alone, so
+	// the decision falls through to provisioning - which is what repairs it.
+	if (!info) return;
+	await upsertPoolMember(db, projectId, containerId, info.State.Running ? 'idle' : 'suspended');
+}
+
+async function loadProjectRow(
+	db: Db,
+	projectId: string,
+): Promise<ProjectRow & { team_slug: string }> {
+	const res = await db.query<ProjectRow & { team_slug: string }>(
+		`SELECT p.id, p.team_id, p.slug, p.docker_base_image, p.container_id, p.container_status,
+		        p.dev_ports, c.slug AS team_slug
+		 FROM projects p JOIN teams c ON c.id = p.team_id
+		 WHERE p.id = $1`,
+		[projectId],
+	);
+	const proj = res.rows[0];
+	if (!proj) throw new Error('Project not found');
+	return proj;
+}
+
 export async function teardownContainer(
 	deps: ContainerDeps,
 	projectId: string,
@@ -702,19 +887,29 @@ export async function teardownContainer(
 		[projectId],
 	);
 
+	// Every member, not just the one `projects.container_id` names: a project can
+	// hold several, and one left behind is a container nothing references and
+	// nobody stops - free to ignore on a local daemon, billed for on a managed
+	// backend until someone notices.
+	const poolIds = await listPoolContainerIds(db, projectId);
 	const teardownContainerId = result.rows[0]?.container_id;
-	if (teardownContainerId && !keepOldContainersFlag) {
-		try {
-			await docker.stopContainer(teardownContainerId);
-		} catch {
-			// Container may already be stopped
-		}
-		try {
-			await docker.removeContainer(teardownContainerId, true);
-		} catch {
-			// Container may already be removed
+	const toRemove = new Set(poolIds);
+	if (teardownContainerId) toRemove.add(teardownContainerId);
+	if (!keepOldContainersFlag) {
+		for (const id of toRemove) {
+			try {
+				await docker.stopContainer(id);
+			} catch {
+				// Container may already be stopped
+			}
+			try {
+				await docker.removeContainer(id, true);
+			} catch {
+				// Container may already be removed
+			}
 		}
 	}
+	for (const id of toRemove) await removePoolMember(db, id);
 
 	await db.query('UPDATE projects SET container_id = NULL, container_status = NULL WHERE id = $1', [
 		projectId,
@@ -756,6 +951,12 @@ export async function stopContainerGracefully(
 			 WHERE id = $3`,
 			[ContainerStatus.Stopped, annotatedLogs, projectId],
 		);
+		// A stopped container is a *suspended* pool member: it still exists and its
+		// filesystem is intact, but it is not running. Recording that here rather
+		// than at each caller is what stops the ladder from handing a run a
+		// container that is not up - the two representations of one container have
+		// to move together or the pool reads stale.
+		await setPoolMemberState(db, containerId, 'suspended');
 		log.info(
 			`project ${ref(projectSlug, projectId)} container ${ref(projectSlug, containerId.slice(0, 12))} stopped`,
 		);

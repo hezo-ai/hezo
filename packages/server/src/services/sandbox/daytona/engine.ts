@@ -44,6 +44,31 @@ const DEFAULT_DISK_GB = 10;
 /** vCPU per sandbox. */
 const DEFAULT_CPU = 2;
 
+/**
+ * Most memory this provider will give one sandbox, in GB.
+ *
+ * A request above it is **refused**, never quietly satisfied with less. The cap
+ * is a memory *guarantee* the run is sized against - `enforceContainerMemoryLimit`
+ * stops a container that exceeds it, and the whole capacity calculation divides
+ * host memory by it - so a container silently provisioned smaller would OOM
+ * partway through a run and read as an agent failure rather than as the
+ * misconfiguration it is. Failing at provision names the real problem.
+ */
+const MAX_MEMORY_GB = 8;
+
+/** Thrown when a project's memory cap exceeds what this provider can allocate. */
+export class DaytonaMemoryCapExceededError extends Error {
+	constructor(requestedGb: number) {
+		super(
+			`requested ${requestedGb} GB per container, but this sandbox service allocates at most ` +
+				`${MAX_MEMORY_GB} GB. Lower the project's memory limit or the instance-wide ` +
+				`default_ram_cap_per_container_gb setting - a container is never provisioned with ` +
+				`less memory than its cap requires.`,
+		);
+		this.name = 'DaytonaMemoryCapExceededError';
+	}
+}
+
 /** Bound on a single exec's stderr read-back. */
 const STDERR_TAIL_BYTES = 256 * 1024;
 
@@ -119,9 +144,14 @@ export class DaytonaEngine implements ContainerEngine {
 			const eq = entry.indexOf('=');
 			if (eq > 0) env[entry.slice(0, eq)] = entry.slice(eq + 1);
 		}
+		// Rounded **up**: a cap of 1.5 GB provisioned as 1 GB is a container that
+		// OOMs below the limit its run was sized against.
 		const memoryGb = config.HostConfig.Memory
 			? Math.max(1, Math.ceil(config.HostConfig.Memory / 1024 ** 3))
 			: undefined;
+		if (memoryGb !== undefined && memoryGb > MAX_MEMORY_GB) {
+			throw new DaytonaMemoryCapExceededError(memoryGb);
+		}
 
 		// Daytona keys its build cache on a hash of the Dockerfile *text*, so a
 		// tag-pinned reference is byte-identical forever: the key never moves and
@@ -153,7 +183,40 @@ export class DaytonaEngine implements ContainerEngine {
 		// `inspectContainer` reads `Running: false` on a sandbox that is merely
 		// coming up, and the container-death path fails the run out from under it.
 		await this.settle(sandbox.id);
+		// Docker's binds bring the run directories into existence as a side effect
+		// of create; a managed sandbox has no binds, so the same postcondition -
+		// "after createContainer, every declared mount target exists" - has to be
+		// met here. Doing it in the adapter rather than at the call site is what
+		// keeps the caller from ever learning which backend it is on: the chown
+		// that follows, and every clone and worktree after it, would otherwise
+		// fail on a missing path here and nowhere else.
+		await this.createMountTargets(sandbox.id, config);
 		return { Id: sandbox.id, Warnings: [] };
+	}
+
+	/** The container-side paths `config.HostConfig.Binds` would have created on Docker. */
+	private async createMountTargets(sandboxId: string, config: ContainerConfig): Promise<void> {
+		const targets = new Set<string>();
+		for (const bind of config.HostConfig.Binds ?? []) {
+			// `host:container[:mode]` - the container side is the second field, and a
+			// file mount (the egress CA) needs its parent rather than itself.
+			const parts = bind.split(':');
+			const target = parts[1];
+			if (!target) continue;
+			targets.add(target.includes('.') ? target.slice(0, target.lastIndexOf('/')) : target);
+		}
+		// The per-run ssh socket dir is not a bind on any backend; it is created by
+		// provisioning on Docker and has to exist here too.
+		targets.add('/run/hezo');
+		const dirs = [...targets].filter((t) => t.startsWith('/'));
+		if (dirs.length === 0) return;
+		const exec = await this.execCreate(sandboxId, {
+			Cmd: ['mkdir', '-p', ...dirs],
+			User: 'root',
+			AttachStdout: false,
+			AttachStderr: false,
+		});
+		await this.execStart(exec);
 	}
 
 	async startContainer(containerId: string): Promise<void> {

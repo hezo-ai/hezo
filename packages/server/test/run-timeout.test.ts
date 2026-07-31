@@ -17,6 +17,7 @@ import {
 	createTestApp,
 	createTestProject,
 	createTestTeam,
+	stubEngineSeams,
 } from './helpers/app';
 import { withRunUserStub } from './helpers/run-user-docker';
 
@@ -59,6 +60,7 @@ function createMockDocker(overrides: Record<string, any> = {}): ContainerEngine 
 		}),
 		containerLogs: async () => new ReadableStream(),
 		execCreate: async () => 'exec-123',
+		...stubEngineSeams(),
 		execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
 		killRunProcesses: async () => {},
 		execStart: execStartOverride ?? (async () => ({ stdout: 'done', stderr: '' })),

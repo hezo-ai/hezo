@@ -2841,16 +2841,9 @@ export class JobManager {
 					if (this.getLiveRunsForProject(candidate.id).length > 0) return;
 					if (!(await isProjectIdleForContainerStop(db, candidate.id, timeoutMin))) return;
 					log.info(
-						`project ${ref(candidate.slug, candidate.id)} idle for ${timeoutMin}min — stopping container ${ref(candidate.slug, candidate.container_id.slice(0, 12))}`,
+						`project ${ref(candidate.slug, candidate.id)} idle for ${timeoutMin}min — retiring its pool`,
 					);
-					await stopContainerGracefully(
-						this.buildContainerDeps(),
-						candidate.id,
-						candidate.slug,
-						candidate.team_id,
-						candidate.container_id,
-					);
-					stopped++;
+					stopped += await this.shutDownIdlePool(candidate);
 				});
 			} catch (err) {
 				log.error(`Idle-stop failed for project ${ref(candidate.slug, candidate.id)}:`, err);
@@ -2859,6 +2852,81 @@ export class JobManager {
 		if (candidates.length > 0) {
 			log.debug(`Idle-container pass: ${stopped}/${candidates.length} candidate(s) stopped`);
 		}
+	}
+
+	/**
+	 * Retire a project's idle containers: suspend one, destroy the rest.
+	 *
+	 * A stopped container *is* a suspended one - it still exists, its writable
+	 * layer is intact, and starting it resumes in place - so the two arms differ
+	 * only in whether the container survives. Keeping **at most one** per project
+	 * is exactly the cardinality a single-container project had, and it is what
+	 * removes a whole category of work that a retained-container pool would
+	 * otherwise need: no retention cap, no reap horizon, no snapshot storage to
+	 * watch grow.
+	 *
+	 * The cost is that the second and later containers of a burst are always
+	 * created cold. That is a fetch rather than a clone, only genuinely concurrent
+	 * runs pay it, and it buys back a bound nobody has to tune.
+	 *
+	 * Returns how many containers this actually retired, for the pass's log line.
+	 */
+	private async shutDownIdlePool(candidate: {
+		id: string;
+		slug: string;
+		team_id: string;
+		container_id: string;
+	}): Promise<number> {
+		const { db, docker } = this.deps;
+		const { planIdleShutdown } = await import('./sandbox/pool');
+		const { loadPoolMembers, removePoolMember } = await import('./sandbox/pool-db');
+
+		const members = await loadPoolMembers(db, candidate.id);
+		// A project whose pool has no row yet (nothing has provisioned through the
+		// pool since the upgrade) still has exactly one container, which is the
+		// single-member case - handle it as one rather than skipping the project.
+		const plan =
+			members.length > 0
+				? planIdleShutdown(members)
+				: {
+						suspend: {
+							id: candidate.container_id,
+							state: 'idle' as const,
+							lastTaskId: null,
+							hasUnpushedCommits: false,
+							atDiskCeiling: false,
+							reservedForChat: false,
+						},
+						destroy: [],
+					};
+
+		let retired = 0;
+		for (const member of plan.destroy) {
+			// Destroyed, not stopped: its filesystem is reproducible from the git
+			// remote, and a container kept beyond the one suspended member is
+			// storage nobody asked for.
+			log.info(
+				`project ${ref(candidate.slug, candidate.id)} retiring surplus idle container ${ref(candidate.slug, member.id.slice(0, 12))}`,
+			);
+			await docker.removeContainer(member.id, true).catch(() => undefined);
+			await removePoolMember(db, member.id);
+			retired++;
+		}
+
+		if (plan.suspend) {
+			log.info(
+				`project ${ref(candidate.slug, candidate.id)} idle — suspending container ${ref(candidate.slug, plan.suspend.id.slice(0, 12))}`,
+			);
+			await stopContainerGracefully(
+				this.buildContainerDeps(),
+				candidate.id,
+				candidate.slug,
+				candidate.team_id,
+				plan.suspend.id,
+			);
+			retired++;
+		}
+		return retired;
 	}
 
 	/**

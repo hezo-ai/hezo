@@ -64,7 +64,7 @@ import {
 	ensureContainerDirReady,
 	resolveContainerRunUser,
 } from './container-user';
-import { ensureProjectContainerRunning } from './containers';
+import { acquireRunContainer } from './containers';
 import type { ContainerEngine, ExecLogChunk } from './docker';
 import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
@@ -1099,17 +1099,20 @@ export async function runAgent(
 		};
 	};
 
-	// Containers run on demand: start (or provision) the project's container for
-	// this run rather than requiring it to already be up. ensureProjectContainerRunning
-	// inspects Docker live — a stale `running` row whose container is gone is
-	// repaired by re-provisioning — and serializes per project, so concurrent runs
-	// dispatching into the same stopped project start exactly one container.
+	// Containers run on demand, and this run claims one **for itself**: the pool
+	// ladder reuses a warm container that last served this task, else any warm
+	// one, else resumes a suspended one, else provisions. What it never returns is
+	// a container another run is using - that one-run-per-container rule is the
+	// whole reason a memory blowout can no longer take down every sibling run in
+	// the project. Serialized per project, so concurrent dispatches into the same
+	// project cannot both provision.
 	if (project.container_status !== ContainerStatus.Running) {
 		emit('stdout', '[runner] Starting the project container…\n');
 	}
 	let containerId: string;
+	let releaseContainer: () => Promise<void> = async () => undefined;
 	try {
-		containerId = await ensureProjectContainerRunning(
+		const acquired = await acquireRunContainer(
 			{
 				db: deps.db,
 				docker: deps.docker,
@@ -1122,7 +1125,10 @@ export async function runAgent(
 				egressCAPath: deps.egressCAPath,
 			},
 			project.id,
+			task?.id ?? null,
 		);
+		containerId = acquired.containerId;
+		releaseContainer = acquired.release;
 	} catch (e) {
 		const message = e instanceof Error ? e.message : String(e);
 		await broadcastProjectUpdate(deps.db, deps.wsManager, project.team_id, project.id);
@@ -1392,6 +1398,11 @@ export async function runAgent(
 					await deps.egressProxy.releaseRunProxy(heartbeatRunId);
 				}
 			});
+			// Back into the pool, warm and idle, with this task recorded so the
+			// task's next run gets the container whose worktree is already built.
+			// Released here rather than only on the success path: a container held
+			// by a failed run is a container no other run can ever have.
+			await step('release-pool-container', () => releaseContainer());
 		};
 
 		if (signal?.aborted) {

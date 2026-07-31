@@ -7,7 +7,7 @@ import {
 	HeartbeatRunStatus,
 } from '@hezo/shared';
 import type { Hono } from 'hono';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import { runLogTextSql } from '../src/db/run-log-chunks';
@@ -131,6 +131,15 @@ beforeAll(async () => {
 		 WHERE id = $1`,
 		[projectId],
 	);
+});
+
+// Each test states the project's container situation for itself (via
+// `makeProject`, or by writing `projects.container_*`). A pool member left
+// behind by the previous test would be a *second* container the run could take,
+// so clear them: "this project has no container" has to mean both records of
+// one, not just the projects row.
+beforeEach(async () => {
+	await db.query(`DELETE FROM container_pool_members WHERE project_id = $1`, [projectId]);
 });
 
 afterAll(async () => {

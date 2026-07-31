@@ -264,12 +264,10 @@ describe('Coach review prompt builder', () => {
 			taskRow.rows[0],
 			teamId,
 			masterKeyManager,
-			3100,
+			'http://127.0.0.1:47081',
 		);
 		expect(prompt).toContain('attachment: crash.log');
-		expect(prompt).toContain(
-			`download: http://host.docker.internal:3100/api/assets/${assetId}?exp=`,
-		);
+		expect(prompt).toContain(`download: http://127.0.0.1:47081/api/assets/${assetId}?exp=`);
 	});
 
 	it('seeded coach system prompt contains the summary-comment rule from the partial', async () => {

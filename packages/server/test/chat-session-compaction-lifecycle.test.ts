@@ -528,7 +528,9 @@ describe('ChatSessionManager — warm resources (ssh bridge + egress) and lifecy
 		// and the egress proxy plus its CA bundle pointers.
 		const env = chat.envByKind.get('turn') ?? [];
 		expect(env).toContain(`SSH_AUTH_SOCK=/run/hezo/${sessionId}.sock`);
-		expect(env).toContain('HTTPS_PROXY=http://host.docker.internal:24999');
+		// The chat reaches its egress proxy on container loopback through the
+		// session's own tunnel, exactly as an agent run does.
+		expect(env.some((e: string) => /^HTTPS_PROXY=http:\/\/127\.0\.0\.1:\d+$/.test(e))).toBe(true);
 		expect(env).toContain('NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/hezo-egress.crt');
 
 		// A second turn reuses the same session — no re-allocation.
@@ -575,7 +577,7 @@ describe('ChatSessionManager — warm resources (ssh bridge + egress) and lifecy
 			'SELECT status, error FROM chat_sessions ORDER BY started_at DESC LIMIT 1',
 		);
 		expect(session.rows[0].status).toBe(ChatSessionStatus.Crashed);
-		expect(session.rows[0].error).toContain('Egress proxy unreachable');
+		expect(session.rows[0].error).toContain('container refused the tunnel channel');
 	});
 
 	test('stop() interrupts an in-flight reply and finalizes the partial', async () => {

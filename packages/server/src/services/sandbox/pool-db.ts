@@ -86,6 +86,122 @@ export async function loadPoolMembers(db: Db, projectId: string): Promise<PoolMe
 }
 
 /**
+ * Record a container as a member of a project's pool.
+ *
+ * Idempotent on `container_id`, which is the engine's own id and therefore
+ * unique across every backend. Provisioning calls this after the container is
+ * up, so a member never exists in a state no run could use - `creating` is for a
+ * member the engine is still building, and the ladder skips it.
+ */
+export async function upsertPoolMember(
+	db: Db,
+	projectId: string,
+	containerId: string,
+	state: PoolMemberState,
+): Promise<void> {
+	await db.query(
+		`INSERT INTO container_pool_members (project_id, container_id, state)
+		 VALUES ($1, $2, $3::container_pool_state)
+		 ON CONFLICT (container_id) DO UPDATE
+		    SET state = EXCLUDED.state, project_id = EXCLUDED.project_id, updated_at = now()
+		  WHERE container_pool_members.state IS DISTINCT FROM EXCLUDED.state
+		     OR container_pool_members.project_id IS DISTINCT FROM EXCLUDED.project_id`,
+		[projectId, containerId, state],
+	);
+}
+
+/**
+ * Move a member between states.
+ *
+ * `busy` is claimed rather than set: the `WHERE state <> 'busy'` makes the
+ * transition the point at which two concurrent acquires are resolved, so the
+ * loser sees zero rows and picks again instead of both runs believing they own
+ * the container. That is the one-run-per-container rule actually being enforced,
+ * rather than merely decided by the ladder a moment earlier.
+ *
+ * Returns whether the row moved.
+ */
+export async function claimPoolMember(
+	db: Db,
+	containerId: string,
+	lastTaskId: string | null,
+): Promise<boolean> {
+	// RETURNING rather than a row count: the driver's QueryResult carries only
+	// rows, and "did this row move" is exactly what decides the race.
+	const res = await db.query<{ container_id: string }>(
+		`UPDATE container_pool_members
+		    SET state = 'busy', last_task_id = COALESCE($2, last_task_id), updated_at = now()
+		  WHERE container_id = $1 AND state <> 'busy'
+		  RETURNING container_id`,
+		[containerId, lastTaskId],
+	);
+	return res.rows.length > 0;
+}
+
+/**
+ * Hand a container back after a run.
+ *
+ * The task is recorded even when the run failed: affinity is about which
+ * worktree and `node_modules` are already built, which a failed run leaves just
+ * as warm as a successful one.
+ */
+export async function releasePoolMember(
+	db: Db,
+	containerId: string,
+	lastTaskId: string | null,
+): Promise<void> {
+	await db.query(
+		`UPDATE container_pool_members
+		    SET state = 'idle', last_task_id = COALESCE($2, last_task_id),
+		        last_released_at = now(), updated_at = now()
+		  WHERE container_id = $1 AND state <> 'suspended'`,
+		[containerId, lastTaskId],
+	);
+}
+
+/** Record a member's engine state after a lifecycle call the pool did not initiate. */
+export async function setPoolMemberState(
+	db: Db,
+	containerId: string,
+	state: PoolMemberState | 'error',
+): Promise<void> {
+	await db.query(
+		`UPDATE container_pool_members
+		    SET state = $2::container_pool_state, updated_at = now()
+		  WHERE container_id = $1 AND state IS DISTINCT FROM $2::container_pool_state`,
+		[containerId, state],
+	);
+}
+
+/** Drop a member once its container is gone. Best-effort: a missing row is fine. */
+export async function removePoolMember(db: Db, containerId: string): Promise<void> {
+	await db.query(`DELETE FROM container_pool_members WHERE container_id = $1`, [containerId]);
+}
+
+/** Every member of a project's pool, whatever its state - for teardown and reconciliation. */
+export async function listPoolContainerIds(db: Db, projectId: string): Promise<string[]> {
+	const res = await db.query<{ container_id: string }>(
+		`SELECT container_id FROM container_pool_members WHERE project_id = $1`,
+		[projectId],
+	);
+	return res.rows.map((r) => r.container_id);
+}
+
+/** Record a member's measured disk use, which decides whether it is recycled rather than reused. */
+export async function setPoolMemberDiskUsage(
+	db: Db,
+	containerId: string,
+	bytes: number,
+): Promise<void> {
+	await db.query(
+		`UPDATE container_pool_members
+		    SET disk_used_bytes = $2, updated_at = now()
+		  WHERE container_id = $1 AND disk_used_bytes IS DISTINCT FROM $2`,
+		[containerId, bytes],
+	);
+}
+
+/**
  * Which container a run in this project should get, decided against live state.
  *
  * The thin DB shell around {@link selectPoolMember}: it loads the members and the
