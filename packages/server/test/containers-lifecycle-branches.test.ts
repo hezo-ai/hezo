@@ -18,7 +18,7 @@ import {
 	syncContainerStatus,
 	teardownContainer,
 } from '../src/services/containers';
-import type { DockerClient } from '../src/services/docker';
+import type { ContainerEngine } from '../src/services/sandbox/types';
 import { ensureProjectWorkspace, getProjectDir } from '../src/services/workspace';
 import type { WebSocketManager } from '../src/services/ws';
 import { safeClose } from './helpers';
@@ -67,7 +67,7 @@ function fakeWs() {
 	};
 }
 
-function deps(docker: DockerClient, extra: Partial<ContainerDeps> = {}): ContainerDeps {
+function deps(docker: ContainerEngine, extra: Partial<ContainerDeps> = {}): ContainerDeps {
 	return { db, docker, dataDir, ...extra };
 }
 

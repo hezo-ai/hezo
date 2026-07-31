@@ -1,4 +1,4 @@
-import type { DockerClient } from './docker';
+import type { ContainerEngine } from './docker';
 
 /**
  * The Docker label every Hezo-provisioned container carries (set as
@@ -23,7 +23,7 @@ const HEZO_CONTAINER_LABEL = 'hezo.team';
  * stopped then force-removed independently; a failure on one (already stopped,
  * already gone) never aborts the sweep.
  */
-export async function removeProvisionedContainers(docker: DockerClient): Promise<number | null> {
+export async function removeProvisionedContainers(docker: ContainerEngine): Promise<number | null> {
 	if (!(await docker.ping())) return null;
 
 	const containers = await docker.listContainersByLabel(HEZO_CONTAINER_LABEL);

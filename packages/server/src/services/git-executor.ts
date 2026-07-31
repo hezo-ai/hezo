@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { trackBackground } from '../lib/background';
 import type { ContainerRunUser } from './container-user';
-import type { DockerClient } from './docker';
+import type { ContainerEngine } from './docker';
 import { type BridgeRunnerArgs, buildBridgeRunnerArgv } from './ssh-agent';
 
 /**
@@ -127,7 +127,7 @@ export class ContainerGitExecutor implements GitExecutor {
 	private readonly runSignal?: AbortSignal;
 
 	constructor(
-		private readonly docker: DockerClient,
+		private readonly docker: ContainerEngine,
 		private readonly containerId: string,
 		opts: ContainerGitExecutorOptions,
 	) {
@@ -153,7 +153,7 @@ export class ContainerGitExecutor implements GitExecutor {
 	 * `GIT_CONFIG_*` entries from `buildGitIdentityEnv`); other callers omit it.
 	 */
 	static forPrep(
-		docker: DockerClient,
+		docker: ContainerEngine,
 		containerId: string,
 		bridge: BridgeRunnerArgs | null,
 		runUser: ContainerRunUser,

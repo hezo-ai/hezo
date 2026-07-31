@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { createServer } from 'node:net';
 import { logger } from '../logger';
-import type { DockerClient } from './docker';
+import type { ContainerEngine } from './docker';
 import { EGRESS_PORT_RANGE_END, EGRESS_PORT_RANGE_START } from './egress/port-allocator';
 import { ensureImage } from './ensure-image';
 import { MANAGED_AGENT_BASE_IMAGE, resolveAgentBaseImage } from './image-registry';
@@ -251,7 +251,7 @@ function startProbeListener(bindHost: string): Promise<ProbeListener> {
 }
 
 export interface ConnectivityProbeDeps {
-	docker: DockerClient;
+	docker: ContainerEngine;
 	image: string;
 	serverPort: number;
 	containerBindHost: string;
@@ -296,7 +296,7 @@ async function runContainerProbe(deps: ConnectivityProbeDeps): Promise<Connectiv
 }
 
 export interface ConnectivityCheckDeps {
-	docker: DockerClient;
+	docker: ContainerEngine;
 	serverPort: number;
 	containerBindHost: string;
 	/** Injectable for tests; defaults to the real throwaway-container probe. */
@@ -408,7 +408,7 @@ export async function checkContainerToHostConnectivity(
  * bridge, and the auto-rebind target. Read directly from the Docker API so it
  * doesn't depend on in-container tooling. Returns null if it can't be determined.
  */
-async function resolveBridgeGateway(docker: DockerClient): Promise<string | null> {
+async function resolveBridgeGateway(docker: ContainerEngine): Promise<string | null> {
 	try {
 		const net = await docker.inspectNetwork('bridge');
 		return net?.IPAM?.Config?.find((c) => c.Gateway)?.Gateway ?? null;
@@ -418,7 +418,7 @@ async function resolveBridgeGateway(docker: DockerClient): Promise<string | null
 }
 
 export interface AutoRebindDeps {
-	docker: DockerClient;
+	docker: ContainerEngine;
 	serverPort: number;
 	/** The shared, mutable bind host read per-run by the egress proxy / SSH bridge.
 	 * Rebound in place to the detected gateway IP when a loopback bind is unreachable. */

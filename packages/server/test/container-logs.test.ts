@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ContainerLogStreamer } from '../src/services/container-logs';
-import type { DockerClient } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
+import type { ContainerEngine } from '../src/services/sandbox/types';
 import { WebSocketManager } from '../src/services/ws';
 
 const mockDocker = {
@@ -13,7 +13,7 @@ const mockDocker = {
 				},
 			}),
 		),
-} as unknown as DockerClient;
+} as unknown as ContainerEngine;
 
 describe('ContainerLogStreamer', () => {
 	let streamer: ContainerLogStreamer;
@@ -58,7 +58,7 @@ describe('ContainerLogStreamer', () => {
 
 	it('decrements refCount on unsubscribe without aborting while count > 0', () => {
 		let abortCalled = false;
-		const trackingDocker: DockerClient = {
+		const trackingDocker: ContainerEngine = {
 			containerLogs: async (_id: string, _opts: any, signal: AbortSignal) => {
 				signal?.addEventListener('abort', () => {
 					abortCalled = true;
@@ -71,7 +71,7 @@ describe('ContainerLogStreamer', () => {
 					}),
 				);
 			},
-		} as unknown as DockerClient;
+		} as unknown as ContainerEngine;
 
 		streamer.subscribe('proj-3', 'ctr-3', logs, trackingDocker);
 		streamer.subscribe('proj-3', 'ctr-3', logs, trackingDocker);
@@ -86,7 +86,7 @@ describe('ContainerLogStreamer', () => {
 
 	it('aborts and deletes the stream when refCount reaches 0', () => {
 		let abortCalled = false;
-		const trackingDocker: DockerClient = {
+		const trackingDocker: ContainerEngine = {
 			containerLogs: async (_id: string, _opts: any, signal: AbortSignal) => {
 				signal?.addEventListener('abort', () => {
 					abortCalled = true;
@@ -99,7 +99,7 @@ describe('ContainerLogStreamer', () => {
 					}),
 				);
 			},
-		} as unknown as DockerClient;
+		} as unknown as ContainerEngine;
 
 		streamer.subscribe('proj-4', 'ctr-4', logs, trackingDocker);
 
@@ -119,7 +119,7 @@ describe('ContainerLogStreamer', () => {
 	it('stopAll() aborts all active streams and clears the map', () => {
 		const aborted: Record<string, boolean> = {};
 
-		const makeTracking = (label: string): DockerClient =>
+		const makeTracking = (label: string): ContainerEngine =>
 			({
 				containerLogs: async (_id: string, _opts: unknown, signal?: AbortSignal) => {
 					signal?.addEventListener('abort', () => {
@@ -133,7 +133,7 @@ describe('ContainerLogStreamer', () => {
 						}),
 					);
 				},
-			}) as unknown as DockerClient;
+			}) as unknown as ContainerEngine;
 
 		streamer.subscribe('proj-a', 'ctr-a', logs, makeTracking('a'));
 		streamer.subscribe('proj-b', 'ctr-b', logs, makeTracking('b'));

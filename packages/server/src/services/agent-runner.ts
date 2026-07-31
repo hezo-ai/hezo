@@ -80,7 +80,7 @@ import {
 	resolveContainerRunUser,
 } from './container-user';
 import { ensureProjectContainerRunning } from './containers';
-import type { DockerClient, ExecLogChunk } from './docker';
+import type { ContainerEngine, ExecLogChunk } from './docker';
 import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
 import { type EgressProxy, formatEgressProxyUrl } from './egress';
@@ -191,7 +191,7 @@ export interface RunResult {
 
 export interface RunnerDeps {
 	db: Db;
-	docker: DockerClient;
+	docker: ContainerEngine;
 	masterKeyManager: MasterKeyManager;
 	serverPort: number;
 	dataDir: string;

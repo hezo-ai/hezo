@@ -1,5 +1,5 @@
 import { logger } from '../logger';
-import type { DockerClient } from './docker';
+import type { ContainerEngine } from './docker';
 
 const log = logger.child('container-user');
 
@@ -31,7 +31,7 @@ export function clearContainerRunUserCache(containerId?: string): void {
 }
 
 async function execCapture(
-	docker: DockerClient,
+	docker: ContainerEngine,
 	containerId: string,
 	script: string,
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
@@ -51,7 +51,7 @@ function delay(ms: number): Promise<void> {
 }
 
 async function probe(
-	docker: DockerClient,
+	docker: ContainerEngine,
 	containerId: string,
 	user: 'node' | null,
 ): Promise<ContainerRunUser | null> {
@@ -79,7 +79,7 @@ async function probe(
  * (root) container read everything the host wrote. Cached per container.
  */
 export async function resolveContainerRunUser(
-	docker: DockerClient,
+	docker: ContainerEngine,
 	containerId: string,
 ): Promise<ContainerRunUser> {
 	const cached = cache.get(containerId);
@@ -117,7 +117,7 @@ function shSingleQuote(s: string): string {
  * operation that follows surfaces the actionable error if the path truly can't be made.
  */
 export async function mkdirInContainer(
-	docker: DockerClient,
+	docker: ContainerEngine,
 	containerId: string,
 	containerPaths: string[],
 ): Promise<void> {
@@ -153,7 +153,7 @@ const DIR_READY_DELAY_MS = 100;
  * follows surfaces the actionable error if the path truly can't be made.
  */
 export async function ensureContainerDirReady(
-	docker: DockerClient,
+	docker: ContainerEngine,
 	containerId: string,
 	containerPath: string,
 	opts: { retries?: number; delayMs?: number } = {},
@@ -189,7 +189,7 @@ export async function ensureContainerDirReady(
  * never throws — a permission fix must never abort the run/provision around it.
  */
 export async function chownToRunUser(
-	docker: DockerClient,
+	docker: ContainerEngine,
 	containerId: string,
 	runUser: ContainerRunUser,
 	containerPaths: string[],

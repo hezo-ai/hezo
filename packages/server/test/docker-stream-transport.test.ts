@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { DockerClient, type ExecLogChunk } from '../src/services/docker';
+import { DockerClient } from '../src/services/docker';
+import type { ContainerEngine, ExecLogChunk } from '../src/services/sandbox/types';
 import { type DockerSockSim, startDockerSockSim } from './helpers/docker-sock-sim';
 
 // The exec-attach and log-follow streams ride node:http (not fetch) so Bun's
@@ -11,7 +12,7 @@ import { type DockerSockSim, startDockerSockSim } from './helpers/docker-sock-si
 // test/bun/docker-stream.bun.test.ts.
 
 let sim: DockerSockSim;
-let docker: DockerClient;
+let docker: ContainerEngine;
 
 beforeAll(async () => {
 	sim = await startDockerSockSim();

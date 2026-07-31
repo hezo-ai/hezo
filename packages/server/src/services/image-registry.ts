@@ -4,7 +4,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { logger } from '../logger';
 import { IS_PACKAGED_BUILD } from '../version';
-import type { DockerClient } from './docker';
+import type { ContainerEngine } from './docker';
 
 const log = logger.child('image-registry');
 
@@ -81,7 +81,7 @@ export function resolveAgentBaseImage(
  * is injectable for tests.
  */
 export async function refreshPublishedAgentBaseImage(
-	docker: DockerClient,
+	docker: ContainerEngine,
 	ref: string | null = publishedAgentBaseRef(),
 ): Promise<string | null> {
 	if (!ref) return null;
@@ -231,7 +231,7 @@ export interface PruneOutcome {
  * their layers alive via Docker's reference counting; only the tag is moved
  * to the rebuilt image.
  */
-export async function pruneStaleBundledImages(docker: DockerClient): Promise<PruneOutcome> {
+export async function pruneStaleBundledImages(docker: ContainerEngine): Promise<PruneOutcome> {
 	const outcome: PruneOutcome = { kept: [], removed: [], skipped: [] };
 	for (const image of Object.keys(LOCAL_IMAGES)) {
 		const resolved = resolveLocalImage(image);
@@ -239,7 +239,7 @@ export async function pruneStaleBundledImages(docker: DockerClient): Promise<Pru
 			outcome.skipped.push({ image, reason: 'source not found on disk' });
 			continue;
 		}
-		let info: Awaited<ReturnType<DockerClient['inspectImage']>>;
+		let info: Awaited<ReturnType<ContainerEngine['inspectImage']>>;
 		try {
 			info = await docker.inspectImage(image);
 		} catch (err) {

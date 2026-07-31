@@ -2,7 +2,6 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { DockerClient } from '../src/services/docker';
 import {
 	AGENT_BASE_GHCR_REPO,
 	BUNDLE_SHA_LABEL,
@@ -15,6 +14,7 @@ import {
 	resolveLocalImage,
 	setDockerBaseDir,
 } from '../src/services/image-registry';
+import type { ContainerEngine } from '../src/services/sandbox/types';
 
 describe('image-registry', () => {
 	it('findRepoRoot locates the monorepo root from this file', () => {
@@ -92,14 +92,14 @@ describe('image-registry', () => {
 		it('pulls and returns the published ref when one exists', async () => {
 			const docker = {
 				pullImage: vi.fn().mockResolvedValue(undefined),
-			} as unknown as DockerClient;
+			} as unknown as ContainerEngine;
 			const ref = `${AGENT_BASE_GHCR_REPO}:latest`;
 			const result = await refreshPublishedAgentBaseImage(docker, ref);
 			expect(docker.pullImage).toHaveBeenCalledWith(ref);
 			expect(result).toBe(ref);
 		});
 		it('is a no-op returning null when there is no published ref', async () => {
-			const docker = { pullImage: vi.fn() } as unknown as DockerClient;
+			const docker = { pullImage: vi.fn() } as unknown as ContainerEngine;
 			const result = await refreshPublishedAgentBaseImage(docker, null);
 			expect(docker.pullImage).not.toHaveBeenCalled();
 			expect(result).toBeNull();

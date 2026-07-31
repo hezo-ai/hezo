@@ -14,8 +14,8 @@ import {
 	stopContainerGracefully,
 	syncAllContainerStatuses,
 } from '../src/services/containers';
-import type { DockerClient } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
+import type { ContainerEngine } from '../src/services/sandbox/types';
 import type { WebSocketManager } from '../src/services/ws';
 import { safeClose } from './helpers';
 import {
@@ -26,7 +26,7 @@ import {
 	createTestTeam,
 } from './helpers/app';
 
-function deps(docker: DockerClient, wsManager?: WebSocketManager): ContainerDeps {
+function deps(docker: ContainerEngine, wsManager?: WebSocketManager): ContainerDeps {
 	// Production samples container memory every 15s rather than on every sync
 	// pass (the stats call is the expensive one and a working set does not move
 	// meaningfully inside a second). These tests drive the sync directly and

@@ -6,9 +6,9 @@ import type { Db } from '../src/db/database';
 import { waitForBackground } from '../src/lib/background';
 import type { Env } from '../src/lib/types';
 import { ContainerLogStreamer } from '../src/services/container-logs';
-import type { DockerClient } from '../src/services/docker';
 import { JobManager, type JobManagerDeps } from '../src/services/job-manager';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
+import type { ContainerEngine } from '../src/services/sandbox/types';
 import { safeClose } from './helpers';
 import {
 	authHeader,
@@ -35,7 +35,7 @@ let taskId: string;
 let taskIdentifier: string;
 let agentId: string;
 
-function createMockDocker(): DockerClient {
+function createMockDocker(): ContainerEngine {
 	return {
 		ping: async () => true,
 		imageExists: async () => true,
@@ -54,7 +54,7 @@ function createMockDocker(): DockerClient {
 		execStart: async () => ({ stdout: 'done', stderr: '' }),
 		execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
 		killRunProcesses: async () => {},
-	} as unknown as DockerClient;
+	} as unknown as ContainerEngine;
 }
 
 function createJobManager(overrides: Partial<JobManagerDeps> = {}): JobManager {

@@ -29,7 +29,7 @@ import {
 	clearContainerRunUserCache,
 	resolveContainerRunUser,
 } from './container-user';
-import type { DockerClient } from './docker';
+import type { ContainerEngine } from './docker';
 import { ensureImage } from './ensure-image';
 import { ContainerGitExecutor, mintGitOpScopeId } from './git-executor';
 import { resolveAgentBaseImage } from './image-registry';
@@ -84,7 +84,7 @@ export interface ProjectRow {
 
 export interface ContainerDeps {
 	db: Db;
-	docker: DockerClient;
+	docker: ContainerEngine;
 	dataDir: string;
 	wsManager?: WebSocketManager;
 	masterKeyManager?: MasterKeyManager;
@@ -268,7 +268,7 @@ function appendMemoryLine(existing: string | null, line: string | null): string 
  * the user can see what happened without a live stream.
  */
 export async function captureContainerLogs(
-	docker: DockerClient,
+	docker: ContainerEngine,
 	containerId: string,
 	projectSlug?: string | null,
 ): Promise<string | null> {
@@ -865,7 +865,7 @@ export async function isProjectIdleForContainerStop(
  * the one whose lag surfaces as a spurious worktree-prep failure.
  */
 export async function verifyContainerWorkspace(
-	docker: DockerClient,
+	docker: ContainerEngine,
 	containerId: string,
 ): Promise<boolean> {
 	try {
@@ -933,13 +933,13 @@ export async function rebuildContainer(
 
 export async function syncContainerStatus(
 	db: Db,
-	docker: DockerClient,
+	docker: ContainerEngine,
 	projectId: string,
 	projectSlug: string,
 	containerId: string,
 	previousStatus?: string | null,
 ): Promise<string | null> {
-	let info: Awaited<ReturnType<DockerClient['inspectContainer']>>;
+	let info: Awaited<ReturnType<ContainerEngine['inspectContainer']>>;
 	try {
 		info = await docker.inspectContainer(containerId);
 	} catch (err) {
@@ -1026,7 +1026,7 @@ async function enforceContainerMemoryLimit(
 ): Promise<string | null> {
 	const { db, docker } = deps;
 
-	let stats: Awaited<ReturnType<DockerClient['containerStats']>>;
+	let stats: Awaited<ReturnType<ContainerEngine['containerStats']>>;
 	try {
 		stats = await docker.containerStats(containerId);
 	} catch (err) {

@@ -29,9 +29,9 @@ import {
 	ContainerConnectivityStatus,
 	type ProbeResult,
 } from '../src/services/container-connectivity-status';
-import type { DockerClient } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { PricingService, upsertManualRate } from '../src/services/pricing';
+import type { ContainerEngine } from '../src/services/sandbox/types';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 
@@ -55,7 +55,7 @@ function readPromptFromExec(
 // Same exec-driven side effect the sibling agent-runner.test.ts uses: flip a
 // run's produced_output (or reported_no_work) mid-exec so an exit-0 mock reads
 // as a genuine success/no-op rather than tripping the "no output" failure path.
-function createMockDocker(taskId: string, overrides: Record<string, any> = {}): DockerClient {
+function createMockDocker(taskId: string, overrides: Record<string, any> = {}): ContainerEngine {
 	const {
 		execStart: execStartOverride,
 		producesOutput = true,
@@ -97,7 +97,7 @@ function createMockDocker(taskId: string, overrides: Record<string, any> = {}): 
 			}
 			return (innerExecStart as (...a: unknown[]) => unknown)(...args);
 		},
-	} as unknown as DockerClient;
+	} as unknown as ContainerEngine;
 }
 
 let app: Hono<Env>;
@@ -213,7 +213,7 @@ function makeProject(overrides: Record<string, unknown> = {}) {
 	};
 }
 
-function baseDeps(docker: DockerClient, extra: Partial<RunnerDeps> = {}): RunnerDeps {
+function baseDeps(docker: ContainerEngine, extra: Partial<RunnerDeps> = {}): RunnerDeps {
 	return {
 		db,
 		docker,

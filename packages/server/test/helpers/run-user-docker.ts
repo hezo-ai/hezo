@@ -1,10 +1,10 @@
-import type { DockerClient } from '../../src/services/docker';
+import type { ContainerEngine } from '../../src/services/sandbox/types';
 
 /** The run-user the stub answers `id -u node …` with (matches the stock agent-base). */
 export const STUB_RUN_USER = { name: 'node', uid: 1000, gid: 1000 };
 
-type ExecCreateConfig = Parameters<DockerClient['execCreate']>[1];
-type ExecStartOpts = Parameters<DockerClient['execStart']>[1];
+type ExecCreateConfig = Parameters<ContainerEngine['execCreate']>[1];
+type ExecStartOpts = Parameters<ContainerEngine['execStart']>[1];
 
 function classify(cmd?: string[]): 'probe' | 'chown' | null {
 	if (!cmd || cmd[0] !== 'sh' || cmd[1] !== '-c') return null;
@@ -15,7 +15,7 @@ function classify(cmd?: string[]): 'probe' | 'chown' | null {
 }
 
 /**
- * Wrap a mock {@link DockerClient} so the container run-user probe (`id -u node …`)
+ * Wrap a mock {@link ContainerEngine} so the container run-user probe (`id -u node …`)
  * and the ownership chowns Hezo issues are answered transparently — yielding a
  * `node` run-user and a clean exit — and are NEVER forwarded to the wrapped
  * client's exec handlers. Lets run-user detection work in unit tests (which fake
@@ -23,9 +23,9 @@ function classify(cmd?: string[]): 'probe' | 'chown' | null {
  * Pass a custom `user` to simulate a different / no-node image.
  */
 export function withRunUserStub(
-	docker: DockerClient,
+	docker: ContainerEngine,
 	user: { name: string; uid: number; gid: number } = STUB_RUN_USER,
-): DockerClient {
+): ContainerEngine {
 	const infra = new Map<string, 'probe' | 'chown'>();
 	let seq = 0;
 	return {
@@ -51,5 +51,5 @@ export function withRunUserStub(
 			if (infra.has(execId)) return { ExitCode: 0, Running: false, Pid: 0 };
 			return docker.execInspect(execId);
 		},
-	} as DockerClient;
+	} as ContainerEngine;
 }

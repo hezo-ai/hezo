@@ -25,7 +25,6 @@ import { toSlug, uniqueSlug } from '../../src/lib/slug';
 import type { Env } from '../../src/lib/types';
 import { signAdminJwt, signAgentJwt } from '../../src/middleware/auth';
 import { ContainerLogStreamer } from '../../src/services/container-logs';
-import type { DockerClient } from '../../src/services/docker';
 import { JobManager } from '../../src/services/job-manager';
 import { LogStreamBroker } from '../../src/services/log-stream-broker';
 import { getMarketplaceTeam } from '../../src/services/marketplace';
@@ -33,13 +32,17 @@ import {
 	createProjectWithPlanningTask,
 	resolveProjectTaskPrefix,
 } from '../../src/services/project-create';
+import type { ContainerEngine } from '../../src/services/sandbox/types';
 import { type CreatedTeamRow, createTeam, seedDefaultTeam } from '../../src/services/teams';
 import { WebSocketManager } from '../../src/services/ws';
 import { buildApp } from '../../src/startup';
 import { seedTestAppTeamTemplate } from './app-team-template';
 import { createTestDbWithMigrations } from './db';
 
-const STUB_DOCKER_METHODS = {
+// Typed, so the compiler rejects an incomplete stub. AGENTS.md requires every
+// inline docker mock to extend this rather than hand-rolling a partial object;
+// that only holds if the base itself is complete.
+const STUB_DOCKER_METHODS: ContainerEngine = {
 	ping: async () => true,
 	imageExists: async () => true,
 	pullImage: async () => {},
@@ -53,9 +56,12 @@ const STUB_DOCKER_METHODS = {
 		Config: { Image: 'stub' },
 	}),
 	findContainerByNamePrefix: async () => null,
+	inspectImage: async () => null,
+	removeImage: async () => {},
+	listContainersByLabel: async () => [],
 	inspectNetwork: async () => ({ IPAM: { Config: [{ Gateway: '172.17.0.1' }] } }),
 	containerStats: async () => null,
-	containerLogs: async () => ({ arrayBuffer: async () => new ArrayBuffer(0) }),
+	containerLogs: async () => new Response(new Uint8Array()),
 	execCreate: async () => {
 		throw new Error('execCreate not mocked — pass a mock docker via RunnerDeps');
 	},
@@ -69,8 +75,8 @@ const STUB_DOCKER_METHODS = {
 
 export function createStubDocker<T extends Record<string, unknown>>(
 	overrides: T = {} as T,
-): DockerClient & T {
-	return { ...STUB_DOCKER_METHODS, ...overrides } as unknown as DockerClient & T;
+): ContainerEngine & T {
+	return { ...STUB_DOCKER_METHODS, ...overrides } as ContainerEngine & T;
 }
 
 /**

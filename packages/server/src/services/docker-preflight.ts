@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
-import type { DockerClient } from './docker';
+import type { ContainerEngine } from './docker';
 
 /**
  * Canonical Docker install page, shown to operators when Docker is missing.
@@ -63,7 +63,7 @@ export function dockerBinaryInstalled(env: NodeJS.ProcessEnv = process.env): boo
  * check — and report availability. Callers gate startup on an `ok` result.
  */
 export async function evaluateDockerPreflight(
-	docker: Pick<DockerClient, 'ping'>,
+	docker: Pick<ContainerEngine, 'ping'>,
 	env: NodeJS.ProcessEnv = process.env,
 ): Promise<DockerAvailability> {
 	return checkDockerAvailability({

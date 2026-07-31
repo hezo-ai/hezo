@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ContainerLogStreamer } from '../src/services/container-logs';
-import type { DockerClient } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
+import type { ContainerEngine } from '../src/services/sandbox/types';
 import { WebSocketManager } from '../src/services/ws';
 
 // Exercises the docker multiplexed-frame parsing loop in startStreaming, which
@@ -26,7 +26,7 @@ function frame(stream: 'stdout' | 'stderr', text: string): Uint8Array {
 }
 
 /** A docker client whose containerLogs streams the given byte chunks then closes. */
-function streamingDocker(chunks: Uint8Array[]): DockerClient {
+function streamingDocker(chunks: Uint8Array[]): ContainerEngine {
 	return {
 		containerLogs: async () =>
 			new Response(
@@ -37,7 +37,7 @@ function streamingDocker(chunks: Uint8Array[]): DockerClient {
 					},
 				}),
 			),
-	} as unknown as DockerClient;
+	} as unknown as ContainerEngine;
 }
 
 const streamId = (projectId: string) => `container:${projectId}`;
@@ -98,7 +98,7 @@ describe('ContainerLogStreamer — frame parsing', () => {
 	});
 
 	it('returns early without throwing when containerLogs yields null', async () => {
-		const docker = { containerLogs: async () => null } as unknown as DockerClient;
+		const docker = { containerLogs: async () => null } as unknown as ContainerEngine;
 		streamer.subscribe('p4', 'c4', logs, docker);
 		// Give the async startStreaming a tick; nothing should be emitted.
 		await new Promise((r) => setTimeout(r, 10));
@@ -108,7 +108,7 @@ describe('ContainerLogStreamer — frame parsing', () => {
 	it('returns early when the response has no readable body', async () => {
 		const docker = {
 			containerLogs: async () => new Response(null),
-		} as unknown as DockerClient;
+		} as unknown as ContainerEngine;
 		streamer.subscribe('p5', 'c5', logs, docker);
 		await new Promise((r) => setTimeout(r, 10));
 		expect(logs.getLogText(streamId('p5'))).toBe('');
@@ -131,7 +131,7 @@ describe('ContainerLogStreamer — frame parsing', () => {
 						},
 					}),
 				),
-		} as unknown as DockerClient;
+		} as unknown as ContainerEngine;
 
 		streamer.subscribe('p6', 'c6', logs, docker);
 		await vi.waitFor(() => {
@@ -148,7 +148,7 @@ describe('ContainerLogStreamer — frame parsing', () => {
 			containerLogs: async () => {
 				throw new Error('docker exploded');
 			},
-		} as unknown as DockerClient;
+		} as unknown as ContainerEngine;
 
 		streamer.subscribe('p8', 'c8', logs, docker);
 		// The .catch in subscribe deletes the streamer entry and ends the broker

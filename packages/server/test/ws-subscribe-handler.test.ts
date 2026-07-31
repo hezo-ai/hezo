@@ -4,9 +4,9 @@ import type { Db } from '../src/db/database';
 import type { AuthInfo } from '../src/lib/types';
 import { canAuthAccessTeam } from '../src/middleware/auth';
 import { ContainerLogStreamer } from '../src/services/container-logs';
-import type { DockerClient } from '../src/services/docker';
 import { ImageBuildTracker } from '../src/services/image-build-tracker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
+import type { ContainerEngine } from '../src/services/sandbox/types';
 import { WebSocketManager, type WsData, type WsSocket } from '../src/services/ws';
 import { handleWsSubscribe, handleWsUnsubscribe } from '../src/services/ws-subscribe-handler';
 import { safeClose } from './helpers';
@@ -69,7 +69,7 @@ describe('handleWsSubscribe', () => {
 	let wsManager: WebSocketManager;
 	let containerLogStreamer: ContainerLogStreamer;
 	let logs: LogStreamBroker;
-	const mockDocker = {} as DockerClient;
+	const mockDocker = {} as ContainerEngine;
 
 	beforeEach(async () => {
 		db = await createTestDbWithMigrations();

@@ -33,9 +33,9 @@ import {
 	shellQuoteArg,
 	type TaskInfo,
 } from '../src/services/agent-runner';
-import type { DockerClient } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import type { ReactionGroup } from '../src/services/reactions';
+import type { ContainerEngine } from '../src/services/sandbox/types';
 import { safeClose } from './helpers';
 import {
 	authHeader,
@@ -166,7 +166,7 @@ function readPromptFromExec(opts: { Env: string[] }): string {
 	return readFileSync(getHostPromptPath(dataDir, teamId, projectId, runId), 'utf8');
 }
 
-function promptCaptureDocker(capture: { prompt: string; env: string[] }): DockerClient {
+function promptCaptureDocker(capture: { prompt: string; env: string[] }): ContainerEngine {
 	const base = createStubDocker({
 		execCreate: async (_id: string, opts: any) => {
 			capture.prompt = readPromptFromExec(opts);
@@ -182,10 +182,10 @@ function promptCaptureDocker(capture: { prompt: string; env: string[] }): Docker
 			return { stdout: 'ok', stderr: '' };
 		},
 	});
-	return withRunUserStub(base as unknown as DockerClient);
+	return withRunUserStub(base as unknown as ContainerEngine);
 }
 
-function baseDeps(docker: DockerClient): RunnerDeps {
+function baseDeps(docker: ContainerEngine): RunnerDeps {
 	return {
 		db,
 		docker,

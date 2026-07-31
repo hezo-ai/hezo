@@ -34,9 +34,9 @@ import {
 	type ProbeResult,
 } from '../src/services/container-connectivity-status';
 import { ensureProjectContainerRunning } from '../src/services/containers';
-import type { DockerClient } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { PricingService, upsertManualRate } from '../src/services/pricing';
+import type { ContainerEngine } from '../src/services/sandbox/types';
 import { safeClose } from './helpers';
 import {
 	authHeader,
@@ -153,7 +153,7 @@ function makeProject(overrides: Record<string, unknown> = {}) {
 
 // Docker stub whose agent exec flips produced_output mid-run (the same write
 // the MCP tool layer does) so exit-0 runs read as genuine successes.
-function makeDocker(overrides: Record<string, any> = {}): DockerClient {
+function makeDocker(overrides: Record<string, any> = {}): ContainerEngine {
 	const { execStart: execStartOverride, producesOutput = true, ...rest } = overrides;
 	const innerExecStart = execStartOverride ?? (async () => ({ stdout: 'done', stderr: '' }));
 	const base = createStubDocker({
@@ -170,7 +170,7 @@ function makeDocker(overrides: Record<string, any> = {}): DockerClient {
 			return (innerExecStart as (...a: unknown[]) => unknown)(...args);
 		},
 	});
-	return withRunUserStub(base as unknown as DockerClient);
+	return withRunUserStub(base as unknown as ContainerEngine);
 }
 
 function recordingWs() {
@@ -186,7 +186,7 @@ function recordingWs() {
 	return { broadcasts, wsManager };
 }
 
-function baseDeps(docker: DockerClient, extra: Partial<RunnerDeps> = {}): RunnerDeps {
+function baseDeps(docker: ContainerEngine, extra: Partial<RunnerDeps> = {}): RunnerDeps {
 	return {
 		db,
 		docker,

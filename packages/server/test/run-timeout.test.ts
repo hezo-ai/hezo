@@ -7,9 +7,9 @@ import { waitForBackground } from '../src/lib/background';
 import type { Env } from '../src/lib/types';
 import { type RunnerDeps, runAgent } from '../src/services/agent-runner';
 import { ContainerLogStreamer } from '../src/services/container-logs';
-import type { DockerClient } from '../src/services/docker';
 import { JobManager } from '../src/services/job-manager';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
+import type { ContainerEngine } from '../src/services/sandbox/types';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 import { withRunUserStub } from './helpers/run-user-docker';
@@ -32,7 +32,7 @@ let agentId: string;
 
 const originalFetch = globalThis.fetch;
 
-function createMockDocker(overrides: Record<string, any> = {}): DockerClient {
+function createMockDocker(overrides: Record<string, any> = {}): ContainerEngine {
 	const { execStart: execStartOverride, ...rest } = overrides;
 	const base = {
 		ping: async () => true,
@@ -53,7 +53,7 @@ function createMockDocker(overrides: Record<string, any> = {}): DockerClient {
 		killRunProcesses: async () => {},
 		execStart: execStartOverride ?? (async () => ({ stdout: 'done', stderr: '' })),
 		...rest,
-	} as unknown as DockerClient;
+	} as unknown as ContainerEngine;
 	// Transparently answer the run-user probe so those infra execs don't hit execStart.
 	return withRunUserStub(base);
 }

@@ -196,7 +196,7 @@ let serveFetch: (
 let wsManager: WebSocketManager | null = null;
 let dbRef: Db | null = null;
 let mkmRef: MasterKeyManager | null = null;
-let dockerRef: import('./services/docker').DockerClient | null = null;
+let dockerRef: import('./services/sandbox/types').ContainerEngine | null = null;
 let logsRef: LogStreamBroker | null = null;
 let containerLogStreamerRef: ContainerLogStreamer | null = null;
 

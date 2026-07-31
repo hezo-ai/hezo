@@ -63,7 +63,7 @@ import {
 	wakeAgentsWithPendingWork,
 	withContainerLifecycleLock,
 } from './containers';
-import type { ContainerProcessInfo, DockerClient } from './docker';
+import type { ContainerEngine, ContainerProcessInfo } from './docker';
 import type { EgressProxy } from './egress';
 import { getDueGoals } from './goals';
 import { HEARTBEAT_INTERVAL_FLOOR_MIN } from './heartbeat-schedule';
@@ -177,7 +177,7 @@ export type ProgressUpdateDispatchResult =
 
 export interface JobManagerDeps {
 	db: Db;
-	docker: DockerClient;
+	docker: ContainerEngine;
 	masterKeyManager: MasterKeyManager;
 	serverPort: number;
 	dataDir: string;
@@ -867,7 +867,7 @@ export class JobManager {
 	 * stopped deliberately — by the operator or by the idle-stop cron (both write
 	 * container_status = stopped) — are left alone to lazy-start on demand.
 	 */
-	private async restartStoppedRunningContainers(docker: DockerClient): Promise<void> {
+	private async restartStoppedRunningContainers(docker: ContainerEngine): Promise<void> {
 		const { db, wsManager, containerLogStreamer, logs } = this.deps;
 
 		const reachable = await docker.ping();
@@ -967,7 +967,7 @@ export class JobManager {
 	 * Probe each running container's `/workspace` and rebuild the broken ones
 	 * so wakeups don't loop on an unrecoverable exec error.
 	 */
-	private async repairStaleContainerMounts(docker: DockerClient): Promise<void> {
+	private async repairStaleContainerMounts(docker: ContainerEngine): Promise<void> {
 		const { db } = this.deps;
 
 		const running = await db.query<{
@@ -1034,7 +1034,7 @@ export class JobManager {
 	 * marker are caught by their bridge cmdline / `SSH_AUTH_SOCK=/run/hezo/` env.
 	 * Best-effort per container: a container stopping mid-sweep just logs.
 	 */
-	private async sweepDanglingContainerProcesses(docker: DockerClient): Promise<void> {
+	private async sweepDanglingContainerProcesses(docker: ContainerEngine): Promise<void> {
 		const { db } = this.deps;
 
 		const reachable = await docker.ping();
@@ -1089,7 +1089,7 @@ export class JobManager {
 		}
 	}
 
-	private async selfHealErroredContainers(docker: DockerClient): Promise<void> {
+	private async selfHealErroredContainers(docker: ContainerEngine): Promise<void> {
 		const { db, wsManager, containerLogStreamer, logs } = this.deps;
 
 		const reachable = await docker.ping();
@@ -1114,7 +1114,7 @@ export class JobManager {
 
 		for (const project of candidates.rows) {
 			const name = `hezo-${project.slug}-${project.id.slice(0, 8)}`;
-			let info: Awaited<ReturnType<DockerClient['findContainerByNamePrefix']>>;
+			let info: Awaited<ReturnType<ContainerEngine['findContainerByNamePrefix']>>;
 			try {
 				info = await docker.findContainerByNamePrefix(name);
 			} catch (err) {

@@ -14,8 +14,8 @@ import type { Db } from '../src/db/database';
 import { runLogTextSql } from '../src/db/run-log-chunks';
 import type { Env } from '../src/lib/types';
 import { type RunnerDeps, runAgent } from '../src/services/agent-runner';
-import type { DockerClient } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
+import type { ContainerEngine } from '../src/services/sandbox/types';
 import { getWorkspacePath, getWorktreesPath } from '../src/services/workspace';
 import { safeClose } from './helpers';
 import {
@@ -128,7 +128,7 @@ function makeProject(overrides: Record<string, unknown> = {}) {
 	};
 }
 
-function baseDeps(docker: DockerClient): RunnerDeps {
+function baseDeps(docker: ContainerEngine): RunnerDeps {
 	return {
 		db,
 		docker,
@@ -161,7 +161,7 @@ function scriptedGitDocker(opts: {
 	rules: GitRule[];
 	onAgentExec?: (config: { Cmd: string[]; Env: string[] }) => Promise<void> | void;
 	agentExitCode?: number;
-}): DockerClient {
+}): ContainerEngine {
 	const results = new Map<string, { exitCode: number; stdout: string; stderr: string }>();
 	let seq = 0;
 	const base = createStubDocker({
@@ -204,7 +204,7 @@ function scriptedGitDocker(opts: {
 			Pid: 0,
 		}),
 	});
-	return withRunUserStub(base as unknown as DockerClient);
+	return withRunUserStub(base as unknown as ContainerEngine);
 }
 
 async function insertRepo(identifier: string): Promise<string> {

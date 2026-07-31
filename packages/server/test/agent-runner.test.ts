@@ -22,9 +22,9 @@ import {
 	runAgent,
 	shellQuoteArg,
 } from '../src/services/agent-runner';
-import type { DockerClient } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { PricingService, upsertManualRate } from '../src/services/pricing';
+import type { ContainerEngine } from '../src/services/sandbox/types';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 import { withRunUserStub } from './helpers/run-user-docker';
@@ -135,7 +135,7 @@ interface ExecChunk {
 	text: string;
 }
 
-function createMockDocker(overrides: Record<string, any> = {}): DockerClient {
+function createMockDocker(overrides: Record<string, any> = {}): ContainerEngine {
 	const {
 		execStart: execStartOverride,
 		producesOutput = true,
@@ -192,7 +192,7 @@ function createMockDocker(overrides: Record<string, any> = {}): DockerClient {
 			if (produced?.stderr) await opts.onChunk({ stream: 'stderr', text: produced.stderr });
 			return { stdout: '', stderr: '' };
 		},
-	} as unknown as DockerClient;
+	} as unknown as ContainerEngine;
 	// Transparently answer the run-user probe (`id -u node`) + ownership chowns so the
 	// runner resolves a `node` run-user without those infra execs reaching the test's
 	// own execCreate/execStart handlers above.

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runUninstall } from '../src/cli';
-import type { DockerClient } from '../src/services/docker';
+import type { ContainerEngine } from '../src/services/sandbox/types';
 import { removeProvisionedContainers } from '../src/services/uninstall';
 import { getRunSocketDir } from '../src/services/workspace';
 
@@ -189,14 +189,14 @@ describe('hezo uninstall subcommand', () => {
 });
 
 describe('removeProvisionedContainers', () => {
-	function stubDocker(overrides: Partial<DockerClient>): DockerClient {
+	function stubDocker(overrides: Partial<ContainerEngine>): ContainerEngine {
 		return {
 			ping: async () => true,
 			listContainersByLabel: async () => [],
 			stopContainer: async () => {},
 			removeContainer: async () => {},
 			...overrides,
-		} as unknown as DockerClient;
+		} as unknown as ContainerEngine;
 	}
 
 	it('returns null without listing when the daemon is unreachable', async () => {

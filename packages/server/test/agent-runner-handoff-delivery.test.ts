@@ -6,8 +6,8 @@ import type { Db } from '../src/db/database';
 import { runLogTextSql } from '../src/db/run-log-chunks';
 import type { Env } from '../src/lib/types';
 import { type RunnerDeps, runAgent } from '../src/services/agent-runner';
-import type { DockerClient } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
+import type { ContainerEngine } from '../src/services/sandbox/types';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 import { withRunUserStub } from './helpers/run-user-docker';
@@ -88,7 +88,7 @@ afterAll(async () => {
 // Mirror agent-runner.test.ts's mock: flip produced_output during exec (what the
 // MCP write layer does mid-run) when `producesOutput`, and stream whatever the
 // test's execStart emits via onChunk.
-function createMockDocker(overrides: Record<string, unknown> = {}): DockerClient {
+function createMockDocker(overrides: Record<string, unknown> = {}): ContainerEngine {
 	const {
 		execStart: execStartOverride,
 		producesOutput = false,
@@ -129,7 +129,7 @@ function createMockDocker(overrides: Record<string, unknown> = {}): DockerClient
 			}
 			return innerExecStart(...args);
 		},
-	} as unknown as DockerClient;
+	} as unknown as ContainerEngine;
 	return withRunUserStub(base);
 }
 
@@ -183,7 +183,7 @@ function streamResult(finalMessage: string, isError = false) {
 	};
 }
 
-function makeDeps(docker: DockerClient): RunnerDeps {
+function makeDeps(docker: ContainerEngine): RunnerDeps {
 	return {
 		db,
 		docker,

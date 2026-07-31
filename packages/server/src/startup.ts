@@ -105,6 +105,7 @@ import { LogStreamBroker } from './services/log-stream-broker';
 import { registerGenericOAuthRefresh } from './services/oauth/generic-refresh';
 import { adminPasswordIsSet } from './services/password';
 import { PricingService } from './services/pricing';
+import type { ContainerEngine } from './services/sandbox/types';
 import { SshAgentServer } from './services/ssh-agent';
 import { WebSocketManager } from './services/ws';
 import { setStartupPhase } from './startup-progress';
@@ -143,7 +144,7 @@ export interface StartupResult {
 	wsManager: WebSocketManager;
 	db: Db;
 	assetStore: AssetStore;
-	docker: DockerClient;
+	docker: ContainerEngine;
 	masterKeyManager: MasterKeyManager;
 	logs: LogStreamBroker;
 	containerLogStreamer: ContainerLogStreamer;
@@ -244,7 +245,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	const masterKeyManager = new MasterKeyManager();
 	const masterKeyState = await resolveMasterKeyState(db, masterKeyManager, config.masterKey);
 
-	let docker: DockerClient;
+	let docker: ContainerEngine;
 	if (process.env.HEZO_SKIP_DOCKER) {
 		const { createFakeDockerClient } = await import('./services/fake-docker.js');
 		docker = createFakeDockerClient(db);
@@ -517,7 +518,7 @@ export function buildApp(
 	db: Db,
 	masterKeyManager: MasterKeyManager,
 	config: AppConfig = { dataDir: '', webUrl: '' },
-	docker: DockerClient = new DockerClient(),
+	docker: ContainerEngine = new DockerClient(),
 	wsManager: WebSocketManager = new WebSocketManager(),
 	jobManager?: JobManager,
 	logs: LogStreamBroker = new LogStreamBroker(),

@@ -1,6 +1,37 @@
 import { request as httpRequest } from 'node:http';
 import { Readable } from 'node:stream';
 import { DockerFrameDecoder, demuxDockerStream } from './docker-frames';
+import type {
+	ContainerConfig,
+	ContainerEngine,
+	ContainerInfo,
+	ContainerMemoryStats,
+	ContainerProcessInfo,
+	ExecConfig,
+	ExecLogChunk,
+	ExecResult,
+	ExecStartOpts,
+	ImageInfo,
+	NetworkInfo,
+	ProcessEnvMarker,
+} from './sandbox/types';
+
+// The shared shapes live in the engine seam (`sandbox/types.ts`); re-exported
+// here so the many existing `from './docker'` type imports keep resolving.
+export type {
+	ContainerConfig,
+	ContainerEngine,
+	ContainerInfo,
+	ContainerMemoryStats,
+	ContainerProcessInfo,
+	ExecConfig,
+	ExecLogChunk,
+	ExecResult,
+	ExecStartOpts,
+	ImageInfo,
+	NetworkInfo,
+	ProcessEnvMarker,
+} from './sandbox/types';
 
 const SOCKET_PATH = '/var/run/docker.sock';
 const API_VERSION = 'v1.44';
@@ -51,81 +82,6 @@ const DOCKER_CONTROL_TIMEOUT_MS = 60_000;
  */
 const ENV_MARKER_VALUE_RE = /^[0-9a-zA-Z_-]{1,64}$/;
 
-interface ContainerConfig {
-	Image: string;
-	Cmd?: string[];
-	Env?: string[];
-	WorkingDir?: string;
-	Labels?: Record<string, string>;
-	HostConfig: {
-		Binds?: string[];
-		PortBindings?: Record<string, Array<{ HostPort: string }>>;
-		ExtraHosts?: string[];
-		CapAdd?: string[];
-		CapDrop?: string[];
-		/** Run docker-init as PID 1 so zombies are reaped under `sleep infinity`. */
-		Init?: boolean;
-		/** cgroup hard cap in bytes. */
-		Memory?: number;
-		/** Equal to Memory so the cap has no swap escape valve. */
-		MemorySwap?: number;
-		PidsLimit?: number;
-	};
-	ExposedPorts?: Record<string, object>;
-}
-
-interface ExecConfig {
-	Cmd: string[];
-	Env?: string[];
-	WorkingDir?: string;
-	User?: string;
-	AttachStdout: boolean;
-	AttachStderr: boolean;
-}
-
-export interface ExecLogChunk {
-	stream: 'stdout' | 'stderr';
-	text: string;
-}
-
-/**
- * The captured output of an exec.
- *
- * **Populated only on the buffered path** — when `ExecStartOpts.onChunk` is
- * omitted. A streamed exec deliberately retains nothing (see `onChunk`), so
- * both fields come back empty; consume the chunks instead.
- */
-export interface ExecResult {
-	stdout: string;
-	stderr: string;
-}
-
-export interface ExecStartOpts {
-	signal?: AbortSignal;
-	/**
-	 * Per-frame callback. Supplying it switches `execStart` to the streaming
-	 * path, which does **not** retain the output — the returned `ExecResult` is
-	 * empty. An agent run's raw stream-json transcript reaches hundreds of MB
-	 * (every tool result in full, strictly larger than the capped rendered log),
-	 * so anything the caller needs from the stream must be derived incrementally
-	 * here rather than scanned afterwards.
-	 */
-	onChunk?: (chunk: ExecLogChunk) => void | Promise<void>;
-}
-
-interface ContainerInfo {
-	Id: string;
-	State: {
-		Status: string;
-		Running: boolean;
-		Pid: number;
-		ExitCode: number;
-	};
-	Config: {
-		Image: string;
-	};
-}
-
 interface RawContainerStats {
 	memory_stats?: {
 		usage?: number;
@@ -135,24 +91,6 @@ interface RawContainerStats {
 			cache?: number;
 		};
 	};
-}
-
-export interface ContainerMemoryStats {
-	usedBytes: number;
-	rawUsageBytes: number;
-}
-
-export interface ImageInfo {
-	Id: string;
-	Config: {
-		Labels: Record<string, string> | null;
-	};
-}
-
-export interface NetworkInfo {
-	IPAM: {
-		Config: Array<{ Gateway?: string; Subnet?: string }> | null;
-	} | null;
 }
 
 async function parseJsonOrThrow<T>(res: Response, op: string): Promise<T> {
@@ -170,7 +108,7 @@ async function parseJsonOrThrow<T>(res: Response, op: string): Promise<T> {
 	}
 }
 
-export class DockerClient {
+export class DockerClient implements ContainerEngine {
 	private socketPath: string;
 
 	constructor(socketPath = SOCKET_PATH) {
@@ -609,7 +547,7 @@ export class DockerClient {
 	 */
 	async killProcessesByEnvMarker(
 		containerId: string,
-		name: 'HEZO_HEARTBEAT_RUN_ID' | 'HEZO_EXEC_SCOPE_ID',
+		name: ProcessEnvMarker,
 		value: string,
 	): Promise<void> {
 		// Scope-id values are UUIDs or `<kind>-<hex>` tags. The character-class
@@ -721,19 +659,6 @@ export class DockerClient {
 			clearTimeout(timer);
 		}
 	}
-}
-
-/** One matching process from `listHezoProcesses`'s in-container `/proc` scan. */
-export interface ContainerProcessInfo {
-	pid: number;
-	/** Value of `HEZO_HEARTBEAT_RUN_ID` in the process env, or null when absent. */
-	runId: string | null;
-	/** Whether the process env carries `SSH_AUTH_SOCK=/run/hezo/…` (legacy bridge-scoped exec). */
-	hasHezoSock: boolean;
-	/** Seconds since the process started, floored. */
-	ageSecs: number;
-	/** NUL-joined cmdline rendered with spaces; empty for kernel threads. */
-	cmdline: string;
 }
 
 /**

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { captureContainerLogs } from '../src/services/containers';
-import type { DockerClient } from '../src/services/docker';
+import type { ContainerEngine } from '../src/services/sandbox/types';
 
 const NUL = String.fromCharCode(0);
 
@@ -18,10 +18,10 @@ function frame(streamType: 1 | 2, payload: Uint8Array): Uint8Array {
 	return out;
 }
 
-function dockerReturning(bytes: Uint8Array): DockerClient {
+function dockerReturning(bytes: Uint8Array): ContainerEngine {
 	return {
 		containerLogs: async () => new Response(bytes),
-	} as unknown as DockerClient;
+	} as unknown as ContainerEngine;
 }
 
 describe('captureContainerLogs NUL handling', () => {

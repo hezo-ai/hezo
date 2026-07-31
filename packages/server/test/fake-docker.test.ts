@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { ExecLogChunk } from '../src/services/docker';
 import { createFakeDockerClient } from '../src/services/fake-docker';
+import type { ExecLogChunk } from '../src/services/sandbox/types';
 import { createAgentRun } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 

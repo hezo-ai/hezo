@@ -1,5 +1,5 @@
 import { WsMessageType } from '@hezo/shared';
-import type { DockerClient } from './docker';
+import type { ContainerEngine } from './docker';
 import { DockerFrameDecoder } from './docker-frames';
 import type { LogStreamBroker } from './log-stream-broker';
 
@@ -21,7 +21,7 @@ export class ContainerLogStreamer {
 		projectId: string,
 		containerId: string,
 		logs: LogStreamBroker,
-		docker: DockerClient,
+		docker: ContainerEngine,
 	): void {
 		const existing = this.streams.get(projectId);
 		if (existing) {
@@ -82,7 +82,7 @@ export class ContainerLogStreamer {
 		projectId: string,
 		containerId: string,
 		logs: LogStreamBroker,
-		docker: DockerClient,
+		docker: ContainerEngine,
 		abortController: AbortController,
 	): Promise<void> {
 		const streamId = containerStreamId(projectId);

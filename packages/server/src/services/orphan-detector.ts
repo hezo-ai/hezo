@@ -37,7 +37,7 @@ export const STALE_STATE_GRACE_SECONDS = 120;
 export interface DetectOrphansOpts {
 	/**
 	 * Best-effort reaper for the orphaned run's in-container process tree
-	 * (`DockerClient.killRunProcesses`). A run row can outlive its host-side
+	 * (`ContainerEngine.killRunProcesses`). A run row can outlive its host-side
 	 * driver while the exec'd agent CLI keeps running in the container — when
 	 * the detector declares the run orphaned, the tree must die with it.
 	 */
