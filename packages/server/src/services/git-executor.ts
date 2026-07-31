@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { trackBackground } from '../lib/background';
 import type { ContainerRunUser } from './container-user';
 import type { ContainerEngine } from './docker';
+import { dockerSandboxHandle } from './sandbox/handle';
 import { type BridgeRunnerArgs, buildBridgeRunnerArgv } from './ssh-agent';
 
 /**
@@ -196,17 +197,14 @@ export class ContainerGitExecutor implements GitExecutor {
 		const timeoutSignal = opts.timeout ? AbortSignal.timeout(opts.timeout) : undefined;
 		const signal = combineAbortSignals(this.runSignal, timeoutSignal);
 		try {
-			const execId = await this.docker.execCreate(this.containerId, {
-				Cmd: cmd,
-				Env: env,
-				WorkingDir: opts.cwd,
-				User: this.runUser.name,
-				AttachStdout: true,
-				AttachStderr: true,
+			// Git runs unelevated so anything it writes into the bind-mounted
+			// workspace stays owned by the run user rather than root.
+			return await dockerSandboxHandle(this.docker, this.containerId, this.runUser).exec({
+				cmd,
+				env,
+				workingDir: opts.cwd,
+				signal,
 			});
-			const { stdout, stderr } = await this.docker.execStart(execId, { signal });
-			const info = await this.docker.execInspect(execId);
-			return { exitCode: info.ExitCode, stdout, stderr };
 		} catch (e) {
 			if (timeoutSignal?.aborted) {
 				this.killAbandonedExec();
