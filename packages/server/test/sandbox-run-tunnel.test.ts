@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ContainerRunUser } from '../src/services/container-user';
-import { TUNNEL_PORTS } from '../src/services/sandbox/endpoints';
 import { hostSandboxFiles } from '../src/services/sandbox/files';
 import { startRunTunnel } from '../src/services/sandbox/tunnel/run-tunnel';
 import type { ContainerByteChannel, ExecConfig } from '../src/services/sandbox/types';
@@ -71,7 +70,7 @@ describe('startRunTunnel', () => {
 		await start(root, engine);
 
 		const config = JSON.parse(readFileSync(join(root, '.hezo/tunnel/run-1.json'), 'utf8'));
-		expect(config.ports).toEqual(TUNNEL_PORTS);
+		expect(Object.keys(config.ports).sort()).toEqual(['mcp', 'proxy', 'ssh']);
 		expect(config.policy).toEqual({ proxiedHosts: ['api.github.com'], proxyEverything: false });
 	});
 
@@ -103,7 +102,8 @@ describe('startRunTunnel', () => {
 
 		expect(tunnel.endpoints.proxyHost).toBe('127.0.0.1');
 		expect(tunnel.endpoints.sshHost).toBe('127.0.0.1');
-		expect(tunnel.endpoints.hezoBaseUrl).toBe(`http://127.0.0.1:${TUNNEL_PORTS.mcp}`);
+		// Whatever port the allocator handed this tunnel, the MCP origin names it.
+		expect(tunnel.endpoints.hezoBaseUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
 		expect(JSON.stringify(tunnel.endpoints)).not.toContain('host.docker.internal');
 	});
 

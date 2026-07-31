@@ -18,10 +18,6 @@ import {
 	ChatSessionManager,
 	formatLongTermMemoryBlock,
 } from '../src/services/chat-session-manager';
-import {
-	ContainerConnectivityStatus,
-	type ProbeResult,
-} from '../src/services/container-connectivity-status';
 import type { ExecLogChunk } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import type { SshAgentServer } from '../src/services/ssh-agent/server';
@@ -511,15 +507,10 @@ describe('ChatSessionManager — warm resources (ssh bridge + egress) and lifecy
 		const chat = scriptedChatDocker(ctx.dataDir, projectId);
 		const ssh = fakeSsh();
 		const egress = fakeEgress();
-		const status = new ContainerConnectivityStatus('127.0.0.1');
-		status.set('ok', '127.0.0.1');
-		const probe = async (): Promise<ProbeResult> => ({ status: 'ok', bindHost: '127.0.0.1' });
 		const { manager } = makeManager(ctx, chat.docker, {
 			sshAgentServer: ssh.server,
 			egressProxy: egress.proxy,
 			egressCAPath: '/tmp/hezo-test-ca.crt',
-			connectivityStatus: status,
-			connectivityProbe: probe,
 		});
 
 		const { assistantMessageId } = await manager.sendTurn({ text: 'hello' });
@@ -557,32 +548,29 @@ describe('ChatSessionManager — warm resources (ssh bridge + egress) and lifecy
 	});
 
 	test('a failed session start releases the already-allocated ssh bridge', async () => {
-		// Connectivity pinned bad (and re-confirmed by the probe) → startSession
-		// throws after the ssh socket was allocated; the catch arm must release it
-		// and never touch the egress proxy.
+		// The tunnel is the last thing session start stands up, and it is the leg
+		// that can genuinely fail (the container has to accept an exec channel).
+		// When it does, the catch arm must release the ssh socket and the egress
+		// proxy allocated before it rather than stranding either.
 		const chat = scriptedChatDocker(ctx.dataDir, projectId);
 		const ssh = fakeSsh();
 		const egress = fakeEgress();
-		const status = new ContainerConnectivityStatus('127.0.0.1');
-		status.set('mcp-unreachable', '127.0.0.1');
-		const probe = async (): Promise<ProbeResult> => ({
-			status: 'mcp-unreachable',
-			bindHost: '127.0.0.1',
-		});
+		const docker = chat.docker as unknown as { openExecChannel: () => Promise<never> };
+		docker.openExecChannel = async () => {
+			throw new Error('container refused the tunnel channel');
+		};
 		const { manager } = makeManager(ctx, chat.docker, {
 			sshAgentServer: ssh.server,
 			egressProxy: egress.proxy,
 			egressCAPath: '/tmp/hezo-test-ca.crt',
-			connectivityStatus: status,
-			connectivityProbe: probe,
 		});
 
 		await expect(manager.sendTurn({ text: 'hello' })).rejects.toThrow(
-			/Egress proxy unreachable from agent containers/,
+			/container refused the tunnel channel/,
 		);
 		expect(ssh.calls.allocated.length).toBe(1);
 		expect(ssh.calls.released).toEqual(ssh.calls.allocated);
-		expect(egress.calls.allocated.length).toBe(0);
+		expect(egress.calls.released).toEqual(egress.calls.allocated);
 		const session = await ctx.db.query<{ status: string; error: string }>(
 			'SELECT status, error FROM chat_sessions ORDER BY started_at DESC LIMIT 1',
 		);

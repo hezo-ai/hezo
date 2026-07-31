@@ -61,7 +61,6 @@ describe('startup real-Docker branch (no daemon required)', () => {
 			open: false,
 			logLevel: 'info',
 			keepOldContainers: false,
-			containerBindHost: '127.0.0.1',
 			telemetry: { enabled: false, endpoint: 'https://example.invalid/telemetry' },
 		};
 

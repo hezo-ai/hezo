@@ -551,9 +551,7 @@ reposRoutes.post('/projects/:projectId/repos/:repoId/reset', async (c) => {
 			return sshAgentServer
 				? withProvisionBridge(
 						sshAgentServer,
-						teamId,
-						dataDir,
-						runUser.name,
+						{ engine: docker, containerId, teamId, dataDir, runUser },
 						({ bridge, scopeId }) => runReset(bridge, scopeId),
 					)
 				: runReset(null, mintGitOpScopeId());

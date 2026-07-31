@@ -32,6 +32,7 @@ import {
 	createTestApp,
 	createTestProject,
 	createTestTeam,
+	stubEngineSeams,
 } from './helpers/app';
 import { withRunUserStub } from './helpers/run-user-docker';
 
@@ -205,7 +206,7 @@ function createMockDocker(overrides: Record<string, any> = {}): ContainerEngine 
 		},
 		// The run stages its prompt and runtime home through the engine seam, so an
 		// inline engine needs the same bind-resolving view the shared stub gives.
-		files: createStubDocker().files,
+		...stubEngineSeams(),
 	} as unknown as ContainerEngine;
 	// Transparently answer the run-user probe (`id -u node`) + ownership chowns so the
 	// runner resolves a `node` run-user without those infra execs reaching the test's
@@ -1350,7 +1351,7 @@ describe('runAgent', () => {
 				mcpServers: { hezo: { type: string; url: string; headers: Record<string, string> } };
 			};
 			expect(parsed.mcpServers.hezo.type).toBe('http');
-			expect(parsed.mcpServers.hezo.url).toBe('http://host.docker.internal:3100/mcp');
+			expect(parsed.mcpServers.hezo.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
 			const authHeaderValue = parsed.mcpServers.hezo.headers.Authorization;
 			expect(authHeaderValue).toMatch(/^Bearer /);
 
@@ -1468,7 +1469,7 @@ describe('runAgent', () => {
 			// config.toml must have been staged with the right body and not contain the JWT.
 			expect(stagedTomlPath).not.toBeNull();
 			expect(stagedTomlContents).toContain('[mcp_servers.hezo]');
-			expect(stagedTomlContents).toContain('url = "http://host.docker.internal:3000/mcp"');
+			expect(stagedTomlContents).toMatch(/url = "http:\/\/127\.0\.0\.1:\d+\/mcp"/);
 			expect(stagedTomlContents).toContain('bearer_token_env_var = "HEZO_MCP_BEARER_TOKEN_HEZO"');
 			expect(stagedTomlContents).not.toContain(token);
 
@@ -1634,7 +1635,7 @@ describe('runAgent', () => {
 			const parsed = JSON.parse(settingsContents!) as {
 				mcpServers: Record<string, { httpUrl: string; headers?: Record<string, string> }>;
 			};
-			expect(parsed.mcpServers.hezo.httpUrl).toBe('http://host.docker.internal:3000/mcp');
+			expect(parsed.mcpServers.hezo.httpUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
 			expect(parsed.mcpServers.hezo.headers?.Authorization).toMatch(/^Bearer /);
 
 			// Cleanup removes the per-run dir.

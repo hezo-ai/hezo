@@ -32,7 +32,6 @@ hezo --sandbox-backend daytona --daytona-api-key "<key>"   # run agent container
 hezo --master-key "<phrase>"     # set up or unlock without the web gate
 hezo --web-url https://hezo.example.com   # public base URL for sign-in redirects
 hezo --no-open                   # don't open the web app in your browser on start
-hezo --container-bind-host 0.0.0.0  # native-Linux Docker: let agent containers reach the egress proxy/SSH bridge
 hezo --no-egress-proxy-auth      # drop per-run egress-proxy auth (escape hatch; on by default)
 hezo --auto-install-updates      # restart onto downloaded updates automatically (waits for idle; comes back unlocked)
 hezo --disable-telemetry         # turn off the anonymous daily usage report (on by default)
@@ -58,11 +57,10 @@ is no longer a prerequisite - see
 A managed backend Hezo cannot reach is fatal at startup: it reports the problem and
 exits rather than silently falling back to local Docker.
 
-On **native-Linux Docker**, agent containers reach the host over the bridge gateway, so the
-host firewall must allow the Docker bridge to reach Hezo's ports. The boot connectivity check
-auto-rebinds the egress proxy / SSH bridge to the detected bridge gateway IP when a loopback
-bind is unreachable, so `--container-bind-host` usually needs no change - set it only to pin a
-specific interface. See
+Agent containers never connect back to the host: Hezo reaches into each container and runs a
+tunnel there, so the MCP endpoint, egress proxy and SSH agent arrive on container loopback.
+No inbound firewall rule is needed for the Docker bridge, and the egress proxy and SSH bridge
+bind loopback only. See
 [Self-hosting → Networking & firewall](/docs/deployment/self-hosting) for the details.
 
 On a desktop machine Hezo opens the web app in your default browser once the server is

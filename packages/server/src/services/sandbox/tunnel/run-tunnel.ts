@@ -1,10 +1,11 @@
 import { logger } from '../../../logger';
 import type { ContainerRunUser } from '../../container-user';
-import { type RunEndpoints, TUNNEL_PORTS, tunnelRunEndpoints } from '../endpoints';
+import { type RunEndpoints, tunnelRunEndpoints } from '../endpoints';
 import type { SandboxFiles } from '../files';
 import type { ContainerByteChannel, ContainerEngine } from '../types';
 import { TunnelMux } from './mux';
 import { connectToRunTargets, type TargetAddresses } from './net-socket';
+import { allocateTunnelPorts } from './ports';
 import type { TunnelHostPolicy } from './split-routing';
 
 const log = logger.child('run-tunnel');
@@ -55,17 +56,32 @@ export interface StartRunTunnelOptions {
  * root-owned process in a container the agent otherwise owns.
  */
 export async function startRunTunnel(opts: StartRunTunnelOptions): Promise<RunTunnel> {
-	await opts.files.write(
-		opts.configRelPath,
-		JSON.stringify({ ports: TUNNEL_PORTS, policy: opts.policy }),
-	);
+	// Allocated, not fixed: a container carries several tunnels at once (a run,
+	// a chat turn, a provisioning git op), each with its own host-side egress and
+	// ssh allocation behind it, so a shared triple would cross them.
+	const allocation = allocateTunnelPorts(opts.containerId);
+	try {
+		await opts.files.write(
+			opts.configRelPath,
+			JSON.stringify({ ports: allocation.ports, policy: opts.policy }),
+		);
+	} catch (err) {
+		allocation.release();
+		throw err;
+	}
 
-	const channel: ContainerByteChannel = await opts.engine.openExecChannel(opts.containerId, {
-		Cmd: ['hezo-tunnel', opts.configContainerPath],
-		User: opts.runUser.name,
-		AttachStdout: true,
-		AttachStderr: true,
-	});
+	let channel: ContainerByteChannel;
+	try {
+		channel = await opts.engine.openExecChannel(opts.containerId, {
+			Cmd: ['hezo-tunnel', opts.configContainerPath],
+			User: opts.runUser.name,
+			AttachStdout: true,
+			AttachStderr: true,
+		});
+	} catch (err) {
+		allocation.release();
+		throw err;
+	}
 
 	const mux = new TunnelMux(
 		{
@@ -86,13 +102,14 @@ export async function startRunTunnel(opts: StartRunTunnelOptions): Promise<RunTu
 
 	let closed = false;
 	return {
-		endpoints: tunnelRunEndpoints(),
+		endpoints: tunnelRunEndpoints(allocation.ports),
 		close: () => {
 			if (closed) return;
 			closed = true;
 			// Closing the mux closes the channel, which ends the client's stdin and
 			// makes it fail closed on its side too.
 			mux.closeAll();
+			allocation.release();
 		},
 	};
 }

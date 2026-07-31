@@ -27,7 +27,6 @@ import {
 	type McpHostRestriction,
 	mcpRestrictionKey,
 } from '../connectors/connections';
-import { DOCKER_CONTAINER_HOST_ALIAS } from '../sandbox/endpoints';
 import type { HezoCA } from './ca';
 import { mcpMethodBlockedMessage, shouldBlockMcpRequest } from './mcp-method-guard';
 import {
@@ -73,7 +72,15 @@ const MAX_BODY_SUBSTITUTION_BYTES = 8192;
  * than this is rejected rather than forwarded uninspected — see `forward`. */
 const MAX_MCP_INSPECTION_BYTES = 262144;
 
-const PROXY_HOST = DOCKER_CONTAINER_HOST_ALIAS;
+/**
+ * Where the per-run proxy binds, and the address reported back for it.
+ *
+ * One value, and it is loopback: the only thing that ever dials this proxy is
+ * the host-side end of a run's tunnel, running in this process. A container
+ * reaches it on its own loopback port, through that tunnel - never by routing
+ * to the host - so the proxy needs no interface beyond this one and there is
+ * nothing here for an operator to open in a firewall.
+ */
 const PROXY_BIND_HOST = '127.0.0.1';
 
 /** Bytes of per-run proxy token. Mirrors the SSH-agent bridge's TCP token
@@ -111,16 +118,11 @@ export interface EgressProxyDeps {
 	 * churn never contends with front-proxy binds. Injectable for tests. */
 	hostPortAllocator?: PortAllocator;
 	proxyHost?: string;
-	/** Interface the per-run proxy binds to. Defaults to `127.0.0.1`
-	 * (loopback-only — agent containers reach it via `host.docker.internal`,
-	 * which on Docker Desktop tunnels to host loopback). Docker integration
-	 * tests on a native-Linux daemon set this to `0.0.0.0` so the container can
-	 * reach the proxy via the bridge gateway IP, which loopback would refuse. */
+	/** Interface the per-run proxy binds to. Production always uses the loopback
+	 * default (see {@link PROXY_BIND_HOST}); the Docker integration tests set
+	 * `0.0.0.0` because they drive the proxy from a container directly, without
+	 * standing up a tunnel first. */
 	proxyBindHost?: string;
-	/** Mutable override for the bind host, read **per-run** at allocation time so
-	 * the boot connectivity check can auto-rebind to the detected bridge gateway IP
-	 * without a restart. Takes precedence over `proxyBindHost` when set. */
-	bindHostRef?: { get(): string };
 	/** Additional CA certs to trust when verifying upstream HTTPS servers.
 	 * Tests use this to trust upstreams that present certs minted from the
 	 * same CA the proxy uses. Production keeps this empty so the proxy
@@ -182,7 +184,7 @@ export class EgressProxy {
 		this.hostPortAllocator =
 			deps.hostPortAllocator ??
 			new PortAllocator(EGRESS_HOST_PORT_RANGE_START, EGRESS_HOST_PORT_RANGE_END);
-		this.proxyHost = deps.proxyHost ?? PROXY_HOST;
+		this.proxyHost = deps.proxyHost ?? PROXY_BIND_HOST;
 		this.proxyBindHost = deps.proxyBindHost ?? PROXY_BIND_HOST;
 		this.authEnabled = deps.authEnabled ?? true;
 	}
@@ -234,7 +236,7 @@ export class EgressProxy {
 					runId,
 					scope,
 					port,
-					bindHost: this.deps.bindHostRef?.get() ?? this.proxyBindHost,
+					bindHost: this.proxyBindHost,
 					token: tokenBytes,
 					db: this.deps.db,
 					masterKeyManager: this.deps.masterKeyManager,

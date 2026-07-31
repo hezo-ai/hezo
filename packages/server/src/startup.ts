@@ -86,11 +86,6 @@ import {
 	wireManagerToChannels,
 } from './services/chat-channels';
 import { ChatSessionManager } from './services/chat-session-manager';
-import { checkAndAutoRebindConnectivity } from './services/container-connectivity-preflight';
-import {
-	ContainerConnectivityStatus,
-	EffectiveBindHost,
-} from './services/container-connectivity-status';
 import { ContainerLogStreamer } from './services/container-logs';
 import type { ContainerDeps } from './services/containers';
 import { DockerClient } from './services/docker';
@@ -324,69 +319,21 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	imageBuildTracker.setWsManager(wsManager);
 	setSharedImageBuildTracker(imageBuildTracker);
 	const containerLogStreamer = new ContainerLogStreamer();
-	// Mutable bind host shared by the egress proxy and SSH bridge, read per-run at
-	// allocation. The boot connectivity check below can auto-rebind it to the
-	// detected docker bridge gateway IP when loopback is unreachable — no restart.
-	const bindHost = new EffectiveBindHost(config.containerBindHost);
-	// Latest container→host connectivity outcome, read at run time to gate egress.
-	const connectivityStatus = new ContainerConnectivityStatus(config.containerBindHost);
-	const sshAgentServer = new SshAgentServer({
-		db,
-		masterKeyManager,
-		tcpListenHost: config.containerBindHost,
-		bindHostRef: bindHost,
-	});
+	// The egress proxy and SSH bridge bind loopback, always: a container reaches
+	// them through its own tunnel, whose host-side end dials them from this
+	// process. Nothing outside the host ever needs a route to either, so there is
+	// no interface to choose and none to firewall.
+	const sshAgentServer = new SshAgentServer({ db, masterKeyManager });
 	await cleanupOrphanRunSockets(db, config.dataDir);
 	const egressCA = await loadOrCreateCA(config.dataDir);
 	const egressProxy = new EgressProxy({
 		db,
 		masterKeyManager,
 		ca: egressCA,
-		proxyBindHost: config.containerBindHost,
-		bindHostRef: bindHost,
 		authEnabled: config.egressProxyAuth,
 	});
 	// Decrypted secrets must never outlive the unlock that produced them.
 	bindSecretsVaultToMasterKey(masterKeyManager);
-	// Verify a container can actually reach back to the host — the MCP server
-	// (firewall signal) and a listener at the egress/SSH bind host. On native-Linux
-	// Docker a host firewall or a loopback bind silently blocks this, leaving every
-	// agent with no tools; detect it at boot and log the exact fix instead of
-	// letting runs hang. When the bind is loopback-only and a container can't reach
-	// it, auto-rebind the proxy + SSH bridge to the detected bridge gateway IP and
-	// re-probe — so native-Linux works out of the box without exposing them on all
-	// interfaces. The captured outcome gates egress at run time (see agent-runner).
-	// Backgrounded + non-fatal: it must not gate readiness, and the web UI stays up
-	// so the operator can act on any residual guidance. No-ops under HEZO_SKIP_DOCKER
-	// (fake docker / tests) and the documented opt-out.
-	//
-	// One probe over the LIVE bind host, used by both the boot check and the per-run
-	// gate (agent-runner / CEO). Routing every probe through checkAndAutoRebindConnectivity
-	// means the gate always re-probes the current EffectiveBindHost (and rebinds if still
-	// on loopback), so a stale/race-poisoned loopback result self-heals on the next run
-	// instead of blocking until restart. The boot probe logs the auto-bind / outcome; the
-	// per-run gate stays quiet (logResult:false) — it surfaces failures via its abort message.
-	const makeConnectivityProbe = (logResult: boolean) => async () => {
-		const r = await checkAndAutoRebindConnectivity({
-			docker,
-			serverPort: config.port,
-			bindHost,
-			logResult,
-		});
-		return { status: r.outcome, bindHost: r.bindHost };
-	};
-	const connectivityProbe = makeConnectivityProbe(false);
-	// Boot via ensureFresh so an early run-time probe shares this single-flight (no race,
-	// no duplicate probe container). maxAge 0 forces the initial probe; the boot closure
-	// logs. Whichever ensureFresh starts first wins — boot starts here, before any request.
-	trackBackground(
-		connectivityStatus.ensureFresh(makeConnectivityProbe(true), 0).catch((err) => {
-			log.info('container→host connectivity check failed', {
-				error: err instanceof Error ? err.message : String(err),
-			});
-			connectivityStatus.set('skipped', bindHost.get());
-		}),
-	);
 	const events = new DomainEventBus();
 	const jobManager = new JobManager({
 		db,
@@ -401,8 +348,6 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		sshAgentServer,
 		egressProxy,
 		egressCAPath: egressCA.certPath,
-		connectivityStatus,
-		connectivityProbe,
 		pricing,
 		storageBackend: storageInfo.backend,
 		telemetry: config.telemetry,
@@ -420,8 +365,6 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		sshAgentServer,
 		egressProxy,
 		egressCAPath: egressCA.certPath,
-		connectivityStatus,
-		connectivityProbe,
 		containerLogStreamer,
 	});
 

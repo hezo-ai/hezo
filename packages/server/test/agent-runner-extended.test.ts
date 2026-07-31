@@ -23,12 +23,6 @@ import {
 	type RunnerDeps,
 	runAgent,
 } from '../src/services/agent-runner';
-import { NETWORKING_DOCS_URL } from '../src/services/container-connectivity-preflight';
-import {
-	type ConnectivityStatus,
-	ContainerConnectivityStatus,
-	type ProbeResult,
-} from '../src/services/container-connectivity-status';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { PricingService, upsertManualRate } from '../src/services/pricing';
 import type { ContainerEngine } from '../src/services/sandbox/types';
@@ -39,7 +33,9 @@ import {
 	createTestApp,
 	createTestProject,
 	createTestTeam,
+	stubEngineSeams,
 } from './helpers/app';
+import { withRunUserStub } from './helpers/run-user-docker';
 
 // Read the prompt the run wrote to its host prompt file, located from the
 // HEZO_PROMPT_FILE env var captured off the exec opts.
@@ -70,7 +66,7 @@ function createMockDocker(taskId: string, overrides: Record<string, any> = {}): 
 		...rest
 	} = overrides;
 	const innerExecStart = execStartOverride ?? (async () => ({ stdout: 'done', stderr: '' }));
-	return {
+	const base = {
 		ping: async () => true,
 		imageExists: async () => true,
 		pullImage: async () => {},
@@ -105,8 +101,11 @@ function createMockDocker(taskId: string, overrides: Record<string, any> = {}): 
 		},
 		// The run stages its prompt and runtime home through the engine seam, so an
 		// inline engine needs the same bind-resolving view the shared stub gives.
-		files: createStubDocker().files,
+		...stubEngineSeams(),
 	} as unknown as ContainerEngine;
+	// Absorb the infra execs (run-user probe, chowns, the run-directory mkdir) so
+	// a test asserting on the *agent's* exec is not handed provisioning's.
+	return withRunUserStub(base);
 }
 
 // The runner's data dir must be the harness's own, not a fixed path: the
@@ -303,30 +302,30 @@ describe('runAgent — egress proxy + ssh agent env injection', () => {
 		// Egress proxy env: both upper- and lower-case proxy vars, NO_PROXY, and the
 		// three CA-bundle pointers the in-container tooling reads. The per-run token
 		// rides the URL userinfo so the client sends it as Proxy-Authorization.
-		const proxyUrl = 'http://run:testtoken0123456789abcdef@127.0.0.1:18080';
-		expect(capturedEnv).toContain(`HTTP_PROXY=${proxyUrl}`);
+		// The host is always container loopback and the port is the one this run's
+		// tunnel client is listening on, so match the shape rather than a literal.
+		const proxyVar = capturedEnv.find((e) => e.startsWith('HTTP_PROXY='));
+		expect(proxyVar).toMatch(
+			/^HTTP_PROXY=http:\/\/run:testtoken0123456789abcdef@127\.0\.0\.1:\d+$/,
+		);
+		const proxyUrl = proxyVar?.slice('HTTP_PROXY='.length);
 		expect(capturedEnv).toContain(`http_proxy=${proxyUrl}`);
 		expect(capturedEnv).toContain(`HTTPS_PROXY=${proxyUrl}`);
 		expect(capturedEnv).toContain(`https_proxy=${proxyUrl}`);
 		// Node ≥24 safety net so spawned Node processes without their own dispatcher
 		// route through the proxy (connector auth is a placeholder that MUST traverse it).
 		expect(capturedEnv).toContain('NODE_USE_ENV_PROXY=1');
-		// NO_PROXY excludes the proxy host itself + loopback + the host origin that
-		// serves the Hezo MCP endpoint and signed asset URLs (host.docker.internal —
-		// real-JWT / signed, no secret to substitute), plus the provider's direct
-		// upstream hosts.
+		// NO_PROXY excludes loopback, which is where the proxy, the Hezo MCP
+		// endpoint and signed asset URLs all arrive through the tunnel (real-JWT /
+		// signed, no secret to substitute), plus the provider's direct upstreams.
 		expect(
 			capturedEnv.some(
-				(e) =>
-					e.startsWith('NO_PROXY=') &&
-					e.includes('127.0.0.1') &&
-					e.includes('localhost') &&
-					e.includes('host.docker.internal'),
+				(e) => e.startsWith('NO_PROXY=') && e.includes('127.0.0.1') && e.includes('localhost'),
 			),
 		).toBe(true);
-		expect(
-			capturedEnv.some((e) => e.startsWith('no_proxy=') && e.includes('host.docker.internal')),
-		).toBe(true);
+		expect(capturedEnv.some((e) => e.startsWith('no_proxy=') && e.includes('127.0.0.1'))).toBe(
+			true,
+		);
 		expect(
 			capturedEnv.some(
 				(e) => e === 'NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/hezo-egress.crt',
@@ -374,134 +373,6 @@ describe('runAgent — egress proxy + ssh agent env injection', () => {
 		// The bridge runner forwards the per-run socket path as one of its argv.
 		expect(capturedExecCmd).toContain(`/run/hezo/${result.heartbeatRunId}.sock`);
 		expect(ssh.calls.released).toContain(result.heartbeatRunId);
-	});
-});
-
-describe('runAgent — egress connectivity gate', () => {
-	// A status holder preset to `s` (fresh). `unknown` is left unset.
-	function presetStatus(s: ConnectivityStatus): ContainerConnectivityStatus {
-		const status = new ContainerConnectivityStatus('127.0.0.1');
-		if (s !== 'unknown') status.set(s, '127.0.0.1');
-		return status;
-	}
-
-	// A fake run-time probe (stands in for the auto-rebind closure from startup).
-	function fakeProbe(result: ProbeResult) {
-		const calls = { count: 0 };
-		return {
-			calls,
-			fn: async () => {
-				calls.count++;
-				return result;
-			},
-		};
-	}
-
-	const okDocker = () =>
-		createMockDocker(taskId, {
-			execCreate: async () => 'exec-gate',
-			execStart: async () => ({ stdout: 'ok', stderr: '' }),
-			execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
-		});
-
-	it('self-heals a stale/race-poisoned bind-loopback cache by re-probing the live bind host', async () => {
-		// The production bug: connectivityStatus stuck at bind-loopback@127.0.0.1 while
-		// the proxy is actually bound+reachable at the gateway. A bad cache must re-probe,
-		// and the auto-rebind probe reports ok@172.17.0.1 → the run proceeds.
-		const egress = fakeEgressProxy();
-		const ssh = fakeSshAgentServer();
-		const probe = fakeProbe({ status: 'ok', bindHost: '172.17.0.1' });
-		const deps = baseDeps(okDocker(), {
-			egressProxy: egress.proxy,
-			egressCAPath: '/tmp/test-data/egress-ca.crt',
-			sshAgentServer: ssh.server,
-			connectivityStatus: presetStatus('bind-loopback'),
-			connectivityProbe: probe.fn,
-		});
-
-		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
-
-		expect(result.success).toBe(true);
-		expect(probe.calls.count).toBe(1); // bad cache forced a re-probe
-		expect(egress.calls.allocated).toContain(result.heartbeatRunId);
-	});
-
-	it.each([
-		'bind-loopback',
-		'bind-firewalled',
-		'mcp-unreachable',
-	] as const)('aborts (without allocating egress) when the proxy is genuinely unreachable: %s', async (bad) => {
-		const egress = fakeEgressProxy();
-		const ssh = fakeSshAgentServer();
-		const probe = fakeProbe({ status: bad, bindHost: '127.0.0.1' });
-		const deps = baseDeps(okDocker(), {
-			egressProxy: egress.proxy,
-			egressCAPath: '/tmp/test-data/egress-ca.crt',
-			sshAgentServer: ssh.server,
-			connectivityStatus: presetStatus(bad),
-			connectivityProbe: probe.fn,
-		});
-
-		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
-
-		expect(result.success).toBe(false);
-		// The operator-actionable guidance (with the docs pointer) is surfaced.
-		expect(result.stderr).toContain(NETWORKING_DOCS_URL);
-		// Egress was never allocated; the ssh socket allocated above was released.
-		expect(egress.calls.allocated).not.toContain(result.heartbeatRunId);
-		expect(ssh.calls.released).toContain(result.heartbeatRunId);
-	});
-
-	it('short-circuits a fresh good cache without re-probing', async () => {
-		const egress = fakeEgressProxy();
-		const ssh = fakeSshAgentServer();
-		const status = new ContainerConnectivityStatus('172.17.0.1');
-		status.set('ok', '172.17.0.1'); // fresh ok
-		const probe = fakeProbe({ status: 'mcp-unreachable', bindHost: '127.0.0.1' }); // would abort if called
-		const deps = baseDeps(okDocker(), {
-			egressProxy: egress.proxy,
-			egressCAPath: '/tmp/test-data/egress-ca.crt',
-			sshAgentServer: ssh.server,
-			connectivityStatus: status,
-			connectivityProbe: probe.fn,
-		});
-
-		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
-
-		expect(result.success).toBe(true);
-		expect(probe.calls.count).toBe(0); // fresh ok → no probe
-		expect(egress.calls.allocated).toContain(result.heartbeatRunId);
-	});
-
-	it('fails open (allocates egress) when the probe is not wired (back-compat)', async () => {
-		const egress = fakeEgressProxy();
-		const ssh = fakeSshAgentServer();
-		const deps = baseDeps(okDocker(), {
-			egressProxy: egress.proxy,
-			egressCAPath: '/tmp/test-data/egress-ca.crt',
-			sshAgentServer: ssh.server,
-			connectivityStatus: presetStatus('bind-loopback'), // present, but no probe → gate skipped
-		});
-
-		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
-
-		expect(result.success).toBe(true);
-		expect(egress.calls.allocated).toContain(result.heartbeatRunId);
-	});
-
-	it('fails open when no connectivity status holder is wired', async () => {
-		const egress = fakeEgressProxy();
-		const ssh = fakeSshAgentServer();
-		const deps = baseDeps(okDocker(), {
-			egressProxy: egress.proxy,
-			egressCAPath: '/tmp/test-data/egress-ca.crt',
-			sshAgentServer: ssh.server,
-		});
-
-		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
-
-		expect(result.success).toBe(true);
-		expect(egress.calls.allocated).toContain(result.heartbeatRunId);
 	});
 });
 

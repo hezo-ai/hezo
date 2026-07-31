@@ -390,6 +390,11 @@ export async function provisionContainer(
 		if (process.env[TEST_CONTAINERS_ENV] === '1') {
 			containerLabels[TEST_CONTAINER_LABEL_KEY] = TEST_CONTAINER_LABEL_VALUE;
 		}
+		// Not how the container reaches Hezo - that is its tunnel, on every
+		// backend. This survives for one unrelated case: an operator can point a
+		// local model provider at their own machine
+		// (`http://host.docker.internal:11434` for Ollama), which the container
+		// dials directly like any other model-provider endpoint.
 		const extraHosts = [DOCKER_HOST_GATEWAY_ENTRY];
 
 		// A host whose internet egress is a VPN/mesh tunnel (WireGuard, NordVPN,
@@ -509,6 +514,24 @@ export async function provisionContainer(
 		// re-detects.
 		clearContainerRunUserCache(Id);
 		const runUser = await resolveContainerRunUser(docker, Id);
+		// Create them first. On a local daemon the bind mounts have already brought
+		// them into being, so this is a no-op; on a backend with no bind mounts they
+		// do not exist at all, and the chown below - and every clone and worktree
+		// after it - would fail on a missing path.
+		const mkdirExec = await docker.execCreate(Id, {
+			Cmd: [
+				'mkdir',
+				'-p',
+				CONTAINER_WORKSPACE_ROOT,
+				CONTAINER_WORKTREES_ROOT,
+				`${CONTAINER_WORKSPACE_ROOT}/.previews`,
+				'/run/hezo',
+			],
+			User: 'root',
+			AttachStdout: false,
+			AttachStderr: false,
+		});
+		await docker.execStart(mkdirExec);
 		await chownToRunUser(docker, Id, runUser, [
 			CONTAINER_WORKSPACE_ROOT,
 			CONTAINER_WORKTREES_ROOT,
@@ -533,9 +556,7 @@ export async function provisionContainer(
 			const syncRes = deps.sshAgentServer
 				? await withProvisionBridge(
 						deps.sshAgentServer,
-						teamId,
-						dataDir,
-						runUser.name,
+						{ engine: docker, containerId: Id, teamId, dataDir, runUser },
 						({ bridge, scopeId }) => syncRepos(bridge, scopeId),
 					)
 				: await syncRepos(null, mintGitOpScopeId());

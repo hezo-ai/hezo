@@ -29,10 +29,6 @@ import {
 	recordRunCostAndEnforce,
 	runAgent,
 } from '../src/services/agent-runner';
-import {
-	ContainerConnectivityStatus,
-	type ProbeResult,
-} from '../src/services/container-connectivity-status';
 import { ensureProjectContainerRunning } from '../src/services/containers';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { PricingService, upsertManualRate } from '../src/services/pricing';
@@ -1149,9 +1145,11 @@ describe('runAgent lifecycle — egress + ssh wiring', () => {
 		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
 		expect(result.success).toBe(true);
 
-		expect(capturedEnv).toContain('HTTP_PROXY=http://172.17.0.1:18080');
-		expect(capturedEnv).toContain('HTTPS_PROXY=http://172.17.0.1:18080');
-		expect(capturedEnv.some((e) => e.startsWith('NO_PROXY=') && e.includes('172.17.0.1'))).toBe(
+		// Whatever host-side address the proxy was allocated on, the container
+		// dials its own loopback: the tunnel is what bridges the two.
+		expect(capturedEnv.some((e) => /^HTTP_PROXY=http:\/\/127\.0\.0\.1:\d+$/.test(e))).toBe(true);
+		expect(capturedEnv.some((e) => /^HTTPS_PROXY=http:\/\/127\.0\.0\.1:\d+$/.test(e))).toBe(true);
+		expect(capturedEnv.some((e) => e.startsWith('NO_PROXY=') && e.includes('127.0.0.1'))).toBe(
 			true,
 		);
 		expect(capturedEnv).toContain(
@@ -1170,55 +1168,6 @@ describe('runAgent lifecycle — egress + ssh wiring', () => {
 		expect(egressCalls.released).toContain(result.heartbeatRunId);
 		expect(sshCalls.allocated).toContain(result.heartbeatRunId);
 		expect(sshCalls.released).toContain(result.heartbeatRunId);
-	});
-
-	it('aborts before allocating egress and releases the ssh socket when the proxy is unreachable', async () => {
-		const egressCalls = { allocated: [] as string[] };
-		const sshCalls = { released: [] as string[] };
-		const status = new ContainerConnectivityStatus('127.0.0.1');
-		status.set('bind-loopback', '127.0.0.1');
-		const probe = async (): Promise<ProbeResult> => ({
-			status: 'bind-loopback',
-			bindHost: '127.0.0.1',
-		});
-		const docker = makeDocker({
-			execCreate: async () => {
-				throw new Error('must not exec');
-			},
-		});
-		const deps = baseDeps(docker, {
-			egressProxy: {
-				allocateRunProxy: async (runId: string) => {
-					egressCalls.allocated.push(runId);
-					return { proxyHost: '127.0.0.1', proxyPort: 18080 };
-				},
-				releaseRunProxy: async () => {},
-			} as any,
-			egressCAPath: `${dataDir}/egress-ca.crt`,
-			sshAgentServer: {
-				allocateRunSocket: async (_runId: string, _ident: unknown, hostPath: string) => ({
-					socketHostPath: hostPath,
-					tcpHostPort: 41001,
-					tokenHex: 'b'.repeat(32),
-				}),
-				releaseRunSocket: async (runId: string) => {
-					sshCalls.released.push(runId);
-				},
-			} as any,
-			connectivityStatus: status,
-			connectivityProbe: probe,
-		});
-
-		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
-		expect(result.success).toBe(false);
-		expect(result.stderr).toContain('Egress proxy unreachable from agent containers');
-		expect(egressCalls.allocated).not.toContain(result.heartbeatRunId);
-		expect(sshCalls.released).toContain(result.heartbeatRunId);
-		const run = await db.query<{ status: string }>(
-			'SELECT status FROM heartbeat_runs WHERE id = $1',
-			[result.heartbeatRunId],
-		);
-		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
 	});
 });
 

@@ -507,7 +507,12 @@ describe('buildTaskPrompt', () => {
 // --------------------------------------------------------------------------
 describe('loadAgentAttachmentsForComments', () => {
 	it('returns an empty map for no comment ids without querying', async () => {
-		const out = await loadAgentAttachmentsForComments(db, [], masterKeyManager, 3100);
+		const out = await loadAgentAttachmentsForComments(
+			db,
+			[],
+			masterKeyManager,
+			'http://127.0.0.1:47081',
+		);
 		expect(out.size).toBe(0);
 	});
 
@@ -529,7 +534,12 @@ describe('loadAgentAttachmentsForComments', () => {
 			assetId,
 		]);
 
-		const out = await loadAgentAttachmentsForComments(db, [commentId], masterKeyManager, 3100);
+		const out = await loadAgentAttachmentsForComments(
+			db,
+			[commentId],
+			masterKeyManager,
+			'http://127.0.0.1:47081',
+		);
 		const list = out.get(commentId) as AgentAttachment[];
 		expect(list).toBeDefined();
 		expect(list.length).toBe(1);
@@ -537,7 +547,7 @@ describe('loadAgentAttachmentsForComments', () => {
 		expect(list[0].content_type).toBe('image/png');
 		expect(list[0].byte_size).toBe(2048);
 		expect(list[0].url).toMatch(
-			new RegExp(`^http://host\\.docker\\.internal:3100/api/assets/${assetId}\\?exp=\\d+&sig=`),
+			new RegExp(`^http://127\\.0\\.0\\.1:47081/api/assets/${assetId}\\?exp=\\d+&sig=`),
 		);
 
 		await db.query('DELETE FROM comment_attachments WHERE comment_id = $1', [commentId]);
@@ -864,6 +874,8 @@ describe('buildCoachReviewPrompt', () => {
 				progress_summary: null,
 			}),
 			teamId,
+			masterKeyManager,
+			'http://127.0.0.1:47081',
 		);
 		expect(out).toContain('## Review Completed Ticket: ');
 		expect(out).toContain('No description provided.');
@@ -932,7 +944,7 @@ describe('buildCoachReviewPrompt', () => {
 			}),
 			teamId,
 			masterKeyManager,
-			3100,
+			'http://127.0.0.1:47081',
 		);
 
 		expect(out).toContain('### Rules');

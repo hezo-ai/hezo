@@ -15,6 +15,7 @@ import {
 	createTestApp,
 	createTestProject,
 	createTestTeam,
+	stubEngineSeams,
 } from './helpers/app';
 import { withRunUserStub } from './helpers/run-user-docker';
 
@@ -137,7 +138,7 @@ function createMockDocker(overrides: Record<string, unknown> = {}): ContainerEng
 		},
 		// The run stages its prompt and runtime home through the engine seam, so an
 		// inline engine needs the same bind-resolving view the shared stub gives.
-		files: createStubDocker().files,
+		...stubEngineSeams(),
 	} as unknown as ContainerEngine;
 	return withRunUserStub(base);
 }

@@ -44,6 +44,18 @@ import { createTestDbWithMigrations } from './db';
 // Typed, so the compiler rejects an incomplete stub. AGENTS.md requires every
 // inline docker mock to extend this rather than hand-rolling a partial object;
 // that only holds if the base itself is complete.
+/**
+ * The two engine seams a run exercises regardless of what a test is asserting:
+ * it stages its prompt and runtime home through `files`, and it opens a tunnel
+ * through `openExecChannel` before the first agent exec. An inline mock that
+ * omits either fails with "not a function" from deep inside the runner, so
+ * spread this into any hand-built engine.
+ */
+export function stubEngineSeams(): Pick<ContainerEngine, 'files' | 'openExecChannel'> {
+	const stub = createStubDocker();
+	return { files: stub.files, openExecChannel: stub.openExecChannel };
+}
+
 const STUB_DOCKER_METHODS: ContainerEngine = {
 	ping: async () => true,
 	imageExists: async () => true,

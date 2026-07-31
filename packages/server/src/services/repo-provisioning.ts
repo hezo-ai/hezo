@@ -102,9 +102,7 @@ export async function performRepoSetup(
 				const syncRes = deps.sshAgentServer
 					? await withProvisionBridge(
 							deps.sshAgentServer,
-							input.teamId,
-							dataDir,
-							runUser.name,
+							{ engine: docker, containerId, teamId: input.teamId, dataDir, runUser },
 							({ bridge, scopeId }) => syncRepos(bridge, scopeId),
 						)
 					: await syncRepos(null, mintGitOpScopeId());

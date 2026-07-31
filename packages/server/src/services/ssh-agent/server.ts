@@ -41,7 +41,6 @@ export interface SshAgentServerDeps {
 	/** Mutable override for the bind host, read **per-run** at allocation time so
 	 * the boot connectivity check can auto-rebind to the detected bridge gateway IP
 	 * without a restart. Takes precedence over `tcpListenHost` when set. */
-	bindHostRef?: { get(): string };
 }
 
 export interface AllocatedSocket {
@@ -137,8 +136,7 @@ export class SshAgentServer {
 		);
 		await new Promise<void>((resolve, reject) => {
 			tcpServer.once('error', reject);
-			const tcpBindHost =
-				this.deps.bindHostRef?.get() ?? this.deps.tcpListenHost ?? TCP_LISTEN_HOST;
+			const tcpBindHost = this.deps.tcpListenHost ?? TCP_LISTEN_HOST;
 			tcpServer.listen({ host: tcpBindHost, port: 0 }, () => {
 				tcpServer.removeListener('error', reject);
 				resolve();

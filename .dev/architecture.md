@@ -2026,17 +2026,17 @@ per-run runtime config and subscription-credential files the server writes into 
 `/workspace` bind mount stay `0o600`/`0o700` and are instead **chowned to the container
 run-user** (see § Containers & worktrees) so the deprivileged agent CLI can read them
 without exposing secrets to other host users.
-Per run, the agent's container gets `HTTP(S)_PROXY=http://run:<token>@host.docker.internal:<port>`
-with `NO_PROXY` carving out the Hezo backend and the LLM provider host (LLM traffic goes
-direct — credentials are env-injected, and MITM breaks some Anthropic-compatible APIs).
-The front proxy binds `127.0.0.1` by default — reachable from containers via
-`host.docker.internal` on Docker Desktop, but **not** on native-Linux Docker, where that
-name maps to the bridge gateway IP. The bind interface for both the egress proxy and the
-ssh-agent TCP bridge is read **per-run** from a shared mutable holder (`EffectiveBindHost`),
-seeded from `HEZO_CONTAINER_BIND_HOST` / `--container-bind-host` (default `127.0.0.1`).
+Per run, the agent's container gets `HTTP(S)_PROXY=http://run:<token>@127.0.0.1:<tunnelPort>`
+with `NO_PROXY` carving out loopback (where the Hezo MCP endpoint and signed asset URLs also
+arrive) and the LLM provider host (LLM traffic goes direct — credentials are env-injected, and
+MITM breaks some Anthropic-compatible APIs). The front proxy and the ssh-agent TCP bridge bind
+`127.0.0.1` and **only** `127.0.0.1`: the sole thing that dials either is the host-side end of
+that run's tunnel, running in this process. A container reaches them on its own loopback
+through the tunnel, never by routing to the host, so there is no bind interface to choose and
+no firewall rule to open (§ Container tunnel).
 
-**Per-run caller auth.** Because the proxy binds an address the run's container shares with
-any co-resident process (host loopback or the bridge gateway), each run's proxy also mints a
+**Per-run caller auth.** Because the proxy binds an address any co-resident host process
+shares, each run's proxy also mints a
 16-byte token (mirroring the ssh-agent bridge) and requires it as `Proxy-Authorization: Basic
 run:<token>` on every plain request and CONNECT — verified constant-time (`timingSafeEqual`),
 missing/wrong ⇒ **407**, and stripped before the upstream re-request. The token rides the
@@ -2058,79 +2058,20 @@ the tunnel: the TLS/SSH handshake (small packets) completes, but a bulk transfer
 ships `iproute2`; `/sys` is read-only in a container so netlink, not a `/sys` write, is
 required). Normal (≥1500) hosts are untouched — no capability, no MTU change.
 
-A boot-time preflight (`container-connectivity-preflight.ts`) starts a throwaway container,
-probes the MCP port and a bind-host listener in the egress range (20000–29999), and resolves
-the bridge gateway IP both host-side (`DockerClient.inspectNetwork('bridge')` → `IPAM.Config[]
-.Gateway`, no container needed) and in-container (for images that expose it). **Auto-rebind:**
-when the bind is loopback-only and a container can't reach it (`bind-loopback`), the proxy +
-SSH bridge are rebound to that detected gateway IP and re-probed — so native-Linux works out
-of the box without exposing them on all interfaces (the gateway IP is host-local, container-
-reachable; binding `0.0.0.0` would expose the proxy and the SSH key bridge on every
-interface). An explicit non-loopback `--container-bind-host` is never overridden. The
-exploratory loopback probe runs **once** (it's deterministic — loopback is reachable on Docker
-Desktop, structurally not on native-Linux) with a short curl timeout, so the whole check is a
-couple of container round-trips (~10s), not a retry loop. The preflight
-logs the exact firewall / `--container-bind-host` remedy when a path is still blocked; severity
-tracks impact: `error` when the MCP server is unreachable (no tools load, runs hang), a
-non-fatal `warn` for a residual egress/SSH bind-host degradation. It never gates startup, so
-the web UI stays up to act on it.
-
-**Run-time gate.** The captured outcome (held in `ContainerConnectivityStatus`) gates egress at
-run time: when egress is required but the proxy is known-unreachable (`bind-loopback` /
-`bind-firewalled` / `mcp-unreachable`), an agent run aborts (recorded `Failed`) and a CEO chat
-turn fails — both with the same operator guidance — instead of allocating a proxy the container
-can't reach and letting the agent fall through to direct egress (which would defeat secret
-substitution, `allowed_hosts`, and audit). It **fails open** on `ok`/`skipped`/unknown, with a
-single-flight lazy re-probe (5-min staleness) so a firewall fix clears the gate — or a
-regression re-closes it — without a restart.
-
-For each request the proxy terminates TLS, matches placeholders **in the URL and headers**,
-loads the named secret, verifies the host against `allowed_hosts`, substitutes, and
-forwards. **Request bodies** are forwarded byte-for-byte by default and never buffered —
-except a narrowly-gated path for secrets a human has opted into body substitution
-(`secrets.allow_body_substitution`): a `POST`/`PUT`/`PATCH` with an uncompressed
-`application/json` body and a fixed `Content-Length` ≤ 8 KB is buffered, has its placeholders
-substituted, and is forwarded with a recomputed `Content-Length`. Everything else — larger,
-non-JSON, compressed, chunked, or streaming bodies (SSE, Streamable-HTTP MCP) — streams
-through untouched, so long-lived connections are never held in memory. Body substitution
-still enforces `allowed_hosts`, and a body placeholder for a secret without the opt-in is
-rejected, not leaked. This exists for APIs that take credentials in the body, such as a login
-POST that returns a token (the agent then uses that token via the `Authorization` header).
-Failures are explicit HTTP errors returned to the agent: `unknown_secret` (400),
-`secret_not_allowed_for_host` (403), `secret_not_allowed_in_body` (403), `body_too_large`
-(413), `secrets_unavailable` (503, master key locked).
-
-**No egress audit.** The egress proxy does not record per-request audit rows, and secret
-values are never written to logs regardless. Earlier builds wrote one `egress_request`
-`audit_log` row per substitution (surfaced on an "Outbound traffic" tab, and the source of
-the per-credential "last used"/"use count" stats on the Credentials page); that logging was
-removed because it flooded the project Activity feed with per-request noise. The tab and the
-usage stats are gone, and any `egress_request` rows left in older databases are filtered out
-of the activity-log reads (`routes/audit-log.ts`) rather than deleted.
-
-**Bun & topology notes.** The proxy runs on Bun, whose TLS stack forces a
-**one-listening-`https.Server`-per-host** topology bridged from the CONNECT socket over an
-**explicitly-allocated** loopback port (never read back from `server.address()`, which
-collapses under Bun). Long-lived streams (SSE, Streamable-HTTP MCP) are tracked and
-severed on run teardown. These divergences are why the egress proxy has a Bun-native test
-tier. Full rationale: `AGENTS.md` › Bun-native runtime rules.
-
----
-
-## 8. SSH signing & git
-
-Each project has **one Ed25519 key** used for git commit signing and SSH git transport.
-The encrypted private key lives on the project's backing team row (`team_ssh_keys`,
-`team_id` UNIQUE — one team backs one project), **not** in the secrets vault. Agents never
-see it.
+**No connectivity preflight, and no run-time connectivity gate.** Both existed to cover one
+failure: a container that could not reach the host's egress proxy, which on native-Linux
+Docker meant a silently-dropped bridge→host path. There is no such path any more - the proxy
+is on Hezo's own loopback and the container reaches it through the tunnel - so the ~490-line
+probe, its auto-rebind of the bind host, and the run/chat abort gate it fed were all deleted
+along with `--container-bind-host`. A tunnel that cannot be established fails the run
+directly, with the error from the exec channel.
 
 **Per-run ssh-agent** (`services/ssh-agent/`). `SshAgentServer.allocateRunSocket` exposes
 the key over two listeners: a **host Unix socket** and a **loopback TCP** listener
 (in-container access, since Docker Desktop on macOS won't forward `AF_UNIX` bind-mounts).
-The TCP listener honours `HEZO_CONTAINER_BIND_HOST` (default `127.0.0.1`), read per-run from
-the same `EffectiveBindHost` holder as the egress proxy — so the boot preflight's auto-rebind
-to the bridge gateway IP makes git-over-SSH containers reach it on native-Linux Docker without
-a manual override.
+The TCP listener binds `127.0.0.1` only; the container reaches it on its own loopback through
+the run's tunnel, so git-over-SSH works identically on Docker Desktop, native-Linux Docker and
+a managed sandbox with no host route at all.
 TCP connections must prefix a 16-byte per-run token (timing-safe compared). The protocol
 answers `MSG_REQUEST_IDENTITIES` (advertises the public key) and `MSG_SIGN_REQUEST` (signs
 with the lazily-decrypted private key). Because **all git now runs in-container** (§ Agent

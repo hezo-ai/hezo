@@ -65,15 +65,6 @@ export interface HezoConfig {
 	 */
 	autoInstallUpdates: boolean;
 	/**
-	 * Interface the egress proxy and SSH bridge bind to so agent containers can
-	 * reach them. Defaults to `127.0.0.1` (loopback — works with Docker Desktop,
-	 * which tunnels `host.docker.internal` to host loopback). On native-Linux
-	 * Docker a container reaches the host via the bridge gateway IP, where a
-	 * loopback bind is unreachable, so set `0.0.0.0` (or the bridge gateway IP)
-	 * and firewall-restrict the port range to the docker bridge.
-	 */
-	containerBindHost: string;
-	/**
 	 * Require a per-run token on every request to the egress proxy. On by
 	 * default: each run's `HTTP(S)_PROXY` URL carries a random token that the
 	 * proxy checks (constant-time) before substituting any secret, so a
@@ -790,10 +781,6 @@ export function parseConfig(
 			'Skip removal of old containers on rebuild/teardown/provision — useful for inspecting crashed containers via `docker logs` / `docker inspect`. Subsequent rebuilds will fail with a name conflict until the operator removes them manually. (env: HEZO_KEEP_OLD_CONTAINERS)',
 		)
 		.option(
-			'--container-bind-host <host>',
-			'Interface the egress proxy and SSH bridge bind to so agent containers can reach them. Default 127.0.0.1 (works with Docker Desktop). On native-Linux Docker set 0.0.0.0 (or the bridge gateway IP) and firewall-restrict the egress port range to the docker bridge. (env: HEZO_CONTAINER_BIND_HOST)',
-		)
-		.option(
 			'--no-egress-proxy-auth',
 			"Disable per-run egress proxy authentication. On by default: each run's HTTP(S)_PROXY URL carries a token the proxy verifies before substituting secrets. Only disable to unblock a runtime whose HTTP client cannot send proxy credentials — the secret red line still holds (an unauthenticated caller only ships unsubstituted placeholders). (env: HEZO_EGRESS_PROXY_AUTH=0)",
 		)
@@ -873,7 +860,6 @@ export function parseConfig(
 		logLevel: parseLogLevel(pick('HEZO_LOG_LEVEL', cli.logLevel) ?? 'info'),
 		keepOldContainers: pickBool('HEZO_KEEP_OLD_CONTAINERS', cli.keepOldContainers),
 		autoInstallUpdates: pickBool('HEZO_AUTO_INSTALL_UPDATES', cli.autoInstallUpdates),
-		containerBindHost: pick('HEZO_CONTAINER_BIND_HOST', cli.containerBindHost) ?? '127.0.0.1',
 		// Egress-proxy auth defaults ON. The env var (when set) wins; otherwise
 		// `--no-egress-proxy-auth` sets cli.egressProxyAuth=false, absent it is true.
 		egressProxyAuth: pickOpen('HEZO_EGRESS_PROXY_AUTH', cli.egressProxyAuth),

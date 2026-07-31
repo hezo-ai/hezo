@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
 	AgentEffort,
 	type AgentRuntime,
@@ -41,20 +41,19 @@ import {
 	getProviderCredentialAndModel,
 } from './ai-provider-keys';
 import { getChatMemory, loadActiveWindow, markCompacted, selectFlush } from './chat-memory';
-import { formatContainerConnectivityMessage } from './container-connectivity-preflight';
-import { CONNECTIVITY_STALE_MS, shouldAbortForConnectivity } from './container-connectivity-status';
 import type { ContainerLogStreamer } from './container-logs';
 import { type ContainerRunUser, resolveContainerRunUser } from './container-user';
 import { type ContainerDeps, ensureProjectContainerRunning } from './containers';
 import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication } from './effort';
 import { resolveRuntimeForTask } from './runtime-resolver';
-import { dockerRunEndpoints } from './sandbox/endpoints';
 import { dockerSandboxHandle } from './sandbox/handle';
 import { setPoolMemberChatReservation } from './sandbox/pool-db';
+import { type RunTunnel, startRunTunnel } from './sandbox/tunnel/run-tunnel';
+import { buildTunnelHostPolicy } from './sandbox/tunnel/split-routing';
 import type { BridgeRunnerArgs } from './ssh-agent';
 import { resolveSystemPrompt } from './template-resolver';
-import { getRunSocketPath } from './workspace';
+import { CONTAINER_WORKSPACE_ROOT, getRunSocketPath } from './workspace';
 import type { WebSocketManager } from './ws';
 
 const log = logger.child('chat-session');
@@ -221,6 +220,8 @@ interface LiveSession {
 	promptDirective: string | null;
 	releaseEgress: () => Promise<void>;
 	releaseSsh: () => Promise<void>;
+	/** Tears down the session's tunnel. Idempotent; see {@link HostSideAllocation}. */
+	closeTunnel: () => void;
 	/** What resume needs to rebuild the host-side half; see {@link HostSideInputs}. */
 	invocationInputs: HostSideInputs;
 }
@@ -252,6 +253,13 @@ interface HostSideAllocation {
 	promptDirective: string | null;
 	releaseEgress: () => Promise<void>;
 	releaseSsh: () => Promise<void>;
+	/**
+	 * The session's tunnel goes with the rest of this half, because everything it
+	 * points at does: its targets are the ssh and egress allocations above, whose
+	 * ports are gone after a suspend. Leaving it open would also keep the
+	 * container active on a backend that bills for that.
+	 */
+	closeTunnel: () => void;
 }
 
 interface CurrentTurn {
@@ -1071,12 +1079,14 @@ export class ChatSessionManager {
 	): Promise<HostSideAllocation> {
 		let releaseSsh = async (): Promise<void> => undefined;
 		let releaseEgress = async (): Promise<void> => undefined;
+		let tunnel: RunTunnel | null = null;
 		try {
 			const label = `chat`;
 
 			// Warm ssh bridge (commit signing / git over ssh), allocated once.
 			let sshSocketContainerPath: string | null = null;
-			let bridge: BridgeRunnerArgs | null = null;
+			let sshHostTcpPort = 0;
+			let sshTokenHex: string | null = null;
 			const sshAgentServer = this.deps.sshAgentServer;
 			if (sshAgentServer) {
 				const socketHostPath = getRunSocketPath(this.deps.dataDir, sessionId);
@@ -1086,58 +1096,71 @@ export class ChatSessionManager {
 					socketHostPath,
 				);
 				sshSocketContainerPath = `/run/hezo/${sessionId}.sock`;
-				bridge = {
-					socketPath: sshSocketContainerPath,
-					socketUser: runUser.name,
-					tokenHex: allocated.tokenHex,
-					hostName: dockerRunEndpoints(this.deps.serverPort).sshHost,
-					hostPort: allocated.tcpHostPort,
-				};
+				sshHostTcpPort = allocated.tcpHostPort;
+				sshTokenHex = allocated.tokenHex;
 				releaseSsh = () => sshAgentServer.releaseRunSocket(sessionId);
 			}
 
 			// Warm egress proxy (secret substitution), allocated once.
-			let egress: EgressEnvDescriptor | null = null;
+			let egressHost: { host: string; port: number; token: string | null } | null = null;
 			const egressProxy = this.deps.egressProxy;
 			if (egressProxy && this.deps.egressCAPath) {
-				// Abort with operator guidance when the proxy is known-unreachable from
-				// containers, rather than launching the CEO into a black-hole proxy that
-				// would silently fall through to direct egress. The throw is caught below,
-				// which releases the ssh bridge and records the session error. Fail open on
-				// ok/skipped/unknown (and when no status holder is wired).
-				const connectivityStatus = this.deps.connectivityStatus;
-				const connectivityProbe = this.deps.connectivityProbe;
-				if (connectivityStatus && connectivityProbe) {
-					// Re-confirm a BAD cached outcome before blocking (maxAge 0): the probe
-					// auto-rebinds against the live bind host, so a stale/race-poisoned
-					// loopback result self-heals instead of blocking until restart.
-					const cached = connectivityStatus.get().status;
-					const maxAge = shouldAbortForConnectivity(cached) ? 0 : CONNECTIVITY_STALE_MS;
-					const status = await connectivityStatus.ensureFresh(connectivityProbe, maxAge);
-					if (shouldAbortForConnectivity(status)) {
-						const guidance = formatContainerConnectivityMessage(status, {
-							serverPort: this.deps.serverPort,
-							containerBindHost: connectivityStatus.get().bindHost,
-						});
-						throw new Error(
-							`Egress proxy unreachable from agent containers — cannot start CEO chat.\n\n${guidance}`,
-						);
-					}
-				}
 				const allocated = await egressProxy.allocateRunProxy(sessionId, {
 					teamId: DEFAULT_TEAM_ID,
 					agentId: inputs.ceoMemberId,
 					projectId: inputs.projectId,
 					label,
 				});
-				egress = {
+				egressHost = {
 					host: allocated.proxyHost,
 					port: allocated.proxyPort,
-					containerCAPath: '/usr/local/share/ca-certificates/hezo-egress.crt',
 					token: allocated.token,
 				};
 				releaseEgress = () => egressProxy.releaseRunProxy(sessionId);
 			}
+
+			// The chat reaches Hezo exactly as an agent run does - one tunnel, its
+			// own allocated loopback ports, torn down with the session. A session
+			// outlives many turns, so this is the longest-lived tunnel there is;
+			// suspend closes it and resume opens a fresh one, because the host-side
+			// ports it points at are reallocated too.
+			tunnel = await startRunTunnel({
+				engine: this.deps.docker,
+				containerId,
+				runUser,
+				files: this.deps.docker.files(containerId, CONTAINER_WORKSPACE_ROOT),
+				configRelPath: join('.hezo', 'tunnel', `${sessionId}.json`),
+				configContainerPath: `${CONTAINER_WORKSPACE_ROOT}/.hezo/tunnel/${sessionId}.json`,
+				addresses: {
+					mcp: { host: '127.0.0.1', port: this.deps.serverPort },
+					ssh: { host: '127.0.0.1', port: sshHostTcpPort },
+					proxy: egressHost
+						? { host: egressHost.host, port: egressHost.port }
+						: { host: '127.0.0.1', port: 0 },
+				},
+				policy: await buildTunnelHostPolicy(this.deps.db, []),
+			});
+			const endpoints = tunnel.endpoints;
+
+			const bridge: BridgeRunnerArgs | null =
+				sshSocketContainerPath && sshTokenHex
+					? {
+							socketPath: sshSocketContainerPath,
+							socketUser: runUser.name,
+							tokenHex: sshTokenHex,
+							hostName: endpoints.sshHost,
+							hostPort: endpoints.sshPort,
+						}
+					: null;
+
+			const egress: EgressEnvDescriptor | null = egressHost
+				? {
+						host: endpoints.proxyHost,
+						port: endpoints.proxyPort,
+						containerCAPath: '/usr/local/share/ca-certificates/hezo-egress.crt',
+						token: egressHost.token,
+					}
+				: null;
 
 			const agentJwt = await signChatSessionJwt(
 				this.deps.masterKeyManager,
@@ -1154,7 +1177,7 @@ export class ChatSessionManager {
 			);
 
 			const invocation = await buildRuntimeInvocation({
-				endpoints: dockerRunEndpoints(this.deps.serverPort),
+				endpoints,
 				deps: this.deps,
 				runTeamId: DEFAULT_TEAM_ID,
 				projectId: inputs.projectId,
@@ -1181,8 +1204,10 @@ export class ChatSessionManager {
 				promptDirective: effortApplication.promptDirective ?? null,
 				releaseEgress,
 				releaseSsh,
+				closeTunnel: () => tunnel?.close(),
 			};
 		} catch (err) {
+			tunnel?.close();
 			await releaseSsh().catch(() => undefined);
 			await releaseEgress().catch(() => undefined);
 			throw err;
@@ -1634,6 +1659,7 @@ export class ChatSessionManager {
 		if (!live || this.suspended) return;
 		this.suspended = true;
 		log.info('HQ container suspended; parking CEO chat session', { session: live.sessionId });
+		live.closeTunnel();
 		await live.releaseSsh().catch(() => undefined);
 		await live.releaseEgress().catch(() => undefined);
 		await this.deps.db
@@ -1718,6 +1744,7 @@ export class ChatSessionManager {
 		await this.deps.docker
 			.killProcessesByEnvMarker(live.containerId, 'HEZO_HEARTBEAT_RUN_ID', live.sessionId)
 			.catch(() => undefined);
+		live.closeTunnel();
 		await live.releaseSsh().catch(() => undefined);
 		await live.releaseEgress().catch(() => undefined);
 		// Hand the container back to the pool. Suspend deliberately does NOT do this:

@@ -45,7 +45,6 @@ function makeConfig(dataDir: string): HezoConfig {
 		open: false,
 		logLevel: 'info',
 		keepOldContainers: false,
-		containerBindHost: '127.0.0.1',
 		telemetry: { enabled: false, endpoint: 'https://example.invalid/telemetry' },
 	};
 }

@@ -57,13 +57,6 @@ import { BackgroundTerminationDetector } from './background-termination';
 import { checkOverBudget, recordRunCost } from './budget';
 import { postAgentComment, resolveWarnableSlugs } from './comment-wakeups';
 import { loadConnectorDescriptors } from './connectors/connections';
-import { formatContainerConnectivityMessage } from './container-connectivity-preflight';
-import {
-	CONNECTIVITY_STALE_MS,
-	type ContainerConnectivityStatus,
-	type ProbeResult,
-	shouldAbortForConnectivity,
-} from './container-connectivity-status';
 import type { ContainerLogStreamer } from './container-logs';
 import {
 	type ContainerRunUser,
@@ -112,12 +105,7 @@ import {
 	subscriptionFiles,
 } from './runtime-home';
 import { resolveRuntimeForTask } from './runtime-resolver';
-import {
-	DOCKER_CONTAINER_HOST_ALIAS,
-	dockerRunEndpoints,
-	type RunEndpoints,
-	TUNNEL_PORTS,
-} from './sandbox/endpoints';
+import type { RunEndpoints } from './sandbox/endpoints';
 import type { SandboxFiles } from './sandbox/files';
 import { dockerSandboxHandle } from './sandbox/handle';
 import { setPoolMemberUnpushedFlag } from './sandbox/pool-db';
@@ -211,14 +199,6 @@ export interface RunnerDeps {
 	egressCAPath?: string | null;
 	/** When present, a container the runner lazy-starts resubscribes its log stream. */
 	containerLogStreamer?: ContainerLogStreamer;
-	/** Latest container→host connectivity outcome. When present and the egress
-	 * proxy is unreachable from containers, the run aborts instead of silently
-	 * falling through to direct egress. Absent → fail open (back-compat). */
-	connectivityStatus?: ContainerConnectivityStatus;
-	/** Probe used to (re)confirm connectivity at run time. Auto-rebinds against the
-	 * live bind host, so a stale loopback result self-heals. Required alongside
-	 * `connectivityStatus` for the gate to run; absent → fail open. */
-	connectivityProbe?: () => Promise<ProbeResult>;
 	/** Runtime model pricing; when present, the parser computes run cost from it. */
 	pricing?: PricingService;
 }
@@ -356,22 +336,6 @@ export interface RunContext {
 }
 
 const CONTAINER_PROMPT_DIR = '/workspace/.hezo/prompts';
-
-/**
- * Whether a run reaches Hezo through the tunnel instead of by naming the host.
- *
- * **A rollout gate, not a backend switch.** The tunnel is what makes a container
- * that is not on this machine work at all, so a managed backend will eventually
- * require it - but on Docker it replaces a path that works today, and the
- * Docker end of it (the hijacked exec socket) has no automated exercise because
- * a test environment has no daemon. Defaulting it off keeps the shipped
- * behaviour byte-identical while the tunnel earns real exposure; flipping the
- * default is a deliberate, separate step that wants a run against a real
- * daemon first.
- */
-export function tunnelEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-	return env.HEZO_TUNNEL === '1';
-}
 
 export function getContainerPromptPath(heartbeatRunId: string): string {
 	return `${CONTAINER_PROMPT_DIR}/${heartbeatRunId}.txt`;
@@ -681,19 +645,14 @@ export async function buildRuntimeInvocation(
 			egress.host,
 			'localhost',
 			'127.0.0.1',
-			// The Hezo MCP endpoint and agent asset URLs are served from the host at
-			// `host.docker.internal:<serverPort>`. MCP auth there is a real per-run JWT
-			// and asset URLs are HMAC-signed, so there is no `__HEZO_SECRET_*__`
-			// placeholder to substitute — routing them through the proxy buys nothing
-			// and adds a hop on every (potentially multi-MB) binary read. Keep them
-			// direct, matching the documented contract (`lib/asset-urls.ts`,
-			// architecture § Asset storage). Connector MCP servers live on their own
-			// remote hosts (reached via HTTPS CONNECT) and still traverse the proxy.
-			// Under the tunnel the same endpoints move to container loopback, which
-			// the `127.0.0.1`/`localhost` entries above already cover - so this entry
-			// becomes redundant rather than wrong, and removing it would only matter
-			// if the tunnel were the sole path, which it is not.
-			DOCKER_CONTAINER_HOST_ALIAS,
+			// The Hezo MCP endpoint and agent asset URLs arrive on container loopback,
+			// where the tunnel client listens — covered by the `127.0.0.1`/`localhost`
+			// entries above. MCP auth there is a real per-run JWT and asset URLs are
+			// HMAC-signed, so there is no `__HEZO_SECRET_*__` placeholder to
+			// substitute: routing them through the proxy would buy nothing and add a
+			// hop on every (potentially multi-MB) binary read. Connector MCP servers
+			// live on their own remote hosts (reached via HTTPS CONNECT) and still
+			// traverse the proxy.
 			// For a locally-hosted provider the upstream is the operator's own machine,
 			// known only from the config's stored base URL — pass it so that host
 			// bypasses the MITM proxy like any other model-provider endpoint.
@@ -882,7 +841,7 @@ async function buildRunContext(
 			task as TaskInfo,
 			runTeamId,
 			deps.masterKeyManager,
-			deps.serverPort,
+			endpoints.hezoBaseUrl,
 		);
 	} else {
 		// Every task run gets the latest few comments inline as a head-start; the shared
@@ -891,7 +850,7 @@ async function buildRunContext(
 			deps.db,
 			(task as TaskInfo).id,
 			deps.masterKeyManager,
-			deps.serverPort,
+			endpoints.hezoBaseUrl,
 			{ limit: RECENT_COMMENTS_LIMIT },
 		);
 		basePrompt = buildTaskPrompt(resolvedPrompt, task as TaskInfo, wakeupPayload, {
@@ -1245,9 +1204,14 @@ export async function runAgent(
 		// `node` user, which makes those chowns a harmless no-op.
 		const runUser = await resolveContainerRunUser(deps.docker, containerId);
 
+		// Both legs are allocated on the host first, then handed to the tunnel as
+		// targets. Only after it is up are the container-facing descriptors built,
+		// from its endpoints - so nothing here ever names an address the container
+		// would have to reach by route.
 		let sshSocketContainerPath: string | null = null;
 		let sshSocketHostPath: string | null = null;
-		let bridge: BridgeRunnerArgs | null = null;
+		let sshHostTcpPort = 0;
+		let sshTokenHex: string | null = null;
 		if (deps.sshAgentServer) {
 			sshSocketHostPath = getRunSocketPath(deps.dataDir, heartbeatRunId);
 			const allocated = await deps.sshAgentServer.allocateRunSocket(
@@ -1256,53 +1220,16 @@ export async function runAgent(
 				sshSocketHostPath,
 			);
 			sshSocketContainerPath = `/run/hezo/${heartbeatRunId}.sock`;
-			bridge = {
-				socketPath: sshSocketContainerPath,
-				socketUser: runUser.name,
-				tokenHex: allocated.tokenHex,
-				hostName: dockerRunEndpoints(deps.serverPort).sshHost,
-				hostPort: allocated.tcpHostPort,
-			};
+			sshHostTcpPort = allocated.tcpHostPort;
+			sshTokenHex = allocated.tokenHex;
 		}
 
-		let egressEnv: EgressEnvDescriptor | null = null;
+		let egressHost: { host: string; port: number; token: string | null } | null = null;
 		let egressAllocated = false;
 		if (deps.egressProxy && deps.egressCAPath) {
 			// Egress proxy is mandatory: agents may have placeholder secrets in
 			// their env. Failing fast prevents real secrets from leaking through
 			// a fall-through path. If allocation fails, the run aborts.
-			//
-			// Allocation only proves the host-side bind succeeded — not that the
-			// container can REACH the proxy. On a misconfigured native-Linux Docker
-			// host the proxy binds fine but containers can't connect, and the agent
-			// falls through to direct egress (`--noproxy`), defeating secret
-			// substitution, allowed_hosts, and audit. Gate on the captured
-			// connectivity outcome and abort with operator guidance when the proxy is
-			// known-unreachable. Fail OPEN on ok/skipped/unknown (and when no status
-			// holder is wired) so Docker Desktop and tests are unaffected.
-			if (deps.connectivityStatus && deps.connectivityProbe) {
-				// Re-confirm a BAD cached outcome before blocking (maxAge 0): the probe
-				// auto-rebinds against the live bind host, so a stale/race-poisoned
-				// loopback result self-heals instead of blocking for the whole staleness
-				// window. A good cached outcome short-circuits on the normal staleness.
-				const cached = deps.connectivityStatus.get().status;
-				const maxAge = shouldAbortForConnectivity(cached) ? 0 : CONNECTIVITY_STALE_MS;
-				const status = await deps.connectivityStatus.ensureFresh(deps.connectivityProbe, maxAge);
-				if (shouldAbortForConnectivity(status)) {
-					// Release the ssh socket allocated just above; the credential lock is
-					// freed by the outer finally.
-					if (deps.sshAgentServer && sshSocketHostPath) {
-						await deps.sshAgentServer.releaseRunSocket(heartbeatRunId).catch(() => {});
-					}
-					const guidance = formatContainerConnectivityMessage(status, {
-						serverPort: deps.serverPort,
-						containerBindHost: deps.connectivityStatus.get().bindHost,
-					});
-					return finalizeFailure(
-						`Egress proxy unreachable from agent containers — aborting to avoid leaking secrets via direct egress.\n\n${guidance}`,
-					);
-				}
-			}
 			const allocated = await deps.egressProxy.allocateRunProxy(heartbeatRunId, {
 				teamId: agent.team_id,
 				agentId: agent.id,
@@ -1310,49 +1237,53 @@ export async function runAgent(
 				label: runLabel,
 			});
 			egressAllocated = true;
-			egressEnv = {
+			egressHost = {
 				host: allocated.proxyHost,
 				port: allocated.proxyPort,
-				containerCAPath: '/usr/local/share/ca-certificates/hezo-egress.crt',
 				token: allocated.token,
 			};
 		}
 
-		// The tunnel, when enabled, replaces every host-addressed leg with container
-		// loopback. It is started here because it needs both allocations above -
-		// there is nothing to point the ssh and proxy targets at until they exist.
-		let tunnel: RunTunnel | null = null;
-		let endpoints: RunEndpoints = dockerRunEndpoints(deps.serverPort);
-		if (tunnelEnabled()) {
-			tunnel = await startRunTunnel({
-				engine: deps.docker,
-				containerId,
-				runUser,
-				files: deps.docker.files(containerId, CONTAINER_WORKSPACE_ROOT),
-				configRelPath: join('.hezo', 'tunnel', `${heartbeatRunId}.json`),
-				configContainerPath: `/workspace/.hezo/tunnel/${heartbeatRunId}.json`,
-				addresses: {
-					mcp: { host: '127.0.0.1', port: deps.serverPort },
-					ssh: {
-						host: '127.0.0.1',
-						port: bridge ? bridge.hostPort : 0,
-					},
-					proxy: egressEnv
-						? { host: egressEnv.host, port: egressEnv.port }
-						: { host: '127.0.0.1', port: 0 },
-				},
-				policy: await buildTunnelHostPolicy(deps.db, []),
-			});
-			endpoints = tunnel.endpoints;
-			// Re-point the two descriptors the allocations produced. Their host-side
-			// addresses stay where they were; only what the *container* dials moves.
-			if (bridge) {
-				bridge = { ...bridge, hostName: endpoints.sshHost, hostPort: TUNNEL_PORTS.ssh };
-			}
-			if (egressEnv) {
-				egressEnv = { ...egressEnv, host: endpoints.proxyHost, port: TUNNEL_PORTS.proxy };
-			}
-		}
+		// The tunnel is how a container reaches Hezo - the only how, on every
+		// backend. Started here because it needs both allocations above: there is
+		// nothing to point the ssh and proxy targets at until they exist.
+		const tunnel: RunTunnel = await startRunTunnel({
+			engine: deps.docker,
+			containerId,
+			runUser,
+			files: deps.docker.files(containerId, CONTAINER_WORKSPACE_ROOT),
+			configRelPath: join('.hezo', 'tunnel', `${heartbeatRunId}.json`),
+			configContainerPath: `/workspace/.hezo/tunnel/${heartbeatRunId}.json`,
+			addresses: {
+				mcp: { host: '127.0.0.1', port: deps.serverPort },
+				ssh: { host: '127.0.0.1', port: sshHostTcpPort },
+				proxy: egressHost
+					? { host: egressHost.host, port: egressHost.port }
+					: { host: '127.0.0.1', port: 0 },
+			},
+			policy: await buildTunnelHostPolicy(deps.db, []),
+		});
+		const endpoints: RunEndpoints = tunnel.endpoints;
+
+		const bridge: BridgeRunnerArgs | null =
+			sshSocketContainerPath && sshTokenHex
+				? {
+						socketPath: sshSocketContainerPath,
+						socketUser: runUser.name,
+						tokenHex: sshTokenHex,
+						hostName: endpoints.sshHost,
+						hostPort: endpoints.sshPort,
+					}
+				: null;
+
+		const egressEnv: EgressEnvDescriptor | null = egressHost
+			? {
+					host: endpoints.proxyHost,
+					port: endpoints.proxyPort,
+					containerCAPath: '/usr/local/share/ca-certificates/hezo-egress.crt',
+					token: egressHost.token,
+				}
+			: null;
 
 		const context = await buildRunContext(
 			deps,
@@ -2268,7 +2199,7 @@ export async function loadAgentAttachmentsForComments(
 	db: Db,
 	commentIds: string[],
 	masterKeyManager: MasterKeyManager,
-	serverPort: number,
+	assetOrigin: string,
 ): Promise<Map<string, AgentAttachment[]>> {
 	if (commentIds.length === 0) return new Map();
 	const rows = await db.query<{
@@ -2293,7 +2224,7 @@ export async function loadAgentAttachmentsForComments(
 			original_filename: row.original_filename,
 			content_type: row.content_type,
 			byte_size: row.byte_size,
-			url: await signAgentAssetUrl(row.id, masterKeyManager, serverPort),
+			url: await signAgentAssetUrl(row.id, masterKeyManager, assetOrigin),
 		});
 		out.set(row.comment_id, list);
 	}
@@ -2333,7 +2264,7 @@ export async function loadCommentHistory(
 	db: Db,
 	taskId: string,
 	masterKeyManager: MasterKeyManager,
-	serverPort: number,
+	assetOrigin: string,
 	opts: { limit?: number } = {},
 ): Promise<RenderableComment[]> {
 	const { limit } = opts;
@@ -2362,7 +2293,7 @@ export async function loadCommentHistory(
 		db,
 		ordered.map((c) => c.id),
 		masterKeyManager,
-		serverPort,
+		assetOrigin,
 	);
 
 	return ordered.map((c) => ({
@@ -2873,9 +2804,9 @@ export async function buildCoachReviewPrompt(
 	task: TaskInfo,
 	teamId: string,
 	masterKeyManager: MasterKeyManager,
-	serverPort: number,
+	assetOrigin: string,
 ): Promise<string> {
-	const comments = await loadCommentHistory(db, task.id, masterKeyManager, serverPort);
+	const comments = await loadCommentHistory(db, task.id, masterKeyManager, assetOrigin);
 	const runLog = await loadRunSummaries(db, task.id, teamId);
 
 	const involvedAgents = await db.query<{

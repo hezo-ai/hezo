@@ -86,6 +86,7 @@ export function createFakeDockerClient(db?: Db, dataDir?: string): ContainerEngi
 	};
 
 	return {
+		// The fake stands in for a local daemon, which does route back to the host.
 		ping: async () => true,
 
 		imageExists: async () => true,

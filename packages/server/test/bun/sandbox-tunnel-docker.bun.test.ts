@@ -41,7 +41,6 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DockerClient } from '../../src/services/docker';
-import { TUNNEL_PORTS } from '../../src/services/sandbox/endpoints';
 import { hostSandboxFiles } from '../../src/services/sandbox/files';
 import { type RunTunnel, startRunTunnel } from '../../src/services/sandbox/tunnel/run-tunnel';
 
@@ -66,6 +65,7 @@ let workspace = '';
 let docker: DockerClient;
 let upstream: Server;
 let upstreamPort = 0;
+let mcpPort = 0;
 let tunnel: RunTunnel | null = null;
 const hits: string[] = [];
 
@@ -161,12 +161,15 @@ describe.skipIf(finalSkipReason !== null)('tunnel over a real Docker hijacked ex
 			},
 			policy: { proxiedHosts: [], allowAll: false },
 		});
+		// The ports are allocated per tunnel, so read the one this tunnel got
+		// rather than assuming a fixed value.
+		mcpPort = Number(new URL(tunnel.endpoints.hezoBaseUrl).port);
 
 		// The client binds its listeners after the exec starts; poll rather than
 		// guessing a fixed delay.
 		let body = '';
 		for (let attempt = 0; attempt < 40 && !body.includes('reached-the-host'); attempt++) {
-			body = await curlInContainer(TUNNEL_PORTS.mcp, '/from-container');
+			body = await curlInContainer(mcpPort, '/from-container');
 			if (!body.includes('reached-the-host')) await new Promise((r) => setTimeout(r, 500));
 		}
 
@@ -189,7 +192,7 @@ describe.skipIf(finalSkipReason !== null)('tunnel over a real Docker hijacked ex
 		tunnel?.close(); // idempotent
 		tunnel = null;
 
-		const body = await curlInContainer(TUNNEL_PORTS.mcp, '/after-close');
+		const body = await curlInContainer(mcpPort, '/after-close');
 		expect(body).not.toContain('reached-the-host');
 	}, 60_000);
 });

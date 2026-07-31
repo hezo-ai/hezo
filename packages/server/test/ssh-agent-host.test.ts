@@ -14,7 +14,7 @@ import {
 import { SshAgentServer, sshPublicKeyToBlob } from '../src/services/ssh-agent/server';
 import { generateTeamSSHKey } from '../src/services/ssh-keys';
 import { safeClose } from './helpers';
-import { createTestApp, createTestTeam } from './helpers/app';
+import { createStubDocker, createTestApp, createTestTeam } from './helpers/app';
 
 let db: Db;
 let masterKeyManager: MasterKeyManager;
@@ -82,36 +82,76 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
+const runUser = { name: 'node', strategy: 'user' } as const;
+
+/**
+ * A provisioning git op reaches the ssh-agent the same way everything else
+ * reaches Hezo: through a tunnel. So the bridge it hands the container names
+ * container loopback, and the host TCP port is only ever dialled by the tunnel's
+ * host-side end - which is why the test has to capture it from the allocation
+ * rather than read it off the bridge.
+ */
+function provisionTarget(capture: { hostPort: number }) {
+	const engine = createStubDocker({
+		openExecChannel: async () => ({
+			write: () => {},
+			close: () => {},
+			onData: () => {},
+			onStderr: () => {},
+			onClose: () => {},
+		}),
+		files: () => ({
+			exists: async () => false,
+			read: async () => '',
+			remove: async () => {},
+			findByName: async () => [],
+			write: async () => {},
+			mkdir: async () => {},
+			removeDir: async () => {},
+		}),
+	});
+	const allocate = server.allocateRunSocket.bind(server);
+	server.allocateRunSocket = async (...args: Parameters<typeof allocate>) => {
+		const allocated = await allocate(...args);
+		capture.hostPort = allocated.tcpHostPort;
+		return allocated;
+	};
+	return { engine, containerId: 'ctr-provision', teamId, dataDir, runUser };
+}
+
 describe('withProvisionBridge', () => {
-	it('allocates a bridge advertising the team key, then releases on exit', async () => {
-		let port = 0;
-		await withProvisionBridge(server, teamId, dataDir, 'node', async ({ bridge }) => {
-			port = bridge.hostPort;
+	it('allocates a bridge over the tunnel, advertising the team key, then releases on exit', async () => {
+		const capture = { hostPort: 0 };
+		await withProvisionBridge(server, provisionTarget(capture), async ({ bridge }) => {
 			expect(bridge.tokenHex).toMatch(/^[0-9a-f]{32}$/);
-			expect(bridge.hostPort).toBeGreaterThan(0);
 			expect(bridge.socketPath.startsWith('/run/hezo/')).toBe(true);
 			expect(bridge.socketUser).toBe('node');
-			expect(bridge.hostName).toBe('host.docker.internal');
+			// Loopback, never the host: the container has no route to the host on
+			// any backend, so a bridge naming one would only work locally.
+			expect(bridge.hostName).toBe('127.0.0.1');
+			expect(bridge.hostPort).toBeGreaterThan(0);
+			expect(capture.hostPort).toBeGreaterThan(0);
+			expect(bridge.hostPort).not.toBe(capture.hostPort);
 
-			const reply = await tcpRequestIdentities(bridge.hostPort, bridge.tokenHex);
+			// The host listener the tunnel forwards to really does serve the key.
+			const reply = await tcpRequestIdentities(capture.hostPort, bridge.tokenHex);
 			expect(reply[0]).toBe(MSG_IDENTITIES_ANSWER);
 			expect(reply.readUInt32BE(1)).toBe(1);
 			const keyLen = reply.readUInt32BE(5);
 			expect(reply.subarray(9, 9 + keyLen)).toEqual(sshPublicKeyToBlob(publicKey));
 		});
 
-		expect(await connectRefused(port)).toBe(true);
+		expect(await connectRefused(capture.hostPort)).toBe(true);
 	});
 
 	it('releases the bridge even if fn throws', async () => {
-		let port = 0;
+		const capture = { hostPort: 0 };
 		await expect(
-			withProvisionBridge(server, teamId, dataDir, 'node', async ({ bridge }) => {
-				port = bridge.hostPort;
+			withProvisionBridge(server, provisionTarget(capture), async () => {
 				throw new Error('boom');
 			}),
 		).rejects.toThrow('boom');
 
-		expect(await connectRefused(port)).toBe(true);
+		expect(await connectRefused(capture.hostPort)).toBe(true);
 	});
 });
