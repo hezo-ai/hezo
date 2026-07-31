@@ -296,6 +296,23 @@ Write the second occurrence as shared code, not a copy. These are decision rules
 
 **Don't over-rotate.** A shared abstraction with one real caller and a speculative second is worse than the duplication it avoids — it fixes the shape of the code before you know the shape of the problem. Extract on the second *real* occurrence, not the first imagined one.
 
+## One mechanism, no silent fallbacks
+
+**Build what was planned, once.** When a design names a mechanism - the container tunnel, the egress proxy, the `SandboxFiles` seam, a provider's file API - that mechanism is **the** way it is done, on every backend and in every environment. Never add a second path that engages when the first is unavailable, unproven, or inconvenient.
+
+This is easy to violate with good intentions, and each violation looks careful on its own: a rollout flag that keeps the old path as the default, a capability check that picks the "supported" branch, a `catch` that quietly does the thing the other way. Together they mean the system has two shapes, only one of which local dev and CI exercise - so the untested shape is the one production runs. A fallback also hides the failure it was added for: the operator sees a working instance doing the wrong thing instead of an error naming what broke.
+
+None of these ship unless the user explicitly asked for them:
+
+- **No fallback path.** If the designated mechanism fails, **fail** - loudly, with an error that names what broke and what to check. `openSandboxBackend` refusing to start rather than quietly using local Docker is the pattern (§ *Adding a container backend*); so is the egress proxy aborting a run rather than letting it egress direct.
+- **No rollout gate that leaves the new mechanism off.** An env var like `HEZO_FEATURE=1` guarding a finished mechanism means the old path is still the real one. Either it is ready and it is the only path, or it is not landed yet.
+- **No capability branch above a seam.** A backend that cannot do what the interface requires is unsupported, not a second code path. Absorb a provider's quirks inside its own adapter, never by teaching a caller which provider is in use.
+- **No "degrades to" behaviour** invented at the call site - no `?? legacyThing()`, no `if (!supported)` alternative, no retry that lands somewhere else.
+
+**When the designated mechanism genuinely cannot work somewhere, ask the user - do not decide it yourself.** Adding a fallback changes the architecture, and the answer is often "then it is unsupported there" rather than "then add a second path". State the constraint, state the trade-off, and let the user choose.
+
+A deliberate exception is fine **once the user has made that call**, and it gets written down as an exception. The run CLI's model-provider credential going direct past the egress proxy (**Security** § red line) is the worked example: documented, narrow, and explicitly not the default posture.
+
 ## Translations
 
 The web app's message catalogs (`packages/web/src/lib/i18n/catalog/*.json`) are **hand-authored source files**, not generated — there is no translation API and no build step behind them. `en.json` is the source of truth; the other eleven are written against it by whoever is doing the work, and reviewed like any other code.
