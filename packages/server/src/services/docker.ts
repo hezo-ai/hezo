@@ -1,6 +1,11 @@
 import { request as httpRequest } from 'node:http';
 import { Readable } from 'node:stream';
 import { DockerFrameDecoder, demuxDockerStream } from './docker-frames';
+import {
+	buildKillByEnvMarkerScript,
+	buildKillPidsScript,
+	buildListHezoProcessesScript,
+} from './sandbox/proc-scripts';
 import type {
 	ContainerConfig,
 	ContainerEngine,
@@ -74,13 +79,6 @@ const SWEEP_EXEC_TIMEOUT_MS = 10_000;
  * per-call signals.
  */
 const DOCKER_CONTROL_TIMEOUT_MS = 60_000;
-
-/**
- * Every env-marker value interpolated into an in-container `sh -c` script must
- * match this — UUIDs and `<kind>-<hex>` scope ids do; anything shell-active
- * (quotes, spaces, `$`, backticks) is rejected before it reaches the shell.
- */
-const ENV_MARKER_VALUE_RE = /^[0-9a-zA-Z_-]{1,64}$/;
 
 interface RawContainerStats {
 	memory_stats?: {
@@ -544,28 +542,16 @@ export class DockerClient implements ContainerEngine {
 	 * NUL-separated `/proc/<pid>/environ` for the marker. Bounded by its own short
 	 * timeout so a wedged kill can never block run finalization. Best-effort: the
 	 * caller swallows failures (a dead/gone container simply can't be exec'd).
+	 *
+	 * The script itself is runtime-agnostic and shared (`sandbox/proc-scripts.ts`);
+	 * only the transport that carries it is Docker's.
 	 */
 	async killProcessesByEnvMarker(
 		containerId: string,
 		name: ProcessEnvMarker,
 		value: string,
 	): Promise<void> {
-		// Scope-id values are UUIDs or `<kind>-<hex>` tags. The character-class
-		// check guarantees the value needs no shell escaping inside the
-		// double-quoted grep pattern below — no metacharacters, word-splitting, or
-		// expansion is possible.
-		if (!ENV_MARKER_VALUE_RE.test(value)) {
-			throw new Error(`unsafe env marker value: ${JSON.stringify(value)}`);
-		}
-		const marker = `${name}=${value}`;
-		// `/proc/<pid>/environ` is NUL-separated; `basename $(dirname …)` recovers the
-		// pid without relying on `${…}` shell parameter expansion (a JS-template
-		// look-alike). `|| true` keeps a since-exited pid from failing the loop.
-		const script =
-			'for e in /proc/[0-9]*/environ; do ' +
-			`grep -qFz "${marker}" "$e" 2>/dev/null || continue; ` +
-			'kill -9 "$(basename "$(dirname "$e")")" 2>/dev/null || true; ' +
-			'done';
+		const script = buildKillByEnvMarkerScript(name, value);
 		const execId = await this.execCreate(containerId, {
 			Cmd: ['sh', '-c', script],
 			AttachStdout: false,
@@ -596,24 +582,7 @@ export class DockerClient implements ContainerEngine {
 	 * boot-time dangling-process sweep (`process-sweeper.ts`).
 	 */
 	async listHezoProcesses(containerId: string): Promise<ContainerProcessInfo[]> {
-		// Age derives from /proc/uptime minus stat field 22 (starttime, in clock
-		// ticks). The stat line's second field (comm) may contain spaces or
-		// parentheses, so everything up to the *last* `) ` is stripped first —
-		// after that, starttime is field 20 of the remainder.
-		const script =
-			'up=$(cut -d. -f1 /proc/uptime); hz=$(getconf CLK_TCK 2>/dev/null || echo 100); ' +
-			'for d in /proc/[0-9]*; do ' +
-			'pid=${d#/proc/}; ' +
-			'rid=$(tr "\\0" "\\n" < "$d/environ" 2>/dev/null | sed -n "s/^HEZO_HEARTBEAT_RUN_ID=//p" | head -n1); ' +
-			'sock=0; grep -qz "SSH_AUTH_SOCK=/run/hezo/" "$d/environ" 2>/dev/null && sock=1; ' +
-			'cmd=$(tr "\\0" " " < "$d/cmdline" 2>/dev/null); ' +
-			'st=$(sed "s/^.*) //" "$d/stat" 2>/dev/null | cut -d" " -f20); ' +
-			'age=$(( up - ${st:-0} / hz )); ' +
-			'case "$cmd" in *hezo-run-with-bridge*|*hezo-ssh-bridge*|*/run/hezo/*) hit=1;; *) hit=0;; esac; ' +
-			'if [ -n "$rid" ] || [ "$sock" = 1 ] || [ "$hit" = 1 ]; then ' +
-			'printf "%s\\t%s\\t%s\\t%s\\t%s\\n" "$pid" "$rid" "$sock" "$age" "$cmd"; ' +
-			'fi; ' +
-			'done';
+		const script = buildListHezoProcessesScript();
 		const execId = await this.execCreate(containerId, {
 			Cmd: ['sh', '-c', script],
 			AttachStdout: true,
@@ -638,14 +607,7 @@ export class DockerClient implements ContainerEngine {
 	 */
 	async killPids(containerId: string, pids: number[]): Promise<void> {
 		if (pids.length === 0) return;
-		for (const pid of pids) {
-			if (!Number.isInteger(pid) || pid <= 1) {
-				throw new Error(`unsafe pid: ${JSON.stringify(pid)}`);
-			}
-		}
-		// Validated positive integers only — safe to interpolate. `|| true` keeps
-		// an already-exited pid from failing the exec.
-		const script = `kill -9 ${pids.join(' ')} 2>/dev/null || true`;
+		const script = buildKillPidsScript(pids);
 		const execId = await this.execCreate(containerId, {
 			Cmd: ['sh', '-c', script],
 			AttachStdout: false,

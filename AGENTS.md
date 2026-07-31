@@ -393,6 +393,24 @@ Never commit `.js`/`.d.ts`/`.js.map`/`.d.ts.map` alongside source. Compiled outp
 - Use shared constants/enums from `@hezo/shared` (`packages/shared/src/types/common.ts`) — no raw status/type strings. Add new enum values to the shared package first.
 - `bunx`, not `npx`.
 
+### Adding a container backend (Docker, Daytona, …)
+
+Agent-run containers run either on the operator's local Docker daemon or on a third-party sandbox service. Both sit behind **one seam**, `ContainerEngine` (`packages/server/src/services/sandbox/types.ts`), and every caller above it — `agent-runner.ts`, `containers.ts`, `git-executor.ts`, `chat-session-manager.ts`, `job-manager.ts`, the process sweeper — talks only to that interface. `DockerClient` (`services/docker.ts`) and `DaytonaEngine` (`services/sandbox/daytona/`) are the implementations.
+
+**Every provider-specific fact lives inside that provider's adapter directory.** Nothing above the seam may learn which backend is in use — no provider name in a conditional, no provider-shaped field on a shared type, no "if remote" anywhere. A provider's API quirks are its adapter's problem to absorb, and absorbing them is the entire job:
+
+- **`services/sandbox/<provider>/client.ts`** — the REST/SDK client and its wire types. Hand-rolled rather than the vendor SDK, so the dependency stays out of the single-binary build and the error shapes are ours to map. Export the **narrow port interface** the engine actually drives (e.g. `DaytonaApi`) and have the client implement it, so tests supply a complete fake instead of a partial object cast through `unknown`.
+- **`services/sandbox/<provider>/command.ts`** — pure, testable rendering of an exec into whatever the provider accepts. This is where an argv-to-string translation, a user-switching workaround or a stream-separation trick belongs.
+- **`services/sandbox/<provider>/engine.ts`** — the `ContainerEngine` implementation.
+
+**Runtime-agnostic logic is shared, not reimplemented per adapter.** The in-container `/proc` scan and kill scripts live in `services/sandbox/proc-scripts.ts` and **both** engines run the identical script — only the transport that carries it differs. A second copy of one of those scripts is how the two backends silently drift apart. Same rule for the endpoint map (`sandbox/endpoints.ts`), file access (`sandbox/files.ts`) and the exec handle (`sandbox/handle.ts`).
+
+**Elevation is a flag, not a username.** Docker honours a per-exec `User`; third-party providers generally do not, and the default identity differs per provider — Daytona execs as **root**, so it renders a non-root user as `runuser -u <user> --` (deprivileging), the inverse of Docker's render. State the intent (`elevated`) at the call site and let each adapter render it.
+
+**Probe the provider; do not infer it from its docs.** Every non-obvious behaviour the Daytona adapter encodes was measured against the live API, and several contradicted the documentation or the obvious reading of the OpenAPI spec: there is no `image` field on create at all (a custom image arrives as Dockerfile text), the build cache is keyed on that Dockerfile's **text** so a tag-pinned `FROM` never invalidates and serves a stale toolchain forever, `stdout`/`stderr` exist on the exec response but are **always null** so the streams arrive merged, and a per-exec `user` is accepted and silently ignored. When an adapter works around something, the comment says what was measured.
+
+**Ship the adapter's own tests.** Pure command rendering (quoting, user rendering, stream handling), state mapping onto the shared `ContainerInfo` shape (including that *transitional* states never read as dead), the exec triad's exit-code propagation, and each degradation the adapter accepts — crib `packages/server/test/sandbox-daytona-{command,engine}.test.ts`.
+
 ### Adding a chat channel adapter
 
 External chat avenues to the CEO (Telegram, Slack, Discord now; WhatsApp later) are built on a **channel-adapter abstraction + registry** so a new app is one file, not a core change. The `ChatChannelAdapter` interface and registry live in `packages/server/src/services/chat-channels/`; the manager (`chat-session-manager.ts`), the generic inbound webhook route (`routes/chat-webhooks.ts`), the conversation model, and the web thread switcher are all **channel-agnostic** — they resolve a channel only through the registry, never by branching on a platform name.

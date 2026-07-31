@@ -939,6 +939,56 @@ is a hard prerequisite. Before `startup()` boots the server, `index.ts` runs a p
 matching guidance (install link / start command), and **exits non-zero**. `HEZO_SKIP_DOCKER`
 (the same flag that swaps in the in-process fake docker for dev/tests) bypasses the gate.
 
+### The container-engine seam
+
+Everything that touches a container goes through **`ContainerEngine`**
+(`services/sandbox/types.ts`) — the exact set of operations Hezo needs from whatever runs
+its agent containers. `DockerClient` (`services/docker.ts`) implements it against the local
+daemon; `DaytonaEngine` (`services/sandbox/daytona/`) implements it against a third-party
+sandbox service. No caller above the seam knows which is in use.
+
+Three shared pieces sit alongside it so the two implementations cannot drift:
+
+- **`sandbox/endpoints.ts`** — `RunEndpoints` states the container-to-host addresses (MCP,
+  assets, egress proxy, ssh-agent) once. They previously rode seven separate hardcoded
+  `host.docker.internal` literals, so they broke together and could only be changed together.
+- **`sandbox/files.ts`** — `SandboxFiles` is the async, relative-path-only interface every
+  run-artifact read goes through (the runtimes' off-stream usage files, push errors,
+  rotated subscription auth). Paths that would escape the run root are rejected, and the
+  walk never follows symlinks.
+- **`sandbox/handle.ts`** — `SandboxHandle.exec()` collapses the
+  `execCreate`/`execStart`/`execInspect` triad into one call returning the exit code with
+  the output, and expresses privilege as **`elevated: boolean`** rather than a username.
+  A username is an instruction only Docker can follow: third-party providers set a user at
+  sandbox creation and ignore a per-exec one, and their *default* identity differs, so each
+  backend renders the intent its own way. Docker maps `elevated` onto `User: root` vs the
+  detected run user; Daytona already execs as root, so it renders the unelevated case as
+  `runuser -u <user> --` — deprivileging, the inverse render.
+- **`sandbox/proc-scripts.ts`** — the `/proc` scan and kill scripts. They are plain POSIX
+  shell and nothing in them is runtime-specific, only the transport that carries them, so
+  both engines run the identical script rather than each reimplementing the scan.
+
+**The Daytona adapter** is three files and absorbs four API differences entirely within
+itself: create also *starts* the sandbox (so `startContainer` is a no-op on one already
+running); there is no per-exec user; there is no image store, because a custom image
+arrives as **Dockerfile text** Daytona builds and caches by a hash of that text (which is
+why the image reference must be **digest-pinned** — a tag-pinned `FROM` is byte-identical
+forever, so the cache never invalidates and the sandbox serves a stale toolchain
+indefinitely); and stdout and stderr arrive **merged**, with the response's `stdout`/
+`stderr` fields always null. The stream split is load-bearing upstream — the agent
+stream-json parser routes on it, and a git exec parses stdout for shas while git writes
+progress to stderr — so the adapter recovers it by redirecting stderr to a per-exec file
+and draining it with a bounded `tail -c`. On the streaming path that means stderr arrives
+as one chunk at the end rather than interleaved: the honest cost of a provider that merges
+the two.
+
+Per-sandbox memory comes from Daytona's OTEL metrics endpoint as a windowed query rather
+than a live gauge; an absent or empty series reports as **null**, which the caller already
+treats as "no reading this tick" (reporting zero would read as a sandbox using no memory
+and defeat cap enforcement). There is no container log stream, and nothing useful in one:
+PID 1 is `sleep infinity`, so the content the UI shows is provisioning and lifecycle output
+Hezo produces itself.
+
 Work reaches an agent through the **wakeup → job-manager → agent-runner** pipeline.
 
 **Wakeups.** Every trigger is an `agent_wakeup_requests` row. Sources: `heartbeat`
