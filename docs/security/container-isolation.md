@@ -23,14 +23,16 @@ and stops again after sitting idle (15 minutes by default). A quiet instance run
 containers. Two global limits in **Settings > Concurrency** bound what a burst of agent
 activity can consume:
 
-- **Maximum active containers** - how many project containers agent runs may use at the
-  same time. The assistant chat's container does not count against it, so a chat turn
-  never waits behind background work. When unset, Hezo sizes it automatically from the
-  machine's memory: (RAM + swap), less 1 GB always kept free for the operating system
-  and Hezo itself, less one container's worth for the assistant chat, divided by the RAM
-  cap below. Swap counts in full, since a container sits idle between runs. Runs that
-  would need another container past the limit wait in the queue and start as containers
-  go idle; the assistant chat always starts.
+- **Total container memory** - how much memory all project containers may use at once.
+  The assistant chat's container runs on top of it, so a chat turn never waits behind
+  background work. When unset, Hezo sizes it automatically from the machine's memory:
+  (RAM + swap), less 1 GB always kept free for the operating system and Hezo itself,
+  less one container's worth for the assistant chat. Swap counts in full, since a
+  container sits idle between runs. A run whose container will not fit in what is left
+  waits in the queue and starts as memory frees up; the assistant chat always starts.
+  There is no separate limit on the *number* of containers: how many fit follows from
+  this budget and the RAM cap below, and a project that raises its own cap simply takes
+  a larger share.
 - **RAM cap per container** - the memory limit applied to every container (2 GB by
   default; projects that need more can override it in their own settings). A container
   over its cap is stopped, or has its biggest process killed by the kernel, instead of

@@ -2,17 +2,17 @@ import {
 	CONTAINER_IDLE_TIMEOUT_MIN_MAX,
 	CONTAINER_IDLE_TIMEOUT_MIN_MIN,
 	coerceLocaleSettings,
-	computeDefaultMaxActiveContainers,
+	computeDefaultMaxContainerMemoryGb,
 	DEFAULT_CONTAINER_IDLE_TIMEOUT_MIN,
-	DEFAULT_MAX_ACTIVE_CONTAINERS,
 	DEFAULT_MAX_CHAT_HISTORY_SIZE,
+	DEFAULT_MAX_CONTAINER_MEMORY_GB,
 	DEFAULT_RAM_CAP_PER_CONTAINER_GB,
 	type LocaleSettings,
 	type LocaleSettingsPatch,
-	MAX_ACTIVE_CONTAINERS_MAX,
-	MAX_ACTIVE_CONTAINERS_MIN,
 	MAX_CHAT_HISTORY_SIZE_MAX,
 	MAX_CHAT_HISTORY_SIZE_MIN,
+	MAX_CONTAINER_MEMORY_GB_MAX,
+	MAX_CONTAINER_MEMORY_GB_MIN,
 	RAM_CAP_PER_CONTAINER_GB_MAX,
 	RAM_CAP_PER_CONTAINER_GB_MIN,
 } from '@hezo/shared';
@@ -26,7 +26,15 @@ import { getHostMemory } from './host-memory';
 
 export const INSTANCE_BASE_URL_KEY = 'instance_base_url';
 export const MAX_CHAT_HISTORY_SIZE_KEY = 'max_chat_history_size';
-export const MAX_ACTIVE_CONTAINERS_KEY = 'max_active_containers';
+/**
+ * Total memory, in GB, all running containers may consume at once.
+ *
+ * This replaced `max_active_containers` (migration 050). A count only bounds
+ * memory while every container is the same size, and `projects.memory_limit_gib`
+ * exists so they are not - so the count is now *derived* from this budget and
+ * the per-container cap rather than configured beside them.
+ */
+export const MAX_CONTAINER_MEMORY_GB_KEY = 'max_container_memory_gb';
 export const RAM_CAP_PER_CONTAINER_KEY = 'default_ram_cap_per_container_gb';
 export const CONTAINER_IDLE_TIMEOUT_KEY = 'container_idle_timeout_min';
 
@@ -98,35 +106,35 @@ export async function setMaxChatHistorySize(db: Db, value: number): Promise<numb
  * Clamp to the allowed max-active-containers range. Exported so the settings
  * route validates with the same bounds the reader enforces.
  */
-export function clampMaxActiveContainers(value: number): number {
-	if (!Number.isFinite(value)) return DEFAULT_MAX_ACTIVE_CONTAINERS;
+export function clampMaxContainerMemoryGb(value: number): number {
+	if (!Number.isFinite(value)) return DEFAULT_MAX_CONTAINER_MEMORY_GB;
 	return Math.min(
-		MAX_ACTIVE_CONTAINERS_MAX,
-		Math.max(MAX_ACTIVE_CONTAINERS_MIN, Math.round(value)),
+		MAX_CONTAINER_MEMORY_GB_MAX,
+		Math.max(MAX_CONTAINER_MEMORY_GB_MIN, Math.round(value)),
 	);
 }
 
 /**
- * The automatic max-active-containers value for this host: how many
- * ram-cap-sized containers fit in total virtual memory (RAM + swap). Used
- * whenever the operator has not explicitly set `max_active_containers`.
+ * The automatic memory budget for this host: total virtual memory (RAM + swap)
+ * less the system reserve and one container's worth held for the CEO chat. Used
+ * whenever the operator has not explicitly set a budget.
  */
-export async function computeAutoMaxActiveContainers(db: Db): Promise<number> {
+export async function computeAutoMaxContainerMemoryGb(db: Db): Promise<number> {
 	const ramCapGb = await getDefaultRamCapPerContainerGb(db);
 	const { totalRamBytes, totalSwapBytes } = getHostMemory();
-	return computeDefaultMaxActiveContainers(totalRamBytes, totalSwapBytes, ramCapGb);
+	return computeDefaultMaxContainerMemoryGb(totalRamBytes, totalSwapBytes, ramCapGb);
 }
 
 /**
  * The explicitly stored max-active-containers value, or null when the operator
  * has never set one (→ the computed default applies).
  */
-export async function getMaxActiveContainersSetting(db: Db): Promise<number | null> {
-	const raw = await getSystemMeta(db, MAX_ACTIVE_CONTAINERS_KEY);
+export async function getMaxContainerMemoryGbSetting(db: Db): Promise<number | null> {
+	const raw = await getSystemMeta(db, MAX_CONTAINER_MEMORY_GB_KEY);
 	if (raw === null) return null;
 	const parsed = Number.parseInt(raw, 10);
 	if (Number.isNaN(parsed)) return null;
-	return clampMaxActiveContainers(parsed);
+	return clampMaxContainerMemoryGb(parsed);
 }
 
 /**
@@ -137,19 +145,19 @@ export async function getMaxActiveContainersSetting(db: Db): Promise<number | nu
  * per-container ram cap. Malformed stored values degrade to the computed
  * default so a stale row can never wedge dispatch.
  */
-export async function getMaxActiveContainers(db: Db): Promise<number> {
-	return (await getMaxActiveContainersSetting(db)) ?? computeAutoMaxActiveContainers(db);
+export async function getMaxContainerMemoryGb(db: Db): Promise<number> {
+	return (await getMaxContainerMemoryGbSetting(db)) ?? computeAutoMaxContainerMemoryGb(db);
 }
 
-export async function setMaxActiveContainers(db: Db, value: number): Promise<number> {
-	const clamped = clampMaxActiveContainers(value);
-	await setSystemMeta(db, MAX_ACTIVE_CONTAINERS_KEY, String(clamped));
+export async function setMaxContainerMemoryGb(db: Db, value: number): Promise<number> {
+	const clamped = clampMaxContainerMemoryGb(value);
+	await setSystemMeta(db, MAX_CONTAINER_MEMORY_GB_KEY, String(clamped));
 	return clamped;
 }
 
 /** Clear the explicit value — the computed (auto) default applies again. */
-export async function clearMaxActiveContainers(db: Db): Promise<void> {
-	await deleteSystemMeta(db, MAX_ACTIVE_CONTAINERS_KEY);
+export async function clearMaxContainerMemoryGb(db: Db): Promise<void> {
+	await deleteSystemMeta(db, MAX_CONTAINER_MEMORY_GB_KEY);
 }
 
 /**

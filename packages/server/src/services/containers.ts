@@ -35,7 +35,7 @@ import { ContainerGitExecutor, mintGitOpScopeId } from './git-executor';
 import { resolveAgentBaseImage } from './image-registry';
 import type { LogStreamBroker } from './log-stream-broker';
 import { ensureProjectRepos } from './repo-sync';
-import { getActiveContainers } from './run-concurrency';
+import { getActiveContainers, projectContainerMemoryGb } from './run-concurrency';
 import { DOCKER_HOST_GATEWAY_ENTRY } from './sandbox/endpoints';
 import { INSTANCE_LABEL } from './sandbox/orphan-reaper';
 import {
@@ -696,7 +696,10 @@ export async function ensureProjectContainerRunning(
  */
 export class PoolCapacityError extends Error {
 	constructor(projectId: string) {
-		super(`no container available for project ${projectId} and the container cap is full`);
+		super(
+			`no container available for project ${projectId} and its next container ` +
+				`does not fit the instance memory budget`,
+		);
 		this.name = 'PoolCapacityError';
 	}
 }
@@ -740,10 +743,14 @@ export async function acquireRunContainer(
 		// contention (a lost race retries against a pool one member smaller), so
 		// this cannot spin. The cap is the pool's own size, not a timeout.
 		for (let attempt = 0; attempt < MAX_ACQUIRE_ATTEMPTS; attempt++) {
-			const active = await getActiveContainers(db);
+			const [active, requestMemoryGb] = await Promise.all([
+				getActiveContainers(db),
+				projectContainerMemoryGb(db, projectId),
+			]);
 			const decision = await decidePoolAcquisition(db, projectId, taskId, {
-				runningContainers: active.runningContainers,
-				maxRunningContainers: active.limit,
+				usedMemoryGb: active.usedMemoryGb,
+				budgetGb: active.budgetGb,
+				requestMemoryGb,
 			});
 
 			if (decision.kind === 'queue') throw new PoolCapacityError(projectId);

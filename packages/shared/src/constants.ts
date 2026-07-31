@@ -59,25 +59,6 @@ export const MAX_CHAT_HISTORY_SIZE_MIN = 8 * 1024;
 export const MAX_CHAT_HISTORY_SIZE_MAX = 256 * 1024;
 
 /**
- * Instance-wide cap on simultaneously ACTIVE (running) project containers,
- * **excluding** the assistant chat's container, which is exempt: a queued task
- * run is invisible and harmless, while a queued chat turn is a person watching
- * a spinner, so chat must never wait behind background work. The memory budget
- * reserves for it up front instead (see
- * {@link computeDefaultMaxActiveContainers}), which also keeps task-run
- * capacity a stable number - opening the chat never silently slows the fleet.
- *
- * Combined with the per-container RAM cap, this bounds total memory demand at
- * `N × cap`. Stored in system_meta; when the key is absent the
- * effective default is COMPUTED from host memory via
- * {@link computeDefaultMaxActiveContainers} — the constant below is only the
- * last-resort fallback when host memory is unreadable. Clamped to [MIN, MAX].
- */
-export const DEFAULT_MAX_ACTIVE_CONTAINERS = 3;
-export const MAX_ACTIVE_CONTAINERS_MIN = 1;
-export const MAX_ACTIVE_CONTAINERS_MAX = 100;
-
-/**
  * Instance-wide default memory cap per project container, in GB. Dual role:
  * the Docker cgroup memory limit applied to every container that doesn't carry
  * a per-project override, and the divisor in the automatic max-active-container
@@ -103,7 +84,7 @@ export const HOST_RESERVED_MEMORY_GB = 1;
 /**
  * Host memory available to containers: total virtual memory (RAM + swap),
  * rounded to whole GiB, less {@link HOST_RESERVED_MEMORY_GB}. Split out from
- * {@link computeDefaultMaxActiveContainers} so the web settings page can render
+ * {@link computeDefaultMaxContainerMemoryGb} so the web settings page can render
  * the same usable figure instead of re-deriving the rounding.
  *
  * **Swap counts at full weight**, deliberately: an agent container spends most of
@@ -122,34 +103,60 @@ export function usableMemoryGibForContainers(
 }
 
 /**
- * The automatic max-active-containers default: how many ram-cap-sized containers
- * a *task run* may use, which is the usable memory above less **one more cap for
- * the assistant chat's container**.
+ * Total memory, in GB, that all running containers may consume at once.
  *
- * Chat is exempt from the limit - a queued task run is invisible and harmless
- * while a queued chat turn is a person watching a spinner - so peak container
- * count is N + 1, and bounding `(N + 1) x cap` by usable memory is what forces
- * the extra cap out of the budget. Reserving it up front rather than subtracting
- * when a session opens is also what keeps task-run capacity a **stable** number:
- * opening the chat never silently slows the fleet.
+ * **The cap is a memory budget, not a container count.** A count only bounds
+ * memory while every container is the same size, and `projects.memory_limit_gib`
+ * exists precisely so one project's containers can be bigger. Under a count, a
+ * project overriding to 4 GB silently doubles its share: an instance sized for
+ * three 2 GB containers would happily run three 4 GB ones and oversubscribe the
+ * host - or, on a managed backend, quietly double the bill for the same number.
+ * Summing what each container actually asked for makes the cap mean one thing
+ * regardless of overrides.
  *
- * The reference 1.92 GiB RAM + 6 GiB swap host rounds to 8 GiB and yields
- * (8 - 1 - 2) / 2 = 2. Instances that have explicitly set `max_active_containers`
- * keep their value; only the computed default moves.
- *
- * Pure math (shared so the web settings page can render the same formula); byte
- * inputs come from the server's host-memory probe.
+ * The trade-off, which is real: a large container waits for enough budget rather
+ * than for any free slot, so it can be overtaken by smaller runs. That is why
+ * {@link projectMemoryFitsBudget} refuses a per-project cap larger than the whole
+ * budget - a request that can never fit is a configuration error the operator
+ * should see at once, not a run that queues forever with nothing to show why.
  */
-export function computeDefaultMaxActiveContainers(
+export const MAX_CONTAINER_MEMORY_GB_MIN = 1;
+export const MAX_CONTAINER_MEMORY_GB_MAX = 4096;
+
+/** Last-resort budget when host memory is unreadable: the old 3 x 2 GB shape. */
+export const DEFAULT_MAX_CONTAINER_MEMORY_GB = 6;
+
+/**
+ * The automatic memory-budget default: everything host memory allows, less the
+ * system reserve and one container's worth held back for the CEO chat.
+ *
+ * Chat is exempt from the budget (a queued task run is invisible; a queued chat
+ * turn is a person watching a spinner), and reserving for it up front rather
+ * than subtracting when a session opens keeps task-run capacity a *stable*
+ * number - opening the chat never silently slows the fleet.
+ */
+export function computeDefaultMaxContainerMemoryGb(
 	totalRamBytes: number,
 	totalSwapBytes: number,
 	ramCapGb: number,
 ): number {
 	const cap = Math.max(1, ramCapGb);
-	// One cap's worth for the chat container, which the limit excludes.
 	const usableGib = Math.max(0, usableMemoryGibForContainers(totalRamBytes, totalSwapBytes) - cap);
-	const computed = Math.floor(usableGib / cap);
-	return Math.min(MAX_ACTIVE_CONTAINERS_MAX, Math.max(MAX_ACTIVE_CONTAINERS_MIN, computed));
+	return Math.min(
+		MAX_CONTAINER_MEMORY_GB_MAX,
+		Math.max(MAX_CONTAINER_MEMORY_GB_MIN, Math.floor(usableGib)),
+	);
+}
+
+/**
+ * Whether a per-container memory cap can ever be satisfied by the budget.
+ *
+ * Enforced where the cap is set - the instance default and the per-project
+ * override - rather than at acquire time, because at acquire time the only
+ * honest response would be to queue a run that can never start.
+ */
+export function projectMemoryFitsBudget(capGb: number, budgetGb: number): boolean {
+	return capGb <= budgetGb;
 }
 
 /**

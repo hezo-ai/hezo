@@ -57,10 +57,12 @@ export type PoolDecision =
 	| { kind: 'queue' };
 
 export interface PoolCapacity {
-	/** Containers already running instance-wide, across every project. */
-	runningContainers: number;
-	/** How many may run at once. Docker derives it from host memory; a managed backend from spend. */
-	maxRunningContainers: number;
+	/** Memory already promised to running containers instance-wide, in GB. */
+	usedMemoryGb: number;
+	/** Total memory all running containers may consume. Host memory locally; a spend guard remotely. */
+	budgetGb: number;
+	/** What one more container in *this* project would consume, in GB. */
+	requestMemoryGb: number;
 }
 
 /**
@@ -99,12 +101,12 @@ export function selectPoolMember(
 	if (warm) return { kind: 'reuse', member: warm };
 
 	const suspended = available.find((m) => m.state === 'suspended');
-	// Resuming a suspended container does not add to the running count until it
-	// is running, so it is still gated on the cap - otherwise a fleet of
-	// suspended containers could be resumed straight past it.
-	if (suspended && underCap(capacity)) return { kind: 'resume', member: suspended };
+	// Resuming a suspended container does not consume budget until it is running,
+	// so it is still gated - otherwise a fleet of suspended containers could be
+	// resumed straight past the budget.
+	if (suspended && fitsBudget(capacity)) return { kind: 'resume', member: suspended };
 
-	if (underCap(capacity)) return { kind: 'create' };
+	if (fitsBudget(capacity)) return { kind: 'create' };
 	return { kind: 'queue' };
 }
 
@@ -125,8 +127,18 @@ function usable(member: PoolMember): boolean {
 	return member.state !== 'busy' && !member.reservedForChat && !member.atDiskCeiling;
 }
 
-function underCap(capacity: PoolCapacity): boolean {
-	return capacity.runningContainers < capacity.maxRunningContainers;
+/**
+ * Whether another container in this project fits in what the budget has left.
+ *
+ * A budget rather than a count because a count only bounds memory while every
+ * container is the same size, and `projects.memory_limit_gib` exists so they are
+ * not. The consequence to be aware of is that a large container waits for enough
+ * budget rather than for any free slot, so smaller runs can overtake it - which
+ * is a delay, not starvation, because a cap larger than the whole budget is
+ * refused where it is set (`projectMemoryFitsBudget`) rather than queued forever.
+ */
+function fitsBudget(capacity: PoolCapacity): boolean {
+	return capacity.usedMemoryGb + capacity.requestMemoryGb <= capacity.budgetGb;
 }
 
 /**

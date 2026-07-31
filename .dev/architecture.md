@@ -1131,13 +1131,27 @@ is 51 CIDRs, so an attempt to send it fails the create outright - which would ha
 every remote run rather than hardening it. What protects a secret remains that the secret
 only ever exists on the Hezo side.
 
-**Capacity reserves for the chat container up front.** `max_active_containers` counts
-containers a *task run* may use; the CEO chat's container is **exempt**, because a queued
-task run is invisible and harmless while a queued chat turn is a person watching a
-spinner. The host still has to fit it, so `computeDefaultMaxActiveContainers` subtracts
-`SYSTEM_RESERVE_GB` (1) plus one container's worth for the chat before dividing. Reserving
-up front rather than subtracting when a session opens keeps task-run capacity a **stable**
-number - opening the chat never silently slows the fleet.
+**Capacity is a memory budget, and it reserves for the chat container up front.**
+`max_container_memory_gb` bounds the total memory *task run* containers may hold at once,
+summed from what each one actually asked for (`projects.memory_limit_gib`, else the
+instance default). It replaced a container **count** (migration 050): a count bounds memory
+only while every container is the same size, and the per-project override exists precisely
+so they are not - one project raising its cap to 4 GB took one "slot" but twice the memory
+of the 2 GB containers the host was sized for. There is deliberately no derived container
+count anywhere, not even for display: how many fit depends on the mix of their sizes.
+
+The CEO chat's container is **exempt** from the budget, because a queued task run is
+invisible and harmless while a queued chat turn is a person watching a spinner. The host
+still has to fit it, so `computeDefaultMaxContainerMemoryGb` subtracts
+`HOST_RESERVED_MEMORY_GB` (1) plus one container's worth for the chat. Reserving up front
+rather than subtracting when a session opens keeps task-run capacity a **stable** number -
+opening the chat never silently slows the fleet.
+
+The trade-off a budget accepts is that a large container waits for enough budget rather
+than for any free slot, so smaller runs can overtake it. That is a delay and not
+starvation, because `projectMemoryFitsBudget` refuses a per-container cap larger than the
+whole budget where it is *set* - both on `PATCH /api/projects/:id` and on the instance
+default - rather than letting such a run queue forever with nothing naming the cause.
 
 The budget is total **virtual** memory: swap counts at full weight, which is deliberate for
 the local backend. An agent container is idle between execs, so its cold pages really can
@@ -1350,20 +1364,21 @@ and the cron's check-then-stop (which re-verifies the predicate plus the schedul
 run/pending refcounts under the lock) — serializes per project through
 `withContainerLifecycleLock` (`services/containers.ts`), so a start and a stop can never
 interleave: worst case is a wasted stop/start cycle, never a failed run. Concurrency is bounded
-by one **global active-container limit** (`max_active_containers` in `system_meta`; when unset,
+by one **global container memory budget** (`max_container_memory_gb` in `system_meta`; when unset,
 the default is computed from host memory as
-`((RAM + swap) - HOST_RESERVED_MEMORY_GB) / default_ram_cap_per_container_gb`, clamped to [1,100] —
+`(RAM + swap) - HOST_RESERVED_MEMORY_GB - default_ram_cap_per_container_gb` —
 the 1GiB reserve keeps the OS, Hezo's own process and the embedded database off the containers'
-budget, since none of them live inside one): dispatch passes a run whose project container is already active (no new
-container needed) and queues one that would need another container past the cap
+budget, since none of them live inside one, and the second subtraction holds back the chat's
+container): dispatch passes a run whose project has a container free to take it (no new
+container needed) and queues one whose next container would not fit the budget
 (`WakeupSkipReason.InstanceAtCapacity`, retried by the 5s dispatcher; an in-memory
 `pendingContainerStarts` refcount covers the window before the DB row reads Running). Dispatch
 drains FIFO by `created_at` with no per-project fair-share — a deep backlog in one project
 consumes freed slots first; that scheduler is the hook if this ever needs fairness. The chat
-path is *not* gated: its container counts toward the limit once running, but starting a chat is
+path is *not* gated: its container counts toward the budget once running, but starting a chat is
 never refused — busy agents must not lock the operator out of the control surface. All three
-knobs (limit, per-container RAM cap, idle timeout) live on the global Settings → Concurrency
-page (`GET/PATCH /api/instance-settings`; `PATCH {max_active_containers: null}` resets to the
+knobs (memory budget, per-container RAM cap, idle timeout) live on the global Settings → Concurrency
+page (`GET/PATCH /api/instance-settings`; `PATCH {max_container_memory_gb: null}` resets to the
 computed default). The project's
 `<dataDir>/teams/<teamId>/projects/<projectId>/workspace/` (id-keyed, never slugs) bind-mounts
 to `/workspace`, with one subdirectory per linked repo. For each task the runner creates a `git worktree` at

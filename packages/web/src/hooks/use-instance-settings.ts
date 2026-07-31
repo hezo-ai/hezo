@@ -7,11 +7,11 @@ export interface InstanceSettings {
 	base_url: string | null;
 	max_chat_history_size: number;
 	/** Effective active-container cap: the explicit setting, else the computed default. */
-	max_active_containers: number;
+	max_container_memory_gb: number;
 	/** True when the operator explicitly set a value (vs the automatic default). */
-	max_active_containers_is_set: boolean;
+	max_container_memory_gb_is_set: boolean;
 	/** The host-memory-computed default: (RAM + swap) / ram cap per container. */
-	max_active_containers_computed_default: number;
+	max_container_memory_gb_computed_default: number;
 	default_ram_cap_per_container_gb: number;
 	container_idle_timeout_min: number;
 	host_total_ram_bytes: number;
@@ -22,7 +22,7 @@ export type InstanceSettingsUpdate = Partial<{
 	base_url: string | null;
 	max_chat_history_size: number;
 	/** null resets to the automatic (host-memory-computed) default. */
-	max_active_containers: number | null;
+	max_container_memory_gb: number | null;
 	default_ram_cap_per_container_gb: number;
 	container_idle_timeout_min: number;
 }>;

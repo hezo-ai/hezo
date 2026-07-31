@@ -26,10 +26,10 @@ import {
 	createTestTeam,
 } from './helpers/app';
 import {
-	clearMaxActiveContainersForTest,
+	clearContainerCapacityForTest,
 	removeSeededContainerProject,
 	seedRunningContainerProject,
-	setMaxActiveContainersForTest,
+	setContainerCapacityForTest,
 } from './helpers/capacity';
 
 // This suite drives the run-scheduling, task-selection, dispatch, and budget /
@@ -297,7 +297,7 @@ describe('JobManager — extended coverage', () => {
 			const manager = createJobManager();
 			// Container semantics: this project's container is stopped, the limit is
 			// 1, and a filler project's running container consumes the only slot.
-			await setMaxActiveContainersForTest(db, 1);
+			await setContainerCapacityForTest(db, 1);
 			await db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [projectId]);
 			await seedRunningContainerProject(db, 'cap-filler-dispatch');
 			const wakeupId = await insertQueuedWakeup(agentId);
@@ -310,7 +310,7 @@ describe('JobManager — extended coverage', () => {
 
 			await db.query(`UPDATE projects SET container_status = 'running' WHERE id = $1`, [projectId]);
 			await removeSeededContainerProject(db, 'cap-filler-dispatch');
-			await clearMaxActiveContainersForTest(db);
+			await clearContainerCapacityForTest(db);
 			manager.shutdown();
 		});
 
@@ -530,7 +530,7 @@ describe('JobManager — extended coverage', () => {
 			const manager = createJobManager();
 			// The project's container is stopped and a filler project's running
 			// container consumes the single slot, so activation must re-queue.
-			await setMaxActiveContainersForTest(db, 1);
+			await setContainerCapacityForTest(db, 1);
 			await db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [projectId]);
 			await seedRunningContainerProject(db, 'cap-filler-activate');
 			const wakeupId = await insertQueuedWakeup(agentId, 'mention');
@@ -559,7 +559,7 @@ describe('JobManager — extended coverage', () => {
 
 			await db.query(`UPDATE projects SET container_status = 'running' WHERE id = $1`, [projectId]);
 			await removeSeededContainerProject(db, 'cap-filler-activate');
-			await clearMaxActiveContainersForTest(db);
+			await clearContainerCapacityForTest(db);
 			manager.shutdown();
 		});
 

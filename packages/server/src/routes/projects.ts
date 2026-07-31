@@ -8,6 +8,7 @@ import {
 	MemberType,
 	PROJECT_ICON_MAX_BYTES,
 	PROJECT_ICON_MAX_DIMENSION,
+	projectMemoryFitsBudget,
 	wsRoom,
 } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
@@ -26,6 +27,7 @@ import { signProjectIconUrl, verifyProjectIconUrl } from '../lib/project-icon-ur
 import { err, ok } from '../lib/response';
 import { toSlug, uniqueSlug } from '../lib/slug';
 import { terminalStatusParams } from '../lib/sql';
+import { getMaxContainerMemoryGb } from '../lib/system-meta';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireAdminEquivalent, requireSuperuser } from '../middleware/auth';
@@ -584,6 +586,24 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 			(!Number.isInteger(body.memory_limit_gib) || body.memory_limit_gib < 1)
 		) {
 			return err(c, 'INVALID_REQUEST', 'memory_limit_gib must be an integer ≥ 1 or null', 400);
+		}
+		// Admission check. A cap larger than the whole instance budget can never be
+		// scheduled, so accepting it would leave this project's runs queueing
+		// forever with nothing naming the cause. Refuse where it is set instead -
+		// the same reason the Daytona adapter refuses a request above its ceiling
+		// rather than quietly allocating less.
+		if (body.memory_limit_gib !== null) {
+			const budget = await getMaxContainerMemoryGb(db);
+			if (!projectMemoryFitsBudget(body.memory_limit_gib, budget)) {
+				return err(
+					c,
+					'INVALID_REQUEST',
+					`memory_limit_gib of ${body.memory_limit_gib} GB exceeds the instance memory ` +
+						`budget of ${budget} GB, so a container this size could never start. Raise ` +
+						`the budget in instance settings first.`,
+					400,
+				);
+			}
 		}
 		sets.push(`memory_limit_gib = $${idx}`);
 		params.push(body.memory_limit_gib);

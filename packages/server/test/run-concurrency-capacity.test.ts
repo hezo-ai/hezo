@@ -1,7 +1,7 @@
 import { ContainerStatus } from '@hezo/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { PgliteDb } from '../src/db/drivers/pglite';
-import { MAX_ACTIVE_CONTAINERS_KEY, setSystemMeta } from '../src/lib/system-meta';
+import { MAX_CONTAINER_MEMORY_GB_KEY, setSystemMeta } from '../src/lib/system-meta';
 import {
 	getActiveContainers,
 	isContainerCapacityBlockedInDb,
@@ -66,35 +66,36 @@ describe('container capacity', () => {
 
 	beforeEach(async () => {
 		db = await createTestDbWithMigrations();
-		await setSystemMeta(db, MAX_ACTIVE_CONTAINERS_KEY, '2');
+		// Room for exactly two default-sized (2 GB) containers.
+		await setSystemMeta(db, MAX_CONTAINER_MEMORY_GB_KEY, '4');
 	});
 	afterEach(() => db.close());
 
-	it('counts containers, not projects that have one', async () => {
+	it('sums every container, not projects that have one', async () => {
 		// The whole point of the change. One project holding two containers is two
-		// containers' worth of memory; counting projects would report 1 and let the
-		// instance run past its own ceiling.
+		// containers' worth of memory; counting projects would report one and let
+		// the instance run past its own ceiling.
 		const project = await seedProject();
 		await addMember(project, 'ctr-a');
 		await addMember(project, 'ctr-b');
-		expect((await getActiveContainers(db)).runningContainers).toBe(2);
+		expect((await getActiveContainers(db)).usedMemoryGb).toBe(4);
 	});
 
-	it('counts a container recorded in both representations exactly once', async () => {
+	it('charges a container recorded in both representations exactly once', async () => {
 		// Migration 049 is additive: `projects.container_*` stays authoritative
 		// until every lifecycle call site moves over, so a container can be in both
-		// places at once. Double-counting it would halve the effective cap.
+		// places at once. Double-charging it would halve the effective budget.
 		const project = await seedProject({ id: 'ctr-dup', status: ContainerStatus.Running });
 		await addMember(project, 'ctr-dup');
-		expect((await getActiveContainers(db)).runningContainers).toBe(1);
+		expect((await getActiveContainers(db)).usedMemoryGb).toBe(2);
 	});
 
-	it('ignores suspended and errored members, which cost storage rather than capacity', async () => {
+	it('charges nothing for suspended and errored members, which cost storage rather than memory', async () => {
 		const project = await seedProject();
 		await addMember(project, 'ctr-idle');
 		await addMember(project, 'ctr-susp', { state: 'suspended' });
 		await addMember(project, 'ctr-err', { state: 'error' });
-		expect((await getActiveContainers(db)).runningContainers).toBe(1);
+		expect((await getActiveContainers(db)).usedMemoryGb).toBe(2);
 	});
 
 	it('blocks a project whose only container is busy, once the cap is reached', async () => {
@@ -107,7 +108,7 @@ describe('container capacity', () => {
 		const other = await seedProject();
 		await addMember(other, 'ctr-other', { state: 'busy' });
 
-		expect((await getActiveContainers(db)).runningContainers).toBe(2);
+		expect((await getActiveContainers(db)).usedMemoryGb).toBe(4);
 		expect(await isContainerCapacityBlockedInDb(db, busy)).toBe(true);
 	});
 
@@ -153,7 +154,7 @@ describe('container capacity', () => {
 		const b = await seedProject();
 		await addMember(b, 'ctr-y', { state: 'busy' });
 
-		expect((await getActiveContainers(db)).runningContainers).toBe(3);
+		expect((await getActiveContainers(db)).usedMemoryGb).toBe(6);
 		expect(await isContainerCapacityBlockedInDb(db, legacy)).toBe(false);
 	});
 
@@ -171,5 +172,30 @@ describe('container capacity', () => {
 		await addMember(a, 'ctr-1', { state: 'busy' });
 		const fresh = await seedProject();
 		expect(await isContainerCapacityBlockedInDb(db, fresh)).toBe(false);
+	});
+
+	it("charges a project's override rather than the default", async () => {
+		// The reason capacity is a budget at all. Under a count this container was
+		// one slot like any other, so an instance sized for 2 GB containers would
+		// run three 4 GB ones and oversubscribe the host by double.
+		const big = await seedProject();
+		await db.query(`UPDATE projects SET memory_limit_gib = 4 WHERE id = $1`, [big]);
+		await addMember(big, 'ctr-big');
+		expect((await getActiveContainers(db)).usedMemoryGb).toBe(4);
+	});
+
+	it('blocks a large container that a half-empty budget still cannot fit', async () => {
+		// The trade-off the budget accepts: a big container waits for enough
+		// budget, not for any free slot. It is a delay rather than starvation
+		// because a cap larger than the whole budget is refused where it is set.
+		const small = await seedProject();
+		await addMember(small, 'ctr-small'); // 2 GB of the 4 GB budget
+		const big = await seedProject();
+		await db.query(`UPDATE projects SET memory_limit_gib = 4 WHERE id = $1`, [big]);
+
+		expect(await isContainerCapacityBlockedInDb(db, big)).toBe(true);
+		// …while a default-sized container fits in the same remaining 2 GB.
+		const normal = await seedProject();
+		expect(await isContainerCapacityBlockedInDb(db, normal)).toBe(false);
 	});
 });

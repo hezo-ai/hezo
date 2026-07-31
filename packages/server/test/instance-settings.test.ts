@@ -159,9 +159,9 @@ describe('concurrency settings', () => {
 	}
 
 	async function getSettings(): Promise<{
-		max_active_containers: number;
-		max_active_containers_is_set: boolean;
-		max_active_containers_computed_default: number;
+		max_container_memory_gb: number;
+		max_container_memory_gb_is_set: boolean;
+		max_container_memory_gb_computed_default: number;
 		default_ram_cap_per_container_gb: number;
 		container_idle_timeout_min: number;
 		host_total_ram_bytes: number;
@@ -172,49 +172,65 @@ describe('concurrency settings', () => {
 		return (await res.json()).data;
 	}
 
-	it('computes the default max_active_containers from host memory when unset', async () => {
+	it('computes the default memory budget from host memory when unset', async () => {
 		const data = await getSettings();
 		// round(1.92 + 6) = 8 GiB, less 1 GB for the host and one 2 GB cap for the
-		// assistant's container (which the limit excludes), / 2 GB per container.
-		expect(data.max_active_containers).toBe(2);
-		expect(data.max_active_containers_is_set).toBe(false);
-		expect(data.max_active_containers_computed_default).toBe(2);
+		// assistant's container, which runs on top of the budget rather than in it.
+		expect(data.max_container_memory_gb).toBe(5);
+		expect(data.max_container_memory_gb_is_set).toBe(false);
+		expect(data.max_container_memory_gb_computed_default).toBe(5);
 		expect(data.default_ram_cap_per_container_gb).toBe(2);
 		expect(data.container_idle_timeout_min).toBe(15);
 		expect(data.host_total_swap_bytes).toBe(6 * GIB);
 	});
 
-	it('changing the ram cap moves the computed default', async () => {
-		// Asserted in both directions. On this host raising the cap lands on 1, which
-		// is also the MIN clamp, so that assertion alone would pass even if the
-		// division broke; the 1GB case is the one that proves it divides.
+	it('changing the ram cap moves the computed budget, because the chat reserve moves', async () => {
+		// The cap no longer divides the budget - it is only the chat container's
+		// share, held back up front. Asserted in both directions so a change that
+		// stopped subtracting it would not slip through.
 		expect((await patchSettings({ default_ram_cap_per_container_gb: 3 })).status).toBe(200);
 		let data = await getSettings();
 		expect(data.default_ram_cap_per_container_gb).toBe(3);
-		expect(data.max_active_containers).toBe(1); // (8 - 1 - 3) / 3 floors to 1
+		expect(data.max_container_memory_gb).toBe(4); // 8 - 1 - 3
 
 		expect((await patchSettings({ default_ram_cap_per_container_gb: 1 })).status).toBe(200);
 		data = await getSettings();
-		expect(data.max_active_containers).toBe(6); // (8 - 1 - 1) / 1
-		expect(data.max_active_containers_is_set).toBe(false);
+		expect(data.max_container_memory_gb).toBe(6); // 8 - 1 - 1
+		expect(data.max_container_memory_gb_is_set).toBe(false);
 		await patchSettings({ default_ram_cap_per_container_gb: 2 });
 	});
 
-	it('an explicitly set value wins over the computed default', async () => {
-		const res = await patchSettings({ max_active_containers: 7 });
+	it('an explicitly set budget wins over the computed default', async () => {
+		const res = await patchSettings({ max_container_memory_gb: 14 });
 		expect(res.status).toBe(200);
 		const data = await getSettings();
-		expect(data.max_active_containers).toBe(7);
-		expect(data.max_active_containers_is_set).toBe(true);
-		expect(data.max_active_containers_computed_default).toBe(2);
+		expect(data.max_container_memory_gb).toBe(14);
+		expect(data.max_container_memory_gb_is_set).toBe(true);
+		expect(data.max_container_memory_gb_computed_default).toBe(5);
 	});
 
-	it('null resets max_active_containers back to the computed default', async () => {
-		const res = await patchSettings({ max_active_containers: null });
+	it('null resets the budget back to the computed default', async () => {
+		const res = await patchSettings({ max_container_memory_gb: null });
 		expect(res.status).toBe(200);
 		const data = await getSettings();
-		expect(data.max_active_containers).toBe(2);
-		expect(data.max_active_containers_is_set).toBe(false);
+		expect(data.max_container_memory_gb).toBe(5);
+		expect(data.max_container_memory_gb_is_set).toBe(false);
+	});
+
+	it('refuses a budget below the per-container cap, which nothing could ever fit', async () => {
+		// The admission check. Accepting it would leave every project queueing
+		// forever with nothing naming the cause, so it is refused where it is set.
+		const res = await patchSettings({ max_container_memory_gb: 1 });
+		expect(res.status).toBe(400);
+		expect((await res.json()).error.message).toContain('no container could ever start');
+	});
+
+	it('refuses a per-container cap above the budget, from the other direction', async () => {
+		expect((await patchSettings({ max_container_memory_gb: 8 })).status).toBe(200);
+		const res = await patchSettings({ default_ram_cap_per_container_gb: 16 });
+		expect(res.status).toBe(400);
+		expect((await res.json()).error.message).toContain('could never start');
+		await patchSettings({ max_container_memory_gb: null });
 	});
 
 	it('updates and persists the idle timeout, including 0 (never stop)', async () => {
@@ -225,11 +241,11 @@ describe('concurrency settings', () => {
 	});
 
 	it.each([
-		['a zero container cap', { max_active_containers: 0 }],
-		['a negative container cap', { max_active_containers: -1 }],
-		['an over-max container cap', { max_active_containers: 101 }],
-		['a non-integer container cap', { max_active_containers: 2.5 }],
-		['a string container cap', { max_active_containers: '3' }],
+		['a zero memory budget', { max_container_memory_gb: 0 }],
+		['a negative memory budget', { max_container_memory_gb: -1 }],
+		['an over-max memory budget', { max_container_memory_gb: 4097 }],
+		['a non-integer memory budget', { max_container_memory_gb: 2.5 }],
+		['a string memory budget', { max_container_memory_gb: '3' }],
 		['a zero ram cap', { default_ram_cap_per_container_gb: 0 }],
 		['an over-max ram cap', { default_ram_cap_per_container_gb: 513 }],
 		['a non-integer ram cap', { default_ram_cap_per_container_gb: 1.5 }],
@@ -243,7 +259,7 @@ describe('concurrency settings', () => {
 	});
 
 	it('rejects non-superusers', async () => {
-		const res = await patchSettings({ max_active_containers: 5 }, nonSuperuserToken);
+		const res = await patchSettings({ max_container_memory_gb: 10 }, nonSuperuserToken);
 		expect(res.status).toBe(403);
 	});
 });

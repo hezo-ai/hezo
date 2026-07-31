@@ -548,7 +548,7 @@ test('Run now queues when the Captain is busy, and the queued run can be cancell
 			// project's running container holding the only slot.
 			await seedGoal(ws, project, { title: 'Ship it', measurement: 'shipped' });
 			await ctx.db.query(
-				`INSERT INTO system_meta (key, value) VALUES ('max_active_containers', '1')
+				`INSERT INTO system_meta (key, value) VALUES ('max_container_memory_gb', '2')
 				 ON CONFLICT (key) DO UPDATE SET value = '1'`,
 			);
 			await ctx.db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [

@@ -4,8 +4,8 @@ import {
 	DEFAULT_CONTAINER_IDLE_TIMEOUT_MIN,
 	DEFAULT_RAM_CAP_PER_CONTAINER_GB,
 	HOST_RESERVED_MEMORY_GB,
-	MAX_ACTIVE_CONTAINERS_MAX,
-	MAX_ACTIVE_CONTAINERS_MIN,
+	MAX_CONTAINER_MEMORY_GB_MAX,
+	MAX_CONTAINER_MEMORY_GB_MIN,
 	RAM_CAP_PER_CONTAINER_GB_MAX,
 	RAM_CAP_PER_CONTAINER_GB_MIN,
 	usableMemoryGibForContainers,
@@ -32,10 +32,10 @@ function gb(bytes: number): number {
 }
 
 const MAX_CONTAINERS_POINTS: readonly MessageKey[] = [
-	'concurrency.maxContainers.point.scope',
-	'concurrency.maxContainers.point.queue',
-	'concurrency.maxContainers.point.automatic',
-	'concurrency.maxContainers.point.range',
+	'concurrency.memoryBudget.point.scope',
+	'concurrency.memoryBudget.point.queue',
+	'concurrency.memoryBudget.point.automatic',
+	'concurrency.memoryBudget.point.range',
 ];
 
 const RAM_CAP_POINTS: readonly MessageKey[] = [
@@ -101,19 +101,19 @@ function ConcurrencySettingsPage() {
 				<section className="border border-border rounded-md p-4 bg-surface mb-4">
 					<label
 						className="block text-[13px] font-medium mb-1"
-						htmlFor="max-active-containers-input"
+						htmlFor="container-memory-budget-input"
 					>
-						{t('concurrency.maxContainers.label')}
+						{t('concurrency.memoryBudget.label')}
 					</label>
 					<Points
 						keys={MAX_CONTAINERS_POINTS}
 						vars={{
-							min: MAX_ACTIVE_CONTAINERS_MIN,
-							max: MAX_ACTIVE_CONTAINERS_MAX,
+							min: MAX_CONTAINER_MEMORY_GB_MIN,
+							max: MAX_CONTAINER_MEMORY_GB_MAX,
 							reserved: HOST_RESERVED_MEMORY_GB,
 						}}
 					/>
-					{settings === undefined ? null : <MaxActiveContainersForm settings={settings} />}
+					{settings === undefined ? null : <ContainerMemoryBudgetForm settings={settings} />}
 				</section>
 
 				<section className="border border-border rounded-md p-4 bg-surface mb-4">
@@ -154,27 +154,27 @@ function ConcurrencySettingsPage() {
 	return <div className="max-w-[900px]">{content}</div>;
 }
 
-function MaxActiveContainersForm({ settings }: { settings: InstanceSettings }) {
+function ContainerMemoryBudgetForm({ settings }: { settings: InstanceSettings }) {
 	const { t } = useI18n();
 	const updateSettings = useUpdateInstanceSettings();
-	const [value, setValue] = useState(String(settings.max_active_containers));
+	const [value, setValue] = useState(String(settings.max_container_memory_gb));
 	const [error, setError] = useState<string | null>(null);
 
 	async function handleSave() {
 		setError(null);
 		const n = Number.parseInt(value, 10);
-		if (Number.isNaN(n) || n < MAX_ACTIVE_CONTAINERS_MIN || n > MAX_ACTIVE_CONTAINERS_MAX) {
+		if (Number.isNaN(n) || n < MAX_CONTAINER_MEMORY_GB_MIN || n > MAX_CONTAINER_MEMORY_GB_MAX) {
 			setError(
 				t('concurrency.rangeError', {
-					min: MAX_ACTIVE_CONTAINERS_MIN,
-					max: MAX_ACTIVE_CONTAINERS_MAX,
+					min: MAX_CONTAINER_MEMORY_GB_MIN,
+					max: MAX_CONTAINER_MEMORY_GB_MAX,
 				}),
 			);
 			return;
 		}
 		try {
-			const result = await updateSettings.mutateAsync({ max_active_containers: n });
-			setValue(String(result.max_active_containers));
+			const result = await updateSettings.mutateAsync({ max_container_memory_gb: n });
+			setValue(String(result.max_container_memory_gb));
 		} catch (e) {
 			setError((e as ApiError).message);
 		}
@@ -183,22 +183,21 @@ function MaxActiveContainersForm({ settings }: { settings: InstanceSettings }) {
 	async function handleReset() {
 		setError(null);
 		try {
-			const result = await updateSettings.mutateAsync({ max_active_containers: null });
-			setValue(String(result.max_active_containers));
+			const result = await updateSettings.mutateAsync({ max_container_memory_gb: null });
+			setValue(String(result.max_container_memory_gb));
 		} catch (e) {
 			setError((e as ApiError).message);
 		}
 	}
 
-	const dirty = value.trim() !== String(settings.max_active_containers);
+	const dirty = value.trim() !== String(settings.max_container_memory_gb);
 	const ram = gb(settings.host_total_ram_bytes);
 	const swap = gb(settings.host_total_swap_bytes);
 	const total = Math.round((settings.host_total_ram_bytes + settings.host_total_swap_bytes) / GIB);
 	// What is left for task-run containers: the host reserve comes off first, then
-	// one container's worth for the assistant, which is exempt from the limit and
-	// so raises peak container count to N + 1. Mirrors
-	// computeDefaultMaxActiveContainers exactly, so the rendered arithmetic adds up
-	// to the number beside it.
+	// one container's worth for the assistant chat, which is exempt from the budget
+	// and so runs on top of it. Mirrors computeDefaultMaxContainerMemoryGb exactly,
+	// so the rendered arithmetic adds up to the number beside it.
 	const chatReserve = settings.default_ram_cap_per_container_gb;
 	const usable = Math.max(
 		0,
@@ -210,55 +209,53 @@ function MaxActiveContainersForm({ settings }: { settings: InstanceSettings }) {
 		<>
 			<div className="flex flex-col gap-2 sm:flex-row sm:items-center">
 				<Input
-					id="max-active-containers-input"
-					data-testid="max-active-containers-input"
+					id="container-memory-budget-input"
+					data-testid="container-memory-budget-input"
 					type="number"
 					inputMode="numeric"
-					min={MAX_ACTIVE_CONTAINERS_MIN}
-					max={MAX_ACTIVE_CONTAINERS_MAX}
+					min={MAX_CONTAINER_MEMORY_GB_MIN}
+					max={MAX_CONTAINER_MEMORY_GB_MAX}
 					value={value}
 					onChange={(e) => setValue(e.target.value)}
 					className="sm:w-40"
 				/>
 				<Button
 					size="sm"
-					data-testid="max-active-containers-save"
+					data-testid="container-memory-budget-save"
 					onClick={handleSave}
 					disabled={!dirty || updateSettings.isPending}
 				>
 					{updateSettings.isPending && <Loader2 className="w-3 h-3 animate-spin" />}{' '}
 					{t('common.save')}
 				</Button>
-				{settings.max_active_containers_is_set && (
+				{settings.max_container_memory_gb_is_set && (
 					<Button
 						size="sm"
 						variant="outline"
-						data-testid="max-active-containers-reset"
+						data-testid="container-memory-budget-reset"
 						onClick={handleReset}
 						disabled={updateSettings.isPending}
 					>
-						{t('concurrency.maxContainers.reset')}
+						{t('concurrency.memoryBudget.reset')}
 					</Button>
 				)}
 			</div>
-			<p className="text-[13px] text-text-2 mt-1.5" data-testid="max-active-containers-formula">
-				{settings.max_active_containers_is_set
-					? t('concurrency.maxContainers.formulaSet', {
-							value: settings.max_active_containers_computed_default,
+			<p className="text-[13px] text-text-2 mt-1.5" data-testid="container-memory-budget-formula">
+				{settings.max_container_memory_gb_is_set
+					? t('concurrency.memoryBudget.formulaSet', {
+							value: settings.max_container_memory_gb_computed_default,
 						})
-					: t('concurrency.maxContainers.formulaAuto', {
+					: t('concurrency.memoryBudget.formulaAuto', {
 							ram,
 							swap,
 							total,
 							reserved: HOST_RESERVED_MEMORY_GB,
 							chat: chatReserve,
 							usable,
-							cap: settings.default_ram_cap_per_container_gb,
-							result: settings.max_active_containers_computed_default,
 						})}
 			</p>
 			{error && (
-				<p className="text-[13px] text-danger mt-1.5" data-testid="max-active-containers-error">
+				<p className="text-[13px] text-danger mt-1.5" data-testid="container-memory-budget-error">
 					{error}
 				</p>
 			)}

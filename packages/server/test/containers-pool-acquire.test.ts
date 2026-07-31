@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Db } from '../src/db/database';
-import { setMaxActiveContainers } from '../src/lib/system-meta';
+import { setMaxContainerMemoryGb } from '../src/lib/system-meta';
 import {
 	acquireRunContainer,
 	type ContainerDeps,
@@ -73,7 +73,7 @@ beforeAll(async () => {
 	const projRes = await createTestProject(db, teamId, { name: 'Pool Project' });
 	projectId = (await projRes.json()).data.id;
 	// Room for several containers, so the cap is not what these assertions hit.
-	await setMaxActiveContainers(db, 10);
+	await setMaxContainerMemoryGb(db, 40);
 });
 
 afterAll(async () => {
@@ -161,19 +161,19 @@ describe('acquireRunContainer', () => {
 		// reaching here means capacity went away in between - requeue, not fail.
 		//
 		// Every member is put to busy first, deliberately: a project that still has
-		// a warm idle container is correctly *not* blocked by the cap, because
-		// reusing a container already running consumes no new slot. The cap only
-		// bites when the pool has nothing left to give.
+		// a warm idle container is correctly *not* blocked, because reusing a
+		// container already running consumes no new budget. The budget only bites
+		// when the pool has nothing left to give.
 		await db.query(`UPDATE container_pool_members SET state = 'busy' WHERE project_id = $1`, [
 			projectId,
 		]);
-		await setMaxActiveContainers(db, 1);
+		await setMaxContainerMemoryGb(db, 1);
 		try {
 			await expect(
 				acquireRunContainer(deps(provisioningDocker()), projectId, TASK_BLOCKED),
 			).rejects.toBeInstanceOf(PoolCapacityError);
 		} finally {
-			await setMaxActiveContainers(db, 10);
+			await setMaxContainerMemoryGb(db, 40);
 			await db.query(`UPDATE container_pool_members SET state = 'idle' WHERE project_id = $1`, [
 				projectId,
 			]);

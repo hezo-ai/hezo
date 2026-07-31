@@ -4,7 +4,7 @@ import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
-import { seedRunningContainerProject, setMaxActiveContainersForTest } from './helpers/capacity';
+import { seedRunningContainerProject, setContainerCapacityForTest } from './helpers/capacity';
 
 // The manual "Run now" endpoint reuses the scheduled progress-update logic
 // (`dispatchProgressUpdateNow` → `tryDispatchProgressUpdate`). These cover the deterministic
@@ -68,7 +68,7 @@ describe('POST /projects/:projectId/goals/run-now', () => {
 		// A container that is down is no longer a transient conflict (the runner
 		// lazy-starts it); the queued path now comes from the container limit:
 		// cap 1, consumed by a filler project's running container.
-		await setMaxActiveContainersForTest(db, 1);
+		await setContainerCapacityForTest(db, 1);
 		await seedRunningContainerProject(db, 'cap-goals-runnow');
 
 		const res = await app.request(`/api/projects/${projectSlug}/goals/run-now`, {

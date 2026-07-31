@@ -28,7 +28,7 @@ import { broadcastRowChange } from '../lib/broadcast';
 import type { StorageBackend } from '../lib/db-info';
 import { shouldDeferWakeupForBlockers } from '../lib/dependencies';
 import { ref } from '../lib/log-ref';
-import { getContainerIdleTimeoutMin } from '../lib/system-meta';
+import { getContainerIdleTimeoutMin, getDefaultRamCapPerContainerGb } from '../lib/system-meta';
 import { logger } from '../logger';
 import { getLatestInfo } from '../routes/updates';
 import { exitToApplyUpdate } from '../runtime-control';
@@ -71,7 +71,7 @@ import { detectOrphans, healStaleRunState, STALE_STATE_GRACE_SECONDS } from './o
 import type { PricingService } from './pricing';
 import { collectCandidateRunIds, decideSweepKills } from './process-sweeper';
 import { ensureRepoSetupAction } from './repo-setup';
-import { getActiveContainers, isTaskBusyInDb } from './run-concurrency';
+import { getActiveContainers, isTaskBusyInDb, projectContainerMemoryGb } from './run-concurrency';
 import type { SshAgentServer } from './ssh-agent';
 import { reportTelemetry } from './telemetry';
 import { ensureUpdateStaged, isSupervisedWorker, readUpdateState } from './updater';
@@ -1213,7 +1213,7 @@ export class JobManager {
 	 * exceeded.
 	 */
 	private async isContainerCapacityBlocked(projectId: string | null): Promise<boolean> {
-		const { limit, runningContainers, projectsWithSpareContainer } = await getActiveContainers(
+		const { budgetGb, usedMemoryGb, projectsWithSpareContainer } = await getActiveContainers(
 			this.deps.db,
 		);
 		if (
@@ -1222,11 +1222,19 @@ export class JobManager {
 		) {
 			return false;
 		}
-		let pendingExtra = 0;
+		// A lazy start already in flight has not reached the DB yet, so its memory
+		// has to be added here or two dispatches would both see room for the same
+		// GB. Charged at the starting project's own cap, not a flat figure - that
+		// is the whole reason the gate moved from a count to a budget.
+		let pendingGb = 0;
 		for (const id of this.pendingContainerStarts.keys()) {
-			if (!projectsWithSpareContainer.has(id)) pendingExtra++;
+			if (projectsWithSpareContainer.has(id)) continue;
+			pendingGb += await projectContainerMemoryGb(this.deps.db, id);
 		}
-		return runningContainers + pendingExtra >= limit;
+		const requestGb = projectId
+			? await projectContainerMemoryGb(this.deps.db, projectId)
+			: await getDefaultRamCapPerContainerGb(this.deps.db);
+		return usedMemoryGb + pendingGb + requestGb > budgetGb;
 	}
 
 	private acquirePendingContainerStart(projectId: string): void {

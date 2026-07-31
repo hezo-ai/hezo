@@ -18,10 +18,10 @@ import {
 	createTestTeam,
 } from './helpers/app';
 import {
-	clearMaxActiveContainersForTest,
+	clearContainerCapacityForTest,
 	removeSeededContainerProject,
 	seedRunningContainerProject,
-	setMaxActiveContainersForTest,
+	setContainerCapacityForTest,
 } from './helpers/capacity';
 
 // The runner's data dir must be the harness's own, not a fixed path: the
@@ -229,7 +229,7 @@ describe('JobManager workflow methods', () => {
 			const manager = createJobManager();
 			// Container semantics: the wakeup's project container is stopped and a
 			// filler project's running container consumes the single slot.
-			await setMaxActiveContainersForTest(db, 1);
+			await setContainerCapacityForTest(db, 1);
 			await stopProjectContainers(db, projectId);
 			await seedRunningContainerProject(db, 'cap-filler-wakeups');
 
@@ -272,7 +272,7 @@ describe('JobManager workflow methods', () => {
 			manager.shutdown();
 			await startProjectContainers(db, projectId);
 			await removeSeededContainerProject(db, 'cap-filler-wakeups');
-			await clearMaxActiveContainersForTest(db);
+			await clearContainerCapacityForTest(db);
 			// Drain everything still queued: the capacity block skipped not just our
 			// wakeup but any background ones (task-assignment pings), which earlier
 			// tests used to leave settled — later tests assume none are pending.
@@ -2375,7 +2375,7 @@ describe('JobManager workflow methods', () => {
 	describe('container-capacity gating and cross-project parallelism', () => {
 		it('isContainerCapacityBlocked trips when a new container would exceed the limit', async () => {
 			const manager = createJobManager();
-			await setMaxActiveContainersForTest(db, 1);
+			await setContainerCapacityForTest(db, 1);
 			await stopProjectContainers(db, projectId);
 			await seedRunningContainerProject(db, 'cap-check-a');
 
@@ -2388,22 +2388,22 @@ describe('JobManager workflow methods', () => {
 			manager.shutdown();
 			await startProjectContainers(db, projectId);
 			await removeSeededContainerProject(db, 'cap-check-a');
-			await clearMaxActiveContainersForTest(db);
+			await clearContainerCapacityForTest(db);
 		});
 
 		it('a project whose container is already running is never capacity-blocked', async () => {
 			const manager = createJobManager();
 			// The project's own running container fills the single slot — but a run
 			// into it needs no NEW container, so it must pass.
-			await setMaxActiveContainersForTest(db, 1);
+			await setContainerCapacityForTest(db, 1);
 			expect(await (manager as any).isContainerCapacityBlocked(projectId)).toBe(false);
 			manager.shutdown();
-			await clearMaxActiveContainersForTest(db);
+			await clearContainerCapacityForTest(db);
 		});
 
 		it('pending lazy-starts hold a slot and let same-project dispatches piggyback', async () => {
 			const manager = createJobManager();
-			await setMaxActiveContainersForTest(db, 1);
+			await setContainerCapacityForTest(db, 1);
 			await stopProjectContainers(db, projectId);
 			(manager as any).acquirePendingContainerStart(projectId);
 
@@ -2421,12 +2421,12 @@ describe('JobManager workflow methods', () => {
 
 			manager.shutdown();
 			await startProjectContainers(db, projectId);
-			await clearMaxActiveContainersForTest(db);
+			await clearContainerCapacityForTest(db);
 		});
 
 		it('re-queues a wakeup when the container limit is reached', async () => {
 			const manager = createJobManager();
-			await setMaxActiveContainersForTest(db, 1);
+			await setContainerCapacityForTest(db, 1);
 			await stopProjectContainers(db, projectId);
 			await seedRunningContainerProject(db, 'cap-filler-requeue');
 
@@ -2449,7 +2449,7 @@ describe('JobManager workflow methods', () => {
 			manager.shutdown();
 			await startProjectContainers(db, projectId);
 			await removeSeededContainerProject(db, 'cap-filler-requeue');
-			await clearMaxActiveContainersForTest(db);
+			await clearContainerCapacityForTest(db);
 			await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [wakeupId]);
 		});
 
@@ -2512,9 +2512,9 @@ describe('JobManager workflow methods', () => {
 			// would be asserting the cap, not the per-agent question under test.
 			const { getActiveContainers } = await import('../src/services/run-concurrency');
 			const active = await getActiveContainers(db);
-			await setMaxActiveContainersForTest(db, active.runningContainers + 1);
+			await setContainerCapacityForTest(db, active.runningContainers + 1);
 			expect(await (manager as any).isContainerCapacityBlocked(projectBId)).toBe(false);
-			await clearMaxActiveContainersForTest(db);
+			await clearContainerCapacityForTest(db);
 
 			manager.shutdown();
 			// Project B lives in its own team, so it cannot interfere with project A's

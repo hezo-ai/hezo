@@ -1,6 +1,6 @@
 import { ContainerStatus, HeartbeatRunStatus } from '@hezo/shared';
 import type { Db } from '../db/database';
-import { getMaxActiveContainers } from '../lib/system-meta';
+import { getDefaultRamCapPerContainerGb, getMaxContainerMemoryGb } from '../lib/system-meta';
 import { POOL_DISK_CEILING_BYTES } from './sandbox/pool';
 
 /**
@@ -30,19 +30,23 @@ export async function isTaskBusyInDb(db: Db, taskId: string): Promise<boolean> {
 }
 
 export interface ActiveContainers {
-	/** Configured (or host-memory-computed) ceiling on running containers. */
-	limit: number;
+	/** Configured (or host-memory-computed) ceiling on total container memory, in GB. */
+	budgetGb: number;
 	/**
-	 * Containers running instance-wide, counted as **containers** rather than as
-	 * projects-with-a-container.
+	 * Memory every running container has been promised, in GB, instance-wide.
 	 *
-	 * The two were the same number only while a project had exactly one
-	 * container. The cap is a memory guarantee - every container is memory-capped,
-	 * so total demand is bounded at `N x cap` - and that arithmetic is over
-	 * containers, so the moment a project can hold several, counting projects
-	 * under-counts and over-subscribes the host.
+	 * Summed from what each container actually asked for - its project's
+	 * `memory_limit_gib`, else the instance default - rather than counted. A count
+	 * bounds memory only while every container is the same size, and the
+	 * per-project override exists precisely so they are not: under a count, one
+	 * project raising its cap to 4 GB silently doubles its share of a host sized
+	 * for 2 GB containers.
+	 *
+	 * There is deliberately no container *count* here, derived or otherwise. How
+	 * many containers fit depends on the mix of their sizes, so the number is not
+	 * stable enough to mean anything to an operator or to gate on.
 	 */
-	runningContainers: number;
+	usedMemoryGb: number;
 	/**
 	 * Projects that can serve another run **without starting a container**.
 	 *
@@ -65,14 +69,19 @@ export interface ActiveContainers {
  * under-counting a capacity gate over-subscribes the host.
  */
 export async function getActiveContainers(db: Db): Promise<ActiveContainers> {
-	const [limit, counted, spare] = await Promise.all([
-		getMaxActiveContainers(db),
-		db.query<{ n: number }>(
-			`SELECT COUNT(*)::int AS n FROM (
-			   SELECT container_id FROM projects
+	const [budgetGb, defaultCapGb, running, spare] = await Promise.all([
+		getMaxContainerMemoryGb(db),
+		getDefaultRamCapPerContainerGb(db),
+		db.query<{ project_id: string }>(
+			// The UNION is keyed on the engine's own container id so a container
+			// recorded in both representations is counted once; the project it
+			// belongs to is carried through because that is where its memory cap
+			// lives.
+			`SELECT project_id FROM (
+			   SELECT id AS project_id, container_id FROM projects
 			    WHERE container_id IS NOT NULL AND container_status = $1::container_status
 			   UNION
-			   SELECT container_id FROM container_pool_members
+			   SELECT project_id, container_id FROM container_pool_members
 			    WHERE state IN ('creating', 'idle', 'busy')
 			 ) AS running`,
 			[ContainerStatus.Running],
@@ -93,11 +102,45 @@ export async function getActiveContainers(db: Db): Promise<ActiveContainers> {
 			[ContainerStatus.Running, POOL_DISK_CEILING_BYTES],
 		),
 	]);
+	// One query for the overrides rather than one per container: the set of
+	// distinct projects here is small, and a per-row lookup would make this gate
+	// cost grow with the fleet it is gating.
+	const overrides = await loadProjectMemoryCaps(db, new Set(running.rows.map((r) => r.project_id)));
+	let usedMemoryGb = 0;
+	for (const row of running.rows) {
+		usedMemoryGb += overrides.get(row.project_id) ?? defaultCapGb;
+	}
 	return {
-		limit,
-		runningContainers: counted.rows[0]?.n ?? 0,
+		budgetGb,
+		usedMemoryGb,
 		projectsWithSpareContainer: new Set(spare.rows.map((r) => r.project_id)),
 	};
+}
+
+/** Per-project memory caps for the given projects; absent means "inherits the default". */
+async function loadProjectMemoryCaps(
+	db: Db,
+	projectIds: ReadonlySet<string>,
+): Promise<Map<string, number>> {
+	if (projectIds.size === 0) return new Map();
+	const res = await db.query<{ id: string; memory_limit_gib: number | null }>(
+		`SELECT id, memory_limit_gib FROM projects WHERE id = ANY($1::uuid[])`,
+		[[...projectIds]],
+	);
+	const out = new Map<string, number>();
+	for (const row of res.rows) {
+		if (row.memory_limit_gib !== null) out.set(row.id, Number(row.memory_limit_gib));
+	}
+	return out;
+}
+
+/** What one more container in this project would consume, in GB. */
+export async function projectContainerMemoryGb(db: Db, projectId: string): Promise<number> {
+	const res = await db.query<{ memory_limit_gib: number | null }>(
+		`SELECT memory_limit_gib FROM projects WHERE id = $1`,
+		[projectId],
+	);
+	return res.rows[0]?.memory_limit_gib ?? (await getDefaultRamCapPerContainerGb(db));
 }
 
 /**
@@ -113,9 +156,9 @@ export async function getActiveContainers(db: Db): Promise<ActiveContainers> {
  * container genuinely free to take the run consumes no new slot.
  */
 export async function isContainerCapacityBlockedInDb(db: Db, projectId: string): Promise<boolean> {
-	const { limit, runningContainers, projectsWithSpareContainer } = await getActiveContainers(db);
+	const { budgetGb, usedMemoryGb, projectsWithSpareContainer } = await getActiveContainers(db);
 	if (projectsWithSpareContainer.has(projectId)) return false;
-	return runningContainers >= limit;
+	return usedMemoryGb + (await projectContainerMemoryGb(db, projectId)) > budgetGb;
 }
 
 /**
