@@ -118,8 +118,9 @@ export interface AppConfig {
 	dataDir: string;
 	webUrl: string;
 	/**
-	 * Port the HTTP server listens on — used to build the absolute
-	 * `host.docker.internal:<port>` asset download URLs handed to agents.
+	 * Port the HTTP server listens on - the address the tunnel's `mcp` leg
+	 * forwards to, so a container reaches Hezo on its own loopback without ever
+	 * naming the host.
 	 */
 	serverPort?: number;
 	/** A master key was configured at startup (env/CLI), so the instance auto-unlocks after a restart. */

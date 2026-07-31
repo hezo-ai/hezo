@@ -3,10 +3,10 @@
  * container.
  *
  * A container needs to reach three things on the Hezo host: the egress proxy,
- * the MCP endpoint (plus signed asset URLs), and the SSH agent. Today all three
- * ride the `host.docker.internal` hostname, which only works because the
- * container is on the same machine. The tunnel replaces that with a multiplexed
- * byte channel that Hezo **dials into** the container, so:
+ * the MCP endpoint (plus signed asset URLs), and the SSH agent. Each used to
+ * ride the `host.docker.internal` hostname, which works only while the
+ * container is on the same machine. All three now ride a multiplexed byte
+ * channel that Hezo **dials into** the container, so:
  *
  * - the Hezo instance never has to be reachable from the internet (outbound to
  *   the provider is enough - no public hostname, no inbound port, no NAT
