@@ -111,5 +111,14 @@
 	"comment.runFailedWithError": "Lauf für {agent} fehlgeschlagen: {error}",
 	"comment.runTimedOutWithError": "Zeitüberschreitung beim Lauf für {agent}: {error}",
 	"comment.runAgentFallback": "einen Agenten",
-	"comment.repoDesignated": "Repository {repo} wurde als zugewiesenes Repository festgelegt."
+	"comment.repoDesignated": "Repository {repo} wurde als zugewiesenes Repository festgelegt.",
+	"attachments.dragHint": "Dateien zum Anhängen hierher ziehen",
+	"attachments.supportedTypes": "Unterstützte Dateitypen",
+	"attachments.maxSize": "Max. {size} pro Datei",
+	"attachments.category.images": "Bilder:",
+	"attachments.category.documents": "Dokumente:",
+	"attachments.category.audio": "Audio:",
+	"attachments.category.video": "Video:",
+	"attachments.category.archives": "Archive:",
+	"attachments.category.scripts": "Skripte & Daten:"
 }

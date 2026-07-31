@@ -111,5 +111,14 @@
 	"comment.runFailedWithError": "{agent} の実行が失敗しました: {error}",
 	"comment.runTimedOutWithError": "{agent} の実行がタイムアウトしました: {error}",
 	"comment.runAgentFallback": "エージェント",
-	"comment.repoDesignated": "リポジトリ {repo} が指定リポジトリに設定されました。"
+	"comment.repoDesignated": "リポジトリ {repo} が指定リポジトリに設定されました。",
+	"attachments.dragHint": "ファイルをドラッグ＆ドロップして添付します",
+	"attachments.supportedTypes": "対応している添付ファイルの種類",
+	"attachments.maxSize": "1 ファイルにつき最大 {size}",
+	"attachments.category.images": "画像：",
+	"attachments.category.documents": "ドキュメント：",
+	"attachments.category.audio": "音声：",
+	"attachments.category.video": "動画：",
+	"attachments.category.archives": "アーカイブ：",
+	"attachments.category.scripts": "スクリプト・データ："
 }

@@ -209,6 +209,7 @@ test.describe('Task Comment Attachments', () => {
 			expect(text).toContain('PDF');
 			expect(text).toContain('MP3');
 			expect(text).toContain('MP4');
+			expect(text).toContain('ZIP');
 			expect(text).toContain('10');
 		}).toPass({ timeout: 15000 });
 

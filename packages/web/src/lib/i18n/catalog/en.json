@@ -111,5 +111,14 @@
 	"comment.runFailedWithError": "Run for {agent} failed: {error}",
 	"comment.runTimedOutWithError": "Run for {agent} timed out: {error}",
 	"comment.runAgentFallback": "agent",
-	"comment.repoDesignated": "Repository {repo} set as the designated repo."
+	"comment.repoDesignated": "Repository {repo} set as the designated repo.",
+	"attachments.dragHint": "Drag and drop files to attach",
+	"attachments.supportedTypes": "Supported attachment types",
+	"attachments.maxSize": "Max {size} per file",
+	"attachments.category.images": "Images:",
+	"attachments.category.documents": "Documents:",
+	"attachments.category.audio": "Audio:",
+	"attachments.category.video": "Video:",
+	"attachments.category.archives": "Archives:",
+	"attachments.category.scripts": "Scripts & data:"
 }

@@ -111,5 +111,14 @@
 	"comment.runFailedWithError": "{agent} 실행이 실패했어요: {error}",
 	"comment.runTimedOutWithError": "{agent} 실행이 시간을 초과했어요: {error}",
 	"comment.runAgentFallback": "에이전트",
-	"comment.repoDesignated": "저장소 {repo}이(가) 지정 저장소로 설정되었어요."
+	"comment.repoDesignated": "저장소 {repo}이(가) 지정 저장소로 설정되었어요.",
+	"attachments.dragHint": "파일을 끌어다 놓아 첨부하세요",
+	"attachments.supportedTypes": "지원되는 첨부 파일 형식",
+	"attachments.maxSize": "파일당 최대 {size}",
+	"attachments.category.images": "이미지:",
+	"attachments.category.documents": "문서:",
+	"attachments.category.audio": "오디오:",
+	"attachments.category.video": "동영상:",
+	"attachments.category.archives": "압축 파일:",
+	"attachments.category.scripts": "스크립트 및 데이터:"
 }

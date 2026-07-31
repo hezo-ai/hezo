@@ -111,5 +111,14 @@
 	"comment.runFailedWithError": "{agent} 的运行失败：{error}",
 	"comment.runTimedOutWithError": "{agent} 的运行超时：{error}",
 	"comment.runAgentFallback": "代理",
-	"comment.repoDesignated": "仓库 {repo} 已设为指定仓库。"
+	"comment.repoDesignated": "仓库 {repo} 已设为指定仓库。",
+	"attachments.dragHint": "拖放文件即可添加附件",
+	"attachments.supportedTypes": "支持的附件类型",
+	"attachments.maxSize": "每个文件最大 {size}",
+	"attachments.category.images": "图片：",
+	"attachments.category.documents": "文档：",
+	"attachments.category.audio": "音频：",
+	"attachments.category.video": "视频：",
+	"attachments.category.archives": "压缩包：",
+	"attachments.category.scripts": "脚本与数据："
 }

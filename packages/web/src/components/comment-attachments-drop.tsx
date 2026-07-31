@@ -1,7 +1,16 @@
+import { ATTACHMENT_MAX_BYTES } from '@hezo/shared';
 import type { ReactNode } from 'react';
 import { useFileAttachments } from '../hooks/use-file-attachments';
 import { useUploadAttachment } from '../hooks/use-upload-attachment';
-import { ATTACHMENT_ACCEPT, AttachmentChips, FileDropZone, UploadButton } from './file-attachments';
+import { useI18n } from '../lib/i18n';
+import {
+	ATTACHMENT_ACCEPT,
+	ATTACHMENT_CATEGORIES,
+	AttachmentChips,
+	FileDropZone,
+	formatCategoryExtensions,
+	UploadButton,
+} from './file-attachments';
 import { InfoTooltip } from './ui/info-tooltip';
 
 interface Props {
@@ -33,6 +42,7 @@ export function CommentAttachmentsDrop({
 	fill,
 	children,
 }: Props) {
+	const { t } = useI18n();
 	const upload = useUploadAttachment(projectId, taskId);
 	const {
 		isDragActive,
@@ -71,26 +81,25 @@ export function CommentAttachmentsDrop({
 						{/* Touch devices can't drag files, so the hint is desktop-only; the
 						    Upload button carries attachment on mobile. */}
 						<span className="hidden sm:inline" data-testid="comment-attachment-hint-text">
-							Drag and drop files to attach
+							{t('attachments.dragHint')}
 						</span>
 						<InfoTooltip
-							label="Supported attachment types"
+							label={t('attachments.supportedTypes')}
 							data-testid="comment-attachment-hint-info"
 							content={
 								<div className="space-y-1">
-									<div>
-										<strong>Images:</strong> PNG, JPG, GIF
+									{/* Categories and their extension lists are derived from the
+									    shared allowlist, so a new format needs no edit here. */}
+									{ATTACHMENT_CATEGORIES.map((category) => (
+										<div key={category.labelKey}>
+											<strong>{t(category.labelKey)}</strong> {formatCategoryExtensions(category)}
+										</div>
+									))}
+									<div className="pt-1 text-text-3">
+										{t('attachments.maxSize', {
+											size: `${ATTACHMENT_MAX_BYTES / (1024 * 1024)} MB`,
+										})}
 									</div>
-									<div>
-										<strong>Documents:</strong> PDF, TXT
-									</div>
-									<div>
-										<strong>Audio:</strong> MP3, WAV, AAC, OPUS
-									</div>
-									<div>
-										<strong>Video:</strong> MP4, WEBM, MOV
-									</div>
-									<div className="pt-1 text-text-3">Max 10&nbsp;MB per file</div>
 								</div>
 							}
 						/>

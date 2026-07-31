@@ -24,7 +24,8 @@ to navigate: related files for one deliverable grouped in a well-named folder, d
 names where order matters, and a dedicated folder (such as `scripts/`) for reusable helper
 scripts that future agent runs can pick up and reuse. Script and text files (`.sh`, `.py`,
 `.js`, `.ts`, `.json`, `.csv`, `.yaml`/`.yml`) are storable assets, kept and served as plain
-text.
+text. Archives (`.zip`, `.tar`, `.tar.gz`/`.tgz`, `.7z`, `.rar`) are storable too, which is
+the way to hand over a whole bundle of files as one item.
 
 Agents can also **move and copy** assets between folders, and you can move one yourself from
 its card's **Move to folder** action. Note that moving an asset changes its `assets/<path>`
@@ -33,13 +34,18 @@ reference - older comments citing the old path show it as plain text.
 ## Uploads
 
 Drag files onto the **Assets** page to add them to the library: mockups, screenshots,
-diagrams, images, PDFs, scripts, audio, or video, up to 10 MB each. Uploads are always
-individual files - folders can't be uploaded from your computer; files simply land in
+diagrams, images, PDFs, scripts, audio, video, or an archive, up to 10 MB each. Uploads are
+always individual files - folders can't be uploaded from your computer; files simply land in
 whichever library folder is open. You can also attach files directly to a task or a comment -
 drag them onto the comment box or use its **Upload** button - so a screenshot or a
 reference document sits right next to the discussion it belongs to -
 those attachments are filed in the library under an **uploads** folder, in a subfolder named
 after the task, so each task's files stay grouped without any manual sorting.
+
+Zipping a folder is how you upload one: an archive counts as a single file, so a design
+export or a set of logs travels as one attachment. Hezo never opens an archive - it is stored
+and handed back exactly as you uploaded it, and clicking it downloads rather than previewing.
+An agent that needs what's inside downloads it into its own container and unpacks it there.
 
 ## Agent-generated assets
 

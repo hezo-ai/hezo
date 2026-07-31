@@ -111,5 +111,14 @@
 	"comment.runFailedWithError": "L'exécution pour {agent} a échoué : {error}",
 	"comment.runTimedOutWithError": "L'exécution pour {agent} a expiré : {error}",
 	"comment.runAgentFallback": "un agent",
-	"comment.repoDesignated": "Dépôt {repo} défini comme dépôt désigné."
+	"comment.repoDesignated": "Dépôt {repo} défini comme dépôt désigné.",
+	"attachments.dragHint": "Glissez-déposez des fichiers pour les joindre",
+	"attachments.supportedTypes": "Types de fichiers pris en charge",
+	"attachments.maxSize": "Max. {size} par fichier",
+	"attachments.category.images": "Images :",
+	"attachments.category.documents": "Documents :",
+	"attachments.category.audio": "Audio :",
+	"attachments.category.video": "Vidéo :",
+	"attachments.category.archives": "Archives :",
+	"attachments.category.scripts": "Scripts et données :"
 }
