@@ -61,5 +61,21 @@
 	"theme.label": "테마",
 	"theme.light": "라이트",
 	"theme.dark": "다크",
-	"theme.system": "시스템"
+	"theme.system": "시스템",
+	"comment.linkedFrom": "{actor} 님이 {source}에서 연결했어요",
+	"comment.linkedFromComment": "{actor} 님이 {source}의 {comment}에서 연결했어요",
+	"comment.linkedFromCommentLabel": "댓글",
+	"comment.statusChanged": "{actor} 님이 상태를 {from}에서 {to}(으)로 변경했어요",
+	"comment.autoUnblocked": "{trigger}이(가) 완료되어 자동으로 차단이 해제되었어요",
+	"comment.autoUnblockedFallback": "차단 중인 작업",
+	"comment.parentMoved": "{actor} 님이 이 작업을 {from}에서 {to}(으)로 옮겼어요",
+	"comment.parentNested": "{actor} 님이 이 작업을 {to} 하위로 옮겼어요",
+	"comment.parentPromotedFrom": "{actor} 님이 이 작업을 최상위로 올렸어요 ({from} 하위였어요)",
+	"comment.parentPromoted": "{actor} 님이 이 작업을 최상위로 올렸어요",
+	"comment.runFailed": "{agent} 실행이 실패했어요.",
+	"comment.runTimedOut": "{agent} 실행이 시간을 초과했어요.",
+	"comment.runFailedWithError": "{agent} 실행이 실패했어요: {error}",
+	"comment.runTimedOutWithError": "{agent} 실행이 시간을 초과했어요: {error}",
+	"comment.runAgentFallback": "에이전트",
+	"comment.repoDesignated": "저장소 {repo}이(가) 지정 저장소로 설정되었어요."
 }

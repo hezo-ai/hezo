@@ -2921,6 +2921,7 @@ export function registerTools(
 					authorMemberId,
 					authorApiKeyId,
 					wsManager,
+					{ kind: 'comment', commentPublicId: row.public_id },
 				).catch((e) => log.error('Failed to record task links from comment:', e)),
 			);
 			// An agent that addresses a teammate by bold/bare name (no @ prefix)
@@ -3055,6 +3056,7 @@ export function registerTools(
 					auth.memberId,
 					apiKeyIdFromAuth(auth),
 					wsManager,
+					{ kind: 'comment', commentPublicId: r.rows[0].public_id },
 				).catch((e) => log.error('Failed to record task links from edited comment:', e)),
 			);
 			const [teammateWarning, passiveWarning, narratedWarning, backtickWarning] = await Promise.all(

@@ -61,5 +61,21 @@
 	"theme.label": "主题",
 	"theme.light": "浅色",
 	"theme.dark": "深色",
-	"theme.system": "跟随系统"
+	"theme.system": "跟随系统",
+	"comment.linkedFrom": "{actor} 从 {source} 建立了关联",
+	"comment.linkedFromComment": "{actor} 从 {source} 的{comment}建立了关联",
+	"comment.linkedFromCommentLabel": "评论",
+	"comment.statusChanged": "{actor} 将状态从 {from} 更改为 {to}",
+	"comment.autoUnblocked": "{trigger} 关闭后自动解除阻塞",
+	"comment.autoUnblockedFallback": "阻塞任务",
+	"comment.parentMoved": "{actor} 将此任务从 {from} 移动到 {to}",
+	"comment.parentNested": "{actor} 将此任务置于 {to} 之下",
+	"comment.parentPromotedFrom": "{actor} 将此任务提升到顶层（原先位于 {from} 之下）",
+	"comment.parentPromoted": "{actor} 将此任务提升到顶层",
+	"comment.runFailed": "{agent} 的运行失败。",
+	"comment.runTimedOut": "{agent} 的运行超时。",
+	"comment.runFailedWithError": "{agent} 的运行失败：{error}",
+	"comment.runTimedOutWithError": "{agent} 的运行超时：{error}",
+	"comment.runAgentFallback": "代理",
+	"comment.repoDesignated": "仓库 {repo} 已设为指定仓库。"
 }

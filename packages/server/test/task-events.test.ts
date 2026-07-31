@@ -41,7 +41,10 @@ interface CommentRow {
 		actor_id?: string | null;
 		source_task_id?: string;
 		source_identifier?: string;
+		source_kind?: string;
+		source_comment_public_id?: string | null;
 	};
+	public_id?: string;
 	author_member_id: string | null;
 	created_at: string;
 }
@@ -396,7 +399,8 @@ describe('task link system events', () => {
 		expect(links).toHaveLength(1);
 		expect(links[0].content.source_task_id).toBe(source.id);
 		expect(links[0].content.source_identifier).toBe(source.identifier);
-		expect(links[0].content.text).toContain(`Linked from ${source.identifier}`);
+		// The mention came from a comment, so the sentence names that origin.
+		expect(links[0].content.text).toContain(`Linked from a comment on ${source.identifier}`);
 	});
 
 	it('does not create a second link comment for repeat mentions from the same source', async () => {
@@ -413,6 +417,48 @@ describe('task link system events', () => {
 
 		const links = await systemComments(target.id, 'task_link');
 		expect(links).toHaveLength(1);
+	});
+
+	it('records which comment the mention was written in, by its anchor', async () => {
+		const target = await createTask('Target with origin');
+		const source = await createTask('Source with origin');
+
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${source.id}/comments`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				content_type: 'text',
+				content: { text: `root cause tracked in ${target.identifier}` },
+			}),
+		});
+		expect(res.status).toBe(201);
+
+		// The recorded anchor has to be the real public_id of the comment that
+		// carried the mention, since that is what the timeline scrolls to.
+		const sourceComments = await listComments(source.id);
+		const mentioning = sourceComments.find((c) =>
+			(c.content?.text ?? '').includes(target.identifier),
+		);
+		expect(mentioning).toBeTruthy();
+
+		const links = await systemComments(target.id, 'task_link');
+		expect(links).toHaveLength(1);
+		expect(links[0].content.source_kind).toBe('comment');
+		expect(links[0].content.source_comment_public_id).toBe(mentioning?.public_id);
+		expect(links[0].content.text).toContain(`Linked from a comment on ${source.identifier}`);
+	});
+
+	it('marks a description-sourced link as such, with no comment anchor', async () => {
+		const target = await createTask('Target desc origin');
+		const source = await createTask('Source desc origin', `tracked in ${target.identifier}`);
+
+		const links = await systemComments(target.id, 'task_link');
+		const fromSource = links.find((l) => l.content.source_task_id === source.id);
+		expect(fromSource?.content.source_kind).toBe('description');
+		expect(fromSource?.content.source_comment_public_id).toBeNull();
+		// The sentence stays exactly as it always was when there is no sub-location.
+		expect(fromSource?.content.text).toContain(`Linked from ${source.identifier}`);
+		expect(fromSource?.content.text).not.toContain('a comment on');
 	});
 
 	it('records a link from task creation when the description mentions another task', async () => {

@@ -61,5 +61,21 @@
 	"theme.label": "Thema",
 	"theme.light": "Licht",
 	"theme.dark": "Donker",
-	"theme.system": "Systeem"
+	"theme.system": "Systeem",
+	"comment.linkedFrom": "Gelinkt vanuit {source} door {actor}",
+	"comment.linkedFromComment": "Gelinkt vanuit {comment} op {source} door {actor}",
+	"comment.linkedFromCommentLabel": "een reactie",
+	"comment.statusChanged": "{actor} heeft de status gewijzigd van {from} naar {to}",
+	"comment.autoUnblocked": "Automatisch gedeblokkeerd nadat {trigger} werd gesloten",
+	"comment.autoUnblockedFallback": "een blokkerende taak",
+	"comment.parentMoved": "{actor} heeft deze taak verplaatst van {from} naar {to}",
+	"comment.parentNested": "{actor} heeft deze taak onder {to} geplaatst",
+	"comment.parentPromotedFrom": "{actor} heeft deze taak naar het hoogste niveau verplaatst (stond onder {from})",
+	"comment.parentPromoted": "{actor} heeft deze taak naar het hoogste niveau verplaatst",
+	"comment.runFailed": "Uitvoering voor {agent} is mislukt.",
+	"comment.runTimedOut": "Uitvoering voor {agent} is verlopen.",
+	"comment.runFailedWithError": "Uitvoering voor {agent} is mislukt: {error}",
+	"comment.runTimedOutWithError": "Uitvoering voor {agent} is verlopen: {error}",
+	"comment.runAgentFallback": "een agent",
+	"comment.repoDesignated": "Repository {repo} ingesteld als aangewezen repository."
 }

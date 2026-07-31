@@ -15,6 +15,7 @@ import type React from 'react';
 import { expect, test } from 'vitest';
 import type { CommentDataOf } from '../src/components/comment-renderers/comment-data';
 import { SystemComment } from '../src/components/comment-renderers/system-comment';
+import { I18nProvider } from '../src/lib/i18n';
 
 function renderNode(node: React.ReactNode) {
 	const rootRoute = createRootRoute({ component: () => node });
@@ -22,8 +23,14 @@ function renderNode(node: React.ReactNode) {
 		routeTree: rootRoute,
 		history: createMemoryHistory({ initialEntries: ['/'] }),
 	});
-	// biome-ignore lint/suspicious/noExplicitAny: opaque router type at the test boundary.
-	return render(<RouterProvider router={router as any} />);
+	return render(
+		// The event sentences resolve through the message catalog, so these need a
+		// provider just as main.tsx supplies one above the router.
+		<I18nProvider>
+			{/* biome-ignore lint/suspicious/noExplicitAny: opaque router type at the test boundary. */}
+			<RouterProvider router={router as any} />
+		</I18nProvider>,
+	);
 }
 
 type Content = CommentDataOf<'system'>['content'];
@@ -289,6 +296,61 @@ test('task_link: falls back to comment.author_name then "Admin" when actor_name 
 		'cur-proj',
 	);
 	expect((await findByText(/Linked from/)).textContent).toContain('CommentAuthor');
+});
+
+test('task_link from a comment deep-links to that comment as well as the task', async () => {
+	const { findByTestId } = renderSystem(
+		comment({
+			kind: 'task_link',
+			source_identifier: 'SRC-5',
+			source_project_slug: 'src-proj',
+			source_kind: 'comment',
+			source_comment_public_id: '20260730120000',
+			actor_name: 'Captain',
+			actor_kind: 'agent',
+			actor_slug: 'captain',
+		}),
+		'cur-proj',
+	);
+	const link = (await findByTestId('task-link-source-comment')) as HTMLAnchorElement;
+	expect(link.textContent).toBe('a comment');
+	expect(link.getAttribute('href')).toContain('/projects/src-proj/tasks/src-5');
+	expect(link.getAttribute('href')).toContain('#comment-20260730120000');
+	// The task itself stays reachable - the clause is added, nothing is replaced.
+	const source = (await findByTestId('task-link-source')) as HTMLAnchorElement;
+	expect(source.getAttribute('href')).toContain('/projects/src-proj/tasks/src-5');
+});
+
+test('task_link from a description renders no comment link', async () => {
+	const { findByText, queryByTestId } = renderSystem(
+		comment({
+			kind: 'task_link',
+			source_identifier: 'SRC-6',
+			source_project_slug: 'src-proj',
+			source_kind: 'description',
+			source_comment_public_id: null,
+			actor_name: 'Captain',
+		}),
+		'cur-proj',
+	);
+	expect((await findByText(/Linked from/)).textContent).toContain('SRC-6');
+	expect(queryByTestId('task-link-source-comment')).toBeNull();
+});
+
+test('task_link recorded before the origin was tracked renders as it always did', async () => {
+	// Rows written by an older build carry neither new field. They must keep the
+	// original one-clause sentence rather than degrading to a broken link.
+	const { findByText, queryByTestId } = renderSystem(
+		comment({
+			kind: 'task_link',
+			source_identifier: 'SRC-7',
+			source_project_slug: 'src-proj',
+			actor_name: 'Captain',
+		}),
+		'cur-proj',
+	);
+	expect((await findByText(/Linked from/)).textContent).toContain('Linked from SRC-7 by Captain');
+	expect(queryByTestId('task-link-source-comment')).toBeNull();
 });
 
 test('task_link without projectId does NOT use the task_link branch (renders generic fallback)', async () => {

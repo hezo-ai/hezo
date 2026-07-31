@@ -61,5 +61,21 @@
 	"theme.label": "Thème",
 	"theme.light": "Clair",
 	"theme.dark": "Sombre",
-	"theme.system": "Système"
+	"theme.system": "Système",
+	"comment.linkedFrom": "Lié depuis {source} par {actor}",
+	"comment.linkedFromComment": "Lié depuis {comment} sur {source} par {actor}",
+	"comment.linkedFromCommentLabel": "un commentaire",
+	"comment.statusChanged": "{actor} a changé le statut de {from} à {to}",
+	"comment.autoUnblocked": "Débloqué automatiquement après la clôture de {trigger}",
+	"comment.autoUnblockedFallback": "une tâche bloquante",
+	"comment.parentMoved": "{actor} a déplacé cette tâche de {from} vers {to}",
+	"comment.parentNested": "{actor} a imbriqué cette tâche sous {to}",
+	"comment.parentPromotedFrom": "{actor} a promu cette tâche au niveau supérieur (elle était sous {from})",
+	"comment.parentPromoted": "{actor} a promu cette tâche au niveau supérieur",
+	"comment.runFailed": "L'exécution pour {agent} a échoué.",
+	"comment.runTimedOut": "L'exécution pour {agent} a expiré.",
+	"comment.runFailedWithError": "L'exécution pour {agent} a échoué : {error}",
+	"comment.runTimedOutWithError": "L'exécution pour {agent} a expiré : {error}",
+	"comment.runAgentFallback": "un agent",
+	"comment.repoDesignated": "Dépôt {repo} défini comme dépôt désigné."
 }
