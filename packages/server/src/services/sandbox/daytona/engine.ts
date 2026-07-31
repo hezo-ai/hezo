@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { logger } from '../../../logger';
 import { parseHezoProcessList } from '../../docker';
+import { resolveDigestPinnedRef } from '../image-ref';
 import {
 	buildKillByEnvMarkerScript,
 	buildKillPidsScript,
@@ -119,11 +120,17 @@ export class DaytonaEngine implements ContainerEngine {
 			? Math.max(1, Math.ceil(config.HostConfig.Memory / 1024 ** 3))
 			: undefined;
 
+		// Daytona keys its build cache on a hash of the Dockerfile *text*, so a
+		// tag-pinned reference is byte-identical forever: the key never moves and
+		// the provider keeps serving the snapshot it first built. Pinning the
+		// digest is what makes that cache correct, not a nicety.
+		const image = await resolveDigestPinnedRef(config.Image);
+
 		const sandbox = await this.client.createSandbox({
-			// One line, and digest-pinned by the caller. Daytona keys its build
-			// cache on a hash of this text, so a tag-pinned reference would never
-			// invalidate and would serve a stale toolchain indefinitely.
-			dockerfileContent: `FROM ${config.Image}\n`,
+			dockerfileContent: `FROM ${image}\n`,
+			// The *requested* image is recorded, not the resolved digest, so
+			// `inspectContainer().Config.Image` answers the same question it
+			// answers on Docker.
 			labels: { ...config.Labels, [NAME_LABEL]: name, [IMAGE_LABEL]: config.Image },
 			env,
 			cpu: DEFAULT_CPU,

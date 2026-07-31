@@ -989,6 +989,26 @@ and defeat cap enforcement). There is no container log stream, and nothing usefu
 PID 1 is `sleep infinity`, so the content the UI shows is provisioning and lifecycle output
 Hezo produces itself.
 
+**Digest resolution** (`sandbox/image-ref.ts`) is the generic OCI registry manifest lookup
+that makes the pin possible: a HEAD on the manifest, exchanging a `WWW-Authenticate: Bearer`
+challenge for an anonymous pull token when the registry asks for one, reading the digest off
+the `Docker-Content-Digest` header. It caches with a TTL and a cap, and **falls back to the
+tag** rather than failing when the registry cannot be reached - an offline instance, a
+private registry, or a locally-built tag that exists in no registry at all would otherwise
+be unable to start a container over a cache-freshness concern. The fallback logs what it
+costs, because the failure it re-admits is otherwise invisible.
+
+**The orphan sweep** (`sandbox/orphan-reaper.ts`, run every 10 minutes by `JobManager`)
+destroys containers this instance created that no project row references any more. Boot
+fails every in-flight run and never reattaches, so a crash, a hard kill or a lost provider
+response strands containers with no owner - harmless on local Docker, but billed for as long
+as nobody looks on a managed backend, which fails as a cost rather than as an error and so
+needs a sweep rather than an alert. Every container Hezo creates carries a `hezo.instance`
+label naming the instance, and the sweep queries on it: several Hezo instances can share one
+provider account, so a broader query would destroy another instance's live sandboxes. The
+pass is bounded and states what it deferred, since a silently-truncated sweep reads as
+"everything was cleaned up" when it was not.
+
 Work reaches an agent through the **wakeup → job-manager → agent-runner** pipeline.
 
 **Wakeups.** Every trigger is an `agent_wakeup_requests` row. Sources: `heartbeat`

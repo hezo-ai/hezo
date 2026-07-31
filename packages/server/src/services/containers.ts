@@ -36,7 +36,9 @@ import { resolveAgentBaseImage } from './image-registry';
 import type { LogStreamBroker } from './log-stream-broker';
 import { ensureProjectRepos } from './repo-sync';
 import { DOCKER_HOST_GATEWAY_ENTRY } from './sandbox/endpoints';
+import { INSTANCE_LABEL } from './sandbox/orphan-reaper';
 import { type BridgeRunnerArgs, type SshAgentServer, withProvisionBridge } from './ssh-agent';
+import { getOrCreateInstanceId } from './telemetry';
 import { createWakeup } from './wakeup';
 import {
 	CONTAINER_WORKSPACE_ROOT,
@@ -378,6 +380,10 @@ export async function provisionContainer(
 		const containerLabels: Record<string, string> = {
 			'hezo.team': teamSlug,
 			'hezo.project': project.slug,
+			// Names the instance that created it, so the orphan sweep can never
+			// destroy another instance's containers - several Hezo instances can
+			// share one managed-backend account.
+			[INSTANCE_LABEL]: await getOrCreateInstanceId(deps.db),
 		};
 		// Mark containers spawned by a test run so the test harness's cleanup can scope
 		// itself to them and never delete a developer's live dev-server containers.

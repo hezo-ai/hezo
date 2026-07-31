@@ -256,6 +256,17 @@ const CONTAINER_IDLE_STOP_CRON = process.env.HEZO_CONTAINER_IDLE_STOP_CRON ?? '1
  * tick continues where this one stopped. */
 const IDLE_STOP_BATCH_LIMIT = 10;
 const ORPHAN_DETECTION_CRON = process.env.HEZO_ORPHAN_DETECTION_CRON ?? '*/30 * * * * *';
+
+/**
+ * Orphaned-container sweep cadence: every 10 minutes. What it watches - a
+ * container this instance created that no project points at any more - only
+ * appears after a crash or a lost provider response, so a fast tick would burn
+ * provider API calls for nothing. It exists because on a managed backend an
+ * orphan bills until somebody notices, which fails as a cost rather than as an
+ * error and so needs a sweep rather than an alert.
+ */
+const ORPHAN_CONTAINER_SWEEP_CRON =
+	process.env.HEZO_ORPHAN_CONTAINER_SWEEP_CRON ?? '45 */10 * * * *';
 // The reactive budget pauses, which the heartbeat scheduler must not wake (the
 // budget-resume sweep lifts them back to `idle` once the window rolls over).
 // Disabled agents are filtered separately via `admin_status`. Postgres array
@@ -516,6 +527,11 @@ export class JobManager {
 			cron: CONTAINER_IDLE_STOP_CRON,
 			log: cronLog,
 			onTick: () => this.guarded('container-idle-stop', () => this.stopIdleContainers()),
+		});
+		this.cron.createJob('orphan-container-sweep', {
+			cron: ORPHAN_CONTAINER_SWEEP_CRON,
+			log: cronLog,
+			onTick: () => this.guarded('orphan-container-sweep', () => this.reapOrphanedContainers()),
 		});
 		this.cron.createJob('inbox-archive', {
 			cron: INBOX_ARCHIVE_CRON,
@@ -2841,6 +2857,34 @@ export class JobManager {
 		if (candidates.length > 0) {
 			log.debug(`Idle-container pass: ${stopped}/${candidates.length} candidate(s) stopped`);
 		}
+	}
+
+	/**
+	 * Destroy containers this instance created that no project references any
+	 * more. Boot fails every in-flight run and never reattaches, so a crash, a
+	 * hard kill or a lost provider response strands containers with no owner -
+	 * harmless on local Docker, but billed for as long as nobody looks on a
+	 * managed backend.
+	 *
+	 * The live set is read from `projects` rather than from the engine, so a
+	 * container is only ever destroyed when Hezo itself has forgotten it.
+	 */
+	private async reapOrphanedContainers(): Promise<void> {
+		const { db, docker } = this.deps;
+		if (!(await docker.ping())) {
+			log.debug('Container engine not reachable; skipping orphan sweep');
+			return;
+		}
+		const { reapOrphanedContainers } = await import('./sandbox/orphan-reaper');
+		const { getOrCreateInstanceId } = await import('./telemetry');
+		const live = await db.query<{ container_id: string }>(
+			`SELECT container_id FROM projects WHERE container_id IS NOT NULL`,
+		);
+		await reapOrphanedContainers(
+			docker,
+			await getOrCreateInstanceId(db),
+			new Set(live.rows.map((r) => r.container_id)),
+		);
 	}
 
 	private async handleContainerTransition(transition: ContainerTransition): Promise<void> {

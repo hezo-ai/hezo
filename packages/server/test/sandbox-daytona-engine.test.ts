@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
 	CreateSandboxSpec,
 	DaytonaApi,
 	DaytonaSandbox,
 } from '../src/services/sandbox/daytona/client';
 import { DaytonaEngine } from '../src/services/sandbox/daytona/engine';
+import { clearImageDigestCache } from '../src/services/sandbox/image-ref';
 
 interface Recorded {
 	creates: CreateSandboxSpec[];
@@ -73,6 +74,11 @@ function fakeApi(
 	return { api, rec, sandboxes };
 }
 
+afterEach(() => {
+	clearImageDigestCache();
+	vi.restoreAllMocks();
+});
+
 /** A running sandbox; the exec tests all target `sbx-1`. */
 const SBX: DaytonaSandbox = { id: 'sbx-1', state: 'started' };
 
@@ -88,6 +94,29 @@ describe('DaytonaEngine lifecycle', () => {
 		const { api, rec } = fakeApi();
 		await new DaytonaEngine(api).createContainer('hezo-p1', { ...CONFIG, HostConfig: {} });
 		expect(rec.creates[0].dockerfileContent).toBe('FROM ghcr.io/hezo-ai/agent-base@sha256:abc\n');
+	});
+
+	it('pins a tagged image to its digest before building', async () => {
+		// Daytona caches the build on a hash of the Dockerfile text, so a tag is
+		// byte-identical forever and the provider would keep serving the snapshot
+		// it first built - agents silently on an old toolchain.
+		const digest = 'sha256:c571976834e5ad497e3393231a83dd7a949f9218622812ff998cabb1f699f627';
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(
+				async () =>
+					new Response(null, {
+						status: 200,
+						headers: new Headers({ 'docker-content-digest': digest }),
+					}),
+			),
+		);
+		const { api, rec } = fakeApi();
+		await new DaytonaEngine(api).createContainer('hezo-p1', {
+			Image: 'ghcr.io/hezo-ai/agent-base:latest',
+			HostConfig: {},
+		});
+		expect(rec.creates[0].dockerfileContent).toBe(`FROM ghcr.io/hezo-ai/agent-base@${digest}\n`);
 	});
 
 	it('disables auto-delete so a stopped sandbox survives to be resumed', async () => {
