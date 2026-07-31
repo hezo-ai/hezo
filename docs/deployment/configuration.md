@@ -224,6 +224,10 @@ Docker daemon, which is why Docker is a prerequisite for a normal install. Setti
 `--sandbox-backend` (or `HEZO_SANDBOX_BACKEND`) moves those containers onto a managed
 sandbox service instead, and Docker stops being required at all.
 
+[Remote sandboxes](/docs/deployment/remote-sandboxes) covers what changes when you do:
+how a container reaches your instance, what stays on your side, and what is not available
+there. This section is the configuration itself.
+
 Today the one managed backend is **Daytona**:
 
 ```sh

@@ -18,8 +18,10 @@ function member(id: string, over: Partial<PoolMember> = {}): PoolMember {
 	};
 }
 
-const ROOM: PoolCapacity = { runningContainers: 1, maxRunningContainers: 5 };
-const FULL: PoolCapacity = { runningContainers: 5, maxRunningContainers: 5 };
+// Capacity is a memory budget, so "room" and "full" are stated in GB. A default
+// container asks for 2 GB: ROOM has 8 GB of a 10 GB budget free, FULL has none.
+const ROOM: PoolCapacity = { usedMemoryGb: 2, budgetGb: 10, requestMemoryGb: 2 };
+const FULL: PoolCapacity = { usedMemoryGb: 10, budgetGb: 10, requestMemoryGb: 2 };
 
 describe('selectPoolMember ladder', () => {
 	it('prefers a warm container that last served this task', () => {
