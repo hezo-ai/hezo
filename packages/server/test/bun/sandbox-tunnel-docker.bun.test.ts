@@ -19,6 +19,18 @@
  * `DockerClient.request` rides Bun's `fetch` unix-socket option, which Node's
  * undici ignores, so a vitest run dials localhost:80 instead of the daemon and
  * every assertion would vacuously skip.
+ *
+ * **Opt-in via `HEZO_DOCKER_TUNNEL_TEST=1`, like the Daytona live suite.** It
+ * needs a daemon it can bind a host directory into and attach a hijacked exec
+ * against, and it proved environment-sensitive on the shared CI runners in a way
+ * it is not on a real host - so it runs as a deliberate pre-ship gate rather than
+ * on every push:
+ *
+ *   HEZO_DOCKER_TUNNEL_TEST=1 bun test test/bun/sandbox-tunnel-docker.bun.test.ts
+ *
+ * Run it before shipping any change to `hijackExec`, `openExecChannel`, the
+ * tunnel protocol or `hezo-tunnel` - it is the only thing that exercises the real
+ * transport, and it is what caught both hijack bugs in the first place.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
@@ -35,9 +47,11 @@ import { type RunTunnel, startRunTunnel } from '../../src/services/sandbox/tunne
 
 const IMAGE = 'hezo/agent-base:latest';
 
-const dockerAvailable = await checkDocker();
-const skipReason =
-	!dockerAvailable || process.env.HEZO_SKIP_DOCKER
+const optedIn = process.env.HEZO_DOCKER_TUNNEL_TEST === '1';
+const dockerAvailable = optedIn ? await checkDocker() : false;
+const skipReason = !optedIn
+	? 'set HEZO_DOCKER_TUNNEL_TEST=1 to run the real-Docker tunnel gate'
+	: !dockerAvailable || process.env.HEZO_SKIP_DOCKER
 		? 'Docker not available or HEZO_SKIP_DOCKER set'
 		: null;
 const imageReady = skipReason ? false : await imageExists(IMAGE);

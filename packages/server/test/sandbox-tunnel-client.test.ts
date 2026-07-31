@@ -85,9 +85,31 @@ async function startTunnel(opts: {
 	cleanups.push(() => mux.closeAll());
 	child.stdout.on('data', (chunk: Buffer) => void mux.handleChunk(new Uint8Array(chunk)));
 
-	// The listeners bind asynchronously; give them a tick before connecting.
-	await new Promise((r) => setTimeout(r, 150));
+	// The client binds its three listeners asynchronously after start-up. Poll
+	// until they actually accept rather than sleeping a fixed amount: a fixed wait
+	// is only ever long enough on an unloaded machine, and on a busy CI runner it
+	// surfaces as an ECONNREFUSED that reads like a protocol bug.
+	await Promise.all(Object.values(ports).map((port) => waitForListener(port)));
 	return { child, ports };
+}
+
+/** Resolve once a TCP connect to `port` succeeds, or throw at the deadline. */
+async function waitForListener(port: number, timeoutMs = 10_000): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	for (;;) {
+		const ok = await new Promise<boolean>((resolve) => {
+			const socket = netConnect({ host: '127.0.0.1', port });
+			const done = (value: boolean) => {
+				socket.destroy();
+				resolve(value);
+			};
+			socket.once('connect', () => done(true));
+			socket.once('error', () => done(false));
+		});
+		if (ok) return;
+		if (Date.now() >= deadline) throw new Error(`tunnel client never bound port ${port}`);
+		await new Promise((r) => setTimeout(r, 50));
+	}
 }
 
 /** Connect, send, and collect until the peer closes. */
