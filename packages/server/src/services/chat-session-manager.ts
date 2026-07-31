@@ -46,6 +46,7 @@ import { type ContainerDeps, ensureProjectContainerRunning } from './containers'
 import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication } from './effort';
 import { resolveRuntimeForTask } from './runtime-resolver';
+import { dockerRunEndpoints } from './sandbox/endpoints';
 import type { BridgeRunnerArgs } from './ssh-agent';
 import { resolveSystemPrompt } from './template-resolver';
 import { getRunSocketPath } from './workspace';
@@ -975,7 +976,7 @@ export class ChatSessionManager {
 					socketPath: sshSocketContainerPath,
 					socketUser: runUser.name,
 					tokenHex: allocated.tokenHex,
-					hostName: 'host.docker.internal',
+					hostName: dockerRunEndpoints(this.deps.serverPort).sshHost,
 					hostPort: allocated.tcpHostPort,
 				};
 				releaseSsh = () => sshAgentServer.releaseRunSocket(sessionId);

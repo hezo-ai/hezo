@@ -27,6 +27,7 @@ import {
 	type McpHostRestriction,
 	mcpRestrictionKey,
 } from '../connectors/connections';
+import { DOCKER_CONTAINER_HOST_ALIAS } from '../sandbox/endpoints';
 import type { HezoCA } from './ca';
 import { mcpMethodBlockedMessage, shouldBlockMcpRequest } from './mcp-method-guard';
 import {
@@ -72,7 +73,7 @@ const MAX_BODY_SUBSTITUTION_BYTES = 8192;
  * than this is rejected rather than forwarded uninspected — see `forward`. */
 const MAX_MCP_INSPECTION_BYTES = 262144;
 
-const PROXY_HOST = 'host.docker.internal';
+const PROXY_HOST = DOCKER_CONTAINER_HOST_ALIAS;
 const PROXY_BIND_HOST = '127.0.0.1';
 
 /** Bytes of per-run proxy token. Mirrors the SSH-agent bridge's TCP token

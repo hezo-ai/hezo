@@ -5,6 +5,11 @@ import type { ContainerEngine } from './docker';
 import { EGRESS_PORT_RANGE_END, EGRESS_PORT_RANGE_START } from './egress/port-allocator';
 import { ensureImage } from './ensure-image';
 import { MANAGED_AGENT_BASE_IMAGE, resolveAgentBaseImage } from './image-registry';
+import {
+	DOCKER_CONTAINER_HOST_ALIAS,
+	DOCKER_HOST_GATEWAY_ENTRY,
+	dockerRunEndpoints,
+} from './sandbox/endpoints';
 
 const log = logger.child('connectivity-preflight');
 
@@ -130,7 +135,7 @@ export function formatContainerConnectivityMessage(
 	if (outcome === 'mcp-unreachable') {
 		return [
 			...FAILURE_HEADER,
-			`A container timed out reaching the MCP server at http://host.docker.internal:${serverPort}/mcp.`,
+			`A container timed out reaching the MCP server at ${dockerRunEndpoints(serverPort).hezoBaseUrl}/mcp.`,
 			'The server listens on all interfaces, so this is almost always the host',
 			'firewall dropping traffic from the Docker bridge to the host — Docker does',
 			'not open that path for you (Docker Desktop tunnels it, native Linux does not).',
@@ -155,7 +160,7 @@ export function formatContainerConnectivityMessage(
 			'',
 			'The MCP server is reachable and agents run, but the egress proxy and SSH bridge',
 			`bind to ${containerBindHost} (loopback), which a container on native-Linux Docker`,
-			'cannot reach via host.docker.internal. Proxied API calls, credentialed requests,',
+			`cannot reach via ${DOCKER_CONTAINER_HOST_ALIAS}. Proxied API calls, credentialed requests,`,
 			'and git-over-SSH will fail; direct LLM providers (no proxy) are unaffected — safe',
 			'to ignore if that is all you use.',
 			'',
@@ -199,9 +204,9 @@ export function buildProbeScript(serverPort: number, bindPort: number): string {
 		`${name}=$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 ${url} 2>/dev/null) || true; ` +
 		`[ -z "$${name}" ] && ${name}=DOWN`;
 	return (
-		`${probe('mcp', `http://host.docker.internal:${serverPort}/mcp`)}; ` +
-		`${probe('bind', `http://host.docker.internal:${bindPort}/`)}; ` +
-		`gw=$(getent hosts host.docker.internal 2>/dev/null | awk '{print $1; exit}'); ` +
+		`${probe('mcp', `${dockerRunEndpoints(serverPort).hezoBaseUrl}/mcp`)}; ` +
+		`${probe('bind', `${dockerRunEndpoints(bindPort).hezoBaseUrl}/`)}; ` +
+		`gw=$(getent hosts ${DOCKER_CONTAINER_HOST_ALIAS} 2>/dev/null | awk '{print $1; exit}'); ` +
 		`[ -z "$gw" ] && gw=-; ` +
 		`printf 'MCP:%s BIND:%s GW:%s\\n' "$mcp" "$bind" "$gw"`
 	);
@@ -274,7 +279,7 @@ async function runContainerProbe(deps: ConnectivityProbeDeps): Promise<Connectiv
 			Image: image,
 			Cmd: ['sleep', 'infinity'],
 			Labels: { 'ai.hezo.role': 'connectivity-preflight' },
-			HostConfig: { ExtraHosts: ['host.docker.internal:host-gateway'] },
+			HostConfig: { ExtraHosts: [DOCKER_HOST_GATEWAY_ENTRY] },
 		});
 		containerId = Id;
 		await docker.startContainer(Id);

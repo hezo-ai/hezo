@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { DOCKER_CONTAINER_HOST_ALIAS } from '../sandbox/endpoints';
 import { getRunSocketPath } from '../workspace';
 import type { BridgeRunnerArgs } from './relay';
 import type { SshAgentServer } from './server';
@@ -30,7 +31,7 @@ export async function withProvisionBridge<T>(
 			socketPath: `/run/hezo/${runId}.sock`,
 			socketUser,
 			tokenHex: allocated.tokenHex,
-			hostName: 'host.docker.internal',
+			hostName: DOCKER_CONTAINER_HOST_ALIAS,
 			hostPort: allocated.tcpHostPort,
 		};
 		// The per-op runId doubles as the exec scope marker

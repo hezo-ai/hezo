@@ -116,6 +116,7 @@ import {
 	type SubscriptionMount as SubscriptionMountImpl,
 } from './runtime-home';
 import { resolveRuntimeForTask } from './runtime-resolver';
+import { DOCKER_CONTAINER_HOST_ALIAS, dockerRunEndpoints } from './sandbox/endpoints';
 import { type BridgeRunnerArgs, buildBridgeRunnerArgv, type SshAgentServer } from './ssh-agent';
 import { validateSubscriptionBlob } from './subscription-auth';
 import { recordStatusChange } from './task-events';
@@ -590,7 +591,7 @@ export async function buildRuntimeInvocation(
 		{
 			kind: 'http',
 			name: 'hezo',
-			url: `http://host.docker.internal:${deps.serverPort}/mcp`,
+			url: `${dockerRunEndpoints(deps.serverPort).hezoBaseUrl}/mcp`,
 			bearerToken: agentJwt,
 		},
 		...(await loadConnectorDescriptors(deps.db, projectId)),
@@ -670,7 +671,7 @@ export async function buildRuntimeInvocation(
 			// direct, matching the documented contract (`lib/asset-urls.ts`,
 			// architecture § Asset storage). Connector MCP servers live on their own
 			// remote hosts (reached via HTTPS CONNECT) and still traverse the proxy.
-			'host.docker.internal',
+			DOCKER_CONTAINER_HOST_ALIAS,
 			// For a locally-hosted provider the upstream is the operator's own machine,
 			// known only from the config's stored base URL — pass it so that host
 			// bypasses the MITM proxy like any other model-provider endpoint.
@@ -1228,7 +1229,7 @@ export async function runAgent(
 				socketPath: sshSocketContainerPath,
 				socketUser: runUser.name,
 				tokenHex: allocated.tokenHex,
-				hostName: 'host.docker.internal',
+				hostName: dockerRunEndpoints(deps.serverPort).sshHost,
 				hostPort: allocated.tcpHostPort,
 			};
 		}

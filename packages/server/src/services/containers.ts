@@ -35,6 +35,7 @@ import { ContainerGitExecutor, mintGitOpScopeId } from './git-executor';
 import { resolveAgentBaseImage } from './image-registry';
 import type { LogStreamBroker } from './log-stream-broker';
 import { ensureProjectRepos } from './repo-sync';
+import { DOCKER_HOST_GATEWAY_ENTRY } from './sandbox/endpoints';
 import { type BridgeRunnerArgs, type SshAgentServer, withProvisionBridge } from './ssh-agent';
 import { createWakeup } from './wakeup';
 import {
@@ -383,7 +384,7 @@ export async function provisionContainer(
 		if (process.env[TEST_CONTAINERS_ENV] === '1') {
 			containerLabels[TEST_CONTAINER_LABEL_KEY] = TEST_CONTAINER_LABEL_VALUE;
 		}
-		const extraHosts = ['host.docker.internal:host-gateway'];
+		const extraHosts = [DOCKER_HOST_GATEWAY_ENTRY];
 
 		// A host whose internet egress is a VPN/mesh tunnel (WireGuard, NordVPN,
 		// Tailscale) has a sub-1500 MTU. Containers reach the internet through it via
