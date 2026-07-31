@@ -523,9 +523,20 @@ uploaded files (blobs in the configured **asset store** keyed by `projectId/asse
 directly with `write_project_asset` — text formats (HTML, SVG, plain text/scripts, and markdown
 such as a blog post; script extensions like `.sh`/`.py`/`.js` store as inert `text/plain`) with
 the default `utf8` encoding, and **binary** formats (any type a human can upload: PNG/JPEG/GIF/WebP,
-PDF, media) by passing `encoding: 'base64'` with the file's bytes base64-encoded in `content`. The
+PDF, media, and archives — zip/tar/gzip/7z/rar) by passing `encoding: 'base64'` with the file's bytes
+base64-encoded in `content`. The
 allowlist is the shared attachment allowlist (`isAllowedAttachmentMime`), a non-text type without
-base64 is rejected, and the 10 MB cap applies to the decoded bytes. The web's
+base64 is rejected, and the 10 MB cap applies to the decoded bytes. **Archives are opaque**: nothing
+server-side ever unpacks one, so there is no decompression surface — an agent that needs the contents
+downloads the blob through its signed URL and unpacks it inside its own container (`unzip`, `tar` and
+`7z` are pre-baked in the agent image; `.rar` needs a runtime install). Two shared rules follow from
+that opacity: an archive extension is **authoritative** over the uploader-declared content type
+(`ATTACHMENT_EXTENSION_AUTHORITATIVE_MIME` in `resolveAttachmentContentType` — browsers spell one
+archive format several ways, e.g. a `.zip` arrives as `application/x-zip-compressed` on Windows
+Chrome/Edge, so deferring to the extension is both more robust and strictly narrower than honoring
+the declaration), and an archive is never served inline (`isArchiveAssetMime` is the second reason
+`assetContentDisposition` returns `attachment`, alongside the script-bearing
+`ASSET_INLINE_UNSAFE_MIME`). The web's
 **asset viewer** (`/projects/:slug/assets/view?file=<path>`, route file
 `assets_.view.tsx`) is the canonical in-app link target for an asset — grid cards, asset
 mentions (`assetPath` in `@hezo/shared`), comment-attachment thumbs, and chat attachment

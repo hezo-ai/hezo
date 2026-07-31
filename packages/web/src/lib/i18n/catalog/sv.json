@@ -111,5 +111,14 @@
 	"comment.runFailedWithError": "Körningen för {agent} misslyckades: {error}",
 	"comment.runTimedOutWithError": "Körningen för {agent} tog för lång tid: {error}",
 	"comment.runAgentFallback": "en agent",
-	"comment.repoDesignated": "Repository {repo} angavs som utsett repository."
+	"comment.repoDesignated": "Repository {repo} angavs som utsett repository.",
+	"attachments.dragHint": "Dra och släpp filer för att bifoga dem",
+	"attachments.supportedTypes": "Filtyper som stöds",
+	"attachments.maxSize": "Max {size} per fil",
+	"attachments.category.images": "Bilder:",
+	"attachments.category.documents": "Dokument:",
+	"attachments.category.audio": "Ljud:",
+	"attachments.category.video": "Video:",
+	"attachments.category.archives": "Arkiv:",
+	"attachments.category.scripts": "Skript och data:"
 }

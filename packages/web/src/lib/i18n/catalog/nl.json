@@ -111,5 +111,14 @@
 	"comment.runFailedWithError": "Uitvoering voor {agent} is mislukt: {error}",
 	"comment.runTimedOutWithError": "Uitvoering voor {agent} is verlopen: {error}",
 	"comment.runAgentFallback": "een agent",
-	"comment.repoDesignated": "Repository {repo} ingesteld als aangewezen repository."
+	"comment.repoDesignated": "Repository {repo} ingesteld als aangewezen repository.",
+	"attachments.dragHint": "Sleep bestanden hierheen om ze toe te voegen",
+	"attachments.supportedTypes": "Ondersteunde bestandstypen",
+	"attachments.maxSize": "Max. {size} per bestand",
+	"attachments.category.images": "Afbeeldingen:",
+	"attachments.category.documents": "Documenten:",
+	"attachments.category.audio": "Audio:",
+	"attachments.category.video": "Video:",
+	"attachments.category.archives": "Archieven:",
+	"attachments.category.scripts": "Scripts en data:"
 }

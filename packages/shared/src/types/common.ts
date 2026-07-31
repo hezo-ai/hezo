@@ -298,12 +298,40 @@ export const ATTACHMENT_EXTENSIONS = {
 	csv: 'text/plain',
 	yaml: 'text/plain',
 	yml: 'text/plain',
+	// Archive containers: a bundle of files handed to (or produced by) a team as
+	// one attachment. `.tar.gz` resolves through its `gz` extension and keeps its
+	// full double-extension name.
+	zip: 'application/zip',
+	tar: 'application/x-tar',
+	gz: 'application/gzip',
+	tgz: 'application/gzip',
+	'7z': 'application/x-7z-compressed',
+	rar: 'application/vnd.rar',
 } as const;
 export type AttachmentExtension = keyof typeof ATTACHMENT_EXTENSIONS;
 
 export const ATTACHMENT_MIME_ALLOWLIST: ReadonlySet<string> = new Set(
 	Object.values(ATTACHMENT_EXTENSIONS),
 );
+
+// Archive container types. Opaque to Hezo: nothing is ever extracted server-side,
+// so an archive is stored and served as bytes. Agents download one by signed URL
+// and unpack it inside their own container (`unzip`, `tar` and `7z` are pre-baked
+// in the agent image). Drives three decisions: the stored content type ignores what the
+// uploader declared (see `resolveAttachmentContentType`), the serve route never
+// sends one inline (see `assetContentDisposition`), and the web renders an
+// archive glyph for it.
+export const ASSET_ARCHIVE_MIME: ReadonlySet<string> = new Set([
+	'application/zip',
+	'application/x-tar',
+	'application/gzip',
+	'application/x-7z-compressed',
+	'application/vnd.rar',
+]);
+
+export function isArchiveAssetMime(mime: string): boolean {
+	return ASSET_ARCHIVE_MIME.has(mime);
+}
 
 // Content types that can carry active script and must never be served inline on
 // our own origin — a top-level navigation to one would execute as us (stored
@@ -321,7 +349,12 @@ export function assetContentDisposition(
 	forceDownload = false,
 ): 'inline' | 'attachment' {
 	if (forceDownload) return 'attachment';
-	return ASSET_INLINE_UNSAFE_MIME.has(contentType) ? 'attachment' : 'inline';
+	// Two distinct reasons never to render inline, each with its own table: a type
+	// that can carry active script (above), and an archive, which is an opaque
+	// container with nothing to display in a tab.
+	if (ASSET_INLINE_UNSAFE_MIME.has(contentType)) return 'attachment';
+	if (isArchiveAssetMime(contentType)) return 'attachment';
+	return 'inline';
 }
 
 // Content types that may carry active script yet are meant to render inline (an
@@ -527,13 +560,29 @@ export function isAllowedAttachmentMime(mime: string): boolean {
 }
 
 /**
+ * Content types whose stored value is always the extension's canonical type,
+ * ignoring what the uploader declared:
+ *
+ * - `text/plain` — storing the inert type is the point. Browsers send
+ *   `text/javascript` for `.js`, `application/json` for `.json`, `text/csv` for
+ *   `.csv`, … and the serving route's nosniff header prevents re-interpretation.
+ * - Archives — browsers disagree wildly on the declared type for one format. A
+ *   `.zip` arrives as `application/zip` (Firefox, Safari),
+ *   `application/x-zip-compressed` (Windows Chrome and Edge), `multipart/x-zip`,
+ *   or `application/octet-stream` depending on OS and browser, so the extension
+ *   is the only reliable signal. Deferring to it also *narrows* what can be
+ *   stored: an archive extension can only ever carry its own canonical type.
+ */
+const ATTACHMENT_EXTENSION_AUTHORITATIVE_MIME: ReadonlySet<string> = new Set([
+	'text/plain',
+	...ASSET_ARCHIVE_MIME,
+]);
+
+/**
  * Resolve the content type to store for an uploaded asset, or null when the
- * upload must be rejected. Extensions that map to text/plain always store
- * text/plain regardless of what the uploader declared (browsers send
- * `text/javascript` for `.js`, `application/json` for `.json`, `text/csv` for
- * `.csv`, … — storing the inert type is the point, and the serving route's
- * nosniff header prevents re-interpretation). Other extensions keep the
- * original posture: a declared allowlisted type wins, a blank or
+ * upload must be rejected. Extensions whose canonical type is authoritative
+ * (see above) always store that type. Other extensions keep the original
+ * posture: a declared allowlisted type wins, a blank or
  * `application/octet-stream` declaration falls back to the extension's
  * canonical type, and a specific disallowed declared type is rejected (a
  * `.png` claiming `application/x-msdownload` is suspicious).
@@ -545,7 +594,7 @@ export function resolveAttachmentContentType(
 	const ext = extensionOf(filename);
 	const extMime = ext ? ATTACHMENT_EXTENSIONS[ext as AttachmentExtension] : undefined;
 	if (extMime === undefined) return null;
-	if (extMime === 'text/plain') return 'text/plain';
+	if (ATTACHMENT_EXTENSION_AUTHORITATIVE_MIME.has(extMime)) return extMime;
 	const declared = declaredType === 'application/octet-stream' ? '' : declaredType;
 	const contentType = declared || extMime;
 	return isAllowedAttachmentMime(contentType) ? contentType : null;

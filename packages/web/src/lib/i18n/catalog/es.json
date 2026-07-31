@@ -111,5 +111,14 @@
 	"comment.runFailedWithError": "La ejecución de {agent} falló: {error}",
 	"comment.runTimedOutWithError": "La ejecución de {agent} agotó el tiempo: {error}",
 	"comment.runAgentFallback": "un agente",
-	"comment.repoDesignated": "Repositorio {repo} establecido como repositorio designado."
+	"comment.repoDesignated": "Repositorio {repo} establecido como repositorio designado.",
+	"attachments.dragHint": "Arrastra y suelta archivos para adjuntarlos",
+	"attachments.supportedTypes": "Tipos de archivo admitidos",
+	"attachments.maxSize": "Máx. {size} por archivo",
+	"attachments.category.images": "Imágenes:",
+	"attachments.category.documents": "Documentos:",
+	"attachments.category.audio": "Audio:",
+	"attachments.category.video": "Vídeo:",
+	"attachments.category.archives": "Archivos comprimidos:",
+	"attachments.category.scripts": "Scripts y datos:"
 }

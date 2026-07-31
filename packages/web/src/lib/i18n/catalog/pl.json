@@ -111,5 +111,14 @@
 	"comment.runFailedWithError": "Uruchomienie dla {agent} nie powiodło się: {error}",
 	"comment.runTimedOutWithError": "Uruchomienie dla {agent} przekroczyło limit czasu: {error}",
 	"comment.runAgentFallback": "agenta",
-	"comment.repoDesignated": "Repozytorium {repo} ustawiono jako wyznaczone repozytorium."
+	"comment.repoDesignated": "Repozytorium {repo} ustawiono jako wyznaczone repozytorium.",
+	"attachments.dragHint": "Przeciągnij i upuść pliki, aby je załączyć",
+	"attachments.supportedTypes": "Obsługiwane typy plików",
+	"attachments.maxSize": "Maks. {size} na plik",
+	"attachments.category.images": "Obrazy:",
+	"attachments.category.documents": "Dokumenty:",
+	"attachments.category.audio": "Dźwięk:",
+	"attachments.category.video": "Wideo:",
+	"attachments.category.archives": "Archiwa:",
+	"attachments.category.scripts": "Skrypty i dane:"
 }

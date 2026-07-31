@@ -111,5 +111,14 @@
 	"comment.runFailedWithError": "Esecuzione per {agent} non riuscita: {error}",
 	"comment.runTimedOutWithError": "Esecuzione per {agent} scaduta: {error}",
 	"comment.runAgentFallback": "un agente",
-	"comment.repoDesignated": "Repository {repo} impostato come repository designato."
+	"comment.repoDesignated": "Repository {repo} impostato come repository designato.",
+	"attachments.dragHint": "Trascina qui i file da allegare",
+	"attachments.supportedTypes": "Tipi di file supportati",
+	"attachments.maxSize": "Massimo {size} per file",
+	"attachments.category.images": "Immagini:",
+	"attachments.category.documents": "Documenti:",
+	"attachments.category.audio": "Audio:",
+	"attachments.category.video": "Video:",
+	"attachments.category.archives": "Archivi:",
+	"attachments.category.scripts": "Script e dati:"
 }

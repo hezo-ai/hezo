@@ -120,6 +120,12 @@ describe('message catalogs', () => {
 		'settings.general': ['es'],
 		'settings.chatbox': ['de'],
 		'setup.step.password': ['it'],
+		// "Audio" and "Video" are the same loanword in these languages, colon and
+		// all - German, Spanish, Italian and Dutch all write Audio; German, Italian,
+		// Dutch and Swedish all write Video. Anything else in the attachment
+		// category list does differ (Bilder, Imágenes, Archiwa, Ljud, ...).
+		'attachments.category.audio': ['de', 'es', 'it', 'nl'],
+		'attachments.category.video': ['de', 'it', 'nl', 'sv'],
 	};
 
 	test('no message was left identical to the English source', () => {
