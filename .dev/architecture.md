@@ -1006,7 +1006,15 @@ Three shared pieces sit alongside it so the two implementations cannot drift:
 - **`sandbox/files.ts`** — `SandboxFiles` is the async, relative-path-only interface every
   run-artifact read goes through (the runtimes' off-stream usage files, push errors,
   rotated subscription auth). Paths that would escape the run root are rejected, and the
-  walk never follows symlinks.
+  walk never follows symlinks. **The only implementation today is `hostSandboxFiles`**,
+  which reads and writes the host filesystem and therefore assumes a bind mount. That is
+  what the interface was extracted for, but it also means a **managed backend cannot yet
+  serve a full agent run**: the prompt file, the per-run runtime home (`settings.json`,
+  subscription credentials) and the tunnel config would all be staged host-side where the
+  sandbox never sees them. Closing that needs a container-backed implementation over the
+  provider's own file API - Daytona has a toolbox one, which `DaytonaApi` does not wrap
+  yet. Until then the Daytona engine is verified for the container lifecycle (create, exec,
+  elevation, the `/proc` scripts, suspend/resume, reaping) but not for a whole run.
 - **`sandbox/handle.ts`** — `SandboxHandle.exec()` collapses the
   `execCreate`/`execStart`/`execInspect` triad into one call returning the exit code with
   the output, and expresses privilege as **`elevated: boolean`** rather than a username.
@@ -1052,13 +1060,31 @@ costs, because the failure it re-admits is otherwise invisible.
 **The tunnel is behind a rollout gate.** `HEZO_TUNNEL=1` switches a run's
 `RunEndpoints` from naming the host (`host.docker.internal`) to container loopback,
 where the in-container client listens. It is **off by default**, deliberately: on Docker
-the tunnel replaces a path that already works, and the Docker end of it - the hijacked
-exec socket - has no automated exercise, because a test environment has no daemon.
-Off keeps the shipped behaviour byte-identical while the tunnel earns exposure. A managed
-backend will eventually require it unconditionally, since there is no other way for its
-containers to reach Hezo; flipping the default is a separate, deliberate step. The CEO
-chat still takes the direct address either way - moving it onto the tunnel is part of the
-chat-on-remote work, which also has to handle resume.
+the tunnel replaces a path that already works, so off keeps the shipped behaviour
+byte-identical while the tunnel earns exposure. A managed backend will eventually require
+it unconditionally, since there is no other way for its containers to reach Hezo;
+flipping the default is a separate, deliberate step. The CEO chat still takes the direct
+address either way - moving it onto the tunnel is part of the chat-on-remote work, which
+also has to handle resume.
+
+**The Docker hijack is spoken over a raw socket, not `http.request`'s `'upgrade'`.** The
+hijacked exec socket was the one piece written from Docker's API documentation rather than
+from something observed, and running it against a live daemon showed it could not have
+worked in production at all. `'upgrade'` is the documented event and is correct on Node;
+**Bun never emits it** for Docker's hijack. Bun emits `'response'` with status **101**,
+routes the framed exec bytes onto the response stream, and ignores writes to `res.socket`,
+so stdin never reaches the exec - both measured. Since Bun is the production runtime, every
+attach rejected with "attach failed (101)", 101 being the success status. A hijack is just
+"send a request, then own the socket", so `hijackExec` now speaks the request over a plain
+`node:net` socket: one code path, identical on both runtimes, accepting 200 as well as 101
+(some daemon versions answer that for a non-TTY attach). The socket is handed back
+**paused** so bytes arriving alongside the headers can be `unshift`ed without loss, which
+makes the explicit `resume()` in `openExecChannel` load-bearing rather than tidy - a `data`
+listener does not auto-resume an explicitly-paused stream, and without it the channel
+connects, the client binds its listeners, and no frame is ever delivered.
+`test/bun/sandbox-tunnel-docker.bun.test.ts` runs the real client in the real image over a
+real hijacked exec and asserts a request made *inside* the container reaches a host server,
+which is the claim no pipe-based or fake-engine test can make.
 
 **The byte channel a tunnel would ride on differs per backend - measured.** The plan for
 reaching Hezo from a remote container (one exec with stdin attached, carrying a multiplexed
