@@ -37,3 +37,19 @@ ON CONFLICT (key) DO NOTHING;
 -- The old key is read by nothing after this. Removing it is what stops a stale
 -- number sitting in the settings table looking authoritative.
 DELETE FROM system_meta WHERE key = 'max_active_containers';
+
+-- The container idle window stops being an operator setting too.
+--
+-- Its only real job is coalescing a burst - covering the gap between one run
+-- finishing and the next starting in the same project, so the next run finds a
+-- warm container rather than resuming or creating one. That gap is seconds to
+-- about a minute, and an operator has no way to reason about it better than the
+-- system can, so it is now the `CONTAINER_IDLE_TIMEOUT_MIN` constant.
+--
+-- Nothing is carried forward: there is no new key for the value to move to, and
+-- a stored number that nothing reads is worse than no row at all - it sits in
+-- the settings table looking authoritative. The `0 = never stop` escape hatch
+-- goes with it, deliberately: a container that never stops bills forever on a
+-- managed backend, and the dev server it used to keep alive belongs in
+-- something with its own lifecycle.
+DELETE FROM system_meta WHERE key = 'container_idle_timeout_min';

@@ -84,23 +84,3 @@ test('raising the ram cap lowers the automatic memory budget and persists', asyn
 	expect(data.default_ram_cap_per_container_gb).toBe(3);
 	expect(data.max_container_memory_gb).toBe(4);
 });
-
-test('saves the container idle timeout, including 0 for always-on', async () => {
-	const { findByTestId, findByRole, user } = await renderApp({
-		initialPath: '/settings/concurrency',
-	});
-	await findByRole('heading', { name: 'Concurrency' });
-
-	const input = (await findByTestId('container-idle-timeout-input')) as HTMLInputElement;
-	expect(input.value).toBe('15');
-	await user.clear(input);
-	await user.type(input, '0');
-	await user.click(await findByTestId('container-idle-timeout-save'));
-	await waitFor(() => expect(input.value).toBe('0'));
-
-	const { apiBase, token } = getTestContext();
-	const res = await apiBase('/api/instance-settings', {
-		headers: { Authorization: `Bearer ${token}` },
-	});
-	expect((await res.json()).data.container_idle_timeout_min).toBe(0);
-});

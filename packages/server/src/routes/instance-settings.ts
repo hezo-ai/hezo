@@ -1,6 +1,4 @@
 import {
-	CONTAINER_IDLE_TIMEOUT_MIN_MAX,
-	CONTAINER_IDLE_TIMEOUT_MIN_MIN,
 	MAX_CHAT_HISTORY_SIZE_MAX,
 	MAX_CHAT_HISTORY_SIZE_MIN,
 	MAX_CONTAINER_MEMORY_GB_MAX,
@@ -18,7 +16,6 @@ import {
 	clearMaxContainerMemoryGb,
 	computeAutoMaxContainerMemoryGb,
 	deleteSystemMeta,
-	getContainerIdleTimeoutMin,
 	getDefaultRamCapPerContainerGb,
 	getInstanceBaseUrl,
 	getInstanceLocale,
@@ -28,7 +25,6 @@ import {
 	INSTANCE_BASE_URL_KEY,
 	instanceLocaleIsConfigured,
 	normalizeBaseUrl,
-	setContainerIdleTimeoutMin,
 	setDefaultRamCapPerContainerGb,
 	setInstanceLocale,
 	setMaxChatHistorySize,
@@ -62,7 +58,6 @@ async function instanceSettingsPayload(db: Db) {
 		max_container_memory_gb_is_set: explicitBudget !== null,
 		max_container_memory_gb_computed_default: await computeAutoMaxContainerMemoryGb(db),
 		default_ram_cap_per_container_gb: await getDefaultRamCapPerContainerGb(db),
-		container_idle_timeout_min: await getContainerIdleTimeoutMin(db),
 		host_total_ram_bytes: totalRamBytes,
 		host_total_swap_bytes: totalSwapBytes,
 		locale: await getInstanceLocale(db),
@@ -164,7 +159,6 @@ instanceSettingsRoutes.patch('/instance-settings', async (c) => {
 		max_chat_history_size?: unknown;
 		max_container_memory_gb?: unknown;
 		default_ram_cap_per_container_gb?: unknown;
-		container_idle_timeout_min?: unknown;
 	};
 	const body = await c.req.json<PatchBody>().catch(() => ({}) as PatchBody);
 
@@ -173,7 +167,6 @@ instanceSettingsRoutes.patch('/instance-settings', async (c) => {
 		'max_chat_history_size',
 		'max_container_memory_gb',
 		'default_ram_cap_per_container_gb',
-		'container_idle_timeout_min',
 	] as const;
 	if (!knownFields.some((f) => f in body)) {
 		return err(c, 'INVALID_REQUEST', `one of ${knownFields.join(', ')} is required`, 400);
@@ -235,17 +228,6 @@ instanceSettingsRoutes.patch('/instance-settings', async (c) => {
 			);
 		}
 		await setDefaultRamCapPerContainerGb(db, cap);
-	}
-
-	if ('container_idle_timeout_min' in body) {
-		const invalid = integerRangeError(
-			'container_idle_timeout_min',
-			body.container_idle_timeout_min,
-			CONTAINER_IDLE_TIMEOUT_MIN_MIN,
-			CONTAINER_IDLE_TIMEOUT_MIN_MAX,
-		);
-		if (invalid) return err(c, 'INVALID_REQUEST', invalid, 400);
-		await setContainerIdleTimeoutMin(db, body.container_idle_timeout_min as number);
 	}
 
 	if ('base_url' in body) {

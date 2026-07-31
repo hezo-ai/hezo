@@ -29,6 +29,7 @@ describe('050_container_memory_budget migration', () => {
 			`INSERT INTO system_meta (key, value) VALUES
 			   ('max_active_containers', '3'),
 			   ('default_ram_cap_per_container_gb', '4'),
+			   ('container_idle_timeout_min', '45'),
 			   ('instance_locale', 'de')`,
 		);
 		await h.applyTarget(TARGET);
@@ -42,6 +43,13 @@ describe('050_container_memory_budget migration', () => {
 
 	it('removes the superseded key so no stale number looks authoritative', async () => {
 		expect(await meta('max_active_containers')).toBeNull();
+	});
+
+	it('drops the container idle timeout, which is now a constant', async () => {
+		// Nothing to carry it forward to, deliberately: the window is
+		// `CONTAINER_IDLE_TIMEOUT_MIN` now, and a stored number nothing reads is
+		// worse than no row - it sits in the settings table looking authoritative.
+		expect(await meta('container_idle_timeout_min')).toBeNull();
 	});
 
 	it('leaves the per-container cap and unrelated settings untouched', async () => {

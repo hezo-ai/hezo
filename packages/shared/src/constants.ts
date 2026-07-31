@@ -160,14 +160,26 @@ export function projectMemoryFitsBudget(capGb: number, budgetGb: number): boolea
 }
 
 /**
- * Minutes a project's container keeps running after its last activity (agent
- * runs, assistant chat) before the idle-stop cron stops it. Containers restart
- * on demand when a run or chat needs them. 0 = never stop (always-on).
- * Stored in system_meta; absent key = default. Clamped to [MIN, MAX].
+ * Minutes a project's containers keep running after their last activity (agent
+ * runs, assistant chat) before the idle pass retires the pool - suspending one
+ * and destroying the rest. Containers come back on demand.
+ *
+ * **A constant, not an operator setting.** Its only real job is coalescing a
+ * burst: covering the gap between one run finishing and the next starting in the
+ * same project, so the next run finds a warm container rather than resuming or
+ * creating one. That gap is a comment insert, a wakeup fire, the 1 Hz dispatch
+ * cron and a container acquire - seconds to about a minute. Two minutes is the
+ * smallest value that reliably covers that chain; one can suspend a container
+ * mid-wakeup-chain, so the next run pays a resume and the instance pays the
+ * suspend work twice for nothing. Longer buys very little, because resuming a
+ * suspended container costs about a second anyway.
+ *
+ * An operator has no way to reason about this better than the system can, which
+ * is exactly the kind of knob worth deleting - and the old `0 = never stop`
+ * escape hatch was the only thing keeping a dev server alive between runs, which
+ * is a job an agent-run container was never the right home for.
  */
-export const DEFAULT_CONTAINER_IDLE_TIMEOUT_MIN = 15;
-export const CONTAINER_IDLE_TIMEOUT_MIN_MIN = 0;
-export const CONTAINER_IDLE_TIMEOUT_MIN_MAX = 10080;
+export const CONTAINER_IDLE_TIMEOUT_MIN = 2;
 
 /**
  * The "latest few" messages kept in the active window after a compaction flush.

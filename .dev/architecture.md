@@ -53,7 +53,7 @@ manager (agents bring their own models and runtimes).
 | Realtime | WebSocket row-change events → client invalidates React Query keys |
 | Agent interface | MCP (Streamable HTTP) at `POST /mcp` via `@modelcontextprotocol/sdk` |
 | Crypto | AES-256-GCM at rest; master key held in memory only |
-| Containers | Docker Engine API, one container per project — started on demand, stopped after an idle timeout |
+| Containers | Docker Engine API or a managed sandbox service, behind one `ContainerEngine` seam — a pool per project, one run per container, started on demand and retired after a fixed 2-minute idle window |
 
 **Monorepo** — Bun workspaces + Turborepo. **Three** packages plus a root `agents/`
 tree:
@@ -1373,9 +1373,16 @@ review is the one path that instead embeds the **full** comment history (both sh
 **Containers & worktrees.** One container per project, **run on demand**: the container is
 not required to be up between runs. `runAgent` establishes it at the start of every run via
 `ensureProjectContainerRunning` (running → reuse; stopped → start in place; missing/stale row →
-provision), chat sessions do the same, and the `container-idle-stop` cron (1/min) stops any
-container idle past the operator's timeout (`container_idle_timeout_min` in `system_meta`,
-default 15 minutes, `0` = always-on) — so a quiet instance runs zero containers. "Idle" means:
+provision), chat sessions do the same, and the `container-idle-stop` cron (1/min) retires any pool
+idle past `CONTAINER_IDLE_TIMEOUT_MIN` (`@hezo/shared`, **2 minutes**) — so a quiet instance
+runs zero containers. That window is a **constant, not a setting** (migration 050 drops the
+old `container_idle_timeout_min` key): its only job is coalescing a burst — covering the gap
+between one run finishing and the next starting in the same project, which is a comment
+insert, a wakeup fire, the 1 Hz dispatch cron and a container acquire, so seconds to about a
+minute. One minute can suspend a container mid-wakeup-chain; longer buys little, since
+resuming a suspended container costs about a second. The old `0` = always-on escape hatch is
+gone with it — a container that never stops bills forever on a managed backend, and the dev
+server it kept alive belongs in something with its own lifecycle. "Idle" means:
 no active (queued/running) run, no run finished inside the window, no queued wakeup that could
 dispatch (capacity-skipped wakeups deliberately don't pin containers), and no chat session with
 recent `last_activity_at` or an in-flight turn; `projects.container_last_started_at` floors the
@@ -1396,8 +1403,8 @@ container needed) and queues one whose next container would not fit the budget
 drains FIFO by `created_at` with no per-project fair-share — a deep backlog in one project
 consumes freed slots first; that scheduler is the hook if this ever needs fairness. The chat
 path is *not* gated: its container counts toward the budget once running, but starting a chat is
-never refused — busy agents must not lock the operator out of the control surface. All three
-knobs (memory budget, per-container RAM cap, idle timeout) live on the global Settings → Concurrency
+never refused — busy agents must not lock the operator out of the control surface. Both
+knobs (memory budget, per-container RAM cap) live on the global Settings → Concurrency
 page (`GET/PATCH /api/instance-settings`; `PATCH {max_container_memory_gb: null}` resets to the
 computed default). The project's
 `<dataDir>/teams/<teamId>/projects/<projectId>/workspace/` (id-keyed, never slugs) bind-mounts

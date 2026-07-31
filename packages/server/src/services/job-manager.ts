@@ -5,6 +5,7 @@ import {
 	type AiProvider,
 	BUDGET_PAUSE_STATUSES,
 	CAPTAIN_AGENT_SLUG,
+	CONTAINER_IDLE_TIMEOUT_MIN,
 	CommentContentType,
 	ContainerStatus,
 	DEFAULT_TEAM_ID,
@@ -28,7 +29,7 @@ import { broadcastRowChange } from '../lib/broadcast';
 import type { StorageBackend } from '../lib/db-info';
 import { shouldDeferWakeupForBlockers } from '../lib/dependencies';
 import { ref } from '../lib/log-ref';
-import { getContainerIdleTimeoutMin, getDefaultRamCapPerContainerGb } from '../lib/system-meta';
+import { getDefaultRamCapPerContainerGb } from '../lib/system-meta';
 import { logger } from '../logger';
 import { getLatestInfo } from '../routes/updates';
 import { exitToApplyUpdate } from '../runtime-control';
@@ -2822,18 +2823,21 @@ export class JobManager {
 	}
 
 	/**
-	 * Stop containers idle past the operator-configured timeout, so an instance
+	 * Retire pools idle past {@link CONTAINER_IDLE_TIMEOUT_MIN}, so an instance
 	 * with no work runs zero containers. Bounded per tick; each stop re-verifies
 	 * the busy predicate under the project's lifecycle lock, so a concurrent
 	 * dispatch's lazy start and this stop can never interleave — the in-memory
 	 * checks close the window before a dispatched run has any DB row, and
-	 * `isProjectIdleForContainerStop` re-runs the DB predicate last. A timeout
-	 * of 0 disables the reaper entirely (always-on containers).
+	 * `isProjectIdleForContainerStop` re-runs the DB predicate last.
+	 *
+	 * The window is a constant rather than a setting, and there is no longer an
+	 * always-on escape hatch: a container that never stops is a container that
+	 * bills forever on a managed backend, and the dev server it used to keep
+	 * alive belongs in something with its own lifecycle.
 	 */
 	private async stopIdleContainers(): Promise<void> {
 		const { db, docker } = this.deps;
-		const timeoutMin = await getContainerIdleTimeoutMin(db);
-		if (timeoutMin === 0) return;
+		const timeoutMin = CONTAINER_IDLE_TIMEOUT_MIN;
 		if (!(await docker.ping())) {
 			log.debug('Docker not reachable; skipping idle-container pass');
 			return;

@@ -40,9 +40,14 @@ activity can consume:
 
 As a sizing rule of thumb, one working agent (its coding CLI plus the helper tools it
 spawns) typically uses 300-350 MB of memory, and the container cap bounds the total
-regardless of how many agents share it. The idle timeout is configurable on the same
-page; note that stopping an idle container also stops any dev or preview servers running
-inside it, and setting the timeout to 0 keeps containers always on.
+regardless of how many agents share it.
+
+Containers stop a couple of minutes after a project's last activity and start again on
+demand, so a quiet instance runs none. That window is fixed rather than configurable -
+its only job is to keep a container warm between one run and the next in the same
+project, which takes seconds, and there is no setting an operator could tune better than
+that. Because containers do not stay up between bursts, they are not a place to run a
+long-lived dev or preview server.
 
 From inside the container, agents **cannot** reach:
 

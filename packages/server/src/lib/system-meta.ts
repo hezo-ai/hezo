@@ -1,9 +1,6 @@
 import {
-	CONTAINER_IDLE_TIMEOUT_MIN_MAX,
-	CONTAINER_IDLE_TIMEOUT_MIN_MIN,
 	coerceLocaleSettings,
 	computeDefaultMaxContainerMemoryGb,
-	DEFAULT_CONTAINER_IDLE_TIMEOUT_MIN,
 	DEFAULT_MAX_CHAT_HISTORY_SIZE,
 	DEFAULT_MAX_CONTAINER_MEMORY_GB,
 	DEFAULT_RAM_CAP_PER_CONTAINER_GB,
@@ -36,7 +33,6 @@ export const MAX_CHAT_HISTORY_SIZE_KEY = 'max_chat_history_size';
  */
 export const MAX_CONTAINER_MEMORY_GB_KEY = 'max_container_memory_gb';
 export const RAM_CAP_PER_CONTAINER_KEY = 'default_ram_cap_per_container_gb';
-export const CONTAINER_IDLE_TIMEOUT_KEY = 'container_idle_timeout_min';
 
 /**
  * Locale keys. One key per axis rather than a single JSON blob, so a partial
@@ -192,36 +188,8 @@ export async function setDefaultRamCapPerContainerGb(db: Db, value: number): Pro
 	return clamped;
 }
 
-/**
- * Clamp to the allowed container idle-timeout range (minutes). 0 is a valid
- * value meaning "never stop" (always-on containers).
- */
-export function clampContainerIdleTimeoutMin(value: number): number {
-	if (!Number.isFinite(value)) return DEFAULT_CONTAINER_IDLE_TIMEOUT_MIN;
-	return Math.min(
-		CONTAINER_IDLE_TIMEOUT_MIN_MAX,
-		Math.max(CONTAINER_IDLE_TIMEOUT_MIN_MIN, Math.round(value)),
-	);
-}
-
-/**
- * Minutes a project's container may sit without activity (agent runs, assistant
- * chat) before the idle-stop cron stops it; containers restart on demand.
- * 0 = never stop. Falls back to the default when unset or malformed.
- */
-export async function getContainerIdleTimeoutMin(db: Db): Promise<number> {
-	const raw = await getSystemMeta(db, CONTAINER_IDLE_TIMEOUT_KEY);
-	if (raw === null) return DEFAULT_CONTAINER_IDLE_TIMEOUT_MIN;
-	const parsed = Number.parseInt(raw, 10);
-	if (Number.isNaN(parsed)) return DEFAULT_CONTAINER_IDLE_TIMEOUT_MIN;
-	return clampContainerIdleTimeoutMin(parsed);
-}
-
-export async function setContainerIdleTimeoutMin(db: Db, value: number): Promise<number> {
-	const clamped = clampContainerIdleTimeoutMin(value);
-	await setSystemMeta(db, CONTAINER_IDLE_TIMEOUT_KEY, String(clamped));
-	return clamped;
-}
+// The container idle window is no longer an operator setting - it is the
+// `CONTAINER_IDLE_TIMEOUT_MIN` constant in `@hezo/shared`, which explains why.
 
 /**
  * The public base URL of this instance (e.g. `https://hezo.example.com`),

@@ -1,7 +1,4 @@
 import {
-	CONTAINER_IDLE_TIMEOUT_MIN_MAX,
-	CONTAINER_IDLE_TIMEOUT_MIN_MIN,
-	DEFAULT_CONTAINER_IDLE_TIMEOUT_MIN,
 	DEFAULT_RAM_CAP_PER_CONTAINER_GB,
 	HOST_RESERVED_MEMORY_GB,
 	MAX_CONTAINER_MEMORY_GB_MAX,
@@ -44,13 +41,6 @@ const RAM_CAP_POINTS: readonly MessageKey[] = [
 	'concurrency.ramCap.point.divisor',
 	'concurrency.ramCap.point.override',
 	'concurrency.ramCap.point.range',
-];
-
-const IDLE_TIMEOUT_POINTS: readonly MessageKey[] = [
-	'concurrency.idleTimeout.point.duration',
-	'concurrency.idleTimeout.point.restart',
-	'concurrency.idleTimeout.point.servers',
-	'concurrency.idleTimeout.point.range',
 ];
 
 /**
@@ -129,24 +119,6 @@ function ConcurrencySettingsPage() {
 						}}
 					/>
 					{settings === undefined ? null : <RamCapForm settings={settings} />}
-				</section>
-
-				<section className="border border-border rounded-md p-4 bg-surface">
-					<label
-						className="block text-[13px] font-medium mb-1"
-						htmlFor="container-idle-timeout-input"
-					>
-						{t('concurrency.idleTimeout.label')}
-					</label>
-					<Points
-						keys={IDLE_TIMEOUT_POINTS}
-						vars={{
-							min: CONTAINER_IDLE_TIMEOUT_MIN_MIN,
-							max: CONTAINER_IDLE_TIMEOUT_MIN_MAX,
-							default: DEFAULT_CONTAINER_IDLE_TIMEOUT_MIN,
-						}}
-					/>
-					{settings === undefined ? null : <IdleTimeoutForm settings={settings} />}
 				</section>
 			</>
 		);
@@ -317,71 +289,6 @@ function RamCapForm({ settings }: { settings: InstanceSettings }) {
 			</div>
 			{error && (
 				<p className="text-[13px] text-danger mt-1.5" data-testid="ram-cap-error">
-					{error}
-				</p>
-			)}
-		</>
-	);
-}
-
-function IdleTimeoutForm({ settings }: { settings: InstanceSettings }) {
-	const { t } = useI18n();
-	const updateSettings = useUpdateInstanceSettings();
-	const [value, setValue] = useState(String(settings.container_idle_timeout_min));
-	const [error, setError] = useState<string | null>(null);
-
-	async function handleSave() {
-		setError(null);
-		const n = Number.parseInt(value, 10);
-		if (
-			Number.isNaN(n) ||
-			n < CONTAINER_IDLE_TIMEOUT_MIN_MIN ||
-			n > CONTAINER_IDLE_TIMEOUT_MIN_MAX
-		) {
-			setError(
-				t('concurrency.rangeError', {
-					min: CONTAINER_IDLE_TIMEOUT_MIN_MIN,
-					max: CONTAINER_IDLE_TIMEOUT_MIN_MAX,
-				}),
-			);
-			return;
-		}
-		try {
-			const result = await updateSettings.mutateAsync({ container_idle_timeout_min: n });
-			setValue(String(result.container_idle_timeout_min));
-		} catch (e) {
-			setError((e as ApiError).message);
-		}
-	}
-
-	const dirty = value.trim() !== String(settings.container_idle_timeout_min);
-
-	return (
-		<>
-			<div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-				<Input
-					id="container-idle-timeout-input"
-					data-testid="container-idle-timeout-input"
-					type="number"
-					inputMode="numeric"
-					min={CONTAINER_IDLE_TIMEOUT_MIN_MIN}
-					max={CONTAINER_IDLE_TIMEOUT_MIN_MAX}
-					value={value}
-					onChange={(e) => setValue(e.target.value)}
-					className="sm:w-40"
-				/>
-				<Button
-					size="sm"
-					data-testid="container-idle-timeout-save"
-					onClick={handleSave}
-					disabled={!dirty || updateSettings.isPending}
-				>
-					{updateSettings.isPending && <Loader2 className="w-3 h-3 animate-spin" />}{' '}
-					{t('common.save')}
-				</Button>
-			</div>
-			{error && (
-				<p className="text-[13px] text-danger mt-1.5" data-testid="container-idle-timeout-error">
 					{error}
 				</p>
 			)}

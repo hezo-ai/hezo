@@ -1,8 +1,8 @@
+import { CONTAINER_IDLE_TIMEOUT_MIN } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
-import { CONTAINER_IDLE_TIMEOUT_KEY, setSystemMeta } from '../src/lib/system-meta';
 import type { Env } from '../src/lib/types';
 import { ContainerLogStreamer } from '../src/services/container-logs';
 import { JobManager, type JobManagerDeps } from '../src/services/job-manager';
@@ -27,6 +27,17 @@ let agentId: string;
 let taskId: string;
 
 const CONTAINER_ID = 'idle-box';
+
+/**
+ * A staleness comfortably *inside* the idle window, derived from the constant
+ * rather than written as a number.
+ *
+ * These fixtures used to say "5 minutes", which was inside the old configurable
+ * 15-minute default and is outside the fixed 2-minute one - so a hardcoded
+ * figure would have silently inverted what each test asserts the moment the
+ * window changed, rather than failing.
+ */
+const INSIDE_WINDOW_MIN = Math.max(1, CONTAINER_IDLE_TIMEOUT_MIN - 1);
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
@@ -109,9 +120,11 @@ async function containerStatus(): Promise<string | null> {
 }
 
 beforeEach(async () => {
-	// Reset to "running and idle for an hour" with a 15-minute timeout; each
-	// test then adds exactly one busy signal (or changes the timeout).
-	await setSystemMeta(db, CONTAINER_IDLE_TIMEOUT_KEY, '15');
+	// Reset to "running and idle for an hour"; each test then adds exactly one
+	// busy signal. The window itself is the CONTAINER_IDLE_TIMEOUT_MIN constant,
+	// so "inside the window" below is expressed relative to it rather than to a
+	// number a test could set - which is the point of it no longer being a
+	// setting.
 	await db.query(
 		`UPDATE projects
 		 SET container_id = $2, container_status = 'running', container_error = NULL,
@@ -136,17 +149,10 @@ describe('container-idle-stop', () => {
 		expect(await containerStatus()).toBe('stopped');
 	});
 
-	it('a timeout of 0 disables the reaper entirely', async () => {
-		await setSystemMeta(db, CONTAINER_IDLE_TIMEOUT_KEY, '0');
-		const { stops } = await runIdlePass();
-		expect(stops).toEqual([]);
-		expect(await containerStatus()).toBe('running');
-	});
-
 	it('never stops a container inside its first idle window (start-time floor)', async () => {
 		await db.query(
-			`UPDATE projects SET container_last_started_at = now() - interval '5 minutes' WHERE id = $1`,
-			[projectId],
+			`UPDATE projects SET container_last_started_at = now() - ($2 || ' minutes')::interval WHERE id = $1`,
+			[projectId, INSIDE_WINDOW_MIN],
 		);
 		const { stops } = await runIdlePass();
 		expect(stops).toEqual([]);
@@ -167,8 +173,9 @@ describe('container-idle-stop', () => {
 	it('a run finished inside the idle window holds the container up; an old one does not', async () => {
 		await db.query(
 			`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at, finished_at)
-			 VALUES ($1, $2, $3, 'succeeded'::heartbeat_run_status, now(), now() - interval '5 minutes')`,
-			[agentId, teamId, taskId],
+			 VALUES ($1, $2, $3, 'succeeded'::heartbeat_run_status, now(),
+			         now() - ($4 || ' minutes')::interval)`,
+			[agentId, teamId, taskId, INSIDE_WINDOW_MIN],
 		);
 		expect((await runIdlePass()).stops).toEqual([]);
 

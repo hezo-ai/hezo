@@ -163,7 +163,6 @@ describe('concurrency settings', () => {
 		max_container_memory_gb_is_set: boolean;
 		max_container_memory_gb_computed_default: number;
 		default_ram_cap_per_container_gb: number;
-		container_idle_timeout_min: number;
 		host_total_ram_bytes: number;
 		host_total_swap_bytes: number;
 	}> {
@@ -180,7 +179,6 @@ describe('concurrency settings', () => {
 		expect(data.max_container_memory_gb_is_set).toBe(false);
 		expect(data.max_container_memory_gb_computed_default).toBe(5);
 		expect(data.default_ram_cap_per_container_gb).toBe(2);
-		expect(data.container_idle_timeout_min).toBe(15);
 		expect(data.host_total_swap_bytes).toBe(6 * GIB);
 	});
 
@@ -233,11 +231,13 @@ describe('concurrency settings', () => {
 		await patchSettings({ max_container_memory_gb: null });
 	});
 
-	it('updates and persists the idle timeout, including 0 (never stop)', async () => {
-		expect((await patchSettings({ container_idle_timeout_min: 45 })).status).toBe(200);
-		expect((await getSettings()).container_idle_timeout_min).toBe(45);
-		expect((await patchSettings({ container_idle_timeout_min: 0 })).status).toBe(200);
-		expect((await getSettings()).container_idle_timeout_min).toBe(0);
+	it('rejects the retired idle-timeout setting rather than silently ignoring it', async () => {
+		// The window is a constant now (CONTAINER_IDLE_TIMEOUT_MIN). A PATCH naming
+		// only the retired field must 400 rather than 200-with-no-effect, so an
+		// operator or script still setting it finds out.
+		const res = await patchSettings({ container_idle_timeout_min: 45 });
+		expect(res.status).toBe(400);
+		expect((await res.json()).error.message).toContain('is required');
 	});
 
 	it.each([
@@ -249,9 +249,6 @@ describe('concurrency settings', () => {
 		['a zero ram cap', { default_ram_cap_per_container_gb: 0 }],
 		['an over-max ram cap', { default_ram_cap_per_container_gb: 513 }],
 		['a non-integer ram cap', { default_ram_cap_per_container_gb: 1.5 }],
-		['a negative idle timeout', { container_idle_timeout_min: -1 }],
-		['an over-max idle timeout', { container_idle_timeout_min: 10081 }],
-		['a non-integer idle timeout', { container_idle_timeout_min: 1.5 }],
 	])('rejects %s', async (_name, body) => {
 		const res = await patchSettings(body);
 		expect(res.status).toBe(400);
