@@ -998,6 +998,21 @@ private registry, or a locally-built tag that exists in no registry at all would
 be unable to start a container over a cache-freshness concern. The fallback logs what it
 costs, because the failure it re-admits is otherwise invisible.
 
+**The byte channel a tunnel would ride on differs per backend - measured.** The plan for
+reaching Hezo from a remote container (one exec with stdin attached, carrying a multiplexed
+tunnel) assumed every backend has Docker's `AttachStdin`. Daytona does not: its exec ignores
+an `input`/`stdin`/`stdinData` field entirely, and a command that reads stdin sees immediate
+EOF. What it has instead is a **PTY session over WebSocket** -
+`POST /process/pty {id}` then `wss://…/process/pty/{id}/connect` with the bearer token -
+verified end to end as a real bidirectional byte channel (writes reach the shell, output
+comes back). Two things follow for whoever builds the tunnel: the channel opens with a
+`{"status":"connected","type":"control"}` JSON frame that is not shell output, and it is a
+**PTY**, so line discipline is active (echo on, `\n` to `\r\n`, bracketed-paste sequences)
+and it must be put in raw mode before any framed protocol rides on it. The consequence for
+the seam is that the *transport* is per-backend while the framing and multiplexing above it
+stay shared - the plan's "one transport for both backends" holds for the protocol, not for
+the channel underneath it.
+
 **Network isolation is the provider's, not ours - measured.** Daytona interposes an Envoy
 proxy in front of all sandbox egress: a raw TCP connect to `169.254.169.254`, to an RFC1918
 address, and to a public address all succeed and all answer `server: envoy`, so there is no
