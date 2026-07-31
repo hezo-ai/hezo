@@ -82,6 +82,8 @@ export class TunnelMux {
 	private readonly streams = new Map<number, Stream>();
 	private readonly window: number;
 	private closed = false;
+	/** Serializes handleChunk so frames are processed strictly in arrival order. */
+	private queue: Promise<void> = Promise.resolve();
 
 	constructor(
 		private readonly channel: ByteChannel,
@@ -91,8 +93,22 @@ export class TunnelMux {
 		this.window = opts.windowBytes ?? DEFAULT_WINDOW_BYTES;
 	}
 
-	/** Feed bytes arriving from the container. */
-	async handleChunk(chunk: Uint8Array): Promise<void> {
+	/**
+	 * Feed bytes arriving from the container.
+	 *
+	 * Serialized against itself, and that is load-bearing rather than tidiness:
+	 * `onOpen` awaits a real connect, so without this a DATA frame arriving in a
+	 * later chunk would be processed while its OPEN was still connecting, find no
+	 * stream registered, and be **silently dropped**. The first bytes of a
+	 * connection are exactly the ones that arrive that way, so the symptom is a
+	 * stream that hangs having lost its request.
+	 */
+	handleChunk(chunk: Uint8Array): Promise<void> {
+		this.queue = this.queue.then(() => this.process(chunk));
+		return this.queue;
+	}
+
+	private async process(chunk: Uint8Array): Promise<void> {
 		if (this.closed) return;
 		let frames: ReturnType<FrameDecoder['push']>;
 		try {

@@ -75,7 +75,11 @@ RUN npm install -g bun \
 # AF_UNIX bind mounts) and Linux production with no platform branching.
 COPY scripts/hezo-ssh-bridge /usr/local/bin/hezo-ssh-bridge
 COPY scripts/hezo-run-with-bridge /usr/local/bin/hezo-run-with-bridge
-RUN chmod +x /usr/local/bin/hezo-ssh-bridge /usr/local/bin/hezo-run-with-bridge
+# Tunnel client: multiplexes the container's connections to Hezo over the byte
+# channel Hezo dials in on, so the instance needs no inbound reachability.
+COPY scripts/hezo-tunnel /usr/local/bin/hezo-tunnel
+RUN chmod +x /usr/local/bin/hezo-ssh-bridge /usr/local/bin/hezo-run-with-bridge \
+    /usr/local/bin/hezo-tunnel
 
 # Runtime dir for the per-run Unix socket. The container is started as the
 # unprivileged `node` user, which cannot create subdirectories under /run.

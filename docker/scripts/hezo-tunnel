@@ -1,0 +1,292 @@
+#!/usr/bin/env node
+'use strict';
+/**
+ * In-container end of the Hezo tunnel.
+ *
+ * Hezo dials *into* the container and runs this over the resulting byte
+ * channel, so the Hezo instance never has to be reachable from the internet -
+ * outbound to the provider is enough, and there is no tunnel credential to mint
+ * or leak because the channel is already authenticated by that connection.
+ *
+ * What it does:
+ *   - listens on three loopback ports, one per target key (proxy, mcp, ssh);
+ *   - multiplexes every connection over stdin/stdout using the frame protocol;
+ *   - for the proxy port, applies the split-routing policy so only hosts that
+ *     need a security check reach Hezo and everything else connects direct.
+ *
+ * Deliberately dependency-free and CommonJS: it runs from the image's Node with
+ * no install step, and must keep working when a project supplies its own
+ * `docker_base_image`.
+ *
+ * Usage: hezo-tunnel <config.json>
+ * Config: { ports: {proxy, mcp, ssh}, policy: {proxiedHosts[], proxyEverything} }
+ */
+
+const net = require('node:net');
+const fs = require('node:fs');
+
+// ---- frame protocol (mirrors services/sandbox/tunnel/protocol.ts) ----------
+// Kept in sync by the round-trip test in sandbox-tunnel-client.test.ts, which
+// drives this file against the server's own encoder rather than a copy of it.
+
+const F_OPEN = 1;
+const F_DATA = 2;
+const F_CLOSE = 3;
+const F_WINDOW = 4;
+const HEADER_BYTES = 9;
+const MAX_PAYLOAD_BYTES = 64 * 1024;
+
+function encodeFrame(type, streamId, payload) {
+	const body = payload || Buffer.alloc(0);
+	const out = Buffer.allocUnsafe(HEADER_BYTES + body.length);
+	out.writeUInt8(type, 0);
+	out.writeUInt32BE(streamId, 1);
+	out.writeUInt32BE(body.length, 5);
+	body.copy(out, HEADER_BYTES);
+	return out;
+}
+
+function makeDecoder(onFrame) {
+	let buffer = Buffer.alloc(0);
+	return (chunk) => {
+		buffer = buffer.length === 0 ? chunk : Buffer.concat([buffer, chunk]);
+		for (;;) {
+			if (buffer.length < HEADER_BYTES) return;
+			const type = buffer.readUInt8(0);
+			const streamId = buffer.readUInt32BE(1);
+			const length = buffer.readUInt32BE(5);
+			if (length > MAX_PAYLOAD_BYTES) throw new Error(`frame length ${length} too large`);
+			const total = HEADER_BYTES + length;
+			if (buffer.length < total) return;
+			onFrame(type, streamId, buffer.subarray(HEADER_BYTES, total));
+			buffer = buffer.subarray(total);
+		}
+	};
+}
+
+// ---- split routing (mirrors services/sandbox/tunnel/split-routing.ts) ------
+
+/**
+ * A leading-dot entry matches the domain and its subdomains; anything else is
+ * an exact host match. Case-insensitive, since DNS is.
+ */
+function hostNeedsProxy(policy, host) {
+	if (policy.proxyEverything) return true;
+	const target = String(host).trim().toLowerCase();
+	return (policy.proxiedHosts || []).some((entry) =>
+		entry.startsWith('.') ? target === entry.slice(1) || target.endsWith(entry) : target === entry,
+	);
+}
+
+// ---- the tunnel -----------------------------------------------------------
+
+const config = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const policy = config.policy || { proxiedHosts: [], proxyEverything: false };
+
+let nextStreamId = 1;
+/** streamId -> { socket, credit, paused, unacked, awaitingDrain, closed } */
+const streams = new Map();
+let windowBytes = 256 * 1024;
+let channelUp = true;
+
+function send(type, streamId, payload) {
+	if (!channelUp) return;
+	process.stdout.write(encodeFrame(type, streamId, payload));
+}
+
+/** Register a socket as a tunnelled stream and start pumping it. */
+function attach(socket, target) {
+	const streamId = nextStreamId;
+	nextStreamId += 2; // container-initiated ids are odd; Hezo never opens one.
+	const stream = {
+		socket,
+		credit: windowBytes,
+		paused: false,
+		unacked: 0,
+		awaitingDrain: false,
+		closed: false,
+	};
+	streams.set(streamId, stream);
+	send(F_OPEN, streamId, Buffer.from(target, 'utf8'));
+
+	socket.on('data', (chunk) => {
+		for (let offset = 0; offset < chunk.length; offset += MAX_PAYLOAD_BYTES) {
+			const slice = chunk.subarray(offset, offset + MAX_PAYLOAD_BYTES);
+			send(F_DATA, streamId, slice);
+			stream.credit -= slice.length;
+		}
+		if (stream.credit <= 0 && !stream.paused) {
+			stream.paused = true;
+			socket.pause();
+		}
+	});
+	const finish = () => {
+		if (stream.closed) return;
+		stream.closed = true;
+		streams.delete(streamId);
+		send(F_CLOSE, streamId);
+	};
+	socket.on('end', finish);
+	socket.on('close', finish);
+	socket.on('error', finish);
+	socket.on('drain', () => {
+		stream.awaitingDrain = false;
+		flushCredit(streamId, stream);
+	});
+	return streamId;
+}
+
+function flushCredit(streamId, stream) {
+	if (stream.awaitingDrain || stream.closed) return;
+	if (stream.unacked < windowBytes / 2) return;
+	const payload = Buffer.allocUnsafe(4);
+	payload.writeUInt32BE(stream.unacked, 0);
+	send(F_WINDOW, streamId, payload);
+	stream.unacked = 0;
+}
+
+const onFrame = (type, streamId, payload) => {
+	const stream = streams.get(streamId);
+	if (type === F_WINDOW) {
+		if (payload.length !== 4) return;
+		const credit = payload.readUInt32BE(0);
+		if (!stream) {
+			// The opening credit for a stream Hezo just accepted.
+			windowBytes = Math.max(windowBytes, credit);
+			return;
+		}
+		stream.credit += credit;
+		if (stream.paused && stream.credit > 0) {
+			stream.paused = false;
+			stream.socket.resume();
+		}
+		return;
+	}
+	if (!stream || stream.closed) return;
+	if (type === F_DATA) {
+		const accepted = stream.socket.write(payload);
+		stream.unacked += payload.length;
+		if (!accepted) {
+			// Withhold credit until drain so Hezo stops sending rather than us
+			// queueing what the local socket cannot take.
+			stream.awaitingDrain = true;
+			return;
+		}
+		flushCredit(streamId, stream);
+		return;
+	}
+	if (type === F_CLOSE) {
+		stream.closed = true;
+		streams.delete(streamId);
+		stream.socket.end();
+	}
+};
+
+const decode = makeDecoder(onFrame);
+process.stdin.on('data', (chunk) => {
+	try {
+		decode(chunk);
+	} catch (e) {
+		// A desynchronised channel cannot be recovered by parsing harder.
+		process.stderr.write(`hezo-tunnel: framing error: ${e.message}\n`);
+		shutdown();
+	}
+});
+
+/**
+ * The tunnel is the only path to Hezo, so losing it must **fail closed**.
+ *
+ * Every open stream is destroyed and the listeners stop accepting, so a request
+ * that needed the proxy errors immediately instead of silently going direct
+ * with an unsubstituted placeholder - the same posture the host-side
+ * `EgressProxyUnavailableError` already takes.
+ */
+function shutdown() {
+	channelUp = false;
+	for (const stream of streams.values()) stream.socket.destroy();
+	streams.clear();
+	for (const server of servers) server.close();
+	process.exit(0);
+}
+process.stdin.on('end', shutdown);
+process.stdin.on('error', shutdown);
+
+const servers = [];
+
+/** The MCP and SSH ports are unconditionally tunnelled - there is no direct route to Hezo. */
+for (const target of ['mcp', 'ssh']) {
+	const port = config.ports[target];
+	if (!port) continue;
+	const server = net.createServer((socket) => attach(socket, target));
+	server.listen(port, '127.0.0.1');
+	servers.push(server);
+}
+
+/**
+ * The proxy port speaks HTTP CONNECT itself, so it can decide per host whether
+ * to hand the connection to Hezo or dial out directly.
+ *
+ * Reading only the CONNECT line means the client's own TLS is untouched - this
+ * never terminates it, so nothing here can see a request body either way.
+ */
+if (config.ports.proxy) {
+	const server = net.createServer((socket) => {
+		let head = Buffer.alloc(0);
+		const onHead = (chunk) => {
+			head = Buffer.concat([head, chunk]);
+			const end = head.indexOf('\r\n\r\n');
+			// Bound the preamble so a client that never sends one cannot grow it.
+			if (end === -1) {
+				if (head.length > 16 * 1024) socket.destroy();
+				return;
+			}
+			socket.removeListener('data', onHead);
+			// Bytes after the preamble arrived in the same chunk and belong to the
+			// tunnelled/spliced connection - dropping them loses the first request
+			// on any client that pipelines, which is most of them.
+			const rest = head.subarray(end + 4);
+			const preamble = head.subarray(0, end + 4);
+			const requestLine = head.subarray(0, head.indexOf('\r\n')).toString('utf8');
+			const match = /^CONNECT\s+([^\s:]+)(?::(\d+))?/i.exec(requestLine);
+			if (!match) {
+				// A plain (non-CONNECT) proxy request carries the whole request in
+				// the clear; hand it to Hezo, which is the only thing that can
+				// decide what to do with it.
+				send(F_DATA, attach(socket, 'proxy'), head);
+				return;
+			}
+			const host = match[1];
+			const port = Number(match[2] || 443);
+
+			if (hostNeedsProxy(policy, host)) {
+				if (!channelUp) {
+					// Fail closed: never fall back to direct for a host whose
+					// requests may carry a placeholder Hezo has to substitute.
+					socket.end('HTTP/1.1 502 Bad Gateway\r\n\r\n');
+					return;
+				}
+				const id = attach(socket, 'proxy');
+				send(F_DATA, id, preamble);
+				if (rest.length > 0) send(F_DATA, id, rest);
+				return;
+			}
+
+			// Direct: dial the origin ourselves and splice, so `apt`, `npm` and
+			// `playwright install` never push their payload through Hezo.
+			const upstream = net.connect({ host, port }, () => {
+				socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+				if (rest.length > 0) upstream.write(rest);
+				socket.pipe(upstream);
+				upstream.pipe(socket);
+			});
+			upstream.on('error', () => {
+				socket.end('HTTP/1.1 502 Bad Gateway\r\n\r\n');
+			});
+			socket.on('error', () => upstream.destroy());
+		};
+		socket.on('data', onHead);
+		socket.on('error', () => socket.destroy());
+	});
+	server.listen(config.ports.proxy, '127.0.0.1');
+	servers.push(server);
+}
