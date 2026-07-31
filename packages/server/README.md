@@ -32,6 +32,9 @@ Starts the server on port 3100 with hot reload. In dev, PGlite data persists at 
 | `--data-dir <path>` | `~/.hezo` | Data directory for the embedded database and assets (env: `HEZO_DATA_DIR`) |
 | `--database-url <url>` | - | External Postgres connection string; omit for the embedded database (env: `HEZO_DATABASE_URL`) |
 | `--asset-storage-url <url>` | - | S3-compatible object storage for asset files (`s3://KEY:SECRET@endpoint/bucket[/prefix]`); omit to store assets under the data directory (env: `HEZO_ASSET_STORAGE_URL`) |
+| `--sandbox-backend <name>` | `docker` | Where agent containers run: `docker` (the local daemon) or `daytona` (a managed sandbox service). A managed backend that cannot be reached is fatal at startup - Hezo never falls back to local Docker (env: `HEZO_SANDBOX_BACKEND`) |
+| `--daytona-api-key <key>` | - | Daytona API key, required when `--sandbox-backend` is `daytona` (env: `HEZO_DAYTONA_API_KEY`) |
+| `--daytona-api-url <url>` | Daytona's public API | Daytona API base URL, for a regional or self-hosted endpoint (env: `HEZO_DAYTONA_API_URL`) |
 | `--master-key <phrase>` | - | Twelve-word master key to set up/unlock on startup (env: `HEZO_MASTER_KEY`) |
 | `--web-url <url>` | same origin | Public base URL for sign-in redirects (env: `HEZO_WEB_URL`) |
 | `--reset` | `false` | Start fresh (existing `pgdata` is renamed aside, not deleted) (env: `HEZO_RESET`) |

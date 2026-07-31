@@ -32,6 +32,23 @@ export interface HezoConfig {
 	 * `lib/asset-storage-info.ts`) and never passed into `buildApp`.
 	 */
 	assetStorageUrl?: string;
+	/**
+	 * Where agent containers run (`--sandbox-backend` / `HEZO_SANDBOX_BACKEND`):
+	 * `docker` (default, the local daemon) or a managed sandbox service. Selecting
+	 * a managed backend Hezo cannot reach is **fatal at startup** - it never falls
+	 * back to local Docker, because an instance that silently degraded would look
+	 * healthy while running somewhere the operator did not choose.
+	 */
+	sandboxBackend?: string;
+	/**
+	 * Daytona API key (`--daytona-api-key` / `HEZO_DAYTONA_API_KEY`), required
+	 * when `sandboxBackend` is `daytona`. Used only by trusted server code to
+	 * reach the provider control plane - it is never placed in an agent
+	 * container, and never logged (see `redactSandboxApiUrl`).
+	 */
+	daytonaApiKey?: string;
+	/** Daytona API base URL, for a regional or self-hosted endpoint. */
+	daytonaApiUrl?: string;
 	masterKey?: { unlockKeyHex: string; publicKeyHex: string };
 	webUrl: string;
 	reset: boolean;
@@ -745,6 +762,18 @@ export function parseConfig(
 			'S3-compatible object storage for asset files (s3://ACCESS_KEY:SECRET@endpoint/bucket[/prefix]?region=…&pathStyle=…). Works with AWS S3, MinIO, R2, Spaces, B2, and any other S3-compatible store. Omit to store assets on the local filesystem under the data directory. (env: HEZO_ASSET_STORAGE_URL)',
 		)
 		.option(
+			'--sandbox-backend <name>',
+			'Where agent containers run: docker (default, the local daemon) or daytona (a managed sandbox service). Selecting a managed backend that cannot be reached is fatal at startup - Hezo never falls back to local Docker. (env: HEZO_SANDBOX_BACKEND)',
+		)
+		.option(
+			'--daytona-api-key <key>',
+			'Daytona API key, required when --sandbox-backend is daytona (env: HEZO_DAYTONA_API_KEY)',
+		)
+		.option(
+			'--daytona-api-url <url>',
+			'Daytona API base URL, for a regional or self-hosted endpoint. Defaults to the public API. (env: HEZO_DAYTONA_API_URL)',
+		)
+		.option(
 			'--master-key <phrase>',
 			'The 12-word master key phrase for setup/unlock (env: HEZO_MASTER_KEY)',
 		)
@@ -831,6 +860,9 @@ export function parseConfig(
 		dataDir: resolveDataDir(pick('HEZO_DATA_DIR', cli.dataDir) ?? DEFAULT_DATA_DIR),
 		databaseUrl,
 		assetStorageUrl: pick('HEZO_ASSET_STORAGE_URL', cli.assetStorageUrl),
+		sandboxBackend: pick('HEZO_SANDBOX_BACKEND', cli.sandboxBackend),
+		daytonaApiKey: pick('HEZO_DAYTONA_API_KEY', cli.daytonaApiKey),
+		daytonaApiUrl: pick('HEZO_DAYTONA_API_URL', cli.daytonaApiUrl),
 		masterKey: masterKeyRaw ? parseMasterKey(masterKeyRaw) : undefined,
 		webUrl: pick('HEZO_WEB_URL', cli.webUrl) ?? '',
 		reset,

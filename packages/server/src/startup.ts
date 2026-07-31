@@ -22,6 +22,7 @@ import { DomainEventBus } from './events/bus';
 import type { AssetStorageInfo } from './lib/asset-storage-info';
 import { trackBackground } from './lib/background';
 import type { StorageInfo } from './lib/db-info';
+import type { SandboxBackendInfo } from './lib/sandbox-backend-info';
 import {
 	getInstanceBaseUrl,
 	getInstanceLocale,
@@ -67,6 +68,7 @@ import { projectDocsRoutes } from './routes/project-docs';
 import { projectsRoutes, publicProjectsRoutes } from './routes/projects';
 import { queuedWakeupsRoutes } from './routes/queued-wakeups';
 import { reposRoutes } from './routes/repos';
+import { buildSandboxBackendInfoRoutes } from './routes/sandbox-backend-info';
 import { searchRoutes } from './routes/search';
 import { secretsRoutes } from './routes/secrets';
 import { skillsRoutes } from './routes/skills';
@@ -105,6 +107,7 @@ import { LogStreamBroker } from './services/log-stream-broker';
 import { registerGenericOAuthRefresh } from './services/oauth/generic-refresh';
 import { adminPasswordIsSet } from './services/password';
 import { PricingService } from './services/pricing';
+import { openSandboxBackend } from './services/sandbox/open';
 import type { ContainerEngine } from './services/sandbox/types';
 import { SshAgentServer } from './services/ssh-agent';
 import { WebSocketManager } from './services/ws';
@@ -133,6 +136,8 @@ export interface AppConfig {
 	storageInfo?: StorageInfo;
 	/** Pre-redacted asset-storage metadata — same contract as `storageInfo`. */
 	assetStorageInfo?: AssetStorageInfo;
+	/** Pre-redacted sandbox-backend metadata — same contract as `storageInfo`. */
+	sandboxBackendInfo?: SandboxBackendInfo;
 }
 
 export interface StartupResult {
@@ -245,12 +250,30 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	const masterKeyManager = new MasterKeyManager();
 	const masterKeyState = await resolveMasterKeyState(db, masterKeyManager, config.masterKey);
 
+	// The container engine is chosen once, here, and never changes at runtime -
+	// a managed backend that cannot be reached aborted startup before this point
+	// (`openSandboxBackend`), so there is no dynamic failover to reason about.
 	let docker: ContainerEngine;
+	let sandboxBackendInfo: SandboxBackendInfo;
 	if (process.env.HEZO_SKIP_DOCKER) {
+		// The fake needs the db (it synthesizes agent output), which is why this
+		// branch stays here rather than inside `openSandboxBackend`.
 		const { createFakeDockerClient } = await import('./services/fake-docker.js');
 		docker = createFakeDockerClient(db);
+		sandboxBackendInfo = { backend: 'docker', display: 'local Docker daemon' };
 	} else {
-		docker = new DockerClient();
+		({ engine: docker, info: sandboxBackendInfo } = await openSandboxBackend({
+			backend: config.sandboxBackend,
+			daytonaApiKey: config.daytonaApiKey,
+			daytonaApiUrl: config.daytonaApiUrl,
+		}));
+	}
+
+	// Image management below is Docker's alone - a managed backend builds from a
+	// Dockerfile at sandbox create and has no image store to seed or prune. Keyed
+	// on the engine itself rather than on how it was constructed, so a Docker
+	// engine gets this setup whichever path produced it.
+	if (docker instanceof DockerClient) {
 		// A compiled binary has no repo checkout, so extract the embedded agent-base
 		// build context to the data dir and point the image resolver at it. This is
 		// the local-build fallback for when the published-image pull fails, and it's
@@ -481,6 +504,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 			autoUnlock: config.masterKey !== undefined,
 			storageInfo,
 			assetStorageInfo,
+			sandboxBackendInfo,
 		},
 		docker,
 		wsManager,
@@ -763,6 +787,12 @@ export function buildApp(
 		'/api',
 		buildAssetStorageInfoRoutes(
 			config.assetStorageInfo ?? { backend: 'local', display: join(config.dataDir, 'assets') },
+		),
+	);
+	app.route(
+		'/api',
+		buildSandboxBackendInfoRoutes(
+			config.sandboxBackendInfo ?? { backend: 'docker', display: 'local Docker daemon' },
 		),
 	);
 	app.route('/api', modelPricingRoutes);

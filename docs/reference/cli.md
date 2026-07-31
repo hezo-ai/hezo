@@ -28,6 +28,7 @@ hezo --port 8080                 # listen on a different port
 hezo --data-dir /var/lib/hezo    # use a specific data directory
 hezo --database-url postgres://user:pass@host:5432/hezo   # use an external Postgres instead of the embedded database
 hezo --asset-storage-url "s3://KEY:SECRET@endpoint/bucket"   # store asset files in S3-compatible object storage
+hezo --sandbox-backend daytona --daytona-api-key "<key>"   # run agent containers on a managed sandbox service
 hezo --master-key "<phrase>"     # set up or unlock without the web gate
 hezo --web-url https://hezo.example.com   # public base URL for sign-in redirects
 hezo --no-open                   # don't open the web app in your browser on start
@@ -49,6 +50,13 @@ Uploaded asset files live under the data directory by default. With
 bucket instead - see
 [Storing assets in S3-compatible object storage](/docs/deployment/configuration) for the
 URL format and how to move an existing instance.
+
+Agent containers run on the local Docker daemon by default. With `--sandbox-backend`
+(or `HEZO_SANDBOX_BACKEND`) they run on a managed sandbox service instead, and Docker
+is no longer a prerequisite - see
+[Running agent containers on a managed sandbox service](/docs/deployment/configuration).
+A managed backend Hezo cannot reach is fatal at startup: it reports the problem and
+exits rather than silently falling back to local Docker.
 
 On **native-Linux Docker**, agent containers reach the host over the bridge gateway, so the
 host firewall must allow the Docker bridge to reach Hezo's ports. The boot connectivity check

@@ -20,6 +20,9 @@ handy for baking defaults into a service definition while still overriding per r
 | `--database-url <url>` | `HEZO_DATABASE_URL` | - | Connection string for an [external Postgres](#using-an-external-postgres) (`postgres://user:password@host:5432/hezo`). Its `sslmode` follows standard libpq rules - see [TLS and sslmode](#tls-and-sslmode). Omit to use the embedded database under the data directory (the default). |
 | - | `HEZO_DATABASE_POOL_SIZE` | `10` | Connection-pool size for the external database (2-100). Ignored for the embedded database. |
 | `--asset-storage-url <url>` | `HEZO_ASSET_STORAGE_URL` | - | [S3-compatible object storage](#storing-assets-in-s3-compatible-object-storage) for asset files (`s3://KEY:SECRET@endpoint/bucket[/prefix]`). Omit to store assets on the local filesystem under the data directory (the default). |
+| `--sandbox-backend <name>` | `HEZO_SANDBOX_BACKEND` | `docker` | Where agent containers run: `docker` (the local daemon) or `daytona` (a [managed sandbox service](#running-agent-containers-on-a-managed-sandbox-service)). Selecting a managed backend Hezo cannot reach is fatal at startup - it never falls back to local Docker. |
+| `--daytona-api-key <key>` | `HEZO_DAYTONA_API_KEY` | - | Daytona API key. Required when `--sandbox-backend` is `daytona`. Used only by Hezo itself to reach the provider - it is never placed inside an agent container. |
+| `--daytona-api-url <url>` | `HEZO_DAYTONA_API_URL` | Daytona's public API | Daytona API base URL, for a regional or self-hosted endpoint. |
 | `--master-key <phrase>` | `HEZO_MASTER_KEY` | - | The twelve-word master key, to set up or unlock without the web gate. |
 | `--web-url <url>` | `HEZO_WEB_URL` | same origin | Public base URL, used so account sign-ins redirect back correctly. |
 | `--reset` | `HEZO_RESET` | off | Start fresh with an empty **embedded** database (the existing `pgdata` is renamed aside, not deleted). Not applicable with `--database-url` - recreate an external database with your provider's tools. |
@@ -214,6 +217,58 @@ Because the local `<data-dir>/assets/` layout and the bucket keys are identical
 (`<project-id>/<asset-id>`), you can alternatively sync the tree directly with any S3 tool
 while the server is stopped - `aws s3 sync /var/lib/hezo/assets/ s3://my-bucket/hezo-assets/`
 (or `rclone sync`).
+
+## Running agent containers on a managed sandbox service
+
+Every agent run executes inside a container. By default that container runs on the local
+Docker daemon, which is why Docker is a prerequisite for a normal install. Setting
+`--sandbox-backend` (or `HEZO_SANDBOX_BACKEND`) moves those containers onto a managed
+sandbox service instead, and Docker stops being required at all.
+
+Today the one managed backend is **Daytona**:
+
+```sh
+hezo --sandbox-backend daytona --daytona-api-key "dtn_..."
+```
+
+or, as environment variables:
+
+```sh
+HEZO_SANDBOX_BACKEND=daytona
+HEZO_DAYTONA_API_KEY=dtn_...
+HEZO_DAYTONA_API_URL=https://app.daytona.io/api   # optional: a regional endpoint
+```
+
+Add `--daytona-api-url` (or `HEZO_DAYTONA_API_URL`) only if you are pointed at a regional
+or self-hosted endpoint; it defaults to Daytona's public API.
+
+**All of it is deployment configuration**, set before the server starts - there is no
+setting for it in the web UI, and the API key does not go in the secrets vault. The
+General settings page shows which backend is in use, read-only, next to the database and
+asset backends.
+
+### It is fatal, never a silent fallback
+
+If you select a managed backend and Hezo cannot reach it - no key, a rejected key, or an
+unreachable API - the server **refuses to start** and prints what to check. It never
+quietly runs your agents on local Docker instead.
+
+This is deliberate, and matches how an external database and S3 asset storage already
+behave. An instance that silently degraded would look perfectly healthy while doing
+something you did not ask for, and the first sign of trouble would be an agent run failing
+for no visible reason.
+
+Startup retries briefly first (a couple of seconds, twice), so a provider that is
+restarting does not kill a boot.
+
+### What the API key can reach
+
+The Daytona API key is used **only by Hezo itself**, to create and manage sandboxes. It is
+never placed inside an agent container, never written into a container's environment, and
+never logged - the same handling as your database password and S3 credentials. Hezo also
+does not use the provider's own secret storage: your credentials stay in Hezo's encrypted
+vault and are substituted into agent requests by Hezo's egress proxy, exactly as they are
+on a local Docker install.
 
 ## Anonymous usage telemetry
 

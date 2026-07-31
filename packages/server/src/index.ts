@@ -25,6 +25,7 @@ import { evaluateDockerPreflight, formatDockerPreflightMessage } from './service
 import { getSharedImageBuildTracker } from './services/image-build-tracker';
 import type { LogStreamBroker } from './services/log-stream-broker';
 import { formatPortInUseMessage, probePort } from './services/port-preflight';
+import { SandboxBackendError } from './services/sandbox/errors';
 import { isAutoUpdateEnabled } from './services/updater';
 import type { WebSocketManager, WsData, WsSocket } from './services/ws';
 import { handleWsSubscribe, handleWsUnsubscribe } from './services/ws-subscribe-handler';
@@ -164,7 +165,12 @@ if (!globalThis.__hezoPortProbed) {
 // guidance (install link / start instructions) rather than booting a server
 // that can't run a single agent. HEZO_SKIP_DOCKER swaps in the in-process fake
 // docker for UI/dev work and tests, so the gate is skipped when it is set.
-if (!process.env.HEZO_SKIP_DOCKER) {
+//
+// A managed sandbox backend replaces the daemon rather than supplementing it,
+// so Docker stops being a prerequisite and this gate would be a false failure.
+// That backend has its own fatal preflight inside `startup()`.
+const usesLocalDocker = !config.sandboxBackend || config.sandboxBackend === 'docker';
+if (!process.env.HEZO_SKIP_DOCKER && usesLocalDocker) {
 	const availability = await evaluateDockerPreflight(new DockerClient());
 	if (availability !== 'ok') {
 		log.error(`\n${formatDockerPreflightMessage(availability)}\n`);
@@ -275,7 +281,8 @@ void (async () => {
 			err instanceof MigrationFailedError ||
 			err instanceof ExternalDbError ||
 			err instanceof ExternalMigrationFailedError ||
-			err instanceof AssetStorageError
+			err instanceof AssetStorageError ||
+			err instanceof SandboxBackendError
 		) {
 			log.error(`\n${err.message}\n`);
 			// Under `Restart=always` this exit is immediately undone, so without a
