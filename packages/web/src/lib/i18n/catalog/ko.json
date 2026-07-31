@@ -52,6 +52,8 @@
 	"settings.apiKeys": "API 키",
 	"settings.users": "사용자",
 	"settings.storage": "저장소",
+	"settings.sandboxBackend.title": "에이전트 컨테이너",
+	"settings.sandboxBackend.docker": "로컬 Docker 데몬",
 	"settings.auditLog": "활동 로그",
 	"settings.adminPassword": "관리자 비밀번호",
 	"settings.chatbox": "채팅",

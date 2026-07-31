@@ -52,6 +52,8 @@
 	"settings.apiKeys": "API 密钥",
 	"settings.users": "用户",
 	"settings.storage": "存储",
+	"settings.sandboxBackend.title": "代理容器",
+	"settings.sandboxBackend.docker": "本地 Docker 守护进程",
 	"settings.auditLog": "活动日志",
 	"settings.adminPassword": "管理员密码",
 	"settings.chatbox": "聊天",

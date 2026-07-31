@@ -52,6 +52,8 @@
 	"settings.apiKeys": "API-sleutels",
 	"settings.users": "Gebruikers",
 	"settings.storage": "Opslag",
+	"settings.sandboxBackend.title": "Agentcontainers",
+	"settings.sandboxBackend.docker": "Lokale Docker-daemon",
 	"settings.auditLog": "Activiteitenlog",
 	"settings.adminPassword": "Beheerderswachtwoord",
 	"settings.chatbox": "Chat",

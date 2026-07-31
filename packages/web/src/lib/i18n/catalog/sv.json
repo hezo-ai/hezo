@@ -52,6 +52,8 @@
 	"settings.apiKeys": "API-nycklar",
 	"settings.users": "Användare",
 	"settings.storage": "Lagring",
+	"settings.sandboxBackend.title": "Agentcontainrar",
+	"settings.sandboxBackend.docker": "Lokal Docker-daemon",
 	"settings.auditLog": "Aktivitetslogg",
 	"settings.adminPassword": "Administratörslösenord",
 	"settings.chatbox": "Chatt",

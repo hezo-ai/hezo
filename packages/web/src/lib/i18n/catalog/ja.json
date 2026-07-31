@@ -52,6 +52,8 @@
 	"settings.apiKeys": "API キー",
 	"settings.users": "ユーザー",
 	"settings.storage": "ストレージ",
+	"settings.sandboxBackend.title": "エージェントコンテナ",
+	"settings.sandboxBackend.docker": "ローカルの Docker デーモン",
 	"settings.auditLog": "アクティビティログ",
 	"settings.adminPassword": "管理者パスワード",
 	"settings.chatbox": "チャット",

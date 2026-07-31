@@ -45,6 +45,8 @@ export const queryKeys = {
 	runLogUsage: (olderThanDays: number) => ['instance', 'database', 'run-log-usage', olderThanDays],
 	/** Asset storage backend metadata (server-side redacted) for the General settings page. */
 	assetStorageInfo: () => ['instance', 'asset-storage'],
+	/** Sandbox backend metadata (server-side redacted) for the Storage settings page. */
+	sandboxBackendInfo: () => ['instance', 'sandbox-backend'],
 	/** Instance-wide mention resolution (global CEO chat), keyed by sorted candidates. */
 	instanceMentionsResolve: (key: KeyParam) => ['instance', 'mentions', 'resolve', key],
 	/**

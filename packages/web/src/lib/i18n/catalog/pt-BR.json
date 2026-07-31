@@ -52,6 +52,8 @@
 	"settings.apiKeys": "Chaves de API",
 	"settings.users": "Usuários",
 	"settings.storage": "Armazenamento",
+	"settings.sandboxBackend.title": "Contêineres dos agentes",
+	"settings.sandboxBackend.docker": "Daemon Docker local",
 	"settings.auditLog": "Registro de atividades",
 	"settings.adminPassword": "Senha de administrador",
 	"settings.chatbox": "Chat",
