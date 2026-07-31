@@ -1093,7 +1093,7 @@ describe('runAgent — rotated subscription auth tombstone', () => {
 			[configId],
 		);
 		expect(cfg.rows[0].status).toBe('verified');
-		expect(decrypt(cfg.rows[0].encrypted_credential, masterKeyManager.getKey())).toBe(
+		expect(decrypt(cfg.rows[0].encrypted_credential, masterKeyManager.getKey() as Buffer)).toBe(
 			validAuthJson,
 		);
 

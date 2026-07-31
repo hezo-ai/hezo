@@ -2,7 +2,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
-import { safeClose } from './helpers';
+import { blobBytes, safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 
 // Review comments on project assets: CRUD via
@@ -64,7 +64,7 @@ async function uploadAsset(
 	const fd = new FormData();
 	const copy = new Uint8Array(bytes.byteLength);
 	copy.set(bytes);
-	fd.set('file', new File([copy.buffer], filename, { type: mime }));
+	fd.set('file', new File([blobBytes(copy)], filename, { type: mime }));
 	const res = await app.request(`/api/projects/${project}/assets`, {
 		method: 'POST',
 		headers: { ...authHeader(token) },

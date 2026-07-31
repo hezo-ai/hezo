@@ -5,7 +5,7 @@ import type { Db } from '../src/db/database';
 import { AGENT_ASSET_URL_TTL_SECONDS, signAgentAssetUrl } from '../src/lib/asset-urls';
 import type { Env } from '../src/lib/types';
 import { loadAgentAttachmentsForComments } from '../src/services/agent-runner';
-import { safeClose } from './helpers';
+import { blobBytes, safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 
 /**

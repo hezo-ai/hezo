@@ -2512,7 +2512,7 @@ describe('JobManager workflow methods', () => {
 			// would be asserting the cap, not the per-agent question under test.
 			const { getActiveContainers } = await import('../src/services/run-concurrency');
 			const active = await getActiveContainers(db);
-			await setContainerCapacityForTest(db, active.runningContainers + 1);
+			await setContainerCapacityForTest(db, Math.ceil(active.usedMemoryGb / 2) + 1);
 			expect(await (manager as any).isContainerCapacityBlocked(projectBId)).toBe(false);
 			await clearContainerCapacityForTest(db);
 

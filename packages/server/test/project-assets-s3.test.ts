@@ -7,7 +7,7 @@ import { S3AssetStore } from '../src/assets/drivers/s3';
 import { parseAssetStorageUrl } from '../src/assets/url';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
-import { safeClose } from './helpers';
+import { blobBytes, safeClose } from './helpers';
 import {
 	authHeader,
 	createTestApp,
@@ -63,7 +63,7 @@ async function uploadProjectAsset(filename: string, mime: string, bytes: Uint8Ar
 	const fd = new FormData();
 	const copy = new Uint8Array(bytes.byteLength);
 	copy.set(bytes);
-	fd.set('file', new File([copy.buffer], filename, { type: mime }));
+	fd.set('file', new File([blobBytes(copy)], filename, { type: mime }));
 	return app.request(`/api/projects/${projectId}/assets`, {
 		method: 'POST',
 		headers: { ...authHeader(token) },
@@ -187,7 +187,7 @@ describe('asset flows with the S3 store active', () => {
 		const fd = new FormData();
 		const copy = new Uint8Array(PNG_BYTES.byteLength);
 		copy.set(PNG_BYTES);
-		fd.set('file', new File([copy.buffer], 'shot.png', { type: 'image/png' }));
+		fd.set('file', new File([blobBytes(copy)], 'shot.png', { type: 'image/png' }));
 		const res = await app.request('/mcp/assets', {
 			method: 'POST',
 			headers: { ...authHeader(agentToken) },
@@ -228,7 +228,7 @@ describe('asset flows with the S3 store active', () => {
 			const fd = new FormData();
 			const copy = new Uint8Array(PNG_BYTES.byteLength);
 			copy.set(PNG_BYTES);
-			fd.set('file', new File([copy.buffer], `f${i}.png`, { type: 'image/png' }));
+			fd.set('file', new File([blobBytes(copy)], `f${i}.png`, { type: 'image/png' }));
 			const res = await app.request(`/api/projects/${doomedProjectId}/assets`, {
 				method: 'POST',
 				headers: { ...authHeader(token) },

@@ -152,7 +152,7 @@ function makeTask() {
 		id: taskId,
 		identifier: 'HC-1',
 		title: 'Handoff Task',
-		description: null,
+		description: '',
 		status: 'backlog',
 		priority: 'medium',
 		project_id: projectId,
@@ -202,6 +202,18 @@ function makeDeps(docker: ContainerEngine): RunnerDeps {
 		dataDir: '/tmp/test-data-handoff',
 		logs: new LogStreamBroker(),
 	};
+}
+
+/**
+ * `RunResult.heartbeatRunId` is optional - a run that never got as far as
+ * registering has none - so narrow it here rather than at a dozen call sites.
+ * A missing id in these tests means the run did not start, which is a failure
+ * worth naming rather than a comment query returning nothing.
+ */
+function runIdOf(result: { heartbeatRunId?: string }): string {
+	const id = result.heartbeatRunId;
+	if (!id) throw new Error('run produced no heartbeat run id');
+	return id;
 }
 
 async function textComments(runId: string) {
@@ -255,7 +267,7 @@ describe('runAgent handoff-delivery guardrail', () => {
 		);
 
 		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
-		const runId = result.heartbeatRunId;
+		const runId = runIdOf(result);
 
 		// The no-op run became a success because the guardrail produced a comment.
 		expect(result.success).toBe(true);
@@ -320,7 +332,7 @@ describe('runAgent handoff-delivery guardrail', () => {
 		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
 
 		// Exactly one comment — the one the agent posted; the guardrail added none.
-		const comments = await textComments(result.heartbeatRunId);
+		const comments = await textComments(runIdOf(result));
 		expect(comments.rows.length).toBe(1);
 		expect(JSON.stringify(comments.rows[0].content)).toContain('awaiting your call');
 	});
@@ -332,7 +344,7 @@ describe('runAgent handoff-delivery guardrail', () => {
 
 		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
 		expect(result.success).toBe(true);
-		const comments = await textComments(result.heartbeatRunId);
+		const comments = await textComments(runIdOf(result));
 		expect(comments.rows.length).toBe(0);
 	});
 
@@ -347,7 +359,7 @@ describe('runAgent handoff-delivery guardrail', () => {
 
 		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
 		expect(result.success).toBe(false);
-		const comments = await textComments(result.heartbeatRunId);
+		const comments = await textComments(runIdOf(result));
 		expect(comments.rows.length).toBe(0);
 	});
 
@@ -372,7 +384,7 @@ describe('runAgent handoff-delivery guardrail', () => {
 		expect(result.success).toBe(true);
 
 		// The guardrail fired even though the run already produced output.
-		const comments = await textComments(result.heartbeatRunId);
+		const comments = await textComments(runIdOf(result));
 		expect(comments.rows.length).toBe(1);
 		expect(JSON.stringify(comments.rows[0].content)).toContain(`@${otherSlug}`);
 
@@ -412,7 +424,7 @@ describe('runAgent handoff-delivery guardrail', () => {
 		expect(result.success).toBe(true);
 
 		// The runner did NOT rewrite the message or auto-deliver it: no comment posted.
-		const comments = await textComments(result.heartbeatRunId);
+		const comments = await textComments(runIdOf(result));
 		expect(comments.rows.length).toBe(0);
 
 		// No teammate was force-woken.
@@ -460,7 +472,7 @@ describe('runAgent handoff-delivery guardrail', () => {
 
 		// Not delivered, not rewritten (the "agent posts it itself" posture): no
 		// comment posted, no teammate force-woken.
-		const comments = await textComments(result.heartbeatRunId);
+		const comments = await textComments(runIdOf(result));
 		expect(comments.rows.length).toBe(0);
 		const wakeups = await db.query(
 			`SELECT 1 FROM agent_wakeup_requests WHERE member_id = $1 AND source = 'mention'`,
@@ -524,7 +536,7 @@ describe('runAgent handoff-delivery guardrail', () => {
 		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
 
 		// Exactly one comment — the agent's own active ask; the guardrail added none.
-		const comments = await textComments(result.heartbeatRunId);
+		const comments = await textComments(runIdOf(result));
 		expect(comments.rows.length).toBe(1);
 
 		// And no stranded-handoff warning, because the ask was already delivered.
@@ -577,7 +589,7 @@ describe('runAgent handoff-delivery guardrail', () => {
 		);
 		expect(result.success).toBe(true);
 
-		const comments = await textComments(result.heartbeatRunId);
+		const comments = await textComments(runIdOf(result));
 		expect(comments.rows.length).toBe(1);
 		expect(comments.rows[0].author_member_id).toBe(agentId);
 		expect(JSON.stringify(comments.rows[0].content)).toContain(link);
@@ -623,7 +635,7 @@ describe('runAgent handoff-delivery guardrail', () => {
 			wakeupId,
 		);
 		expect(result.success).toBe(true);
-		const comments = await textComments(result.heartbeatRunId);
+		const comments = await textComments(runIdOf(result));
 		expect(comments.rows.length).toBe(1);
 		expect(comments.rows[0].parent_comment_id).toBe(mention);
 	});
@@ -686,7 +698,7 @@ describe('runAgent handoff-delivery guardrail', () => {
 			wakeupId,
 		);
 		// Exactly the one comment the run posted itself — no auto-delivered echo.
-		const comments = await textComments(result.heartbeatRunId);
+		const comments = await textComments(runIdOf(result));
 		expect(comments.rows.length).toBe(1);
 		expect(JSON.stringify(comments.rows[0].content)).toContain('Posted it here');
 	});
@@ -731,7 +743,7 @@ describe('runAgent handoff-delivery guardrail', () => {
 		);
 		expect(result.success).toBe(true);
 		// Agent-to-agent chatter is not auto-posted — the run left no comment.
-		const comments = await textComments(result.heartbeatRunId);
+		const comments = await textComments(runIdOf(result));
 		expect(comments.rows.length).toBe(0);
 	});
 
@@ -754,7 +766,7 @@ describe('runAgent handoff-delivery guardrail', () => {
 
 		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
 		expect(result.success).toBe(true);
-		const comments = await textComments(result.heartbeatRunId);
+		const comments = await textComments(runIdOf(result));
 		expect(comments.rows.length).toBe(0);
 		const run = await db.query<{ log_text: string }>(
 			`SELECT ${runLogTextSql('heartbeat_runs.id')} AS log_text FROM heartbeat_runs WHERE id = $1`,

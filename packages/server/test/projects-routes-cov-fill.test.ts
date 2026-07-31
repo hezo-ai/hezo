@@ -4,6 +4,7 @@ import { LocalAssetStore } from '../src/assets/drivers/local';
 import { signProjectIconUrl } from '../src/lib/project-icon-urls';
 import { signAdminJwt } from '../src/middleware/auth';
 import { buildApp } from '../src/startup';
+import { blobBytes } from './helpers';
 import { authHeader, createStubDocker, createTestProject, createTestTeam } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
@@ -22,7 +23,7 @@ function pngWithDimensions(width: number, height: number): Buffer {
 
 function iconForm(bytes: Buffer, type = 'image/png'): FormData {
 	const fd = new FormData();
-	fd.set('file', new Blob([bytes], { type }), 'icon.png');
+	fd.set('file', new Blob([blobBytes(bytes)], { type }), 'icon.png');
 	return fd;
 }
 

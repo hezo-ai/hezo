@@ -112,6 +112,7 @@ describe('buildProviderEnv', () => {
 		const env = buildProviderEnv(AiProvider.Anthropic, {
 			value: 'sk-ant-123',
 			authMethod: AiAuthMethod.ApiKey,
+			baseUrl: null,
 		});
 		// Claude Code quiet flags are prepended for ClaudeCode-runtime providers.
 		expect(env).toContain('DISABLE_TELEMETRY=1');
@@ -129,6 +130,7 @@ describe('buildProviderEnv', () => {
 		const env = buildProviderEnv(AiProvider.Anthropic, {
 			value: 'oauth-token-abc',
 			authMethod: AiAuthMethod.Subscription,
+			baseUrl: null,
 		});
 		expect(env).toContain('CLAUDE_CODE_OAUTH_TOKEN=oauth-token-abc');
 		expect(env.some((e) => e.startsWith('ANTHROPIC_API_KEY='))).toBe(false);
@@ -141,6 +143,7 @@ describe('buildProviderEnv', () => {
 		const env = buildProviderEnv(AiProvider.OpenAI, {
 			value: 'whatever',
 			authMethod: AiAuthMethod.Subscription,
+			baseUrl: null,
 		});
 		expect(env).toEqual([]);
 	});
@@ -149,6 +152,7 @@ describe('buildProviderEnv', () => {
 		const env = buildProviderEnv(AiProvider.DeepSeek, {
 			value: 'ds-key',
 			authMethod: AiAuthMethod.ApiKey,
+			baseUrl: null,
 		});
 		// DeepSeek runs on Claude Code → quiet env present.
 		expect(env).toContain('DISABLE_TELEMETRY=1');
@@ -163,6 +167,7 @@ describe('buildProviderEnv', () => {
 		const env = buildProviderEnv(AiProvider.Kimi, {
 			value: 'kimi-key',
 			authMethod: AiAuthMethod.ApiKey,
+			baseUrl: null,
 		});
 		// Kimi now runs on Claude Code against Moonshot's Anthropic-compatible endpoint
 		// → quiet env present, plus the Moonshot base URL + model defaults.
@@ -179,6 +184,7 @@ describe('buildProviderEnv', () => {
 		const env = buildProviderEnv(AiProvider.OpenRouter, {
 			value: 'or-key',
 			authMethod: AiAuthMethod.ApiKey,
+			baseUrl: null,
 		});
 		// OpenRouter runs on the OpenCode runtime, not Claude Code → no DISABLE_* flags.
 		expect(env.some((e) => e.startsWith('DISABLE_TELEMETRY='))).toBe(false);
@@ -189,6 +195,7 @@ describe('buildProviderEnv', () => {
 		const env = buildProviderEnv(AiProvider.OpenAI, {
 			value: 'sk-openai',
 			authMethod: AiAuthMethod.ApiKey,
+			baseUrl: null,
 		});
 		expect(env).toEqual(['OPENAI_API_KEY=sk-openai']);
 	});
@@ -197,6 +204,7 @@ describe('buildProviderEnv', () => {
 		const env = buildProviderEnv(AiProvider.Google, {
 			value: 'AIza-google',
 			authMethod: AiAuthMethod.ApiKey,
+			baseUrl: null,
 		});
 		// Gemini runs headless in /workspace, which the CLI treats as untrusted unless
 		// told otherwise; the runtime env trusts it so --yolo keeps auto-approving.

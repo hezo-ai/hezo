@@ -11,7 +11,7 @@ import type { Db } from '../src/db/database';
 import { runMigrations } from '../src/db/migrate';
 import { openDatabase } from '../src/db/open';
 import { BASE_SCHEMA } from '../src/db/schema';
-import { safeClose } from './helpers';
+import { blobBytes, safeClose } from './helpers';
 import { allMigrations } from './helpers/migrate';
 import { createS3Sim } from './helpers/s3-sim';
 
@@ -78,7 +78,7 @@ describe('asset blob backup/restore', () => {
 		const db = await openMigratedDb(srcDir);
 		const store = new LocalAssetStore(srcDir);
 		const asset = await seedAssetRow(db, Buffer.from('hello asset bytes'));
-		await store.write(asset.projectId, asset.assetId, new Blob([asset.content]));
+		await store.write(asset.projectId, asset.assetId, new Blob([blobBytes(asset.content)]));
 
 		const bundleDir = makeTempDir();
 		const dump = await dumpAssetBlobs(db, store, bundleDir);
@@ -105,7 +105,7 @@ describe('asset blob backup/restore', () => {
 		const db = await openMigratedDb(srcDir);
 		const store = new LocalAssetStore(srcDir);
 		const asset = await seedAssetRow(db, Buffer.from('to the cloud'));
-		await store.write(asset.projectId, asset.assetId, new Blob([asset.content]));
+		await store.write(asset.projectId, asset.assetId, new Blob([blobBytes(asset.content)]));
 
 		const bundleDir = makeTempDir();
 		await dumpAssetBlobs(db, store, bundleDir);
@@ -133,7 +133,7 @@ describe('asset blob backup/restore', () => {
 		const db = await openMigratedDb(srcDir);
 		const store = new LocalAssetStore(srcDir);
 		const present = await seedAssetRow(db, Buffer.from('present'));
-		await store.write(present.projectId, present.assetId, new Blob([present.content]));
+		await store.write(present.projectId, present.assetId, new Blob([blobBytes(present.content)]));
 		const dangling = await seedAssetRow(db, Buffer.from('row without a blob'));
 
 		const bundleDir = makeTempDir();
@@ -149,7 +149,7 @@ describe('asset blob backup/restore', () => {
 		const db = await openMigratedDb(srcDir);
 		const store = new LocalAssetStore(srcDir);
 		const asset = await seedAssetRow(db, Buffer.from('original bytes'));
-		await store.write(asset.projectId, asset.assetId, new Blob([asset.content]));
+		await store.write(asset.projectId, asset.assetId, new Blob([blobBytes(asset.content)]));
 
 		const bundleDir = makeTempDir();
 		await dumpAssetBlobs(db, store, bundleDir);
@@ -170,7 +170,7 @@ describe('asset blob backup/restore', () => {
 		const db = await openMigratedDb(srcDir);
 		const store = new LocalAssetStore(srcDir);
 		const asset = await seedAssetRow(db, Buffer.from('assets-only blob'));
-		await store.write(asset.projectId, asset.assetId, new Blob([asset.content]));
+		await store.write(asset.projectId, asset.assetId, new Blob([blobBytes(asset.content)]));
 
 		const bundleDir = makeTempDir();
 		await dumpAssetBlobs(db, store, bundleDir);

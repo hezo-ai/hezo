@@ -6,7 +6,7 @@
 		"dev": "bun run --hot src/index.ts",
 		"build": "bun run ../../scripts/ensure-bundles.ts && tsc",
 		"test": "vitest run",
-		"typecheck": "bun run ../../scripts/ensure-bundles.ts && tsc --noEmit",
+		"typecheck": "bun run ../../scripts/ensure-bundles.ts && tsc -p tsconfig.typecheck.json",
 		"build:migrations": "bun run scripts/bundle-migrations.ts",
 		"build:agents": "bun run scripts/bundle-agents.ts",
 		"build:skills": "bun run scripts/bundle-skills.ts",

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
 	CreateSandboxSpec,
 	DaytonaApi,
+	DaytonaFileEntry,
 	DaytonaSandbox,
 } from '../src/services/sandbox/daytona/client';
 import { DaytonaEngine } from '../src/services/sandbox/daytona/engine';
@@ -25,58 +26,93 @@ function fakeApi(
 ): { api: DaytonaApi; rec: Recorded; sandboxes: Map<string, DaytonaSandbox> } {
 	const rec: Recorded = { creates: [], commands: [], started: [], stopped: [], destroyed: [] };
 	const sandboxes = new Map(seed.map((s) => [s.id, s]));
+	// The file half is a real (if flat) tree rather than five no-ops: a write the
+	// fake forgets would let a read-back assertion pass against nothing.
+	const files = new Map<string, { content: Uint8Array; mode: number; isDir: boolean }>();
 	let n = 0;
-	const api: DaytonaApi = {
-		ping: async () => true,
-		createSandbox: async (spec) => {
-			rec.creates.push(spec);
-			n += 1;
-			const s: DaytonaSandbox = {
-				id: `sbx-${n}`,
-				state: 'started',
-				labels: spec.labels,
-				toolboxProxyUrl: 'https://proxy.test/toolbox',
-			};
-			sandboxes.set(s.id, s);
-			return s;
+	// Object.assign rather than a `...overrides` spread: spreading a Partial
+	// widens every key it names to `T | undefined`, which quietly turns the
+	// complete fake this claims to be back into a partial one.
+	const api: DaytonaApi = Object.assign<DaytonaApi, Partial<DaytonaApi>>(
+		{
+			ping: async () => true,
+			createSandbox: async (spec) => {
+				rec.creates.push(spec);
+				n += 1;
+				const s: DaytonaSandbox = {
+					id: `sbx-${n}`,
+					state: 'started',
+					labels: spec.labels,
+					toolboxProxyUrl: 'https://proxy.test/toolbox',
+				};
+				sandboxes.set(s.id, s);
+				return s;
+			},
+			getSandbox: async (id) => sandboxes.get(id) ?? null,
+			listSandboxes: async (labels) => ({
+				items: [...sandboxes.values()].filter((s) =>
+					labels ? Object.entries(labels).every(([k, v]) => s.labels?.[k] === v) : true,
+				),
+			}),
+			start: async (id) => {
+				rec.started.push(id);
+				const s = sandboxes.get(id);
+				if (s) s.state = 'started';
+			},
+			stop: async (id) => {
+				rec.stopped.push(id);
+				const s = sandboxes.get(id);
+				if (s) s.state = 'stopped';
+			},
+			destroy: async (id) => {
+				rec.destroyed.push(id);
+				sandboxes.delete(id);
+			},
+			getMetrics: async () => new Map(),
+			openPty: async () => ({
+				send: () => {},
+				onData: () => {},
+				onClose: () => {},
+				close: () => {},
+			}),
+			execute: async (_s, command) => {
+				rec.commands.push(command);
+				return { exitCode: 0, output: '' };
+			},
+			executeStreaming: async (_s, command) => {
+				rec.commands.push(command);
+				return { exitCode: 0 };
+			},
+			listFiles: async (_s, path) => {
+				const prefix = path.endsWith('/') ? path : `${path}/`;
+				const out: DaytonaFileEntry[] = [];
+				for (const [p, f] of files) {
+					if (!p.startsWith(prefix)) continue;
+					const rest = p.slice(prefix.length);
+					if (rest === '' || rest.includes('/')) continue;
+					out.push({
+						name: rest,
+						path: p,
+						size: f.content.byteLength,
+						isDir: f.isDir,
+						permissions: f.mode.toString(8).padStart(4, '0'),
+					});
+				}
+				return out;
+			},
+			downloadFile: async (_s, path) => files.get(path)?.content ?? null,
+			uploadFile: async (_s, path, content, mode) => {
+				files.set(path, { content, mode: mode ?? 0o644, isDir: false });
+			},
+			createFolder: async (_s, path, mode) => {
+				files.set(path, { content: new Uint8Array(), mode: mode ?? 0o755, isDir: true });
+			},
+			deleteFile: async (_s, path) => {
+				files.delete(path);
+			},
 		},
-		getSandbox: async (id) => sandboxes.get(id) ?? null,
-		listSandboxes: async (labels) => ({
-			items: [...sandboxes.values()].filter((s) =>
-				labels ? Object.entries(labels).every(([k, v]) => s.labels?.[k] === v) : true,
-			),
-		}),
-		start: async (id) => {
-			rec.started.push(id);
-			const s = sandboxes.get(id);
-			if (s) s.state = 'started';
-		},
-		stop: async (id) => {
-			rec.stopped.push(id);
-			const s = sandboxes.get(id);
-			if (s) s.state = 'stopped';
-		},
-		destroy: async (id) => {
-			rec.destroyed.push(id);
-			sandboxes.delete(id);
-		},
-		getMetrics: async () => new Map(),
-		openPty: async () => ({
-			send: () => {},
-			onData: () => {},
-			onClose: () => {},
-			close: () => {},
-		}),
-		execute: async (_s, command) => {
-			rec.commands.push(command);
-			return { exitCode: 0, output: '' };
-		},
-		executeStreaming: async (_s, command) => {
-			rec.commands.push(command);
-			return { exitCode: 0 };
-		},
-		...overrides,
-	};
+		overrides,
+	);
 	return { api, rec, sandboxes };
 }
 

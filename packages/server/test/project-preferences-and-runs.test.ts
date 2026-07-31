@@ -372,7 +372,14 @@ describe('Coach review prompt', () => {
 			 FROM tasks WHERE id = $1`,
 			[taskId],
 		);
-		const prompt = await buildCoachReviewPrompt(db, 'SYS', taskRow.rows[0], teamId);
+		const prompt = await buildCoachReviewPrompt(
+			db,
+			'SYS',
+			taskRow.rows[0],
+			teamId,
+			masterKeyManager,
+			'http://127.0.0.1:1',
+		);
 		expect(prompt).toContain('### Agent Runs');
 		expect(prompt).toContain(runId);
 		expect(prompt).toMatch(/get_run_log/);

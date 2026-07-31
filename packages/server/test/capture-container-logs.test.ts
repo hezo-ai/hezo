@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { captureContainerLogs } from '../src/services/containers';
 import type { ContainerEngine } from '../src/services/sandbox/types';
+import { blobBytes } from './helpers';
 
 const NUL = String.fromCharCode(0);
 
@@ -20,7 +21,7 @@ function frame(streamType: 1 | 2, payload: Uint8Array): Uint8Array {
 
 function dockerReturning(bytes: Uint8Array): ContainerEngine {
 	return {
-		containerLogs: async () => new Response(bytes),
+		containerLogs: async () => new Response(blobBytes(bytes)),
 	} as unknown as ContainerEngine;
 }
 

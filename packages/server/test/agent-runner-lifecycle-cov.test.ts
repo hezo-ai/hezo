@@ -1018,7 +1018,7 @@ describe('runAgent lifecycle — subscription credential lock + rotation', () =>
 			'SELECT encrypted_credential FROM ai_provider_configs WHERE id = $1',
 			[configId],
 		);
-		expect(decrypt(cfg.rows[0].encrypted_credential, masterKeyManager.getKey())).toBe(
+		expect(decrypt(cfg.rows[0].encrypted_credential, masterKeyManager.getKey() as Buffer)).toBe(
 			rotatedAuthJson,
 		);
 
@@ -1100,7 +1100,7 @@ describe('runAgent lifecycle — subscription credential lock + rotation', () =>
 			'SELECT encrypted_credential FROM ai_provider_configs WHERE id = $1',
 			[configId],
 		);
-		expect(decrypt(cfg.rows[0].encrypted_credential, masterKeyManager.getKey())).toBe(
+		expect(decrypt(cfg.rows[0].encrypted_credential, masterKeyManager.getKey() as Buffer)).toBe(
 			originalAuthJson,
 		);
 		await db.query(`DELETE FROM ai_provider_configs WHERE id = $1`, [configId]);

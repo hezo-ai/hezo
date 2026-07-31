@@ -188,51 +188,6 @@ describe('MCP endpoint: tool registration', () => {
 });
 
 describe('MCP tool: verifyTeamAccess (direct DB tests)', () => {
-	it('API key auth allows access to own team', () => {
-		const apiKeyAuth: AuthInfo = { type: AuthType.ApiKey, teamId };
-		expect(apiKeyAuth.teamId).toBe(teamId);
-	});
-
-	it('API key auth denies access to other team', () => {
-		const apiKeyAuth: AuthInfo = { type: AuthType.ApiKey, teamId };
-		expect(apiKeyAuth.teamId).not.toBe(teamBId);
-	});
-
-	it('agent auth allows access to own team', async () => {
-		const agentAuth: AuthInfo = {
-			type: AuthType.Agent,
-			memberId: agentId,
-			teamId,
-			runId: '00000000-0000-0000-0000-000000000001',
-			taskId: null,
-			projectId: '00000000-0000-0000-0000-000000000010',
-			crossProject: true,
-		};
-		expect(agentAuth.teamId).toBe(teamId);
-	});
-
-	it('agent auth denies access to other team', async () => {
-		const agentAuth: AuthInfo = {
-			type: AuthType.Agent,
-			memberId: agentBId,
-			teamId: teamBId,
-			runId: '00000000-0000-0000-0000-000000000002',
-			taskId: null,
-			projectId: '00000000-0000-0000-0000-000000000011',
-			crossProject: true,
-		};
-		expect(agentAuth.teamId).not.toBe(teamId);
-	});
-
-	it('admin superuser has access to any team', async () => {
-		const superuserAuth: AuthInfo = {
-			type: AuthType.Admin,
-			userId: 'test-user-id',
-			isSuperuser: true,
-		};
-		expect(superuserAuth.isSuperuser).toBe(true);
-	});
-
 	it('admin non-superuser needs membership check', async () => {
 		// Create a non-superuser who is NOT a member of teamB
 		const userRes = await db.query<{ id: string }>(

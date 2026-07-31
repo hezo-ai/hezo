@@ -51,7 +51,7 @@ function buildSubscriptionMountWithEngine(
 		PROJECT,
 		runId,
 		provider,
-		credential,
+		{ ...credential, baseUrl: null },
 		fakeEngine(base),
 		CONTAINER,
 	);

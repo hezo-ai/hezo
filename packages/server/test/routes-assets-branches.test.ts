@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { AssetStore, WriteAssetResult } from '../src/assets/store';
 import { AssetNotFoundError, AttachmentTooLargeError } from '../src/assets/store';
 import { signAssetUrl } from '../src/lib/asset-urls';
-import { safeClose } from './helpers';
+import { blobBytes, safeClose } from './helpers';
 import {
 	authHeader,
 	createTestApp,
@@ -48,7 +48,7 @@ function fileForm(filename: string, mime: string, bytes: Uint8Array, folder?: st
 	const fd = new FormData();
 	const copy = new Uint8Array(bytes.byteLength);
 	copy.set(bytes);
-	fd.set('file', new File([copy.buffer], filename, { type: mime }));
+	fd.set('file', new File([blobBytes(copy)], filename, { type: mime }));
 	if (folder !== undefined) fd.set('folder', folder);
 	return fd;
 }

@@ -196,7 +196,14 @@ describe('Coach review prompt builder', () => {
 		);
 		expect(taskRow.rows.length).toBe(1);
 
-		const prompt = await buildCoachReviewPrompt(db, 'SYSTEM_PROMPT', taskRow.rows[0], teamId);
+		const prompt = await buildCoachReviewPrompt(
+			db,
+			'SYSTEM_PROMPT',
+			taskRow.rows[0],
+			teamId,
+			masterKeyManager,
+			'http://127.0.0.1:47081',
+		);
 
 		expect(prompt).toContain('SYSTEM_PROMPT');
 		expect(prompt).toContain(taskRow.rows[0].identifier);
@@ -220,7 +227,14 @@ describe('Coach review prompt builder', () => {
 			[taskId],
 		);
 
-		const prompt = await buildCoachReviewPrompt(db, 'SYS', taskRow.rows[0], teamId);
+		const prompt = await buildCoachReviewPrompt(
+			db,
+			'SYS',
+			taskRow.rows[0],
+			teamId,
+			masterKeyManager,
+			'http://127.0.0.1:47081',
+		);
 
 		expect(prompt).toContain('### Rules');
 		expect(prompt).toContain('Run the full suite before pushing');

@@ -10,7 +10,7 @@ import { seedBuiltins } from '../src/db/seed';
 import type { Env } from '../src/lib/types';
 import { signAdminJwt } from '../src/middleware/auth';
 import { buildApp } from '../src/startup';
-import { safeClose } from './helpers';
+import { blobBytes, safeClose } from './helpers';
 import {
 	authHeader,
 	createStubDocker,
@@ -22,7 +22,7 @@ import { createTestDbWithMigrations } from './helpers/db';
 
 function iconForm(bytes: Buffer, type = 'image/png'): FormData {
 	const fd = new FormData();
-	fd.set('file', new Blob([bytes], { type }), 'icon.png');
+	fd.set('file', new Blob([blobBytes(bytes)], { type }), 'icon.png');
 	return fd;
 }
 

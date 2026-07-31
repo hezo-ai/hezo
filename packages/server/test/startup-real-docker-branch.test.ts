@@ -7,6 +7,7 @@ import { DockerClient } from '../src/services/docker';
 import { AGENT_BASE_CONTEXT_DIR } from '../src/services/docker-assets';
 import { getRunSocketDir } from '../src/services/workspace';
 import { type HezoConfig, type StartupResult, startup } from '../src/startup';
+import { testHezoConfig } from './helpers/config';
 
 // Exercises startup()'s REAL-Docker branch (HEZO_SKIP_DOCKER unset): the
 // DockerClient construction, the bundled-context extraction no-op (dev has no
@@ -53,16 +54,7 @@ describe('startup real-Docker branch (no daemon required)', () => {
 		// the error path this test asserts; capture it instead of printing it.
 		const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-		const config: HezoConfig = {
-			port: 0,
-			dataDir,
-			webUrl: '',
-			reset: false,
-			open: false,
-			logLevel: 'info',
-			keepOldContainers: false,
-			telemetry: { enabled: false, endpoint: 'https://example.invalid/telemetry' },
-		};
+		const config: HezoConfig = testHezoConfig(dataDir);
 
 		result = await startup(config);
 

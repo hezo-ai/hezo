@@ -101,7 +101,7 @@ beforeAll(async () => {
 	const project = (await projRes.json()).data;
 	projectId = project.id;
 	projectSlug = project.slug;
-	planningTaskId = project.planning_task_id;
+	planningTaskId = project.planning_task_id as string;
 
 	const agent = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma JOIN members m ON m.id = ma.id

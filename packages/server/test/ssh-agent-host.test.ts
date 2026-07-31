@@ -82,7 +82,7 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
-const runUser = { name: 'node', strategy: 'user' } as const;
+const runUser = { name: 'node', uid: 1000, gid: 1000 } as const;
 
 /**
  * A provisioning git op reaches the ssh-agent the same way everything else

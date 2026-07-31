@@ -26,7 +26,7 @@ import type { ContainerEngine, ExecLogChunk } from '../src/services/sandbox/type
 
 const apiKey = process.env.HEZO_DAYTONA_API_KEY;
 const IMAGE = process.env.HEZO_AGENT_IMAGE ?? 'ghcr.io/hezo-ai/agent-base:latest';
-const RUN_USER = { name: 'node', strategy: 'user' } as const;
+const RUN_USER = { name: 'node', uid: 1000, gid: 1000 } as const;
 
 // One sandbox for the whole file: a cold create is ~30s and each one is billed.
 const TIMEOUT = 300_000;
@@ -141,6 +141,7 @@ describe.skipIf(!apiKey)('Daytona adapter — live API', () => {
 				Env: ['FROM_EXEC=yes'],
 				User: 'root',
 				AttachStdout: true,
+				AttachStderr: true,
 			});
 			expect((await engine.execStart(execId)).stdout.trim()).toBe('1/yes');
 		},

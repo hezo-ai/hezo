@@ -148,7 +148,7 @@ describe.skipIf(finalSkipReason !== null)('tunnel over a real Docker hijacked ex
 		tunnel = await startRunTunnel({
 			engine: docker,
 			containerId,
-			runUser: { name: 'node', strategy: 'user' },
+			runUser: { name: 'node', uid: 1000, gid: 1000 },
 			files: hostSandboxFiles(workspace),
 			configRelPath: '.hezo/tunnel.json',
 			configContainerPath: '/workspace/.hezo/tunnel.json',
@@ -159,7 +159,7 @@ describe.skipIf(finalSkipReason !== null)('tunnel over a real Docker hijacked ex
 				mcp: { host: '127.0.0.1', port: upstreamPort },
 				ssh: { host: '127.0.0.1', port: upstreamPort },
 			},
-			policy: { proxiedHosts: [], allowAll: false },
+			policy: { proxiedHosts: [], proxyEverything: false },
 		});
 		// The ports are allocated per tunnel, so read the one this tunnel got
 		// rather than assuming a fixed value.

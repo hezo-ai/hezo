@@ -293,8 +293,8 @@ describe('EgressProxy under Bun', () => {
 					{ socket: heldTunnel, servername: hostA, ca: [ca.cert], rejectUnauthorized: true },
 					() => resolve(heldTls?.getPeerCertificate().subjectaltname ?? ''),
 				);
-				heldTls.on('error', reject);
-				heldTls.setTimeout(20_000, () => heldTls?.destroy(new Error('held handshake timed out')));
+				heldTls?.on('error', reject);
+				heldTls?.setTimeout(20_000, () => heldTls?.destroy(new Error('held handshake timed out')));
 			});
 			expect(heldSan).toContain(hostA);
 

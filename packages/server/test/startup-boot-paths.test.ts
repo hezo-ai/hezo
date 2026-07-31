@@ -7,6 +7,7 @@ import { waitForBackground } from '../src/lib/background';
 import { setLogLevel } from '../src/logger';
 import { getRunSocketDir } from '../src/services/workspace';
 import { type HezoConfig, type StartupResult, startup } from '../src/startup';
+import { testHezoConfig } from './helpers/config';
 
 // Drives the production startup() path (fake Docker via HEZO_SKIP_DOCKER) through
 // the branches the smoke tests in startup.test.ts don't reach: a CLI master key
@@ -26,17 +27,7 @@ function masterKeyFor(phrase: string): { unlockKeyHex: string; publicKeyHex: str
 }
 
 function baseConfig(dataDir: string, overrides: Partial<HezoConfig> = {}): HezoConfig {
-	return {
-		port: 0,
-		dataDir,
-		webUrl: '',
-		reset: false,
-		open: false,
-		logLevel: 'info',
-		keepOldContainers: false,
-		telemetry: { enabled: false, endpoint: 'https://example.invalid/telemetry' },
-		...overrides,
-	};
+	return testHezoConfig(dataDir, overrides);
 }
 
 describe('startup boot paths (master key, routes, socket cleanup)', () => {

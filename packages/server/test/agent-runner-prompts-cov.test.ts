@@ -775,7 +775,12 @@ describe('context loaders (direct edge cases)', () => {
 	});
 
 	it('loadAgentAttachmentsForComments short-circuits on an empty id list', async () => {
-		const out = await loadAgentAttachmentsForComments(db, [], masterKeyManager, 3000);
+		const out = await loadAgentAttachmentsForComments(
+			db,
+			[],
+			masterKeyManager,
+			'http://127.0.0.1:47081',
+		);
 		expect(out.size).toBe(0);
 	});
 });

@@ -161,7 +161,10 @@ function firstResolvableFiles(
 	};
 }
 
-export function createStubDocker<T extends Record<string, unknown>>(
+// `T extends object` rather than `Record<string, unknown>`: an interface type has
+// no index signature, so the narrower constraint rejected the perfectly ordinary
+// case of passing one stub engine in as the base for another.
+export function createStubDocker<T extends object>(
 	overrides: T = {} as T,
 	ctx?: { db?: Db; dataDir?: string },
 ): ContainerEngine & T {
