@@ -681,6 +681,10 @@ export async function buildRuntimeInvocation(
 			// direct, matching the documented contract (`lib/asset-urls.ts`,
 			// architecture § Asset storage). Connector MCP servers live on their own
 			// remote hosts (reached via HTTPS CONNECT) and still traverse the proxy.
+			// Under the tunnel the same endpoints move to container loopback, which
+			// the `127.0.0.1`/`localhost` entries above already cover - so this entry
+			// becomes redundant rather than wrong, and removing it would only matter
+			// if the tunnel were the sole path, which it is not.
 			DOCKER_CONTAINER_HOST_ALIAS,
 			// For a locally-hosted provider the upstream is the operator's own machine,
 			// known only from the config's stored base URL — pass it so that host
