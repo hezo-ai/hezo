@@ -47,6 +47,7 @@ import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication } from './effort';
 import { resolveRuntimeForTask } from './runtime-resolver';
 import { dockerRunEndpoints } from './sandbox/endpoints';
+import { dockerSandboxHandle } from './sandbox/handle';
 import type { BridgeRunnerArgs } from './ssh-agent';
 import { resolveSystemPrompt } from './template-resolver';
 import { getRunSocketPath } from './workspace';
@@ -1180,15 +1181,10 @@ export class ChatSessionManager {
 				}
 			};
 
-			const execId = await this.deps.docker.execCreate(session.containerId, {
-				Cmd: session.execCmd,
-				Env: env,
-				WorkingDir: CHAT_WORKING_DIR,
-				User: session.runUser.name,
-				AttachStdout: true,
-				AttachStderr: true,
-			});
-			await this.deps.docker.execStart(execId, {
+			await dockerSandboxHandle(this.deps.docker, session.containerId, session.runUser).exec({
+				cmd: session.execCmd,
+				env,
+				workingDir: CHAT_WORKING_DIR,
 				signal: abort.signal,
 				onChunk: (chunk) => {
 					if (chunk.stream === 'stdout') handle(parser.onStdout(chunk.text));
@@ -1345,17 +1341,15 @@ export class ChatSessionManager {
 		mkdirSync(dirname(hostPath), { recursive: true });
 		writeFileSync(hostPath, prompt);
 		try {
-			const execId = await this.deps.docker.execCreate(session.containerId, {
-				Cmd: session.execCmd,
-				Env: env,
-				WorkingDir: CHAT_WORKING_DIR,
-				User: session.runUser.name,
-				AttachStdout: true,
-				AttachStderr: true,
-			});
 			// Drain output; the reply text is irrelevant — the memory write is the
 			// real product, landed via the update_chat_memory MCP tool.
-			await this.deps.docker.execStart(execId, { signal: abort.signal, onChunk: () => undefined });
+			await dockerSandboxHandle(this.deps.docker, session.containerId, session.runUser).exec({
+				cmd: session.execCmd,
+				env,
+				workingDir: CHAT_WORKING_DIR,
+				signal: abort.signal,
+				onChunk: () => undefined,
+			});
 		} catch (e) {
 			// A new user turn preempts compaction — that's a clean stop, not a
 			// failure; nothing is evicted and it retries later.
@@ -1459,15 +1453,10 @@ export class ChatSessionManager {
 		const parser = createAgentChatParser(session.runtimeType);
 		let text = '';
 		try {
-			const execId = await this.deps.docker.execCreate(session.containerId, {
-				Cmd: session.execCmd,
-				Env: env,
-				WorkingDir: CHAT_WORKING_DIR,
-				User: session.runUser.name,
-				AttachStdout: true,
-				AttachStderr: true,
-			});
-			await this.deps.docker.execStart(execId, {
+			await dockerSandboxHandle(this.deps.docker, session.containerId, session.runUser).exec({
+				cmd: session.execCmd,
+				env,
+				workingDir: CHAT_WORKING_DIR,
 				signal: abort.signal,
 				onChunk: (chunk) => {
 					if (chunk.stream === 'stdout') {

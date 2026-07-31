@@ -118,6 +118,7 @@ import {
 import { resolveRuntimeForTask } from './runtime-resolver';
 import { DOCKER_CONTAINER_HOST_ALIAS, dockerRunEndpoints } from './sandbox/endpoints';
 import { hostSandboxFiles, type SandboxFiles } from './sandbox/files';
+import { dockerSandboxHandle } from './sandbox/handle';
 import { type BridgeRunnerArgs, buildBridgeRunnerArgv, type SshAgentServer } from './ssh-agent';
 import { validateSubscriptionBlob } from './subscription-auth';
 import { recordStatusChange } from './task-events';
@@ -1403,15 +1404,6 @@ export async function runAgent(
 
 			emit('stdout', `${invocationCommand}\n`);
 
-			const execId = await deps.docker.execCreate(containerId, {
-				Cmd: context.execCmd,
-				Env: context.env,
-				WorkingDir: prep.workingDir,
-				User: runUser.name,
-				AttachStdout: true,
-				AttachStderr: true,
-			});
-
 			// Scanned incrementally rather than over a retained transcript: the raw
 			// exec output is the full stream-json stream and never kept (see
 			// ExecStartOpts.onChunk).
@@ -1427,12 +1419,19 @@ export async function runAgent(
 				currentUsage = parser.getUsage();
 			};
 
-			await deps.docker.execStart(execId, { signal, onChunk });
+			// Unelevated: the agent writes into the bind-mounted worktree, and those
+			// files must stay owned by the run user rather than root.
+			const execOutcome = await dockerSandboxHandle(deps.docker, containerId, runUser).exec({
+				cmd: context.execCmd,
+				env: context.env,
+				workingDir: prep.workingDir,
+				signal,
+				onChunk,
+			});
 			const tail = parser.flush();
 			if (tail) emit('stdout', tail);
-			const execInfo = await deps.docker.execInspect(execId);
 			const durationMs = Date.now() - startTime;
-			const exitedClean = execInfo.ExitCode === 0;
+			const exitedClean = execOutcome.exitCode === 0;
 
 			// Report auto-pushes that were denied during the run. The post-commit hook
 			// is deliberately non-fatal, so without this the human sees a run that
@@ -1660,7 +1659,7 @@ export async function runAgent(
 				heartbeatRunId,
 				{
 					status: success ? HeartbeatRunStatus.Succeeded : HeartbeatRunStatus.Failed,
-					exitCode: execInfo.ExitCode,
+					exitCode: execOutcome.exitCode,
 					durationMs,
 					error: backgroundError ?? noOutputError ?? terminalError ?? undefined,
 					// Grok's usage comes from the debug log (runUsage); every other
@@ -1674,7 +1673,7 @@ export async function runAgent(
 			);
 
 			await cleanupRunArtifacts();
-			return { success, exitCode: execInfo.ExitCode, stderr: '', durationMs, heartbeatRunId };
+			return { success, exitCode: execOutcome.exitCode, stderr: '', durationMs, heartbeatRunId };
 		} catch (error) {
 			const durationMs = Date.now() - startTime;
 			const isAbort = (error as Error).name === 'AbortError';

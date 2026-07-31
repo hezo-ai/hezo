@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { trackBackground } from '../lib/background';
 import type { ContainerRunUser } from './container-user';
 import type { ContainerEngine } from './docker';
-import { dockerSandboxHandle } from './sandbox/handle';
+import { dockerSandboxHandle, type SandboxHandle } from './sandbox/handle';
 import { type BridgeRunnerArgs, buildBridgeRunnerArgv } from './ssh-agent';
 
 /**
@@ -126,6 +126,8 @@ export class ContainerGitExecutor implements GitExecutor {
 	private readonly runUser: ContainerRunUser;
 	private readonly scopeId: string;
 	private readonly runSignal?: AbortSignal;
+	/** Built once: exec() runs many git commands per run over a fixed container and user. */
+	private readonly sandbox: SandboxHandle;
 
 	constructor(
 		private readonly docker: ContainerEngine,
@@ -136,6 +138,7 @@ export class ContainerGitExecutor implements GitExecutor {
 		this.runUser = opts.runUser;
 		this.scopeId = opts.scopeId;
 		this.runSignal = opts.signal;
+		this.sandbox = dockerSandboxHandle(docker, containerId, opts.runUser);
 		// The bridge wrapper appends/redirects HEZO_PROMPT_FILE into the command it
 		// runs; it must never leak into a git invocation. Strip it defensively.
 		this.baseEnv = [
@@ -199,7 +202,7 @@ export class ContainerGitExecutor implements GitExecutor {
 		try {
 			// Git runs unelevated so anything it writes into the bind-mounted
 			// workspace stays owned by the run user rather than root.
-			return await dockerSandboxHandle(this.docker, this.containerId, this.runUser).exec({
+			return await this.sandbox.exec({
 				cmd,
 				env,
 				workingDir: opts.cwd,
