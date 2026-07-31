@@ -1,5 +1,6 @@
 import { request as httpRequest } from 'node:http';
 import type { Socket } from 'node:net';
+import { connect as netConnect } from 'node:net';
 import { Readable } from 'node:stream';
 import { DockerFrameDecoder, demuxDockerStream } from './docker-frames';
 import {
@@ -43,6 +44,9 @@ export type {
 } from './sandbox/types';
 
 const SOCKET_PATH = '/var/run/docker.sock';
+/** Cap on a hijack response's header block - a daemon that never terminates them is broken, not slow. */
+const MAX_HIJACK_HEADER_BYTES = 64 * 1024;
+
 const API_VERSION = 'v1.44';
 
 /**
@@ -253,6 +257,13 @@ export class DockerClient implements ContainerEngine {
 		socket.on('end', finish);
 		socket.on('close', finish);
 		socket.on('error', finish);
+		// `hijackExec` hands the socket back **paused**, so the bytes that arrived
+		// alongside the response headers could be `unshift`ed without being lost.
+		// Attaching a `data` listener only auto-resumes a stream that was never
+		// explicitly paused, so this is required rather than tidy: without it the
+		// channel connects, the client binds its listeners, and not one frame is
+		// ever delivered.
+		socket.resume();
 
 		return {
 			write: (data) => {
@@ -273,35 +284,81 @@ export class DockerClient implements ContainerEngine {
 		};
 	}
 
+	/**
+	 * Attach to an exec as a raw bidirectional socket.
+	 *
+	 * **The request is spoken over a plain `node:net` socket rather than through
+	 * `node:http`, deliberately.** `http.request`'s `'upgrade'` event is the
+	 * obvious way to do this and it is what this used to do - but it only works
+	 * under Node. Bun never emits `'upgrade'` for Docker's hijack: it emits
+	 * `'response'` with status **101** and routes the framed exec bytes onto the
+	 * response stream, where writing back to `res.socket` does not reach the
+	 * exec's stdin at all (both measured against a live daemon). Since Bun is the
+	 * production runtime, the version built on `'upgrade'` could never have
+	 * worked - it rejected every attach with "attach failed (101)".
+	 *
+	 * A hijack is just "send a request, then own the socket", so owning it
+	 * outright removes the divergence instead of branching on it: one code path,
+	 * identical on both runtimes, and exercised by
+	 * `test/bun/sandbox-tunnel-docker.bun.test.ts` on the runtime that ships.
+	 */
 	private hijackExec(execId: string): Promise<Socket> {
 		return new Promise((resolve, reject) => {
-			const payload = JSON.stringify({ Detach: false, Tty: false });
-			const req = httpRequest({
-				socketPath: this.socketPath,
-				path: `/${API_VERSION}/exec/${execId}/start`,
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-					'Content-Length': Buffer.byteLength(payload),
-					Connection: 'Upgrade',
-					Upgrade: 'tcp',
-				},
-			});
-			req.on('upgrade', (_res, socket) => resolve(socket));
-			// Docker answers 101 + upgrade on success. A plain response means it
-			// refused - surface its body rather than a bare "no upgrade".
-			req.on('response', (res) => {
-				let body = '';
-				res.on('data', (c: Buffer) => {
-					body += c.toString();
-				});
-				res.on('end', () =>
-					reject(new Error(`Docker exec attach failed (${res.statusCode}): ${body}`)),
+			const payload = Buffer.from(JSON.stringify({ Detach: false, Tty: false }));
+			const socket = netConnect({ path: this.socketPath });
+			let header = Buffer.alloc(0);
+
+			const onHeaderData = (chunk: Buffer): void => {
+				header = Buffer.concat([header, chunk]);
+				const end = header.indexOf('\r\n\r\n');
+				if (end < 0) {
+					// A response that never terminates its headers is a broken daemon,
+					// not a slow one; cap it rather than buffering without bound.
+					if (header.length > MAX_HIJACK_HEADER_BYTES) {
+						socket.destroy();
+						reject(new Error('Docker exec attach: response headers too large'));
+					}
+					return;
+				}
+				socket.removeListener('data', onHeaderData);
+				socket.removeListener('error', onEarlyError);
+
+				const statusLine = header.subarray(0, header.indexOf('\r\n')).toString();
+				const status = Number.parseInt(statusLine.split(' ')[1] ?? '', 10);
+				// 101 is the hijack; Docker answers 200 for a non-TTY attach on some
+				// versions and the stream is identical. Anything else is a refusal,
+				// and its body says why.
+				if (status !== 101 && status !== 200) {
+					const body = header.subarray(end + 4).toString();
+					socket.destroy();
+					reject(new Error(`Docker exec attach failed (${status}): ${body}`));
+					return;
+				}
+
+				// Bytes that arrived in the same chunk as the headers are already
+				// stream payload. Pause first so `unshift` is legal, then hand them
+				// back for the caller's own `data` handler to receive first.
+				const rest = header.subarray(end + 4);
+				socket.pause();
+				if (rest.length > 0) socket.unshift(rest);
+				resolve(socket);
+			};
+
+			const onEarlyError = (err: Error): void => reject(err);
+
+			socket.on('data', onHeaderData);
+			socket.on('error', onEarlyError);
+			socket.on('connect', () => {
+				socket.write(
+					`POST /${API_VERSION}/exec/${execId}/start HTTP/1.1\r\n` +
+						`Host: docker\r\n` +
+						`Content-Type: application/json\r\n` +
+						`Content-Length: ${payload.length}\r\n` +
+						`Connection: Upgrade\r\n` +
+						`Upgrade: tcp\r\n\r\n`,
 				);
+				socket.write(payload);
 			});
-			req.on('error', reject);
-			req.write(payload);
-			req.end();
 		});
 	}
 
