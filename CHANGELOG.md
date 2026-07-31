@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.39.0 - 2026-07-31
+
+### Features
+
+- **attachments:** accept archive files on comments and in the asset library ([#881](https://github.com/hezo-ai/hezo/pull/881))
+- **tasks:** name the comment a task link came from, and translate system events ([#879](https://github.com/hezo-ai/hezo/pull/879))
+- **tasks:** edit a task's title and description in place ([#877](https://github.com/hezo-ai/hezo/pull/877))
+- **concurrency:** reserve 1GB of host memory from the automatic container limit ([#875](https://github.com/hezo-ai/hezo/pull/875))
+- **goals:** confirm before archiving a goal ([#876](https://github.com/hezo-ai/hezo/pull/876))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.38.0...0.39.0
+
 ## 0.38.0 - 2026-07-30
 
 ### Features
