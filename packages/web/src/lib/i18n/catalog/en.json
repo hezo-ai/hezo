@@ -122,5 +122,7 @@
 	"attachments.category.audio": "Audio:",
 	"attachments.category.video": "Video:",
 	"attachments.category.archives": "Archives:",
-	"attachments.category.scripts": "Scripts & data:"
+	"attachments.category.scripts": "Scripts & data:",
+	"container.strandedCommits.title": "Committed work has not reached a remote",
+	"container.strandedCommits.body": "A push to this project's git remote was refused, so those commits exist only inside one container. Hezo keeps that container alive until a later run pushes them. Check the repository's push access."
 }

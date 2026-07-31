@@ -122,5 +122,7 @@
 	"attachments.category.audio": "Audio :",
 	"attachments.category.video": "Vidéo :",
 	"attachments.category.archives": "Archives :",
-	"attachments.category.scripts": "Scripts et données :"
+	"attachments.category.scripts": "Scripts et données :",
+	"container.strandedCommits.title": "Du travail validé n'a atteint aucun dépôt distant",
+	"container.strandedCommits.body": "Un push vers le dépôt distant de ce projet a été refusé : ces commits n'existent que dans un seul conteneur. Hezo garde ce conteneur en vie jusqu'à ce qu'une exécution ultérieure les pousse. Vérifiez les droits de push du dépôt."
 }

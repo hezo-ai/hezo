@@ -243,16 +243,30 @@ export async function setPoolMemberChatReservation(
 }
 
 /**
+ * SQL predicate: does this project hold committed work that reached no durable
+ * remote?
+ *
+ * Exported as a fragment because it is asked in two shapes - on its own, and as
+ * a column of the project list - and two hand-written spellings of one predicate
+ * is how they end up disagreeing about whether a project is at risk.
+ *
+ * `projectAlias` is the alias of `projects` in the surrounding query.
+ */
+export function strandedCommitsExistsSql(projectAlias: string): string {
+	return `EXISTS (
+		SELECT 1 FROM container_pool_members scm
+		 WHERE scm.project_id = ${projectAlias}.id AND scm.has_unpushed_commits
+	)`;
+}
+
+/**
  * Whether any container in this project is pinned by unpushed work. Surfaced so a
  * project whose commits are stranded reads as such rather than looking healthy
  * while a container quietly carries the only copy.
  */
 export async function projectHasStrandedCommits(db: Db, projectId: string): Promise<boolean> {
 	const res = await db.query<{ pinned: boolean }>(
-		`SELECT EXISTS (
-		   SELECT 1 FROM container_pool_members
-		    WHERE project_id = $1 AND has_unpushed_commits
-		 ) AS pinned`,
+		`SELECT ${strandedCommitsExistsSql('p')} AS pinned FROM projects p WHERE p.id = $1`,
 		[projectId],
 	);
 	return res.rows[0]?.pinned ?? false;

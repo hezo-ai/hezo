@@ -15,8 +15,10 @@ import {
 import { useContainerLogs } from '../../../hooks/use-container-logs';
 import { useImageBuild } from '../../../hooks/use-image-build';
 import { useProject } from '../../../hooks/use-projects';
+import { useI18n } from '../../../lib/i18n';
 
 function ContainerPage() {
+	const { t } = useI18n();
 	const { projectId } = Route.useParams();
 	const { data: project } = useProject(projectId);
 	const startContainer = useStartContainer(projectId);
@@ -172,6 +174,21 @@ function ContainerPage() {
 						<span className="whitespace-pre-wrap font-mono text-xs text-danger">
 							{project.container_error}
 						</span>
+					</div>
+				</div>
+			)}
+
+			{/* Committed work that reached no remote - the container is pinned, but
+			    the work exists in exactly one place until a later run pushes it. */}
+			{project.has_stranded_commits && (
+				<div
+					data-testid="stranded-commits-warning"
+					className="flex gap-2 rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-sm"
+				>
+					<AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+					<div className="flex flex-col gap-1">
+						<span className="font-medium">{t('container.strandedCommits.title')}</span>
+						<span className="text-xs text-text-2">{t('container.strandedCommits.body')}</span>
 					</div>
 				</div>
 			)}

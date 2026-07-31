@@ -122,5 +122,7 @@
 	"attachments.category.audio": "Ljud:",
 	"attachments.category.video": "Video:",
 	"attachments.category.archives": "Arkiv:",
-	"attachments.category.scripts": "Skript och data:"
+	"attachments.category.scripts": "Skript och data:",
+	"container.strandedCommits.title": "Committat arbete har inte nått något fjärrarkiv",
+	"container.strandedCommits.body": "En push till projektets git-fjärrarkiv nekades, så de commitsen finns bara inuti en container. Hezo håller den containern vid liv tills en senare körning pushar dem. Kontrollera arkivets push-behörighet."
 }

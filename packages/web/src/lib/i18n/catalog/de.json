@@ -122,5 +122,7 @@
 	"attachments.category.audio": "Audio:",
 	"attachments.category.video": "Video:",
 	"attachments.category.archives": "Archive:",
-	"attachments.category.scripts": "Skripte & Daten:"
+	"attachments.category.scripts": "Skripte & Daten:",
+	"container.strandedCommits.title": "Committete Arbeit hat kein Remote erreicht",
+	"container.strandedCommits.body": "Ein Push zum Git-Remote dieses Projekts wurde abgelehnt, daher liegen diese Commits nur in einem einzigen Container. Hezo hält diesen Container am Leben, bis ein späterer Lauf sie pusht. Prüfen Sie die Push-Berechtigung des Repositorys."
 }

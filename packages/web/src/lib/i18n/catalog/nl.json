@@ -122,5 +122,7 @@
 	"attachments.category.audio": "Audio:",
 	"attachments.category.video": "Video:",
 	"attachments.category.archives": "Archieven:",
-	"attachments.category.scripts": "Scripts en data:"
+	"attachments.category.scripts": "Scripts en data:",
+	"container.strandedCommits.title": "Vastgelegd werk heeft geen remote bereikt",
+	"container.strandedCommits.body": "Een push naar de git-remote van dit project is geweigerd, dus die commits bestaan alleen in één container. Hezo houdt die container in leven tot een latere run ze pusht. Controleer de push-rechten van de repository."
 }

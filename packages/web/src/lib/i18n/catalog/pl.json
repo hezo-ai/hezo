@@ -122,5 +122,7 @@
 	"attachments.category.audio": "Dźwięk:",
 	"attachments.category.video": "Wideo:",
 	"attachments.category.archives": "Archiwa:",
-	"attachments.category.scripts": "Skrypty i dane:"
+	"attachments.category.scripts": "Skrypty i dane:",
+	"container.strandedCommits.title": "Zatwierdzona praca nie trafiła do żadnego zdalnego repozytorium",
+	"container.strandedCommits.body": "Push do zdalnego repozytorium git tego projektu został odrzucony, więc te commity istnieją tylko w jednym kontenerze. Hezo utrzymuje ten kontener przy życiu, dopóki późniejsze uruchomienie ich nie wyśle. Sprawdź uprawnienia do pushowania w repozytorium."
 }

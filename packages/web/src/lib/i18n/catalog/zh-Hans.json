@@ -122,5 +122,7 @@
 	"attachments.category.audio": "音频：",
 	"attachments.category.video": "视频：",
 	"attachments.category.archives": "压缩包：",
-	"attachments.category.scripts": "脚本与数据："
+	"attachments.category.scripts": "脚本与数据：",
+	"container.strandedCommits.title": "已提交的工作尚未推送到远程仓库",
+	"container.strandedCommits.body": "向该项目 git 远程仓库的推送被拒绝，因此这些提交只存在于一个容器中。Hezo 会保留该容器，直到后续运行将它们推送出去。请检查仓库的推送权限。"
 }

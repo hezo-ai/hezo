@@ -122,5 +122,7 @@
 	"attachments.category.audio": "오디오:",
 	"attachments.category.video": "동영상:",
 	"attachments.category.archives": "압축 파일:",
-	"attachments.category.scripts": "스크립트 및 데이터:"
+	"attachments.category.scripts": "스크립트 및 데이터:",
+	"container.strandedCommits.title": "커밋한 작업이 원격 저장소에 도달하지 못했습니다",
+	"container.strandedCommits.body": "이 프로젝트의 git 원격 저장소로 보내는 push가 거부되어 해당 커밋은 컨테이너 한 대 안에만 존재합니다. Hezo는 이후 실행이 push할 때까지 그 컨테이너를 유지합니다. 저장소의 push 권한을 확인해 주세요."
 }

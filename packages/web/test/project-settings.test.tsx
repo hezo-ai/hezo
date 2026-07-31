@@ -114,7 +114,7 @@ test('edits the per-project memory limit and persists it', async () => {
 
 	const { findByRole, findByTestId, getByRole, ctx, user, router } = await renderApp({
 		initialPath: '/',
-		seed: async () => {
+		seed: async (seedCtx) => {
 			ws = await seedWorkspace();
 			const project = await seedProject(ws, {
 				name: projectName,
@@ -122,6 +122,14 @@ test('edits the per-project memory limit and persists it', async () => {
 			});
 			projectSlug = project.slug;
 			projectId = project.id;
+			// A per-project cap larger than the whole instance budget can never be
+			// scheduled, so it is refused where it is set. Give the instance room for
+			// the 24 GB this test asks for - otherwise the assertion depends on how
+			// much RAM the machine running the suite happens to have.
+			await seedCtx.db.query(
+				`INSERT INTO system_meta (key, value) VALUES ('max_container_memory_gb', '64')
+				 ON CONFLICT (key) DO UPDATE SET value = '64'`,
+			);
 		},
 	});
 

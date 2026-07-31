@@ -122,5 +122,7 @@
 	"attachments.category.audio": "Audio:",
 	"attachments.category.video": "Vídeo:",
 	"attachments.category.archives": "Archivos comprimidos:",
-	"attachments.category.scripts": "Scripts y datos:"
+	"attachments.category.scripts": "Scripts y datos:",
+	"container.strandedCommits.title": "Hay trabajo confirmado que no llegó a ningún remoto",
+	"container.strandedCommits.body": "Se rechazó un push al remoto de git de este proyecto, así que esos commits solo existen dentro de un contenedor. Hezo mantiene vivo ese contenedor hasta que una ejecución posterior los suba. Revisa los permisos de push del repositorio."
 }

@@ -49,6 +49,7 @@ import {
 import { createProjectWithTeam } from '../services/project-create';
 import { createProjectIntake, getOpenProjectIntakeForHome } from '../services/project-intake';
 import { getProjectProgress } from '../services/projects';
+import { strandedCommitsExistsSql } from '../services/sandbox/pool-db';
 import { exportTeamBundle, TeamBundleExportError } from '../services/team-bundle-export';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -151,7 +152,12 @@ projectsRoutes.get('/projects', async (c) => {
           AS today_spend_cents,
        COALESCE((SELECT max(i3.updated_at) FROM tasks i3 WHERE i3.project_id = p.id), p.created_at)
           AS last_activity_at,
-       (SELECT pi.updated_at FROM project_icons pi WHERE pi.project_id = p.id) AS icon_updated_at
+       (SELECT pi.updated_at FROM project_icons pi WHERE pi.project_id = p.id) AS icon_updated_at,
+       -- A container holding commits that reached neither origin nor any other
+       -- durable remote is pinned against suspend and destroy until a later run
+       -- gets them out. Surfaced so such a project reads as at-risk instead of
+       -- looking healthy while one container quietly carries the only copy.
+       ${strandedCommitsExistsSql('p')} AS has_stranded_commits
      FROM projects p
      JOIN teams t ON t.id = p.team_id`;
 
@@ -498,7 +504,12 @@ projectsRoutes.get('/projects/:projectId', async (c) => {
        (SELECT count(*) FROM goals g WHERE g.project_id = p.id AND g.archived_at IS NULL)::int AS open_goal_count,
        (SELECT count(*) FROM member_agents ma JOIN members mm ON mm.id = ma.id
           WHERE mm.team_id = p.team_id AND ma.touches_code)::int AS code_agent_count,
-       (SELECT pi.updated_at FROM project_icons pi WHERE pi.project_id = p.id) AS icon_updated_at
+       (SELECT pi.updated_at FROM project_icons pi WHERE pi.project_id = p.id) AS icon_updated_at,
+       -- A container holding commits that reached neither origin nor any other
+       -- durable remote is pinned against suspend and destroy until a later run
+       -- gets them out. Surfaced so such a project reads as at-risk instead of
+       -- looking healthy while one container quietly carries the only copy.
+       ${strandedCommitsExistsSql('p')} AS has_stranded_commits
      FROM projects p
      WHERE p.id = $1 AND p.team_id = $2`,
 		[projectId, teamId, ...ts2.values],

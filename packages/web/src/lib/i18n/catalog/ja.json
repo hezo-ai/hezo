@@ -122,5 +122,7 @@
 	"attachments.category.audio": "音声：",
 	"attachments.category.video": "動画：",
 	"attachments.category.archives": "アーカイブ：",
-	"attachments.category.scripts": "スクリプト・データ："
+	"attachments.category.scripts": "スクリプト・データ：",
+	"container.strandedCommits.title": "コミット済みの作業がリモートに届いていません",
+	"container.strandedCommits.body": "このプロジェクトの git リモートへの push が拒否されたため、これらのコミットは 1 つのコンテナ内にしか存在しません。Hezo は後続の実行が push するまでそのコンテナを保持します。リポジトリの push 権限を確認してください。"
 }

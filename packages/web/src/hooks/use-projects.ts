@@ -25,6 +25,12 @@ export interface Project {
 	container_id: string | null;
 	container_status: 'creating' | 'running' | 'stopping' | 'stopped' | 'error' | null;
 	container_error: string | null;
+	/**
+	 * A container in this project holds commits that reached no durable remote.
+	 * It is pinned against suspend and destroy until a later run gets them out,
+	 * so the work is not lost - but it exists in exactly one place.
+	 */
+	has_stranded_commits: boolean;
 	container_last_logs: string | null;
 	dev_ports: Array<{ container: number; host: number }>;
 	repo_count: number;
