@@ -998,6 +998,16 @@ private registry, or a locally-built tag that exists in no registry at all would
 be unable to start a container over a cache-freshness concern. The fallback logs what it
 costs, because the failure it re-admits is otherwise invisible.
 
+**Network isolation is the provider's, not ours - measured.** Daytona interposes an Envoy
+proxy in front of all sandbox egress: a raw TCP connect to `169.254.169.254`, to an RFC1918
+address, and to a public address all succeed and all answer `server: envoy`, so there is no
+cloud metadata service behind link-local to reach and no other tenant behind the private
+ranges. Hezo therefore sets **no** `networkAllowList`. It could not express one in any case:
+the field is capped at **10 networks**, while "the public internet minus the private ranges"
+is 51 CIDRs, so an attempt to send it fails the create outright - which would have broken
+every remote run rather than hardening it. What protects a secret remains that the secret
+only ever exists on the Hezo side.
+
 **The orphan sweep** (`sandbox/orphan-reaper.ts`, run every 10 minutes by `JobManager`)
 destroys containers this instance created that no project row references any more. Boot
 fails every in-flight run and never reattaches, so a crash, a hard kill or a lost provider
