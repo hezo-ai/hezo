@@ -318,16 +318,12 @@ describe('runAgent — egress proxy + ssh agent env injection', () => {
 				(e) => e === 'NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/hezo-egress.crt',
 			),
 		).toBe(true);
-		expect(
-			capturedEnv.some(
-				(e) => e === 'CURL_CA_BUNDLE=/usr/local/share/ca-certificates/hezo-egress.crt',
-			),
-		).toBe(true);
-		expect(
-			capturedEnv.some(
-				(e) => e === 'GIT_SSL_CAINFO=/usr/local/share/ca-certificates/hezo-egress.crt',
-			),
-		).toBe(true);
+		// Deliberately absent: unlike NODE_EXTRA_CA_CERTS these two *replace* the
+		// trust bundle rather than adding to it, so a direct TLS peer would be
+		// checked against a bundle holding only the Hezo CA and fail. curl and git
+		// get the CA from the system trust store instead (update-ca-certificates).
+		expect(capturedEnv.some((e) => e.startsWith('CURL_CA_BUNDLE='))).toBe(false);
+		expect(capturedEnv.some((e) => e.startsWith('GIT_SSL_CAINFO='))).toBe(false);
 
 		// SSH socket env points at the per-run bridge socket.
 		expect(

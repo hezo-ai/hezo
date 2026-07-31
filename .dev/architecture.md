@@ -1849,8 +1849,17 @@ the secret and fires a `credential_provided` wakeup so the agent retries.
 substitution — there is **no fall-through**; if it can't bind, the run aborts
 (`EgressProxyUnavailableError`). On first boot Hezo generates a per-instance RSA CA
 (`<dataDir>/ca/`, cert world-readable, key host-owner-only) that both signs per-host leaf
-certs and is bind-mounted into every container's trust store
-(`update-ca-certificates`, `NODE_EXTRA_CA_CERTS`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`).
+certs and is bind-mounted into every container's trust store, installed there by
+`update-ca-certificates` at provision and additionally handed to Node via
+`NODE_EXTRA_CA_CERTS`.
+
+**`CURL_CA_BUNDLE` and `GIT_SSL_CAINFO` are deliberately not set**, for the same reason
+`SSL_CERT_FILE` is not: they **replace** the trust bundle rather than adding to it.
+That is harmless only while every TLS peer is the MITM proxy. Under the tunnel's split
+routing, where an agent reaches ordinary public hosts directly, curl or git talking to one
+would check a real public certificate against a bundle holding only the Hezo CA and fail.
+The system trust store carries the CA for them instead, so both kinds of certificate
+verify.
 Unlike the CA cert (deliberately world-readable so any in-container uid can read it), the
 per-run runtime config and subscription-credential files the server writes into the
 `/workspace` bind mount stay `0o600`/`0o700` and are instead **chowned to the container

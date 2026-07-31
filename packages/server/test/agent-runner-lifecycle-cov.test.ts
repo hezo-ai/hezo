@@ -1157,12 +1157,10 @@ describe('runAgent lifecycle — egress + ssh wiring', () => {
 		expect(capturedEnv).toContain(
 			'NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/hezo-egress.crt',
 		);
-		expect(capturedEnv).toContain(
-			'CURL_CA_BUNDLE=/usr/local/share/ca-certificates/hezo-egress.crt',
-		);
-		expect(capturedEnv).toContain(
-			'GIT_SSL_CAINFO=/usr/local/share/ca-certificates/hezo-egress.crt',
-		);
+		// Not set: both replace the trust bundle rather than adding to it, which
+		// breaks a direct TLS peer under split routing. See agent-runner.
+		expect(capturedEnv.some((e) => e.startsWith('CURL_CA_BUNDLE='))).toBe(false);
+		expect(capturedEnv.some((e) => e.startsWith('GIT_SSL_CAINFO='))).toBe(false);
 		expect(capturedEnv.some((e) => e.startsWith('SSH_AUTH_SOCK=/run/hezo/'))).toBe(true);
 		// Bridge wrapper (not the bare sh prompt-delivery wrapper) leads the exec argv.
 		expect(capturedExecCmd[0]).not.toBe('claude');

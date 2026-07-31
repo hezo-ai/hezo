@@ -692,11 +692,18 @@ export async function buildRuntimeInvocation(
 			//     trust store, into which the container's start-up
 			//     `update-ca-certificates` installs the egress CA.
 			`NODE_USE_ENV_PROXY=1`,
-			// Rely on update-ca-certificates for curl/git; do not set SSL_CERT_FILE to
-			// the egress CA alone — that replaces the system trust store and breaks TLS.
+			// `NODE_EXTRA_CA_CERTS` is *additive* — Node keeps its bundled roots and
+			// adds this one, so a direct TLS peer still verifies.
+			//
+			// `CURL_CA_BUNDLE` and `GIT_SSL_CAINFO` are deliberately NOT set, for the
+			// same reason `SSL_CERT_FILE` is not: they **replace** the trust bundle
+			// rather than adding to it. That is harmless only while every TLS peer is
+			// the MITM proxy. Under split routing curl or git talking to a direct host
+			// would check a real public certificate against a bundle holding only the
+			// Hezo CA, and fail. Both rely instead on the `update-ca-certificates` run
+			// at provision, which installs the CA *into* the system trust store so
+			// both kinds of certificate verify.
 			`NODE_EXTRA_CA_CERTS=${egress.containerCAPath}`,
-			`CURL_CA_BUNDLE=${egress.containerCAPath}`,
-			`GIT_SSL_CAINFO=${egress.containerCAPath}`,
 		);
 	}
 
