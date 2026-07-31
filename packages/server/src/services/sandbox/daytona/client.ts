@@ -115,6 +115,23 @@ export interface DaytonaApi {
 		onLine: (line: string) => void | Promise<void>,
 		opts?: { cwd?: string; signal?: AbortSignal },
 	): Promise<{ exitCode: number }>;
+	openPty(sandbox: DaytonaSandbox, sessionId: string): Promise<DaytonaPty>;
+}
+
+/**
+ * A raw bidirectional byte channel into a sandbox.
+ *
+ * Daytona's exec has no stdin at all - `input`/`stdin`/`stdinData` are ignored
+ * and a command reading stdin sees immediate EOF, measured against the live
+ * API. Its **PTY over WebSocket** is the only bidirectional channel it offers,
+ * which is why the tunnel's transport is per-backend even though its framing is
+ * not.
+ */
+export interface DaytonaPty {
+	send(data: Uint8Array): void;
+	onData(handler: (chunk: Uint8Array) => void): void;
+	onClose(handler: () => void): void;
+	close(): void;
 }
 
 /**
@@ -384,6 +401,72 @@ export class DaytonaClient implements DaytonaApi {
 		});
 		const info = (await infoRes.json()) as { exitCode?: number | null };
 		return { exitCode: info.exitCode ?? 0 };
+	}
+
+	/**
+	 * Open a PTY session and connect to it.
+	 *
+	 * Two things about this channel are not obvious and both would corrupt a
+	 * framed protocol, so both are handled here rather than left to the caller:
+	 * it opens with a `{"status":"connected","type":"control"}` JSON frame that
+	 * is **not** shell output and must be swallowed, and it is a PTY, so line
+	 * discipline is on until `stty raw -echo` runs. Both were measured against
+	 * the live API.
+	 */
+	async openPty(sandbox: DaytonaSandbox, sessionId: string): Promise<DaytonaPty> {
+		const base = await this.toolboxBase(sandbox);
+		await fetch(`${base}/process/pty`, {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' },
+			body: JSON.stringify({ id: sessionId, cols: 200, rows: 50 }),
+		});
+
+		const url = `${base.replace(/^http/, 'ws')}/process/pty/${encodeURIComponent(sessionId)}/connect`;
+		const socket = new WebSocket(url, {
+			headers: { Authorization: `Bearer ${this.apiKey}` },
+		} as unknown as string[]);
+		socket.binaryType = 'arraybuffer';
+
+		let onData: ((chunk: Uint8Array) => void) | undefined;
+		let onClose: (() => void) | undefined;
+		let sawControlFrame = false;
+
+		await new Promise<void>((resolve, reject) => {
+			socket.onopen = () => resolve();
+			socket.onerror = () => reject(new Error('Daytona PTY connect failed'));
+		});
+
+		socket.onmessage = (event) => {
+			const raw =
+				typeof event.data === 'string'
+					? new TextEncoder().encode(event.data)
+					: new Uint8Array(event.data as ArrayBuffer);
+			if (!sawControlFrame) {
+				sawControlFrame = true;
+				// The opening control frame is JSON, not shell output; feeding it to
+				// the frame decoder would desynchronise the stream on byte one.
+				const text = new TextDecoder().decode(raw);
+				if (text.startsWith('{') && text.includes('"type":"control"')) return;
+			}
+			onData?.(raw);
+		};
+		socket.onclose = () => onClose?.();
+
+		// Raw mode before anything framed rides on it: without this the PTY echoes
+		// every byte written and rewrites \n as \r\n, which corrupts both
+		// directions of a binary protocol.
+		socket.send('stty raw -echo\n');
+
+		return {
+			send: (data) => socket.send(data),
+			onData: (handler) => {
+				onData = handler;
+			},
+			onClose: (handler) => {
+				onClose = handler;
+			},
+			close: () => socket.close(),
+		};
 	}
 
 	/** Write a whole file into the sandbox. */

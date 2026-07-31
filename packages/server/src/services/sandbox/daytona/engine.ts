@@ -8,6 +8,7 @@ import {
 	buildListHezoProcessesScript,
 } from '../proc-scripts';
 import type {
+	ContainerByteChannel,
 	ContainerConfig,
 	ContainerEngine,
 	ContainerInfo,
@@ -21,7 +22,7 @@ import type {
 	ProcessEnvMarker,
 } from '../types';
 import { type DaytonaApi, DaytonaApiError, type DaytonaSandbox } from './client';
-import { renderDaytonaExec, renderStderrDrain } from './command';
+import { renderDaytonaExec, renderDaytonaExecScript, renderStderrDrain } from './command';
 
 const log = logger.child('daytona-engine');
 
@@ -316,6 +317,44 @@ export class DaytonaEngine implements ContainerEngine {
 		const stderr = rec.wantsStderr ? await this.drainStderr(sandbox, rec) : '';
 		if (stderr && opts.onChunk) await opts.onChunk({ stream: 'stderr', text: stderr });
 		return { stdout, stderr: opts.onChunk ? '' : stderr };
+	}
+
+	/**
+	 * The tunnel's transport on Daytona: a PTY over WebSocket.
+	 *
+	 * The exec API has no stdin at all, so this is the only bidirectional channel
+	 * the provider offers. The PTY merges stdout and stderr - there is no split
+	 * to recover here as there is for a normal exec - so `onStderr` never fires
+	 * and diagnostics arrive interleaved on `onData`, which is harmless because
+	 * the tunnel client writes none.
+	 */
+	async openExecChannel(containerId: string, config: ExecConfig): Promise<ContainerByteChannel> {
+		const sandbox = await this.fetch(containerId);
+		if (!sandbox) throw new Error(`sandbox ${containerId} not found`);
+		const sessionId = `hezo-chan-${randomBytes(6).toString('hex')}`;
+		const pty = await this.client.openPty(sandbox, sessionId);
+
+		// The PTY starts a login shell, so the command is *typed into* it rather
+		// than being the process it launched - the inverse of a Docker exec, where
+		// the command is the exec. Sent after raw mode is applied by openPty.
+		pty.send(
+			new TextEncoder().encode(
+				`${renderDaytonaExecScript({
+					cmd: config.Cmd,
+					env: config.Env,
+					user: config.User,
+					stderrPath: `/tmp/.hezo-chan-${sessionId}.err`,
+				})}\n`,
+			),
+		);
+
+		return {
+			write: (data) => pty.send(data),
+			onData: (handler) => pty.onData(handler),
+			onStderr: () => {},
+			onClose: (handler) => pty.onClose(handler),
+			close: () => pty.close(),
+		};
 	}
 
 	async execInspect(execId: string): Promise<{ ExitCode: number; Running: boolean; Pid: number }> {

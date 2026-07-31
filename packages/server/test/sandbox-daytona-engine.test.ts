@@ -61,6 +61,12 @@ function fakeApi(
 			sandboxes.delete(id);
 		},
 		getMetrics: async () => new Map(),
+		openPty: async () => ({
+			send: () => {},
+			onData: () => {},
+			onClose: () => {},
+			close: () => {},
+		}),
 		execute: async (_s, command) => {
 			rec.commands.push(command);
 			return { exitCode: 0, output: '' };

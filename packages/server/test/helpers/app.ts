@@ -67,6 +67,15 @@ const STUB_DOCKER_METHODS: ContainerEngine = {
 	},
 	execStart: async () => ({ stdout: '', stderr: '' }),
 	execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+	// A channel that carries nothing. The tunnel treats a closed channel as
+	// fail-closed, so a stubbed engine simply never tunnels.
+	openExecChannel: async () => ({
+		write: () => {},
+		onData: () => {},
+		onStderr: () => {},
+		onClose: () => {},
+		close: () => {},
+	}),
 	killRunProcesses: async () => {},
 	killProcessesByEnvMarker: async () => {},
 	listHezoProcesses: async () => [],

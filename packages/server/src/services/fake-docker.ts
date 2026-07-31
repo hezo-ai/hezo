@@ -1,5 +1,6 @@
 import type { Db } from '../db/database';
 import type {
+	ContainerByteChannel,
 	ContainerConfig,
 	ContainerEngine,
 	ContainerInfo,
@@ -153,6 +154,21 @@ export function createFakeDockerClient(db?: Db): ContainerEngine {
 			return { stdout: '', stderr: '' };
 		},
 		execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+		// A channel that carries nothing and closes on demand. The tunnel treats a
+		// closed channel as fail-closed, so a HEZO_SKIP_DOCKER run simply never
+		// tunnels rather than hanging waiting for bytes that will not come.
+		openExecChannel: async (): Promise<ContainerByteChannel> => {
+			let onClose: (() => void) | undefined;
+			return {
+				write: () => {},
+				onData: () => {},
+				onStderr: () => {},
+				onClose: (handler) => {
+					onClose = handler;
+				},
+				close: () => onClose?.(),
+			};
+		},
 
 		killProcessesByEnvMarker: async () => {},
 		killRunProcesses: async () => {},

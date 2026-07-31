@@ -56,6 +56,8 @@ export interface ExecConfig {
 	User?: string;
 	AttachStdout: boolean;
 	AttachStderr: boolean;
+	/** Only set by `openExecChannel` - the exec triad is one-way by construction. */
+	AttachStdin?: boolean;
 }
 
 export interface ContainerInfo {
@@ -136,6 +138,26 @@ export interface ContainerProcessInfo {
 	cmdline: string;
 }
 
+/**
+ * A bidirectional byte channel to a command running in the container.
+ *
+ * This is the tunnel's transport, and it is the one place the backends differ
+ * in kind rather than in detail: Docker hijacks its exec socket, while a
+ * provider may offer only a PTY over a WebSocket. Each renders this shape its
+ * own way; the framing and multiplexing above it are shared
+ * (`sandbox/tunnel/`), so the network stack still has one shape.
+ */
+export interface ContainerByteChannel {
+	write(data: Uint8Array): void;
+	/** Payload bytes from the command's stdout, already demuxed if the transport frames them. */
+	onData(handler: (chunk: Uint8Array) => void): void;
+	/** Diagnostics from the command's stderr. Never carries protocol bytes. */
+	onStderr(handler: (chunk: Uint8Array) => void): void;
+	/** The channel is gone. The tunnel treats this as fail-closed. */
+	onClose(handler: () => void): void;
+	close(): void;
+}
+
 /** Env var names the process sweeper and abort path match on. */
 export type ProcessEnvMarker = 'HEZO_HEARTBEAT_RUN_ID' | 'HEZO_EXEC_SCOPE_ID';
 
@@ -176,6 +198,12 @@ export interface ContainerEngine {
 	): Promise<Response | null>;
 
 	execCreate(containerId: string, config: ExecConfig): Promise<string>;
+	/**
+	 * Open a bidirectional byte channel to a command - the tunnel's transport.
+	 * Distinct from the exec triad because that path is one-way by construction:
+	 * it returns captured output, with no way to write to the command.
+	 */
+	openExecChannel(containerId: string, config: ExecConfig): Promise<ContainerByteChannel>;
 	execStart(execId: string, opts?: ExecStartOpts): Promise<ExecResult>;
 	execInspect(execId: string): Promise<{ ExitCode: number; Running: boolean; Pid: number }>;
 

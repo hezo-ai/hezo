@@ -1,4 +1,5 @@
 import { request as httpRequest } from 'node:http';
+import type { Socket } from 'node:net';
 import { Readable } from 'node:stream';
 import { DockerFrameDecoder, demuxDockerStream } from './docker-frames';
 import {
@@ -6,7 +7,9 @@ import {
 	buildKillPidsScript,
 	buildListHezoProcessesScript,
 } from './sandbox/proc-scripts';
+import { DockerBinaryFrameDecoder } from './sandbox/tunnel/docker-frames-binary';
 import type {
+	ContainerByteChannel,
 	ContainerConfig,
 	ContainerEngine,
 	ContainerInfo,
@@ -24,6 +27,7 @@ import type {
 // The shared shapes live in the engine seam (`sandbox/types.ts`); re-exported
 // here so the many existing `from './docker'` type imports keep resolving.
 export type {
+	ContainerByteChannel,
 	ContainerConfig,
 	ContainerEngine,
 	ContainerInfo,
@@ -207,6 +211,96 @@ export class DockerClient implements ContainerEngine {
 				cleanupAbort = () => signal.removeEventListener('abort', onAbort);
 			}
 			if (payload !== undefined) req.write(payload);
+			req.end();
+		});
+	}
+
+	/**
+	 * Open a **bidirectional** byte channel to an exec.
+	 *
+	 * This is the tunnel's transport on Docker, and it cannot go through
+	 * `requestStream`: that returns a `Response`, which is read-only. Docker
+	 * hands out a raw socket instead, via the standard HTTP upgrade dance -
+	 * `Connection: Upgrade` / `Upgrade: tcp` makes it answer `101` and Node
+	 * emits `upgrade` with the socket explicitly, rather than leaving us to
+	 * pull one out from under a parser that still thinks it owns it.
+	 *
+	 * Stdin is written raw; output arrives in Docker's 8-byte framing (the exec
+	 * runs without a TTY on purpose - a TTY gives raw bytes but also line
+	 * discipline, which would mangle a framed protocol) and is demuxed at the
+	 * byte level, never through the text decoder the run-log stream uses.
+	 */
+	async openExecChannel(containerId: string, config: ExecConfig): Promise<ContainerByteChannel> {
+		const execId = await this.execCreate(containerId, {
+			...config,
+			AttachStdin: true,
+			AttachStdout: true,
+			AttachStderr: true,
+		});
+		const socket = await this.hijackExec(execId);
+		const decoder = new DockerBinaryFrameDecoder();
+		let onData: ((chunk: Uint8Array) => void) | undefined;
+		let onClose: (() => void) | undefined;
+		let onStderr: ((chunk: Uint8Array) => void) | undefined;
+
+		socket.on('data', (chunk: Buffer) => {
+			for (const frame of decoder.push(new Uint8Array(chunk))) {
+				if (frame.stream === 'stdout') onData?.(frame.payload);
+				else onStderr?.(frame.payload);
+			}
+		});
+		const finish = () => onClose?.();
+		socket.on('end', finish);
+		socket.on('close', finish);
+		socket.on('error', finish);
+
+		return {
+			write: (data) => {
+				socket.write(data);
+			},
+			close: () => {
+				socket.destroy();
+			},
+			onData: (handler) => {
+				onData = handler;
+			},
+			onStderr: (handler) => {
+				onStderr = handler;
+			},
+			onClose: (handler) => {
+				onClose = handler;
+			},
+		};
+	}
+
+	private hijackExec(execId: string): Promise<Socket> {
+		return new Promise((resolve, reject) => {
+			const payload = JSON.stringify({ Detach: false, Tty: false });
+			const req = httpRequest({
+				socketPath: this.socketPath,
+				path: `/${API_VERSION}/exec/${execId}/start`,
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					'Content-Length': Buffer.byteLength(payload),
+					Connection: 'Upgrade',
+					Upgrade: 'tcp',
+				},
+			});
+			req.on('upgrade', (_res, socket) => resolve(socket));
+			// Docker answers 101 + upgrade on success. A plain response means it
+			// refused - surface its body rather than a bare "no upgrade".
+			req.on('response', (res) => {
+				let body = '';
+				res.on('data', (c: Buffer) => {
+					body += c.toString();
+				});
+				res.on('end', () =>
+					reject(new Error(`Docker exec attach failed (${res.statusCode}): ${body}`)),
+				);
+			});
+			req.on('error', reject);
+			req.write(payload);
 			req.end();
 		});
 	}
