@@ -6,8 +6,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
 	buildSubscriptionMount,
 	ensureRuntimeHomeDir,
+	getHostSubscriptionBase,
 	getHostSubscriptionRoot,
-	mkdirTraversable,
+	SUBSCRIPTION_DIR_MODE,
+	subscriptionFiles,
 } from '../src/services/runtime-home';
 
 /**
@@ -26,50 +28,54 @@ const RUN = 'run-abc';
 const mode = (p: string): number => statSync(p).mode & 0o777;
 
 /** Run `fn` with the process umask forced to `value`, restoring it afterwards. */
-function withUmask<T>(value: number, fn: () => T): T {
+async function withUmask<T>(value: number, fn: () => T | Promise<T>): Promise<T> {
 	const prev = process.umask(value);
 	try {
-		return fn();
+		return await fn();
 	} finally {
 		process.umask(prev);
 	}
 }
 
-describe('mkdirTraversable', () => {
+describe('subscriptionFiles directory modes', () => {
 	let base: string;
 	afterEach(() => {
 		if (base) rmSync(base, { recursive: true, force: true });
 	});
 
-	it('forces 0o711 on every component from the subscription root down, past a strict umask', () => {
+	it('forces 0o711 on every component from the subscription root down, past a strict umask', async () => {
 		base = mkdtempSync(join(tmpdir(), 'hezo-rt-'));
-		const sub = join(base, 'workspace', '.hezo', 'subscription');
-		const leaf = join(sub, 'codex', RUN);
+		const sub = getHostSubscriptionBase(base, TEAM, PROJECT);
 
-		withUmask(0o077, () => {
-			// A bare mkdir would lose the traversal bit under this umask — assert the
+		await withUmask(0o077, async () => {
+			// A bare mkdir would lose the traversal bit under this umask - assert the
 			// premise so this test fails loudly if Node's masking behaviour ever changes.
 			const control = join(base, 'control');
 			mkdirSync(control, { recursive: true, mode: 0o711 });
 			expect(mode(control) & 0o001).toBe(0);
 
-			mkdirTraversable(leaf);
+			await subscriptionFiles(base, TEAM, PROJECT).mkdir(join('codex', RUN), {
+				mode: SUBSCRIPTION_DIR_MODE,
+			});
 		});
 
 		expect(mode(sub)).toBe(0o711);
 		expect(mode(join(sub, 'codex'))).toBe(0o711);
-		expect(mode(leaf)).toBe(0o711);
+		expect(mode(join(sub, 'codex', RUN))).toBe(0o711);
 	});
 
-	it('leaves components above the subscription root untouched', () => {
+	it('leaves components above the subscription root untouched', async () => {
+		// The SandboxFiles root is the boundary: widening `.hezo` would re-mode a
+		// directory this seam does not own.
 		base = mkdtempSync(join(tmpdir(), 'hezo-rt-'));
-		const hezo = join(base, 'workspace', '.hezo');
-		const leaf = join(hezo, 'subscription', 'gemini', RUN);
+		const hezo = dirname(getHostSubscriptionBase(base, TEAM, PROJECT));
 
-		withUmask(0o077, () => mkdirTraversable(leaf));
+		await withUmask(0o077, () =>
+			subscriptionFiles(base, TEAM, PROJECT).mkdir(join('gemini', RUN), {
+				mode: SUBSCRIPTION_DIR_MODE,
+			}),
+		);
 
-		// `.hezo` is above the marker — the walk stops at `subscription`, so `.hezo`
-		// keeps the umask-derived mode (here 0o700) rather than being widened.
 		expect(mode(hezo) & 0o001).toBe(0);
 	});
 });
@@ -80,9 +86,9 @@ describe('ensureRuntimeHomeDir under a strict umask', () => {
 		if (base) rmSync(base, { recursive: true, force: true });
 	});
 
-	it('keeps the intermediate dirs traversable by the non-root run-user', () => {
+	it('keeps the intermediate dirs traversable by the non-root run-user', async () => {
 		base = mkdtempSync(join(tmpdir(), 'hezo-rt-'));
-		const mount = withUmask(0o077, () =>
+		const mount = await withUmask(0o077, () =>
 			ensureRuntimeHomeDir(AiProvider.DeepSeek, base, TEAM, PROJECT, RUN, null),
 		);
 		expect(mount).not.toBeNull();
@@ -105,9 +111,9 @@ describe('buildSubscriptionMount under a strict umask', () => {
 		if (base) rmSync(base, { recursive: true, force: true });
 	});
 
-	it('makes the auth-file dir traversable while keeping the credential file 0o600', () => {
+	it('makes the auth-file dir traversable while keeping the credential file 0o600', async () => {
 		base = mkdtempSync(join(tmpdir(), 'hezo-rt-'));
-		const mount = withUmask(0o077, () =>
+		const mount = await withUmask(0o077, () =>
 			buildSubscriptionMount(base, TEAM, PROJECT, RUN, AiProvider.OpenAI, {
 				value: JSON.stringify({ tokens: { refresh_token: 'rt' } }),
 				authMethod: AiAuthMethod.Subscription,

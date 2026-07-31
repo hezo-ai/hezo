@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import {
 	AgentRuntime,
 	AiAuthMethod,
@@ -101,11 +101,13 @@ import {
 	buildSubscriptionMount as buildSubscriptionMountImpl,
 	ensureRuntimeHomeDir,
 	getContainerSubscriptionRoot as getContainerSubscriptionRootImpl,
+	getHostSubscriptionBase,
 	getHostSubscriptionRoot as getHostSubscriptionRootImpl,
-	mkdirTraversable,
 	type RuntimeHomeMount,
+	SUBSCRIPTION_DIR_MODE,
 	SUBSCRIPTION_LAYOUTS,
 	type SubscriptionMount as SubscriptionMountImpl,
+	subscriptionFiles,
 } from './runtime-home';
 import { resolveRuntimeForTask } from './runtime-resolver';
 import { DOCKER_CONTAINER_HOST_ALIAS, dockerRunEndpoints } from './sandbox/endpoints';
@@ -537,7 +539,7 @@ export async function buildRuntimeInvocation(
 		extraEnv = [],
 	} = input;
 
-	const subscriptionMount = buildSubscriptionMount(
+	const subscriptionMount = await buildSubscriptionMount(
 		deps.dataDir,
 		runTeamId,
 		projectId,
@@ -548,7 +550,7 @@ export async function buildRuntimeInvocation(
 
 	const adapter = MCP_ADAPTERS[runtimeType];
 	const homeMount: RuntimeHomeMount | null = adapter.capabilities.requiresHomeDir
-		? ensureRuntimeHomeDir(
+		? await ensureRuntimeHomeDir(
 				provider,
 				deps.dataDir,
 				runTeamId,
@@ -576,11 +578,18 @@ export async function buildRuntimeInvocation(
 	});
 	validateInjection(adapter, mcpInjection);
 
+	// Through SandboxFiles, rooted at the subscription base: the container reads
+	// these, so on a backend whose container is not on this machine the write has
+	// to go through the provider's file API. `dirMode` is what keeps the
+	// other-execute bit the non-root run-user needs to traverse down to this leaf,
+	// which a strict process umask would otherwise strip.
+	const runtimeFiles = subscriptionFiles(deps.dataDir, runTeamId, projectId);
+	const subscriptionBase = getHostSubscriptionBase(deps.dataDir, runTeamId, projectId);
 	for (const file of mcpInjection.files) {
-		// mkdirTraversable (not a bare mkdir mode) so a strict process umask can't strip
-		// the other-execute bit the non-root run-user needs to traverse to this leaf.
-		mkdirTraversable(dirname(file.hostPath));
-		writeFileSync(file.hostPath, file.contents, { mode: file.mode });
+		await runtimeFiles.write(relative(subscriptionBase, file.hostPath), file.contents, {
+			mode: file.mode,
+			dirMode: SUBSCRIPTION_DIR_MODE,
+		});
 	}
 
 	// The host (root in production) just wrote the per-run config dir + files at

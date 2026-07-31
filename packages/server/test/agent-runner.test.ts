@@ -2356,10 +2356,10 @@ describe('runAgent', () => {
 			expect(env).toEqual(['OPENAI_API_KEY=sk-test']);
 		});
 
-		it('writes auth.json to a per-run host path and points CODEX_HOME at it', () => {
+		it('writes auth.json to a per-run host path and points CODEX_HOME at it', async () => {
 			const dataDir = `/tmp/codex-mount-${Date.now()}`;
 			const runId = 'run-mount-1';
-			const mount = buildSubscriptionMount(dataDir, 'co', 'pj', runId, AiProvider.OpenAI, {
+			const mount = await buildSubscriptionMount(dataDir, 'co', 'pj', runId, AiProvider.OpenAI, {
 				value: validAuthJson,
 				authMethod: AiAuthMethod.Subscription,
 			});
@@ -2372,38 +2372,38 @@ describe('runAgent', () => {
 			expect(readFileSync(mount!.hostAuthFile, 'utf8')).toBe(validAuthJson);
 		});
 
-		it('returns null mount for providers without a paste flow', () => {
+		it('returns null mount for providers without a paste flow', async () => {
 			expect(
-				buildSubscriptionMount('/tmp', 'co', 'pj', 'r1', AiProvider.OpenAI, {
+				await buildSubscriptionMount('/tmp', 'co', 'pj', 'r1', AiProvider.OpenAI, {
 					value: 'sk-x',
 					authMethod: AiAuthMethod.ApiKey,
 				}),
 			).toBeNull();
 			expect(
-				buildSubscriptionMount('/tmp', 'co', 'pj', 'r1', AiProvider.Anthropic, {
+				await buildSubscriptionMount('/tmp', 'co', 'pj', 'r1', AiProvider.Anthropic, {
 					value: 'sk-ant',
 					authMethod: AiAuthMethod.ApiKey,
 				}),
 			).toBeNull();
 		});
 
-		it('returns null mount for Anthropic subscription (delivered via env var, not a file)', () => {
+		it('returns null mount for Anthropic subscription (delivered via env var, not a file)', async () => {
 			// Anthropic subscription has no authFileRelative — the token goes in
 			// CLAUDE_CODE_OAUTH_TOKEN (buildProviderEnv), so there is nothing to mount.
 			expect(
-				buildSubscriptionMount('/tmp', 'co', 'pj', 'r1', AiProvider.Anthropic, {
+				await buildSubscriptionMount('/tmp', 'co', 'pj', 'r1', AiProvider.Anthropic, {
 					value: 'sk-ant-oat01-token',
 					authMethod: AiAuthMethod.Subscription,
 				}),
 			).toBeNull();
 		});
 
-		it('returns null mount for Kimi (api-key on Claude Code, credential via env var)', () => {
+		it('returns null mount for Kimi (api-key on Claude Code, credential via env var)', async () => {
 			// Kimi now runs through Claude Code against Moonshot's Anthropic-compatible
 			// endpoint with an api key delivered via ANTHROPIC_AUTH_TOKEN — there is no
 			// subscription file to mount.
 			expect(
-				buildSubscriptionMount('/tmp', 'co', 'pj', 'r1', AiProvider.Kimi, {
+				await buildSubscriptionMount('/tmp', 'co', 'pj', 'r1', AiProvider.Kimi, {
 					value: 'sk-kimi',
 					authMethod: AiAuthMethod.ApiKey,
 				}),
