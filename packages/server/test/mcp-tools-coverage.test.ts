@@ -362,6 +362,79 @@ describe('update_task branches', () => {
 		expect(row.rows[0].runtime_type).toBeNull();
 	});
 
+	// Renames and description edits made over MCP record the same thread entries a
+	// PATCH from the web UI does, so an agent's edit is not invisible.
+	async function systemKinds(taskIdent: string, kind: string) {
+		const r = await db.query<{ content: { text?: string; to?: string; to_preview?: string } }>(
+			`SELECT content FROM task_comments
+			  WHERE task_id = $1 AND content_type = 'system' AND content->>'kind' = $2
+			  ORDER BY created_at ASC, id ASC`,
+			[taskIdent, kind],
+		);
+		return r.rows;
+	}
+
+	it('a title change records a title_change comment and trims the new title', async () => {
+		const createdId = await makeTask(projectSlug, 'Before MCP rename', engineerId);
+		const r = await admin('update_task', {
+			project: projectSlug,
+			task_id: createdId,
+			title: '  After MCP rename  ',
+		});
+		expect(r.error).toBeUndefined();
+
+		const row = await db.query<{ title: string }>('SELECT title FROM tasks WHERE id = $1', [
+			createdId,
+		]);
+		expect(row.rows[0].title).toBe('After MCP rename');
+
+		const events = await systemKinds(createdId, 'title_change');
+		expect(events.length).toBe(1);
+		expect(events[0].content.to).toBe('After MCP rename');
+		expect(events[0].content.text).toContain('Before MCP rename');
+	});
+
+	it('a whitespace-only title edit records nothing', async () => {
+		const createdId = await makeTask(projectSlug, 'Stable MCP title', engineerId);
+		const r = await admin('update_task', {
+			project: projectSlug,
+			task_id: createdId,
+			title: '  Stable MCP title  ',
+		});
+		expect(r.error).toBeUndefined();
+		expect(await systemKinds(createdId, 'title_change')).toHaveLength(0);
+	});
+
+	it('a description change records a description_change comment', async () => {
+		const createdId = await makeTask(projectSlug, 'MCP description', engineerId, {
+			description: 'The original body.',
+		});
+		const r = await admin('update_task', {
+			project: projectSlug,
+			task_id: createdId,
+			description: 'The rewritten body.',
+		});
+		expect(r.error).toBeUndefined();
+
+		const events = await systemKinds(createdId, 'description_change');
+		expect(events.length).toBe(1);
+		expect(events[0].content.text).toContain('updated the description');
+		expect(events[0].content.to_preview).toBe('The rewritten body.');
+	});
+
+	it('an unchanged description records nothing', async () => {
+		const createdId = await makeTask(projectSlug, 'MCP same description', engineerId, {
+			description: 'Unchanged body.',
+		});
+		const r = await admin('update_task', {
+			project: projectSlug,
+			task_id: createdId,
+			description: 'Unchanged body.',
+		});
+		expect(r.error).toBeUndefined();
+		expect(await systemKinds(createdId, 'description_change')).toHaveLength(0);
+	});
+
 	it('agent reassigning to a non-subordinate is rejected by the hierarchy check', async () => {
 		const createdId = await makeTask(projectSlug, 'Hierarchy target', engineerId);
 		const engToken = await agentToken(engineerId, teamId);

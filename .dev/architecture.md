@@ -162,8 +162,8 @@ place a genuine per-repo write restriction is represented.
 an agent-maintained `progress_summary`. Numbering is atomic via `project_task_counters`.
 `task_dependencies` is the many-to-many blocking graph (`UNIQUE`, no self-blocks).
 `task_comments` is **polymorphic** over a `content_type` enum + `content` JSONB — `text`,
-`system` (timeline entries like `status_change`/`task_link`), `run` (auto-written
-on run completion), `preview`, `action`,
+`system` (timeline entries like `status_change`/`title_change`/`description_change`/`task_link`),
+`run` (auto-written on run completion), `preview`, `action`,
 `connect_required`, `credential_request`. Each comment carries a `public_id` slug for
 `#comment-<id>` deep-links. A `task_link` entry records **where** in the source task the
 mention was written: `source_kind` (`description` | `comment`) plus, for a comment,
@@ -181,6 +181,13 @@ emoji reactions, keyed by a non-null `member_id` (unlike a comment's nullable
 a team they can access but aren't a member of resolves to their **HQ (default-team)**
 membership (`resolveReactorMemberId`) — the same cross-team identity HQ agents use to act in
 other teams' projects — so a superuser can react anywhere, not only in HQ or teams they created.
+Title and description edits are recorded on the thread from **both** update paths
+(`recordTitleChange` / `recordDescriptionChange` in `services/task-events.ts`), so an agent's
+edit leaves the same entry a human's does. A `description_change` payload carries a capped
+preview of each end plus the full lengths, never the bodies: the comments skeleton route and
+the MCP `list_comments` tool both return a system comment's `content` whole, so a stored body
+would ride into every comment fetch and every agent prompt for the life of the task. The
+matching `task.updated` audit event omits both ends for the same reason.
 Marking a task `done` is gated in both update paths (REST PATCH and MCP `update_task`,
 shared helpers in `lib/task-relationships.ts`): every sub-task terminal, no outstanding
 pinged-agent activity by others (active runs, pending mention/comment/reply wakeups), and —
@@ -1136,8 +1143,10 @@ run/pending refcounts under the lock) — serializes per project through
 `withContainerLifecycleLock` (`services/containers.ts`), so a start and a stop can never
 interleave: worst case is a wasted stop/start cycle, never a failed run. Concurrency is bounded
 by one **global active-container limit** (`max_active_containers` in `system_meta`; when unset,
-the default is computed from host memory as `(RAM + swap) / default_ram_cap_per_container_gb`,
-clamped to [1,100]): dispatch passes a run whose project container is already active (no new
+the default is computed from host memory as
+`((RAM + swap) - HOST_RESERVED_MEMORY_GB) / default_ram_cap_per_container_gb`, clamped to [1,100] —
+the 1GiB reserve keeps the OS, Hezo's own process and the embedded database off the containers'
+budget, since none of them live inside one): dispatch passes a run whose project container is already active (no new
 container needed) and queues one that would need another container past the cap
 (`WakeupSkipReason.InstanceAtCapacity`, retried by the 5s dispatcher; an in-memory
 `pendingContainerStarts` refcount covers the window before the DB row reads Running). Dispatch

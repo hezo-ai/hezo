@@ -364,6 +364,61 @@ test('task_link without projectId does NOT use the task_link branch (renders gen
 	expect(el.textContent).toContain('SRC-4');
 });
 
+// ─── description_change ───────────────────────────────────────────────────
+
+test('description_change renders the sentence and hides the previews until expanded', async () => {
+	const { findByText, findByTestId, queryByTestId } = renderSystem(
+		comment({
+			kind: 'description_change',
+			text: 'Alice updated the description',
+			from_preview: 'The old body.',
+			to_preview: 'The new body.',
+			from_truncated: false,
+			to_truncated: false,
+			from_length: 13,
+			to_length: 13,
+		}),
+	);
+
+	await findByText('Alice updated the description');
+	expect(queryByTestId('description-change-before')).toBeNull();
+
+	(await findByTestId('description-change-toggle')).click();
+
+	expect((await findByTestId('description-change-before')).textContent).toBe('The old body.');
+	expect((await findByTestId('description-change-after')).textContent).toBe('The new body.');
+});
+
+test('description_change marks a truncated preview with an ellipsis', async () => {
+	const { findByTestId } = renderSystem(
+		comment({
+			kind: 'description_change',
+			text: 'Alice added a description',
+			from_preview: '',
+			to_preview: 'x'.repeat(200),
+			from_truncated: false,
+			to_truncated: true,
+			from_length: 0,
+			to_length: 500,
+		}),
+	);
+
+	(await findByTestId('description-change-toggle')).click();
+
+	const after = await findByTestId('description-change-after');
+	expect(after.textContent).toBe(`${'x'.repeat(200)}…`);
+	// The "before" end is empty on an added description, so it renders nothing.
+	expect(document.querySelector('[data-testid="description-change-before"]')).toBeNull();
+});
+
+test('description_change with no previews offers no toggle', async () => {
+	const { findByText, queryByTestId } = renderSystem(
+		comment({ kind: 'description_change', text: 'Alice cleared the description' }),
+	);
+	await findByText('Alice cleared the description');
+	expect(queryByTestId('description-change-toggle')).toBeNull();
+});
+
 // ─── generic fallback ─────────────────────────────────────────────────────
 
 test('generic system content renders its text field', async () => {

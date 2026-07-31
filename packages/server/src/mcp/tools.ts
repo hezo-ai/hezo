@@ -157,7 +157,12 @@ import {
 import { listReviewComments } from '../services/review-comments';
 import { recordSkillRevisionIfChanged } from '../services/skill-revisions';
 import { triggerStatusAutomations, wakeTaskIfChildrenClosed } from '../services/task-automation';
-import { recordParentChange, recordTaskLinks } from '../services/task-events';
+import {
+	recordDescriptionChange,
+	recordParentChange,
+	recordTaskLinks,
+	recordTitleChange,
+} from '../services/task-events';
 import {
 	type CreateTaskCaller,
 	CreateTaskError,
@@ -1604,10 +1609,15 @@ export function registerTools(
 			const { teamId, taskId, projectId } = scope;
 
 			const currentRowResult = await db.query<{
+				title: string;
+				description: string | null;
 				status: string;
 				assignee_id: string | null;
 				parent_task_id: string | null;
-			}>('SELECT status, assignee_id, parent_task_id FROM tasks WHERE id = $1', [taskId]);
+			}>(
+				'SELECT title, description, status, assignee_id, parent_task_id FROM tasks WHERE id = $1',
+				[taskId],
+			);
 			const currentRow = currentRowResult.rows[0];
 
 			const scopeDenied = assertRunTaskScope(auth, taskId, args.status as string | undefined);
@@ -1615,6 +1625,11 @@ export function registerTools(
 
 			const currentStatus = currentRow?.status;
 			const previousAssigneeId = currentRow?.assignee_id ?? null;
+
+			// Normalize the title the way the REST route does (`tasks.ts`), so both
+			// surfaces store the same value and the rename recorder treats the same
+			// whitespace-only edits as no-ops.
+			if (typeof args.title === 'string') args.title = args.title.trim();
 
 			// Accept a teammate slug (what an agent holds) or a member UUID; every
 			// downstream check + the UPDATE below consumes the resolved member id.
@@ -1745,7 +1760,45 @@ export function registerTools(
 			const actorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 			const actorApiKeyId = apiKeyIdFromAuth(auth);
 
+			// Renames and description edits are recorded on this surface too, so an
+			// agent's edit leaves the same thread entry a human's does. Awaited for the
+			// same reason as the parent change below: a human watching the task page
+			// depends on the broadcast that lands with the comment.
+			if (args.title !== undefined && currentRow) {
+				try {
+					await recordTitleChange(
+						db,
+						teamId,
+						taskId,
+						currentRow.title,
+						args.title as string,
+						actorMemberId,
+						actorApiKeyId,
+						wsManager,
+					);
+				} catch (e) {
+					log.error('Failed to record title change:', e);
+				}
+			}
+
 			if (args.description !== undefined) {
+				if (currentRow) {
+					try {
+						await recordDescriptionChange(
+							db,
+							teamId,
+							taskId,
+							currentRow.description,
+							args.description as string,
+							actorMemberId,
+							actorApiKeyId,
+							wsManager,
+						);
+					} catch (e) {
+						log.error('Failed to record description change:', e);
+					}
+				}
+
 				trackBackground(
 					recordTaskLinks(
 						db,

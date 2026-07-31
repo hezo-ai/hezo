@@ -193,6 +193,53 @@ test('title renames appear as system entries on the timeline', async () => {
 	);
 });
 
+test('description edits appear as system entries with an expandable before/after', async () => {
+	let teamSlug = '';
+	let projectSlug = '';
+	let taskIdentifier = '';
+
+	const { findByTestId, findAllByTestId, router, user } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Description Project' });
+			const task = await seedTask(ws, project, {
+				title: 'Described ticket',
+				description: 'The original body.',
+				assignee_id: ws.agents[0].id,
+			});
+			await patchTask(ws, task.id, { description: 'The rewritten body.' });
+			teamSlug = ws.team.slug;
+			projectSlug = project.slug;
+			taskIdentifier = task.identifier;
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: {
+			projectId: projectSlug,
+			taskId: taskIdentifier.toLowerCase(),
+		},
+	});
+
+	await waitFor(
+		async () => {
+			const items = await findAllByTestId('comment-item');
+			const match = items.find((el) => /updated the description/i.test(el.textContent ?? ''));
+			expect(match).toBeDefined();
+		},
+		{ timeout: 10_000 },
+	);
+
+	// The bodies stay collapsed until asked for.
+	expect(document.querySelector('[data-testid="description-change-before"]')).toBeNull();
+	await user.click(await findByTestId('description-change-toggle'));
+	expect((await findByTestId('description-change-before')).textContent).toBe('The original body.');
+	expect((await findByTestId('description-change-after')).textContent).toBe('The rewritten body.');
+	expect(teamSlug).toBeTruthy();
+});
+
 test('auto-unblock cascade renders as system attribution, not the patcher', async () => {
 	let teamSlug = '';
 	let projectSlug = '';
