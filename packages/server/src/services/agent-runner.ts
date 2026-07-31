@@ -78,10 +78,12 @@ import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } fr
 import { type EgressProxy, formatEgressProxyUrl } from './egress';
 import {
 	clearPushErrors,
+	describeUnpushedWork,
 	ensurePushHook,
 	ensureTaskWorktreeWithRetry,
 	fastForwardLocalDefault,
 	fetchRepo,
+	findUnpushedWork,
 	getWorktreeHead,
 	mergeDefaultIntoWorktree,
 	type RepoLoc,
@@ -118,6 +120,7 @@ import {
 } from './sandbox/endpoints';
 import { hostSandboxFiles, type SandboxFiles } from './sandbox/files';
 import { dockerSandboxHandle } from './sandbox/handle';
+import { setPoolMemberUnpushedFlag } from './sandbox/pool-db';
 import { type RunTunnel, startRunTunnel } from './sandbox/tunnel/run-tunnel';
 import { buildTunnelHostPolicy } from './sandbox/tunnel/split-routing';
 import { type BridgeRunnerArgs, buildBridgeRunnerArgv, type SshAgentServer } from './ssh-agent';
@@ -1478,6 +1481,7 @@ export async function runAgent(
 						designatedRepo: null as RepoRow | null,
 						worktrees: [] as WorktreeRef[],
 						clones: [] as RepoLoc[],
+						branch: null as string | null,
 						executor: null as GitExecutor | null,
 					};
 
@@ -1544,6 +1548,34 @@ export async function runAgent(
 						`to this repository.\n${pushErrors}\n`,
 				);
 			}
+
+			// Whether committed work is about to be left behind in this container only.
+			//
+			// Decided on a REF COMPARISON, not on the push-error log above: that log is
+			// append-only within a run and cleared at prep, so a push that failed at
+			// commit 3 and succeeded at commit 5 leaves a non-empty log with nothing
+			// actually unpushed. `findUnpushedWork` asks the authoritative question -
+			// is the local `hezo/<task>` tip reachable from a remote-tracking ref -
+			// which the log cannot answer.
+			//
+			// Two things follow from a positive finding, and both matter only once a
+			// project has more than one container (nothing fails at pool size 1, which
+			// is why no existing test caught this): the run is not a success, and the
+			// container is pinned against suspend and destroy so the only copy of the
+			// work is not swept away by the idle cron.
+			const unpushed =
+				prep.executor && prep.branch && prep.clones.length > 0
+					? await findUnpushedWork(prep.executor, prep.clones, prep.branch)
+					: { work: [], complete: false };
+			// `complete: false` means the check could not answer, so it may neither
+			// fail the run nor release a pin an earlier run set.
+			await setPoolMemberUnpushedFlag(
+				deps.db,
+				containerId,
+				unpushed.work.length > 0 ? true : unpushed.complete ? false : null,
+			);
+			const unpushedError =
+				unpushed.work.length > 0 ? describeUnpushedWork(unpushed.work) : undefined;
 
 			// Grok and Kimi Code emit no usage on their streams; recover it from the
 			// file each writes into the per-run home mount, then scrub that file (both
@@ -1732,7 +1764,10 @@ export async function runAgent(
 				exitedClean && runtimeType === AgentRuntime.ClaudeCode && backgroundTermination.finish();
 
 			const success =
-				exitedClean && (producedOutput || reportedNoWork) && !backgroundWorkTerminated;
+				exitedClean &&
+				(producedOutput || reportedNoWork) &&
+				!backgroundWorkTerminated &&
+				!unpushedError;
 			const backgroundError = backgroundWorkTerminated
 				? 'run ended with background tasks still running — the runtime terminated the unfinished work before it completed, so the run abandoned incomplete work'
 				: undefined;
@@ -1744,7 +1779,11 @@ export async function runAgent(
 			// otherwise lives only in the log; surface it on the run row so the board
 			// shows why the run failed instead of a bare "failed".
 			const terminalError = success ? null : parser.getTerminalError();
-			if (backgroundError) emit('stderr', `\n[runner] ${backgroundError}\n`);
+			// Ordered by what the human has to act on. Stranded commits come first
+			// because they are the only one where the fix is time-sensitive: the work
+			// exists in exactly one container.
+			if (unpushedError) emit('stderr', `\n[runner] ${unpushedError}\n`);
+			else if (backgroundError) emit('stderr', `\n[runner] ${backgroundError}\n`);
 			else if (noOutputError) emit('stderr', `\n[runner] ${noOutputError}\n`);
 			else if (reportedNoWork && !producedOutput)
 				emit('stdout', `\n[runner] no work to do${noWorkReason ? ` — ${noWorkReason}` : ''}\n`);
@@ -1758,7 +1797,7 @@ export async function runAgent(
 					status: success ? HeartbeatRunStatus.Succeeded : HeartbeatRunStatus.Failed,
 					exitCode: execOutcome.exitCode,
 					durationMs,
-					error: backgroundError ?? noOutputError ?? terminalError ?? undefined,
+					error: unpushedError ?? backgroundError ?? noOutputError ?? terminalError ?? undefined,
 					// Grok's usage comes from the debug log (runUsage); every other
 					// runtime reports it on the stream (parser.getUsage()).
 					usage: runUsage ?? parser.getUsage(),
@@ -1874,6 +1913,8 @@ async function prepareWorktrees(
 	worktrees: WorktreeRef[];
 	/** Each prepared repo's clone — where the auto-push hook records failed pushes. */
 	clones: RepoLoc[];
+	/** The task branch every prepared worktree is on, or null when no repo was prepared. */
+	branch: string | null;
 	executor: GitExecutor | null;
 }> {
 	const emitSystem = (stream: 'stdout' | 'stderr', text: string) =>
@@ -1892,11 +1933,15 @@ async function prepareWorktrees(
 			designatedRepo: null,
 			worktrees: [],
 			clones: [],
+			branch: null,
 			executor: null,
 		};
 	}
 
 	return withProjectGitLock(project.id, async () => {
+		// Declared before the first early return: it is a pure function of the task,
+		// and every exit from here reports which branch the run's work is on.
+		const branchName = `hezo/${task.identifier}`;
 		// All git runs inside the project container; the host only does the bind-mount
 		// filesystem checks. SSH-transport ops authenticate through the run's bridge.
 		// The team's git identity (+ signing) is passed so the worktree catch-up merge
@@ -1940,6 +1985,7 @@ async function prepareWorktrees(
 				designatedRepo: null,
 				worktrees: [],
 				clones: [],
+				branch: branchName,
 				executor,
 			};
 		}
@@ -1960,7 +2006,6 @@ async function prepareWorktrees(
 		// the run-user) can populate it. No-op when the run-user is root.
 		await chownToRunUser(deps.docker, project.container_id, runUser, [containerWorktreeRoot]);
 
-		const branchName = `hezo/${task.identifier}`;
 		const repoLocOf = (name: string): RepoLoc => ({
 			hostPath: join(workspaceRoot, name),
 			containerPath: `${CONTAINER_WORKSPACE_ROOT}/${name}`,
@@ -2057,6 +2102,7 @@ async function prepareWorktrees(
 				designatedRepo: null,
 				worktrees: [],
 				clones: [],
+				branch: branchName,
 				executor,
 			};
 		}
@@ -2089,7 +2135,14 @@ async function prepareWorktrees(
 			clones.push(repoLocOf(repoName));
 		}
 
-		return { workingDir, designatedRepo: primary ?? null, worktrees, clones, executor };
+		return {
+			workingDir,
+			designatedRepo: primary ?? null,
+			worktrees,
+			clones,
+			branch: branchName,
+			executor,
+		};
 	});
 }
 

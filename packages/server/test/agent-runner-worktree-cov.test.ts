@@ -574,6 +574,167 @@ describe('prepareWorktrees', () => {
 		}
 	});
 
+	/**
+	 * Committed work that reached no remote must not read as a successful run, and
+	 * the container holding it must be pinned against the idle cron. Nothing fails
+	 * at one container per project - the next run hits the same `.git` and the ref
+	 * is still there - so this is the regression that only appears once a project
+	 * has several containers, which is exactly why it needs its own test.
+	 */
+	describe('stranded commits', () => {
+		/** Rules that carry prep through to a successful agent exec, as above. */
+		const preparedRepo = (extra: GitRule[]): GitRule[] => [
+			when((a) => a === 'remote get-url origin', {
+				stdout: 'git@github.com:acme/todos.git\n',
+			}),
+			when((a) => a === 'symbolic-ref --short refs/remotes/origin/HEAD', {
+				stdout: 'origin/main\n',
+			}),
+			when((a) => a.startsWith('rev-parse --verify --quiet refs/remotes/origin/main'), {
+				exitCode: 0,
+			}),
+			when((a) => a === 'symbolic-ref --quiet --short HEAD', { stdout: 'main\n' }),
+			when((a) => a === 'rev-parse --git-dir', { stdout: '.git\n' }),
+			when((a) => a === 'merge-base --is-ancestor origin/main HEAD', { exitCode: 0 }),
+			when((a) => a === 'status --porcelain', { stdout: ' M src/app.ts\n' }),
+			when((a) => a === 'rev-parse HEAD', { stdout: 'ddd444\n' }),
+			...extra,
+		];
+
+		async function stageRun(identifier: string): Promise<{ repoId: string }> {
+			const repoId = await insertRepo('acme/todos');
+			mkdirSync(join(getWorkspacePath(dataDir, teamId, projectId), 'todos', '.git'), {
+				recursive: true,
+			});
+			mkdirSync(join(getWorktreesPath(dataDir, teamId, projectId), identifier, 'todos', '.git'), {
+				recursive: true,
+			});
+			return { repoId };
+		}
+
+		// The pool member is keyed on the *engine's* container id, which is what
+		// `ensureProjectContainerRunning` returns — the stub engine's fixed
+		// `stub-container`, not the id `makeProject()` reports.
+		const POOL_CONTAINER_ID = 'stub-container';
+
+		const memberFlag = async (): Promise<boolean | null> => {
+			const r = await db.query<{ has_unpushed_commits: boolean }>(
+				'SELECT has_unpushed_commits FROM container_pool_members WHERE container_id = $1',
+				[POOL_CONTAINER_ID],
+			);
+			return r.rows[0]?.has_unpushed_commits ?? null;
+		};
+
+		beforeAll(async () => {
+			await db.query(
+				`INSERT INTO container_pool_members (project_id, container_id, state)
+				 VALUES ($1, $2, 'busy') ON CONFLICT (container_id) DO NOTHING`,
+				[projectId, POOL_CONTAINER_ID],
+			);
+		});
+
+		it('fails a clean run that leaves commits reaching no remote, and pins the container', async () => {
+			const { repoId } = await stageRun('WT-STRANDED');
+			try {
+				const docker = scriptedGitDocker({
+					rules: preparedRepo([
+						when((a) => a.startsWith('rev-parse --verify --quiet refs/heads/hezo/'), {
+							exitCode: 0,
+						}),
+						when((a) => a.startsWith('rev-list --count'), { stdout: '2\n' }),
+					]),
+				});
+
+				const result = await runAgent(
+					baseDeps(docker),
+					makeAgent(),
+					makeTask('WT-STRANDED'),
+					makeProject(),
+				);
+
+				// The worktree is dirty, so this run DID produce output — it fails
+				// purely because the work exists only in this container.
+				expect(result.success).toBe(false);
+				expect(result.exitCode).toBe(0);
+
+				const run = await db.query<{ status: string; error: string | null }>(
+					'SELECT status, error FROM heartbeat_runs WHERE id = $1',
+					[result.heartbeatRunId],
+				);
+				expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
+				expect(run.rows[0].error).toContain('reached no remote');
+				expect(run.rows[0].error).toContain('hezo/WT-STRANDED');
+
+				expect(await memberFlag()).toBe(true);
+				expect(await runLog(result.heartbeatRunId!)).toContain('reached no remote');
+			} finally {
+				await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
+			}
+		});
+
+		it('succeeds and releases the pin once the commits are on the remote', async () => {
+			const { repoId } = await stageRun('WT-PUSHED');
+			try {
+				const docker = scriptedGitDocker({
+					rules: preparedRepo([
+						when((a) => a.startsWith('rev-parse --verify --quiet refs/heads/hezo/'), {
+							exitCode: 0,
+						}),
+						when((a) => a.startsWith('rev-list --count'), { stdout: '0\n' }),
+					]),
+				});
+
+				const result = await runAgent(
+					baseDeps(docker),
+					makeAgent(),
+					makeTask('WT-PUSHED'),
+					makeProject(),
+				);
+				expect(result.success).toBe(true);
+				// A later run getting the commits out is what releases the pin;
+				// leaving it set would strand the container forever on one denied push.
+				expect(await memberFlag()).toBe(false);
+			} finally {
+				await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
+			}
+		});
+
+		it('leaves the pin alone when the check could not answer', async () => {
+			await db.query(
+				'UPDATE container_pool_members SET has_unpushed_commits = true WHERE container_id = $1',
+				[POOL_CONTAINER_ID],
+			);
+			const { repoId } = await stageRun('WT-UNKNOWN');
+			try {
+				const docker = scriptedGitDocker({
+					rules: preparedRepo([
+						when((a) => a.startsWith('rev-parse --verify --quiet refs/heads/hezo/'), {
+							exitCode: 0,
+						}),
+						// git failed, so the run knows nothing about what is unpushed.
+						when((a) => a.startsWith('rev-list --count'), {
+							exitCode: 128,
+							stderr: 'fatal: bad revision',
+						}),
+					]),
+				});
+
+				const result = await runAgent(
+					baseDeps(docker),
+					makeAgent(),
+					makeTask('WT-UNKNOWN'),
+					makeProject(),
+				);
+				// An unanswerable check must neither fail the run nor release the pin —
+				// releasing it would destroy the container the pin exists to protect.
+				expect(result.success).toBe(true);
+				expect(await memberFlag()).toBe(true);
+			} finally {
+				await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
+			}
+		});
+	});
+
 	it('returns to /workspace when the abort lands during the worktree loop itself', async () => {
 		const repoId = await insertRepo('acme/todos');
 		const clone = join(getWorkspacePath(dataDir, teamId, projectId), 'todos');

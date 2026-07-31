@@ -1425,6 +1425,39 @@ failure never fails the commit. *Uncommitted*
 changes are still not covered — the agent commits to preserve, and the role prompts frame frequent
 committing (not a manual end-of-run push) as the durability action.
 
+**Stranded commits (ref comparison, not the error log).** Reporting a failed push into the run log
+is not the same as noticing that work is about to be left behind, and the two questions have
+different answers: the error log is append-only within a run and cleared at prep, so a push that
+failed at commit 3 and succeeded at commit 5 leaves a non-empty log with **nothing** actually
+unpushed. At run completion the runner therefore asks the authoritative question directly —
+`findUnpushedWork` / `countUnpushedCommits` (`services/git.ts`) run
+`git rev-list --count refs/heads/hezo/<task> --not --remotes=origin` in each prepared clone, which
+counts commits reachable from the task branch but from no `origin` tracking ref. `git push` updates
+those tracking refs on success and prep fetches before the agent starts, so this is a **local**
+read: no network call, and it is correct for all four shapes (current, behind, merged to the default
+branch under another name, never pushed). What counts as durable is the `DURABLE_REMOTES` parameter
+rather than a hardcoded remote at each call site.
+
+A positive finding does two things. The run is **not** a success — it records
+`error = "run ended with committed work that reached no remote …"` even when it exited 0 and
+produced output, precedent being `BackgroundTerminationDetector`'s clean-exit failure. And the
+container is **pinned**: `setPoolMemberUnpushedFlag` (`services/sandbox/pool-db.ts`) sets
+`container_pool_members.has_unpushed_commits`, which `planIdleShutdown` excludes from both suspend
+and destroy, so the idle cron cannot sweep away the only copy of the work. The check distinguishes
+"no unpushed work" from "could not tell": a git failure or a missing clone yields `null`, which
+neither fails the run nor **releases** a pin an earlier run set — clearing a pin on an unanswerable
+check would destroy exactly the container the pin exists to protect. A later run that gets the
+commits out clears it.
+
+None of this changes anything while a project has one container: the next run hits the same `.git`
+and the ref is still there. It matters once a project has several — run 1 commits into container A,
+its push is denied, run 2 lands on container B and fetches from a remote that never received the
+commit, and A is destroyed when it goes idle. The recovery half of the plan (falling back to a Hezo
+mirror when `origin` refuses, so a later run can fetch the commits rather than needing the pinned
+container back) is **not** implemented: on a managed backend the shared store is an object store,
+which cannot hold a bare repo at all, so it needs the whole-file bundle transport rather than a
+mirror remote. Until it lands, the pin plus the failed run is what keeps the work from vanishing.
+
 **Admin git-state & recovery (superuser).** Because a clone's live state lives only in the
 container, the project Git settings page exposes a per-repo, **superuser-only** panel to inspect
 and repair it. `GET /api/projects/:projectId/repos/:repoId/git-state` reads it — the clone's

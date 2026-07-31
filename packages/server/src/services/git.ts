@@ -1083,3 +1083,118 @@ export function readPushErrors(clone: RepoLoc, maxLines = 40): string | null {
 		return null;
 	}
 }
+
+/**
+ * Remotes whose refs mean "this commit exists somewhere other than this container".
+ * Today that is just `origin`; a future durability backstop adds its own name here
+ * rather than at each call site, so what counts as durable is stated once.
+ */
+export const DURABLE_REMOTES = ['origin'] as const;
+
+/**
+ * Commits on a clone's task branch that reached none of {@link DURABLE_REMOTES}.
+ *
+ * **This is a ref comparison, deliberately, and not a read of
+ * {@link PUSH_ERROR_LOG_NAME}.** The log is append-only within a run and cleared at
+ * prep, so a push that failed at commit 3 and succeeded at commit 5 leaves a
+ * non-empty log with nothing actually unpushed - reporting off it would fail a run
+ * whose work is safely on the remote. The authoritative question is whether the
+ * local `hezo/<task>` tip is reachable from a remote-tracking ref, which this asks
+ * directly.
+ *
+ * `git push` updates the corresponding `refs/remotes/origin/*` ref on success, and
+ * run prep fetches before the agent starts, so the tracking refs are a faithful
+ * local record of what the remote holds - no network call is needed or made.
+ *
+ * `--not --remotes=<name>` excludes everything reachable from that remote's
+ * tracking refs, which answers all four shapes uniformly: pushed and current (0),
+ * pushed but behind (the delta), never pushed but already merged into the default
+ * branch (0, correctly - the commits are on the remote), and never pushed at all
+ * (the whole branch).
+ *
+ * Returns 0 for a definite all-clear (including "the branch was never created", so
+ * the agent committed nothing), and **null when the question could not be answered**
+ * - the clone is gone or git failed. Null is not 0: a diagnostic that could not run
+ * must neither fail a run nor clear a pin.
+ */
+export async function countUnpushedCommits(
+	executor: GitExecutor,
+	repo: RepoLoc,
+	branch: string,
+	remotes: readonly string[] = DURABLE_REMOTES,
+): Promise<number | null> {
+	if (!existsSync(join(repo.hostPath, '.git'))) return null;
+	const localRef = `refs/heads/${branch}`;
+	const exists = await executor.exec(['rev-parse', '--verify', '--quiet', localRef], {
+		cwd: repo.containerPath,
+		timeout: 10_000,
+	});
+	// No branch is a definite absence of unpushed work, not an unanswered question:
+	// the agent committed nothing on this task's branch in this clone.
+	if (exists.exitCode !== 0) return 0;
+
+	const { exitCode, stdout } = await executor.exec(
+		['rev-list', '--count', localRef, '--not', ...remotes.map((r) => `--remotes=${r}`)],
+		{ cwd: repo.containerPath, timeout: 30_000 },
+	);
+	if (exitCode !== 0) return null;
+	const count = Number.parseInt(stdout.trim(), 10);
+	return Number.isFinite(count) ? count : null;
+}
+
+/** A clone left holding commits that reached no durable remote. */
+export interface UnpushedWork {
+	repo: RepoLoc;
+	branch: string;
+	commits: number;
+}
+
+export interface UnpushedWorkScan {
+	/** Clones holding commits that reached no durable remote. */
+	work: UnpushedWork[];
+	/**
+	 * True when every clone answered. False when at least one could not be read, in
+	 * which case an empty `work` is "nothing found", not an all-clear - so it may
+	 * not be used to release a container pinned by an earlier run.
+	 */
+	complete: boolean;
+}
+
+/**
+ * The clones a run is about to leave behind with commits that exist nowhere but
+ * this container.
+ *
+ * With one container per project this was survivable: the next run hit the same
+ * `.git` and the ref was still there. Once a project has several containers it is
+ * not - run 1 commits into container A, its push is denied, run 2 lands on
+ * container B and fetches from a remote that never received the commit, and A is
+ * destroyed when it goes idle. Nothing fails at pool size 1, which is why no
+ * existing test caught it.
+ */
+export async function findUnpushedWork(
+	executor: GitExecutor,
+	clones: RepoLoc[],
+	branch: string,
+): Promise<UnpushedWorkScan> {
+	const work: UnpushedWork[] = [];
+	let complete = true;
+	for (const repo of clones) {
+		const commits = await countUnpushedCommits(executor, repo, branch);
+		if (commits === null) complete = false;
+		else if (commits > 0) work.push({ repo, branch, commits });
+	}
+	return { work, complete };
+}
+
+/**
+ * One line per clone, for the run log and the run row's error. Names the branch and
+ * the clone so the human knows exactly which container holds the work and what to
+ * fetch out of it.
+ */
+export function describeUnpushedWork(work: UnpushedWork[]): string {
+	const parts = work.map(
+		(w) =>
+			`${w.commits} commit${w.commits === 1 ? '' : 's'} on ${w.branch} in ${w.repo.containerPath}`,
+	);
+	return `run ended with committed work that reached no remote (${parts.join('; ')}) — the commits exist only in this container`;
+}
