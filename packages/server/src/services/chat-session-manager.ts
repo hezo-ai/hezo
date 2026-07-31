@@ -36,7 +36,10 @@ import {
 	type AgentRunUsage,
 	createAgentChatParser,
 } from './agent-stream-parser';
-import { getProviderCredentialAndModel } from './ai-provider-keys';
+import {
+	type AiProviderCredentialAndModel,
+	getProviderCredentialAndModel,
+} from './ai-provider-keys';
 import { getChatMemory, loadActiveWindow, markCompacted, selectFlush } from './chat-memory';
 import { formatContainerConnectivityMessage } from './container-connectivity-preflight';
 import { CONNECTIVITY_STALE_MS, shouldAbortForConnectivity } from './container-connectivity-status';
@@ -48,6 +51,7 @@ import { applyEffortToRuntime, type EffortRuntimeApplication } from './effort';
 import { resolveRuntimeForTask } from './runtime-resolver';
 import { dockerRunEndpoints } from './sandbox/endpoints';
 import { dockerSandboxHandle } from './sandbox/handle';
+import { setPoolMemberChatReservation } from './sandbox/pool-db';
 import type { BridgeRunnerArgs } from './ssh-agent';
 import { resolveSystemPrompt } from './template-resolver';
 import { getRunSocketPath } from './workspace';
@@ -217,6 +221,37 @@ interface LiveSession {
 	promptDirective: string | null;
 	releaseEgress: () => Promise<void>;
 	releaseSsh: () => Promise<void>;
+	/** What resume needs to rebuild the host-side half; see {@link HostSideInputs}. */
+	invocationInputs: HostSideInputs;
+}
+
+/**
+ * Everything the host-side half of a session start needs, captured once so
+ * resume can re-run it without re-resolving the CEO, the runtime and the
+ * provider credential.
+ */
+interface HostSideInputs {
+	ceoMemberId: string;
+	projectId: string;
+	provider: AiProvider;
+	credential: AiProviderCredentialAndModel;
+	runtimeType: AgentRuntime;
+	modelOverride: string | null;
+}
+
+/**
+ * The half of a session that lives on the Hezo side and does **not** survive its
+ * container being suspended: the ssh agent socket and egress proxy allocations
+ * (whose ports change), the session JWT, and the exec command and env built
+ * around them. Start and resume both produce one of these, which is why it is a
+ * shape rather than an inline block in `startSession`.
+ */
+interface HostSideAllocation {
+	env: string[];
+	execCmd: string[];
+	promptDirective: string | null;
+	releaseEgress: () => Promise<void>;
+	releaseSsh: () => Promise<void>;
 }
 
 interface CurrentTurn {
@@ -293,6 +328,12 @@ export interface ChannelHooks {
  */
 export class ChatSessionManager {
 	private live: LiveSession | null = null;
+	/**
+	 * The live session is parked on a stopped-but-intact container: its row is
+	 * still live and still owns the container, but its host-side allocations have
+	 * been released, so no turn may exec until {@link resumeSession} rebuilds them.
+	 */
+	private suspended = false;
 	private ensuring: Promise<LiveSession> | null = null;
 	private healthTimer: ReturnType<typeof setInterval> | null = null;
 	// Per-conversation turn bookkeeping (lock + in-flight turn + compaction). Keyed
@@ -847,9 +888,12 @@ export class ChatSessionManager {
 	}
 
 	private async ensureSession(): Promise<LiveSession> {
-		if (this.live) return this.live;
+		if (this.live && !this.suspended) return this.live;
 		if (this.ensuring) return this.ensuring;
-		this.ensuring = this.startSession().finally(() => {
+		// A parked session resumes into its own container and keeps its row; only a
+		// session that never existed (or whose container was replaced) starts fresh.
+		const begin = this.live && this.suspended ? this.resumeSession() : this.startSession();
+		this.ensuring = begin.finally(() => {
 			this.ensuring = null;
 		});
 		return this.ensuring;
@@ -929,15 +973,18 @@ export class ChatSessionManager {
 		const modelOverride = override.rows[0]?.model ?? credential.defaultModel ?? null;
 
 		// Reclaim any DB rows left live by a crash without an in-memory session, so
-		// the singleton insert below doesn't collide.
+		// the singleton insert below doesn't collide. `suspended` counts as live -
+		// the singleton index treats every non-terminal status that way - so a
+		// process restart while a session was suspended must reclaim it too.
 		await db.query(
 			`UPDATE chat_sessions SET status = $1, stopped_at = now()
-			 WHERE member_id = $2 AND status IN ($3, $4)`,
+			 WHERE member_id = $2 AND status IN ($3, $4, $5)`,
 			[
 				ChatSessionStatus.Crashed,
 				ceoMemberId,
 				ChatSessionStatus.Starting,
 				ChatSessionStatus.Running,
+				ChatSessionStatus.Suspended,
 			],
 		);
 
@@ -956,6 +1003,72 @@ export class ChatSessionManager {
 		);
 		const sessionId = inserted.rows[0].id;
 
+		try {
+			const inputs: HostSideInputs = {
+				ceoMemberId,
+				projectId: project.id,
+				provider,
+				credential,
+				runtimeType,
+				modelOverride,
+			};
+			const allocation = await this.allocateHostSide(sessionId, containerId, runUser, inputs);
+
+			await db.query(`UPDATE chat_sessions SET status = $1 WHERE id = $2`, [
+				ChatSessionStatus.Running,
+				sessionId,
+			]);
+			// Pin the container to the chat in the pool: a task run may never take it,
+			// and the idle sweep may never stop it. Chat is exempt from the container
+			// cap for the same reason - a queued task run is invisible and harmless, a
+			// queued chat turn is a person watching a spinner.
+			await setPoolMemberChatReservation(db, containerId, true);
+
+			this.live = {
+				sessionId,
+				ceoMemberId,
+				projectId: project.id,
+				containerId,
+				runUser,
+				runtimeType,
+				invocationInputs: inputs,
+				...allocation,
+			};
+			log.info(`CEO chat session started (runtime=${runtimeType})`, { session: sessionId });
+			return this.live;
+		} catch (err) {
+			await db
+				.query(
+					`UPDATE chat_sessions SET status = $1, error = $2, stopped_at = now() WHERE id = $3`,
+					[ChatSessionStatus.Crashed, (err as Error).message, sessionId],
+				)
+				.catch(() => undefined);
+			throw err;
+		}
+	}
+
+	/**
+	 * Allocate the half of a session that lives on the Hezo side: the ssh agent
+	 * socket, the egress proxy, the session JWT, and the exec command and env built
+	 * around them.
+	 *
+	 * Extracted because **resume needs exactly this and nothing else**. A suspended
+	 * container keeps its filesystem, and a chat session holds no long-lived process
+	 * (each turn is its own exec; continuity is in the database) - but these
+	 * allocations live on the Hezo side and are released at suspend, and their ports
+	 * change. Two copies of this sequence is what the second-call-site rule exists to
+	 * prevent, and a drifted copy here would mean a resumed chat silently losing
+	 * commit signing or secret substitution.
+	 *
+	 * Releases whatever it managed to allocate before rethrowing, so a partial
+	 * failure never strands a socket or a proxy port.
+	 */
+	private async allocateHostSide(
+		sessionId: string,
+		containerId: string,
+		runUser: ContainerRunUser,
+		inputs: HostSideInputs,
+	): Promise<HostSideAllocation> {
 		let releaseSsh = async (): Promise<void> => undefined;
 		let releaseEgress = async (): Promise<void> => undefined;
 		try {
@@ -969,7 +1082,7 @@ export class ChatSessionManager {
 				const socketHostPath = getRunSocketPath(this.deps.dataDir, sessionId);
 				const allocated = await sshAgentServer.allocateRunSocket(
 					sessionId,
-					{ teamId: DEFAULT_TEAM_ID, agentId: ceoMemberId, label },
+					{ teamId: DEFAULT_TEAM_ID, agentId: inputs.ceoMemberId, label },
 					socketHostPath,
 				);
 				sshSocketContainerPath = `/run/hezo/${sessionId}.sock`;
@@ -1013,8 +1126,8 @@ export class ChatSessionManager {
 				}
 				const allocated = await egressProxy.allocateRunProxy(sessionId, {
 					teamId: DEFAULT_TEAM_ID,
-					agentId: ceoMemberId,
-					projectId: project.id,
+					agentId: inputs.ceoMemberId,
+					projectId: inputs.projectId,
 					label,
 				});
 				egress = {
@@ -1028,72 +1141,50 @@ export class ChatSessionManager {
 
 			const agentJwt = await signChatSessionJwt(
 				this.deps.masterKeyManager,
-				ceoMemberId,
+				inputs.ceoMemberId,
 				DEFAULT_TEAM_ID,
 				sessionId,
-				project.id,
+				inputs.projectId,
 			);
 
 			// Max thinking — the CEO chat runs at the highest reasoning effort.
 			const effortApplication: EffortRuntimeApplication = applyEffortToRuntime(
-				runtimeType,
+				inputs.runtimeType,
 				AgentEffort.Max,
 			);
 
 			const invocation = await buildRuntimeInvocation({
-				// Chat keeps the direct host address for now; moving it onto the
-				// tunnel is the chat-on-remote change, which also has to handle
-				// resume.
 				endpoints: dockerRunEndpoints(this.deps.serverPort),
 				deps: this.deps,
 				runTeamId: DEFAULT_TEAM_ID,
-				projectId: project.id,
-				provider,
-				credential,
-				runtimeType,
+				projectId: inputs.projectId,
+				provider: inputs.provider,
+				credential: inputs.credential,
+				runtimeType: inputs.runtimeType,
 				agentJwt,
-				agentId: ceoMemberId,
+				agentId: inputs.ceoMemberId,
 				resourceId: sessionId,
 				containerId,
 				runUser,
 				promptContainerPath: getContainerPromptPath(sessionId),
 				effort: AgentEffort.Max,
 				effortApplication,
-				modelOverride,
+				modelOverride: inputs.modelOverride,
 				sshSocketContainerPath,
 				bridge,
 				egress,
 			});
 
-			await db.query(`UPDATE chat_sessions SET status = $1 WHERE id = $2`, [
-				ChatSessionStatus.Running,
-				sessionId,
-			]);
-
-			this.live = {
-				sessionId,
-				ceoMemberId,
-				projectId: project.id,
-				containerId,
-				runUser,
-				runtimeType,
+			return {
 				env: invocation.env,
 				execCmd: invocation.execCmd,
 				promptDirective: effortApplication.promptDirective ?? null,
 				releaseEgress,
 				releaseSsh,
 			};
-			log.info(`CEO chat session started (runtime=${runtimeType})`, { session: sessionId });
-			return this.live;
 		} catch (err) {
 			await releaseSsh().catch(() => undefined);
 			await releaseEgress().catch(() => undefined);
-			await db
-				.query(
-					`UPDATE chat_sessions SET status = $1, error = $2, stopped_at = now() WHERE id = $3`,
-					[ChatSessionStatus.Crashed, (err as Error).message, sessionId],
-				)
-				.catch(() => undefined);
 			throw err;
 		}
 	}
@@ -1497,16 +1588,115 @@ export class ChatSessionManager {
 		});
 	}
 
+	/**
+	 * Two different things can happen to the chat's container, and conflating them
+	 * is what used to end a session for no reason.
+	 *
+	 * **A different container** (id changed, or the project has none) means the
+	 * filesystem this session was working in is gone. Nothing can be resumed into
+	 * it, so the session is torn down exactly as before.
+	 *
+	 * **The same container, stopped** is a suspend: the filesystem is intact and
+	 * the session holds no long-lived process, so nothing it needs was lost. It is
+	 * parked rather than ended - the row stays live, its id keeps anchoring the
+	 * message history, and the next turn resumes into it. This is what makes a
+	 * managed backend usable, since it suspends sandboxes on its own idle timer;
+	 * tearing down there would end the operator's session every quiet period.
+	 */
 	private async checkHealth(): Promise<void> {
-		if (!this.live) return;
+		const live = this.live;
+		if (!live || this.suspended) return;
 		const proj = await this.deps.db.query<{
 			container_id: string | null;
 			container_status: string | null;
-		}>(`SELECT container_id, container_status FROM projects WHERE id = $1`, [this.live.projectId]);
+		}>(`SELECT container_id, container_status FROM projects WHERE id = $1`, [live.projectId]);
 		const row = proj.rows[0];
-		if (!row || row.container_status !== 'running' || row.container_id !== this.live.containerId) {
-			log.warn('HQ container unavailable; tearing down CEO chat session');
+		if (!row || !row.container_id || row.container_id !== live.containerId) {
+			log.warn('HQ container replaced or gone; tearing down CEO chat session');
 			await this.teardown(ChatSessionStatus.Stopped);
+			return;
+		}
+		if (row.container_status !== 'running') {
+			await this.suspend();
+		}
+	}
+
+	/**
+	 * Park the session on its stopped-but-intact container: release the host-side
+	 * allocations (their ports do not survive) and record `suspended`, keeping the
+	 * row live so it still owns its container and still blocks a second session.
+	 *
+	 * No marker kill here, unlike teardown - the container is stopped, so there is
+	 * no process tree to reap, and an exec against it would only fail.
+	 */
+	private async suspend(): Promise<void> {
+		const live = this.live;
+		if (!live || this.suspended) return;
+		this.suspended = true;
+		log.info('HQ container suspended; parking CEO chat session', { session: live.sessionId });
+		await live.releaseSsh().catch(() => undefined);
+		await live.releaseEgress().catch(() => undefined);
+		await this.deps.db
+			.query(`UPDATE chat_sessions SET status = $1 WHERE id = $2`, [
+				ChatSessionStatus.Suspended,
+				live.sessionId,
+			])
+			.catch(() => undefined);
+	}
+
+	/**
+	 * Resume a parked session into its container: start the container again and
+	 * re-run the host-side half against the **same** session row, so the id that
+	 * anchors this session's messages survives.
+	 *
+	 * A resume that comes back with a different container id means the container
+	 * was replaced rather than restarted - the filesystem is not the one this
+	 * session was parked on - so it tears down and lets the caller start fresh.
+	 */
+	private async resumeSession(): Promise<LiveSession> {
+		const live = this.live;
+		if (!live) throw new Error('no session to resume');
+		const containerId = await ensureProjectContainerRunning(
+			this.buildContainerDeps(),
+			live.projectId,
+		);
+		if (containerId !== live.containerId) {
+			log.warn('HQ container was replaced while suspended; starting a fresh CEO chat session');
+			await this.teardown(ChatSessionStatus.Stopped);
+			return this.startSession();
+		}
+
+		try {
+			const allocation = await this.allocateHostSide(
+				live.sessionId,
+				containerId,
+				live.runUser,
+				live.invocationInputs,
+			);
+			await this.deps.db.query(`UPDATE chat_sessions SET status = $1 WHERE id = $2`, [
+				ChatSessionStatus.Running,
+				live.sessionId,
+			]);
+			// Re-assert the pin: the member row is rewritten as the container moves
+			// through the pool's states, so resume must not assume it survived.
+			await setPoolMemberChatReservation(this.deps.db, containerId, true);
+			this.live = { ...live, ...allocation };
+			this.suspended = false;
+			log.info('CEO chat session resumed', { session: live.sessionId });
+			return this.live;
+		} catch (err) {
+			// The session cannot serve a turn without its host-side half, and leaving
+			// it parked would retry the same failure on every message. End it so the
+			// next turn starts cleanly and the error is recorded once.
+			await this.deps.db
+				.query(
+					`UPDATE chat_sessions SET status = $1, error = $2, stopped_at = now() WHERE id = $3`,
+					[ChatSessionStatus.Crashed, (err as Error).message, live.sessionId],
+				)
+				.catch(() => undefined);
+			this.live = null;
+			this.suspended = false;
+			throw err;
 		}
 	}
 
@@ -1519,6 +1709,7 @@ export class ChatSessionManager {
 		const live = this.live;
 		if (!live) return;
 		this.live = null;
+		this.suspended = false;
 		// Session-wide reap: every exec of this session (and its children) carries
 		// HEZO_HEARTBEAT_RUN_ID=<sessionId>, and by teardown they have all been
 		// aborted — nothing live shares the marker, so the broad kill is safe here
@@ -1529,6 +1720,11 @@ export class ChatSessionManager {
 			.catch(() => undefined);
 		await live.releaseSsh().catch(() => undefined);
 		await live.releaseEgress().catch(() => undefined);
+		// Hand the container back to the pool. Suspend deliberately does NOT do this:
+		// a parked session still owns its container and resumes into it.
+		await setPoolMemberChatReservation(this.deps.db, live.containerId, false).catch(
+			() => undefined,
+		);
 		await this.deps.db
 			.query(`UPDATE chat_sessions SET status = $1, stopped_at = now() WHERE id = $2`, [
 				status,

@@ -739,6 +739,164 @@ describe('ChatSessionManager — warm resources (ssh bridge + egress) and lifecy
 		await manager.stop();
 	});
 
+	/**
+	 * A stopped container and a *different* container are not the same event, and
+	 * conflating them is what used to end a session for no reason. The chat holds no
+	 * long-lived process - each turn is its own exec, continuity is in the database -
+	 * so a container that stops with its filesystem intact takes nothing the session
+	 * needs. A managed backend suspends sandboxes on its own idle timer, so tearing
+	 * down there would end the operator's session every quiet period.
+	 */
+	describe('suspend and resume', () => {
+		const health = (manager: unknown) =>
+			(manager as { checkHealth(): Promise<void> }).checkHealth();
+
+		const sessionRow = async () => {
+			const r = await ctx.db.query<{ id: string; status: string }>(
+				'SELECT id, status::text FROM chat_sessions ORDER BY started_at DESC LIMIT 1',
+			);
+			return r.rows[0];
+		};
+
+		test('parks the session instead of ending it when the container stops', async () => {
+			const chat = scriptedChatDocker(ctx.dataDir, projectId);
+			const { manager } = makeManager(ctx, chat.docker);
+			const { assistantMessageId } = await manager.sendTurn({ text: 'hi' });
+			await waitComplete(ctx, assistantMessageId);
+			const before = await sessionRow();
+			expect(before.status).toBe(ChatSessionStatus.Running);
+
+			// Same container id, no longer running: a suspend, not a replacement.
+			await ctx.db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [
+				projectId,
+			]);
+			await health(manager);
+
+			const after = await sessionRow();
+			expect(after.status).toBe(ChatSessionStatus.Suspended);
+			// The same row: its id anchors this session's messages, so ending it and
+			// starting a new one would orphan them.
+			expect(after.id).toBe(before.id);
+			await manager.stop();
+		});
+
+		test('resumes into the same session on the next turn', async () => {
+			const chat = scriptedChatDocker(ctx.dataDir, projectId);
+			const { manager } = makeManager(ctx, chat.docker);
+			const first = await manager.sendTurn({ text: 'hi' });
+			await waitComplete(ctx, first.assistantMessageId);
+			const before = await sessionRow();
+
+			await ctx.db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [
+				projectId,
+			]);
+			await health(manager);
+			expect((await sessionRow()).status).toBe(ChatSessionStatus.Suspended);
+
+			// ensureProjectContainerRunning brings the same container back up.
+			await ctx.db.query(`UPDATE projects SET container_status = 'running' WHERE id = $1`, [
+				projectId,
+			]);
+			const second = await manager.sendTurn({ text: 'still there?' });
+			await waitComplete(ctx, second.assistantMessageId);
+
+			const after = await sessionRow();
+			expect(after.status).toBe(ChatSessionStatus.Running);
+			expect(after.id).toBe(before.id);
+			// One session across the whole episode — resume, not restart.
+			const count = await ctx.db.query<{ n: number }>(
+				'SELECT COUNT(*)::int AS n FROM chat_sessions',
+			);
+			expect(count.rows[0].n).toBe(1);
+			await manager.stop();
+		});
+
+		test('starts fresh when the container was replaced rather than restarted', async () => {
+			const chat = scriptedChatDocker(ctx.dataDir, projectId);
+			const { manager } = makeManager(ctx, chat.docker);
+			const first = await manager.sendTurn({ text: 'hi' });
+			await waitComplete(ctx, first.assistantMessageId);
+			const before = await sessionRow();
+
+			await ctx.db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [
+				projectId,
+			]);
+			await health(manager);
+
+			// A different container: the filesystem this session was parked on is gone,
+			// so there is nothing to resume into.
+			await ctx.db.query(
+				`UPDATE projects SET container_id = 'replaced-container', container_status = 'running'
+				 WHERE id = $1`,
+				[projectId],
+			);
+			const second = await manager.sendTurn({ text: 'hello again' });
+			await waitComplete(ctx, second.assistantMessageId);
+
+			const after = await sessionRow();
+			expect(after.status).toBe(ChatSessionStatus.Running);
+			expect(after.id).not.toBe(before.id);
+			await manager.stop();
+		});
+
+		test('a parked session still blocks a second one', async () => {
+			// It owns its row and its container, so the singleton guard has to keep
+			// counting it as live.
+			const chat = scriptedChatDocker(ctx.dataDir, projectId);
+			const { manager } = makeManager(ctx, chat.docker);
+			const { assistantMessageId } = await manager.sendTurn({ text: 'hi' });
+			await waitComplete(ctx, assistantMessageId);
+			await ctx.db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [
+				projectId,
+			]);
+			await health(manager);
+
+			const ceoId = await ceoMemberId(ctx);
+			await expect(
+				ctx.db.query(
+					`INSERT INTO chat_sessions (member_id, team_id, project_id, runtime_type, status)
+					 VALUES ($1, $2, $3, 'claude_code', 'starting')`,
+					[ceoId, DEFAULT_TEAM_ID, projectId],
+				),
+			).rejects.toThrow();
+			await manager.stop();
+		});
+
+		test('reserves the chat’s container in the pool and hands it back at teardown', async () => {
+			// Chat is exempt from the container cap, and the pin is the other half of
+			// that: without it a task run could take the container out from under a live
+			// session, which is the same interruption by a different route.
+			await ctx.db.query(
+				`INSERT INTO container_pool_members (project_id, container_id, state)
+				 VALUES ($1, 'hq-container', 'idle') ON CONFLICT (container_id) DO NOTHING`,
+				[projectId],
+			);
+			const reserved = async (): Promise<boolean> => {
+				const r = await ctx.db.query<{ reserved_for_chat: boolean }>(
+					'SELECT reserved_for_chat FROM container_pool_members WHERE container_id = $1',
+					['hq-container'],
+				);
+				return r.rows[0].reserved_for_chat;
+			};
+
+			const chat = scriptedChatDocker(ctx.dataDir, projectId);
+			const { manager } = makeManager(ctx, chat.docker);
+			const { assistantMessageId } = await manager.sendTurn({ text: 'hi' });
+			await waitComplete(ctx, assistantMessageId);
+			expect(await reserved()).toBe(true);
+
+			// Suspend keeps the pin — a parked session still owns its container.
+			await ctx.db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [
+				projectId,
+			]);
+			await health(manager);
+			expect(await reserved()).toBe(true);
+
+			await manager.stop();
+			expect(await reserved()).toBe(false);
+		});
+	});
+
 	test('reconcileOnStartup crashes orphaned sessions and settles orphaned messages', async () => {
 		const ceoId = await ceoMemberId(ctx);
 		await ctx.db.query(

@@ -37,6 +37,30 @@ export async function setPoolMemberUnpushedFlag(
 }
 
 /**
+ * Mark (or release) the chat's pinned container, which `selectPoolMember` will
+ * never hand to a task run and `planIdleShutdown` will never stop.
+ *
+ * Chat is exempt from the container cap because a queued task run is invisible and
+ * harmless while a queued chat turn is a person watching a spinner; the memory
+ * budget reserves for it up front instead. Reserving the member is the other half
+ * of that: without it a task run could take the container out from under a live
+ * chat session, which is the same interruption by a different route.
+ */
+export async function setPoolMemberChatReservation(
+	db: Db,
+	containerId: string,
+	reserved: boolean,
+): Promise<void> {
+	await db.query(
+		`UPDATE container_pool_members
+		    SET reserved_for_chat = $2, updated_at = now()
+		  WHERE container_id = $1
+		    AND reserved_for_chat IS DISTINCT FROM $2`,
+		[containerId, reserved],
+	);
+}
+
+/**
  * Whether any container in this project is pinned by unpushed work. Surfaced so a
  * project whose commits are stranded reads as such rather than looking healthy
  * while a container quietly carries the only copy.

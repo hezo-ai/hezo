@@ -307,6 +307,33 @@ topic), and the platform→app direction runs via `parseClose` →
 **single shared lease** per CEO member — a thread is only message-grouping + rolling
 window + memory scope, and each turn is a stateless one-shot `docker exec` reading a
 per-turn prompt file, so N threads run as N independent execs into the one container.
+
+**A session survives its container being suspended.** Because it holds no long-lived
+process — each turn is its own exec and continuity lives in `chat_conversations` /
+`chat_messages` — a container that stops with its filesystem intact takes nothing the
+session needs. `checkHealth` therefore separates two events it used to conflate. A
+**different** container (id changed, or the project has none) means the filesystem is
+gone, so the session is torn down as before. The **same** container, stopped, is a
+suspend: `ChatSessionStatus.Suspended` parks the row, the host-side allocations are
+released, and the next turn resumes into it via `resumeSession` rather than starting
+over, keeping the session id that anchors its messages. This is what makes a managed
+backend usable at all — it suspends sandboxes on its own idle timer, so tearing down
+would end the operator's session every quiet period.
+
+Resume is not a no-op, which is why the host-side half of `startSession` is extracted as
+`allocateHostSide`: the ssh agent socket and egress proxy allocation live on the Hezo
+side, are released at suspend, and come back on **different ports**, so the exec command
+and env have to be rebuilt around them (two copies of that sequence is what the
+second-call-site rule exists to prevent — a drifted copy would mean a resumed chat
+silently losing commit signing or secret substitution). `suspended` counts as **live**
+everywhere it matters: the singleton index is stated as "not terminal" so a parked
+session still blocks a second one, and a process restart reclaims it as crashed like any
+other live row. It is deliberately **not** accepted by `authMiddleware` — a parked
+session has no host-side half, so no exec of it can legitimately be calling. In the
+container pool the chat's container is pinned (`reserved_for_chat`), which suspend keeps
+and teardown releases: chat is exempt from the container cap, and the pin is the other
+half of that, since a task run taking the container out from under a live session is the
+same interruption by a different route.
 Long-term memory (`chat_memories`) stays **per-agent** (shared across a member's
 assistant threads); compaction serialises at the member level so concurrent threads never
 clobber the shared memory row. External channels (Telegram, Slack, Discord) are built on

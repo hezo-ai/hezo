@@ -118,6 +118,12 @@ export async function verifyToken(
 					[sessionId, memberId, teamId],
 				);
 				const sessionRow = sessionResult.rows[0];
+				// `suspended` is deliberately NOT accepted, even though the row is
+				// still live: a parked session has released its host-side half, so no
+				// exec of it can legitimately be calling. Resume flips the row back to
+				// `running` before any turn, so nothing real is rejected — and until it
+				// does, a JWT from a container Hezo is not currently driving is not a
+				// principal we want to honour.
 				if (
 					sessionRow?.status !== ChatSessionStatus.Starting &&
 					sessionRow?.status !== ChatSessionStatus.Running

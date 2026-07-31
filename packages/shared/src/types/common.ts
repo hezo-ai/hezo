@@ -1066,6 +1066,18 @@ export const ChatSessionStatus = {
 	Running: 'running',
 	Crashed: 'crashed',
 	Stopped: 'stopped',
+	/**
+	 * The container stopped without losing its filesystem, and the session is
+	 * waiting to resume into it. Live, not terminal: the row still owns its
+	 * container and still blocks a second session.
+	 *
+	 * A chat session holds no long-lived process - each turn is its own exec and
+	 * continuity comes from `chat_conversations`/`chat_messages` - so nothing the
+	 * session needs is lost. What does not survive is the host-side half: the ssh
+	 * socket and egress proxy allocations, whose ports change, which is why resume
+	 * re-runs that half rather than being a no-op.
+	 */
+	Suspended: 'suspended',
 } as const;
 export type ChatSessionStatus = (typeof ChatSessionStatus)[keyof typeof ChatSessionStatus];
 
