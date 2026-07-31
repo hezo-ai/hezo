@@ -95,5 +95,21 @@
 	"theme.label": "Design",
 	"theme.light": "Hell",
 	"theme.dark": "Dunkel",
-	"theme.system": "System"
+	"theme.system": "System",
+	"comment.linkedFrom": "Verlinkt aus {source} von {actor}",
+	"comment.linkedFromComment": "Verlinkt aus {comment} in {source} von {actor}",
+	"comment.linkedFromCommentLabel": "einem Kommentar",
+	"comment.statusChanged": "{actor} hat den Status von {from} zu {to} geändert",
+	"comment.autoUnblocked": "Automatisch entsperrt, nachdem {trigger} geschlossen wurde",
+	"comment.autoUnblockedFallback": "eine blockierende Aufgabe",
+	"comment.parentMoved": "{actor} hat diese Aufgabe von {from} zu {to} verschoben",
+	"comment.parentNested": "{actor} hat diese Aufgabe unter {to} eingeordnet",
+	"comment.parentPromotedFrom": "{actor} hat diese Aufgabe auf die oberste Ebene verschoben (war unter {from})",
+	"comment.parentPromoted": "{actor} hat diese Aufgabe auf die oberste Ebene verschoben",
+	"comment.runFailed": "Lauf für {agent} fehlgeschlagen.",
+	"comment.runTimedOut": "Zeitüberschreitung beim Lauf für {agent}.",
+	"comment.runFailedWithError": "Lauf für {agent} fehlgeschlagen: {error}",
+	"comment.runTimedOutWithError": "Zeitüberschreitung beim Lauf für {agent}: {error}",
+	"comment.runAgentFallback": "einen Agenten",
+	"comment.repoDesignated": "Repository {repo} wurde als zugewiesenes Repository festgelegt."
 }

@@ -91,16 +91,27 @@ test('status changes and cross-task mentions appear as system entries on the tim
 		{ timeout: 10_000 },
 	);
 
-	// Verify "Linked from <source>" landed on target.
+	// Verify "Linked from a comment on <source>" landed on target. The mention was
+	// written in a comment, so the entry names that origin and links to it.
 	await waitFor(
 		async () => {
 			const items = await findAllByTestId('comment-item');
 			const linked = items.filter((el) =>
-				new RegExp(`Linked from ${sourceIdentifier}`).test(el.textContent ?? ''),
+				new RegExp(`Linked from a comment on ${sourceIdentifier}`).test(el.textContent ?? ''),
 			);
 			expect(linked.length).toBe(1);
 		},
 		{ timeout: 10_000 },
+	);
+
+	// The "a comment" link points at the source task, anchored to the comment that
+	// carried the mention - not merely at the source task.
+	const commentLink = document.querySelector<HTMLAnchorElement>(
+		'[data-testid="task-link-source-comment"]',
+	);
+	expect(commentLink).toBeTruthy();
+	expect(commentLink?.getAttribute('href')).toContain(
+		`/tasks/${sourceIdentifier.toLowerCase()}#comment-`,
 	);
 
 	// Post a second mention from the same source — should NOT add a duplicate
@@ -133,7 +144,7 @@ test('status changes and cross-task mentions appear as system entries on the tim
 		async () => {
 			const items = await findAllByTestId('comment-item');
 			const linked = items.filter((el) =>
-				new RegExp(`Linked from ${sourceIdentifier}`).test(el.textContent ?? ''),
+				new RegExp(`Linked from a comment on ${sourceIdentifier}`).test(el.textContent ?? ''),
 			);
 			expect(linked.length).toBe(1);
 		},

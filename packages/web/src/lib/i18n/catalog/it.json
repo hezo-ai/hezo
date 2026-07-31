@@ -95,5 +95,21 @@
 	"theme.label": "Tema",
 	"theme.light": "Chiaro",
 	"theme.dark": "Scuro",
-	"theme.system": "Sistema"
+	"theme.system": "Sistema",
+	"comment.linkedFrom": "Collegamento da {source} creato da {actor}",
+	"comment.linkedFromComment": "Collegamento da {comment} in {source} creato da {actor}",
+	"comment.linkedFromCommentLabel": "un commento",
+	"comment.statusChanged": "{actor} ha cambiato lo stato da {from} a {to}",
+	"comment.autoUnblocked": "Sbloccato automaticamente dopo la chiusura di {trigger}",
+	"comment.autoUnblockedFallback": "un'attività bloccante",
+	"comment.parentMoved": "{actor} ha spostato questa attività da {from} a {to}",
+	"comment.parentNested": "{actor} ha annidato questa attività sotto {to}",
+	"comment.parentPromotedFrom": "{actor} ha promosso questa attività al livello principale (era sotto {from})",
+	"comment.parentPromoted": "{actor} ha promosso questa attività al livello principale",
+	"comment.runFailed": "Esecuzione per {agent} non riuscita.",
+	"comment.runTimedOut": "Esecuzione per {agent} scaduta.",
+	"comment.runFailedWithError": "Esecuzione per {agent} non riuscita: {error}",
+	"comment.runTimedOutWithError": "Esecuzione per {agent} scaduta: {error}",
+	"comment.runAgentFallback": "un agente",
+	"comment.repoDesignated": "Repository {repo} impostato come repository designato."
 }

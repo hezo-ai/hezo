@@ -95,5 +95,21 @@
 	"theme.label": "Tema",
 	"theme.light": "Claro",
 	"theme.dark": "Oscuro",
-	"theme.system": "Sistema"
+	"theme.system": "Sistema",
+	"comment.linkedFrom": "Enlazado desde {source} por {actor}",
+	"comment.linkedFromComment": "Enlazado desde {comment} en {source} por {actor}",
+	"comment.linkedFromCommentLabel": "un comentario",
+	"comment.statusChanged": "{actor} cambió el estado de {from} a {to}",
+	"comment.autoUnblocked": "Desbloqueado automáticamente tras cerrarse {trigger}",
+	"comment.autoUnblockedFallback": "una tarea bloqueante",
+	"comment.parentMoved": "{actor} movió esta tarea de {from} a {to}",
+	"comment.parentNested": "{actor} anidó esta tarea bajo {to}",
+	"comment.parentPromotedFrom": "{actor} promovió esta tarea al nivel superior (estaba bajo {from})",
+	"comment.parentPromoted": "{actor} promovió esta tarea al nivel superior",
+	"comment.runFailed": "La ejecución de {agent} falló.",
+	"comment.runTimedOut": "La ejecución de {agent} agotó el tiempo.",
+	"comment.runFailedWithError": "La ejecución de {agent} falló: {error}",
+	"comment.runTimedOutWithError": "La ejecución de {agent} agotó el tiempo: {error}",
+	"comment.runAgentFallback": "un agente",
+	"comment.repoDesignated": "Repositorio {repo} establecido como repositorio designado."
 }

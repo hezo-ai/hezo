@@ -95,5 +95,21 @@
 	"theme.label": "Tema",
 	"theme.light": "Ljust",
 	"theme.dark": "Mörkt",
-	"theme.system": "System"
+	"theme.system": "System",
+	"comment.linkedFrom": "Länkad från {source} av {actor}",
+	"comment.linkedFromComment": "Länkad från {comment} i {source} av {actor}",
+	"comment.linkedFromCommentLabel": "en kommentar",
+	"comment.statusChanged": "{actor} ändrade status från {from} till {to}",
+	"comment.autoUnblocked": "Automatiskt avblockerad efter att {trigger} stängdes",
+	"comment.autoUnblockedFallback": "en blockerande uppgift",
+	"comment.parentMoved": "{actor} flyttade den här uppgiften från {from} till {to}",
+	"comment.parentNested": "{actor} placerade den här uppgiften under {to}",
+	"comment.parentPromotedFrom": "{actor} flyttade den här uppgiften till toppnivån (låg under {from})",
+	"comment.parentPromoted": "{actor} flyttade den här uppgiften till toppnivån",
+	"comment.runFailed": "Körningen för {agent} misslyckades.",
+	"comment.runTimedOut": "Körningen för {agent} tog för lång tid.",
+	"comment.runFailedWithError": "Körningen för {agent} misslyckades: {error}",
+	"comment.runTimedOutWithError": "Körningen för {agent} tog för lång tid: {error}",
+	"comment.runAgentFallback": "en agent",
+	"comment.repoDesignated": "Repository {repo} angavs som utsett repository."
 }

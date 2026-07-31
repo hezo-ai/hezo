@@ -95,5 +95,21 @@
 	"theme.label": "テーマ",
 	"theme.light": "ライト",
 	"theme.dark": "ダーク",
-	"theme.system": "システム"
+	"theme.system": "システム",
+	"comment.linkedFrom": "{actor} により {source} からリンクされました",
+	"comment.linkedFromComment": "{actor} により {source} の{comment}からリンクされました",
+	"comment.linkedFromCommentLabel": "コメント",
+	"comment.statusChanged": "{actor} がステータスを {from} から {to} に変更しました",
+	"comment.autoUnblocked": "{trigger} が完了したため自動的にブロック解除されました",
+	"comment.autoUnblockedFallback": "ブロック元のタスク",
+	"comment.parentMoved": "{actor} がこのタスクを {from} から {to} に移動しました",
+	"comment.parentNested": "{actor} がこのタスクを {to} の下に配置しました",
+	"comment.parentPromotedFrom": "{actor} がこのタスクを最上位に移動しました（{from} の下にありました）",
+	"comment.parentPromoted": "{actor} がこのタスクを最上位に移動しました",
+	"comment.runFailed": "{agent} の実行が失敗しました。",
+	"comment.runTimedOut": "{agent} の実行がタイムアウトしました。",
+	"comment.runFailedWithError": "{agent} の実行が失敗しました: {error}",
+	"comment.runTimedOutWithError": "{agent} の実行がタイムアウトしました: {error}",
+	"comment.runAgentFallback": "エージェント",
+	"comment.repoDesignated": "リポジトリ {repo} が指定リポジトリに設定されました。"
 }

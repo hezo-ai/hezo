@@ -95,5 +95,21 @@
 	"theme.label": "Theme",
 	"theme.light": "Light",
 	"theme.dark": "Dark",
-	"theme.system": "System"
+	"theme.system": "System",
+	"comment.linkedFrom": "Linked from {source} by {actor}",
+	"comment.linkedFromComment": "Linked from {comment} on {source} by {actor}",
+	"comment.linkedFromCommentLabel": "a comment",
+	"comment.statusChanged": "{actor} changed status from {from} to {to}",
+	"comment.autoUnblocked": "Auto-unblocked after {trigger} closed",
+	"comment.autoUnblockedFallback": "a blocker",
+	"comment.parentMoved": "{actor} moved this task from {from} to {to}",
+	"comment.parentNested": "{actor} nested this task under {to}",
+	"comment.parentPromotedFrom": "{actor} promoted this task to top level (was under {from})",
+	"comment.parentPromoted": "{actor} promoted this task to top level",
+	"comment.runFailed": "Run for {agent} failed.",
+	"comment.runTimedOut": "Run for {agent} timed out.",
+	"comment.runFailedWithError": "Run for {agent} failed: {error}",
+	"comment.runTimedOutWithError": "Run for {agent} timed out: {error}",
+	"comment.runAgentFallback": "agent",
+	"comment.repoDesignated": "Repository {repo} set as the designated repo."
 }

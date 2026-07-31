@@ -95,5 +95,21 @@
 	"theme.label": "Motyw",
 	"theme.light": "Jasny",
 	"theme.dark": "Ciemny",
-	"theme.system": "Systemowy"
+	"theme.system": "Systemowy",
+	"comment.linkedFrom": "Powiązano z {source} przez {actor}",
+	"comment.linkedFromComment": "Powiązano z {comment} w {source} przez {actor}",
+	"comment.linkedFromCommentLabel": "komentarza",
+	"comment.statusChanged": "{actor} zmienił status z {from} na {to}",
+	"comment.autoUnblocked": "Automatycznie odblokowano po zamknięciu {trigger}",
+	"comment.autoUnblockedFallback": "zadania blokującego",
+	"comment.parentMoved": "{actor} przeniósł to zadanie z {from} do {to}",
+	"comment.parentNested": "{actor} zagnieździł to zadanie pod {to}",
+	"comment.parentPromotedFrom": "{actor} przeniósł to zadanie na najwyższy poziom (było pod {from})",
+	"comment.parentPromoted": "{actor} przeniósł to zadanie na najwyższy poziom",
+	"comment.runFailed": "Uruchomienie dla {agent} nie powiodło się.",
+	"comment.runTimedOut": "Uruchomienie dla {agent} przekroczyło limit czasu.",
+	"comment.runFailedWithError": "Uruchomienie dla {agent} nie powiodło się: {error}",
+	"comment.runTimedOutWithError": "Uruchomienie dla {agent} przekroczyło limit czasu: {error}",
+	"comment.runAgentFallback": "agenta",
+	"comment.repoDesignated": "Repozytorium {repo} ustawiono jako wyznaczone repozytorium."
 }

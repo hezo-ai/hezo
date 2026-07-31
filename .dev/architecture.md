@@ -165,7 +165,13 @@ an agent-maintained `progress_summary`. Numbering is atomic via `project_task_co
 `system` (timeline entries like `status_change`/`title_change`/`description_change`/`task_link`),
 `run` (auto-written on run completion), `preview`, `action`,
 `connect_required`, `credential_request`. Each comment carries a `public_id` slug for
-`#comment-<id>` deep-links. A human-authored comment keeps `author_member_id` null by
+`#comment-<id>` deep-links. A `task_link` entry records **where** in the source task the
+mention was written: `source_kind` (`description` | `comment`) plus, for a comment,
+`source_comment_public_id` - the anchor the renderer links to, so following a link lands on
+the sentence that created the relationship rather than only on its task. Rows written before
+the origin was tracked carry neither field and render as description-sourced ones do. The
+dedupe stays keyed on `source_task_id` alone, so a target records one entry per related task
+(first mention wins) regardless of origin. A human-authored comment keeps `author_member_id` null by
 convention but records **which** human in `author_user_id` (nullable FK to `users`), so the
 author's uploaded avatar (`user_icons`) resolves alongside their comments; the comments feed
 returns a signed `author_icon_url` per row (a human's `user_icons` image, or an agent's
@@ -2394,6 +2400,17 @@ pre-choice default would otherwise overwrite `navigator.languages` detection.
 state (sound because the locale is global and the provider is its only writer), so its
 consumers were untouched. Catalogs are committed JSON per language, statically imported, with
 lookup falling back language → English → the key.
+
+Two lookup primitives, both keyed by `MessageKey = keyof typeof en` so a typo is a compile
+error. `t()` interpolates `{name}` tokens over `Record<string, string | number>` and returns a
+string. `<Trans k vars>` is its node-aware counterpart for a sentence that embeds React nodes -
+a `<Link>`, an `<em>` - which `t()` cannot express: it splits the same `{name}` template and
+interleaves `ReactNode` vars, so the *whole* sentence stays one catalog entry and each language
+places the nodes in its own word order. Splitting such a sentence into per-fragment keys instead
+would freeze English word order into every translation. The system-comment timeline entries
+(`system-comment.tsx`) are the worked example. Note `TASK_STATUS_LABELS` in `@hezo/shared` is
+still English, so a translated status sentence carries English status words until the board's
+status vocabulary is localized too.
 
 `PATCH /api/instance-settings/locale` is the single write path. It is listed in
 `PUBLIC_PATHS` but self-authenticating: open only while no admin password is enrolled (the
