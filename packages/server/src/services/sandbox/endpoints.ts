@@ -16,6 +16,11 @@
  * host's Docker bridge supplies different values, and none of the four call
  * sites has to know.
  *
+ * There are two answers. `dockerRunEndpoints` names the host directly and works
+ * only while the container is on this machine; `tunnelRunEndpoints` points every
+ * leg at container loopback, where the tunnel client is listening, and so works
+ * anywhere. The call sites cannot tell which they were handed.
+ *
  * `host.docker.internal` is the Docker answer specifically. Containers get it
  * via `ExtraHosts: ['host.docker.internal:host-gateway']` (see
  * `services/containers.ts`), which Docker Desktop tunnels to host loopback and
@@ -59,5 +64,32 @@ export function dockerRunEndpoints(serverPort: number): RunEndpoints {
 		hezoBaseUrl: `http://${DOCKER_CONTAINER_HOST_ALIAS}:${serverPort}`,
 		proxyHost: DOCKER_CONTAINER_HOST_ALIAS,
 		sshHost: DOCKER_CONTAINER_HOST_ALIAS,
+	};
+}
+
+/**
+ * Loopback ports the in-container tunnel client listens on, one per target key.
+ *
+ * Fixed rather than allocated: they are inside the container's own network
+ * namespace, so they cannot collide with anything on the host or in another
+ * container, and a fixed set means the client's config and these endpoints
+ * cannot drift apart. Chosen high enough to sit clear of anything an agent is
+ * likely to bind while developing.
+ */
+export const TUNNEL_PORTS = { proxy: 47080, mcp: 47081, ssh: 47082 } as const;
+
+/**
+ * The addresses a run uses when it reaches Hezo through the tunnel.
+ *
+ * Everything is loopback, because the tunnel client is *in* the container: the
+ * host is never named at all, which is precisely why this works for a container
+ * that is not on this machine. It is also why a backend needs no `ExtraHosts`
+ * entry and no inbound reachability - see `sandbox/tunnel/`.
+ */
+export function tunnelRunEndpoints(): RunEndpoints {
+	return {
+		hezoBaseUrl: `http://127.0.0.1:${TUNNEL_PORTS.mcp}`,
+		proxyHost: '127.0.0.1',
+		sshHost: '127.0.0.1',
 	};
 }
