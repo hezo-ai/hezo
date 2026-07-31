@@ -150,9 +150,15 @@ describe('planIdleShutdown', () => {
 		expect(plan.destroy).toEqual([]);
 	});
 
-	it('never shuts down the chat’s container', () => {
+	it('suspends the chat’s container once the project itself is idle', () => {
+		// The reservation keeps a *task run* off this container; it is not a pin
+		// against stopping. Reaching here means the project-level predicate already
+		// judged the project idle, and that predicate treats a live or recently
+		// active chat session as busy - so a reserved container that gets this far
+		// belongs to a session that has gone quiet. Parking it is the point:
+		// otherwise the chat's container runs, and bills, forever.
 		const plan = planIdleShutdown([member('chat', { reservedForChat: true })]);
-		expect(plan.suspend).toBeNull();
+		expect(plan.suspend?.id).toBe('chat');
 		expect(plan.destroy).toEqual([]);
 	});
 

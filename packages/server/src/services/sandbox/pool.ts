@@ -115,7 +115,9 @@ export function selectPoolMember(
  * - **busy**: one run per container, the rule the pool exists for.
  * - **reservedForChat**: a queued task run is invisible and harmless, while a
  *   queued chat turn is a person watching a spinner - so chat's container is
- *   never taken from it.
+ *   never taken from it. Note this excludes it from being *handed to a run*, not
+ *   from being stopped when the whole project goes idle (see
+ *   {@link planIdleShutdown}).
  * - **atDiskCeiling**: a container out of disk fails its run partway through,
  *   which is worse than paying for a fresh one.
  */
@@ -148,7 +150,15 @@ export function planIdleShutdown(members: readonly PoolMember[]): {
 	suspend: PoolMember | null;
 	destroy: PoolMember[];
 } {
-	const idle = members.filter((m) => m.state === 'idle' && !m.reservedForChat);
+	// Deliberately *not* filtered by `reservedForChat`. The reservation means "no
+	// task run may take this container" - it does not mean "never stop it". By the
+	// time this runs the project has already been judged idle by a predicate that
+	// includes its chat session (a live or recently-active session makes the
+	// project busy and it is never a candidate), so a chat container reaching here
+	// is one whose session has gone quiet. Suspending it is correct: the session
+	// parks, and resume starts it again with a fresh host-side half. Treating the
+	// reservation as a pin here would keep the container running forever.
+	const idle = members.filter((m) => m.state === 'idle');
 	const alreadySuspended = members.some((m) => m.state === 'suspended');
 
 	// A container holding work that reached neither origin nor the mirror is
