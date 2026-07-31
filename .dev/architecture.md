@@ -1088,6 +1088,32 @@ and defeat cap enforcement). There is no container log stream, and nothing usefu
 PID 1 is `sleep infinity`, so the content the UI shows is provisioning and lifecycle output
 Hezo produces itself.
 
+**Volumes are an object store, not a filesystem** - re-measured against the live API with a
+volume-scoped key (`GET`/`POST /volumes` both 200, so the scopes are not the blocker they
+were once assumed to be), mounting one at `/mnt/vault` on a running sandbox:
+
+| Operation | Result |
+|---|---|
+| `mount` type | `mountpoint-s3 … type fuse (rw,nosuid,nodev,noatime,default_permissions,allow_other)` |
+| create a new file, read it back | ✅ |
+| copy a finished file in (the bundle transport) | ✅ |
+| `mkdir` / `rmdir` | ✅ |
+| append to or modify an existing file | ❌ `Operation not permitted` |
+| `rename` | ❌ `Function not implemented` |
+| `chmod` | ❌ `Operation not permitted` - every file stays `0666` owned by `nobody` |
+| `git init --bare` | ❌ `could not write config file …: Function not implemented` |
+
+Two things about *how* this was measured are worth keeping, because both produced a wrong
+answer first. **Exit codes lie on this mount**: a first pass chaining `cmd && echo ok`
+reported append, rename, chmod and `git init --bare` as all succeeding, and every one of
+them is false - the failures only appear when the data is read back. Assert on read-back,
+never on the exit status. And **writes are not always immediately visible**: a file written
+and `cat`ed in the same breath can read as absent, which made an early probe look like
+`mkdir` did not persist when it does.
+
+This is what makes the whole-file bundle the only workable shape on a volume, and why the
+recovery vault does not use one (§ Agent runtime, Recovery bundles).
+
 **Digest resolution** (`sandbox/image-ref.ts`) is the generic OCI registry manifest lookup
 that makes the pin possible: a HEAD on the manifest, exchanging a `WWW-Authenticate: Bearer`
 challenge for an anonymous pull token when the registry asks for one, reading the digest off
@@ -1097,15 +1123,15 @@ private registry, or a locally-built tag that exists in no registry at all would
 be unable to start a container over a cache-freshness concern. The fallback logs what it
 costs, because the failure it re-admits is otherwise invisible.
 
-**The tunnel is behind a rollout gate.** `HEZO_TUNNEL=1` switches a run's
-`RunEndpoints` from naming the host (`host.docker.internal`) to container loopback,
-where the in-container client listens. It is **off by default**, deliberately: on Docker
-the tunnel replaces a path that already works, so off keeps the shipped behaviour
-byte-identical while the tunnel earns exposure. A managed backend will eventually require
-it unconditionally, since there is no other way for its containers to reach Hezo;
-flipping the default is a separate, deliberate step. The CEO chat still takes the direct
-address either way - moving it onto the tunnel is part of the chat-on-remote work, which
-also has to handle resume.
+**The tunnel is the only way a container reaches Hezo**, on every backend, with no gate and
+no second path. `RunEndpoints` always names container loopback, where the in-container
+client listens; `host.docker.internal` survives only for an operator-configured local model
+provider, which is a host address the *agent* dials rather than a route back into Hezo. An
+earlier draft shipped this behind `HEZO_TUNNEL=1`, off by default, so Docker kept its
+existing direct path — that was removed: a gate that leaves the new mechanism off means the
+old path is still the real one, and the shape local dev and CI exercise is then not the
+shape production runs (§ *One mechanism, no silent fallbacks* in AGENTS.md). The CEO chat
+takes the tunnel too.
 
 **The Docker hijack is spoken over a raw socket, not `http.request`'s `'upgrade'`.** The
 hijacked exec socket was the one piece written from Docker's API documentation rather than
@@ -1600,9 +1626,9 @@ knows the other's business: `createRecoveryBundle` / `fetchRecoveryBundle` /
 store, and `sandbox/recovery.ts` is the seam between them.
 
 - **A bundle, not a mirror remote.** A managed backend's shared store is an object store
-  (`mountpoint-s3`): no append, no rename, no chmod, so `git init --bare` fails outright
-  (`unable to write symref for HEAD`). A bundle is one finished file, which is exactly what such a
-  store supports.
+  (`mountpoint-s3`), and a bundle is one finished file — which is the only shape such a store
+  supports. Re-measured against a live Daytona volume (see the table below): `git init --bare`
+  fails on it outright, so a mirror remote is not an option there at all.
 - **Built on local disk, moved as a finished file.** `git bundle create` seeks while writing and
   dies (`pack-objects died`) against anything that is not a real filesystem, so it writes to
   `<clone>/.git/hezo-recovery.bundle` — local disk, already owned by the run user — and the bytes
@@ -1610,6 +1636,21 @@ store, and `sandbox/recovery.ts` is the seam between them.
   container-writes-host-reads and is implemented on every backend. The vault is therefore
   **backend-agnostic**: no volume mount and nothing per-adapter to keep in step, and the copy lands
   under `<dataDir>/git-recovery/<projectId>/`, where the operator's backups already are.
+- **Why the instance's disk and not a provider volume.** The original design put the shared store
+  on a Daytona volume plus a Docker bind mount. Measured against the live API with a
+  volume-scoped key, that would be **the same bundle design and strictly worse**, so it was not
+  built:
+  - A volume holds whole files only, so it could not hold a bare repo or a live working tree. A
+    volume-backed store would therefore also be a bundle store — no architectural gain over the
+    seam that already exists.
+  - **`chmod` is not implemented**, so every file on the mount is `0666` owned by `nobody`. The
+    vault writes bundles `0600`; on a volume that guarantee is unavailable, and a bundle is the
+    user's source code readable by every container that mounts it.
+  - Only containers can read a volume. Hezo itself cannot, so the run-end copy-out would need a
+    container alive to perform it, and the recovery copy would sit outside whatever backs up the
+    instance.
+  - It needs per-provider volume provisioning plus a Docker bind-mount equivalent: two
+    implementations of one thing, against zero today.
 - **A delta, not a copy of the history.** `--not --remotes=origin` packs only what no durable remote
   has, recording the remote tips as prerequisites — kilobytes for an ordinary task. A clone with no
   remote to exclude against produces a bundle of the whole branch, which is what
