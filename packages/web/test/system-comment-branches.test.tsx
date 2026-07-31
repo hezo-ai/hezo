@@ -204,6 +204,33 @@ test('run_failed: agent_slug present but no projectId → span (no link)', async
 	expect(queryByTestId('run-failed-agent')).toBeNull();
 });
 
+// The status x error-present matrix picks between four separate catalog keys
+// (the status word inflects with the sentence in several languages, so it
+// cannot be a {status} var). The two tests above cover timed_out-with-error and
+// failed-without; these cover the remaining two corners.
+
+test('run_failed: failed status with an error renders the error variant', async () => {
+	const { findByTestId } = renderSystem(
+		comment({ kind: 'run_failed', agent_slug: 'qa', status: 'failed', error: 'exit 1' }),
+		'proj',
+	);
+	const wrapper = await findByTestId('run-failed-comment');
+	expect(wrapper.textContent).toContain('failed');
+	expect(wrapper.textContent).toContain('exit 1');
+	expect(wrapper.textContent).not.toContain('timed out');
+});
+
+test('run_failed: timed_out with no error renders the plain timed-out variant', async () => {
+	const { findByTestId } = renderSystem(
+		comment({ kind: 'run_failed', agent_slug: 'qa', status: 'timed_out' }),
+		'proj',
+	);
+	const wrapper = await findByTestId('run-failed-comment');
+	expect(wrapper.textContent).toContain('timed out.');
+	// No error present, so no ": <error>" clause is appended.
+	expect(wrapper.textContent).not.toContain(':');
+});
+
 // ─── repo_designated ──────────────────────────────────────────────────────
 
 test('repo_designated with a github identifier renders an external link', async () => {
