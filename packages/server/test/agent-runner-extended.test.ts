@@ -33,7 +33,13 @@ import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { PricingService, upsertManualRate } from '../src/services/pricing';
 import type { ContainerEngine } from '../src/services/sandbox/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
+import {
+	authHeader,
+	createStubDocker,
+	createTestApp,
+	createTestProject,
+	createTestTeam,
+} from './helpers/app';
 
 // Read the prompt the run wrote to its host prompt file, located from the
 // HEZO_PROMPT_FILE env var captured off the exec opts.
@@ -97,9 +103,16 @@ function createMockDocker(taskId: string, overrides: Record<string, any> = {}): 
 			}
 			return (innerExecStart as (...a: unknown[]) => unknown)(...args);
 		},
+		// The run stages its prompt and runtime home through the engine seam, so an
+		// inline engine needs the same bind-resolving view the shared stub gives.
+		files: createStubDocker().files,
 	} as unknown as ContainerEngine;
 }
 
+// The runner's data dir must be the harness's own, not a fixed path: the
+// container engine resolves a run's files through the project's workspace under
+// it, so a hardcoded literal would stage them somewhere the test cannot read.
+let testDataDir: string;
 let app: Hono<Env>;
 let db: Db;
 let adminToken: string;
@@ -115,6 +128,7 @@ const originalFetch = globalThis.fetch;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
+	testDataDir = ctx.dataDir;
 	app = ctx.app;
 	db = ctx.db;
 	adminToken = ctx.token;
@@ -219,7 +233,7 @@ function baseDeps(docker: ContainerEngine, extra: Partial<RunnerDeps> = {}): Run
 		docker,
 		masterKeyManager,
 		serverPort: 3000,
-		dataDir: '/tmp/test-data',
+		dataDir: testDataDir,
 		logs: new LogStreamBroker(),
 		...extra,
 	};
@@ -697,7 +711,7 @@ describe('runAgent — requester_context substitution', () => {
 		let capturedPrompt = '';
 		const docker = createMockDocker(taskId, {
 			execCreate: async (_id: string, opts: any) => {
-				capturedPrompt = readPromptFromExec(opts, '/tmp/test-data', project);
+				capturedPrompt = readPromptFromExec(opts, testDataDir, project);
 				return 'exec-req-ctx';
 			},
 			execStart: async () => ({ stdout: 'ok', stderr: '' }),
@@ -737,7 +751,7 @@ describe('runAgent — mention handoff', () => {
 		let capturedPrompt = '';
 		const docker = createMockDocker(taskId, {
 			execCreate: async (_id: string, opts: any) => {
-				capturedPrompt = readPromptFromExec(opts, '/tmp/test-data', project);
+				capturedPrompt = readPromptFromExec(opts, testDataDir, project);
 				return 'exec-mention';
 			},
 			execStart: async () => ({ stdout: 'ok', stderr: '' }),
@@ -805,7 +819,7 @@ describe('runAgent — reply handoff', () => {
 		let capturedPrompt = '';
 		const docker = createMockDocker(taskId, {
 			execCreate: async (_id: string, opts: any) => {
-				capturedPrompt = readPromptFromExec(opts, '/tmp/test-data', project);
+				capturedPrompt = readPromptFromExec(opts, testDataDir, project);
 				return 'exec-reply';
 			},
 			execStart: async () => ({ stdout: 'ok', stderr: '' }),
@@ -1174,7 +1188,7 @@ describe('runAgent — rotated subscription auth tombstone', () => {
 				const runId = codexHomeEntry.slice('CODEX_HOME='.length).split('/').pop()!;
 				const hostFile = `${getHostSubscriptionRoot(
 					AiProvider.OpenAI,
-					'/tmp/test-data',
+					testDataDir,
 					teamId,
 					projectId,
 					runId,

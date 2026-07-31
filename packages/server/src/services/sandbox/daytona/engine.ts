@@ -20,9 +20,11 @@ import type {
 	ImageInfo,
 	NetworkInfo,
 	ProcessEnvMarker,
+	SandboxFiles,
 } from '../types';
 import { type DaytonaApi, DaytonaApiError, type DaytonaSandbox } from './client';
 import { renderDaytonaExec, renderDaytonaExecScript, renderStderrDrain } from './command';
+import { daytonaSandboxFiles } from './files';
 
 const log = logger.child('daytona-engine');
 
@@ -417,6 +419,44 @@ export class DaytonaEngine implements ContainerEngine {
 	async killPids(containerId: string, pids: number[]): Promise<void> {
 		if (pids.length === 0) return;
 		await this.runScript(containerId, buildKillPidsScript(pids));
+	}
+
+	/**
+	 * {@link SandboxFiles} over the toolbox file API, rooted inside the sandbox.
+	 *
+	 * There is no bind mount here, so this is the only way a run's artefacts reach
+	 * the container at all - the prompt file, the runtime home and its
+	 * credentials, the tunnel config - and the only way its read-backs come out
+	 * again. The sandbox record is resolved once per call rather than per
+	 * operation: the toolbox base is per-sandbox, and looking it up on every read
+	 * would add a control-plane round trip to something that already costs one.
+	 */
+	files(containerId: string, containerRoot: string): SandboxFiles {
+		const load = async (): Promise<DaytonaSandbox> => {
+			const sandbox = await this.fetch(containerId);
+			if (!sandbox) throw new Error(`sandbox ${containerId} not found`);
+			return sandbox;
+		};
+		// A thin forwarding shell so each operation resolves the sandbox lazily -
+		// `files()` itself is synchronous by the interface's contract, and the
+		// sandbox may not be fetched yet when the caller asks for it.
+		const bound = async (): Promise<SandboxFiles> =>
+			daytonaSandboxFiles(this.client, await load(), containerRoot);
+		return {
+			exists: async (relPath: string) => (await bound()).exists(relPath),
+			read: async (relPath: string) => (await bound()).read(relPath),
+			remove: async (relPath: string) => (await bound()).remove(relPath),
+			removeDir: async (relPath: string) => (await bound()).removeDir(relPath),
+			findByName: async (relDir: string, name: string, maxDepth: number) =>
+				(await bound()).findByName(relDir, name, maxDepth),
+			write: async (
+				relPath: string,
+				contents: string,
+				opts?: { mode?: number; dirMode?: number },
+			) => (await bound()).write(relPath, contents, opts),
+			mkdir: async (relPath: string, opts?: { mode?: number }) =>
+				(await bound()).mkdir(relPath, opts),
+		};
 	}
 
 	/**

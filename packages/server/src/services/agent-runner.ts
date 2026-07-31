@@ -118,7 +118,7 @@ import {
 	type RunEndpoints,
 	TUNNEL_PORTS,
 } from './sandbox/endpoints';
-import { hostSandboxFiles, type SandboxFiles } from './sandbox/files';
+import type { SandboxFiles } from './sandbox/files';
 import { dockerSandboxHandle } from './sandbox/handle';
 import { setPoolMemberUnpushedFlag } from './sandbox/pool-db';
 import { type RunTunnel, startRunTunnel } from './sandbox/tunnel/run-tunnel';
@@ -580,6 +580,8 @@ export async function buildRuntimeInvocation(
 		resourceId,
 		provider,
 		credential,
+		deps.docker,
+		containerId,
 	);
 
 	const adapter = MCP_ADAPTERS[runtimeType];
@@ -591,6 +593,8 @@ export async function buildRuntimeInvocation(
 				projectId,
 				resourceId,
 				subscriptionMount,
+				deps.docker,
+				containerId,
 			)
 		: null;
 
@@ -617,7 +621,7 @@ export async function buildRuntimeInvocation(
 	// to go through the provider's file API. `dirMode` is what keeps the
 	// other-execute bit the non-root run-user needs to traverse down to this leaf,
 	// which a strict process umask would otherwise strip.
-	const runtimeFiles = subscriptionFiles(deps.dataDir, runTeamId, projectId);
+	const runtimeFiles = subscriptionFiles(deps.docker, containerId);
 	const subscriptionBase = getHostSubscriptionBase(deps.dataDir, runTeamId, projectId);
 	for (const file of mcpInjection.files) {
 		await runtimeFiles.write(relative(subscriptionBase, file.hostPath), file.contents, {
@@ -1324,7 +1328,7 @@ export async function runAgent(
 				engine: deps.docker,
 				containerId,
 				runUser,
-				files: hostSandboxFiles(getWorkspacePath(deps.dataDir, project.team_id, project.id)),
+				files: deps.docker.files(containerId, CONTAINER_WORKSPACE_ROOT),
 				configRelPath: join('.hezo', 'tunnel', `${heartbeatRunId}.json`),
 				configContainerPath: `/workspace/.hezo/tunnel/${heartbeatRunId}.json`,
 				addresses: {
@@ -1372,9 +1376,7 @@ export async function runAgent(
 		// Rooted at the workspace, which is what makes the prompt path relative and
 		// so switchable; the absolute form is still needed for the env var the
 		// container reads it from.
-		const workspaceFiles = hostSandboxFiles(
-			getWorkspacePath(deps.dataDir, project.team_id, project.id),
-		);
+		const workspaceFiles = deps.docker.files(containerId, CONTAINER_WORKSPACE_ROOT);
 		const promptRelPath = getPromptRelPath(heartbeatRunId);
 
 		const pricing = deps.pricing;
@@ -1390,7 +1392,7 @@ export async function runAgent(
 				// Through SandboxFiles: the *container* rewrote this file during the
 				// run, so a backend whose container is not on this machine has to
 				// read it back through the provider's file API rather than off disk.
-				const mountFiles = hostSandboxFiles(mount.hostDir);
+				const mountFiles = deps.docker.files(containerId, mount.containerDir);
 				if (await mountFiles.exists(mount.authFileRelative)) {
 					const rotated = await mountFiles.read(mount.authFileRelative);
 					if (!rotated || rotated === credential.value) return;
@@ -1439,11 +1441,15 @@ export async function runAgent(
 			await step('close-tunnel', () => tunnel?.close());
 			await step('persist-rotated-auth', persistRotatedAuth);
 			await step('remove-prompt', () => workspaceFiles.remove(promptRelPath));
-			await step('remove-home-mount', () => {
-				const dirToRemove = context.subscriptionMount?.hostDir ?? context.homeMount?.hostDir;
-				if (dirToRemove) {
-					rmSync(dirToRemove, { recursive: true, force: true });
-				}
+			await step('remove-home-mount', async () => {
+				// Removing the per-run home was never tidiness - it holds the provider
+				// credential, so this is a scrub. It goes through the seam because on a
+				// managed backend the directory is inside the sandbox, where a host
+				// `rmSync` would silently no-op while looking like it worked.
+				const dirToRemove =
+					context.subscriptionMount?.containerDir ?? context.homeMount?.containerDir;
+				if (!dirToRemove) return;
+				await deps.docker.files(containerId, dirToRemove).removeDir('.');
 			});
 			await step('release-ssh-socket', async () => {
 				if (deps.sshAgentServer) {
@@ -1584,7 +1590,7 @@ export async function runAgent(
 			// is missing/unparseable; the home mount is removed at cleanup anyway.
 			const runUsage = await recoverOffStreamRunUsage(
 				runtimeType,
-				context.homeMount ? hostSandboxFiles(context.homeMount.hostDir) : null,
+				context.homeMount ? deps.docker.files(containerId, context.homeMount.containerDir) : null,
 				priceFn,
 				(msg) => log.error(`Run ${heartbeatRunId}: ${msg}`),
 			);

@@ -3,11 +3,13 @@ import type { Socket } from 'node:net';
 import { connect as netConnect } from 'node:net';
 import { Readable } from 'node:stream';
 import { DockerFrameDecoder, demuxDockerStream } from './docker-frames';
+import type { SandboxFiles } from './sandbox/files';
 import {
 	buildKillByEnvMarkerScript,
 	buildKillPidsScript,
 	buildListHezoProcessesScript,
 } from './sandbox/proc-scripts';
+import { tarSingleFile, untarFirstFile } from './sandbox/tar';
 import { DockerBinaryFrameDecoder } from './sandbox/tunnel/docker-frames-binary';
 import type {
 	ContainerByteChannel,
@@ -114,6 +116,31 @@ async function parseJsonOrThrow<T>(res: Response, op: string): Promise<T> {
 	}
 }
 
+/** Reject a relative path that would escape the run root, matching every SandboxFiles implementation. */
+function resolveContainerPath(root: string, relPath: string): string {
+	if (relPath.startsWith('/')) {
+		throw new Error(`sandbox file path must be relative: ${JSON.stringify(relPath)}`);
+	}
+	const parts: string[] = [];
+	for (const segment of relPath.split('/')) {
+		if (segment === '' || segment === '.') continue;
+		if (segment === '..') {
+			if (parts.length === 0) {
+				throw new Error(`sandbox file path escapes its root: ${JSON.stringify(relPath)}`);
+			}
+			parts.pop();
+			continue;
+		}
+		parts.push(segment);
+	}
+	return parts.length === 0 ? root : `${root}/${parts.join('/')}`;
+}
+
+/** Single-quote for `sh -c`, closing and reopening around any embedded quote. */
+function shellQuote(arg: string): string {
+	return `'${arg.replaceAll("'", `'\\''`)}'`;
+}
+
 export class DockerClient implements ContainerEngine {
 	private socketPath: string;
 
@@ -139,6 +166,25 @@ export class DockerClient implements ContainerEngine {
 			signal,
 		} as RequestInit & { unix: string });
 		return res;
+	}
+
+	/**
+	 * Raw-bytes request, for the archive endpoints.
+	 *
+	 * Separate from {@link request} because that one is a JSON helper: it
+	 * `JSON.stringify`s whatever it is given and labels it `application/json`, so
+	 * handing it a tar produced `{"0":31,"1":139,…}` and a 500 from the daemon
+	 * that named nothing. A binary body needs its own path rather than a flag, so
+	 * the two can never be confused at a call site.
+	 */
+	private async requestBinary(method: string, path: string, body?: Uint8Array): Promise<Response> {
+		return fetch(`http://localhost/${API_VERSION}${path}`, {
+			method,
+			headers: body ? { 'Content-Type': 'application/x-tar' } : undefined,
+			body: body as BodyInit | undefined,
+			unix: this.socketPath,
+			signal: AbortSignal.timeout(DOCKER_CONTROL_TIMEOUT_MS),
+		} as RequestInit & { unix: string });
 	}
 
 	/**
@@ -771,6 +817,108 @@ export class DockerClient implements ContainerEngine {
 		} finally {
 			clearTimeout(timer);
 		}
+	}
+
+	/**
+	 * {@link SandboxFiles} over Docker's archive endpoints, rooted inside the
+	 * container.
+	 *
+	 * Deliberately **not** the bind mount, even though one is usually there. A
+	 * host-filesystem fast path is one that works everywhere except the cases this
+	 * seam exists for - a daemon reached over TCP, a rootless daemon in its own
+	 * mount namespace, and the managed backend it is a rehearsal for - and it
+	 * would be exercised by every local test while the real path shipped
+	 * unexercised. Going through the daemon means both backends move the same
+	 * bytes the same way and only the transport differs.
+	 *
+	 * Small metadata questions (exists, find) go through an exec rather than the
+	 * archive endpoint: `find` in one call is cheaper and simpler than pulling a
+	 * tar of a directory tree just to read its names.
+	 */
+	files(containerId: string, containerRoot: string): SandboxFiles {
+		const abs = (relPath: string): string => resolveContainerPath(containerRoot, relPath);
+		const run = async (script: string): Promise<{ exitCode: number; stdout: string }> => {
+			const execId = await this.execCreate(containerId, {
+				Cmd: ['sh', '-c', script],
+				User: 'root',
+				AttachStdout: true,
+				AttachStderr: true,
+			});
+			const { stdout } = await this.execStart(execId);
+			const { ExitCode } = await this.execInspect(execId);
+			return { exitCode: ExitCode, stdout };
+		};
+
+		return {
+			exists: async (relPath) => (await run(`test -e ${shellQuote(abs(relPath))}`)).exitCode === 0,
+
+			read: async (relPath) => {
+				const res = await this.requestBinary(
+					'GET',
+					`/containers/${containerId}/archive?path=${encodeURIComponent(abs(relPath))}`,
+				);
+				if (!res.ok) throw new Error(`sandbox file not found: ${relPath}`);
+				const entry = untarFirstFile(new Uint8Array(await res.arrayBuffer()));
+				if (!entry) throw new Error(`sandbox file not found: ${relPath}`);
+				return new TextDecoder().decode(entry.contents);
+			},
+
+			remove: async (relPath) => {
+				// Best-effort by contract: a missing file is not an error, and the
+				// callers that scrub a credential must not fail a run over it.
+				await run(`rm -f ${shellQuote(abs(relPath))}`).catch(() => undefined);
+			},
+
+			findByName: async (relDir, basename, maxDepth) => {
+				const root = abs(relDir);
+				// `-type f` and no `-L`: symlinks are never followed, which is what
+				// makes the depth cap a real bound rather than an approximate one.
+				const res = await run(
+					`find ${shellQuote(root)} -maxdepth ${maxDepth + 1} -type f -name ${shellQuote(basename)} 2>/dev/null`,
+				);
+				if (res.exitCode !== 0) return [];
+				return res.stdout
+					.split('\n')
+					.map((line) => line.trim())
+					.filter(Boolean)
+					.map((full) =>
+						full.startsWith(`${containerRoot}/`) ? full.slice(containerRoot.length + 1) : full,
+					);
+			},
+
+			write: async (relPath, contents, opts = {}) => {
+				const target = abs(relPath);
+				const dir = target.slice(0, Math.max(target.lastIndexOf('/'), 1));
+				const dirMode = (opts.dirMode ?? 0o755).toString(8);
+				// `mkdir -p` applies the mode only to directories it creates, which
+				// matches the host implementation's contract exactly.
+				const made = await run(`mkdir -p -m ${dirMode} ${shellQuote(dir)}`);
+				if (made.exitCode !== 0) throw new Error(`could not create ${dir} in ${containerId}`);
+
+				const name = target.slice(target.lastIndexOf('/') + 1);
+				const archive = tarSingleFile(name, new TextEncoder().encode(contents), opts.mode ?? 0o644);
+				const res = await this.requestBinary(
+					'PUT',
+					`/containers/${containerId}/archive?path=${encodeURIComponent(dir)}`,
+					archive,
+				);
+				if (!res.ok) {
+					throw new Error(`could not write ${relPath} into ${containerId} (${res.status})`);
+				}
+			},
+
+			removeDir: async (relPath) => {
+				// The archive endpoints have no recursive delete, so this is the one
+				// file operation that has to be an exec. Best-effort by contract.
+				await run(`rm -rf ${shellQuote(abs(relPath))}`).catch(() => undefined);
+			},
+
+			mkdir: async (relPath, opts = {}) => {
+				const mode = (opts.mode ?? 0o755).toString(8);
+				const res = await run(`mkdir -p -m ${mode} ${shellQuote(abs(relPath))}`);
+				if (res.exitCode !== 0) throw new Error(`could not create ${relPath} in ${containerId}`);
+			},
+		};
 	}
 }
 

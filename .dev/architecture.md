@@ -1004,17 +1004,37 @@ Three shared pieces sit alongside it so the two implementations cannot drift:
   assets, egress proxy, ssh-agent) once. They previously rode seven separate hardcoded
   `host.docker.internal` literals, so they broke together and could only be changed together.
 - **`sandbox/files.ts`** — `SandboxFiles` is the async, relative-path-only interface every
-  run-artifact read goes through (the runtimes' off-stream usage files, push errors,
-  rotated subscription auth). Paths that would escape the run root are rejected, and the
-  walk never follows symlinks. **The only implementation today is `hostSandboxFiles`**,
-  which reads and writes the host filesystem and therefore assumes a bind mount. That is
-  what the interface was extracted for, but it also means a **managed backend cannot yet
-  serve a full agent run**: the prompt file, the per-run runtime home (`settings.json`,
-  subscription credentials) and the tunnel config would all be staged host-side where the
-  sandbox never sees them. Closing that needs a container-backed implementation over the
-  provider's own file API - Daytona has a toolbox one, which `DaytonaApi` does not wrap
-  yet. Until then the Daytona engine is verified for the container lifecycle (create, exec,
-  elevation, the `/proc` scripts, suspend/resume, reaping) but not for a whole run.
+  run-artifact read *and write* goes through: the prompt file, the per-run runtime home
+  (`settings.json`, subscription credentials), the tunnel config, and the read-backs (the
+  runtimes' off-stream usage files, push errors, rotated subscription auth). Paths that
+  would escape the run root are rejected, and the walk never follows symlinks. `removeDir`
+  is part of it because the per-run home holds the provider credential, so removing it is a
+  scrub rather than tidying.
+
+  It is reached as **`ContainerEngine.files(containerId, containerRoot)`**, rooted on the
+  *container* path - identical on both backends by rule; only how it is reached differs.
+  Nothing above the seam may touch `node:fs` for a run artefact: a host-only file path is
+  one that works everywhere except production on a managed backend.
+  - **Daytona** implements it over the toolbox file API. Every endpoint was measured
+    against the live service and two do not behave as the spec reads: `files/folder`
+    answers **201**, and `files/find` matches file **content** rather than names, so
+    `findByName` walks the directory listing instead of using an endpoint that looks right
+    and silently finds nothing. An upload lands `0644` owned by root whatever the caller
+    asked, so the mode contract (`0600` on a credential, `0711` on the directories above it
+    so the deprivileged run user can traverse without listing) is re-applied explicitly.
+  - **Docker** implements it over the daemon's `PUT`/`GET /containers/{id}/archive`
+    endpoints, **not** the bind mount - a host fast path would be exercised by every local
+    test while the real path shipped unexercised, and it would break a daemon reached over
+    TCP or running rootless in its own namespace. That needs tar, owned outright in
+    `sandbox/tar.ts` rather than pulled in, since one regular file per call is a 512-byte
+    header plus padding. Two facts there are only findable against a real daemon, which is
+    why `test/bun/sandbox-files-docker.bun.test.ts` exists: the checksum field is **six**
+    octal digits, a NUL and a space (the seven-digit shape every other numeric field uses
+    puts the NUL over the last digit), and the JSON request helper silently
+    `JSON.stringify`d the archive until `requestBinary` was split out.
+  - **The fake engine models the bind mount** rather than an in-memory store, resolving a
+    container path to the project's real workspace. That is what a local daemon actually
+    does, so a test that stages through the seam still reads the bytes off disk.
 - **`sandbox/handle.ts`** — `SandboxHandle.exec()` collapses the
   `execCreate`/`execStart`/`execInspect` triad into one call returning the exit code with
   the output, and expresses privilege as **`elevated: boolean`** rather than a username.

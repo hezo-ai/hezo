@@ -1,3 +1,6 @@
+import type { SandboxFiles } from './files';
+
+export type { SandboxFiles };
 /**
  * The container-engine seam.
  *
@@ -215,4 +218,21 @@ export interface ContainerEngine {
 	killRunProcesses(containerId: string, runId: string): Promise<void>;
 	listHezoProcesses(containerId: string): Promise<ContainerProcessInfo[]>;
 	killPids(containerId: string, pids: number[]): Promise<void>;
+
+	/**
+	 * Read and write a run's artefact files, rooted at an absolute path **inside
+	 * the container**.
+	 *
+	 * This is what lets a whole agent run work off the operator's own daemon.
+	 * Every artefact a run stages (the prompt file, the per-run runtime home and
+	 * its credentials, the tunnel config) and reads back (Grok's debug log,
+	 * Kimi's `wire.jsonl`, the auto-push error log) goes through the returned
+	 * interface, so nothing above this seam may reach for `node:fs` and quietly
+	 * assume a bind mount - a host-only file path is one that works everywhere
+	 * except production on a managed backend.
+	 *
+	 * `containerRoot` is the container-side path, identical on both backends by
+	 * rule; only how it is reached differs.
+	 */
+	files(containerId: string, containerRoot: string): SandboxFiles;
 }

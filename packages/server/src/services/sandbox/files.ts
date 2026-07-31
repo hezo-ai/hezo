@@ -68,6 +68,17 @@ export interface SandboxFiles {
 	): Promise<void>;
 	/** Create a directory and its parents. `mode` applies to each one created. */
 	mkdir(relPath: string, opts?: { mode?: number }): Promise<void>;
+	/**
+	 * Recursively remove a directory and everything under it.
+	 *
+	 * The per-run config directory holds the provider credential, so this is a
+	 * scrub rather than tidying - and it has to happen where the directory
+	 * actually is. A host `rmSync` against a managed backend's sandbox would
+	 * silently no-op while looking like it worked, which is the failure mode this
+	 * whole interface exists to remove. Best-effort: a missing directory is not
+	 * an error.
+	 */
+	removeDir(relPath: string): Promise<void>;
 }
 
 /** Reject a relative path that would escape the root (`..`, or an absolute path). */
@@ -108,8 +119,11 @@ function walk(
 /**
  * {@link SandboxFiles} over the local filesystem, rooted at a host directory.
  *
- * This is the Docker implementation: the run's directory is bind-mounted, so the
- * host path and the container path are the same bytes.
+ * No longer the Docker implementation - Docker moves bytes through the daemon's
+ * archive endpoints so it does not assume a bind mount either. This is what the
+ * *fake* engine resolves to (a bind mount really does make the host path and the
+ * container path the same bytes, which is the property tests rely on) and what
+ * any caller with a genuine host directory uses.
  */
 export function hostSandboxFiles(hostRoot: string): SandboxFiles {
 	return {
@@ -134,6 +148,13 @@ export function hostSandboxFiles(hostRoot: string): SandboxFiles {
 			// umask would fail the run rather than leak - but it would fail
 			// confusingly, at the CLI, not here.
 			if (opts.mode !== undefined) forceMode(full, opts.mode);
+		},
+		removeDir: async (relPath) => {
+			try {
+				rmSync(resolveWithin(hostRoot, relPath), { recursive: true, force: true });
+			} catch {
+				// Best-effort by contract - a missing directory is not an error.
+			}
 		},
 		mkdir: async (relPath, opts = {}) => {
 			makeDirs(hostRoot, resolveWithin(hostRoot, relPath), opts.mode);

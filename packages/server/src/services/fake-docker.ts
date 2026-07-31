@@ -1,4 +1,8 @@
+import { mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { Db } from '../db/database';
+import { hostSandboxFiles, type SandboxFiles } from './sandbox/files';
 import type {
 	ContainerByteChannel,
 	ContainerConfig,
@@ -9,6 +13,7 @@ import type {
 	ExecResult,
 	ExecStartOpts,
 } from './sandbox/types';
+import { CONTAINER_WORKSPACE_ROOT, getWorkspacePath } from './workspace';
 
 const SYNTHETIC_EXEC_SCRIPT: Array<{
 	stream: 'stdout' | 'stderr';
@@ -61,7 +66,7 @@ interface FakeContainer {
  * boot self-heal) threw "is not a function" at runtime under `HEZO_SKIP_DOCKER`.
  * The compiler now rejects an incomplete stub.
  */
-export function createFakeDockerClient(db?: Db): ContainerEngine {
+export function createFakeDockerClient(db?: Db, dataDir?: string): ContainerEngine {
 	const containers = new Map<string, FakeContainer>();
 	const execRunIds = new Map<string, string | null>();
 	let execCounter = 0;
@@ -99,6 +104,7 @@ export function createFakeDockerClient(db?: Db): ContainerEngine {
 		createContainer: async (name: string, config?: ContainerConfig) => {
 			const id = `noop-${name}`;
 			containers.set(id, { name, running: false, labels: config?.Labels ?? {} });
+			recordFakeBinds(id, config?.HostConfig?.Binds);
 			return { Id: id, Warnings: [] };
 		},
 		startContainer: async (id: string) => {
@@ -176,5 +182,121 @@ export function createFakeDockerClient(db?: Db): ContainerEngine {
 		// every HEZO_SKIP_DOCKER harness.
 		listHezoProcesses: async () => [],
 		killPids: async () => {},
+
+		// Resolved through the container's bind mounts, exactly as Docker would.
+		// The fake exists to stand in for a *local daemon*, and a local daemon's
+		// defining property here is that a path written inside the container is the
+		// same bytes on the host - which is what lets a test stage a file through
+		// the seam and read it back off disk. An in-memory store would quietly
+		// break every such assertion while looking like it worked.
+		files: (containerId: string, containerRoot: string) =>
+			lazyHostFiles(() => resolveFakeHostRoot(containerId, containerRoot, db, dataDir)),
 	};
+}
+
+/**
+ * Container-path -> host-path bind tables, per container.
+ *
+ * Populated from `HostConfig.Binds` at create, which is the same information
+ * Docker itself is given, so the fake's file view matches the real one without
+ * anything having to be declared twice.
+ */
+const fakeBinds = new Map<string, Array<{ containerPath: string; hostPath: string }>>();
+
+/** Fallback roots for containers a test fabricates without going through create. */
+const fakeFallbackRoots = new Map<string, string>();
+
+export function recordFakeBinds(containerId: string, binds?: string[]): void {
+	if (!binds?.length) return;
+	const parsed = binds
+		.map((bind) => {
+			const [hostPath, containerPath] = bind.split(':');
+			return hostPath && containerPath ? { containerPath, hostPath } : null;
+		})
+		.filter((entry): entry is { containerPath: string; hostPath: string } => entry !== null)
+		// Longest container path first, so a nested mount wins over its parent.
+		.sort((a, b) => b.containerPath.length - a.containerPath.length);
+	fakeBinds.set(containerId, parsed);
+}
+
+/**
+ * Register where a container root lives on the host for a container the test
+ * never created through the engine - the common shape, where a project row is
+ * given a `container_id` directly.
+ */
+export function registerFakeContainerRoot(containerId: string, hostRoot: string): void {
+	fakeFallbackRoots.set(containerId, hostRoot);
+}
+
+/**
+ * A {@link SandboxFiles} whose host root is resolved on first use.
+ *
+ * `files()` is synchronous by the interface's contract, but the fake resolves
+ * its root from the database - so the lookup is deferred into the operations,
+ * which are async anyway.
+ */
+function lazyHostFiles(resolve: () => Promise<string>): SandboxFiles {
+	const bound = async (): Promise<SandboxFiles> => hostSandboxFiles(await resolve());
+	return {
+		exists: async (p) => (await bound()).exists(p),
+		read: async (p) => (await bound()).read(p),
+		remove: async (p) => (await bound()).remove(p),
+		removeDir: async (p) => (await bound()).removeDir(p),
+		findByName: async (d, n, depth) => (await bound()).findByName(d, n, depth),
+		write: async (p, c, o) => (await bound()).write(p, c, o),
+		mkdir: async (p, o) => (await bound()).mkdir(p, o),
+	};
+}
+
+async function resolveFakeHostRoot(
+	containerId: string,
+	containerRoot: string,
+	db?: Db,
+	dataDir?: string,
+): Promise<string> {
+	const suffix = (base: string): string =>
+		containerRoot.startsWith(CONTAINER_WORKSPACE_ROOT)
+			? `${base}${containerRoot.slice(CONTAINER_WORKSPACE_ROOT.length)}`
+			: base;
+
+	// A recorded bind is the most faithful answer: it is the same information
+	// Docker itself was given at create.
+	for (const bind of fakeBinds.get(containerId) ?? []) {
+		if (containerRoot === bind.containerPath) return bind.hostPath;
+		if (containerRoot.startsWith(`${bind.containerPath}/`)) {
+			return `${bind.hostPath}${containerRoot.slice(bind.containerPath.length)}`;
+		}
+	}
+
+	const registered = fakeFallbackRoots.get(containerId);
+	if (registered) return suffix(registered);
+
+	// Most tests hand a project a `container_id` without provisioning through the
+	// engine, so there are no binds to read. The project row still says which
+	// workspace that container would have mounted, which is the same mapping a
+	// real bind produces.
+	if (db && dataDir) {
+		try {
+			const row = await db.query<{ team_id: string; id: string }>(
+				'SELECT team_id, id FROM projects WHERE container_id = $1 LIMIT 1',
+				[containerId],
+			);
+			const project = row.rows[0];
+			if (project) return suffix(getWorkspacePath(dataDir, project.team_id, project.id));
+		} catch {
+			// Fall through to the scratch dir below - a fake must never throw from
+			// a path resolution.
+		}
+	}
+
+	// Nothing to go on: a scratch dir, so writes still round-trip rather than
+	// failing on a path that does not exist.
+	const scratch = join(
+		tmpdir(),
+		'hezo-fake-container',
+		containerId,
+		containerRoot.replaceAll('/', '_'),
+	);
+	mkdirSync(scratch, { recursive: true });
+	return scratch;
 }

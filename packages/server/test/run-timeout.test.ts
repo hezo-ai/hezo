@@ -11,7 +11,13 @@ import { JobManager } from '../src/services/job-manager';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import type { ContainerEngine } from '../src/services/sandbox/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
+import {
+	authHeader,
+	createStubDocker,
+	createTestApp,
+	createTestProject,
+	createTestTeam,
+} from './helpers/app';
 import { withRunUserStub } from './helpers/run-user-docker';
 
 // Part 2 of the run-limit work: a run cut off by its wall-clock time limit finalizes as
@@ -20,6 +26,10 @@ import { withRunUserStub } from './helpers/run-user-docker';
 // the run's signal mid-exec, and the continuation/cap tests drive the private JobManager
 // methods directly (the pattern used across job-manager-workflows.test.ts).
 
+// The runner's data dir must be the harness's own, not a fixed path: the
+// container engine resolves a run's files through the project's workspace under
+// it, so a hardcoded literal would stage them somewhere the test cannot read.
+let testDataDir: string;
 let app: Hono<Env>;
 let db: Db;
 let masterKeyManager: MasterKeyManager;
@@ -53,6 +63,9 @@ function createMockDocker(overrides: Record<string, any> = {}): ContainerEngine 
 		killRunProcesses: async () => {},
 		execStart: execStartOverride ?? (async () => ({ stdout: 'done', stderr: '' })),
 		...rest,
+		// The run stages its prompt and runtime home through the engine seam, so an
+		// inline engine needs the same bind-resolving view the shared stub gives.
+		files: createStubDocker().files,
 	} as unknown as ContainerEngine;
 	// Transparently answer the run-user probe so those infra execs don't hit execStart.
 	return withRunUserStub(base);
@@ -74,7 +87,7 @@ function makeDeps(dockerOverrides: Record<string, any> = {}): RunnerDeps {
 		docker: createMockDocker(dockerOverrides),
 		masterKeyManager,
 		serverPort: 3000,
-		dataDir: '/tmp/test-data',
+		dataDir: testDataDir,
 		wsManager,
 		logs,
 	};
@@ -86,7 +99,7 @@ function createJobManager(): JobManager {
 		docker: createMockDocker(),
 		masterKeyManager,
 		serverPort: 3100,
-		dataDir: '/tmp/test-data',
+		dataDir: testDataDir,
 		wsManager: { broadcast: () => {} } as any,
 		logs: new LogStreamBroker(),
 		containerLogStreamer: new ContainerLogStreamer(),
@@ -125,6 +138,7 @@ function makeProject() {
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
+	testDataDir = ctx.dataDir;
 	app = ctx.app;
 	db = ctx.db;
 	masterKeyManager = ctx.masterKeyManager;

@@ -9,7 +9,13 @@ import { type RunnerDeps, runAgent } from '../src/services/agent-runner';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import type { ContainerEngine } from '../src/services/sandbox/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
+import {
+	authHeader,
+	createStubDocker,
+	createTestApp,
+	createTestProject,
+	createTestTeam,
+} from './helpers/app';
 import { withRunUserStub } from './helpers/run-user-docker';
 
 // The handoff-delivery guardrail: when a run ends (clean exit) with a reply in
@@ -129,6 +135,9 @@ function createMockDocker(overrides: Record<string, unknown> = {}): ContainerEng
 			}
 			return innerExecStart(...args);
 		},
+		// The run stages its prompt and runtime home through the engine seam, so an
+		// inline engine needs the same bind-resolving view the shared stub gives.
+		files: createStubDocker().files,
 	} as unknown as ContainerEngine;
 	return withRunUserStub(base);
 }

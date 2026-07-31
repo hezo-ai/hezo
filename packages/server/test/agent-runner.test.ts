@@ -26,7 +26,13 @@ import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { PricingService, upsertManualRate } from '../src/services/pricing';
 import type { ContainerEngine } from '../src/services/sandbox/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
+import {
+	authHeader,
+	createStubDocker,
+	createTestApp,
+	createTestProject,
+	createTestTeam,
+} from './helpers/app';
 import { withRunUserStub } from './helpers/run-user-docker';
 
 function readPromptFromExec(
@@ -44,6 +50,10 @@ function readPromptFromExec(
 	return readFileSync(getHostPromptPath(dataDir, project.team_id, project.id, runId), 'utf8');
 }
 
+// The runner's data dir must be the harness's own, not a fixed path: the
+// container engine resolves a run's files through the project's workspace under
+// it, so a hardcoded literal would stage them somewhere the test cannot read.
+let testDataDir: string;
 let app: Hono<Env>;
 let db: Db;
 let adminToken: string;
@@ -58,6 +68,7 @@ const originalFetch = globalThis.fetch;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
+	testDataDir = ctx.dataDir;
 	app = ctx.app;
 	db = ctx.db;
 	adminToken = ctx.token;
@@ -192,6 +203,9 @@ function createMockDocker(overrides: Record<string, any> = {}): ContainerEngine 
 			if (produced?.stderr) await opts.onChunk({ stream: 'stderr', text: produced.stderr });
 			return { stdout: '', stderr: '' };
 		},
+		// The run stages its prompt and runtime home through the engine seam, so an
+		// inline engine needs the same bind-resolving view the shared stub gives.
+		files: createStubDocker().files,
 	} as unknown as ContainerEngine;
 	// Transparently answer the run-user probe (`id -u node`) + ownership chowns so the
 	// runner resolves a `node` run-user without those infra execs reaching the test's
@@ -272,7 +286,7 @@ describe('runAgent', () => {
 			docker,
 			masterKeyManager,
 			serverPort: 3000,
-			dataDir: '/tmp/test-data',
+			dataDir: testDataDir,
 			logs: new LogStreamBroker(),
 		};
 
@@ -326,7 +340,7 @@ describe('runAgent', () => {
 			}),
 			masterKeyManager,
 			serverPort: 3000,
-			dataDir: '/tmp/test-data',
+			dataDir: testDataDir,
 			logs: new LogStreamBroker(),
 		};
 
@@ -371,7 +385,7 @@ describe('runAgent', () => {
 			}),
 			masterKeyManager,
 			serverPort: 3000,
-			dataDir: '/tmp/test-data',
+			dataDir: testDataDir,
 			logs: new LogStreamBroker(),
 		};
 
@@ -411,7 +425,7 @@ describe('runAgent', () => {
 			docker,
 			masterKeyManager,
 			serverPort: 3000,
-			dataDir: '/tmp/test-data',
+			dataDir: testDataDir,
 			logs: new LogStreamBroker(),
 		};
 
@@ -454,7 +468,7 @@ describe('runAgent', () => {
 			docker,
 			masterKeyManager,
 			serverPort: 3000,
-			dataDir: '/tmp/test-data',
+			dataDir: testDataDir,
 			logs: new LogStreamBroker(),
 		};
 
@@ -477,7 +491,7 @@ describe('runAgent', () => {
 			docker: createMockDocker(),
 			masterKeyManager,
 			serverPort: 3000,
-			dataDir: '/tmp/test-data',
+			dataDir: testDataDir,
 			logs: new LogStreamBroker(),
 		};
 
@@ -501,7 +515,7 @@ describe('runAgent', () => {
 			}),
 			masterKeyManager,
 			serverPort: 3000,
-			dataDir: '/tmp/test-data',
+			dataDir: testDataDir,
 			logs: new LogStreamBroker(),
 		};
 
@@ -532,7 +546,7 @@ describe('runAgent', () => {
 			}),
 			masterKeyManager,
 			serverPort: 3000,
-			dataDir: '/tmp/test-data',
+			dataDir: testDataDir,
 			logs: new LogStreamBroker(),
 		};
 
@@ -576,7 +590,7 @@ describe('runAgent', () => {
 			}),
 			masterKeyManager,
 			serverPort: 3000,
-			dataDir: '/tmp/test-data',
+			dataDir: testDataDir,
 			logs: new LogStreamBroker(),
 		};
 
@@ -622,7 +636,7 @@ describe('runAgent', () => {
 			}),
 			masterKeyManager,
 			serverPort: 3000,
-			dataDir: '/tmp/test-data',
+			dataDir: testDataDir,
 			logs: new LogStreamBroker(),
 		};
 
@@ -648,7 +662,7 @@ describe('runAgent', () => {
 			docker,
 			masterKeyManager,
 			serverPort: 3000,
-			dataDir: '/tmp/test-data',
+			dataDir: testDataDir,
 			logs: new LogStreamBroker(),
 		};
 
@@ -677,7 +691,7 @@ describe('runAgent', () => {
 			docker,
 			masterKeyManager,
 			serverPort: 3000,
-			dataDir: '/tmp/test-data',
+			dataDir: testDataDir,
 			logs: new LogStreamBroker(),
 		};
 
@@ -699,7 +713,7 @@ describe('runAgent', () => {
 		const project = makeProject();
 		const docker = createMockDocker({
 			execCreate: async (_containerId: string, opts: any) => {
-				const prompt = readPromptFromExec(opts, '/tmp/test-data', project);
+				const prompt = readPromptFromExec(opts, testDataDir, project);
 				expect(prompt).toContain('Rules for this task');
 				expect(prompt).toContain('Always write tests');
 				return 'exec-rules';
@@ -713,7 +727,7 @@ describe('runAgent', () => {
 			docker,
 			masterKeyManager,
 			serverPort: 3000,
-			dataDir: '/tmp/test-data',
+			dataDir: testDataDir,
 			logs: new LogStreamBroker(),
 		};
 
@@ -726,7 +740,7 @@ describe('runAgent', () => {
 		const project = makeProject();
 		const docker = createMockDocker({
 			execCreate: async (_containerId: string, opts: any) => {
-				const prompt = readPromptFromExec(opts, '/tmp/test-data', project);
+				const prompt = readPromptFromExec(opts, testDataDir, project);
 				expect(prompt).toContain('### Progress Summary');
 				expect(prompt).toContain('Parser landed; tests still failing');
 				return 'exec-progress';
@@ -740,7 +754,7 @@ describe('runAgent', () => {
 			docker,
 			masterKeyManager,
 			serverPort: 3000,
-			dataDir: '/tmp/test-data',
+			dataDir: testDataDir,
 			logs: new LogStreamBroker(),
 		};
 
@@ -770,7 +784,7 @@ describe('runAgent', () => {
 			docker,
 			masterKeyManager,
 			serverPort: 3100,
-			dataDir: '/tmp/test-data',
+			dataDir: testDataDir,
 			logs: new LogStreamBroker(),
 		};
 
@@ -789,7 +803,7 @@ describe('runAgent', () => {
 		let capturedPrompt = '';
 		const docker = createMockDocker({
 			execCreate: async (_containerId: string, opts: any) => {
-				capturedPrompt = readPromptFromExec(opts, '/tmp/test-data', project);
+				capturedPrompt = readPromptFromExec(opts, testDataDir, project);
 				return 'exec-run-ctx';
 			},
 			execStart: async () => ({ stdout: 'ok', stderr: '' }),
@@ -801,7 +815,7 @@ describe('runAgent', () => {
 			docker,
 			masterKeyManager,
 			serverPort: 3100,
-			dataDir: '/tmp/test-data',
+			dataDir: testDataDir,
 			logs: new LogStreamBroker(),
 		};
 
@@ -821,7 +835,7 @@ describe('runAgent', () => {
 		let capturedPrompt = '';
 		const docker = createMockDocker({
 			execCreate: async (_containerId: string, opts: any) => {
-				capturedPrompt = readPromptFromExec(opts, '/tmp/test-data', project);
+				capturedPrompt = readPromptFromExec(opts, testDataDir, project);
 				return 'exec-coach';
 			},
 			execStart: async () => ({ stdout: 'reviewed', stderr: '' }),
@@ -833,7 +847,7 @@ describe('runAgent', () => {
 			docker,
 			masterKeyManager,
 			serverPort: 3000,
-			dataDir: '/tmp/test-data',
+			dataDir: testDataDir,
 			logs: new LogStreamBroker(),
 		};
 
@@ -858,7 +872,7 @@ describe('runAgent', () => {
 			docker,
 			masterKeyManager,
 			serverPort: 3000,
-			dataDir: '/tmp/test-data',
+			dataDir: testDataDir,
 			logs: new LogStreamBroker(),
 		};
 
@@ -886,7 +900,7 @@ describe('runAgent', () => {
 			let capturedPrompt = '';
 			const docker = createMockDocker({
 				execCreate: async (_id: string, opts: any) => {
-					capturedPrompt = readPromptFromExec(opts, '/tmp/test-data', project);
+					capturedPrompt = readPromptFromExec(opts, testDataDir, project);
 					return 'exec-ultra';
 				},
 				execStart: async () => ({ stdout: 'ok', stderr: '' }),
@@ -898,7 +912,7 @@ describe('runAgent', () => {
 				docker,
 				masterKeyManager,
 				serverPort: 3000,
-				dataDir: '/tmp/test-data',
+				dataDir: testDataDir,
 				logs: new LogStreamBroker(),
 			};
 
@@ -914,7 +928,7 @@ describe('runAgent', () => {
 			let capturedPrompt = '';
 			const docker = createMockDocker({
 				execCreate: async (_id: string, opts: any) => {
-					capturedPrompt = readPromptFromExec(opts, '/tmp/test-data', project);
+					capturedPrompt = readPromptFromExec(opts, testDataDir, project);
 					return 'exec-default';
 				},
 				execStart: async () => ({ stdout: 'ok', stderr: '' }),
@@ -926,7 +940,7 @@ describe('runAgent', () => {
 				docker,
 				masterKeyManager,
 				serverPort: 3000,
-				dataDir: '/tmp/test-data',
+				dataDir: testDataDir,
 				logs: new LogStreamBroker(),
 			};
 
@@ -956,7 +970,7 @@ describe('runAgent', () => {
 				docker,
 				masterKeyManager,
 				serverPort: 3000,
-				dataDir: '/tmp/test-data',
+				dataDir: testDataDir,
 				logs: new LogStreamBroker(),
 			};
 
@@ -983,7 +997,7 @@ describe('runAgent', () => {
 				docker,
 				masterKeyManager,
 				serverPort: 3000,
-				dataDir: '/tmp/test-data',
+				dataDir: testDataDir,
 				logs: new LogStreamBroker(),
 			};
 
@@ -1029,7 +1043,7 @@ describe('runAgent', () => {
 			docker,
 			masterKeyManager,
 			serverPort: 3000,
-			dataDir: '/tmp/test-data',
+			dataDir: testDataDir,
 			logs: new LogStreamBroker(),
 		};
 
@@ -1067,7 +1081,7 @@ describe('runAgent', () => {
 			docker,
 			masterKeyManager,
 			serverPort: 3000,
-			dataDir: '/tmp/test-data',
+			dataDir: testDataDir,
 			logs: new LogStreamBroker(),
 		};
 
@@ -1110,7 +1124,7 @@ describe('runAgent', () => {
 			docker,
 			masterKeyManager,
 			serverPort: 3000,
-			dataDir: '/tmp/test-data',
+			dataDir: testDataDir,
 			logs: new LogStreamBroker(),
 		};
 
@@ -1145,7 +1159,7 @@ describe('runAgent', () => {
 			docker,
 			masterKeyManager,
 			serverPort: 3000,
-			dataDir: '/tmp/test-data',
+			dataDir: testDataDir,
 			logs: new LogStreamBroker(),
 		};
 
@@ -1181,7 +1195,7 @@ describe('runAgent', () => {
 			docker,
 			masterKeyManager,
 			serverPort: 3000,
-			dataDir: '/tmp/test-data',
+			dataDir: testDataDir,
 			logs: new LogStreamBroker(),
 		};
 
@@ -1210,7 +1224,7 @@ describe('runAgent', () => {
 			docker,
 			masterKeyManager,
 			serverPort: 3000,
-			dataDir: '/tmp/test-data',
+			dataDir: testDataDir,
 			logs: new LogStreamBroker(),
 		};
 
@@ -1242,7 +1256,7 @@ describe('runAgent', () => {
 				docker,
 				masterKeyManager,
 				serverPort: 3000,
-				dataDir: '/tmp/test-data',
+				dataDir: testDataDir,
 				logs: new LogStreamBroker(),
 			};
 
@@ -1282,7 +1296,7 @@ describe('runAgent', () => {
 				docker,
 				masterKeyManager,
 				serverPort: 3000,
-				dataDir: '/tmp/test-data',
+				dataDir: testDataDir,
 				logs: new LogStreamBroker(),
 			};
 
@@ -1322,7 +1336,7 @@ describe('runAgent', () => {
 				docker,
 				masterKeyManager,
 				serverPort: 3100,
-				dataDir: '/tmp/test-data',
+				dataDir: testDataDir,
 				logs: new LogStreamBroker(),
 			};
 
@@ -1369,7 +1383,7 @@ describe('runAgent', () => {
 				docker,
 				masterKeyManager,
 				serverPort: 3000,
-				dataDir: '/tmp/test-data',
+				dataDir: testDataDir,
 				logs: new LogStreamBroker(),
 			};
 
@@ -1410,7 +1424,7 @@ describe('runAgent', () => {
 						const runId = containerDir.split('/').pop()!;
 						stagedTomlPath = `${getHostSubscriptionRoot(
 							AiProvider.OpenAI,
-							'/tmp/test-data',
+							testDataDir,
 							teamId,
 							projectId,
 							runId,
@@ -1428,7 +1442,7 @@ describe('runAgent', () => {
 				docker,
 				masterKeyManager,
 				serverPort: 3000,
-				dataDir: '/tmp/test-data',
+				dataDir: testDataDir,
 				logs: new LogStreamBroker(),
 			};
 
@@ -1495,7 +1509,7 @@ describe('runAgent', () => {
 						const runId = containerDir.split('/').pop()!;
 						const hostDir = getHostSubscriptionRoot(
 							AiProvider.OpenAI,
-							'/tmp/test-data',
+							testDataDir,
 							teamId,
 							projectId,
 							runId,
@@ -1517,7 +1531,7 @@ describe('runAgent', () => {
 				docker,
 				masterKeyManager,
 				serverPort: 3000,
-				dataDir: '/tmp/test-data',
+				dataDir: testDataDir,
 				logs: new LogStreamBroker(),
 			};
 
@@ -1583,7 +1597,7 @@ describe('runAgent', () => {
 						const runId = containerDir.split('/').pop()!;
 						settingsPath = `${getHostSubscriptionRoot(
 							AiProvider.Google,
-							'/tmp/test-data',
+							testDataDir,
 							teamId,
 							projectId,
 							runId,
@@ -1601,7 +1615,7 @@ describe('runAgent', () => {
 				docker,
 				masterKeyManager,
 				serverPort: 3000,
-				dataDir: '/tmp/test-data',
+				dataDir: testDataDir,
 				logs: new LogStreamBroker(),
 			};
 
@@ -1638,7 +1652,7 @@ describe('runAgent', () => {
 				docker,
 				masterKeyManager,
 				serverPort: 3000,
-				dataDir: '/tmp/test-data',
+				dataDir: testDataDir,
 				logs: new LogStreamBroker(),
 			};
 
@@ -1662,7 +1676,7 @@ describe('runAgent', () => {
 				execCreate: async (_id: string, opts: any) => {
 					capturedCmd = opts.Cmd;
 					capturedEnv = opts.Env;
-					promptOnDisk = readPromptFromExec(opts, '/tmp/test-data', project);
+					promptOnDisk = readPromptFromExec(opts, testDataDir, project);
 					return 'exec-huge';
 				},
 				execStart: async () => ({ stdout: '', stderr: '' }),
@@ -1673,7 +1687,7 @@ describe('runAgent', () => {
 				docker,
 				masterKeyManager,
 				serverPort: 3000,
-				dataDir: '/tmp/test-data',
+				dataDir: testDataDir,
 				logs: new LogStreamBroker(),
 			};
 
@@ -1706,7 +1720,7 @@ describe('runAgent', () => {
 				docker,
 				masterKeyManager,
 				serverPort: 3000,
-				dataDir: '/tmp/test-data',
+				dataDir: testDataDir,
 				logs: new LogStreamBroker(),
 			};
 
@@ -1754,7 +1768,7 @@ describe('runAgent', () => {
 				docker,
 				masterKeyManager,
 				serverPort: 3000,
-				dataDir: '/tmp/test-data',
+				dataDir: testDataDir,
 				wsManager,
 				logs,
 			};
@@ -1790,7 +1804,7 @@ describe('runAgent', () => {
 				docker,
 				masterKeyManager,
 				serverPort: 3000,
-				dataDir: '/tmp/test-data',
+				dataDir: testDataDir,
 				logs: new LogStreamBroker(),
 			};
 
@@ -1814,7 +1828,7 @@ describe('runAgent', () => {
 				docker,
 				masterKeyManager,
 				serverPort: 3000,
-				dataDir: '/tmp/test-data',
+				dataDir: testDataDir,
 				logs: new LogStreamBroker(),
 			};
 
@@ -1843,7 +1857,7 @@ describe('runAgent', () => {
 				docker,
 				masterKeyManager,
 				serverPort: 3000,
-				dataDir: '/tmp/test-data',
+				dataDir: testDataDir,
 				logs: new LogStreamBroker(),
 			};
 
@@ -1872,7 +1886,7 @@ describe('runAgent', () => {
 				docker,
 				masterKeyManager,
 				serverPort: 3000,
-				dataDir: '/tmp/test-data',
+				dataDir: testDataDir,
 				logs: new LogStreamBroker(),
 			};
 
@@ -1906,7 +1920,7 @@ describe('runAgent', () => {
 				docker,
 				masterKeyManager,
 				serverPort: 3000,
-				dataDir: '/tmp/test-data',
+				dataDir: testDataDir,
 				logs: new LogStreamBroker(),
 			};
 
@@ -1936,7 +1950,7 @@ describe('runAgent', () => {
 				docker,
 				masterKeyManager,
 				serverPort: 3000,
-				dataDir: '/tmp/test-data',
+				dataDir: testDataDir,
 				logs: new LogStreamBroker(),
 			};
 
@@ -1988,7 +2002,7 @@ describe('runAgent', () => {
 				docker,
 				masterKeyManager,
 				serverPort: 3000,
-				dataDir: '/tmp/test-data',
+				dataDir: testDataDir,
 				logs: new LogStreamBroker(),
 			};
 
@@ -2097,7 +2111,7 @@ describe('runAgent', () => {
 				docker,
 				masterKeyManager,
 				serverPort: 3000,
-				dataDir: '/tmp/test-data',
+				dataDir: testDataDir,
 				logs: new LogStreamBroker(),
 				pricing,
 			};
@@ -2144,7 +2158,7 @@ describe('runAgent', () => {
 				docker,
 				masterKeyManager,
 				serverPort: 3000,
-				dataDir: '/tmp/test-data',
+				dataDir: testDataDir,
 				logs: new LogStreamBroker(),
 			};
 
@@ -2177,7 +2191,7 @@ describe('runAgent', () => {
 				docker,
 				masterKeyManager,
 				serverPort: 3000,
-				dataDir: '/tmp/test-data',
+				dataDir: testDataDir,
 				logs: new LogStreamBroker(),
 			};
 
@@ -2205,7 +2219,7 @@ describe('runAgent', () => {
 				docker,
 				masterKeyManager,
 				serverPort: 3000,
-				dataDir: '/tmp/test-data',
+				dataDir: testDataDir,
 				logs: new LogStreamBroker(),
 			};
 
@@ -2236,7 +2250,7 @@ describe('runAgent', () => {
 				docker,
 				masterKeyManager,
 				serverPort: 3000,
-				dataDir: '/tmp/test-data',
+				dataDir: testDataDir,
 				logs: new LogStreamBroker(),
 			};
 
@@ -2278,7 +2292,7 @@ describe('runAgent', () => {
 				docker,
 				masterKeyManager,
 				serverPort: 3000,
-				dataDir: '/tmp/test-data',
+				dataDir: testDataDir,
 				logs: new LogStreamBroker(),
 			};
 
@@ -2356,34 +2370,55 @@ describe('runAgent', () => {
 			expect(env).toEqual(['OPENAI_API_KEY=sk-test']);
 		});
 
-		it('writes auth.json to a per-run host path and points CODEX_HOME at it', async () => {
-			const dataDir = `/tmp/codex-mount-${Date.now()}`;
+		it('stages auth.json into the run home and points CODEX_HOME at it', async () => {
+			// Staged through the engine seam, not onto the host: on a managed backend
+			// the sandbox is not on this machine, so the credential has to travel by
+			// the provider's file transport. Read back the same way it was written.
 			const runId = 'run-mount-1';
-			const mount = await buildSubscriptionMount(dataDir, 'co', 'pj', runId, AiProvider.OpenAI, {
-				value: validAuthJson,
-				authMethod: AiAuthMethod.Subscription,
-			});
+			const engine = createStubDocker();
+			const mount = await buildSubscriptionMount(
+				testDataDir,
+				'co',
+				'pj',
+				runId,
+				AiProvider.OpenAI,
+				{ value: validAuthJson, authMethod: AiAuthMethod.Subscription },
+				engine,
+				'container-123',
+			);
 			expect(mount).not.toBeNull();
 			expect(mount!.containerDir).toBe(`/workspace/.hezo/subscription/codex/${runId}`);
 			expect(mount!.envEntries).toEqual([
 				`CODEX_HOME=/workspace/.hezo/subscription/codex/${runId}`,
 			]);
-			expect(existsSync(mount!.hostAuthFile)).toBe(true);
-			expect(readFileSync(mount!.hostAuthFile, 'utf8')).toBe(validAuthJson);
+			const staged = engine.files('container-123', mount!.containerDir);
+			expect(await staged.read(mount!.authFileRelative)).toBe(validAuthJson);
 		});
 
 		it('returns null mount for providers without a paste flow', async () => {
 			expect(
-				await buildSubscriptionMount('/tmp', 'co', 'pj', 'r1', AiProvider.OpenAI, {
-					value: 'sk-x',
-					authMethod: AiAuthMethod.ApiKey,
-				}),
+				await buildSubscriptionMount(
+					'/tmp',
+					'co',
+					'pj',
+					'r1',
+					AiProvider.OpenAI,
+					{ value: 'sk-x', authMethod: AiAuthMethod.ApiKey },
+					createStubDocker(),
+					'container-123',
+				),
 			).toBeNull();
 			expect(
-				await buildSubscriptionMount('/tmp', 'co', 'pj', 'r1', AiProvider.Anthropic, {
-					value: 'sk-ant',
-					authMethod: AiAuthMethod.ApiKey,
-				}),
+				await buildSubscriptionMount(
+					'/tmp',
+					'co',
+					'pj',
+					'r1',
+					AiProvider.Anthropic,
+					{ value: 'sk-ant', authMethod: AiAuthMethod.ApiKey },
+					createStubDocker(),
+					'container-123',
+				),
 			).toBeNull();
 		});
 
@@ -2391,10 +2426,16 @@ describe('runAgent', () => {
 			// Anthropic subscription has no authFileRelative — the token goes in
 			// CLAUDE_CODE_OAUTH_TOKEN (buildProviderEnv), so there is nothing to mount.
 			expect(
-				await buildSubscriptionMount('/tmp', 'co', 'pj', 'r1', AiProvider.Anthropic, {
-					value: 'sk-ant-oat01-token',
-					authMethod: AiAuthMethod.Subscription,
-				}),
+				await buildSubscriptionMount(
+					'/tmp',
+					'co',
+					'pj',
+					'r1',
+					AiProvider.Anthropic,
+					{ value: 'sk-ant-oat01-token', authMethod: AiAuthMethod.Subscription },
+					createStubDocker(),
+					'container-123',
+				),
 			).toBeNull();
 		});
 
@@ -2403,10 +2444,16 @@ describe('runAgent', () => {
 			// endpoint with an api key delivered via ANTHROPIC_AUTH_TOKEN — there is no
 			// subscription file to mount.
 			expect(
-				await buildSubscriptionMount('/tmp', 'co', 'pj', 'r1', AiProvider.Kimi, {
-					value: 'sk-kimi',
-					authMethod: AiAuthMethod.ApiKey,
-				}),
+				await buildSubscriptionMount(
+					'/tmp',
+					'co',
+					'pj',
+					'r1',
+					AiProvider.Kimi,
+					{ value: 'sk-kimi', authMethod: AiAuthMethod.ApiKey },
+					createStubDocker(),
+					'container-123',
+				),
 			).toBeNull();
 			// The provider env carries the Moonshot endpoint + auth token + quiet env.
 			const env = buildProviderEnv(AiProvider.Kimi, {
@@ -2433,7 +2480,7 @@ describe('runAgent', () => {
 						const runId = containerDir.split('/').pop()!;
 						stagedFile = `${getHostSubscriptionRoot(
 							AiProvider.OpenAI,
-							'/tmp/test-data',
+							testDataDir,
 							teamId,
 							projectId,
 							runId,
@@ -2450,7 +2497,7 @@ describe('runAgent', () => {
 				docker,
 				masterKeyManager,
 				serverPort: 3000,
-				dataDir: '/tmp/test-data',
+				dataDir: testDataDir,
 				logs: new LogStreamBroker(),
 			};
 
@@ -2489,7 +2536,7 @@ describe('runAgent', () => {
 					const runId = containerDir.split('/').pop()!;
 					const hostFile = `${getHostSubscriptionRoot(
 						AiProvider.OpenAI,
-						'/tmp/test-data',
+						testDataDir,
 						teamId,
 						projectId,
 						runId,
@@ -2507,7 +2554,7 @@ describe('runAgent', () => {
 				docker,
 				masterKeyManager,
 				serverPort: 3000,
-				dataDir: '/tmp/test-data',
+				dataDir: testDataDir,
 				logs: new LogStreamBroker(),
 			};
 
@@ -2598,7 +2645,7 @@ describe('runAgent', () => {
 				docker,
 				masterKeyManager,
 				serverPort: 3000,
-				dataDir: '/tmp/test-data',
+				dataDir: testDataDir,
 				wsManager,
 				logs,
 			};

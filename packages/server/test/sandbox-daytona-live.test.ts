@@ -191,6 +191,65 @@ describe.skipIf(!apiKey)('Daytona adapter — live API', () => {
 	);
 
 	it(
+		'stages and reads back run artefacts through SandboxFiles',
+		async () => {
+			// The half that makes a whole agent run possible rather than just a
+			// container lifecycle. There is no bind mount here, so every artefact a
+			// run stages - the prompt file, the runtime home and its credentials, the
+			// tunnel config - reaches the sandbox only through this.
+			const files = engine.files(containerId, '/workspace/runfiles');
+
+			await files.write('prompt.txt', 'do the thing\n');
+			expect(await files.read('prompt.txt')).toBe('do the thing\n');
+
+			// Visible to processes inside the sandbox, not just to the API - which is
+			// the only property the agent actually depends on.
+			expect((await runAs(['cat', '/workspace/runfiles/prompt.txt'])).stdout).toContain(
+				'do the thing',
+			);
+
+			// The mode contract: 0600 on a credential, 0711 on the directories above
+			// it so the deprivileged run user can traverse without listing. A backend
+			// that dropped either would lock the run out or widen a secret, and
+			// neither fails loudly.
+			await files.write('home/.config/creds.json', '{"token":"x"}', {
+				mode: 0o600,
+				dirMode: 0o711,
+			});
+			const modes = await runAs([
+				'sh',
+				'-c',
+				'stat -c %a /workspace/runfiles/home/.config/creds.json; stat -c %a /workspace/runfiles/home/.config',
+			]);
+			const [fileMode, dirMode] = modes.stdout.trim().split('\n');
+			expect(fileMode.trim()).toBe('600');
+			expect(dirMode.trim()).toBe('711');
+
+			// The read-back direction: what a runtime writes and the host scrapes.
+			await runAs([
+				'sh',
+				'-c',
+				'mkdir -p /workspace/runfiles/logs/a/b && echo used > /workspace/runfiles/logs/a/b/wire.jsonl',
+			]);
+			expect(await files.findByName('logs', 'wire.jsonl', 3)).toContain('logs/a/b/wire.jsonl');
+
+			expect(await files.exists('prompt.txt')).toBe(true);
+			await files.remove('prompt.txt');
+			expect(await files.exists('prompt.txt')).toBe(false);
+			// A missing file is not an error, by contract.
+			await files.remove('prompt.txt');
+		},
+		TIMEOUT,
+	);
+
+	it('refuses a file path that escapes the run root', async () => {
+		// The rule that keeps the interface switchable: a caller able to climb out
+		// has silently opted into a host-shaped path.
+		const files = engine.files(containerId, '/workspace/runfiles');
+		await expect(files.read('../../etc/passwd')).rejects.toThrow(/escapes its root/);
+	});
+
+	it(
 		'reaps a sandbox this instance owns but no longer references',
 		async () => {
 			// Orphans are a cost failure rather than an error - nothing surfaces them -

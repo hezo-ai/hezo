@@ -1,3 +1,4 @@
+import { basename } from 'node:path';
 import { logger } from '../../../logger';
 
 const log = logger.child('daytona');
@@ -5,6 +6,9 @@ const log = logger.child('daytona');
 export const DEFAULT_DAYTONA_API_URL = 'https://app.daytona.io/api';
 
 /** Control-plane calls are quick; a wedged one must never stall the run loop. */
+/** File transfers are bigger than a control call but must still not hang a run. */
+const FILE_TIMEOUT_MS = 120_000;
+
 const CONTROL_TIMEOUT_MS = 60_000;
 
 /**
@@ -116,6 +120,30 @@ export interface DaytonaApi {
 		opts?: { cwd?: string; signal?: AbortSignal },
 	): Promise<{ exitCode: number }>;
 	openPty(sandbox: DaytonaSandbox, sessionId: string): Promise<DaytonaPty>;
+
+	// ---- files -------------------------------------------------------------
+	// Measured against the live toolbox API; see DaytonaClient for the shapes and
+	// the status codes each one actually answers with.
+	listFiles(sandbox: DaytonaSandbox, path: string): Promise<DaytonaFileEntry[]>;
+	downloadFile(sandbox: DaytonaSandbox, path: string): Promise<Uint8Array | null>;
+	uploadFile(
+		sandbox: DaytonaSandbox,
+		path: string,
+		content: Uint8Array,
+		mode?: number,
+	): Promise<void>;
+	createFolder(sandbox: DaytonaSandbox, path: string, mode?: number): Promise<void>;
+	deleteFile(sandbox: DaytonaSandbox, path: string): Promise<void>;
+}
+
+/** One entry from the toolbox directory listing. */
+export interface DaytonaFileEntry {
+	name: string;
+	path: string;
+	size: number;
+	isDir: boolean;
+	/** Octal string, e.g. `0644`. */
+	permissions?: string;
 }
 
 /**
@@ -469,40 +497,99 @@ export class DaytonaClient implements DaytonaApi {
 		};
 	}
 
-	/** Write a whole file into the sandbox. */
-	async uploadFile(sandbox: DaytonaSandbox, path: string, contents: string): Promise<void> {
+	// ---- files -------------------------------------------------------------
+	//
+	// All five paths were measured against the live API rather than read off the
+	// spec, and two of the results are not what the obvious reading gives:
+	// `files/folder` answers **201** (not 200), and `files/find` matches file
+	// *content*, not names - a `pattern` of `x.txt` against an existing
+	// `/workspace/probe/x.txt` returns `[]`. `SandboxFiles.findByName` is
+	// therefore built on the directory listing, exactly like the host
+	// implementation, rather than on an endpoint that looks right and silently
+	// finds nothing.
+
+	private async fileRequest(
+		sandbox: DaytonaSandbox,
+		method: string,
+		path: string,
+		init: { body?: BodyInit; accept?: 'json' | 'bytes' | 'none' } = {},
+	): Promise<Response> {
 		const base = await this.toolboxBase(sandbox);
-		const form = new FormData();
-		form.append('file', new Blob([contents]), path.split('/').pop() ?? 'file');
-		const res = await fetch(`${base}/files/upload?path=${encodeURIComponent(path)}`, {
-			method: 'POST',
+		const res = await fetch(`${base}${path}`, {
+			method,
 			headers: { Authorization: `Bearer ${this.apiKey}` },
-			body: form,
+			body: init.body,
+			signal: AbortSignal.timeout(FILE_TIMEOUT_MS),
 		});
-		if (!res.ok) {
+		if (!res.ok && res.status !== 404) {
 			const text = await res.text();
 			throw new DaytonaApiError(
-				`Daytona upload ${path} failed (${res.status}): ${text.slice(0, 200)}`,
+				`Daytona file ${method} ${path} failed (${res.status}): ${text.slice(0, 300)}`,
 				res.status,
 				text,
 			);
 		}
+		return res;
 	}
 
-	/** Read a whole file out of the sandbox. */
-	async downloadFile(sandbox: DaytonaSandbox, path: string): Promise<string> {
-		const base = await this.toolboxBase(sandbox);
-		const res = await fetch(`${base}/files/download?path=${encodeURIComponent(path)}`, {
-			headers: { Authorization: `Bearer ${this.apiKey}` },
+	async listFiles(sandbox: DaytonaSandbox, path: string): Promise<DaytonaFileEntry[]> {
+		const res = await this.fileRequest(sandbox, 'GET', `/files?path=${encodeURIComponent(path)}`);
+		if (!res.ok) return [];
+		const body = (await res.json()) as DaytonaFileEntry[] | null;
+		return Array.isArray(body) ? body : [];
+	}
+
+	async downloadFile(sandbox: DaytonaSandbox, path: string): Promise<Uint8Array | null> {
+		const res = await this.fileRequest(
+			sandbox,
+			'GET',
+			`/files/download?path=${encodeURIComponent(path)}`,
+		);
+		// A missing file is not an error here - `SandboxFiles.exists` is built on
+		// it, and every read-back call site treats absence as "nothing to recover".
+		if (!res.ok) return null;
+		return new Uint8Array(await res.arrayBuffer());
+	}
+
+	async uploadFile(
+		sandbox: DaytonaSandbox,
+		path: string,
+		content: Uint8Array,
+		mode?: number,
+	): Promise<void> {
+		const form = new FormData();
+		// The field name is `file`; the filename is ignored in favour of `?path=`.
+		form.append('file', new Blob([content as BlobPart]), basename(path));
+		await this.fileRequest(sandbox, 'POST', `/files/upload?path=${encodeURIComponent(path)}`, {
+			body: form,
 		});
-		if (!res.ok) {
-			const text = await res.text();
-			throw new DaytonaApiError(
-				`Daytona download ${path} failed (${res.status}): ${text.slice(0, 200)}`,
-				res.status,
-				text,
-			);
-		}
-		return res.text();
+		// Uploads land 0644 owned by root regardless of the caller, so a mode that
+		// matters - a credential file the agent must not read, a config it must -
+		// is applied as a second call rather than assumed.
+		if (mode !== undefined) await this.setPermissions(sandbox, path, mode);
+	}
+
+	async createFolder(sandbox: DaytonaSandbox, path: string, mode = 0o755): Promise<void> {
+		const res = await this.fileRequest(
+			sandbox,
+			'POST',
+			`/files/folder?path=${encodeURIComponent(path)}&mode=${mode.toString(8)}`,
+		);
+		// 201 on create; a directory that already exists answers 404 rather than a
+		// conflict, which is why a missing-parent failure has to surface from the
+		// upload rather than from here.
+		void res;
+	}
+
+	async deleteFile(sandbox: DaytonaSandbox, path: string): Promise<void> {
+		await this.fileRequest(sandbox, 'DELETE', `/files?path=${encodeURIComponent(path)}`);
+	}
+
+	private async setPermissions(sandbox: DaytonaSandbox, path: string, mode: number): Promise<void> {
+		await this.fileRequest(
+			sandbox,
+			'POST',
+			`/files/permissions?path=${encodeURIComponent(path)}&mode=${mode.toString(8).padStart(3, '0')}`,
+		);
 	}
 }

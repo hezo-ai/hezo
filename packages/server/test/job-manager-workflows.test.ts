@@ -24,6 +24,10 @@ import {
 	setMaxActiveContainersForTest,
 } from './helpers/capacity';
 
+// The runner's data dir must be the harness's own, not a fixed path: the
+// container engine resolves a run's files through the project's workspace under
+// it, so a hardcoded literal would stage them somewhere the test cannot read.
+let testDataDir: string;
 let app: Hono<Env>;
 let db: Db;
 let token: string;
@@ -63,7 +67,7 @@ function createJobManager(overrides: Partial<JobManagerDeps> = {}): JobManager {
 		docker: createMockDocker(),
 		masterKeyManager,
 		serverPort: 3100,
-		dataDir: '/tmp/test-data',
+		dataDir: testDataDir,
 		wsManager: { broadcast: () => {} } as any,
 		logs: new LogStreamBroker(),
 		containerLogStreamer: new ContainerLogStreamer(),
@@ -73,6 +77,7 @@ function createJobManager(overrides: Partial<JobManagerDeps> = {}): JobManager {
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
+	testDataDir = ctx.dataDir;
 	app = ctx.app;
 	db = ctx.db;
 	token = ctx.token;

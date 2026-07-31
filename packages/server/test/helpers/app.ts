@@ -25,6 +25,7 @@ import { toSlug, uniqueSlug } from '../../src/lib/slug';
 import type { Env } from '../../src/lib/types';
 import { signAdminJwt, signAgentJwt } from '../../src/middleware/auth';
 import { ContainerLogStreamer } from '../../src/services/container-logs';
+import { createFakeDockerClient } from '../../src/services/fake-docker';
 import { JobManager } from '../../src/services/job-manager';
 import { LogStreamBroker } from '../../src/services/log-stream-broker';
 import { getMarketplaceTeam } from '../../src/services/marketplace';
@@ -32,6 +33,7 @@ import {
 	createProjectWithPlanningTask,
 	resolveProjectTaskPrefix,
 } from '../../src/services/project-create';
+import type { SandboxFiles } from '../../src/services/sandbox/files';
 import type { ContainerEngine } from '../../src/services/sandbox/types';
 import { type CreatedTeamRow, createTeam, seedDefaultTeam } from '../../src/services/teams';
 import { WebSocketManager } from '../../src/services/ws';
@@ -80,12 +82,88 @@ const STUB_DOCKER_METHODS: ContainerEngine = {
 	killProcessesByEnvMarker: async () => {},
 	listHezoProcesses: async () => [],
 	killPids: async () => {},
+	// Same bind-resolved view the fake engine gives, so a test that stages a file
+	// through the seam reads it back off disk exactly as a bind mount would.
+	files: (containerId: string, containerRoot: string) =>
+		createFakeDockerClient().files(containerId, containerRoot),
 };
+
+/**
+ * The live test app's db + dataDir, so a `createStubDocker()` built anywhere in a
+ * spec can resolve container paths to the same workspace the app is using.
+ *
+ * Most specs construct their own scripted engine with `createStubDocker({...})`
+ * and no context, so threading it through every call site would mean touching
+ * every spec; the harness records it once instead.
+ */
+const testContexts: Array<{ db: Db; dataDir: string }> = [];
+
+/** Register a live app so any stub engine can resolve container paths against it. */
+function rememberTestContext(db: Db, dataDir: string): void {
+	testContexts.unshift({ db, dataDir });
+	// Bounded: a worker runs many files, and only the most recent few can still
+	// own a live container.
+	if (testContexts.length > 8) testContexts.length = 8;
+}
+
+/**
+ * A {@link SandboxFiles} that resolves against whichever registered app knows
+ * the container, deferring the choice to the operation so a context created
+ * after the engine still counts.
+ */
+function firstResolvableFiles(
+	candidates: Array<{ db: Db; dataDir: string }>,
+	containerId: string,
+	containerRoot: string,
+): SandboxFiles {
+	const pick = async (): Promise<SandboxFiles> => {
+		for (const candidate of candidates) {
+			try {
+				const row = await candidate.db.query<{ id: string }>(
+					'SELECT id FROM projects WHERE container_id = $1 LIMIT 1',
+					[containerId],
+				);
+				if (row.rows.length > 0) {
+					return createFakeDockerClient(candidate.db, candidate.dataDir).files(
+						containerId,
+						containerRoot,
+					);
+				}
+			} catch {
+				// A closed db from a finished spec - try the next one.
+			}
+		}
+		return createFakeDockerClient(candidates[0]?.db, candidates[0]?.dataDir).files(
+			containerId,
+			containerRoot,
+		);
+	};
+	return {
+		exists: async (p) => (await pick()).exists(p),
+		read: async (p) => (await pick()).read(p),
+		remove: async (p) => (await pick()).remove(p),
+		removeDir: async (p) => (await pick()).removeDir(p),
+		findByName: async (d, n, depth) => (await pick()).findByName(d, n, depth),
+		write: async (p, c, o) => (await pick()).write(p, c, o),
+		mkdir: async (p, o) => (await pick()).mkdir(p, o),
+	};
+}
 
 export function createStubDocker<T extends Record<string, unknown>>(
 	overrides: T = {} as T,
+	ctx?: { db?: Db; dataDir?: string },
 ): ContainerEngine & T {
-	return { ...STUB_DOCKER_METHODS, ...overrides } as ContainerEngine & T;
+	// `files` resolves the container's workspace the way a bind mount would, from
+	// the project row - so a test that stages a file through the seam reads it
+	// back off disk exactly as it did when the runner used `node:fs` directly.
+	// Try each live app in turn: a spec can stand up an isolated context
+	// alongside the file-level one, and only the app that actually owns the
+	// container can say where its workspace is.
+	const candidates =
+		ctx?.db && ctx?.dataDir ? [{ db: ctx.db, dataDir: ctx.dataDir }] : testContexts;
+	const files: ContainerEngine['files'] = (containerId, containerRoot) =>
+		firstResolvableFiles(candidates, containerId, containerRoot);
+	return { ...STUB_DOCKER_METHODS, files, ...overrides } as ContainerEngine & T;
 }
 
 /**
@@ -108,7 +186,8 @@ export async function createTestApp(opts: { webUrl?: string; assetStore?: AssetS
 	await seedBuiltins(db, roleDocs);
 	await seedTestAppTeamTemplate(db);
 	const dataDir = mkdtempSync(join(tmpdir(), 'hezo-test-'));
-	const docker = createStubDocker();
+	rememberTestContext(db, dataDir);
+	const docker = createStubDocker({}, { db, dataDir });
 	const wsManager = new WebSocketManager();
 	const logs = new LogStreamBroker();
 	logs.setWsManager(wsManager);
@@ -200,7 +279,8 @@ export async function createUnsetTestApp() {
 	await seedBuiltins(db, roleDocs);
 	await seedTestAppTeamTemplate(db);
 	const dataDir = mkdtempSync(join(tmpdir(), 'hezo-test-'));
-	const docker = createStubDocker();
+	rememberTestContext(db, dataDir);
+	const docker = createStubDocker({}, { db, dataDir });
 	const wsManager = new WebSocketManager();
 	const logs = new LogStreamBroker();
 	logs.setWsManager(wsManager);

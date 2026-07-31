@@ -1,8 +1,9 @@
 import { join } from 'node:path';
 import { AiAuthMethod, AiProvider } from '@hezo/shared';
 import type { AiProviderCredential } from './ai-provider-keys';
-import { hostSandboxFiles, type SandboxFiles } from './sandbox/files';
-import { getWorkspacePath } from './workspace';
+import type { SandboxFiles } from './sandbox/files';
+import type { ContainerEngine } from './sandbox/types';
+import { CONTAINER_WORKSPACE_ROOT, getWorkspacePath } from './workspace';
 
 export const CONTAINER_SUBSCRIPTION_DIR = '/workspace/.hezo/subscription';
 
@@ -35,13 +36,19 @@ export function getHostSubscriptionBase(
  * agent CLI fails with `EACCES` opening `<leaf>/settings.json` even though the
  * leaf and its files were chowned correctly.
  */
-export function subscriptionFiles(
-	dataDir: string,
-	teamId: string,
-	projectId: string,
-): SandboxFiles {
-	return hostSandboxFiles(getHostSubscriptionBase(dataDir, teamId, projectId));
+export function subscriptionFiles(engine: ContainerEngine, containerId: string): SandboxFiles {
+	return engine.files(containerId, CONTAINER_SUBSCRIPTION_BASE);
 }
+
+/**
+ * Container-side root the subscription files are written under.
+ *
+ * Rooting on the *container* path rather than the host one is what lets these
+ * credentials reach a sandbox that is not on this machine: the bytes go through
+ * the engine's file transport instead of a bind mount, and the mode contract
+ * above travels with them.
+ */
+export const CONTAINER_SUBSCRIPTION_BASE = `${CONTAINER_WORKSPACE_ROOT}/.hezo/subscription`;
 
 /** Directory mode for everything under the subscription base. See {@link subscriptionFiles}. */
 export const SUBSCRIPTION_DIR_MODE = 0o711;
@@ -181,6 +188,14 @@ export function getHostSubscriptionRoot(
 }
 
 export interface SubscriptionMount {
+	/**
+	 * Host path the run's config directory *would* occupy under a bind mount.
+	 *
+	 * Kept only for the prompt's `hostHomeDir` variable and operator-facing
+	 * diagnostics - nothing reads or writes through it, because a managed
+	 * backend's sandbox is not on this machine. Every actual read and write goes
+	 * through {@link SandboxFiles} rooted at `containerDir`.
+	 */
 	hostDir: string;
 	hostAuthFile: string;
 	/**
@@ -203,6 +218,8 @@ export async function buildSubscriptionMount(
 	heartbeatRunId: string,
 	provider: AiProvider,
 	credential: AiProviderCredential,
+	engine: ContainerEngine,
+	containerId: string,
 ): Promise<SubscriptionMount | null> {
 	if (credential.authMethod !== AiAuthMethod.Subscription) return null;
 
@@ -226,7 +243,7 @@ export async function buildSubscriptionMount(
 	// and that base is also where its chmod walk stops, so the traversal bit
 	// lands on exactly the dirs Hezo created and no higher. The credential file
 	// itself stays 0o600 (and is chowned to the run-user), never world-readable.
-	await subscriptionFiles(dataDir, teamId, projectId).write(
+	await subscriptionFiles(engine, containerId).write(
 		join(layout.dirName, heartbeatRunId, authFileRelative),
 		credential.value,
 		{ mode: 0o600, dirMode: SUBSCRIPTION_DIR_MODE },
@@ -262,6 +279,8 @@ export async function ensureRuntimeHomeDir(
 	projectId: string,
 	heartbeatRunId: string,
 	existing: SubscriptionMount | null,
+	engine: ContainerEngine,
+	containerId: string,
 ): Promise<RuntimeHomeMount | null> {
 	const layout = SUBSCRIPTION_LAYOUTS[provider];
 	if (!layout) return null;
@@ -283,7 +302,7 @@ export async function ensureRuntimeHomeDir(
 	) as string;
 	const containerDir = getContainerSubscriptionRoot(provider, heartbeatRunId) as string;
 
-	await subscriptionFiles(dataDir, teamId, projectId).mkdir(join(layout.dirName, heartbeatRunId), {
+	await subscriptionFiles(engine, containerId).mkdir(join(layout.dirName, heartbeatRunId), {
 		mode: SUBSCRIPTION_DIR_MODE,
 	});
 

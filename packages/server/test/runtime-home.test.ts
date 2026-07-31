@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { AiAuthMethod, AiProvider } from '@hezo/shared';
 import { afterEach, describe, expect, it } from 'vitest';
+import { createFakeDockerClient, registerFakeContainerRoot } from '../src/services/fake-docker';
 import {
 	buildSubscriptionMount,
 	ensureRuntimeHomeDir,
@@ -11,6 +12,8 @@ import {
 	SUBSCRIPTION_DIR_MODE,
 	subscriptionFiles,
 } from '../src/services/runtime-home';
+import type { ContainerEngine } from '../src/services/sandbox/types';
+import { getWorkspacePath } from '../src/services/workspace';
 
 /**
  * Regression coverage for the EACCES-on-settings.json bug: the per-run subscription /
@@ -21,6 +24,38 @@ import {
  * CLI dies with `EACCES` opening `<leaf>/settings.json`. These tests run the real dir
  * builders under a strict umask and assert the traversal bit survives.
  */
+
+/**
+ * The subscription files live *inside the container* now, so the tests drive the
+ * same seam production does. The fake resolves a container root to a host path,
+ * so the mode assertions below still read real directories - which is the point:
+ * the mode contract has to survive the move, not just the write.
+ */
+const CONTAINER = 'container-runtime-home';
+
+function fakeEngine(base: string): ContainerEngine {
+	const engine = createFakeDockerClient();
+	registerFakeContainerRoot(CONTAINER, getWorkspacePath(base, TEAM, PROJECT));
+	return engine;
+}
+
+function buildSubscriptionMountWithEngine(
+	base: string,
+	runId: string,
+	provider: AiProvider,
+	credential: { value: string; authMethod: AiAuthMethod },
+) {
+	return buildSubscriptionMount(
+		base,
+		TEAM,
+		PROJECT,
+		runId,
+		provider,
+		credential,
+		fakeEngine(base),
+		CONTAINER,
+	);
+}
 
 const TEAM = 'team-1';
 const PROJECT = 'project-1';
@@ -54,7 +89,7 @@ describe('subscriptionFiles directory modes', () => {
 			mkdirSync(control, { recursive: true, mode: 0o711 });
 			expect(mode(control) & 0o001).toBe(0);
 
-			await subscriptionFiles(base, TEAM, PROJECT).mkdir(join('codex', RUN), {
+			await subscriptionFiles(fakeEngine(base), CONTAINER).mkdir(join('codex', RUN), {
 				mode: SUBSCRIPTION_DIR_MODE,
 			});
 		});
@@ -71,7 +106,7 @@ describe('subscriptionFiles directory modes', () => {
 		const hezo = dirname(getHostSubscriptionBase(base, TEAM, PROJECT));
 
 		await withUmask(0o077, () =>
-			subscriptionFiles(base, TEAM, PROJECT).mkdir(join('gemini', RUN), {
+			subscriptionFiles(fakeEngine(base), CONTAINER).mkdir(join('gemini', RUN), {
 				mode: SUBSCRIPTION_DIR_MODE,
 			}),
 		);
@@ -89,7 +124,16 @@ describe('ensureRuntimeHomeDir under a strict umask', () => {
 	it('keeps the intermediate dirs traversable by the non-root run-user', async () => {
 		base = mkdtempSync(join(tmpdir(), 'hezo-rt-'));
 		const mount = await withUmask(0o077, () =>
-			ensureRuntimeHomeDir(AiProvider.DeepSeek, base, TEAM, PROJECT, RUN, null),
+			ensureRuntimeHomeDir(
+				AiProvider.DeepSeek,
+				base,
+				TEAM,
+				PROJECT,
+				RUN,
+				null,
+				fakeEngine(base),
+				CONTAINER,
+			),
 		);
 		expect(mount).not.toBeNull();
 
@@ -114,7 +158,7 @@ describe('buildSubscriptionMount under a strict umask', () => {
 	it('makes the auth-file dir traversable while keeping the credential file 0o600', async () => {
 		base = mkdtempSync(join(tmpdir(), 'hezo-rt-'));
 		const mount = await withUmask(0o077, () =>
-			buildSubscriptionMount(base, TEAM, PROJECT, RUN, AiProvider.OpenAI, {
+			buildSubscriptionMountWithEngine(base, RUN, AiProvider.OpenAI, {
 				value: JSON.stringify({ tokens: { refresh_token: 'rt' } }),
 				authMethod: AiAuthMethod.Subscription,
 			}),
