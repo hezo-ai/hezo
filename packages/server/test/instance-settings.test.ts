@@ -173,9 +173,10 @@ describe('concurrency settings', () => {
 
 	it('computes the default max_active_containers from host memory when unset', async () => {
 		const data = await getSettings();
-		expect(data.max_active_containers).toBe(4); // round(1.92 + 6) = 8 GiB / 2 GB
+		// round(1.92 + 6) = 8 GiB, less 1 GB system and 2 GB chat, / 2 GB per container.
+		expect(data.max_active_containers).toBe(2);
 		expect(data.max_active_containers_is_set).toBe(false);
-		expect(data.max_active_containers_computed_default).toBe(4);
+		expect(data.max_active_containers_computed_default).toBe(2);
 		expect(data.default_ram_cap_per_container_gb).toBe(2);
 		expect(data.container_idle_timeout_min).toBe(15);
 		expect(data.host_total_swap_bytes).toBe(6 * GIB);
@@ -186,7 +187,8 @@ describe('concurrency settings', () => {
 		expect(res.status).toBe(200);
 		const data = await getSettings();
 		expect(data.default_ram_cap_per_container_gb).toBe(4);
-		expect(data.max_active_containers).toBe(2); // 8 GiB / 4 GB
+		// (8 - 1 - 4) / 4 floors to 0, clamped up to the minimum.
+		expect(data.max_active_containers).toBe(1);
 		expect(data.max_active_containers_is_set).toBe(false);
 		await patchSettings({ default_ram_cap_per_container_gb: 2 });
 	});
@@ -197,14 +199,14 @@ describe('concurrency settings', () => {
 		const data = await getSettings();
 		expect(data.max_active_containers).toBe(7);
 		expect(data.max_active_containers_is_set).toBe(true);
-		expect(data.max_active_containers_computed_default).toBe(4);
+		expect(data.max_active_containers_computed_default).toBe(2);
 	});
 
 	it('null resets max_active_containers back to the computed default', async () => {
 		const res = await patchSettings({ max_active_containers: null });
 		expect(res.status).toBe(200);
 		const data = await getSettings();
-		expect(data.max_active_containers).toBe(4);
+		expect(data.max_active_containers).toBe(2);
 		expect(data.max_active_containers_is_set).toBe(false);
 	});
 

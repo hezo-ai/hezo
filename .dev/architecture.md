@@ -1034,6 +1034,18 @@ is 51 CIDRs, so an attempt to send it fails the create outright - which would ha
 every remote run rather than hardening it. What protects a secret remains that the secret
 only ever exists on the Hezo side.
 
+**Capacity reserves for the chat container up front.** `max_active_containers` counts
+containers a *task run* may use; the CEO chat's container is **exempt**, because a queued
+task run is invisible and harmless while a queued chat turn is a person watching a
+spinner. The host still has to fit it, so `computeDefaultMaxActiveContainers` subtracts
+`SYSTEM_RESERVE_GB` (1) plus one container's worth for the chat before dividing. Reserving
+up front rather than subtracting when a session opens keeps task-run capacity a **stable**
+number - opening the chat never silently slows the fleet. This lowers the computed default
+on small hosts, deliberately: the documented 1.92 GiB + 6 GiB reference host goes from 4 to
+2, and 4 only ever fit by leaning on swap and by pretending the chat container did not
+exist. Instances that have explicitly set the value keep it; only the computed default
+moves.
+
 **The orphan sweep** (`sandbox/orphan-reaper.ts`, run every 10 minutes by `JobManager`)
 destroys containers this instance created that no project row references any more. Boot
 fails every in-flight run and never reattaches, so a crash, a hard kill or a lost provider

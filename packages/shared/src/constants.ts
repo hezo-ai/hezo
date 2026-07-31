@@ -60,9 +60,15 @@ export const MAX_CHAT_HISTORY_SIZE_MAX = 256 * 1024;
 
 /**
  * Instance-wide cap on simultaneously ACTIVE (running) project containers,
- * including the assistant chat's container. Combined with the per-container RAM
- * cap, this bounds total memory demand at `N × cap` no matter how many runs
- * share a container. Stored in system_meta; when the key is absent the
+ * **excluding** the assistant chat's container, which is exempt: a queued task
+ * run is invisible and harmless, while a queued chat turn is a person watching
+ * a spinner, so chat must never wait behind background work. The memory budget
+ * reserves for it up front instead (see
+ * {@link computeDefaultMaxActiveContainers}), which also keeps task-run
+ * capacity a stable number - opening the chat never silently slows the fleet.
+ *
+ * Combined with the per-container RAM cap, this bounds total memory demand at
+ * `N × cap`. Stored in system_meta; when the key is absent the
  * effective default is COMPUTED from host memory via
  * {@link computeDefaultMaxActiveContainers} — the constant below is only the
  * last-resort fallback when host memory is unreadable. Clamped to [MIN, MAX].
@@ -82,12 +88,33 @@ export const RAM_CAP_PER_CONTAINER_GB_MIN = 1;
 export const RAM_CAP_PER_CONTAINER_GB_MAX = 512;
 
 /**
+/**
+ * Held back from the container budget for the host and the Hezo process itself.
+ *
+ * It also absorbs the per-container `MEMORY_HARD_CAP_HEADROOM_BYTES` slack that
+ * the whole-GiB arithmetic below does not model exactly.
+ */
+export const SYSTEM_RESERVE_GB = 1;
+
+/**
  * The automatic max-active-containers default: how many ram-cap-sized
- * containers fit in the host's total virtual memory (RAM + swap), so total
- * container demand can never exceed what the host actually has. The reference
- * 1.92GiB-RAM + 6GiB-swap host rounds to 8GiB and yields 8 / 2 = 4. Pure math
- * (shared so the web settings page can render the same formula); byte inputs
- * come from the server's host-memory probe.
+ * containers fit in the host's total virtual memory (RAM + swap) **after
+ * reserving for the system and for the chat's container**, so total demand can
+ * never exceed what the host actually has.
+ *
+ * The chat container is reserved for up front rather than subtracted when a
+ * session opens, which is what keeps task-run capacity stable: opening the chat
+ * never silently slows the fleet.
+ *
+ * **This lowers the computed default on small hosts, and that is the point.**
+ * The documented 1.92 GiB RAM + 6 GiB swap reference host rounds to 8 GiB and
+ * used to yield 8 / 2 = 4; it now yields (8 - 1 - 2) / 2 = 2. Four was
+ * over-subscribed - it only ever fit by leaning on swap and by pretending the
+ * chat container did not exist. Instances that have explicitly set
+ * `max_active_containers` keep their value; only the computed default moves.
+ *
+ * Pure math (shared so the web settings page renders the same formula); byte
+ * inputs come from the server's host-memory probe.
  */
 export function computeDefaultMaxActiveContainers(
 	totalRamBytes: number,
@@ -95,8 +122,11 @@ export function computeDefaultMaxActiveContainers(
 	ramCapGb: number,
 ): number {
 	const gib = 1024 ** 3;
+	const cap = Math.max(1, ramCapGb);
 	const totalGib = Math.round((totalRamBytes + totalSwapBytes) / gib);
-	const computed = Math.floor(totalGib / Math.max(1, ramCapGb));
+	// The chat's container is one cap's worth; the system reserve is on top.
+	const usableGib = Math.max(0, totalGib - SYSTEM_RESERVE_GB - cap);
+	const computed = Math.floor(usableGib / cap);
 	return Math.min(MAX_ACTIVE_CONTAINERS_MAX, Math.max(MAX_ACTIVE_CONTAINERS_MIN, computed));
 }
 

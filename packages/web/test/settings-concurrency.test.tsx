@@ -17,11 +17,16 @@ test('concurrency settings page shows the computed default, saves, and resets to
 
 	await findByRole('heading', { name: 'Concurrency' });
 
-	// Unset → the effective value is the host-memory-computed default.
+	// Unset → the effective value is the host-memory-computed default, which
+	// reserves for the system and for the chat's container before dividing:
+	// 8 GiB - 1 - 2, over 2 GB per container.
 	const maxInput = (await findByTestId('max-active-containers-input')) as HTMLInputElement;
-	expect(maxInput.value).toBe('4');
+	expect(maxInput.value).toBe('2');
 	const formula = await findByTestId('max-active-containers-formula');
-	expect(formula.textContent).toContain('= 4');
+	expect(formula.textContent).toContain('= 2');
+	// The reserve is shown, not just applied - otherwise the arithmetic on screen
+	// does not add up and reads as a bug.
+	expect(formula.textContent).toContain('chat container');
 	expect(queryByTestId('max-active-containers-reset')).toBeNull();
 
 	// An explicit value wins and offers a reset back to automatic.
@@ -39,10 +44,10 @@ test('concurrency settings page shows the computed default, saves, and resets to
 	expect(data.max_active_containers_is_set).toBe(true);
 
 	await user.click(reset);
-	await waitFor(() => expect(maxInput.value).toBe('4'));
+	await waitFor(() => expect(maxInput.value).toBe('2'));
 	res = await apiBase('/api/instance-settings', { headers: auth });
 	data = (await res.json()).data;
-	expect(data.max_active_containers).toBe(4);
+	expect(data.max_active_containers).toBe(2);
 	expect(data.max_active_containers_is_set).toBe(false);
 });
 
@@ -61,9 +66,10 @@ test('raising the ram cap lowers the automatic container limit and persists', as
 	await user.click(await findByTestId('ram-cap-save'));
 	await waitFor(() => expect(ramInput.value).toBe('4'));
 
-	// The automatic limit follows the new divisor: 8GB / 4GB = 2.
+	// The automatic limit follows the new divisor and the larger chat reserve:
+	// (8 - 1 - 4) / 4 floors to 0, clamped up to the minimum.
 	const formula = await findByTestId('max-active-containers-formula');
-	await waitFor(() => expect(formula.textContent).toContain('= 2'));
+	await waitFor(() => expect(formula.textContent).toContain('= 1'));
 
 	const { apiBase, token } = getTestContext();
 	const res = await apiBase('/api/instance-settings', {
@@ -71,7 +77,7 @@ test('raising the ram cap lowers the automatic container limit and persists', as
 	});
 	const data = (await res.json()).data;
 	expect(data.default_ram_cap_per_container_gb).toBe(4);
-	expect(data.max_active_containers).toBe(2);
+	expect(data.max_active_containers).toBe(1);
 });
 
 test('saves the container idle timeout, including 0 for always-on', async () => {

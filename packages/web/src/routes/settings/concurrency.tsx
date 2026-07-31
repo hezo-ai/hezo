@@ -7,6 +7,7 @@ import {
 	MAX_ACTIVE_CONTAINERS_MIN,
 	RAM_CAP_PER_CONTAINER_GB_MAX,
 	RAM_CAP_PER_CONTAINER_GB_MIN,
+	SYSTEM_RESERVE_GB,
 } from '@hezo/shared';
 import { createFileRoute } from '@tanstack/react-router';
 import { Loader2 } from 'lucide-react';
@@ -188,7 +189,7 @@ function MaxActiveContainersForm({ settings }: { settings: InstanceSettings }) {
 			<p className="text-[13px] text-text-2 mt-1.5" data-testid="max-active-containers-formula">
 				{settings.max_active_containers_is_set
 					? `Set explicitly - the automatic value for this host would be ${settings.max_active_containers_computed_default}.`
-					: `Automatic: this host has ${ram} GB RAM + ${swap} GB swap (~${total} GB) / ${settings.default_ram_cap_per_container_gb} GB per container = ${settings.max_active_containers_computed_default}.`}
+					: `Automatic: this host has ${ram} GB RAM + ${swap} GB swap (~${total} GB), less ${SYSTEM_RESERVE_GB} GB for the system and ${settings.default_ram_cap_per_container_gb} GB for the chat container, / ${settings.default_ram_cap_per_container_gb} GB per container = ${settings.max_active_containers_computed_default}.`}
 			</p>
 			{error && (
 				<p className="text-[13px] text-danger mt-1.5" data-testid="max-active-containers-error">
