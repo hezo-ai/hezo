@@ -1,11 +1,5 @@
 import { join } from 'node:path';
-import {
-	ContainerStatus,
-	RepoSetupStatus,
-	repoNameFromIdentifier,
-	TERMINAL_TASK_STATUSES,
-	wsRoom,
-} from '@hezo/shared';
+import { ContainerStatus, RepoSetupStatus, repoNameFromIdentifier, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
@@ -23,7 +17,6 @@ import {
 	getWorktreeState,
 	listWorktrees,
 	type RepoLoc,
-	removeWorktreesWhere,
 	resetCloneToOrigin,
 	type WorktreeLoc,
 } from '../services/git';
@@ -34,6 +27,7 @@ import { performRepoSetup } from '../services/repo-provisioning';
 import { refreshRepoPushAccess } from '../services/repo-push-access';
 import { removeRepoFromWorkspace } from '../services/repo-sync';
 import { countActiveRunsInProject } from '../services/run-concurrency';
+import { collectFinishedWorktrees } from '../services/sandbox/worktree-gc';
 import { type BridgeRunnerArgs, withProvisionBridge } from '../services/ssh-agent';
 import {
 	CONTAINER_WORKSPACE_ROOT,
@@ -532,24 +526,18 @@ reposRoutes.post('/projects/:projectId/repos/:repoId/reset', async (c) => {
 				// finished tickets plus leftovers from crashed/interrupted runs. Open
 				// tasks' worktrees are left intact; reset is already 409-gated on active
 				// runs, so nothing live is touched. Committed work survives on the pushed
-				// `hezo/<identifier>` branch refs. `removeWorktreesWhere` also runs the
-				// plain `git worktree prune` afterward to clear any dangling metadata.
-				const taskRows = await db.query<{ identifier: string; status: string }>(
-					'SELECT identifier, status FROM tasks WHERE project_id = $1',
-					[projectId],
-				);
-				const statusByIdentifier = new Map(taskRows.rows.map((t) => [t.identifier, t.status]));
-				const isStale = (identifier: string): boolean => {
-					const status = statusByIdentifier.get(identifier);
-					return (
-						status === undefined || (TERMINAL_TASK_STATUSES as readonly string[]).includes(status)
-					);
-				};
-				const removed = await removeWorktreesWhere(
+				// `hezo/<identifier>` branch refs. The sweep also runs the plain
+				// `git worktree prune` afterward to clear any dangling metadata.
+				//
+				// Same policy as the automatic per-run sweep, and unbounded here: a human
+				// asked for this and is waiting on the result, so it clears everything
+				// rather than leaving a remainder for later.
+				const { removed } = await collectFinishedWorktrees(
+					db,
 					executor,
-					repo.repoLoc,
-					CONTAINER_WORKTREES_ROOT,
-					isStale,
+					projectId,
+					[repo.repoLoc],
+					undefined,
 				);
 				return { success: true, removed };
 			}

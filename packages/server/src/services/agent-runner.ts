@@ -123,6 +123,7 @@ import { dockerSandboxHandle } from './sandbox/handle';
 import { setPoolMemberUnpushedFlag } from './sandbox/pool-db';
 import { type RunTunnel, startRunTunnel } from './sandbox/tunnel/run-tunnel';
 import { buildTunnelHostPolicy } from './sandbox/tunnel/split-routing';
+import { collectFinishedWorktrees } from './sandbox/worktree-gc';
 import { type BridgeRunnerArgs, buildBridgeRunnerArgv, type SshAgentServer } from './ssh-agent';
 import { validateSubscriptionBlob } from './subscription-auth';
 import { recordStatusChange } from './task-events';
@@ -2133,6 +2134,30 @@ async function prepareWorktrees(
 			if (!existsSync(join(loc.hostPath, '.git'))) continue;
 			worktrees.push({ loc, headBefore: await getWorktreeHead(executor, loc) });
 			clones.push(repoLocOf(repoName));
+		}
+
+		// Reclaim the worktrees of finished tasks before the agent starts. Worktrees
+		// are deliberately kept after a run (a task gets many runs and reusing its
+		// worktree is the common case), so a container that serves twenty tasks
+		// accumulates twenty worktrees and their node_modules. On the operator's own
+		// daemon that only costs disk; a managed sandbox has a few GB in total, and
+		// package caches cannot be moved onto the shared store, so this is the only
+		// lever on that budget.
+		//
+		// Bounded per repo so a long backlog costs a predictable amount per run, and
+		// best-effort: reclaimed disk is never worth failing a run over. Only tasks
+		// that are terminal or gone are touched, and committed work survives on the
+		// `hezo/<identifier>` branch ref regardless.
+		try {
+			const gc = await collectFinishedWorktrees(deps.db, executor, project.id, clones);
+			if (gc.removed.length > 0) {
+				emitSystem(
+					'stdout',
+					`(reclaimed ${gc.removed.length} finished task worktree(s)${gc.deferred ? ', more remain for the next run' : ''})`,
+				);
+			}
+		} catch (e) {
+			log.error(`Run ${heartbeatRunId}: worktree GC failed:`, e);
 		}
 
 		return {

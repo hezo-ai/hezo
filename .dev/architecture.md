@@ -1040,11 +1040,17 @@ task run is invisible and harmless while a queued chat turn is a person watching
 spinner. The host still has to fit it, so `computeDefaultMaxActiveContainers` subtracts
 `SYSTEM_RESERVE_GB` (1) plus one container's worth for the chat before dividing. Reserving
 up front rather than subtracting when a session opens keeps task-run capacity a **stable**
-number - opening the chat never silently slows the fleet. This lowers the computed default
-on small hosts, deliberately: the documented 1.92 GiB + 6 GiB reference host goes from 4 to
-2, and 4 only ever fit by leaning on swap and by pretending the chat container did not
-exist. Instances that have explicitly set the value keep it; only the computed default
-moves.
+number - opening the chat never silently slows the fleet.
+
+The budget is total **virtual** memory: swap counts at full weight, which is deliberate for
+the local backend. An agent container is idle between execs, so its cold pages really can
+live on disk, and a host with swap configured genuinely fits more containers than its RAM
+alone - the reference host below fits nothing but the reserves without its swap. (A managed
+backend does no memory arithmetic at all; its cap is a spend guard.) This lowers the
+computed default on small hosts: the documented 1.92 GiB + 6 GiB reference host goes from 4
+to 2, and that drop is entirely the two reserves - the host itself, and the chat container
+the old formula pretended did not exist - not a discount on its swap. Instances that have
+explicitly set the value keep it; only the computed default moves.
 
 **The orphan sweep** (`sandbox/orphan-reaper.ts`, run every 10 minutes by `JobManager`)
 destroys containers this instance created that no project row references any more. Boot

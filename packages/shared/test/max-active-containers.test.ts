@@ -19,9 +19,26 @@ describe('computeDefaultMaxActiveContainers', () => {
 
 	it('rounds the total before dividing — the 1.92GiB + 6GiB reference host yields 2', () => {
 		// A "2GB" droplet reports ~1.92GiB MemTotal; 1.92 + 6 = 7.92 rounds to 8.
-		// This used to yield 4, which was over-subscribed: it only fit by leaning
-		// on swap and by pretending the chat container did not exist.
+		// This used to yield 4. The drop is the two reserves, NOT a discount on
+		// swap — see the swap assertions below.
 		expect(computeDefaultMaxActiveContainers(1.92 * GIB, 6 * GIB, 2)).toBe(2);
+	});
+
+	it('counts swap at full weight, including on the reference host', () => {
+		// A local agent container is idle between execs, so cold pages really can
+		// live on disk and a swap-configured host genuinely fits more containers
+		// than its RAM alone. A GiB of swap must therefore buy exactly what a GiB
+		// of RAM buys — asserted as an equivalence so a future "swap is worth half"
+		// discount fails here rather than quietly halving every host's default.
+		expect(computeDefaultMaxActiveContainers(1.92 * GIB, 6 * GIB, 2)).toBe(
+			computeDefaultMaxActiveContainers(7.92 * GIB, 0, 2),
+		);
+		// And it is load-bearing on the reference host: without its swap the same
+		// box fits nothing but the reserves and clamps to the minimum.
+		expect(computeDefaultMaxActiveContainers(1.92 * GIB, 0, 2)).toBe(1);
+		expect(computeDefaultMaxActiveContainers(1.92 * GIB, 6 * GIB, 2)).toBe(2);
+		// More swap keeps buying capacity rather than saturating.
+		expect(computeDefaultMaxActiveContainers(1.92 * GIB, 14 * GIB, 2)).toBe(6);
 	});
 
 	it('scales with the cap — the same host with a 4GB cap yields 1', () => {

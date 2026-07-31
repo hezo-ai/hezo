@@ -106,12 +106,19 @@ export const SYSTEM_RESERVE_GB = 1;
  * session opens, which is what keeps task-run capacity stable: opening the chat
  * never silently slows the fleet.
  *
- * **This lowers the computed default on small hosts, and that is the point.**
- * The documented 1.92 GiB RAM + 6 GiB swap reference host rounds to 8 GiB and
- * used to yield 8 / 2 = 4; it now yields (8 - 1 - 2) / 2 = 2. Four was
- * over-subscribed - it only ever fit by leaning on swap and by pretending the
- * chat container did not exist. Instances that have explicitly set
- * `max_active_containers` keep their value; only the computed default moves.
+ * **Swap counts at full weight**, and that is deliberate for a local backend: an
+ * agent container spends most of its life idle between execs, so pages that are
+ * cold really can live on disk, and a host with swap configured genuinely fits
+ * more containers than its RAM alone. The budget is total virtual memory, not
+ * RAM. (A managed backend does no memory arithmetic at all - its cap is a spend
+ * guard.)
+ *
+ * **This lowers the computed default on small hosts.** The documented 1.92 GiB
+ * RAM + 6 GiB swap reference host rounds to 8 GiB and used to yield 8 / 2 = 4;
+ * it now yields (8 - 1 - 2) / 2 = 2. That drop comes entirely from the two
+ * reserves - the host itself, and the chat container the old formula pretended
+ * did not exist - not from discounting its swap. Instances that have explicitly
+ * set `max_active_containers` keep their value; only the computed default moves.
  *
  * Pure math (shared so the web settings page renders the same formula); byte
  * inputs come from the server's host-memory probe.

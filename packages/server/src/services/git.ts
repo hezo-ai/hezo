@@ -761,17 +761,24 @@ export async function removeWorktree(
  * by the admin "Prune worktrees" action to clear worktrees of closed/orphaned tasks; the
  * main worktree (the clone under `/workspace`) never sits under the worktrees root, so it
  * is inherently skipped.
+ *
+ * `limit` bounds one pass. The admin action leaves it unset and sweeps everything; the
+ * automatic per-run sweep caps it, so a container carrying a long backlog of stale
+ * worktrees pays a bounded cost per run instead of stalling one run to clear all of them.
+ * Callers that care whether more remain compare `removed.length` against the cap.
  */
 export async function removeWorktreesWhere(
 	executor: GitExecutor,
 	repo: RepoLoc,
 	worktreesRootContainer: string,
 	shouldRemove: (taskIdentifier: string) => boolean,
+	limit?: number,
 ): Promise<string[]> {
 	const prefix = `${worktreesRootContainer}/`;
 	const entries = await listWorktrees(executor, repo);
 	const removed: string[] = [];
 	for (const entry of entries) {
+		if (limit !== undefined && removed.length >= limit) break;
 		if (!entry.path.startsWith(prefix)) continue;
 		const taskIdentifier = entry.path.slice(prefix.length).split('/')[0];
 		if (!taskIdentifier || !shouldRemove(taskIdentifier)) continue;
