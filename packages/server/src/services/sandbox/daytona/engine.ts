@@ -145,22 +145,39 @@ export class DaytonaEngine implements ContainerEngine {
 			autoDeleteInterval: -1,
 		});
 		this.sandboxes.set(sandbox.id, sandbox);
+		// Create returns while the sandbox is still `creating`. Docker's create +
+		// start hands back something immediately usable, so the wait belongs here
+		// rather than at every call site: without it the caller's first
+		// `inspectContainer` reads `Running: false` on a sandbox that is merely
+		// coming up, and the container-death path fails the run out from under it.
+		await this.settle(sandbox.id);
 		return { Id: sandbox.id, Warnings: [] };
 	}
 
 	async startContainer(containerId: string): Promise<void> {
-		const sandbox = await this.fetch(containerId);
+		// A stop that has been *accepted* but not finished leaves the sandbox in
+		// `stopping`, and starting from there is a hard 409 ("Sandbox state change
+		// in progress") - measured against the live API. Settling first is what
+		// makes stop-then-start work, which is exactly what the chat's resume path
+		// and the pool's resume rung both do.
+		const settled = await this.settle(containerId);
 		// Unlike Docker, create leaves the sandbox running - starting a started
 		// sandbox is an error there, so the state check is required rather than
 		// an optimization.
-		if (sandbox && isRunning(sandbox.state)) return;
+		if (settled && isRunning(settled.state)) return;
 		await this.client.start(containerId);
 		this.sandboxes.delete(containerId);
+		await this.settle(containerId);
 	}
 
 	async stopContainer(containerId: string): Promise<void> {
+		await this.settle(containerId);
 		await this.client.stop(containerId);
 		this.sandboxes.delete(containerId);
+		// Settle on the way out too, so the caller's next `inspectContainer` reads
+		// `stopped` rather than the transitional `stopping` - the difference
+		// between a suspended container and one that reads as dead.
+		await this.settle(containerId);
 	}
 
 	async removeContainer(containerId: string): Promise<void> {
@@ -424,6 +441,41 @@ export class DaytonaEngine implements ContainerEngine {
 		this.execs.set(id, rec);
 	}
 
+	/**
+	 * Wait for a sandbox to reach a resting state.
+	 *
+	 * Daytona's lifecycle calls return when the transition has been **accepted**,
+	 * not when it has happened: create answers `creating`, stop answers
+	 * `stopping`, and both settle a beat later (measured: create -> started in
+	 * ~0.7s warm, stop -> stopped in ~1.1s). Docker's equivalents do not behave
+	 * that way, so absorbing the difference is this adapter's job - leaking it
+	 * upward produced two real failures: a 409 on stop-then-start, and a
+	 * just-created sandbox reading `Running: false` to the container-death path.
+	 *
+	 * Unknown states are treated as **transitional**, deliberately. A new
+	 * transitional state that we proceeded through would resurface as the 409 this
+	 * exists to remove, whereas a new resting state costs one bounded wait and
+	 * logs itself, which is how we would find out about it.
+	 */
+	private async settle(
+		containerId: string,
+		timeoutMs = SETTLE_TIMEOUT_MS,
+	): Promise<DaytonaSandbox | null> {
+		const deadline = Date.now() + timeoutMs;
+		let sandbox = await this.fetch(containerId, { refresh: true });
+		while (sandbox && !isSettled(sandbox.state)) {
+			if (Date.now() >= deadline) {
+				log.warn(
+					`sandbox ${containerId} still in state "${sandbox.state}" after ${timeoutMs}ms; proceeding`,
+				);
+				return sandbox;
+			}
+			await new Promise((resolve) => setTimeout(resolve, SETTLE_POLL_MS));
+			sandbox = await this.fetch(containerId, { refresh: true });
+		}
+		return sandbox;
+	}
+
 	private async fetch(
 		containerId: string,
 		opts: { refresh?: boolean } = {},
@@ -462,12 +514,37 @@ function shQuote(s: string): string {
  */
 const DAYTONA_IDLE_STOP_MIN = 10;
 
+/**
+ * How long a lifecycle call waits for the sandbox to reach a resting state, and
+ * how often it asks. Generous because a *cold* create builds the image (~31s
+ * measured) while a warm one settles in well under a second; the poll is only
+ * paid while something is actually in flight.
+ */
+const SETTLE_TIMEOUT_MS = 180_000;
+const SETTLE_POLL_MS = 500;
+
 function isRunning(state: string): boolean {
 	return state === 'started';
 }
 
 function isFailed(state: string): boolean {
 	return state === 'error' || state === 'build_failed';
+}
+
+/**
+ * Resting states - the ones Daytona stays in until something asks it to move.
+ * Everything else (`creating`, `starting`, `stopping`, `restoring`, …) is a
+ * transition in flight; see {@link DaytonaEngine.settle} for why the unknown
+ * case falls on the transitional side.
+ */
+function isSettled(state: string): boolean {
+	return (
+		isRunning(state) ||
+		isFailed(state) ||
+		state === 'stopped' ||
+		state === 'destroyed' ||
+		state === 'archived'
+	);
 }
 
 /**

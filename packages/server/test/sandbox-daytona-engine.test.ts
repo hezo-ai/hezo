@@ -423,3 +423,116 @@ describe('DaytonaEngine degradations', () => {
 		expect(await engine.inspectNetwork()).toBeNull();
 	});
 });
+
+/**
+ * Daytona's lifecycle calls return when the transition has been **accepted**,
+ * not when it has happened - create answers `creating`, stop answers `stopping`.
+ * Docker's do not behave that way, so absorbing it is the adapter's job, and
+ * leaking it upward produced two real failures against the live API: a hard 409
+ * ("Sandbox state change in progress") on stop-then-start, and a just-created
+ * sandbox reading `Running: false` straight into the container-death path.
+ */
+describe('DaytonaEngine settles a transition before returning', () => {
+	/**
+	 * An API whose state machine takes `steps` polls to reach its resting state,
+	 * the way the real one does.
+	 */
+	function laggyApi(opts: {
+		createStates?: string[];
+		stopStates?: string[];
+		startStates?: string[];
+	}): { api: DaytonaApi; polls: () => number } {
+		const queue = {
+			create: [...(opts.createStates ?? [])],
+			stop: [...(opts.stopStates ?? [])],
+			start: [...(opts.startStates ?? [])],
+		};
+		let active: 'create' | 'stop' | 'start' = 'create';
+		let polls = 0;
+		const sandbox: DaytonaSandbox = {
+			id: 'sbx-lag',
+			state: 'started',
+			labels: {},
+			toolboxProxyUrl: 'https://proxy.test/toolbox',
+		};
+		const { api } = fakeApi(
+			{
+				createSandbox: async () => {
+					active = 'create';
+					sandbox.state = queue.create.length > 0 ? 'creating' : 'started';
+					return sandbox;
+				},
+				getSandbox: async () => {
+					polls += 1;
+					const next = queue[active].shift();
+					if (next) sandbox.state = next;
+					return sandbox;
+				},
+				stop: async () => {
+					active = 'stop';
+					sandbox.state = 'stopping';
+				},
+				start: async () => {
+					active = 'start';
+					sandbox.state = queue.start.length > 0 ? 'starting' : 'started';
+				},
+			},
+			[sandbox],
+		);
+		return { api, polls: () => polls };
+	}
+
+	it('waits for a created sandbox to leave `creating`', async () => {
+		const { api } = laggyApi({ createStates: ['creating', 'creating', 'started'] });
+		const engine = new DaytonaEngine(api);
+		const { Id } = await engine.createContainer('c', {
+			Image: 'img',
+			HostConfig: {},
+		} as never);
+		// The caller's very first inspect must not read a coming-up sandbox as dead.
+		expect((await engine.inspectContainer(Id))?.State.Running).toBe(true);
+	});
+
+	it('waits out a `stopping` sandbox instead of starting into a 409', async () => {
+		// The live API rejects a start while the stop is still in flight, which is
+		// exactly what the chat's resume path and the pool's resume rung do.
+		const { api } = laggyApi({ stopStates: ['stopping', 'stopped'], startStates: ['started'] });
+		const engine = new DaytonaEngine(api);
+		await engine.stopContainer('sbx-lag');
+		// Settled on the way out: a suspended container must not read as dead.
+		expect((await engine.inspectContainer('sbx-lag'))?.State.Running).toBe(false);
+		await engine.startContainer('sbx-lag');
+		expect((await engine.inspectContainer('sbx-lag'))?.State.Running).toBe(true);
+	});
+
+	it('does not call start on a sandbox that is already started', async () => {
+		const { api, rec } = fakeApi({}, [
+			{ id: 'sbx-up', state: 'started', labels: {}, toolboxProxyUrl: 'https://p/toolbox' },
+		]);
+		await new DaytonaEngine(api).startContainer('sbx-up');
+		expect(rec.started).toEqual([]);
+	});
+
+	it('treats an unknown state as transitional, not as settled', async () => {
+		// The deliberate direction of the unknown case. A new *transitional* state
+		// we proceeded through would resurface as the 409 this exists to remove,
+		// whereas a new *resting* state costs one bounded wait and logs itself,
+		// which is how we would find out about it. Asserted as "does not return
+		// immediately" - the bound itself is 180s and not worth burning in a unit
+		// test.
+		const sandbox: DaytonaSandbox = {
+			id: 'sbx-weird',
+			state: 'some_new_state',
+			labels: {},
+			toolboxProxyUrl: 'https://proxy.test/toolbox',
+		};
+		const { api } = fakeApi({ getSandbox: async () => sandbox }, [sandbox]);
+		const engine = new DaytonaEngine(api);
+		await expect(
+			Promise.race([
+				engine.stopContainer('sbx-weird').then(() => 'returned'),
+				new Promise((resolve) => setTimeout(() => resolve('still waiting'), 300)),
+			]),
+		).resolves.toBe('still waiting');
+	});
+});
