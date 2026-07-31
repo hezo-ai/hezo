@@ -96,10 +96,14 @@ export function encodeOpen(streamId: number, target: TunnelTarget): Uint8Array {
 }
 
 /** A `WINDOW` frame's payload is a single u32 credit count. */
-export function encodeWindow(streamId: number, credit: number): Uint8Array {
+export function windowPayload(credit: number): Uint8Array {
 	const payload = new Uint8Array(4);
 	new DataView(payload.buffer).setUint32(0, credit, false);
-	return encodeFrame(FrameType.Window, streamId, payload);
+	return payload;
+}
+
+export function encodeWindow(streamId: number, credit: number): Uint8Array {
+	return encodeFrame(FrameType.Window, streamId, windowPayload(credit));
 }
 
 export function decodeWindowCredit(payload: Uint8Array): number {
