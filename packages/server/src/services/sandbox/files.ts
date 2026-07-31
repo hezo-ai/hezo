@@ -1,5 +1,14 @@
-import { type Dirent, existsSync, readdirSync, readFileSync, rmSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import {
+	chmodSync,
+	type Dirent,
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from 'node:fs';
+import { dirname, join, relative, sep } from 'node:path';
 
 /**
  * Reading and writing a run's artifact files, without assuming where they live.
@@ -37,6 +46,28 @@ export interface SandboxFiles {
 	 * every caller of this is a best-effort scrape.
 	 */
 	findByName(relDir: string, basename: string, maxDepth: number): Promise<string[]>;
+	/**
+	 * Write a whole file, creating its parent directories.
+	 *
+	 * **`mode` is part of the contract, not a detail.** These files carry
+	 * credentials and are read by a *deprivileged* process inside the container,
+	 * so two permission facts have to survive any move to a remote backend: the
+	 * credential file itself is `0o600`, and the directories above it are `0o711`
+	 * rather than `0o700` so the non-root run user can traverse down to the leaf
+	 * without being able to list what else is there. A remote implementation that
+	 * silently dropped the mode would either lock the run user out or widen a
+	 * credential to world-readable, and neither would fail loudly.
+	 *
+	 * The parent-directory mode is `dirMode`, applied to every directory this
+	 * call has to create.
+	 */
+	write(
+		relPath: string,
+		contents: string,
+		opts?: { mode?: number; dirMode?: number },
+	): Promise<void>;
+	/** Create a directory and its parents. `mode` applies to each one created. */
+	mkdir(relPath: string, opts?: { mode?: number }): Promise<void>;
 }
 
 /** Reject a relative path that would escape the root (`..`, or an absolute path). */
@@ -94,5 +125,52 @@ export function hostSandboxFiles(hostRoot: string): SandboxFiles {
 		},
 		findByName: async (relDir, basename, maxDepth) =>
 			walk(hostRoot, resolveWithin(hostRoot, relDir), basename, maxDepth, 0),
+		write: async (relPath, contents, opts = {}) => {
+			const full = resolveWithin(hostRoot, relPath);
+			makeDirs(hostRoot, dirname(full), opts.dirMode);
+			writeFileSync(full, contents, opts.mode === undefined ? undefined : { mode: opts.mode });
+			// Same umask reasoning as the directories: `writeFileSync`'s mode is
+			// masked, and a credential file that came out 0o000 under a strict
+			// umask would fail the run rather than leak - but it would fail
+			// confusingly, at the CLI, not here.
+			if (opts.mode !== undefined) forceMode(full, opts.mode);
+		},
+		mkdir: async (relPath, opts = {}) => {
+			makeDirs(hostRoot, resolveWithin(hostRoot, relPath), opts.mode);
+		},
 	};
+}
+
+/**
+ * `mkdir -p` with a mode that survives a strict process umask.
+ *
+ * `mkdirSync`'s mode is masked by the umask, so on a hardened host (umask 0o027
+ * or 0o077, common under systemd `UMask=`) an intended 0o711 is silently
+ * stripped to 0o710 or 0o700 - dropping the other-execute bit that lets the
+ * deprivileged container run user *traverse* down to its per-run leaf. The agent
+ * CLI then fails with EACCES opening a file that was chowned to it correctly.
+ * `chmodSync` is not subject to the umask, so every component this call creates
+ * is chmod'd afterwards, from the leaf back up to the root of this
+ * {@link SandboxFiles} - never above it, which is what bounds the walk.
+ */
+function makeDirs(root: string, dir: string, mode?: number): void {
+	mkdirSync(dir, { recursive: true });
+	if (mode === undefined) return;
+	let cursor = dir;
+	for (;;) {
+		forceMode(cursor, mode);
+		if (cursor === root) break;
+		const parent = dirname(cursor);
+		if (parent === cursor || relative(root, parent).startsWith('..')) break;
+		cursor = parent;
+	}
+}
+
+/** Best-effort chmod - a host where we cannot set a mode must not abort the run over it. */
+function forceMode(target: string, mode: number): void {
+	try {
+		chmodSync(target, mode);
+	} catch {
+		// Best-effort by design; see makeDirs.
+	}
 }

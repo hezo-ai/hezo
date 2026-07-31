@@ -1,4 +1,12 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+	chmodSync,
+	mkdirSync,
+	mkdtempSync,
+	rmSync,
+	statSync,
+	symlinkSync,
+	writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -83,5 +91,87 @@ describe('hostSandboxFiles', () => {
 		it('yields nothing for a directory that is not there', async () => {
 			expect(await hostSandboxFiles(root).findByName('missing', 'wire.jsonl', 8)).toEqual([]);
 		});
+	});
+});
+
+/**
+ * The write side exists so host-written, container-read files (the prompt, a
+ * subscription credential, runtime config) can move to a backend whose
+ * container is not on this machine. Modes are part of that contract, not a
+ * detail - the container reads them as a *deprivileged* user.
+ */
+describe('hostSandboxFiles write side', () => {
+	it('writes a file, creating its parent directories', async () => {
+		const root = mkdtempSync(join(tmpdir(), 'sbx-write-'));
+		const files = hostSandboxFiles(root);
+		await files.write('.hezo/prompts/run-1.txt', 'do the thing');
+		expect(await files.read('.hezo/prompts/run-1.txt')).toBe('do the thing');
+		rmSync(root, { recursive: true, force: true });
+	});
+
+	it('applies the file mode even under a strict umask', async () => {
+		// writeFileSync's mode is masked by the process umask, so a 0o600
+		// credential can come out 0o000 on a hardened host - which fails the run
+		// confusingly, at the agent CLI, rather than here.
+		const prev = process.umask(0o077);
+		try {
+			const root = mkdtempSync(join(tmpdir(), 'sbx-mode-'));
+			const files = hostSandboxFiles(root);
+			await files.write('auth.json', '{"token":"x"}', { mode: 0o600 });
+			expect(statSync(join(root, 'auth.json')).mode & 0o777).toBe(0o600);
+			rmSync(root, { recursive: true, force: true });
+		} finally {
+			process.umask(prev);
+		}
+	});
+
+	it('keeps the traversal bit on parent dirs under a strict umask', async () => {
+		// 0o711 rather than 0o700 so the non-root run user can traverse down to
+		// its per-run leaf without being able to list what else is there. A umask
+		// of 0o077 strips the other-execute bit from mkdirSync's mode.
+		const prev = process.umask(0o077);
+		try {
+			const root = mkdtempSync(join(tmpdir(), 'sbx-dir-'));
+			const files = hostSandboxFiles(root);
+			await files.write('subscription/anthropic/run-1/auth.json', 'v', {
+				mode: 0o600,
+				dirMode: 0o711,
+			});
+			for (const rel of [
+				'subscription',
+				'subscription/anthropic',
+				'subscription/anthropic/run-1',
+			]) {
+				expect(statSync(join(root, rel)).mode & 0o777, rel).toBe(0o711);
+			}
+			rmSync(root, { recursive: true, force: true });
+		} finally {
+			process.umask(prev);
+		}
+	});
+
+	it('never chmods above its own root', async () => {
+		// The root is the boundary that bounds the walk - reaching past it would
+		// re-mode directories this SandboxFiles does not own.
+		const parent = mkdtempSync(join(tmpdir(), 'sbx-outer-'));
+		const root = join(parent, 'inner');
+		mkdirSync(root);
+		chmodSync(parent, 0o755);
+		await hostSandboxFiles(root).write('a/b.txt', 'x', { dirMode: 0o711 });
+		expect(statSync(parent).mode & 0o777).toBe(0o755);
+		rmSync(parent, { recursive: true, force: true });
+	});
+
+	it('refuses a write that would escape the root', async () => {
+		const root = mkdtempSync(join(tmpdir(), 'sbx-esc-'));
+		await expect(hostSandboxFiles(root).write('../outside.txt', 'x')).rejects.toThrow(/escapes/);
+		rmSync(root, { recursive: true, force: true });
+	});
+
+	it('creates a directory with mkdir', async () => {
+		const root = mkdtempSync(join(tmpdir(), 'sbx-mkdir-'));
+		await hostSandboxFiles(root).mkdir('a/b/c', { mode: 0o711 });
+		expect(statSync(join(root, 'a/b/c')).mode & 0o777).toBe(0o711);
+		rmSync(root, { recursive: true, force: true });
 	});
 });

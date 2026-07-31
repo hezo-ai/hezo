@@ -1,5 +1,6 @@
 import { logger } from '../logger';
 import type { ContainerEngine } from './docker';
+import { dockerSandboxHandle } from './sandbox/handle';
 
 const log = logger.child('container-user');
 
@@ -30,6 +31,13 @@ export function clearContainerRunUserCache(containerId?: string): void {
 	else cache.clear();
 }
 
+/**
+ * The pre-run-user probe's exec. Deliberately **not** on `SandboxHandle`: the
+ * handle is built from a `ContainerRunUser`, and this is the call that
+ * *determines* one - there is nothing to build it from yet. Same reason the
+ * provision-time execs (MTU pin, `update-ca-certificates`, the mount probe)
+ * stay on the raw engine.
+ */
 async function execCapture(
 	docker: ContainerEngine,
 	containerId: string,
@@ -200,11 +208,14 @@ export async function chownToRunUser(
 	const owner = `${shSingleQuote(runUser.name)}:${shSingleQuote(runUser.name)}`;
 	const targets = containerPaths.map(shSingleQuote).join(' ');
 	try {
-		const { exitCode, stderr } = await execCapture(
-			docker,
-			containerId,
-			`chown ${flag}${owner} ${targets}`,
-		);
+		// Elevated by necessity: this is the one exec that runs *as root against a
+		// known run user* - it exists to hand ownership over to that user, so it
+		// cannot run as them. Everything else in this file is the pre-run-user
+		// probe, which has no handle to build (see execCapture).
+		const { exitCode, stderr } = await dockerSandboxHandle(docker, containerId, runUser).exec({
+			cmd: ['sh', '-c', `chown ${flag}${owner} ${targets}`],
+			elevated: true,
+		});
 		if (exitCode !== 0) {
 			log.warn(
 				`chown to ${runUser.name} exited ${exitCode} for [${containerPaths.join(', ')}]: ${stderr.trim()}`,

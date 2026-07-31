@@ -1,12 +1,4 @@
-import {
-	type Dirent,
-	existsSync,
-	mkdirSync,
-	readdirSync,
-	readFileSync,
-	rmSync,
-	writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
 	AgentRuntime,
@@ -362,12 +354,17 @@ export function getHostPromptPath(
 	projectId: string,
 	heartbeatRunId: string,
 ): string {
-	return join(
-		getWorkspacePath(dataDir, teamId, projectId),
-		'.hezo',
-		'prompts',
-		`${heartbeatRunId}.txt`,
-	);
+	return join(getWorkspacePath(dataDir, teamId, projectId), getPromptRelPath(heartbeatRunId));
+}
+
+/**
+ * The prompt file's path *relative to the workspace root*, which is the form a
+ * {@link SandboxFiles} takes. The absolute host path above is derived from it
+ * rather than the other way round, so the two can never disagree about where
+ * the file is - the bug a second hand-written join would eventually introduce.
+ */
+export function getPromptRelPath(heartbeatRunId: string): string {
+	return join('.hezo', 'prompts', `${heartbeatRunId}.txt`);
 }
 
 // Basename of the Grok `--debug-file`, written into the per-run home mount so it
@@ -1279,12 +1276,13 @@ export async function runAgent(
 			progressUpdate ?? null,
 		);
 
-		const hostPromptPath = getHostPromptPath(
-			deps.dataDir,
-			project.team_id,
-			project.id,
-			heartbeatRunId,
+		// Rooted at the workspace, which is what makes the prompt path relative and
+		// so switchable; the absolute form is still needed for the env var the
+		// container reads it from.
+		const workspaceFiles = hostSandboxFiles(
+			getWorkspacePath(deps.dataDir, project.team_id, project.id),
 		);
+		const promptRelPath = getPromptRelPath(heartbeatRunId);
 
 		const pricing = deps.pricing;
 		const priceFn = pricing
@@ -1296,8 +1294,12 @@ export async function runAgent(
 			const mount = context.subscriptionMount;
 			if (!mount?.rotates) return;
 			try {
-				if (existsSync(mount.hostAuthFile)) {
-					const rotated = readFileSync(mount.hostAuthFile, 'utf8');
+				// Through SandboxFiles: the *container* rewrote this file during the
+				// run, so a backend whose container is not on this machine has to
+				// read it back through the provider's file API rather than off disk.
+				const mountFiles = hostSandboxFiles(mount.hostDir);
+				if (await mountFiles.exists(mount.authFileRelative)) {
+					const rotated = await mountFiles.read(mount.authFileRelative);
 					if (!rotated || rotated === credential.value) return;
 					// The CLI rewrites this file on every run: a rotated credential on
 					// success, but an empty "tombstone" (blank tokens) when the refresh
@@ -1339,7 +1341,7 @@ export async function runAgent(
 				}
 			};
 			await step('persist-rotated-auth', persistRotatedAuth);
-			await step('remove-prompt', () => rmSync(hostPromptPath, { force: true }));
+			await step('remove-prompt', () => workspaceFiles.remove(promptRelPath));
 			await step('remove-home-mount', () => {
 				const dirToRemove = context.subscriptionMount?.hostDir ?? context.homeMount?.hostDir;
 				if (dirToRemove) {
@@ -1388,8 +1390,10 @@ export async function runAgent(
 
 			if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
-			mkdirSync(dirname(hostPromptPath), { recursive: true });
-			writeFileSync(hostPromptPath, context.taskPrompt);
+			// Through SandboxFiles rather than a host write: the container reads this
+			// file, so on a backend whose container is not on this machine the write
+			// has to go through the provider's file API. Nothing else about it changes.
+			await workspaceFiles.write(promptRelPath, context.taskPrompt);
 
 			const redactedCmd = context.cmd.map((arg) => arg.replace(/Bearer [^"\s]+/g, 'Bearer ***'));
 			const promptSuffix = context.promptAsArg

@@ -183,6 +183,14 @@ export function getHostSubscriptionRoot(
 export interface SubscriptionMount {
 	hostDir: string;
 	hostAuthFile: string;
+	/**
+	 * The auth file's path *relative to `hostDir`*, which is the form a
+	 * `SandboxFiles` takes. The rotated-credential read-back goes through that
+	 * seam: the container rewrites this file during the run, so on a backend
+	 * whose container is not on this machine the host cannot simply read it
+	 * back - that read-back is one of the cases the abstraction exists for.
+	 */
+	authFileRelative: string;
 	containerDir: string;
 	envEntries: string[];
 	rotates: boolean;
@@ -226,6 +234,7 @@ export function buildSubscriptionMount(
 	return {
 		hostDir,
 		hostAuthFile,
+		authFileRelative,
 		containerDir,
 		envEntries: [`${layout.envVarName}=${containerDir}`],
 		rotates: layout.rotates,
