@@ -117,6 +117,7 @@ import {
 } from './runtime-home';
 import { resolveRuntimeForTask } from './runtime-resolver';
 import { DOCKER_CONTAINER_HOST_ALIAS, dockerRunEndpoints } from './sandbox/endpoints';
+import { hostSandboxFiles, type SandboxFiles } from './sandbox/files';
 import { type BridgeRunnerArgs, buildBridgeRunnerArgv, type SshAgentServer } from './ssh-agent';
 import { validateSubscriptionBlob } from './subscription-auth';
 import { recordStatusChange } from './task-events';
@@ -387,27 +388,6 @@ const KIMI_SESSION_LOG_BASENAME = 'wire.jsonl';
 // walk.
 const KIMI_SESSION_LOG_MAX_DEPTH = 8;
 
-/** Collect every `wire.jsonl` beneath `root`, depth-bounded and best-effort. */
-function findKimiSessionLogs(root: string, depth = 0): string[] {
-	if (depth > KIMI_SESSION_LOG_MAX_DEPTH) return [];
-	let entries: Dirent[];
-	try {
-		entries = readdirSync(root, { withFileTypes: true });
-	} catch {
-		return [];
-	}
-	const out: string[] = [];
-	for (const entry of entries) {
-		const full = join(root, entry.name);
-		// `withFileTypes` reports a symlink as neither file nor directory, so
-		// following one is opt-in — and we never opt in. That is what makes the
-		// depth cap sufficient to bound this walk.
-		if (entry.isDirectory()) out.push(...findKimiSessionLogs(full, depth + 1));
-		else if (entry.isFile() && entry.name === KIMI_SESSION_LOG_BASENAME) out.push(full);
-	}
-	return out;
-}
-
 /**
  * Recover a run's token usage for the runtimes that report none on stdout.
  *
@@ -426,49 +406,42 @@ function findKimiSessionLogs(root: string, depth = 0): string[] {
  * usage. Best-effort throughout: a missing or unreadable log yields null (⇒ $0
  * rather than a failed run), and the home mount is removed at cleanup regardless.
  */
-export function recoverOffStreamRunUsage(
+export async function recoverOffStreamRunUsage(
 	runtimeType: AgentRuntime,
-	homeMount: RuntimeHomeMount | null,
+	files: SandboxFiles | null,
 	priceFn: ((model: string | undefined, tokens: CostTokens) => number) | undefined,
 	onError: (msg: string) => void,
-): AgentRunUsage | null {
-	if (!homeMount) return null;
+): Promise<AgentRunUsage | null> {
+	if (!files) return null;
 	if (runtimeType === AgentRuntime.Grok) {
-		const debugPath = join(homeMount.hostDir, GROK_DEBUG_BASENAME);
 		try {
-			if (!existsSync(debugPath)) return null;
-			return extractGrokUsageFromDebugLog(readFileSync(debugPath, 'utf8'), priceFn);
+			if (!(await files.exists(GROK_DEBUG_BASENAME))) return null;
+			return extractGrokUsageFromDebugLog(await files.read(GROK_DEBUG_BASENAME), priceFn);
 		} catch (e) {
 			onError(`failed to read grok debug log for usage: ${(e as Error).message}`);
 			return null;
 		} finally {
-			try {
-				rmSync(debugPath, { force: true });
-			} catch {
-				// The whole home mount is removed at cleanup; a failed scrub here is not fatal.
-			}
+			await files.remove(GROK_DEBUG_BASENAME);
 		}
 	}
 	if (runtimeType === AgentRuntime.Kimi) {
-		const logPaths = findKimiSessionLogs(join(homeMount.hostDir, 'sessions'));
+		const logPaths = await files.findByName(
+			'sessions',
+			KIMI_SESSION_LOG_BASENAME,
+			KIMI_SESSION_LOG_MAX_DEPTH,
+		);
 		if (logPaths.length === 0) return null;
 		try {
 			// The home dir is per-run, so in practice there is exactly one session.
 			// Concatenating tolerates a resumed or sub-agent session without
 			// double-counting: the extractor dedupes by record identity, not by file.
-			const contents = logPaths.map((p) => readFileSync(p, 'utf8')).join('\n');
+			const contents = (await Promise.all(logPaths.map((p) => files.read(p)))).join('\n');
 			return extractKimiUsageFromSessionLog(contents, priceFn);
 		} catch (e) {
 			onError(`failed to read kimi session log for usage: ${(e as Error).message}`);
 			return null;
 		} finally {
-			for (const p of logPaths) {
-				try {
-					rmSync(p, { force: true });
-				} catch {
-					// See above — cleanup removes the mount regardless.
-				}
-			}
+			for (const p of logPaths) await files.remove(p);
 		}
 	}
 	return null;
@@ -1480,8 +1453,11 @@ export async function runAgent(
 			// file each writes into the per-run home mount, then scrub that file (both
 			// can carry the provider credential). Falls back to null (⇒ $0) if the log
 			// is missing/unparseable; the home mount is removed at cleanup anyway.
-			const runUsage = recoverOffStreamRunUsage(runtimeType, context.homeMount, priceFn, (msg) =>
-				log.error(`Run ${heartbeatRunId}: ${msg}`),
+			const runUsage = await recoverOffStreamRunUsage(
+				runtimeType,
+				context.homeMount ? hostSandboxFiles(context.homeMount.hostDir) : null,
+				priceFn,
+				(msg) => log.error(`Run ${heartbeatRunId}: ${msg}`),
 			);
 
 			// A clean exit is only a real success if the run produced persisted
