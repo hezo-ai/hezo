@@ -78,7 +78,13 @@ beforeAll(async () => {
 		'sleep',
 		'infinity',
 	]);
-	expect(run.exitCode).toBe(0);
+	// Name the daemon's own complaint: a bare `expect(exitCode).toBe(0)` reports
+	// "expected 1 to be 0", which says nothing about why the container refused.
+	if (run.exitCode !== 0) {
+		throw new Error(
+			`docker run failed (${run.exitCode}): ${run.stderr.trim() || run.stdout.trim()}`,
+		);
+	}
 	containerId = run.stdout.trim();
 	docker = new DockerClient();
 	// The bind mount is root-owned by default; the tunnel client runs as the
@@ -89,9 +95,24 @@ beforeAll(async () => {
 afterAll(async () => {
 	if (finalSkipReason) return;
 	tunnel?.close();
-	if (containerId) await runCommand('docker', ['rm', '-f', containerId]);
+	// Empty the bind mount from *inside* the container first. Its contents are
+	// written by container processes and can end up owned by a uid the test
+	// process is not, which a host-side recursive delete cannot always unlink -
+	// on a CI runner it surfaced as an EFAULT out of `rmSync`. Docker owns those
+	// files, so let Docker remove them.
+	if (containerId) {
+		await runCommand('docker', ['exec', containerId, 'sh', '-c', 'rm -rf /workspace/.hezo']);
+		await runCommand('docker', ['rm', '-f', containerId]);
+	}
 	if (upstream) await new Promise<void>((resolve) => upstream.close(() => resolve()));
-	if (workspace) rmSync(workspace, { recursive: true, force: true });
+	// Best-effort: a leftover temp dir is worth far less than a red suite.
+	if (workspace) {
+		try {
+			rmSync(workspace, { recursive: true, force: true });
+		} catch {
+			// Reclaimed by the runner; nothing here outlives the job.
+		}
+	}
 });
 
 /** curl a tunnel loopback port from inside the container. */

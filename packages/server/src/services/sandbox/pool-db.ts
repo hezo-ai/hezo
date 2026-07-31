@@ -7,6 +7,14 @@
  */
 
 import type { Db } from '../../db/database';
+import {
+	POOL_DISK_CEILING_BYTES,
+	type PoolCapacity,
+	type PoolDecision,
+	type PoolMember,
+	type PoolMemberState,
+	selectPoolMember,
+} from './pool';
 
 /**
  * Record whether a container is holding committed work that reached no durable
@@ -34,6 +42,64 @@ export async function setPoolMemberUnpushedFlag(
 		    AND has_unpushed_commits IS DISTINCT FROM $2`,
 		[containerId, hasUnpushedCommits],
 	);
+}
+
+/**
+ * Load a project's pool members in the shape the pure ladder reads.
+ *
+ * `atDiskCeiling` is derived here rather than stored: the ceiling is a policy
+ * number that can change between releases, while `disk_used_bytes` is a
+ * measurement. Storing the derived flag would freeze old rows at an old policy.
+ */
+export async function loadPoolMembers(db: Db, projectId: string): Promise<PoolMember[]> {
+	const res = await db.query<{
+		container_id: string;
+		state: PoolMemberState | 'creating' | 'error';
+		last_task_id: string | null;
+		disk_used_bytes: string | number;
+		has_unpushed_commits: boolean;
+		reserved_for_chat: boolean;
+	}>(
+		`SELECT container_id, state::text AS state, last_task_id, disk_used_bytes,
+		        has_unpushed_commits, reserved_for_chat
+		   FROM container_pool_members
+		  WHERE project_id = $1
+		  ORDER BY created_at ASC`,
+		[projectId],
+	);
+	const members: PoolMember[] = [];
+	for (const row of res.rows) {
+		// `creating` and `error` have no place in the ladder: one is not yet a
+		// container and the other is not one any more. Both are excluded rather
+		// than mapped, so a half-built member can never be handed to a run.
+		if (row.state !== 'idle' && row.state !== 'busy' && row.state !== 'suspended') continue;
+		members.push({
+			id: row.container_id,
+			state: row.state,
+			lastTaskId: row.last_task_id,
+			hasUnpushedCommits: row.has_unpushed_commits,
+			atDiskCeiling: Number(row.disk_used_bytes) >= POOL_DISK_CEILING_BYTES,
+			reservedForChat: row.reserved_for_chat,
+		});
+	}
+	return members;
+}
+
+/**
+ * Which container a run in this project should get, decided against live state.
+ *
+ * The thin DB shell around {@link selectPoolMember}: it loads the members and the
+ * capacity and hands both to the pure ladder, which is where every rule actually
+ * lives. Keeping the decision in one place is what stops the acquire path and the
+ * capacity gate from drifting into two different answers to the same question.
+ */
+export async function decidePoolAcquisition(
+	db: Db,
+	projectId: string,
+	taskId: string | null,
+	capacity: PoolCapacity,
+): Promise<PoolDecision> {
+	return selectPoolMember(taskId, await loadPoolMembers(db, projectId), capacity);
 }
 
 /**

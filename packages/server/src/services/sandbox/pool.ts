@@ -13,6 +13,18 @@
  * *every* run in the project. One greedy run takes down its siblings.
  */
 
+/**
+ * Disk a member may consume before it is recycled rather than reused.
+ *
+ * This is the constraint that does not exist on a local daemon, where
+ * `/workspace` is a bind mount with the operator's whole disk behind it, and the
+ * one that bites on a managed sandbox, which gets a few GB in total. Set below
+ * the provider allocation rather than at it: a container that fills up *during*
+ * a run fails that run partway through, which is strictly worse than paying for
+ * a fresh container up front.
+ */
+export const POOL_DISK_CEILING_BYTES = 2 * 1024 ** 3;
+
 export type PoolMemberState =
 	/** Running and serving a run. */
 	| 'busy'

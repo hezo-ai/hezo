@@ -1204,27 +1204,32 @@ export class JobManager {
 
 	/**
 	 * Would running in `projectId` need a container start that exceeds the
-	 * instance's active-container cap? A project whose container is already
-	 * running — or already being lazy-started by a concurrent dispatch — is
-	 * never blocked: its run consumes no new container slot. Task-less callers
-	 * pass null and are gated on the total alone (activateAgent re-checks with
-	 * the chosen task's project). The in-memory pending-start refcounts lead
-	 * the DB while a lazy start is in flight and are deduped against projects
-	 * whose container already reads Running, so the ceiling is never exceeded.
+	 * instance's active-container cap? A project with a container genuinely free
+	 * to take the run — or one already being lazy-started by a concurrent
+	 * dispatch — is never blocked, because its run consumes no new slot. Note
+	 * "free", not merely "running": with a pool, a project whose containers are
+	 * all busy needs a *new* container and is gated like any other start.
+	 * Task-less callers pass null and are gated on the total alone (activateAgent
+	 * re-checks with the chosen task's project). The in-memory pending-start
+	 * refcounts lead the DB while a lazy start is in flight and are deduped
+	 * against projects that already have spare capacity, so the ceiling is never
+	 * exceeded.
 	 */
 	private async isContainerCapacityBlocked(projectId: string | null): Promise<boolean> {
-		const { limit, runningProjectIds } = await getActiveContainers(this.deps.db);
+		const { limit, runningContainers, projectsWithSpareContainer } = await getActiveContainers(
+			this.deps.db,
+		);
 		if (
 			projectId &&
-			(runningProjectIds.has(projectId) || this.pendingContainerStarts.has(projectId))
+			(projectsWithSpareContainer.has(projectId) || this.pendingContainerStarts.has(projectId))
 		) {
 			return false;
 		}
 		let pendingExtra = 0;
 		for (const id of this.pendingContainerStarts.keys()) {
-			if (!runningProjectIds.has(id)) pendingExtra++;
+			if (!projectsWithSpareContainer.has(id)) pendingExtra++;
 		}
-		return runningProjectIds.size + pendingExtra >= limit;
+		return runningContainers + pendingExtra >= limit;
 	}
 
 	private acquirePendingContainerStart(projectId: string): void {

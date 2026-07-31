@@ -1,6 +1,7 @@
 import { ContainerStatus, HeartbeatRunStatus } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { getMaxActiveContainers } from '../lib/system-meta';
+import { POOL_DISK_CEILING_BYTES } from './sandbox/pool';
 
 /**
  * DB-backed concurrency checks — the single source of truth for the two run
@@ -31,38 +32,90 @@ export async function isTaskBusyInDb(db: Db, taskId: string): Promise<boolean> {
 export interface ActiveContainers {
 	/** Configured (or host-memory-computed) ceiling on running containers. */
 	limit: number;
-	/** Project ids whose container currently reads Running in the DB. */
-	runningProjectIds: Set<string>;
+	/**
+	 * Containers running instance-wide, counted as **containers** rather than as
+	 * projects-with-a-container.
+	 *
+	 * The two were the same number only while a project had exactly one
+	 * container. The cap is a memory guarantee - every container is memory-capped,
+	 * so total demand is bounded at `N x cap` - and that arithmetic is over
+	 * containers, so the moment a project can hold several, counting projects
+	 * under-counts and over-subscribes the host.
+	 */
+	runningContainers: number;
+	/**
+	 * Projects that can serve another run **without starting a container**.
+	 *
+	 * Not the same question as "has a running container", which is what this used
+	 * to answer. A project at one container per run is only free if one of its
+	 * containers is actually idle; a project whose single container is busy needs
+	 * a second one and must be gated like any other new start.
+	 */
+	projectsWithSpareContainer: Set<string>;
 }
 
 /**
- * Read the instance-wide container ceiling alongside the set of projects with
- * a running container. Returning the id set (not just a count) lets callers
- * both dedupe their in-memory pending-start guards against it and pass a run
- * whose target container is already up. The projects table is tiny, so this is
- * a cheap scan.
+ * Read the instance-wide container ceiling alongside what is already running.
+ *
+ * The count unions **both** representations of a container, keyed on the engine's
+ * own id so a row present in each is counted once. `container_pool_members` is
+ * additive (migration 049) and `projects.container_*` stays authoritative until
+ * every lifecycle call site has moved over, so during that window a container may
+ * be recorded in either place or both. Reading one alone would under-count, and
+ * under-counting a capacity gate over-subscribes the host.
  */
 export async function getActiveContainers(db: Db): Promise<ActiveContainers> {
-	const [limit, rows] = await Promise.all([
+	const [limit, counted, spare] = await Promise.all([
 		getMaxActiveContainers(db),
-		db.query<{ id: string }>(
-			`SELECT id FROM projects WHERE container_status = $1::container_status`,
+		db.query<{ n: number }>(
+			`SELECT COUNT(*)::int AS n FROM (
+			   SELECT container_id FROM projects
+			    WHERE container_id IS NOT NULL AND container_status = $1::container_status
+			   UNION
+			   SELECT container_id FROM container_pool_members
+			    WHERE state IN ('creating', 'idle', 'busy')
+			 ) AS running`,
 			[ContainerStatus.Running],
 		),
+		db.query<{ project_id: string }>(
+			// A project is spare-capable if it has an idle pool member a run may
+			// take - never one that is busy, reserved for the chat, or out of disk -
+			// or, while the pool is not yet populated for it, a running container of
+			// its own, which is today's one-container-per-project behaviour.
+			`SELECT project_id FROM container_pool_members
+			  WHERE state = 'idle' AND NOT reserved_for_chat AND disk_used_bytes < $2
+			 UNION
+			 SELECT id AS project_id FROM projects
+			  WHERE container_status = $1::container_status
+			    AND NOT EXISTS (
+			      SELECT 1 FROM container_pool_members m WHERE m.project_id = projects.id
+			    )`,
+			[ContainerStatus.Running, POOL_DISK_CEILING_BYTES],
+		),
 	]);
-	return { limit, runningProjectIds: new Set(rows.rows.map((r) => r.id)) };
+	return {
+		limit,
+		runningContainers: counted.rows[0]?.n ?? 0,
+		projectsWithSpareContainer: new Set(spare.rows.map((r) => r.project_id)),
+	};
 }
 
 /**
  * Stateless container-capacity gate (route-side mirror of the scheduler's
- * in-memory-guarded check): would running in `projectId` need a container
- * start that exceeds the cap? A project whose container is already running is
- * never blocked — its run consumes no new container slot.
+ * in-memory-guarded check): would running in `projectId` need a container start
+ * that exceeds the cap?
+ *
+ * The old shortcut - "a project whose container is already up is never blocked" -
+ * is gone. It was only ever true at one container per project: with a pool, a
+ * project whose containers are all busy needs a *new* one, and waving it through
+ * would let concurrent runs in one project walk straight past the cap. What
+ * replaces it is the narrower and still-correct claim that a project with a
+ * container genuinely free to take the run consumes no new slot.
  */
 export async function isContainerCapacityBlockedInDb(db: Db, projectId: string): Promise<boolean> {
-	const { limit, runningProjectIds } = await getActiveContainers(db);
-	if (runningProjectIds.has(projectId)) return false;
-	return runningProjectIds.size >= limit;
+	const { limit, runningContainers, projectsWithSpareContainer } = await getActiveContainers(db);
+	if (projectsWithSpareContainer.has(projectId)) return false;
+	return runningContainers >= limit;
 }
 
 /**
