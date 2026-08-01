@@ -1690,8 +1690,8 @@ delivered verbatim via `postAgentComment` — the same insert + broadcast + `fir
 path `create_comment` uses — so it fans out to the admin inbox / agent wakeup instead of
 vanishing (the agent wrote an explicit, unambiguous wake; delivering it is safe). This flips an
 otherwise no-op run to a success and is why the one-block judge ceiling is acceptable.
-(2) an **unlinked bold/leading-line address that reads like an ask** (`**slug** — … when you
-resume …`, the name after a short routing label like `Next step: slug — …`, or an
+(2) a **name-only address that reads like an ask** - the unlinked bold/leading-line form
+(`**slug** — … when you resume …`, the name after a short routing label like `Next step: slug — …`, or an
 action-assignment heading/label line like `## Required actions for slug` — where the phrase on
 the line is itself the ask signal, since the imperative list below it carries none — or a **name
 bound directly to a sign-off/approval gate mid-sentence** (`awaiting slug sign-off`, `needs
@@ -1705,7 +1705,10 @@ both the phrasings that name the recipient ("ready for review", "all yours", "ha
 "passing this to …", "take it from here") and the ones that name only the gate being waited on
 ("awaiting review", "for review", "pending approval", "sign-off needed") — the latter is the same
 handoff with its `ready` opener dropped, and it carries no pronoun, no imperative and no `?` at
-all; a bold name written for mere emphasis is never touched) is the wakes-no-one
+all; a bold name written for mere emphasis is never touched) — **or** the same address written in
+the **passive** `@@slug` form, via `detectPassiveTeammateAsks`, which is the likelier spelling of
+a closing verdict line (`APPROVED. Ready for @@marketing-lead review.`) and wakes exactly as many
+people as the bare name does. Either is the wakes-no-one
 trap — but the net does **not** rewrite the
 agent's words or auto-deliver it (guessing intent to force a wake overreaches). `create_comment`
 already warns the agent interactively when it posts such a comment; the final-message path skips
@@ -1736,17 +1739,24 @@ backticked-entity check would otherwise tell the author to un-backtick exactly t
 `detectQuotedMentionTokens` subtracts backticked-and-narrated slugs from its candidates, so the
 two advisories can never contradict each other.
 
-`detectPassiveTeammateAsks` gates its two addressing forms differently, because they differ in
+`detectPassiveTeammateAsks` gates its forms differently, because they differ in
 how ambiguous they are. A **leading-line** `@@slug — …` (including one behind a routing label,
 `Next step: @@slug — …`) is flagged **unconditionally, with no ask gate**: opening a line with a
 teammate reference and a separator is the *address* shape, and the address shape is reserved for
 active mentions — a reference you only mean to make belongs inside a sentence. This is what
 catches `@@admin — release is done.`, which is asking the admin to register the fact but carries
-no pronoun, no `please` and no `?`, so no ask gate could see it. An **emphasised** `**@@slug**`
-stays gated on `readsAsAsk` over its own paragraph(s), since bold marks attribution and headings
-as much as address. `SHARED_INSTRUCTIONS` teaches the matching rules: an active mention's shape
-is a line opening `@<slug> - ` then the ask, several recipients get one such line each, and a
-line never opens with `@@<slug> - `.
+no pronoun, no `please` and no `?`, so no ask gate could see it. An **action-assignment line**
+(`## Required actions for @@slug`) is likewise self-gating - the phrase on the line assigns the
+work. A **name bound directly to a sign-off/approval gate** (`Ready for @@slug review`, `awaiting
+@@slug sign-off`, `@@slug to approve`) is the mid-sentence case every address-position form
+misses, and it is the shape a review verdict ends on: it shares `hasNameBoundSignoffGate` with the
+bare-name detector, so `Ready for marketing-lead review.` and `Ready for @@marketing-lead review.`
+warn alike rather than the `@@` spelling being a way around the check. An **emphasised**
+`**@@slug**` stays gated on `readsAsAsk` over its own paragraph(s), since bold marks attribution
+and headings as much as address. `SHARED_INSTRUCTIONS` teaches the matching rules: an active
+mention's shape is a line opening `@<slug> - ` then the ask, several recipients get one such line
+each, a line never opens with `@@<slug> - `, and a baton-passing handoff ("ready for review") is
+an ask however stative its grammar.
 
 ---
 
