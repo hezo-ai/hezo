@@ -28,8 +28,16 @@ nothing else:
 | The SSH agent and your repositories' signing key | - |
 | Deciding what each agent may reach | - |
 
-The provider never receives a secret, a private key, or a decrypted anything. It receives
-an image reference and a command.
+The provider never receives a private key, a stored credential, or the master key. Secrets
+an agent uses reach the outside world as placeholders that are substituted at Hezo's own
+egress proxy, so what runs in the sandbox is a stand-in that is useless to anyone who reads
+it - including the provider.
+
+There is one exception, and it is the same one that applies to a local container: the API
+key or token the coding CLI uses to reach its **AI model provider** is passed to it directly,
+because some model endpoints break when proxied. On a managed backend that means the
+provider's infrastructure handles that one credential. Nothing else about a run is in the
+clear there.
 
 ## How a container reaches Hezo
 

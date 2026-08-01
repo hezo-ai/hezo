@@ -178,7 +178,7 @@ s3://ACCESS_KEY:SECRET@endpoint[:port]/bucket[/prefix]?region=…&pathStyle=…&
 
 At startup Hezo verifies it can reach the bucket with the given credentials and exits
 with guidance if it can't. The active backend (with credentials occluded) is shown under
-**Settings → General → Asset storage**.
+**Settings → Storage → Asset storage**.
 
 Recommendations:
 
