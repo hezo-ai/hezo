@@ -78,7 +78,10 @@ interface Stream {
 }
 
 export class TunnelMux {
-	private readonly decoder = new FrameDecoder();
+	// Expects the client's preamble: a byte channel is not always clean from byte
+	// zero (a PTY carries a shell's echo and prompt), and everything before the
+	// marker is noise to discard rather than frames to parse.
+	private readonly decoder = new FrameDecoder({ expectPreamble: true });
 	private readonly streams = new Map<number, Stream>();
 	private readonly window: number;
 	private closed = false;
@@ -110,32 +113,37 @@ export class TunnelMux {
 
 	private async process(chunk: Uint8Array): Promise<void> {
 		if (this.closed) return;
-		let frames: ReturnType<FrameDecoder['push']>;
+		// The whole body, not just the decode. A throw anywhere in the dispatch
+		// below - `decodeWindowCredit` on a WINDOW frame whose payload is not four
+		// bytes is the reachable one, and the threat model assumes the container may
+		// misbehave - would otherwise reject `this.queue`, after which every later
+		// `queue.then(...)` is skipped: the tunnel silently stops reading, wedged
+		// rather than closed, with an unhandled rejection to show for it. Failing
+		// closed is the only honest response to a stream we can no longer trust.
 		try {
-			frames = this.decoder.push(chunk);
+			const frames = this.decoder.push(chunk);
+			for (const frame of frames) {
+				switch (frame.type) {
+					case FrameType.Open:
+						await this.onOpen(frame.streamId, new TextDecoder().decode(frame.payload));
+						break;
+					case FrameType.Data:
+						this.onData(frame.streamId, frame.payload);
+						break;
+					case FrameType.Close:
+						this.onRemoteClose(frame.streamId);
+						break;
+					case FrameType.Window:
+						this.onWindow(frame.streamId, decodeWindowCredit(frame.payload));
+						break;
+				}
+			}
 		} catch (e) {
 			// A desynchronised stream cannot be recovered by parsing harder: every
 			// subsequent frame boundary is wrong, so the streams would silently
 			// carry garbage. Tear the tunnel down instead.
 			log.error(`tunnel framing error, closing: ${(e as Error).message}`);
 			this.closeAll();
-			return;
-		}
-		for (const frame of frames) {
-			switch (frame.type) {
-				case FrameType.Open:
-					await this.onOpen(frame.streamId, new TextDecoder().decode(frame.payload));
-					break;
-				case FrameType.Data:
-					this.onData(frame.streamId, frame.payload);
-					break;
-				case FrameType.Close:
-					this.onRemoteClose(frame.streamId);
-					break;
-				case FrameType.Window:
-					this.onWindow(frame.streamId, decodeWindowCredit(frame.payload));
-					break;
-			}
 		}
 	}
 

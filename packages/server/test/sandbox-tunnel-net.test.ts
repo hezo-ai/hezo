@@ -13,7 +13,14 @@ afterEach(async () => {
 
 /** A TCP echo server on an ephemeral port. */
 async function echoServer(): Promise<number> {
-	const server = createServer((socket) => socket.pipe(socket));
+	const server = createServer((socket) => {
+		// `pipe` does not forward errors, so a client that destroys mid-exchange
+		// (which the backpressure case does deliberately) leaves an ECONNRESET on
+		// this side with no listener - an uncaught exception that fails the whole
+		// run, and only under enough load to lose the race.
+		socket.on('error', () => {});
+		socket.pipe(socket);
+	});
 	servers.push(server);
 	await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
 	const address = server.address();

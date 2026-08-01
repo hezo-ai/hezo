@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import {
 	AgentEffort,
 	type AgentRuntime,
@@ -28,7 +27,7 @@ import {
 	buildRuntimeInvocation,
 	type EgressEnvDescriptor,
 	getContainerPromptPath,
-	getHostPromptPath,
+	getPromptRelPath,
 	type RunnerDeps,
 } from './agent-runner';
 import {
@@ -41,6 +40,7 @@ import {
 	getProviderCredentialAndModel,
 } from './ai-provider-keys';
 import { getChatMemory, loadActiveWindow, markCompacted, selectFlush } from './chat-memory';
+import { loadConnectorDescriptors } from './connectors/connections';
 import type { ContainerLogStreamer } from './container-logs';
 import { type ContainerRunUser, resolveContainerRunUser } from './container-user';
 import { type ContainerDeps, ensureProjectContainerRunning } from './containers';
@@ -1124,6 +1124,12 @@ export class ChatSessionManager {
 			// outlives many turns, so this is the longest-lived tunnel there is;
 			// suspend closes it and resume opens a fresh one, because the host-side
 			// ports it points at are reallocated too.
+			// Resolved once and used twice: the tunnel's split-routing policy needs
+			// the connector hosts (their method allowlist is enforced at the proxy,
+			// so one routed direct would skip it) and the runtime invocation needs
+			// the descriptors themselves. Two loads a moment apart could disagree.
+			const connectorDescriptors = await loadConnectorDescriptors(this.deps.db, inputs.projectId);
+
 			tunnel = await startRunTunnel({
 				engine: this.deps.docker,
 				containerId,
@@ -1138,7 +1144,11 @@ export class ChatSessionManager {
 						? { host: egressHost.host, port: egressHost.port }
 						: { host: '127.0.0.1', port: 0 },
 				},
-				policy: await buildTunnelHostPolicy(this.deps.db, []),
+				// Connector hosts belong in the policy even though a chat turn builds no
+				// MCP descriptors of its own: the policy governs what this *container*
+				// proxies, and the per-connector method allowlist is enforced at the
+				// proxy, so a connector host routed direct from here would skip it.
+				policy: await buildTunnelHostPolicy(this.deps.db, connectorDescriptors),
 			});
 			const endpoints = tunnel.endpoints;
 
@@ -1178,6 +1188,7 @@ export class ChatSessionManager {
 
 			const invocation = await buildRuntimeInvocation({
 				endpoints,
+				connectorDescriptors,
 				deps: this.deps,
 				runTeamId: DEFAULT_TEAM_ID,
 				projectId: inputs.projectId,
@@ -1226,16 +1237,31 @@ export class ChatSessionManager {
 		session: LiveSession,
 		conversationId: string,
 		slot?: string,
-	): { hostPath: string; env: string[] } {
+	): { write: (prompt: string) => Promise<void>; remove: () => Promise<void>; env: string[] } {
 		const key = slot
 			? `${session.sessionId}-${conversationId}-${slot}`
 			: `${session.sessionId}-${conversationId}`;
-		const hostPath = getHostPromptPath(this.deps.dataDir, DEFAULT_TEAM_ID, session.projectId, key);
 		const containerPath = getContainerPromptPath(key);
 		const env = session.env.map((e) =>
 			e.startsWith('HEZO_PROMPT_FILE=') ? `HEZO_PROMPT_FILE=${containerPath}` : e,
 		);
-		return { hostPath, env };
+		// Written through the seam, not to a host path. The exec reads
+		// `HEZO_PROMPT_FILE` from *inside* the container, and that only lined up
+		// with a host write because the workspace is a bind mount on Docker. On a
+		// managed backend there is no such path, so every chat turn would have read
+		// an empty prompt while the write reported success - the failure the
+		// `SandboxFiles` seam exists to remove. `runAgent` moved the identical
+		// write over already; this one was missed.
+		const files = this.deps.docker.files(session.containerId, CONTAINER_WORKSPACE_ROOT);
+		const relPath = getPromptRelPath(key);
+		return {
+			write: (prompt: string) => files.write(relPath, prompt),
+			// Scrubbed the same way it was written: a host `rmSync` against a managed
+			// backend would no-op while looking like it worked, leaving the prompt in
+			// the container for the rest of its life.
+			remove: () => files.remove(relPath),
+			env,
+		};
 	}
 
 	private async runTurn(
@@ -1247,7 +1273,11 @@ export class ChatSessionManager {
 	): Promise<void> {
 		const { conversationId } = ctx;
 		const convo = this.getConvoRuntime(conversationId);
-		const { hostPath, env } = this.turnPrompt(session, conversationId);
+		const {
+			write: writePrompt,
+			remove: removePrompt,
+			env,
+		} = this.turnPrompt(session, conversationId);
 		// Per-exec scope marker: session-level HEZO_HEARTBEAT_RUN_ID is shared by
 		// every exec of this session (turns in other conversations, compaction,
 		// titling), so an interrupt must kill by a marker unique to THIS exec or it
@@ -1284,8 +1314,7 @@ export class ChatSessionManager {
 				kind: ctx.kind,
 				injectedContext,
 			});
-			mkdirSync(dirname(hostPath), { recursive: true });
-			writeFileSync(hostPath, prompt);
+			await writePrompt(prompt);
 
 			const pricing = this.deps.pricing;
 			const parser = createAgentChatParser(
@@ -1323,7 +1352,7 @@ export class ChatSessionManager {
 				await finalize(ChatMessageStatus.Failed, null, (err as Error).message);
 			}
 		} finally {
-			rmSync(hostPath, { force: true });
+			await removePrompt();
 			if (convo.current?.assistantMessageId === assistantMessageId) convo.current = null;
 		}
 	}
@@ -1455,11 +1484,14 @@ export class ChatSessionManager {
 		const memory = await getChatMemory(this.deps.db, session.ceoMemberId);
 		const before = memory?.updated_at ?? null;
 		const prompt = buildCompactionPrompt(memory?.content ?? '', flush.windowTranscript);
-		const { hostPath, env } = this.turnPrompt(session, conversationId);
+		const {
+			write: writePrompt,
+			remove: removePrompt,
+			env,
+		} = this.turnPrompt(session, conversationId);
 		const execScopeId = randomUUID();
 		env.push(`HEZO_EXEC_SCOPE_ID=${execScopeId}`);
-		mkdirSync(dirname(hostPath), { recursive: true });
-		writeFileSync(hostPath, prompt);
+		await writePrompt(prompt);
 		try {
 			// Drain output; the reply text is irrelevant — the memory write is the
 			// real product, landed via the update_chat_memory MCP tool.
@@ -1479,7 +1511,7 @@ export class ChatSessionManager {
 			}
 			throw e;
 		} finally {
-			rmSync(hostPath, { force: true });
+			await removePrompt();
 		}
 		if (abort.signal.aborted) return;
 
@@ -1564,11 +1596,14 @@ export class ChatSessionManager {
 		const prompt = buildTitlePrompt(window.map(chatTranscriptLine).join('\n\n'));
 		// A dedicated prompt file (the `title` slot) so this exec can run concurrently
 		// with the reply's exec without either overwriting the other's prompt.
-		const { hostPath, env } = this.turnPrompt(session, conversationId, 'title');
+		const {
+			write: writePrompt,
+			remove: removePrompt,
+			env,
+		} = this.turnPrompt(session, conversationId, 'title');
 		const execScopeId = randomUUID();
 		env.push(`HEZO_EXEC_SCOPE_ID=${execScopeId}`);
-		mkdirSync(dirname(hostPath), { recursive: true });
-		writeFileSync(hostPath, prompt);
+		await writePrompt(prompt);
 
 		const parser = createAgentChatParser(session.runtimeType);
 		let text = '';
@@ -1593,7 +1628,7 @@ export class ChatSessionManager {
 			}
 			throw e;
 		} finally {
-			rmSync(hostPath, { force: true });
+			await removePrompt();
 		}
 		if (abort.signal.aborted) return;
 

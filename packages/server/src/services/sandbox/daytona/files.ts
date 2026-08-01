@@ -118,7 +118,10 @@ export function daytonaSandboxFiles(
 
 	return {
 		async exists(relPath) {
-			return (await api.downloadFile(sandbox, abs(relPath))) !== null;
+			// `files/info` rather than a download: it answers for a directory too,
+			// where downloading one is a 400 rather than a "no", and it does not pull
+			// the file's bytes across just to learn that it is there.
+			return (await api.statFile(sandbox, abs(relPath))) !== null;
 		},
 
 		async read(relPath) {
@@ -134,13 +137,13 @@ export function daytonaSandboxFiles(
 		},
 
 		async size(relPath) {
-			// The listing carries the size, so the file itself is never transferred -
-			// which is the whole reason a caller asks before reading.
-			const target = abs(relPath);
-			const name = target.slice(target.lastIndexOf('/') + 1);
+			// Metadata carries the size, so the file itself is never transferred -
+			// which is the whole reason a caller asks before reading. One lookup on
+			// the path rather than a listing of its parent, which grows with the
+			// directory rather than with the answer.
 			try {
-				const entries = await api.listFiles(sandbox, parentOf(target));
-				return entries.find((e) => e.name === name && !e.isDir)?.size ?? null;
+				const info = await api.statFile(sandbox, abs(relPath));
+				return info && !info.isDir ? info.size : null;
 			} catch {
 				return null;
 			}
@@ -173,10 +176,33 @@ export function daytonaSandboxFiles(
 		},
 
 		async removeDir(relPath) {
+			// `recursive` is not optional here: without it the API refuses a
+			// non-empty directory outright. The caller that matters is the per-run
+			// scrub of the runtime home, which holds the provider credential - so
+			// silently leaving the tree in place left that credential on the
+			// provider's disk for the rest of the container's life.
+			const target = abs(relPath);
 			try {
-				await api.deleteFile(sandbox, abs(relPath));
+				await api.deleteFile(sandbox, target, { recursive: true });
 			} catch (e) {
-				log.warn(`could not remove directory ${relPath}: ${(e as Error).message}`);
+				// Best-effort by contract, but only for "it was not there". A directory
+				// that is still present after a failed delete is a scrub that did not
+				// happen, which is worth an error rather than a shrug.
+				const stillThere = await api.statFile(sandbox, target).catch(() => null);
+				const message = (e as Error).message;
+				if (stillThere) {
+					log.error(`could not remove directory ${relPath}, it is still present: ${message}`);
+				} else {
+					log.warn(`could not remove directory ${relPath}: ${message}`);
+				}
+			}
+		},
+
+		async list(relDir) {
+			try {
+				return (await api.listFiles(sandbox, abs(relDir))).map((e) => e.name);
+			} catch {
+				return [];
 			}
 		},
 

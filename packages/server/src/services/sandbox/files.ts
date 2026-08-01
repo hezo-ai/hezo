@@ -99,6 +99,15 @@ export interface SandboxFiles {
 	/** Create a directory and its parents. `mode` applies to each one created. */
 	mkdir(relPath: string, opts?: { mode?: number }): Promise<void>;
 	/**
+	 * Entry names directly under `relDir`, including dotfiles. Empty when the
+	 * directory is missing or unreadable, so "nothing there" and "cannot look" read
+	 * alike - every caller so far only asks whether anything is present.
+	 *
+	 * Distinct from {@link findByName}, which searches a tree for one basename and
+	 * cannot answer "is this directory empty".
+	 */
+	list(relDir: string): Promise<string[]>;
+	/**
 	 * Recursively remove a directory and everything under it.
 	 *
 	 * The per-run config directory holds the provider credential, so this is a
@@ -162,7 +171,11 @@ export function hostSandboxFiles(hostRoot: string): SandboxFiles {
 		readBytes: async (relPath) => new Uint8Array(readFileSync(resolveWithin(hostRoot, relPath))),
 		size: async (relPath) => {
 			try {
-				return statSync(resolveWithin(hostRoot, relPath)).size;
+				// A directory answers null, not its entry size: callers ask this before
+				// reading a file, and 4096 would send them off to read a directory. Same
+				// contract the container implementations honour - see the Docker one.
+				const stat = statSync(resolveWithin(hostRoot, relPath));
+				return stat.isFile() ? stat.size : null;
 			} catch {
 				return null;
 			}
@@ -189,6 +202,13 @@ export function hostSandboxFiles(hostRoot: string): SandboxFiles {
 		},
 		mkdir: async (relPath, opts = {}) => {
 			makeDirs(hostRoot, resolveWithin(hostRoot, relPath), opts.mode);
+		},
+		list: async (relDir) => {
+			try {
+				return readdirSync(resolveWithin(hostRoot, relDir));
+			} catch {
+				return [];
+			}
 		},
 	};
 }

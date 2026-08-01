@@ -35,6 +35,12 @@ const F_CLOSE = 3;
 const F_WINDOW = 4;
 const HEADER_BYTES = 9;
 const MAX_PAYLOAD_BYTES = 64 * 1024;
+// Emitted once, before any frame, so Hezo can discard whatever the transport put
+// on the channel ahead of us - a PTY carries the shell's echo and prompt - and so
+// it knows the listeners below are bound. NUL-delimited because terminal output
+// never contains NUL. Must match TUNNEL_PREAMBLE in tunnel/protocol.ts.
+const TUNNEL_PROTOCOL_VERSION = 1;
+const TUNNEL_PREAMBLE = Buffer.from(`\u0000HEZO-TUNNEL/${TUNNEL_PROTOCOL_VERSION}\u0000`, 'utf8');
 
 function encodeFrame(type, streamId, payload) {
 	const body = payload || Buffer.alloc(0);
@@ -99,8 +105,16 @@ function attach(socket, target) {
 	const streamId = nextStreamId;
 	nextStreamId += 2; // container-initiated ids are odd; Hezo never opens one.
 	const stream = {
+		// Starts at zero: Hezo sends the opening WINDOW once it has accepted the
+		// stream, and that grant is authoritative. Seeding this with `windowBytes`
+		// as well counted the same allowance twice, so the in-flight bound was
+		// double what the window says - and it silently ignored a host configured
+		// with a different window. Nothing stalls on the round trip: the CONNECT
+		// preamble is sent regardless, and credit only decides when to *pause* the
+		// socket.
+		credit: 0,
+		gotOpeningGrant: false,
 		socket,
-		credit: windowBytes,
 		paused: false,
 		unacked: 0,
 		awaitingDrain: false,
@@ -150,10 +164,14 @@ const onFrame = (type, streamId, payload) => {
 	if (type === F_WINDOW) {
 		if (payload.length !== 4) return;
 		const credit = payload.readUInt32BE(0);
-		if (!stream) {
-			// The opening credit for a stream Hezo just accepted.
-			windowBytes = Math.max(windowBytes, credit);
-			return;
+		// A WINDOW for a stream we have already closed: nothing to credit.
+		if (!stream) return;
+		// Only the *opening* grant announces the host's window; every later one is
+		// an incremental return of consumed bytes. Reading the window off those too
+		// would move the half-window flush threshold around under us.
+		if (!stream.gotOpeningGrant) {
+			stream.gotOpeningGrant = true;
+			windowBytes = credit;
 		}
 		stream.credit += credit;
 		if (stream.paused && stream.credit > 0) {
@@ -213,13 +231,30 @@ process.stdin.on('error', shutdown);
 
 const servers = [];
 
+/**
+ * Bind one loopback listener, and make a bind failure legible.
+ *
+ * Without an `error` handler a failed `listen` is an uncaught exception: the
+ * client dies, the channel ends, and the run fails with a dead stream and no
+ * cause. EADDRINUSE is the realistic one - an agent may already have bound a
+ * port in this range while developing - and stderr is surfaced by the host.
+ */
+function listen(port, onConnection) {
+	const server = net.createServer(onConnection);
+	server.on('error', (e) => {
+		process.stderr.write(`hezo-tunnel: cannot listen on 127.0.0.1:${port}: ${e.message}\n`);
+		shutdown();
+	});
+	server.listen(port, '127.0.0.1');
+	servers.push(server);
+	return server;
+}
+
 /** The MCP and SSH ports are unconditionally tunnelled - there is no direct route to Hezo. */
 for (const target of ['mcp', 'ssh']) {
 	const port = config.ports[target];
 	if (!port) continue;
-	const server = net.createServer((socket) => attach(socket, target));
-	server.listen(port, '127.0.0.1');
-	servers.push(server);
+	listen(port, (socket) => attach(socket, target));
 }
 
 /**
@@ -230,7 +265,7 @@ for (const target of ['mcp', 'ssh']) {
  * never terminates it, so nothing here can see a request body either way.
  */
 if (config.ports.proxy) {
-	const server = net.createServer((socket) => {
+	listen(config.ports.proxy, (socket) => {
 		let head = Buffer.alloc(0);
 		const onHead = (chunk) => {
 			head = Buffer.concat([head, chunk]);
@@ -287,6 +322,19 @@ if (config.ports.proxy) {
 		socket.on('data', onHead);
 		socket.on('error', () => socket.destroy());
 	});
-	server.listen(config.ports.proxy, '127.0.0.1');
-	servers.push(server);
 }
+
+/**
+ * Announce ourselves, last of all.
+ *
+ * Everything before this on the channel is whatever the transport put there - a
+ * PTY carries the shell's echo of the command that started us, its
+ * bracketed-paste escapes and its prompt - and Hezo discards all of it up to
+ * this marker.
+ *
+ * Emitted after the listeners are bound so it cannot precede a working tunnel,
+ * but the host does not treat it as the readiness signal: it probes the
+ * listening sockets directly instead, which is the fact rather than a proxy for
+ * it. See `waitForTunnelListeners` in `tunnel/run-tunnel.ts`.
+ */
+process.stdout.write(TUNNEL_PREAMBLE);

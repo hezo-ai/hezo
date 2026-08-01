@@ -31,12 +31,29 @@ function get(authToken: string) {
 }
 
 describe('GET /api/sandbox-backend-info', () => {
-	it('reports the local Docker default', async () => {
+	it('reports the local Docker default, plus what a switch would cost', async () => {
 		const res = await get(token);
 		expect(res.status).toBe(200);
-		expect(await res.json()).toEqual({
-			data: { backend: 'docker', display: 'local Docker daemon' },
-		});
+		const data = (await res.json()).data;
+		expect(data.backend).toBe('docker');
+		expect(data.display).toBe('local Docker daemon');
+		// The form needs to know which backends exist and whether a credential is
+		// already on file, so it can offer "keep the saved key" rather than
+		// demanding one every time.
+		expect(data.available).toContain('daytona');
+		expect(data.credential_configured).toBe(false);
+		// The confirmation dialog names real numbers rather than warning in the
+		// abstract, so the counts ship with the read.
+		expect(data.impact).toEqual({ containers: 0, activeRuns: 0 });
+	});
+
+	it('never echoes the provider key back, only whether one exists', async () => {
+		// The key lives in the vault and is decrypted in-process for control-plane
+		// calls only. A response that carried it would put it in every client's
+		// memory and in any log that captures responses.
+		const body = JSON.stringify(await (await get(token)).json());
+		expect(body).not.toContain('daytona_api_key');
+		expect(body).not.toContain('dtn_');
 	});
 
 	it('rejects non-superusers', async () => {

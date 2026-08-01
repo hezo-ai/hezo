@@ -4,19 +4,16 @@
  * `AssetStorageInfo` / `StorageInfo`: the API key never exists in client-side
  * memory, because redaction runs on the server once at startup and request
  * handlers only ever see the pre-redacted value.
+ *
+ * The backend names themselves live in `@hezo/shared` ({@link SandboxBackend}),
+ * because the web app has to reason about them too - which limits apply, and
+ * where the capacity numbers on the concurrency page come from.
  */
 
-export type SandboxBackendName = 'docker' | 'daytona';
-
-/** Every backend Hezo can be configured to use, for validating the flag. */
-export const SANDBOX_BACKENDS: readonly SandboxBackendName[] = ['docker', 'daytona'];
-
-export function isSandboxBackendName(value: string): value is SandboxBackendName {
-	return (SANDBOX_BACKENDS as readonly string[]).includes(value);
-}
+import type { SandboxBackend } from '@hezo/shared';
 
 export interface SandboxBackendInfo {
-	backend: SandboxBackendName;
+	backend: SandboxBackend;
 	/** `local Docker daemon`, or the pre-redacted provider endpoint. */
 	display: string;
 }

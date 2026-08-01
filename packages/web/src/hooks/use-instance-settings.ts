@@ -6,15 +6,22 @@ import { queryKeys } from '../lib/query-keys';
 export interface InstanceSettings {
 	base_url: string | null;
 	max_chat_history_size: number;
-	/** Effective active-container cap: the explicit setting, else the computed default. */
+	/** Effective task-run memory budget: the explicit setting, else the computed default. */
 	max_container_memory_gb: number;
 	/** True when the operator explicitly set a value (vs the automatic default). */
 	max_container_memory_gb_is_set: boolean;
-	/** The host-memory-computed default: (RAM + swap) / ram cap per container. */
+	/** The automatic default the server computed for this backend. */
 	max_container_memory_gb_computed_default: number;
 	default_ram_cap_per_container_gb: number;
-	host_total_ram_bytes: number;
-	host_total_swap_bytes: number;
+	/** Disk allocated to each container, in GB. Sibling of the RAM cap. */
+	default_container_disk_gb: number;
+	/**
+	 * The memory containers are drawn from, or null when they do not run on the
+	 * Hezo host - a managed sandbox backend, where the host's RAM had no part in
+	 * the budget and rendering a formula from it would be a lie.
+	 */
+	host_total_ram_bytes: number | null;
+	host_total_swap_bytes: number | null;
 }
 
 export type InstanceSettingsUpdate = Partial<{
@@ -23,6 +30,7 @@ export type InstanceSettingsUpdate = Partial<{
 	/** null resets to the automatic (host-memory-computed) default. */
 	max_container_memory_gb: number | null;
 	default_ram_cap_per_container_gb: number;
+	default_container_disk_gb: number;
 }>;
 
 export function useInstanceSettings() {

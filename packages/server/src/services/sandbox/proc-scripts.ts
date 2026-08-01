@@ -71,7 +71,8 @@ export function buildListHezoProcessesScript(): string {
 }
 
 /**
- * Bytes used on the filesystem holding a container's workspace.
+ * Bytes used on the filesystem holding a container's workspace, **or nothing at
+ * all when that filesystem is not the container's own**.
  *
  * `df` rather than `du`: the question is how close the container is to filling
  * up, and `df` answers it from the superblock in constant time, where `du` walks
@@ -79,14 +80,32 @@ export function buildListHezoProcessesScript(): string {
  * interesting in the first place. It is measured once per run, so a walk would be
  * a per-run cost proportional to how much the container has accumulated.
  *
- * `--output=used` reports 1K blocks; the caller multiplies. Runtime-agnostic like
- * the scripts above - only the transport that carries it differs per engine.
+ * The device check in front of it is what makes the number mean what the pool
+ * thinks it means. The pool recycles a container that is near its disk ceiling,
+ * on the reasoning that a replacement starts empty - which only holds while the
+ * storage belongs to the container. On a local Docker daemon `/workspace` is a
+ * bind mount of the host data dir, so `df` there reports the **host partition**:
+ * essentially always past a 2 GiB ceiling, and replacing the container frees
+ * none of it. Every member of every project read as out of disk, so affinity
+ * never fired, suspended members were never resumable, and each run provisioned
+ * a fresh container.
+ *
+ * Comparing the path's device against `/` distinguishes the two cases exactly,
+ * and it is the measurement's own property rather than a per-backend rule - which
+ * is why it lives in the shared script instead of one engine. Measured: on
+ * Daytona `/workspace` and `/` are the same overlay device, so a sandbox reports
+ * its real usage; a bind-mounted path is a different device and reports nothing.
+ * No output parses to null, and null already means "could not measure" to every
+ * caller - which is not zero, and deliberately leaves the last figure alone.
  */
 export function buildDiskUsageScript(path: string): string {
 	if (!/^\/[A-Za-z0-9._/-]*$/.test(path)) {
 		throw new Error(`unsafe path: ${JSON.stringify(path)}`);
 	}
-	return `df -Pk ${path} 2>/dev/null | awk 'NR==2 {print $3}'`;
+	return (
+		`[ "$(stat -c %d / 2>/dev/null)" = "$(stat -c %d ${path} 2>/dev/null)" ] || exit 0; ` +
+		`df -Pk ${path} 2>/dev/null | awk 'NR==2 {print $3}'`
+	);
 }
 
 /** SIGKILL an explicit pid list. Validates every pid so nothing unexpected reaches the shell. */
@@ -97,4 +116,37 @@ export function buildKillPidsScript(pids: number[]): string {
 		}
 	}
 	return `kill -9 ${pids.join(' ')} 2>/dev/null || true`;
+}
+
+/**
+ * Report whether every one of `ports` is being listened on, on loopback.
+ *
+ * Reads `/proc/net/tcp` rather than shelling out to `ss` or `netstat`: the
+ * pseudo-file is always there, while the tools are packages a custom
+ * `docker_base_image` need not carry, and a missing tool would read as "not
+ * listening" forever.
+ *
+ * The file's `local_address` column is `<addr>:<port>` in **hex**, address
+ * little-endian - so 127.0.0.1 is `0100007F` - and the state column is `0A` for
+ * LISTEN. Matching on the port alone would accept a listener on any interface,
+ * which is not what the tunnel promises the container.
+ *
+ * Prints `ready` when all of them are up and nothing otherwise, so the caller
+ * tests one exact string rather than parsing.
+ */
+export function buildPortsListeningScript(ports: readonly number[]): string {
+	if (ports.length === 0) return 'echo ready';
+	for (const port of ports) {
+		if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+			throw new Error(`invalid port: ${String(port)}`);
+		}
+	}
+	// `0100007F` is 127.0.0.1 in the file's byte order; `0A` is TCP_LISTEN.
+	const tests = ports
+		.map((port) => {
+			const hex = port.toString(16).toUpperCase().padStart(4, '0');
+			return `grep -qi " 0100007F:${hex} .* 0A " /proc/net/tcp`;
+		})
+		.join(' && ');
+	return `${tests} && echo ready`;
 }

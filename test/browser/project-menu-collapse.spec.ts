@@ -5,7 +5,7 @@
 // be exercised at a real desktop width — neither is computable in happy-dom.
 
 import { expect, test } from './fixtures';
-import { waitForPageLoad } from './helpers';
+import { waitForPageLoad, waitForStableBox } from './helpers';
 
 test('the project menu collapses to a rail-docked expand tab and restores', async ({
 	page,
@@ -21,7 +21,9 @@ test('the project menu collapses to a rail-docked expand tab and restores', asyn
 
 	// The collapse button hugs the menu panel's top-right corner (absolute
 	// positioning, so only measurable from a real layout pass).
-	const menu = await page.getByTestId('project-menu').boundingBox();
+	// Settled first - see waitForStableBox: an absolute-positioned corner is
+	// measured against a panel that may still be sizing.
+	const menu = await waitForStableBox(page.getByTestId('project-menu'));
 	const collapseBox = await page.getByTestId('project-sidebar-collapse').boundingBox();
 	expect(menu).not.toBeNull();
 	expect(collapseBox).not.toBeNull();
@@ -43,9 +45,11 @@ test('the project menu collapses to a rail-docked expand tab and restores', asyn
 	await expect(tab).toBeVisible();
 
 	// It's docked flush under the app header, against the project rail's right edge.
+	// The tab is docked against the header and the rail, so all three have to be
+	// measured from one settled layout - see waitForStableBox.
+	const tabBox = await waitForStableBox(tab);
 	const header = await page.locator('header').first().boundingBox();
 	const rail = await page.getByTestId('project-rail').boundingBox();
-	const tabBox = await tab.boundingBox();
 	expect(header).not.toBeNull();
 	expect(rail).not.toBeNull();
 	expect(tabBox).not.toBeNull();

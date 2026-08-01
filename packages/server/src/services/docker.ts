@@ -2,6 +2,8 @@ import { request as httpRequest } from 'node:http';
 import type { Socket } from 'node:net';
 import { connect as netConnect } from 'node:net';
 import { Readable } from 'node:stream';
+import type { ContainerHostMemory } from '@hezo/shared';
+import { getHostMemory } from '../lib/host-memory';
 import { DockerFrameDecoder, demuxDockerStream } from './docker-frames';
 import type { SandboxFiles } from './sandbox/files';
 import {
@@ -844,6 +846,15 @@ export class DockerClient implements ContainerEngine {
 	}
 
 	/**
+	 * The host's own memory: a local daemon's containers are carved out of the
+	 * same RAM and swap this process is running in, which is exactly why the
+	 * automatic budget holds a reserve back for the system.
+	 */
+	containerHostMemory(): ContainerHostMemory {
+		return getHostMemory();
+	}
+
+	/**
 	 * {@link SandboxFiles} over Docker's archive endpoints, rooted inside the
 	 * container.
 	 *
@@ -922,7 +933,16 @@ export class DockerClient implements ContainerEngine {
 			size: async (relPath) => {
 				// `stat -c %s` rather than the archive endpoint's tar header: the
 				// point of asking is to avoid transferring the file at all.
-				const res = await run(`stat -c %s ${shellQuote(abs(relPath))} 2>/dev/null`);
+				//
+				// Guarded on it being a regular file, because `stat` answers for a
+				// directory too - with the size of the directory entry (4096), which is
+				// not a number any caller here can use. They ask before reading, so a
+				// directory has to answer "no size" exactly as a missing path does.
+				// Caught by the shared backend-conformance suite: Daytona already
+				// answered null and this did not, which is the divergence a single
+				// interface with two implementations is supposed to make impossible.
+				const path = shellQuote(abs(relPath));
+				const res = await run(`[ -f ${path} ] && stat -c %s ${path} 2>/dev/null`);
 				if (res.exitCode !== 0) return null;
 				const bytes = Number.parseInt(res.stdout.trim(), 10);
 				return Number.isFinite(bytes) ? bytes : null;
@@ -960,6 +980,17 @@ export class DockerClient implements ContainerEngine {
 				// The archive endpoints have no recursive delete, so this is the one
 				// file operation that has to be an exec. Best-effort by contract.
 				await run(`rm -rf ${shellQuote(abs(relPath))}`).catch(() => undefined);
+			},
+
+			list: async (relDir) => {
+				// `-A` includes dotfiles and omits `.`/`..`, so an empty listing really
+				// means empty.
+				const res = await run(`ls -A ${shellQuote(abs(relDir))} 2>/dev/null`);
+				if (res.exitCode !== 0) return [];
+				return res.stdout
+					.split('\n')
+					.map((l) => l.trim())
+					.filter(Boolean);
 			},
 
 			mkdir: async (relPath, opts = {}) => {

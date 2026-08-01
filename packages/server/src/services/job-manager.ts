@@ -57,6 +57,7 @@ import {
 	isProjectIdleForContainerStop,
 	provisionContainer,
 	rebuildContainer,
+	reconcilePoolMembers,
 	stopContainerGracefully,
 	syncAllContainerStatuses,
 	verifyContainerWorkspace,
@@ -73,6 +74,7 @@ import type { PricingService } from './pricing';
 import { collectCandidateRunIds, decideSweepKills } from './process-sweeper';
 import { ensureRepoSetupAction } from './repo-setup';
 import { getActiveContainers, isTaskBusyInDb, projectContainerMemoryGb } from './run-concurrency';
+import { reclaimBusyPoolMembers } from './sandbox/pool-db';
 import type { SshAgentServer } from './ssh-agent';
 import { reportTelemetry } from './telemetry';
 import { ensureUpdateStaged, isSupervisedWorker, readUpdateState } from './updater';
@@ -298,6 +300,13 @@ export class JobManager {
 	private runningTasks = new Map<string, RunningTask>();
 	private liveRuns = new Map<string, LiveRun>();
 	private guards = new Map<string, boolean>();
+	/**
+	 * Containers the last orphan sweep found unreferenced. One sighting is not
+	 * enough to destroy on (see `reapOrphanedContainers`), so the set carries
+	 * across ticks. Bounded by the number of containers this instance owns, and
+	 * replaced wholesale each pass rather than accumulated.
+	 */
+	private suspectedOrphanContainers: ReadonlySet<string> = new Set();
 	/** Ticks dropped since the last warning, per job — see guarded(). */
 	private skippedTicks = new Map<string, number>();
 	private skipWarnedAt = new Map<string, number>();
@@ -751,6 +760,16 @@ export class JobManager {
 		);
 
 		await db.query('UPDATE execution_locks SET released_at = now() WHERE released_at IS NULL');
+
+		// Same reasoning as the execution locks above, for the pool's own claims:
+		// every in-flight run was just failed, so a member still marked busy is
+		// holding a claim for a run that no longer exists. Nothing else reclaims one
+		// - the ladder skips it, the idle pass ignores it, and its memory counts
+		// against the budget - so a crash would otherwise cost a container for good.
+		const reclaimed = await reclaimBusyPoolMembers(db);
+		if (reclaimed.length > 0) {
+			log.info(`Returned ${reclaimed.length} claimed container(s) to the pool after restart`);
+		}
 
 		for (const run of stranded.rows) {
 			broadcastRowChange(wsManager, wsRoom.team(run.team_id), 'heartbeat_runs', 'UPDATE', {
@@ -1216,6 +1235,7 @@ export class JobManager {
 	private async isContainerCapacityBlocked(projectId: string | null): Promise<boolean> {
 		const { budgetGb, usedMemoryGb, projectsWithSpareContainer } = await getActiveContainers(
 			this.deps.db,
+			this.deps.docker,
 		);
 		if (
 			projectId &&
@@ -2187,12 +2207,7 @@ export class JobManager {
 			this.deps.wsManager,
 		);
 
-		if (wakeupId) {
-			await db.query(
-				`UPDATE agent_wakeup_requests SET status = $1::wakeup_status, completed_at = now() WHERE id = $2`,
-				[result.success ? WakeupStatus.Completed : WakeupStatus.Failed, wakeupId],
-			);
-		}
+		if (await this.settleWakeupForRun(wakeupId, result)) return;
 
 		// A run cut off by its wall-clock time limit is not a failure. Queue a same-task
 		// continuation so the agent resumes it (committed work is already pushed) and skip the
@@ -2466,12 +2481,44 @@ export class JobManager {
 			result.heartbeatRunId,
 			this.deps.wsManager,
 		);
+		await this.settleWakeupForRun(wakeupId, result);
+	}
+
+	/**
+	 * Settle a wakeup now its run has finished, and say whether the caller should
+	 * stop.
+	 *
+	 * A run that never started because the instance was at its container-memory
+	 * budget is **not** a failure - the dispatcher's own gate tests for exactly
+	 * that state, and a moment later it may not hold. So the wakeup goes back to
+	 * `queued` the same way the dispatcher's transient branch does, and `true`
+	 * stops the caller before the failure ping and the next-task chain, neither of
+	 * which should fire for a scheduling race. Every other outcome is terminal.
+	 */
+	private async settleWakeupForRun(
+		wakeupId: string | undefined,
+		result: { success: boolean; requeued?: boolean },
+	): Promise<boolean> {
+		const { db } = this.deps;
+		if (result.requeued) {
+			if (wakeupId) {
+				await db.query(
+					`UPDATE agent_wakeup_requests
+					 SET status = $1::wakeup_status, claimed_at = NULL,
+					     last_skipped_at = now(), last_skipped_reason = $2
+					 WHERE id = $3`,
+					[WakeupStatus.Queued, WakeupSkipReason.InstanceAtCapacity, wakeupId],
+				);
+			}
+			return true;
+		}
 		if (wakeupId) {
 			await db.query(
 				`UPDATE agent_wakeup_requests SET status = $1::wakeup_status, completed_at = now() WHERE id = $2`,
 				[result.success ? WakeupStatus.Completed : WakeupStatus.Failed, wakeupId],
 			);
 		}
+		return false;
 	}
 
 	/**
@@ -2815,11 +2862,19 @@ export class JobManager {
 			return;
 		}
 
-		const transitions = await syncAllContainerStatuses(this.buildContainerDeps());
+		const deps = this.buildContainerDeps();
+		const transitions = await syncAllContainerStatuses(deps);
 
 		for (const transition of transitions) {
 			await this.handleContainerTransition(transition);
 		}
+
+		// Pool members are not reachable from the project rows above - a project
+		// names one container, a pool has many - so they are reconciled here.
+		// Without it a member whose container is gone is never revisited and
+		// permanently consumes the instance memory budget (see
+		// `reconcilePoolMembers`).
+		await reconcilePoolMembers(deps);
 	}
 
 	/**
@@ -2958,15 +3013,18 @@ export class JobManager {
 			return;
 		}
 		const { reapOrphanedContainers } = await import('./sandbox/orphan-reaper');
+		const { listReferencedContainerIds } = await import('./sandbox/pool-db');
 		const { getOrCreateInstanceId } = await import('./telemetry');
-		const live = await db.query<{ container_id: string }>(
-			`SELECT container_id FROM projects WHERE container_id IS NOT NULL`,
-		);
-		await reapOrphanedContainers(
+		const result = await reapOrphanedContainers(
 			docker,
 			await getOrCreateInstanceId(db),
-			new Set(live.rows.map((r) => r.container_id)),
+			await listReferencedContainerIds(db),
+			this.suspectedOrphanContainers,
 		);
+		// Carried to the next tick: a container is only destroyed once it has looked
+		// orphaned twice running, which is what keeps a mid-provision container -
+		// on the engine, not yet recorded anywhere - from being swept.
+		this.suspectedOrphanContainers = result.suspected;
 	}
 
 	private async handleContainerTransition(transition: ContainerTransition): Promise<void> {

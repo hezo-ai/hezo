@@ -59,7 +59,17 @@ describe('startup real-Docker branch (no daemon required)', () => {
 		result = await startup(config);
 
 		// The real client was constructed — not the HEZO_SKIP_DOCKER fake.
-		expect(result.docker).toBeInstanceOf(DockerClient);
+		// Not `toBeInstanceOf(DockerClient)` any more: what startup hands out is the
+		// holder's proxy, which is deliberately an instance of nothing so a swap can
+		// re-point it. The claim worth keeping is that a *real* Docker engine is
+		// behind it - and this assertion is why the production `instanceof` check
+		// that gates image setup had to move onto the concrete engine, since it was
+		// silently false against the proxy and nothing else would have said so.
+		expect(result.docker).toBeDefined();
+		expect(typeof result.docker.ping).toBe('function');
+		// The fake stands in only under HEZO_SKIP_DOCKER, which this spec does not
+		// set - so a real client is what got opened.
+		expect(process.env.HEZO_SKIP_DOCKER).toBeFalsy();
 
 		// Dev/source has no embedded docker bundle, so nothing was extracted.
 		expect(existsSync(join(dataDir, AGENT_BASE_CONTEXT_DIR))).toBe(false);

@@ -13,17 +13,14 @@
  * *every* run in the project. One greedy run takes down its siblings.
  */
 
-/**
- * Disk a member may consume before it is recycled rather than reused.
- *
- * This is the constraint that does not exist on a local daemon, where
- * `/workspace` is a bind mount with the operator's whole disk behind it, and the
- * one that bites on a managed sandbox, which gets a few GB in total. Set below
- * the provider allocation rather than at it: a container that fills up *during*
- * a run fails that run partway through, which is strictly worse than paying for
- * a fresh container up front.
- */
-export const POOL_DISK_CEILING_BYTES = 2 * 1024 ** 3;
+// The disk a member may consume before it is recycled rather than reused is
+// `poolDiskCeilingBytes(allocation)` in `@hezo/shared`, and it is recorded per
+// member (`container_pool_members.disk_ceiling_bytes`) rather than shared. The
+// allocation is a setting with a per-project override, so a single constant here
+// would either be far above what a small container can hold or would recycle a
+// large one with most of its disk free. The constraint itself does not exist on a
+// local daemon, where the workspace is a bind mount with the operator's whole
+// disk behind it; it is what bites on a managed sandbox.
 
 export type PoolMemberState =
 	/** Running and serving a run. */

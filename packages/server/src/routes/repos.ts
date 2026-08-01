@@ -357,8 +357,12 @@ reposRoutes.get('/projects/:projectId/repos/:repoId/git-state', async (c) => {
 	const wtPrefix = `${CONTAINER_WORKTREES_ROOT}/`;
 
 	const state = await withProjectGitLock(projectId, async () => {
-		const clone = await getCloneState(executor, repo.repoLoc);
-		const entries = await listWorktrees(executor, repo.repoLoc);
+		const repoLoc: RepoLoc = {
+			containerPath: repo.repoContainerPath,
+			files: executor.files(repo.repoContainerPath),
+		};
+		const clone = await getCloneState(executor, repoLoc);
+		const entries = await listWorktrees(executor, repoLoc);
 		const worktrees: {
 			taskIdentifier: string;
 			branch: string | null;
@@ -372,8 +376,8 @@ reposRoutes.get('/projects/:projectId/repos/:repoId/git-state', async (c) => {
 			const taskIdentifier = entry.path.slice(wtPrefix.length).split('/')[0];
 			if (!taskIdentifier) continue;
 			const wtLoc: WorktreeLoc = {
-				hostPath: join(worktreesPath, taskIdentifier, repo.repoName),
 				containerPath: entry.path,
+				files: executor.files(entry.path),
 			};
 			const wt = await getWorktreeState(executor, wtLoc);
 			worktrees.push({
@@ -460,15 +464,17 @@ reposRoutes.post('/projects/:projectId/repos/:repoId/reset', async (c) => {
 	const docker = c.get('docker');
 
 	if (action === 'reclone') {
-		// Wipe the clone (+ this repo's worktrees) and re-run the standard repo-setup
-		// path, which re-clones and settles the row to ready/failed. The frontend
-		// already renders `setup_status === 'pending'` as "Setting up…".
-		try {
-			removeRepoFromWorkspace(dataDir, teamId, projectId, repo.repoName);
-		} catch (e) {
-			log.error(`Failed to wipe workspace for reclone of ${repo.repoName}:`, e);
-			return err(c, 'RECLONE_FAILED', 'failed to remove existing clone', 500);
-		}
+		// Re-run the standard repo-setup path, asking it for a *fresh* clone: it
+		// wipes the existing one (and this repo's worktrees) inside the container
+		// and then clones, settling the row to ready/failed. The frontend already
+		// renders `setup_status === 'pending'` as "Setting up…".
+		//
+		// The wipe belongs there rather than here because the sync chooses
+		// clone-vs-adopt by reading the container. This route used to delete the
+		// host directory instead, which selected `clone` only while the two were
+		// the same bytes - on a managed backend it emptied nothing, the sync
+		// adopted the clone it was asked to replace, and the action reported
+		// success having done nothing.
 		const updated = await db.query<Record<string, unknown>>(
 			`UPDATE repos r SET setup_status = $1::repo_setup_status, setup_error = NULL
 			 WHERE r.id = $2 AND r.project_id = $3
@@ -493,7 +499,13 @@ reposRoutes.post('/projects/:projectId/repos/:repoId/reset', async (c) => {
 		trackBackground(
 			performRepoSetup(
 				{ ...setupDeps, docker, dataDir },
-				{ teamId, projectId, repoId: repo.repoId, repoIdentifier: repo.repoIdentifier },
+				{
+					teamId,
+					projectId,
+					repoId: repo.repoId,
+					repoIdentifier: repo.repoIdentifier,
+					freshClone: true,
+				},
 			).catch((e) => log.error(`Background reclone for ${repo.repoIdentifier} failed:`, e)),
 		);
 		return ok(c, { reset: true, action });
@@ -536,18 +548,34 @@ reposRoutes.post('/projects/:projectId/repos/:repoId/reset', async (c) => {
 					db,
 					executor,
 					projectId,
-					[repo.repoLoc],
+					[
+						{
+							containerPath: repo.repoContainerPath,
+							files: executor.files(repo.repoContainerPath),
+						},
+					],
 					undefined,
 				);
 				return { success: true, removed };
 			}
 			// discard_local: the best-effort fetch needs the SSH bridge.
 			const sshAgentServer = c.get('sshAgentServer');
-			const runReset = (bridge: BridgeRunnerArgs | null, scopeId: string) =>
-				resetCloneToOrigin(
-					ContainerGitExecutor.forPrep(docker, containerId, bridge, runUser, scopeId),
-					repo.repoLoc,
+			const runReset = (bridge: BridgeRunnerArgs | null, scopeId: string) => {
+				// The loc's files come from this executor, not another: pairing a cwd
+				// with a seam rooted in a different container is the drift the shared
+				// `files()` accessor exists to prevent.
+				const resetExecutor = ContainerGitExecutor.forPrep(
+					docker,
+					containerId,
+					bridge,
+					runUser,
+					scopeId,
 				);
+				return resetCloneToOrigin(resetExecutor, {
+					containerPath: repo.repoContainerPath,
+					files: resetExecutor.files(repo.repoContainerPath),
+				});
+			};
 			return sshAgentServer
 				? withProvisionBridge(
 						sshAgentServer,
@@ -634,7 +662,12 @@ interface RepoGitTarget {
 	repoId: string;
 	repoIdentifier: string;
 	repoName: string;
-	repoLoc: RepoLoc;
+	/**
+	 * The clone's path *inside* the container. Not a full `RepoLoc`, because that
+	 * carries a `SandboxFiles` rooted at the container this repo lives in and the
+	 * executor which supplies it is built by the caller, after this resolves.
+	 */
+	repoContainerPath: string;
 	containerId: string | null;
 	containerRunning: boolean;
 }
@@ -668,10 +701,7 @@ async function loadRepoForGit(
 		repoId,
 		repoIdentifier,
 		repoName,
-		repoLoc: {
-			hostPath: join(getWorkspacePath(dataDir, teamId, projectId), repoName),
-			containerPath: `${CONTAINER_WORKSPACE_ROOT}/${repoName}`,
-		},
+		repoContainerPath: `${CONTAINER_WORKSPACE_ROOT}/${repoName}`,
 		containerId: containerRes.rows[0]?.container_id ?? null,
 		containerRunning: containerRes.rows[0]?.container_status === ContainerStatus.Running,
 	};

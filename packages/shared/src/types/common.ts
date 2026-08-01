@@ -2266,3 +2266,26 @@ export const DEFAULT_LOCALE_SETTINGS: LocaleSettings = {
 	date_format: DateFormat.Mdy,
 	number_format: NumberFormat.DotComma,
 };
+
+/**
+ * Where agent containers run.
+ *
+ * Shared because both halves need the same answer: the server selects the
+ * backend and reports it, and the web app tells the operator which one is in use
+ * and which limits therefore apply. It lived as a hand-written `'docker' |
+ * 'daytona'` union in each package, which is two places to update for every new
+ * provider.
+ */
+export const SandboxBackend = {
+	/** The operator's own Docker daemon. Containers share the host's memory and disk. */
+	Docker: 'docker',
+	/** Daytona managed sandboxes. Containers run on the provider's machines. */
+	Daytona: 'daytona',
+} as const;
+export type SandboxBackend = (typeof SandboxBackend)[keyof typeof SandboxBackend];
+
+export const SANDBOX_BACKENDS: readonly SandboxBackend[] = Object.values(SandboxBackend);
+
+export function isSandboxBackend(value: string): value is SandboxBackend {
+	return (SANDBOX_BACKENDS as readonly string[]).includes(value);
+}

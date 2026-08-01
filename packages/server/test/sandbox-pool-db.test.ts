@@ -1,5 +1,6 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { PgliteDb } from '../src/db/drivers/pglite';
+import { reconcilePoolMembers } from '../src/services/containers';
 import {
 	projectHasStrandedCommits,
 	setPoolMemberUnpushedFlag,
@@ -107,5 +108,99 @@ describe('setPoolMemberUnpushedFlag', () => {
 	it('stops reporting a project once its last pin clears', async () => {
 		await setPoolMemberUnpushedFlag(db, 'ctr-b', false);
 		expect(await projectHasStrandedCommits(db, projectId)).toBe(false);
+	});
+});
+
+/**
+ * Reconciling pool members against the engine.
+ *
+ * The acquire path repairs a stale member only on the rungs it picks - and it
+ * never picks a `busy` one, so a run that died without releasing its row leaves
+ * a member nothing revisits. Because `getActiveContainers` counts `busy` towards
+ * the instance memory budget, each orphan permanently consumes capacity until
+ * every run in the project fails admission.
+ */
+describe('reconcilePoolMembers', () => {
+	let db: PgliteDb;
+	let projectId: string;
+
+	const seed = async (containerId: string, state: string, ageSeconds: number) => {
+		await db.query(
+			`INSERT INTO container_pool_members (project_id, container_id, state, updated_at)
+			 VALUES ($1, $2, $3::container_pool_state, now() - ($4 * interval '1 second'))`,
+			[projectId, containerId, state, ageSeconds],
+		);
+	};
+	const remaining = async (): Promise<string[]> => {
+		const r = await db.query<{ container_id: string }>(
+			'SELECT container_id FROM container_pool_members ORDER BY container_id',
+		);
+		return r.rows.map((x) => x.container_id);
+	};
+	/** Engine that knows only `known`, 404s the rest, and throws for `unanswerable`. */
+	const engine = (known: string[], unanswerable: string[] = []) =>
+		({
+			inspectContainer: async (id: string) => {
+				if (unanswerable.includes(id)) throw new Error('API unreachable');
+				return known.includes(id)
+					? {
+							Id: id,
+							State: { Status: 'running', Running: true, Pid: 1, ExitCode: 0 },
+							Config: { Image: 'x' },
+						}
+					: null;
+			},
+		}) as unknown as Parameters<typeof reconcilePoolMembers>[0]['docker'];
+
+	beforeAll(async () => {
+		db = await createTestDbWithMigrations();
+		const team = await db.query<{ id: string }>(
+			"INSERT INTO teams (name, slug) VALUES ('rec', 'rec') RETURNING id",
+		);
+		const project = await db.query<{ id: string }>(
+			`INSERT INTO projects (team_id, name, slug, task_prefix) VALUES ($1, 'rec', 'rec', 'REC') RETURNING id`,
+			[team.rows[0].id],
+		);
+		projectId = project.rows[0].id;
+	});
+	afterAll(() => db.close());
+	// Each case owns the whole table: a member left behind by a previous case
+	// would be judged missing by the next one's engine and inflate its count.
+	beforeEach(() => db.query('DELETE FROM container_pool_members'));
+
+	it('drops a busy member whose container is gone — the case nothing else repairs', async () => {
+		await seed('gone-busy', 'busy', 300);
+		await seed('live-busy', 'busy', 300);
+		const dropped = await reconcilePoolMembers({
+			db,
+			docker: engine(['live-busy']),
+		} as unknown as Parameters<typeof reconcilePoolMembers>[0]);
+		expect(dropped).toBe(1);
+		expect(await remaining()).toEqual(['live-busy']);
+	});
+
+	it('leaves a member alone when the engine could not answer', async () => {
+		// A timeout or an unreachable API proves nothing. Deleting the row on an
+		// unanswerable check would lose the record of a live container and orphan
+		// it on the backend, which is the strictly worse failure.
+		await seed('unanswerable', 'idle', 300);
+		const dropped = await reconcilePoolMembers({
+			db,
+			docker: engine([], ['unanswerable']),
+		} as unknown as Parameters<typeof reconcilePoolMembers>[0]);
+		expect(dropped).toBe(0);
+		expect(await remaining()).toContain('unanswerable');
+	});
+
+	it('does not judge a member that was only just touched', async () => {
+		// A container created moments ago may not be answerable for yet, and a
+		// member mid-transition would be racing whatever moved it.
+		await seed('fresh', 'creating', 1);
+		const dropped = await reconcilePoolMembers({
+			db,
+			docker: engine([]),
+		} as unknown as Parameters<typeof reconcilePoolMembers>[0]);
+		expect(dropped).toBe(0);
+		expect(await remaining()).toContain('fresh');
 	});
 });

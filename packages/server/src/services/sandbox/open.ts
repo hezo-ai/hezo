@@ -1,9 +1,5 @@
-import {
-	isSandboxBackendName,
-	redactSandboxApiUrl,
-	type SandboxBackendInfo,
-	type SandboxBackendName,
-} from '../../lib/sandbox-backend-info';
+import { isSandboxBackend, SANDBOX_BACKENDS, SandboxBackend } from '@hezo/shared';
+import { redactSandboxApiUrl, type SandboxBackendInfo } from '../../lib/sandbox-backend-info';
 import { logger } from '../../logger';
 import { DockerClient } from '../docker';
 import { DaytonaClient, DEFAULT_DAYTONA_API_URL } from './daytona/client';
@@ -48,13 +44,13 @@ export async function openSandboxBackend(
 ): Promise<OpenedSandboxBackend> {
 	const name = resolveBackendName(options.backend);
 
-	if (name === 'docker') {
+	if (name === SandboxBackend.Docker) {
 		// No preflight here: the daemon gate already ran in `index.ts`, before the
 		// server booted, so it could print install/start guidance rather than a
 		// generic connection error.
 		return {
 			engine: new DockerClient(),
-			info: { backend: 'docker', display: 'local Docker daemon' },
+			info: { backend: SandboxBackend.Docker, display: 'local Docker daemon' },
 		};
 	}
 
@@ -94,17 +90,17 @@ export async function openSandboxBackend(
 	log.info(`Sandbox backend: Daytona (${redacted})`);
 	return {
 		engine: new DaytonaEngine(client),
-		info: { backend: 'daytona', display: redacted },
+		info: { backend: SandboxBackend.Daytona, display: redacted },
 	};
 }
 
-function resolveBackendName(raw?: string): SandboxBackendName {
-	if (!raw) return 'docker';
+function resolveBackendName(raw?: string): SandboxBackend {
+	if (!raw) return SandboxBackend.Docker;
 	const value = raw.trim().toLowerCase();
-	if (!isSandboxBackendName(value)) {
+	if (!isSandboxBackend(value)) {
 		throw new SandboxBackendError(
 			`Unknown sandbox backend "${raw}".\n` +
-				'Set --sandbox-backend / HEZO_SANDBOX_BACKEND to one of: docker, daytona.',
+				`Set --sandbox-backend / HEZO_SANDBOX_BACKEND to one of: ${SANDBOX_BACKENDS.join(', ')}.`,
 		);
 	}
 	return value;

@@ -18,6 +18,7 @@ import {
 	removeRepoFromWorkspace,
 	removeTaskWorktrees,
 } from '../src/services/repo-sync';
+import { hostSandboxFiles } from '../src/services/sandbox/files';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 
@@ -92,6 +93,10 @@ function rawOriginUrl(dir: string): string {
  * network. Everything the heal does besides `ls-remote` is a local operation.
  */
 class EmptyRemoteExecutor implements GitExecutor {
+	/** Temp dirs, so host and container paths are the same string. */
+	files(containerPath: string) {
+		return hostSandboxFiles(containerPath);
+	}
 	private readonly inner = new HostGitExecutor(HERMETIC_GIT_ENV);
 	exec(args: string[], opts: GitExecOpts): Promise<GitExecResult> {
 		if (args[0] === 'ls-remote') {
@@ -103,6 +108,10 @@ class EmptyRemoteExecutor implements GitExecutor {
 
 /** Answers every git call with a zero-exit and no output — the stubbed-docker shape. */
 class SilentExecutor implements GitExecutor {
+	/** Temp dirs, so host and container paths are the same string. */
+	files(containerPath: string) {
+		return hostSandboxFiles(containerPath);
+	}
 	calls: string[][] = [];
 	exec(args: string[]): Promise<GitExecResult> {
 		this.calls.push(args);
@@ -114,7 +123,11 @@ async function withRepo(
 	identifier: string,
 	fn: (
 		targetDir: string,
-		sync: (executor: GitExecutor, logEmit?: LogEmitter) => Promise<RepoSyncResult>,
+		sync: (
+			executor: GitExecutor,
+			logEmit?: LogEmitter,
+			opts?: { freshClone?: ReadonlySet<string> },
+		) => Promise<RepoSyncResult>,
 	) => Promise<void>,
 ): Promise<void> {
 	await db.query(
@@ -124,7 +137,7 @@ async function withRepo(
 	);
 	const workspacePath = join(dataDir, 'teams', teamId, 'projects', projectId, 'workspace');
 	try {
-		await fn(join(workspacePath, identifier.split('/')[1]), (executor, logEmit) =>
+		await fn(join(workspacePath, identifier.split('/')[1]), (executor, logEmit, opts) =>
 			// Host and "container" paths coincide: the executor runs host git, so the
 			// workspace path doubles as the container workspace root.
 			ensureProjectRepos(
@@ -134,6 +147,7 @@ async function withRepo(
 				executor,
 				logEmit,
 				workspacePath,
+				opts,
 			),
 		);
 	} finally {
@@ -151,6 +165,61 @@ describe('ensureProjectRepos', () => {
 		expect(result.repaired).toEqual([]);
 		expect(result.skipped).toEqual([]);
 		expect(result.failed).toEqual([]);
+	});
+
+	it('re-clones a repo the operator asked to replace, instead of adopting it', async () => {
+		// The reset route's `reclone`. It used to work by deleting the host clone
+		// directory before calling in, which selected `clone` below only because the
+		// mode check was a host check too. The check now asks the container, so the
+		// removal has to happen on that side or the sync adopts the very clone it
+		// was told to replace - which on a managed backend is what happened, while
+		// the action reported success.
+		await withRepo('owner/staleclone', async (targetDir, sync) => {
+			makeRepo(targetDir, 'git@github.com:owner/staleclone.git');
+			writeFileSync(join(targetDir, 'leftover.txt'), 'from the clone being replaced');
+
+			// Without the request this is a no-op: origin is already correct.
+			expect((await sync(exec)).skipped).toContain('staleclone');
+
+			// With it, the existing clone is gone before the sync decides - the
+			// silent executor stands in for the clone itself, which needs a network.
+			const executor = new SilentExecutor();
+			const result = await sync(executor, undefined, {
+				freshClone: new Set(['owner/staleclone']),
+			});
+
+			expect(result.cloned).toContain('staleclone');
+			expect(result.skipped).toEqual([]);
+			expect(result.repaired).toEqual([]);
+			// The old working tree is really gone, not merely re-pointed.
+			expect(existsSync(join(targetDir, 'leftover.txt'))).toBe(false);
+			expect(existsSync(join(targetDir, '.git'))).toBe(false);
+			// And the git command actually issued was a clone.
+			expect(executor.calls.some((c) => c[0] === 'clone')).toBe(true);
+		});
+	});
+
+	it("clears the replaced repo's worktrees, which point into the clone it just deleted", async () => {
+		// They are `git worktree` checkouts *of* that clone: once its .git is gone
+		// their admin files dangle, and a later worktree add for the same task would
+		// collide with the orphan.
+		await withRepo('owner/wtclone', async (targetDir, sync) => {
+			makeRepo(targetDir, 'git@github.com:owner/wtclone.git');
+			const worktreesRoot = join(dataDir, 'teams', teamId, 'projects', projectId, 'worktrees');
+			const taskWorktree = join(worktreesRoot, 'TASK-1', 'wtclone');
+			mkdirSync(taskWorktree, { recursive: true });
+			writeFileSync(join(taskWorktree, 'checked-out.txt'), 'x');
+			// A sibling repo's worktree under the same task must survive - only the
+			// repo being recloned is in scope.
+			const otherWorktree = join(worktreesRoot, 'TASK-1', 'unrelated');
+			mkdirSync(otherWorktree, { recursive: true });
+			writeFileSync(join(otherWorktree, 'keep.txt'), 'y');
+
+			await sync(new SilentExecutor(), undefined, { freshClone: new Set(['owner/wtclone']) });
+
+			expect(existsSync(taskWorktree)).toBe(false);
+			expect(existsSync(join(otherWorktree, 'keep.txt'))).toBe(true);
+		});
 	});
 
 	it('skips a clone whose origin already points at the linked repo', async () => {

@@ -20,7 +20,7 @@ import { forEachConcurrent } from '../lib/concurrency';
 import { withKeyedLock } from '../lib/keyed-lock';
 import { ref } from '../lib/log-ref';
 import { stripNulBytes, terminalStatusParams } from '../lib/sql';
-import { getDefaultRamCapPerContainerGb } from '../lib/system-meta';
+import { getDefaultRamCapPerContainerGb, getProjectContainerDiskGb } from '../lib/system-meta';
 import { logger } from '../logger';
 import { setAgentIdleIfNoActiveRuns } from './agent-runtime-status';
 import type { ContainerLogStreamer } from './container-logs';
@@ -42,6 +42,7 @@ import {
 	claimPoolMember,
 	decidePoolAcquisition,
 	listPoolContainerIds,
+	listPoolMembersForReconcile,
 	releasePoolMember,
 	removePoolMember,
 	setPoolMemberState,
@@ -443,6 +444,10 @@ export async function provisionContainer(
 		const memoryLimitGib =
 			limitRow.rows[0]?.memory_limit_gib ?? (await getDefaultRamCapPerContainerGb(db));
 		const memoryHardCapBytes = memoryLimitBytes(memoryLimitGib) + MEMORY_HARD_CAP_HEADROOM_BYTES;
+		// Same precedence as the memory cap: the project's override, else the
+		// instance default. Stated on every backend; what it means is the engine's
+		// to absorb (see ContainerConfig.HostConfig.DiskGb).
+		const diskGb = await getProjectContainerDiskGb(db, project.id);
 
 		const { Id } = await docker.createContainer(containerName, {
 			Image: baseImage,
@@ -457,6 +462,7 @@ export async function provisionContainer(
 				Init: true,
 				Memory: memoryHardCapBytes,
 				MemorySwap: memoryHardCapBytes,
+				DiskGb: diskGb,
 				PidsLimit: CONTAINER_PIDS_LIMIT,
 				CapDrop: ['ALL'],
 				CapAdd: [...CONTAINER_BASE_CAPABILITIES, ...(pinMtu !== null ? ['NET_ADMIN'] : [])],
@@ -499,7 +505,10 @@ export async function provisionContainer(
 		// never exists in a state no run could use, and registered for every
 		// container - `projects.container_id` still names one of them for the UI and
 		// for the columns not yet migrated, but the pool is what the ladder reads.
-		await upsertPoolMember(db, project.id, Id, 'idle');
+		// The disk it was actually provisioned with rides along, so the pool judges
+		// this container against its own allocation rather than against whatever the
+		// setting happens to say later.
+		await upsertPoolMember(db, project.id, Id, 'idle', diskGb);
 
 		if (deps.containerLogStreamer && deps.logs) {
 			deps.containerLogStreamer.subscribe(project.id, Id, deps.logs, docker);
@@ -744,7 +753,7 @@ export async function acquireRunContainer(
 		// this cannot spin. The cap is the pool's own size, not a timeout.
 		for (let attempt = 0; attempt < MAX_ACQUIRE_ATTEMPTS; attempt++) {
 			const [active, requestMemoryGb] = await Promise.all([
-				getActiveContainers(db),
+				getActiveContainers(db, deps.docker),
 				projectContainerMemoryGb(db, projectId),
 			]);
 			const decision = await decidePoolAcquisition(db, projectId, taskId, {
@@ -1604,4 +1613,64 @@ async function allocateHostPorts(
 		usedPorts.add(host);
 		return { container: p.container, host };
 	});
+}
+
+/**
+ * How stale a pool member must be before it is checked, and how many are checked
+ * per pass. The floor keeps a just-created container from being judged missing
+ * before the provider can answer for it; the bound keeps a large pool from
+ * turning one tick into a fan-out of engine round trips.
+ */
+const POOL_RECONCILE_MIN_AGE_SECONDS = 60;
+const POOL_RECONCILE_LIMIT = 50;
+
+/**
+ * Drop pool members whose container no longer exists.
+ *
+ * The acquire path repairs a stale member on two rungs - `reuse` verifies the
+ * container still runs, `resume` drops it if the start throws - but both only
+ * fire for a member the ladder actually **picks**, and the ladder never picks a
+ * `busy` one. A run that died without releasing its row therefore leaves a
+ * member nothing ever revisits. That is not merely untidy: `getActiveContainers`
+ * counts `creating`/`idle`/`busy` members towards the instance memory budget, so
+ * each orphan permanently consumes capacity, and enough of them make every run
+ * in the project fail admission with "no container available".
+ *
+ * This matters more on a managed backend than on a local daemon, because there a
+ * container disappearing is normal rather than anomalous - the provider stops,
+ * archives or reaps sandboxes on its own schedule and enforces quota by refusing
+ * or removing them.
+ *
+ * **A member is dropped only on a definite answer.** `inspectContainer` returns
+ * null for a container the engine does not know; anything else - a timeout, an
+ * unreachable API - throws, and a throw means "could not determine", which
+ * leaves the row exactly as it was. Treating an unanswerable check as "gone"
+ * would delete the record of a live container and orphan it on the backend,
+ * which is the strictly worse failure.
+ */
+export async function reconcilePoolMembers(deps: ContainerDeps): Promise<number> {
+	const { db, docker } = deps;
+	const stale = await listPoolMembersForReconcile(
+		db,
+		POOL_RECONCILE_MIN_AGE_SECONDS,
+		POOL_RECONCILE_LIMIT,
+	);
+	if (stale.length === 0) return 0;
+
+	let dropped = 0;
+	for (const member of stale) {
+		let info: Awaited<ReturnType<ContainerEngine['inspectContainer']>>;
+		try {
+			info = await docker.inspectContainer(member.containerId);
+		} catch {
+			continue;
+		}
+		if (info !== null) continue;
+		await removePoolMember(db, member.containerId);
+		dropped++;
+		log.info(
+			`pool member ${member.containerId.slice(0, 12)} (${member.state}) no longer exists on the backend — dropped`,
+		);
+	}
+	return dropped;
 }

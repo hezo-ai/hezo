@@ -1,11 +1,12 @@
 import { execSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { TaskStatus } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { PgliteDb } from '../src/db/drivers/pglite';
 import type { RepoLoc } from '../src/services/git';
+import { localGitLoc } from '../src/services/git';
 import { HostGitExecutor } from '../src/services/git-executor';
 import {
 	collectFinishedWorktrees,
@@ -26,7 +27,11 @@ import { createTestDbWithMigrations } from './helpers/db';
  * the shared store, which is what makes this mandatory rather than housekeeping.
  */
 
-const root = mkdtempSync(join(tmpdir(), 'worktree-gc-'));
+// Resolved, because git reports worktree paths with symlinks followed. On macOS
+// `tmpdir()` is `/var/folders/…`, a symlink to `/private/var/folders/…`, so an
+// unresolved root is 8 characters shorter than what `git worktree list` prints -
+// and every path this fixture slices by that prefix comes out shifted.
+const root = realpathSync(mkdtempSync(join(tmpdir(), 'worktree-gc-')));
 const exec = new HostGitExecutor();
 
 function run(cmd: string, cwd?: string): string {
@@ -92,7 +97,7 @@ describe('worktree GC', () => {
 		run('git config user.email tester@test.com', clonePath);
 		run('git config commit.gpgsign false', clonePath);
 		run('git commit --allow-empty -m initial', clonePath);
-		clone = { hostPath: clonePath, containerPath: clonePath };
+		clone = localGitLoc(clonePath);
 
 		await seedTask('GC-1', TaskStatus.Done);
 		await seedTask('GC-2', TaskStatus.InProgress);

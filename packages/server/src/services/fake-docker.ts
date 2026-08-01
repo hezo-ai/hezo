@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Db } from '../db/database';
+import { getHostMemory } from '../lib/host-memory';
 import { hostSandboxFiles, type SandboxFiles } from './sandbox/files';
 import type {
 	ContainerByteChannel,
@@ -13,7 +14,12 @@ import type {
 	ExecResult,
 	ExecStartOpts,
 } from './sandbox/types';
-import { CONTAINER_WORKSPACE_ROOT, getWorkspacePath } from './workspace';
+import {
+	CONTAINER_WORKSPACE_ROOT,
+	CONTAINER_WORKTREES_ROOT,
+	getWorkspacePath,
+	getWorktreesPath,
+} from './workspace';
 
 const SYNTHETIC_EXEC_SCRIPT: Array<{
 	stream: 'stdout' | 'stderr';
@@ -70,6 +76,7 @@ export function createFakeDockerClient(db?: Db, dataDir?: string): ContainerEngi
 	const containers = new Map<string, FakeContainer>();
 	const execRunIds = new Map<string, string | null>();
 	let execCounter = 0;
+	const tunnelReadyExecs = new Set<string>();
 
 	const describe = (id: string): ContainerInfo => {
 		const running = containers.get(id)?.running ?? true;
@@ -148,11 +155,21 @@ export function createFakeDockerClient(db?: Db, dataDir?: string): ContainerEngi
 			const execId = `noop-exec-${++execCounter}`;
 			const runEntry = config?.Env?.find((e) => e.startsWith(RUN_ID_ENV_PREFIX));
 			execRunIds.set(execId, runEntry ? runEntry.slice(RUN_ID_ENV_PREFIX.length) : null);
+			// The tunnel's port-readiness check, recognised so it can be answered.
+			// `startRunTunnel` will not hand a run its endpoints until the client's
+			// ports are listening, so a fake that never answers leaves every run -
+			// and every chat turn - waiting out the full timeout and then failing.
+			if ((config?.Cmd ?? []).some((part) => part.includes('/proc/net/tcp'))) {
+				tunnelReadyExecs.add(execId);
+			}
 			return execId;
 		},
 		execStart: async (execId: string, opts?: ExecStartOpts): Promise<ExecResult> => {
 			const runId = execRunIds.get(execId) ?? null;
 			execRunIds.delete(execId);
+			// A fake container's tunnel comes up. A test that wants the opposite
+			// drives `startRunTunnel` against its own engine (sandbox-run-tunnel).
+			if (tunnelReadyExecs.delete(execId)) return { stdout: 'ready\n', stderr: '' };
 			if (!opts?.onChunk) return { stdout: '', stderr: '' };
 			await runSyntheticExec(opts);
 			if (db && runId) {
@@ -187,6 +204,11 @@ export function createFakeDockerClient(db?: Db, dataDir?: string): ContainerEngi
 		// rather than 0 - a fake claiming an empty disk would make the pool's
 		// recycle rung untestable by asserting the opposite of what it guards.
 		diskUsedBytes: async () => null,
+
+		// The fake stands in for a *local daemon*, so its containers draw on this
+		// host exactly as Docker's would - which is what keeps the automatic budget
+		// under HEZO_SKIP_DOCKER the same number production would compute.
+		containerHostMemory: () => getHostMemory(),
 
 		// Resolved through the container's bind mounts, exactly as Docker would.
 		// The fake exists to stand in for a *local daemon*, and a local daemon's
@@ -253,8 +275,26 @@ function lazyHostFiles(resolve: () => Promise<string>): SandboxFiles {
 		write: async (p, c, o) => (await bound()).write(p, c, o),
 		writeBytes: async (p, c, o) => (await bound()).writeBytes(p, c, o),
 		mkdir: async (p, o) => (await bound()).mkdir(p, o),
+		list: async (p) => (await bound()).list(p),
 	};
 }
+
+/**
+ * The two binds `containers.ts` gives every project container, so a path under
+ * either resolves the way the real mount would.
+ *
+ * Both are needed, not just the workspace: worktrees live on their own mount,
+ * and resolving `/worktrees/<task>/<repo>` against the workspace root answers
+ * with a directory that exists and holds the wrong repo - a wrong answer that
+ * reads as a right one, which is worse than failing.
+ */
+const FAKE_PROJECT_MOUNTS: ReadonlyArray<{
+	containerRoot: string;
+	hostRoot: (dataDir: string, teamId: string, projectId: string) => string;
+}> = [
+	{ containerRoot: CONTAINER_WORKSPACE_ROOT, hostRoot: getWorkspacePath },
+	{ containerRoot: CONTAINER_WORKTREES_ROOT, hostRoot: getWorktreesPath },
+];
 
 async function resolveFakeHostRoot(
 	containerId: string,
@@ -262,26 +302,31 @@ async function resolveFakeHostRoot(
 	db?: Db,
 	dataDir?: string,
 ): Promise<string> {
-	const suffix = (base: string): string =>
-		containerRoot.startsWith(CONTAINER_WORKSPACE_ROOT)
-			? `${base}${containerRoot.slice(CONTAINER_WORKSPACE_ROOT.length)}`
-			: base;
+	/** Rebase `containerRoot` onto `base` when it sits at or under `mountRoot`. */
+	const under = (mountRoot: string, base: string): string | null => {
+		if (containerRoot === mountRoot) return base;
+		if (containerRoot.startsWith(`${mountRoot}/`)) {
+			return `${base}${containerRoot.slice(mountRoot.length)}`;
+		}
+		return null;
+	};
 
 	// A recorded bind is the most faithful answer: it is the same information
 	// Docker itself was given at create.
 	for (const bind of fakeBinds.get(containerId) ?? []) {
-		if (containerRoot === bind.containerPath) return bind.hostPath;
-		if (containerRoot.startsWith(`${bind.containerPath}/`)) {
-			return `${bind.hostPath}${containerRoot.slice(bind.containerPath.length)}`;
-		}
+		const resolved = under(bind.containerPath, bind.hostPath);
+		if (resolved) return resolved;
 	}
 
+	// A root registered for the whole container answers for anything under it,
+	// and stands in unchanged for a path outside the project mounts (a per-run
+	// runtime home, say) - that is what the caller registered it for.
 	const registered = fakeFallbackRoots.get(containerId);
-	if (registered) return suffix(registered);
+	if (registered) return under(CONTAINER_WORKSPACE_ROOT, registered) ?? registered;
 
 	// Most tests hand a project a `container_id` without provisioning through the
 	// engine, so there are no binds to read. The project row still says which
-	// workspace that container would have mounted, which is the same mapping a
+	// directories that container would have mounted, which is the same mapping a
 	// real bind produces.
 	if (db && dataDir) {
 		try {
@@ -290,7 +335,18 @@ async function resolveFakeHostRoot(
 				[containerId],
 			);
 			const project = row.rows[0];
-			if (project) return suffix(getWorkspacePath(dataDir, project.team_id, project.id));
+			if (project) {
+				for (const mount of FAKE_PROJECT_MOUNTS) {
+					const resolved = under(
+						mount.containerRoot,
+						mount.hostRoot(dataDir, project.team_id, project.id),
+					);
+					if (resolved) return resolved;
+				}
+				// Outside both mounts (a per-run runtime home): the workspace stands in,
+				// so a write and the read that follows it still land on the same bytes.
+				return getWorkspacePath(dataDir, project.team_id, project.id);
+			}
 		} catch {
 			// Fall through to the scratch dir below - a fake must never throw from
 			// a path resolution.

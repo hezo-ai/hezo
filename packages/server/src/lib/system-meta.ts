@@ -1,6 +1,9 @@
 import {
+	CONTAINER_DISK_GB_MAX,
+	CONTAINER_DISK_GB_MIN,
 	coerceLocaleSettings,
 	computeDefaultMaxContainerMemoryGb,
+	DEFAULT_CONTAINER_DISK_GB,
 	DEFAULT_MAX_CHAT_HISTORY_SIZE,
 	DEFAULT_MAX_CONTAINER_MEMORY_GB,
 	DEFAULT_RAM_CAP_PER_CONTAINER_GB,
@@ -14,7 +17,7 @@ import {
 	RAM_CAP_PER_CONTAINER_GB_MIN,
 } from '@hezo/shared';
 import type { Db } from '../db/database';
-import { getHostMemory } from './host-memory';
+import type { ContainerEngine } from '../services/sandbox/types';
 
 /**
  * Instance-wide key-value settings stored in the `system_meta` table (the same
@@ -33,6 +36,8 @@ export const MAX_CHAT_HISTORY_SIZE_KEY = 'max_chat_history_size';
  */
 export const MAX_CONTAINER_MEMORY_GB_KEY = 'max_container_memory_gb';
 export const RAM_CAP_PER_CONTAINER_KEY = 'default_ram_cap_per_container_gb';
+/** Disk allocated to each project container, in GB. Sibling of the RAM cap. */
+export const CONTAINER_DISK_GB_KEY = 'default_container_disk_gb';
 
 /**
  * Locale keys. One key per axis rather than a single JSON blob, so a partial
@@ -111,14 +116,22 @@ export function clampMaxContainerMemoryGb(value: number): number {
 }
 
 /**
- * The automatic memory budget for this host: total virtual memory (RAM + swap)
- * less the system reserve and one container's worth held for the CEO chat. Used
- * whenever the operator has not explicitly set a budget.
+ * The automatic memory budget: for an engine whose containers run here, total
+ * virtual memory (RAM + swap) less the system reserve and one container's worth
+ * held for the CEO chat; for one whose containers run elsewhere, a flat default,
+ * since this host's memory is not what bounds them. Used whenever the operator
+ * has not explicitly set a budget.
+ *
+ * The engine is asked rather than probed - `containerHostMemory()` is the one
+ * fact the model needs, and taking it from the engine keeps every provider name
+ * on the far side of the seam.
  */
-export async function computeAutoMaxContainerMemoryGb(db: Db): Promise<number> {
+export async function computeAutoMaxContainerMemoryGb(
+	db: Db,
+	engine: Pick<ContainerEngine, 'containerHostMemory'>,
+): Promise<number> {
 	const ramCapGb = await getDefaultRamCapPerContainerGb(db);
-	const { totalRamBytes, totalSwapBytes } = getHostMemory();
-	return computeDefaultMaxContainerMemoryGb(totalRamBytes, totalSwapBytes, ramCapGb);
+	return computeDefaultMaxContainerMemoryGb(engine.containerHostMemory(), ramCapGb);
 }
 
 /**
@@ -137,12 +150,15 @@ export async function getMaxContainerMemoryGbSetting(db: Db): Promise<number | n
  * The effective instance-wide cap on simultaneously active (running) project
  * containers — the operator's main bound on memory, since every container is
  * memory-capped and total demand never exceeds `N × cap`. An explicitly stored
- * value wins; otherwise the default is computed from host memory and the
- * per-container ram cap. Malformed stored values degrade to the computed
- * default so a stale row can never wedge dispatch.
+ * value wins; otherwise the default comes from {@link computeAutoMaxContainerMemoryGb}.
+ * Malformed stored values degrade to the computed default so a stale row can
+ * never wedge dispatch.
  */
-export async function getMaxContainerMemoryGb(db: Db): Promise<number> {
-	return (await getMaxContainerMemoryGbSetting(db)) ?? computeAutoMaxContainerMemoryGb(db);
+export async function getMaxContainerMemoryGb(
+	db: Db,
+	engine: Pick<ContainerEngine, 'containerHostMemory'>,
+): Promise<number> {
+	return (await getMaxContainerMemoryGbSetting(db)) ?? computeAutoMaxContainerMemoryGb(db, engine);
 }
 
 export async function setMaxContainerMemoryGb(db: Db, value: number): Promise<number> {
@@ -186,6 +202,44 @@ export async function setDefaultRamCapPerContainerGb(db: Db, value: number): Pro
 	const clamped = clampRamCapPerContainerGb(value);
 	await setSystemMeta(db, RAM_CAP_PER_CONTAINER_KEY, String(clamped));
 	return clamped;
+}
+
+/** Clamp to the allowed per-container disk range (GB), matching the RAM cap's shape. */
+export function clampContainerDiskGb(value: number): number {
+	if (!Number.isFinite(value)) return DEFAULT_CONTAINER_DISK_GB;
+	return Math.min(CONTAINER_DISK_GB_MAX, Math.max(CONTAINER_DISK_GB_MIN, Math.round(value)));
+}
+
+/**
+ * The instance-wide disk allocated to each project container, in GB. Applied to
+ * every container without a per-project override. Falls back to the default when
+ * unset or malformed.
+ */
+export async function getDefaultContainerDiskGb(db: Db): Promise<number> {
+	const raw = await getSystemMeta(db, CONTAINER_DISK_GB_KEY);
+	if (raw === null) return DEFAULT_CONTAINER_DISK_GB;
+	const parsed = Number.parseInt(raw, 10);
+	if (Number.isNaN(parsed)) return DEFAULT_CONTAINER_DISK_GB;
+	return clampContainerDiskGb(parsed);
+}
+
+export async function setDefaultContainerDiskGb(db: Db, value: number): Promise<number> {
+	const clamped = clampContainerDiskGb(value);
+	await setSystemMeta(db, CONTAINER_DISK_GB_KEY, String(clamped));
+	return clamped;
+}
+
+/**
+ * The disk a given project's containers get, in GB: its own override, else the
+ * instance default. One query, so a caller never has to remember the precedence.
+ */
+export async function getProjectContainerDiskGb(db: Db, projectId: string): Promise<number> {
+	const row = await db.query<{ container_disk_gb: number | null }>(
+		'SELECT container_disk_gb FROM projects WHERE id = $1',
+		[projectId],
+	);
+	const override = row.rows[0]?.container_disk_gb;
+	return override ?? (await getDefaultContainerDiskGb(db));
 }
 
 // The container idle window is no longer an operator setting - it is the

@@ -2,6 +2,7 @@ import { Boxes, Cloud } from 'lucide-react';
 import { useMe } from '../hooks/use-me';
 import { type SandboxBackendInfo, useSandboxBackendInfo } from '../hooks/use-sandbox-backend-info';
 import { useI18n } from '../lib/i18n';
+import { backendDisplayName } from '../lib/sandbox-backend';
 
 /**
  * Sandbox-backend card, rendered alongside the database and asset-storage cards
@@ -47,9 +48,10 @@ function SandboxBackendDetails({ info }: { info: SandboxBackendInfo }) {
 						&bull;
 					</span>
 					<span className="text-[13px] text-text-2" data-testid="settings-sandbox-backend-name">
-						{/* A provider name is a proper noun and stays untranslated; only the
-						    local-daemon wording is a catalog string. */}
-						{isManaged ? 'Daytona' : t('settings.sandboxBackend.docker')}
+						{/* Named from the shared table, not from `isManaged`: rendering the
+						    literal "Daytona" for anything that is not Docker names the wrong
+						    provider the moment there is a second one. */}
+						{backendDisplayName(info.backend, t)}
 					</span>
 				</div>
 				{isManaged && (

@@ -13,6 +13,7 @@ import {
 	getOriginRemote,
 	getRemoteDefaultBranch,
 	isTransientMountError,
+	localGitLoc,
 	mergeDefaultIntoWorktree,
 	pruneWorktrees,
 	type RepoLoc,
@@ -26,6 +27,7 @@ import {
 	type GitExecutor,
 	HostGitExecutor,
 } from '../src/services/git-executor';
+import { hostSandboxFiles } from '../src/services/sandbox/files';
 
 const testDir = join(tmpdir(), `hezo-test-git-${Date.now()}`);
 const bareRepoDir = join(testDir, 'bare.git');
@@ -34,8 +36,8 @@ const cloneDir = join(testDir, 'clone');
 // Production drives git inside the container; tests drive the same orchestration
 // against a host git where the host and container paths are the same temp dir.
 const exec = new HostGitExecutor();
-const repoLoc = (p: string): RepoLoc => ({ hostPath: p, containerPath: p });
-const wtLoc = (p: string): WorktreeLoc => ({ hostPath: p, containerPath: p });
+const repoLoc = (p: string): RepoLoc => localGitLoc(p);
+const wtLoc = (p: string): WorktreeLoc => localGitLoc(p);
 
 function run(cmd: string, cwd?: string) {
 	execSync(cmd, { cwd, stdio: 'pipe' });
@@ -69,6 +71,10 @@ afterAll(() => {
 
 // Records every exec so we can assert which git ops need the SSH bridge.
 class RecordingExecutor implements GitExecutor {
+	/** Temp dirs, so host and container paths are the same string. */
+	files(containerPath: string) {
+		return hostSandboxFiles(containerPath);
+	}
 	calls: Array<{ args: string[]; needsSsh: boolean }> = [];
 	async exec(args: string[], opts: GitExecOpts): Promise<GitExecResult> {
 		this.calls.push({ args, needsSsh: !!opts.needsSsh });
@@ -465,6 +471,10 @@ describe('ensureTaskWorktreeWithRetry retries transient mount ENOENT', () => {
 	// Wraps a real HostGitExecutor, failing the first `failFirst` `worktree add`
 	// calls with a scripted stderr and delegating everything else to real git.
 	class FlakyWorktreeAdd implements GitExecutor {
+		/** Temp dirs, so host and container paths are the same string. */
+		files(containerPath: string) {
+			return hostSandboxFiles(containerPath);
+		}
 		addCalls = 0;
 		constructor(
 			private readonly inner: GitExecutor,
@@ -616,12 +626,14 @@ describe('origin remote inspection and repair', () => {
 
 		// A transport-style failure gives no evidence either way.
 		const flaky: GitExecutor = {
+			files: (containerPath: string) => hostSandboxFiles(containerPath),
 			exec: async () => ({ exitCode: 1, stdout: '', stderr: 'docker exec transport died' }),
 		};
 		expect(await getOriginRemote(flaky, repoLoc(noOrigin))).toEqual({ status: 'indeterminate' });
 
 		// A zero-exit with no URL (a stubbed executor) is indeterminate too.
 		const silent: GitExecutor = {
+			files: (containerPath: string) => hostSandboxFiles(containerPath),
 			exec: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
 		};
 		expect(await getOriginRemote(silent, repoLoc(noOrigin))).toEqual({ status: 'indeterminate' });

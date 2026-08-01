@@ -1,3 +1,4 @@
+import type { ContainerHostMemory } from '@hezo/shared';
 import type { SandboxFiles } from './files';
 
 export type { SandboxFiles };
@@ -42,6 +43,21 @@ export interface ContainerConfig {
 		/** Equal to Memory so the cap has no swap escape valve. */
 		MemorySwap?: number;
 		PidsLimit?: number;
+		/**
+		 * Disk to allocate to this container's own filesystem, in GB.
+		 *
+		 * Stated by the caller on every backend; what it *means* is the adapter's
+		 * to absorb, and the two differ in kind rather than in degree. A managed
+		 * sandbox is given a filesystem of exactly this size, and it is the number
+		 * the provider bills and quotas. A local Docker container's workspace is a
+		 * bind mount with the operator's whole disk behind it, so there is nothing
+		 * to allocate and the Docker adapter ignores it - a per-container quota
+		 * there needs an XFS project-quota storage driver Hezo does not require.
+		 *
+		 * Deliberately not a "supported?" flag the caller branches on: nothing above
+		 * this seam is allowed to learn which backend is in use.
+		 */
+		DiskGb?: number;
 	};
 	ExposedPorts?: Record<string, object>;
 }
@@ -221,19 +237,40 @@ export interface ContainerEngine {
 
 	/**
 	 * Bytes used on the filesystem holding `path` inside the container, or null
-	 * when it could not be read.
+	 * when it could not be read **or does not describe the container's own
+	 * storage**.
 	 *
 	 * The pool's recycle rung is decided on this: a container near its disk
 	 * ceiling is replaced rather than reused, because one that fills up *during* a
-	 * run fails that run partway through. Null is not zero - an unanswerable
-	 * measurement must leave the last known figure alone rather than report a
-	 * container as empty.
+	 * run fails that run partway through. That reasoning holds only while the
+	 * storage belongs to the container, so a path on a foreign mount - a bind
+	 * mount of the host data dir, where replacing the container frees nothing -
+	 * answers null rather than the host partition's usage. Null is not zero: an
+	 * unanswerable measurement must leave the last known figure alone rather than
+	 * report a container as empty.
 	 *
 	 * A per-engine method rather than an exec at the call site, so a backend that
 	 * exposes disk on its control plane can answer without spawning anything -
 	 * and so nothing above the seam has to know which one it is talking to.
 	 */
 	diskUsedBytes(containerId: string, path: string): Promise<number | null>;
+
+	/**
+	 * The memory this engine's containers are drawn from, or `null` when they do
+	 * not draw on this machine at all.
+	 *
+	 * The capacity model needs exactly one fact about a backend - whether the RAM
+	 * its containers consume is the operator's to spend - and this is that fact,
+	 * stated as a resource rather than as a provider. Answering `null` is not
+	 * "unknown": it is "not from here", and the budget falls back to a flat
+	 * default the operator sets deliberately instead of sizing a remote fleet by
+	 * the wrong computer.
+	 *
+	 * Synchronous and cheap by contract: it reports what the engine is configured
+	 * against, not a live measurement, and is read on settings reads and on the
+	 * dispatch gate.
+	 */
+	containerHostMemory(): ContainerHostMemory | null;
 
 	/**
 	 * Read and write a run's artefact files, rooted at an absolute path **inside

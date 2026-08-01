@@ -1,22 +1,44 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 import { RepoHostType } from '@hezo/shared';
 import type { GitExecutor } from './git-executor';
+import { hostSandboxFiles, type SandboxFiles } from './sandbox/files';
 
 /**
- * A repo clone, addressed by both its host path (for `node:fs` checks against the
- * bind-mounted directory) and its in-container path (the cwd git runs in). In unit
- * tests the two are the same temp dir.
+ * A repo clone, addressed the only way that works on every backend: its path
+ * *inside the container* (the cwd git runs in) and a {@link SandboxFiles} rooted
+ * there.
+ *
+ * It used to carry a host path too, for `node:fs` checks against the bind-mounted
+ * directory. That made every "is this cloned?" question a question about the
+ * operator's own disk, which is the same bytes only while the container is local.
+ * On a managed backend the clone lives in the sandbox and the host path names an
+ * empty directory, so those checks answered "not cloned" for a repo that was
+ * cloned - and the run failed with `cannot prepare worktree ... repo is not
+ * cloned`, which sends you looking at the repo connection rather than at a
+ * filesystem assumption.
  */
 export interface RepoLoc {
-	hostPath: string;
 	containerPath: string;
+	/** Reads and writes rooted at {@link containerPath}. */
+	files: SandboxFiles;
 }
 
 /** A task worktree, addressed the same way as {@link RepoLoc}. */
 export interface WorktreeLoc {
-	hostPath: string;
 	containerPath: string;
+	files: SandboxFiles;
+}
+
+/**
+ * A loc whose container path is also a real host path.
+ *
+ * True in exactly two places and nowhere else: a unit test pointing both at one
+ * temp dir, and the fake engine, where a bind mount genuinely makes the two names
+ * the same bytes. Production builds its locs from `ContainerEngine.files`, which
+ * is what makes them work on a backend that is not this machine.
+ */
+export function localGitLoc(dir: string): RepoLoc & WorktreeLoc {
+	return { containerPath: dir, files: hostSandboxFiles(dir) };
 }
 
 function formatGitError(stderr: string): string {
@@ -143,9 +165,11 @@ export async function connectExistingRepo(
 	needsSsh: boolean,
 ): Promise<{ success: boolean; error?: string }> {
 	const cwd = target.containerPath;
-	const hadGit = existsSync(join(target.hostPath, '.git'));
-	const fail = (error: string): { success: false; error: string } => {
-		if (!hadGit) rmSync(join(target.hostPath, '.git'), { recursive: true, force: true });
+	const hadGit = await target.files.exists('.git');
+	const fail = async (error: string): Promise<{ success: false; error: string }> => {
+		// Only tear down a `.git` this call created; one that was already there
+		// belongs to the user.
+		if (!hadGit) await target.files.removeDir('.git');
 		return { success: false, error };
 	};
 
@@ -270,10 +294,9 @@ export async function seedInitialCommitIfEmpty(
 		});
 		if (sym.exitCode !== 0) return { seeded: false, error: formatGitError(sym.stderr) };
 
-		const readmePath = join(repo.hostPath, 'README.md');
 		try {
-			if (!existsSync(readmePath)) {
-				writeFileSync(readmePath, initialReadmeContent(repoIdentifier));
+			if (!(await repo.files.exists('README.md'))) {
+				await repo.files.write('README.md', initialReadmeContent(repoIdentifier));
 			}
 		} catch (e) {
 			return { seeded: false, error: e instanceof Error ? e.message : String(e) };
@@ -650,7 +673,7 @@ export async function ensureTaskWorktree(
 	wt: WorktreeLoc,
 	branchName: string,
 ): Promise<{ success: boolean; created: boolean; error?: string }> {
-	if (existsSync(join(wt.hostPath, '.git'))) {
+	if (await wt.files.exists('.git')) {
 		// Reuse the existing worktree when its gitdir still resolves in the container.
 		const probe = await executor.exec(['rev-parse', '--git-dir'], {
 			cwd: wt.containerPath,
@@ -662,7 +685,8 @@ export async function ensureTaskWorktree(
 		// The tree survived but its admin entry was lost (e.g. the clone was
 		// recreated). Discard the stale tree and rebuild from the branch ref, which
 		// still lives in the clone — committed work is preserved.
-		rmSync(wt.hostPath, { recursive: true, force: true });
+		// Rooted at the worktree, so '.' is the worktree itself.
+		await wt.files.removeDir('.');
 		await pruneWorktrees(executor, repo);
 	}
 
@@ -798,7 +822,7 @@ export async function getWorktreeHead(
 	executor: GitExecutor,
 	wt: WorktreeLoc,
 ): Promise<string | null> {
-	if (!existsSync(join(wt.hostPath, '.git'))) return null;
+	if (!(await wt.files.exists('.git'))) return null;
 	const { exitCode, stdout } = await executor.exec(['rev-parse', 'HEAD'], {
 		cwd: wt.containerPath,
 		timeout: 10_000,
@@ -816,7 +840,7 @@ export async function worktreeHasChanges(
 	wt: WorktreeLoc,
 	headBefore: string | null,
 ): Promise<boolean> {
-	if (!existsSync(join(wt.hostPath, '.git'))) return false;
+	if (!(await wt.files.exists('.git'))) return false;
 	const status = await executor.exec(['status', '--porcelain'], {
 		cwd: wt.containerPath,
 		timeout: 10_000,
@@ -844,7 +868,7 @@ export interface CloneState {
 }
 
 export async function getCloneState(executor: GitExecutor, repo: RepoLoc): Promise<CloneState> {
-	if (!existsSync(join(repo.hostPath, '.git'))) {
+	if (!(await repo.files.exists('.git'))) {
 		return {
 			cloned: false,
 			defaultBranch: null,
@@ -1040,30 +1064,27 @@ exit 0
  * a filesystem failure is swallowed so it never blocks run prep — the agent's own
  * end-of-run push still lands the work; only the per-commit safeguard is skipped.
  */
-export function ensurePushHook(clone: RepoLoc): void {
-	const hooksDir = join(clone.hostPath, '.git', 'hooks');
-	const hookPath = join(hooksDir, 'post-commit');
+export async function ensurePushHook(clone: RepoLoc): Promise<void> {
 	try {
-		mkdirSync(hooksDir, { recursive: true });
-		writeFileSync(hookPath, POST_COMMIT_PUSH_HOOK, { mode: 0o755 });
-		// writeFileSync only applies `mode` when creating the file; chmod explicitly so a
-		// refresh over an existing (or umask-narrowed) file is always executable.
-		chmodSync(hookPath, 0o755);
+		// The seam writes the mode rather than a separate chmod: it creates parent
+		// directories and applies the mode on every write, so a refresh over an
+		// existing (or umask-narrowed) file is executable either way.
+		await clone.files.write(PUSH_HOOK_REL_PATH, POST_COMMIT_PUSH_HOOK, { mode: 0o755 });
 	} catch {
 		// Non-fatal — see the docstring. Swallowed so run prep never fails on a hook write.
 	}
 }
 
-const pushErrorLogPath = (clone: RepoLoc): string =>
-	join(clone.hostPath, '.git', PUSH_ERROR_LOG_NAME);
+const PUSH_HOOK_REL_PATH = '.git/hooks/post-commit';
+const pushErrorLogRelPath = `.git/${PUSH_ERROR_LOG_NAME}`;
 
 /**
  * Clear a clone's auto-push error log at run prep, so what {@link readPushErrors}
  * reports at run end belongs to this run and not a previous one. Best-effort.
  */
-export function clearPushErrors(clone: RepoLoc): void {
+export async function clearPushErrors(clone: RepoLoc): Promise<void> {
 	try {
-		rmSync(pushErrorLogPath(clone), { force: true });
+		await clone.files.remove(pushErrorLogRelPath);
 	} catch {
 		// Non-fatal — a stale log is worth less than a failed run prep.
 	}
@@ -1078,11 +1099,10 @@ export function clearPushErrors(clone: RepoLoc): void {
  * Returns the trailing `maxLines` lines, or null when nothing failed. Best-effort:
  * an unreadable log reports nothing rather than throwing at run finalize.
  */
-export function readPushErrors(clone: RepoLoc, maxLines = 40): string | null {
+export async function readPushErrors(clone: RepoLoc, maxLines = 40): Promise<string | null> {
 	try {
-		const path = pushErrorLogPath(clone);
-		if (!existsSync(path)) return null;
-		const text = readFileSync(path, 'utf-8').trim();
+		// A missing log rejects, which is the same "nothing failed" answer.
+		const text = (await clone.files.read(pushErrorLogRelPath)).trim();
 		if (!text) return null;
 		const lines = text.split('\n');
 		return lines.length > maxLines ? lines.slice(-maxLines).join('\n') : text;
@@ -1134,7 +1154,7 @@ export async function countUnpushedCommits(
 	branch: string,
 	remotes: readonly string[] = DURABLE_REMOTES,
 ): Promise<number | null> {
-	if (!existsSync(join(repo.hostPath, '.git'))) return null;
+	if (!(await repo.files.exists('.git'))) return null;
 	const localRef = `refs/heads/${branch}`;
 	const exists = await executor.exec(['rev-parse', '--verify', '--quiet', localRef], {
 		cwd: repo.containerPath,

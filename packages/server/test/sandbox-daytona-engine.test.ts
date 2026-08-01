@@ -14,6 +14,9 @@ interface Recorded {
 	started: string[];
 	stopped: string[];
 	destroyed: string[];
+	/** Launch lines handed to `openPty`, and anything written to the channel after. */
+	ptyLaunches: string[];
+	ptyWrites: Uint8Array[];
 }
 
 /**
@@ -24,7 +27,15 @@ function fakeApi(
 	overrides: Partial<DaytonaApi> = {},
 	seed: DaytonaSandbox[] = [],
 ): { api: DaytonaApi; rec: Recorded; sandboxes: Map<string, DaytonaSandbox> } {
-	const rec: Recorded = { creates: [], commands: [], started: [], stopped: [], destroyed: [] };
+	const rec: Recorded = {
+		creates: [],
+		commands: [],
+		started: [],
+		stopped: [],
+		destroyed: [],
+		ptyLaunches: [],
+		ptyWrites: [],
+	};
 	const sandboxes = new Map(seed.map((s) => [s.id, s]));
 	// The file half is a real (if flat) tree rather than five no-ops: a write the
 	// fake forgets would let a read-back assertion pass against nothing.
@@ -69,12 +80,15 @@ function fakeApi(
 				sandboxes.delete(id);
 			},
 			getMetrics: async () => new Map(),
-			openPty: async () => ({
-				send: () => {},
-				onData: () => {},
-				onClose: () => {},
-				close: () => {},
-			}),
+			openPty: async (_s, _sessionId, launch) => {
+				rec.ptyLaunches.push(launch);
+				return {
+					send: (data) => rec.ptyWrites.push(data),
+					onData: () => {},
+					onClose: () => {},
+					close: () => {},
+				};
+			},
 			execute: async (_s, command) => {
 				rec.commands.push(command);
 				return { exitCode: 0, output: '' };
@@ -100,15 +114,43 @@ function fakeApi(
 				}
 				return out;
 			},
-			downloadFile: async (_s, path) => files.get(path)?.content ?? null,
+			// A directory has no content to download, matching the live API where
+			// downloading one is a 400 rather than a "no" - which is why `exists` is
+			// built on `statFile` instead.
+			downloadFile: async (_s, path) => {
+				const f = files.get(path);
+				return f && !f.isDir ? f.content : null;
+			},
+			statFile: async (_s, path) => {
+				const f = files.get(path);
+				if (!f) return null;
+				return {
+					name: path.slice(path.lastIndexOf('/') + 1),
+					path,
+					size: f.content.byteLength,
+					isDir: f.isDir,
+					permissions: f.mode.toString(8).padStart(4, '0'),
+				};
+			},
 			uploadFile: async (_s, path, content, mode) => {
 				files.set(path, { content, mode: mode ?? 0o644, isDir: false });
 			},
 			createFolder: async (_s, path, mode) => {
 				files.set(path, { content: new Uint8Array(), mode: mode ?? 0o755, isDir: true });
 			},
-			deleteFile: async (_s, path) => {
+			deleteFile: async (_s, path, opts) => {
+				// Without `recursive` the live API refuses a non-empty directory
+				// outright rather than deleting what it can, so the fake refuses too -
+				// a fake that always succeeded would pass a contract production does
+				// not offer, which is how the silent credential scrub shipped.
+				const entry = files.get(path);
+				const prefix = `${path}/`;
+				const children = [...files.keys()].filter((p) => p.startsWith(prefix));
+				if (entry?.isDir && children.length > 0 && !opts?.recursive) {
+					throw new Error('bad request: cannot delete directory without recursive flag');
+				}
 				files.delete(path);
+				if (opts?.recursive) for (const child of children) files.delete(child);
 			},
 		},
 		overrides,
@@ -595,5 +637,146 @@ describe('DaytonaEngine settles a transition before returning', () => {
 				new Promise((resolve) => setTimeout(() => resolve('still waiting'), 300)),
 			]),
 		).resolves.toBe('still waiting');
+	});
+});
+
+/**
+ * The file contract, where this backend diverged from the host implementation in
+ * two ways that both failed quietly.
+ */
+describe('DaytonaEngine files', () => {
+	const sandbox: DaytonaSandbox = {
+		id: 'sbx-files',
+		state: 'started',
+		labels: {},
+		toolboxProxyUrl: 'https://proxy.test/toolbox',
+	};
+
+	it('scrubs a non-empty directory rather than leaving it in place', async () => {
+		// The per-run runtime home holds the provider credential, so `removeDir` is
+		// a scrub and not tidying. The API refuses a non-empty directory without a
+		// recursive flag, and the failure was swallowed as best-effort - so on this
+		// backend the credential stayed on the provider's disk for the rest of the
+		// container's life while the cleanup step reported success.
+		const { api } = fakeApi({}, [sandbox]);
+		const engine = new DaytonaEngine(api);
+		const files = engine.files('sbx-files', '/run');
+
+		await files.write('home/.config/creds.json', '{"token":"x"}', { mode: 0o600, dirMode: 0o711 });
+		expect(await files.exists('home/.config/creds.json')).toBe(true);
+
+		await files.removeDir('home');
+		expect(await files.exists('home/.config/creds.json')).toBe(false);
+		expect(await files.exists('home')).toBe(false);
+	});
+
+	it('answers exists for a directory instead of throwing', async () => {
+		// Built on a download, a directory was a 400 rather than a "yes" - a
+		// divergence from the host implementation, which simply stats the path.
+		const { api } = fakeApi({}, [sandbox]);
+		const engine = new DaytonaEngine(api);
+		const files = engine.files('sbx-files', '/run');
+
+		await files.mkdir('somedir');
+		expect(await files.exists('somedir')).toBe(true);
+		expect(await files.exists('nothing-here')).toBe(false);
+	});
+
+	it('reports a size without transferring the file, and null for a directory', async () => {
+		const { api } = fakeApi({}, [sandbox]);
+		const engine = new DaytonaEngine(api);
+		const files = engine.files('sbx-files', '/run');
+
+		await files.write('payload.bin', 'abcde');
+		expect(await files.size('payload.bin')).toBe(5);
+		await files.mkdir('adir');
+		expect(await files.size('adir')).toBeNull();
+		expect(await files.size('missing')).toBeNull();
+	});
+});
+
+describe('DaytonaEngine byte channel (the tunnel transport)', () => {
+	// A PTY starts a login shell, so anything the shell emits around accepting a
+	// command lands on the channel ahead of the command's own first byte - and
+	// the tunnel's decoder reads whatever arrives first as
+	// `[u8 type][u32 streamId][u32 len]`. Against the live API this was fatal
+	// rather than cosmetic: the shell's echo of `stty raw -echo` decoded as a
+	// frame of length 1918990112 ("raw " read as a u32), the mux closed the
+	// channel on the spot, and every agent run on Daytona then failed with the
+	// Hezo MCP server unreachable. These assertions pin the shape that fixed it.
+
+	it('launches the command with the PTY rather than typing it in afterwards', async () => {
+		const { api, rec } = fakeApi({}, [SBX]);
+		await new DaytonaEngine(api).openExecChannel('sbx-1', {
+			Cmd: ['hezo-tunnel', '/workspace/.hezo/tunnel.json'],
+			User: 'node',
+			AttachStdout: true,
+			AttachStderr: true,
+		});
+		expect(rec.ptyLaunches).toHaveLength(1);
+		expect(rec.ptyLaunches[0]).toContain('hezo-tunnel');
+		// Nothing is written to the channel by opening it. A command typed in
+		// after the fact is echoed by the shell, and that echo is the corruption.
+		expect(rec.ptyWrites).toEqual([]);
+	});
+
+	it('deprivileges the launched command the same way a normal exec does', async () => {
+		const { api, rec } = fakeApi({}, [SBX]);
+		await new DaytonaEngine(api).openExecChannel('sbx-1', {
+			Cmd: ['hezo-tunnel', '/cfg.json'],
+			User: 'node',
+			AttachStdout: true,
+			AttachStderr: true,
+		});
+		// Daytona execs as root, so the tunnel client would run as root without
+		// this - a root-owned process in a container the agent otherwise owns.
+		expect(rec.ptyLaunches[0]).toMatch(/runuser.+-u.+node/);
+		// And its stderr goes to a file, not down the channel: a diagnostic from
+		// `runuser` interleaved into the frame stream corrupts it just as the
+		// shell's own echo did.
+		expect(rec.ptyLaunches[0]).toMatch(/2>.*\.err/);
+	});
+
+	it('writes only what the caller writes, once the channel is open', async () => {
+		const { api, rec } = fakeApi({}, [SBX]);
+		const channel = await new DaytonaEngine(api).openExecChannel('sbx-1', {
+			Cmd: ['hezo-tunnel', '/cfg.json'],
+			AttachStdout: true,
+			AttachStderr: true,
+		});
+		channel.write(new Uint8Array([1, 2, 3]));
+		expect(rec.ptyWrites).toEqual([new Uint8Array([1, 2, 3])]);
+	});
+
+	it('closing the channel is what must terminate the in-container process', async () => {
+		// On Docker, closing the hijacked exec kills the process. On Daytona the
+		// WebSocket close does neither - measured: a process launched on a PTY was
+		// still listening after the socket closed, and the session still read
+		// `active: true`. Only deleting the session ends it, so `close()` has to do
+		// more than close the socket. The leak is not cosmetic: the tunnel client
+		// holds the run's three loopback ports, and a pooled container serves many
+		// runs in sequence, so the next run's client dies with EADDRINUSE and that
+		// run loses MCP and egress entirely.
+		let closes = 0;
+		const { api } = fakeApi(
+			{
+				openPty: async () => ({
+					send: () => {},
+					onData: () => {},
+					onClose: () => {},
+					close: () => {
+						closes += 1;
+					},
+				}),
+			},
+			[SBX],
+		);
+		const channel = await new DaytonaEngine(api).openExecChannel('sbx-1', {
+			Cmd: ['hezo-tunnel', '/cfg.json'],
+			AttachStdout: true,
+			AttachStderr: true,
+		});
+		channel.close();
+		expect(closes).toBe(1);
 	});
 });

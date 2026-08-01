@@ -11,17 +11,19 @@ import {
 	ensureTaskWorktree,
 	fastForwardLocalDefault,
 	getRemoteDefaultBranch,
+	localGitLoc,
 	mergeDefaultIntoWorktree,
 	type RepoLoc,
 	type WorktreeLoc,
 } from '../src/services/git';
 import type { GitExecOpts, GitExecResult, GitExecutor } from '../src/services/git-executor';
 import { HostGitExecutor } from '../src/services/git-executor';
+import { hostSandboxFiles } from '../src/services/sandbox/files';
 
 const root = mkdtempSync(join(tmpdir(), 'git-coverage-'));
 const exec = new HostGitExecutor();
-const repoLoc = (p: string): RepoLoc => ({ hostPath: p, containerPath: p });
-const wtLoc = (p: string): WorktreeLoc => ({ hostPath: p, containerPath: p });
+const repoLoc = (p: string): RepoLoc => localGitLoc(p);
+const wtLoc = (p: string): WorktreeLoc => localGitLoc(p);
 
 function run(cmd: string, cwd?: string) {
 	execSync(cmd, { cwd, stdio: 'pipe' });
@@ -48,6 +50,10 @@ type Rule = {
 	result: GitExecResult;
 };
 class ScriptedExecutor implements GitExecutor {
+	/** Temp dirs, so host and container paths are the same string. */
+	files(containerPath: string) {
+		return hostSandboxFiles(containerPath);
+	}
 	calls: string[][] = [];
 	constructor(private rules: Rule[]) {}
 	async exec(args: string[], _opts: GitExecOpts): Promise<GitExecResult> {

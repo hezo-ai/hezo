@@ -121,3 +121,32 @@ describe('hostNeedsProxy', () => {
 		expect(hostNeedsProxy(policy(['api.github.com']), 'API.GitHub.COM')).toBe(true);
 	});
 });
+
+/**
+ * The production wiring, not just the function.
+ *
+ * `buildTunnelHostPolicy` always took descriptors and always folded their hosts
+ * in - but both call sites passed `[]`, so the branch never contributed and a
+ * connector whose host appears in no secret's `allowed_hosts` was routed direct.
+ * That skips the egress proxy, and with it `shouldBlockMcpRequest`, which is
+ * where a connector's per-method allowlist is enforced. The function's own
+ * docstring calls missing this "a security gap rather than a performance one",
+ * so the regression worth guarding is the argument, not the arithmetic.
+ */
+describe('connector hosts reach the policy', () => {
+	it('proxies a connector host even when no secret names it', async () => {
+		const policy = await buildTunnelHostPolicy(db, [
+			{ kind: 'http', name: 'linear', url: 'https://mcp.linear.app/sse' },
+		]);
+		expect(policy.proxiedHosts).toContain('mcp.linear.app');
+		expect(hostNeedsProxy(policy, 'mcp.linear.app')).toBe(true);
+	});
+
+	it('ignores a descriptor whose url will not parse rather than losing the policy', async () => {
+		const policy = await buildTunnelHostPolicy(db, [
+			{ kind: 'http', name: 'broken', url: 'not a url' },
+			{ kind: 'http', name: 'ok', url: 'https://good.example/sse' },
+		]);
+		expect(policy.proxiedHosts).toContain('good.example');
+	});
+});

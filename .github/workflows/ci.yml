@@ -347,6 +347,31 @@ jobs:
       - if: steps.playwright-cache.outputs.cache-hit == 'true'
         run: bunx playwright install-deps chromium
       - run: bun run test --browser --shard ${{ matrix.shard }}/3
+      # Everything needed to diagnose a failure is in the artifact below, but
+      # reading it means downloading a zip — a slow loop for a browser failure
+      # that only reproduces on CI. So print the page-side evidence into the job
+      # log too. `test/browser/diagnostics.ts` already logs the shell's geometry
+      # from the fixture; this adds Playwright's own snapshot of the accessibility
+      # tree at the moment of failure, which covers specs that drive their own
+      # `test` (master-key-gate) and so never reach that fixture.
+      - name: Print Playwright failure context
+        if: failure()
+        run: |
+          shopt -s globstar nullglob
+          # error-context.md ONLY. The page-state dump is already in this log via
+          # the fixture's stdout, and it lands on disk twice (the file the fixture
+          # writes plus Playwright's copy under attachments/) — globbing it here
+          # printed every dump three times per attempt, which buries the failure
+          # the log exists to surface.
+          found=0
+          for f in test-results/**/error-context.md; do
+            found=1
+            echo "::group::$f"
+            head -c 60000 "$f"
+            echo
+            echo "::endgroup::"
+          done
+          [ "$found" = 1 ] || echo "no error-context.md written (the failure was not page-side)"
       - if: failure()
         uses: actions/upload-artifact@v4
         with:

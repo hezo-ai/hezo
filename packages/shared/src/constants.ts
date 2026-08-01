@@ -90,8 +90,10 @@ export const HOST_RESERVED_MEMORY_GB = 1;
  * **Swap counts at full weight**, deliberately: an agent container spends most of
  * its life idle between execs, so its cold pages really can live on disk, and a
  * host with swap configured genuinely fits more containers than its RAM alone.
- * The budget is total virtual memory, not RAM. (A managed sandbox backend does no
- * memory arithmetic at all - its cap is a spend guard.)
+ * The budget is total virtual memory, not RAM.
+ *
+ * Only meaningful for a backend that runs containers on this host - see
+ * {@link computeDefaultMaxContainerMemoryGb}, which is where that check lives.
  */
 export function usableMemoryGibForContainers(
 	totalRamBytes: number,
@@ -123,25 +125,64 @@ export function usableMemoryGibForContainers(
 export const MAX_CONTAINER_MEMORY_GB_MIN = 1;
 export const MAX_CONTAINER_MEMORY_GB_MAX = 4096;
 
-/** Last-resort budget when host memory is unreadable: the old 3 x 2 GB shape. */
+/**
+ * Memory a container engine's containers draw from, as reported by the engine.
+ *
+ * `null` where a container's memory is not this host's to spend - the engine
+ * runs them elsewhere - which is the only distinction the capacity model needs
+ * to make, and the reason it needs no idea which provider is in use.
+ */
+export interface ContainerHostMemory {
+	totalRamBytes: number;
+	totalSwapBytes: number;
+}
+
+/**
+ * The budget when there is no host memory to derive one from: a managed backend,
+ * or a host whose memory is unreadable. The old 3 x 2 GB shape.
+ *
+ * Deliberately modest rather than generous. On a managed backend this figure is
+ * a **spend guard**, and the cost of setting it too low is a queued run the
+ * operator can see and raise; the cost of setting it too high is a bill they
+ * find out about later.
+ */
 export const DEFAULT_MAX_CONTAINER_MEMORY_GB = 6;
 
 /**
- * The automatic memory-budget default: everything host memory allows, less the
- * system reserve and one container's worth held back for the CEO chat.
+ * The automatic memory-budget default, in GB.
  *
- * Chat is exempt from the budget (a queued task run is invisible; a queued chat
- * turn is a person watching a spinner), and reserving for it up front rather
- * than subtracting when a session opens keeps task-run capacity a *stable*
- * number - opening the chat never silently slows the fleet.
+ * **Only an engine that runs containers on this host derives from host memory**,
+ * which is why the input is the engine's own answer rather than a probe. A
+ * managed backend's containers run on the provider's machines, so the operator's
+ * RAM says nothing about how many fit: deriving from it would size the fleet by
+ * the wrong computer, and wrongly in both directions - a 2 GB VPS driving a
+ * managed backend would compute a budget that fits no container at all, while a
+ * 128 GB workstation would authorise 127 GB of somebody else's hardware.
+ * {@link DEFAULT_MAX_CONTAINER_MEMORY_GB} stands in there, and the operator
+ * raises it deliberately.
+ *
+ * On a host engine it is everything host memory allows, less the system reserve
+ * ({@link HOST_RESERVED_MEMORY_GB}, via {@link usableMemoryGibForContainers})
+ * and one container's worth held back for the CEO chat.
+ *
+ * Chat is exempt from the budget on **every** backend (a queued task run is
+ * invisible; a queued chat turn is a person watching a spinner), so the chat
+ * container is excluded from what the budget counts as used. Reserving for it up
+ * front rather than subtracting when a session opens keeps task-run capacity a
+ * *stable* number - opening the chat never silently slows the fleet. The
+ * managed-backend default already has that reservation priced in, which is why
+ * it is not subtracted again here.
  */
 export function computeDefaultMaxContainerMemoryGb(
-	totalRamBytes: number,
-	totalSwapBytes: number,
+	hostMemory: ContainerHostMemory | null,
 	ramCapGb: number,
 ): number {
+	if (!hostMemory) return DEFAULT_MAX_CONTAINER_MEMORY_GB;
 	const cap = Math.max(1, ramCapGb);
-	const usableGib = Math.max(0, usableMemoryGibForContainers(totalRamBytes, totalSwapBytes) - cap);
+	const usableGib = Math.max(
+		0,
+		usableMemoryGibForContainers(hostMemory.totalRamBytes, hostMemory.totalSwapBytes) - cap,
+	);
 	return Math.min(
 		MAX_CONTAINER_MEMORY_GB_MAX,
 		Math.max(MAX_CONTAINER_MEMORY_GB_MIN, Math.floor(usableGib)),
@@ -157,6 +198,53 @@ export function computeDefaultMaxContainerMemoryGb(
  */
 export function projectMemoryFitsBudget(capGb: number, budgetGb: number): boolean {
 	return capGb <= budgetGb;
+}
+
+/**
+ * Disk, in GB, allocated to each project container.
+ *
+ * The sibling of the per-container RAM cap: an instance-wide default, overridable
+ * per project. Unlike memory it is only meaningful where the backend allocates a
+ * per-container filesystem - a managed sandbox does, a local Docker container's
+ * workspace is a bind mount with the operator's whole disk behind it - so each
+ * engine absorbs it, and the setting is stated once rather than branched on by a
+ * caller.
+ *
+ * Small on purpose. A sandbox's disk is billed and quota'd by the provider, and
+ * the account-wide disk quota is usually what binds first, so the default is
+ * sized for a working checkout plus its dependencies rather than for the largest
+ * repository anyone might have. Raise it - globally or for the one project that
+ * needs it - rather than paying for headroom every project holds and none uses.
+ */
+export const DEFAULT_CONTAINER_DISK_GB = 5;
+/** Below this a checkout plus `node_modules` does not reliably fit. */
+export const CONTAINER_DISK_GB_MIN = 2;
+export const CONTAINER_DISK_GB_MAX = 1024;
+
+/**
+ * Headroom, in GB, left below a container's allocation before the pool recycles
+ * it rather than handing it to another run.
+ *
+ * A container that fills up *during* a run fails that run partway through, which
+ * is strictly worse than paying for a fresh container up front - so the recycle
+ * threshold sits below the allocation, not at it, and the gap has to be big
+ * enough for one run's growth (a dependency install, a build output).
+ */
+const POOL_DISK_HEADROOM_GB = 1;
+
+/**
+ * Disk a container may consume before the pool recycles it, in bytes.
+ *
+ * Derived from that container's own allocation rather than fixed, because the
+ * allocation is now configurable: a ceiling that made sense against one size is
+ * either pointless (far above what the container can hold) or thrashing (recycles
+ * a container that had plenty left) against another. The floor keeps the
+ * threshold meaningful when the allocation is small enough that the flat headroom
+ * would consume most of it.
+ */
+export function poolDiskCeilingBytes(diskGb: number): number {
+	const usable = Math.max(diskGb / 2, diskGb - POOL_DISK_HEADROOM_GB);
+	return Math.round(usable * 1024 ** 3);
 }
 
 /**

@@ -6,7 +6,7 @@
 // The chip-click wiring itself is covered in packages/web/test/document-review.test.tsx.
 
 import { expect, test } from './fixtures';
-import { waitForPageLoad } from './helpers';
+import { waitForPageLoad, waitForStableBox } from './helpers';
 
 const DOC = 'sticky-actions.md';
 
@@ -78,7 +78,10 @@ for (const { name, width, height } of [
 		// sticky they would be thousands of px above the fold (y << 0) after scrolling.
 		await expect(editButton).toBeVisible();
 		await expect(reviewToolbar).toBeVisible();
-		const editBox = await editButton.boundingBox();
+		// Settled first - see waitForStableBox. Reading mid-render measures a layout
+		// that is still growing above these elements, which reads as them having
+		// failed to pin when they simply had not stopped moving yet.
+		const editBox = await waitForStableBox(editButton);
 		const toolbarBox = await reviewToolbar.boundingBox();
 		expect(editBox).not.toBeNull();
 		expect(toolbarBox).not.toBeNull();

@@ -66,7 +66,11 @@ function createMockDocker(taskId: string, overrides: Record<string, any> = {}): 
 		...rest
 	} = overrides;
 	const innerExecStart = execStartOverride ?? (async () => ({ stdout: 'done', stderr: '' }));
-	const base = {
+	// Built on createStubDocker rather than hand-rolled: a literal cast through
+	// `as unknown as ContainerEngine` silently omits whatever the interface grows
+	// next, and the compiler cannot say so. That is how six specs came to call a
+	// method that did not exist on their engine.
+	const base = createStubDocker({
 		ping: async () => true,
 		imageExists: async () => true,
 		pullImage: async () => {},
@@ -102,7 +106,7 @@ function createMockDocker(taskId: string, overrides: Record<string, any> = {}): 
 		// The run stages its prompt and runtime home through the engine seam, so an
 		// inline engine needs the same bind-resolving view the shared stub gives.
 		...stubEngineSeams(),
-	} as unknown as ContainerEngine;
+	});
 	// Absorb the infra execs (run-user probe, chowns, the run-directory mkdir) so
 	// a test asserting on the *agent's* exec is not handed provisioning's.
 	return withRunUserStub(base);
@@ -454,6 +458,17 @@ describe('runAgent — provider/credential resolution failures', () => {
 			);
 			expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
 			expect(run.rows[0].error).toContain('No AI provider credentials configured');
+
+			// And it never took a container to fail in. The claim happens only after
+			// the credential resolves, so a misconfigured instance provisions nothing
+			// it would then have to give back. When the claim came first, every wakeup
+			// on an instance with no credential leaked one busy member - which nothing
+			// reclaims (the ladder skips it, the idle pass ignores it) while its memory
+			// counts against the budget, so the budget walked to exhaustion.
+			const members = await isoCtx.db.query<{ state: string }>(
+				`SELECT state::text AS state FROM container_pool_members`,
+			);
+			expect(members.rows.map((r) => r.state)).toEqual([]);
 		} finally {
 			await safeClose(isoCtx.db);
 		}

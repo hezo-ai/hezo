@@ -21,6 +21,8 @@ import { loadAgentRoles } from '../../src/db/agent-roles';
 import type { Db } from '../../src/db/database';
 import { seedBuiltins } from '../../src/db/seed';
 import { DomainEventBus } from '../../src/events/bus';
+import { getHostMemory } from '../../src/lib/host-memory';
+import type { SandboxBackendInfo } from '../../src/lib/sandbox-backend-info';
 import { toSlug, uniqueSlug } from '../../src/lib/slug';
 import type { Env } from '../../src/lib/types';
 import { signAdminJwt, signAgentJwt } from '../../src/middleware/auth';
@@ -34,6 +36,7 @@ import {
 	resolveProjectTaskPrefix,
 } from '../../src/services/project-create';
 import type { SandboxFiles } from '../../src/services/sandbox/files';
+import { SandboxBackendHolder } from '../../src/services/sandbox/holder';
 import type { ContainerEngine } from '../../src/services/sandbox/types';
 import { type CreatedTeamRow, createTeam, seedDefaultTeam } from '../../src/services/teams';
 import { WebSocketManager } from '../../src/services/ws';
@@ -95,6 +98,8 @@ const STUB_DOCKER_METHODS: ContainerEngine = {
 	listHezoProcesses: async () => [],
 	killPids: async () => {},
 	diskUsedBytes: async () => null,
+	// Same answer the fake gives: a stub engine stands in for the local daemon.
+	containerHostMemory: () => getHostMemory(),
 	// Same bind-resolved view the fake engine gives, so a test that stages a file
 	// through the seam reads it back off disk exactly as a bind mount would.
 	files: (containerId: string, containerRoot: string) =>
@@ -156,6 +161,7 @@ function firstResolvableFiles(
 		read: async (p) => (await pick()).read(p),
 		readBytes: async (p) => (await pick()).readBytes(p),
 		size: async (p) => (await pick()).size(p),
+		list: async (p) => (await pick()).list(p),
 		remove: async (p) => (await pick()).remove(p),
 		removeDir: async (p) => (await pick()).removeDir(p),
 		findByName: async (d, n, depth) => (await pick()).findByName(d, n, depth),
@@ -182,7 +188,66 @@ export function createStubDocker<T extends object>(
 		ctx?.db && ctx?.dataDir ? [{ db: ctx.db, dataDir: ctx.dataDir }] : testContexts;
 	const files: ContainerEngine['files'] = (containerId, containerRoot) =>
 		firstResolvableFiles(candidates, containerId, containerRoot);
-	return { ...STUB_DOCKER_METHODS, files, ...overrides } as ContainerEngine & T;
+	const merged = { ...STUB_DOCKER_METHODS, files, ...overrides } as ContainerEngine & T;
+	return withTunnelReadyStub(merged);
+}
+
+/**
+ * Answer the tunnel's port-readiness check, whatever the caller's exec stubs do.
+ *
+ * `startRunTunnel` will not hand a run its endpoints until the client's ports
+ * are listening, so an engine that never answers leaves every run and every chat
+ * turn waiting out the full timeout and then failing. Wrapping rather than
+ * merging is what makes that true for the many specs that replace `execCreate`
+ * and `execStart` wholesale - the same reason `withRunUserStub` wraps the
+ * run-user probe and the chowns instead of relying on a default.
+ *
+ * A stubbed container's tunnel comes up. A spec that wants the opposite drives
+ * `startRunTunnel` against its own engine (`sandbox-run-tunnel.test.ts`).
+ */
+function withTunnelReadyStub<T extends ContainerEngine>(engine: T): T {
+	const ready = new Set<string>();
+	let seq = 0;
+
+	const execCreate = async (
+		containerId: string,
+		config: Parameters<ContainerEngine['execCreate']>[1],
+	) => {
+		if ((config?.Cmd ?? []).some((part) => part.includes('/proc/net/tcp'))) {
+			const id = `__tunnel-ready-${seq++}`;
+			ready.add(id);
+			return id;
+		}
+		return engine.execCreate(containerId, config);
+	};
+	const execStart = async (execId: string, opts: Parameters<ContainerEngine['execStart']>[1]) => {
+		if (ready.delete(execId)) return { stdout: 'ready\n', stderr: '' };
+		return engine.execStart(execId, opts);
+	};
+
+	return {
+		...engine,
+		// Spy metadata is carried across, so a spec that asserts on
+		// `docker.execCreate.mock.calls` still sees the calls it made - wrapping
+		// must not cost a test its ability to inspect its own stub.
+		execCreate: preserveSpy(execCreate, engine.execCreate),
+		execStart: preserveSpy(execStart, engine.execStart),
+		execInspect: async (execId: string) => {
+			if (execId.startsWith('__tunnel-ready-')) return { ExitCode: 0, Running: false, Pid: 0 };
+			return engine.execInspect(execId);
+		},
+	} as T;
+}
+
+/** Copy a mock's own properties (`mock`, `mockClear`, …) onto the function wrapping it. */
+function preserveSpy<F extends (...args: never[]) => unknown>(wrapper: F, original: unknown): F {
+	if (typeof original !== 'function') return wrapper;
+	for (const key of Object.getOwnPropertyNames(original)) {
+		if (key === 'length' || key === 'name' || key === 'prototype') continue;
+		const descriptor = Object.getOwnPropertyDescriptor(original, key);
+		if (descriptor) Object.defineProperty(wrapper, key, descriptor);
+	}
+	return wrapper;
 }
 
 /**
@@ -194,7 +259,18 @@ export function createStubDocker<T extends object>(
  */
 export { encrypt };
 
-export async function createTestApp(opts: { webUrl?: string; assetStore?: AssetStore } = {}) {
+export async function createTestApp(
+	opts: {
+		webUrl?: string;
+		assetStore?: AssetStore;
+		/**
+		 * Stand in a different engine - the managed-backend shape, say, whose
+		 * containers report no host memory. Defaults to the local-daemon stub.
+		 */
+		docker?: ContainerEngine;
+		sandboxBackendInfo?: SandboxBackendInfo;
+	} = {},
+) {
 	const db = await createTestDbWithMigrations();
 	const masterKeyManager = new MasterKeyManager();
 	const mnemonic = generateMnemonic();
@@ -206,7 +282,7 @@ export async function createTestApp(opts: { webUrl?: string; assetStore?: AssetS
 	await seedTestAppTeamTemplate(db);
 	const dataDir = mkdtempSync(join(tmpdir(), 'hezo-test-'));
 	rememberTestContext(db, dataDir);
-	const docker = createStubDocker({}, { db, dataDir });
+	const docker = opts.docker ?? createStubDocker({}, { db, dataDir });
 	const wsManager = new WebSocketManager();
 	const logs = new LogStreamBroker();
 	logs.setWsManager(wsManager);
@@ -229,6 +305,11 @@ export async function createTestApp(opts: { webUrl?: string; assetStore?: AssetS
 		{
 			dataDir,
 			webUrl: opts.webUrl ?? '',
+			// A holder rather than the bare info: the backend is switchable at
+			// runtime, so the settings route needs something it can re-point.
+			sandboxHolder: opts.sandboxBackendInfo
+				? new SandboxBackendHolder({ engine: docker, info: opts.sandboxBackendInfo })
+				: undefined,
 		},
 		docker,
 		wsManager,

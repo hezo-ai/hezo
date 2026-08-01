@@ -8,6 +8,7 @@ import {
 	createRecoveryBundle,
 	fastForwardFromRecovery,
 	fetchRecoveryBundle,
+	localGitLoc,
 	RECOVERY_BUNDLE_REL_PATH,
 	RECOVERY_REMOTE,
 	type RepoLoc,
@@ -39,8 +40,8 @@ import {
 
 const root = mkdtempSync(join(tmpdir(), 'git-recovery-'));
 const exec = new HostGitExecutor();
-const repoLoc = (p: string): RepoLoc => ({ hostPath: p, containerPath: p });
-const wtLoc = (p: string): WorktreeLoc => ({ hostPath: p, containerPath: p });
+const repoLoc = (p: string): RepoLoc => localGitLoc(p);
+const wtLoc = (p: string): WorktreeLoc => localGitLoc(p);
 
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 

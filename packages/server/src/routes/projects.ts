@@ -1,6 +1,8 @@
 import {
 	ArchiveFilter,
 	AuthType,
+	CONTAINER_DISK_GB_MAX,
+	CONTAINER_DISK_GB_MIN,
 	ContainerStatus,
 	isAllowedProjectIconStoredMime,
 	isArchiveFilter,
@@ -561,6 +563,7 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 		name?: string;
 		description?: string;
 		memory_limit_gib?: number | null;
+		container_disk_gb?: number | null;
 		daily_budget_cents?: number;
 		weekly_budget_cents?: number;
 		monthly_budget_cents?: number;
@@ -605,7 +608,7 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 		// the same reason the Daytona adapter refuses a request above its ceiling
 		// rather than quietly allocating less.
 		if (body.memory_limit_gib !== null) {
-			const budget = await getMaxContainerMemoryGb(db);
+			const budget = await getMaxContainerMemoryGb(db, c.get('docker'));
 			if (!projectMemoryFitsBudget(body.memory_limit_gib, budget)) {
 				return err(
 					c,
@@ -619,6 +622,31 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 		}
 		sets.push(`memory_limit_gib = $${idx}`);
 		params.push(body.memory_limit_gib);
+		idx++;
+	}
+	if (body.container_disk_gb !== undefined) {
+		// null clears the per-project override - the container inherits the
+		// instance-wide default disk size.
+		if (
+			body.container_disk_gb !== null &&
+			(!Number.isInteger(body.container_disk_gb) ||
+				body.container_disk_gb < CONTAINER_DISK_GB_MIN ||
+				body.container_disk_gb > CONTAINER_DISK_GB_MAX)
+		) {
+			return err(
+				c,
+				'INVALID_REQUEST',
+				`container_disk_gb must be an integer between ${CONTAINER_DISK_GB_MIN} and ` +
+					`${CONTAINER_DISK_GB_MAX}, or null`,
+				400,
+			);
+		}
+		// No instance-budget check, unlike the memory cap: Hezo does not pool disk.
+		// What bounds it is the provider account's own quota, which Hezo cannot see,
+		// so a check here would be guessing - the real limit surfaces at provision
+		// time naming the provider.
+		sets.push(`container_disk_gb = $${idx}`);
+		params.push(body.container_disk_gb);
 		idx++;
 	}
 	// Budget limits: 0 = unlimited. Validate the *merged* trio (incoming ?? stored)

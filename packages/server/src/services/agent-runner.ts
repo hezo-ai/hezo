@@ -64,7 +64,7 @@ import {
 	ensureContainerDirReady,
 	resolveContainerRunUser,
 } from './container-user';
-import { acquireRunContainer } from './containers';
+import { acquireRunContainer, PoolCapacityError } from './containers';
 import type { ContainerEngine, ExecLogChunk } from './docker';
 import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
@@ -191,6 +191,12 @@ export interface RunResult {
 	heartbeatRunId?: string;
 	/** The run ended by hitting its wall-clock time limit; drives an automatic same-task continuation. */
 	timedOut?: boolean;
+	/**
+	 * The run never started because the instance was at its container-memory
+	 * budget. Not a failure: the wakeup is re-queued and dispatched again, and no
+	 * failure ping is posted.
+	 */
+	requeued?: boolean;
 }
 
 export interface RunnerDeps {
@@ -507,6 +513,17 @@ export interface RuntimeInvocationInput {
 	 * learning that a tunnel exists.
 	 */
 	endpoints: RunEndpoints;
+	/**
+	 * The project's connector MCP servers.
+	 *
+	 * Passed in rather than loaded here because the caller needs them *before*
+	 * this runs: the tunnel's split-routing policy has to name the connector hosts
+	 * so they reach the egress proxy, where the per-connector method allowlist is
+	 * enforced. Resolving them once and handing them down also keeps the policy
+	 * and the descriptors describing the same set - two loads a moment apart could
+	 * disagree, and the one that silently lost a host would be the policy.
+	 */
+	connectorDescriptors: McpDescriptor[];
 	/** Caller-specific env entries (e.g. HEZO_TASK_ID for a run). */
 	extraEnv?: string[];
 }
@@ -542,6 +559,7 @@ export async function buildRuntimeInvocation(
 		bridge,
 		egress,
 		endpoints,
+		connectorDescriptors,
 		extraEnv = [],
 	} = input;
 
@@ -577,7 +595,7 @@ export async function buildRuntimeInvocation(
 			url: `${endpoints.hezoBaseUrl}/mcp`,
 			bearerToken: agentJwt,
 		},
-		...(await loadConnectorDescriptors(deps.db, projectId)),
+		...connectorDescriptors,
 	];
 
 	const mcpInjection = adapter.build(mcpDescriptors, {
@@ -771,6 +789,10 @@ async function buildRunContext(
 	runUser: ContainerRunUser,
 	progressUpdate: ProgressUpdateContext | null,
 	endpoints: RunEndpoints,
+	// Loaded before the tunnel starts, because the tunnel's split-routing policy
+	// needs the connector hosts and the tunnel is up before this runs. Passed in
+	// rather than re-queried so a run resolves them exactly once.
+	connectorDescriptors: McpDescriptor[],
 ): Promise<RunContext> {
 	// The run is scoped to the project's team (the "run team"). For normal agents
 	// this equals the agent's home team; for instance agents (CEO/Coach) that
@@ -879,6 +901,7 @@ async function buildRunContext(
 
 	const { env, cmd, execCmd, subscriptionMount, homeMount } = await buildRuntimeInvocation({
 		endpoints,
+		connectorDescriptors,
 		deps,
 		runTeamId,
 		projectId: project.id,
@@ -1107,51 +1130,6 @@ export async function runAgent(
 		};
 	};
 
-	// Containers run on demand, and this run claims one **for itself**: the pool
-	// ladder reuses a warm container that last served this task, else any warm
-	// one, else resumes a suspended one, else provisions. What it never returns is
-	// a container another run is using - that one-run-per-container rule is the
-	// whole reason a memory blowout can no longer take down every sibling run in
-	// the project. Serialized per project, so concurrent dispatches into the same
-	// project cannot both provision.
-	if (project.container_status !== ContainerStatus.Running) {
-		emit('stdout', '[runner] Starting the project container…\n');
-	}
-	let containerId: string;
-	let releaseContainer: () => Promise<void> = async () => undefined;
-	try {
-		const acquired = await acquireRunContainer(
-			{
-				db: deps.db,
-				docker: deps.docker,
-				dataDir: deps.dataDir,
-				wsManager: deps.wsManager,
-				masterKeyManager: deps.masterKeyManager,
-				logs: deps.logs,
-				containerLogStreamer: deps.containerLogStreamer,
-				sshAgentServer: deps.sshAgentServer,
-				egressCAPath: deps.egressCAPath,
-			},
-			project.id,
-			task?.id ?? null,
-		);
-		containerId = acquired.containerId;
-		releaseContainer = acquired.release;
-	} catch (e) {
-		const message = e instanceof Error ? e.message : String(e);
-		await broadcastProjectUpdate(deps.db, deps.wsManager, project.team_id, project.id);
-		return finalizeFailure(
-			`Could not start the project container: ${message}. See the Container page for logs.`,
-		);
-	}
-	// The run may have been aborted (e.g. timed out) while a slow provision ran.
-	if (signal?.aborted) return finalizeAbort();
-	const runningProject: RunningProjectInfo = {
-		...project,
-		container_id: containerId,
-		container_status: ContainerStatus.Running,
-	};
-
 	let provider: AiProvider;
 	let runtimeType: AgentRuntime;
 	if (agent.model_override_provider) {
@@ -1185,24 +1163,117 @@ export async function runAgent(
 
 	if (signal?.aborted) return finalizeAbort();
 
-	const layout = SUBSCRIPTION_LAYOUTS[provider];
-	let releaseCredentialLock: (() => void) | null = null;
-	if (credential.authMethod === AiAuthMethod.Subscription && layout?.rotates) {
-		// Records the true wait so the run comment reads honestly while blocked.
+	/**
+	 * Hand the run back to the queue instead of failing it.
+	 *
+	 * The instance is at its memory budget - a state the dispatcher's own gate
+	 * already tests for, and which a moment later may not hold. Failing here would
+	 * burn the agent's turn and post a failure ping for what is a scheduling race,
+	 * so the run stays `queued` (it was never marked running) with the wait
+	 * recorded, and the caller re-queues the wakeup.
+	 */
+	const finalizeRequeue = async (reason: string): Promise<RunResult> => {
+		emit('stdout', `[runner] ${reason} - returning this run to the queue.\n`);
+		await deps.logs.end(streamId);
 		await deps.db.query(
 			`UPDATE heartbeat_runs SET queued_reason = $1
 			 WHERE id = $2 AND status = $3::heartbeat_run_status`,
-			['waiting for prior run on this credential', heartbeatRunId, HeartbeatRunStatus.Queued],
+			['waiting for container capacity', heartbeatRunId, HeartbeatRunStatus.Queued],
 		);
-		releaseCredentialLock = await acquireCredentialLock(credential.configId);
-	}
+		return {
+			success: false,
+			exitCode: -1,
+			stderr: reason,
+			durationMs: Date.now() - startTime,
+			heartbeatRunId,
+			requeued: true,
+		};
+	};
 
-	// Everything past the lock runs inside a try/finally so the credential lock is
-	// always released — including when setup (sockets, proxy, context, worktrees,
-	// file writes) throws before the exec block. Leaking it would queue every later
-	// run on this credential forever. Release is idempotent, so the explicit cleanup
-	// paths below don't double-free.
+	// Containers run on demand, and this run claims one **for itself**: the pool
+	// ladder reuses a warm container that last served this task, else any warm
+	// one, else resumes a suspended one, else provisions. What it never returns is
+	// a container another run is using - that one-run-per-container rule is the
+	// whole reason a memory blowout can no longer take down every sibling run in
+	// the project. Serialized per project, so concurrent dispatches into the same
+	// project cannot both provision.
+	//
+	// Claimed **after** the provider, runtime and credential are resolved, and not
+	// before: those three resolve to a `finalizeFailure` on an instance that is
+	// simply misconfigured (no credential, an override naming a retired provider),
+	// which is a normal state rather than an exceptional one. Claiming first meant
+	// every such wakeup provisioned a container and returned without giving it
+	// back - and a leaked claim is unrecoverable, since the ladder skips a busy
+	// member, the idle pass never stops one, and its memory counts against the
+	// instance budget forever. On a credential-less instance that walked the budget
+	// to exhaustion one wakeup at a time.
+	if (project.container_status !== ContainerStatus.Running) {
+		emit('stdout', '[runner] Starting the project container…\n');
+	}
+	let containerId: string;
+	let releaseContainer: () => Promise<void> = async () => undefined;
 	try {
+		const acquired = await acquireRunContainer(
+			{
+				db: deps.db,
+				docker: deps.docker,
+				dataDir: deps.dataDir,
+				wsManager: deps.wsManager,
+				masterKeyManager: deps.masterKeyManager,
+				logs: deps.logs,
+				containerLogStreamer: deps.containerLogStreamer,
+				sshAgentServer: deps.sshAgentServer,
+				egressCAPath: deps.egressCAPath,
+			},
+			project.id,
+			task?.id ?? null,
+		);
+		containerId = acquired.containerId;
+		releaseContainer = acquired.release;
+	} catch (e) {
+		if (e instanceof PoolCapacityError) {
+			// Not a failure: the instance is at its memory budget, which the gate
+			// already knew and which a moment from now may not be true. Requeue so
+			// the run is dispatched again rather than burning the agent's turn on a
+			// transient capacity race - the contract PoolCapacityError documents.
+			return finalizeRequeue(e.message);
+		}
+		const message = e instanceof Error ? e.message : String(e);
+		await broadcastProjectUpdate(deps.db, deps.wsManager, project.team_id, project.id);
+		return finalizeFailure(
+			`Could not start the project container: ${message}. See the Container page for logs.`,
+		);
+	}
+	// The run may have been aborted (e.g. timed out) while a slow provision ran.
+	if (signal?.aborted) {
+		await releaseContainer();
+		return finalizeAbort();
+	}
+	const runningProject: RunningProjectInfo = {
+		...project,
+		container_id: containerId,
+		container_status: ContainerStatus.Running,
+	};
+
+	// Everything past the claim runs inside a try/finally so both the claim and the
+	// credential lock are always released — including when setup (sockets, proxy,
+	// context, worktrees, file writes) throws before the exec block. Leaking the
+	// lock would queue every later run on this credential forever; leaking the claim
+	// strands the container itself, which nothing reclaims. Both releases are
+	// idempotent, so the explicit cleanup paths below don't double-free.
+	let releaseCredentialLock: (() => void) | null = null;
+	try {
+		const layout = SUBSCRIPTION_LAYOUTS[provider];
+		if (credential.authMethod === AiAuthMethod.Subscription && layout?.rotates) {
+			// Records the true wait so the run comment reads honestly while blocked.
+			await deps.db.query(
+				`UPDATE heartbeat_runs SET queued_reason = $1
+				 WHERE id = $2 AND status = $3::heartbeat_run_status`,
+				['waiting for prior run on this credential', heartbeatRunId, HeartbeatRunStatus.Queued],
+			);
+			releaseCredentialLock = await acquireCredentialLock(credential.configId);
+		}
+
 		await markHeartbeatRunRunning(deps.db, heartbeatRunId, runBroadcast, {
 			aiProviderConfigId: credential.configId,
 			provider,
@@ -1258,6 +1329,15 @@ export async function runAgent(
 			};
 		}
 
+		// Loaded before the tunnel because its split-routing policy needs the
+		// connector hosts: the per-connector method allowlist is enforced *at the
+		// proxy*, so a connector routed direct would skip its policy check even when
+		// no secret is involved. They resolve from the db and the project alone -
+		// only the `hezo` descriptor needs the tunnel's endpoints, and that one is
+		// container loopback and never proxied - so nothing here waits on the
+		// tunnel. Threaded into `buildRunContext` after, so a run resolves them once.
+		const connectorDescriptors = await loadConnectorDescriptors(deps.db, project.id);
+
 		// The tunnel is how a container reaches Hezo - the only how, on every
 		// backend. Started here because it needs both allocations above: there is
 		// nothing to point the ssh and proxy targets at until they exist.
@@ -1275,7 +1355,7 @@ export async function runAgent(
 					? { host: egressHost.host, port: egressHost.port }
 					: { host: '127.0.0.1', port: 0 },
 			},
-			policy: await buildTunnelHostPolicy(deps.db, []),
+			policy: await buildTunnelHostPolicy(deps.db, connectorDescriptors),
 		});
 		const endpoints: RunEndpoints = tunnel.endpoints;
 
@@ -1316,6 +1396,7 @@ export async function runAgent(
 			runUser,
 			progressUpdate ?? null,
 			endpoints,
+			connectorDescriptors,
 		);
 
 		// Rooted at the workspace, which is what makes the prompt path relative and
@@ -1496,7 +1577,7 @@ export async function runAgent(
 			// "succeeded" while its commits never left the container — the exact shape
 			// of a repo the connected GitHub account can read but not write.
 			for (const clone of prep.clones) {
-				const pushErrors = readPushErrors(clone);
+				const pushErrors = await readPushErrors(clone);
 				if (!pushErrors) continue;
 				emit(
 					'stderr',
@@ -1779,7 +1860,19 @@ export async function runAgent(
 			const isAbort = (error as Error).name === 'AbortError';
 			const reason = runAbortReason(signal);
 			const errorMessage = abortErrorMessage(reason) ?? (error as Error).message;
-			const status = isAbort ? abortedRunStatus(reason) : HeartbeatRunStatus.Failed;
+			// The **signal** decides the status, not the shape of the thrown error.
+			// Only Docker's exec reliably rejects with an `AbortError` when its
+			// attach is torn down; a managed backend's exec may reject with
+			// anything or resolve outright, and keying on the error name there
+			// recorded a timed-out run as `failed` while still stamping it with the
+			// timeout's own message - measured against the live Daytona API. An
+			// error with no abort reason behind it is a genuine failure; a bare
+			// abort (user cancel, shutdown) is still `cancelled`.
+			const status = reason
+				? abortedRunStatus(reason)
+				: isAbort
+					? HeartbeatRunStatus.Cancelled
+					: HeartbeatRunStatus.Failed;
 
 			// Aborting the exec only tears down its attach stream — Docker leaves the
 			// agent CLI running in the container, so a user-terminated or timed-out run
@@ -1829,6 +1922,10 @@ export async function runAgent(
 		}
 	} finally {
 		releaseCredentialLock?.();
+		// The claim outlives every explicit cleanup path above, so this is the only
+		// release that covers a throw in setup. Idempotent, so the success path's
+		// own release (which also records task affinity) is not undone here.
+		await releaseContainer();
 	}
 }
 
@@ -2043,14 +2140,16 @@ async function prepareWorktrees(
 		// the run-user) can populate it. No-op when the run-user is root.
 		await chownToRunUser(deps.docker, project.container_id, runUser, [containerWorktreeRoot]);
 
-		const repoLocOf = (name: string): RepoLoc => ({
-			hostPath: join(workspaceRoot, name),
-			containerPath: `${CONTAINER_WORKSPACE_ROOT}/${name}`,
-		});
-		const wtLocOf = (name: string): WorktreeLoc => ({
-			hostPath: join(taskWorktreeRoot, name),
-			containerPath: `${CONTAINER_WORKTREES_ROOT}/${task.identifier}/${name}`,
-		});
+		// Addressed inside the container, with the seam rooted there. A host path
+		// would only line up while the container is on this machine.
+		const repoLocOf = (name: string): RepoLoc => {
+			const containerPath = `${CONTAINER_WORKSPACE_ROOT}/${name}`;
+			return { containerPath, files: deps.docker.files(project.container_id, containerPath) };
+		};
+		const wtLocOf = (name: string): WorktreeLoc => {
+			const containerPath = `${CONTAINER_WORKTREES_ROOT}/${task.identifier}/${name}`;
+			return { containerPath, files: deps.docker.files(project.container_id, containerPath) };
+		};
 
 		const worktreeErrors = new Map<string, string>();
 		for (const repo of repos.rows) {
@@ -2058,7 +2157,7 @@ async function prepareWorktrees(
 			const repoName = repoNameFromIdentifier(repo.repo_identifier);
 			const repoLoc = repoLocOf(repoName);
 
-			if (!existsSync(join(repoLoc.hostPath, '.git'))) {
+			if (!(await repoLoc.files.exists('.git'))) {
 				worktreeErrors.set(repo.id, 'repo is not cloned');
 				emitSystem('stderr', `(skipping worktree for ${repoName} — not cloned)`);
 				continue;
@@ -2070,8 +2169,8 @@ async function prepareWorktrees(
 			// worktree. Idempotent and best-effort (never throws). Clearing the hook's
 			// error log here scopes what the run reports at finalize to this run's own
 			// failed pushes.
-			ensurePushHook(repoLoc);
-			clearPushErrors(repoLoc);
+			await ensurePushHook(repoLoc);
+			await clearPushErrors(repoLoc);
 
 			// Bootstrap a connected repo that has no commits yet: `git worktree add`
 			// can't branch off an unborn HEAD, so an empty remote would otherwise fail
@@ -2203,7 +2302,7 @@ async function prepareWorktrees(
 			if (worktreeErrors.has(repo.id)) continue;
 			const repoName = repoNameFromIdentifier(repo.repo_identifier);
 			const loc = wtLocOf(repoName);
-			if (!existsSync(join(loc.hostPath, '.git'))) continue;
+			if (!(await loc.files.exists('.git'))) continue;
 			worktrees.push({ loc, headBefore: await getWorktreeHead(executor, loc) });
 			clones.push(repoLocOf(repoName));
 		}

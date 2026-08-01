@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { DEFAULT_CONTAINER_DISK_GB } from '@hezo/shared';
 import { logger } from '../../../logger';
 import { parseDfKilobytes, parseHezoProcessList } from '../../docker';
 import { resolveDigestPinnedRef } from '../image-ref';
@@ -24,7 +25,12 @@ import type {
 	SandboxFiles,
 } from '../types';
 import { type DaytonaApi, DaytonaApiError, type DaytonaSandbox } from './client';
-import { renderDaytonaExec, renderDaytonaExecScript, renderStderrDrain } from './command';
+import {
+	asShellCommand,
+	renderDaytonaExec,
+	renderDaytonaExecScript,
+	renderStderrDrain,
+} from './command';
 import { daytonaSandboxFiles } from './files';
 
 const log = logger.child('daytona-engine');
@@ -40,8 +46,14 @@ const log = logger.child('daytona-engine');
 const NAME_LABEL = 'hezo.name';
 const IMAGE_LABEL = 'hezo.image';
 
-/** Disk (GB) requested per sandbox. The image is a read-only lower layer and does not count against it. */
-const DEFAULT_DISK_GB = 10;
+/**
+ * Disk (GB) requested when the caller states none. The image is a read-only
+ * lower layer and does not count against it.
+ *
+ * A fallback only - `HostConfig.DiskGb` is what a Hezo-provisioned container
+ * actually carries, from the instance setting and the project's override.
+ */
+const FALLBACK_DISK_GB = DEFAULT_CONTAINER_DISK_GB;
 /** vCPU per sandbox. */
 const DEFAULT_CPU = 2;
 
@@ -169,7 +181,7 @@ export class DaytonaEngine implements ContainerEngine {
 			env,
 			cpu: DEFAULT_CPU,
 			memory: memoryGb,
-			disk: DEFAULT_DISK_GB,
+			disk: config.HostConfig?.DiskGb ?? FALLBACK_DISK_GB,
 			// A backstop only: Hezo suspends idle containers itself, and this is
 			// what stops a sandbox billing forever if the server dies first.
 			autoStopInterval: DAYTONA_IDLE_STOP_MIN,
@@ -410,24 +422,40 @@ export class DaytonaEngine implements ContainerEngine {
 	 * to recover here as there is for a normal exec - so `onStderr` never fires
 	 * and diagnostics arrive interleaved on `onData`, which is harmless because
 	 * the tunnel client writes none.
+	 *
+	 * The command is handed to `openPty` rather than typed in afterwards. A PTY
+	 * starts a login shell, so the command is *typed into* it - the inverse of a
+	 * Docker exec, where the command is the exec - and everything the shell emits
+	 * around accepting it (its own echo, the prompt, bracketed-paste sequences)
+	 * would land on this channel as leading bytes. A framed protocol cannot
+	 * tolerate any of them, so the launch and the sync that hides them are one
+	 * operation; see `openPty` for what each source of noise is.
+	 *
+	 * That sync runs *here*, in the transport, and is not the only one: the framing
+	 * layer independently discards everything before the client's `TUNNEL_PREAMBLE`
+	 * (`tunnel/protocol.ts`). The two are not redundant - this one removes noise
+	 * that is specific to a PTY and would otherwise reach a decoder that cannot
+	 * survive it, while the preamble is a property of the protocol itself and holds
+	 * on any transport, including Docker's, where it doubles as the client's
+	 * "listeners are bound" signal.
 	 */
 	async openExecChannel(containerId: string, config: ExecConfig): Promise<ContainerByteChannel> {
 		const sandbox = await this.fetch(containerId);
 		if (!sandbox) throw new Error(`sandbox ${containerId} not found`);
 		const sessionId = `hezo-chan-${randomBytes(6).toString('hex')}`;
-		const pty = await this.client.openPty(sandbox, sessionId);
-
-		// The PTY starts a login shell, so the command is *typed into* it rather
-		// than being the process it launched - the inverse of a Docker exec, where
-		// the command is the exec. Sent after raw mode is applied by openPty.
-		pty.send(
-			new TextEncoder().encode(
-				`${renderDaytonaExecScript({
+		const pty = await this.client.openPty(
+			sandbox,
+			sessionId,
+			// `exec`ed by the launch line, so it replaces the shell rather than
+			// running under it - which is what stops a second prompt reaching the
+			// channel when the command ends.
+			asShellCommand(
+				renderDaytonaExecScript({
 					cmd: config.Cmd,
 					env: config.Env,
 					user: config.User,
 					stderrPath: `/tmp/.hezo-chan-${sessionId}.err`,
-				})}\n`,
+				}),
 			),
 		);
 
@@ -499,6 +527,15 @@ export class DaytonaEngine implements ContainerEngine {
 	}
 
 	/**
+	 * Null: these containers run on Daytona's machines, so the memory they consume
+	 * is not this host's to budget. The provider's own per-sandbox ceiling and the
+	 * operator's spend guard are what bound them instead.
+	 */
+	containerHostMemory(): null {
+		return null;
+	}
+
+	/**
 	 * {@link SandboxFiles} over the toolbox file API, rooted inside the sandbox.
 	 *
 	 * There is no bind mount here, so this is the only way a run's artefacts reach
@@ -540,6 +577,7 @@ export class DaytonaEngine implements ContainerEngine {
 			) => (await bound()).writeBytes(relPath, contents, opts),
 			mkdir: async (relPath: string, opts?: { mode?: number }) =>
 				(await bound()).mkdir(relPath, opts),
+			list: async (relDir: string) => (await bound()).list(relDir),
 		};
 	}
 
