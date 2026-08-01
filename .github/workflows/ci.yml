@@ -358,8 +358,13 @@ jobs:
         if: failure()
         run: |
           shopt -s globstar nullglob
+          # error-context.md ONLY. The page-state dump is already in this log via
+          # the fixture's stdout, and it lands on disk twice (the file the fixture
+          # writes plus Playwright's copy under attachments/) — globbing it here
+          # printed every dump three times per attempt, which buries the failure
+          # the log exists to surface.
           found=0
-          for f in test-results/**/error-context.md test-results/**/*page-state*; do
+          for f in test-results/**/error-context.md; do
             found=1
             echo "::group::$f"
             head -c 60000 "$f"
