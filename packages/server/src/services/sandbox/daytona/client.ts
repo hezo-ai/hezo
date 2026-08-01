@@ -126,6 +126,8 @@ export interface DaytonaApi {
 	// the status codes each one actually answers with.
 	listFiles(sandbox: DaytonaSandbox, path: string): Promise<DaytonaFileEntry[]>;
 	downloadFile(sandbox: DaytonaSandbox, path: string): Promise<Uint8Array | null>;
+	/** Metadata for one path, or null when it is not there. Answers for a directory too. */
+	statFile(sandbox: DaytonaSandbox, path: string): Promise<DaytonaFileEntry | null>;
 	uploadFile(
 		sandbox: DaytonaSandbox,
 		path: string,
@@ -133,7 +135,11 @@ export interface DaytonaApi {
 		mode?: number,
 	): Promise<void>;
 	createFolder(sandbox: DaytonaSandbox, path: string, mode?: number): Promise<void>;
-	deleteFile(sandbox: DaytonaSandbox, path: string): Promise<void>;
+	/**
+	 * Delete a path. `recursive` is required for a non-empty directory - without
+	 * it the API refuses with a 400 rather than deleting what it can.
+	 */
+	deleteFile(sandbox: DaytonaSandbox, path: string, opts?: { recursive?: boolean }): Promise<void>;
 }
 
 /** One entry from the toolbox directory listing. */
@@ -581,8 +587,35 @@ export class DaytonaClient implements DaytonaApi {
 		void res;
 	}
 
-	async deleteFile(sandbox: DaytonaSandbox, path: string): Promise<void> {
-		await this.fileRequest(sandbox, 'DELETE', `/files?path=${encodeURIComponent(path)}`);
+	/**
+	 * Metadata for one path. Unlike `files/download` this answers for a directory
+	 * as well as a file, which is what makes it the right primitive for an
+	 * existence check - downloading a directory is a 400, not a "no".
+	 */
+	async statFile(sandbox: DaytonaSandbox, path: string): Promise<DaytonaFileEntry | null> {
+		const res = await this.fileRequest(
+			sandbox,
+			'GET',
+			`/files/info?path=${encodeURIComponent(path)}`,
+		);
+		if (!res.ok) return null;
+		return (await res.json()) as DaytonaFileEntry;
+	}
+
+	async deleteFile(
+		sandbox: DaytonaSandbox,
+		path: string,
+		opts: { recursive?: boolean } = {},
+	): Promise<void> {
+		// A non-empty directory is refused outright without this - "cannot delete
+		// directory without recursive flag", measured - so a scrub that omitted it
+		// left the whole tree in place while looking like it had worked.
+		const recursive = opts.recursive ? '&recursive=true' : '';
+		await this.fileRequest(
+			sandbox,
+			'DELETE',
+			`/files?path=${encodeURIComponent(path)}${recursive}`,
+		);
 	}
 
 	private async setPermissions(sandbox: DaytonaSandbox, path: string, mode: number): Promise<void> {

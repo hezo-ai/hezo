@@ -1024,10 +1024,17 @@ Three shared pieces sit alongside it so the two implementations cannot drift:
   to buffer a file *before* `readBytes` buffers it - asking by reading and measuring
   afterwards is the check happening after the damage.
   - **Daytona** implements it over the toolbox file API. Every endpoint was measured
-    against the live service and two do not behave as the spec reads: `files/folder`
-    answers **201**, and `files/find` matches file **content** rather than names, so
+    against the live service and several do not behave as the spec reads: `files/folder`
+    answers **201**; `files/find` matches file **content** rather than names, so
     `findByName` walks the directory listing instead of using an endpoint that looks right
-    and silently finds nothing. An upload lands `0644` owned by root whatever the caller
+    and silently finds nothing; and a `DELETE` of a **non-empty directory** is refused with
+    a 400 unless `recursive=true` is passed, deleting nothing. That last one is why
+    `removeDir` passes the flag and treats a path still present afterwards as an error
+    rather than a shrug: its caller is the per-run scrub of the runtime home, so a delete
+    that quietly did nothing left the provider credential on the provider's disk for the
+    rest of the container's life. `exists` and `size` go through `files/info`, which
+    answers for a directory as well as a file - built on a download, a directory was a 400
+    rather than a "yes". An upload lands `0644` owned by root whatever the caller
     asked, so the mode contract (`0600` on a credential, `0711` on the directories above it
     so the deprivileged run user can traverse without listing) is re-applied explicitly.
   - **Docker** implements it over the daemon's `PUT`/`GET /containers/{id}/archive`

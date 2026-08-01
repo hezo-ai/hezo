@@ -100,15 +100,43 @@ function fakeApi(
 				}
 				return out;
 			},
-			downloadFile: async (_s, path) => files.get(path)?.content ?? null,
+			// A directory has no content to download, matching the live API where
+			// downloading one is a 400 rather than a "no" - which is why `exists` is
+			// built on `statFile` instead.
+			downloadFile: async (_s, path) => {
+				const f = files.get(path);
+				return f && !f.isDir ? f.content : null;
+			},
+			statFile: async (_s, path) => {
+				const f = files.get(path);
+				if (!f) return null;
+				return {
+					name: path.slice(path.lastIndexOf('/') + 1),
+					path,
+					size: f.content.byteLength,
+					isDir: f.isDir,
+					permissions: f.mode.toString(8).padStart(4, '0'),
+				};
+			},
 			uploadFile: async (_s, path, content, mode) => {
 				files.set(path, { content, mode: mode ?? 0o644, isDir: false });
 			},
 			createFolder: async (_s, path, mode) => {
 				files.set(path, { content: new Uint8Array(), mode: mode ?? 0o755, isDir: true });
 			},
-			deleteFile: async (_s, path) => {
+			deleteFile: async (_s, path, opts) => {
+				// Without `recursive` the live API refuses a non-empty directory
+				// outright rather than deleting what it can, so the fake refuses too -
+				// a fake that always succeeded would pass a contract production does
+				// not offer, which is how the silent credential scrub shipped.
+				const entry = files.get(path);
+				const prefix = `${path}/`;
+				const children = [...files.keys()].filter((p) => p.startsWith(prefix));
+				if (entry?.isDir && children.length > 0 && !opts?.recursive) {
+					throw new Error('bad request: cannot delete directory without recursive flag');
+				}
 				files.delete(path);
+				if (opts?.recursive) for (const child of children) files.delete(child);
 			},
 		},
 		overrides,
@@ -595,5 +623,60 @@ describe('DaytonaEngine settles a transition before returning', () => {
 				new Promise((resolve) => setTimeout(() => resolve('still waiting'), 300)),
 			]),
 		).resolves.toBe('still waiting');
+	});
+});
+
+/**
+ * The file contract, where this backend diverged from the host implementation in
+ * two ways that both failed quietly.
+ */
+describe('DaytonaEngine files', () => {
+	const sandbox: DaytonaSandbox = {
+		id: 'sbx-files',
+		state: 'started',
+		labels: {},
+		toolboxProxyUrl: 'https://proxy.test/toolbox',
+	};
+
+	it('scrubs a non-empty directory rather than leaving it in place', async () => {
+		// The per-run runtime home holds the provider credential, so `removeDir` is
+		// a scrub and not tidying. The API refuses a non-empty directory without a
+		// recursive flag, and the failure was swallowed as best-effort - so on this
+		// backend the credential stayed on the provider's disk for the rest of the
+		// container's life while the cleanup step reported success.
+		const { api } = fakeApi({}, [sandbox]);
+		const engine = new DaytonaEngine(api);
+		const files = engine.files('sbx-files', '/run');
+
+		await files.write('home/.config/creds.json', '{"token":"x"}', { mode: 0o600, dirMode: 0o711 });
+		expect(await files.exists('home/.config/creds.json')).toBe(true);
+
+		await files.removeDir('home');
+		expect(await files.exists('home/.config/creds.json')).toBe(false);
+		expect(await files.exists('home')).toBe(false);
+	});
+
+	it('answers exists for a directory instead of throwing', async () => {
+		// Built on a download, a directory was a 400 rather than a "yes" - a
+		// divergence from the host implementation, which simply stats the path.
+		const { api } = fakeApi({}, [sandbox]);
+		const engine = new DaytonaEngine(api);
+		const files = engine.files('sbx-files', '/run');
+
+		await files.mkdir('somedir');
+		expect(await files.exists('somedir')).toBe(true);
+		expect(await files.exists('nothing-here')).toBe(false);
+	});
+
+	it('reports a size without transferring the file, and null for a directory', async () => {
+		const { api } = fakeApi({}, [sandbox]);
+		const engine = new DaytonaEngine(api);
+		const files = engine.files('sbx-files', '/run');
+
+		await files.write('payload.bin', 'abcde');
+		expect(await files.size('payload.bin')).toBe(5);
+		await files.mkdir('adir');
+		expect(await files.size('adir')).toBeNull();
+		expect(await files.size('missing')).toBeNull();
 	});
 });
