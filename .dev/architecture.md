@@ -1272,11 +1272,17 @@ client emits a NUL-delimited `TUNNEL_PREAMBLE` before its first frame and the de
 discards everything up to it. That lives in the shared protocol rather than in an adapter
 deliberately: `openPty`'s sentinel removes noise that is specific to a PTY, while the
 preamble is a property of the protocol and holds on any transport - a channel that *is*
-clean (Docker's hijack) simply syncs on the first bytes it sends. It earns its place twice
-over: because the client writes it **after binding its listeners** it doubles as the
-readiness signal (the provisioning git ops previously started as soon as the exec channel
-opened, before anything was listening), and it carries a version, so an older in-container
+clean (Docker's hijack) simply syncs on the first bytes it sends. It also carries a version, so an older in-container
 client is refused by name instead of surfacing as an unknown frame type.
+
+**Readiness is a separate, single mechanism**, and it is not the preamble. The client emits
+the preamble after binding, so it arrives at roughly the right moment - but roughly is the
+objection: `waitForTunnelListeners` polls the container for the three loopback sockets
+actually listening, which is the fact rather than a proxy for it, and fails the run on
+timeout. Opening the channel only *starts* the client, and a coding CLI that gets
+`ECONNREFUSED` on the MCP endpoint marks that server failed for the whole session rather
+than retrying - so returning early produced exactly the silent no-op run this exists to
+prevent.
 
 Raw mode is enough for the bytes themselves: measured, all 256 byte values survive a 64 KiB
 payload intact, NUL and XON/XOFF included, so nothing has to be escaped.
@@ -2384,6 +2390,20 @@ is on Hezo's own loopback and the container reaches it through the tunnel - so t
 probe, its auto-rebind of the bind host, and the run/chat abort gate it fed were all deleted
 along with `--container-bind-host`. A tunnel that cannot be established fails the run
 directly, with the error from the exec channel.
+
+---
+
+## 8. SSH signing & git
+
+Repo access is **SSH end to end**, keyed on one Ed25519 key per team (`team_ssh_keys`,
+`UNIQUE(team_id)`, encrypted on the team row and never in the secrets vault). The same key
+signs commits and authenticates the git transport, so a `Verified` badge on GitHub and a
+successful `git push` are the same credential. The OAuth token is never used for git - see
+§ 9, *Git vs API*.
+
+The key never leaves Hezo. Everything that needs it reaches it through an **ssh-agent
+socket**, which is what lets a container sign and push without the private half ever
+existing inside it - the red line in § 7 applied to git.
 
 **Per-run ssh-agent** (`services/ssh-agent/`). `SshAgentServer.allocateRunSocket` exposes
 the key over two listeners: a **host Unix socket** and a **loopback TCP** listener
@@ -3544,6 +3564,27 @@ failures — is in `AGENTS.md` › Testing, which is authoritative):
 - **Bun-native runtime** (`packages/server/test/bun/**/*.bun.test.ts`, `bun test`) — code
   whose behavior diverges between Node and Bun, exercised on the production Bun runtime.
   Today: the egress proxy's TLS MITM path (§ 7).
+
+**Backend conformance** cuts across those tiers rather than being one of them. The
+`ContainerEngine` and `SandboxFiles` contracts have more than one implementation, and the
+only way "one seam, no provider knowledge above it" stays true is if the same assertions run
+against every implementation - so `packages/server/test/conformance/{engine,files}.ts` are
+backend-agnostic suites parameterised by a `LiveAdapterFixture`, and a new provider is a
+fixture file rather than a second suite. They run against the **real** backend, because the
+adapter unit suites drive a fake API and can only pin the requests Hezo sends: every
+non-obvious behaviour the Daytona adapter encodes was measured live and several contradicted
+the documentation, and nothing in a fake notices when one of them changes. Docker's fixture
+runs in CI (self-skipping with a logged reason when there is no daemon); Daytona's is manual
+and opt-in (`bun run test:daytona`), excluded from the default vitest run, refused outright
+under `CI`, and every container it creates is labelled `hezo.conformance` and swept on the
+way *in* as well as out so a crashed run does not leave a sandbox billing.
+
+Where a backend legitimately cannot answer something, the fixture declares it and the suite
+asserts the documented alternative instead of skipping. That has already paid: the live run
+established that Daytona's telemetry endpoint answers 403 on an ordinary account
+("Telemetry endpoints are disabled when Analytics API is configured"), so `containerStats`
+is null there - Hezo's stop-before-the-cap does not operate on that backend and the
+provider's own OOM handling applies, ending the one run that overran.
 
 All changes ship with tests that exercise functionality, preferring integration over
 heavily-mocked unit tests, and a green run keeps a quiet log (no stray `[error]`/`[warn]`).

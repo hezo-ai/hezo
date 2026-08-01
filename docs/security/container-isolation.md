@@ -19,7 +19,7 @@ work - the blast radius of anything going wrong is contained to a single project
 ## Containers run only when there is work
 
 A container starts automatically the moment an agent run or an assistant chat needs it,
-and stops again after sitting idle (15 minutes by default). A quiet instance runs zero
+and stops again after sitting idle (a couple of minutes). A quiet instance runs zero
 containers. Two global limits in **Settings > Concurrency** bound what a burst of agent
 activity can consume:
 

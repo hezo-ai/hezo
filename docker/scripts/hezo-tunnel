@@ -330,8 +330,11 @@ if (config.ports.proxy) {
  * Everything before this on the channel is whatever the transport put there - a
  * PTY carries the shell's echo of the command that started us, its
  * bracketed-paste escapes and its prompt - and Hezo discards all of it up to
- * this marker. Emitting it only once the listeners above are bound also makes it
- * a readiness signal: the host knows the loopback ports are accepting rather
- * than having to guess, which is what the provisioning git ops were racing.
+ * this marker.
+ *
+ * Emitted after the listeners are bound so it cannot precede a working tunnel,
+ * but the host does not treat it as the readiness signal: it probes the
+ * listening sockets directly instead, which is the fact rather than a proxy for
+ * it. See `waitForTunnelListeners` in `tunnel/run-tunnel.ts`.
  */
 process.stdout.write(TUNNEL_PREAMBLE);

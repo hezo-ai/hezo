@@ -81,11 +81,16 @@ export enum FrameType {
  * discards everything up to this marker. That makes any transport usable,
  * including the next provider that offers only a PTY, and it costs one write.
  *
- * It doubles as two other things worth having:
- * - a **readiness signal**. The client emits it once its listeners are bound, so
- *   the host knows the loopback ports are accepting rather than guessing.
- * - a **version handshake**. A client from an older image announces `/0` and is
- *   refused by name, instead of surfacing as an unknown frame type much later.
+ * It doubles as a **version handshake**: a client from an older image announces
+ * `/0` and is refused by name, instead of surfacing as an unknown frame type
+ * much later.
+ *
+ * It is deliberately **not** what gates the run on the client being ready. The
+ * client does emit it after binding, so it arrives at about the right moment,
+ * but "about" is the problem - a marker that happens to follow the bind is a
+ * proxy for the fact, while `waitForTunnelListeners` (`run-tunnel.ts`) observes
+ * the listening sockets themselves. One readiness mechanism, and it is the one
+ * that checks the thing it cares about.
  *
  * NUL-delimited because shell and terminal output never contains NUL, so the
  * marker cannot be forged by the noise it is there to skip past.

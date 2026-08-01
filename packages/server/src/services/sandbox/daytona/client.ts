@@ -216,11 +216,18 @@ export class DaytonaClient implements DaytonaApi {
 		});
 		const text = await res.text();
 		if (!res.ok) {
-			// 403 is the one worth naming: Daytona returns a bare "Access denied"
-			// for a key missing a scope, which reads like an outage unless you know
-			// to look at the key's permissions.
+			// 403 is worth naming, because Daytona returns a bare "Access denied" for
+			// a key missing a scope and that reads like an outage unless you know to
+			// look at the key's permissions.
+			//
+			// Only where a scope is actually the likely cause, though. The telemetry
+			// endpoint 403s on an ordinary account for a reason it states itself
+			// ("Telemetry endpoints are disabled when Analytics API is configured"),
+			// and appending a scope hint there sent the reader to change permissions
+			// that have nothing to do with it - a confident wrong diagnosis is worse
+			// than none, since the response body already said what was wrong.
 			const hint =
-				res.status === 403
+				res.status === 403 && !path.includes('/telemetry/')
 					? ' (the API key is likely missing a permission scope - volumes need read:volumes/write:volumes/delete:volumes)'
 					: '';
 			throw new DaytonaApiError(
