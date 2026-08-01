@@ -7,13 +7,25 @@ section: Deployment
 # Remote sandboxes
 
 Every agent run executes inside a container. Normally that container runs on the Docker
-daemon on the same machine as Hezo. Point `--sandbox-backend` at a managed sandbox service
-and the containers run on the provider's machines instead, while Hezo keeps doing all of
-the work that touches your data.
+daemon on the same machine as Hezo. Point Hezo at a managed sandbox service and the
+containers run on the provider's machines instead, while Hezo keeps doing all of the work
+that touches your data.
 
-The flags themselves are in
-[Configuration → Running agent containers on a managed sandbox service](/docs/deployment/configuration).
-This page is about what actually changes when you flip it.
+**You choose this in Settings -> Containers**, and you can change it whenever you like -
+including switching back to local Docker, which needs no credentials. Switching to a
+managed service asks for that provider's API key, which is stored encrypted and used only
+by Hezo to reach the provider; it never enters an agent container.
+
+**Switching destroys every container that is running at that moment.** Agent runs in
+progress end and are reported as failed on their project's Container page, and can be
+started again once the switch is done. Hezo tells you how many containers and how many runs
+that is before you confirm. Nothing is destroyed until the new service has answered - if the
+key is wrong or the provider is unreachable, the switch is refused and you stay exactly where
+you were.
+
+The [CLI flags](/docs/deployment/configuration) set the service a **brand-new** instance
+starts on. Once you have chosen one in Settings, that choice wins and the flags no longer
+override it.
 
 ## What moves, and what does not
 

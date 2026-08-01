@@ -1342,6 +1342,33 @@ from `usedMemoryGb` (on both arms of its UNION - the pool member and the `projec
 two records of one container). Charging it in both places reserved the same memory twice,
 so an instance sized for three containers dispatched two whenever the chat was open.
 
+**The backend is a setting, not launch configuration.** It used to be chosen once at
+startup and fixed for the process; it is now switchable from Settings -> Containers, with
+the CLI flag seeding only a fresh instance and the stored choice winning thereafter.
+`SandboxBackendHolder` (`services/sandbox/holder.ts`) exists because of what that changes:
+every consumer used to capture the concrete engine (`c.set('docker')`, the JobManager's
+deps, the chat manager, the process sweeper), and a captured reference would keep driving
+the backend the operator just left - a run provisioned there looks entirely normal. Startup
+builds one `ContainerEngine` proxy and hands *that* out, so re-pointing the holder changes
+what every call site talks to without any of them knowing. The delegation is an explicit
+object rather than a `Proxy` so a method added to the interface is a build error rather than
+a runtime `TypeError`.
+
+`switchSandboxBackend` runs **preflight -> destroy -> swap**, and the order is the design.
+Preflight first (opening the destination *is* the preflight, so there is one definition of
+"usable") because a half-completed switch loses every container *and* lands on an
+unreachable backend. Destroy before the swap because afterwards those ids belong to a
+backend nothing will ever ask again - the pool, the orphan sweep and every lifecycle call go
+through the *current* engine, so a survivor is unreachable by the very things that clean up,
+and on a paid provider that is a bill with no surface in the product. Containers are
+enumerated from the engine **by label** rather than from the database, so one the database
+lost track of goes too. In-flight runs die with their containers through the normal
+container-death path; the route reports the counts up front so the confirmation names them.
+This is still not failover: the holder swaps *which* backend is current, never picks a
+second because the first is down, and an unreachable stored backend still aborts startup.
+The provider key lives in the secrets vault with `allowed_hosts` empty and substitution off
+- it is Hezo's own control-plane credential and must never be reachable from a run.
+
 **The budget derives from host memory only where the containers are the host's to feed.**
 `ContainerEngine.containerHostMemory()` answers with the memory its containers are drawn
 from, or `null` when they are not drawn from this machine at all; `DockerClient` returns the

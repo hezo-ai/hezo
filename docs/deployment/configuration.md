@@ -20,7 +20,7 @@ handy for baking defaults into a service definition while still overriding per r
 | `--database-url <url>` | `HEZO_DATABASE_URL` | - | Connection string for an [external Postgres](#using-an-external-postgres) (`postgres://user:password@host:5432/hezo`). Its `sslmode` follows standard libpq rules - see [TLS and sslmode](#tls-and-sslmode). Omit to use the embedded database under the data directory (the default). |
 | - | `HEZO_DATABASE_POOL_SIZE` | `10` | Connection-pool size for the external database (2-100). Ignored for the embedded database. |
 | `--asset-storage-url <url>` | `HEZO_ASSET_STORAGE_URL` | - | [S3-compatible object storage](#storing-assets-in-s3-compatible-object-storage) for asset files (`s3://KEY:SECRET@endpoint/bucket[/prefix]`). Omit to store assets on the local filesystem under the data directory (the default). |
-| `--sandbox-backend <name>` | `HEZO_SANDBOX_BACKEND` | `docker` | Where agent containers run: `docker` (the local daemon) or `daytona` (a [managed sandbox service](#running-agent-containers-on-a-managed-sandbox-service)). Selecting a managed backend Hezo cannot reach is fatal at startup - it never falls back to local Docker. |
+| `--sandbox-backend <name>` | `HEZO_SANDBOX_BACKEND` | `docker` | Where agent containers run on a **new** instance: `docker` (the local daemon) or `daytona` (a [managed sandbox service](#running-agent-containers-on-a-managed-sandbox-service)). Once set in Settings -> Containers, the stored choice wins and this is ignored. Selecting a managed backend Hezo cannot reach is fatal at startup - it never falls back to local Docker. |
 | `--daytona-api-key <key>` | `HEZO_DAYTONA_API_KEY` | - | Daytona API key. Required when `--sandbox-backend` is `daytona`. Used only by Hezo itself to reach the provider - it is never placed inside an agent container. |
 | `--daytona-api-url <url>` | `HEZO_DAYTONA_API_URL` | Daytona's public API | Daytona API base URL, for a regional or self-hosted endpoint. |
 | `--master-key <phrase>` | `HEZO_MASTER_KEY` | - | The twelve-word master key, to set up or unlock without the web gate. |
@@ -221,6 +221,11 @@ while the server is stopped - `aws s3 sync /var/lib/hezo/assets/ s3://my-bucket/
 
 Every agent run executes inside a container. By default that container runs on the local
 Docker daemon, which is why Docker is a prerequisite for a normal install. Setting
+These flags choose what a **brand-new** instance starts on. After that the setting in
+Settings -> Containers is what counts, and you can switch service (or switch back to local
+Docker) there at any time without restarting - see
+[Remote sandboxes](/docs/deployment/remote-sandboxes).
+
 `--sandbox-backend` (or `HEZO_SANDBOX_BACKEND`) moves those containers onto a managed
 sandbox service instead, and Docker stops being required at all.
 
