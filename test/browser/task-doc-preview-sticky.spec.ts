@@ -88,9 +88,17 @@ test('the document preview panel fits the viewport and its top stays pinned on s
 	await expect(header).toBeVisible();
 
 	const scroller = page.locator('main').first();
-	const mainBox = await scroller.boundingBox();
-	expect(mainBox).not.toBeNull();
-	if (!mainBox) return;
+	// Re-read at every comparison rather than captured once. The scroller's own
+	// box is the frame of reference here, and it is not fixed: the app header
+	// above it settles to a taller layout on a slow runner, so a `mainBox` taken
+	// when the panel opened is stale by the time the post-scroll assertions use
+	// it - and every offset measured against it is wrong by the difference.
+	const mainBoxNow = async () => {
+		const box = await scroller.boundingBox();
+		expect(box).not.toBeNull();
+		return box!;
+	};
+	const mainBox = await mainBoxNow();
 
 	// The long doc drives the panel to its max-height cap — confirm the cap actually
 	// engaged (the panel is nearly as tall as the scroller's visible area), otherwise
@@ -117,16 +125,17 @@ test('the document preview panel fits the viewport and its top stays pinned on s
 	// max-height (100vh − 2rem) ignored the h-12 (3rem) app header the scroller sits
 	// below, so the pinned panel overran the scroller's bottom by ~2rem — this bound
 	// fails on that sizing (bottom ≈ mainBottom + 32) and holds on the corrected one.
+	const main1 = await mainBoxNow();
 	const pinned = await panel.boundingBox();
 	const headerTop1 = (await header.boundingBox())?.y ?? -1;
 	expect(pinned).not.toBeNull();
 	if (!pinned) return;
-	expect(pinned.y).toBeGreaterThanOrEqual(mainBox.y - 1);
-	expect(pinned.y + pinned.height).toBeLessThanOrEqual(mainBox.y + mainBox.height + 2);
+	expect(pinned.y).toBeGreaterThanOrEqual(main1.y - 1);
+	expect(pinned.y + pinned.height).toBeLessThanOrEqual(main1.y + main1.height + 2);
 	// Docked near the top of the scroller (below the header, at the sticky offset),
 	// not risen out of view.
-	expect(headerTop1).toBeGreaterThanOrEqual(mainBox.y - 1);
-	expect(headerTop1).toBeLessThan(mainBox.y + 40);
+	expect(headerTop1).toBeGreaterThanOrEqual(main1.y - 1);
+	expect(headerTop1).toBeLessThan(main1.y + 40);
 
 	// Scroll further (still clear of the bottom): the panel top does not scroll out
 	// of view — its header stays pinned at the same y. A panel taller than the
@@ -136,6 +145,7 @@ test('the document preview panel fits the viewport and its top stays pinned on s
 	await scroller.evaluate((el, top) => el.scrollTo({ top }), midB);
 	await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBeGreaterThan(midB - 4);
 	const headerTop2 = (await header.boundingBox())?.y ?? -1;
-	expect(headerTop2).toBeGreaterThanOrEqual(mainBox.y - 1);
+	const main2 = await mainBoxNow();
+	expect(headerTop2).toBeGreaterThanOrEqual(main2.y - 1);
 	expect(Math.abs(headerTop2 - headerTop1)).toBeLessThanOrEqual(2);
 });
