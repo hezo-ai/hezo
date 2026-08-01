@@ -933,7 +933,16 @@ export class DockerClient implements ContainerEngine {
 			size: async (relPath) => {
 				// `stat -c %s` rather than the archive endpoint's tar header: the
 				// point of asking is to avoid transferring the file at all.
-				const res = await run(`stat -c %s ${shellQuote(abs(relPath))} 2>/dev/null`);
+				//
+				// Guarded on it being a regular file, because `stat` answers for a
+				// directory too - with the size of the directory entry (4096), which is
+				// not a number any caller here can use. They ask before reading, so a
+				// directory has to answer "no size" exactly as a missing path does.
+				// Caught by the shared backend-conformance suite: Daytona already
+				// answered null and this did not, which is the divergence a single
+				// interface with two implementations is supposed to make impossible.
+				const path = shellQuote(abs(relPath));
+				const res = await run(`[ -f ${path} ] && stat -c %s ${path} 2>/dev/null`);
 				if (res.exitCode !== 0) return null;
 				const bytes = Number.parseInt(res.stdout.trim(), 10);
 				return Number.isFinite(bytes) ? bytes : null;

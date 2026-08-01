@@ -171,7 +171,11 @@ export function hostSandboxFiles(hostRoot: string): SandboxFiles {
 		readBytes: async (relPath) => new Uint8Array(readFileSync(resolveWithin(hostRoot, relPath))),
 		size: async (relPath) => {
 			try {
-				return statSync(resolveWithin(hostRoot, relPath)).size;
+				// A directory answers null, not its entry size: callers ask this before
+				// reading a file, and 4096 would send them off to read a directory. Same
+				// contract the container implementations honour - see the Docker one.
+				const stat = statSync(resolveWithin(hostRoot, relPath));
+				return stat.isFile() ? stat.size : null;
 			} catch {
 				return null;
 			}

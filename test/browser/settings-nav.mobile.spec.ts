@@ -40,31 +40,53 @@ test.describe('settings navigation responsiveness', () => {
 	test('mobile menu stays pinned to the top while the page scrolls', async ({
 		authedPage: page,
 	}) => {
-		// A short viewport guarantees the content overflows so <main> can scroll.
-		await page.setViewportSize({ width: 375, height: 480 });
+		// Short enough that the settings chrome alone overflows <main>. The height
+		// is load-bearing and the spec now says so: at 480px the credentials page
+		// (empty, on a fresh instance) fit *within* the scroller, `scrollTo` was a
+		// no-op, and the assertions below compared two identical unscrolled
+		// layouts - passing without ever exercising stickiness. The overflow
+		// precondition is asserted rather than assumed for the same reason.
+		await page.setViewportSize({ width: 375, height: 360 });
 		await page.goto('/settings/credentials');
 
 		const toggle = page.getByTestId('settings-nav-toggle');
 		await expect(toggle).toBeVisible({ timeout: 15000 });
+		const scroller = page.locator('main').first();
 
-		// Settled first: a box read while the page is still arriving is a reading of
-		// a different layout than the one after the scroll, which shows up as the
-		// element moving *down* - something `position: sticky` cannot do.
-		const before = await waitForStableBox(toggle);
-		expect(before).not.toBeNull();
+		// Measured **relative to the scroll container**, not to the viewport.
+		//
+		// `sticky top-0` is a promise about the element's position within its
+		// scrolling ancestor, so that offset is the property under test. Comparing
+		// viewport-absolute `y` values across a scroll tests the same thing only
+		// while everything above <main> keeps a constant height - an assumption the
+		// spec never stated and that does not hold: on a 2-core CI runner the app
+		// header above the scroller settles to a taller layout between the two
+		// reads, and the toggle appeared to move *down* the page by ~75px in
+		// response to a downward scroll, which stickiness cannot do. Measuring the
+		// offset removes the assumption rather than widening the bound.
+		const offset = async () => {
+			const box = await waitForStableBox(toggle);
+			const main = await scroller.boundingBox();
+			expect(main).not.toBeNull();
+			return box.y - main!.y;
+		};
 
-		// Scroll the main panel (the only scroller) down.
-		await page
-			.locator('main')
-			.first()
-			.evaluate((el) => el.scrollTo({ top: 600 }));
+		const before = await offset();
+
+		// The content must genuinely overflow, or "it did not move" proves nothing.
+		const overflow = await scroller.evaluate((el) => el.scrollHeight - el.clientHeight);
+		expect(overflow).toBeGreaterThan(60);
+
+		// Scroll the main panel (the only scroller) to the bottom.
+		await scroller.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
 		await page.waitForTimeout(150);
+		expect(await scroller.evaluate((el) => el.scrollTop)).toBeGreaterThan(30);
 
-		const after = await toggle.boundingBox();
-		expect(after).not.toBeNull();
-		// Sticky: the toggle does not scroll up off-screen — it pins at/near the top
-		// of the scroll area rather than moving with the content.
-		expect(after!.y).toBeLessThanOrEqual(before!.y + 1);
-		expect(after!.y).toBeLessThan(120);
+		const after = await offset();
+
+		// Sticky: it holds its place at the top of the scroll area instead of
+		// travelling up with the content it is pinned above.
+		expect(after).toBeLessThanOrEqual(before + 1);
+		expect(after).toBeLessThan(40);
 	});
 });
