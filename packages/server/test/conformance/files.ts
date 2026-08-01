@@ -46,6 +46,18 @@ export function describeFilesConformance(fixture: LiveAdapterFixture, h: Conform
 			await files.mkdir('.');
 		}, 300_000);
 
+		/** Octal modes of paths under the work root, in the order asked for. */
+		async function statModes(relPaths: string[]): Promise<string[]> {
+			const args = relPaths.map((p) => `${fixture.workRoot}/${p}`).join(' ');
+			const execId = await engine.execCreate(containerId, {
+				Cmd: ['sh', '-c', `stat -c %a ${args}`],
+				User: 'root',
+				AttachStdout: true,
+				AttachStderr: true,
+			});
+			return (await engine.execStart(execId)).stdout.trim().split('\n');
+		}
+
 		afterAll(async () => {
 			await sweepConformanceContainers(engine);
 		}, 120_000);
@@ -99,19 +111,30 @@ export function describeFilesConformance(fixture: LiveAdapterFixture, h: Conform
 			expect(await files.read('deep/nested/tree/file.txt')).toBe('ok');
 		});
 
-		it('applies the mode it was asked for', async () => {
+		it('applies the mode it was asked for, to the file and to every directory above it', async () => {
 			// The credential contract: 0600 on the secret, 0711 on the directories
 			// above it so a deprivileged run user can traverse without listing.
 			// Dropping it either locks the run out or widens a credential to
 			// world-readable, and neither fails loudly.
-			await files.write('secret/creds.json', '{"token":"x"}', { mode: 0o600, dirMode: 0o711 });
-			const execId = await engine.execCreate(containerId, {
-				Cmd: ['sh', '-c', `stat -c %a ${fixture.workRoot}/secret/creds.json`],
-				User: 'root',
-				AttachStdout: true,
-				AttachStderr: true,
+			//
+			// Two levels deep on purpose. Asserting only the file, or only the leaf
+			// directory, is what let this diverge: `mkdir -p -m MODE` applies the mode
+			// to the **final** directory only, so Docker created the intermediate at
+			// the default 0755 while Daytona (which creates each segment with the
+			// mode) created it at 0711. The production path is exactly this shape -
+			// `subscription/<provider>/<run>/settings.json` - so the widened directory
+			// was the one holding every other run's credential directory.
+			await files.write('creds/anthropic/run-1/creds.json', '{"token":"x"}', {
+				mode: 0o600,
+				dirMode: 0o711,
 			});
-			expect((await engine.execStart(execId)).stdout.trim()).toBe('600');
+			const modes = await statModes([
+				'creds/anthropic/run-1/creds.json',
+				'creds/anthropic/run-1',
+				'creds/anthropic',
+				'creds',
+			]);
+			expect(modes).toEqual(['600', '711', '711', '711']);
 		});
 
 		it('removes a non-empty directory rather than leaving it in place', async () => {

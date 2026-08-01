@@ -1,6 +1,10 @@
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { redactSandboxApiUrl } from '../src/lib/sandbox-backend-info';
 import { DockerClient } from '../src/services/docker';
+import { DOCKER_INSTALL_URL } from '../src/services/docker-preflight';
 import { DaytonaClient } from '../src/services/sandbox/daytona/client';
 import { DaytonaEngine } from '../src/services/sandbox/daytona/engine';
 import { SandboxBackendError } from '../src/services/sandbox/errors';
@@ -8,20 +12,28 @@ import { openSandboxBackend } from '../src/services/sandbox/open';
 
 afterEach(() => {
 	vi.restoreAllMocks();
+	vi.unstubAllEnvs();
 });
 
 /** Never retry in tests - the real backoff would add 6s per failing case. */
 const NO_RETRY = { retryDelaysMs: [] };
 
+/** A daemon that answers, so the Docker branch is exercised without one running. */
+function dockerAnswers(): void {
+	vi.spyOn(DockerClient.prototype, 'ping').mockResolvedValue(true);
+}
+
 describe('openSandboxBackend selection', () => {
 	it('defaults to local Docker when nothing is configured', async () => {
-		const { engine, info } = await openSandboxBackend();
+		dockerAnswers();
+		const { engine, info } = await openSandboxBackend(NO_RETRY);
 		expect(engine).toBeInstanceOf(DockerClient);
 		expect(info).toEqual({ backend: 'docker', display: 'local Docker daemon' });
 	});
 
 	it('accepts an explicit docker backend', async () => {
-		const { engine } = await openSandboxBackend({ backend: 'docker' });
+		dockerAnswers();
+		const { engine } = await openSandboxBackend({ backend: 'docker', ...NO_RETRY });
 		expect(engine).toBeInstanceOf(DockerClient);
 	});
 
@@ -117,6 +129,93 @@ describe('openSandboxBackend is fatal, never degraded', () => {
 			...NO_RETRY,
 		}).catch((e) => e);
 		expect(err.message).not.toContain(key);
+	});
+});
+
+/**
+ * Docker gets a real preflight here, and this is the only place it gets one.
+ *
+ * The gate that used to sit at the top of `index.ts` ran before the database was
+ * open, so it could only read the launch flag while the stored setting is what
+ * actually selects the backend - an instance switched to Daytona from the
+ * Containers page exited 1 on restart, showing Docker install guidance for a
+ * backend it would never use. Moving the check here also gives the **runtime
+ * switch** a preflight it never had: `switchSandboxBackend` destroys every
+ * container before swapping, so a destination that cannot be reached has to be
+ * caught before anything is torn down.
+ */
+describe('openSandboxBackend preflights Docker', () => {
+	/** A PATH with, or without, a `docker` executable on it. */
+	function pathWithDocker(present: boolean): string {
+		const dir = mkdtempSync(join(tmpdir(), 'hezo-sandbox-open-'));
+		if (present) {
+			const bin = join(dir, process.platform === 'win32' ? 'docker.exe' : 'docker');
+			writeFileSync(bin, '#!/bin/sh\necho docker\n');
+			chmodSync(bin, 0o755);
+		}
+		return dir;
+	}
+
+	it('refuses rather than handing back an unpinged client', async () => {
+		vi.spyOn(DockerClient.prototype, 'ping').mockResolvedValue(false);
+		const result = await openSandboxBackend({ backend: 'docker', ...NO_RETRY }).catch(() => null);
+		expect(result).toBeNull();
+	});
+
+	it('retries a daemon that is briefly restarting before giving up', async () => {
+		// Docker Desktop bouncing for a couple of seconds must not kill startup -
+		// the same allowance Daytona gets.
+		const ping = vi
+			.spyOn(DockerClient.prototype, 'ping')
+			.mockResolvedValueOnce(false)
+			.mockResolvedValue(true);
+		const { engine } = await openSandboxBackend({ backend: 'docker', retryDelaysMs: [1] });
+		expect(ping).toHaveBeenCalledTimes(2);
+		expect(engine).toBeInstanceOf(DockerClient);
+	});
+
+	it('points at the install page when the daemon is down and docker is absent', async () => {
+		// The distinction is the whole value of the message: "install it" and
+		// "start it" are different actions, and a generic "cannot reach" is neither.
+		vi.spyOn(DockerClient.prototype, 'ping').mockResolvedValue(false);
+		const dir = pathWithDocker(false);
+		try {
+			vi.stubEnv('PATH', dir);
+			const err = await openSandboxBackend({ backend: 'docker', ...NO_RETRY }).catch((e) => e);
+			expect(err).toBeInstanceOf(SandboxBackendError);
+			expect(err.message).toContain('not appear to be installed');
+			expect(err.message).toContain(DOCKER_INSTALL_URL);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('explains how to start the daemon when docker is installed but down', async () => {
+		vi.spyOn(DockerClient.prototype, 'ping').mockResolvedValue(false);
+		const dir = pathWithDocker(true);
+		try {
+			vi.stubEnv('PATH', dir);
+			const err = await openSandboxBackend({ backend: 'docker', ...NO_RETRY }).catch((e) => e);
+			expect(err.message).toContain('daemon is not reachable');
+			expect(err.message).not.toContain('not appear to be installed');
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('offers the managed backend as the alternative to a local daemon', async () => {
+		// An operator with no Docker is not stuck: the other backend is the reason
+		// this seam exists, and the failure is where they will look for it.
+		vi.spyOn(DockerClient.prototype, 'ping').mockResolvedValue(false);
+		const err = await openSandboxBackend({ backend: 'docker', ...NO_RETRY }).catch((e) => e);
+		expect(err.message).toContain('--sandbox-backend');
+		expect(err.message).toContain('HEZO_SANDBOX_BACKEND');
+	});
+
+	it('never surfaces the test-only escape hatch to an operator', async () => {
+		vi.spyOn(DockerClient.prototype, 'ping').mockResolvedValue(false);
+		const err = await openSandboxBackend({ backend: 'docker', ...NO_RETRY }).catch((e) => e);
+		expect(err.message).not.toContain('HEZO_SKIP_DOCKER');
 	});
 });
 

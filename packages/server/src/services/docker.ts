@@ -75,6 +75,20 @@ const DOCKER_REQUEST_TIMEOUT_MS = (() => {
 const KILL_EXEC_TIMEOUT_MS = 5_000;
 
 /**
+ * Bound on the hijack handshake - connect, write the request, read the response
+ * headers - and on that alone. It is cleared the moment the socket is handed
+ * over, because everything after that point is a **long-lived** channel: the
+ * tunnel sits idle between requests for as long as the run lasts, so an
+ * inactivity timeout on the socket itself would tear down a perfectly healthy
+ * one. Without this the promise had no way to settle at all: a daemon that
+ * accepts the connection and then never answers left it pending forever, and the
+ * caller - a run acquiring its tunnel - waited with it, indefinitely and with no
+ * error to report. `MAX_HIJACK_HEADER_BYTES` only catches a daemon that talks
+ * too much; this catches one that does not talk at all.
+ */
+const HIJACK_HANDSHAKE_TIMEOUT_MS = 30_000;
+
+/**
  * Upper bound on the boot sweep's `/proc` scan exec (`listHezoProcesses`).
  * Wider than the kill bound — the scan walks every pid — but still short enough
  * that a wedged daemon can't stall startup reconciliation.
@@ -137,6 +151,39 @@ function resolveContainerPath(root: string, relPath: string): string {
 		parts.push(segment);
 	}
 	return parts.length === 0 ? root : `${root}/${parts.join('/')}`;
+}
+
+/**
+ * Every directory from `root` down to `dir`, root first - the chain a `dirMode`
+ * applies to.
+ *
+ * `SandboxFiles.write` promises the mode reaches "every directory this call has
+ * to create", and the host implementation delivers that by chmod'ing each
+ * component from the leaf back up to the root. `mkdir -p -m MODE` does **not**:
+ * both POSIX and coreutils apply `-m` to the final directory only, and create
+ * the intermediates with the default mode instead. So a `dirMode` of 0o711 -
+ * chosen precisely so the deprivileged run user can traverse to a credential
+ * without being able to list what sits beside it - produced a 0o755 parent, and
+ * the one property it was set for was the one that was lost. Nothing failed;
+ * that is what made it worth finding.
+ *
+ * Bounded at `root` exactly as the host walk is, so a mode meant for a per-run
+ * directory can never travel up to `/workspace` or `/`.
+ */
+export function containerDirChain(root: string, dir: string): string[] {
+	if (dir === root) return [root];
+	const suffix = dir.startsWith(`${root}/`) ? dir.slice(root.length + 1) : '';
+	// A path outside the root is not ours to re-mode; `resolveContainerPath`
+	// already refuses to produce one, so this is a belt-and-braces bound.
+	if (suffix === '') return [dir];
+	const chain = [root];
+	let cursor = root;
+	for (const segment of suffix.split('/')) {
+		if (segment === '') continue;
+		cursor = `${cursor}/${segment}`;
+		chain.push(cursor);
+	}
+	return chain;
 }
 
 /** Single-quote for `sh -c`, closing and reopening around any embedded quote. */
@@ -273,10 +320,10 @@ export class DockerClient implements ContainerEngine {
 	 *
 	 * This is the tunnel's transport on Docker, and it cannot go through
 	 * `requestStream`: that returns a `Response`, which is read-only. Docker
-	 * hands out a raw socket instead, via the standard HTTP upgrade dance -
-	 * `Connection: Upgrade` / `Upgrade: tcp` makes it answer `101` and Node
-	 * emits `upgrade` with the socket explicitly, rather than leaving us to
-	 * pull one out from under a parser that still thinks it owns it.
+	 * hands out a raw socket instead, in answer to `Connection: Upgrade` /
+	 * `Upgrade: tcp`. The request is spoken over a plain socket rather than
+	 * through an HTTP client - see {@link hijackExec} for why that is not
+	 * optional under Bun.
 	 *
 	 * Stdin is written raw; output arrives in Docker's 8-byte framing (the exec
 	 * runs without a TTY on purpose - a TTY gives raw bytes but also line
@@ -356,6 +403,27 @@ export class DockerClient implements ContainerEngine {
 			const payload = Buffer.from(JSON.stringify({ Detach: false, Tty: false }));
 			const socket = netConnect({ path: this.socketPath });
 			let header = Buffer.alloc(0);
+			let settled = false;
+
+			/** Settle once, and stop the handshake clock whichever way it went. */
+			const fail = (err: Error): void => {
+				if (settled) return;
+				settled = true;
+				clearTimeout(handshakeTimer);
+				socket.destroy();
+				reject(err);
+			};
+
+			const handshakeTimer = setTimeout(() => {
+				fail(
+					new Error(
+						`Docker exec attach timed out after ${HIJACK_HANDSHAKE_TIMEOUT_MS}ms waiting for the daemon to answer`,
+					),
+				);
+			}, HIJACK_HANDSHAKE_TIMEOUT_MS);
+			// Node keeps the process alive for a pending timer; this one must not
+			// hold a shutdown open on a daemon that has stopped answering.
+			handshakeTimer.unref?.();
 
 			const onHeaderData = (chunk: Buffer): void => {
 				header = Buffer.concat([header, chunk]);
@@ -364,13 +432,11 @@ export class DockerClient implements ContainerEngine {
 					// A response that never terminates its headers is a broken daemon,
 					// not a slow one; cap it rather than buffering without bound.
 					if (header.length > MAX_HIJACK_HEADER_BYTES) {
-						socket.destroy();
-						reject(new Error('Docker exec attach: response headers too large'));
+						fail(new Error('Docker exec attach: response headers too large'));
 					}
 					return;
 				}
 				socket.removeListener('data', onHeaderData);
-				socket.removeListener('error', onEarlyError);
 
 				const statusLine = header.subarray(0, header.indexOf('\r\n')).toString();
 				const status = Number.parseInt(statusLine.split(' ')[1] ?? '', 10);
@@ -379,8 +445,7 @@ export class DockerClient implements ContainerEngine {
 				// and its body says why.
 				if (status !== 101 && status !== 200) {
 					const body = header.subarray(end + 4).toString();
-					socket.destroy();
-					reject(new Error(`Docker exec attach failed (${status}): ${body}`));
+					fail(new Error(`Docker exec attach failed (${status}): ${body}`));
 					return;
 				}
 
@@ -390,13 +455,18 @@ export class DockerClient implements ContainerEngine {
 				const rest = header.subarray(end + 4);
 				socket.pause();
 				if (rest.length > 0) socket.unshift(rest);
+				settled = true;
+				clearTimeout(handshakeTimer);
 				resolve(socket);
 			};
 
-			const onEarlyError = (err: Error): void => reject(err);
-
+			// Left attached past the handover, deliberately. Removing it left the
+			// socket with **no** `error` listener until the caller attached its own,
+			// and an `error` emitted in that window is not a rejected promise - Node
+			// throws it as an uncaught exception. After the handover `fail` is a
+			// no-op, so this only ever suppresses that.
+			socket.on('error', fail);
 			socket.on('data', onHeaderData);
-			socket.on('error', onEarlyError);
 			socket.on('connect', () => {
 				socket.write(
 					`POST /${API_VERSION}/exec/${execId}/start HTTP/1.1\r\n` +
@@ -905,10 +975,14 @@ export class DockerClient implements ContainerEngine {
 		): Promise<void> => {
 			const target = abs(relPath);
 			const dir = target.slice(0, Math.max(target.lastIndexOf('/'), 1));
+			// `mkdir -p` first, then chmod the whole chain - `-m` alone would mode
+			// the leaf and leave every directory above it at the default. See
+			// {@link containerDirChain}. chmod is not subject to the umask either,
+			// which is the same reason the host walk chmods rather than trusting
+			// `mkdirSync`'s mode.
 			const dirMode = (opts.dirMode ?? 0o755).toString(8);
-			// `mkdir -p` applies the mode only to directories it creates, which
-			// matches the host implementation's contract exactly.
-			const made = await run(`mkdir -p -m ${dirMode} ${shellQuote(dir)}`);
+			const chain = containerDirChain(containerRoot, dir).map(shellQuote).join(' ');
+			const made = await run(`mkdir -p ${shellQuote(dir)} && chmod ${dirMode} ${chain}`);
 			if (made.exitCode !== 0) throw new Error(`could not create ${dir} in ${containerId}`);
 
 			const name = target.slice(target.lastIndexOf('/') + 1);

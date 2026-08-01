@@ -203,3 +203,52 @@ describe('hostSandboxFiles write side', () => {
 		rmSync(root, { recursive: true, force: true });
 	});
 });
+
+/**
+ * Docker's half of the same directory-mode contract, as a pure function.
+ *
+ * The host implementation walks real directories, so its behaviour is asserted
+ * above by stat'ing them. Docker's cannot be: the directories live inside a
+ * container, so the mode is carried by a rendered shell command and the only
+ * thing testable without a daemon is which paths that command names. The
+ * end-to-end assertion is in the shared backend-conformance suite
+ * (`test/conformance/files.ts`), which stats them for real on every backend.
+ */
+describe('containerDirChain', () => {
+	const ROOT = '/workspace/.hezo/subscription';
+
+	it('names every directory from the root down to the leaf', async () => {
+		// This is the whole fix. `mkdir -p -m MODE` modes the **final** directory
+		// only, so the production path `subscription/<provider>/<run>` came out with
+		// a 0755 `<provider>` directory holding every run's credential directory,
+		// while the same call on Daytona produced 0711. Nothing failed either way.
+		const { containerDirChain } = await import('../src/services/docker');
+		expect(containerDirChain(ROOT, `${ROOT}/anthropic/run-1`)).toEqual([
+			ROOT,
+			`${ROOT}/anthropic`,
+			`${ROOT}/anthropic/run-1`,
+		]);
+	});
+
+	it('is just the root when the write lands directly in it', async () => {
+		const { containerDirChain } = await import('../src/services/docker');
+		expect(containerDirChain(ROOT, ROOT)).toEqual([ROOT]);
+	});
+
+	it('never names a directory above its own root', async () => {
+		// The same bound the host walk keeps: a mode meant for a per-run directory
+		// must not travel up to /workspace or /.
+		const { containerDirChain } = await import('../src/services/docker');
+		for (const outside of ['/workspace', '/', '/etc', '/workspace/.hezo']) {
+			expect(containerDirChain(ROOT, outside)).toEqual([outside]);
+		}
+	});
+
+	it('is not fooled by a sibling directory sharing the root as a prefix', async () => {
+		// `/workspace/.hezo/subscription-other` starts with the root's characters
+		// but is not under it, so re-moding the chain would touch a tree this
+		// SandboxFiles does not own.
+		const { containerDirChain } = await import('../src/services/docker');
+		expect(containerDirChain(ROOT, `${ROOT}-other/x`)).toEqual([`${ROOT}-other/x`]);
+	});
+});

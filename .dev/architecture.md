@@ -983,12 +983,26 @@ instance-agent task selection).
 
 ## 5. Agent execution & run lifecycle
 
-**Startup Docker gate.** Every run executes in a per-project Docker container, so Docker
-is a hard prerequisite. Before `startup()` boots the server, `index.ts` runs a preflight
-(`services/docker-preflight.ts`): it pings the daemon and, on failure, checks for a
-`docker` binary on PATH to tell *not installed* from *installed-but-stopped*, prints the
-matching guidance (install link / start command), and **exits non-zero**. `HEZO_SKIP_DOCKER`
-(the same flag that swaps in the in-process fake docker for dev/tests) bypasses the gate.
+**Startup backend gate.** Every run executes in a container, and a backend that cannot be
+reached is fatal — for local Docker exactly as for a managed provider. The check lives in
+`openSandboxBackend` (`services/sandbox/open.ts`), which is the single place a
+`ContainerEngine` is constructed: it pings with a bounded 2s/4s backoff and then throws
+`SandboxBackendError`, which `index.ts` prints verbatim before recording a startup-failure
+breadcrumb and exiting non-zero. Docker's message comes from `services/docker-preflight.ts`,
+which checks for a `docker` binary on PATH to tell *not installed* from
+*installed-but-stopped* and prints the matching guidance (install link / start command),
+plus a pointer to `--sandbox-backend` as the alternative to a local daemon.
+`HEZO_SKIP_DOCKER` (the same flag that swaps in the in-process fake docker for dev/tests)
+bypasses it by taking the fake branch in `startup()` before the backend is opened.
+
+There is deliberately **no** earlier gate at the top of `index.ts`. One used to sit there,
+before the database was open, which meant it could only read the *launch flag* — while the
+**stored** setting is what actually selects the backend (`resolveStartupBackend`). An
+instance switched to Daytona from the Containers page and restarted on a host without
+Docker therefore exited 1, printing Docker install guidance for a backend it would never
+use. Moving the check behind backend resolution also gave the **runtime switch** a
+preflight it never had: `switchSandboxBackend` destroys every container before swapping, so
+a destination that cannot be reached has to be caught before anything is torn down.
 
 ### The container-engine seam
 

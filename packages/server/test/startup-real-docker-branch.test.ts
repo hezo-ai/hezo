@@ -17,6 +17,12 @@ import { testHezoConfig } from './helpers/config';
 // asserted error path here), and the published-image refresh is a no-op outside
 // a packaged build. The container→host connectivity probe is skipped via its
 // documented opt-out so no throwaway container is ever attempted.
+//
+// Only the daemon **ping** is faked, and only because `openSandboxBackend` now
+// preflights Docker and refuses to hand back an unreachable engine (see
+// `sandbox-open.test.ts`, and `startup-docker-unreachable.test.ts` for the
+// refusal itself). Everything past that point still runs against the absent
+// socket, which is what keeps this a real-client test rather than a mocked one.
 
 describe('startup real-Docker branch (no daemon required)', () => {
 	let dataDir: string;
@@ -53,6 +59,9 @@ describe('startup real-Docker branch (no daemon required)', () => {
 		// The prune's per-image `inspect ... failed` warn (docker socket absent) is
 		// the error path this test asserts; capture it instead of printing it.
 		const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		// The backend preflight, and nothing else. Every other call still meets the
+		// missing socket.
+		vi.spyOn(DockerClient.prototype, 'ping').mockResolvedValue(true);
 
 		const config: HezoConfig = testHezoConfig(dataDir);
 

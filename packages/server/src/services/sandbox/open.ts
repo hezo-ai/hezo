@@ -2,6 +2,7 @@ import { isSandboxBackend, SANDBOX_BACKENDS, SandboxBackend } from '@hezo/shared
 import { redactSandboxApiUrl, type SandboxBackendInfo } from '../../lib/sandbox-backend-info';
 import { logger } from '../../logger';
 import { DockerClient } from '../docker';
+import { dockerBinaryInstalled, formatDockerPreflightMessage } from '../docker-preflight';
 import { DaytonaClient, DEFAULT_DAYTONA_API_URL } from './daytona/client';
 import { DaytonaEngine } from './daytona/engine';
 import { SandboxBackendError } from './errors';
@@ -45,13 +46,24 @@ export async function openSandboxBackend(
 	const name = resolveBackendName(options.backend);
 
 	if (name === SandboxBackend.Docker) {
-		// No preflight here: the daemon gate already ran in `index.ts`, before the
-		// server booted, so it could print install/start guidance rather than a
-		// generic connection error.
-		return {
-			engine: new DockerClient(),
-			info: { backend: SandboxBackend.Docker, display: 'local Docker daemon' },
-		};
+		// Docker is pinged here, with the same retry shape as Daytona, and this is
+		// the **only** place it is pinged.
+		//
+		// There used to be a second gate at the top of `index.ts`, before the
+		// database was even open. It could therefore only read the *launch flag*,
+		// while the backend actually in use comes from the stored setting - so an
+		// instance switched to Daytona from the Containers page and then restarted
+		// on a host without Docker exited 1, printing Docker install guidance for a
+		// backend it was never going to use. It also could not serve the other call
+		// site: a **runtime switch** happens long after boot, and deferring to a
+		// boot-time verdict meant switching back to Docker returned an unpinged
+		// client. `switchSandboxBackend` destroys every container before swapping,
+		// so the operator lost the fleet and gained a backend that could not be
+		// reached - precisely what its ordering exists to prevent.
+		const engine = new DockerClient();
+		const info = { backend: SandboxBackend.Docker, display: 'local Docker daemon' } as const;
+		await preflight(engine, options.retryDelaysMs, dockerUnreachableMessage);
+		return { engine, info };
 	}
 
 	const apiUrl = options.daytonaApiUrl || DEFAULT_DAYTONA_API_URL;
@@ -68,30 +80,68 @@ export async function openSandboxBackend(
 	}
 
 	const client = new DaytonaClient(options.daytonaApiKey, apiUrl);
-	const delays = options.retryDelaysMs ?? CONNECT_RETRY_DELAYS_MS;
-	for (let attempt = 0; ; attempt++) {
-		if (await client.ping()) break;
-		if (attempt < delays.length) {
-			log.warn(
-				`Daytona preflight failed (attempt ${attempt + 1}/${delays.length + 1}), retrying in ${delays[attempt]}ms...`,
-			);
-			await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
-			continue;
-		}
-		throw new SandboxBackendError(
+	await preflight(
+		client,
+		options.retryDelaysMs,
+		() =>
 			`Cannot reach the configured Daytona API at ${redacted}.\n` +
-				'Check that --daytona-api-key / HEZO_DAYTONA_API_KEY is valid and not expired, that ' +
-				'the key carries the sandbox permission scopes, and that --daytona-api-url / ' +
-				'HEZO_DAYTONA_API_URL points at the right region. ' +
-				'Drop --sandbox-backend / HEZO_SANDBOX_BACKEND to run containers on local Docker.',
-		);
-	}
+			'Check that --daytona-api-key / HEZO_DAYTONA_API_KEY is valid and not expired, that ' +
+			'the key carries the sandbox permission scopes, and that --daytona-api-url / ' +
+			'HEZO_DAYTONA_API_URL points at the right region. ' +
+			'Drop --sandbox-backend / HEZO_SANDBOX_BACKEND to run containers on local Docker.',
+		'Daytona',
+	);
 
 	log.info(`Sandbox backend: Daytona (${redacted})`);
 	return {
 		engine: new DaytonaEngine(client),
 		info: { backend: SandboxBackend.Daytona, display: redacted },
 	};
+}
+
+/**
+ * Guidance for a local daemon that will not answer. Kept beside Daytona's so the
+ * two backends fail the same way - a switch that cannot reach its destination
+ * must abort before anything is destroyed, whichever destination it is.
+ *
+ * Only reached once every ping attempt has failed, which is exactly
+ * `checkDockerAvailability`'s failed-ping branch - so the binary probe alone
+ * distinguishes "not installed" from "installed but stopped" without pinging a
+ * third time, and the operator gets the install link or the start instructions
+ * rather than a generic "cannot reach".
+ */
+function dockerUnreachableMessage(): string {
+	const status = dockerBinaryInstalled() ? 'not-running' : 'not-installed';
+	return (
+		`${formatDockerPreflightMessage(status)}\n\n` +
+		'Alternatively, set --sandbox-backend / HEZO_SANDBOX_BACKEND to run containers ' +
+		'on a managed sandbox service instead of a local daemon.'
+	);
+}
+
+/**
+ * Ping until it answers, with bounded backoff, then throw a named, actionable
+ * error. One definition so "this backend is usable" means the same thing for
+ * every backend and at every call site (boot, a runtime switch, and uninstall).
+ */
+async function preflight(
+	engine: { ping(): Promise<boolean> },
+	retryDelaysMs: number[] | undefined,
+	message: () => string,
+	label = 'Docker',
+): Promise<void> {
+	const delays = retryDelaysMs ?? CONNECT_RETRY_DELAYS_MS;
+	for (let attempt = 0; ; attempt++) {
+		if (await engine.ping().catch(() => false)) return;
+		if (attempt < delays.length) {
+			log.warn(
+				`${label} preflight failed (attempt ${attempt + 1}/${delays.length + 1}), retrying in ${delays[attempt]}ms...`,
+			);
+			await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+			continue;
+		}
+		throw new SandboxBackendError(message());
+	}
 }
 
 function resolveBackendName(raw?: string): SandboxBackend {
