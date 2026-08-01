@@ -295,7 +295,12 @@ describe('container-idle-stop', () => {
 
 	it('never destroys a container holding commits that reached no durable remote', async () => {
 		// The work exists nowhere else and nothing downstream would report that it
-		// had gone, so the pin outranks the shutdown plan entirely.
+		// had gone - so the pin outranks *destruction*. It deliberately does not
+		// outrank suspension: stopping preserves the writable layer, so the
+		// commits survive, while leaving the container running would hold its full
+		// RAM cap out of the global budget until some later run on that same
+		// container clears the flag. The pinned member is therefore the one that
+		// takes the single suspend slot.
 		await db.query(
 			`INSERT INTO container_pool_members (project_id, container_id, state, has_unpushed_commits)
 			 VALUES ($1, 'pool-pinned', 'idle', true), ($1, 'pool-free', 'idle', false)`,
@@ -312,9 +317,12 @@ describe('container-idle-stop', () => {
 		await (manager as unknown as { stopIdleContainers(): Promise<void> }).stopIdleContainers();
 		manager.shutdown();
 
+		// Never destroyed - that is the half that would lose the work.
 		expect(removes).not.toContain('pool-pinned');
-		expect(stops).not.toContain('pool-pinned');
-		expect(stops).toEqual(['pool-free']);
+		// Suspended rather than left running, and the unpinned surplus is the one
+		// that gets removed.
+		expect(stops).toEqual(['pool-pinned']);
+		expect(removes).toContain('pool-free');
 		await db.query(`DELETE FROM container_pool_members WHERE project_id = $1`, [projectId]);
 	});
 });

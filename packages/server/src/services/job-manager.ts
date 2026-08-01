@@ -2946,7 +2946,9 @@ export class JobManager {
 	}): Promise<number> {
 		const { db, docker } = this.deps;
 		const { planIdleShutdown } = await import('./sandbox/pool');
-		const { loadPoolMembers, removePoolMember } = await import('./sandbox/pool-db');
+		const { clearProjectContainerIfNamed, loadPoolMembers, removePoolMember } = await import(
+			'./sandbox/pool-db'
+		);
 
 		const members = await loadPoolMembers(db, candidate.id);
 		// A project whose pool has no row yet (nothing has provisioned through the
@@ -2977,6 +2979,13 @@ export class JobManager {
 			);
 			await docker.removeContainer(member.id, true).catch(() => undefined);
 			await removePoolMember(db, member.id);
+			// The project row may still name this container - `provisionContainer`
+			// points `container_id` at the newest one, which is exactly the surplus
+			// the plan destroys first. Left behind, the row names a container that
+			// no longer exists, and the next status sync reads that as the
+			// project's container having died: a spurious error on a project whose
+			// remaining containers are perfectly healthy.
+			await clearProjectContainerIfNamed(db, candidate.id, member.id);
 			retired++;
 		}
 

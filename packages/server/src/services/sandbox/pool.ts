@@ -170,13 +170,29 @@ export function planIdleShutdown(members: readonly PoolMember[]): {
 	const idle = members.filter((m) => m.state === 'idle');
 	const alreadySuspended = members.some((m) => m.state === 'suspended');
 
-	// A container holding work that reached neither origin nor the mirror is
-	// pinned: destroying it loses the only copy, and nothing downstream would
-	// report that it had.
+	// A container holding work that reached no durable remote is pinned against
+	// **destroy** - that is what would lose the only copy, and nothing downstream
+	// would report that it had.
+	//
+	// It is deliberately *not* pinned against suspend. Suspending preserves the
+	// writable layer (that is the entire premise of suspend-versus-destroy here),
+	// so the commits survive it untouched, while leaving the container running
+	// holds its full RAM cap out of the global budget indefinitely - the flag is
+	// only ever cleared by a later run on that same container, which for a stuck
+	// project never comes. A handful of such projects would consume the whole
+	// budget and queue every run on the instance forever.
+	//
+	// So a pinned member is the *preferred* suspend candidate: it is the one that
+	// must not be destroyed, and suspending is how it stops costing memory while
+	// still holding the work.
+	const pinned = idle.filter((m) => m.hasUnpushedCommits);
 	const disposable = idle.filter((m) => !m.hasUnpushedCommits);
-	if (disposable.length === 0) return { suspend: null, destroy: [] };
+	if (idle.length === 0) return { suspend: null, destroy: [] };
 
 	if (alreadySuspended) return { suspend: null, destroy: disposable };
+	// Prefer a pinned member for the single suspend slot; the rest that may be
+	// destroyed are only ever the unpinned ones.
+	if (pinned.length > 0) return { suspend: pinned[0], destroy: disposable };
 	const [first, ...rest] = disposable;
-	return { suspend: first, destroy: rest };
+	return { suspend: first ?? null, destroy: rest };
 }

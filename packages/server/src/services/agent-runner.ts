@@ -2358,7 +2358,18 @@ async function prepareWorktrees(
 		// that are terminal or gone are touched, and committed work survives on the
 		// `hezo/<identifier>` branch ref regardless.
 		try {
-			const gc = await collectFinishedWorktrees(deps.db, executor, project.id, clones);
+			const gc = await collectFinishedWorktrees(
+				deps.db,
+				executor,
+				project.id,
+				clones,
+				undefined,
+				undefined,
+				// Never this run's own worktree: a run on a closed task (a comment,
+				// a mention, a Coach review) would otherwise have prep delete the
+				// directory it just set as the working directory.
+				task.identifier,
+			);
 			if (gc.removed.length > 0) {
 				emitSystem(
 					'stdout',

@@ -254,6 +254,31 @@ export async function listReferencedContainerIds(db: Db): Promise<Set<string>> {
 	return new Set(res.rows.map((r) => r.container_id));
 }
 
+/**
+ * Clear `projects.container_id` when, and only when, it names `containerId`.
+ *
+ * The project row still points at a single "the" container - the newest one
+ * provisioned - while the pool holds several. Destroying a member the row
+ * happens to name leaves it pointing at nothing, and the 1 Hz status sync reads
+ * a container it cannot inspect as one that died: a spurious `error` on a
+ * project whose other containers are fine.
+ *
+ * Conditional on the id so a concurrent provision that has already re-pointed
+ * the row is never clobbered, and `IS DISTINCT FROM` keeps a no-op out of the
+ * table - this runs per retired container.
+ */
+export async function clearProjectContainerIfNamed(
+	db: Db,
+	projectId: string,
+	containerId: string,
+): Promise<void> {
+	await db.query(
+		`UPDATE projects SET container_id = NULL, container_status = NULL
+		  WHERE id = $1 AND container_id = $2`,
+		[projectId, containerId],
+	);
+}
+
 /** Every member of a project's pool, whatever its state - for teardown and reconciliation. */
 export async function listPoolContainerIds(db: Db, projectId: string): Promise<string[]> {
 	const res = await db.query<{ container_id: string }>(

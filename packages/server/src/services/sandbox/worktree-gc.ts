@@ -78,9 +78,21 @@ export async function collectFinishedWorktrees(
 	clones: RepoLoc[],
 	limit: number | undefined = MAX_WORKTREE_REMOVALS_PER_PASS,
 	worktreesRoot: string = CONTAINER_WORKTREES_ROOT,
+	/**
+	 * The task the calling run is *for*, never reclaimed however terminal it is.
+	 *
+	 * Runs on closed tasks are routine, not exotic: the explicit-`task_id` wakeup
+	 * path (mentions, comments, coach triggers) carries no status filter, and the
+	 * Coach exists to review completed work. Without this the pass deletes the
+	 * worktree run prep just created and set as the run's working directory, and
+	 * the agent execs into a directory that is no longer there.
+	 */
+	currentTaskIdentifier: string | null = null,
 ): Promise<WorktreeGcResult> {
 	if (clones.length === 0) return { removed: [], deferred: false };
-	const isReclaimable = await resolveReclaimableTasks(db, projectId);
+	const reclaimable = await resolveReclaimableTasks(db, projectId);
+	const isReclaimable = (taskIdentifier: string): boolean =>
+		taskIdentifier !== currentTaskIdentifier && reclaimable(taskIdentifier);
 
 	const removed: string[] = [];
 	let deferred = false;

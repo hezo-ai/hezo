@@ -138,18 +138,33 @@ describe('planIdleShutdown', () => {
 		expect(plan.destroy.map((m) => m.id)).toEqual(['a']);
 	});
 
-	it('never touches a container holding unpushed commits', () => {
-		// The work exists nowhere else, and nothing downstream would report that
-		// it had gone.
+	it('never destroys a container holding unpushed commits', () => {
+		// Destroying it loses the only copy, and nothing downstream would report
+		// that it had. Suspending does not: the writable layer survives, which is
+		// the whole premise of suspend-versus-destroy - so the pinned member is
+		// the one that takes the suspend slot rather than being left running.
 		const plan = planIdleShutdown([member('risky', { hasUnpushedCommits: true })]);
-		expect(plan.suspend).toBeNull();
 		expect(plan.destroy).toEqual([]);
+		expect(plan.suspend?.id).toBe('risky');
 	});
 
-	it('suspends a safe container while leaving a risky one alone', () => {
+	it('prefers the risky container for the suspend slot and destroys the safe one', () => {
+		// Leaving the pinned member running would hold its full RAM cap out of the
+		// global budget forever - the flag is only cleared by a later run on that
+		// same container, which for a stuck project never comes.
 		const plan = planIdleShutdown([member('risky', { hasUnpushedCommits: true }), member('safe')]);
-		expect(plan.suspend?.id).toBe('safe');
-		expect(plan.destroy).toEqual([]);
+		expect(plan.suspend?.id).toBe('risky');
+		expect(plan.destroy.map((m) => m.id)).toEqual(['safe']);
+	});
+
+	it('never destroys the pinned member even when something is already suspended', () => {
+		const plan = planIdleShutdown([
+			member('parked', { state: 'suspended' }),
+			member('risky', { hasUnpushedCommits: true }),
+			member('safe'),
+		]);
+		expect(plan.suspend).toBeNull();
+		expect(plan.destroy.map((m) => m.id)).toEqual(['safe']);
 	});
 
 	it('suspends the chat’s container once the project itself is idle', () => {

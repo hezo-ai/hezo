@@ -164,6 +164,48 @@ describe('worktree GC', () => {
 		// undefined because a human asked for it and is waiting on the result.
 		expect(MAX_WORKTREE_REMOVALS_PER_PASS).toBeGreaterThan(0);
 	});
+
+	it('never reclaims the worktree of the run doing the reclaiming', async () => {
+		// Runs on terminal tasks are routine, not exotic: the explicit-task_id
+		// wakeup path (mentions, comments, coach triggers) applies no status
+		// filter, and the Coach's whole job is reviewing completed work. Prep
+		// creates the worktree, sets it as the run's working directory, and only
+		// then sweeps - so without this the agent execs into a deleted directory.
+		await seedTask('GC-SELF', TaskStatus.Done);
+		addWorktree('GC-SELF');
+
+		const result = await collectFinishedWorktrees(
+			db,
+			exec,
+			projectId,
+			[clone],
+			undefined,
+			worktreesRoot,
+			'GC-SELF',
+		);
+
+		expect(result.removed).not.toContain('GC-SELF');
+		expect(registered()).toContain('GC-SELF');
+	});
+
+	it('still reclaims other finished tasks while protecting the current one', async () => {
+		// The exclusion is one identifier, not a switch that disables the sweep.
+		await seedTask('GC-OTHER', TaskStatus.Done);
+		addWorktree('GC-OTHER');
+
+		const result = await collectFinishedWorktrees(
+			db,
+			exec,
+			projectId,
+			[clone],
+			undefined,
+			worktreesRoot,
+			'GC-SELF',
+		);
+
+		expect(result.removed).toContain('GC-OTHER');
+		expect(registered()).toContain('GC-SELF');
+	});
 });
 
 describe('resolveReclaimableTasks', () => {
