@@ -123,5 +123,14 @@
 	"attachments.category.archives": "Archives:",
 	"attachments.category.scripts": "Scripts & data:",
 	"container.strandedCommits.title": "Committed work has not reached a remote",
-	"container.strandedCommits.body": "A push to this project's git remote was refused, so those commits exist only inside one container. Hezo keeps that container alive until a later run pushes them. Check the repository's push access."
+	"container.strandedCommits.body": "A push to this project's git remote was refused, so those commits exist only inside one container. Hezo keeps that container alive until a later run pushes them. Check the repository's push access.",
+	"containers.backend.sectionLabel": "Container service",
+	"containers.backend.sectionHelp": "Where agent containers run. Switching destroys every container that is running now, so any agent work in progress ends. You can switch back at any time.",
+	"containers.backend.confirm.title": "Switch to {name}?",
+	"containers.backend.confirm.body": "This destroys {containers} running container(s) and ends {runs} agent run(s) in progress. Those runs are reported as failed on their project’s Container page and can be started again afterwards.",
+	"containers.backend.confirm.action": "Switch and destroy containers",
+	"containers.backend.apiKey.label": "Daytona API key",
+	"containers.backend.apiKey.hint": "Stored encrypted. Used only by Hezo to reach the provider - it never enters an agent container.",
+	"containers.backend.switched": "Container service switched. {count} container(s) destroyed.",
+	"containers.backend.apiKey.required": "Enter the API key to switch."
 }

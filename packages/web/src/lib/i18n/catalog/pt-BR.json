@@ -123,5 +123,14 @@
 	"attachments.category.archives": "Arquivos compactados:",
 	"attachments.category.scripts": "Scripts e dados:",
 	"container.strandedCommits.title": "Trabalho commitado não chegou a nenhum remoto",
-	"container.strandedCommits.body": "Um push para o remoto git deste projeto foi recusado, então esses commits existem apenas dentro de um contêiner. O Hezo mantém esse contêiner vivo até que uma execução posterior os envie. Verifique a permissão de push do repositório."
+	"container.strandedCommits.body": "Um push para o remoto git deste projeto foi recusado, então esses commits existem apenas dentro de um contêiner. O Hezo mantém esse contêiner vivo até que uma execução posterior os envie. Verifique a permissão de push do repositório.",
+	"containers.backend.sectionLabel": "Serviço de contêineres",
+	"containers.backend.sectionHelp": "Onde os contêineres dos agentes rodam. Trocar destrói todos os contêineres em execução, então o trabalho de agente em andamento termina. Você pode voltar quando quiser.",
+	"containers.backend.confirm.title": "Trocar para {name}?",
+	"containers.backend.confirm.body": "Isso destrói {containers} contêiner(es) em execução e encerra {runs} execução(ões) de agente em andamento. Essas execuções aparecem como falhas na página Contêiner do projeto e podem ser iniciadas de novo depois.",
+	"containers.backend.confirm.action": "Trocar e destruir contêineres",
+	"containers.backend.apiKey.label": "Chave de API da Daytona",
+	"containers.backend.apiKey.hint": "Guardada criptografada. Só o Hezo a usa para falar com o provedor - ela nunca entra em um contêiner de agente.",
+	"containers.backend.switched": "Serviço de contêineres trocado. {count} contêiner(es) destruído(s).",
+	"containers.backend.apiKey.required": "Informe a chave de API para trocar."
 }

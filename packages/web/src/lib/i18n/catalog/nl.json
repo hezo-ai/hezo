@@ -123,5 +123,14 @@
 	"attachments.category.archives": "Archieven:",
 	"attachments.category.scripts": "Scripts en data:",
 	"container.strandedCommits.title": "Vastgelegd werk heeft geen remote bereikt",
-	"container.strandedCommits.body": "Een push naar de git-remote van dit project is geweigerd, dus die commits bestaan alleen in één container. Hezo houdt die container in leven tot een latere run ze pusht. Controleer de push-rechten van de repository."
+	"container.strandedCommits.body": "Een push naar de git-remote van dit project is geweigerd, dus die commits bestaan alleen in één container. Hezo houdt die container in leven tot een latere run ze pusht. Controleer de push-rechten van de repository.",
+	"containers.backend.sectionLabel": "Containerdienst",
+	"containers.backend.sectionHelp": "Waar agentcontainers draaien. Wisselen vernietigt elke container die nu draait, dus lopend agentwerk stopt. Je kunt altijd terugwisselen.",
+	"containers.backend.confirm.title": "Overschakelen naar {name}?",
+	"containers.backend.confirm.body": "Dit vernietigt {containers} draaiende container(s) en beëindigt {runs} lopende agentruns. Die runs worden als mislukt gemeld op de Containerpagina van hun project en kunnen daarna opnieuw worden gestart.",
+	"containers.backend.confirm.action": "Wisselen en containers vernietigen",
+	"containers.backend.apiKey.label": "Daytona API-sleutel",
+	"containers.backend.apiKey.hint": "Versleuteld opgeslagen. Alleen Hezo gebruikt hem om de provider te bereiken - hij komt nooit in een agentcontainer.",
+	"containers.backend.switched": "Containerdienst gewisseld. {count} container(s) vernietigd.",
+	"containers.backend.apiKey.required": "Voer de API-sleutel in om te wisselen."
 }

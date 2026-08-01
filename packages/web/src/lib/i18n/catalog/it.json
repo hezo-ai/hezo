@@ -123,5 +123,14 @@
 	"attachments.category.archives": "Archivi:",
 	"attachments.category.scripts": "Script e dati:",
 	"container.strandedCommits.title": "Il lavoro committato non ha raggiunto alcun remoto",
-	"container.strandedCommits.body": "Un push verso il remoto git di questo progetto è stato rifiutato, quindi quei commit esistono solo dentro un container. Hezo tiene vivo quel container finché un'esecuzione successiva non li invia. Controlla i permessi di push del repository."
+	"container.strandedCommits.body": "Un push verso il remoto git di questo progetto è stato rifiutato, quindi quei commit esistono solo dentro un container. Hezo tiene vivo quel container finché un'esecuzione successiva non li invia. Controlla i permessi di push del repository.",
+	"containers.backend.sectionLabel": "Servizio container",
+	"containers.backend.sectionHelp": "Dove girano i container degli agenti. Cambiare distrugge tutti i container attivi, quindi il lavoro degli agenti in corso si interrompe. Puoi tornare indietro quando vuoi.",
+	"containers.backend.confirm.title": "Passare a {name}?",
+	"containers.backend.confirm.body": "Questo distrugge {containers} container attivi e interrompe {runs} esecuzioni di agenti in corso. Quelle esecuzioni risultano fallite nella pagina Container del loro progetto e possono essere rilanciate dopo.",
+	"containers.backend.confirm.action": "Cambia e distruggi i container",
+	"containers.backend.apiKey.label": "Chiave API Daytona",
+	"containers.backend.apiKey.hint": "Salvata cifrata. La usa solo Hezo per raggiungere il provider: non entra mai in un container di un agente.",
+	"containers.backend.switched": "Servizio container cambiato. {count} container distrutti.",
+	"containers.backend.apiKey.required": "Inserisci la chiave API per cambiare."
 }

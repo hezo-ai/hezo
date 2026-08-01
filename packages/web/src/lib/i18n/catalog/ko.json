@@ -123,5 +123,14 @@
 	"attachments.category.archives": "압축 파일:",
 	"attachments.category.scripts": "스크립트 및 데이터:",
 	"container.strandedCommits.title": "커밋한 작업이 원격 저장소에 도달하지 못했습니다",
-	"container.strandedCommits.body": "이 프로젝트의 git 원격 저장소로 보내는 push가 거부되어 해당 커밋은 컨테이너 한 대 안에만 존재합니다. Hezo는 이후 실행이 push할 때까지 그 컨테이너를 유지합니다. 저장소의 push 권한을 확인해 주세요."
+	"container.strandedCommits.body": "이 프로젝트의 git 원격 저장소로 보내는 push가 거부되어 해당 커밋은 컨테이너 한 대 안에만 존재합니다. Hezo는 이후 실행이 push할 때까지 그 컨테이너를 유지합니다. 저장소의 push 권한을 확인해 주세요.",
+	"containers.backend.sectionLabel": "컨테이너 서비스",
+	"containers.backend.sectionHelp": "에이전트 컨테이너가 실행되는 곳이에요. 전환하면 지금 실행 중인 컨테이너가 모두 삭제되고 진행 중인 에이전트 작업도 끝나요. 언제든 다시 되돌릴 수 있어요.",
+	"containers.backend.confirm.title": "{name}(으)로 전환할까요?",
+	"containers.backend.confirm.body": "실행 중인 컨테이너 {containers}개를 삭제하고 진행 중인 에이전트 실행 {runs}건을 종료해요. 해당 실행은 각 프로젝트의 컨테이너 페이지에 실패로 표시되고, 나중에 다시 시작할 수 있어요.",
+	"containers.backend.confirm.action": "전환하고 컨테이너 삭제",
+	"containers.backend.apiKey.label": "Daytona API 키",
+	"containers.backend.apiKey.hint": "암호화해서 저장해요. Hezo가 제공업체에 연결할 때만 쓰고, 에이전트 컨테이너에는 절대 들어가지 않아요.",
+	"containers.backend.switched": "컨테이너 서비스를 전환했어요. 컨테이너 {count}개를 삭제했어요.",
+	"containers.backend.apiKey.required": "전환하려면 API 키를 입력하세요."
 }

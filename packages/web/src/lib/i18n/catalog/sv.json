@@ -123,5 +123,14 @@
 	"attachments.category.archives": "Arkiv:",
 	"attachments.category.scripts": "Skript och data:",
 	"container.strandedCommits.title": "Committat arbete har inte nått något fjärrarkiv",
-	"container.strandedCommits.body": "En push till projektets git-fjärrarkiv nekades, så de commitsen finns bara inuti en container. Hezo håller den containern vid liv tills en senare körning pushar dem. Kontrollera arkivets push-behörighet."
+	"container.strandedCommits.body": "En push till projektets git-fjärrarkiv nekades, så de commitsen finns bara inuti en container. Hezo håller den containern vid liv tills en senare körning pushar dem. Kontrollera arkivets push-behörighet.",
+	"containers.backend.sectionLabel": "Containertjänst",
+	"containers.backend.sectionHelp": "Var agentcontainrarna körs. Att byta förstör alla containrar som körs nu, så pågående agentarbete avbryts. Du kan byta tillbaka när som helst.",
+	"containers.backend.confirm.title": "Byta till {name}?",
+	"containers.backend.confirm.body": "Detta förstör {containers} körande container och avslutar {runs} pågående agentkörningar. De körningarna rapporteras som misslyckade på projektets Container-sida och kan startas om efteråt.",
+	"containers.backend.confirm.action": "Byt och förstör containrar",
+	"containers.backend.apiKey.label": "Daytona API-nyckel",
+	"containers.backend.apiKey.hint": "Lagras krypterad. Används bara av Hezo för att nå leverantören - den hamnar aldrig i en agentcontainer.",
+	"containers.backend.switched": "Containertjänsten bytt. {count} containrar förstördes.",
+	"containers.backend.apiKey.required": "Ange API-nyckeln för att byta."
 }

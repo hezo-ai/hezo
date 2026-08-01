@@ -123,5 +123,14 @@
 	"attachments.category.archives": "Archivos comprimidos:",
 	"attachments.category.scripts": "Scripts y datos:",
 	"container.strandedCommits.title": "Hay trabajo confirmado que no llegó a ningún remoto",
-	"container.strandedCommits.body": "Se rechazó un push al remoto de git de este proyecto, así que esos commits solo existen dentro de un contenedor. Hezo mantiene vivo ese contenedor hasta que una ejecución posterior los suba. Revisa los permisos de push del repositorio."
+	"container.strandedCommits.body": "Se rechazó un push al remoto de git de este proyecto, así que esos commits solo existen dentro de un contenedor. Hezo mantiene vivo ese contenedor hasta que una ejecución posterior los suba. Revisa los permisos de push del repositorio.",
+	"containers.backend.sectionLabel": "Servicio de contenedores",
+	"containers.backend.sectionHelp": "Dónde se ejecutan los contenedores de agentes. Cambiar destruye todos los contenedores en marcha, así que el trabajo de agente en curso termina. Puedes volver atrás cuando quieras.",
+	"containers.backend.confirm.title": "¿Cambiar a {name}?",
+	"containers.backend.confirm.body": "Esto destruye {containers} contenedor(es) en marcha y termina {runs} ejecución(es) de agente en curso. Esas ejecuciones se marcan como fallidas en la página Contenedor de su proyecto y se pueden volver a lanzar después.",
+	"containers.backend.confirm.action": "Cambiar y destruir contenedores",
+	"containers.backend.apiKey.label": "Clave de API de Daytona",
+	"containers.backend.apiKey.hint": "Se guarda cifrada. Solo la usa Hezo para llegar al proveedor: nunca entra en un contenedor de agente.",
+	"containers.backend.switched": "Servicio de contenedores cambiado. {count} contenedor(es) destruido(s).",
+	"containers.backend.apiKey.required": "Introduce la clave de API para cambiar."
 }

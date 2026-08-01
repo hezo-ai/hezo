@@ -123,5 +123,14 @@
 	"attachments.category.archives": "Archive:",
 	"attachments.category.scripts": "Skripte & Daten:",
 	"container.strandedCommits.title": "Committete Arbeit hat kein Remote erreicht",
-	"container.strandedCommits.body": "Ein Push zum Git-Remote dieses Projekts wurde abgelehnt, daher liegen diese Commits nur in einem einzigen Container. Hezo hält diesen Container am Leben, bis ein späterer Lauf sie pusht. Prüfen Sie die Push-Berechtigung des Repositorys."
+	"container.strandedCommits.body": "Ein Push zum Git-Remote dieses Projekts wurde abgelehnt, daher liegen diese Commits nur in einem einzigen Container. Hezo hält diesen Container am Leben, bis ein späterer Lauf sie pusht. Prüfen Sie die Push-Berechtigung des Repositorys.",
+	"containers.backend.sectionLabel": "Container-Dienst",
+	"containers.backend.sectionHelp": "Wo Agent-Container laufen. Beim Wechsel werden alle derzeit laufenden Container zerstört, sodass laufende Agentenarbeit endet. Sie können jederzeit zurückwechseln.",
+	"containers.backend.confirm.title": "Zu {name} wechseln?",
+	"containers.backend.confirm.body": "Dabei werden {containers} laufende Container zerstört und {runs} laufende Agentenläufe beendet. Diese Läufe werden auf der Container-Seite des jeweiligen Projekts als fehlgeschlagen gemeldet und können danach erneut gestartet werden.",
+	"containers.backend.confirm.action": "Wechseln und Container zerstören",
+	"containers.backend.apiKey.label": "Daytona-API-Schlüssel",
+	"containers.backend.apiKey.hint": "Verschlüsselt gespeichert. Wird nur von Hezo für den Zugriff auf den Anbieter genutzt - er gelangt nie in einen Agent-Container.",
+	"containers.backend.switched": "Container-Dienst gewechselt. {count} Container zerstört.",
+	"containers.backend.apiKey.required": "Geben Sie den API-Schlüssel ein, um zu wechseln."
 }

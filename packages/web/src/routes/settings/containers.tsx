@@ -12,6 +12,7 @@ import { createFileRoute } from '@tanstack/react-router';
 import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from '../../components/ui/button';
+import { ConfirmDialog } from '../../components/ui/confirm-dialog';
 import { InfoTooltip } from '../../components/ui/info-tooltip';
 import { Input } from '../../components/ui/input';
 import {
@@ -20,7 +21,12 @@ import {
 	useUpdateInstanceSettings,
 } from '../../hooks/use-instance-settings';
 import { useMe } from '../../hooks/use-me';
-import { useSandboxBackendInfo } from '../../hooks/use-sandbox-backend-info';
+import {
+	type SandboxBackendInfo,
+	useSandboxBackendInfo,
+	useSwitchSandboxBackend,
+} from '../../hooks/use-sandbox-backend-info';
+import { toast } from '../../hooks/use-toast';
 import type { ApiError } from '../../lib/api';
 import { type MessageKey, useI18n } from '../../lib/i18n';
 import { backendDisplayName } from '../../lib/sandbox-backend';
@@ -64,6 +70,123 @@ const BACKEND_NOTE: Record<SandboxBackend, MessageKey | null> = {
  * operator's own RAM, and on a managed backend it rations their spend. An
  * operator reading "13 GB" needs to know which.
  */
+/**
+ * Choose which backend runs the containers.
+ *
+ * Switching destroys every running container, so this is the one setting on the
+ * page that cannot be a quiet inline save: the confirmation names how many
+ * containers and how many in-flight runs the change will end, read from the
+ * server rather than described in the abstract. An operator who has nothing
+ * running should be able to see that too - "0 containers" is the reassurance
+ * that makes the dialog worth reading rather than dismissing.
+ *
+ * Response-driven: the server preflights the destination and only then destroys
+ * anything, so the UI must not show the new backend until the switch has landed.
+ */
+function BackendSwitcher({ info }: { info: SandboxBackendInfo }) {
+	const { t } = useI18n();
+	const switchBackend = useSwitchSandboxBackend();
+	const [target, setTarget] = useState<SandboxBackend | null>(null);
+	const [apiKey, setApiKey] = useState('');
+	const [error, setError] = useState<string | null>(null);
+
+	const needsKey = target === SandboxBackend.Daytona && !info.credential_configured;
+	const canConfirm = !needsKey || apiKey.trim().length > 0;
+
+	async function handleConfirm() {
+		if (!target) return;
+		setError(null);
+		if (!canConfirm) {
+			setError(t('containers.backend.apiKey.required'));
+			throw new Error('missing api key');
+		}
+		try {
+			const result = await switchBackend.mutateAsync({
+				backend: target,
+				daytona_api_key: apiKey.trim() || undefined,
+			});
+			// The result lives on this page, so the change is its own confirmation -
+			// except for the count, which is the part the operator cannot see.
+			toast.success(t('containers.backend.switched', { count: result.containers_destroyed ?? 0 }));
+			setTarget(null);
+			setApiKey('');
+		} catch (e) {
+			// Kept in the dialog rather than a toast: the operator is mid-decision and
+			// the message ("that key was refused") belongs next to the field.
+			setError((e as ApiError).message);
+			throw e;
+		}
+	}
+
+	return (
+		<>
+			<div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+				{info.available.map((backend) => {
+					const current = backend === info.backend;
+					return (
+						<Button
+							key={backend}
+							size="sm"
+							variant={current ? 'primary' : 'outline'}
+							disabled={current || switchBackend.isPending}
+							data-testid={`backend-select-${backend}`}
+							onClick={() => {
+								setApiKey('');
+								setError(null);
+								setTarget(backend);
+							}}
+						>
+							{backendDisplayName(backend, t)}
+						</Button>
+					);
+				})}
+			</div>
+
+			<ConfirmDialog
+				open={target !== null}
+				onOpenChange={(open) => {
+					if (!open) setTarget(null);
+				}}
+				variant="danger"
+				title={t('containers.backend.confirm.title', {
+					name: target ? backendDisplayName(target, t) : '',
+				})}
+				description={t('containers.backend.confirm.body', {
+					containers: info.impact.containers,
+					runs: info.impact.activeRuns,
+				})}
+				confirmLabel={t('containers.backend.confirm.action')}
+				loading={switchBackend.isPending}
+				// A disabled confirm would leave the operator guessing why; the guard
+				// lives in the handler so the missing key can say so instead.
+				onConfirm={handleConfirm}
+			>
+				{needsKey && (
+					<div className="flex flex-col gap-1.5">
+						<label className="text-[13px] font-medium" htmlFor="daytona-api-key-input">
+							{t('containers.backend.apiKey.label')}
+						</label>
+						<Input
+							id="daytona-api-key-input"
+							data-testid="daytona-api-key-input"
+							type="password"
+							autoComplete="off"
+							value={apiKey}
+							onChange={(e) => setApiKey(e.target.value)}
+						/>
+						<p className="text-[12px] text-text-2">{t('containers.backend.apiKey.hint')}</p>
+					</div>
+				)}
+				{error && (
+					<p className="text-[13px] text-danger" data-testid="backend-switch-error">
+						{error}
+					</p>
+				)}
+			</ConfirmDialog>
+		</>
+	);
+}
+
 function ContainerBackendNote() {
 	const { t } = useI18n();
 	const { data: info } = useSandboxBackendInfo(true);
@@ -75,6 +198,21 @@ function ContainerBackendNote() {
 			{t('concurrency.backend.label')} <span className="text-text">{name}</span>
 			{noteKey ? ` - ${t(noteKey)}` : null}
 		</p>
+	);
+}
+
+function ContainerBackendSection() {
+	const { t } = useI18n();
+	const { data: info } = useSandboxBackendInfo(true);
+	if (info === undefined) return null;
+	return (
+		<section className="border border-border rounded-md p-4 bg-surface mb-4">
+			<h2 className="text-[13px] font-medium mb-1">{t('containers.backend.sectionLabel')}</h2>
+			<p className="text-[13px] text-text-2 mb-2.5 max-w-[680px]">
+				{t('containers.backend.sectionHelp')}
+			</p>
+			<BackendSwitcher info={info} />
+		</section>
 	);
 }
 
@@ -131,6 +269,8 @@ function ConcurrencySettingsPage() {
 					<p className="text-[13px] text-text-2 mt-1 max-w-[680px]">{t('concurrency.intro')}</p>
 					<ContainerBackendNote />
 				</div>
+
+				<ContainerBackendSection />
 
 				<section className="border border-border rounded-md p-4 bg-surface mb-4">
 					<label

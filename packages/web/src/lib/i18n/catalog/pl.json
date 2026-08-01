@@ -123,5 +123,14 @@
 	"attachments.category.archives": "Archiwa:",
 	"attachments.category.scripts": "Skrypty i dane:",
 	"container.strandedCommits.title": "Zatwierdzona praca nie trafiła do żadnego zdalnego repozytorium",
-	"container.strandedCommits.body": "Push do zdalnego repozytorium git tego projektu został odrzucony, więc te commity istnieją tylko w jednym kontenerze. Hezo utrzymuje ten kontener przy życiu, dopóki późniejsze uruchomienie ich nie wyśle. Sprawdź uprawnienia do pushowania w repozytorium."
+	"container.strandedCommits.body": "Push do zdalnego repozytorium git tego projektu został odrzucony, więc te commity istnieją tylko w jednym kontenerze. Hezo utrzymuje ten kontener przy życiu, dopóki późniejsze uruchomienie ich nie wyśle. Sprawdź uprawnienia do pushowania w repozytorium.",
+	"containers.backend.sectionLabel": "Usługa kontenerów",
+	"containers.backend.sectionHelp": "Gdzie działają kontenery agentów. Zmiana niszczy wszystkie działające kontenery, więc trwająca praca agentów się kończy. W każdej chwili możesz wrócić.",
+	"containers.backend.confirm.title": "Przełączyć na {name}?",
+	"containers.backend.confirm.body": "To zniszczy {containers} działających kontenerów i zakończy {runs} trwających uruchomień agentów. Te uruchomienia zostaną oznaczone jako nieudane na stronie Kontener ich projektu i będzie można je uruchomić ponownie.",
+	"containers.backend.confirm.action": "Przełącz i zniszcz kontenery",
+	"containers.backend.apiKey.label": "Klucz API Daytony",
+	"containers.backend.apiKey.hint": "Przechowywany w postaci zaszyfrowanej. Używa go tylko Hezo do połączenia z dostawcą - nigdy nie trafia do kontenera agenta.",
+	"containers.backend.switched": "Usługa kontenerów zmieniona. Zniszczono {count} kontenerów.",
+	"containers.backend.apiKey.required": "Podaj klucz API, aby przełączyć."
 }

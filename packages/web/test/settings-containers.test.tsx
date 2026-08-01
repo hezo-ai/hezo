@@ -92,3 +92,27 @@ test('raising the ram cap lowers the automatic memory budget and persists', asyn
 	expect(data.default_ram_cap_per_container_gb).toBe(3);
 	expect(data.max_container_memory_gb).toBe(4);
 });
+
+test('switching the container service warns with real numbers and needs a key', async () => {
+	const { findByTestId, getByTestId, user } = await renderApp({
+		initialPath: '/settings/containers',
+	});
+
+	// Docker is current, so it is the one option that cannot be chosen again.
+	const docker = (await findByTestId('backend-select-docker')) as HTMLButtonElement;
+	expect(docker.disabled).toBe(true);
+
+	await user.click(await findByTestId('backend-select-daytona'));
+
+	// The confirmation states what will be destroyed rather than warning in the
+	// abstract - a fresh instance has nothing running, and "0" is exactly the
+	// reassurance that makes the dialog worth reading instead of dismissing.
+	const dialog = document.body;
+	expect(dialog.textContent).toContain('destroys 0 running container');
+	expect(dialog.textContent).toContain('ends 0 agent run');
+
+	// Daytona has no stored credential here, so the key field is part of the
+	// decision rather than a separate step the operator discovers afterwards.
+	const keyInput = getByTestId('daytona-api-key-input') as HTMLInputElement;
+	expect(keyInput.type).toBe('password');
+});

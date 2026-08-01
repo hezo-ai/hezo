@@ -123,5 +123,14 @@
 	"attachments.category.archives": "Archives :",
 	"attachments.category.scripts": "Scripts et données :",
 	"container.strandedCommits.title": "Du travail validé n'a atteint aucun dépôt distant",
-	"container.strandedCommits.body": "Un push vers le dépôt distant de ce projet a été refusé : ces commits n'existent que dans un seul conteneur. Hezo garde ce conteneur en vie jusqu'à ce qu'une exécution ultérieure les pousse. Vérifiez les droits de push du dépôt."
+	"container.strandedCommits.body": "Un push vers le dépôt distant de ce projet a été refusé : ces commits n'existent que dans un seul conteneur. Hezo garde ce conteneur en vie jusqu'à ce qu'une exécution ultérieure les pousse. Vérifiez les droits de push du dépôt.",
+	"containers.backend.sectionLabel": "Service de conteneurs",
+	"containers.backend.sectionHelp": "Où tournent les conteneurs d'agents. Changer détruit tous les conteneurs en cours d'exécution, donc le travail d'agent en cours s'arrête. Vous pouvez revenir en arrière à tout moment.",
+	"containers.backend.confirm.title": "Passer à {name} ?",
+	"containers.backend.confirm.body": "Cela détruit {containers} conteneur(s) en cours et met fin à {runs} exécution(s) d'agent en cours. Ces exécutions sont signalées comme échouées sur la page Conteneur de leur projet et peuvent être relancées ensuite.",
+	"containers.backend.confirm.action": "Changer et détruire les conteneurs",
+	"containers.backend.apiKey.label": "Clé API Daytona",
+	"containers.backend.apiKey.hint": "Stockée chiffrée. Utilisée uniquement par Hezo pour joindre le fournisseur - elle n'entre jamais dans un conteneur d'agent.",
+	"containers.backend.switched": "Service de conteneurs changé. {count} conteneur(s) détruit(s).",
+	"containers.backend.apiKey.required": "Saisissez la clé API pour changer."
 }

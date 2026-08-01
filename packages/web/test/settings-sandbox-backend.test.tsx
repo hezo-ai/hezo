@@ -1,3 +1,4 @@
+import type { SandboxBackend } from '@hezo/shared';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render } from '@testing-library/react';
 import { expect, test } from 'vitest';
@@ -6,6 +7,13 @@ import type { SandboxBackendInfo } from '../src/hooks/use-sandbox-backend-info';
 import { I18nProvider } from '../src/lib/i18n';
 import { queryKeys } from '../src/lib/query-keys';
 import { renderApp } from './helpers/render';
+
+/** The fields every response carries, so a fixture only states what it varies. */
+const BACKEND_BASE = {
+	available: ['docker', 'daytona'] as SandboxBackend[],
+	credential_configured: false,
+	impact: { containers: 0, activeRuns: 0 },
+};
 
 // Full-route render against the real in-process backend: local Docker is what a
 // test server actually reports, and the card's placement on the Storage subpage
@@ -46,6 +54,7 @@ function renderManaged(info: SandboxBackendInfo, opts: { superuser?: boolean } =
 
 test('managed variant names the provider and shows the redacted endpoint', async () => {
 	const { findByTestId } = renderManaged({
+		...BACKEND_BASE,
 		backend: 'daytona',
 		display: 'https://app.daytona.io/api',
 	});
@@ -60,6 +69,7 @@ test('the local variant shows no endpoint line at all', async () => {
 	// There is no endpoint for a local daemon, so an empty mono line would be
 	// noise rather than information.
 	const { findByTestId, queryByTestId } = renderManaged({
+		...BACKEND_BASE,
 		backend: 'docker',
 		display: 'local Docker daemon',
 	});
@@ -70,6 +80,7 @@ test('the local variant shows no endpoint line at all', async () => {
 test('the card offers no way to change the backend', () => {
 	// Read-only by design: it is deployment configuration, chosen at startup.
 	const { container } = renderManaged({
+		...BACKEND_BASE,
 		backend: 'daytona',
 		display: 'https://app.daytona.io/api',
 	});
@@ -78,7 +89,7 @@ test('the card offers no way to change the backend', () => {
 
 test('the card does not render for non-superusers', () => {
 	const { queryByTestId } = renderManaged(
-		{ backend: 'daytona', display: 'https://app.daytona.io/api' },
+		{ ...BACKEND_BASE, backend: 'daytona', display: 'https://app.daytona.io/api' },
 		{ superuser: false },
 	);
 	expect(queryByTestId('settings-sandbox-backend')).toBeNull();

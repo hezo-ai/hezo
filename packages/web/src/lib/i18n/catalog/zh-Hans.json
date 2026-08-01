@@ -123,5 +123,14 @@
 	"attachments.category.archives": "压缩包：",
 	"attachments.category.scripts": "脚本与数据：",
 	"container.strandedCommits.title": "已提交的工作尚未推送到远程仓库",
-	"container.strandedCommits.body": "向该项目 git 远程仓库的推送被拒绝，因此这些提交只存在于一个容器中。Hezo 会保留该容器，直到后续运行将它们推送出去。请检查仓库的推送权限。"
+	"container.strandedCommits.body": "向该项目 git 远程仓库的推送被拒绝，因此这些提交只存在于一个容器中。Hezo 会保留该容器，直到后续运行将它们推送出去。请检查仓库的推送权限。",
+	"containers.backend.sectionLabel": "容器服务",
+	"containers.backend.sectionHelp": "智能体容器的运行位置。切换会销毁当前所有运行中的容器，因此进行中的智能体工作会结束。你随时可以切换回来。",
+	"containers.backend.confirm.title": "切换到 {name}？",
+	"containers.backend.confirm.body": "这会销毁 {containers} 个运行中的容器，并结束 {runs} 次进行中的智能体运行。这些运行会在各自项目的容器页面显示为失败，之后可以重新启动。",
+	"containers.backend.confirm.action": "切换并销毁容器",
+	"containers.backend.apiKey.label": "Daytona API 密钥",
+	"containers.backend.apiKey.hint": "加密保存。仅供 Hezo 连接服务商使用，绝不会进入智能体容器。",
+	"containers.backend.switched": "容器服务已切换，销毁了 {count} 个容器。",
+	"containers.backend.apiKey.required": "请输入 API 密钥后再切换。"
 }

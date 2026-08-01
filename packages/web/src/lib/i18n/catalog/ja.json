@@ -123,5 +123,14 @@
 	"attachments.category.archives": "アーカイブ：",
 	"attachments.category.scripts": "スクリプト・データ：",
 	"container.strandedCommits.title": "コミット済みの作業がリモートに届いていません",
-	"container.strandedCommits.body": "このプロジェクトの git リモートへの push が拒否されたため、これらのコミットは 1 つのコンテナ内にしか存在しません。Hezo は後続の実行が push するまでそのコンテナを保持します。リポジトリの push 権限を確認してください。"
+	"container.strandedCommits.body": "このプロジェクトの git リモートへの push が拒否されたため、これらのコミットは 1 つのコンテナ内にしか存在しません。Hezo は後続の実行が push するまでそのコンテナを保持します。リポジトリの push 権限を確認してください。",
+	"containers.backend.sectionLabel": "コンテナサービス",
+	"containers.backend.sectionHelp": "エージェントのコンテナを実行する場所です。切り替えると現在動いているコンテナはすべて破棄され、進行中のエージェントの作業は終了します。いつでも戻せます。",
+	"containers.backend.confirm.title": "{name} に切り替えますか？",
+	"containers.backend.confirm.body": "実行中のコンテナ {containers} 個を破棄し、進行中のエージェント実行 {runs} 件を終了します。それらの実行は各プロジェクトのコンテナページに失敗として表示され、あとから再実行できます。",
+	"containers.backend.confirm.action": "切り替えてコンテナを破棄",
+	"containers.backend.apiKey.label": "Daytona API キー",
+	"containers.backend.apiKey.hint": "暗号化して保存されます。Hezo がプロバイダーに接続するためだけに使い、エージェントのコンテナには一切渡りません。",
+	"containers.backend.switched": "コンテナサービスを切り替えました。{count} 個のコンテナを破棄しました。",
+	"containers.backend.apiKey.required": "切り替えるには API キーを入力してください。"
 }
