@@ -2,7 +2,10 @@ import { ContainerStatus } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { PgliteDb } from '../src/db/drivers/pglite';
 import { reapOrphanedContainers } from '../src/services/sandbox/orphan-reaper';
-import { listReferencedContainerIds } from '../src/services/sandbox/pool-db';
+import {
+	listReferencedContainerIds,
+	reclaimBusyPoolMembers,
+} from '../src/services/sandbox/pool-db';
 import { createStubDocker } from './helpers/app';
 import { createTestDbWithMigrations } from './helpers/db';
 
@@ -86,5 +89,61 @@ describe('listReferencedContainerIds', () => {
 		const second = await reapOrphanedContainers(engine, 'inst-1', live, first.suspected);
 		expect(destroyed).toEqual(['ctr-orphan']);
 		expect(second.destroyed).toEqual(['ctr-orphan']);
+	});
+});
+
+/**
+ * Boot fails every in-flight run and never reattaches, so a member still marked
+ * busy is holding a claim for a run that no longer exists. Nothing else clears
+ * one - the ladder skips a busy member and the idle pass only touches idle ones -
+ * so a claim leaked across a crash costs that container permanently while its
+ * memory keeps counting against the instance budget.
+ */
+describe('reclaimBusyPoolMembers', () => {
+	let db: PgliteDb;
+
+	const stateOf = async (containerId: string): Promise<string> => {
+		const r = await db.query<{ state: string }>(
+			`SELECT state::text AS state FROM container_pool_members WHERE container_id = $1`,
+			[containerId],
+		);
+		return r.rows[0].state;
+	};
+
+	beforeAll(async () => {
+		db = await createTestDbWithMigrations();
+		const team = await db.query<{ id: string }>(
+			'INSERT INTO teams (name, slug) VALUES ($1, $1) RETURNING id',
+			['team-reclaim'],
+		);
+		const project = await db.query<{ id: string }>(
+			`INSERT INTO projects (team_id, name, slug, task_prefix)
+			 VALUES ($1, 'reclaim', 'reclaim', 'REC') RETURNING id`,
+			[team.rows[0].id],
+		);
+		await db.query(
+			`INSERT INTO container_pool_members (project_id, container_id, state)
+			 VALUES ($1, 'ctr-claimed', 'busy'),
+			        ($1, 'ctr-warm', 'idle'),
+			        ($1, 'ctr-parked', 'suspended')`,
+			[project.rows[0].id],
+		);
+	});
+	afterAll(() => db.close());
+
+	it('returns a claimed member to the pool', async () => {
+		expect(await reclaimBusyPoolMembers(db)).toEqual(['ctr-claimed']);
+		expect(await stateOf('ctr-claimed')).toBe('idle');
+	});
+
+	it('leaves a suspended member suspended', async () => {
+		// Something stopped that container deliberately. Advertising it as idle
+		// would hand a run a container that is not running.
+		expect(await stateOf('ctr-parked')).toBe('suspended');
+	});
+
+	it('is a no-op when nothing is claimed', async () => {
+		expect(await reclaimBusyPoolMembers(db)).toEqual([]);
+		expect(await stateOf('ctr-warm')).toBe('idle');
 	});
 });

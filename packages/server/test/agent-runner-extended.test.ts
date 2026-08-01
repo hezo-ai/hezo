@@ -454,6 +454,17 @@ describe('runAgent — provider/credential resolution failures', () => {
 			);
 			expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
 			expect(run.rows[0].error).toContain('No AI provider credentials configured');
+
+			// And it never took a container to fail in. The claim happens only after
+			// the credential resolves, so a misconfigured instance provisions nothing
+			// it would then have to give back. When the claim came first, every wakeup
+			// on an instance with no credential leaked one busy member - which nothing
+			// reclaims (the ladder skips it, the idle pass ignores it) while its memory
+			// counts against the budget, so the budget walked to exhaustion.
+			const members = await isoCtx.db.query<{ state: string }>(
+				`SELECT state::text AS state FROM container_pool_members`,
+			);
+			expect(members.rows.map((r) => r.state)).toEqual([]);
 		} finally {
 			await safeClose(isoCtx.db);
 		}

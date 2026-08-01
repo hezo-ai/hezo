@@ -73,6 +73,7 @@ import type { PricingService } from './pricing';
 import { collectCandidateRunIds, decideSweepKills } from './process-sweeper';
 import { ensureRepoSetupAction } from './repo-setup';
 import { getActiveContainers, isTaskBusyInDb, projectContainerMemoryGb } from './run-concurrency';
+import { reclaimBusyPoolMembers } from './sandbox/pool-db';
 import type { SshAgentServer } from './ssh-agent';
 import { reportTelemetry } from './telemetry';
 import { ensureUpdateStaged, isSupervisedWorker, readUpdateState } from './updater';
@@ -758,6 +759,16 @@ export class JobManager {
 		);
 
 		await db.query('UPDATE execution_locks SET released_at = now() WHERE released_at IS NULL');
+
+		// Same reasoning as the execution locks above, for the pool's own claims:
+		// every in-flight run was just failed, so a member still marked busy is
+		// holding a claim for a run that no longer exists. Nothing else reclaims one
+		// - the ladder skips it, the idle pass ignores it, and its memory counts
+		// against the budget - so a crash would otherwise cost a container for good.
+		const reclaimed = await reclaimBusyPoolMembers(db);
+		if (reclaimed.length > 0) {
+			log.info(`Returned ${reclaimed.length} claimed container(s) to the pool after restart`);
+		}
 
 		for (const run of stranded.rows) {
 			broadcastRowChange(wsManager, wsRoom.team(run.team_id), 'heartbeat_runs', 'UPDATE', {
@@ -2194,12 +2205,7 @@ export class JobManager {
 			this.deps.wsManager,
 		);
 
-		if (wakeupId) {
-			await db.query(
-				`UPDATE agent_wakeup_requests SET status = $1::wakeup_status, completed_at = now() WHERE id = $2`,
-				[result.success ? WakeupStatus.Completed : WakeupStatus.Failed, wakeupId],
-			);
-		}
+		if (await this.settleWakeupForRun(wakeupId, result)) return;
 
 		// A run cut off by its wall-clock time limit is not a failure. Queue a same-task
 		// continuation so the agent resumes it (committed work is already pushed) and skip the
@@ -2473,12 +2479,44 @@ export class JobManager {
 			result.heartbeatRunId,
 			this.deps.wsManager,
 		);
+		await this.settleWakeupForRun(wakeupId, result);
+	}
+
+	/**
+	 * Settle a wakeup now its run has finished, and say whether the caller should
+	 * stop.
+	 *
+	 * A run that never started because the instance was at its container-memory
+	 * budget is **not** a failure - the dispatcher's own gate tests for exactly
+	 * that state, and a moment later it may not hold. So the wakeup goes back to
+	 * `queued` the same way the dispatcher's transient branch does, and `true`
+	 * stops the caller before the failure ping and the next-task chain, neither of
+	 * which should fire for a scheduling race. Every other outcome is terminal.
+	 */
+	private async settleWakeupForRun(
+		wakeupId: string | undefined,
+		result: { success: boolean; requeued?: boolean },
+	): Promise<boolean> {
+		const { db } = this.deps;
+		if (result.requeued) {
+			if (wakeupId) {
+				await db.query(
+					`UPDATE agent_wakeup_requests
+					 SET status = $1::wakeup_status, claimed_at = NULL,
+					     last_skipped_at = now(), last_skipped_reason = $2
+					 WHERE id = $3`,
+					[WakeupStatus.Queued, WakeupSkipReason.InstanceAtCapacity, wakeupId],
+				);
+			}
+			return true;
+		}
 		if (wakeupId) {
 			await db.query(
 				`UPDATE agent_wakeup_requests SET status = $1::wakeup_status, completed_at = now() WHERE id = $2`,
 				[result.success ? WakeupStatus.Completed : WakeupStatus.Failed, wakeupId],
 			);
 		}
+		return false;
 	}
 
 	/**

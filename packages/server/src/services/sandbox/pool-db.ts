@@ -179,6 +179,32 @@ export async function removePoolMember(db: Db, containerId: string): Promise<voi
 }
 
 /**
+ * Return every claimed member to the pool at boot.
+ *
+ * `busy` means "a run holds this container", and boot has just failed every
+ * in-flight run and will never reattach to one - so any claim still standing
+ * belongs to the previous process and describes a run that no longer exists.
+ *
+ * Something has to clear it, because nothing else does: the ladder skips a busy
+ * member, `planIdleShutdown` only ever touches idle ones, and its memory counts
+ * against the instance budget for as long as the row says busy. A claim leaked
+ * across a crash would therefore cost a container permanently.
+ *
+ * `suspended` is left alone for the same reason `releasePoolMember` leaves it
+ * alone: an operator (or the idle pass) stopped that container deliberately, and
+ * flipping it to idle would advertise a container that is not running.
+ */
+export async function reclaimBusyPoolMembers(db: Db): Promise<string[]> {
+	const res = await db.query<{ container_id: string }>(
+		`UPDATE container_pool_members
+		    SET state = 'idle', last_released_at = now(), updated_at = now()
+		  WHERE state = 'busy'
+		 RETURNING container_id`,
+	);
+	return res.rows.map((r) => r.container_id);
+}
+
+/**
  * Every container id Hezo still references, instance-wide, across **both**
  * representations of a container.
  *

@@ -64,7 +64,7 @@ import {
 	ensureContainerDirReady,
 	resolveContainerRunUser,
 } from './container-user';
-import { acquireRunContainer } from './containers';
+import { acquireRunContainer, PoolCapacityError } from './containers';
 import type { ContainerEngine, ExecLogChunk } from './docker';
 import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
@@ -191,6 +191,12 @@ export interface RunResult {
 	heartbeatRunId?: string;
 	/** The run ended by hitting its wall-clock time limit; drives an automatic same-task continuation. */
 	timedOut?: boolean;
+	/**
+	 * The run never started because the instance was at its container-memory
+	 * budget. Not a failure: the wakeup is re-queued and dispatched again, and no
+	 * failure ping is posted.
+	 */
+	requeued?: boolean;
 }
 
 export interface RunnerDeps {
@@ -1107,51 +1113,6 @@ export async function runAgent(
 		};
 	};
 
-	// Containers run on demand, and this run claims one **for itself**: the pool
-	// ladder reuses a warm container that last served this task, else any warm
-	// one, else resumes a suspended one, else provisions. What it never returns is
-	// a container another run is using - that one-run-per-container rule is the
-	// whole reason a memory blowout can no longer take down every sibling run in
-	// the project. Serialized per project, so concurrent dispatches into the same
-	// project cannot both provision.
-	if (project.container_status !== ContainerStatus.Running) {
-		emit('stdout', '[runner] Starting the project container…\n');
-	}
-	let containerId: string;
-	let releaseContainer: () => Promise<void> = async () => undefined;
-	try {
-		const acquired = await acquireRunContainer(
-			{
-				db: deps.db,
-				docker: deps.docker,
-				dataDir: deps.dataDir,
-				wsManager: deps.wsManager,
-				masterKeyManager: deps.masterKeyManager,
-				logs: deps.logs,
-				containerLogStreamer: deps.containerLogStreamer,
-				sshAgentServer: deps.sshAgentServer,
-				egressCAPath: deps.egressCAPath,
-			},
-			project.id,
-			task?.id ?? null,
-		);
-		containerId = acquired.containerId;
-		releaseContainer = acquired.release;
-	} catch (e) {
-		const message = e instanceof Error ? e.message : String(e);
-		await broadcastProjectUpdate(deps.db, deps.wsManager, project.team_id, project.id);
-		return finalizeFailure(
-			`Could not start the project container: ${message}. See the Container page for logs.`,
-		);
-	}
-	// The run may have been aborted (e.g. timed out) while a slow provision ran.
-	if (signal?.aborted) return finalizeAbort();
-	const runningProject: RunningProjectInfo = {
-		...project,
-		container_id: containerId,
-		container_status: ContainerStatus.Running,
-	};
-
 	let provider: AiProvider;
 	let runtimeType: AgentRuntime;
 	if (agent.model_override_provider) {
@@ -1185,24 +1146,117 @@ export async function runAgent(
 
 	if (signal?.aborted) return finalizeAbort();
 
-	const layout = SUBSCRIPTION_LAYOUTS[provider];
-	let releaseCredentialLock: (() => void) | null = null;
-	if (credential.authMethod === AiAuthMethod.Subscription && layout?.rotates) {
-		// Records the true wait so the run comment reads honestly while blocked.
+	/**
+	 * Hand the run back to the queue instead of failing it.
+	 *
+	 * The instance is at its memory budget - a state the dispatcher's own gate
+	 * already tests for, and which a moment later may not hold. Failing here would
+	 * burn the agent's turn and post a failure ping for what is a scheduling race,
+	 * so the run stays `queued` (it was never marked running) with the wait
+	 * recorded, and the caller re-queues the wakeup.
+	 */
+	const finalizeRequeue = async (reason: string): Promise<RunResult> => {
+		emit('stdout', `[runner] ${reason} - returning this run to the queue.\n`);
+		await deps.logs.end(streamId);
 		await deps.db.query(
 			`UPDATE heartbeat_runs SET queued_reason = $1
 			 WHERE id = $2 AND status = $3::heartbeat_run_status`,
-			['waiting for prior run on this credential', heartbeatRunId, HeartbeatRunStatus.Queued],
+			['waiting for container capacity', heartbeatRunId, HeartbeatRunStatus.Queued],
 		);
-		releaseCredentialLock = await acquireCredentialLock(credential.configId);
-	}
+		return {
+			success: false,
+			exitCode: -1,
+			stderr: reason,
+			durationMs: Date.now() - startTime,
+			heartbeatRunId,
+			requeued: true,
+		};
+	};
 
-	// Everything past the lock runs inside a try/finally so the credential lock is
-	// always released — including when setup (sockets, proxy, context, worktrees,
-	// file writes) throws before the exec block. Leaking it would queue every later
-	// run on this credential forever. Release is idempotent, so the explicit cleanup
-	// paths below don't double-free.
+	// Containers run on demand, and this run claims one **for itself**: the pool
+	// ladder reuses a warm container that last served this task, else any warm
+	// one, else resumes a suspended one, else provisions. What it never returns is
+	// a container another run is using - that one-run-per-container rule is the
+	// whole reason a memory blowout can no longer take down every sibling run in
+	// the project. Serialized per project, so concurrent dispatches into the same
+	// project cannot both provision.
+	//
+	// Claimed **after** the provider, runtime and credential are resolved, and not
+	// before: those three resolve to a `finalizeFailure` on an instance that is
+	// simply misconfigured (no credential, an override naming a retired provider),
+	// which is a normal state rather than an exceptional one. Claiming first meant
+	// every such wakeup provisioned a container and returned without giving it
+	// back - and a leaked claim is unrecoverable, since the ladder skips a busy
+	// member, the idle pass never stops one, and its memory counts against the
+	// instance budget forever. On a credential-less instance that walked the budget
+	// to exhaustion one wakeup at a time.
+	if (project.container_status !== ContainerStatus.Running) {
+		emit('stdout', '[runner] Starting the project container…\n');
+	}
+	let containerId: string;
+	let releaseContainer: () => Promise<void> = async () => undefined;
 	try {
+		const acquired = await acquireRunContainer(
+			{
+				db: deps.db,
+				docker: deps.docker,
+				dataDir: deps.dataDir,
+				wsManager: deps.wsManager,
+				masterKeyManager: deps.masterKeyManager,
+				logs: deps.logs,
+				containerLogStreamer: deps.containerLogStreamer,
+				sshAgentServer: deps.sshAgentServer,
+				egressCAPath: deps.egressCAPath,
+			},
+			project.id,
+			task?.id ?? null,
+		);
+		containerId = acquired.containerId;
+		releaseContainer = acquired.release;
+	} catch (e) {
+		if (e instanceof PoolCapacityError) {
+			// Not a failure: the instance is at its memory budget, which the gate
+			// already knew and which a moment from now may not be true. Requeue so
+			// the run is dispatched again rather than burning the agent's turn on a
+			// transient capacity race - the contract PoolCapacityError documents.
+			return finalizeRequeue(e.message);
+		}
+		const message = e instanceof Error ? e.message : String(e);
+		await broadcastProjectUpdate(deps.db, deps.wsManager, project.team_id, project.id);
+		return finalizeFailure(
+			`Could not start the project container: ${message}. See the Container page for logs.`,
+		);
+	}
+	// The run may have been aborted (e.g. timed out) while a slow provision ran.
+	if (signal?.aborted) {
+		await releaseContainer();
+		return finalizeAbort();
+	}
+	const runningProject: RunningProjectInfo = {
+		...project,
+		container_id: containerId,
+		container_status: ContainerStatus.Running,
+	};
+
+	// Everything past the claim runs inside a try/finally so both the claim and the
+	// credential lock are always released — including when setup (sockets, proxy,
+	// context, worktrees, file writes) throws before the exec block. Leaking the
+	// lock would queue every later run on this credential forever; leaking the claim
+	// strands the container itself, which nothing reclaims. Both releases are
+	// idempotent, so the explicit cleanup paths below don't double-free.
+	let releaseCredentialLock: (() => void) | null = null;
+	try {
+		const layout = SUBSCRIPTION_LAYOUTS[provider];
+		if (credential.authMethod === AiAuthMethod.Subscription && layout?.rotates) {
+			// Records the true wait so the run comment reads honestly while blocked.
+			await deps.db.query(
+				`UPDATE heartbeat_runs SET queued_reason = $1
+				 WHERE id = $2 AND status = $3::heartbeat_run_status`,
+				['waiting for prior run on this credential', heartbeatRunId, HeartbeatRunStatus.Queued],
+			);
+			releaseCredentialLock = await acquireCredentialLock(credential.configId);
+		}
+
 		await markHeartbeatRunRunning(deps.db, heartbeatRunId, runBroadcast, {
 			aiProviderConfigId: credential.configId,
 			provider,
@@ -1829,6 +1883,10 @@ export async function runAgent(
 		}
 	} finally {
 		releaseCredentialLock?.();
+		// The claim outlives every explicit cleanup path above, so this is the only
+		// release that covers a throw in setup. Idempotent, so the success path's
+		// own release (which also records task affinity) is not undone here.
+		await releaseContainer();
 	}
 }
 
