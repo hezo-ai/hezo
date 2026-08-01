@@ -68,20 +68,29 @@ path and Hezo owns it, so the rules are the same wherever the container runs.
   managed backend the containers are not on your machine, so the default is a flat starting
   figure you raise deliberately. Treat it as a spend limit rather than a share of your RAM.
   The Concurrency settings page names the backend in use and shows which of the two applies.
-  See [Settings → Concurrency](/docs/security/container-isolation).
-- **The provider's disk quota caps concurrency too.** Daytona allocates 10 GB per sandbox
-  against your account's total disk quota, so that quota can be the limit you hit first -
-  raising the memory budget will not get you more sandboxes than the quota allows.
-- **A project's memory cap must fit that budget.** Providers also cap a single sandbox
-  (Daytona allocates at most 8 GB). Ask for more than the provider can give and the run
-  fails with a message naming the limit - Hezo never quietly starts a smaller container
-  than the cap it promised, because the rest of the system is sized against that promise.
+  See [Settings -> Concurrency](/docs/security/container-isolation).
+- **Your provider account also bounds it, and Hezo cannot see that limit.** Providers cap
+  how much memory and disk your organisation may hold across all sandboxes at once, and on
+  a small plan that ceiling is reached well before the memory budget is. Hezo keeps
+  admitting runs the provider then refuses, and the refusal surfaces on the project's
+  Container page naming the provider's limit. Set the memory budget to something your plan
+  can actually satisfy: divide your plan's total memory *and* its total disk by what one
+  container takes, and use the smaller of the two. Note a container takes slightly more
+  than its cap (the cap plus a little headroom, rounded up to whole GB). The figures are
+  per provider - see [Provider notes](#provider-notes) for the ones Hezo supports.
+- **A project's memory cap must fit that budget.** Providers also cap a single sandbox.
+  Ask for more than the provider can give and the run fails with a message naming the
+  limit - Hezo never quietly starts a smaller container than the cap it promised, because
+  the rest of the system is sized against that promise.
 - **Disk is finite.** A local `/workspace` has your whole disk behind it; a sandbox has a
   few GB. Hezo prunes worktrees for closed tasks and recycles a container that approaches
   its ceiling.
 - **Idle containers are suspended, not destroyed.** A project keeps at most one suspended
   container, which resumes with its clones and worktrees intact; extra containers from a
   burst are destroyed when they go idle and are rebuilt from the git remote next time.
+  A suspended sandbox still counts against your provider account's memory and disk limits,
+  so on a small plan a handful of idle projects can hold the whole allowance. If runs start
+  failing to provision while nothing appears to be running, that is what to look at.
 - **The first container of a project is slower to start** than a local one (roughly half a
   minute) because the provider builds it. Later ones start in a few seconds.
 
@@ -98,6 +107,25 @@ path and Hezo owns it, so the rules are the same wherever the container runs.
   expose that, the provider's own out-of-memory handling applies instead. Because a
   container serves one run at a time, that ends only the run that overran, not the rest of
   the project's work.
+
+## Provider notes
+
+The numbers a provider enforces are its own, and they are not the same from one to the
+next. Everything above holds whichever you use; this section is where the specific figures
+live. Hezo supports one managed provider today.
+
+### Daytona
+
+- **A sandbox gets at most 8 GB of memory.** A project memory cap above that is refused
+  when the run tries to start, with the limit named.
+- **Each sandbox is allocated 10 GB of disk**, whatever the memory cap is.
+- **Your account has a total disk quota across all sandboxes**, and it is usually what you
+  hit first. At 10 GB each, a 30 GB quota is three sandboxes running at once - regardless
+  of what the memory budget allows. If runs queue while the memory budget looks free, this
+  is the limit to check.
+- **The first sandbox for a project takes about half a minute** because Daytona builds the
+  image; later ones start in a few seconds. The build is cached on the text of the
+  Dockerfile Hezo sends, which is why the image is pinned by digest rather than by tag.
 
 ## If the provider is unreachable
 

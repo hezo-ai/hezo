@@ -23,6 +23,14 @@ test('concurrency settings page shows the computed default, saves, and resets to
 	// of the budget rather than inside it.
 	const maxInput = (await findByTestId('container-memory-budget-input')) as HTMLInputElement;
 	expect(maxInput.value).toBe('5');
+	// The backend running the containers is named, with only its own caveats: the
+	// numbers a provider enforces are its own, and stating one provider's in the
+	// general prose would read as a property of every backend.
+	const backend = await findByTestId('concurrency-backend');
+	expect(backend.textContent).toContain('Local Docker daemon');
+	expect(backend.textContent).toContain('share this machine');
+	expect(backend.textContent).not.toContain('Daytona');
+
 	const formula = await findByTestId('container-memory-budget-formula');
 	expect(formula.textContent).toContain('= 5 GB');
 	// Both reserves are spelled out, not just applied, so the operator can see

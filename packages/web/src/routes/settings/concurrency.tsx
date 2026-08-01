@@ -38,27 +38,53 @@ const MAX_CONTAINERS_POINTS: readonly MessageKey[] = [
 ];
 
 /**
- * Which backend is running the containers these limits apply to.
+ * Per-backend caveats, keyed on the backend actually in use.
  *
- * On the page rather than only under Storage because the numbers below mean
+ * The numbers a provider enforces are its own, so they are stated per provider
+ * rather than as a property of managed sandboxes in general - which would be
+ * wrong the moment there are two, and wrong in a way nobody notices because the
+ * page still reads correctly for whichever one they happen to run. Local Docker
+ * is a backend here like any other and gets its own entry.
+ *
+ * A backend with nothing worth saying maps to `null` rather than to an empty
+ * string, so adding one is a decision rather than an omission.
+ */
+const BACKEND_NOTE: Record<SandboxBackend, MessageKey | null> = {
+	[SandboxBackend.Docker]: 'concurrency.backend.dockerNote',
+	[SandboxBackend.Daytona]: 'concurrency.backend.daytonaNote',
+};
+
+/**
+ * Provider names are proper nouns and stay untranslated, so they are literals;
+ * the local-daemon wording is a phrase and reuses the Storage card's key rather
+ * than adding a second name for one concept. The two are distinguished
+ * structurally so neither can be mistaken for the other.
+ */
+const BACKEND_NAME: Record<SandboxBackend, { key: MessageKey } | { literal: string }> = {
+	[SandboxBackend.Docker]: { key: 'settings.sandboxBackend.docker' },
+	[SandboxBackend.Daytona]: { literal: 'Daytona' },
+};
+
+/**
+ * Which backend is running the containers these limits apply to, and what it
+ * caps beyond the budget below.
+ *
+ * On this page rather than only under Storage because the numbers below mean
  * different things per backend: on the local daemon the budget rations the
  * operator's own RAM, and on a managed backend it rations their spend. An
  * operator reading "13 GB" needs to know which.
- *
- * The provider name is a proper noun and stays untranslated; the local-daemon
- * wording reuses the Storage card's string rather than adding a second name for
- * one concept.
  */
 function ContainerBackendNote() {
 	const { t } = useI18n();
 	const { data: info } = useSandboxBackendInfo(true);
 	if (info === undefined) return null;
-	const managed = info.backend !== SandboxBackend.Docker;
+	const named = BACKEND_NAME[info.backend];
+	const name = 'key' in named ? t(named.key) : named.literal;
+	const noteKey = BACKEND_NOTE[info.backend];
 	return (
 		<p className="text-[13px] text-text-2 mt-1 max-w-[680px]" data-testid="concurrency-backend">
-			{t('concurrency.backend.label')}{' '}
-			<span className="text-text">{managed ? 'Daytona' : t('settings.sandboxBackend.docker')}</span>
-			{managed ? ` - ${t('concurrency.backend.managedNote')}` : null}
+			{t('concurrency.backend.label')} <span className="text-text">{name}</span>
+			{noteKey ? ` - ${t(noteKey)}` : null}
 		</p>
 	);
 }

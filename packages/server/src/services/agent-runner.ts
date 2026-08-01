@@ -1860,7 +1860,19 @@ export async function runAgent(
 			const isAbort = (error as Error).name === 'AbortError';
 			const reason = runAbortReason(signal);
 			const errorMessage = abortErrorMessage(reason) ?? (error as Error).message;
-			const status = isAbort ? abortedRunStatus(reason) : HeartbeatRunStatus.Failed;
+			// The **signal** decides the status, not the shape of the thrown error.
+			// Only Docker's exec reliably rejects with an `AbortError` when its
+			// attach is torn down; a managed backend's exec may reject with
+			// anything or resolve outright, and keying on the error name there
+			// recorded a timed-out run as `failed` while still stamping it with the
+			// timeout's own message - measured against the live Daytona API. An
+			// error with no abort reason behind it is a genuine failure; a bare
+			// abort (user cancel, shutdown) is still `cancelled`.
+			const status = reason
+				? abortedRunStatus(reason)
+				: isAbort
+					? HeartbeatRunStatus.Cancelled
+					: HeartbeatRunStatus.Failed;
 
 			// Aborting the exec only tears down its attach stream — Docker leaves the
 			// agent CLI running in the container, so a user-terminated or timed-out run

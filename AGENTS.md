@@ -431,6 +431,20 @@ Agent-run containers run either on the operator's local Docker daemon or on a th
 
 **Probe the provider; do not infer it from its docs.** Every non-obvious behaviour the Daytona adapter encodes was measured against the live API, and several contradicted the documentation or the obvious reading of the OpenAPI spec: there is no `image` field on create at all (a custom image arrives as Dockerfile text), the build cache is keyed on that Dockerfile's **text** so a tag-pinned `FROM` never invalidates and serves a stale toolchain forever, `stdout`/`stderr` exist on the exec response but are **always null** so the streams arrive merged, and a per-exec `user` is accepted and silently ignored. When an adapter works around something, the comment says what was measured.
 
+**Keep a provider's numbers in that provider's own docs section.** A ceiling, a quota, a
+per-sandbox allocation or a startup latency is a fact about *one* provider, and writing it
+into the generic prose makes it read as a property of managed sandboxes in general - which
+is wrong the moment a second provider exists, and wrong in a way nobody notices because the
+page still reads correctly for the provider they happen to use. So `docs/deployment/remote-sandboxes.md`
+states the **shape** of every limit generically ("your provider account caps total memory
+and disk across all sandboxes, and Hezo cannot see that limit") and its `## Provider notes`
+section carries the **figures** under a per-provider heading (`### Daytona`: 8 GB per
+sandbox, 10 GB of disk each, an account-wide disk quota that is usually what binds first).
+The same split applies in the UI: the Concurrency settings page resolves the backend in use
+- **including local Docker, which is a backend like any other here** - and shows only that
+one's caveats. When you add an adapter, add its `###` section and its UI branch in the same
+change, and move anything provider-specific you find in the generic prose into it.
+
 **Ship the adapter's own tests.** Pure command rendering (quoting, user rendering, stream handling), state mapping onto the shared `ContainerInfo` shape (including that *transitional* states never read as dead), the exec triad's exit-code propagation, and each degradation the adapter accepts — crib `packages/server/test/sandbox-daytona-{command,engine}.test.ts`.
 
 ### Adding a chat channel adapter

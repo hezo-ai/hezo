@@ -321,3 +321,31 @@ export async function projectHasStrandedCommits(db: Db, projectId: string): Prom
 	);
 	return res.rows[0]?.pinned ?? false;
 }
+
+/**
+ * Pool members old enough to be worth checking against the engine, oldest first.
+ *
+ * `updated_at` rather than `created_at`: a member that just changed state is
+ * mid-transition and reconciling it would race the thing that moved it. The age
+ * floor is what keeps a container created moments ago from being judged missing
+ * before the provider can answer for it.
+ */
+export async function listPoolMembersForReconcile(
+	db: Db,
+	minAgeSeconds: number,
+	limit: number,
+): Promise<Array<{ containerId: string; projectId: string; state: string }>> {
+	const res = await db.query<{ container_id: string; project_id: string; state: string }>(
+		`SELECT container_id, project_id, state::text AS state
+		   FROM container_pool_members
+		  WHERE updated_at < now() - ($1 * interval '1 second')
+		  ORDER BY updated_at ASC
+		  LIMIT $2`,
+		[minAgeSeconds, limit],
+	);
+	return res.rows.map((r) => ({
+		containerId: r.container_id,
+		projectId: r.project_id,
+		state: r.state,
+	}));
+}

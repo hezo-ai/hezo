@@ -1,4 +1,6 @@
+import { randomBytes } from 'node:crypto';
 import { basename } from 'node:path';
+import { trackBackground } from '../../../lib/background';
 import { logger } from '../../../logger';
 
 const log = logger.child('daytona');
@@ -10,6 +12,15 @@ export const DEFAULT_DAYTONA_API_URL = 'https://app.daytona.io/api';
 const FILE_TIMEOUT_MS = 120_000;
 
 const CONTROL_TIMEOUT_MS = 60_000;
+
+/**
+ * How long the PTY has to reach raw mode and echo its sentinel.
+ *
+ * Generous, because it covers a shell starting inside a sandbox that may still
+ * be settling - but bounded, because the alternative to failing here is a
+ * channel that silently never carries a frame.
+ */
+const PTY_SYNC_TIMEOUT_MS = 30_000;
 
 /**
  * Sandbox lifecycle states Daytona reports. Only the ones Hezo reacts to are
@@ -119,7 +130,7 @@ export interface DaytonaApi {
 		onLine: (line: string) => void | Promise<void>,
 		opts?: { cwd?: string; signal?: AbortSignal },
 	): Promise<{ exitCode: number }>;
-	openPty(sandbox: DaytonaSandbox, sessionId: string): Promise<DaytonaPty>;
+	openPty(sandbox: DaytonaSandbox, sessionId: string, launch: string): Promise<DaytonaPty>;
 
 	// ---- files -------------------------------------------------------------
 	// Measured against the live toolbox API; see DaytonaClient for the shapes and
@@ -438,16 +449,34 @@ export class DaytonaClient implements DaytonaApi {
 	}
 
 	/**
-	 * Open a PTY session and connect to it.
+	 * Open a PTY session, launch a command on it, and hand back a byte channel
+	 * carrying only that command's own output.
 	 *
-	 * Two things about this channel are not obvious and both would corrupt a
-	 * framed protocol, so both are handled here rather than left to the caller:
-	 * it opens with a `{"status":"connected","type":"control"}` JSON frame that
-	 * is **not** shell output and must be swallowed, and it is a PTY, so line
-	 * discipline is on until `stty raw -echo` runs. Both were measured against
-	 * the live API.
+	 * Everything before the command's first byte is shell noise, and a framed
+	 * protocol riding this channel is desynchronised by any of it - the decoder
+	 * reads whatever arrives first as `[u8 type][u32 streamId][u32 len]`. Four
+	 * distinct sources of noise were measured on the live API, and the launch is
+	 * folded into this method precisely so none of them can reach the caller:
+	 *
+	 * 1. The channel opens with a `{"status":"connected","type":"control"}` JSON
+	 *    frame, which is not shell output.
+	 * 2. It is a PTY with echo on, so `stty raw -echo` is itself echoed back
+	 *    before it takes effect. That echo alone is fatal: the decoder reads
+	 *    `stty` as a type and stream id and `raw ` as a 1918990112-byte length.
+	 * 3. The interactive shell prints a prompt, and brackets each command it
+	 *    accepts with bracketed-paste sequences (`ESC[?2004h` / `ESC[?2004l`) -
+	 *    emitted even with echo off, so raw mode does not suppress them.
+	 * 4. A shell that outlived the command would print a further prompt.
+	 *
+	 * So one line is sent - set raw mode, print a per-session sentinel, then
+	 * **`exec`** the command - and every byte up to and including that sentinel is
+	 * discarded. `exec` replaces the shell, which removes (3) and (4) for good
+	 * rather than filtering them; the sentinel is printed after `stty` has been
+	 * applied, so it lands past (2); it is random per session, so it cannot
+	 * collide with the command's own output; and it is emitted from two halves so
+	 * that the echoed command line does not contain it (see the send below).
 	 */
-	async openPty(sandbox: DaytonaSandbox, sessionId: string): Promise<DaytonaPty> {
+	async openPty(sandbox: DaytonaSandbox, sessionId: string, launch: string): Promise<DaytonaPty> {
 		const base = await this.toolboxBase(sandbox);
 		await fetch(`${base}/process/pty`, {
 			method: 'POST',
@@ -463,33 +492,71 @@ export class DaytonaClient implements DaytonaApi {
 
 		let onData: ((chunk: Uint8Array) => void) | undefined;
 		let onClose: (() => void) | undefined;
-		let sawControlFrame = false;
+		let closed = false;
 
 		await new Promise<void>((resolve, reject) => {
 			socket.onopen = () => resolve();
 			socket.onerror = () => reject(new Error('Daytona PTY connect failed'));
 		});
 
+		const sentinel = `__hezo_pty_${randomBytes(8).toString('hex')}__`;
+		const sentinelBytes = new TextEncoder().encode(sentinel);
+		let synced = false;
+		let preamble = new Uint8Array(0);
+		const ready = Promise.withResolvers<void>();
+
 		socket.onmessage = (event) => {
 			const raw =
 				typeof event.data === 'string'
 					? new TextEncoder().encode(event.data)
 					: new Uint8Array(event.data as ArrayBuffer);
-			if (!sawControlFrame) {
-				sawControlFrame = true;
-				// The opening control frame is JSON, not shell output; feeding it to
-				// the frame decoder would desynchronise the stream on byte one.
-				const text = new TextDecoder().decode(raw);
-				if (text.startsWith('{') && text.includes('"type":"control"')) return;
+			if (synced) {
+				onData?.(raw);
+				return;
 			}
-			onData?.(raw);
+			// Held rather than forwarded: the sentinel can be split across frames,
+			// so the search runs over the accumulation, not over one chunk.
+			preamble = concatBytes(preamble, raw);
+			const at = lastIndexOfBytes(preamble, sentinelBytes);
+			if (at === -1) return;
+			synced = true;
+			const rest = preamble.subarray(at + sentinelBytes.length);
+			preamble = new Uint8Array(0);
+			ready.resolve();
+			// Bytes past the sentinel are already the command's - a command that
+			// writes immediately would otherwise lose its first frame.
+			if (rest.length > 0) onData?.(rest);
 		};
-		socket.onclose = () => onClose?.();
+		socket.onclose = () => {
+			closed = true;
+			ready.reject(new Error('Daytona PTY closed before the launch completed'));
+			onClose?.();
+		};
 
-		// Raw mode before anything framed rides on it: without this the PTY echoes
-		// every byte written and rewrites \n as \r\n, which corrupts both
-		// directions of a binary protocol.
-		socket.send('stty raw -echo\n');
+		// The sentinel is emitted from two halves. While echo is still on the
+		// command line itself comes back, and a line carrying the sentinel
+		// *literally* would be matched by the search - syncing on the echo and
+		// forwarding the real one, which is the same corruption one step later
+		// (measured: the decoder then read the sentinel's own bytes as a header).
+		// Split across two arguments, the echoed line contains `'…_pty_' 'abc__'`
+		// and the contiguous sentinel appears exactly once, in the output.
+		const half = Math.ceil(sentinel.length / 2);
+		socket.send(
+			`stty raw -echo; printf '%s%s' ${shellQuoteSingle(sentinel.slice(0, half))} ` +
+				`${shellQuoteSingle(sentinel.slice(half))}; exec ${launch}\n`,
+		);
+
+		const timer = setTimeout(() => {
+			ready.reject(new Error(`Daytona PTY did not reach raw mode within ${PTY_SYNC_TIMEOUT_MS}ms`));
+		}, PTY_SYNC_TIMEOUT_MS);
+		try {
+			await ready.promise;
+		} catch (e) {
+			if (!closed) socket.close();
+			throw e;
+		} finally {
+			clearTimeout(timer);
+		}
 
 		return {
 			send: (data) => socket.send(data),
@@ -499,8 +566,44 @@ export class DaytonaClient implements DaytonaApi {
 			onClose: (handler) => {
 				onClose = handler;
 			},
-			close: () => socket.close(),
+			close: () => {
+				socket.close();
+				// Closing the socket does **not** end the session or kill what runs
+				// on it - measured: a process launched on a PTY was still listening
+				// after the WebSocket closed, and the session still read `active`.
+				// Only deleting the session terminates it.
+				//
+				// On Docker the equivalent close kills the exec, so a caller that
+				// only closed the socket would leak a process per channel on this
+				// backend alone. For the tunnel that leak is not cosmetic: the client
+				// holds the run's three loopback ports, and because a pooled
+				// container serves many runs in sequence, the *next* run's client
+				// dies with `EADDRINUSE` and the whole run loses MCP and egress.
+				trackBackground(
+					this.deletePtySession(sandbox, sessionId).catch((e) => {
+						log.warn(`could not delete PTY session ${sessionId}: ${(e as Error).message}`);
+					}),
+				);
+			},
 		};
+	}
+
+	/** End a PTY session, terminating whatever is running on it. */
+	private async deletePtySession(sandbox: DaytonaSandbox, sessionId: string): Promise<void> {
+		const base = await this.toolboxBase(sandbox);
+		const res = await fetch(`${base}/process/pty/${encodeURIComponent(sessionId)}`, {
+			method: 'DELETE',
+			headers: { Authorization: `Bearer ${this.apiKey}` },
+			signal: AbortSignal.timeout(CONTROL_TIMEOUT_MS),
+		});
+		// A session that is already gone is the desired end state, not an error.
+		if (!res.ok && res.status !== 404) {
+			throw new DaytonaApiError(
+				`Daytona DELETE /process/pty/${sessionId} failed (${res.status})`,
+				res.status,
+				await res.text(),
+			);
+		}
 	}
 
 	// ---- files -------------------------------------------------------------
@@ -625,4 +728,38 @@ export class DaytonaClient implements DaytonaApi {
 			`/files/permissions?path=${encodeURIComponent(path)}&mode=${mode.toString(8).padStart(3, '0')}`,
 		);
 	}
+}
+
+/**
+ * Single-quote a value for the shell. Local to the client because the PTY
+ * launch line is assembled here; `command.ts` owns the exec rendering and has
+ * its own copy of the same rule for the same reason.
+ */
+function shellQuoteSingle(value: string): string {
+	return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array<ArrayBuffer> {
+	const out = new Uint8Array(a.length + b.length);
+	out.set(a, 0);
+	out.set(b, a.length);
+	return out;
+}
+
+/**
+ * Index of the last occurrence of `needle` in `haystack`, or -1.
+ *
+ * Searched from the end so that if the sentinel ever did appear twice, the sync
+ * lands on the later one - forwarding from an earlier match would leave the
+ * second copy in the stream, which is exactly the corruption being prevented.
+ */
+function lastIndexOfBytes(haystack: Uint8Array, needle: Uint8Array): number {
+	if (needle.length === 0 || haystack.length < needle.length) return -1;
+	outer: for (let start = haystack.length - needle.length; start >= 0; start--) {
+		for (let i = 0; i < needle.length; i++) {
+			if (haystack[start + i] !== needle[i]) continue outer;
+		}
+		return start;
+	}
+	return -1;
 }
