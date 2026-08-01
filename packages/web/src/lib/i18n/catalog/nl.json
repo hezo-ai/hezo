@@ -67,7 +67,7 @@
 	"settings.auditLog": "Activiteitenlog",
 	"settings.adminPassword": "Beheerderswachtwoord",
 	"settings.chatbox": "Chat",
-	"settings.concurrency": "Gelijktijdige uitvoering",
+	"settings.concurrency": "Containers",
 	"settings.archivedProjects": "Gearchiveerde projecten",
 	"settings.logOut": "Uitloggen",
 	"concurrency.adminOnly": "Instellingen voor gelijktijdige uitvoering worden beheerd door de Admin. Je hebt geen toegang tot deze pagina.",

@@ -67,7 +67,7 @@
 	"settings.auditLog": "アクティビティログ",
 	"settings.adminPassword": "管理者パスワード",
 	"settings.chatbox": "チャット",
-	"settings.concurrency": "同時実行",
+	"settings.concurrency": "コンテナ",
 	"settings.archivedProjects": "アーカイブ済みプロジェクト",
 	"settings.logOut": "ログアウト",
 	"concurrency.adminOnly": "同時実行の設定は管理者が管理します。このページへのアクセス権がありません。",

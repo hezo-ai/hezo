@@ -67,7 +67,7 @@
 	"settings.auditLog": "Registro attività",
 	"settings.adminPassword": "Password amministratore",
 	"settings.chatbox": "Chat",
-	"settings.concurrency": "Esecuzione simultanea",
+	"settings.concurrency": "Container",
 	"settings.archivedProjects": "Progetti archiviati",
 	"settings.logOut": "Esci",
 	"concurrency.adminOnly": "Le impostazioni di esecuzione simultanea sono gestite dall'Admin. Non hai accesso a questa pagina.",

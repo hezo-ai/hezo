@@ -67,7 +67,7 @@
 	"settings.auditLog": "Dziennik aktywności",
 	"settings.adminPassword": "Hasło administratora",
 	"settings.chatbox": "Czat",
-	"settings.concurrency": "Współbieżność",
+	"settings.concurrency": "Kontenery",
 	"settings.archivedProjects": "Zarchiwizowane projekty",
 	"settings.logOut": "Wyloguj się",
 	"concurrency.adminOnly": "Ustawieniami współbieżności zarządza Admin. Nie masz dostępu do tej strony.",

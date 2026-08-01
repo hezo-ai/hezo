@@ -67,7 +67,7 @@
 	"settings.auditLog": "Aktivitetslogg",
 	"settings.adminPassword": "Administratörslösenord",
 	"settings.chatbox": "Chatt",
-	"settings.concurrency": "Samtidig körning",
+	"settings.concurrency": "Containrar",
 	"settings.archivedProjects": "Arkiverade projekt",
 	"settings.logOut": "Logga ut",
 	"concurrency.adminOnly": "Inställningarna för samtidig körning hanteras av Admin. Du har inte åtkomst till den här sidan.",

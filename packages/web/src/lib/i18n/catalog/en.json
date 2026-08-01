@@ -67,7 +67,7 @@
 	"settings.auditLog": "Activity log",
 	"settings.adminPassword": "Admin password",
 	"settings.chatbox": "Chatbox",
-	"settings.concurrency": "Concurrency",
+	"settings.concurrency": "Containers",
 	"settings.archivedProjects": "Archived projects",
 	"settings.logOut": "Log out",
 	"concurrency.adminOnly": "Concurrency settings are managed by the Admin. You don't have access to this page.",

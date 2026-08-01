@@ -67,7 +67,7 @@
 	"settings.auditLog": "Aktivitätsprotokoll",
 	"settings.adminPassword": "Admin-Passwort",
 	"settings.chatbox": "Chatbox",
-	"settings.concurrency": "Parallelität",
+	"settings.concurrency": "Container",
 	"settings.archivedProjects": "Archivierte Projekte",
 	"settings.logOut": "Abmelden",
 	"concurrency.adminOnly": "Parallelitätseinstellungen werden vom Admin verwaltet. Sie haben keinen Zugriff auf diese Seite.",

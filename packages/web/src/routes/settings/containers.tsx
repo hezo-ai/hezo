@@ -346,6 +346,6 @@ function RamCapForm({ settings }: { settings: InstanceSettings }) {
 	);
 }
 
-export const Route = createFileRoute('/settings/concurrency')({
+export const Route = createFileRoute('/settings/containers')({
 	component: ConcurrencySettingsPage,
 });

@@ -67,7 +67,7 @@
 	"settings.auditLog": "活动日志",
 	"settings.adminPassword": "管理员密码",
 	"settings.chatbox": "聊天",
-	"settings.concurrency": "并发",
+	"settings.concurrency": "容器",
 	"settings.archivedProjects": "已归档项目",
 	"settings.logOut": "退出登录",
 	"concurrency.adminOnly": "并发设置由管理员管理。您没有访问此页面的权限。",

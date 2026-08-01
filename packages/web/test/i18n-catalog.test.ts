@@ -119,6 +119,9 @@ describe('message catalogs', () => {
 		'theme.system': ['de', 'sv'],
 		'settings.general': ['es'],
 		'settings.chatbox': ['de'],
+		// Dutch really does write "containers" - the loanword, plural and all.
+		// Every other language differs (Container, Conteneurs, Contêineres, ...).
+		'settings.concurrency': ['nl'],
 		'setup.step.password': ['it'],
 		// "Audio" and "Video" are the same loanword in these languages, colon and
 		// all - German, Spanish, Italian and Dutch all write Audio; German, Italian,

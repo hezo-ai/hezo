@@ -13,10 +13,10 @@ test('concurrency settings page shows the computed default, saves, and resets to
 	setHostMemoryForTest({ totalRamBytes: 1.92 * GIB, totalSwapBytes: 6 * GIB });
 
 	const { findByTestId, findByRole, queryByTestId, user } = await renderApp({
-		initialPath: '/settings/concurrency',
+		initialPath: '/settings/containers',
 	});
 
-	await findByRole('heading', { name: 'Concurrency' });
+	await findByRole('heading', { name: 'Containers' });
 
 	// Unset → the effective value is the host-memory-computed default: 8 GiB less
 	// 1 GB for the system and one 2 GB container for the chat, which runs on top
@@ -66,9 +66,9 @@ test('raising the ram cap lowers the automatic memory budget and persists', asyn
 	setHostMemoryForTest({ totalRamBytes: 1.92 * GIB, totalSwapBytes: 6 * GIB });
 
 	const { findByTestId, findByRole, user } = await renderApp({
-		initialPath: '/settings/concurrency',
+		initialPath: '/settings/containers',
 	});
-	await findByRole('heading', { name: 'Concurrency' });
+	await findByRole('heading', { name: 'Containers' });
 
 	const ramInput = (await findByTestId('ram-cap-input')) as HTMLInputElement;
 	expect(ramInput.value).toBe('2');
