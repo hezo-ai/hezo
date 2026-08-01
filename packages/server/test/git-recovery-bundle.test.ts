@@ -318,3 +318,50 @@ describe('recovery bundle failure reporting', () => {
 		expect(recovered).toContain('on-top');
 	});
 });
+
+describe('recovery bundle is readable by the process that must read it', () => {
+	/** Records the mode each write asks for, delegating everything else. */
+	function modeSpy(inner: ReturnType<typeof hostSandboxFiles>) {
+		const modes: Array<number | undefined> = [];
+		return {
+			files: {
+				...inner,
+				writeBytes: (p: string, c: Uint8Array, o?: { mode?: number; dirMode?: number }) => {
+					modes.push(o?.mode);
+					return inner.writeBytes(p, c, o);
+				},
+			},
+			modes,
+		};
+	}
+
+	it('writes the restored bundle group/other-readable, not owner-only', async () => {
+		// The bug this pins: both engines place files into the container as ROOT
+		// (Docker tars uid 0; Daytona execs as root) while the `git fetch` that
+		// reads the bundle back runs UNELEVATED as the run user. A root-owned 0600
+		// bundle is unopenable by that reader, so every restore failed with EACCES
+		// and recovery never worked at all.
+		//
+		// Asserted on the mode rather than by dropping privileges, because the
+		// suite runs as a single uid - which is precisely why the original test
+		// passed while production was broken.
+		const { bare, clone } = setup('perm');
+		writeFileSync(join(clone, 'work.txt'), 'needs recovering');
+		run('git add .', clone);
+		run('git commit -m "unpushed"', clone);
+
+		const vault = createBundleVault(join(root, 'vault-perm'));
+		await saveRecoveryBundle(vault, hostSandboxFiles(clone), exec, repoLoc(clone), key);
+		rmSync(clone, { recursive: true, force: true });
+
+		const other = secondClone(bare, 'perm');
+		const spy = modeSpy(hostSandboxFiles(other));
+		const restored = await restoreRecoveryBundle(vault, spy.files, exec, repoLoc(other), key);
+
+		expect(restored.ok).toBe(true);
+		expect(spy.modes.length).toBe(1);
+		const mode = spy.modes[0] ?? 0o644;
+		// Some read bit beyond the owner's, or a different uid cannot open it.
+		expect(mode & 0o044).toBeGreaterThan(0);
+	});
+});

@@ -16,6 +16,7 @@ import type { Env } from '../src/lib/types';
 import { type RunnerDeps, runAgent } from '../src/services/agent-runner';
 import { RECOVERY_BUNDLE_REL_PATH } from '../src/services/git';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
+import { createBundleVault } from '../src/services/sandbox/bundle-vault';
 import type { ContainerEngine } from '../src/services/sandbox/types';
 import { getWorkspacePath, getWorktreesPath } from '../src/services/workspace';
 import { safeClose } from './helpers';
@@ -781,6 +782,44 @@ describe('prepareWorktrees', () => {
 				// The bundle is copied out of the clone, not left to be restored over a
 				// newer one on the next run.
 				expect(existsSync(join(clone, RECOVERY_BUNDLE_REL_PATH))).toBe(false);
+			} finally {
+				await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
+			}
+		});
+
+		it('keeps a stored bundle when the restore failed, rather than dropping the last copy', async () => {
+			// The data-loss path: container A's commits are in the vault and A is
+			// gone. A run here cannot apply the bundle, so its clone genuinely has
+			// nothing unpushed - and reading that as "the work reached origin" would
+			// delete the only surviving copy.
+			const { repoId } = await stageRun('WT-KEEPBUNDLE');
+			try {
+				const vault = createBundleVault(dataDir);
+				const bundleKey = {
+					projectId,
+					repoName: 'todos',
+					branch: 'hezo/WT-KEEPBUNDLE',
+				};
+				await vault.put(bundleKey, new TextEncoder().encode('a stored bundle'));
+
+				const docker = scriptedGitDocker({
+					rules: preparedRepo([
+						when((a) => a.startsWith('rev-parse --verify --quiet refs/heads/hezo/'), {
+							exitCode: 0,
+						}),
+						// The restore cannot be applied in this container.
+						when((a) => a.startsWith('fetch --no-write-fetch-head'), {
+							exitCode: 128,
+							stderr: 'fatal: failed to read bundle',
+						}),
+						// ...so this clone reports a perfectly clean branch.
+						when((a) => a.startsWith('rev-list --count'), { stdout: '0\n' }),
+					]),
+				});
+
+				await runAgent(baseDeps(docker), makeAgent(), makeTask('WT-KEEPBUNDLE'), makeProject());
+
+				expect(await vault.has(bundleKey)).toBe(true);
 			} finally {
 				await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
 			}

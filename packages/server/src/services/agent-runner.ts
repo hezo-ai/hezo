@@ -1527,6 +1527,7 @@ export async function runAgent(
 						clones: [] as RepoLoc[],
 						branch: null as string | null,
 						executor: null as GitExecutor | null,
+						recoveryFailed: new Set<string>(),
 					};
 
 			if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
@@ -1984,7 +1985,12 @@ async function vaultUnpushedWork(
 	project: { id: string },
 	containerId: string,
 	unpushed: UnpushedWorkScan,
-	prep: { executor: GitExecutor | null; clones: RepoLoc[]; branch: string | null },
+	prep: {
+		executor: GitExecutor | null;
+		clones: RepoLoc[];
+		branch: string | null;
+		recoveryFailed: Set<string>;
+	},
 	emit: (stream: 'stdout' | 'stderr', text: string) => void,
 ): Promise<boolean> {
 	// No executor means no clone was prepared, so the scan found nothing and there
@@ -2028,6 +2034,14 @@ async function vaultUnpushedWork(
 		const withWork = new Set(unpushed.work.map((w) => w.repo.containerPath));
 		for (const clone of prep.clones) {
 			if (withWork.has(clone.containerPath)) continue;
+			// "This clone has nothing unpushed" only implies "the work reached
+			// origin" when this clone actually *has* the work. If a stored bundle
+			// could not be applied, the commits live solely in that bundle and the
+			// scan is trivially clean here - dropping it then destroys the only
+			// remaining copy, which is the precise failure the vault exists to
+			// prevent. Keep it and let a later run, on a container where the restore
+			// works, be the one that clears it.
+			if (prep.recoveryFailed.has(clone.containerPath)) continue;
 			await releaseRecoveryBundle(vault, {
 				projectId: project.id,
 				repoName: basename(clone.containerPath),
@@ -2056,6 +2070,13 @@ async function prepareWorktrees(
 	/** The task branch every prepared worktree is on, or null when no repo was prepared. */
 	branch: string | null;
 	executor: GitExecutor | null;
+	/**
+	 * Clones (by container path) that had a stored recovery bundle which could
+	 * **not** be applied. Carried to finalize because it is the one thing that
+	 * makes "this clone has nothing unpushed" uninformative: the commits exist,
+	 * they are just not here - so the vault must not drop its copy.
+	 */
+	recoveryFailed: Set<string>;
 }> {
 	const emitSystem = (stream: 'stdout' | 'stderr', text: string) =>
 		emit(stream, `[system] ${text}\n`);
@@ -2075,6 +2096,7 @@ async function prepareWorktrees(
 			clones: [],
 			branch: null,
 			executor: null,
+			recoveryFailed: new Set<string>(),
 		};
 	}
 
@@ -2082,6 +2104,10 @@ async function prepareWorktrees(
 		// Declared before the first early return: it is a pure function of the task,
 		// and every exit from here reports which branch the run's work is on.
 		const branchName = `hezo/${task.identifier}`;
+		// Repos whose stored recovery bundle could not be applied this run. See the
+		// field's docstring on the return type - it is what stops finalize reading
+		// "nothing unpushed here" as "the work reached origin".
+		const recoveryFailed = new Set<string>();
 		// All git runs inside the project container; the host only does the bind-mount
 		// filesystem checks. SSH-transport ops authenticate through the run's bridge.
 		// The team's git identity (+ signing) is passed so the worktree catch-up merge
@@ -2127,6 +2153,7 @@ async function prepareWorktrees(
 				clones: [],
 				branch: branchName,
 				executor,
+				recoveryFailed,
 			};
 		}
 
@@ -2222,6 +2249,10 @@ async function prepareWorktrees(
 				{ projectId: project.id, repoName, branch: branchName },
 			);
 			if (!recovered.ok) {
+				// A bundle exists for this branch and this clone does not have its
+				// commits. Recorded so finalize does not mistake "nothing unpushed
+				// here" for "the work is safely on origin" and drop the only copy.
+				recoveryFailed.add(repoLoc.containerPath);
 				emitSystem('stderr', `${repoName}: ${recovered.reason}`);
 			} else if (recovered.bytes !== null) {
 				emitSystem(
@@ -2282,6 +2313,7 @@ async function prepareWorktrees(
 				clones: [],
 				branch: branchName,
 				executor,
+				recoveryFailed,
 			};
 		}
 
@@ -2360,6 +2392,7 @@ async function prepareWorktrees(
 			clones,
 			branch: branchName,
 			executor,
+			recoveryFailed,
 		};
 	});
 }

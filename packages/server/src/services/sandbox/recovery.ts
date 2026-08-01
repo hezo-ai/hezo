@@ -104,7 +104,14 @@ export async function restoreRecoveryBundle(
 	if (contents === null) return { ok: true, bytes: null };
 
 	try {
-		await files.writeBytes(RECOVERY_BUNDLE_REL_PATH, contents, { mode: 0o600 });
+		// **0644, not 0600.** Both engines write into the container as root
+		// (Docker's archive endpoint tars uid 0; Daytona execs as root), while the
+		// `git fetch` that reads this back runs *unelevated* as the run user - so a
+		// root-owned 0600 file is one the reader cannot open. That combination made
+		// every restore fail with EACCES, which is to say recovery never worked at
+		// all. There is nothing secret in a bundle that is not already in the
+		// worktree beside it, and it is removed again as soon as the fetch returns.
+		await files.writeBytes(RECOVERY_BUNDLE_REL_PATH, contents, { mode: 0o644 });
 	} catch (e) {
 		return { ok: false, reason: `could not place the bundle: ${(e as Error).message}` };
 	}
