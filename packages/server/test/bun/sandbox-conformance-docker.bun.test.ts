@@ -22,6 +22,7 @@ import { AiProvider } from '@hezo/shared';
 import { DockerClient } from '../../src/services/docker';
 import { CONTAINER_WORKSPACE_ROOT } from '../../src/services/workspace';
 import { describeAgentCliConformance } from '../conformance/agent-cli';
+import { describeEgressConformance } from '../conformance/egress';
 import { describeEngineConformance } from '../conformance/engine';
 import { describeFilesConformance } from '../conformance/files';
 import type {
@@ -88,6 +89,7 @@ if (reason) {
 	describeEngineConformance(fixture, harness);
 	describeFilesConformance(fixture, harness);
 	describeAgentCliConformance(fixture, harness);
+	describeEgressConformance(fixture, harness);
 }
 
 /** Reads the optional model-provider key. Same env contract as `test/live/`. */

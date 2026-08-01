@@ -463,7 +463,29 @@ change, and move anything provider-specific you find in the generic prose into i
 **Ship the adapter's own tests, and a conformance fixture.** Two layers, and both are needed:
 
 - **Unit, against a fake API** — pure command rendering (quoting, user rendering, stream handling), state mapping onto the shared `ContainerInfo` shape (including that *transitional* states never read as dead), the exec triad's exit-code propagation, and each degradation the adapter accepts. Crib `packages/server/test/sandbox-daytona-{command,engine}.test.ts`. These pin the requests Hezo *sends*; they cannot tell you the provider still answers them the way it did when they were written.
-- **Conformance, against the real backend** — `packages/server/test/conformance/{engine,files}.ts` are backend-agnostic suites parameterised by a `LiveAdapterFixture`, so a new provider is a fixture file rather than a second suite, and a divergence surfaces as a shared assertion failing on one backend instead of as an assertion nobody thought to write for it. Docker's fixture (`test/sandbox-conformance-docker.test.ts`) **runs in CI**, self-skipping with a logged reason when there is no daemon or no agent-base image; a paid provider's fixture lives in `test/live/` and is manual (`bun run test:daytona`). Where a backend legitimately cannot answer something (`diskUsedBytes` may return null by design), the fixture declares the fact with a flag and the suite asserts the documented alternative rather than skipping in silence.
+- **Conformance, against the real backend** — everything under `packages/server/test/conformance/` is a backend-agnostic suite parameterised by a `LiveAdapterFixture`, so a new provider is a fixture file rather than a second suite, and a divergence surfaces as a shared assertion failing on one backend instead of as an assertion nobody thought to write for it. Docker's fixture (`test/bun/sandbox-conformance-docker.bun.test.ts`) **runs in CI**, self-skipping with a logged reason when there is no daemon or no agent-base image; a paid provider's fixture lives in `test/live/` and is manual (`bun run test:daytona`). Where a backend legitimately cannot answer something (`diskUsedBytes` may return null by design), the fixture declares the fact with a flag and the suite asserts the documented alternative rather than skipping in silence.
+
+**Every one of those suites must run against every adapter — that is the requirement, not a nice-to-have.** The end-to-end coverage that exists today is not "the Daytona tests"; it is the conformance set, which Daytona happens to be one fixture for. A new adapter (Modal, E2B, …) ships a fixture that runs **all** of them, and any suite added later is written generically so every existing adapter picks it up for free. Today that set is:
+
+| Suite | What it proves about the backend |
+|---|---|
+| `conformance/engine.ts` | lifecycle, the exec triad and its exit code, streaming that arrives incrementally, env, elevation, stop/start preserving the filesystem, the `/proc` process scripts, and the disk/memory answers |
+| `conformance/files.ts` | the whole `SandboxFiles` contract - byte fidelity, sizes, listing, recursive removal, root escape refusal, and that a mode reaches **every** directory it creates |
+| `conformance/agent-cli.ts` | a real coding-CLI run inside a provisioned container, against a real model provider (opt-in via a second key) |
+| `conformance/egress.ts` | the red line end to end: a placeholder written inside the container is substituted at the proxy, the value exists nowhere the container can read, and a host outside `allowed_hosts` gets the placeholder rather than the secret |
+
+**Never add a backend-specific end-to-end test.** If something is worth asserting against a live backend, it is worth asserting against all of them - put it in `conformance/`, add whatever the fixture must declare, and let each adapter answer. A suite only one provider runs stops describing the interface and starts describing that provider, which is the failure this whole directory exists to prevent.
+
+`conformance/egress.ts` needs the image to carry `hezo-tunnel` (there is no container-to-host path otherwise) and **refuses with that reason** rather than skipping, since a skip there would report green while asserting nothing about the only path it covers. That bites a managed backend before it bites Docker: Docker builds from the working tree, while a provider pulls a *published* image, so `agent-base:latest` is main's and lacks anything a branch added.
+
+Point `HEZO_CONFORMANCE_IMAGE` at the image CI published for the branch. **Finding its tag is not obvious**: `build-agent-image` tags with `github.sha`, which on a `pull_request` event is the *merge* commit rather than the branch head, so the tag matches no SHA `git log` will show you. Resolve it with `git ls-remote origin refs/pull/<pr>/merge`, then:
+
+```sh
+HEZO_CONFORMANCE_IMAGE=ghcr.io/hezo-ai/agent-base:<merge-sha> \
+HEZO_DAYTONA_API_KEY=… HEZO_DEEPSEEK_API_KEY=… bun run test:daytona
+```
+
+(The merge ref moves when main does, so re-resolve it rather than reusing a stale tag.)
 
 `test/live/**` is excluded from `vitest.config.ts` and `vitest.live.config.ts` **throws if `CI` is set** — a key reaching CI through a secret or a fork's environment must not start billing, and a guard that depends on the key being absent is one misconfiguration away from provisioning on every push. Every container the suites create carries the `hezo.conformance` label and is swept on the way *in* as well as out, so a crashed earlier run does not leave a sandbox billing until somebody notices it in a dashboard.
 

@@ -23,6 +23,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DaytonaClient, DEFAULT_DAYTONA_API_URL } from '../../src/services/sandbox/daytona/client';
 import { DaytonaEngine } from '../../src/services/sandbox/daytona/engine';
 import { describeAgentCliConformance } from '../conformance/agent-cli';
+import { describeEgressConformance } from '../conformance/egress';
 import { describeEngineConformance } from '../conformance/engine';
 import { describeFilesConformance } from '../conformance/files';
 import type {
@@ -90,4 +91,5 @@ if (!apiKey) {
 	describeEngineConformance(fixture, harness);
 	describeFilesConformance(fixture, harness);
 	describeAgentCliConformance(fixture, harness);
+	describeEgressConformance(fixture, harness);
 }
