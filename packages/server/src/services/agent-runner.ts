@@ -45,7 +45,11 @@ import type { DomainEventBus } from '../events/bus';
 import { signAgentAssetUrl } from '../lib/asset-urls';
 import { broadcastProjectUpdate, broadcastRowChange } from '../lib/broadcast';
 import { withProjectGitLock } from '../lib/git-lock';
-import { detectUnlinkedTeammateAsks, extractMentionSlugs } from '../lib/mentions';
+import {
+	detectPassiveTeammateAsks,
+	detectUnlinkedTeammateAsks,
+	extractMentionSlugs,
+} from '../lib/mentions';
 import { terminalStatusParams, withTransaction } from '../lib/sql';
 import { logger } from '../logger';
 import { signAgentJwt } from '../middleware/auth';
@@ -1523,12 +1527,14 @@ export async function runAgent(
 			//       via postAgentComment (admin inbox / agent wakeup), flipping the run
 			//       to a success. This is the deterministic backstop to the completeness
 			//       stop-hook judge (best-effort, model-dependent).
-			//   (2) an UNLINKED bold/leading-line address that reads like an ask
-			//       (`**slug** — … when you resume …`) — the wakes-no-one trap. We do NOT
-			//       auto-deliver or rewrite the agent's words to force a wake (that guesses
-			//       intent and overreaches). create_comment already warns the agent
-			//       interactively, but the final-message path skips that check, so surface
-			//       the same warning in the run log; the handoff is left undelivered.
+			//   (2) a NAME-ONLY address that reads like an ask — the unlinked bold/
+			//       leading-line form (`**slug** — … when you resume …`) or the passive
+			//       `@@slug` one (`Ready for @@slug review.`) — the wakes-no-one trap in
+			//       both its spellings. We do NOT auto-deliver or rewrite the agent's words
+			//       to force a wake (that guesses intent and overreaches). create_comment
+			//       already warns the agent interactively on both, but the final-message
+			//       path skips that check, so surface the same warning in the run log; the
+			//       handoff is left undelivered.
 			//   (3) a plain DIRECT ANSWER (no mention, no ask) to a human who addressed
 			//       this agent by replying to or @-mentioning it — the exact "give me the
 			//       link" case. The human asked and expects the answer in the thread, but
@@ -1543,10 +1549,19 @@ export async function runAgent(
 					const finalMessage = parser.getFinalAssistantMessage();
 					if (finalMessage?.trim()) {
 						const activeMentions = extractMentionSlugs(finalMessage);
-						// Unlinked bold/leading-line asks, scoped to the run team's roster +
-						// HQ instance agents + @admin (the slugs a mention here can wake).
+						// Name-only asks — a handoff written in a form that wakes nobody —
+						// scoped to the run team's roster + HQ instance agents + @admin (the
+						// slugs a mention here can wake). Both spellings count: the bare/bold
+						// name (`**slug** — …`) and the passive `@@slug`, which renders as a
+						// delivered-looking chip and is the likelier of the two to end a
+						// verdict report ("Ready for @@marketing-lead review.").
 						const roster = await resolveWarnableSlugs(deps.db, runTeamId, agent.id);
-						const unlinkedAsks = detectUnlinkedTeammateAsks(finalMessage, roster);
+						const nameOnlyAsks = Array.from(
+							new Set([
+								...detectUnlinkedTeammateAsks(finalMessage, roster),
+								...detectPassiveTeammateAsks(finalMessage, roster),
+							]),
+						);
 						// A run woken by a human addressing this agent directly (reply to its
 						// comment / @-mention) is expected to answer in the thread. The waking
 						// comment id lets us both check its author is human (not an agent — we
@@ -1557,7 +1572,7 @@ export async function runAgent(
 							(wakeupPayload?.source === WakeupSource.Reply ||
 								wakeupPayload?.source === WakeupSource.Mention) &&
 							wakingCommentId !== null;
-						if (activeMentions.length > 0 || unlinkedAsks.length > 0 || directQuestionWake) {
+						if (activeMentions.length > 0 || nameOnlyAsks.length > 0 || directQuestionWake) {
 							// Text comments this run posted, with their task, used to skip a mention
 							// it already delivered (the same extractor fireCommentWakeups uses) and to
 							// tell whether it already answered this task's thread (case 3).
@@ -1570,7 +1585,7 @@ export async function runAgent(
 								for (const slug of extractMentionSlugs(c.content)) delivered.add(slug);
 							}
 
-							if (activeMentions.length > 0 || unlinkedAsks.length > 0) {
+							if (activeMentions.length > 0 || nameOnlyAsks.length > 0) {
 								// (1) Deliver stranded active mentions verbatim.
 								const undeliveredActive = activeMentions.filter((slug) => !delivered.has(slug));
 								if (undeliveredActive.length > 0) {
@@ -1598,14 +1613,14 @@ export async function runAgent(
 									);
 								}
 
-								// (2) Warn about a stranded bold-name ask — do NOT deliver or rewrite.
-								const strandedAsks = unlinkedAsks.filter((slug) => !delivered.has(slug));
+								// (2) Warn about a stranded name-only ask — do NOT deliver or rewrite.
+								const strandedAsks = nameOnlyAsks.filter((slug) => !delivered.has(slug));
 								if (strandedAsks.length > 0) {
 									const named = strandedAsks.map((s) => `**${s}**`).join(', ');
 									const fixes = strandedAsks.map((s) => `@${s}`).join(', ');
 									emit(
 										'stdout',
-										`\n[runner] WARNING: this run's final message addresses ${named} by name only, with no active @-mention — a bare or bold name, or a sign-off gate like "awaiting <name> sign-off", renders as text and wakes no one, so the handoff was NOT delivered. Post a comment with an active mention (${fixes}) to reach them.\n`,
+										`\n[runner] WARNING: this run's final message addresses ${named} without an active @-mention — a bare or bold name, a passive @@<name>, or a sign-off gate like "awaiting <name> sign-off" / "ready for <name> review", renders as inert text or a delivered-looking chip and wakes no one, so the handoff was NOT delivered. Post a comment with an active mention (${fixes}) to reach them.\n`,
 									);
 								}
 							} else if (directQuestionWake && !posted.rows.some((c) => c.task_id === task.id)) {

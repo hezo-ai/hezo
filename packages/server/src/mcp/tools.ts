@@ -288,7 +288,8 @@ async function buildUnlinkedMentionWarning(
  * Returns a warning when a comment addresses a teammate with the PASSIVE mention
  * form (@@slug) yet the surrounding text reads like an ask — the passive form
  * links but notifies no one, so an intended handoff stalls silently. Only an
- * addressing use paired with a directed-ask signal is flagged (see
+ * addressing use paired with a directed-ask signal, or a name bound directly to a
+ * sign-off/approval gate ("Ready for @@slug review"), is flagged (see
  * detectPassiveTeammateAsks), so a deliberate passive reference is left alone.
  * Same scoping as buildUnlinkedMentionWarning; best-effort and non-blocking.
  */
@@ -308,8 +309,11 @@ async function buildPassiveMentionWarning(
 		`notifies no one, so no wakeup or admin-inbox alert was created. If you need them to ` +
 		`act on this ticket, edit this comment or post a follow-up with an active mention ` +
 		`(${fixes}). If you only meant to refer to them, keep the passive form but move the ` +
-		`reference inside the sentence: a line that opens with a teammate reference and a ` +
-		`dash is an address, and the address form is reserved for active mentions.`
+		`reference out of the handoff position: a line that opens with a teammate reference and ` +
+		`a dash is an address, and a name bound to a sign-off gate ("ready for <name> review", ` +
+		`"awaiting <name> sign-off", "<name> to approve") hands them the next action - both ` +
+		`shapes are reserved for active mentions, so a plain reference belongs inside a ` +
+		`sentence that asks for nothing.`
 	);
 }
 

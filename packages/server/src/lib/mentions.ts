@@ -145,6 +145,13 @@ const SIGNOFF_PENDING_ACTION_RE = String.raw`(?:sign-?\s?off|approve|review)`;
  * never when a gate word merely co-occurs with a non-addressed name elsewhere in
  * the sentence ("The doc went out for review last week; the architect wrote the
  * brief." → no match).
+ *
+ * Shared by BOTH ask-gated detectors, so the bare name (`for marketing-lead
+ * review`) and the passive form (`for @@marketing-lead review`) are recognised as
+ * the same handoff — neither wakes anyone. `namePattern` therefore carries its own
+ * left-edge guard (a `(?<![\w@…])` lookbehind) rather than relying on a `\b` here:
+ * a leading `\b` cannot match in front of the passive form's `@@`, which is how a
+ * mid-sentence `@@slug` sign-off gate went unflagged.
  */
 function hasNameBoundSignoffGate(stripped: string, namePattern: string): boolean {
 	const gateNameObject = new RegExp(
@@ -152,7 +159,7 @@ function hasNameBoundSignoffGate(stripped: string, namePattern: string): boolean
 		'i',
 	);
 	const namePendingAction = new RegExp(
-		String.raw`\b${namePattern}(?:['’]s)?\s+(?:(?:still\s+)?(?:needs?|has)\s+to\s+|to\s+|must\s+|should\s+)${SIGNOFF_PENDING_ACTION_RE}\b`,
+		String.raw`${namePattern}(?:['’]s)?\s+(?:(?:still\s+)?(?:needs?|has)\s+to\s+|to\s+|must\s+|should\s+)${SIGNOFF_PENDING_ACTION_RE}\b`,
 		'i',
 	);
 	return gateNameObject.test(stripped) || namePendingAction.test(stripped);
@@ -304,14 +311,25 @@ export function detectUnlinkedTeammateReferences(content: unknown, knownSlugs: s
 /**
  * Flags teammate slugs addressed with the PASSIVE mention form (`@@slug`) where an
  * active `@slug` was almost certainly intended — `@@` links without notifying, so
- * the handoff stalls silently. Two addressing forms, gated differently:
+ * the handoff stalls silently. Four forms, gated differently:
  *
+ * - An **action-assignment line** (`## Required actions for @@slug`) — the phrase
+ *   on the line assigns the work, so it is its own ask signal.
  * - A **leading-line address** (`@@slug — …`, optionally after a routing label) is
  *   flagged unconditionally. Opening a line with a teammate reference and a
  *   separator is the address shape, reserved for active mentions; a genuine
  *   passive reference goes inside the sentence. `@@admin — release is done.` is
  *   the canonical miss — it is asking the admin to register the fact, but carries
  *   no pronoun, no `please` and no `?`, so no ask gate can see it.
+ * - A **name bound directly to a sign-off/approval gate** (`Ready for @@slug
+ *   review`, `awaiting @@slug sign-off`, `@@slug to approve`) — the mid-sentence
+ *   handoff every address-position form above misses, because the name sits inside
+ *   the sentence rather than opening a line. This is the verdict-report closing
+ *   line (`APPROVED — the fix is correct. Ready for @@marketing-lead review.`):
+ *   the one sentence whose whole job is to hand over the next action, marked with
+ *   the form that wakes nobody. Same self-gating binding the bare-name detector
+ *   uses (see hasNameBoundSignoffGate), so both spellings of the identical
+ *   stranded handoff warn alike.
  * - An **emphasised** `**@@slug**` is ambiguous (bold marks attribution and
  *   headings too), so it keeps the directed-ask gate over its own paragraph(s)
  *   (see readsAsAsk) and a bold name written for emphasis is never flagged.
@@ -349,6 +367,17 @@ export function detectPassiveTeammateAsks(content: unknown, knownSlugs: string[]
 		// strands the most work, because the status vocabulary it attracts
 		// (`@@admin — release is done.`) is exactly what the ask gate cannot see.
 		if (leadingAddressRegex(`@@${s}`).test(stripped)) {
+			flagged.add(slug);
+			continue;
+		}
+		// Name-bound sign-off gate with the passive form: `Ready for @@slug review`,
+		// `awaiting @@slug sign-off`, `@@slug to approve`. The binding to the gate is
+		// itself the ask signal, so like the action-assignment line it needs no
+		// readsAsAsk pass. Without this branch a closing verdict line that hands the
+		// next action to a named approver mid-sentence — the shape a review report
+		// ends on — matched none of the address-position forms and warned nowhere,
+		// even though the bare-name spelling of the same sentence already did.
+		if (hasNameBoundSignoffGate(stripped, String.raw`(?<![\w@])@@${s}(?![\w-])`)) {
 			flagged.add(slug);
 			continue;
 		}
