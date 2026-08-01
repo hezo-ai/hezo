@@ -7,8 +7,12 @@ section: Security
 # Container isolation
 
 Agents execute real, often AI-generated code. Hezo runs that code where it can't hurt
-you: **every project gets its own Docker container, and agents only ever run inside
+you: **every project gets its own container, and agents only ever run inside
 it** - never on your host directly.
+
+This page is the security case for that boundary. For where those containers run and how
+to choose - your own Docker daemon or a managed service - see
+[Containers](/docs/containers/overview). Every property described here holds on either.
 
 ## A sandbox per project
 
@@ -20,19 +24,22 @@ work - the blast radius of anything going wrong is contained to a single project
 
 A container starts automatically the moment an agent run or an assistant chat needs it,
 and stops again after sitting idle (a couple of minutes). A quiet instance runs zero
-containers. Two global limits in **Settings > Concurrency** bound what a burst of agent
+containers. Two global limits in **Settings > Containers** bound what a burst of agent
 activity can consume:
 
 - **Total container memory** - how much memory all project containers may use at once.
   The assistant chat's container runs on top of it, so a chat turn never waits behind
-  background work. When unset, Hezo sizes it automatically from the machine's memory:
-  (RAM + swap), less 1 GB always kept free for the operating system and Hezo itself,
-  less one container's worth for the assistant chat. Swap counts in full, since a
-  container sits idle between runs. A run whose container will not fit in what is left
-  waits in the queue and starts as memory frees up; the assistant chat always starts.
-  There is no separate limit on the *number* of containers: how many fit follows from
-  this budget and the RAM cap below, and a project that raises its own cap simply takes
-  a larger share.
+  background work. When unset, Hezo sizes it automatically, and how depends on where
+  containers run: on [local Docker](/docs/containers/local-docker) it is derived from the
+  machine's memory (RAM + swap, less 1 GB always kept free for the operating system and
+  Hezo itself, less one container's worth for the assistant chat; swap counts in full,
+  since a container sits idle between runs), while on a
+  [managed service](/docs/containers/remote/overview) the containers are not on your
+  machine at all and the default is a flat starting figure you raise deliberately. A run
+  whose container will not fit in what is left waits in the queue and starts as memory
+  frees up; the assistant chat always starts. There is no separate limit on the *number*
+  of containers: how many fit follows from this budget and the RAM cap below, and a
+  project that raises its own cap simply takes a larger share.
 - **RAM cap per container** - the memory limit applied to every container (2 GB by
   default; projects that need more can override it in their own settings). A container
   over its cap is stopped, or has its biggest process killed by the kernel, instead of

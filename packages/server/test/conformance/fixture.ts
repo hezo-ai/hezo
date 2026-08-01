@@ -22,6 +22,7 @@
  * paid-provider fixture is manual and opt-in - see `test/live/`.
  */
 
+import type { AiProvider } from '@hezo/shared';
 import type { ContainerEngine } from '../../src/services/sandbox/types';
 
 /**
@@ -37,7 +38,14 @@ import type { ContainerEngine } from '../../src/services/sandbox/types';
  */
 export interface ConformanceHarness {
 	describe: (name: string, fn: () => void) => void;
-	it: (name: string, fn: () => Promise<void> | void, timeoutMs?: number) => void;
+	it: ((name: string, fn: () => Promise<void> | void, timeoutMs?: number) => void) & {
+		/**
+		 * Both runners have it, and a suite that is entirely opt-in needs it: a
+		 * missing model-provider key must register a *named* skip rather than
+		 * registering nothing, or "not run" is indistinguishable from "passed".
+		 */
+		skip: (name: string, fn: () => Promise<void> | void) => void;
+	};
 	expect: (value: unknown) => any;
 	beforeAll: (fn: () => Promise<void> | void, timeoutMs?: number) => void;
 	afterAll: (fn: () => Promise<void> | void, timeoutMs?: number) => void;
@@ -93,6 +101,37 @@ export interface LiveAdapterFixture {
 	honoursExecUser: boolean;
 	/** The non-root user execs run as when not elevated. */
 	runUser: string;
+	/**
+	 * A real model-provider credential, enabling {@link describeAgentCliConformance}
+	 * - a genuine coding-CLI run inside a provisioned container.
+	 *
+	 * Separate from the backend's own key because they answer different
+	 * questions and cost differently: the engine and files suites prove the
+	 * *sandbox* works, this proves an *agent* can run in it. Optional, so a
+	 * backend can be conformance-tested with no model spend at all.
+	 */
+	modelProvider?: LiveModelProvider;
+}
+
+/** The model-provider half of a live fixture. */
+export interface LiveModelProvider {
+	/** Display name for the suite title - the provider, not the env var. */
+	name: string;
+	/**
+	 * Which provider, so the suite reads its runtime, endpoint, model defaults
+	 * and credential variable out of `PROVIDER_RUNTIME_ADAPTERS` rather than
+	 * restating them. Must be an api-key provider (a subscription/file-mount
+	 * auth method has no key to hand a container).
+	 */
+	provider: AiProvider;
+	/** The API key. Never logged - it reaches the container as an env var only. */
+	apiKey: string;
+	/**
+	 * Model to pin. Pick the provider's cheapest: the suite asks for one short
+	 * completion and the answer is a single word, so nothing is gained by a
+	 * larger model and the run is billed either way.
+	 */
+	model?: string;
 }
 
 /** A label every container this suite creates carries, so a sweep can find them. */

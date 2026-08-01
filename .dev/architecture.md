@@ -1638,9 +1638,9 @@ drains FIFO by `created_at` with no per-project fair-share — a deep backlog in
 consumes freed slots first; that scheduler is the hook if this ever needs fairness. The chat
 path is *not* gated: its container is exempt from the budget rather than charged against it
 (reserved up front instead), and starting a chat is never refused — busy agents must not lock the operator out of the control surface. Both
-knobs (memory budget, per-container RAM cap) live on the global Settings → Concurrency
+knobs (memory budget, per-container RAM cap) live on the global Settings → Containers
 page (`GET/PATCH /api/instance-settings`; `PATCH {max_container_memory_gb: null}` resets to the
-computed default). The project's
+computed default), which also hosts the backend switcher. The project's
 `<dataDir>/teams/<teamId>/projects/<projectId>/workspace/` (id-keyed, never slugs) bind-mounts
 to `/workspace`, with one subdirectory per linked repo. For each task the runner creates a `git worktree` at
 `/worktrees/<task-identifier>/<repo-name>` on branch `hezo/<task-identifier>`, persisted

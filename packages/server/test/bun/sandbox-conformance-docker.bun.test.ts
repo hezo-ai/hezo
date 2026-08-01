@@ -18,11 +18,17 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import { AiProvider } from '@hezo/shared';
 import { DockerClient } from '../../src/services/docker';
 import { CONTAINER_WORKSPACE_ROOT } from '../../src/services/workspace';
+import { describeAgentCliConformance } from '../conformance/agent-cli';
 import { describeEngineConformance } from '../conformance/engine';
 import { describeFilesConformance } from '../conformance/files';
-import type { ConformanceHarness, LiveAdapterFixture } from '../conformance/fixture';
+import type {
+	ConformanceHarness,
+	LiveAdapterFixture,
+	LiveModelProvider,
+} from '../conformance/fixture';
 
 const IMAGE = 'hezo/agent-base:latest';
 
@@ -70,8 +76,28 @@ if (reason) {
 		reportsMemoryStats: true,
 		honoursExecUser: true,
 		runUser: 'node',
+		// The same opt-in the Daytona fixture takes, wired here too so the agent-CLI
+		// suite is not a Daytona-only assertion - a suite one backend ever runs
+		// drifts into describing that backend, which is the reason this whole
+		// directory is generic. Unset in CI (the key is not a secret there), so it
+		// self-skips with a reason and costs nothing; a developer with a key gets a
+		// real run against local Docker.
+		modelProvider: liveModelProvider(),
 	};
 
 	describeEngineConformance(fixture, harness);
 	describeFilesConformance(fixture, harness);
+	describeAgentCliConformance(fixture, harness);
+}
+
+/** Reads the optional model-provider key. Same env contract as `test/live/`. */
+function liveModelProvider(): LiveModelProvider | undefined {
+	const key = process.env.HEZO_DEEPSEEK_API_KEY;
+	if (!key) return undefined;
+	return {
+		name: 'DeepSeek',
+		provider: AiProvider.DeepSeek,
+		apiKey: key,
+		model: process.env.HEZO_LIVE_MODEL || 'deepseek-v4-flash',
+	};
 }

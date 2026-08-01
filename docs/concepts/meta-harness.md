@@ -77,11 +77,13 @@ Everything runs from one self-contained server process:
 
 ### Where agents run
 
-Each project gets its own **Docker container** - a private workspace with the project's
+Each project gets its own **container** - a private workspace with the project's
 code and tools. Agents execute inside it, never on your host directly. All their
 outbound traffic is forced through the egress proxy, and the keys used to sign commits
 or reach your model never enter the container. See
-[Container isolation](/docs/security/container-isolation).
+[Container isolation](/docs/security/container-isolation) for the security case, and
+[Containers](/docs/containers/overview) for where they run: your own Docker daemon by
+default, or a managed sandbox service, switchable at any time.
 
 ### How a model becomes an agent
 

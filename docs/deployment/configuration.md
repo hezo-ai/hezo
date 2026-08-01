@@ -224,14 +224,15 @@ Docker daemon, which is why Docker is a prerequisite for a normal install. Setti
 These flags choose what a **brand-new** instance starts on. After that the setting in
 Settings -> Containers is what counts, and you can switch service (or switch back to local
 Docker) there at any time without restarting - see
-[Remote sandboxes](/docs/deployment/remote-sandboxes).
+[Switching at any time](/docs/containers/overview#switching-at-any-time).
 
 `--sandbox-backend` (or `HEZO_SANDBOX_BACKEND`) moves those containers onto a managed
 sandbox service instead, and Docker stops being required at all.
 
-[Remote sandboxes](/docs/deployment/remote-sandboxes) covers what changes when you do:
+[Remote containers](/docs/containers/remote/overview) covers what changes when you do:
 how a container reaches your instance, what stays on your side, and what is not available
-there. This section is the configuration itself.
+there; [Daytona](/docs/containers/remote/daytona) carries that provider's own limits. This
+section is the configuration itself.
 
 Today the one managed backend is **Daytona**:
 

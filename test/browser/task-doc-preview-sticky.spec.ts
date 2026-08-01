@@ -65,6 +65,133 @@ async function seedTaskWithLongThread(
 	return { projectSlug: project.slug, taskId: task.identifier.toLowerCase() };
 }
 
+/**
+ * Seed just enough for the fit check: a doc long enough to drive the panel to
+ * its max-height cap, and one comment carrying the mention that opens it. No
+ * padded thread - this test asserts sizing, not scroll behaviour.
+ */
+async function seedTaskWithLongDoc(
+	page: Page,
+	token: string,
+): Promise<{ projectSlug: string; taskId: string }> {
+	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+	const project = await createProjectAndClearPlanning(page, '', token, {
+		name: uniqueName('Doc Preview Banner'),
+		description: 'Preview panel height under shell chrome.',
+	});
+	const docRes = await page.request.put(`/api/projects/${project.slug}/docs/${DOC}`, {
+		headers,
+		data: { content: DOC_CONTENT },
+	});
+	expect(docRes.ok()).toBe(true);
+	const agentsRes = await page.request.get(`/api/projects/${project.slug}/agents`, { headers });
+	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
+	const assigneeId = (agents.find((a) => a.slug === 'captain') ?? agents[0]).id;
+
+	const taskRes = await page.request.post(`/api/projects/${project.slug}/tasks`, {
+		headers,
+		data: { project_id: project.id, title: 'Review the guidelines', assignee_id: assigneeId },
+	});
+	expect(taskRes.ok()).toBe(true);
+	const task = ((await taskRes.json()) as { data: { id: string; identifier: string } }).data;
+	const commentRes = await page.request.post(
+		`/api/projects/${project.slug}/tasks/${task.id}/comments`,
+		{ headers, data: { content_type: 'text', content: { text: `Please review ${DOC}.` } } },
+	);
+	expect(commentRes.ok()).toBe(true);
+	return { projectSlug: project.slug, taskId: task.identifier.toLowerCase() };
+}
+
+// Playwright-tier for the same reason as the spec below (real CSS layout), but
+// guarding a different failure: the panel's cap is expressed against the shell
+// scroller, so it has to survive the shell growing a row above <main>.
+//
+// It did not. The cap used to be `100vh - 4rem`, a literal for "viewport minus
+// the app header minus my own top offset" - true only while the header is the
+// only thing above <main>. When an update is available the shell renders a 47px
+// banner between them, and the panel overhung the fold by exactly that, which is
+// the "top rides up on scroll" symptom the cap exists to prevent. Every user with
+// a newer release available was seeing it.
+//
+// The banner is driven by GET /api/updates/status, so stubbing that response is
+// the whole setup - and the e2e server has the real check gated off
+// (HEZO_SKIP_UPDATE_CHECK), so nothing else in the run can produce one.
+test('the preview panel still fits the scroller when the shell renders a banner', async ({
+	sharedPage: page,
+	sharedWorkspace,
+}) => {
+	const { token } = sharedWorkspace;
+	await page.setViewportSize({ width: 1280, height: 800 });
+
+	const { projectSlug, taskId } = await seedTaskWithLongDoc(page, token);
+
+	await page.route('**/api/updates/status', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({
+				current: '0.0.1',
+				latest: '9.9.9',
+				updateAvailable: true,
+				url: 'https://example.invalid/release',
+				state: 'idle',
+				canApply: false,
+				autoUnlock: false,
+			}),
+		});
+	});
+
+	await page.goto(`/projects/${projectSlug}/tasks/${taskId}`);
+	await waitForPageLoad(page);
+
+	// The banner is the precondition, not the subject - if it never rendered the
+	// fit assertion below would pass on the broken sizing too.
+	const banner = page.getByTestId('update-banner');
+	await expect(banner).toBeVisible({ timeout: 20000 });
+	const bannerBox = await banner.boundingBox();
+	expect(bannerBox?.height ?? 0).toBeGreaterThan(20);
+
+	const mention = page.getByTestId('doc-mention-link').first();
+	await expect(mention).toBeVisible({ timeout: 20000 });
+	await mention.click();
+
+	const panel = page.getByTestId('preview-panel');
+	await expect(panel).toBeVisible();
+
+	const scroller = page.locator('main').first();
+	const box0 = await scroller.boundingBox();
+	expect(box0).not.toBeNull();
+	if (!box0) return;
+
+	// The long doc drives the panel to its cap, so what follows measures the cap
+	// rather than a short panel that would fit whatever the sizing said.
+	const panel0 = await panel.boundingBox();
+	expect(panel0).not.toBeNull();
+	if (!panel0) return;
+	expect(panel0.height).toBeGreaterThan(box0.height - 48);
+
+	// Scroll so the panel is actually docked at its `top-4` offset. Unscrolled it
+	// sits at its flow position - below the layout's own top padding, lower than
+	// the offset it sticks to - so it legitimately extends past the fold there and
+	// measuring it would test the padding, not the cap.
+	const range = await scroller.evaluate((el) => el.scrollHeight - el.clientHeight);
+	expect(range).toBeGreaterThan(40);
+	const mid = Math.round(range * 0.5);
+	await scroller.evaluate((el, top) => el.scrollTo({ top }), mid);
+	await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBeGreaterThan(mid - 4);
+
+	// The assertion. Docked, the panel sits entirely inside the scroller. On the
+	// old `100vh - 4rem` cap - which subtracted the app header and nothing else -
+	// its bottom landed the banner's full height (~47px) below the scroller's.
+	const mainBox = await scroller.boundingBox();
+	const pinned = await panel.boundingBox();
+	expect(mainBox).not.toBeNull();
+	expect(pinned).not.toBeNull();
+	if (!mainBox || !pinned) return;
+	expect(pinned.y).toBeGreaterThanOrEqual(mainBox.y - 1);
+	expect(pinned.y + pinned.height).toBeLessThanOrEqual(mainBox.y + mainBox.height + 2);
+});
+
 test('the document preview panel fits the viewport and its top stays pinned on scroll', async ({
 	sharedPage: page,
 	sharedWorkspace,
