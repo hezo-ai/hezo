@@ -68,7 +68,11 @@ export default defineConfig({
 		baseURL: `http://localhost:${WEB_PORT}`,
 		headless: true,
 		trace: 'retain-on-failure',
-		screenshot: 'only-on-failure',
+		// Full-page rather than the viewport-only default: the failures this tier
+		// produces are geometry ones, and the element that moved the measurement is
+		// routinely below the fold (a banner, a sticky footer, an overflowing list).
+		// A viewport crop hides exactly the evidence the failure is about.
+		screenshot: { mode: 'only-on-failure', fullPage: true },
 		video: 'retain-on-failure',
 		// The app registers a PWA service worker (packages/web/public/sw.js) on
 		// localhost, which is a secure context — so without this it activates in the
