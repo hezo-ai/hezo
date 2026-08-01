@@ -168,6 +168,14 @@ export default defineConfig({
 				// Pricing still seeds from the bundled snapshot (offline); skip the
 				// boot-time refresh so e2e doesn't make an outbound feed fetch.
 				HEZO_SKIP_PRICING_REFRESH: '1',
+				// Same reason, plus a sharper one: the GitHub release check decides
+				// whether the UpdateBanner renders, and the banner sits between the app
+				// header and the content row — so on a runner that can reach GitHub,
+				// every element in the shell moves down by 47px (75px at mobile, where
+				// the banner stacks) the moment a release newer than this tree ships.
+				// That is a suite-wide layout change driven by a third party's release
+				// schedule, and it took the browser tier red on the day 0.39.0 landed.
+				HEZO_SKIP_UPDATE_CHECK: '1',
 				// Telemetry defaults on; a CI run crossing the daily cron window
 				// would fire a real outbound report. Tests never phone home.
 				HEZO_TELEMETRY_ENABLED: '0',
