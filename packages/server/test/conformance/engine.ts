@@ -30,6 +30,11 @@ export function describeEngineConformance(fixture: LiveAdapterFixture): void {
 			await sweepConformanceContainers(engine);
 			const created = await engine.createContainer(`hezo-conf-${conformanceRunId()}`, {
 				Image: fixture.image,
+				// PID 1 has to outlive the execs, exactly as production sets it
+				// (`containers.ts`). Without it the container runs the image's default
+				// command, exits immediately, and every assertion below fails on a dead
+				// container rather than on the thing it was testing.
+				Cmd: ['sleep', 'infinity'],
 				Labels: { [CONFORMANCE_LABEL]: '1' },
 				HostConfig: { Memory: fixture.memoryBytes },
 			});
