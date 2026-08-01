@@ -9,6 +9,7 @@ import {
 	HEADER_BYTES,
 	isTunnelTarget,
 	MAX_PAYLOAD_BYTES,
+	TUNNEL_PREAMBLE,
 } from '../src/services/sandbox/tunnel/protocol';
 
 const bytes = (...v: number[]) => new Uint8Array(v);
@@ -137,5 +138,76 @@ describe('FrameDecoder', () => {
 		view.setUint32(1, 1, false);
 		view.setUint32(5, 0xffffffff, false);
 		expect(() => new FrameDecoder().push(header)).toThrow(/exceeds/);
+	});
+});
+
+/**
+ * Skipping whatever the transport put on the channel before the client spoke.
+ *
+ * Docker's exec hijack carries the command's stdout and nothing else, but a
+ * provider may only offer a PTY - and a PTY is attached to a shell, which echoes
+ * what was typed into it and prints a prompt. Measured on Daytona: 97 bytes of
+ * `stty raw -echo\r\n\e[?2004l\r\e[?2004hroot@…:/workspace# ` arrive ahead of the
+ * first frame, and fed to the decoder they parse as a header - "raw " read as a
+ * length field gives 1918990112 - so the tunnel tore itself down before carrying
+ * a byte.
+ */
+describe('preamble sync', () => {
+	// The exact prologue measured from the live Daytona PTY.
+	const PTY_NOISE = text(
+		'stty raw -echo\r\n\u001b[?2004l\r\u001b[?2004hroot@89838e4d:/workspace# \u001b[?2004l\r\n',
+	);
+	const preamble = () => TUNNEL_PREAMBLE;
+
+	it('discards shell noise ahead of the marker and decodes the frames after it', () => {
+		const decoder = new FrameDecoder({ expectPreamble: true });
+		const frame = encodeOpen(1, 'mcp');
+		const frames = decoder.push(new Uint8Array([...PTY_NOISE, ...preamble(), ...frame]));
+		expect(frames).toHaveLength(1);
+		expect(decode(frames[0].payload)).toBe('mcp');
+	});
+
+	it('waits rather than failing while the marker has not arrived', () => {
+		// A PTY delivers its prologue over several reads; a partial one is an
+		// ordinary short read, not a desync.
+		const decoder = new FrameDecoder({ expectPreamble: true });
+		expect(decoder.push(PTY_NOISE)).toEqual([]);
+		expect(decoder.isSynced).toBe(false);
+		expect(decoder.push(new Uint8Array([...preamble(), ...encodeOpen(3, 'ssh')]))).toHaveLength(1);
+		expect(decoder.isSynced).toBe(true);
+	});
+
+	it('finds a marker split across two chunks', () => {
+		const decoder = new FrameDecoder({ expectPreamble: true });
+		const p = preamble();
+		const half = Math.floor(p.length / 2);
+		decoder.push(new Uint8Array([...PTY_NOISE, ...p.slice(0, half)]));
+		const frames = decoder.push(new Uint8Array([...p.slice(half), ...encodeOpen(5, 'proxy')]));
+		expect(frames).toHaveLength(1);
+		expect(decode(frames[0].payload)).toBe('proxy');
+	});
+
+	it('keeps the pre-sync buffer bounded while it scans', () => {
+		// A channel that never syncs must not grow a buffer forever. Kept under the
+		// scan cap so this measures the trimming rather than the give-up throw.
+		const decoder = new FrameDecoder({ expectPreamble: true });
+		for (let i = 0; i < 10; i++) decoder.push(new Uint8Array(4096));
+		expect(decoder.pending).toBeLessThan(TUNNEL_PREAMBLE.byteLength);
+	});
+
+	it('names the likely cause once far too much noise has gone by', () => {
+		// Past the cap the client is not coming - an image without `hezo-tunnel`,
+		// most likely - and the bytes are that command's error output. An operator
+		// needs to be told which, not "unknown frame type".
+		const decoder = new FrameDecoder({ expectPreamble: true });
+		expect(() => {
+			for (let i = 0; i < 40; i++) decoder.push(new Uint8Array(4096).fill(0x41));
+		}).toThrow(/never announced itself/);
+	});
+
+	it('does not expect a preamble unless asked, so the round trip stays testable', () => {
+		const decoder = new FrameDecoder();
+		expect(decoder.isSynced).toBe(true);
+		expect(decoder.push(encodeOpen(1, 'mcp'))).toHaveLength(1);
 	});
 });

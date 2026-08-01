@@ -420,9 +420,16 @@ export class DaytonaEngine implements ContainerEngine {
 		// The PTY starts a login shell, so the command is *typed into* it rather
 		// than being the process it launched - the inverse of a Docker exec, where
 		// the command is the exec. Sent after raw mode is applied by openPty.
+		//
+		// `exec` matters: it *replaces* the shell with the command, so once the
+		// tunnel client is running there is no shell left to print a prompt into
+		// the middle of the framed stream. Everything the shell emitted before this
+		// point - its echo of this very line, the bracketed-paste escapes, the
+		// first prompt - is still on the channel, and is discarded by the framing
+		// layer up to the client's preamble (see TUNNEL_PREAMBLE).
 		pty.send(
 			new TextEncoder().encode(
-				`${renderDaytonaExecScript({
+				`exec ${renderDaytonaExecScript({
 					cmd: config.Cmd,
 					env: config.Env,
 					user: config.User,

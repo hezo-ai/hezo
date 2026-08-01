@@ -1166,13 +1166,38 @@ an `input`/`stdin`/`stdinData` field entirely, and a command that reads stdin se
 EOF. What it has instead is a **PTY session over WebSocket** -
 `POST /process/pty {id}` then `wss://…/process/pty/{id}/connect` with the bearer token -
 verified end to end as a real bidirectional byte channel (writes reach the shell, output
-comes back). Two things follow for whoever builds the tunnel: the channel opens with a
+comes back). Two things follow: the channel opens with a
 `{"status":"connected","type":"control"}` JSON frame that is not shell output, and it is a
 **PTY**, so line discipline is active (echo on, `\n` to `\r\n`, bracketed-paste sequences)
 and it must be put in raw mode before any framed protocol rides on it. The consequence for
 the seam is that the *transport* is per-backend while the framing and multiplexing above it
-stay shared - the plan's "one transport for both backends" holds for the protocol, not for
-the channel underneath it.
+stay shared - "one transport for both backends" holds for the protocol, not for the channel
+underneath it. Raw mode is enough for the bytes themselves: measured, all 256 byte values
+survive a 64 KiB payload intact, NUL and XON/XOFF included, so nothing has to be escaped.
+
+**The channel is not clean from byte zero, so the framing layer syncs.** Raw mode stops the
+PTY *mangling* bytes but not the shell *writing* them: it still echoes the command typed
+into it and prints a prompt, and 97 bytes of
+`stty raw -echo\r\n\e[?2004l\r\e[?2004hroot@…:/workspace# ` arrive ahead of the first frame.
+Parsed as frames those are fatal rather than untidy - "raw " read as a length field gives
+1918990112, past the cap, and the mux tears the tunnel down before it carries anything. So
+the client emits a NUL-delimited `TUNNEL_PREAMBLE` before its first frame and the decoder
+discards everything up to it. That lives in the shared protocol rather than in the Daytona
+adapter deliberately: any provider offering only a PTY has the same prologue, and a channel
+that *is* clean (Docker's hijack) simply syncs on the first bytes it sends. Daytona also
+`exec`s the client so the shell is replaced and cannot print between frames; the preamble
+covers only the prologue. Because the client writes it after binding its listeners it
+doubles as the **readiness signal** (the provisioning git ops previously started as soon as
+the exec channel opened, before anything was listening), and it carries a version so an
+older in-container client is refused by name instead of surfacing as an unknown frame type.
+
+**Both directions fail closed and stay bounded.** A throw anywhere in the mux's frame
+dispatch - not just in the decode - tears the tunnel down, because the alternative is worse
+than closing: the dispatch runs on a promise queue, so an escaping rejection silently stops
+all further reads and leaves a tunnel that is wedged rather than closed. Flow control is a
+credit window in both directions; a stream starts at zero credit and the peer's opening
+`WINDOW` is authoritative, since seeding a default *and* accepting the grant counts one
+allowance twice and ignores a host configured with a different window.
 
 **Network isolation is the provider's, not ours - measured.** Daytona interposes an Envoy
 proxy in front of all sandbox egress: a raw TCP connect to `169.254.169.254`, to an RFC1918
