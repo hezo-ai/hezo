@@ -605,17 +605,43 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 /** Injectable seams for {@link runUninstall} — real Docker cleanup by default. */
 export interface UninstallDeps {
 	/**
-	 * Remove the Docker containers Hezo provisioned. Returns the count removed, or
-	 * `null` when Docker was unreachable. Defaults to the real Docker path;
-	 * overridden in tests so they never touch a live daemon.
+	 * Remove the containers Hezo provisioned. Returns the count removed, or `null`
+	 * when the backend was unreachable. Defaults to the real path; overridden in
+	 * tests so they never touch a live daemon or a real provider account.
 	 */
-	removeContainers?: () => Promise<number | null>;
+	removeContainers?: (opts: SandboxBackendOptions) => Promise<number | null>;
 }
 
-async function defaultRemoveProvisionedContainers(): Promise<number | null> {
-	const { DockerClient } = await import('./services/docker.js');
+/** What uninstall needs to reach the backend the instance was running on. */
+export interface SandboxBackendOptions {
+	backend?: string;
+	daytonaApiKey?: string;
+	daytonaApiUrl?: string;
+}
+
+/**
+ * Remove the containers, on whichever backend the instance used.
+ *
+ * Hard-wired to local Docker before, which meant uninstalling a managed-backend
+ * instance removed the data directory and left the provider's sandboxes running.
+ * Nothing then reaps them either: the orphan sweep lives in the server that was
+ * just deleted, so they bill until somebody notices in a dashboard.
+ *
+ * An unreachable backend answers `null` rather than aborting - the data directory
+ * is the thing the operator asked to remove, and refusing to do that because a
+ * provider is down would be the wrong trade.
+ */
+async function defaultRemoveProvisionedContainers(
+	opts: SandboxBackendOptions,
+): Promise<number | null> {
+	const { openSandboxBackend } = await import('./services/sandbox/open.js');
 	const { removeProvisionedContainers } = await import('./services/uninstall.js');
-	return removeProvisionedContainers(new DockerClient());
+	try {
+		const { engine } = await openSandboxBackend(opts);
+		return await removeProvisionedContainers(engine);
+	} catch {
+		return null;
+	}
 }
 
 /**
@@ -652,6 +678,14 @@ export async function runUninstall(
 		)
 		.option('--data-dir <path>', 'Data directory to remove (env: HEZO_DATA_DIR)', DEFAULT_DATA_DIR)
 		.option('--yes', 'Confirm removal — required; without it nothing is deleted')
+		// The instance's own backend, so its containers are removed wherever they
+		// actually ran. Defaults to Docker, matching the server's default.
+		.option(
+			'--sandbox-backend <name>',
+			'Backend the instance ran containers on: docker (default) or daytona (env: HEZO_SANDBOX_BACKEND)',
+		)
+		.option('--daytona-api-key <key>', 'Daytona API key (env: HEZO_DAYTONA_API_KEY)')
+		.option('--daytona-api-url <url>', 'Daytona API base URL (env: HEZO_DAYTONA_API_URL)')
 		.parse(argv.slice(3), { from: 'user' });
 
 	const opts = program.opts();
@@ -698,12 +732,22 @@ export async function runUninstall(
 	// the database we are about to delete, so skipping this orphans them. Never
 	// fatal — Docker may already be stopped.
 	const removeContainers = deps.removeContainers ?? defaultRemoveProvisionedContainers;
+	const backendOpts: SandboxBackendOptions = {
+		backend: process.env.HEZO_SANDBOX_BACKEND ?? opts.sandboxBackend,
+		daytonaApiKey: process.env.HEZO_DAYTONA_API_KEY ?? opts.daytonaApiKey,
+		daytonaApiUrl: process.env.HEZO_DAYTONA_API_URL ?? opts.daytonaApiUrl,
+	};
+	const managed = (backendOpts.backend ?? 'docker') !== 'docker';
 	try {
-		const removed = await removeContainers();
+		const removed = await removeContainers(backendOpts);
 		if (removed === null) {
 			console.log(
-				'→ Docker not reachable; skipping container cleanup. Remove any leftovers with: ' +
-					'docker rm -f $(docker ps -aq --filter label=hezo.team)',
+				managed
+					? '→ Sandbox provider not reachable; skipping container cleanup. Remove any ' +
+							'leftover sandboxes from the provider dashboard - nothing else will, since ' +
+							'the sweep that would have lived in this instance is going away with it.'
+					: '→ Docker not reachable; skipping container cleanup. Remove any leftovers with: ' +
+							'docker rm -f $(docker ps -aq --filter label=hezo.team)',
 			);
 		} else if (removed > 0) {
 			console.log(`→ Removed ${removed} Hezo container(s).`);

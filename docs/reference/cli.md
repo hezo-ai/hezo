@@ -145,11 +145,20 @@ provider's tools.
 
 ```sh
 hezo uninstall [--data-dir <path>] [--yes]
+              [--sandbox-backend <name>] [--daytona-api-key <key>] [--daytona-api-url <url>]
 ```
 
 Removes Hezo's **data directory** (default `~/.hezo/`) - every project workspace, the
-embedded database, backups, and settings - and best-effort removes the Docker containers
-Hezo created. It does **not** remove the `hezo` binary itself.
+embedded database, backups, and settings - and best-effort removes the containers Hezo
+created. It does **not** remove the `hezo` binary itself.
+
+If the instance ran its containers on a **remote sandbox service**, pass the same backend
+settings the server used (`--sandbox-backend daytona` plus the API key, or the matching
+`HEZO_SANDBOX_BACKEND` / `HEZO_DAYTONA_API_KEY` / `HEZO_DAYTONA_API_URL` environment
+variables). Without them uninstall cleans up local Docker and leaves the remote sandboxes
+running, and nothing else will remove them: the sweep that reaps unreferenced sandboxes
+lives in the instance you are deleting. If the provider cannot be reached, uninstall says
+so and still removes the data directory.
 
 Prefer this over `rm -rf ~/.hezo`. On macOS, Docker Desktop tags Hezo's nested
 `.previews` mount point with a *deny delete* ACL that a plain `rm -rf` can't override, so

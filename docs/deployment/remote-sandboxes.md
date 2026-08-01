@@ -99,3 +99,19 @@ to local Docker. If the provider becomes unreachable while Hezo is running, in-f
 fail through the normal container-death path and are reported on the project's Container
 page. There is no automatic failover: an instance that silently switched substrates would
 look healthy while doing something you did not ask for.
+
+## Uninstalling
+
+`hezo uninstall` removes the containers it created as well as the data directory, so give
+it the same backend settings the server ran with:
+
+```sh
+hezo uninstall --yes --sandbox-backend daytona --daytona-api-key "<key>"
+```
+
+The environment variables work too (`HEZO_SANDBOX_BACKEND`, `HEZO_DAYTONA_API_KEY`,
+`HEZO_DAYTONA_API_URL`). Without them uninstall cleans up local Docker and leaves the
+remote sandboxes running - and nothing else will remove them, because the sweep that reaps
+unreferenced sandboxes lives in the instance being deleted. If the provider cannot be
+reached, uninstall says so and still removes the data directory; remove the leftovers from
+the provider's dashboard.
