@@ -464,15 +464,17 @@ reposRoutes.post('/projects/:projectId/repos/:repoId/reset', async (c) => {
 	const docker = c.get('docker');
 
 	if (action === 'reclone') {
-		// Wipe the clone (+ this repo's worktrees) and re-run the standard repo-setup
-		// path, which re-clones and settles the row to ready/failed. The frontend
-		// already renders `setup_status === 'pending'` as "Setting up…".
-		try {
-			removeRepoFromWorkspace(dataDir, teamId, projectId, repo.repoName);
-		} catch (e) {
-			log.error(`Failed to wipe workspace for reclone of ${repo.repoName}:`, e);
-			return err(c, 'RECLONE_FAILED', 'failed to remove existing clone', 500);
-		}
+		// Re-run the standard repo-setup path, asking it for a *fresh* clone: it
+		// wipes the existing one (and this repo's worktrees) inside the container
+		// and then clones, settling the row to ready/failed. The frontend already
+		// renders `setup_status === 'pending'` as "Setting up…".
+		//
+		// The wipe belongs there rather than here because the sync chooses
+		// clone-vs-adopt by reading the container. This route used to delete the
+		// host directory instead, which selected `clone` only while the two were
+		// the same bytes - on a managed backend it emptied nothing, the sync
+		// adopted the clone it was asked to replace, and the action reported
+		// success having done nothing.
 		const updated = await db.query<Record<string, unknown>>(
 			`UPDATE repos r SET setup_status = $1::repo_setup_status, setup_error = NULL
 			 WHERE r.id = $2 AND r.project_id = $3
@@ -497,7 +499,13 @@ reposRoutes.post('/projects/:projectId/repos/:repoId/reset', async (c) => {
 		trackBackground(
 			performRepoSetup(
 				{ ...setupDeps, docker, dataDir },
-				{ teamId, projectId, repoId: repo.repoId, repoIdentifier: repo.repoIdentifier },
+				{
+					teamId,
+					projectId,
+					repoId: repo.repoId,
+					repoIdentifier: repo.repoIdentifier,
+					freshClone: true,
+				},
 			).catch((e) => log.error(`Background reclone for ${repo.repoIdentifier} failed:`, e)),
 		);
 		return ok(c, { reset: true, action });

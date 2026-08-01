@@ -13,7 +13,12 @@ import {
 	setOriginUrl,
 } from './git';
 import type { GitExecutor } from './git-executor';
-import { CONTAINER_WORKSPACE_ROOT, getWorkspacePath, getWorktreesPath } from './workspace';
+import {
+	CONTAINER_WORKSPACE_ROOT,
+	CONTAINER_WORKTREES_ROOT,
+	getWorkspacePath,
+	getWorktreesPath,
+} from './workspace';
 
 const log = logger.child('repo-sync');
 
@@ -55,6 +60,38 @@ async function hasEntries(loc: RepoLoc): Promise<boolean> {
 	return (await loc.files.list('.')).length > 0;
 }
 
+/**
+ * Empty a repo's clone directory and every per-task worktree copy of it, through
+ * the container seam.
+ *
+ * The worktrees go too because they are `git worktree` checkouts *of* the clone:
+ * once its `.git` is gone their administrative files point at nothing, and a
+ * later `worktree add` for the same task would collide with the orphan. The old
+ * host-side wipe removed both for the same reason.
+ *
+ * Best-effort per path rather than all-or-nothing: a worktree that will not
+ * delete is a stale directory the run can still work around, and failing the
+ * reclone over it would leave the operator with neither the old clone nor a new
+ * one. The clone itself is different - if that survives, `clone` mode fails
+ * loudly on a non-empty target, which is the honest outcome.
+ */
+async function removeCloneAndWorktrees(
+	executor: GitExecutor,
+	loc: RepoLoc,
+	repoName: string,
+	containerWorkspaceRoot: string,
+): Promise<void> {
+	const worktreesRoot =
+		containerWorkspaceRoot === CONTAINER_WORKSPACE_ROOT
+			? CONTAINER_WORKTREES_ROOT
+			: `${containerWorkspaceRoot}/../worktrees`;
+	const worktreeFiles = executor.files(worktreesRoot);
+	for (const taskDir of await worktreeFiles.list('.')) {
+		await worktreeFiles.removeDir(`${taskDir}/${repoName}`);
+	}
+	await loc.files.removeDir('.');
+}
+
 export async function ensureProjectRepos(
 	db: Db,
 	project: ProjectIdentity,
@@ -62,6 +99,15 @@ export async function ensureProjectRepos(
 	executor: GitExecutor,
 	logEmit?: LogEmitter,
 	containerWorkspaceRoot: string = CONTAINER_WORKSPACE_ROOT,
+	opts: {
+		/**
+		 * Repo identifiers the operator has asked for a *fresh* clone of, whatever
+		 * is already there. Emptying the directory here rather than at the call
+		 * site is the point: the mode decision below reads the container, so only
+		 * a removal through the same seam can change the answer.
+		 */
+		freshClone?: ReadonlySet<string>;
+	} = {},
 ): Promise<RepoSyncResult> {
 	const result: RepoSyncResult = { cloned: [], repaired: [], skipped: [], failed: [] };
 
@@ -83,6 +129,17 @@ export async function ensureProjectRepos(
 
 		const containerPath = `${containerWorkspaceRoot}/${name}`;
 		const loc: RepoLoc = { containerPath, files: executor.files(containerPath) };
+		if (opts.freshClone?.has(r.repo_identifier)) {
+			// A requested reclone. This used to work by deleting the *host* directory
+			// before calling in, which selected `clone` below only because the check
+			// was a host check too. Now that the check asks the container, a host
+			// delete changes nothing on a managed backend and the reclone quietly
+			// adopted the clone it was asked to replace - so the removal moved here,
+			// behind the same seam the decision is made through.
+			await removeCloneAndWorktrees(executor, loc, name, containerWorkspaceRoot);
+			pending.push({ repo: r, mode: 'clone', loc });
+			continue;
+		}
 		// Asked of the container, not the host: on a managed backend the clone lives
 		// in the sandbox and `targetDir` names an empty host directory, so a host
 		// check reported "not cloned" for every repo and re-cloned on every run.
@@ -174,12 +231,22 @@ interface RepoRow {
  * container is local. On a managed backend they clean an empty host directory and
  * the sandbox keeps its copy.
  *
- * Left that way deliberately rather than migrated with the rest of the git layer:
- * the consequence there is disk that is not reclaimed early, not a run that
- * behaves wrongly, and the pool's disk-ceiling rung already recycles a container
- * that fills up. Migrating them needs an engine and a container id threaded to
- * the task-close automation and the repo routes, which is a wider change than the
- * run correctness this pass was for.
+ * What they are left for is **disk reclaim**, where the consequence is bounded:
+ * disk not freed at task close or repo delete, rather than a run behaving
+ * wrongly, and the pool's disk-ceiling rung already recycles a container that
+ * fills up. They stay host-side because reclaiming inside the sandbox needs a
+ * running container, and neither caller has one to hand - the task-close
+ * automation has no engine at all, and a repo can be deleted while the project's
+ * container is stopped.
+ *
+ * They are **not** load-bearing for correctness any more, and must not become so
+ * again. The `reclone` action used to call this to *select* `syncRepo`'s `clone`
+ * mode, which worked only while the host directory and the container's were the
+ * same bytes: on a managed backend it emptied nothing, the sync adopted the clone
+ * it was asked to replace, and the action reported success having done nothing.
+ * That intent is now stated directly (`freshClone`) and carried out through the
+ * seam the decision is made through. Any future caller that needs a directory to
+ * actually be gone belongs there too, not here.
  */
 export function removeRepoFromWorkspace(
 	dataDir: string,

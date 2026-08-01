@@ -32,6 +32,15 @@ export interface RepoSetupInput {
 	projectId: string;
 	repoId: string;
 	repoIdentifier: string;
+	/**
+	 * Replace whatever is already cloned rather than adopting it - the reset
+	 * route's `reclone` action.
+	 *
+	 * Carried as intent rather than performed by the caller: the sync decides
+	 * clone-vs-adopt by reading the container, so only a removal on that side can
+	 * change its mind, and only the sync is on that side.
+	 */
+	freshClone?: boolean;
 }
 
 export interface RepoSetupOutcome {
@@ -98,6 +107,9 @@ export async function performRepoSetup(
 						{ id: input.projectId, team_id: input.teamId },
 						dataDir,
 						ContainerGitExecutor.forPrep(docker, containerId, bridge, runUser, scopeId),
+						undefined,
+						undefined,
+						{ freshClone: input.freshClone ? new Set([input.repoIdentifier]) : undefined },
 					);
 				const syncRes = deps.sshAgentServer
 					? await withProvisionBridge(
