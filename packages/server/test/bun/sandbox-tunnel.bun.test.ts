@@ -11,6 +11,7 @@ import {
 	FrameDecoder,
 	FrameType,
 	MAX_PAYLOAD_BYTES,
+	TUNNEL_PREAMBLE,
 } from '../../src/services/sandbox/tunnel/protocol';
 
 /**
@@ -39,6 +40,19 @@ async function echoServer(transform: (s: string) => string = (s) => s): Promise<
 
 function closeAll(): void {
 	for (const server of servers.splice(0)) server.close();
+}
+
+/**
+ * A mux that has already consumed the client's preamble, which is the state
+ * production is in by the time frames flow: the real `hezo-tunnel` emits the
+ * marker once its listeners are bound, and everything the transport put on the
+ * channel before it is discarded. Feeding it here rather than switching the
+ * expectation off keeps the handshake itself under test on the Bun runtime.
+ */
+function syncedMux(...args: ConstructorParameters<typeof TunnelMux>): TunnelMux {
+	const mux = new TunnelMux(...args);
+	void mux.handleChunk(TUNNEL_PREAMBLE);
+	return mux;
 }
 
 describe('tunnel framing under Bun', () => {
@@ -139,7 +153,7 @@ describe('TunnelMux over Bun sockets', () => {
 				},
 				close: () => {},
 			};
-			const mux = new TunnelMux(
+			const mux = syncedMux(
 				channel,
 				() =>
 					new Promise((resolve, reject) => {
@@ -178,7 +192,7 @@ describe('TunnelMux over Bun sockets', () => {
 		try {
 			const port = await echoServer();
 			let closed = false;
-			const mux = new TunnelMux(
+			const mux = syncedMux(
 				{
 					write: () => {},
 					close: () => {
