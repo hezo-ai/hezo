@@ -40,13 +40,7 @@ test.describe('settings navigation responsiveness', () => {
 	test('mobile menu stays pinned to the top while the page scrolls', async ({
 		authedPage: page,
 	}) => {
-		// Short enough that the settings chrome alone overflows <main>. The height
-		// is load-bearing and the spec now says so: at 480px the credentials page
-		// (empty, on a fresh instance) fit *within* the scroller, `scrollTo` was a
-		// no-op, and the assertions below compared two identical unscrolled
-		// layouts - passing without ever exercising stickiness. The overflow
-		// precondition is asserted rather than assumed for the same reason.
-		await page.setViewportSize({ width: 375, height: 360 });
+		await page.setViewportSize({ width: 375, height: 700 });
 		await page.goto('/settings/credentials');
 
 		const toggle = page.getByTestId('settings-nav-toggle');
@@ -59,11 +53,10 @@ test.describe('settings navigation responsiveness', () => {
 		// scrolling ancestor, so that offset is the property under test. Comparing
 		// viewport-absolute `y` values across a scroll tests the same thing only
 		// while everything above <main> keeps a constant height - an assumption the
-		// spec never stated and that does not hold: on a 2-core CI runner the app
-		// header above the scroller settles to a taller layout between the two
-		// reads, and the toggle appeared to move *down* the page by ~75px in
-		// response to a downward scroll, which stickiness cannot do. Measuring the
-		// offset removes the assumption rather than widening the bound.
+		// spec never stated and that has been false twice, most recently when the
+		// update banner rendered between the header and the scroller on CI (see
+		// HEZO_SKIP_UPDATE_CHECK in playwright.config.ts). Measuring the offset
+		// removes the assumption rather than widening the bound.
 		const offset = async () => {
 			const box = await waitForStableBox(toggle);
 			const main = await scroller.boundingBox();
@@ -71,22 +64,37 @@ test.describe('settings navigation responsiveness', () => {
 			return box.y - main!.y;
 		};
 
-		const before = await offset();
+		// Short viewport, so the settings chrome alone overflows <main>. It has to be
+		// this short: a fresh instance has no credentials, so the page is a heading
+		// and an empty state, and the toggle's own offset (~69px) is a large share of
+		// what little content there is.
+		//
+		// That offset is the bar the scroll range must clear. Below it the toggle
+		// never reaches the top, so "it moved less than the scroll did" is equally
+		// true of an ordinary element and the test demonstrates nothing - which is
+		// what a 360px viewport bought on CI, where the range came to 55px. The
+		// precondition is asserted rather than assumed because the page's height is
+		// not a constant: it moves with the font that actually loaded, and CI reaches
+		// Google Fonts where a sandbox generally cannot.
+		await page.setViewportSize({ width: 375, height: 260 });
 
-		// The content must genuinely overflow, or "it did not move" proves nothing.
+		const before = await offset();
 		const overflow = await scroller.evaluate((el) => el.scrollHeight - el.clientHeight);
-		expect(overflow).toBeGreaterThan(60);
+		expect(overflow).toBeGreaterThan(before + 30);
 
 		// Scroll the main panel (the only scroller) to the bottom.
 		await scroller.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
 		await page.waitForTimeout(150);
-		expect(await scroller.evaluate((el) => el.scrollTop)).toBeGreaterThan(30);
+		expect(await scroller.evaluate((el) => el.scrollTop)).toBeGreaterThan(before);
 
 		const after = await offset();
 
-		// Sticky: it holds its place at the top of the scroll area instead of
-		// travelling up with the content it is pinned above.
-		expect(after).toBeLessThanOrEqual(before + 1);
-		expect(after).toBeLessThan(40);
+		// Pinned, and pinned *exactly*: `top-0` on the wrapper puts the toggle flush
+		// with the scroller's top edge once the content has scrolled past it. The
+		// upper bound catches an element that never pinned; the lower bound catches
+		// one that scrolled straight off the top, which the previous "< 40" assertion
+		// would have called a pass.
+		expect(after).toBeGreaterThanOrEqual(-1);
+		expect(after).toBeLessThanOrEqual(1);
 	});
 });
