@@ -13,7 +13,12 @@ import type {
 	ExecResult,
 	ExecStartOpts,
 } from './sandbox/types';
-import { CONTAINER_WORKSPACE_ROOT, getWorkspacePath } from './workspace';
+import {
+	CONTAINER_WORKSPACE_ROOT,
+	CONTAINER_WORKTREES_ROOT,
+	getWorkspacePath,
+	getWorktreesPath,
+} from './workspace';
 
 const SYNTHETIC_EXEC_SCRIPT: Array<{
 	stream: 'stdout' | 'stderr';
@@ -257,32 +262,54 @@ function lazyHostFiles(resolve: () => Promise<string>): SandboxFiles {
 	};
 }
 
+/**
+ * The two binds `containers.ts` gives every project container, so a path under
+ * either resolves the way the real mount would.
+ *
+ * Both are needed, not just the workspace: worktrees live on their own mount,
+ * and resolving `/worktrees/<task>/<repo>` against the workspace root answers
+ * with a directory that exists and holds the wrong repo - a wrong answer that
+ * reads as a right one, which is worse than failing.
+ */
+const FAKE_PROJECT_MOUNTS: ReadonlyArray<{
+	containerRoot: string;
+	hostRoot: (dataDir: string, teamId: string, projectId: string) => string;
+}> = [
+	{ containerRoot: CONTAINER_WORKSPACE_ROOT, hostRoot: getWorkspacePath },
+	{ containerRoot: CONTAINER_WORKTREES_ROOT, hostRoot: getWorktreesPath },
+];
+
 async function resolveFakeHostRoot(
 	containerId: string,
 	containerRoot: string,
 	db?: Db,
 	dataDir?: string,
 ): Promise<string> {
-	const suffix = (base: string): string =>
-		containerRoot.startsWith(CONTAINER_WORKSPACE_ROOT)
-			? `${base}${containerRoot.slice(CONTAINER_WORKSPACE_ROOT.length)}`
-			: base;
+	/** Rebase `containerRoot` onto `base` when it sits at or under `mountRoot`. */
+	const under = (mountRoot: string, base: string): string | null => {
+		if (containerRoot === mountRoot) return base;
+		if (containerRoot.startsWith(`${mountRoot}/`)) {
+			return `${base}${containerRoot.slice(mountRoot.length)}`;
+		}
+		return null;
+	};
 
 	// A recorded bind is the most faithful answer: it is the same information
 	// Docker itself was given at create.
 	for (const bind of fakeBinds.get(containerId) ?? []) {
-		if (containerRoot === bind.containerPath) return bind.hostPath;
-		if (containerRoot.startsWith(`${bind.containerPath}/`)) {
-			return `${bind.hostPath}${containerRoot.slice(bind.containerPath.length)}`;
-		}
+		const resolved = under(bind.containerPath, bind.hostPath);
+		if (resolved) return resolved;
 	}
 
+	// A root registered for the whole container answers for anything under it,
+	// and stands in unchanged for a path outside the project mounts (a per-run
+	// runtime home, say) - that is what the caller registered it for.
 	const registered = fakeFallbackRoots.get(containerId);
-	if (registered) return suffix(registered);
+	if (registered) return under(CONTAINER_WORKSPACE_ROOT, registered) ?? registered;
 
 	// Most tests hand a project a `container_id` without provisioning through the
 	// engine, so there are no binds to read. The project row still says which
-	// workspace that container would have mounted, which is the same mapping a
+	// directories that container would have mounted, which is the same mapping a
 	// real bind produces.
 	if (db && dataDir) {
 		try {
@@ -291,7 +318,18 @@ async function resolveFakeHostRoot(
 				[containerId],
 			);
 			const project = row.rows[0];
-			if (project) return suffix(getWorkspacePath(dataDir, project.team_id, project.id));
+			if (project) {
+				for (const mount of FAKE_PROJECT_MOUNTS) {
+					const resolved = under(
+						mount.containerRoot,
+						mount.hostRoot(dataDir, project.team_id, project.id),
+					);
+					if (resolved) return resolved;
+				}
+				// Outside both mounts (a per-run runtime home): the workspace stands in,
+				// so a write and the read that follows it still land on the same bytes.
+				return getWorkspacePath(dataDir, project.team_id, project.id);
+			}
 		} catch {
 			// Fall through to the scratch dir below - a fake must never throw from
 			// a path resolution.
