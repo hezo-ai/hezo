@@ -42,7 +42,17 @@ export enum FrameType {
 	Open = 1,
 	/** Payload bytes for an open stream, in either direction. */
 	Data = 2,
-	/** Sender will send no more on this stream. Payload: empty. */
+	/**
+	 * The stream is finished. Payload: empty.
+	 *
+	 * **Full close, not half-close.** Both ends drop the stream on receipt, so
+	 * anything still in flight the other way is discarded. That is enough for all
+	 * three legs - an HTTP exchange, an MCP stream and an ssh-agent round trip all
+	 * complete before either side closes - but a client that shut down its write
+	 * half while still awaiting a reply would see the reply dropped. Said plainly
+	 * because the obvious reading of "sender will send no more" is half-close,
+	 * and building on that assumption would fail only under load.
+	 */
 	Close = 3,
 	/**
 	 * Receiver has consumed `payload` bytes and will accept that many more.

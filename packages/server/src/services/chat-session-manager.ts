@@ -41,6 +41,7 @@ import {
 	getProviderCredentialAndModel,
 } from './ai-provider-keys';
 import { getChatMemory, loadActiveWindow, markCompacted, selectFlush } from './chat-memory';
+import { loadConnectorDescriptors } from './connectors/connections';
 import type { ContainerLogStreamer } from './container-logs';
 import { type ContainerRunUser, resolveContainerRunUser } from './container-user';
 import { type ContainerDeps, ensureProjectContainerRunning } from './containers';
@@ -1124,6 +1125,12 @@ export class ChatSessionManager {
 			// outlives many turns, so this is the longest-lived tunnel there is;
 			// suspend closes it and resume opens a fresh one, because the host-side
 			// ports it points at are reallocated too.
+			// Resolved once and used twice: the tunnel's split-routing policy needs
+			// the connector hosts (their method allowlist is enforced at the proxy,
+			// so one routed direct would skip it) and the runtime invocation needs
+			// the descriptors themselves. Two loads a moment apart could disagree.
+			const connectorDescriptors = await loadConnectorDescriptors(this.deps.db, inputs.projectId);
+
 			tunnel = await startRunTunnel({
 				engine: this.deps.docker,
 				containerId,
@@ -1138,7 +1145,11 @@ export class ChatSessionManager {
 						? { host: egressHost.host, port: egressHost.port }
 						: { host: '127.0.0.1', port: 0 },
 				},
-				policy: await buildTunnelHostPolicy(this.deps.db, []),
+				// Connector hosts belong in the policy even though a chat turn builds no
+				// MCP descriptors of its own: the policy governs what this *container*
+				// proxies, and the per-connector method allowlist is enforced at the
+				// proxy, so a connector host routed direct from here would skip it.
+				policy: await buildTunnelHostPolicy(this.deps.db, connectorDescriptors),
 			});
 			const endpoints = tunnel.endpoints;
 
@@ -1178,6 +1189,7 @@ export class ChatSessionManager {
 
 			const invocation = await buildRuntimeInvocation({
 				endpoints,
+				connectorDescriptors,
 				deps: this.deps,
 				runTeamId: DEFAULT_TEAM_ID,
 				projectId: inputs.projectId,

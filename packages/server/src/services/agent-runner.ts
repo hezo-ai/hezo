@@ -513,6 +513,17 @@ export interface RuntimeInvocationInput {
 	 * learning that a tunnel exists.
 	 */
 	endpoints: RunEndpoints;
+	/**
+	 * The project's connector MCP servers.
+	 *
+	 * Passed in rather than loaded here because the caller needs them *before*
+	 * this runs: the tunnel's split-routing policy has to name the connector hosts
+	 * so they reach the egress proxy, where the per-connector method allowlist is
+	 * enforced. Resolving them once and handing them down also keeps the policy
+	 * and the descriptors describing the same set - two loads a moment apart could
+	 * disagree, and the one that silently lost a host would be the policy.
+	 */
+	connectorDescriptors: McpDescriptor[];
 	/** Caller-specific env entries (e.g. HEZO_TASK_ID for a run). */
 	extraEnv?: string[];
 }
@@ -548,6 +559,7 @@ export async function buildRuntimeInvocation(
 		bridge,
 		egress,
 		endpoints,
+		connectorDescriptors,
 		extraEnv = [],
 	} = input;
 
@@ -583,7 +595,7 @@ export async function buildRuntimeInvocation(
 			url: `${endpoints.hezoBaseUrl}/mcp`,
 			bearerToken: agentJwt,
 		},
-		...(await loadConnectorDescriptors(deps.db, projectId)),
+		...connectorDescriptors,
 	];
 
 	const mcpInjection = adapter.build(mcpDescriptors, {
@@ -777,6 +789,10 @@ async function buildRunContext(
 	runUser: ContainerRunUser,
 	progressUpdate: ProgressUpdateContext | null,
 	endpoints: RunEndpoints,
+	// Loaded before the tunnel starts, because the tunnel's split-routing policy
+	// needs the connector hosts and the tunnel is up before this runs. Passed in
+	// rather than re-queried so a run resolves them exactly once.
+	connectorDescriptors: McpDescriptor[],
 ): Promise<RunContext> {
 	// The run is scoped to the project's team (the "run team"). For normal agents
 	// this equals the agent's home team; for instance agents (CEO/Coach) that
@@ -885,6 +901,7 @@ async function buildRunContext(
 
 	const { env, cmd, execCmd, subscriptionMount, homeMount } = await buildRuntimeInvocation({
 		endpoints,
+		connectorDescriptors,
 		deps,
 		runTeamId,
 		projectId: project.id,
@@ -1312,6 +1329,15 @@ export async function runAgent(
 			};
 		}
 
+		// Loaded before the tunnel because its split-routing policy needs the
+		// connector hosts: the per-connector method allowlist is enforced *at the
+		// proxy*, so a connector routed direct would skip its policy check even when
+		// no secret is involved. They resolve from the db and the project alone -
+		// only the `hezo` descriptor needs the tunnel's endpoints, and that one is
+		// container loopback and never proxied - so nothing here waits on the
+		// tunnel. Threaded into `buildRunContext` after, so a run resolves them once.
+		const connectorDescriptors = await loadConnectorDescriptors(deps.db, project.id);
+
 		// The tunnel is how a container reaches Hezo - the only how, on every
 		// backend. Started here because it needs both allocations above: there is
 		// nothing to point the ssh and proxy targets at until they exist.
@@ -1329,7 +1355,7 @@ export async function runAgent(
 					? { host: egressHost.host, port: egressHost.port }
 					: { host: '127.0.0.1', port: 0 },
 			},
-			policy: await buildTunnelHostPolicy(deps.db, []),
+			policy: await buildTunnelHostPolicy(deps.db, connectorDescriptors),
 		});
 		const endpoints: RunEndpoints = tunnel.endpoints;
 
@@ -1370,6 +1396,7 @@ export async function runAgent(
 			runUser,
 			progressUpdate ?? null,
 			endpoints,
+			connectorDescriptors,
 		);
 
 		// Rooted at the workspace, which is what makes the prompt path relative and
