@@ -296,7 +296,17 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	// Dockerfile at sandbox create and has no image store to seed or prune. Keyed
 	// on the engine itself rather than on how it was constructed, so a Docker
 	// engine gets this setup whichever path produced it.
-	if (docker instanceof DockerClient) {
+	// Tested against the **concrete** engine, never the holder's proxy: a proxy is
+	// not an instance of anything, so branching on `docker` here silently skipped
+	// image setup entirely the moment the holder was introduced - agent-base was
+	// never extracted and stale bundled images were never pruned, with nothing
+	// saying so. `startup-real-docker-branch` is what caught it.
+	//
+	// Boot-time only, and knowingly: switching *to* Docker at runtime does not
+	// re-run this. The image resolver falls back to pulling the published image,
+	// so a switched instance still works; it just does not get the local-build
+	// fallback until the next restart.
+	if (initialEngine instanceof DockerClient) {
 		// A compiled binary has no repo checkout, so extract the embedded agent-base
 		// build context to the data dir and point the image resolver at it. This is
 		// the local-build fallback for when the published-image pull fails, and it's
