@@ -1188,13 +1188,13 @@ Two further quota facts were measured, and both bear on the pool:
   provider-side notion of "suspended" the adapter chooses, rather than one shape for both.
 - **Memory is a separate provider cap from disk, and binds first at this container size.** The
   tier measured allowed 10 GiB total memory and 30 GiB total disk - three sandboxes either
-  way at 3 GiB/10 GiB each. Hezo's budget knows neither: it counts a container as its *cap*
-  (`memory_limit_gib`, 2 GB) while the provider allocates the **hard cap** - cap plus
-  `MEMORY_HARD_CAP_HEADROOM_BYTES`, rounded up - so the accounting understates real
-  consumption by 50% at that size, and a budget set to 24 GB admits twelve containers the
-  provider refuses on the fourth. The workaround noted above (size the budget against
-  `quota_disk_gb / 10`) therefore needs to be the *minimum* of the disk and memory
-  derivations, and computed against the hard cap rather than the cap.
+  way at 3 GiB/10 GiB each. Hezo's budget knows neither, so a budget set to 24 GB admits
+  twelve containers the provider refuses on the fourth. The workaround noted above (size the
+  budget against `quota_disk_gb / 10`) therefore needs to be the *minimum* of the disk and
+  memory derivations. Note the budget and the provider now agree on the **per-container**
+  figure at least: the caller states the project's ceiling and the Docker adapter alone adds
+  its cgroup headroom, so a managed sandbox is allocated exactly what the budget charges for
+  it (rounded up to the provider's whole-GB unit).
 
 **Digest resolution** (`sandbox/image-ref.ts`) is the generic OCI registry manifest lookup
 that makes the pin possible: a HEAD on the manifest, exchanging a `WWW-Authenticate: Bearer`
@@ -1204,6 +1204,18 @@ tag** rather than failing when the registry cannot be reached - an offline insta
 private registry, or a locally-built tag that exists in no registry at all would otherwise
 be unable to start a container over a cache-freshness concern. The fallback logs what it
 costs, because the failure it re-admits is otherwise invisible.
+
+**The loopback ports are drawn from below the kernel's ephemeral range.**
+`TUNNEL_PORT_BASE` is 19080 with a range of 300 (`sandbox/endpoints.ts`), allocated as
+adjacent triples per container (`tunnel/ports.ts`) because a container carries several
+tunnels at once - a run, a chat turn, a provisioning git op - each with its own host-side
+egress and ssh allocation behind it. The range must stay under **32768**, the floor of
+Linux's default `net.ipv4.ip_local_port_range` (32768-60999, which a fresh network namespace
+inherits as its own default): a range inside it - this used to start at 47080 - can be
+claimed as the *source* port of an outbound connection the container makes, and the client's
+later `bind()` then fails. It presented as "the tunnel client did not bind its ports within
+Nms", intermittently and more often on a busy container, reading as an infrastructure flake
+rather than a port conflict.
 
 **`startRunTunnel` does not return until the endpoints work.** Opening the channel only
 *starts* the client; it is a process that still has to boot and bind three loopback ports, and
@@ -1437,6 +1449,17 @@ container, an idle member a task has affinity with, the chat's container and a m
 for unpushed commits as unreferenced. `suspended` matters most: that is the state a container
 the pool means to resume sits in, and destroying one loses its filesystem.
 
+**Operator-driven teardown covers the whole pool too, for the same reason.** Both
+`teardownContainer` (project deletion) and `rebuildContainer` (the Container page's Rebuild)
+remove every `container_pool_members` row of the project plus whatever `projects.container_id`
+names, not the named container alone. A rebuild is an operator saying "this project's
+container is wrong" - a changed base image, a broken toolchain - and removing one member of
+three left the rest running the **old** image, still reachable by the allocation ladder and
+still charged against the memory budget, so the fix applied to whichever container the next
+run happened to land on. The member row is dropped even when the engine call fails or
+`--keep-old-containers` spares the container itself: a row pointing at a container this
+rebuild replaced would hand the next run exactly what the operator asked to be rid of.
+
 A container is destroyed only on its **second consecutive sighting**. Provisioning has a
 window where a container exists on the engine and is recorded nowhere yet - `createContainer`
 has returned an id and the pool row is written only after it starts - and one caught there is
@@ -1652,7 +1675,13 @@ budget, since none of them live inside one, and the second subtraction holds bac
 container): dispatch passes a run whose project has a container free to take it (no new
 container needed) and queues one whose next container would not fit the budget
 (`WakeupSkipReason.InstanceAtCapacity`, retried by the 5s dispatcher; an in-memory
-`pendingContainerStarts` refcount covers the window before the DB row reads Running). Dispatch
+`pendingContainerStarts` refcount covers the window before the new member reaches the DB).
+Whether a dispatch takes such a slot is read off the **same** gate verdict that admitted it
+(`CapacityVerdict.hasSpareContainer`), not re-derived from `projects.container_status`: those
+answered the same question only while a project had one container, and with a pool a project
+whose named container reads Running but whose members are all busy still needs a new one - so
+the old test held no slot for a container it was about to create, and two such dispatches
+could fit themselves into the same headroom. Dispatch
 drains FIFO by `created_at` with no per-project fair-share — a deep backlog in one project
 consumes freed slots first; that scheduler is the hook if this ever needs fairness. The chat
 path is *not* gated: its container is exempt from the budget rather than charged against it
@@ -1723,10 +1752,9 @@ its abort handler on the *response* stream's end, never on the `ClientRequest`'s
 that had already been detached.
 
 **Container hardening.** Each project container is created with a hardened `HostConfig`
-(`provisionContainer`): a cgroup memory cap (`Memory`=`MemorySwap`= the effective RAM cap +
-512 MiB headroom, so no swap escape valve — the per-project `memory_limit_gib` override when
-set, else the instance-wide `default_ram_cap_per_container_gb`, default 2 GB) as a hard
-backstop *behind*
+(`provisionContainer`): a memory ceiling (`Memory`=`MemorySwap`= the per-project
+`memory_limit_gib` override when set, else the instance-wide
+`default_ram_cap_per_container_gb`, default 2 GB) as a hard backstop *behind*
 the sync-loop stats poller that stays the graceful early-stop at the configured ceiling;
 `PidsLimit` (4096) as a fork-bomb guard; `Init: true` so a real init reaps zombies under the
 `sleep infinity` PID 1; and `CapDrop: ['ALL']` with a minimal add-back
@@ -1737,6 +1765,18 @@ conditional `NET_ADMIN` for MTU pinning). Two hardenings are **deliberately omit
 container on the host and break the bind-mount ownership model below). The kernel remains the
 isolation boundary within a host; the tenant boundary for untrusted multi-tenant is the VM
 (see the hosted architecture), not the container.
+
+**Where the cgroup headroom lives.** `provisionContainer` states the project's working-set
+**ceiling** and nothing more; `DockerClient.createContainer` is what sets the cgroup limit a
+little above it (`MEMORY_HARD_CAP_HEADROOM_BYTES`, 512 MiB) so a runaway allocation *between*
+stats-poll ticks meets the kernel OOM killer instead of destabilizing the operator's host.
+That split follows the seam: the margin is a cgroup concern and a shared-host concern, and a
+managed sandbox has neither - it is allocated exactly the ceiling, on a machine that is
+nobody else's. Folding it into the caller made **both** backends ask their provider for more
+memory than the project was configured for, and at the boundary refused outright: a project
+set to a managed provider's documented per-sandbox maximum arrived as maximum-plus-slack,
+rounded up past the ceiling, and was rejected with a message telling the operator to lower a
+limit they had set to the advertised value.
 
 **Container run-user & host-file ownership.** The agent base image (`node:24-slim`) sets no
 `USER`, so the container runs as **root**; Hezo deprivileges individual `docker exec`s — the
@@ -2343,6 +2383,19 @@ assumes the agent itself may misbehave; the egress proxy is the choke point.
 They are **instance-global** — `name` is globally unique and the egress proxy resolves the
 placeholder by name with no project context — bounded per-secret by `allowed_hosts`. The
 master key (§ 10) decrypts at request time.
+
+**One matcher for `allowed_hosts`, in `@hezo/shared`.** `hostMatchesAllowedHosts` decides
+both "may a secret be substituted into a request to this host" (the proxy) and "must this
+host go through the proxy at all" (the tunnel's split routing, § Container tunnel) — the same
+question, so deliberately not two functions. Rules: an exact host matches itself;
+`*.example.com` matches subdomains and **not** the apex (the TLS-certificate convention, and
+what the connector registry assumes when it lists `sentry.io` *and* `*.sentry.io`); matching
+is case-insensitive. Three copies had grown and two used a leading-dot syntax instead, so a
+credential scoped to `*.datocms.com` matched nothing on the tunnel side: the container
+connected direct, past the proxy, and the placeholder reached the provider unsubstituted -
+failing as a 401 with nothing naming the cause. The in-container client
+(`docker/scripts/hezo-tunnel`) cannot import the shared function and carries a hand-written
+copy, exercised as the real script over real sockets in `sandbox-tunnel-client.test.ts`.
 
 The decrypted vault is **cached in server memory** rather than re-read and re-decrypted per
 request. `loadAllSecrets` runs for every proxied request carrying a placeholder — every MCP

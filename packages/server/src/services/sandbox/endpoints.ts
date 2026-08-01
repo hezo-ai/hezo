@@ -74,11 +74,27 @@ export interface TunnelPorts {
 /**
  * Range the in-container listen ports are drawn from.
  *
- * High enough to sit clear of anything an agent is likely to bind while
- * developing, and inside the container's own network namespace either way - so
- * these never collide with a host port or with another container.
+ * Two constraints, and the second is the one that moved this range.
+ *
+ * Clear of what an agent binds while developing - 3000, 5173, 8080 and the rest
+ * of the usual suspects sit well below - and inside the container's own network
+ * namespace either way, so these never collide with a host port or with another
+ * container.
+ *
+ * And **below the kernel's ephemeral range**, which on Linux defaults to
+ * 32768-60999 (`net.ipv4.ip_local_port_range`, and a fresh network namespace
+ * gets that default rather than the host's current value). This range used to
+ * start at 47080, squarely inside it: an outbound connection the container makes
+ * - npm, apt, git, the agent's own traffic - can be assigned one of these as its
+ * *source* port, and the tunnel client's later `bind()` on that port then fails.
+ * It surfaced as "the tunnel client did not bind its ports within Nms", which
+ * reads as an infrastructure flake rather than a port conflict, and got likelier
+ * the busier the container was.
+ *
+ * `TUNNEL_PORT_BASE + TUNNEL_PORT_RANGE` must stay under 32768; the test asserts
+ * it, because the failure it prevents is intermittent and misattributed.
  */
-export const TUNNEL_PORT_BASE = 47080;
+export const TUNNEL_PORT_BASE = 19080;
 export const TUNNEL_PORT_RANGE = 300;
 
 /**

@@ -2383,11 +2383,11 @@ describe('JobManager workflow methods', () => {
 			await stopProjectContainers(db, projectId);
 			await seedRunningContainerProject(db, 'cap-check-a');
 
-			expect(await (manager as any).isContainerCapacityBlocked(projectId)).toBe(true);
+			expect((await (manager as any).isContainerCapacityBlocked(projectId)).blocked).toBe(true);
 
 			// The filler's container stops — the slot frees and the block lifts.
 			await db.query(`UPDATE projects SET container_status = 'stopped' WHERE slug = 'cap-check-a'`);
-			expect(await (manager as any).isContainerCapacityBlocked(projectId)).toBe(false);
+			expect((await (manager as any).isContainerCapacityBlocked(projectId)).blocked).toBe(false);
 
 			manager.shutdown();
 			await startProjectContainers(db, projectId);
@@ -2400,9 +2400,42 @@ describe('JobManager workflow methods', () => {
 			// The project's own running container fills the single slot — but a run
 			// into it needs no NEW container, so it must pass.
 			await setContainerCapacityForTest(db, 1);
-			expect(await (manager as any).isContainerCapacityBlocked(projectId)).toBe(false);
+			expect((await (manager as any).isContainerCapacityBlocked(projectId)).blocked).toBe(false);
 			manager.shutdown();
 			await clearContainerCapacityForTest(db);
+		});
+
+		it('reports spare capacity from the pool, which is what tells a dispatch it will create a container', async () => {
+			// The gate returns this alongside its verdict so the dispatch after it
+			// knows whether to hold a pending-start slot. It used to answer that from
+			// `projects.container_status` instead, and the two stopped agreeing the
+			// moment a project could hold several containers: a project whose named
+			// container reads Running but whose members are all busy still needs a
+			// new one, so no slot was held for a container about to be created and
+			// two such dispatches could fit into the same headroom.
+			const manager = createJobManager();
+			try {
+				await startProjectContainers(db, projectId);
+				expect(
+					(await (manager as any).isContainerCapacityBlocked(projectId)).hasSpareContainer,
+				).toBe(true);
+
+				// Busy, not stopped: the project row still reads `running`, which is
+				// exactly the case the old test could not distinguish.
+				await db.query(`UPDATE container_pool_members SET state = 'busy' WHERE project_id = $1`, [
+					projectId,
+				]);
+				const verdict = await (manager as any).isContainerCapacityBlocked(projectId);
+				expect(verdict.hasSpareContainer).toBe(false);
+				const status = await db.query<{ container_status: string }>(
+					'SELECT container_status FROM projects WHERE id = $1',
+					[projectId],
+				);
+				expect(status.rows[0].container_status).toBe('running');
+			} finally {
+				manager.shutdown();
+				await startProjectContainers(db, projectId);
+			}
 		});
 
 		it('pending lazy-starts hold a slot and let same-project dispatches piggyback', async () => {
@@ -2412,15 +2445,17 @@ describe('JobManager workflow methods', () => {
 			(manager as any).acquirePendingContainerStart(projectId);
 
 			// The same project piggybacks on the in-flight start…
-			expect(await (manager as any).isContainerCapacityBlocked(projectId)).toBe(false);
+			expect((await (manager as any).isContainerCapacityBlocked(projectId)).blocked).toBe(false);
 			// …while a different project is blocked by the slot it holds.
 			expect(
-				await (manager as any).isContainerCapacityBlocked('00000000-0000-0000-0000-0000000000aa'),
+				(await (manager as any).isContainerCapacityBlocked('00000000-0000-0000-0000-0000000000aa'))
+					.blocked,
 			).toBe(true);
 
 			(manager as any).releasePendingContainerStart(projectId);
 			expect(
-				await (manager as any).isContainerCapacityBlocked('00000000-0000-0000-0000-0000000000aa'),
+				(await (manager as any).isContainerCapacityBlocked('00000000-0000-0000-0000-0000000000aa'))
+					.blocked,
 			).toBe(false);
 
 			manager.shutdown();
@@ -2517,7 +2552,7 @@ describe('JobManager workflow methods', () => {
 			const { getActiveContainers } = await import('../src/services/run-concurrency');
 			const active = await getActiveContainers(db, createStubDocker());
 			await setContainerCapacityForTest(db, Math.ceil(active.usedMemoryGb / 2) + 1);
-			expect(await (manager as any).isContainerCapacityBlocked(projectBId)).toBe(false);
+			expect((await (manager as any).isContainerCapacityBlocked(projectBId)).blocked).toBe(false);
 			await clearContainerCapacityForTest(db);
 
 			manager.shutdown();

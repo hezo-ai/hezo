@@ -1,11 +1,14 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type {
 	CreateSandboxSpec,
 	DaytonaApi,
 	DaytonaFileEntry,
 	DaytonaSandbox,
 } from '../src/services/sandbox/daytona/client';
-import { DaytonaEngine } from '../src/services/sandbox/daytona/engine';
+import { bindMountDirs, DaytonaEngine } from '../src/services/sandbox/daytona/engine';
 import { clearImageDigestCache } from '../src/services/sandbox/image-ref';
 
 interface Recorded {
@@ -212,10 +215,46 @@ describe('DaytonaEngine lifecycle', () => {
 		expect(rec.creates[0].autoStopInterval).toBeGreaterThan(0);
 	});
 
-	it('converts the cgroup byte cap into whole GB', async () => {
+	it('converts the working-set ceiling into whole GB', async () => {
 		const { api, rec } = fakeApi();
 		await new DaytonaEngine(api).createContainer('hezo-p1', CONFIG);
 		expect(rec.creates[0].memory).toBe(2);
+	});
+
+	it('rounds a fractional ceiling up, never down', async () => {
+		// A 1.5 GB ceiling provisioned as 1 GB is a container that OOMs below the
+		// limit its run was sized against - which reads as an agent failure.
+		const { api, rec } = fakeApi();
+		await new DaytonaEngine(api).createContainer('hezo-p1', {
+			...CONFIG,
+			HostConfig: { Memory: 1.5 * 1024 ** 3 },
+		});
+		expect(rec.creates[0].memory).toBe(2);
+	});
+
+	it('accepts a project set to exactly the provider ceiling', async () => {
+		// The boundary case, and the reason the cgroup headroom moved into the
+		// Docker adapter. With it folded into the caller's figure, 8 GB - the value
+		// the provider's own docs advertise as the maximum - arrived here as 8.5,
+		// rounded to 9, and was refused with a message telling the operator to lower
+		// a limit they had set to exactly the documented maximum, quoting a number
+		// they never entered.
+		const { api, rec } = fakeApi();
+		await new DaytonaEngine(api).createContainer('hezo-p1', {
+			...CONFIG,
+			HostConfig: { Memory: 8 * 1024 ** 3 },
+		});
+		expect(rec.creates[0].memory).toBe(8);
+	});
+
+	it('refuses a ceiling above what the provider can allocate, rather than shrinking it', async () => {
+		const { api } = fakeApi();
+		await expect(
+			new DaytonaEngine(api).createContainer('hezo-p1', {
+				...CONFIG,
+				HostConfig: { Memory: 12 * 1024 ** 3 },
+			}),
+		).rejects.toThrow(/at most 8 GB/);
 	});
 
 	it('does not re-start a sandbox that create already started', async () => {
@@ -232,6 +271,68 @@ describe('DaytonaEngine lifecycle', () => {
 		const { api, rec } = fakeApi({}, [{ id: 'sbx-9', state: 'stopped' }]);
 		await new DaytonaEngine(api).startContainer('sbx-9');
 		expect(rec.started).toEqual(['sbx-9']);
+	});
+});
+
+/**
+ * Docker brings a bind's target into existence as a side effect of create. A
+ * managed sandbox has no binds, so the adapter has to meet the same
+ * postcondition - or the chown that follows, and every clone and worktree after
+ * it, fails on a missing path on one backend and nowhere else.
+ */
+describe('bindMountDirs', () => {
+	let root: string;
+	let dir: string;
+	let file: string;
+
+	beforeAll(() => {
+		root = mkdtempSync(join(tmpdir(), 'hezo-binds-'));
+		dir = join(root, 'previews');
+		mkdirSync(dir);
+		file = join(root, 'hezo-egress.crt');
+		writeFileSync(file, 'cert');
+	});
+	afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+	it('creates a dotted directory target rather than its parent', async () => {
+		// The bug this exists for. Classification used to ask whether the *container*
+		// path contained a dot, which is true of any dotted directory - so
+		// `/workspace/.previews` was read as a file and `/workspace` was created in
+		// its place, leaving the one target that had to be created the one that
+		// never was.
+		expect([...bindMountDirs([`${dir}:/workspace/.previews:rw`])]).toEqual([
+			'/workspace/.previews',
+		]);
+	});
+
+	it('creates the parent of a file mount, since the file itself is the mount', async () => {
+		// The egress CA is a single file; its directory is what must exist.
+		expect([...bindMountDirs([`${file}:/usr/local/share/ca-certificates/hezo.crt:ro`])]).toEqual([
+			'/usr/local/share/ca-certificates',
+		]);
+	});
+
+	it('reads the host side, not the container path, so an extensionless file still resolves', async () => {
+		const plain = join(root, 'plainfile');
+		writeFileSync(plain, 'x');
+		expect([...bindMountDirs([`${plain}:/etc/hezo/marker:ro`])]).toEqual(['/etc/hezo']);
+	});
+
+	it('treats an unreadable host path as a directory, which is what Docker does', async () => {
+		expect([...bindMountDirs([`${join(root, 'gone')}:/workspace:rw`])]).toEqual(['/workspace']);
+	});
+
+	it('handles the production bind list', async () => {
+		const dirs = bindMountDirs([
+			`${root}:/workspace:rw`,
+			`${dir}:/workspace/.previews:rw`,
+			`${file}:/usr/local/share/ca-certificates/hezo.crt:ro`,
+		]);
+		expect([...dirs].sort()).toEqual([
+			'/usr/local/share/ca-certificates',
+			'/workspace',
+			'/workspace/.previews',
+		]);
 	});
 });
 

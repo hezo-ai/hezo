@@ -204,16 +204,6 @@ export function shouldKeepOldContainers(): boolean {
 
 const memoryLimitBytes = (gib: number) => gib * 1024 ** 3;
 
-/**
- * Headroom the cgroup hard cap sits above the project's working-set ceiling.
- * The stats poller in the sync loop stays the graceful early-stop (clean
- * `stopContainer` + explanation in `container_error` at the configured limit);
- * the cgroup cap exists so a runaway allocation between poll ticks hits the
- * kernel OOM killer (exit 137) instead of destabilizing the host. MemorySwap
- * is set equal to Memory, so the cap has no swap escape valve.
- */
-const MEMORY_HARD_CAP_HEADROOM_BYTES = 512 * 1024 ** 2;
-
 /** Fork-bomb backstop; generous for npm/build process fan-out. */
 const CONTAINER_PIDS_LIMIT = 4096;
 
@@ -434,16 +424,17 @@ export async function provisionContainer(
 
 		emit('stdout', `→ Creating container ${containerName}`);
 
-		// cgroup hard cap = the project's working-set ceiling + headroom; the
-		// sync-loop stats poller remains the graceful early-stop at the ceiling
-		// itself (see MEMORY_HARD_CAP_HEADROOM_BYTES).
+		// The project's working-set ceiling, stated as itself. The sync-loop stats
+		// poller is the graceful early-stop at exactly this figure; whether a margin
+		// sits above it, and how big, is the engine's business - see
+		// `ContainerConfig.HostConfig.Memory` and `MEMORY_HARD_CAP_HEADROOM_BYTES`.
 		const limitRow = await db.query<{ memory_limit_gib: number | null }>(
 			'SELECT memory_limit_gib FROM projects WHERE id = $1',
 			[project.id],
 		);
 		const memoryLimitGib =
 			limitRow.rows[0]?.memory_limit_gib ?? (await getDefaultRamCapPerContainerGb(db));
-		const memoryHardCapBytes = memoryLimitBytes(memoryLimitGib) + MEMORY_HARD_CAP_HEADROOM_BYTES;
+		const memoryCeilingBytes = memoryLimitBytes(memoryLimitGib);
 		// Same precedence as the memory cap: the project's override, else the
 		// instance default. Stated on every backend; what it means is the engine's
 		// to absorb (see ContainerConfig.HostConfig.DiskGb).
@@ -460,8 +451,8 @@ export async function provisionContainer(
 				PortBindings: portBindings,
 				ExtraHosts: extraHosts,
 				Init: true,
-				Memory: memoryHardCapBytes,
-				MemorySwap: memoryHardCapBytes,
+				Memory: memoryCeilingBytes,
+				MemorySwap: memoryCeilingBytes,
 				DiskGb: diskGb,
 				PidsLimit: CONTAINER_PIDS_LIMIT,
 				CapDrop: ['ALL'],
@@ -1133,6 +1124,18 @@ export async function verifyContainerWorkspace(
 	}
 }
 
+/**
+ * Replace a project's containers with a freshly provisioned one.
+ *
+ * **Every member, not just the one `projects.container_id` names.** A rebuild is
+ * an operator saying "this project's container is wrong" - a changed base image,
+ * a broken toolchain, a wedged daemon - and a project can hold several. Removing
+ * only the named one left the rest running on the *old* image, still reachable
+ * by the allocation ladder and still charged against the instance memory budget:
+ * the operator's explicit fix silently applied to one container out of three,
+ * and the next run could land on either. `teardownContainer` already sweeps the
+ * whole pool for the same reason; this is the other half of it.
+ */
 export async function rebuildContainer(
 	deps: ContainerDeps,
 	project: ProjectRow,
@@ -1142,34 +1145,52 @@ export async function rebuildContainer(
 	beginProvisionStream(logs, project.id);
 	const streamId = provisionStreamId(project.id);
 
-	if (project.container_id) {
+	const toRemove = new Set(await listPoolContainerIds(db, project.id));
+	if (project.container_id) toRemove.add(project.container_id);
+
+	if (toRemove.size > 0) {
 		log.info(
-			`project ${ref(project.slug, project.id)} container ${ref(project.slug, project.container_id.slice(0, 12))} rebuild started`,
+			`project ${ref(project.slug, project.id)} rebuild started (${toRemove.size} container(s) to remove)`,
 		);
-		logs?.emit(
-			streamId,
-			'stdout',
-			`→ Removing previous container ${project.container_id.slice(0, 12)}`,
-		);
-		const lastLogs = await captureContainerLogs(docker, project.container_id, project.slug);
-		const annotatedLogs = appendMemoryLine(lastLogs, consumeFinalMemoryLine(project.id));
-		if (annotatedLogs) {
-			await db.query('UPDATE projects SET container_last_logs = $1 WHERE id = $2', [
-				annotatedLogs,
-				project.id,
-			]);
+		// Only the named container's logs are kept: `container_last_logs` is a
+		// single column describing "the project's container", and the operator is
+		// looking at the one the Container page showed them.
+		if (project.container_id) {
+			logs?.emit(
+				streamId,
+				'stdout',
+				`→ Removing previous container ${project.container_id.slice(0, 12)}`,
+			);
+			const lastLogs = await captureContainerLogs(docker, project.container_id, project.slug);
+			const annotatedLogs = appendMemoryLine(lastLogs, consumeFinalMemoryLine(project.id));
+			if (annotatedLogs) {
+				await db.query('UPDATE projects SET container_last_logs = $1 WHERE id = $2', [
+					annotatedLogs,
+					project.id,
+				]);
+			}
 		}
-		if (!keepOldContainersFlag) {
-			try {
-				await docker.stopContainer(project.container_id);
-			} catch {
-				// Already stopped
+		for (const id of toRemove) {
+			if (id !== project.container_id) {
+				logs?.emit(streamId, 'stdout', `→ Removing pool container ${id.slice(0, 12)}`);
 			}
-			try {
-				await docker.removeContainer(project.container_id, true);
-			} catch {
-				// Already removed
+			if (!keepOldContainersFlag) {
+				try {
+					await docker.stopContainer(id);
+				} catch {
+					// Already stopped
+				}
+				try {
+					await docker.removeContainer(id, true);
+				} catch {
+					// Already removed
+				}
 			}
+			// Dropped whether or not the engine call succeeded, and whether or not
+			// `keepOldContainersFlag` spared the container itself: a member row
+			// pointing at a container this rebuild has replaced would hand the next
+			// run the container the operator just asked to be rid of.
+			await removePoolMember(db, id);
 		}
 	} else {
 		log.info(`project ${ref(project.slug, project.id)} rebuild started (no previous container)`);

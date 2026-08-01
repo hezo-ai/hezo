@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type ByteChannel, TunnelMux } from '../src/services/sandbox/tunnel/mux';
 import { nodeTunnelSocket } from '../src/services/sandbox/tunnel/net-socket';
+import { hostNeedsProxy } from '../src/services/sandbox/tunnel/split-routing';
 
 /**
  * The in-container client is a plain Node script in the image, so its copy of
@@ -190,6 +191,33 @@ describe('hezo-tunnel split routing', () => {
 		expect(seen[0]).toBe('CONNECT api.github.com:443 HTTP/1.1');
 	});
 
+	it('sends a wildcard-matched subdomain through Hezo', async () => {
+		// The syntax the vault actually stores. `allowed_hosts` holds `*.example.com`
+		// - it is what the shipped connector registry uses (`*.datocms.com`,
+		// `*.sentry.io`) and what the egress proxy matches on - but this client and
+		// the policy builder had both been written against a leading-dot form, so a
+		// wildcard entry matched nothing here. The container connected direct, the
+		// placeholder was never substituted, and the agent got a 401 from the
+		// provider with nothing naming the cause.
+		const seen: string[] = [];
+		const proxyTarget = await listenOn((socket) => {
+			socket.on('data', (chunk) => {
+				seen.push(chunk.toString().split('\r\n')[0]);
+				socket.end('HTTP/1.1 200 Connection Established\r\n\r\n');
+			});
+		});
+		const { ports } = await startTunnel({
+			targets: { proxy: proxyTarget },
+			policy: { proxiedHosts: ['*.datocms.com'], proxyEverything: false },
+		});
+
+		await exchange(
+			ports.proxy,
+			'CONNECT mcp.datocms.com:443 HTTP/1.1\r\nHost: mcp.datocms.com\r\n\r\n',
+		);
+		expect(seen[0]).toBe('CONNECT mcp.datocms.com:443 HTTP/1.1');
+	});
+
 	it('dials an unmatched host directly instead of through Hezo', async () => {
 		// npm, apt and playwright install must not push their payload through the
 		// Hezo instance. The origin here answers on loopback so "direct" is
@@ -234,20 +262,34 @@ describe('hezo-tunnel split routing', () => {
 		expect(seen[0]).toBe('CONNECT registry.npmjs.org:443 HTTP/1.1');
 	});
 
-	it('matches a leading-dot policy entry on subdomains, like the server copy', async () => {
-		const seen: string[] = [];
+	it('treats a wildcard as covering subdomains only, exactly as the server copy does', async () => {
+		// The apex is not a subdomain - the convention TLS certificates use, and
+		// what the shipped connector registry assumes when it lists `sentry.io`
+		// *and* `*.sentry.io`. Asserted through the real client because this file is
+		// a hand-written copy of the shared matcher, so "the server agrees" has to
+		// be shown here rather than reasoned about.
+		const proxied: string[] = [];
 		const proxyTarget = await listenOn((socket) => {
-			socket.on('data', (chunk) => {
-				seen.push(chunk.toString().split('\r\n')[0]);
-				socket.end('HTTP/1.1 200 Connection Established\r\n\r\n');
-			});
+			socket.on('data', (c) => proxied.push(c.toString()));
+		});
+		const origin = await listenOn((socket) => {
+			socket.on('data', () => socket.end('DIRECT-OK'));
 		});
 		const { ports } = await startTunnel({
 			targets: { proxy: proxyTarget },
-			policy: { proxiedHosts: ['.github.com'], proxyEverything: false },
+			policy: { proxiedHosts: ['*.github.com'], proxyEverything: false },
 		});
 
-		await exchange(ports.proxy, 'CONNECT uploads.github.com:443 HTTP/1.1\r\n\r\n');
-		expect(seen[0]).toBe('CONNECT uploads.github.com:443 HTTP/1.1');
+		// `127.0.0.1` stands in for the apex: neither is a subdomain of the entry,
+		// and only a loopback origin makes "went direct" observable.
+		const out = await exchange(
+			ports.proxy,
+			`CONNECT 127.0.0.1:${origin} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\nGET / HTTP/1.1\r\n\r\n`,
+		);
+		expect(out).toContain('DIRECT-OK');
+		expect(proxied).toEqual([]);
+		expect(
+			hostNeedsProxy({ proxiedHosts: ['*.github.com'], proxyEverything: false }, 'github.com'),
+		).toBe(false);
 	});
 });

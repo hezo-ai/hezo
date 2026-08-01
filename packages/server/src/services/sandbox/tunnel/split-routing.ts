@@ -1,3 +1,4 @@
+import { hostMatchesAllowedHosts } from '@hezo/shared';
 import type { Db } from '../../../db/database';
 import type { McpDescriptor } from '../../mcp-injectors/types';
 
@@ -25,9 +26,15 @@ import type { McpDescriptor } from '../../mcp-injectors/types';
 
 export interface TunnelHostPolicy {
 	/**
-	 * Hosts that must go through the proxy. Matched by the tunnel client as an
-	 * exact host or a `.suffix` match, the same shape `allowed_hosts` already
-	 * uses.
+	 * Hosts that must go through the proxy, in `allowed_hosts` syntax verbatim:
+	 * an exact host, or `*.example.com` for a domain's subdomains.
+	 *
+	 * Verbatim matters. These entries are copied straight out of the vault, and
+	 * the matcher on both sides is `hostMatchesAllowedHosts` from `@hezo/shared` -
+	 * the same function the egress proxy uses to decide whether to substitute. It
+	 * did not used to be: this side read a leading-dot form, so a secret scoped to
+	 * `*.datocms.com` matched nothing here, the container connected direct, and
+	 * the placeholder reached the provider unsubstituted.
 	 */
 	proxiedHosts: string[];
 	/**
@@ -100,17 +107,18 @@ function addHost(into: Set<string>, raw: string): void {
 /**
  * Whether `host` must be proxied under `policy`.
  *
- * Exported because the tunnel client applies the same rule inside the container
- * and a second implementation would eventually disagree with this one - the
- * kind of divergence that shows up as a secret quietly failing to substitute.
+ * The rule is `allowed_hosts` matching, unchanged - deliberately the *same*
+ * function the proxy uses to decide whether to substitute, because "would a
+ * secret be substituted into a request to this host" and "must this host go
+ * through the proxy" have to be the same question. Two implementations of it is
+ * how a wildcard-scoped credential ended up routed direct.
  *
- * A leading-dot entry matches the domain and its subdomains; anything else is
- * an exact host match. Comparison is case-insensitive, since DNS is.
+ * Exported because the tunnel client applies the identical rule inside the
+ * container; it carries a hand-written copy (it is a plain Node script, so it
+ * cannot import this), exercised as the real script over real sockets in
+ * `sandbox-tunnel-client.test.ts`.
  */
 export function hostNeedsProxy(policy: TunnelHostPolicy, host: string): boolean {
 	if (policy.proxyEverything) return true;
-	const target = host.trim().toLowerCase();
-	return policy.proxiedHosts.some((entry) =>
-		entry.startsWith('.') ? target === entry.slice(1) || target.endsWith(entry) : target === entry,
-	);
+	return hostMatchesAllowedHosts(host, policy.proxiedHosts);
 }

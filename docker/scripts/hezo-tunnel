@@ -70,18 +70,38 @@ function makeDecoder(onFrame) {
 	};
 }
 
-// ---- split routing (mirrors services/sandbox/tunnel/split-routing.ts) ------
+// ---- split routing --------------------------------------------------------
 
 /**
- * A leading-dot entry matches the domain and its subdomains; anything else is
- * an exact host match. Case-insensitive, since DNS is.
+ * `allowed_hosts` matching: an exact host, or `*.example.com` for that domain's
+ * subdomains (not its apex - the convention TLS certificates use).
+ * Case-insensitive, since DNS is.
+ *
+ * A hand-written copy of `hostMatchesAllowedHosts` in `@hezo/shared`, because
+ * this file is a plain Node script baked into the image and cannot import it.
+ * It had been written against a leading-dot form while the vault and the egress
+ * proxy both use `*.`, so a credential scoped to `*.datocms.com` matched nothing
+ * here, the container connected direct, and the placeholder reached the provider
+ * unsubstituted - a 401 with nothing naming the cause.
+ *
+ * `sandbox-tunnel-client.test.ts` spawns this script and drives real sockets
+ * through it, so the copy is tested as it actually runs. Keep it in step with
+ * the shared function whenever either changes.
  */
 function hostNeedsProxy(policy, host) {
 	if (policy.proxyEverything) return true;
 	const target = String(host).trim().toLowerCase();
-	return (policy.proxiedHosts || []).some((entry) =>
-		entry.startsWith('.') ? target === entry.slice(1) || target.endsWith(entry) : target === entry,
-	);
+	if (target.length === 0) return false;
+	for (const raw of policy.proxiedHosts || []) {
+		const entry = String(raw).trim().toLowerCase();
+		if (entry.length === 0) continue;
+		if (entry.startsWith('*.')) {
+			if (target.endsWith(entry.slice(1))) return true;
+		} else if (target === entry) {
+			return true;
+		}
+	}
+	return false;
 }
 
 // ---- the tunnel -----------------------------------------------------------

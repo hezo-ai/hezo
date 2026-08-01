@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { DockerClient } from '../src/services/docker';
+import { DockerClient, MEMORY_HARD_CAP_HEADROOM_BYTES } from '../src/services/docker';
 import { startDockerSockSim } from './helpers/docker-sock-sim';
 
 // The DockerClient's one-shot calls ride `fetch` with Bun's `unix` option; under
@@ -216,6 +216,36 @@ describe('container lifecycle operations', () => {
 		await expect(client().createContainer('dup', { Image: 'img', HostConfig: {} })).rejects.toThrow(
 			'Docker createContainer failed (409): name already in use',
 		);
+	});
+
+	it('sets the cgroup limit above the ceiling it was given, with no swap escape valve', async () => {
+		// The two limits do different jobs. The caller states the project's
+		// working-set **ceiling**, which is where the stats poller stops the
+		// container gracefully; the cgroup cap sits a little above it so a runaway
+		// allocation *between* poll ticks meets the kernel OOM killer rather than
+		// taking the operator's host with it.
+		//
+		// The margin lives here, in the adapter, because it is a cgroup and a
+		// shared-host concern and a managed sandbox has neither. It used to be added
+		// by the caller, which made *both* backends ask their provider for more
+		// memory than the project was configured for - and at the boundary refused a
+		// project set to a managed provider's documented maximum, telling the
+		// operator to lower a limit they had set to the advertised value.
+		const calls = stubFetch(() => json({ Id: 'cid-1', Warnings: [] }, 201));
+		const ceiling = 2 * 1024 ** 3;
+		await client().createContainer('hezo-demo', {
+			Image: 'img',
+			HostConfig: { Memory: ceiling, MemorySwap: ceiling },
+		});
+		const sent = JSON.parse(calls[0].body ?? '{}');
+		expect(sent.HostConfig.Memory).toBe(ceiling + MEMORY_HARD_CAP_HEADROOM_BYTES);
+		expect(sent.HostConfig.MemorySwap).toBe(sent.HostConfig.Memory);
+	});
+
+	it('leaves a config that states no ceiling alone rather than inventing one', async () => {
+		const calls = stubFetch(() => json({ Id: 'cid-1', Warnings: [] }, 201));
+		await client().createContainer('hezo-demo', { Image: 'img', HostConfig: {} });
+		expect(JSON.parse(calls[0].body ?? '{}').HostConfig).toEqual({});
 	});
 
 	it('startContainer succeeds on 204, tolerates 304, and throws otherwise', async () => {

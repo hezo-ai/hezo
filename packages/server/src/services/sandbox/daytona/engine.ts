@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { statSync } from 'node:fs';
 import { DEFAULT_CONTAINER_DISK_GB } from '@hezo/shared';
 import { logger } from '../../../logger';
 import { parseDfKilobytes, parseHezoProcessList } from '../../docker';
@@ -45,6 +46,48 @@ const log = logger.child('daytona-engine');
  */
 const NAME_LABEL = 'hezo.name';
 const IMAGE_LABEL = 'hezo.image';
+
+/**
+ * The container-side **directories** a Docker bind list would have brought into
+ * existence, from `host:container[:mode]` entries.
+ *
+ * Docker creates a bind's target as a side effect of create; a managed sandbox
+ * has no binds, so the adapter has to meet the same postcondition itself -
+ * "after createContainer, every declared mount target exists" - or the chown
+ * that follows, and every clone and worktree after it, fails on a missing path
+ * here and nowhere else.
+ *
+ * The only judgement call is that one bind is a **file** (the egress CA), whose
+ * parent is what must exist rather than the path itself. This used to be decided
+ * by asking whether the container path contained a dot, which is true of any
+ * dotted *directory* - so `/workspace/.previews` was read as a file and
+ * `/workspace` was created in its place, leaving the one target that had to be
+ * created the one that never was. The host side answers it properly: it is the
+ * real path, it exists by the time a container is created
+ * (`ensureProjectWorkspace` for the workspace tree, startup for the CA), and it
+ * is a file or a directory rather than a guess about a name. An unreadable host
+ * path is treated as a directory, which is what Docker itself does with a
+ * missing bind source.
+ */
+export function bindMountDirs(binds: readonly string[]): Set<string> {
+	const targets = new Set<string>();
+	for (const bind of binds) {
+		const parts = bind.split(':');
+		const [source, target] = parts;
+		if (!target) continue;
+		targets.add(isHostFile(source) ? target.slice(0, target.lastIndexOf('/')) : target);
+	}
+	return targets;
+}
+
+function isHostFile(hostPath: string | undefined): boolean {
+	if (!hostPath) return false;
+	try {
+		return statSync(hostPath).isFile();
+	} catch {
+		return false;
+	}
+}
 
 /**
  * Disk (GB) requested when the caller states none. The image is a read-only
@@ -209,15 +252,7 @@ export class DaytonaEngine implements ContainerEngine {
 
 	/** The container-side paths `config.HostConfig.Binds` would have created on Docker. */
 	private async createMountTargets(sandboxId: string, config: ContainerConfig): Promise<void> {
-		const targets = new Set<string>();
-		for (const bind of config.HostConfig.Binds ?? []) {
-			// `host:container[:mode]` - the container side is the second field, and a
-			// file mount (the egress CA) needs its parent rather than itself.
-			const parts = bind.split(':');
-			const target = parts[1];
-			if (!target) continue;
-			targets.add(target.includes('.') ? target.slice(0, target.lastIndexOf('/')) : target);
-		}
+		const targets = bindMountDirs(config.HostConfig.Binds ?? []);
 		// The per-run ssh socket dir is not a bind on any backend; it is created by
 		// provisioning on Docker and has to exist here too.
 		targets.add('/run/hezo');

@@ -186,6 +186,33 @@ export function containerDirChain(root: string, dir: string): string[] {
 	return chain;
 }
 
+/**
+ * Headroom the cgroup hard cap sits above the project's working-set ceiling.
+ *
+ * Two limits, doing different jobs. The stats poller in the sync loop is the
+ * graceful early-stop: at the configured ceiling it stops the container cleanly
+ * and writes an explanation into `container_error`. The cgroup cap sits a little
+ * above that so a runaway allocation *between* poll ticks meets the kernel OOM
+ * killer (exit 137) rather than taking the operator's host with it. `MemorySwap`
+ * is set equal to it, so the cap has no swap escape valve.
+ *
+ * This lives in the Docker adapter because it is a cgroup concern and a
+ * shared-host concern, and a managed sandbox has neither: it is allocated
+ * exactly what was asked for, on a machine that is nobody else's. Keeping it in
+ * the caller made the two backends ask their providers for different amounts of
+ * memory than the project was configured for - and at the boundary, refused a
+ * project set to a managed provider's documented maximum.
+ */
+export const MEMORY_HARD_CAP_HEADROOM_BYTES = 512 * 1024 ** 2;
+
+/** The caller's config with Docker's own margin folded onto the cgroup limits. */
+function withCgroupHeadroom(config: ContainerConfig): ContainerConfig {
+	const ceiling = config.HostConfig.Memory;
+	if (!ceiling) return config;
+	const cap = ceiling + MEMORY_HARD_CAP_HEADROOM_BYTES;
+	return { ...config, HostConfig: { ...config.HostConfig, Memory: cap, MemorySwap: cap } };
+}
+
 /** Single-quote for `sh -c`, closing and reopening around any embedded quote. */
 function shellQuote(arg: string): string {
 	return `'${arg.replaceAll("'", `'\\''`)}'`;
@@ -564,7 +591,7 @@ export class DockerClient implements ContainerEngine {
 		const res = await this.request(
 			'POST',
 			`/containers/create?name=${encodeURIComponent(name)}`,
-			config,
+			withCgroupHeadroom(config),
 			AbortSignal.timeout(DOCKER_CONTROL_TIMEOUT_MS),
 		);
 		if (!res.ok) {

@@ -44,23 +44,27 @@ export interface WorktreeGcResult {
  * project. Resolved in one query rather than per worktree: the sweep runs on the
  * run-prep path, so it must not cost a round trip per directory.
  *
- * An identifier with no task row is reclaimable - it is a leftover from a
- * crashed run or a deleted task, and nothing will ever come back for it.
+ * It asks for the **open** identifiers, not for every task. Both answer the same
+ * question - an identifier is reclaimable unless a task is still live on it -
+ * but the sets grow differently: open tasks are bounded by what a team can have
+ * in flight, while all tasks grows forever. Loading the latter on the run-prep
+ * path meant every run on a mature project paid for its whole task history.
+ *
+ * Absence therefore covers two cases at once, both reclaimable: a task that has
+ * finished, and an identifier with no task row at all - a leftover from a
+ * crashed run or a deleted task, which nothing will ever come back for.
  */
 export async function resolveReclaimableTasks(
 	db: Db,
 	projectId: string,
 ): Promise<(taskIdentifier: string) => boolean> {
-	const rows = await db.query<{ identifier: string; status: string }>(
-		'SELECT identifier, status FROM tasks WHERE project_id = $1',
-		[projectId],
+	const rows = await db.query<{ identifier: string }>(
+		`SELECT identifier FROM tasks
+		  WHERE project_id = $1 AND status <> ALL($2::task_status[])`,
+		[projectId, TERMINAL_TASK_STATUSES],
 	);
-	const statusByIdentifier = new Map(rows.rows.map((t) => [t.identifier, t.status]));
-	const terminal: readonly string[] = TERMINAL_TASK_STATUSES;
-	return (taskIdentifier: string) => {
-		const status = statusByIdentifier.get(taskIdentifier);
-		return status === undefined || terminal.includes(status);
-	};
+	const stillOpen = new Set(rows.rows.map((t) => t.identifier));
+	return (taskIdentifier: string) => !stillOpen.has(taskIdentifier);
 }
 
 /**

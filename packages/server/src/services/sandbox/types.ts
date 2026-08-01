@@ -38,7 +38,23 @@ export interface ContainerConfig {
 		CapDrop?: string[];
 		/** Run docker-init as PID 1 so zombies are reaped under `sleep infinity`. */
 		Init?: boolean;
-		/** cgroup hard cap in bytes. */
+		/**
+		 * The project's working-set ceiling, in bytes - the memory this container is
+		 * **guaranteed**, and the figure the instance budget is spent in units of.
+		 *
+		 * Stated as the ceiling itself, not as a cap plus slack. The Docker adapter
+		 * sets the cgroup limit a little above it (`MEMORY_HARD_CAP_HEADROOM_BYTES`)
+		 * so a runaway allocation between stats-poll ticks meets the kernel OOM
+		 * killer rather than destabilizing the operator's host; a managed sandbox has
+		 * no shared host to destabilize and is simply allocated this much.
+		 *
+		 * That split matters at the boundary, which is where it was found: with the
+		 * headroom folded in here, a project set to a provider's documented maximum
+		 * asked for maximum-plus-slack, was refused for exceeding the ceiling, and
+		 * was told to lower a limit it had set to the advertised value - quoting a
+		 * number the operator never entered. The guarantee is what the caller states;
+		 * the margin above it is the adapter's business.
+		 */
 		Memory?: number;
 		/** Equal to Memory so the cap has no swap escape valve. */
 		MemorySwap?: number;

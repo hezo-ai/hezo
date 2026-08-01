@@ -1,3 +1,4 @@
+import { hostMatchesAllowedHosts } from '@hezo/shared';
 import { decrypt } from '../../crypto/encryption';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Db } from '../../db/database';
@@ -278,16 +279,12 @@ function applyToString(
 	return { value: result, changed: result !== input, failure };
 }
 
+/**
+ * Delegated to `@hezo/shared` so the *substitute here?* answer and the tunnel's
+ * *route through the proxy?* answer come from one definition. They had drifted:
+ * this one reads `*.example.com`, the tunnel's read `.example.com`, and a
+ * wildcard-scoped secret was therefore routed direct and never substituted.
+ */
 function hostMatchesAllowlist(host: string, allowedHosts: string[]): boolean {
-	const normalized = host.toLowerCase();
-	for (const allowed of allowedHosts) {
-		const expected = allowed.toLowerCase();
-		if (expected.startsWith('*.')) {
-			const suffix = expected.slice(1);
-			if (normalized.endsWith(suffix)) return true;
-		} else if (normalized === expected) {
-			return true;
-		}
-	}
-	return false;
+	return hostMatchesAllowedHosts(host, allowedHosts);
 }

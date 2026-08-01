@@ -23,6 +23,28 @@ const CONTROL_TIMEOUT_MS = 60_000;
 const PTY_SYNC_TIMEOUT_MS = 30_000;
 
 /**
+ * How long the PTY WebSocket has to finish its handshake.
+ *
+ * A `WebSocket` whose TCP connection is accepted but whose upgrade never
+ * completes fires **neither** `open` nor `error`, so the promise that awaits one
+ * of them never settles - and the caller is a run acquiring its tunnel, which
+ * then waits forever with nothing to report. `PTY_SYNC_TIMEOUT_MS` covers only
+ * what happens *after* the socket opens, so it cannot bound this.
+ */
+const PTY_CONNECT_TIMEOUT_MS = 30_000;
+
+/**
+ * Pages `listSandboxes` will follow before giving up.
+ *
+ * A backstop against a server that never stops handing back a cursor, not a
+ * limit on how many sandboxes an account may have - at any plausible page size
+ * this is far more than the instance memory budget could ever run. Hitting it is
+ * logged, because a sweep that silently covered part of the fleet reads exactly
+ * like one that covered all of it.
+ */
+const MAX_SANDBOX_PAGES = 100;
+
+/**
  * Sandbox lifecycle states Daytona reports. Only the ones Hezo reacts to are
  * named; anything else is treated as not-running.
  */
@@ -281,9 +303,42 @@ export class DaytonaClient implements DaytonaApi {
 		}
 	}
 
-	listSandboxes(labels?: Record<string, string>): Promise<{ items: DaytonaSandbox[] }> {
-		const q = labels ? `?labels=${encodeURIComponent(JSON.stringify(labels))}` : '';
-		return this.request<{ items: DaytonaSandbox[] }>('GET', `/sandbox${q}`);
+	/**
+	 * Every sandbox matching the labels, following the cursor to the end.
+	 *
+	 * `GET /sandbox` is paginated - it answers `{items, nextCursor}` and takes a
+	 * `cursor` query parameter (measured against the live API: a bad value returns
+	 * a specific 400, "Invalid cursor provided"). Reading only the first page is
+	 * how this went wrong quietly: the orphan reaper would sweep a page and report
+	 * success while every sandbox past it kept billing, and
+	 * `findContainerByNamePrefix` would answer "no such container" for a container
+	 * that exists - reprovisioning a second one beside it.
+	 *
+	 * Bounded, and loudly. A server that keeps handing back a cursor would
+	 * otherwise spin here forever, and a truncated sweep that says nothing reads
+	 * exactly like a complete one.
+	 */
+	async listSandboxes(labels?: Record<string, string>): Promise<{ items: DaytonaSandbox[] }> {
+		const labelQuery = labels ? `labels=${encodeURIComponent(JSON.stringify(labels))}` : '';
+		const items: DaytonaSandbox[] = [];
+		let cursor: string | null = null;
+		for (let page = 0; page < MAX_SANDBOX_PAGES; page++) {
+			const params = [labelQuery, cursor ? `cursor=${encodeURIComponent(cursor)}` : '']
+				.filter(Boolean)
+				.join('&');
+			const res: { items?: DaytonaSandbox[]; nextCursor?: string | null } = await this.request<{
+				items?: DaytonaSandbox[];
+				nextCursor?: string | null;
+			}>('GET', `/sandbox${params ? `?${params}` : ''}`);
+			items.push(...(res.items ?? []));
+			cursor = res.nextCursor ?? null;
+			if (!cursor) return { items };
+		}
+		log.warn(
+			`listSandboxes stopped at ${MAX_SANDBOX_PAGES} pages (${items.length} sandboxes) with a cursor still pending; ` +
+				'anything past this point is not swept and will keep billing',
+		);
+		return { items };
 	}
 
 	start(id: string): Promise<void> {
@@ -396,6 +451,13 @@ export class DaytonaClient implements DaytonaApi {
 	 * Daytona has no single streaming-exec call: a session is created, the command
 	 * is started async, and its logs are followed on a second request. That split
 	 * is why the engine cannot simply map `execStart` onto one HTTP call.
+	 *
+	 * The session is **always deleted**, on every path out. A session is a shell
+	 * that outlives the command it ran, and this is the streaming exec - the one
+	 * every agent run, every git operation and every chat turn goes through. One
+	 * abandoned session per exec on a container the pool keeps for hours is how a
+	 * sandbox ends up wedged against its process limit, with the run that finally
+	 * hits it reported as an agent failure.
 	 */
 	async executeStreaming(
 		sandbox: DaytonaSandbox,
@@ -405,54 +467,93 @@ export class DaytonaClient implements DaytonaApi {
 	): Promise<{ exitCode: number }> {
 		const base = await this.toolboxBase(sandbox);
 		const auth = { Authorization: `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' };
-		const sessionId = `hezo-${Math.random().toString(36).slice(2, 10)}`;
+		const sessionId = `hezo-${randomBytes(6).toString('hex')}`;
 
-		await fetch(`${base}/process/session`, {
+		const created = await fetch(`${base}/process/session`, {
 			method: 'POST',
 			headers: auth,
 			body: JSON.stringify({ sessionId }),
-			signal: opts.signal,
+			signal: opts.signal ?? AbortSignal.timeout(CONTROL_TIMEOUT_MS),
 		});
-
-		const startRes = await fetch(`${base}/process/session/${sessionId}/exec`, {
-			method: 'POST',
-			headers: auth,
-			body: JSON.stringify({
-				command: opts.cwd ? `cd ${JSON.stringify(opts.cwd)} && ${command}` : command,
-				runAsync: true,
-			}),
-			signal: opts.signal,
-		});
-		const started = (await startRes.json()) as { cmdId?: string };
-		const cmdId = started.cmdId;
-		if (!cmdId) throw new Error('Daytona session exec returned no cmdId');
-
-		const logsRes = await fetch(
-			`${base}/process/session/${sessionId}/command/${cmdId}/logs?follow=true`,
-			{ headers: { Authorization: `Bearer ${this.apiKey}` }, signal: opts.signal },
-		);
-		if (logsRes.body) {
-			const reader = logsRes.body.getReader();
-			const decoder = new TextDecoder();
-			let buf = '';
-			while (true) {
-				const { done, value } = await reader.read();
-				if (done) break;
-				buf += decoder.decode(value, { stream: true });
-				const lines = buf.split('\n');
-				buf = lines.pop() ?? '';
-				for (const line of lines) await onLine(`${line}\n`);
-			}
-			if (buf) await onLine(buf);
+		if (!created.ok) {
+			// Reported rather than swallowed: every later call in this method is
+			// addressed to a session that does not exist, so the real failure would
+			// otherwise surface as a confusing "returned no cmdId" one step later.
+			const body = await created.text();
+			throw new DaytonaApiError(
+				`Daytona session create failed (${created.status}): ${body.slice(0, 400)}`,
+				created.status,
+				body,
+			);
 		}
 
-		// The follow stream ends when the command does; the exit code is only on
-		// the command record, so it is fetched rather than parsed out of the logs.
-		const infoRes = await fetch(`${base}/process/session/${sessionId}/command/${cmdId}`, {
+		try {
+			const startRes = await fetch(`${base}/process/session/${sessionId}/exec`, {
+				method: 'POST',
+				headers: auth,
+				body: JSON.stringify({
+					command: opts.cwd ? `cd ${JSON.stringify(opts.cwd)} && ${command}` : command,
+					runAsync: true,
+				}),
+				signal: opts.signal ?? AbortSignal.timeout(CONTROL_TIMEOUT_MS),
+			});
+			const started = (await startRes.json()) as { cmdId?: string };
+			const cmdId = started.cmdId;
+			if (!cmdId) throw new Error('Daytona session exec returned no cmdId');
+
+			// Deliberately no timeout on the follow stream: it stays open for the
+			// whole command, and an agent run legitimately runs for its full timeout.
+			// `opts.signal` is how a caller ends it early.
+			const logsRes = await fetch(
+				`${base}/process/session/${sessionId}/command/${cmdId}/logs?follow=true`,
+				{ headers: { Authorization: `Bearer ${this.apiKey}` }, signal: opts.signal },
+			);
+			if (logsRes.body) {
+				const reader = logsRes.body.getReader();
+				const decoder = new TextDecoder();
+				let buf = '';
+				while (true) {
+					const { done, value } = await reader.read();
+					if (done) break;
+					buf += decoder.decode(value, { stream: true });
+					const lines = buf.split('\n');
+					buf = lines.pop() ?? '';
+					for (const line of lines) await onLine(`${line}\n`);
+				}
+				if (buf) await onLine(buf);
+			}
+
+			// The follow stream ends when the command does; the exit code is only on
+			// the command record, so it is fetched rather than parsed out of the logs.
+			const infoRes = await fetch(`${base}/process/session/${sessionId}/command/${cmdId}`, {
+				headers: { Authorization: `Bearer ${this.apiKey}` },
+				signal: AbortSignal.timeout(CONTROL_TIMEOUT_MS),
+			});
+			const info = (await infoRes.json()) as { exitCode?: number | null };
+			return { exitCode: info.exitCode ?? 0 };
+		} finally {
+			// Awaited, not backgrounded: the caller is about to release the container
+			// back to the pool, and the next run's exec must not find the sandbox
+			// carrying this one's shell.
+			await this.deleteSession(sandbox, sessionId).catch((e) => {
+				log.warn(`could not delete exec session ${sessionId}: ${(e as Error).message}`);
+			});
+		}
+	}
+
+	/** End a command session, terminating the shell it holds. */
+	private async deleteSession(sandbox: DaytonaSandbox, sessionId: string): Promise<void> {
+		const base = await this.toolboxBase(sandbox);
+		const res = await fetch(`${base}/process/session/${encodeURIComponent(sessionId)}`, {
+			method: 'DELETE',
 			headers: { Authorization: `Bearer ${this.apiKey}` },
+			signal: AbortSignal.timeout(CONTROL_TIMEOUT_MS),
 		});
-		const info = (await infoRes.json()) as { exitCode?: number | null };
-		return { exitCode: info.exitCode ?? 0 };
+		// A session that is already gone is the desired end state, not an error.
+		if (!res.ok && res.status !== 404) {
+			const body = await res.text();
+			throw new DaytonaApiError(`Daytona session delete failed (${res.status})`, res.status, body);
+		}
 	}
 
 	/**
@@ -489,6 +590,7 @@ export class DaytonaClient implements DaytonaApi {
 			method: 'POST',
 			headers: { Authorization: `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' },
 			body: JSON.stringify({ id: sessionId, cols: 200, rows: 50 }),
+			signal: AbortSignal.timeout(CONTROL_TIMEOUT_MS),
 		});
 
 		const url = `${base.replace(/^http/, 'ws')}/process/pty/${encodeURIComponent(sessionId)}/connect`;
@@ -501,10 +603,26 @@ export class DaytonaClient implements DaytonaApi {
 		let onClose: (() => void) | undefined;
 		let closed = false;
 
-		await new Promise<void>((resolve, reject) => {
-			socket.onopen = () => resolve();
-			socket.onerror = () => reject(new Error('Daytona PTY connect failed'));
-		});
+		// Bounded: a half-open upgrade fires neither handler, and the unbounded
+		// version of this await hung the run that was acquiring its tunnel.
+		const connected = Promise.withResolvers<void>();
+		const connectTimer = setTimeout(() => {
+			connected.reject(new Error(`Daytona PTY did not connect within ${PTY_CONNECT_TIMEOUT_MS}ms`));
+		}, PTY_CONNECT_TIMEOUT_MS);
+		socket.onopen = () => connected.resolve();
+		socket.onerror = () => connected.reject(new Error('Daytona PTY connect failed'));
+		try {
+			await connected.promise;
+		} catch (e) {
+			// The session outlives a failed connect - it is created by the POST above,
+			// not by the socket - so it has to be deleted or it sits there holding a
+			// shell for the sandbox's life.
+			socket.close();
+			await this.deletePtySession(sandbox, sessionId).catch(() => undefined);
+			throw e;
+		} finally {
+			clearTimeout(connectTimer);
+		}
 
 		const sentinel = `__hezo_pty_${randomBytes(8).toString('hex')}__`;
 		const sentinelBytes = new TextEncoder().encode(sentinel);
@@ -559,7 +677,10 @@ export class DaytonaClient implements DaytonaApi {
 		try {
 			await ready.promise;
 		} catch (e) {
+			// Same reasoning as the connect path: closing the socket leaves the
+			// session, and its shell, running (measured - see `close` below).
 			if (!closed) socket.close();
+			await this.deletePtySession(sandbox, sessionId).catch(() => undefined);
 			throw e;
 		} finally {
 			clearTimeout(timer);

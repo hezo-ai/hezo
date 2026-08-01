@@ -32,7 +32,9 @@ import {
 import { ensureProjectContainerRunning } from '../src/services/containers';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { PricingService, upsertManualRate } from '../src/services/pricing';
+import { CONTAINER_SUBSCRIPTION_BASE } from '../src/services/runtime-home';
 import type { ContainerEngine } from '../src/services/sandbox/types';
+import { CONTAINER_WORKSPACE_ROOT } from '../src/services/workspace';
 import { safeClose } from './helpers';
 import {
 	authHeader,
@@ -1231,6 +1233,88 @@ describe('runAgent lifecycle — egress + ssh wiring', () => {
 		expect(egressCalls.released).toContain(result.heartbeatRunId);
 		expect(sshCalls.allocated).toContain(result.heartbeatRunId);
 		expect(sshCalls.released).toContain(result.heartbeatRunId);
+	});
+
+	it('releases the tunnel, the ssh socket and the egress port when setup throws after the tunnel starts', async () => {
+		// The window between `startRunTunnel` and the point `cleanupRunArtifacts`
+		// becomes reachable - `buildRunContext` sits directly in it. A throw there
+		// used to strand all three, and each is quiet in its own way: the tunnel is
+		// a live exec, so the container counts as active and never goes idle (a bill,
+		// not an error), and on a managed backend its client holds the run's three
+		// loopback ports, so the *next* run on that pooled container dies with
+		// EADDRINUSE having lost MCP and egress outright.
+		//
+		// The failure is injected at the engine seam rather than by reaching into
+		// the runner: the tunnel and the prompt both stage under the workspace root,
+		// while the per-run runtime home - written from inside `buildRunContext` -
+		// is rooted at the subscription base. Refusing that one root therefore fails
+		// after the tunnel is up and before any exec, and it is a real failure mode
+		// (a provider's file API refusing a write) rather than a contrived one.
+		const egressCalls = { allocated: [] as string[], released: [] as string[] };
+		const sshCalls = { allocated: [] as string[], released: [] as string[] };
+		let tunnelClosed = false;
+		const rootsSeen: string[] = [];
+
+		const base = makeDocker({
+			openExecChannel: async () => ({
+				write: () => {},
+				onData: () => {},
+				onStderr: () => {},
+				onClose: () => {},
+				close: () => {
+					tunnelClosed = true;
+				},
+			}),
+		});
+		const stubFiles = base.files.bind(base);
+		const docker = {
+			...base,
+			files: (containerId: string, containerRoot: string) => {
+				rootsSeen.push(containerRoot);
+				if (containerRoot.startsWith(CONTAINER_SUBSCRIPTION_BASE)) {
+					throw new Error('sandbox file API refused the write');
+				}
+				return stubFiles(containerId, containerRoot);
+			},
+		} as unknown as ContainerEngine;
+
+		const deps = baseDeps(docker, {
+			egressProxy: {
+				allocateRunProxy: async (runId: string) => {
+					egressCalls.allocated.push(runId);
+					return { proxyHost: '172.17.0.1', proxyPort: 18081 };
+				},
+				releaseRunProxy: async (runId: string) => {
+					egressCalls.released.push(runId);
+				},
+			} as any,
+			egressCAPath: `${dataDir}/egress-ca.crt`,
+			sshAgentServer: {
+				allocateRunSocket: async (runId: string, _ident: unknown, hostPath: string) => {
+					sshCalls.allocated.push(runId);
+					return { socketHostPath: hostPath, tcpHostPort: 41001, tokenHex: 'b'.repeat(32) };
+				},
+				releaseRunSocket: async (runId: string) => {
+					sshCalls.released.push(runId);
+				},
+			} as any,
+		});
+
+		// Setup failures propagate out of `runAgent` (the job manager catches them);
+		// the point here is that the resources are released on the way past.
+		await expect(runAgent(deps, makeAgent(), makeTask(), makeProject())).rejects.toThrow(
+			'refused the write',
+		);
+
+		// The tunnel really did start - otherwise the assertion below is vacuous.
+		expect(rootsSeen).toContain(CONTAINER_WORKSPACE_ROOT);
+		expect(tunnelClosed).toBe(true);
+		// Container provisioning allocates its own socket under a `provision-` id,
+		// so compare sets rather than counts: what matters is that nothing the run
+		// itself took was left held.
+		expect(sshCalls.released.sort()).toEqual(sshCalls.allocated.sort());
+		expect(egressCalls.released.sort()).toEqual(egressCalls.allocated.sort());
+		expect(sshCalls.allocated.some((id) => !id.startsWith('provision-'))).toBe(true);
 	});
 });
 

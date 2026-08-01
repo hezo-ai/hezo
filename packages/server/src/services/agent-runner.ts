@@ -1255,13 +1255,28 @@ export async function runAgent(
 		container_status: ContainerStatus.Running,
 	};
 
-	// Everything past the claim runs inside a try/finally so both the claim and the
-	// credential lock are always released — including when setup (sockets, proxy,
+	// Everything past the claim runs inside a try/finally so every run-scoped
+	// resource is always released — including when setup (sockets, proxy, tunnel,
 	// context, worktrees, file writes) throws before the exec block. Leaking the
-	// lock would queue every later run on this credential forever; leaking the claim
-	// strands the container itself, which nothing reclaims. Both releases are
-	// idempotent, so the explicit cleanup paths below don't double-free.
+	// credential lock would queue every later run on this credential forever;
+	// leaking the claim strands the container itself, which nothing reclaims.
+	//
+	// The three below are declared out here for the same reason, and each was
+	// genuinely stranded by a throw between its acquisition and the point
+	// `cleanupRunArtifacts` becomes reachable — `buildRunContext` is the realistic
+	// thrower, and it sits directly between them. Each leak is quiet in its own
+	// way: a live tunnel counts as activity on every backend, so the container
+	// never goes idle and bills instead of erroring, and on a managed backend its
+	// client keeps the run's three loopback ports, so the *next* run on that
+	// pooled container dies with EADDRINUSE having lost MCP and egress entirely.
+	// The ssh socket and the egress allocation each hold a host port.
+	//
+	// Every release here is idempotent, so the explicit cleanup paths below do not
+	// double-free.
 	let releaseCredentialLock: (() => void) | null = null;
+	let runTunnel: RunTunnel | null = null;
+	let sshSocketAllocated = false;
+	let egressProxyAllocated = false;
 	try {
 		const layout = SUBSCRIPTION_LAYOUTS[provider];
 		if (credential.authMethod === AiAuthMethod.Subscription && layout?.rotates) {
@@ -1313,6 +1328,7 @@ export async function runAgent(
 			sshSocketContainerPath = `/run/hezo/${heartbeatRunId}.sock`;
 			sshHostTcpPort = allocated.tcpHostPort;
 			sshTokenHex = allocated.tokenHex;
+			sshSocketAllocated = true;
 		}
 
 		let egressHost: { host: string; port: number; token: string | null } | null = null;
@@ -1328,6 +1344,7 @@ export async function runAgent(
 				label: runLabel,
 			});
 			egressAllocated = true;
+			egressProxyAllocated = true;
 			egressHost = {
 				host: allocated.proxyHost,
 				port: allocated.proxyPort,
@@ -1363,6 +1380,7 @@ export async function runAgent(
 			},
 			policy: await buildTunnelHostPolicy(deps.db, connectorDescriptors),
 		});
+		runTunnel = tunnel;
 		const endpoints: RunEndpoints = tunnel.endpoints;
 
 		const bridge: BridgeRunnerArgs | null =
@@ -1929,10 +1947,30 @@ export async function runAgent(
 		}
 	} finally {
 		releaseCredentialLock?.();
-		// The claim outlives every explicit cleanup path above, so this is the only
-		// release that covers a throw in setup. Idempotent, so the success path's
-		// own release (which also records task affinity) is not undone here.
-		await releaseContainer();
+		// These outlive every explicit cleanup path above, so this is the only
+		// release that covers a throw in setup. All idempotent, so the success
+		// path's own releases - including the one that records task affinity - are
+		// not undone here. Each is isolated: a failed release must not stop the
+		// others, since between them they hold a container, two host ports and an
+		// exec that keeps the container awake.
+		for (const [label, release] of [
+			['tunnel', () => runTunnel?.close()],
+			[
+				'ssh-socket',
+				() => (sshSocketAllocated ? deps.sshAgentServer?.releaseRunSocket(heartbeatRunId) : null),
+			],
+			[
+				'egress-proxy',
+				() => (egressProxyAllocated ? deps.egressProxy?.releaseRunProxy(heartbeatRunId) : null),
+			],
+			['pool-container', () => releaseContainer()],
+		] as const) {
+			try {
+				await release();
+			} catch (e) {
+				log.error(`Run ${heartbeatRunId} final release of '${label}' failed:`, e);
+			}
+		}
 	}
 }
 

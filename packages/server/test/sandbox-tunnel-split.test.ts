@@ -1,3 +1,4 @@
+import { hostMatchesAllowedHosts } from '@hezo/shared';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
 import type { McpDescriptor } from '../src/services/mcp-injectors/types';
@@ -110,15 +111,55 @@ describe('hostNeedsProxy', () => {
 		expect(hostNeedsProxy(p, 'github.com')).toBe(false);
 	});
 
-	it('matches a leading-dot entry on the domain and its subdomains', () => {
-		const p = policy(['.github.com']);
-		expect(hostNeedsProxy(p, 'github.com')).toBe(true);
+	it('matches a `*.` wildcard on subdomains, in the syntax the vault stores', () => {
+		// This is the bug the unification fixed. `allowed_hosts` holds
+		// `*.example.com` - the shipped connector registry uses it
+		// (`*.datocms.com`, `*.sentry.io`) and the egress proxy matches on it - but
+		// this side read a leading-dot form, so a wildcard entry matched nothing:
+		// the container routed direct, past the proxy, and the placeholder reached
+		// the provider unsubstituted.
+		const p = policy(['*.github.com']);
 		expect(hostNeedsProxy(p, 'api.github.com')).toBe(true);
+		expect(hostNeedsProxy(p, 'deep.api.github.com')).toBe(true);
 		expect(hostNeedsProxy(p, 'notgithub.com')).toBe(false);
+		// The apex is not a subdomain, matching TLS-certificate convention - and the
+		// registry assumes it, listing `sentry.io` *and* `*.sentry.io`, which would
+		// be redundant otherwise.
+		expect(hostNeedsProxy(p, 'github.com')).toBe(false);
+	});
+
+	it('answers exactly what the egress proxy would answer', () => {
+		// The property that matters, stated directly: "would a secret be
+		// substituted into a request to this host" and "must this host go through
+		// the proxy" are the same question, so they must not be two functions.
+		// Unifying them is what fixed the wildcard; this is what keeps them unified.
+		const entries = ['api.github.com', '*.datocms.com', 'sentry.io', '*.sentry.io'];
+		const hosts = [
+			'api.github.com',
+			'API.GitHub.COM',
+			'github.com',
+			'evil-api.github.com',
+			'api.github.com.evil.test',
+			'mcp.datocms.com',
+			'datocms.com',
+			'sentry.io',
+			'eu.sentry.io',
+			'unrelated.test',
+		];
+		for (const host of hosts) {
+			expect(hostNeedsProxy(policy(entries), host)).toBe(hostMatchesAllowedHosts(host, entries));
+		}
 	});
 
 	it('is case-insensitive, since DNS is', () => {
 		expect(hostNeedsProxy(policy(['api.github.com']), 'API.GitHub.COM')).toBe(true);
+		expect(hostNeedsProxy(policy(['*.GitHub.com']), 'api.github.com')).toBe(true);
+	});
+
+	it('ignores a blank entry rather than matching everything on it', () => {
+		// An empty string in `allowed_hosts` (a stray comma in the UI) must not
+		// become a proxy-everything switch by accident.
+		expect(hostNeedsProxy(policy(['', '  ']), 'anything.test')).toBe(false);
 	});
 });
 

@@ -812,17 +812,20 @@ describe('provisionContainer broadcasting', () => {
 		expect(binds.find((b) => b.includes('assets'))).toBeUndefined();
 		expect(binds.find((b) => b.endsWith(':/workspace:rw'))).toBeDefined();
 
-		// The cgroup hard cap is set as a backstop (project ceiling + headroom,
-		// no swap); the sync-loop stats poller remains the graceful early-stop.
+		// The project's working-set ceiling, stated as itself and with no swap
+		// escape valve; the sync-loop stats poller is the graceful early-stop at
+		// exactly this figure. Whether a margin sits above it - and how big - is the
+		// engine's business: the Docker adapter adds one for the between-ticks
+		// kernel-OOM backstop, a managed sandbox is allocated exactly this.
 		const limitGib = (
 			await db.query<{ memory_limit_gib: number }>(
 				'SELECT memory_limit_gib FROM projects WHERE id = $1',
 				[projectId],
 			)
 		).rows[0].memory_limit_gib;
-		const expectedCap = limitGib * 1024 ** 3 + 512 * 1024 ** 2;
-		expect(hostConfig.Memory).toBe(expectedCap);
-		expect(hostConfig.MemorySwap).toBe(expectedCap);
+		const ceiling = limitGib * 1024 ** 3;
+		expect(hostConfig.Memory).toBe(ceiling);
+		expect(hostConfig.MemorySwap).toBe(ceiling);
 	});
 
 	it('labels containers as test containers only when HEZO_TEST_CONTAINERS is set', async () => {

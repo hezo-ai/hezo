@@ -117,6 +117,20 @@ interface RunDispatchContext {
 	pendingContainerStart?: boolean;
 }
 
+/**
+ * What the capacity gate decided, and the fact the dispatch after it needs.
+ *
+ * `hasSpareContainer` is "this project has a member a run may take", which is
+ * also exactly "this dispatch will not create a container". Carrying it out of
+ * the gate keeps that judgement in one place; the alternative - re-deriving it
+ * from `projects.container_status` at the dispatch - is a different question
+ * wearing the same clothes, and answered wrong under a pool.
+ */
+interface CapacityVerdict {
+	blocked: boolean;
+	hasSpareContainer: boolean;
+}
+
 interface RunningTask {
 	key: string;
 	abortController: AbortController;
@@ -409,7 +423,7 @@ export class JobManager {
 				return { dispatched: false, reason: 'task_busy' };
 			}
 			const project = await this.resolveProjectForTask(wakeupTaskId);
-			if (await this.isContainerCapacityBlocked(project?.id ?? null)) {
+			if ((await this.isContainerCapacityBlocked(project?.id ?? null)).blocked) {
 				await this.markWakeupSkipped(
 					wakeup.id,
 					WakeupSkipReason.InstanceAtCapacity,
@@ -1232,16 +1246,22 @@ export class JobManager {
 	 * against projects that already have spare capacity, so the ceiling is never
 	 * exceeded.
 	 */
-	private async isContainerCapacityBlocked(projectId: string | null): Promise<boolean> {
+	private async isContainerCapacityBlocked(projectId: string | null): Promise<CapacityVerdict> {
 		const { budgetGb, usedMemoryGb, projectsWithSpareContainer } = await getActiveContainers(
 			this.deps.db,
 			this.deps.docker,
 		);
-		if (
-			projectId &&
-			(projectsWithSpareContainer.has(projectId) || this.pendingContainerStarts.has(projectId))
-		) {
-			return false;
+		// Returned alongside the verdict, not just consumed here: the dispatch that
+		// follows has to know whether it is about to *create* a container, and it
+		// used to answer that from `projects.container_status` instead. Those two
+		// stopped meaning the same thing the moment a project could hold several
+		// containers - a project whose named container reads Running but whose
+		// members are all busy needs a new one - so a dispatch would create a
+		// container while holding no pending-start slot, and two of them could fit
+		// themselves into the same headroom. One query, one answer, used by both.
+		const hasSpareContainer = projectId !== null && projectsWithSpareContainer.has(projectId);
+		if (projectId && (hasSpareContainer || this.pendingContainerStarts.has(projectId))) {
+			return { blocked: false, hasSpareContainer };
 		}
 		// A lazy start already in flight has not reached the DB yet, so its memory
 		// has to be added here or two dispatches would both see room for the same
@@ -1255,7 +1275,7 @@ export class JobManager {
 		const requestGb = projectId
 			? await projectContainerMemoryGb(this.deps.db, projectId)
 			: await getDefaultRamCapPerContainerGb(this.deps.db);
-		return usedMemoryGb + pendingGb + requestGb > budgetGb;
+		return { blocked: usedMemoryGb + pendingGb + requestGb > budgetGb, hasSpareContainer };
 	}
 
 	private acquirePendingContainerStart(projectId: string): void {
@@ -1394,7 +1414,7 @@ export class JobManager {
 					continue;
 				}
 				const project = await this.resolveProjectForTask(wakeupTaskId);
-				if (await this.isContainerCapacityBlocked(project?.id ?? null)) {
+				if ((await this.isContainerCapacityBlocked(project?.id ?? null)).blocked) {
 					log.debug(`Skipping wakeup ${wakeup.id} — instance is at its active-container limit`);
 					await this.markWakeupSkipped(
 						wakeup.id,
@@ -1837,7 +1857,8 @@ export class JobManager {
 			await this.requeueWakeup(wakeupId);
 			return;
 		}
-		if (await this.isContainerCapacityBlocked(task.project_id)) {
+		const capacity = await this.isContainerCapacityBlocked(task.project_id);
+		if (capacity.blocked) {
 			log.debug(
 				`Instance is at its active-container limit — re-queuing wakeup for ${ref(agent.rows[0].slug, memberId)}`,
 			);
@@ -2037,11 +2058,18 @@ export class JobManager {
 		const lockedTaskId = task.id;
 		this.activeTaskRuns.add(lockedTaskId);
 		this.acquireProjectRun(projectId);
-		// Launching into a project whose container isn't running will lazy-start
-		// one — hold a pending-start slot so the container cap counts it during
-		// the window before the DB row reads Running. Released with the dispatch
-		// guards when the run settles.
-		const pendingContainerStart = projectRow.container_status !== ContainerStatus.Running;
+		// A dispatch with no spare container will create one — hold a pending-start
+		// slot so the memory budget counts it during the window before the new
+		// member reaches the DB. Released with the dispatch guards when the run
+		// settles.
+		//
+		// Read from the capacity verdict computed above, not from
+		// `projects.container_status`. Those answered the same question only while
+		// a project had exactly one container: with a pool, a project whose named
+		// container reads Running but whose members are all busy still needs a new
+		// one, so the old test held no slot for a container it was about to create
+		// and two such dispatches could fit themselves into the same headroom.
+		const pendingContainerStart = !capacity.hasSpareContainer;
 		if (pendingContainerStart) this.acquirePendingContainerStart(projectId);
 
 		const launched = this.launchTask(
@@ -2338,7 +2366,7 @@ export class JobManager {
 		if (await this.isAgentBusyInProject(memberId, projectRow.id)) {
 			return { dispatched: false, reason: 'agent_busy' };
 		}
-		if (await this.isContainerCapacityBlocked(projectRow.id)) {
+		if ((await this.isContainerCapacityBlocked(projectRow.id)).blocked) {
 			return { dispatched: false, reason: 'instance_at_capacity' };
 		}
 		if (await checkOverBudget(db, memberId, projectRow.id)) {

@@ -392,16 +392,19 @@ describe('provisionContainer', () => {
 		expect(hc.Init).toBe(true);
 		expect(hc.CapDrop).toEqual(['ALL']);
 		expect(hc.PidsLimit).toBe(4096);
-		// Hard cap = the instance-wide ram cap (default 2 GB, no per-project
-		// override set) + 512 MiB headroom, no swap escape valve — the stats
-		// poller stops the container at the ceiling itself; the cgroup is the
-		// between-ticks backstop.
-		const expectedCap = 2 * 1024 ** 3 + 512 * 1024 ** 2;
-		expect(hc.Memory).toBe(expectedCap);
-		expect(hc.MemorySwap).toBe(expectedCap);
+		// The project's working-set **ceiling**, stated as itself: the instance-wide
+		// ram cap (default 2 GB, no per-project override set). The 512 MiB cgroup
+		// headroom is no longer added here - it is a cgroup and shared-host concern,
+		// so the Docker adapter adds it (`withCgroupHeadroom`) and a managed sandbox,
+		// which has neither, is allocated exactly this much. Keeping it here made
+		// both backends ask for more than the project was configured for, and at the
+		// boundary refused a project set to a managed provider's documented maximum.
+		const ceiling = 2 * 1024 ** 3;
+		expect(hc.Memory).toBe(ceiling);
+		expect(hc.MemorySwap).toBe(ceiling);
 	});
 
-	it('derives the cgroup cap from a project-specific memory_limit_gib', async () => {
+	it('states the ceiling from a project-specific memory_limit_gib', async () => {
 		await resetContainerRow();
 		await db.query('UPDATE projects SET memory_limit_gib = 8 WHERE id = $1', [projectId]);
 		try {
@@ -409,9 +412,9 @@ describe('provisionContainer', () => {
 
 			await provisionContainer(baseDeps(docker), await projectRow(), teamSlug);
 
-			const expectedCap = 8 * 1024 ** 3 + 512 * 1024 ** 2;
-			expect(created[0].config.HostConfig.Memory).toBe(expectedCap);
-			expect(created[0].config.HostConfig.MemorySwap).toBe(expectedCap);
+			const ceiling = 8 * 1024 ** 3;
+			expect(created[0].config.HostConfig.Memory).toBe(ceiling);
+			expect(created[0].config.HostConfig.MemorySwap).toBe(ceiling);
 		} finally {
 			await db.query('UPDATE projects SET memory_limit_gib = DEFAULT WHERE id = $1', [projectId]);
 		}

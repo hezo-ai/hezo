@@ -95,6 +95,21 @@ describe('allocateTunnelPorts', () => {
 		}
 	});
 
+	it('draws its range from below the kernel ephemeral floor', () => {
+		// The range used to start at 47080, inside Linux's default
+		// `net.ipv4.ip_local_port_range` of 32768-60999 - which a fresh network
+		// namespace inherits as its own default. An outbound connection the
+		// container makes can hold one of these as its *source* port, and the
+		// tunnel client's later bind on it then fails. It presented as "the tunnel
+		// client did not bind its ports within Nms": intermittent, likelier the
+		// busier the container, and reading as an infrastructure flake rather than
+		// as the port conflict it was.
+		const EPHEMERAL_FLOOR = 32768;
+		expect(TUNNEL_PORT_BASE + TUNNEL_PORT_RANGE).toBeLessThan(EPHEMERAL_FLOOR);
+		// And still above the well-known ports, which need privilege to bind.
+		expect(TUNNEL_PORT_BASE).toBeGreaterThan(1024);
+	});
+
 	it('drops a container’s entry entirely once its last tunnel closes', () => {
 		// Otherwise the map grows by one entry per container the process ever saw,
 		// which is the unbounded-Map failure AGENTS.md names.

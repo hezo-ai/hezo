@@ -77,6 +77,11 @@ async function resetContainerRow(): Promise<void> {
 		 container_error = NULL, container_last_logs = NULL WHERE id = $1`,
 		[projectId],
 	);
+	// The pool rows too, not just the project column. Provisioning records a
+	// member, so a test that provisions leaves one behind for every test after it
+	// - and once rebuild started sweeping the whole pool (which is the point), a
+	// spec asserting "no previous container" was silently inheriting three.
+	await db.query('DELETE FROM container_pool_members WHERE project_id = $1', [projectId]);
 	consumeFinalMemoryLine(projectId);
 }
 
@@ -488,6 +493,45 @@ describe('rebuildContainer', () => {
 		expect(row.rows[0].container_id).toBe(newId);
 		expect(row.rows[0].container_status).toBe('running');
 		expect(row.rows[0].container_last_logs).toContain('pre-rebuild console output');
+	});
+
+	it('removes every pool member, not just the one the project row names', async () => {
+		// A rebuild is an operator saying "this project's container is wrong" - a
+		// changed base image, a broken toolchain. Removing only the named container
+		// left the project's other members running on the **old** image, still
+		// reachable by the allocation ladder and still charged against the instance
+		// memory budget: the fix applied to one container out of three, and the next
+		// run could land on either.
+		await resetContainerRow();
+		await db.query(
+			"UPDATE projects SET container_id = 'named-cid', container_status = 'running'::container_status WHERE id = $1",
+			[projectId],
+		);
+		for (const id of ['named-cid', 'sibling-a', 'sibling-b']) {
+			await db.query(
+				`INSERT INTO container_pool_members (project_id, container_id, state, disk_ceiling_bytes)
+				 VALUES ($1, $2, 'idle', 1000000)`,
+				[projectId, id],
+			);
+		}
+		const removeContainer = vi.fn(async (_id: string, _force?: boolean) => {});
+		const docker = provisioningDocker({
+			stopContainer: vi.fn(async () => {}),
+			removeContainer,
+			containerLogs: vi.fn(async () => null),
+		});
+
+		const newId = await rebuildContainer(deps(docker), await projectRow(), 'lifecycle-coverage-co');
+
+		const removed = removeContainer.mock.calls.map((c) => c[0]).sort();
+		expect(removed).toEqual(['named-cid', 'sibling-a', 'sibling-b']);
+		// And their rows are gone, so nothing hands a later run a container this
+		// rebuild replaced.
+		const left = await db.query<{ container_id: string }>(
+			'SELECT container_id FROM container_pool_members WHERE project_id = $1',
+			[projectId],
+		);
+		expect(left.rows.map((r) => r.container_id)).toEqual([newId]);
 	});
 
 	it('keeps the old container when keep-old-containers is enabled', async () => {
