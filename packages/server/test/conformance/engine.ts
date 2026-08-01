@@ -9,17 +9,21 @@
  * that never existed.
  */
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ContainerEngine } from '../../src/services/sandbox/types';
 import {
 	CONFORMANCE_LABEL,
+	type ConformanceHarness,
 	conformanceRunId,
 	type LiveAdapterFixture,
 	sweepConformanceContainers,
 } from './fixture';
 
 /** Registers the engine conformance suite for one backend. */
-export function describeEngineConformance(fixture: LiveAdapterFixture): void {
+export function describeEngineConformance(
+	fixture: LiveAdapterFixture,
+	h: ConformanceHarness,
+): void {
+	const { describe, it, expect, beforeAll, afterAll } = h;
 	describe(`${fixture.name}: ContainerEngine conformance`, () => {
 		const engine: ContainerEngine = fixture.engine;
 		let containerId: string;

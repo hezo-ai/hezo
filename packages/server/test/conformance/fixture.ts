@@ -25,6 +25,25 @@
 import type { ContainerEngine } from '../../src/services/sandbox/types';
 
 /**
+ * The test API the shared suites register through.
+ *
+ * Injected rather than imported, because the two fixtures do not run on the same
+ * runner and cannot. `DockerClient` reaches the daemon with Bun's
+ * `fetch(..., { unix })`, an option Node ignores - so under vitest (which is
+ * Node) every request goes to `http://localhost:80` and is refused. The Docker
+ * fixture therefore lives in the Bun-native tier and imports `bun:test`, while
+ * the Daytona fixture is ordinary HTTP and runs under vitest. One suite, two
+ * runners, and the assertions cannot drift apart.
+ */
+export interface ConformanceHarness {
+	describe: (name: string, fn: () => void) => void;
+	it: (name: string, fn: () => Promise<void> | void, timeoutMs?: number) => void;
+	expect: (value: unknown) => any;
+	beforeAll: (fn: () => Promise<void> | void, timeoutMs?: number) => void;
+	afterAll: (fn: () => Promise<void> | void, timeoutMs?: number) => void;
+}
+
+/**
  * What one backend supplies so the shared suites can run against it.
  *
  * The two "supported" flags exist because a legitimate implementation may not be

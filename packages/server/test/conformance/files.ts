@@ -11,17 +11,18 @@
  * provider credential on the provider's disk.
  */
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { SandboxFiles } from '../../src/services/sandbox/files';
 import {
 	CONFORMANCE_LABEL,
+	type ConformanceHarness,
 	conformanceRunId,
 	type LiveAdapterFixture,
 	sweepConformanceContainers,
 } from './fixture';
 
 /** Registers the file-contract conformance suite for one backend. */
-export function describeFilesConformance(fixture: LiveAdapterFixture): void {
+export function describeFilesConformance(fixture: LiveAdapterFixture, h: ConformanceHarness): void {
+	const { describe, it, expect, beforeAll, afterAll } = h;
 	describe(`${fixture.name}: SandboxFiles conformance`, () => {
 		const engine = fixture.engine;
 		let containerId: string;

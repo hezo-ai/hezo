@@ -18,12 +18,12 @@
  * backend rather than as an assertion nobody wrote for it.
  */
 
-import { describe, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DaytonaClient, DEFAULT_DAYTONA_API_URL } from '../../src/services/sandbox/daytona/client';
 import { DaytonaEngine } from '../../src/services/sandbox/daytona/engine';
 import { describeEngineConformance } from '../conformance/engine';
 import { describeFilesConformance } from '../conformance/files';
-import type { LiveAdapterFixture } from '../conformance/fixture';
+import type { ConformanceHarness, LiveAdapterFixture } from '../conformance/fixture';
 
 const apiKey = process.env.HEZO_DAYTONA_API_KEY;
 
@@ -63,6 +63,7 @@ if (!apiKey) {
 		runUser: 'node',
 	};
 
-	describeEngineConformance(fixture);
-	describeFilesConformance(fixture);
+	const harness: ConformanceHarness = { describe, it, expect, beforeAll, afterAll };
+	describeEngineConformance(fixture, harness);
+	describeFilesConformance(fixture, harness);
 }

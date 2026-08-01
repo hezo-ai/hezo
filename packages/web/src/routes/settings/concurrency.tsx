@@ -23,6 +23,7 @@ import { useMe } from '../../hooks/use-me';
 import { useSandboxBackendInfo } from '../../hooks/use-sandbox-backend-info';
 import type { ApiError } from '../../lib/api';
 import { type MessageKey, useI18n } from '../../lib/i18n';
+import { backendDisplayName } from '../../lib/sandbox-backend';
 
 const GIB = 1024 ** 3;
 
@@ -55,17 +56,6 @@ const BACKEND_NOTE: Record<SandboxBackend, MessageKey | null> = {
 };
 
 /**
- * Provider names are proper nouns and stay untranslated, so they are literals;
- * the local-daemon wording is a phrase and reuses the Storage card's key rather
- * than adding a second name for one concept. The two are distinguished
- * structurally so neither can be mistaken for the other.
- */
-const BACKEND_NAME: Record<SandboxBackend, { key: MessageKey } | { literal: string }> = {
-	[SandboxBackend.Docker]: { key: 'settings.sandboxBackend.docker' },
-	[SandboxBackend.Daytona]: { literal: 'Daytona' },
-};
-
-/**
  * Which backend is running the containers these limits apply to, and what it
  * caps beyond the budget below.
  *
@@ -78,8 +68,7 @@ function ContainerBackendNote() {
 	const { t } = useI18n();
 	const { data: info } = useSandboxBackendInfo(true);
 	if (info === undefined) return null;
-	const named = BACKEND_NAME[info.backend];
-	const name = 'key' in named ? t(named.key) : named.literal;
+	const name = backendDisplayName(info.backend, t);
 	const noteKey = BACKEND_NOTE[info.backend];
 	return (
 		<p className="text-[13px] text-text-2 mt-1 max-w-[680px]" data-testid="concurrency-backend">

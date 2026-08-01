@@ -3,6 +3,7 @@
 // menu is `sticky top-0`, which is real-CSS layout. happy-dom can't run the
 // media queries or compute sticky offsets, so this needs real Chromium.
 import { expect, test } from './fixtures';
+import { waitForStableBox } from './helpers';
 
 test.describe('settings navigation responsiveness', () => {
 	test('desktop (1024+) shows the persistent sidebar; the mobile toggle is hidden', async ({
@@ -46,7 +47,10 @@ test.describe('settings navigation responsiveness', () => {
 		const toggle = page.getByTestId('settings-nav-toggle');
 		await expect(toggle).toBeVisible({ timeout: 15000 });
 
-		const before = await toggle.boundingBox();
+		// Settled first: a box read while the page is still arriving is a reading of
+		// a different layout than the one after the scroll, which shows up as the
+		// element moving *down* - something `position: sticky` cannot do.
+		const before = await waitForStableBox(toggle);
 		expect(before).not.toBeNull();
 
 		// Scroll the main panel (the only scroller) down.
