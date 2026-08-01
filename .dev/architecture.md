@@ -1121,6 +1121,37 @@ and `cat`ed in the same breath can read as absent, which made an early probe loo
 This is what makes the whole-file bundle the only workable shape on a volume, and why the
 recovery vault does not use one (§ Agent runtime, Recovery bundles).
 
+**Measured end to end against the live API**, driving the real `DaytonaEngine` (not a fake)
+through provision, the exec triad, elevation, streaming, files, disk, suspend/resume, the
+marker kill and teardown. Four findings are worth carrying:
+
+- **Concurrent pool size on Daytona is bounded by the org's total *disk* quota, not by
+  Hezo's memory budget.** Each sandbox takes `DEFAULT_DISK_GB` (10), and a create past the
+  quota fails with `400 Total disk limit exceeded`. Hezo's admission check
+  (`projectMemoryFitsBudget`) models memory only, so on a disk-constrained account it will
+  keep admitting runs the provider then refuses. **Known gap**: the failure surfaces as a
+  provisioning error on the project's Container page rather than as a queued run, which is
+  loud but not actionable - the operator has no Hezo-side setting that would have prevented
+  it. Sizing the memory budget against `quota_disk_gb / 10` is the current workaround.
+- **The label index lags create by ~1-3 s.** A sandbox queried by label immediately after
+  `createContainer` is not returned; it appears within about three seconds. The orphan
+  reaper's direction of failure is therefore the safe one - a lagging sandbox is simply
+  absent from `owned`, so it is a *missed* reap caught on the next pass, never a wrongful
+  destroy (`reapOrphanedSandboxes` destroys `owned − live`, never `live − owned`).
+- **`containerStats` legitimately returns null on some accounts.** The telemetry endpoint
+  answers `403 Telemetry endpoints are disabled when Analytics API is configured`, which is
+  an org configuration rather than a missing scope. The honest-null path handles it: memory
+  enforcement degrades to the provider's own OOM, and because one container serves one run
+  that ends only the run that overran.
+- **A digest-pinned `agent-base` is pullable anonymously**, so Daytona builds it with no
+  registry credential - the `buildInfo` Dockerfile is `FROM …@sha256:…` and nothing else.
+
+The one part that cannot be exercised from a network that blocks WebSocket upgrades is the
+**tunnel**, whose Daytona transport is a PTY over WebSocket - and with it, anything that
+needs a container to reach Hezo (MCP, the egress proxy, the ssh-agent), so a full agent-CLI
+run included. That is a property of such a network, not of the adapter: every HTTP path
+(control plane, exec, streaming logs, files) works through the same one.
+
 **Digest resolution** (`sandbox/image-ref.ts`) is the generic OCI registry manifest lookup
 that makes the pin possible: a HEAD on the manifest, exchanging a `WWW-Authenticate: Bearer`
 challenge for an anonymous pull token when the registry asks for one, reading the digest off
