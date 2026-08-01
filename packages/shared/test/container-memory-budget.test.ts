@@ -31,10 +31,17 @@ describe('computeDefaultMaxContainerMemoryGb', () => {
 		expect(computeDefaultMaxContainerMemoryGb(onHost(1.92, 6), 2)).toBe(5);
 	});
 
-	it('clamps to the minimum rather than returning zero on a tiny host', () => {
+	it('clamps to one container rather than returning zero on a tiny host', () => {
 		// A host too small to fit the reserve must still be able to run one
 		// container, or the instance can never do anything at all.
-		expect(computeDefaultMaxContainerMemoryGb(onHost(1), 2)).toBe(MAX_CONTAINER_MEMORY_GB_MIN);
+		//
+		// That was this test's stated intent all along, but it asserted
+		// `MAX_CONTAINER_MEMORY_GB_MIN` (1 GB) against a 2 GB cap - a budget that
+		// admits nothing, since the budget is compared against a whole container's
+		// request. The comment was right and the assertion was wrong, so a 4 GB
+		// VPS could never start a container and this test called it correct.
+		expect(computeDefaultMaxContainerMemoryGb(onHost(1), 2)).toBe(2);
+		expect(MAX_CONTAINER_MEMORY_GB_MIN).toBeLessThanOrEqual(2);
 	});
 
 	it('a bigger per-container cap leaves less budget, not more', () => {
@@ -71,5 +78,39 @@ describe('projectMemoryFitsBudget', () => {
 		// Not a queueing decision: such a container can never be scheduled, so the
 		// operator has to learn that when they set it, not by watching a run wait.
 		expect(projectMemoryFitsBudget(16, 8)).toBe(false);
+	});
+});
+
+describe('the computed budget always admits at least one container', () => {
+	// The invariant: the budget is compared against a *whole* container's
+	// request, so a budget below the per-container cap admits nothing at all and
+	// every run queues `InstanceAtCapacity` forever with nothing naming why.
+	// Flooring at MAX_CONTAINER_MEMORY_GB_MIN (1 GB) did precisely that on small
+	// hosts, so an ordinary 4 GB VPS could never start a single container.
+	it.each([
+		['2 GiB, no swap', 2, 0],
+		['3 GiB, no swap', 3, 0],
+		['4 GiB, no swap', 4, 0],
+		['tiny host', 1, 0],
+	])('%s fits the default cap', (_label, ram, swap) => {
+		const budget = computeDefaultMaxContainerMemoryGb(onHost(ram, swap), 2);
+		expect(budget).toBeGreaterThanOrEqual(2);
+		expect(projectMemoryFitsBudget(2, budget)).toBe(true);
+	});
+
+	it('floors at whatever the cap actually is, not a constant', () => {
+		// A raised cap raises the floor with it - the point is "one container
+		// fits", not a particular number of gigabytes.
+		expect(computeDefaultMaxContainerMemoryGb(onHost(2, 0), 8)).toBeGreaterThanOrEqual(8);
+		expect(projectMemoryFitsBudget(8, computeDefaultMaxContainerMemoryGb(onHost(2, 0), 8))).toBe(
+			true,
+		);
+	});
+
+	it('leaves a host with real headroom exactly as it was', () => {
+		// The floor must not become the answer on machines that were fine: this is
+		// the documented reference host and a workstation.
+		expect(computeDefaultMaxContainerMemoryGb(onHost(1.92, 6), 2)).toBe(5);
+		expect(computeDefaultMaxContainerMemoryGb(onHost(16, 0), 2)).toBe(13);
 	});
 });

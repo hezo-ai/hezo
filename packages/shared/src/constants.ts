@@ -183,10 +183,19 @@ export function computeDefaultMaxContainerMemoryGb(
 		0,
 		usableMemoryGibForContainers(hostMemory.totalRamBytes, hostMemory.totalSwapBytes) - cap,
 	);
-	return Math.min(
-		MAX_CONTAINER_MEMORY_GB_MAX,
-		Math.max(MAX_CONTAINER_MEMORY_GB_MIN, Math.floor(usableGib)),
-	);
+	// **Floored at one container's cap, not at MAX_CONTAINER_MEMORY_GB_MIN.**
+	// The budget is compared against a whole container's request, so a budget
+	// below the cap admits nothing: every run queues `InstanceAtCapacity`
+	// forever with nothing naming the cause. Flooring at 1 GB did exactly that
+	// on any host with roughly 5 GiB or less of RAM+swap - a 4 GB VPS with no
+	// swap yielded a 1 GB budget against the 2 GB default cap - so the
+	// instance bricked on hardware the docs treat as ordinary.
+	//
+	// Admitting one container over-subscribes a host that genuinely cannot fit
+	// it, and that is the better failure: the container is memory-capped, so
+	// the kernel bounds the damage to that one run, whereas the alternative is
+	// an instance that can never do anything at all.
+	return Math.min(MAX_CONTAINER_MEMORY_GB_MAX, Math.max(cap, Math.floor(usableGib)));
 }
 
 /**
