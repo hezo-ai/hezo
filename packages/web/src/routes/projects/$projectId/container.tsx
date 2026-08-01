@@ -2,7 +2,10 @@ import { createFileRoute } from '@tanstack/react-router';
 import { AlertTriangle, ExternalLink, Loader2, Play, RefreshCw, Square } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { LogViewer, type LogViewerLine } from '../../../components/log-viewer';
-import { ProjectMemoryLimitSection } from '../../../components/project-memory-limit';
+import {
+	ProjectDiskLimitSection,
+	ProjectMemoryLimitSection,
+} from '../../../components/project-container-limits';
 import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
 import { ConfirmDialog } from '../../../components/ui/confirm-dialog';
@@ -318,6 +321,7 @@ function ContainerPage() {
 			/>
 
 			<ProjectMemoryLimitSection projectId={projectId} />
+			<ProjectDiskLimitSection projectId={projectId} />
 		</div>
 	);
 }

@@ -43,6 +43,21 @@ export interface ContainerConfig {
 		/** Equal to Memory so the cap has no swap escape valve. */
 		MemorySwap?: number;
 		PidsLimit?: number;
+		/**
+		 * Disk to allocate to this container's own filesystem, in GB.
+		 *
+		 * Stated by the caller on every backend; what it *means* is the adapter's
+		 * to absorb, and the two differ in kind rather than in degree. A managed
+		 * sandbox is given a filesystem of exactly this size, and it is the number
+		 * the provider bills and quotas. A local Docker container's workspace is a
+		 * bind mount with the operator's whole disk behind it, so there is nothing
+		 * to allocate and the Docker adapter ignores it - a per-container quota
+		 * there needs an XFS project-quota storage driver Hezo does not require.
+		 *
+		 * Deliberately not a "supported?" flag the caller branches on: nothing above
+		 * this seam is allowed to learn which backend is in use.
+		 */
+		DiskGb?: number;
 	};
 	ExposedPorts?: Record<string, object>;
 }

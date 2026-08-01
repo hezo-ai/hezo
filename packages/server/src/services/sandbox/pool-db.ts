@@ -6,15 +6,25 @@
  * names.
  */
 
+import { DEFAULT_CONTAINER_DISK_GB, poolDiskCeilingBytes } from '@hezo/shared';
 import type { Db } from '../../db/database';
 import {
-	POOL_DISK_CEILING_BYTES,
 	type PoolCapacity,
 	type PoolDecision,
 	type PoolMember,
 	type PoolMemberState,
 	selectPoolMember,
 } from './pool';
+
+/**
+ * Ceiling written for a member inserted without a stated disk size.
+ *
+ * A literal in SQL rather than a bind, because it is a column default in all but
+ * name: the only rows that reach it are ones written by a path that does not know
+ * the container's allocation, and they should read as "the default allocation"
+ * rather than as zero (which would recycle instantly) or as unbounded.
+ */
+const DEFAULT_DISK_CEILING_SQL = String(poolDiskCeilingBytes(DEFAULT_CONTAINER_DISK_GB));
 
 /**
  * Record whether a container is holding committed work that reached no durable
@@ -57,11 +67,12 @@ export async function loadPoolMembers(db: Db, projectId: string): Promise<PoolMe
 		state: PoolMemberState | 'creating' | 'error';
 		last_task_id: string | null;
 		disk_used_bytes: string | number;
+		disk_ceiling_bytes: string | number;
 		has_unpushed_commits: boolean;
 		reserved_for_chat: boolean;
 	}>(
 		`SELECT container_id, state::text AS state, last_task_id, disk_used_bytes,
-		        has_unpushed_commits, reserved_for_chat
+		        disk_ceiling_bytes, has_unpushed_commits, reserved_for_chat
 		   FROM container_pool_members
 		  WHERE project_id = $1
 		  ORDER BY created_at ASC`,
@@ -78,7 +89,10 @@ export async function loadPoolMembers(db: Db, projectId: string): Promise<PoolMe
 			state: row.state,
 			lastTaskId: row.last_task_id,
 			hasUnpushedCommits: row.has_unpushed_commits,
-			atDiskCeiling: Number(row.disk_used_bytes) >= POOL_DISK_CEILING_BYTES,
+			// Against the ceiling recorded for *this* container, not a global one:
+			// members can carry different allocations (a project override, or a
+			// default that changed after some were provisioned).
+			atDiskCeiling: Number(row.disk_used_bytes) >= Number(row.disk_ceiling_bytes),
 			reservedForChat: row.reserved_for_chat,
 		});
 	}
@@ -98,15 +112,27 @@ export async function upsertPoolMember(
 	projectId: string,
 	containerId: string,
 	state: PoolMemberState,
+	/**
+	 * Disk this container was actually provisioned with, in GB. Recorded on the
+	 * member rather than read from the setting at judgement time, so raising the
+	 * default afterwards cannot tell an existing container it may fill past what
+	 * it really has. Omitted on an upsert that is only moving state, which leaves
+	 * the recorded ceiling alone.
+	 */
+	diskGb?: number,
 ): Promise<void> {
+	const ceiling = diskGb === undefined ? null : poolDiskCeilingBytes(diskGb);
 	await db.query(
-		`INSERT INTO container_pool_members (project_id, container_id, state)
-		 VALUES ($1, $2, $3::container_pool_state)
+		`INSERT INTO container_pool_members (project_id, container_id, state, disk_ceiling_bytes)
+		 VALUES ($1, $2, $3::container_pool_state, COALESCE($4, ${DEFAULT_DISK_CEILING_SQL}))
 		 ON CONFLICT (container_id) DO UPDATE
-		    SET state = EXCLUDED.state, project_id = EXCLUDED.project_id, updated_at = now()
+		    SET state = EXCLUDED.state, project_id = EXCLUDED.project_id,
+		        disk_ceiling_bytes = COALESCE($4, container_pool_members.disk_ceiling_bytes),
+		        updated_at = now()
 		  WHERE container_pool_members.state IS DISTINCT FROM EXCLUDED.state
-		     OR container_pool_members.project_id IS DISTINCT FROM EXCLUDED.project_id`,
-		[projectId, containerId, state],
+		     OR container_pool_members.project_id IS DISTINCT FROM EXCLUDED.project_id
+		     OR container_pool_members.disk_ceiling_bytes IS DISTINCT FROM COALESCE($4, container_pool_members.disk_ceiling_bytes)`,
+		[projectId, containerId, state, ceiling],
 	);
 }
 

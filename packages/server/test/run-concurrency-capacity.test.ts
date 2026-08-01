@@ -1,8 +1,10 @@
 import {
 	ContainerStatus,
 	computeDefaultMaxContainerMemoryGb,
+	DEFAULT_CONTAINER_DISK_GB,
 	DEFAULT_MAX_CONTAINER_MEMORY_GB,
 	DEFAULT_RAM_CAP_PER_CONTAINER_GB,
+	poolDiskCeilingBytes,
 } from '@hezo/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { PgliteDb } from '../src/db/drivers/pglite';
@@ -11,7 +13,6 @@ import {
 	getActiveContainers,
 	isContainerCapacityBlockedInDb,
 } from '../src/services/run-concurrency';
-import { POOL_DISK_CEILING_BYTES } from '../src/services/sandbox/pool';
 import { createStubDocker } from './helpers/app';
 import { createTestDbWithMigrations } from './helpers/db';
 
@@ -64,18 +65,21 @@ describe('container capacity', () => {
 			state: string;
 			reserved_for_chat: boolean;
 			disk_used_bytes: number;
+			disk_ceiling_bytes: number;
 		}> = {},
 	): Promise<void> {
 		await db.query(
 			`INSERT INTO container_pool_members
-			   (project_id, container_id, state, reserved_for_chat, disk_used_bytes)
-			 VALUES ($1, $2, $3::container_pool_state, $4, $5)`,
+			   (project_id, container_id, state, reserved_for_chat, disk_used_bytes,
+			    disk_ceiling_bytes)
+			 VALUES ($1, $2, $3::container_pool_state, $4, $5, $6)`,
 			[
 				projectId,
 				containerId,
 				over.state ?? 'idle',
 				over.reserved_for_chat ?? false,
 				over.disk_used_bytes ?? 0,
+				over.disk_ceiling_bytes ?? poolDiskCeilingBytes(DEFAULT_CONTAINER_DISK_GB),
 			],
 		);
 	}
@@ -180,7 +184,9 @@ describe('container capacity', () => {
 		// It would fail its run partway through, which is worse than paying for a
 		// fresh one.
 		const project = await seedProject();
-		await addMember(project, 'ctr-full', { disk_used_bytes: POOL_DISK_CEILING_BYTES });
+		await addMember(project, 'ctr-full', {
+			disk_used_bytes: poolDiskCeilingBytes(DEFAULT_CONTAINER_DISK_GB),
+		});
 		const other = await seedProject();
 		await addMember(other, 'ctr-busy', { state: 'busy' });
 		expect(await isContainerCapacityBlockedInDb(db, engine, project)).toBe(true);

@@ -20,7 +20,7 @@ import { forEachConcurrent } from '../lib/concurrency';
 import { withKeyedLock } from '../lib/keyed-lock';
 import { ref } from '../lib/log-ref';
 import { stripNulBytes, terminalStatusParams } from '../lib/sql';
-import { getDefaultRamCapPerContainerGb } from '../lib/system-meta';
+import { getDefaultRamCapPerContainerGb, getProjectContainerDiskGb } from '../lib/system-meta';
 import { logger } from '../logger';
 import { setAgentIdleIfNoActiveRuns } from './agent-runtime-status';
 import type { ContainerLogStreamer } from './container-logs';
@@ -444,6 +444,10 @@ export async function provisionContainer(
 		const memoryLimitGib =
 			limitRow.rows[0]?.memory_limit_gib ?? (await getDefaultRamCapPerContainerGb(db));
 		const memoryHardCapBytes = memoryLimitBytes(memoryLimitGib) + MEMORY_HARD_CAP_HEADROOM_BYTES;
+		// Same precedence as the memory cap: the project's override, else the
+		// instance default. Stated on every backend; what it means is the engine's
+		// to absorb (see ContainerConfig.HostConfig.DiskGb).
+		const diskGb = await getProjectContainerDiskGb(db, project.id);
 
 		const { Id } = await docker.createContainer(containerName, {
 			Image: baseImage,
@@ -458,6 +462,7 @@ export async function provisionContainer(
 				Init: true,
 				Memory: memoryHardCapBytes,
 				MemorySwap: memoryHardCapBytes,
+				DiskGb: diskGb,
 				PidsLimit: CONTAINER_PIDS_LIMIT,
 				CapDrop: ['ALL'],
 				CapAdd: [...CONTAINER_BASE_CAPABILITIES, ...(pinMtu !== null ? ['NET_ADMIN'] : [])],
@@ -500,7 +505,10 @@ export async function provisionContainer(
 		// never exists in a state no run could use, and registered for every
 		// container - `projects.container_id` still names one of them for the UI and
 		// for the columns not yet migrated, but the pool is what the ladder reads.
-		await upsertPoolMember(db, project.id, Id, 'idle');
+		// The disk it was actually provisioned with rides along, so the pool judges
+		// this container against its own allocation rather than against whatever the
+		// setting happens to say later.
+		await upsertPoolMember(db, project.id, Id, 'idle', diskGb);
 
 		if (deps.containerLogStreamer && deps.logs) {
 			deps.containerLogStreamer.subscribe(project.id, Id, deps.logs, docker);

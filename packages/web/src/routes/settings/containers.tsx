@@ -1,4 +1,7 @@
 import {
+	CONTAINER_DISK_GB_MAX,
+	CONTAINER_DISK_GB_MIN,
+	DEFAULT_CONTAINER_DISK_GB,
 	DEFAULT_RAM_CAP_PER_CONTAINER_GB,
 	HOST_RESERVED_MEMORY_GB,
 	MAX_CONTAINER_MEMORY_GB_MAX,
@@ -224,6 +227,14 @@ const RAM_CAP_POINTS: readonly MessageKey[] = [
 	'concurrency.ramCap.point.range',
 ];
 
+const DISK_SIZE_POINTS: readonly MessageKey[] = [
+	'concurrency.diskSize.point.allocation',
+	'concurrency.diskSize.point.managed',
+	'concurrency.diskSize.point.recycle',
+	'concurrency.diskSize.point.override',
+	'concurrency.diskSize.point.range',
+];
+
 /**
  * Each section's explanation is a short bullet list rather than a paragraph -
  * these are reference facts an operator scans, not prose they read. `vars` is
@@ -303,6 +314,21 @@ function ConcurrencySettingsPage() {
 						}}
 					/>
 					{settings === undefined ? null : <RamCapForm settings={settings} />}
+				</section>
+
+				<section className="border border-border rounded-md p-4 bg-surface mb-4">
+					<label className="block text-[13px] font-medium mb-1" htmlFor="container-disk-input">
+						{t('concurrency.diskSize.label')}
+					</label>
+					<Points
+						keys={DISK_SIZE_POINTS}
+						vars={{
+							min: CONTAINER_DISK_GB_MIN,
+							max: CONTAINER_DISK_GB_MAX,
+							default: DEFAULT_CONTAINER_DISK_GB,
+						}}
+					/>
+					{settings === undefined ? null : <ContainerDiskForm settings={settings} />}
 				</section>
 			</>
 		);
@@ -489,3 +515,73 @@ function RamCapForm({ settings }: { settings: InstanceSettings }) {
 export const Route = createFileRoute('/settings/containers')({
 	component: ConcurrencySettingsPage,
 });
+
+/**
+ * The instance-wide disk allocation, the sibling of {@link RamCapForm}.
+ *
+ * Same shape deliberately: an operator reading this page should not have to
+ * learn two controls for two limits that behave identically. The one asymmetry
+ * is that there is no budget to check it against - Hezo pools memory and does not
+ * pool disk, so what bounds this is the provider account's quota, which Hezo
+ * cannot see.
+ */
+function ContainerDiskForm({ settings }: { settings: InstanceSettings }) {
+	const { t } = useI18n();
+	const updateSettings = useUpdateInstanceSettings();
+	const [value, setValue] = useState(String(settings.default_container_disk_gb));
+	const [error, setError] = useState<string | null>(null);
+
+	async function handleSave() {
+		setError(null);
+		const n = Number.parseInt(value, 10);
+		if (Number.isNaN(n) || n < CONTAINER_DISK_GB_MIN || n > CONTAINER_DISK_GB_MAX) {
+			setError(
+				t('concurrency.rangeError', {
+					min: CONTAINER_DISK_GB_MIN,
+					max: CONTAINER_DISK_GB_MAX,
+				}),
+			);
+			return;
+		}
+		try {
+			const result = await updateSettings.mutateAsync({ default_container_disk_gb: n });
+			setValue(String(result.default_container_disk_gb));
+		} catch (e) {
+			setError((e as ApiError).message);
+		}
+	}
+
+	const dirty = value.trim() !== String(settings.default_container_disk_gb);
+
+	return (
+		<>
+			<div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+				<Input
+					id="container-disk-input"
+					data-testid="container-disk-input"
+					type="number"
+					inputMode="numeric"
+					min={CONTAINER_DISK_GB_MIN}
+					max={CONTAINER_DISK_GB_MAX}
+					value={value}
+					onChange={(e) => setValue(e.target.value)}
+					className="sm:w-40"
+				/>
+				<Button
+					size="sm"
+					data-testid="container-disk-save"
+					onClick={handleSave}
+					disabled={!dirty || updateSettings.isPending}
+				>
+					{updateSettings.isPending && <Loader2 className="w-3 h-3 animate-spin" />}{' '}
+					{t('common.save')}
+				</Button>
+			</div>
+			{error && (
+				<p className="text-[13px] text-danger mt-1.5" data-testid="container-disk-error">
+					{error}
+				</p>
+			)}
+		</>
+	);
+}

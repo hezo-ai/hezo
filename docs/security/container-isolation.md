@@ -41,9 +41,13 @@ activity can consume:
   of containers: how many fit follows from this budget and the RAM cap below, and a
   project that raises its own cap simply takes a larger share.
 - **RAM cap per container** - the memory limit applied to every container (2 GB by
-  default; projects that need more can override it in their own settings). A container
-  over its cap is stopped, or has its biggest process killed by the kernel, instead of
-  taking down the whole server.
+  default; projects that need more can override it on their own Container page). A
+  container over its cap is stopped, or has its biggest process killed by the kernel,
+  instead of taking down the whole server.
+
+A third setting on the same page, **Disk per container**, sizes each container's own
+filesystem where the container service allocates one - see
+[Containers](/docs/containers/overview#how-much-can-run-at-once).
 
 As a sizing rule of thumb, one working agent (its coding CLI plus the helper tools it
 spawns) typically uses 300-350 MB of memory, and the container cap bounds the total

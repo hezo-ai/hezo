@@ -13,6 +13,8 @@ export interface InstanceSettings {
 	/** The automatic default the server computed for this backend. */
 	max_container_memory_gb_computed_default: number;
 	default_ram_cap_per_container_gb: number;
+	/** Disk allocated to each container, in GB. Sibling of the RAM cap. */
+	default_container_disk_gb: number;
 	/**
 	 * The memory containers are drawn from, or null when they do not run on the
 	 * Hezo host - a managed sandbox backend, where the host's RAM had no part in
@@ -28,6 +30,7 @@ export type InstanceSettingsUpdate = Partial<{
 	/** null resets to the automatic (host-memory-computed) default. */
 	max_container_memory_gb: number | null;
 	default_ram_cap_per_container_gb: number;
+	default_container_disk_gb: number;
 }>;
 
 export function useInstanceSettings() {

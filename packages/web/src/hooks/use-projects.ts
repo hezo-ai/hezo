@@ -18,6 +18,7 @@ export interface Project {
 	is_internal?: boolean;
 	/** Per-project container memory override in GiB; null = inherit the instance-wide ram cap. */
 	memory_limit_gib: number | null;
+	container_disk_gb: number | null;
 	daily_budget_cents: number;
 	weekly_budget_cents: number;
 	monthly_budget_cents: number;
@@ -246,6 +247,7 @@ interface UpdateProjectVars {
 	description?: string;
 	/** null clears the override back to the instance-wide default ram cap. */
 	memory_limit_gib?: number | null;
+	container_disk_gb?: number | null;
 	daily_budget_cents?: number;
 	weekly_budget_cents?: number;
 	monthly_budget_cents?: number;

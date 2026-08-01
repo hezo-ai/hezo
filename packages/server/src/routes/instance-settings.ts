@@ -1,4 +1,6 @@
 import {
+	CONTAINER_DISK_GB_MAX,
+	CONTAINER_DISK_GB_MIN,
 	MAX_CHAT_HISTORY_SIZE_MAX,
 	MAX_CHAT_HISTORY_SIZE_MIN,
 	MAX_CONTAINER_MEMORY_GB_MAX,
@@ -15,6 +17,7 @@ import {
 	clearMaxContainerMemoryGb,
 	computeAutoMaxContainerMemoryGb,
 	deleteSystemMeta,
+	getDefaultContainerDiskGb,
 	getDefaultRamCapPerContainerGb,
 	getInstanceBaseUrl,
 	getInstanceLocale,
@@ -24,6 +27,7 @@ import {
 	INSTANCE_BASE_URL_KEY,
 	instanceLocaleIsConfigured,
 	normalizeBaseUrl,
+	setDefaultContainerDiskGb,
 	setDefaultRamCapPerContainerGb,
 	setInstanceLocale,
 	setMaxChatHistorySize,
@@ -64,6 +68,7 @@ async function instanceSettingsPayload(db: Db, engine: ContainerEngine) {
 		max_container_memory_gb_is_set: explicitBudget !== null,
 		max_container_memory_gb_computed_default: await computeAutoMaxContainerMemoryGb(db, engine),
 		default_ram_cap_per_container_gb: await getDefaultRamCapPerContainerGb(db),
+		default_container_disk_gb: await getDefaultContainerDiskGb(db),
 		host_total_ram_bytes: hostMemory?.totalRamBytes ?? null,
 		host_total_swap_bytes: hostMemory?.totalSwapBytes ?? null,
 		locale: await getInstanceLocale(db),
@@ -165,6 +170,7 @@ instanceSettingsRoutes.patch('/instance-settings', async (c) => {
 		max_chat_history_size?: unknown;
 		max_container_memory_gb?: unknown;
 		default_ram_cap_per_container_gb?: unknown;
+		default_container_disk_gb?: unknown;
 	};
 	const body = await c.req.json<PatchBody>().catch(() => ({}) as PatchBody);
 
@@ -173,6 +179,7 @@ instanceSettingsRoutes.patch('/instance-settings', async (c) => {
 		'max_chat_history_size',
 		'max_container_memory_gb',
 		'default_ram_cap_per_container_gb',
+		'default_container_disk_gb',
 	] as const;
 	if (!knownFields.some((f) => f in body)) {
 		return err(c, 'INVALID_REQUEST', `one of ${knownFields.join(', ')} is required`, 400);
@@ -234,6 +241,22 @@ instanceSettingsRoutes.patch('/instance-settings', async (c) => {
 			);
 		}
 		await setDefaultRamCapPerContainerGb(db, cap);
+	}
+
+	if ('default_container_disk_gb' in body) {
+		const invalid = integerRangeError(
+			'default_container_disk_gb',
+			body.default_container_disk_gb,
+			CONTAINER_DISK_GB_MIN,
+			CONTAINER_DISK_GB_MAX,
+		);
+		if (invalid) return err(c, 'INVALID_REQUEST', invalid, 400);
+		// No budget cross-check to make: unlike memory, disk is not pooled by Hezo.
+		// What bounds it is the provider account's own quota, which Hezo cannot see -
+		// so the honest place for that limit is the provider's docs page and the
+		// failure it produces at provision time, not a check here that would be
+		// guessing.
+		await setDefaultContainerDiskGb(db, body.default_container_disk_gb as number);
 	}
 
 	if ('base_url' in body) {

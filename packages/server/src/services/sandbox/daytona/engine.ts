@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { DEFAULT_CONTAINER_DISK_GB } from '@hezo/shared';
 import { logger } from '../../../logger';
 import { parseDfKilobytes, parseHezoProcessList } from '../../docker';
 import { resolveDigestPinnedRef } from '../image-ref';
@@ -45,8 +46,14 @@ const log = logger.child('daytona-engine');
 const NAME_LABEL = 'hezo.name';
 const IMAGE_LABEL = 'hezo.image';
 
-/** Disk (GB) requested per sandbox. The image is a read-only lower layer and does not count against it. */
-const DEFAULT_DISK_GB = 10;
+/**
+ * Disk (GB) requested when the caller states none. The image is a read-only
+ * lower layer and does not count against it.
+ *
+ * A fallback only - `HostConfig.DiskGb` is what a Hezo-provisioned container
+ * actually carries, from the instance setting and the project's override.
+ */
+const FALLBACK_DISK_GB = DEFAULT_CONTAINER_DISK_GB;
 /** vCPU per sandbox. */
 const DEFAULT_CPU = 2;
 
@@ -174,7 +181,7 @@ export class DaytonaEngine implements ContainerEngine {
 			env,
 			cpu: DEFAULT_CPU,
 			memory: memoryGb,
-			disk: DEFAULT_DISK_GB,
+			disk: config.HostConfig?.DiskGb ?? FALLBACK_DISK_GB,
 			// A backstop only: Hezo suspends idle containers itself, and this is
 			// what stops a sandbox billing forever if the server dies first.
 			autoStopInterval: DAYTONA_IDLE_STOP_MIN,

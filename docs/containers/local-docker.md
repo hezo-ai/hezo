@@ -48,6 +48,11 @@ is no per-container disk ceiling to plan around, and Hezo does not prune anythin
 grounds here. Worktrees for closed tasks are cleaned up as tasks close, as they are
 everywhere.
 
+The **Disk per container** setting therefore allocates nothing on this backend. It is
+still there, and still what a container would get if you moved to a managed service, but
+on the local daemon there is no filesystem to size: giving a container a quota would need
+a storage driver with project-quota support that Hezo does not require you to run.
+
 ## Reaching services on your machine
 
 Because the container is on your machine, it can reach things that are also on it. The one

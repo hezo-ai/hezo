@@ -1,7 +1,7 @@
 import { ContainerStatus, HeartbeatRunStatus } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { getDefaultRamCapPerContainerGb, getMaxContainerMemoryGb } from '../lib/system-meta';
-import { POOL_DISK_CEILING_BYTES } from './sandbox/pool';
+
 import type { ContainerEngine } from './sandbox/types';
 
 /**
@@ -111,15 +111,18 @@ export async function getActiveContainers(
 			// take - never one that is busy, reserved for the chat, or out of disk -
 			// or, while the pool is not yet populated for it, a running container of
 			// its own, which is today's one-container-per-project behaviour.
+			// Each member is judged against its own recorded ceiling rather than a
+			// global constant - the allocation is a setting now, and a project may
+			// override it, so two idle members can legitimately have different room.
 			`SELECT project_id FROM container_pool_members
-			  WHERE state = 'idle' AND NOT reserved_for_chat AND disk_used_bytes < $2
+			  WHERE state = 'idle' AND NOT reserved_for_chat AND disk_used_bytes < disk_ceiling_bytes
 			 UNION
 			 SELECT id AS project_id FROM projects
 			  WHERE container_status = $1::container_status
 			    AND NOT EXISTS (
 			      SELECT 1 FROM container_pool_members m WHERE m.project_id = projects.id
 			    )`,
-			[ContainerStatus.Running, POOL_DISK_CEILING_BYTES],
+			[ContainerStatus.Running],
 		),
 	]);
 	// One query for the overrides rather than one per container: the set of

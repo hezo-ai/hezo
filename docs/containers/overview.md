@@ -135,6 +135,13 @@ consume:
   default). A project that needs more can override it on its own Container page. A
   container over its cap is stopped, or has its biggest process killed by the kernel,
   rather than taking down anything else.
+- **Disk per container** - how much disk each container is given for its checkouts,
+  dependencies and build output (5 GB by default). Like the RAM cap, a project that needs
+  more can override it on its own Container page. A container that fills most of its
+  allocation is replaced rather than reused, so a run never runs out of space partway
+  through. This only allocates anything where the container service gives each container
+  its own filesystem: on [local Docker](/docs/containers/local-docker) a container's
+  workspace has your whole disk behind it, so there is nothing to allocate.
 
 The automatic default for the first of those depends on where containers run, because the
 memory being budgeted is not the same memory. The settings page names the service in use

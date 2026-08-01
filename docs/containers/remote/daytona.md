@@ -35,13 +35,15 @@ These numbers are Daytona's. Another provider will have different ones.
 
 - **A sandbox gets at most 8 GB of memory.** A project memory cap above that is refused
   when the run tries to start, with the limit named.
-- **Each sandbox is allocated 10 GB of disk**, whatever the memory cap is.
 - **Your account has a total disk quota across all sandboxes**, and it is usually what you
-  hit first. At 10 GB each, a 30 GB quota is three sandboxes running at once, regardless of
-  what Hezo's memory budget allows. If runs queue while the memory budget looks free, this
-  is the limit to check.
+  hit first - before the memory quota, and before Hezo's own memory budget. It is what
+  makes **Disk per container** the setting to think about here: at Hezo's 5 GB default a
+  30 GB quota is six sandboxes at once, where the 10 GB Hezo used to request would have
+  allowed three. If runs queue while the memory budget looks free, this is the limit to
+  check.
 
-Size Hezo's total container memory against whichever of those binds first for your plan.
+Size Hezo's total container memory and its disk per container against whichever of those
+binds first for your plan.
 
 ## Startup time
 

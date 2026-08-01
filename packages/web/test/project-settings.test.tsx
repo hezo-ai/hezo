@@ -142,7 +142,7 @@ test('edits the per-project memory limit and persists it', async () => {
 
 	// Read view shows the no-override state: the container inherits the
 	// instance-wide ram cap.
-	const readValue = await findByTestId('memory-limit-gib-value', undefined, { timeout: 8_000 });
+	const readValue = await findByTestId('project-memory-limit-value', undefined, { timeout: 8_000 });
 	expect(readValue.textContent).toContain('Instance default');
 
 	await user.click(await findByTestId('project-memory-limit-edit'));

@@ -101,9 +101,17 @@ of the system is sized against that promise.
 
 ## What else to expect
 
-- **Disk is finite.** A local workspace has your whole disk behind it; a sandbox is
-  allocated a fixed amount. Hezo prunes worktrees for closed tasks and recycles a container
-  that approaches its ceiling.
+- **Disk is finite, and you choose how much.** A local workspace has your whole disk behind
+  it; a sandbox gets exactly what Hezo asks for. **Disk per container** in Settings ->
+  Containers sets that (5 GB by default), and a project that needs more can override it on
+  its own Container page - the same shape as the RAM cap. Hezo prunes worktrees for closed
+  tasks and replaces a container that fills most of its allocation, so a run never runs out
+  of space partway through.
+
+  It is worth sizing deliberately rather than raising to be safe: disk is billed and
+  quota'd per sandbox, and the account-wide disk quota is usually what binds first, so
+  every extra GB is one fewer container you can run at once. Divide your plan's disk quota
+  by this number to see how many sandboxes your plan actually allows.
 - **Idle containers are suspended, not destroyed.** A project keeps at most one suspended
   container, which resumes with its clones and worktrees intact; extra containers from a
   burst are destroyed when they go idle and are rebuilt from the git remote next time. A

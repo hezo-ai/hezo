@@ -201,6 +201,53 @@ export function projectMemoryFitsBudget(capGb: number, budgetGb: number): boolea
 }
 
 /**
+ * Disk, in GB, allocated to each project container.
+ *
+ * The sibling of the per-container RAM cap: an instance-wide default, overridable
+ * per project. Unlike memory it is only meaningful where the backend allocates a
+ * per-container filesystem - a managed sandbox does, a local Docker container's
+ * workspace is a bind mount with the operator's whole disk behind it - so each
+ * engine absorbs it, and the setting is stated once rather than branched on by a
+ * caller.
+ *
+ * Small on purpose. A sandbox's disk is billed and quota'd by the provider, and
+ * the account-wide disk quota is usually what binds first, so the default is
+ * sized for a working checkout plus its dependencies rather than for the largest
+ * repository anyone might have. Raise it - globally or for the one project that
+ * needs it - rather than paying for headroom every project holds and none uses.
+ */
+export const DEFAULT_CONTAINER_DISK_GB = 5;
+/** Below this a checkout plus `node_modules` does not reliably fit. */
+export const CONTAINER_DISK_GB_MIN = 2;
+export const CONTAINER_DISK_GB_MAX = 1024;
+
+/**
+ * Headroom, in GB, left below a container's allocation before the pool recycles
+ * it rather than handing it to another run.
+ *
+ * A container that fills up *during* a run fails that run partway through, which
+ * is strictly worse than paying for a fresh container up front - so the recycle
+ * threshold sits below the allocation, not at it, and the gap has to be big
+ * enough for one run's growth (a dependency install, a build output).
+ */
+const POOL_DISK_HEADROOM_GB = 1;
+
+/**
+ * Disk a container may consume before the pool recycles it, in bytes.
+ *
+ * Derived from that container's own allocation rather than fixed, because the
+ * allocation is now configurable: a ceiling that made sense against one size is
+ * either pointless (far above what the container can hold) or thrashing (recycles
+ * a container that had plenty left) against another. The floor keeps the
+ * threshold meaningful when the allocation is small enough that the flat headroom
+ * would consume most of it.
+ */
+export function poolDiskCeilingBytes(diskGb: number): number {
+	const usable = Math.max(diskGb / 2, diskGb - POOL_DISK_HEADROOM_GB);
+	return Math.round(usable * 1024 ** 3);
+}
+
+/**
  * Minutes a project's containers keep running after their last activity (agent
  * runs, assistant chat) before the idle pass retires the pool - suspending one
  * and destroying the rest. Containers come back on demand.

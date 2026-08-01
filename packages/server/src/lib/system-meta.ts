@@ -1,6 +1,9 @@
 import {
+	CONTAINER_DISK_GB_MAX,
+	CONTAINER_DISK_GB_MIN,
 	coerceLocaleSettings,
 	computeDefaultMaxContainerMemoryGb,
+	DEFAULT_CONTAINER_DISK_GB,
 	DEFAULT_MAX_CHAT_HISTORY_SIZE,
 	DEFAULT_MAX_CONTAINER_MEMORY_GB,
 	DEFAULT_RAM_CAP_PER_CONTAINER_GB,
@@ -33,6 +36,8 @@ export const MAX_CHAT_HISTORY_SIZE_KEY = 'max_chat_history_size';
  */
 export const MAX_CONTAINER_MEMORY_GB_KEY = 'max_container_memory_gb';
 export const RAM_CAP_PER_CONTAINER_KEY = 'default_ram_cap_per_container_gb';
+/** Disk allocated to each project container, in GB. Sibling of the RAM cap. */
+export const CONTAINER_DISK_GB_KEY = 'default_container_disk_gb';
 
 /**
  * Locale keys. One key per axis rather than a single JSON blob, so a partial
@@ -197,6 +202,44 @@ export async function setDefaultRamCapPerContainerGb(db: Db, value: number): Pro
 	const clamped = clampRamCapPerContainerGb(value);
 	await setSystemMeta(db, RAM_CAP_PER_CONTAINER_KEY, String(clamped));
 	return clamped;
+}
+
+/** Clamp to the allowed per-container disk range (GB), matching the RAM cap's shape. */
+export function clampContainerDiskGb(value: number): number {
+	if (!Number.isFinite(value)) return DEFAULT_CONTAINER_DISK_GB;
+	return Math.min(CONTAINER_DISK_GB_MAX, Math.max(CONTAINER_DISK_GB_MIN, Math.round(value)));
+}
+
+/**
+ * The instance-wide disk allocated to each project container, in GB. Applied to
+ * every container without a per-project override. Falls back to the default when
+ * unset or malformed.
+ */
+export async function getDefaultContainerDiskGb(db: Db): Promise<number> {
+	const raw = await getSystemMeta(db, CONTAINER_DISK_GB_KEY);
+	if (raw === null) return DEFAULT_CONTAINER_DISK_GB;
+	const parsed = Number.parseInt(raw, 10);
+	if (Number.isNaN(parsed)) return DEFAULT_CONTAINER_DISK_GB;
+	return clampContainerDiskGb(parsed);
+}
+
+export async function setDefaultContainerDiskGb(db: Db, value: number): Promise<number> {
+	const clamped = clampContainerDiskGb(value);
+	await setSystemMeta(db, CONTAINER_DISK_GB_KEY, String(clamped));
+	return clamped;
+}
+
+/**
+ * The disk a given project's containers get, in GB: its own override, else the
+ * instance default. One query, so a caller never has to remember the precedence.
+ */
+export async function getProjectContainerDiskGb(db: Db, projectId: string): Promise<number> {
+	const row = await db.query<{ container_disk_gb: number | null }>(
+		'SELECT container_disk_gb FROM projects WHERE id = $1',
+		[projectId],
+	);
+	const override = row.rows[0]?.container_disk_gb;
+	return override ?? (await getDefaultContainerDiskGb(db));
 }
 
 // The container idle window is no longer an operator setting - it is the

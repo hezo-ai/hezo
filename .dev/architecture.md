@@ -1126,13 +1126,18 @@ through provision, the exec triad, elevation, streaming, files, disk, suspend/re
 marker kill and teardown. Four findings are worth carrying:
 
 - **Concurrent pool size on Daytona is bounded by the org's total *disk* quota, not by
-  Hezo's memory budget.** Each sandbox takes `DEFAULT_DISK_GB` (10), and a create past the
-  quota fails with `400 Total disk limit exceeded`. Hezo's admission check
-  (`projectMemoryFitsBudget`) models memory only, so on a disk-constrained account it will
-  keep admitting runs the provider then refuses. **Known gap**: the failure surfaces as a
-  provisioning error on the project's Container page rather than as a queued run, which is
-  loud but not actionable - the operator has no Hezo-side setting that would have prevented
-  it. Sizing the memory budget against `quota_disk_gb / 10` is the current workaround.
+  Hezo's memory budget.** A create past the quota fails with `400 Total disk limit
+  exceeded`, and Hezo's admission check (`projectMemoryFitsBudget`) models memory only, so
+  on a disk-constrained account it will keep admitting runs the provider then refuses; the
+  failure surfaces as a provisioning error on the project's Container page. What the
+  operator *can* do about it is the per-container disk allocation, which is now a setting
+  (`default_container_disk_gb`, default 5 GB) with a per-project override
+  (`projects.container_disk_gb`) rather than the flat 10 GB the adapter used to hardcode -
+  so `quota_disk_gb / allocation` is a number they control. The pool's recycle threshold is
+  derived from the same figure (`poolDiskCeilingBytes`) and recorded per member
+  (`container_pool_members.disk_ceiling_bytes`) at provision, so a container is always
+  judged against the disk it actually has rather than against whatever the setting says
+  later.
 - **The label index lags create by ~1-3 s.** A sandbox queried by label immediately after
   `createContainer` is not returned; it appears within about three seconds. The orphan
   reaper's direction of failure is therefore the safe one - a lagging sandbox is simply

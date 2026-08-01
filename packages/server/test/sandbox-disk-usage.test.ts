@@ -1,6 +1,6 @@
+import { DEFAULT_CONTAINER_DISK_GB, poolDiskCeilingBytes } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
 import { parseDfKilobytes } from '../src/services/docker';
-import { POOL_DISK_CEILING_BYTES } from '../src/services/sandbox/pool';
 import {
 	buildDiskUsageScript,
 	buildPortsListeningScript,
@@ -71,9 +71,10 @@ describe('parseDfKilobytes', () => {
 	it('reads a figure over the pool ceiling as over the ceiling', () => {
 		// The one end-to-end property that matters: the units line up, so a
 		// container genuinely over its budget is recycled rather than reused.
-		const overKb = String(Math.ceil(POOL_DISK_CEILING_BYTES / 1024) + 1);
-		expect(parseDfKilobytes(overKb)).toBeGreaterThan(POOL_DISK_CEILING_BYTES);
-		expect(parseDfKilobytes('1024')).toBeLessThan(POOL_DISK_CEILING_BYTES);
+		const ceiling = poolDiskCeilingBytes(DEFAULT_CONTAINER_DISK_GB);
+		const overKb = String(Math.ceil(ceiling / 1024) + 1);
+		expect(parseDfKilobytes(overKb)).toBeGreaterThan(ceiling);
+		expect(parseDfKilobytes('1024')).toBeLessThan(ceiling);
 	});
 });
 
