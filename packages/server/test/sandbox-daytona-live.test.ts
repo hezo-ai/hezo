@@ -255,7 +255,12 @@ describe.skipIf(!apiKey)('Daytona adapter — live API', () => {
 		async () => {
 			// Orphans are a cost failure rather than an error - nothing surfaces them -
 			// so the sweep is the only thing that notices.
-			const result = await reapOrphanedContainers(engine, instanceId, new Set<string>());
+			// Twice: a container is destroyed only on its second consecutive sighting,
+			// so one mid-provision on the engine but not yet recorded is never swept.
+			const live = new Set<string>();
+			const first = await reapOrphanedContainers(engine, instanceId, live);
+			expect(first.destroyed).toEqual([]);
+			const result = await reapOrphanedContainers(engine, instanceId, live, first.suspected);
 			expect(result.destroyed).toContain(containerId);
 			const gone = await engine.inspectContainer(containerId);
 			expect(gone === null || gone.State.Running === false).toBe(true);

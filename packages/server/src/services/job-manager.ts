@@ -298,6 +298,13 @@ export class JobManager {
 	private runningTasks = new Map<string, RunningTask>();
 	private liveRuns = new Map<string, LiveRun>();
 	private guards = new Map<string, boolean>();
+	/**
+	 * Containers the last orphan sweep found unreferenced. One sighting is not
+	 * enough to destroy on (see `reapOrphanedContainers`), so the set carries
+	 * across ticks. Bounded by the number of containers this instance owns, and
+	 * replaced wholesale each pass rather than accumulated.
+	 */
+	private suspectedOrphanContainers: ReadonlySet<string> = new Set();
 	/** Ticks dropped since the last warning, per job — see guarded(). */
 	private skippedTicks = new Map<string, number>();
 	private skipWarnedAt = new Map<string, number>();
@@ -2958,15 +2965,18 @@ export class JobManager {
 			return;
 		}
 		const { reapOrphanedContainers } = await import('./sandbox/orphan-reaper');
+		const { listReferencedContainerIds } = await import('./sandbox/pool-db');
 		const { getOrCreateInstanceId } = await import('./telemetry');
-		const live = await db.query<{ container_id: string }>(
-			`SELECT container_id FROM projects WHERE container_id IS NOT NULL`,
-		);
-		await reapOrphanedContainers(
+		const result = await reapOrphanedContainers(
 			docker,
 			await getOrCreateInstanceId(db),
-			new Set(live.rows.map((r) => r.container_id)),
+			await listReferencedContainerIds(db),
+			this.suspectedOrphanContainers,
 		);
+		// Carried to the next tick: a container is only destroyed once it has looked
+		// orphaned twice running, which is what keeps a mid-provision container -
+		// on the engine, not yet recorded anywhere - from being swept.
+		this.suspectedOrphanContainers = result.suspected;
 	}
 
 	private async handleContainerTransition(transition: ContainerTransition): Promise<void> {

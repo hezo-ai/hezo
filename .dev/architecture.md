@@ -1210,7 +1210,7 @@ the old formula pretended did not exist - not a discount on its swap. Instances 
 explicitly set the value keep it; only the computed default moves.
 
 **The orphan sweep** (`sandbox/orphan-reaper.ts`, run every 10 minutes by `JobManager`)
-destroys containers this instance created that no project row references any more. Boot
+destroys containers this instance created that Hezo no longer references anywhere. Boot
 fails every in-flight run and never reattaches, so a crash, a hard kill or a lost provider
 response strands containers with no owner - harmless on local Docker, but billed for as long
 as nobody looks on a managed backend, which fails as a cost rather than as an error and so
@@ -1219,6 +1219,24 @@ label naming the instance, and the sweep queries on it: several Hezo instances c
 provider account, so a broader query would destroy another instance's live sandboxes. The
 pass is bounded and states what it deferred, since a silently-truncated sweep reads as
 "everything was cleaned up" when it was not.
+
+The live set (`listReferencedContainerIds`) is the union of **both** representations of a
+container - the project row and the pool member - across **every** pool state. A pooled
+project owns several containers at once while `projects.container_id` names only the most
+recently provisioned or resumed one, so a set built from projects alone reads a busy run's
+container, an idle member a task has affinity with, the chat's container and a member pinned
+for unpushed commits as unreferenced. `suspended` matters most: that is the state a container
+the pool means to resume sits in, and destroying one loses its filesystem.
+
+A container is destroyed only on its **second consecutive sighting**. Provisioning has a
+window where a container exists on the engine and is recorded nowhere yet - `createContainer`
+has returned an id and the pool row is written only after it starts - and one caught there is
+indistinguishable from an orphan. No ordering of the two reads closes that window, and no
+engine exposes a creation time to age it out with, so the sweep carries its suspicions to the
+next tick instead: whatever was mid-provision has since been recorded, while a real orphan is
+still there. The cost is one extra billing period, against the alternative of destroying a
+container that is running someone's work; the number held back for confirmation is logged so
+the delay is visible.
 
 Work reaches an agent through the **wakeup → job-manager → agent-runner** pipeline.
 

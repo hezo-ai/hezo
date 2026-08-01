@@ -178,6 +178,30 @@ export async function removePoolMember(db: Db, containerId: string): Promise<voi
 	await db.query(`DELETE FROM container_pool_members WHERE container_id = $1`, [containerId]);
 }
 
+/**
+ * Every container id Hezo still references, instance-wide, across **both**
+ * representations of a container.
+ *
+ * This is the orphan sweep's live set, and the union is the whole point: a
+ * project owns several containers at once while `projects.container_id` names
+ * only the most recently provisioned or resumed one, so a set built from
+ * projects alone reads a busy run's container, a suspended member and a member
+ * pinned for unpushed commits as unreferenced. Every pool state counts,
+ * `suspended` most of all - that is the state a container the pool means to
+ * resume sits in.
+ *
+ * Exported rather than inlined at the cron because the cron is where this was
+ * wrong, and a query nothing can call is a query nothing can test.
+ */
+export async function listReferencedContainerIds(db: Db): Promise<Set<string>> {
+	const res = await db.query<{ container_id: string }>(
+		`SELECT container_id FROM projects WHERE container_id IS NOT NULL
+		 UNION
+		 SELECT container_id FROM container_pool_members`,
+	);
+	return new Set(res.rows.map((r) => r.container_id));
+}
+
 /** Every member of a project's pool, whatever its state - for teardown and reconciliation. */
 export async function listPoolContainerIds(db: Db, projectId: string): Promise<string[]> {
 	const res = await db.query<{ container_id: string }>(
