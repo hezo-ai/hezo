@@ -109,7 +109,11 @@ function createMockDocker(overrides: Record<string, unknown> = {}): ContainerEng
 	const innerExecStart =
 		(execStartOverride as ((...a: unknown[]) => unknown) | undefined) ??
 		(async () => ({ stdout: 'done', stderr: '' }));
-	const base = {
+	// Built on createStubDocker rather than hand-rolled: a literal cast through
+	// `as unknown as ContainerEngine` silently omits whatever the interface grows
+	// next, and the compiler cannot say so. That is how six specs came to call a
+	// method that did not exist on their engine.
+	const base = createStubDocker({
 		ping: async () => true,
 		imageExists: async () => true,
 		pullImage: async () => {},
@@ -139,7 +143,7 @@ function createMockDocker(overrides: Record<string, unknown> = {}): ContainerEng
 		// The run stages its prompt and runtime home through the engine seam, so an
 		// inline engine needs the same bind-resolving view the shared stub gives.
 		...stubEngineSeams(),
-	} as unknown as ContainerEngine;
+	});
 	return withRunUserStub(base);
 }
 

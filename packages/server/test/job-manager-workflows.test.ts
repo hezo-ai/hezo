@@ -40,7 +40,11 @@ let taskIdentifier: string;
 let agentId: string;
 
 function createMockDocker(): ContainerEngine {
-	return {
+	// Built on createStubDocker rather than hand-rolled: a literal cast through
+	// `as unknown as ContainerEngine` silently omits whatever the interface grows
+	// next, and the compiler cannot say so. That is how six specs came to call a
+	// method that did not exist on their engine.
+	return createStubDocker({
 		ping: async () => true,
 		imageExists: async () => true,
 		pullImage: async () => {},
@@ -58,7 +62,7 @@ function createMockDocker(): ContainerEngine {
 		execStart: async () => ({ stdout: 'done', stderr: '' }),
 		execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
 		killRunProcesses: async () => {},
-	} as unknown as ContainerEngine;
+	});
 }
 
 function createJobManager(overrides: Partial<JobManagerDeps> = {}): JobManager {
