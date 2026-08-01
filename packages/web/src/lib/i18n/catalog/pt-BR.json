@@ -132,5 +132,10 @@
 	"containers.backend.apiKey.label": "Chave de API da Daytona",
 	"containers.backend.apiKey.hint": "Guardada criptografada. Só o Hezo a usa para falar com o provedor - ela nunca entra em um contêiner de agente.",
 	"containers.backend.switched": "Serviço de contêineres trocado. {count} contêiner(es) destruído(s).",
-	"containers.backend.apiKey.required": "Informe a chave de API para trocar."
+	"containers.backend.apiKey.required": "Informe a chave de API para trocar.",
+	"container.memoryLimit.label": "Memória por contêiner",
+	"container.memoryLimit.help": "Quanta memória cada contêiner deste projeto pode usar. Deixe no padrão da instância a menos que este projeto precise de mais.",
+	"container.memoryLimit.inherited": "Padrão da instância ({value} GB)",
+	"container.memoryLimit.override": "{value} GB (personalizado)",
+	"container.memoryLimit.invalid": "Informe um número inteiro de GB, ou limpe o campo para usar o padrão."
 }

@@ -132,5 +132,10 @@
 	"containers.backend.apiKey.label": "Daytona API 密钥",
 	"containers.backend.apiKey.hint": "加密保存。仅供 Hezo 连接服务商使用，绝不会进入智能体容器。",
 	"containers.backend.switched": "容器服务已切换，销毁了 {count} 个容器。",
-	"containers.backend.apiKey.required": "请输入 API 密钥后再切换。"
+	"containers.backend.apiKey.required": "请输入 API 密钥后再切换。",
+	"container.memoryLimit.label": "每个容器的内存",
+	"container.memoryLimit.help": "本项目每个容器可使用的内存。除非本项目需要更多，否则保持实例默认值即可。",
+	"container.memoryLimit.inherited": "实例默认值（{value} GB）",
+	"container.memoryLimit.override": "{value} GB（自定义）",
+	"container.memoryLimit.invalid": "请输入整数 GB，或清空该字段以使用实例默认值。"
 }

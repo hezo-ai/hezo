@@ -132,5 +132,10 @@
 	"containers.backend.apiKey.label": "Daytona API 키",
 	"containers.backend.apiKey.hint": "암호화해서 저장해요. Hezo가 제공업체에 연결할 때만 쓰고, 에이전트 컨테이너에는 절대 들어가지 않아요.",
 	"containers.backend.switched": "컨테이너 서비스를 전환했어요. 컨테이너 {count}개를 삭제했어요.",
-	"containers.backend.apiKey.required": "전환하려면 API 키를 입력하세요."
+	"containers.backend.apiKey.required": "전환하려면 API 키를 입력하세요.",
+	"container.memoryLimit.label": "컨테이너당 메모리",
+	"container.memoryLimit.help": "이 프로젝트의 컨테이너 하나가 쓸 수 있는 메모리예요. 이 프로젝트에 더 필요하지 않다면 인스턴스 기본값 그대로 두세요.",
+	"container.memoryLimit.inherited": "인스턴스 기본값({value} GB)",
+	"container.memoryLimit.override": "{value} GB(개별 설정)",
+	"container.memoryLimit.invalid": "GB 단위 정수를 입력하거나, 비워 두면 인스턴스 기본값을 써요."
 }

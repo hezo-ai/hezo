@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router';
 import { AlertTriangle, ExternalLink, Loader2, Play, RefreshCw, Square } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { LogViewer, type LogViewerLine } from '../../../components/log-viewer';
+import { ProjectMemoryLimitSection } from '../../../components/project-memory-limit';
 import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
 import { ConfirmDialog } from '../../../components/ui/confirm-dialog';
@@ -93,7 +94,7 @@ function ContainerPage() {
 		<div className="flex flex-col gap-5">
 			{/* Containers run on demand: agent runs and chats start this container
 			    automatically, and it stops again after the global idle timeout
-			    (Settings → Concurrency). The controls below are manual overrides. */}
+			    (Settings → Containers). The controls below are manual overrides. */}
 			<p className="text-[13px] text-text-2 max-w-[680px]">
 				This container starts automatically whenever an agent run or the assistant needs it, and
 				stops after sitting idle (configurable in Settings → Concurrency). Starting or stopping it
@@ -315,6 +316,8 @@ function ContainerPage() {
 					)
 				}
 			/>
+
+			<ProjectMemoryLimitSection projectId={projectId} />
 		</div>
 	);
 }

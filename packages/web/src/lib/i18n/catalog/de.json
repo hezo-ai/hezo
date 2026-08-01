@@ -132,5 +132,10 @@
 	"containers.backend.apiKey.label": "Daytona-API-Schlüssel",
 	"containers.backend.apiKey.hint": "Verschlüsselt gespeichert. Wird nur von Hezo für den Zugriff auf den Anbieter genutzt - er gelangt nie in einen Agent-Container.",
 	"containers.backend.switched": "Container-Dienst gewechselt. {count} Container zerstört.",
-	"containers.backend.apiKey.required": "Geben Sie den API-Schlüssel ein, um zu wechseln."
+	"containers.backend.apiKey.required": "Geben Sie den API-Schlüssel ein, um zu wechseln.",
+	"container.memoryLimit.label": "Arbeitsspeicher pro Container",
+	"container.memoryLimit.help": "Wie viel Arbeitsspeicher jeder Container dieses Projekts nutzen darf. Belassen Sie es beim Instanz-Standard, sofern dieses Projekt nicht mehr benötigt.",
+	"container.memoryLimit.inherited": "Instanz-Standard ({value} GB)",
+	"container.memoryLimit.override": "{value} GB (überschrieben)",
+	"container.memoryLimit.invalid": "Geben Sie eine ganze Zahl in GB ein oder leeren Sie das Feld für den Instanz-Standard."
 }

@@ -132,5 +132,10 @@
 	"containers.backend.apiKey.label": "Klucz API Daytony",
 	"containers.backend.apiKey.hint": "Przechowywany w postaci zaszyfrowanej. Używa go tylko Hezo do połączenia z dostawcą - nigdy nie trafia do kontenera agenta.",
 	"containers.backend.switched": "Usługa kontenerów zmieniona. Zniszczono {count} kontenerów.",
-	"containers.backend.apiKey.required": "Podaj klucz API, aby przełączyć."
+	"containers.backend.apiKey.required": "Podaj klucz API, aby przełączyć.",
+	"container.memoryLimit.label": "Pamięć na kontener",
+	"container.memoryLimit.help": "Ile pamięci może użyć każdy kontener tego projektu. Zostaw domyślną wartość instancji, chyba że ten projekt potrzebuje więcej.",
+	"container.memoryLimit.inherited": "Domyślna wartość instancji ({value} GB)",
+	"container.memoryLimit.override": "{value} GB (własna)",
+	"container.memoryLimit.invalid": "Podaj całkowitą liczbę GB albo wyczyść pole, aby użyć wartości domyślnej."
 }

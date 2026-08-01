@@ -132,5 +132,10 @@
 	"containers.backend.apiKey.label": "Clave de API de Daytona",
 	"containers.backend.apiKey.hint": "Se guarda cifrada. Solo la usa Hezo para llegar al proveedor: nunca entra en un contenedor de agente.",
 	"containers.backend.switched": "Servicio de contenedores cambiado. {count} contenedor(es) destruido(s).",
-	"containers.backend.apiKey.required": "Introduce la clave de API para cambiar."
+	"containers.backend.apiKey.required": "Introduce la clave de API para cambiar.",
+	"container.memoryLimit.label": "Memoria por contenedor",
+	"container.memoryLimit.help": "Cuánta memoria puede usar cada contenedor de este proyecto. Déjalo en el valor por defecto de la instancia salvo que este proyecto necesite más.",
+	"container.memoryLimit.inherited": "Valor por defecto de la instancia ({value} GB)",
+	"container.memoryLimit.override": "{value} GB (personalizado)",
+	"container.memoryLimit.invalid": "Introduce un número entero de GB, o vacía el campo para usar el valor por defecto."
 }

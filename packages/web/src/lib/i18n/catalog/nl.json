@@ -132,5 +132,10 @@
 	"containers.backend.apiKey.label": "Daytona API-sleutel",
 	"containers.backend.apiKey.hint": "Versleuteld opgeslagen. Alleen Hezo gebruikt hem om de provider te bereiken - hij komt nooit in een agentcontainer.",
 	"containers.backend.switched": "Containerdienst gewisseld. {count} container(s) vernietigd.",
-	"containers.backend.apiKey.required": "Voer de API-sleutel in om te wisselen."
+	"containers.backend.apiKey.required": "Voer de API-sleutel in om te wisselen.",
+	"container.memoryLimit.label": "Geheugen per container",
+	"container.memoryLimit.help": "Hoeveel geheugen elke container van dit project mag gebruiken. Laat de standaard van de instantie staan tenzij dit project meer nodig heeft.",
+	"container.memoryLimit.inherited": "Standaard van de instantie ({value} GB)",
+	"container.memoryLimit.override": "{value} GB (afwijkend)",
+	"container.memoryLimit.invalid": "Voer een heel getal in GB in, of maak het veld leeg voor de standaard."
 }

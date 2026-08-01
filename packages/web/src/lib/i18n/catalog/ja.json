@@ -132,5 +132,10 @@
 	"containers.backend.apiKey.label": "Daytona API キー",
 	"containers.backend.apiKey.hint": "暗号化して保存されます。Hezo がプロバイダーに接続するためだけに使い、エージェントのコンテナには一切渡りません。",
 	"containers.backend.switched": "コンテナサービスを切り替えました。{count} 個のコンテナを破棄しました。",
-	"containers.backend.apiKey.required": "切り替えるには API キーを入力してください。"
+	"containers.backend.apiKey.required": "切り替えるには API キーを入力してください。",
+	"container.memoryLimit.label": "コンテナごとのメモリ",
+	"container.memoryLimit.help": "このプロジェクトの各コンテナが使えるメモリ量です。このプロジェクトに余分に必要でなければ、インスタンスの既定値のままにしてください。",
+	"container.memoryLimit.inherited": "インスタンスの既定値（{value} GB）",
+	"container.memoryLimit.override": "{value} GB（個別設定）",
+	"container.memoryLimit.invalid": "GB の整数を入力するか、空欄にしてインスタンスの既定値を使ってください。"
 }

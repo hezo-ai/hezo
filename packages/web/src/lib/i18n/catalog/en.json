@@ -132,5 +132,10 @@
 	"containers.backend.apiKey.label": "Daytona API key",
 	"containers.backend.apiKey.hint": "Stored encrypted. Used only by Hezo to reach the provider - it never enters an agent container.",
 	"containers.backend.switched": "Container service switched. {count} container(s) destroyed.",
-	"containers.backend.apiKey.required": "Enter the API key to switch."
+	"containers.backend.apiKey.required": "Enter the API key to switch.",
+	"container.memoryLimit.label": "Memory per container",
+	"container.memoryLimit.help": "How much memory each of this project's containers may use. Leave it on the instance default unless this project needs more.",
+	"container.memoryLimit.inherited": "Instance default ({value} GB)",
+	"container.memoryLimit.override": "{value} GB (override)",
+	"container.memoryLimit.invalid": "Enter a whole number of GB, or clear the field to use the instance default."
 }

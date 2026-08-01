@@ -132,5 +132,10 @@
 	"containers.backend.apiKey.label": "Daytona API-nyckel",
 	"containers.backend.apiKey.hint": "Lagras krypterad. Används bara av Hezo för att nå leverantören - den hamnar aldrig i en agentcontainer.",
 	"containers.backend.switched": "Containertjänsten bytt. {count} containrar förstördes.",
-	"containers.backend.apiKey.required": "Ange API-nyckeln för att byta."
+	"containers.backend.apiKey.required": "Ange API-nyckeln för att byta.",
+	"container.memoryLimit.label": "Minne per container",
+	"container.memoryLimit.help": "Hur mycket minne varje container i det här projektet får använda. Låt instansens standard stå kvar om inte projektet behöver mer.",
+	"container.memoryLimit.inherited": "Instansens standard ({value} GB)",
+	"container.memoryLimit.override": "{value} GB (egen)",
+	"container.memoryLimit.invalid": "Ange ett helt antal GB, eller töm fältet för att använda standarden."
 }
