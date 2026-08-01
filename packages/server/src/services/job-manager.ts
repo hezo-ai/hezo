@@ -73,7 +73,12 @@ import { detectOrphans, healStaleRunState, STALE_STATE_GRACE_SECONDS } from './o
 import type { PricingService } from './pricing';
 import { collectCandidateRunIds, decideSweepKills } from './process-sweeper';
 import { ensureRepoSetupAction } from './repo-setup';
-import { getActiveContainers, isTaskBusyInDb, projectContainerMemoryGb } from './run-concurrency';
+import {
+	getActiveContainers,
+	isTaskBusyInDb,
+	projectContainerMemoryGb,
+	sumProjectContainerMemoryGb,
+} from './run-concurrency';
 import { reclaimBusyPoolMembers } from './sandbox/pool-db';
 import type { SshAgentServer } from './ssh-agent';
 import { reportTelemetry } from './telemetry';
@@ -1267,11 +1272,14 @@ export class JobManager {
 		// has to be added here or two dispatches would both see room for the same
 		// GB. Charged at the starting project's own cap, not a flat figure - that
 		// is the whole reason the gate moved from a count to a budget.
-		let pendingGb = 0;
-		for (const id of this.pendingContainerStarts.keys()) {
-			if (projectsWithSpareContainer.has(id)) continue;
-			pendingGb += await projectContainerMemoryGb(this.deps.db, id);
-		}
+		//
+		// One query for all of them, not one per project: this runs on the dispatch
+		// path, and a gate whose cost grows with the number of starts it is gating
+		// is the wrong shape however small the number happens to be today.
+		const pendingIds = [...this.pendingContainerStarts.keys()].filter(
+			(id) => !projectsWithSpareContainer.has(id),
+		);
+		const pendingGb = await sumProjectContainerMemoryGb(this.deps.db, pendingIds);
 		const requestGb = projectId
 			? await projectContainerMemoryGb(this.deps.db, projectId)
 			: await getDefaultRamCapPerContainerGb(this.deps.db);

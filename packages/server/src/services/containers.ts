@@ -43,8 +43,10 @@ import {
 	decidePoolAcquisition,
 	listPoolContainerIds,
 	listPoolMembersForReconcile,
+	loadPoolMembers,
 	releasePoolMember,
 	removePoolMember,
+	setPoolMemberChatReservation,
 	setPoolMemberState,
 	upsertPoolMember,
 } from './sandbox/pool-db';
@@ -712,6 +714,23 @@ export interface AcquiredContainer {
 }
 
 /**
+ * What the container is being taken for. The ladder is the same either way; four
+ * things around it are not.
+ *
+ * - **`task-run`** claims the member busy, is gated on the memory budget, and
+ *   gives it back when the run ends.
+ * - **`chat`** *pins* it instead (`reserved_for_chat`), leaving the state idle:
+ *   the member is then excluded from the ladder (`usable`) and from
+ *   `usedMemoryGb` (`getActiveContainers`), which together are what "the chat's
+ *   container" means. It is not gated, because the budget already holds a
+ *   container's worth back for chat up front - a queued task run is invisible
+ *   and harmless, a queued chat turn is a person watching a spinner. And it is
+ *   never released per turn: the session holds it until teardown, which clears
+ *   the pin.
+ */
+export type ContainerWorkload = 'task-run' | 'chat';
+
+/**
  * Claim a container for one run.
  *
  * This is where the pool stops being a table and starts being the thing that
@@ -723,11 +742,21 @@ export interface AcquiredContainer {
  * the part that cannot be: turning a decision into a claim, under the
  * per-project lifecycle lock, and re-deciding if another acquire won the race for
  * the same member.
+ *
+ * **The chat comes through here too, and that is the point.** It used to take
+ * whatever `projects.container_id` named, which under a pool may be a member
+ * currently serving a task run - so the chat pinned it and executed turns on it,
+ * two workloads sharing one memory cap, which is precisely the shared-fate
+ * failure the pool exists to remove. Routing it through the same ladder is what
+ * guarantees the container it pins is one nothing else is using. Both callers
+ * take the same per-project lifecycle lock, so a task run cannot claim a member
+ * between the chat deciding on it and pinning it.
  */
 export async function acquireRunContainer(
 	deps: ContainerDeps,
 	projectId: string,
 	taskId: string | null,
+	workload: ContainerWorkload = 'task-run',
 ): Promise<AcquiredContainer> {
 	const { db, docker } = deps;
 	const containerId = await withContainerLifecycleLock(projectId, async () => {
@@ -739,6 +768,16 @@ export async function acquireRunContainer(
 		// which is not a fallback path but the two representations of one container
 		// being reconciled, the same UNION `getActiveContainers` already does.
 		await adoptUnpooledContainer(deps, projectId);
+		// A pin the chat already holds is its own rung, and it has to come before
+		// the ladder rather than inside it: `selectPoolMember` excludes reserved
+		// members by design, so a session reconnecting would otherwise be handed a
+		// *different* container from the one it parked on - losing the filesystem
+		// its conversation was built against, and pinning a second container beside
+		// the one it already holds.
+		if (workload === 'chat') {
+			const existing = await reusableChatMember(deps, projectId);
+			if (existing) return existing;
+		}
 		// Bounded: each iteration either claims a member or removes one from
 		// contention (a lost race retries against a pool one member smaller), so
 		// this cannot spin. The cap is the pool's own size, not a timeout.
@@ -747,18 +786,30 @@ export async function acquireRunContainer(
 				getActiveContainers(db, deps.docker),
 				projectContainerMemoryGb(db, projectId),
 			]);
-			const decision = await decidePoolAcquisition(db, projectId, taskId, {
-				usedMemoryGb: active.usedMemoryGb,
-				budgetGb: active.budgetGb,
-				requestMemoryGb,
-			});
+			const decision = await decidePoolAcquisition(
+				db,
+				projectId,
+				taskId,
+				// Chat is exempt from the budget rather than charged against it: the
+				// automatic budget already subtracts one container's worth up front
+				// (`computeDefaultMaxActiveContainers`), so charging it again would
+				// reserve for the chat twice and refuse it on a small host. An
+				// unreachable ceiling states that here without a second ladder.
+				workload === 'chat'
+					? { usedMemoryGb: 0, budgetGb: Number.POSITIVE_INFINITY, requestMemoryGb: 0 }
+					: {
+							usedMemoryGb: active.usedMemoryGb,
+							budgetGb: active.budgetGb,
+							requestMemoryGb,
+						},
+			);
 
 			if (decision.kind === 'queue') throw new PoolCapacityError(projectId);
 
 			if (decision.kind === 'create') {
 				const proj = await loadProjectRow(db, projectId);
 				const id = await provisionContainer(deps, proj, proj.team_slug);
-				if (await claimPoolMember(db, id, taskId)) return id;
+				if (await takeMember(deps, projectId, id, taskId, workload)) return id;
 				continue;
 			}
 
@@ -789,7 +840,7 @@ export async function acquireRunContainer(
 				await setPoolMemberState(db, member.id, 'idle');
 				await markProjectContainerStarted(deps, projectId, member.id);
 			}
-			if (await claimPoolMember(db, member.id, taskId)) return member.id;
+			if (await takeMember(deps, projectId, member.id, taskId, workload)) return member.id;
 		}
 		throw new PoolCapacityError(projectId);
 	});
@@ -800,6 +851,10 @@ export async function acquireRunContainer(
 		release: async () => {
 			if (released) return;
 			released = true;
+			// A chat pin outlives the turn that established it - the session holds
+			// its container across every turn, and `teardown` is what clears the
+			// reservation. Releasing here would hand it back after the first turn.
+			if (workload === 'chat') return;
 			await releasePoolMember(db, containerId, taskId).catch(() => undefined);
 		},
 	};
@@ -807,6 +862,77 @@ export async function acquireRunContainer(
 
 /** See {@link acquireRunContainer} - the loop is bounded by contention, not by time. */
 const MAX_ACQUIRE_ATTEMPTS = 8;
+
+/**
+ * Take a decided member for `workload`, answering whether the take succeeded.
+ *
+ * A task run **claims** it busy, which is also the atomic did-I-win check
+ * against a concurrent acquire. The chat **pins** it instead and leaves it idle:
+ * that pair of facts - idle, reserved - is what makes a container the chat's,
+ * since `usable` then skips it in the ladder and `getActiveContainers` stops
+ * charging it against the budget. Both callers hold the same per-project
+ * lifecycle lock, so the pin needs no compare-and-set of its own.
+ */
+async function takeMember(
+	deps: ContainerDeps,
+	projectId: string,
+	containerId: string,
+	taskId: string | null,
+	workload: ContainerWorkload,
+): Promise<boolean> {
+	if (workload !== 'chat') return claimPoolMember(deps.db, containerId, taskId);
+
+	await setPoolMemberChatReservation(deps.db, containerId, true);
+	// Point the project row at it when it is not already there. `container_id` is
+	// the operator's view - it is what the Container page shows, what the sync
+	// loop polls, and what `container_error`/`container_last_logs` attach to - and
+	// the chat's container is the long-lived one they are most likely to be
+	// looking at. Now that the chat takes a member from the ladder rather than
+	// whatever the column happened to name, the column has to follow it. Skipped
+	// when it already matches so a reuse writes no row (§ never write a row that
+	// has not changed).
+	const named = await deps.db.query<{ container_id: string | null }>(
+		'SELECT container_id FROM projects WHERE id = $1',
+		[projectId],
+	);
+	if (named.rows[0]?.container_id !== containerId) {
+		await markProjectContainerStarted(deps, projectId, containerId);
+	}
+	return true;
+}
+
+/**
+ * The container the chat already holds, if it is still usable.
+ *
+ * Answers null rather than repairing anything when the pin points at a member
+ * that is gone or unreachable - the caller falls through to the ladder, which is
+ * where a fresh container comes from. A stale pin is dropped on the way past so
+ * it cannot keep a phantom container out of the budget forever.
+ */
+async function reusableChatMember(deps: ContainerDeps, projectId: string): Promise<string | null> {
+	const { db, docker } = deps;
+	const pinned = (await loadPoolMembers(db, projectId)).find((m) => m.reservedForChat);
+	if (!pinned) return null;
+
+	if (pinned.state === 'suspended') {
+		try {
+			await docker.startContainer(pinned.id);
+		} catch {
+			await removePoolMember(db, pinned.id);
+			return null;
+		}
+		await setPoolMemberState(db, pinned.id, 'idle');
+		await markProjectContainerStarted(deps, projectId, pinned.id);
+		return pinned.id;
+	}
+
+	const info = await docker.inspectContainer(pinned.id).catch(() => null);
+	if (!info?.State.Running) {
+		await removePoolMember(db, pinned.id);
+		return null;
+	}
+	return pinned.id;
+}
 
 /**
  * Reflect a resume on the project row, which is what the Container page reads.

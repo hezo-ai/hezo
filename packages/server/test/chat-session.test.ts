@@ -173,6 +173,12 @@ async function seedProviderAndContainer(ctx: ServerTestContext): Promise<string>
 		 WHERE team_id = $1 AND is_internal = true RETURNING id`,
 		[DEFAULT_TEAM_ID],
 	);
+	// The pool has to say the same thing as the column, because the chat resolves
+	// its container through the pool now. Re-seeding only the column left members
+	// behind from earlier tests - including one a provisioning spec created - and
+	// the ladder handed the next test that container instead of `hq-container`,
+	// which is the seeded premise every spec in this file is written against.
+	await ctx.db.query('DELETE FROM container_pool_members WHERE project_id = $1', [proj.rows[0].id]);
 	return proj.rows[0].id;
 }
 
@@ -254,9 +260,20 @@ describe('ChatSessionManager', () => {
 		// A fresh instance exposes the CEO chat before any project is created, so the
 		// HQ container may never have been provisioned. The turn must bring it up
 		// rather than failing with "HQ container is not running".
+		//
+		// The pool rows go too, not just the project column: earlier tests in this
+		// file provision, and each leaves a member behind. Now that the chat resolves
+		// its container through the pool rather than through `projects.container_id`,
+		// clearing only the column left this spec inheriting a perfectly good member
+		// and asserting a provisioning path it had not actually taken.
 		await ctx.db.query(
 			`UPDATE projects SET container_id = NULL, container_status = 'stopped'
 			 WHERE team_id = $1 AND is_internal = true`,
+			[DEFAULT_TEAM_ID],
+		);
+		await ctx.db.query(
+			`DELETE FROM container_pool_members WHERE project_id IN (
+			   SELECT id FROM projects WHERE team_id = $1 AND is_internal = true)`,
 			[DEFAULT_TEAM_ID],
 		);
 

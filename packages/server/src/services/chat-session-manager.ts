@@ -43,7 +43,7 @@ import { getChatMemory, loadActiveWindow, markCompacted, selectFlush } from './c
 import { loadConnectorDescriptors } from './connectors/connections';
 import type { ContainerLogStreamer } from './container-logs';
 import { type ContainerRunUser, resolveContainerRunUser } from './container-user';
-import { type ContainerDeps, ensureProjectContainerRunning } from './containers';
+import { acquireRunContainer, type ContainerDeps } from './containers';
 import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication } from './effort';
 import { resolveRuntimeForTask } from './runtime-resolver';
@@ -933,24 +933,25 @@ export class ChatSessionManager {
 		const ceoMemberId = ceo.rows[0]?.id;
 		if (!ceoMemberId) throw new Error('CEO agent not found in HQ team');
 
-		const proj = await db.query<{
-			id: string;
-			container_id: string | null;
-			container_status: string | null;
-		}>(
-			`SELECT id, container_id, container_status FROM projects
-			 WHERE team_id = $1 AND is_internal = true`,
+		const proj = await db.query<{ id: string }>(
+			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
 			[DEFAULT_TEAM_ID],
 		);
 		const project = proj.rows[0];
 		if (!project) throw new Error('HQ project not found');
-		// The CEO chat is available app-wide from first load, before any project is
-		// created, so the HQ container may never have been provisioned. Bring it up
-		// on demand rather than failing the turn.
-		const containerId =
-			project.container_status === 'running' && project.container_id
-				? project.container_id
-				: await ensureProjectContainerRunning(this.buildContainerDeps(), project.id);
+		// Through the pool, with the chat workload - which reuses the container this
+		// chat already pinned, else takes an idle one, else resumes or creates.
+		//
+		// It used to read `projects.container_id` and lazily start it. That names
+		// the project's most recently provisioned or resumed container, which under
+		// a pool may be one currently serving a task run: the chat then pinned a
+		// busy container and executed its turns on it, two workloads sharing one
+		// memory cap - the shared-fate failure the pool exists to remove, arrived at
+		// from the one direction the pool was not guarding. The CEO chat is also
+		// available app-wide from first load, before any project exists, so the
+		// create rung is a normal path here rather than an edge case.
+		const acquired = await acquireRunContainer(this.buildContainerDeps(), project.id, null, 'chat');
+		const containerId = acquired.containerId;
 
 		// Detect the HQ container's run-user once for this session; reused on every
 		// turn's exec, the ssh socket owner, and the per-turn config-dir chown.
@@ -1026,11 +1027,10 @@ export class ChatSessionManager {
 				ChatSessionStatus.Running,
 				sessionId,
 			]);
-			// Pin the container to the chat in the pool: a task run may never take it,
-			// and the idle sweep may never stop it. Chat is exempt from the container
-			// cap for the same reason - a queued task run is invisible and harmless, a
-			// queued chat turn is a person watching a spinner.
-			await setPoolMemberChatReservation(db, containerId, true);
+			// The pin is established by the acquire above, not here - `acquireRunContainer`
+			// with the chat workload is the one place a container becomes the chat's,
+			// so it is also the one place that can guarantee the container it pins is
+			// not already serving a run.
 
 			this.live = {
 				sessionId,
@@ -1710,17 +1710,27 @@ export class ChatSessionManager {
 	 * re-run the host-side half against the **same** session row, so the id that
 	 * anchors this session's messages survives.
 	 *
-	 * A resume that comes back with a different container id means the container
-	 * was replaced rather than restarted - the filesystem is not the one this
-	 * session was parked on - so it tears down and lets the caller start fresh.
+	 * The acquire is scoped to the **chat workload**, so it comes back with the
+	 * container this session pinned - resumed if it was suspended - rather than
+	 * whichever one the project happens to name. That distinction only appeared
+	 * with the pool: asking `ensureProjectContainerRunning` returned the project's
+	 * most recently provisioned or resumed container, so once task runs had moved
+	 * it on, a perfectly healthy parked session read as "the container was
+	 * replaced" and was torn down. Getting a genuinely different id back still
+	 * means the pinned container is gone (the pin was dropped as stale), and
+	 * starting fresh is right then - the filesystem this conversation was built
+	 * against no longer exists.
 	 */
 	private async resumeSession(): Promise<LiveSession> {
 		const live = this.live;
 		if (!live) throw new Error('no session to resume');
-		const containerId = await ensureProjectContainerRunning(
+		const acquired = await acquireRunContainer(
 			this.buildContainerDeps(),
 			live.projectId,
+			null,
+			'chat',
 		);
+		const containerId = acquired.containerId;
 		if (containerId !== live.containerId) {
 			log.warn('HQ container was replaced while suspended; starting a fresh CEO chat session');
 			await this.teardown(ChatSessionStatus.Stopped);
@@ -1738,9 +1748,6 @@ export class ChatSessionManager {
 				ChatSessionStatus.Running,
 				live.sessionId,
 			]);
-			// Re-assert the pin: the member row is rewritten as the container moves
-			// through the pool's states, so resume must not assume it survived.
-			await setPoolMemberChatReservation(this.deps.db, containerId, true);
 			this.live = { ...live, ...allocation };
 			this.suspended = false;
 			log.info('CEO chat session resumed', { session: live.sessionId });

@@ -1373,6 +1373,24 @@ from `usedMemoryGb` (on both arms of its UNION - the pool member and the `projec
 two records of one container). Charging it in both places reserved the same memory twice,
 so an instance sized for three containers dispatched two whenever the chat was open.
 
+**The chat takes its container through the same ladder a run does**, with
+`acquireRunContainer(..., 'chat')` - the workload changes four things and nothing else: it
+is not gated on the budget (already reserved above), it **pins** the member
+(`reserved_for_chat`) rather than claiming it busy, its release is a no-op because the
+session holds the container across every turn until `teardown` clears the pin, and a pin the
+session already holds is checked *before* the ladder, since `selectPoolMember` excludes
+reserved members by design. It also points `projects.container_id` at what it took, that
+column being the operator's view of the project's container.
+
+Routing it through the ladder is the whole point. The chat used to read
+`projects.container_id` directly, which names the most recently provisioned or resumed
+container - under a pool, possibly one mid-run. It pinned that and executed its turns on it:
+two workloads on one memory cap, which is exactly the shared-fate failure the pool exists to
+remove, reached from the one direction the pool was not guarding. Resume had the mirror
+problem, comparing `ensureProjectContainerRunning`'s answer against the container the session
+parked on, so once task runs had moved the project's named container a healthy parked session
+read as "the container was replaced" and was torn down.
+
 **The backend is a setting, not launch configuration.** It used to be chosen once at
 startup and fixed for the process; it is now switchable from Settings -> Containers, with
 the CLI flag seeding only a fresh instance and the stored choice winning thereafter.

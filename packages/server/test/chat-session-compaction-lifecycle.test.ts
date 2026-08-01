@@ -156,6 +156,10 @@ async function seedProviderAndContainer(ctx: ServerTestContext): Promise<string>
 		 WHERE team_id = $1 AND is_internal = true RETURNING id`,
 		[DEFAULT_TEAM_ID],
 	);
+	// The pool has to agree with the column: the chat resolves its container
+	// through the pool, so a member left over from an earlier test would be handed
+	// to the next one instead of the `hq-container` it seeds and asserts against.
+	await ctx.db.query('DELETE FROM container_pool_members WHERE project_id = $1', [proj.rows[0].id]);
 	return proj.rows[0].id;
 }
 
@@ -815,6 +819,14 @@ describe('ChatSessionManager — warm resources (ssh bridge + egress) and lifecy
 
 			// A different container: the filesystem this session was parked on is gone,
 			// so there is nothing to resume into.
+			//
+			// Replacement is expressed as the pinned **member** disappearing, which is
+			// what it now means - the chat resolves its container through the pool, so
+			// moving `projects.container_id` alone leaves the pin (and therefore the
+			// session's own container) exactly where it was. This is the state the
+			// reconciler leaves behind when a container is removed out from under
+			// Hezo: the member row gone, and the project naming something else.
+			await ctx.db.query('DELETE FROM container_pool_members WHERE project_id = $1', [projectId]);
 			await ctx.db.query(
 				`UPDATE projects SET container_id = 'replaced-container', container_status = 'running'
 				 WHERE id = $1`,

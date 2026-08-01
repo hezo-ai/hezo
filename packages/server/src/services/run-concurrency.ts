@@ -157,6 +157,28 @@ async function loadProjectMemoryCaps(
 	return out;
 }
 
+/**
+ * What one more container in **each** of these projects would consume, summed.
+ *
+ * Two queries whatever the list length, rather than the one-to-two per project a
+ * loop over {@link projectContainerMemoryGb} costs. The caller is the dispatch
+ * gate charging for lazy starts already in flight: a small list today, but a
+ * gate whose cost grows with what it is gating is the wrong shape regardless.
+ * A project listed twice is charged twice, which is correct - two in-flight
+ * starts in one project are two containers.
+ */
+export async function sumProjectContainerMemoryGb(
+	db: Db,
+	projectIds: readonly string[],
+): Promise<number> {
+	if (projectIds.length === 0) return 0;
+	const overrides = await loadProjectMemoryCaps(db, new Set(projectIds));
+	const fallback = await getDefaultRamCapPerContainerGb(db);
+	let total = 0;
+	for (const id of projectIds) total += overrides.get(id) ?? fallback;
+	return total;
+}
+
 /** What one more container in this project would consume, in GB. */
 export async function projectContainerMemoryGb(db: Db, projectId: string): Promise<number> {
 	const res = await db.query<{ memory_limit_gib: number | null }>(
