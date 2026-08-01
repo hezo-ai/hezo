@@ -525,3 +525,211 @@ describe('archived items leave discovery surfaces', () => {
 		expect(manifest).not.toContain('out-of-context.md');
 	});
 });
+
+// Archival is not just a visibility filter: an archived item is frozen. These
+// cover the writers that used to slip past that rule, plus the audit trail that
+// makes an agent's self-serve restore visible to the operator.
+describe('archived items are read-only', () => {
+	/** Poll the audit_log — the observer writes via trackBackground. */
+	async function waitForAuditRow(
+		sql: string,
+		params: unknown[] = [],
+	): Promise<Record<string, unknown> | null> {
+		for (let i = 0; i < 40; i++) {
+			const r = await db.query<Record<string, unknown>>(sql, params);
+			if (r.rows.length > 0) return r.rows[0];
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		}
+		return null;
+	}
+
+	it('refuses to move or rename an archived asset (matching move_project_asset)', async () => {
+		const a = await uploadAsset('frozen-move.txt');
+		await patchAsset(a.id, { archived: true });
+
+		const res = await patchAsset(a.id, { folder: 'somewhere' });
+		expect(res.status).toBe(409);
+		expect((await res.json()).error.code).toBe('ASSET_ARCHIVED');
+
+		const row = await db.query<{ original_filename: string }>(
+			'SELECT original_filename FROM assets WHERE id = $1',
+			[a.id],
+		);
+		expect(row.rows[0].original_filename).toBe('frozen-move.txt');
+	});
+
+	it('does not persist a dimension backfill onto an archived asset', async () => {
+		// A 1x1 PNG, uploaded then stripped of its captured dimensions to look like
+		// a pre-existing row the self-heal would want to fix.
+		const png = Buffer.from(
+			'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+			'base64',
+		);
+		const fd = new FormData();
+		fd.set('file', new File([new Uint8Array(png)], 'frozen-dims.png', { type: 'image/png' }));
+		const up = await app.request(`/api/projects/${projectId}/assets`, {
+			method: 'POST',
+			headers: { ...authHeader(token) },
+			body: fd,
+		});
+		const assetId = (await up.json()).data.id as string;
+		await db.query('UPDATE assets SET width = NULL, height = NULL WHERE id = $1', [assetId]);
+		await patchAsset(assetId, { archived: true });
+
+		const t = await agentToken();
+		const read = await callToolViaMcp(t, 'read_project_asset', {
+			project: projectId,
+			filename: 'frozen-dims.png',
+			filter: 'all',
+		});
+		// The caller still gets the dimensions; only the write-back is skipped.
+		expect(read.width).toBe(1);
+		expect(read.height).toBe(1);
+
+		const row = await db.query<{ width: number | null; height: number | null }>(
+			'SELECT width, height FROM assets WHERE id = $1',
+			[assetId],
+		);
+		expect(row.rows[0].width).toBeNull();
+		expect(row.rows[0].height).toBeNull();
+	});
+
+	it('does not resurrect an archived prd.md when its pending approval is approved', async () => {
+		await putDoc('prd.md', 'approved baseline');
+		const t = await agentToken();
+
+		// An agent PUT to prd.md files a strategy approval instead of writing.
+		const filed = await app.request(`/api/projects/${projectId}/docs/prd.md`, {
+			method: 'PUT',
+			headers: { ...authHeader(t), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ content: 'agent rewrite' }),
+		});
+		expect(filed.status).toBe(202);
+
+		const approval = await db.query<{ id: string }>(
+			`SELECT id FROM approvals WHERE team_id = $1 AND type = 'strategy' AND status = 'pending'
+			 ORDER BY created_at DESC LIMIT 1`,
+			[teamId],
+		);
+		expect(approval.rows.length).toBe(1);
+
+		// The admin archives the doc before getting to the approval.
+		await patchDoc('prd.md', { archived: true });
+		const revsBefore = await db.query<{ c: number }>(
+			`SELECT COUNT(*)::int AS c FROM document_revisions dr
+			 JOIN documents d ON d.id = dr.document_id
+			 WHERE d.project_id = $1 AND d.slug = 'prd.md'`,
+			[projectId],
+		);
+
+		const resolved = await app.request(`/api/approvals/${approval.rows[0].id}/resolve`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ status: 'approved' }),
+		});
+		expect(resolved.status).toBe(200);
+
+		const doc = await db.query<{ content: string; archived_at: string | null }>(
+			`SELECT content, archived_at FROM documents WHERE project_id = $1 AND slug = 'prd.md'`,
+			[projectId],
+		);
+		expect(doc.rows[0].content).toBe('approved baseline');
+		expect(doc.rows[0].archived_at).not.toBeNull();
+		const revsAfter = await db.query<{ c: number }>(
+			`SELECT COUNT(*)::int AS c FROM document_revisions dr
+			 JOIN documents d ON d.id = dr.document_id
+			 WHERE d.project_id = $1 AND d.slug = 'prd.md'`,
+			[projectId],
+		);
+		expect(revsAfter.rows[0].c).toBe(revsBefore.rows[0].c);
+	});
+
+	it('refuses a revision restore on an archived doc', async () => {
+		await putDoc('rollback.md', 'v1');
+		await putDoc('rollback.md', 'v2');
+		await patchDoc('rollback.md', { archived: true });
+
+		const res = await app.request(`/api/projects/${projectId}/docs/rollback.md/restore`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ revision_number: 1 }),
+		});
+		expect(res.status).toBe(409);
+
+		const doc = await db.query<{ content: string }>(
+			`SELECT content FROM documents WHERE project_id = $1 AND slug = 'rollback.md'`,
+			[projectId],
+		);
+		expect(doc.rows[0].content).toBe('v2');
+	});
+
+	it("attributes an agent's asset restore to the run that did it", async () => {
+		const { token: t, runId } = await mintAgentToken(db, masterKeyManager, agentId, teamId, taskId);
+		await callToolViaMcp(t, 'write_project_asset', {
+			project: projectId,
+			filename: 'traced-asset.txt',
+			content: 'v1',
+		});
+		await callToolViaMcp(t, 'archive_project_asset', {
+			project: projectId,
+			filename: 'traced-asset.txt',
+		});
+		await callToolViaMcp(t, 'unarchive_project_asset', {
+			project: projectId,
+			filename: 'traced-asset.txt',
+		});
+
+		const row = await waitForAuditRow(
+			`SELECT details FROM audit_log
+			 WHERE entity_type = 'asset' AND details->>'filename' = 'traced-asset.txt'
+			   AND details->>'archived' = 'false'`,
+		);
+		expect(row).not.toBeNull();
+		const details = row?.details as Record<string, unknown>;
+		expect(details.task_id).toBe(taskId);
+		expect(details.run_id).toBe(runId);
+	});
+
+	it('records a doc archive/restore distinguishably from a content edit', async () => {
+		const { token: t, runId } = await mintAgentToken(db, masterKeyManager, agentId, teamId, taskId);
+		await callToolViaMcp(t, 'write_project_doc', {
+			project: projectId,
+			filename: 'traced-doc.md',
+			content: 'body v1',
+		});
+		await callToolViaMcp(t, 'archive_project_doc', {
+			project: projectId,
+			filename: 'traced-doc.md',
+		});
+		await callToolViaMcp(t, 'unarchive_project_doc', {
+			project: projectId,
+			filename: 'traced-doc.md',
+		});
+
+		const restore = await waitForAuditRow(
+			`SELECT details FROM audit_log
+			 WHERE entity_type = 'document' AND details->>'slug' = 'traced-doc.md'
+			   AND details->>'archived' = 'false'`,
+		);
+		expect(restore).not.toBeNull();
+		const restoreDetails = restore?.details as Record<string, unknown>;
+		expect(restoreDetails.task_id).toBe(taskId);
+		expect(restoreDetails.run_id).toBe(runId);
+
+		const archive = await waitForAuditRow(
+			`SELECT details FROM audit_log
+			 WHERE entity_type = 'document' AND details->>'slug' = 'traced-doc.md'
+			   AND details->>'archived' = 'true'`,
+		);
+		expect(archive).not.toBeNull();
+
+		// The content write carries no `archived` key at all, so an edit can never
+		// be mistaken for an archive (they share the `updated` action).
+		const writes = await db.query<{ details: Record<string, unknown> }>(
+			`SELECT details FROM audit_log
+			 WHERE entity_type = 'document' AND details->>'slug' = 'traced-doc.md'
+			   AND details->>'archived' IS NULL`,
+		);
+		expect(writes.rows.length).toBeGreaterThan(0);
+	});
+});

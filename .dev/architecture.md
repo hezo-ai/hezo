@@ -569,16 +569,37 @@ surface is active-only: the web pages default to an Active filter (Active/Archiv
 client-side; the REST lists return `archived_at` for all rows), the MCP doc/asset list+read
 tools take a `filter` key defaulting to `'active'` (`'archived'`/`'all'` opt in), full-text
 search, doc autocomplete, and the `{{project_docs_context}}` run manifest all exclude
-archived rows, and archived docs are read-only (writes/status/revision-restore return 409 /
-tool errors until restored). **Hard deletion is human/admin-only** (agents get 403 on both
+archived rows. **An archived row is frozen, not merely hidden**, and that rule lives in the
+two upsert helpers rather than at each call site: `upsertProjectAsset` (`lib/asset-name.ts`)
+and `upsertDocument` (`services/documents.ts`) each re-read `archived_at` **inside** the
+transaction that does the write and return a `status: 'archived'` discriminant instead of
+writing, so there is no check-then-write race and a new caller inherits the refusal (this
+is what closed the approved-`update_prd` handler and `restoreRevision`, which previously had
+no check at all). Callers map that status to their own surface error — 409 `ASSET_ARCHIVED`
+/ 409 `CONFLICT` on REST, an "unarchive it first" string on MCP — and the write paths keep a
+cheap pre-flight (`archivedAssetHolderId`, `isDocumentArchived`) so a 10 MB blob (possibly an
+S3 PUT) isn't spent on a doomed call. Beyond content writes, `PATCH …/assets/:assetId
+{ folder }` refuses an archived asset (409 `ASSET_ARCHIVED`, matching `move_project_asset`,
+whose client-side counterpart is the hidden Move action on archived cards),
+`move_project_asset`/`copy_project_asset` refuse an archived source, asset review mutations
+403, and `read_project_asset`'s width/height self-heal reports the parsed dimensions but
+skips the `UPDATE` on an archived row. **Hard deletion is human/admin-only** (agents get 403 on both
 DELETE routes; in the UI Delete only appears on archived items — a deliberate two-step).
 The legacy `request_asset_deletion` tool is gone, but its resolve endpoint
 (`POST …/comments/:commentId/resolve-asset-deletion`, agents 403) and comment renderer
 remain so pending `asset_deletion_request` cards from older instances stay resolvable —
 approve deletes rows + blobs server-side, deny keeps everything, both wake the requester
 (`asset_deletion_resolved`). `asset.created`, `asset.archived`, `asset.deletion_requested`,
-and `asset.deleted` domain events feed the audit log (doc archival rides
-`document.updated`); asset row-changes broadcast on the team room so the Assets page
+and `asset.deleted` domain events feed the audit log, and doc archival emits its own
+`document.archived` (**not** `document.updated`, which would render identically to a content
+edit). Both archival events carry `archived: boolean` plus `taskId`/`runId`, mapped into
+`audit_log.details` as `archived`/`task_id`/`run_id` — no new `AuditAction` (existing archive
+rows are already `updated`, and `details.archived` is the discriminator), so no migration:
+`action`/`entity_type` are plain `TEXT` and `details` is `JSONB`. `task_id` also feeds the
+audit-log route's existing join onto `tasks`, so an agent's archive/restore deep-links to its
+task for free. `packages/web/src/lib/audit-format.ts` reads the flag to render
+"Archived"/"Restored" (previously every asset row read "Uploaded", including archives and
+deletes). Asset row-changes broadcast on the team room so the Assets page
 live-refreshes. `project_icons`
 (1:1 with `projects`, `ON DELETE CASCADE`) holds an optional per-project icon image —
 unlike assets the **bytes live in the DB** (a `BYTEA` column) in a dedicated table so the

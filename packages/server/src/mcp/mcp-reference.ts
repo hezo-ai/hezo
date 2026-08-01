@@ -424,13 +424,13 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	archive_project_doc: {
 		category: 'Project docs & assets',
 		returns:
-			'`{ archived: true, filename, changed }` (`changed: false` when it was already archived - the call is idempotent), or `{ error }` if the file is not found. The archived doc leaves listings, search, and agent-run context but keeps its filename reserved and its revision history.',
+			'`{ archived: true, filename, changed }` (`changed: false` when it was already archived - the call is idempotent), or `{ error }` if the file is not found. The archived doc leaves listings, search, and agent-run context but keeps its filename reserved and its revision history. While archived it is read-only: no writes and no revision restores until unarchive_project_doc restores it.',
 		auth: 'Archival is the agent-facing soft delete; hard deletion of docs is admin-only in the web app.',
 	},
 	unarchive_project_doc: {
 		category: 'Project docs & assets',
 		returns:
-			'`{ archived: false, filename, changed }` (`changed: false` when it was already active), or `{ error }` if the file is not found.',
+			'`{ archived: false, filename, changed }` (`changed: false` when it was already active), or `{ error }` if the file is not found. Restoring is recorded in the project activity log, naming the task and run it came from - so restore a doc because it is genuinely back in use, not merely to get around the archived-write refusal.',
 	},
 	list_project_assets: {
 		category: 'Project docs & assets',
@@ -460,13 +460,13 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	archive_project_asset: {
 		category: 'Project docs & assets',
 		returns:
-			'`{ archived: true, reference: "assets/<path>", changed }` (`changed: false` when it was already archived - the call is idempotent), or `{ error }` if the asset is not found. The archived asset leaves listings and default reads but keeps its path reserved; existing `assets/<path>` references keep resolving.',
+			'`{ archived: true, reference: "assets/<path>", changed }` (`changed: false` when it was already archived - the call is idempotent), or `{ error }` if the asset is not found. The archived asset leaves listings and default reads but keeps its path reserved; existing `assets/<path>` references keep resolving. While archived it is read-only: it cannot be overwritten, moved, renamed, or reviewed until unarchive_project_asset restores it.',
 		auth: 'Archival is the agent-facing soft delete; hard deletion of assets is admin-only in the web app.',
 	},
 	unarchive_project_asset: {
 		category: 'Project docs & assets',
 		returns:
-			'`{ archived: false, reference: "assets/<path>", changed }` (`changed: false` when it was already active), or `{ error }` if the asset is not found.',
+			'`{ archived: false, reference: "assets/<path>", changed }` (`changed: false` when it was already active), or `{ error }` if the asset is not found. Restoring is recorded in the project activity log, naming the task and run it came from - so restore an asset because it is genuinely back in use, not merely to get around the archived-write refusal.',
 	},
 
 	// Costs

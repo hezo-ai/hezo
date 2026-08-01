@@ -58,7 +58,7 @@ import { readRunLogTail, runLogLengthSql } from '../db/run-log-chunks';
 import type { DomainEventBus } from '../events/bus';
 import { assertNoActiveRun } from '../lib/active-run';
 import { isHqInstanceAgent, isVirtualHqMemberInTeam } from '../lib/agent-roles';
-import { upsertProjectAsset } from '../lib/asset-name';
+import { archivedAssetHolderId, upsertProjectAsset } from '../lib/asset-name';
 import { assetSortOrderBy } from '../lib/asset-sort';
 import { signAgentAssetUrl } from '../lib/asset-urls';
 import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
@@ -3964,7 +3964,7 @@ export function registerTools(
 				),
 			);
 
-			return { applied: true, document_id: doc.id };
+			return { applied: true, document_id: doc.row.id };
 		},
 		db,
 	);
@@ -4047,7 +4047,7 @@ export function registerTools(
 					changeSummary: u.change_summary,
 					authorMemberId: callerMemberId,
 				});
-				results.push({ index: i, agent_id: u.agent_id, slug, ok: true, document_id: doc.id });
+				results.push({ index: i, agent_id: u.agent_id, slug, ok: true, document_id: doc.row.id });
 				applied.push({ slug, change_summary: u.change_summary });
 			}
 
@@ -4143,7 +4143,7 @@ export function registerTools(
 				);
 			}
 
-			return { applied: true, document_id: doc.id, length: (args.content as string).length };
+			return { applied: true, document_id: doc.row.id, length: (args.content as string).length };
 		},
 		db,
 	);
@@ -4562,6 +4562,10 @@ export function registerTools(
 	const assetPathError = (raw: string) =>
 		`Invalid asset path '${raw}': up to ${ASSET_MAX_FOLDER_DEPTH} folder levels, each segment starting with a letter or digit (e.g. "launch/images/hero.png").`;
 
+	/** Refusal copy for a write aimed at a path an archived asset still holds. */
+	const archivedAssetWriteError = (filename: string) =>
+		`Asset 'assets/${filename}' exists but is archived - call unarchive_project_asset first to overwrite it, or write under a different path.`;
+
 	tool(
 		server,
 		'list_project_assets',
@@ -4710,15 +4714,11 @@ export function registerTools(
 			}
 
 			// An archived asset keeps its path reserved; overwriting it would
-			// silently resurrect (and clobber) soft-deleted content.
-			const archivedHolder = await db.query<{ id: string }>(
-				'SELECT id FROM assets WHERE project_id = $1 AND original_filename = $2 AND archived_at IS NOT NULL',
-				[projectId, filename],
-			);
-			if (archivedHolder.rows.length > 0) {
-				return {
-					error: `Asset 'assets/${filename}' exists but is archived - call unarchive_project_asset first to overwrite it, or write under a different path.`,
-				};
+			// silently resurrect (and clobber) soft-deleted content. The upsert
+			// refuses it transactionally too — this pre-flight just avoids spending
+			// the blob write on a doomed call.
+			if (await archivedAssetHolderId(db, projectId, filename)) {
+				return { error: archivedAssetWriteError(filename) };
 			}
 
 			// Capture raster-image pixel dimensions so read_project_asset /
@@ -4747,6 +4747,12 @@ export function registerTools(
 				await assets.delete(projectId, assetId).catch(() => {});
 				throw e;
 			}
+			if (result.status === 'archived') {
+				// Archived between the pre-flight and the upsert — the bytes we just
+				// stored have no row pointing at them.
+				await assets.delete(projectId, assetId).catch(() => {});
+				return { error: archivedAssetWriteError(filename) };
+			}
 			if (result.replacedAssetId) {
 				await assets.delete(projectId, result.replacedAssetId).catch(() => {});
 			}
@@ -4766,16 +4772,16 @@ export function registerTools(
 				);
 			}
 			broadcastRowChange(wsManager, wsRoom.team(teamId), 'assets', 'INSERT', {
-				id: result.id,
+				id: result.asset.id,
 				team_id: teamId,
 				project_id: projectId,
-				original_filename: result.original_filename,
+				original_filename: result.asset.original_filename,
 			});
 			return {
 				written: true,
-				id: result.id,
-				reference: `assets/${result.original_filename}`,
-				byte_size: result.byte_size,
+				id: result.asset.id,
+				reference: `assets/${result.asset.original_filename}`,
+				byte_size: result.asset.byte_size,
 				...(dims ? { width: dims.width, height: dims.height } : {}),
 			};
 		},
@@ -4878,14 +4884,20 @@ export function registerTools(
 							width = dims.width;
 							height = dims.height;
 							// Self-heal: persist so future reads / list_project_assets
-							// don't re-parse this pre-existing asset's blob.
-							await db
-								.query('UPDATE assets SET width = $1, height = $2 WHERE id = $3', [
-									dims.width,
-									dims.height,
-									asset.id,
-								])
-								.catch(() => {});
+							// don't re-parse this pre-existing asset's blob. Skipped on an
+							// archived row — nothing writes an archived asset, and an
+							// invariant with a carve-out is one no reader can rely on. The
+							// dimensions are still reported; only the caching is skipped,
+							// and archived reads are rare (explicitly opted into).
+							if (!archived) {
+								await db
+									.query('UPDATE assets SET width = $1, height = $2 WHERE id = $3', [
+										dims.width,
+										dims.height,
+										asset.id,
+									])
+									.catch(() => {});
+							}
 						}
 					}
 				}
@@ -5116,6 +5128,10 @@ export function registerTools(
 			assetId: asset.id,
 			filename,
 			archived,
+			// Attribution: an agent restoring an asset so it can overwrite it is
+			// exactly what the operator needs to trace back to a run.
+			taskId: auth.type === AuthType.Agent ? auth.taskId : null,
+			runId: auth.type === AuthType.Agent ? auth.runId : null,
 		});
 		broadcastRowChange(wsManager, wsRoom.team(scope.teamId), 'assets', 'UPDATE', {
 			id: asset.id,
@@ -5305,18 +5321,6 @@ export function registerTools(
 						'Project docs must be markdown (.md). Non-markdown files belong in the assets library, referenced as assets/<filename>.',
 				};
 			}
-			// An archived doc is read-only; writing would silently resurrect it.
-			const prior = await getDocument(db, {
-				type: DocumentType.ProjectDoc,
-				teamId: scope.teamId,
-				projectId: scope.projectId,
-				slug: args.filename as string,
-			});
-			if (prior?.archived_at) {
-				return {
-					error: `Doc '${args.filename}' is archived - call unarchive_project_doc first, or write under a different filename.`,
-				};
-			}
 			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 			const callerApiKeyId = apiKeyIdFromAuth(auth);
 			const doc = await upsertDocument(db, wsManager, {
@@ -5337,7 +5341,14 @@ export function registerTools(
 					actorApiKeyId: callerApiKeyId,
 				},
 			});
-			return { written: true, id: doc.id, filename: doc.slug };
+			// An archived doc is read-only; writing would silently resurrect it. The
+			// refusal comes from upsertDocument itself, so no caller can forget it.
+			if (doc.status === 'archived') {
+				return {
+					error: `Doc '${args.filename}' is archived - call unarchive_project_doc first, or write under a different filename.`,
+				};
+			}
+			return { written: true, id: doc.row.id, filename: doc.row.slug };
 		},
 		db,
 	);
@@ -5369,6 +5380,10 @@ export function registerTools(
 				events,
 				actorType: actorTypeFromAuth(auth),
 				actorApiKeyId: apiKeyIdFromAuth(auth),
+				// Attribution: an agent restoring a doc so it can overwrite it is
+				// exactly what the operator needs to trace back to a run.
+				taskId: auth.type === AuthType.Agent ? auth.taskId : null,
+				runId: auth.type === AuthType.Agent ? auth.runId : null,
 			},
 		);
 		if (!result) return { error: `File '${args.filename}' not found` };

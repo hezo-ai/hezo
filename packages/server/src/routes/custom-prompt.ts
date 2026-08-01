@@ -60,7 +60,7 @@ customPromptRoutes.patch('/projects/:projectId/custom-prompt', async (c) => {
 		);
 	}
 
-	return ok(c, doc, existing ? 200 : 201);
+	return ok(c, doc.row, existing ? 200 : 201);
 });
 
 customPromptRoutes.get('/projects/:projectId/custom-prompt/revisions', async (c) => {
@@ -102,7 +102,9 @@ customPromptRoutes.post('/projects/:projectId/custom-prompt/restore', async (c) 
 		revisionNumber: body.revision_number,
 		restoredByMemberId,
 	});
-	if (!restored) return err(c, 'NOT_FOUND', 'Revision not found', 404);
+	// 'archived' is unreachable here — only project docs are ever archived — but
+	// the union makes that explicit rather than assumed.
+	if (restored.status !== 'restored') return err(c, 'NOT_FOUND', 'Revision not found', 404);
 
-	return ok(c, restored);
+	return ok(c, restored.row);
 });

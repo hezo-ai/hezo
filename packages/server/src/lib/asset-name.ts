@@ -111,12 +111,46 @@ export async function insertAssetWithUniqueName(
 }
 
 /**
+ * The id of the archived asset holding `filename` in this project, or null when
+ * the path is free or held by an active asset. An archived asset keeps its path
+ * reserved, so callers use this as a pre-flight before spending bytes on a write
+ * that `upsertProjectAsset` would refuse anyway.
+ */
+export async function archivedAssetHolderId(
+	db: Db,
+	projectId: string,
+	filename: string,
+): Promise<string | null> {
+	const r = await db.query<{ id: string }>(
+		'SELECT id FROM assets WHERE project_id = $1 AND original_filename = $2 AND archived_at IS NOT NULL',
+		[projectId, filename],
+	);
+	return r.rows[0]?.id ?? null;
+}
+
+export type UpsertProjectAssetResult =
+	| {
+			status: 'written';
+			asset: InsertedAsset;
+			replacedAssetId: string | null;
+			wipedReviewComments: boolean;
+	  }
+	/** The path is held by an archived asset — nothing was written. */
+	| { status: 'archived'; assetId: string };
+
+/**
  * Insert an asset under an exact filename, or overwrite the row if one already
  * exists for that `(project_id, original_filename)`. Used by agent-authored
  * assets (e.g. an iterated HTML mockup) so the reference stays stable at
  * `assets/<filename>` instead of accreting random suffixes on each re-save. The
  * caller writes the new blob keyed by `assetId`; on overwrite the previous
  * `assetId`'s blob is orphaned and should be cleaned up by the caller.
+ *
+ * An **archived** holder is refused (`status: 'archived'`, no writes issued):
+ * archival keeps the path reserved, so overwriting would silently clobber
+ * soft-deleted content. The rule lives here rather than at each call site so a
+ * new caller inherits it, and the lookup runs inside the transaction that does
+ * the write so an archive landing mid-request can't slip past it.
  *
  * Overwriting deletes the asset's pending review comments in the same
  * transaction (they are version-scoped, like document review comments — and the
@@ -126,17 +160,21 @@ export async function insertAssetWithUniqueName(
 export async function upsertProjectAsset(
 	db: Db,
 	input: InsertAssetInput,
-): Promise<InsertedAsset & { replacedAssetId: string | null; wipedReviewComments: boolean }> {
-	const existing = await db.query<{ id: string }>(
-		'SELECT id FROM assets WHERE project_id = $1 AND original_filename = $2 LIMIT 1',
-		[input.projectId, input.desiredName],
-	);
-	const prior = existing.rows[0]?.id ?? null;
-	if (prior) {
-		return db.transaction(async (tx) => {
+): Promise<UpsertProjectAssetResult> {
+	return db.transaction(async (tx) => {
+		const existing = await tx.query<{ id: string; archived_at: string | null }>(
+			`SELECT id, archived_at FROM assets
+			 WHERE project_id = $1 AND original_filename = $2 LIMIT 1 FOR UPDATE`,
+			[input.projectId, input.desiredName],
+		);
+		const prior = existing.rows[0] ?? null;
+		if (prior?.archived_at != null) {
+			return { status: 'archived', assetId: prior.id };
+		}
+		if (prior) {
 			const wiped = await tx.query<{ id: string }>(
 				'DELETE FROM review_comments WHERE asset_id = $1 RETURNING id',
-				[prior],
+				[prior.id],
 			);
 			const r = await tx.query<InsertedAsset>(
 				`UPDATE assets
@@ -156,25 +194,37 @@ export async function upsertProjectAsset(
 					input.desiredName,
 				],
 			);
-			return { ...r.rows[0], replacedAssetId: prior, wipedReviewComments: wiped.rows.length > 0 };
-		});
-	}
-	const r = await db.query<InsertedAsset>(
-		`INSERT INTO assets (id, team_id, project_id, content_type, byte_size, sha256, original_filename, uploaded_by_member_id, width, height)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-		 RETURNING id, content_type, byte_size, original_filename, width, height`,
-		[
-			input.assetId,
-			input.teamId,
-			input.projectId,
-			input.contentType,
-			input.byteSize,
-			input.sha256,
-			input.desiredName,
-			input.uploadedByMemberId,
-			input.width ?? null,
-			input.height ?? null,
-		],
-	);
-	return { ...r.rows[0], replacedAssetId: null, wipedReviewComments: false };
+			return {
+				status: 'written',
+				asset: r.rows[0],
+				replacedAssetId: prior.id,
+				wipedReviewComments: wiped.rows.length > 0,
+			};
+		}
+		// No row to lock, so UNIQUE(project_id, original_filename) is still the
+		// backstop against a concurrent insert — callers handle the violation.
+		const r = await tx.query<InsertedAsset>(
+			`INSERT INTO assets (id, team_id, project_id, content_type, byte_size, sha256, original_filename, uploaded_by_member_id, width, height)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			 RETURNING id, content_type, byte_size, original_filename, width, height`,
+			[
+				input.assetId,
+				input.teamId,
+				input.projectId,
+				input.contentType,
+				input.byteSize,
+				input.sha256,
+				input.desiredName,
+				input.uploadedByMemberId,
+				input.width ?? null,
+				input.height ?? null,
+			],
+		);
+		return {
+			status: 'written',
+			asset: r.rows[0],
+			replacedAssetId: null,
+			wipedReviewComments: false,
+		};
+	});
 }

@@ -1237,7 +1237,7 @@ Archive a project asset - the reversible soft delete, and the ONLY way an agent 
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `filename` | `string` | Yes | Asset path to archive - the full path exactly as list_project_assets returns it (e.g. "drafts/old-v1.md") |
 
-**Returns:** `{ archived: true, reference: "assets/<path>", changed }` (`changed: false` when it was already archived - the call is idempotent), or `{ error }` if the asset is not found. The archived asset leaves listings and default reads but keeps its path reserved; existing `assets/<path>` references keep resolving.
+**Returns:** `{ archived: true, reference: "assets/<path>", changed }` (`changed: false` when it was already archived - the call is idempotent), or `{ error }` if the asset is not found. The archived asset leaves listings and default reads but keeps its path reserved; existing `assets/<path>` references keep resolving. While archived it is read-only: it cannot be overwritten, moved, renamed, or reviewed until unarchive_project_asset restores it.
 
 **Authorization:** Archival is the agent-facing soft delete; hard deletion of assets is admin-only in the web app.
 
@@ -1254,7 +1254,7 @@ Restore an archived project asset to active. It reappears in list_project_assets
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `filename` | `string` | Yes | Asset path to restore (the same path it was archived under) |
 
-**Returns:** `{ archived: false, reference: "assets/<path>", changed }` (`changed: false` when it was already active), or `{ error }` if the asset is not found.
+**Returns:** `{ archived: false, reference: "assets/<path>", changed }` (`changed: false` when it was already active), or `{ error }` if the asset is not found. Restoring is recorded in the project activity log, naming the task and run it came from - so restore an asset because it is genuinely back in use, not merely to get around the archived-write refusal.
 
 ### `read_project_doc`
 
@@ -1305,7 +1305,7 @@ Archive a project doc - the reversible soft delete, and the ONLY way an agent re
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `filename` | `string` | Yes | Doc filename to archive (e.g. "old-plan.md") |
 
-**Returns:** `{ archived: true, filename, changed }` (`changed: false` when it was already archived - the call is idempotent), or `{ error }` if the file is not found. The archived doc leaves listings, search, and agent-run context but keeps its filename reserved and its revision history.
+**Returns:** `{ archived: true, filename, changed }` (`changed: false` when it was already archived - the call is idempotent), or `{ error }` if the file is not found. The archived doc leaves listings, search, and agent-run context but keeps its filename reserved and its revision history. While archived it is read-only: no writes and no revision restores until unarchive_project_doc restores it.
 
 **Authorization:** Archival is the agent-facing soft delete; hard deletion of docs is admin-only in the web app.
 
@@ -1322,7 +1322,7 @@ Restore an archived project doc to active. It reappears in list_project_docs and
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `filename` | `string` | Yes | Doc filename to restore (e.g. "old-plan.md") |
 
-**Returns:** `{ archived: false, filename, changed }` (`changed: false` when it was already active), or `{ error }` if the file is not found.
+**Returns:** `{ archived: false, filename, changed }` (`changed: false` when it was already active), or `{ error }` if the file is not found. Restoring is recorded in the project activity log, naming the task and run it came from - so restore a doc because it is genuinely back in use, not merely to get around the archived-write refusal.
 
 ## Costs
 
