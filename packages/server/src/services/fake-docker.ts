@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Db } from '../db/database';
+import { getHostMemory } from '../lib/host-memory';
 import { hostSandboxFiles, type SandboxFiles } from './sandbox/files';
 import type {
 	ContainerByteChannel,
@@ -192,6 +193,11 @@ export function createFakeDockerClient(db?: Db, dataDir?: string): ContainerEngi
 		// rather than 0 - a fake claiming an empty disk would make the pool's
 		// recycle rung untestable by asserting the opposite of what it guards.
 		diskUsedBytes: async () => null,
+
+		// The fake stands in for a *local daemon*, so its containers draw on this
+		// host exactly as Docker's would - which is what keeps the automatic budget
+		// under HEZO_SKIP_DOCKER the same number production would compute.
+		containerHostMemory: () => getHostMemory(),
 
 		// Resolved through the container's bind mounts, exactly as Docker would.
 		// The fake exists to stand in for a *local daemon*, and a local daemon's

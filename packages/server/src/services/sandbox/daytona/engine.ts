@@ -506,6 +506,15 @@ export class DaytonaEngine implements ContainerEngine {
 	}
 
 	/**
+	 * Null: these containers run on Daytona's machines, so the memory they consume
+	 * is not this host's to budget. The provider's own per-sandbox ceiling and the
+	 * operator's spend guard are what bound them instead.
+	 */
+	containerHostMemory(): null {
+		return null;
+	}
+
+	/**
 	 * {@link SandboxFiles} over the toolbox file API, rooted inside the sandbox.
 	 *
 	 * There is no bind mount here, so this is the only way a run's artefacts reach

@@ -744,7 +744,7 @@ export async function acquireRunContainer(
 		// this cannot spin. The cap is the pool's own size, not a timeout.
 		for (let attempt = 0; attempt < MAX_ACQUIRE_ATTEMPTS; attempt++) {
 			const [active, requestMemoryGb] = await Promise.all([
-				getActiveContainers(db),
+				getActiveContainers(db, deps.docker),
 				projectContainerMemoryGb(db, projectId),
 			]);
 			const decision = await decidePoolAcquisition(db, projectId, taskId, {

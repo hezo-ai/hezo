@@ -2,12 +2,13 @@ import { ContainerStatus, HeartbeatRunStatus } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { getDefaultRamCapPerContainerGb, getMaxContainerMemoryGb } from '../lib/system-meta';
 import { POOL_DISK_CEILING_BYTES } from './sandbox/pool';
+import type { ContainerEngine } from './sandbox/types';
 
 /**
  * DB-backed concurrency checks — the single source of truth for the two run
  * rules: at most one active (queued/running) agent run per task, and at most
- * `max_active_containers` (system_meta; default computed from host memory)
- * simultaneously RUNNING project containers across the instance. The container
+ * `max_active_containers` (system_meta; default from the engine's own memory
+ * answer) simultaneously RUNNING project containers across the instance. The container
  * cap is the memory guarantee: every container is memory-capped, so total
  * demand never exceeds `N × cap` no matter how many runs share a container.
  * Shared by the scheduler (`JobManager`, which layers its in-memory dispatch
@@ -30,7 +31,10 @@ export async function isTaskBusyInDb(db: Db, taskId: string): Promise<boolean> {
 }
 
 export interface ActiveContainers {
-	/** Configured (or host-memory-computed) ceiling on total container memory, in GB. */
+	/**
+	 * Ceiling on total task-run container memory, in GB - the operator's setting,
+	 * else the automatic default the engine's own memory answer produces.
+	 */
 	budgetGb: number;
 	/**
 	 * Memory every running container has been promised, in GB, instance-wide.
@@ -45,6 +49,9 @@ export interface ActiveContainers {
 	 * There is deliberately no container *count* here, derived or otherwise. How
 	 * many containers fit depends on the mix of their sizes, so the number is not
 	 * stable enough to mean anything to an operator or to gate on.
+	 *
+	 * Excludes the container reserved for the assistant chat, which the budget
+	 * holds back up front rather than charging as it is used - see the query.
 	 */
 	usedMemoryGb: number;
 	/**
@@ -68,21 +75,34 @@ export interface ActiveContainers {
  * be recorded in either place or both. Reading one alone would under-count, and
  * under-counting a capacity gate over-subscribes the host.
  */
-export async function getActiveContainers(db: Db): Promise<ActiveContainers> {
+export async function getActiveContainers(
+	db: Db,
+	engine: Pick<ContainerEngine, 'containerHostMemory'>,
+): Promise<ActiveContainers> {
 	const [budgetGb, defaultCapGb, running, spare] = await Promise.all([
-		getMaxContainerMemoryGb(db),
+		getMaxContainerMemoryGb(db, engine),
 		getDefaultRamCapPerContainerGb(db),
 		db.query<{ project_id: string }>(
 			// The UNION is keyed on the engine's own container id so a container
 			// recorded in both representations is counted once; the project it
 			// belongs to is carried through because that is where its memory cap
 			// lives.
+			//
+			// A member reserved for the assistant chat is left out: the budget is a
+			// *task-run* budget, and the automatic default already holds one
+			// container's worth back for chat. Counting it here as well reserved the
+			// same memory twice, so an instance sized for three containers dispatched
+			// two whenever the chat was open.
 			`SELECT project_id FROM (
 			   SELECT id AS project_id, container_id FROM projects
 			    WHERE container_id IS NOT NULL AND container_status = $1::container_status
+			      AND NOT EXISTS (
+			        SELECT 1 FROM container_pool_members m
+			         WHERE m.container_id = projects.container_id AND m.reserved_for_chat
+			      )
 			   UNION
 			   SELECT project_id, container_id FROM container_pool_members
-			    WHERE state IN ('creating', 'idle', 'busy')
+			    WHERE state IN ('creating', 'idle', 'busy') AND NOT reserved_for_chat
 			 ) AS running`,
 			[ContainerStatus.Running],
 		),
@@ -155,8 +175,15 @@ export async function projectContainerMemoryGb(db: Db, projectId: string): Promi
  * replaces it is the narrower and still-correct claim that a project with a
  * container genuinely free to take the run consumes no new slot.
  */
-export async function isContainerCapacityBlockedInDb(db: Db, projectId: string): Promise<boolean> {
-	const { budgetGb, usedMemoryGb, projectsWithSpareContainer } = await getActiveContainers(db);
+export async function isContainerCapacityBlockedInDb(
+	db: Db,
+	engine: Pick<ContainerEngine, 'containerHostMemory'>,
+	projectId: string,
+): Promise<boolean> {
+	const { budgetGb, usedMemoryGb, projectsWithSpareContainer } = await getActiveContainers(
+		db,
+		engine,
+	);
 	if (projectsWithSpareContainer.has(projectId)) return false;
 	return usedMemoryGb + (await projectContainerMemoryGb(db, projectId)) > budgetGb;
 }

@@ -1,3 +1,4 @@
+import type { ContainerHostMemory } from '@hezo/shared';
 import type { SandboxFiles } from './files';
 
 export type { SandboxFiles };
@@ -238,6 +239,23 @@ export interface ContainerEngine {
 	 * and so nothing above the seam has to know which one it is talking to.
 	 */
 	diskUsedBytes(containerId: string, path: string): Promise<number | null>;
+
+	/**
+	 * The memory this engine's containers are drawn from, or `null` when they do
+	 * not draw on this machine at all.
+	 *
+	 * The capacity model needs exactly one fact about a backend - whether the RAM
+	 * its containers consume is the operator's to spend - and this is that fact,
+	 * stated as a resource rather than as a provider. Answering `null` is not
+	 * "unknown": it is "not from here", and the budget falls back to a flat
+	 * default the operator sets deliberately instead of sizing a remote fleet by
+	 * the wrong computer.
+	 *
+	 * Synchronous and cheap by contract: it reports what the engine is configured
+	 * against, not a live measurement, and is read on settings reads and on the
+	 * dispatch gate.
+	 */
+	containerHostMemory(): ContainerHostMemory | null;
 
 	/**
 	 * Read and write a run's artefact files, rooted at an absolute path **inside

@@ -5,6 +5,7 @@ import {
 	MAX_CONTAINER_MEMORY_GB_MIN,
 	RAM_CAP_PER_CONTAINER_GB_MAX,
 	RAM_CAP_PER_CONTAINER_GB_MIN,
+	SandboxBackend,
 	usableMemoryGibForContainers,
 } from '@hezo/shared';
 import { createFileRoute } from '@tanstack/react-router';
@@ -19,6 +20,7 @@ import {
 	useUpdateInstanceSettings,
 } from '../../hooks/use-instance-settings';
 import { useMe } from '../../hooks/use-me';
+import { useSandboxBackendInfo } from '../../hooks/use-sandbox-backend-info';
 import type { ApiError } from '../../lib/api';
 import { type MessageKey, useI18n } from '../../lib/i18n';
 
@@ -34,6 +36,32 @@ const MAX_CONTAINERS_POINTS: readonly MessageKey[] = [
 	'concurrency.memoryBudget.point.automatic',
 	'concurrency.memoryBudget.point.range',
 ];
+
+/**
+ * Which backend is running the containers these limits apply to.
+ *
+ * On the page rather than only under Storage because the numbers below mean
+ * different things per backend: on the local daemon the budget rations the
+ * operator's own RAM, and on a managed backend it rations their spend. An
+ * operator reading "13 GB" needs to know which.
+ *
+ * The provider name is a proper noun and stays untranslated; the local-daemon
+ * wording reuses the Storage card's string rather than adding a second name for
+ * one concept.
+ */
+function ContainerBackendNote() {
+	const { t } = useI18n();
+	const { data: info } = useSandboxBackendInfo(true);
+	if (info === undefined) return null;
+	const managed = info.backend !== SandboxBackend.Docker;
+	return (
+		<p className="text-[13px] text-text-2 mt-1 max-w-[680px]" data-testid="concurrency-backend">
+			{t('concurrency.backend.label')}{' '}
+			<span className="text-text">{managed ? 'Daytona' : t('settings.sandboxBackend.docker')}</span>
+			{managed ? ` - ${t('concurrency.backend.managedNote')}` : null}
+		</p>
+	);
+}
 
 const RAM_CAP_POINTS: readonly MessageKey[] = [
 	'concurrency.ramCap.point.limit',
@@ -86,6 +114,7 @@ function ConcurrencySettingsPage() {
 						/>
 					</div>
 					<p className="text-[13px] text-text-2 mt-1 max-w-[680px]">{t('concurrency.intro')}</p>
+					<ContainerBackendNote />
 				</div>
 
 				<section className="border border-border rounded-md p-4 bg-surface mb-4">
@@ -163,19 +192,18 @@ function ContainerMemoryBudgetForm({ settings }: { settings: InstanceSettings })
 	}
 
 	const dirty = value.trim() !== String(settings.max_container_memory_gb);
-	const ram = gb(settings.host_total_ram_bytes);
-	const swap = gb(settings.host_total_swap_bytes);
-	const total = Math.round((settings.host_total_ram_bytes + settings.host_total_swap_bytes) / GIB);
+	// Null host memory means the containers do not run here, so there is no
+	// arithmetic to show - the server did not use these numbers either. Rendering
+	// a host formula on a managed backend would explain the budget with figures
+	// that had no part in it.
+	const hostRamBytes = settings.host_total_ram_bytes;
+	const hostSwapBytes = settings.host_total_swap_bytes;
+	const runsOnHost = hostRamBytes !== null && hostSwapBytes !== null;
 	// What is left for task-run containers: the host reserve comes off first, then
 	// one container's worth for the assistant chat, which is exempt from the budget
 	// and so runs on top of it. Mirrors computeDefaultMaxContainerMemoryGb exactly,
 	// so the rendered arithmetic adds up to the number beside it.
 	const chatReserve = settings.default_ram_cap_per_container_gb;
-	const usable = Math.max(
-		0,
-		usableMemoryGibForContainers(settings.host_total_ram_bytes, settings.host_total_swap_bytes) -
-			chatReserve,
-	);
 
 	return (
 		<>
@@ -217,14 +245,21 @@ function ContainerMemoryBudgetForm({ settings }: { settings: InstanceSettings })
 					? t('concurrency.memoryBudget.formulaSet', {
 							value: settings.max_container_memory_gb_computed_default,
 						})
-					: t('concurrency.memoryBudget.formulaAuto', {
-							ram,
-							swap,
-							total,
-							reserved: HOST_RESERVED_MEMORY_GB,
-							chat: chatReserve,
-							usable,
-						})}
+					: runsOnHost
+						? t('concurrency.memoryBudget.formulaAuto', {
+								ram: gb(hostRamBytes),
+								swap: gb(hostSwapBytes),
+								total: Math.round((hostRamBytes + hostSwapBytes) / GIB),
+								reserved: HOST_RESERVED_MEMORY_GB,
+								chat: chatReserve,
+								usable: Math.max(
+									0,
+									usableMemoryGibForContainers(hostRamBytes, hostSwapBytes) - chatReserve,
+								),
+							})
+						: t('concurrency.memoryBudget.formulaManaged', {
+								value: settings.max_container_memory_gb_computed_default,
+							})}
 			</p>
 			{error && (
 				<p className="text-[13px] text-danger mt-1.5" data-testid="container-memory-budget-error">

@@ -10,7 +10,6 @@ import {
 } from '@hezo/shared';
 import { Hono } from 'hono';
 import type { Db } from '../db/database';
-import { getHostMemory } from '../lib/host-memory';
 import { err, ok } from '../lib/response';
 import {
 	clearMaxContainerMemoryGb,
@@ -34,6 +33,7 @@ import {
 import type { Env } from '../lib/types';
 import { requireAdminEquivalent, requireAdminEquivalentBearer } from '../middleware/auth';
 import { adminPasswordIsSet } from '../services/password';
+import type { ContainerEngine } from '../services/sandbox/types';
 
 export const instanceSettingsRoutes = new Hono<Env>();
 
@@ -43,23 +43,29 @@ export const instanceSettingsRoutes = new Hono<Env>();
  * computed default, and the host memory figures let the settings page render
  * the formula behind the automatic value.
  *
+ * **The host memory figures are null when containers do not run on this host.**
+ * They come from the engine rather than a probe here, so the page cannot render
+ * a formula out of numbers that had no part in the budget - a managed backend's
+ * fleet is bounded by the operator's spend, not by the machine Hezo is installed
+ * on.
+ *
  * There is deliberately no container *count* here. How many containers fit
  * depends on the mix of their sizes - a project may raise its own cap - so a
  * count would be a number that changes meaning as the fleet changes, which is
  * exactly why the budget replaced it.
  */
-async function instanceSettingsPayload(db: Db) {
+async function instanceSettingsPayload(db: Db, engine: ContainerEngine) {
 	const explicitBudget = await getMaxContainerMemoryGbSetting(db);
-	const { totalRamBytes, totalSwapBytes } = getHostMemory();
+	const hostMemory = engine.containerHostMemory();
 	return {
 		base_url: await getInstanceBaseUrl(db),
 		max_chat_history_size: await getMaxChatHistorySize(db),
-		max_container_memory_gb: await getMaxContainerMemoryGb(db),
+		max_container_memory_gb: await getMaxContainerMemoryGb(db, engine),
 		max_container_memory_gb_is_set: explicitBudget !== null,
-		max_container_memory_gb_computed_default: await computeAutoMaxContainerMemoryGb(db),
+		max_container_memory_gb_computed_default: await computeAutoMaxContainerMemoryGb(db, engine),
 		default_ram_cap_per_container_gb: await getDefaultRamCapPerContainerGb(db),
-		host_total_ram_bytes: totalRamBytes,
-		host_total_swap_bytes: totalSwapBytes,
+		host_total_ram_bytes: hostMemory?.totalRamBytes ?? null,
+		host_total_swap_bytes: hostMemory?.totalSwapBytes ?? null,
 		locale: await getInstanceLocale(db),
 	};
 }
@@ -67,7 +73,7 @@ async function instanceSettingsPayload(db: Db) {
 // Instance-wide settings. Readable by any authenticated principal (the same
 // openness as GET /api/ai-providers); writes are superuser-only.
 instanceSettingsRoutes.get('/instance-settings', async (c) => {
-	return ok(c, await instanceSettingsPayload(c.get('db')));
+	return ok(c, await instanceSettingsPayload(c.get('db'), c.get('docker')));
 });
 
 /**
@@ -216,7 +222,7 @@ instanceSettingsRoutes.patch('/instance-settings', async (c) => {
 		// The same admission rule from the other side: raising the inherited cap
 		// above the budget would make every project that inherits it unschedulable.
 		const cap = body.default_ram_cap_per_container_gb as number;
-		const budget = await getMaxContainerMemoryGb(db);
+		const budget = await getMaxContainerMemoryGb(db, c.get('docker'));
 		if (!projectMemoryFitsBudget(cap, budget)) {
 			return err(
 				c,
@@ -251,5 +257,5 @@ instanceSettingsRoutes.patch('/instance-settings', async (c) => {
 
 	// Locale is echoed so GET and PATCH return the same shape, but it is not
 	// writable here — PATCH /instance-settings/locale is its single write path.
-	return ok(c, await instanceSettingsPayload(c.get('db')));
+	return ok(c, await instanceSettingsPayload(c.get('db'), c.get('docker')));
 });

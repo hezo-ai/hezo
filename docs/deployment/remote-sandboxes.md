@@ -63,8 +63,15 @@ path and Hezo owns it, so the rules are the same wherever the container runs.
 
 ## What to expect
 
-- **Concurrency is bounded by the container memory budget**, exactly as it is locally. See
-  [Settings → Concurrency](/docs/security/container-isolation).
+- **Concurrency is bounded by the container memory budget**, as it is locally - but the
+  automatic default is different. Locally Hezo sizes it from your machine's memory; with a
+  managed backend the containers are not on your machine, so the default is a flat starting
+  figure you raise deliberately. Treat it as a spend limit rather than a share of your RAM.
+  The Concurrency settings page names the backend in use and shows which of the two applies.
+  See [Settings → Concurrency](/docs/security/container-isolation).
+- **The provider's disk quota caps concurrency too.** Daytona allocates 10 GB per sandbox
+  against your account's total disk quota, so that quota can be the limit you hit first -
+  raising the memory budget will not get you more sandboxes than the quota allows.
 - **A project's memory cap must fit that budget.** Providers also cap a single sandbox
   (Daytona allocates at most 8 GB). Ask for more than the provider can give and the run
   fails with a message naming the limit - Hezo never quietly starts a smaller container

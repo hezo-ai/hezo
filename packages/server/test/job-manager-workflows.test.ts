@@ -2511,7 +2511,7 @@ describe('JobManager workflow methods', () => {
 			// pool legitimately holds containers from earlier tests, and a hardcoded 2
 			// would be asserting the cap, not the per-agent question under test.
 			const { getActiveContainers } = await import('../src/services/run-concurrency');
-			const active = await getActiveContainers(db);
+			const active = await getActiveContainers(db, createStubDocker());
 			await setContainerCapacityForTest(db, Math.ceil(active.usedMemoryGb / 2) + 1);
 			expect(await (manager as any).isContainerCapacityBlocked(projectBId)).toBe(false);
 			await clearContainerCapacityForTest(db);

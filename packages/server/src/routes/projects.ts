@@ -605,7 +605,7 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 		// the same reason the Daytona adapter refuses a request above its ceiling
 		// rather than quietly allocating less.
 		if (body.memory_limit_gib !== null) {
-			const budget = await getMaxContainerMemoryGb(db);
+			const budget = await getMaxContainerMemoryGb(db, c.get('docker'));
 			if (!projectMemoryFitsBudget(body.memory_limit_gib, budget)) {
 				return err(
 					c,

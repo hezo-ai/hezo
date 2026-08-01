@@ -14,7 +14,7 @@ import {
 	RAM_CAP_PER_CONTAINER_GB_MIN,
 } from '@hezo/shared';
 import type { Db } from '../db/database';
-import { getHostMemory } from './host-memory';
+import type { ContainerEngine } from '../services/sandbox/types';
 
 /**
  * Instance-wide key-value settings stored in the `system_meta` table (the same
@@ -111,14 +111,22 @@ export function clampMaxContainerMemoryGb(value: number): number {
 }
 
 /**
- * The automatic memory budget for this host: total virtual memory (RAM + swap)
- * less the system reserve and one container's worth held for the CEO chat. Used
- * whenever the operator has not explicitly set a budget.
+ * The automatic memory budget: for an engine whose containers run here, total
+ * virtual memory (RAM + swap) less the system reserve and one container's worth
+ * held for the CEO chat; for one whose containers run elsewhere, a flat default,
+ * since this host's memory is not what bounds them. Used whenever the operator
+ * has not explicitly set a budget.
+ *
+ * The engine is asked rather than probed - `containerHostMemory()` is the one
+ * fact the model needs, and taking it from the engine keeps every provider name
+ * on the far side of the seam.
  */
-export async function computeAutoMaxContainerMemoryGb(db: Db): Promise<number> {
+export async function computeAutoMaxContainerMemoryGb(
+	db: Db,
+	engine: Pick<ContainerEngine, 'containerHostMemory'>,
+): Promise<number> {
 	const ramCapGb = await getDefaultRamCapPerContainerGb(db);
-	const { totalRamBytes, totalSwapBytes } = getHostMemory();
-	return computeDefaultMaxContainerMemoryGb(totalRamBytes, totalSwapBytes, ramCapGb);
+	return computeDefaultMaxContainerMemoryGb(engine.containerHostMemory(), ramCapGb);
 }
 
 /**
@@ -137,12 +145,15 @@ export async function getMaxContainerMemoryGbSetting(db: Db): Promise<number | n
  * The effective instance-wide cap on simultaneously active (running) project
  * containers — the operator's main bound on memory, since every container is
  * memory-capped and total demand never exceeds `N × cap`. An explicitly stored
- * value wins; otherwise the default is computed from host memory and the
- * per-container ram cap. Malformed stored values degrade to the computed
- * default so a stale row can never wedge dispatch.
+ * value wins; otherwise the default comes from {@link computeAutoMaxContainerMemoryGb}.
+ * Malformed stored values degrade to the computed default so a stale row can
+ * never wedge dispatch.
  */
-export async function getMaxContainerMemoryGb(db: Db): Promise<number> {
-	return (await getMaxContainerMemoryGbSetting(db)) ?? computeAutoMaxContainerMemoryGb(db);
+export async function getMaxContainerMemoryGb(
+	db: Db,
+	engine: Pick<ContainerEngine, 'containerHostMemory'>,
+): Promise<number> {
+	return (await getMaxContainerMemoryGbSetting(db)) ?? computeAutoMaxContainerMemoryGb(db, engine);
 }
 
 export async function setMaxContainerMemoryGb(db: Db, value: number): Promise<number> {

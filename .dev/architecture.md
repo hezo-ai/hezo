@@ -1219,11 +1219,29 @@ of the 2 GB containers the host was sized for. There is deliberately no derived 
 count anywhere, not even for display: how many fit depends on the mix of their sizes.
 
 The CEO chat's container is **exempt** from the budget, because a queued task run is
-invisible and harmless while a queued chat turn is a person watching a spinner. The host
-still has to fit it, so `computeDefaultMaxContainerMemoryGb` subtracts
+invisible and harmless while a queued chat turn is a person watching a spinner. On a host
+backend the machine still has to fit it, so `computeDefaultMaxContainerMemoryGb` subtracts
 `HOST_RESERVED_MEMORY_GB` (1) plus one container's worth for the chat. Reserving up front
 rather than subtracting when a session opens keeps task-run capacity a **stable** number -
-opening the chat never silently slows the fleet.
+opening the chat never silently slows the fleet. The exemption is enforced on **both** sides:
+the budget reserves for it, and `getActiveContainers` excludes a `reserved_for_chat` member
+from `usedMemoryGb` (on both arms of its UNION - the pool member and the `projects` row are
+two records of one container). Charging it in both places reserved the same memory twice,
+so an instance sized for three containers dispatched two whenever the chat was open.
+
+**The budget derives from host memory only where the containers are the host's to feed.**
+`ContainerEngine.containerHostMemory()` answers with the memory its containers are drawn
+from, or `null` when they are not drawn from this machine at all; `DockerClient` returns the
+host's RAM + swap and `DaytonaEngine` returns `null`, and the budget then falls back to
+`DEFAULT_MAX_CONTAINER_MEMORY_GB` (6). Deriving a managed fleet from `os.totalmem()` sizes it
+by the wrong computer, and wrongly in both directions - a 2 GB VPS computes a budget that fits
+no container and never dispatches, a 128 GB workstation authorises 127 GB of the provider's
+hardware. It is deliberately a **resource** on the seam rather than a provider name: the
+capacity model needs exactly one fact ("is this RAM mine to spend"), and asking it that way
+keeps every provider conditional on the adapter's side of the interface. `GET
+/api/instance-settings` reports `host_total_ram_bytes`/`host_total_swap_bytes` as `null` on
+such a backend, so the settings page renders what the budget was actually computed from
+rather than an arithmetic that had no part in it.
 
 The trade-off a budget accepts is that a large container waits for enough budget rather
 than for any free slot, so smaller runs can overtake it. That is a delay and not
@@ -1478,8 +1496,8 @@ container needed) and queues one whose next container would not fit the budget
 `pendingContainerStarts` refcount covers the window before the DB row reads Running). Dispatch
 drains FIFO by `created_at` with no per-project fair-share — a deep backlog in one project
 consumes freed slots first; that scheduler is the hook if this ever needs fairness. The chat
-path is *not* gated: its container counts toward the budget once running, but starting a chat is
-never refused — busy agents must not lock the operator out of the control surface. Both
+path is *not* gated: its container is exempt from the budget rather than charged against it
+(reserved up front instead), and starting a chat is never refused — busy agents must not lock the operator out of the control surface. Both
 knobs (memory budget, per-container RAM cap) live on the global Settings → Concurrency
 page (`GET/PATCH /api/instance-settings`; `PATCH {max_container_memory_gb: null}` resets to the
 computed default). The project's

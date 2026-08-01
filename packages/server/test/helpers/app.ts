@@ -21,6 +21,8 @@ import { loadAgentRoles } from '../../src/db/agent-roles';
 import type { Db } from '../../src/db/database';
 import { seedBuiltins } from '../../src/db/seed';
 import { DomainEventBus } from '../../src/events/bus';
+import { getHostMemory } from '../../src/lib/host-memory';
+import type { SandboxBackendInfo } from '../../src/lib/sandbox-backend-info';
 import { toSlug, uniqueSlug } from '../../src/lib/slug';
 import type { Env } from '../../src/lib/types';
 import { signAdminJwt, signAgentJwt } from '../../src/middleware/auth';
@@ -95,6 +97,8 @@ const STUB_DOCKER_METHODS: ContainerEngine = {
 	listHezoProcesses: async () => [],
 	killPids: async () => {},
 	diskUsedBytes: async () => null,
+	// Same answer the fake gives: a stub engine stands in for the local daemon.
+	containerHostMemory: () => getHostMemory(),
 	// Same bind-resolved view the fake engine gives, so a test that stages a file
 	// through the seam reads it back off disk exactly as a bind mount would.
 	files: (containerId: string, containerRoot: string) =>
@@ -195,7 +199,18 @@ export function createStubDocker<T extends object>(
  */
 export { encrypt };
 
-export async function createTestApp(opts: { webUrl?: string; assetStore?: AssetStore } = {}) {
+export async function createTestApp(
+	opts: {
+		webUrl?: string;
+		assetStore?: AssetStore;
+		/**
+		 * Stand in a different engine - the managed-backend shape, say, whose
+		 * containers report no host memory. Defaults to the local-daemon stub.
+		 */
+		docker?: ContainerEngine;
+		sandboxBackendInfo?: SandboxBackendInfo;
+	} = {},
+) {
 	const db = await createTestDbWithMigrations();
 	const masterKeyManager = new MasterKeyManager();
 	const mnemonic = generateMnemonic();
@@ -207,7 +222,7 @@ export async function createTestApp(opts: { webUrl?: string; assetStore?: AssetS
 	await seedTestAppTeamTemplate(db);
 	const dataDir = mkdtempSync(join(tmpdir(), 'hezo-test-'));
 	rememberTestContext(db, dataDir);
-	const docker = createStubDocker({}, { db, dataDir });
+	const docker = opts.docker ?? createStubDocker({}, { db, dataDir });
 	const wsManager = new WebSocketManager();
 	const logs = new LogStreamBroker();
 	logs.setWsManager(wsManager);
@@ -230,6 +245,7 @@ export async function createTestApp(opts: { webUrl?: string; assetStore?: AssetS
 		{
 			dataDir,
 			webUrl: opts.webUrl ?? '',
+			sandboxBackendInfo: opts.sandboxBackendInfo,
 		},
 		docker,
 		wsManager,

@@ -2,6 +2,8 @@ import { request as httpRequest } from 'node:http';
 import type { Socket } from 'node:net';
 import { connect as netConnect } from 'node:net';
 import { Readable } from 'node:stream';
+import type { ContainerHostMemory } from '@hezo/shared';
+import { getHostMemory } from '../lib/host-memory';
 import { DockerFrameDecoder, demuxDockerStream } from './docker-frames';
 import type { SandboxFiles } from './sandbox/files';
 import {
@@ -841,6 +843,15 @@ export class DockerClient implements ContainerEngine {
 		} finally {
 			clearTimeout(timer);
 		}
+	}
+
+	/**
+	 * The host's own memory: a local daemon's containers are carved out of the
+	 * same RAM and swap this process is running in, which is exactly why the
+	 * automatic budget holds a reserve back for the system.
+	 */
+	containerHostMemory(): ContainerHostMemory {
+		return getHostMemory();
 	}
 
 	/**

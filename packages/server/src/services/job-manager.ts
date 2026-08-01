@@ -1234,6 +1234,7 @@ export class JobManager {
 	private async isContainerCapacityBlocked(projectId: string | null): Promise<boolean> {
 		const { budgetGb, usedMemoryGb, projectsWithSpareContainer } = await getActiveContainers(
 			this.deps.db,
+			this.deps.docker,
 		);
 		if (
 			projectId &&
