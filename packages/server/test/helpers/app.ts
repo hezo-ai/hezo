@@ -36,6 +36,7 @@ import {
 	resolveProjectTaskPrefix,
 } from '../../src/services/project-create';
 import type { SandboxFiles } from '../../src/services/sandbox/files';
+import { SandboxBackendHolder } from '../../src/services/sandbox/holder';
 import type { ContainerEngine } from '../../src/services/sandbox/types';
 import { type CreatedTeamRow, createTeam, seedDefaultTeam } from '../../src/services/teams';
 import { WebSocketManager } from '../../src/services/ws';
@@ -304,7 +305,11 @@ export async function createTestApp(
 		{
 			dataDir,
 			webUrl: opts.webUrl ?? '',
-			sandboxBackendInfo: opts.sandboxBackendInfo,
+			// A holder rather than the bare info: the backend is switchable at
+			// runtime, so the settings route needs something it can re-point.
+			sandboxHolder: opts.sandboxBackendInfo
+				? new SandboxBackendHolder({ engine: docker, info: opts.sandboxBackendInfo })
+				: undefined,
 		},
 		docker,
 		wsManager,

@@ -102,6 +102,7 @@ import { LogStreamBroker } from './services/log-stream-broker';
 import { registerGenericOAuthRefresh } from './services/oauth/generic-refresh';
 import { adminPasswordIsSet } from './services/password';
 import { PricingService } from './services/pricing';
+import { SandboxBackendHolder } from './services/sandbox/holder';
 import { openSandboxBackend } from './services/sandbox/open';
 import type { ContainerEngine } from './services/sandbox/types';
 import { SshAgentServer } from './services/ssh-agent';
@@ -132,8 +133,14 @@ export interface AppConfig {
 	storageInfo?: StorageInfo;
 	/** Pre-redacted asset-storage metadata — same contract as `storageInfo`. */
 	assetStorageInfo?: AssetStorageInfo;
-	/** Pre-redacted sandbox-backend metadata — same contract as `storageInfo`. */
-	sandboxBackendInfo?: SandboxBackendInfo;
+	/**
+	 * The live container-backend holder.
+	 *
+	 * A holder rather than the metadata it used to carry, because the backend is
+	 * now switchable at runtime: the settings route reads *and re-points* it, so
+	 * a snapshot taken at boot would go stale the moment an operator switched.
+	 */
+	sandboxHolder?: SandboxBackendHolder;
 }
 
 export interface StartupResult {
@@ -246,24 +253,44 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	const masterKeyManager = new MasterKeyManager();
 	const masterKeyState = await resolveMasterKeyState(db, masterKeyManager, config.masterKey);
 
-	// The container engine is chosen once, here, and never changes at runtime -
-	// a managed backend that cannot be reached aborted startup before this point
-	// (`openSandboxBackend`), so there is no dynamic failover to reason about.
-	let docker: ContainerEngine;
+	// The backend is chosen here from the **stored setting**, which the launch
+	// flag only seeds on a fresh instance - so an operator who switched from the
+	// Containers page comes back on what they chose, not on what the command line
+	// happens to say. It can change at runtime now, which is why everything below
+	// receives `holder.engine` (a stable proxy) rather than the engine itself: a
+	// captured reference would keep driving the backend they just left.
+	//
+	// Still no dynamic failover. A backend that cannot be reached aborts startup
+	// exactly as before; the holder swaps *which* backend is current, never picks
+	// a second one because the first is down.
+	let initialEngine: ContainerEngine;
 	let sandboxBackendInfo: SandboxBackendInfo;
 	if (process.env.HEZO_SKIP_DOCKER) {
 		// The fake needs the db (it synthesizes agent output), which is why this
 		// branch stays here rather than inside `openSandboxBackend`.
 		const { createFakeDockerClient } = await import('./services/fake-docker.js');
-		docker = createFakeDockerClient(db);
+		initialEngine = createFakeDockerClient(db);
 		sandboxBackendInfo = { backend: 'docker', display: 'local Docker daemon' };
 	} else {
-		({ engine: docker, info: sandboxBackendInfo } = await openSandboxBackend({
+		const { resolveStartupBackend } = await import('./services/sandbox/backend-store.js');
+		const resolved = await resolveStartupBackend(db, masterKeyManager, {
 			backend: config.sandboxBackend,
 			daytonaApiKey: config.daytonaApiKey,
 			daytonaApiUrl: config.daytonaApiUrl,
+		});
+		({ engine: initialEngine, info: sandboxBackendInfo } = await openSandboxBackend({
+			backend: resolved.backend,
+			daytonaApiKey: resolved.daytonaApiKey,
+			daytonaApiUrl: resolved.daytonaApiUrl,
 		}));
 	}
+	const { SandboxBackendHolder } = await import('./services/sandbox/holder.js');
+	const sandboxHolder = new SandboxBackendHolder({
+		engine: initialEngine,
+		info: sandboxBackendInfo,
+	});
+	// Everything downstream takes the proxy. Nothing may capture `initialEngine`.
+	const docker: ContainerEngine = sandboxHolder.engine;
 
 	// Image management below is Docker's alone - a managed backend builds from a
 	// Dockerfile at sandbox create and has no image store to seed or prune. Keyed
@@ -448,7 +475,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 			autoUnlock: config.masterKey !== undefined,
 			storageInfo,
 			assetStorageInfo,
-			sandboxBackendInfo,
+			sandboxHolder,
 		},
 		docker,
 		wsManager,
@@ -736,7 +763,11 @@ export function buildApp(
 	app.route(
 		'/api',
 		buildSandboxBackendInfoRoutes(
-			config.sandboxBackendInfo ?? { backend: 'docker', display: 'local Docker daemon' },
+			config.sandboxHolder ??
+				new SandboxBackendHolder({
+					engine: docker,
+					info: { backend: 'docker', display: 'local Docker daemon' },
+				}),
 		),
 	);
 	app.route('/api', modelPricingRoutes);

@@ -1,28 +1,112 @@
+import { isSandboxBackend, SANDBOX_BACKENDS, SandboxBackend } from '@hezo/shared';
 import { Hono } from 'hono';
-import { ok } from '../lib/response';
-import type { SandboxBackendInfo } from '../lib/sandbox-backend-info';
+import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireSuperuser } from '../middleware/auth';
+import { hasDaytonaApiKey, readDaytonaApiKey } from '../services/sandbox/backend-store';
+import { SandboxBackendError } from '../services/sandbox/errors';
+import type { SandboxBackendHolder } from '../services/sandbox/holder';
+import { describeSwitchImpact, switchSandboxBackend } from '../services/sandbox/switch-backend';
 
 /**
- * Sandbox-backend metadata for the General settings page. Superuser-only: even
- * redacted, the provider endpoint is infrastructure detail - the same posture
- * as `GET /api/database-info` and `GET /api/asset-storage-info`.
+ * Read and change which container backend the instance runs on. Superuser-only:
+ * even redacted, the provider endpoint is infrastructure detail, and the write
+ * side destroys every running container.
  *
- * Read-only by design. The backend is deployment configuration, chosen once at
- * startup and never changed at runtime, so there is nothing here to PATCH.
+ * **This used to be read-only**, on the reasoning that the backend was
+ * deployment configuration chosen once at startup and never changed. It is now a
+ * setting: the launch flag seeds a fresh instance, the stored choice wins from
+ * then on, and switching back to local Docker is always available and needs no
+ * credential.
  *
- * The `SandboxBackendInfo` handed to this factory is computed ONCE at startup
- * with the endpoint already redacted server-side (`redactSandboxApiUrl`); the
- * API key is never set on the request context, so no handler - this one or any
- * future one - can echo it to a client.
+ * The API key is written into the vault and never read back out to a client.
+ * `credential_configured` says only whether one is on file, which is all the form
+ * needs to choose between "enter a key" and "keep the saved one". The endpoint
+ * stays pre-redacted server-side (`redactSandboxApiUrl`), so no handler here or
+ * later can echo the secret.
  */
-export function buildSandboxBackendInfoRoutes(info: SandboxBackendInfo): Hono<Env> {
+export function buildSandboxBackendInfoRoutes(holder: SandboxBackendHolder): Hono<Env> {
 	const routes = new Hono<Env>();
-	routes.get('/sandbox-backend-info', (c) => {
+
+	routes.get('/sandbox-backend-info', async (c) => {
 		const denied = requireSuperuser(c);
 		if (denied) return denied;
-		return ok(c, info);
+		const db = c.get('db');
+		return ok(c, {
+			...holder.info,
+			available: SANDBOX_BACKENDS,
+			credential_configured: await hasDaytonaApiKey(db),
+			// What a switch would cost right now, so the confirmation dialog names
+			// real numbers instead of warning in the abstract.
+			impact: await describeSwitchImpact(db, holder.engine),
+		});
 	});
+
+	routes.patch('/sandbox-backend', async (c) => {
+		const denied = requireSuperuser(c);
+		if (denied) return denied;
+
+		const body = await c.req
+			.json<{ backend?: string; daytona_api_key?: string; daytona_api_url?: string }>()
+			.catch(() => ({}) as Record<string, never>);
+
+		const target = (body.backend ?? '').trim().toLowerCase();
+		if (!isSandboxBackend(target)) {
+			return err(
+				c,
+				'INVALID_REQUEST',
+				`backend must be one of: ${SANDBOX_BACKENDS.join(', ')}`,
+				400,
+			);
+		}
+
+		const db = c.get('db');
+		const masterKeyManager = c.get('masterKeyManager');
+
+		// Refused before the preflight rather than surfacing as an opaque
+		// connection error: a missing credential is a configuration mistake and the
+		// message should say which.
+		if (
+			target === SandboxBackend.Daytona &&
+			!body.daytona_api_key?.trim() &&
+			!(await hasDaytonaApiKey(db))
+		) {
+			return err(
+				c,
+				'CREDENTIAL_REQUIRED',
+				'Daytona needs an API key. Enter one to switch to it.',
+				400,
+			);
+		}
+
+		try {
+			const result = await switchSandboxBackend(
+				db,
+				masterKeyManager,
+				holder,
+				{
+					backend: target,
+					daytonaApiKey: body.daytona_api_key,
+					daytonaApiUrl: body.daytona_api_url,
+				},
+				() => readDaytonaApiKey(db, masterKeyManager),
+			);
+			return ok(c, {
+				...holder.info,
+				available: SANDBOX_BACKENDS,
+				credential_configured: await hasDaytonaApiKey(db),
+				containers_destroyed: result.containersDestroyed,
+				impact: await describeSwitchImpact(db, holder.engine),
+			});
+		} catch (e) {
+			if (e instanceof SandboxBackendError) {
+				// Nothing was destroyed: the preflight runs first precisely so a failed
+				// switch leaves the instance exactly as it was.
+				return err(c, 'BACKEND_UNREACHABLE', e.message, 503);
+			}
+			throw e;
+		}
+	});
+
 	return routes;
 }
