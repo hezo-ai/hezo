@@ -326,3 +326,110 @@ describe('verifyContainerWorkspace', () => {
 		await expect(verifyContainerWorkspace(docker, 'cid')).resolves.toBe(false);
 	});
 });
+
+describe('failProjectRuns blast radius', () => {
+	/** A running run attributed to a specific container. */
+	async function runOnContainer(containerId: string | null): Promise<string> {
+		const res = await db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status, container_id)
+			 VALUES ($1, $2, $3, $4::heartbeat_run_status, $5) RETURNING id`,
+			[teamId, agentId, taskId, HeartbeatRunStatus.Running, containerId],
+		);
+		return res.rows[0].id;
+	}
+
+	const statusOf = async (runId: string): Promise<string> =>
+		(
+			await db.query<{ status: string }>(
+				'SELECT status::text AS status FROM heartbeat_runs WHERE id = $1',
+				[runId],
+			)
+		).rows[0].status;
+
+	it('fails only the runs on the dead container, leaving siblings running', async () => {
+		// The property the whole pool exists for. Before runs recorded their
+		// container this was unanswerable, so one container's OOM failed every run
+		// in the project - the shared-fate blast radius the rearchitecture removes.
+		await clearState();
+		const dead = await runOnContainer('ctr-dead');
+		const sibling = await runOnContainer('ctr-alive');
+
+		await failProjectRuns(
+			buildDeps(),
+			projectId,
+			projectSlug,
+			teamId,
+			'container_error',
+			'ctr-dead',
+		);
+
+		expect(await statusOf(dead)).toBe(HeartbeatRunStatus.Failed);
+		expect(await statusOf(sibling)).toBe(HeartbeatRunStatus.Running);
+	});
+
+	it('still fails an unattributable run, which nothing can prove is alive', async () => {
+		// Rows written before runs carried a container id. Leaving them Running
+		// forever would hold the agent's slot and its execution lock.
+		await clearState();
+		const legacy = await runOnContainer(null);
+		await failProjectRuns(
+			buildDeps(),
+			projectId,
+			projectSlug,
+			teamId,
+			'container_error',
+			'ctr-dead',
+		);
+		expect(await statusOf(legacy)).toBe(HeartbeatRunStatus.Failed);
+	});
+
+	it('fails everything when no container is named', async () => {
+		// Project teardown and the boot sweep have no single container to blame.
+		await clearState();
+		const a = await runOnContainer('ctr-1');
+		const b = await runOnContainer('ctr-2');
+		await failProjectRuns(buildDeps(), projectId, projectSlug, teamId, 'container_stopped');
+		expect(await statusOf(a)).toBe(HeartbeatRunStatus.Failed);
+		expect(await statusOf(b)).toBe(HeartbeatRunStatus.Failed);
+	});
+
+	it("leaves a surviving run's execution lock held", async () => {
+		// Releasing it would let a second run be dispatched onto a task another
+		// container is still actively working. Two tasks, because one active run
+		// per task is already enforced - concurrent runs are never on the same one.
+		await clearState();
+		const other = await db.query<{ id: string }>(
+			`INSERT INTO tasks (project_id, team_id, number, identifier, title)
+			 VALUES ($1, $2, 9001, 'REC-9001', 'sibling') RETURNING id`,
+			[projectId, teamId],
+		);
+		const otherTaskId = other.rows[0].id;
+
+		await runOnContainer('ctr-dead');
+		await db.query(
+			`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status, container_id)
+			 VALUES ($1, $2, $3, $4::heartbeat_run_status, 'ctr-alive')`,
+			[teamId, agentId, otherTaskId, HeartbeatRunStatus.Running],
+		);
+		await db.query(`INSERT INTO execution_locks (task_id, member_id) VALUES ($1, $2)`, [
+			otherTaskId,
+			agentId,
+		]);
+
+		await failProjectRuns(
+			buildDeps(),
+			projectId,
+			projectSlug,
+			teamId,
+			'container_error',
+			'ctr-dead',
+		);
+
+		const held = await db.query<{ c: number }>(
+			`SELECT COUNT(*)::int AS c FROM execution_locks
+			  WHERE task_id = $1 AND released_at IS NULL`,
+			[otherTaskId],
+		);
+		expect(held.rows[0].c).toBe(1);
+	});
+});

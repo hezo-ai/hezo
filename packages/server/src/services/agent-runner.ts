@@ -1274,10 +1274,16 @@ export async function runAgent(
 			releaseCredentialLock = await acquireCredentialLock(credential.configId);
 		}
 
-		await markHeartbeatRunRunning(deps.db, heartbeatRunId, runBroadcast, {
-			aiProviderConfigId: credential.configId,
-			provider,
-		});
+		await markHeartbeatRunRunning(
+			deps.db,
+			heartbeatRunId,
+			runBroadcast,
+			{ aiProviderConfigId: credential.configId, provider },
+			// Recorded here rather than at insert because the container is acquired
+			// after the row exists. It is what lets a container's death fail exactly
+			// the runs that were on it (see `failProjectRuns`).
+			containerId,
+		);
 
 		// Human-friendly label for run-scoped logs (egress proxy, ssh-agent),
 		// since a run has no friendly identifier of its own.
@@ -3254,13 +3260,16 @@ async function markHeartbeatRunRunning(
 	runId: string,
 	broadcast: HeartbeatRunBroadcast,
 	adapter: { aiProviderConfigId: string | null; provider: AiProvider | null },
+	containerId: string | null,
 ): Promise<void> {
 	// Stamp the resolved AI adapter config on the run so recordRunCostAndEnforce
-	// can attribute the run's cost to it without re-resolving.
+	// can attribute the run's cost to it without re-resolving, and the container
+	// so a container's death can fail only the runs it was actually carrying.
 	const result = await db.query<{ id: string }>(
 		`UPDATE heartbeat_runs
 		    SET status = $1::heartbeat_run_status, started_at = now(),
-		        ai_provider_config_id = $4, provider = $5::ai_provider
+		        ai_provider_config_id = $4, provider = $5::ai_provider,
+		        container_id = $6
 		  WHERE id = $2 AND status = $3::heartbeat_run_status
 		  RETURNING id`,
 		[
@@ -3269,6 +3278,7 @@ async function markHeartbeatRunRunning(
 			HeartbeatRunStatus.Queued,
 			adapter.aiProviderConfigId,
 			adapter.provider,
+			containerId,
 		],
 	);
 	if (result.rows.length > 0) {

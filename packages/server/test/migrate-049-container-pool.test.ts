@@ -1,3 +1,4 @@
+import { DEFAULT_CONTAINER_DISK_GB, poolDiskCeilingBytes } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDataPreservationHarness, type DataPreservationHarness } from './helpers/migrate';
 
@@ -274,5 +275,240 @@ describe('049_container_pool migration: chat session suspend', () => {
 		expect(fresh).toBeTruthy();
 		// And the guard still holds against the new one.
 		await expect(insertSession(memberId, 'running')).rejects.toThrow();
+	});
+});
+
+describe('050_container_memory_budget migration', () => {
+	let h: DataPreservationHarness;
+
+	const meta = async (key: string): Promise<string | null> => {
+		const r = await h.db.query<{ value: string }>(`SELECT value FROM system_meta WHERE key = $1`, [
+			key,
+		]);
+		return r.rows[0]?.value ?? null;
+	};
+
+	beforeAll(async () => {
+		h = await createDataPreservationHarness();
+		await h.applyUpToExclusive(TARGET);
+		await h.db.query(
+			`INSERT INTO system_meta (key, value) VALUES
+			   ('max_active_containers', '3'),
+			   ('default_ram_cap_per_container_gb', '4'),
+			   ('container_idle_timeout_min', '45'),
+			   ('instance_locale', 'de')`,
+		);
+		await h.applyTarget(TARGET);
+	});
+	afterAll(() => h.close());
+
+	it('converts an explicit container count into the equivalent memory budget', async () => {
+		// 3 containers x 4 GB each is the same fleet, expressed in the new unit.
+		expect(await meta('max_container_memory_gb')).toBe('12');
+	});
+
+	it('removes the superseded key so no stale number looks authoritative', async () => {
+		expect(await meta('max_active_containers')).toBeNull();
+	});
+
+	it('drops the container idle timeout, which is now a constant', async () => {
+		// Nothing to carry it forward to, deliberately: the window is
+		// `CONTAINER_IDLE_TIMEOUT_MIN` now, and a stored number nothing reads is
+		// worse than no row - it sits in the settings table looking authoritative.
+		expect(await meta('container_idle_timeout_min')).toBeNull();
+	});
+
+	it('leaves the per-container cap and unrelated settings untouched', async () => {
+		expect(await meta('default_ram_cap_per_container_gb')).toBe('4');
+		expect(await meta('instance_locale')).toBe('de');
+	});
+});
+
+describe('050_container_memory_budget migration on an instance that never set a cap', () => {
+	let h: DataPreservationHarness;
+
+	beforeAll(async () => {
+		h = await createDataPreservationHarness();
+		await h.applyUpToExclusive(TARGET);
+		await h.db.query(`INSERT INTO system_meta (key, value) VALUES ('instance_locale', 'fr')`);
+		await h.applyTarget(TARGET);
+	});
+	afterAll(() => h.close());
+
+	it('writes no budget, so the computed default keeps applying', async () => {
+		// Storing one here would freeze today's host memory into the settings
+		// table, so an instance that later gains RAM would never notice.
+		const r = await h.db.query<{ n: number }>(
+			`SELECT count(*)::int AS n FROM system_meta WHERE key = 'max_container_memory_gb'`,
+		);
+		expect(r.rows[0].n).toBe(0);
+	});
+
+	it('preserves the settings that were there', async () => {
+		const r = await h.db.query<{ value: string }>(
+			`SELECT value FROM system_meta WHERE key = 'instance_locale'`,
+		);
+		expect(r.rows[0].value).toBe('fr');
+	});
+});
+
+describe('051_container_disk_size migration', () => {
+	let h: DataPreservationHarness;
+	let projectId: string;
+	let memberId: string;
+
+	beforeAll(async () => {
+		h = await createDataPreservationHarness();
+		await h.applyUpToExclusive(TARGET);
+
+		const team = await h.db.query<{ id: string }>(
+			`INSERT INTO teams (name, slug) VALUES ('Acme', 'acme') RETURNING id`,
+		);
+		const project = await h.db.query<{ id: string }>(
+			`INSERT INTO projects (team_id, name, slug, task_prefix, memory_limit_gib)
+			 VALUES ($1, 'Web', 'web', 'WEB', 4) RETURNING id`,
+			[team.rows[0].id],
+		);
+		projectId = project.rows[0].id;
+
+		await h.applyTarget(TARGET);
+
+		// The pool table is created by this same migration, so there is no
+		// "member at the prior schema" to preserve - what matters instead is the
+		// ceiling a member gets when the provisioning code does not name one.
+		const member = await h.db.query<{ id: string }>(
+			`INSERT INTO container_pool_members (project_id, container_id, state, disk_used_bytes)
+			 VALUES ($1, 'ctr-existing', 'idle'::container_pool_state, 1073741824) RETURNING id`,
+			[projectId],
+		);
+		memberId = member.rows[0].id;
+	});
+	afterAll(() => h.close());
+
+	it('adds the per-project override, defaulting to inherit', async () => {
+		const row = await h.db.query<{ container_disk_gb: number | null }>(
+			'SELECT container_disk_gb FROM projects WHERE id = $1',
+			[projectId],
+		);
+		expect(row.rows.length).toBe(1);
+		// NULL, not the default value: a project that never chose one must keep
+		// following the instance setting when the operator changes it.
+		expect(row.rows[0].container_disk_gb).toBeNull();
+	});
+
+	it('accepts an override and refuses one below the floor', async () => {
+		await h.db.query('UPDATE projects SET container_disk_gb = 8 WHERE id = $1', [projectId]);
+		const row = await h.db.query<{ container_disk_gb: number }>(
+			'SELECT container_disk_gb FROM projects WHERE id = $1',
+			[projectId],
+		);
+		expect(row.rows[0].container_disk_gb).toBe(8);
+
+		await expect(
+			h.db.query('UPDATE projects SET container_disk_gb = 1 WHERE id = $1', [projectId]),
+		).rejects.toThrow();
+		// The rejected write left the accepted one intact.
+		const after = await h.db.query<{ container_disk_gb: number }>(
+			'SELECT container_disk_gb FROM projects WHERE id = $1',
+			[projectId],
+		);
+		expect(after.rows[0].container_disk_gb).toBe(8);
+	});
+
+	it('gives a member that names no ceiling the conservative 2 GiB default', async () => {
+		const row = await h.db.query<{
+			container_id: string;
+			disk_used_bytes: string;
+			disk_ceiling_bytes: string;
+		}>(
+			'SELECT container_id, disk_used_bytes, disk_ceiling_bytes FROM container_pool_members WHERE id = $1',
+			[memberId],
+		);
+		expect(row.rows.length).toBe(1);
+		expect(row.rows[0].container_id).toBe('ctr-existing');
+		expect(Number(row.rows[0].disk_used_bytes)).toBe(1073741824);
+		// The column default, deliberately below what a newly-provisioned container
+		// is given: a member whose ceiling was never set must be judged against the
+		// smallest allocation it could plausibly have, never a larger one it may
+		// not actually have been given.
+		expect(Number(row.rows[0].disk_ceiling_bytes)).toBe(2 * 1024 ** 3);
+	});
+
+	it('leaves the new default meaningfully below the allocation', async () => {
+		// The property the ceiling exists for: a container is recycled with room to
+		// spare, so a run never discovers the wall partway through.
+		const ceiling = poolDiskCeilingBytes(DEFAULT_CONTAINER_DISK_GB);
+		expect(ceiling).toBeLessThan(DEFAULT_CONTAINER_DISK_GB * 1024 ** 3);
+		expect(ceiling).toBeGreaterThan(0);
+	});
+});
+
+describe('049_container_pool run-to-container attribution', () => {
+	let h: DataPreservationHarness;
+	let runId: string;
+
+	beforeAll(async () => {
+		h = await createDataPreservationHarness();
+		await h.applyUpToExclusive(TARGET);
+
+		// A run recorded at the prior schema, i.e. before runs knew their
+		// container. It must survive and read as unattributable rather than as
+		// belonging to some container it never ran in.
+		const team = await h.db.query<{ id: string }>(
+			`INSERT INTO teams (name, slug) VALUES ('attr', 'attr') RETURNING id`,
+		);
+		const project = await h.db.query<{ id: string }>(
+			`INSERT INTO projects (team_id, name, slug, task_prefix)
+			 VALUES ($1, 'attr', 'attr', 'ATT') RETURNING id`,
+			[team.rows[0].id],
+		);
+		const member = await h.db.query<{ id: string }>(
+			`INSERT INTO members (team_id, member_type, display_name) VALUES ($1, 'agent', 'attr') RETURNING id`,
+			[team.rows[0].id],
+		);
+		const task = await h.db.query<{ id: string }>(
+			`INSERT INTO tasks (project_id, team_id, number, identifier, title, created_by_member_id)
+			 VALUES ($1, $2, 1, 'ATT-1', 'pre-existing', $3) RETURNING id`,
+			[project.rows[0].id, team.rows[0].id, member.rows[0].id],
+		);
+		const run = await h.db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
+			 VALUES ($1, $2, $3, 'running'::heartbeat_run_status, now()) RETURNING id`,
+			[member.rows[0].id, team.rows[0].id, task.rows[0].id],
+		);
+		runId = run.rows[0].id;
+
+		await h.applyTarget(TARGET);
+	});
+	afterAll(() => h.close());
+
+	it('adds the column runs are attributed by', async () => {
+		const c = await h.db.query<{ c: number }>(
+			`SELECT COUNT(*)::int AS c FROM information_schema.columns
+			  WHERE table_name = 'heartbeat_runs' AND column_name = 'container_id'`,
+		);
+		expect(c.rows[0].c).toBe(1);
+	});
+
+	it('indexes the predicate the container-death path asks', async () => {
+		// Without it, every container death scans heartbeat_runs - a table that
+		// only grows - on a path that fires per container per lifetime.
+		const idx = await h.db.query<{ c: number }>(
+			`SELECT COUNT(*)::int AS c FROM pg_indexes
+			  WHERE tablename = 'heartbeat_runs' AND indexname = 'idx_runs_container_live'`,
+		);
+		expect(idx.rows[0].c).toBe(1);
+	});
+
+	it('preserves the pre-existing run, leaving it unattributed', async () => {
+		// NULL is "cannot attribute", which the death path treats as in-scope -
+		// the safe direction, since nothing can prove such a run is still alive.
+		const r = await h.db.query<{ status: string; container_id: string | null }>(
+			`SELECT status::text AS status, container_id FROM heartbeat_runs WHERE id = $1`,
+			[runId],
+		);
+		expect(r.rows.length).toBe(1);
+		expect(r.rows[0].status).toBe('running');
+		expect(r.rows[0].container_id).toBeNull();
 	});
 });

@@ -992,7 +992,9 @@ export async function stopContainerGracefully(
 		);
 	}
 
-	await failProjectRuns(deps, projectId, projectSlug, teamId, exitReason).catch((e) =>
+	// This container is being stopped, so only its runs die - a sibling in
+	// another container of the same project keeps going.
+	await failProjectRuns(deps, projectId, projectSlug, teamId, exitReason, containerId).catch((e) =>
 		log.error('Failed to fail project runs on stop:', e),
 	);
 
@@ -1334,8 +1336,11 @@ async function enforceContainerMemoryLimit(
 	memoryUsageState.delete(projectId);
 	lastMemoryCheckAt.delete(projectId);
 
-	await failProjectRuns(deps, projectId, projectSlug, teamId, 'container_error').catch((e) =>
-		log.error('Failed to fail project runs after memory-limit stop:', e),
+	// Scoped to the container that actually exceeded its cap. Failing the whole
+	// project here is what the pool was built to stop: a sibling run in its own
+	// container is unaffected by this one's memory use and must not die with it.
+	await failProjectRuns(deps, projectId, projectSlug, teamId, 'container_error', containerId).catch(
+		(e) => log.error('Failed to fail project runs after memory-limit stop:', e),
 	);
 
 	return ContainerStatus.Error;
@@ -1430,10 +1435,25 @@ function dueForMemoryCheck(projectId: string, now: number, intervalMs?: number):
 }
 
 /**
- * Mark all in-flight heartbeat_runs for a project's tasks as failed with the
- * given reason, reset affected agents' runtime_status to idle, release execution
- * locks, and broadcast row changes. Caller is responsible for first aborting any
- * live in-process runs via the JobManager registry.
+ * Fail the in-flight runs a dead container was carrying, reset their agents to
+ * idle, release their execution locks and broadcast the changes. The caller
+ * first aborts any live in-process runs via the JobManager registry.
+ *
+ * **Scoped to the container when one is named.** The pool exists so that a run
+ * cannot take down its siblings, and that promise is kept or broken precisely
+ * here: failing by *project* would fail runs sitting healthy in their own
+ * containers because some other container OOMed, which is the shared-fate blast
+ * radius the whole rearchitecture removes. `heartbeat_runs.container_id` (added
+ * in 049) is what makes the narrower question answerable.
+ *
+ * Passing `containerId: null` deliberately keeps the project-wide behaviour, for
+ * the two callers that have no container to blame - a project-level teardown,
+ * and the boot sweep reconciling runs from a previous lifetime.
+ *
+ * Runs whose `container_id` is NULL (recorded before 049, or never attributed)
+ * are failed alongside the named container's. That is the safe direction: an
+ * unattributable run is one nothing can prove is still alive, and leaving it
+ * `running` forever would hold its agent's slot and its execution lock.
  */
 export async function failProjectRuns(
 	deps: ContainerDeps,
@@ -1441,9 +1461,13 @@ export async function failProjectRuns(
 	projectSlug: string,
 	teamId: string,
 	reason: ContainerExitReason,
+	containerId: string | null = null,
 ): Promise<void> {
 	const { db, wsManager } = deps;
 
+	// `$5::text IS NULL` rather than building the SQL in two shapes: one
+	// statement, one plan, and the scoped/unscoped difference stays visible.
+	const scope = `AND ($5::text IS NULL OR container_id = $5::text OR container_id IS NULL)`;
 	const failedRuns = await db.query<{ id: string; member_id: string; task_id: string | null }>(
 		`UPDATE heartbeat_runs
 		 SET status = $1::heartbeat_run_status,
@@ -1452,19 +1476,23 @@ export async function failProjectRuns(
 		     exit_code = -1
 		 WHERE status = $3::heartbeat_run_status
 		   AND task_id IN (SELECT id FROM tasks WHERE project_id = $4)
+		   ${scope}
 		 RETURNING id, member_id, task_id`,
-		[HeartbeatRunStatus.Failed, reason, HeartbeatRunStatus.Running, projectId],
+		[HeartbeatRunStatus.Failed, reason, HeartbeatRunStatus.Running, projectId, containerId],
 	);
 
 	if (failedRuns.rows.length === 0) return;
 
 	const memberIds = Array.from(new Set(failedRuns.rows.map((r) => r.member_id)));
 
+	// Only the locks of the runs actually failed - a sibling run still executing
+	// in another container must keep its lock, or a second run could be
+	// dispatched onto the task it is still working.
 	await db.query(
 		`UPDATE execution_locks SET released_at = now()
 		 WHERE released_at IS NULL
-		   AND task_id IN (SELECT id FROM tasks WHERE project_id = $1)`,
-		[projectId],
+		   AND task_id = ANY($1::uuid[])`,
+		[failedRuns.rows.map((r) => r.task_id).filter((id): id is string => id !== null)],
 	);
 
 	for (const run of failedRuns.rows) {
