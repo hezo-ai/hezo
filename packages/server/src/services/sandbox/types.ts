@@ -221,13 +221,17 @@ export interface ContainerEngine {
 
 	/**
 	 * Bytes used on the filesystem holding `path` inside the container, or null
-	 * when it could not be read.
+	 * when it could not be read **or does not describe the container's own
+	 * storage**.
 	 *
 	 * The pool's recycle rung is decided on this: a container near its disk
 	 * ceiling is replaced rather than reused, because one that fills up *during* a
-	 * run fails that run partway through. Null is not zero - an unanswerable
-	 * measurement must leave the last known figure alone rather than report a
-	 * container as empty.
+	 * run fails that run partway through. That reasoning holds only while the
+	 * storage belongs to the container, so a path on a foreign mount - a bind
+	 * mount of the host data dir, where replacing the container frees nothing -
+	 * answers null rather than the host partition's usage. Null is not zero: an
+	 * unanswerable measurement must leave the last known figure alone rather than
+	 * report a container as empty.
 	 *
 	 * A per-engine method rather than an exec at the call site, so a backend that
 	 * exposes disk on its control plane can answer without spawning anything -

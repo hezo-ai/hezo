@@ -71,7 +71,8 @@ export function buildListHezoProcessesScript(): string {
 }
 
 /**
- * Bytes used on the filesystem holding a container's workspace.
+ * Bytes used on the filesystem holding a container's workspace, **or nothing at
+ * all when that filesystem is not the container's own**.
  *
  * `df` rather than `du`: the question is how close the container is to filling
  * up, and `df` answers it from the superblock in constant time, where `du` walks
@@ -79,14 +80,32 @@ export function buildListHezoProcessesScript(): string {
  * interesting in the first place. It is measured once per run, so a walk would be
  * a per-run cost proportional to how much the container has accumulated.
  *
- * `--output=used` reports 1K blocks; the caller multiplies. Runtime-agnostic like
- * the scripts above - only the transport that carries it differs per engine.
+ * The device check in front of it is what makes the number mean what the pool
+ * thinks it means. The pool recycles a container that is near its disk ceiling,
+ * on the reasoning that a replacement starts empty - which only holds while the
+ * storage belongs to the container. On a local Docker daemon `/workspace` is a
+ * bind mount of the host data dir, so `df` there reports the **host partition**:
+ * essentially always past a 2 GiB ceiling, and replacing the container frees
+ * none of it. Every member of every project read as out of disk, so affinity
+ * never fired, suspended members were never resumable, and each run provisioned
+ * a fresh container.
+ *
+ * Comparing the path's device against `/` distinguishes the two cases exactly,
+ * and it is the measurement's own property rather than a per-backend rule - which
+ * is why it lives in the shared script instead of one engine. Measured: on
+ * Daytona `/workspace` and `/` are the same overlay device, so a sandbox reports
+ * its real usage; a bind-mounted path is a different device and reports nothing.
+ * No output parses to null, and null already means "could not measure" to every
+ * caller - which is not zero, and deliberately leaves the last figure alone.
  */
 export function buildDiskUsageScript(path: string): string {
 	if (!/^\/[A-Za-z0-9._/-]*$/.test(path)) {
 		throw new Error(`unsafe path: ${JSON.stringify(path)}`);
 	}
-	return `df -Pk ${path} 2>/dev/null | awk 'NR==2 {print $3}'`;
+	return (
+		`[ "$(stat -c %d / 2>/dev/null)" = "$(stat -c %d ${path} 2>/dev/null)" ] || exit 0; ` +
+		`df -Pk ${path} 2>/dev/null | awk 'NR==2 {print $3}'`
+	);
 }
 
 /** SIGKILL an explicit pid list. Validates every pid so nothing unexpected reaches the shell. */

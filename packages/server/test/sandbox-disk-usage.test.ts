@@ -23,6 +23,22 @@ describe('buildDiskUsageScript', () => {
 		expect(script).not.toContain('du ');
 	});
 
+	it("measures only when the path is on the container's own filesystem", () => {
+		// The guard that makes the number mean what the pool thinks it means. On a
+		// local Docker daemon `/workspace` is a bind mount of the host data dir, so
+		// an unguarded `df` reports the *host partition* - essentially always past a
+		// 2 GiB ceiling, and replacing the container frees none of it. Every member
+		// of every project then read as out of disk: affinity never fired, suspended
+		// members were never resumable, and each run provisioned a fresh container.
+		const script = buildDiskUsageScript('/workspace');
+		expect(script).toContain('stat -c %d /');
+		expect(script).toContain('stat -c %d /workspace');
+		// No output on a foreign mount, which parses to null - "could not measure",
+		// which is not zero and leaves the last figure alone.
+		expect(script).toContain('|| exit 0');
+		expect(script.indexOf('stat -c %d')).toBeLessThan(script.indexOf('df -Pk'));
+	});
+
 	it('refuses a path that would need shell escaping', () => {
 		// The path is interpolated unquoted, so the character class is what makes
 		// that safe; a rejection here beats a quoting bug reaching a root shell.
