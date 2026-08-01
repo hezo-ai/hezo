@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { trackBackground } from '../lib/background';
 import type { ContainerRunUser } from './container-user';
 import type { ContainerEngine } from './docker';
+import { hostSandboxFiles, type SandboxFiles } from './sandbox/files';
 import { dockerSandboxHandle, type SandboxHandle } from './sandbox/handle';
 import { type BridgeRunnerArgs, buildBridgeRunnerArgv } from './ssh-agent';
 
@@ -57,6 +58,17 @@ export interface GitExecOpts {
  */
 export interface GitExecutor {
 	exec(args: string[], opts: GitExecOpts): Promise<GitExecResult>;
+	/**
+	 * Reads and writes rooted at an in-container path, in the same container this
+	 * executor runs git in.
+	 *
+	 * Here because "run git in this container" and "look at that container's
+	 * files" are the same question, and every caller that has one needs the other:
+	 * a repo loc pairs the cwd git uses with the seam rooted at it. Threading a
+	 * second handle alongside the executor would let the two drift onto different
+	 * containers, which is precisely the bug the seam exists to prevent.
+	 */
+	files(containerPath: string): SandboxFiles;
 }
 
 /**
@@ -67,6 +79,11 @@ export interface GitExecutor {
  */
 export class HostGitExecutor implements GitExecutor {
 	constructor(private readonly env: Record<string, string | undefined> = {}) {}
+
+	/** Host and container paths are the same string here, by construction. */
+	files(containerPath: string): SandboxFiles {
+		return hostSandboxFiles(containerPath);
+	}
 
 	exec(args: string[], opts: GitExecOpts): Promise<GitExecResult> {
 		return new Promise((resolve) => {
@@ -145,6 +162,11 @@ export class ContainerGitExecutor implements GitExecutor {
 			...opts.baseEnv.filter((e) => !e.startsWith('HEZO_PROMPT_FILE=')),
 			`HEZO_HEARTBEAT_RUN_ID=${opts.scopeId}`,
 		];
+	}
+
+	/** The same container git runs in - see the note on `GitExecutor.files`. */
+	files(containerPath: string): SandboxFiles {
+		return this.docker.files(this.containerId, containerPath);
 	}
 
 	/**

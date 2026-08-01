@@ -156,6 +156,7 @@ function firstResolvableFiles(
 		read: async (p) => (await pick()).read(p),
 		readBytes: async (p) => (await pick()).readBytes(p),
 		size: async (p) => (await pick()).size(p),
+		list: async (p) => (await pick()).list(p),
 		remove: async (p) => (await pick()).remove(p),
 		removeDir: async (p) => (await pick()).removeDir(p),
 		findByName: async (d, n, depth) => (await pick()).findByName(d, n, depth),

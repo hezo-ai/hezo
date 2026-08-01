@@ -962,6 +962,17 @@ export class DockerClient implements ContainerEngine {
 				await run(`rm -rf ${shellQuote(abs(relPath))}`).catch(() => undefined);
 			},
 
+			list: async (relDir) => {
+				// `-A` includes dotfiles and omits `.`/`..`, so an empty listing really
+				// means empty.
+				const res = await run(`ls -A ${shellQuote(abs(relDir))} 2>/dev/null`);
+				if (res.exitCode !== 0) return [];
+				return res.stdout
+					.split('\n')
+					.map((l) => l.trim())
+					.filter(Boolean);
+			},
+
 			mkdir: async (relPath, opts = {}) => {
 				const mode = (opts.mode ?? 0o755).toString(8);
 				const res = await run(`mkdir -p -m ${mode} ${shellQuote(abs(relPath))}`);

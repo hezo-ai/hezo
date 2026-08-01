@@ -7,9 +7,11 @@ import {
 	countUnpushedCommits,
 	describeUnpushedWork,
 	findUnpushedWork,
+	localGitLoc,
 	type RepoLoc,
 } from '../src/services/git';
 import { type GitExecutor, HostGitExecutor } from '../src/services/git-executor';
+import { hostSandboxFiles } from '../src/services/sandbox/files';
 
 /**
  * The ref comparison that decides whether a run left committed work behind in one
@@ -26,7 +28,7 @@ import { type GitExecutor, HostGitExecutor } from '../src/services/git-executor'
 
 const root = mkdtempSync(join(tmpdir(), 'git-unpushed-'));
 const exec = new HostGitExecutor();
-const repoLoc = (p: string): RepoLoc => ({ hostPath: p, containerPath: p });
+const repoLoc = (p: string): RepoLoc => localGitLoc(p);
 
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
@@ -128,6 +130,7 @@ describe('countUnpushedCommits', () => {
 		const { clone } = setupClone('gitfail', BRANCH);
 		commit(clone, 'work');
 		const broken: GitExecutor = {
+			files: (containerPath: string) => hostSandboxFiles(containerPath),
 			exec: async (args, opts) =>
 				args[0] === 'rev-list'
 					? { exitCode: 128, stdout: '', stderr: 'fatal: bad revision' }
@@ -160,7 +163,12 @@ describe('findUnpushedWork', () => {
 
 		const scan = await findUnpushedWork(exec, [repoLoc(clean.clone), repoLoc(dirty.clone)], BRANCH);
 		expect(scan.complete).toBe(true);
-		expect(scan.work).toEqual([{ repo: repoLoc(dirty.clone), branch: BRANCH, commits: 1 }]);
+		// Compared by the clone it names, not by deep equality: a `RepoLoc` carries a
+		// `SandboxFiles` whose methods are closures, so two locs for the same path
+		// are never `toEqual` even though they address the same clone.
+		expect(scan.work).toHaveLength(1);
+		expect(scan.work[0].repo.containerPath).toBe(dirty.clone);
+		expect(scan.work[0]).toMatchObject({ branch: BRANCH, commits: 1 });
 	});
 
 	it('marks the scan incomplete when a clone could not be read', async () => {

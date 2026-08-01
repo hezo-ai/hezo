@@ -18,6 +18,7 @@ import {
 	removeRepoFromWorkspace,
 	removeTaskWorktrees,
 } from '../src/services/repo-sync';
+import { hostSandboxFiles } from '../src/services/sandbox/files';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 
@@ -92,6 +93,10 @@ function rawOriginUrl(dir: string): string {
  * network. Everything the heal does besides `ls-remote` is a local operation.
  */
 class EmptyRemoteExecutor implements GitExecutor {
+	/** Temp dirs, so host and container paths are the same string. */
+	files(containerPath: string) {
+		return hostSandboxFiles(containerPath);
+	}
 	private readonly inner = new HostGitExecutor(HERMETIC_GIT_ENV);
 	exec(args: string[], opts: GitExecOpts): Promise<GitExecResult> {
 		if (args[0] === 'ls-remote') {
@@ -103,6 +108,10 @@ class EmptyRemoteExecutor implements GitExecutor {
 
 /** Answers every git call with a zero-exit and no output — the stubbed-docker shape. */
 class SilentExecutor implements GitExecutor {
+	/** Temp dirs, so host and container paths are the same string. */
+	files(containerPath: string) {
+		return hostSandboxFiles(containerPath);
+	}
 	calls: string[][] = [];
 	exec(args: string[]): Promise<GitExecResult> {
 		this.calls.push(args);

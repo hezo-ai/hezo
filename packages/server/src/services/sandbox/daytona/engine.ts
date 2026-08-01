@@ -547,6 +547,7 @@ export class DaytonaEngine implements ContainerEngine {
 			) => (await bound()).writeBytes(relPath, contents, opts),
 			mkdir: async (relPath: string, opts?: { mode?: number }) =>
 				(await bound()).mkdir(relPath, opts),
+			list: async (relDir: string) => (await bound()).list(relDir),
 		};
 	}
 

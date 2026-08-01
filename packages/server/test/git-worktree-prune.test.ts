@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
 	createWorktree,
+	localGitLoc,
 	type RepoLoc,
 	removeWorktree,
 	removeWorktreesWhere,
@@ -20,8 +21,8 @@ import { HostGitExecutor } from '../src/services/git-executor';
 // macOS, where the tmpdir sits behind a symlink git resolves.
 const root = realpathSync(mkdtempSync(join(tmpdir(), 'git-wt-prune-')));
 const exec = new HostGitExecutor();
-const repoLoc = (p: string): RepoLoc => ({ hostPath: p, containerPath: p });
-const wtLoc = (p: string): WorktreeLoc => ({ hostPath: p, containerPath: p });
+const repoLoc = (p: string): RepoLoc => localGitLoc(p);
+const wtLoc = (p: string): WorktreeLoc => localGitLoc(p);
 
 function run(cmd: string, cwd?: string): string {
 	return execSync(cmd, { cwd, stdio: 'pipe' }).toString();

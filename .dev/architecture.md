@@ -1514,8 +1514,23 @@ there is no host `git`. Every repo/worktree operation (clone, fetch, `worktree a
 via `docker exec` in the project container (which ships Debian's packaged git), driven from TypeScript on
 the server through a `GitExecutor` seam (`services/git-executor.ts`): `ContainerGitExecutor`
 in production, `HostGitExecutor` (host `execFile`) in unit tests. `git.ts` functions take the
-executor plus a `{ hostPath, containerPath }` pair per location — `node:fs` checks use the
-host (bind-mounted) path; git commands use the container path. SSH-transport ops (clone /
+executor plus a `{ containerPath, files }` pair per location: git commands use the container
+path, and every file question - is this cloned, seed a README, install the post-commit hook,
+read the push-error log, discard a stale worktree - goes through the `SandboxFiles` rooted
+there. The `files` handle comes from `GitExecutor.files()`, because "run git in this
+container" and "read that container's files" are one question and two separately-threaded
+handles could address different containers.
+
+That pair used to be `{ hostPath, containerPath }`, with `node:fs` checks against the
+bind-mounted host path. It answered correctly only while the container was local: on a
+managed backend the clone lives in the sandbox and the host path names an empty directory,
+so repo-linked runs failed with `repo is not cloned` for a repo that was cloned, and repo
+sync's clone-vs-adopt decision flipped depending on which pool rung a run landed on. `git.ts`
+imports no `node:fs` at all now, which is what stops the assumption returning. The one
+deliberate exception is `removeRepoFromWorkspace`/`removeTaskWorktrees`, which still reclaim
+host disk only - that leaves a managed backend's copy in place, which costs disk rather than
+correctness, and the disk-ceiling rung already recycles a container that fills up.
+SSH-transport ops (clone /
 fetch) are wrapped with the per-run SSH bridge (`hezo-run-with-bridge`) so `git@github.com:`
 authenticates through the host ssh-agent; the container's baked-in `/etc/ssh/ssh_known_hosts`
 verifies the host key. Cloning outside a run (container provision, repo link) uses a

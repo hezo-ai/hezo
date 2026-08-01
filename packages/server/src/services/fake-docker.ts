@@ -253,6 +253,7 @@ function lazyHostFiles(resolve: () => Promise<string>): SandboxFiles {
 		write: async (p, c, o) => (await bound()).write(p, c, o),
 		writeBytes: async (p, c, o) => (await bound()).writeBytes(p, c, o),
 		mkdir: async (p, o) => (await bound()).mkdir(p, o),
+		list: async (p) => (await bound()).list(p),
 	};
 }
 

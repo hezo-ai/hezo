@@ -357,8 +357,12 @@ reposRoutes.get('/projects/:projectId/repos/:repoId/git-state', async (c) => {
 	const wtPrefix = `${CONTAINER_WORKTREES_ROOT}/`;
 
 	const state = await withProjectGitLock(projectId, async () => {
-		const clone = await getCloneState(executor, repo.repoLoc);
-		const entries = await listWorktrees(executor, repo.repoLoc);
+		const repoLoc: RepoLoc = {
+			containerPath: repo.repoContainerPath,
+			files: executor.files(repo.repoContainerPath),
+		};
+		const clone = await getCloneState(executor, repoLoc);
+		const entries = await listWorktrees(executor, repoLoc);
 		const worktrees: {
 			taskIdentifier: string;
 			branch: string | null;
@@ -372,8 +376,8 @@ reposRoutes.get('/projects/:projectId/repos/:repoId/git-state', async (c) => {
 			const taskIdentifier = entry.path.slice(wtPrefix.length).split('/')[0];
 			if (!taskIdentifier) continue;
 			const wtLoc: WorktreeLoc = {
-				hostPath: join(worktreesPath, taskIdentifier, repo.repoName),
 				containerPath: entry.path,
+				files: executor.files(entry.path),
 			};
 			const wt = await getWorktreeState(executor, wtLoc);
 			worktrees.push({
@@ -536,18 +540,34 @@ reposRoutes.post('/projects/:projectId/repos/:repoId/reset', async (c) => {
 					db,
 					executor,
 					projectId,
-					[repo.repoLoc],
+					[
+						{
+							containerPath: repo.repoContainerPath,
+							files: executor.files(repo.repoContainerPath),
+						},
+					],
 					undefined,
 				);
 				return { success: true, removed };
 			}
 			// discard_local: the best-effort fetch needs the SSH bridge.
 			const sshAgentServer = c.get('sshAgentServer');
-			const runReset = (bridge: BridgeRunnerArgs | null, scopeId: string) =>
-				resetCloneToOrigin(
-					ContainerGitExecutor.forPrep(docker, containerId, bridge, runUser, scopeId),
-					repo.repoLoc,
+			const runReset = (bridge: BridgeRunnerArgs | null, scopeId: string) => {
+				// The loc's files come from this executor, not another: pairing a cwd
+				// with a seam rooted in a different container is the drift the shared
+				// `files()` accessor exists to prevent.
+				const resetExecutor = ContainerGitExecutor.forPrep(
+					docker,
+					containerId,
+					bridge,
+					runUser,
+					scopeId,
 				);
+				return resetCloneToOrigin(resetExecutor, {
+					containerPath: repo.repoContainerPath,
+					files: resetExecutor.files(repo.repoContainerPath),
+				});
+			};
 			return sshAgentServer
 				? withProvisionBridge(
 						sshAgentServer,
@@ -634,7 +654,12 @@ interface RepoGitTarget {
 	repoId: string;
 	repoIdentifier: string;
 	repoName: string;
-	repoLoc: RepoLoc;
+	/**
+	 * The clone's path *inside* the container. Not a full `RepoLoc`, because that
+	 * carries a `SandboxFiles` rooted at the container this repo lives in and the
+	 * executor which supplies it is built by the caller, after this resolves.
+	 */
+	repoContainerPath: string;
 	containerId: string | null;
 	containerRunning: boolean;
 }
@@ -668,10 +693,7 @@ async function loadRepoForGit(
 		repoId,
 		repoIdentifier,
 		repoName,
-		repoLoc: {
-			hostPath: join(getWorkspacePath(dataDir, teamId, projectId), repoName),
-			containerPath: `${CONTAINER_WORKSPACE_ROOT}/${repoName}`,
-		},
+		repoContainerPath: `${CONTAINER_WORKSPACE_ROOT}/${repoName}`,
 		containerId: containerRes.rows[0]?.container_id ?? null,
 		containerRunning: containerRes.rows[0]?.container_status === ContainerStatus.Running,
 	};

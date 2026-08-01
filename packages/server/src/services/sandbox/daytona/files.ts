@@ -198,6 +198,14 @@ export function daytonaSandboxFiles(
 			}
 		},
 
+		async list(relDir) {
+			try {
+				return (await api.listFiles(sandbox, abs(relDir))).map((e) => e.name);
+			} catch {
+				return [];
+			}
+		},
+
 		async mkdir(relPath, opts = {}) {
 			await mkdirp(abs(relPath), opts.mode ?? 0o755);
 		},

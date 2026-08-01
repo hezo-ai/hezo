@@ -1577,7 +1577,7 @@ export async function runAgent(
 			// "succeeded" while its commits never left the container — the exact shape
 			// of a repo the connected GitHub account can read but not write.
 			for (const clone of prep.clones) {
-				const pushErrors = readPushErrors(clone);
+				const pushErrors = await readPushErrors(clone);
 				if (!pushErrors) continue;
 				emit(
 					'stderr',
@@ -2128,14 +2128,16 @@ async function prepareWorktrees(
 		// the run-user) can populate it. No-op when the run-user is root.
 		await chownToRunUser(deps.docker, project.container_id, runUser, [containerWorktreeRoot]);
 
-		const repoLocOf = (name: string): RepoLoc => ({
-			hostPath: join(workspaceRoot, name),
-			containerPath: `${CONTAINER_WORKSPACE_ROOT}/${name}`,
-		});
-		const wtLocOf = (name: string): WorktreeLoc => ({
-			hostPath: join(taskWorktreeRoot, name),
-			containerPath: `${CONTAINER_WORKTREES_ROOT}/${task.identifier}/${name}`,
-		});
+		// Addressed inside the container, with the seam rooted there. A host path
+		// would only line up while the container is on this machine.
+		const repoLocOf = (name: string): RepoLoc => {
+			const containerPath = `${CONTAINER_WORKSPACE_ROOT}/${name}`;
+			return { containerPath, files: deps.docker.files(project.container_id, containerPath) };
+		};
+		const wtLocOf = (name: string): WorktreeLoc => {
+			const containerPath = `${CONTAINER_WORKTREES_ROOT}/${task.identifier}/${name}`;
+			return { containerPath, files: deps.docker.files(project.container_id, containerPath) };
+		};
 
 		const worktreeErrors = new Map<string, string>();
 		for (const repo of repos.rows) {
@@ -2143,7 +2145,7 @@ async function prepareWorktrees(
 			const repoName = repoNameFromIdentifier(repo.repo_identifier);
 			const repoLoc = repoLocOf(repoName);
 
-			if (!existsSync(join(repoLoc.hostPath, '.git'))) {
+			if (!(await repoLoc.files.exists('.git'))) {
 				worktreeErrors.set(repo.id, 'repo is not cloned');
 				emitSystem('stderr', `(skipping worktree for ${repoName} — not cloned)`);
 				continue;
@@ -2155,8 +2157,8 @@ async function prepareWorktrees(
 			// worktree. Idempotent and best-effort (never throws). Clearing the hook's
 			// error log here scopes what the run reports at finalize to this run's own
 			// failed pushes.
-			ensurePushHook(repoLoc);
-			clearPushErrors(repoLoc);
+			await ensurePushHook(repoLoc);
+			await clearPushErrors(repoLoc);
 
 			// Bootstrap a connected repo that has no commits yet: `git worktree add`
 			// can't branch off an unborn HEAD, so an empty remote would otherwise fail
@@ -2288,7 +2290,7 @@ async function prepareWorktrees(
 			if (worktreeErrors.has(repo.id)) continue;
 			const repoName = repoNameFromIdentifier(repo.repo_identifier);
 			const loc = wtLocOf(repoName);
-			if (!existsSync(join(loc.hostPath, '.git'))) continue;
+			if (!(await loc.files.exists('.git'))) continue;
 			worktrees.push({ loc, headBefore: await getWorktreeHead(executor, loc) });
 			clones.push(repoLocOf(repoName));
 		}

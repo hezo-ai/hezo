@@ -50,6 +50,11 @@ export interface ProjectIdentity {
  * origin when it's wrong — reported in `repaired`. Healing never discards local
  * files or commits; a heal that would clobber untracked work fails instead.
  */
+/** Whether the clone directory already holds anything, asked of the container. */
+async function hasEntries(loc: RepoLoc): Promise<boolean> {
+	return (await loc.files.list('.')).length > 0;
+}
+
 export async function ensureProjectRepos(
 	db: Db,
 	project: ProjectIdentity,
@@ -75,12 +80,13 @@ export async function ensureProjectRepos(
 	const pending: Array<{ repo: RepoRow; mode: SyncMode; loc: RepoLoc; badOrigin?: string }> = [];
 	for (const r of repos.rows) {
 		const name = repoNameFromIdentifier(r.repo_identifier);
-		const targetDir = join(workspacePath, name);
-		const loc: RepoLoc = {
-			hostPath: targetDir,
-			containerPath: `${containerWorkspaceRoot}/${name}`,
-		};
-		if (existsSync(join(targetDir, '.git'))) {
+
+		const containerPath = `${containerWorkspaceRoot}/${name}`;
+		const loc: RepoLoc = { containerPath, files: executor.files(containerPath) };
+		// Asked of the container, not the host: on a managed backend the clone lives
+		// in the sandbox and `targetDir` names an empty host directory, so a host
+		// check reported "not cloned" for every repo and re-cloned on every run.
+		if (await loc.files.exists('.git')) {
 			// Verify — don't trust — the existing `.git` (see the docstring). Only a
 			// positively-wrong state is healed; an indeterminate answer leaves the
 			// clone alone.
@@ -95,9 +101,14 @@ export async function ensureProjectRepos(
 			} else {
 				result.skipped.push(name);
 			}
-		} else if (existsSync(targetDir) && readdirSync(targetDir).length > 0) {
+		} else if (await hasEntries(loc)) {
 			// An agent populated this directory before the repo was connected — a
 			// plain clone would refuse the non-empty target, so adopt it in place.
+			// Asked of the container for the same reason as the `.git` check above:
+			// on a managed backend the host directory is always empty, so this branch
+			// never fired and every run re-entered `clone`, which then failed against
+			// the clone already sitting in the sandbox. Whether a run hit that
+			// depended on which pool rung it landed on, so it read as intermittent.
 			pending.push({ repo: r, mode: 'init', loc });
 		} else {
 			pending.push({ repo: r, mode: 'clone', loc });
@@ -157,6 +168,19 @@ interface RepoRow {
 	repo_identifier: string;
 }
 
+/**
+ * **Host-side only, and knowingly so.** These reclaim disk under the operator's
+ * data dir, which is the same bytes as the container's workspace only while the
+ * container is local. On a managed backend they clean an empty host directory and
+ * the sandbox keeps its copy.
+ *
+ * Left that way deliberately rather than migrated with the rest of the git layer:
+ * the consequence there is disk that is not reclaimed early, not a run that
+ * behaves wrongly, and the pool's disk-ceiling rung already recycles a container
+ * that fills up. Migrating them needs an engine and a container id threaded to
+ * the task-close automation and the repo routes, which is a wider change than the
+ * run correctness this pass was for.
+ */
 export function removeRepoFromWorkspace(
 	dataDir: string,
 	teamId: string,
