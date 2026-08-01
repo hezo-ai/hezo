@@ -808,6 +808,69 @@ describe('runAgent lifecycle — aborts and timeout', () => {
 		expect(run.rows[0].error).toBe('run reached its time limit');
 	});
 
+	it('marks the run timed_out even when the engine does not raise an AbortError', async () => {
+		// The sibling test above throws a real `AbortError`, which is what Docker's
+		// exec does when its attach is torn down. A managed backend's exec is under
+		// no such obligation - Daytona's rejects with an ordinary Error - and
+		// keying the status on the error's *name* recorded a timed-out run as
+		// `failed` while still stamping it with the timeout's own message
+		// (measured live: exit -1, status `failed`, error "run reached its time
+		// limit"). The status has to come from the signal, which is the same on
+		// every backend.
+		//
+		// It is not cosmetic: the consecutive-timeout escalation in
+		// `JobManager.onAgentComplete` reads this column, so on such a backend a
+		// task that times out repeatedly is never escalated.
+		const ac = new AbortController();
+		const docker = makeDocker({
+			producesOutput: false,
+			execStart: async () => {
+				ac.abort('run_timeout');
+				throw new Error('socket closed');
+			},
+		});
+		const result = await runAgent(
+			baseDeps(docker),
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+			undefined,
+			ac.signal,
+		);
+		expect(result.timedOut).toBe(true);
+		const run = await db.query<{ status: string; error: string | null }>(
+			'SELECT status, error FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(run.rows[0].status).toBe(HeartbeatRunStatus.TimedOut);
+		expect(run.rows[0].error).toBe('run reached its time limit');
+	});
+
+	it('still fails a run whose error is not an abort at all', async () => {
+		// The other half of the same branch: with no abort reason on the signal a
+		// thrown error is a genuine failure, not a timeout and not a cancel.
+		const docker = makeDocker({
+			producesOutput: false,
+			execStart: async () => {
+				throw new Error('boom');
+			},
+		});
+		const result = await runAgent(
+			baseDeps(docker),
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+			undefined,
+			new AbortController().signal,
+		);
+		expect(result.timedOut).toBeFalsy();
+		const run = await db.query<{ status: string }>(
+			'SELECT status FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
+	});
+
 	it('finalizes a cancelled run when the abort lands between run creation and credential lock', async () => {
 		const ac = new AbortController();
 		let execCreated = false;

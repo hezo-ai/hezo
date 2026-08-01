@@ -98,3 +98,36 @@ export function buildKillPidsScript(pids: number[]): string {
 	}
 	return `kill -9 ${pids.join(' ')} 2>/dev/null || true`;
 }
+
+/**
+ * Report whether every one of `ports` is being listened on, on loopback.
+ *
+ * Reads `/proc/net/tcp` rather than shelling out to `ss` or `netstat`: the
+ * pseudo-file is always there, while the tools are packages a custom
+ * `docker_base_image` need not carry, and a missing tool would read as "not
+ * listening" forever.
+ *
+ * The file's `local_address` column is `<addr>:<port>` in **hex**, address
+ * little-endian - so 127.0.0.1 is `0100007F` - and the state column is `0A` for
+ * LISTEN. Matching on the port alone would accept a listener on any interface,
+ * which is not what the tunnel promises the container.
+ *
+ * Prints `ready` when all of them are up and nothing otherwise, so the caller
+ * tests one exact string rather than parsing.
+ */
+export function buildPortsListeningScript(ports: readonly number[]): string {
+	if (ports.length === 0) return 'echo ready';
+	for (const port of ports) {
+		if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+			throw new Error(`invalid port: ${String(port)}`);
+		}
+	}
+	// `0100007F` is 127.0.0.1 in the file's byte order; `0A` is TCP_LISTEN.
+	const tests = ports
+		.map((port) => {
+			const hex = port.toString(16).toUpperCase().padStart(4, '0');
+			return `grep -qi " 0100007F:${hex} .* 0A " /proc/net/tcp`;
+		})
+		.join(' && ');
+	return `${tests} && echo ready`;
+}

@@ -21,13 +21,27 @@ function scratch(): string {
 	return dir;
 }
 
-/** Records the exec the tunnel asks for, and whether its channel was closed. */
-function recordingEngine() {
+/**
+ * Records the exec the tunnel asks for, and whether its channel was closed.
+ *
+ * The readiness probe is modelled rather than stubbed away: `startRunTunnel`
+ * will not return until the client's ports are listening, so a fake that always
+ * answered `ready` would make the tests pass for a reason production does not
+ * have. `listening` starts false and is flipped when the channel is opened,
+ * which is what a real container does.
+ */
+function recordingEngine(opts: { neverBinds?: boolean } = {}) {
 	const execs: ExecConfig[] = [];
-	const state = { closed: false, stderr: undefined as ((c: Uint8Array) => void) | undefined };
-	const engine = createStubDocker({
+	const state = {
+		closed: false,
+		listening: false,
+		stderr: undefined as ((c: Uint8Array) => void) | undefined,
+	};
+	const probes: string[] = [];
+	const base = createStubDocker({
 		openExecChannel: async (_id: string, config: ExecConfig): Promise<ContainerByteChannel> => {
 			execs.push(config);
+			state.listening = true;
 			return {
 				write: () => {},
 				onData: () => {},
@@ -41,7 +55,22 @@ function recordingEngine() {
 			};
 		},
 	});
-	return { engine, execs, state };
+	// Layered *outside* `createStubDocker`, which answers the readiness probe for
+	// every other spec so their runs are not left waiting it out. This spec is the
+	// one testing that probe, so it has to see and answer it itself.
+	const engine = {
+		...base,
+		execCreate: async (_id: string, config: ExecConfig) => {
+			probes.push((config?.Cmd ?? []).join(' '));
+			return 'exec-1';
+		},
+		execStart: async () => ({
+			stdout: state.listening && !opts.neverBinds ? 'ready\n' : '',
+			stderr: '',
+			exitCode: 0,
+		}),
+	} as unknown as ReturnType<typeof createStubDocker>;
+	return { engine, execs, state, probes };
 }
 
 const ADDRESSES = {
@@ -50,8 +79,13 @@ const ADDRESSES = {
 	ssh: { host: '127.0.0.1', port: 3 },
 };
 
-function start(root: string, engine: ReturnType<typeof recordingEngine>['engine']) {
+function start(
+	root: string,
+	engine: ReturnType<typeof recordingEngine>['engine'],
+	listenTimeoutMs?: number,
+) {
 	return startRunTunnel({
+		...(listenTimeoutMs === undefined ? {} : { listenTimeoutMs }),
 		engine,
 		containerId: 'c1',
 		runUser: NODE_USER,
@@ -136,5 +170,35 @@ describe('startRunTunnel', () => {
 		// tunnel problem shows up as a log line rather than a dead stream.
 		expect(state.stderr).toBeDefined();
 		expect(() => state.stderr?.(new TextEncoder().encode('framing error'))).not.toThrow();
+	});
+
+	it('does not return until the client is actually listening', async () => {
+		// Opening the channel only *starts* the client; it still has to boot and
+		// bind. Returning early hands the run endpoints that refuse connections,
+		// and a coding CLI that gets ECONNREFUSED on the MCP endpoint marks that
+		// server failed for the whole session rather than retrying - so the agent
+		// runs with no Hezo tools and the run reads as it having done nothing.
+		// Measured on Daytona: the listeners appear ~1s after the channel opens.
+		const root = scratch();
+		const { engine, probes } = recordingEngine();
+		const tunnel = await start(root, engine);
+
+		const port = Number(/:(\d+)$/.exec(tunnel.endpoints.hezoBaseUrl)?.[1]);
+		expect(probes.length).toBeGreaterThan(0);
+		// It asks about the ports it just handed out, on loopback specifically -
+		// a listener on another interface is not what the container was promised.
+		const hex = port.toString(16).toUpperCase().padStart(4, '0');
+		expect(probes.join(' ')).toContain(`0100007F:${hex}`);
+	});
+
+	it('fails the run when the client never binds', async () => {
+		// There is no useful degraded mode: without the tunnel the container
+		// cannot reach MCP, the egress proxy or the ssh-agent, so proceeding
+		// would produce exactly the silent no-op run this exists to prevent.
+		const root = scratch();
+		const { engine, state } = recordingEngine({ neverBinds: true });
+		await expect(start(root, engine, 500)).rejects.toThrow(/did not bind its ports/);
+		// And it does not leak the channel it opened on the way out.
+		expect(state.closed).toBe(true);
 	});
 });

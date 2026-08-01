@@ -70,6 +70,7 @@ export function createFakeDockerClient(db?: Db, dataDir?: string): ContainerEngi
 	const containers = new Map<string, FakeContainer>();
 	const execRunIds = new Map<string, string | null>();
 	let execCounter = 0;
+	const tunnelReadyExecs = new Set<string>();
 
 	const describe = (id: string): ContainerInfo => {
 		const running = containers.get(id)?.running ?? true;
@@ -148,11 +149,21 @@ export function createFakeDockerClient(db?: Db, dataDir?: string): ContainerEngi
 			const execId = `noop-exec-${++execCounter}`;
 			const runEntry = config?.Env?.find((e) => e.startsWith(RUN_ID_ENV_PREFIX));
 			execRunIds.set(execId, runEntry ? runEntry.slice(RUN_ID_ENV_PREFIX.length) : null);
+			// The tunnel's port-readiness check, recognised so it can be answered.
+			// `startRunTunnel` will not hand a run its endpoints until the client's
+			// ports are listening, so a fake that never answers leaves every run -
+			// and every chat turn - waiting out the full timeout and then failing.
+			if ((config?.Cmd ?? []).some((part) => part.includes('/proc/net/tcp'))) {
+				tunnelReadyExecs.add(execId);
+			}
 			return execId;
 		},
 		execStart: async (execId: string, opts?: ExecStartOpts): Promise<ExecResult> => {
 			const runId = execRunIds.get(execId) ?? null;
 			execRunIds.delete(execId);
+			// A fake container's tunnel comes up. A test that wants the opposite
+			// drives `startRunTunnel` against its own engine (sandbox-run-tunnel).
+			if (tunnelReadyExecs.delete(execId)) return { stdout: 'ready\n', stderr: '' };
 			if (!opts?.onChunk) return { stdout: '', stderr: '' };
 			await runSyntheticExec(opts);
 			if (db && runId) {

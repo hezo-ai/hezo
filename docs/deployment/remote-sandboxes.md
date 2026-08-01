@@ -65,6 +65,14 @@ path and Hezo owns it, so the rules are the same wherever the container runs.
 
 - **Concurrency is bounded by the container memory budget**, exactly as it is locally. See
   [Settings → Concurrency](/docs/security/container-isolation).
+- **Your provider account also bounds it, and Hezo cannot see that limit.** Providers cap
+  how much memory and disk your organisation may hold across all sandboxes at once, and on
+  a small plan that ceiling is reached well before the memory budget is. Hezo keeps
+  admitting runs the provider then refuses, and the refusal surfaces on the project's
+  Container page naming the provider's limit. Set the memory budget to something your plan
+  can actually satisfy: divide your plan's total memory *and* its total disk by what one
+  container takes, and use the smaller of the two. Note a container takes slightly more
+  than its cap (the cap plus a little headroom, rounded up to whole GB).
 - **A project's memory cap must fit that budget.** Providers also cap a single sandbox
   (Daytona allocates at most 8 GB). Ask for more than the provider can give and the run
   fails with a message naming the limit - Hezo never quietly starts a smaller container
@@ -75,6 +83,9 @@ path and Hezo owns it, so the rules are the same wherever the container runs.
 - **Idle containers are suspended, not destroyed.** A project keeps at most one suspended
   container, which resumes with its clones and worktrees intact; extra containers from a
   burst are destroyed when they go idle and are rebuilt from the git remote next time.
+  A suspended sandbox still counts against your provider account's memory and disk limits,
+  so on a small plan a handful of idle projects can hold the whole allowance. If runs start
+  failing to provision while nothing appears to be running, that is what to look at.
 - **The first container of a project is slower to start** than a local one (roughly half a
   minute) because the provider builds it. Later ones start in a few seconds.
 

@@ -57,6 +57,7 @@ import {
 	isProjectIdleForContainerStop,
 	provisionContainer,
 	rebuildContainer,
+	reconcilePoolMembers,
 	stopContainerGracefully,
 	syncAllContainerStatuses,
 	verifyContainerWorkspace,
@@ -2815,11 +2816,19 @@ export class JobManager {
 			return;
 		}
 
-		const transitions = await syncAllContainerStatuses(this.buildContainerDeps());
+		const deps = this.buildContainerDeps();
+		const transitions = await syncAllContainerStatuses(deps);
 
 		for (const transition of transitions) {
 			await this.handleContainerTransition(transition);
 		}
+
+		// Pool members are not reachable from the project rows above - a project
+		// names one container, a pool has many - so they are reconciled here.
+		// Without it a member whose container is gone is never revisited and
+		// permanently consumes the instance memory budget (see
+		// `reconcilePoolMembers`).
+		await reconcilePoolMembers(deps);
 	}
 
 	/**

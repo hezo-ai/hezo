@@ -149,7 +149,11 @@ test('hire form reports-to dropdown defaults to Captain and posts the chosen man
 
 	const select = (await findByLabelText('Reports to')) as HTMLSelectElement;
 	// Options populate once the team roster loads; default selection is the Captain.
-	await findByText('Architect');
+	// Asserted against the select's own options rather than by finding the text
+	// anywhere on the page: a role name can also appear in a roster list left in
+	// `document.body` by an earlier spec, which makes a bare text query ambiguous
+	// under a full run while passing in isolation.
+	await waitFor(() => expect([...select.options].map((o) => o.value)).toContain('architect'));
 	await waitFor(() => expect(select.value).toBe('captain'));
 
 	await user.selectOptions(select, 'architect');

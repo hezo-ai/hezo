@@ -2,6 +2,7 @@ import { logger } from '../../../logger';
 import type { ContainerRunUser } from '../../container-user';
 import { type RunEndpoints, tunnelRunEndpoints } from '../endpoints';
 import type { SandboxFiles } from '../files';
+import { buildPortsListeningScript } from '../proc-scripts';
 import type { ContainerByteChannel, ContainerEngine } from '../types';
 import { TunnelMux } from './mux';
 import { connectToRunTargets, type TargetAddresses } from './net-socket';
@@ -41,10 +42,17 @@ export interface StartRunTunnelOptions {
 	addresses: TargetAddresses;
 	/** Which hosts the container must route through the egress proxy. */
 	policy: TunnelHostPolicy;
+	/** Test hook: shortens the wait for the client to bind. */
+	listenTimeoutMs?: number;
 }
 
 /**
  * Start the tunnel and return the endpoints the run should use.
+ *
+ * **The endpoints work by the time this resolves.** Opening the channel only
+ * starts the client, so this waits for it to bind and **fails the run** if it
+ * never does - see {@link waitForTunnelListeners} for why returning early is
+ * worse than failing.
  *
  * **The returned `close` is not optional.** A live channel counts as activity
  * on every backend, so a tunnel left open keeps the container from ever going
@@ -101,15 +109,81 @@ export async function startRunTunnel(opts: StartRunTunnelOptions): Promise<RunTu
 	channel.onClose(() => mux.closeAll());
 
 	let closed = false;
-	return {
-		endpoints: tunnelRunEndpoints(allocation.ports),
-		close: () => {
-			if (closed) return;
-			closed = true;
-			// Closing the mux closes the channel, which ends the client's stdin and
-			// makes it fail closed on its side too.
-			mux.closeAll();
-			allocation.release();
-		},
+	const close = () => {
+		if (closed) return;
+		closed = true;
+		// Closing the mux closes the channel, which ends the client's stdin and
+		// makes it fail closed on its side too.
+		mux.closeAll();
+		allocation.release();
 	};
+
+	try {
+		await waitForTunnelListeners(
+			opts.engine,
+			opts.containerId,
+			allocation.ports,
+			opts.listenTimeoutMs ?? LISTEN_TIMEOUT_MS,
+		);
+	} catch (err) {
+		close();
+		throw err;
+	}
+
+	return { endpoints: tunnelRunEndpoints(allocation.ports), close };
+}
+
+/** How long the in-container client has to bind before the run is failed. */
+const LISTEN_TIMEOUT_MS = 30_000;
+const LISTEN_POLL_MS = 150;
+
+/**
+ * Block until the client is actually listening on its loopback ports.
+ *
+ * Opening the channel only *starts* the client; it is a process that still has
+ * to boot and bind. Returning before it has means handing the run endpoints that
+ * refuse connections, and the runtimes dial them immediately - a coding CLI that
+ * gets `ECONNREFUSED` on the MCP endpoint marks that server failed **for the
+ * whole session** rather than retrying, so the agent runs to completion with no
+ * Hezo tools at all and the run reads as the agent having done nothing.
+ *
+ * Measured on Daytona: the listeners appear ~1s after `openExecChannel` resolves,
+ * because the sandbox has to exec a shell, `runuser`, then node. The window is
+ * smaller on a local daemon but it is the same race, so the wait is here rather
+ * than in either adapter.
+ *
+ * A timeout **fails the run**. There is no useful degraded mode: without the
+ * tunnel the container cannot reach MCP, the egress proxy or the ssh-agent, and
+ * proceeding would produce exactly the silent no-op run this exists to prevent.
+ */
+async function waitForTunnelListeners(
+	engine: ContainerEngine,
+	containerId: string,
+	ports: { proxy: number; mcp: number; ssh: number },
+	timeoutMs: number,
+): Promise<void> {
+	const script = buildPortsListeningScript([ports.proxy, ports.mcp, ports.ssh]);
+	const deadline = Date.now() + timeoutMs;
+	let lastError = '';
+	while (Date.now() < deadline) {
+		try {
+			const execId = await engine.execCreate(containerId, {
+				Cmd: ['sh', '-c', script],
+				User: 'root',
+				AttachStdout: true,
+				AttachStderr: false,
+			});
+			const { stdout } = await engine.execStart(execId);
+			if (stdout.includes('ready')) return;
+		} catch (err) {
+			// A container that is still settling can refuse an exec; keep trying
+			// until the deadline rather than failing on the first one.
+			lastError = err instanceof Error ? err.message : String(err);
+		}
+		await new Promise((resolve) => setTimeout(resolve, LISTEN_POLL_MS));
+	}
+	throw new Error(
+		`the tunnel client did not bind its ports within ${timeoutMs}ms` +
+			`${lastError ? ` (last error: ${lastError})` : ''}`,
+	);
 }

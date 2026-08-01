@@ -1139,11 +1139,36 @@ marker kill and teardown. Four findings are worth carrying:
 - **A digest-pinned `agent-base` is pullable anonymously**, so Daytona builds it with no
   registry credential - the `buildInfo` Dockerfile is `FROM …@sha256:…` and nothing else.
 
-The one part that cannot be exercised from a network that blocks WebSocket upgrades is the
-**tunnel**, whose Daytona transport is a PTY over WebSocket - and with it, anything that
-needs a container to reach Hezo (MCP, the egress proxy, the ssh-agent), so a full agent-CLI
-run included. That is a property of such a network, not of the adapter: every HTTP path
-(control plane, exec, streaming logs, files) works through the same one.
+**The tunnel has since been driven end to end**, from a network that permits WebSocket
+upgrades (the earlier pass could not reach it at all, which is why three defects lived in it -
+see the PTY section above and the readiness contract in § Container tunnel). A real agent run
+now completes on Daytona: DeepSeek through Claude Code, `tools=97` in the session line,
+`create_comment` and `update_task` landing over MCP, run `succeeded`, tokens priced from the
+table. Run logs stream over the WebSocket, suspend/resume preserves the filesystem, the pool
+serves concurrent runs one-per-container, the wall-clock kill leaves no marked process behind,
+and deleting the project destroys every sandbox it owned. On a network that blocks WebSocket
+upgrades none of that is reachable - a property of such a network, not of the adapter, since
+every HTTP path (control plane, exec, streaming logs, files) works through the same one.
+
+Two further quota facts were measured, and both bear on the pool:
+
+- **A *suspended* sandbox still holds its full memory and disk quota.** `planIdleShutdown`
+  keeps one suspended container per project on the reasoning that retention is nearly free.
+  It is not free here: stopping a sandbox releases nothing, so an idle project holds a whole
+  concurrency slot indefinitely, and on a tier allowing three sandboxes, three idle projects
+  consume the entire org quota and no run can start. Daytona's own refusal names the state
+  that *does* release it - **archive** - which Hezo never uses (`autoArchiveInterval` defaults
+  to 7 days and `archived` already maps to `exited`). **Known gap**: the suspend rung wants a
+  provider-side notion of "suspended" the adapter chooses, rather than one shape for both.
+- **Memory is a separate provider cap from disk, and binds first at this container size.** The
+  tier measured allowed 10 GiB total memory and 30 GiB total disk - three sandboxes either
+  way at 3 GiB/10 GiB each. Hezo's budget knows neither: it counts a container as its *cap*
+  (`memory_limit_gib`, 2 GB) while the provider allocates the **hard cap** - cap plus
+  `MEMORY_HARD_CAP_HEADROOM_BYTES`, rounded up - so the accounting understates real
+  consumption by 50% at that size, and a budget set to 24 GB admits twelve containers the
+  provider refuses on the fourth. The workaround noted above (size the budget against
+  `quota_disk_gb / 10`) therefore needs to be the *minimum* of the disk and memory
+  derivations, and computed against the hard cap rather than the cap.
 
 **Digest resolution** (`sandbox/image-ref.ts`) is the generic OCI registry manifest lookup
 that makes the pin possible: a HEAD on the manifest, exchanging a `WWW-Authenticate: Bearer`
@@ -1153,6 +1178,20 @@ tag** rather than failing when the registry cannot be reached - an offline insta
 private registry, or a locally-built tag that exists in no registry at all would otherwise
 be unable to start a container over a cache-freshness concern. The fallback logs what it
 costs, because the failure it re-admits is otherwise invisible.
+
+**`startRunTunnel` does not return until the endpoints work.** Opening the channel only
+*starts* the client; it is a process that still has to boot and bind three loopback ports, and
+on Daytona they appear ~1s later (the sandbox execs a shell, then `runuser`, then node). A run
+hands those endpoints straight to the coding CLI, which dials them immediately - and a CLI that
+gets `ECONNREFUSED` on the MCP endpoint marks that server failed **for the whole session**
+rather than retrying, so the agent runs to completion with no Hezo tools and the run reads as
+the agent having done nothing (`tools=25` instead of `tools=97` in the session line was the
+tell). So the tunnel polls the container until all three ports listen, reading `/proc/net/tcp`
+(always present, unlike `ss`/`netstat`, which a custom `docker_base_image` need not carry) and
+matching loopback specifically. It **fails the run** if they never do: without the tunnel the
+container cannot reach MCP, the egress proxy or the ssh-agent, so proceeding would produce
+exactly the silent no-op it exists to prevent. The wait lives in the shared tunnel code, not in
+either adapter - the race is Docker's too, just narrower.
 
 **The tunnel is the only way a container reaches Hezo**, on every backend, with no gate and
 no second path. `RunEndpoints` always names container loopback, where the in-container
@@ -1190,13 +1229,36 @@ an `input`/`stdin`/`stdinData` field entirely, and a command that reads stdin se
 EOF. What it has instead is a **PTY session over WebSocket** -
 `POST /process/pty {id}` then `wss://…/process/pty/{id}/connect` with the bearer token -
 verified end to end as a real bidirectional byte channel (writes reach the shell, output
-comes back). Two things follow for whoever builds the tunnel: the channel opens with a
-`{"status":"connected","type":"control"}` JSON frame that is not shell output, and it is a
-**PTY**, so line discipline is active (echo on, `\n` to `\r\n`, bracketed-paste sequences)
-and it must be put in raw mode before any framed protocol rides on it. The consequence for
-the seam is that the *transport* is per-backend while the framing and multiplexing above it
-stay shared - the plan's "one transport for both backends" holds for the protocol, not for
-the channel underneath it.
+comes back). The consequence for the seam is that the *transport* is per-backend while the
+framing and multiplexing above it stay shared - the plan's "one transport for both backends"
+holds for the protocol, not for the channel underneath it.
+
+**Four things on that channel would each desynchronise the framing on byte one**, and all four
+are absorbed in `openPty` (measured against the live API; the first was handled from the start
+and the rest were found by driving a real agent run over it):
+
+1. the opening `{"status":"connected","type":"control"}` JSON frame, which is not shell output;
+2. the PTY's **echo of `stty raw -echo`** - sent to turn echo off, and echoed back because echo
+   is still on. The decoder read `stty` as a type and stream id and `raw ` as a 1918990112-byte
+   length, and the mux closed the channel before any payload existed;
+3. bash's **bracketed-paste sequences** (`ESC[?2004h` / `ESC[?2004l`), emitted around every
+   command it accepts **even with echo off** - so raw mode does not remove them;
+4. the shell **prompt** printed when the launched command exits.
+
+So the launch is folded into `openPty` as one line - `stty raw -echo`, print a per-session
+sentinel, then **`exec`** the command - and nothing reaches the caller until that sentinel.
+`exec` replaces the shell, which removes (3) and (4) structurally rather than filtering them.
+The sentinel is emitted from **two halves** (`printf '%s%s' 'a' 'b'`) so the still-echoed command
+line does not contain it: printed whole, the sync fired on the echoed copy and forwarded the real
+one, moving the corruption one step later instead of removing it.
+
+**Closing the socket does not end the session or kill what runs on it** - measured: a process
+launched on a PTY was still listening after the WebSocket closed and the session still read
+`active`. Only `DELETE /process/pty/{id}` terminates it, so that is what `close()` does. On
+Docker the equivalent close kills the exec, so without it this leaks a process per channel on
+Daytona alone - and for the tunnel that is not cosmetic, since the client holds the run's three
+loopback ports and a pooled container serves many runs in sequence: the next run's client dies
+with `EADDRINUSE` and that run loses MCP, egress and the ssh-agent entirely.
 
 **Network isolation is the provider's, not ours - measured.** Daytona interposes an Envoy
 proxy in front of all sandbox egress: a raw TCP connect to `169.254.169.254`, to an RFC1918
@@ -1207,6 +1269,23 @@ the field is capped at **10 networks**, while "the public internet minus the pri
 is 51 CIDRs, so an attempt to send it fails the create outright - which would have broken
 every remote run rather than hardening it. What protects a secret remains that the secret
 only ever exists on the Hezo side.
+
+**Pool members are reconciled against the engine, because nothing else revisits them.** The
+acquire path repairs a stale member on two rungs - `reuse` verifies the container still runs,
+`resume` drops it if the start throws - but both only fire for a member the ladder actually
+*picks*, and it never picks a `busy` one. A run that died without releasing its row therefore
+left a member nothing ever looked at again, and since `getActiveContainers` counts
+`creating`/`idle`/`busy` towards the memory budget, each orphan permanently consumed capacity
+until every run in the project failed admission with "no container available". So
+`reconcilePoolMembers` runs from the `container-sync` job and drops members whose container the
+engine no longer knows. It drops **only on a definite answer**: `inspectContainer` returns null
+for a container the engine does not know and *throws* for anything else, and a throw means
+"could not determine" and changes nothing - deleting on an unanswerable check would lose the
+record of a live container and orphan it on the backend. A grace period keeps a just-created
+container from being judged early, and a per-pass bound keeps a large pool from turning one tick
+into a fan-out of round trips. This matters more on a managed backend than locally, because
+there a container disappearing is normal rather than anomalous - the provider stops, archives
+and reaps sandboxes on its own schedule, and enforces quota by refusing or removing them.
 
 **Capacity is a memory budget, and it reserves for the chat container up front.**
 `max_container_memory_gb` bounds the total memory *task run* containers may hold at once,
@@ -1809,7 +1888,12 @@ gone mid-op.
 **Timeout handling (graceful cut).** The `run_timeout_min` timer aborts the run's signal with a
 tagged `'run_timeout'` reason (`JobManager.launchTask`), so the runner finalizes it as `timed_out`
 — distinct from a bare abort (user cancel / shutdown → `cancelled`) and container death
-(`container_*` → `failed`); `runAgent`'s `abortedRunStatus` maps the reason. On a `timed_out` run
+(`container_*` → `failed`); `runAgent`'s `abortedRunStatus` maps the reason. **The signal
+decides the status, never the shape of the thrown error.** Only Docker's exec reliably rejects
+with an `AbortError` when its attach is torn down - a managed backend's may reject with anything
+or resolve outright - so keying on the error name recorded a timed-out run on Daytona as `failed`
+while still stamping it with the timeout's own message (measured live). The streak cap below
+reads that column, so the misclassification silently disabled it. On a `timed_out` run
 `onAgentComplete` **auto-queues a same-task continuation wakeup** (`queueTimeoutContinuation` →
 `createWakeup(Timer, {reason:'timeout_continuation'})`) so the agent resumes the task on the next
 wakeup pass — committed work is already pushed, so nothing is lost — and it **skips the failure

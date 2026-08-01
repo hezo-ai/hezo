@@ -24,7 +24,12 @@ import type {
 	SandboxFiles,
 } from '../types';
 import { type DaytonaApi, DaytonaApiError, type DaytonaSandbox } from './client';
-import { renderDaytonaExec, renderDaytonaExecScript, renderStderrDrain } from './command';
+import {
+	asShellCommand,
+	renderDaytonaExec,
+	renderDaytonaExecScript,
+	renderStderrDrain,
+} from './command';
 import { daytonaSandboxFiles } from './files';
 
 const log = logger.child('daytona-engine');
@@ -410,24 +415,32 @@ export class DaytonaEngine implements ContainerEngine {
 	 * to recover here as there is for a normal exec - so `onStderr` never fires
 	 * and diagnostics arrive interleaved on `onData`, which is harmless because
 	 * the tunnel client writes none.
+	 *
+	 * The command is handed to `openPty` rather than typed in afterwards. A PTY
+	 * starts a login shell, so the command is *typed into* it - the inverse of a
+	 * Docker exec, where the command is the exec - and everything the shell emits
+	 * around accepting it (its own echo, the prompt, bracketed-paste sequences)
+	 * would land on this channel as leading bytes. A framed protocol cannot
+	 * tolerate any of them, so the launch and the sync that hides them are one
+	 * operation; see `openPty` for what each source of noise is.
 	 */
 	async openExecChannel(containerId: string, config: ExecConfig): Promise<ContainerByteChannel> {
 		const sandbox = await this.fetch(containerId);
 		if (!sandbox) throw new Error(`sandbox ${containerId} not found`);
 		const sessionId = `hezo-chan-${randomBytes(6).toString('hex')}`;
-		const pty = await this.client.openPty(sandbox, sessionId);
-
-		// The PTY starts a login shell, so the command is *typed into* it rather
-		// than being the process it launched - the inverse of a Docker exec, where
-		// the command is the exec. Sent after raw mode is applied by openPty.
-		pty.send(
-			new TextEncoder().encode(
-				`${renderDaytonaExecScript({
+		const pty = await this.client.openPty(
+			sandbox,
+			sessionId,
+			// `exec`ed by the launch line, so it replaces the shell rather than
+			// running under it - which is what stops a second prompt reaching the
+			// channel when the command ends.
+			asShellCommand(
+				renderDaytonaExecScript({
 					cmd: config.Cmd,
 					env: config.Env,
 					user: config.User,
 					stderrPath: `/tmp/.hezo-chan-${sessionId}.err`,
-				})}\n`,
+				}),
 			),
 		);
 

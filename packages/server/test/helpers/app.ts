@@ -182,7 +182,66 @@ export function createStubDocker<T extends object>(
 		ctx?.db && ctx?.dataDir ? [{ db: ctx.db, dataDir: ctx.dataDir }] : testContexts;
 	const files: ContainerEngine['files'] = (containerId, containerRoot) =>
 		firstResolvableFiles(candidates, containerId, containerRoot);
-	return { ...STUB_DOCKER_METHODS, files, ...overrides } as ContainerEngine & T;
+	const merged = { ...STUB_DOCKER_METHODS, files, ...overrides } as ContainerEngine & T;
+	return withTunnelReadyStub(merged);
+}
+
+/**
+ * Answer the tunnel's port-readiness check, whatever the caller's exec stubs do.
+ *
+ * `startRunTunnel` will not hand a run its endpoints until the client's ports
+ * are listening, so an engine that never answers leaves every run and every chat
+ * turn waiting out the full timeout and then failing. Wrapping rather than
+ * merging is what makes that true for the many specs that replace `execCreate`
+ * and `execStart` wholesale - the same reason `withRunUserStub` wraps the
+ * run-user probe and the chowns instead of relying on a default.
+ *
+ * A stubbed container's tunnel comes up. A spec that wants the opposite drives
+ * `startRunTunnel` against its own engine (`sandbox-run-tunnel.test.ts`).
+ */
+function withTunnelReadyStub<T extends ContainerEngine>(engine: T): T {
+	const ready = new Set<string>();
+	let seq = 0;
+
+	const execCreate = async (
+		containerId: string,
+		config: Parameters<ContainerEngine['execCreate']>[1],
+	) => {
+		if ((config?.Cmd ?? []).some((part) => part.includes('/proc/net/tcp'))) {
+			const id = `__tunnel-ready-${seq++}`;
+			ready.add(id);
+			return id;
+		}
+		return engine.execCreate(containerId, config);
+	};
+	const execStart = async (execId: string, opts: Parameters<ContainerEngine['execStart']>[1]) => {
+		if (ready.delete(execId)) return { stdout: 'ready\n', stderr: '' };
+		return engine.execStart(execId, opts);
+	};
+
+	return {
+		...engine,
+		// Spy metadata is carried across, so a spec that asserts on
+		// `docker.execCreate.mock.calls` still sees the calls it made - wrapping
+		// must not cost a test its ability to inspect its own stub.
+		execCreate: preserveSpy(execCreate, engine.execCreate),
+		execStart: preserveSpy(execStart, engine.execStart),
+		execInspect: async (execId: string) => {
+			if (execId.startsWith('__tunnel-ready-')) return { ExitCode: 0, Running: false, Pid: 0 };
+			return engine.execInspect(execId);
+		},
+	} as T;
+}
+
+/** Copy a mock's own properties (`mock`, `mockClear`, …) onto the function wrapping it. */
+function preserveSpy<F extends (...args: never[]) => unknown>(wrapper: F, original: unknown): F {
+	if (typeof original !== 'function') return wrapper;
+	for (const key of Object.getOwnPropertyNames(original)) {
+		if (key === 'length' || key === 'name' || key === 'prototype') continue;
+		const descriptor = Object.getOwnPropertyDescriptor(original, key);
+		if (descriptor) Object.defineProperty(wrapper, key, descriptor);
+	}
+	return wrapper;
 }
 
 /**
