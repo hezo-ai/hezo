@@ -17,13 +17,18 @@ The log captures every state-changing action on the project:
 
 - **Tasks** - created, renamed, status changes, reassignments.
 - **Agent runs** - each run started and completed, with its outcome.
-- **Documents** - created, updated, and deleted, including edits to an agent's instructions.
-- **Assets** - files uploaded to the project or a task.
+- **Documents** - created, updated, archived, restored, and deleted, including edits to an
+  agent's instructions.
+- **Assets** - files uploaded to the project or a task, and files archived, restored, or
+  deleted.
 - **Agents** - hired, updated, enabled, and disabled.
 - **Connectors** - MCP connections and OAuth account connections changing.
 
 Each entry names the **actor** (you, an agent, the system, or an external MCP client),
-so a human action and an automated one are always told apart.
+so a human action and an automated one are always told apart. Archiving and restoring are
+recorded distinctly from an ordinary edit, so restoring a retired document or asset is
+never mistaken for a routine change - and when an agent does it, the entry names the task
+and run it came from.
 
 ## Reading the log
 
@@ -35,8 +40,6 @@ three columns:
 - **Activity** - a plain-language description ("Created task TO-4", "Changed status of TO-4
   from Backlog to In Progress"). Most rows link straight to the task, agent, or page they
   concern.
-
-You can narrow the view by entity type, action, and date range.
 
 The log loads the most recent entries first, in pages. **Load older activity** at the
 bottom of the list fetches the next page and appends it, so you can walk back through the

@@ -98,6 +98,13 @@ reserved and any existing `assets/<path>` links keep resolving. Agents archive s
 it), and you can archive one yourself from its card's **Archive** action. Nothing is lost:
 restore it at any time.
 
+**While archived, an asset is read-only.** It can't be overwritten, moved, or renamed -
+by you or by an agent - until it is restored. An agent that tries to save over an archived
+path is told to restore it first rather than quietly replacing the retired file, and the
+path stays reserved the whole time, so nothing else can take it. Archiving and restoring
+are both recorded in the project's [activity log](/docs/security/activity-log), and when an
+agent does either, the entry names the task and run it came from.
+
 The Assets page shows **active** items by default. The filter button (funnel icon) next to
 "Showing active items" switches the view to **Archived** or **All** - archived cards render
 dimmed with an "Archived" badge, and offer **Restore** plus **Delete**.

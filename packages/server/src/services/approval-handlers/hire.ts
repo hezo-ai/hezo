@@ -91,7 +91,7 @@ export const hireHandler: ApprovalHandler = {
 		broadcasts.push({
 			table: 'documents',
 			op: 'INSERT',
-			row: promptDoc as unknown as Record<string, unknown>,
+			row: promptDoc.row as unknown as Record<string, unknown>,
 		});
 
 		const newAgent = await db.query<Record<string, unknown>>(
