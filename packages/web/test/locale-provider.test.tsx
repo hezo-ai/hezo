@@ -4,11 +4,11 @@
 // via Intl.PluralRules, and the format helpers. Rendered with renderHook (no app
 // shell).
 import { DateFormat, DEFAULT_LOCALE_SETTINGS, Language, NumberFormat } from '@hezo/shared';
-import { act, renderHook } from '@testing-library/react';
-import type { ReactNode } from 'react';
+import { act, render, renderHook } from '@testing-library/react';
+import { type ReactNode, useEffect } from 'react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { getActiveLocale } from '../src/lib/format-date';
-import { I18nProvider, useI18n, useSyncInstanceLocale } from '../src/lib/i18n';
+import { I18nProvider, LanguagePreview, useI18n, useSyncInstanceLocale } from '../src/lib/i18n';
 import { writeStored } from '../src/lib/safe-storage';
 
 const STORAGE_KEY = 'locale';
@@ -225,5 +225,97 @@ describe('I18nProvider', () => {
 		expect(() => renderHook(() => useI18n())).toThrow(
 			'useI18n must be used within an I18nProvider',
 		);
+	});
+});
+
+/** Publish the context value a subtree sees, so two subtrees can be compared. */
+function Probe({ onValue }: { onValue: (value: ReturnType<typeof useI18n>) => void }) {
+	const value = useI18n();
+	useEffect(() => onValue(value), [value, onValue]);
+	return null;
+}
+
+describe('LanguagePreview', () => {
+	beforeEach(() => {
+		localStorage.clear();
+		document.documentElement.lang = '';
+	});
+	afterEach(() => {
+		vi.restoreAllMocks();
+		localStorage.clear();
+	});
+
+	test('renders its subtree in the previewed language', () => {
+		installLanguages(['en-US']);
+		const { result } = renderHook(() => useI18n(), {
+			wrapper: ({ children }: { children: ReactNode }) => (
+				<I18nProvider>
+					<LanguagePreview language={Language.De}>{children}</LanguagePreview>
+				</I18nProvider>
+			),
+		});
+
+		expect(result.current.language).toBe(Language.De);
+		expect(result.current.t('locale.title')).toBe('Sprache auswählen');
+	});
+
+	test('previews the language only - the formats stay committed', () => {
+		// Date and currency format apply on save; only the language previews.
+		installLanguages(['en-US']);
+		const { result } = renderHook(() => useI18n(), {
+			wrapper: ({ children }: { children: ReactNode }) => (
+				<I18nProvider>
+					<LanguagePreview language={Language.De}>{children}</LanguagePreview>
+				</I18nProvider>
+			),
+		});
+
+		expect(result.current.date_format).toBe(DateFormat.Mdy);
+		expect(result.current.number_format).toBe(NumberFormat.DotComma);
+		expect(result.current.formatDate(new Date(2026, 6, 29))).toBe('07/29/2026');
+	});
+
+	test('commits nothing - an unsaved preview leaves every global alone', () => {
+		// This is what makes it safe to drop with no cleanup on unmount or cancel.
+		installLanguages(['en-US']);
+		renderHook(() => useI18n(), {
+			wrapper: ({ children }: { children: ReactNode }) => (
+				<I18nProvider>
+					<LanguagePreview language={Language.Ko}>{children}</LanguagePreview>
+				</I18nProvider>
+			),
+		});
+
+		expect(document.documentElement.lang).toBe(Language.En);
+		expect(getActiveLocale().language).toBe(Language.En);
+		expect(JSON.parse(localStorage.getItem(STORAGE_KEY) as string).language).toBe(Language.En);
+	});
+
+	test('previewing the committed language reuses the same context value', () => {
+		// An unchanged draft must not re-render the subtree, the same reason
+		// applyServerLocale compares by value.
+		installLanguages(['en-US']);
+		let outer: ReturnType<typeof useI18n> | null = null;
+		let inner: ReturnType<typeof useI18n> | null = null;
+
+		render(
+			<I18nProvider>
+				<Probe
+					onValue={(v) => {
+						outer = v;
+					}}
+				/>
+				<LanguagePreview language={Language.En}>
+					<Probe
+						onValue={(v) => {
+							inner = v;
+						}}
+					/>
+				</LanguagePreview>
+			</I18nProvider>,
+		);
+
+		expect(outer).not.toBeNull();
+		expect(inner).toBe(outer);
 	});
 });

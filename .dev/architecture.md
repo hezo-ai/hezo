@@ -2489,10 +2489,23 @@ would freeze English word order into every translation. The system-comment timel
 still English, so a translated status sentence carries English status words until the board's
 status vocabulary is localized too.
 
+`LanguagePreview` (`lib/i18n`) nests a second `I18nContext.Provider` so the locale editor's
+card renders in the language the operator just picked, before it is saved - the card *is* the
+language picker, so it has to answer in the language being chosen. It shares `buildI18nValue`
+with the real provider (one lookup path, never two), overrides **language only** (date and
+money formats apply on save, and already preview inside their own option rows), and reuses the
+outer context value by identity when the previewed language matches the committed one. It
+touches nothing global - no render hint, no `document.documentElement.lang`, no
+`setActiveLocale`, no request - which is what makes it droppable with no cleanup on unmount or
+cancel. `LocaleEditor` therefore splits in two: the outer half owns the draft and reads the
+*committed* locale (so the re-seed effect can never be re-entered by a preview), the inner half
+renders under the preview. Its hosts pass a `MessageKey` rather than a translated
+`submitLabel`, since a string translated in the host is frozen in the committed language.
+
 `PATCH /api/instance-settings/locale` is the single write path. It is listed in
 `PUBLIC_PATHS` but self-authenticating: open only while no admin password is enrolled (the
 same window `POST /api/auth/setup` is open in), superuser-only after, resolving the bearer
-in-route via `requireAdminEquivalentBearer`. The globe button that hosts the editor appears
+in-route via `requireAdminEquivalentBearer`. The language button that hosts the editor appears
 only on pre-auth surfaces; an unauthorized save there applies to that browser alone rather
 than failing.
 
