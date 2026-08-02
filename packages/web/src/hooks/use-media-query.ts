@@ -2,8 +2,13 @@ import { useEffect, useState } from 'react';
 
 /**
  * Reactive `window.matchMedia` — re-renders when the query flips. Guards for
- * environments without `matchMedia` (happy-dom in component tests), where it
- * always reports `false`.
+ * environments without `matchMedia`, where it always reports `false`.
+ *
+ * Note happy-dom is NOT such an environment: it implements `matchMedia` and
+ * reports a 1024px-wide viewport, so component tests evaluate every query
+ * against that width and land on the desktop side of a `min-width` breakpoint.
+ * Behaviour that differs by breakpoint needs a Playwright spec at the viewport
+ * in question, not a component test that assumes mobile.
  */
 export function useMediaQuery(query: string): boolean {
 	const [matches, setMatches] = useState(() => {
