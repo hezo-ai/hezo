@@ -80,7 +80,7 @@ references it.
 The global **Settings → Skills** page lists **every** skill, global and each project's,
 and each row has a scope drop-down so you can move a skill between global and any project (it
 works just like the [Connectors](/docs/mcp/connecting-mcp-servers) page). Each project also has its
-own **Skills** page, under **Connectors** in the project's settings menu, showing that
+own **Skills** page, in the project menu right below **Connectors**, showing that
 project's skills plus the globals; you can edit or remove the project's own skills there,
 while global ones are shown for reference and stay managed on the global page. Every row -
 on either page - has a **view** button that opens the skill and renders its full markdown so
