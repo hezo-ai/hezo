@@ -2417,6 +2417,21 @@ transient state** (`creating` / `stopping` — deliberately not the `null` of a 
 project, which would poll forever). That bounds the damage of a missed transition to a few
 seconds of stale banner instead of "stuck until the operator reloads the page."
 
+**Overlay lifetime across navigation.** Overlays rendered under the `<Outlet />` unmount on
+navigation; the ones rendered by the shell chrome in `routes/__root.tsx` — the project rail's
+New project dialog, the mobile nav drawer, the Cmd/Ctrl+K search palette, the CEO chat — sit
+above it and keep their `open` state, so a link inside them swaps the page underneath and
+leaves the overlay covering it. `hooks/use-close-on-route-change.ts` is the single seam. It
+fires on a real **pathname** change only: search params are page state (a task filter, an
+assets folder) and a hash is an in-page jump (the comment deep-link executor strips
+`#comment-…` once it settles), so neither counts, and it never fires on mount. Closing at the
+route rather than in each link's `onClick` is deliberate — the global Cmd/Ctrl+K handler is a
+`window` keydown listener and Radix only intercepts Escape, so the palette opens on top of an
+open modal and navigates from somewhere that modal never sees. The CEO chat is
+**viewport-conditional**: only its blocking presentations (the mobile full-screen sheet, the
+desktop expanded view) react, and expanded collapses back to anchored rather than closing; the
+anchored desktop panel is a deliberately persistent companion that survives navigation.
+
 **Connection indicator.** `useConnectionMonitor` (`hooks/use-connection-status.ts`) drives a
 module-level store from two signals - `navigator.onLine` (catches a dropped network an
 already-open half-open socket hasn't noticed) and the socket's own `connected` flag (catches a

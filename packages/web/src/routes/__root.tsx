@@ -29,6 +29,7 @@ import { UpdateBanner } from '../components/update-banner';
 import { ScrollContentContext } from '../contexts/scroll-content-context';
 import { SocketProvider } from '../contexts/socket-context';
 import { useActiveProject } from '../hooks/use-active-project';
+import { useCloseOnRouteChange } from '../hooks/use-close-on-route-change';
 import { useMe } from '../hooks/use-me';
 import { useProjectMenuCollapsed } from '../hooks/use-project-menu-collapsed';
 import { useAllVisibleProjects, useHqProject, useProjectsIndex } from '../hooks/use-projects';
@@ -223,6 +224,12 @@ function ShellLayout() {
 	const [drawerOpen, setDrawerOpen] = useState(false);
 	const [chatOpen, setChatOpen] = useState(false);
 
+	// The drawer is shell chrome, not route content: it renders outside the
+	// <Outlet /> below and so survives navigation. It holds nothing but nav links,
+	// so leaving it open after one is followed parks a full-screen panel over the
+	// page it just opened. Must be called before the `bare` early return.
+	useCloseOnRouteChange(drawerOpen, () => setDrawerOpen(false));
+
 	// Bare routes (e.g. the standalone document preview) render full-viewport
 	// without the header, project rail, or mobile drawer.
 	if (bare) return <Outlet />;
@@ -243,6 +250,11 @@ interface ShellChromeProps {
 
 function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
 	const [searchOpen, setSearchOpen] = useState(false);
+	// Also shell chrome, and also a full-screen modal. Picking a result closes the
+	// palette on its own way out (`search-results.tsx` calls `onSelect` from the
+	// row's Link), but that only covers navigations the palette itself started —
+	// anything else leaves it stacked over the new page.
+	useCloseOnRouteChange(searchOpen, () => setSearchOpen(false));
 	const active = useActiveProject();
 	const hq = useHqProject();
 	const { projects, isLoading: projectsLoading } = useAllVisibleProjects();
