@@ -115,12 +115,19 @@ export function SidebarNav({ sections }: SidebarNavProps) {
 				<div key={section.title ?? `section-${sections.indexOf(section)}`}>
 					{section.title && <SectionHeader section={section} />}
 					{section.items.map((item) => {
-						const isActive = matchRoute({ to: item.to, params: item.params, fuzzy: true });
 						// A sub-item disclosure also stays open while the user is on one of the
-						// sub-item routes (which don't fuzzy-match the parent's own route).
+						// sub-item routes. Those routes come in two shapes: siblings that don't
+						// fuzzy-match the parent at all (Settings → /git, /connectors), and children
+						// nested under it (Progress → /progress/goals).
 						const subActive =
 							item.subItems?.some((s) => matchRoute({ to: s.to, params: s.params, fuzzy: true })) ??
 							false;
+						// A nested sub-item fuzzy-matches its parent's route, which would light up
+						// both rows at once. Highlight the parent on an exact match in that case, so
+						// only the row the user is actually on reads as active.
+						const isActive = subActive
+							? !!matchRoute({ to: item.to, params: item.params })
+							: !!matchRoute({ to: item.to, params: item.params, fuzzy: true });
 						const paddingClass = section.title ? 'pl-4 pr-2 py-0.5' : 'px-2.5 py-1';
 						const key = `${item.to}-${JSON.stringify(item.params)}`;
 						const link = (

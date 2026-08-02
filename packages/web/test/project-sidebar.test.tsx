@@ -290,7 +290,7 @@ test('creating a goal clears the sidebar "no goals yet" dot', async () => {
 	// Create a goal from the Progress page's "New goal" button. The sidebar persists across
 	// project routes, so its dot reflects the new goal once the project index invalidates.
 	await router.navigate({
-		to: '/projects/$projectId/goals',
+		to: '/projects/$projectId/progress/goals',
 		params: { projectId: projectSlug },
 	});
 	await user.click(await findByTestId('goals-empty-create', undefined, { timeout: 15_000 }));

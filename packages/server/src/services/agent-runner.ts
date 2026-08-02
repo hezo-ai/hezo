@@ -15,6 +15,7 @@ import {
 	HeartbeatRunStatus,
 	opencodeModelArg,
 	PROVIDER_RUNTIME_ADAPTERS,
+	type ProgressActivityKind,
 	providerDirectUpstreamHosts,
 	RUNTIME_AUTO_APPROVE_ARGS,
 	RUNTIME_COMMANDS,
@@ -37,7 +38,11 @@ import type { DomainEventBus } from '../events/bus';
 import { signAgentAssetUrl } from '../lib/asset-urls';
 import { broadcastProjectUpdate, broadcastRowChange } from '../lib/broadcast';
 import { withProjectGitLock } from '../lib/git-lock';
-import { detectUnlinkedTeammateAsks, extractMentionSlugs } from '../lib/mentions';
+import {
+	detectPassiveTeammateAsks,
+	detectUnlinkedTeammateAsks,
+	extractMentionSlugs,
+} from '../lib/mentions';
 import { terminalStatusParams, withTransaction } from '../lib/sql';
 import { logger } from '../logger';
 import { signAgentJwt } from '../middleware/auth';
@@ -92,6 +97,7 @@ import { buildGitIdentityEnv } from './git-identity';
 import type { LogStreamBroker } from './log-stream-broker';
 import { MCP_ADAPTERS, type McpDescriptor, validateInjection } from './mcp-injectors';
 import type { PricingService } from './pricing';
+import type { ProgressActivityCandidates } from './project-activity';
 import { loadReactionsForTask, type ReactionGroup } from './reactions';
 import { ensureProjectRepos } from './repo-sync';
 import {
@@ -1698,12 +1704,14 @@ export async function runAgent(
 			//       via postAgentComment (admin inbox / agent wakeup), flipping the run
 			//       to a success. This is the deterministic backstop to the completeness
 			//       stop-hook judge (best-effort, model-dependent).
-			//   (2) an UNLINKED bold/leading-line address that reads like an ask
-			//       (`**slug** — … when you resume …`) — the wakes-no-one trap. We do NOT
-			//       auto-deliver or rewrite the agent's words to force a wake (that guesses
-			//       intent and overreaches). create_comment already warns the agent
-			//       interactively, but the final-message path skips that check, so surface
-			//       the same warning in the run log; the handoff is left undelivered.
+			//   (2) a NAME-ONLY address that reads like an ask — the unlinked bold/
+			//       leading-line form (`**slug** — … when you resume …`) or the passive
+			//       `@@slug` one (`Ready for @@slug review.`) — the wakes-no-one trap in
+			//       both its spellings. We do NOT auto-deliver or rewrite the agent's words
+			//       to force a wake (that guesses intent and overreaches). create_comment
+			//       already warns the agent interactively on both, but the final-message
+			//       path skips that check, so surface the same warning in the run log; the
+			//       handoff is left undelivered.
 			//   (3) a plain DIRECT ANSWER (no mention, no ask) to a human who addressed
 			//       this agent by replying to or @-mentioning it — the exact "give me the
 			//       link" case. The human asked and expects the answer in the thread, but
@@ -1718,10 +1726,19 @@ export async function runAgent(
 					const finalMessage = parser.getFinalAssistantMessage();
 					if (finalMessage?.trim()) {
 						const activeMentions = extractMentionSlugs(finalMessage);
-						// Unlinked bold/leading-line asks, scoped to the run team's roster +
-						// HQ instance agents + @admin (the slugs a mention here can wake).
+						// Name-only asks — a handoff written in a form that wakes nobody —
+						// scoped to the run team's roster + HQ instance agents + @admin (the
+						// slugs a mention here can wake). Both spellings count: the bare/bold
+						// name (`**slug** — …`) and the passive `@@slug`, which renders as a
+						// delivered-looking chip and is the likelier of the two to end a
+						// verdict report ("Ready for @@marketing-lead review.").
 						const roster = await resolveWarnableSlugs(deps.db, runTeamId, agent.id);
-						const unlinkedAsks = detectUnlinkedTeammateAsks(finalMessage, roster);
+						const nameOnlyAsks = Array.from(
+							new Set([
+								...detectUnlinkedTeammateAsks(finalMessage, roster),
+								...detectPassiveTeammateAsks(finalMessage, roster),
+							]),
+						);
 						// A run woken by a human addressing this agent directly (reply to its
 						// comment / @-mention) is expected to answer in the thread. The waking
 						// comment id lets us both check its author is human (not an agent — we
@@ -1732,7 +1749,7 @@ export async function runAgent(
 							(wakeupPayload?.source === WakeupSource.Reply ||
 								wakeupPayload?.source === WakeupSource.Mention) &&
 							wakingCommentId !== null;
-						if (activeMentions.length > 0 || unlinkedAsks.length > 0 || directQuestionWake) {
+						if (activeMentions.length > 0 || nameOnlyAsks.length > 0 || directQuestionWake) {
 							// Text comments this run posted, with their task, used to skip a mention
 							// it already delivered (the same extractor fireCommentWakeups uses) and to
 							// tell whether it already answered this task's thread (case 3).
@@ -1745,7 +1762,7 @@ export async function runAgent(
 								for (const slug of extractMentionSlugs(c.content)) delivered.add(slug);
 							}
 
-							if (activeMentions.length > 0 || unlinkedAsks.length > 0) {
+							if (activeMentions.length > 0 || nameOnlyAsks.length > 0) {
 								// (1) Deliver stranded active mentions verbatim.
 								const undeliveredActive = activeMentions.filter((slug) => !delivered.has(slug));
 								if (undeliveredActive.length > 0) {
@@ -1773,14 +1790,14 @@ export async function runAgent(
 									);
 								}
 
-								// (2) Warn about a stranded bold-name ask — do NOT deliver or rewrite.
-								const strandedAsks = unlinkedAsks.filter((slug) => !delivered.has(slug));
+								// (2) Warn about a stranded name-only ask — do NOT deliver or rewrite.
+								const strandedAsks = nameOnlyAsks.filter((slug) => !delivered.has(slug));
 								if (strandedAsks.length > 0) {
 									const named = strandedAsks.map((s) => `**${s}**`).join(', ');
 									const fixes = strandedAsks.map((s) => `@${s}`).join(', ');
 									emit(
 										'stdout',
-										`\n[runner] WARNING: this run's final message addresses ${named} by name only, with no active @-mention — a bare or bold name, or a sign-off gate like "awaiting <name> sign-off", renders as text and wakes no one, so the handoff was NOT delivered. Post a comment with an active mention (${fixes}) to reach them.\n`,
+										`\n[runner] WARNING: this run's final message addresses ${named} without an active @-mention — a bare or bold name, a passive @@<name>, or a sign-off gate like "awaiting <name> sign-off" / "ready for <name> review", renders as inert text or a delivered-looking chip and wakes no one, so the handoff was NOT delivered. Post a comment with an active mention (${fixes}) to reach them.\n`,
 									);
 								}
 							} else if (directQuestionWake && !posted.rows.some((c) => c.task_id === task.id)) {
@@ -2732,13 +2749,72 @@ export interface ProgressUpdateGoal {
 }
 
 export interface ProgressUpdateContext {
+	/** Due goals. May be empty — a progress-update run does not require goals. */
 	goals: ProgressUpdateGoal[];
+	/**
+	 * Deterministically-selected candidate tasks for the Progress page's three columns. Optional
+	 * so a caller that only wants the goal half (tests, previews) need not build them.
+	 */
+	activityCandidates?: ProgressActivityCandidates;
+}
+
+/** One candidate column rendered into the prompt, with the question its lines must answer. */
+const ACTIVITY_COLUMN_PROMPTS: {
+	kind: ProgressActivityKind;
+	heading: string;
+	answers: string;
+}[] = [
+	{
+		kind: 'actioned',
+		heading: 'Recently actioned (being worked now)',
+		answers: 'what is being accomplished here, and how far it has got',
+	},
+	{
+		kind: 'created',
+		heading: 'Recently created (newly filed)',
+		answers: 'what this sets out to accomplish, and why it is outstanding',
+	},
+	{
+		kind: 'closed',
+		heading: 'Recently closed (finished)',
+		answers: 'what was accomplished - the outcome that matters to the project',
+	},
+];
+
+/**
+ * Render the candidate tasks for one column as compact prompt lines. Tolerates a missing or
+ * partial candidates object — this is a pure formatter, and a column with nothing in it should
+ * render as "nothing yet" rather than throw.
+ */
+function renderActivityCandidates(candidates?: Partial<ProgressActivityCandidates>): string[] {
+	const parts: string[] = [];
+	for (const col of ACTIVITY_COLUMN_PROMPTS) {
+		const rows = candidates?.[col.kind] ?? [];
+		parts.push(`### ${col.heading}`);
+		parts.push(`Each line answers: *${col.answers}.*`);
+		if (rows.length === 0) {
+			parts.push('- (nothing yet - omit this column)');
+		} else {
+			for (const r of rows) {
+				const meta = [r.status, r.actor].filter(Boolean).join(' · ');
+				parts.push(
+					`- \`${r.identifier}\` ${r.title}${meta ? ` — ${meta}` : ''}` +
+						(r.excerpt ? `\n  > ${r.excerpt.replace(/\s+/g, ' ').trim()}` : ''),
+				);
+			}
+		}
+		parts.push('');
+	}
+	return parts;
 }
 
 /**
- * The user-message body for a Captain progress-update run. Lists every due goal with its current
- * estimate and instructs the Captain to assess each and call `update_goal_progress`. No task is
- * attached — the run exists only to refresh goal status.
+ * The user-message body for a Captain progress-update run. No task is attached.
+ *
+ * The run's primary job is refreshing the project's **Progress page** — the high-level summary and
+ * the three activity columns — which happens on every progress-update run whether or not the
+ * project has goals. Goal assessment is the *second* section and is emitted only when goals are
+ * actually due, so a project that has never set one still gets a maintained Progress page.
  */
 export function buildProgressUpdatePrompt(
 	systemPrompt: string,
@@ -2746,38 +2822,71 @@ export function buildProgressUpdatePrompt(
 ): string {
 	const parts = [systemPrompt, '', '---', '', '## Progress Update', ''];
 	parts.push(
-		`${ctx.goals.length} goal${ctx.goals.length === 1 ? ' is' : 's are'} due for a progress check. ` +
-			'For each goal below, assess real progress toward the objective — read the relevant tickets, ' +
-			'comments, and repo state; do not just count tasks. Then call `update_goal_progress` once per ' +
-			'goal with a fresh `progress_percent` (0-100), a `health` (on_track / at_risk / off_track, ' +
-			'weighing progress against any target date), and a one-paragraph `status_blurb` describing where ' +
-			'the goal stands and the next step needed. The blurb renders as markdown on the Progress page — ' +
-			'reference tasks by their identifier (e.g. `HM-51`, which auto-links) and link PRs or other URLs ' +
-			'as markdown links (e.g. `[PR #502](https://github.com/owner/repo/pull/502)`). Do not lower a ' +
-			'percentage without explaining why in the blurb. A goal at 100% is not finished for tracking ' +
-			'purposes: progress can drop back below 100 if the measurement is no longer met, and some goals ' +
-			'are never-ending and measured continuously forever — so re-assess a 100% goal exactly like any ' +
-			'other and record your honest current estimate, even if that means lowering it (with the reason ' +
-			'in the blurb). When a goal needs a push, you can either comment on an existing in-flight ticket ' +
-			'(`create_comment`) to steer or unblock it, or file new task(s) (with `goal_id` set) when a ' +
-			'concrete next step is actually missing — existing backlog or in-flight work often already ' +
-			'covers the goal. Never re-open a closed ticket (done/cancelled are terminal and the system will ' +
-			'refuse it); if work must be redone, file a new ticket that references the old one by identifier. ' +
-			'Finally, call `update_project_progress` once to refresh the project progress summary shown at the ' +
-			'top of the Progress page: a concise markdown blurb leading with the key points in **bold**, then ' +
-			'a short narrative of what is done, in progress, and still to do (link only a few key tickets).',
+		"Refresh this project's Progress page. Call `update_project_progress` **once**, with a " +
+			'`summary` and the three activity columns (`actioned`, `created`, `closed`). The summary and ' +
+			'the columns sit at two different levels and must not repeat each other.',
 	);
 	parts.push('');
-	for (const g of ctx.goals) {
-		parts.push(`### ${g.title}  \`${g.id}\``);
-		parts.push(
-			`- Current: ${g.progress_percent}% · health ${g.health} · checked ${g.check_frequency}` +
-				(g.target_date ? ` · deadline ${g.target_date}` : ''),
-		);
-		if (g.status_blurb) parts.push(`- Last status: ${g.status_blurb}`);
-		parts.push(`- Achieved when: ${g.measurement || 'Not specified.'}`);
-		if (g.actions) parts.push(`- Suggested actions: ${g.actions}`);
+	parts.push(
+		'**The summary** is the high-level read: where the project stands, what has taken place, and ' +
+			'what is being planned. Lead with the key points in **bold**, then a short narrative. Do ' +
+			'**not** name individual tickets in it — no identifiers at all — because the columns below ' +
+			'already link the specific work. It overwrites the whole summary, so include everything that ' +
+			'should remain.',
+	);
+	parts.push('');
+	parts.push(
+		'**The columns** are that specific work: up to 5 tasks each, chosen from the candidates below, ' +
+			'each with a one-line summary you write yourself. Pitch every line at what it means for the ' +
+			'project — what was accomplished, what is being accomplished, or what is outstanding. Do ' +
+			"**not** paste the task's own progress summary or the first line of its description, and do " +
+			'not narrate mechanics (branches, CI, who commented when, review round-trips). A reader ' +
+			'should be able to read the three columns top to bottom and come away knowing where the ' +
+			"project stands. Drop any candidate that is not worth a reader's attention rather than " +
+			'padding a column to five, and omit a column entirely if it has nothing in it.',
+	);
+	parts.push('');
+	parts.push('## Candidate tasks');
+	parts.push('');
+	parts.push(...renderActivityCandidates(ctx.activityCandidates));
+
+	// Goals are an optional layer on top of progress: this section only exists when some are due.
+	if (ctx.goals.length > 0) {
+		parts.push('---');
 		parts.push('');
+		parts.push('## Goals due for a check');
+		parts.push('');
+		parts.push(
+			`${ctx.goals.length} goal${ctx.goals.length === 1 ? ' is' : 's are'} also due for a progress check. ` +
+				'For each goal below, assess real progress toward the objective — read the relevant tickets, ' +
+				'comments, and repo state; do not just count tasks. Then call `update_goal_progress` once per ' +
+				'goal with a fresh `progress_percent` (0-100), a `health` (on_track / at_risk / off_track, ' +
+				'weighing progress against any target date), and a one-paragraph `status_blurb` describing where ' +
+				"the goal stands and the next step needed. The blurb renders as markdown on the goal's own page — " +
+				'reference tasks by their identifier (e.g. `HM-51`, which auto-links) and link PRs or other URLs ' +
+				'as markdown links (e.g. `[PR #502](https://github.com/owner/repo/pull/502)`). Do not lower a ' +
+				'percentage without explaining why in the blurb. A goal at 100% is not finished for tracking ' +
+				'purposes: progress can drop back below 100 if the measurement is no longer met, and some goals ' +
+				'are never-ending and measured continuously forever — so re-assess a 100% goal exactly like any ' +
+				'other and record your honest current estimate, even if that means lowering it (with the reason ' +
+				'in the blurb). When a goal needs a push, you can either comment on an existing in-flight ticket ' +
+				'(`create_comment`) to steer or unblock it, or file new task(s) (with `goal_id` set) when a ' +
+				'concrete next step is actually missing — existing backlog or in-flight work often already ' +
+				'covers the goal. Never re-open a closed ticket (done/cancelled are terminal and the system will ' +
+				'refuse it); if work must be redone, file a new ticket that references the old one by identifier.',
+		);
+		parts.push('');
+		for (const g of ctx.goals) {
+			parts.push(`### ${g.title}  \`${g.id}\``);
+			parts.push(
+				`- Current: ${g.progress_percent}% · health ${g.health} · checked ${g.check_frequency}` +
+					(g.target_date ? ` · deadline ${g.target_date}` : ''),
+			);
+			if (g.status_blurb) parts.push(`- Last status: ${g.status_blurb}`);
+			parts.push(`- Achieved when: ${g.measurement || 'Not specified.'}`);
+			if (g.actions) parts.push(`- Suggested actions: ${g.actions}`);
+			parts.push('');
+		}
 	}
 	return parts.join('\n');
 }

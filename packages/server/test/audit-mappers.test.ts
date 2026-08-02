@@ -179,6 +179,67 @@ describe('mapEventToAudit', () => {
 		});
 	}
 
+	// Archival shares the `updated` action with a content edit, so `details` is
+	// what tells them apart — and the task/run are what trace an agent's
+	// self-serve restore back to the run that did it.
+	it('carries the archived flag and run attribution on an asset restore', () => {
+		const audit = mapEventToAudit({
+			type: 'asset.archived',
+			assetId: 'as9',
+			filename: 'reports/q3.html',
+			archived: false,
+			taskId: 't9',
+			runId: 'r9',
+			...scope,
+			...actor,
+		});
+		expect(audit?.entityType).toBe(AuditEntityType.Asset);
+		expect(audit?.action).toBe(AuditAction.Updated);
+		expect(audit?.entityId).toBe('as9');
+		expect(audit?.details).toMatchObject({
+			filename: 'reports/q3.html',
+			archived: false,
+			task_id: 't9',
+			run_id: 'r9',
+		});
+	});
+
+	it('maps a doc archive to its own event, distinguishable from an edit', () => {
+		const archived = mapEventToAudit({
+			type: 'document.archived',
+			documentId: 'd9',
+			documentType: 'project_doc',
+			slug: 'spec.md',
+			title: 'Spec',
+			archived: true,
+			taskId: 't9',
+			runId: 'r9',
+			...scope,
+			...actor,
+		});
+		expect(archived?.entityType).toBe(AuditEntityType.Document);
+		expect(archived?.action).toBe(AuditAction.Updated);
+		expect(archived?.entityId).toBe('d9');
+		expect(archived?.details).toMatchObject({
+			slug: 'spec.md',
+			title: 'Spec',
+			archived: true,
+			task_id: 't9',
+			run_id: 'r9',
+		});
+
+		// A content edit writes no `archived` key, so the two never collide.
+		const edited = mapEventToAudit({
+			type: 'document.updated',
+			documentId: 'd9',
+			documentType: 'project_doc',
+			slug: 'spec.md',
+			...scope,
+			...actor,
+		});
+		expect(edited?.details).not.toHaveProperty('archived');
+	});
+
 	it('attributes system-prompt doc edits to the agent entity', () => {
 		const audit = mapEventToAudit({
 			type: 'document.updated',

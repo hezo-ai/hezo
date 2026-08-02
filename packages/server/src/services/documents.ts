@@ -11,6 +11,9 @@ export interface DocumentAuditContext {
 	actorType?: AuditActorType;
 	/** Set when the actor is an API key. */
 	actorApiKeyId?: string | null;
+	/** The agent run's task/run, when the mutation came from one — attribution for the audit row. */
+	taskId?: string | null;
+	runId?: string | null;
 }
 
 function emitDocumentEvent(
@@ -195,25 +198,44 @@ export interface UpsertDocumentInput {
 	audit?: DocumentAuditContext;
 }
 
+export type UpsertDocumentResult =
+	| { status: 'written'; row: DocumentRow }
+	/** The doc is archived — nothing was written; the caller reports "restore it first". */
+	| { status: 'archived'; row: DocumentRow };
+
+/**
+ * Create the scoped document, or replace its content when it already exists.
+ *
+ * An **archived** doc is refused (`status: 'archived'`, no revision recorded, no
+ * review comments wiped): archival keeps the slug reserved, so writing would
+ * silently resurrect retired content. The rule lives here rather than at each
+ * call site so every writer inherits it - including the approved-PRD handler and
+ * the template appliers, which never had a check of their own. Only project docs
+ * are ever archived, so it is a no-op for agent system prompts and team prefs.
+ */
 export async function upsertDocument(
 	db: Db,
 	wsManager: WebSocketManager | undefined,
 	input: UpsertDocumentInput,
-): Promise<DocumentRow> {
+): Promise<UpsertDocumentResult> {
 	const where = scopeWhere(input.scope, '');
-	const existing = await db.query<{ id: string; content: string }>(
-		`SELECT id, content FROM documents WHERE ${where.sql}`,
-		where.params,
-	);
-
-	const action: 'INSERT' | 'UPDATE' = existing.rows.length === 0 ? 'INSERT' : 'UPDATE';
 
 	let clearedReviewComments = false;
-	const row = await withTransaction(db, async () => {
+	let existedBefore = false;
+	const result = await withTransaction(db, async (): Promise<UpsertDocumentResult> => {
+		const existing = await db.query<{ id: string; content: string; archived_at: string | null }>(
+			`SELECT id, content, archived_at FROM documents WHERE ${where.sql}`,
+			where.params,
+		);
 		if (existing.rows.length === 0) {
-			return await insertDocument(db, input);
+			return { status: 'written', row: await insertDocument(db, input) };
 		}
+		existedBefore = true;
 		const prior = existing.rows[0];
+		if (prior.archived_at !== null) {
+			const asIs = await db.query<DocumentRow>('SELECT * FROM documents WHERE id = $1', [prior.id]);
+			return { status: 'archived', row: asIs.rows[0] };
+		}
 		if (prior.content !== input.content) {
 			await recordRevision(
 				db,
@@ -241,8 +263,12 @@ export async function upsertDocument(
 				prior.id,
 			],
 		);
-		return updateResult.rows[0];
+		return { status: 'written', row: updateResult.rows[0] };
 	});
+
+	if (result.status === 'archived') return result;
+	const row = result.row;
+	const action: 'INSERT' | 'UPDATE' = existedBefore ? 'UPDATE' : 'INSERT';
 
 	broadcastRowChange(
 		wsManager,
@@ -258,7 +284,7 @@ export async function upsertDocument(
 		row,
 		input.authorMemberId,
 	);
-	return row;
+	return result;
 }
 
 /**
@@ -305,7 +331,25 @@ export async function setDocumentArchived(
 		'UPDATE',
 		row as unknown as Record<string, unknown>,
 	);
-	emitDocumentEvent(audit, 'document.updated', row, actorMemberId);
+	// Its own event, not `document.updated`: archiving and restoring must be
+	// distinguishable from a content edit in the activity log (an agent restoring
+	// a doc so it can overwrite it is exactly what an operator needs to see), and
+	// the task/run make it traceable to the run that did it.
+	audit?.events?.emit({
+		type: 'document.archived',
+		teamId: row.team_id,
+		projectId: row.project_id,
+		actorType: audit.actorType ?? 'admin',
+		actorMemberId,
+		actorApiKeyId: audit.actorApiKeyId ?? null,
+		documentId: row.id,
+		documentType: row.type,
+		slug: row.slug,
+		title: row.title,
+		archived,
+		taskId: audit.taskId ?? null,
+		runId: audit.runId ?? null,
+	});
 	return { row, changed: true };
 }
 
@@ -444,21 +488,35 @@ export interface RestoreRevisionInput {
 	audit?: DocumentAuditContext;
 }
 
+export type RestoreRevisionResult =
+	| { status: 'restored'; row: DocumentRow }
+	/** The doc is archived — its content is frozen until it is restored. */
+	| { status: 'archived' }
+	/** No such document, or no such revision on it. */
+	| { status: 'not_found' };
+
+/**
+ * Roll a document's content back to an earlier revision. Refused while the doc
+ * is archived, for the same reason a write is: an archived doc is read-only.
+ */
 export async function restoreRevision(
 	db: Db,
 	wsManager: WebSocketManager | undefined,
 	input: RestoreRevisionInput,
-): Promise<DocumentRow | null> {
-	const doc = await db.query<{ id: string; content: string; team_id: string }>(
-		'SELECT id, content, team_id FROM documents WHERE id = $1',
-		[input.documentId],
-	);
-	if (doc.rows.length === 0) return null;
+): Promise<RestoreRevisionResult> {
+	const doc = await db.query<{
+		id: string;
+		content: string;
+		team_id: string;
+		archived_at: string | null;
+	}>('SELECT id, content, team_id, archived_at FROM documents WHERE id = $1', [input.documentId]);
+	if (doc.rows.length === 0) return { status: 'not_found' };
+	if (doc.rows[0].archived_at !== null) return { status: 'archived' };
 	const target = await db.query<{ content: string }>(
 		'SELECT content FROM document_revisions WHERE document_id = $1 AND revision_number = $2',
 		[input.documentId, input.revisionNumber],
 	);
-	if (target.rows.length === 0) return null;
+	if (target.rows.length === 0) return { status: 'not_found' };
 
 	let clearedReviewComments = false;
 	const row = await withTransaction(db, async () => {
@@ -493,7 +551,22 @@ export async function restoreRevision(
 	);
 	if (clearedReviewComments) broadcastReviewCommentsCleared(wsManager, row);
 	emitDocumentEvent(input.audit, 'document.updated', row, input.restoredByMemberId);
-	return row;
+	return { status: 'restored', row };
+}
+
+/**
+ * Whether the scoped document is archived, or null when there is no such doc.
+ * A narrow read for callers that only need the flag — `getDocument` would pull
+ * the whole unbounded `content` column to answer it.
+ */
+export async function isDocumentArchived(db: Db, scope: DocumentScope): Promise<boolean | null> {
+	const where = scopeWhere(scope, '');
+	const r = await db.query<{ archived_at: string | null }>(
+		`SELECT archived_at FROM documents WHERE ${where.sql}`,
+		where.params,
+	);
+	if (r.rows.length === 0) return null;
+	return r.rows[0].archived_at !== null;
 }
 
 export async function getAgentSystemPrompt(

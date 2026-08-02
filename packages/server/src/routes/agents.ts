@@ -920,9 +920,11 @@ agentsRoutes.post('/projects/:projectId/agents/:agentId/system-prompt/restore', 
 		restoredByMemberId: null,
 		audit: { events: c.get('events'), actorType: actorTypeFromAuth(auth) },
 	});
-	if (!restored) return err(c, 'NOT_FOUND', 'Revision not found', 404);
+	// 'archived' is unreachable here — only project docs are ever archived — but
+	// the union makes that explicit rather than assumed.
+	if (restored.status !== 'restored') return err(c, 'NOT_FOUND', 'Revision not found', 404);
 
-	return ok(c, restored);
+	return ok(c, restored.row);
 });
 
 agentsRoutes.patch('/projects/:projectId/agents/:agentId', async (c) => {

@@ -171,6 +171,64 @@ describe('MCP project progress + goal run activity', () => {
 		expect((await res.json()).data.summary).toContain('Onboarding shipped');
 	});
 
+	// The summary and the three columns are one artifact from one run: written together, read
+	// together, and sharing a single `updated_at`.
+	it('writes the activity columns alongside the summary in one call', async () => {
+		const identifier = (
+			await db.query<{ identifier: string }>(
+				`INSERT INTO tasks (team_id, project_id, number, identifier, title, status, priority, labels)
+				 VALUES ($1, $2, 9100, 'BILL-1', 'Ship the billing split', 'in_progress'::task_status,
+				         'medium'::task_priority, '[]'::jsonb)
+				 RETURNING identifier`,
+				[teamId, projectId],
+			)
+		).rows[0].identifier;
+
+		const agent = await mintAgentToken(db, masterKeyManager, captainAgentId, teamId, null, {
+			projectId,
+		});
+		const updated = (await callTool(agent.token, 'update_project_progress', {
+			project: projectSlug,
+			summary: '**Billing is the long pole.**',
+			actioned: [{ task: identifier, summary: 'Payments can now take live cards end to end.' }],
+			closed: [{ task: 'ZZ-404', summary: 'This task does not exist.' }],
+		})) as {
+			activity: { actioned: { identifier: string; title: string; summary: string }[] };
+			unknown_tasks?: string[];
+		};
+
+		expect(updated.activity.actioned[0].identifier).toBe(identifier);
+		expect(updated.activity.actioned[0].title).toBe('Ship the billing split');
+		// An identifier that does not resolve comes back rather than vanishing.
+		expect(updated.unknown_tasks).toEqual(['ZZ-404']);
+
+		const res = await app.request(`/api/projects/${projectSlug}/progress`, {
+			headers: authHeader(token),
+		});
+		const body = (await res.json()).data;
+		expect(body.summary).toContain('Billing is the long pole');
+		expect(body.activity.actioned[0].summary).toBe('Payments can now take live cards end to end.');
+		expect(body.activity.closed).toEqual([]);
+	});
+
+	// A caller refreshing only the summary must not blank the columns beneath it.
+	it('leaves the stored columns alone when no lists are passed', async () => {
+		const agent = await mintAgentToken(db, masterKeyManager, captainAgentId, teamId, null, {
+			projectId,
+		});
+		await callTool(agent.token, 'update_project_progress', {
+			project: projectSlug,
+			summary: '**Summary only.**',
+		});
+
+		const res = await app.request(`/api/projects/${projectSlug}/progress`, {
+			headers: authHeader(token),
+		});
+		const body = (await res.json()).data;
+		expect(body.summary).toContain('Summary only');
+		expect(body.activity.actioned.length).toBe(1);
+	});
+
 	it('surfaces a run that created a task and commented on it for the goal', async () => {
 		// A fresh goal so the feed reflects only this run's activity.
 		const goalRes = await app.request(`/api/projects/${projectSlug}/goals`, {

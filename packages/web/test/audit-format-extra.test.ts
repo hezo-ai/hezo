@@ -300,3 +300,82 @@ describe('auditEntryLink — remaining targets', () => {
 		expect(auditEntryLink(entry({ entity_type: 'team' }))).toBeNull();
 	});
 });
+
+// Archive/restore rows share the `updated` action with a content edit, so the
+// sentence has to come from `details.archived`. Before this, every asset row
+// read "Uploaded ..." — including archives, deletes and deletion requests.
+describe('describeAuditEntry — archive lifecycle', () => {
+	test('names an asset archive and restore instead of calling them uploads', () => {
+		const archived = entry({
+			entity_type: 'asset',
+			action: 'updated',
+			entity_identifier: null,
+			details: { filename: 'reports/q3.html', archived: true },
+		});
+		expect(describeAuditEntry(archived)).toBe('Archived reports/q3.html');
+
+		const restored = entry({
+			entity_type: 'asset',
+			action: 'updated',
+			entity_identifier: null,
+			details: { filename: 'reports/q3.html', archived: false },
+		});
+		expect(describeAuditEntry(restored)).toBe('Restored reports/q3.html');
+	});
+
+	test('still describes a plain upload as an upload', () => {
+		const uploaded = entry({
+			entity_type: 'asset',
+			action: 'created',
+			entity_identifier: null,
+			ref_task_identifier: 'OP-7',
+			details: { filename: 'hero.png' },
+		});
+		expect(describeAuditEntry(uploaded)).toBe('Uploaded hero.png to OP-7');
+	});
+
+	test('reads the plural filenames key on deletes and deletion requests', () => {
+		const deleted = entry({
+			entity_type: 'asset',
+			action: 'deleted',
+			entity_identifier: null,
+			details: { filenames: ['old.png', 'older.png'] },
+		});
+		expect(describeAuditEntry(deleted)).toBe('Deleted old.png, older.png');
+
+		const requested = entry({
+			entity_type: 'asset',
+			action: 'requested',
+			entity_identifier: null,
+			ref_task_identifier: 'OP-9',
+			details: { filenames: ['old.png'] },
+		});
+		expect(describeAuditEntry(requested)).toBe('Requested deletion of old.png in OP-9');
+	});
+
+	test('distinguishes a doc archive/restore from a content edit', () => {
+		const archived = entry({
+			entity_type: 'document',
+			action: 'updated',
+			entity_identifier: null,
+			details: { slug: 'spec.md', title: 'Spec', archived: true },
+		});
+		expect(describeAuditEntry(archived)).toBe('Archived document Spec');
+
+		const restored = entry({
+			entity_type: 'document',
+			action: 'updated',
+			entity_identifier: null,
+			details: { slug: 'spec.md', title: 'Spec', archived: false },
+		});
+		expect(describeAuditEntry(restored)).toBe('Restored document Spec');
+
+		const edited = entry({
+			entity_type: 'document',
+			action: 'updated',
+			entity_identifier: null,
+			details: { slug: 'spec.md', title: 'Spec' },
+		});
+		expect(describeAuditEntry(edited)).toBe('Updated document Spec');
+	});
+});

@@ -240,9 +240,34 @@ Together these back the goal detail page's per-goal **run activity** feed (`list
 the progress-update runs that estimated *that* goal, created tickets linked to it, or commented on its
 linked tickets. During a progress-update run the Captain may comment on an in-flight ticket instead of
 filing a new one, and it can never re-open a terminal ticket (blocked in both the REST and MCP
-update paths — only the admin can). A separate Captain-maintained **project progress summary**
-(`projects.progress_summary` + `progress_summary_updated_at`, set via the `update_project_progress`
-MCP tool) is the markdown blurb shown at the top of the Progress page.
+update paths — only the admin can).
+
+**Progress page (independent of goals).** The Captain maintains the Progress page on
+`projects`: `progress_summary` (markdown blurb, deliberately naming no ticket identifiers) +
+`progress_activity` (jsonb) + a shared `progress_summary_updated_at`, all written by one
+`update_project_progress` MCP call in a single `UPDATE`, so summary and columns can never be
+observed half-updated. `progress_activity` is a **frozen snapshot** of the page's three
+recent-activity columns — `{actioned|created|closed: [{identifier, title, summary}]}`, ≤5 each —
+where each `summary` is prose the Captain wrote for that ticket at project altitude (what was
+accomplished / is being accomplished / is outstanding), not a copy of the ticket's own fields.
+Identifier and title are captured at write time, so rendering needs no join and a ticket deleted
+between runs simply renders its captured row. `buildProgressActivitySnapshot`
+(`services/project-activity.ts`) validates on write and returns unresolvable identifiers to the
+caller; `readProgressActivity` tolerates the `{}` default.
+In the web app the page is `/projects/$projectId/progress`, with **Goals nested beneath it**
+(`/progress/goals`, `/progress/goals/$goalId`) so the URL matches the sidebar disclosure and the
+breadcrumb; the pre-nesting `/goals` paths survive as redirect-only routes. The sidebar's Progress
+row carries `subItems: [goals]` and, because a nested sub-item fuzzy-matches its parent, the parent
+row highlights on an *exact* match so only one row reads as active (`sidebar-nav.tsx`).
+The *selection* half is deterministic and stays in SQL — `buildProgressActivityCandidates` builds
+the candidate lists handed to the run prompt: actioned ranks open tickets by
+`GREATEST(tasks.updated_at, latest run on the ticket)` (a progress-update run carries
+`task_id IS NULL`, so it structurally cannot lift a ticket into its own report), created is
+`created_at DESC`, and closed resolves each candidate's real close time from the latest
+`status_change → done` system comment (handling re-opens, cascade closes via
+`content.triggered_by_actor_id`, and a missing comment by falling back to `updated_at`);
+`cancelled` is excluded from the page entirely. Migration 049 adds the column plus the partial
+indexes each candidate window needs.
 
 **Secrets, OAuth, connectors.** `secrets` stores AES-256-GCM ciphertext gated by
 `allowed_hosts` (§ 7). `oauth_connections` records connected GitHub/SaaS accounts; their
@@ -267,11 +292,21 @@ execution (status, timing, tokens, cost, captured logs, `wakeup_id` provenance, 
 success-gate flags `produced_output`/`reported_no_work`). A `kind` enum distinguishes a
 normal `task` run from a `progress_update` run (the Captain's task-less goal assessment —
 `task_id IS NULL`); progress-update runs reuse the full run lifecycle but skip the task comment,
-status flip, and code worktree. They fire on the Captain's heartbeat when goals are due
-(`JobManager.tryDispatchProgressUpdate` → `getDueGoals`), and can also be triggered on demand from
-the Goals page's **Run now** button (`POST /projects/:projectId/goals/run-now` →
-`JobManager.dispatchProgressUpdateNow`, which resolves the project's Captain and reuses the same
-due-goal logic). If **Run now** hits a *transient* conflict — the Captain is already running, the
+status flip, and code worktree. **They do not depend on goals**: a run is due on the Captain's
+heartbeat when a goal is due (`getDueGoals`) *or* when the Progress page has gone stale and a task
+has moved since (`JobManager.isProgressSnapshotDue`, over `PROGRESS_REFRESH_INTERVAL_HOURS`). Its
+anchor is `COALESCE(GREATEST(progress_summary_updated_at, last progress-update run), created_at)`:
+the **run** term is what stops a run that ended without calling `update_project_progress` from
+leaving the page stale and re-dispatching every heartbeat, and `created_at` is a fallback (not a
+third `GREATEST` argument) so a new project runs its planning task first while a recently-created
+project with a genuinely stale page still qualifies. The activity term keeps dormant projects from
+being woken to rewrite an identical summary. Neither being true yields
+`reason: 'not_due'`. The run prompt (`buildProgressUpdatePrompt`) is correspondingly
+progress-first: the Progress page rebuild plus candidate tickets always, and a due-goal section
+only when `ctx.goals` is non-empty. A run can also be triggered on demand from the Progress page's
+**Run now** button (`POST /projects/:projectId/progress/run-now` →
+`JobManager.dispatchProgressUpdateNow`), which passes `manual` to skip the due-check entirely —
+pressing the button always runs. If **Run now** hits a *transient* conflict — the Captain is already running, the
 instance is at its active-container limit, or a launch race — the run is
 **queued** rather than erroring: a task-less `agent_wakeup_requests` row tagged
 `payload.trigger='progress_update_now'` (deduped per Captain by `createProgressUpdateWakeup`, so
@@ -279,7 +314,7 @@ instance is at its active-container limit, or a launch race — the run is
 also makes such a wakeup guard against fall-through: when it is finally dispatched, `activateAgent`
 runs *only* the progress update — it never lets the Captain pick up ordinary task work — and completes
 the wakeup as a no-op if nothing is due by then. A queued run is listed/cancelled through
-`GET`/`POST /projects/:projectId/goals/queued-run[/:wakeupId/cancel]` (scheduled heartbeat checks
+`GET`/`POST /projects/:projectId/progress/queued-run[/:wakeupId/cancel]` (scheduled heartbeat checks
 carry no trigger tag, so they are never surfaced or cancellable here). The isolation is
 two-way: `createProgressUpdateWakeup` never coalesces onto a heartbeat wakeup, and
 `createWakeup`'s generic coalescing skips marker-carrying (`payload.trigger`) rows — so a
@@ -596,16 +631,37 @@ surface is active-only: the web pages default to an Active filter (Active/Archiv
 client-side; the REST lists return `archived_at` for all rows), the MCP doc/asset list+read
 tools take a `filter` key defaulting to `'active'` (`'archived'`/`'all'` opt in), full-text
 search, doc autocomplete, and the `{{project_docs_context}}` run manifest all exclude
-archived rows, and archived docs are read-only (writes/status/revision-restore return 409 /
-tool errors until restored). **Hard deletion is human/admin-only** (agents get 403 on both
+archived rows. **An archived row is frozen, not merely hidden**, and that rule lives in the
+two upsert helpers rather than at each call site: `upsertProjectAsset` (`lib/asset-name.ts`)
+and `upsertDocument` (`services/documents.ts`) each re-read `archived_at` **inside** the
+transaction that does the write and return a `status: 'archived'` discriminant instead of
+writing, so there is no check-then-write race and a new caller inherits the refusal (this
+is what closed the approved-`update_prd` handler and `restoreRevision`, which previously had
+no check at all). Callers map that status to their own surface error — 409 `ASSET_ARCHIVED`
+/ 409 `CONFLICT` on REST, an "unarchive it first" string on MCP — and the write paths keep a
+cheap pre-flight (`archivedAssetHolderId`, `isDocumentArchived`) so a 10 MB blob (possibly an
+S3 PUT) isn't spent on a doomed call. Beyond content writes, `PATCH …/assets/:assetId
+{ folder }` refuses an archived asset (409 `ASSET_ARCHIVED`, matching `move_project_asset`,
+whose client-side counterpart is the hidden Move action on archived cards),
+`move_project_asset`/`copy_project_asset` refuse an archived source, asset review mutations
+403, and `read_project_asset`'s width/height self-heal reports the parsed dimensions but
+skips the `UPDATE` on an archived row. **Hard deletion is human/admin-only** (agents get 403 on both
 DELETE routes; in the UI Delete only appears on archived items — a deliberate two-step).
 The legacy `request_asset_deletion` tool is gone, but its resolve endpoint
 (`POST …/comments/:commentId/resolve-asset-deletion`, agents 403) and comment renderer
 remain so pending `asset_deletion_request` cards from older instances stay resolvable —
 approve deletes rows + blobs server-side, deny keeps everything, both wake the requester
 (`asset_deletion_resolved`). `asset.created`, `asset.archived`, `asset.deletion_requested`,
-and `asset.deleted` domain events feed the audit log (doc archival rides
-`document.updated`); asset row-changes broadcast on the team room so the Assets page
+and `asset.deleted` domain events feed the audit log, and doc archival emits its own
+`document.archived` (**not** `document.updated`, which would render identically to a content
+edit). Both archival events carry `archived: boolean` plus `taskId`/`runId`, mapped into
+`audit_log.details` as `archived`/`task_id`/`run_id` — no new `AuditAction` (existing archive
+rows are already `updated`, and `details.archived` is the discriminator), so no migration:
+`action`/`entity_type` are plain `TEXT` and `details` is `JSONB`. `task_id` also feeds the
+audit-log route's existing join onto `tasks`, so an agent's archive/restore deep-links to its
+task for free. `packages/web/src/lib/audit-format.ts` reads the flag to render
+"Archived"/"Restored" (previously every asset row read "Uploaded", including archives and
+deletes). Asset row-changes broadcast on the team room so the Assets page
 live-refreshes. `project_icons`
 (1:1 with `projects`, `ON DELETE CASCADE`) holds an optional per-project icon image —
 unlike assets the **bytes live in the DB** (a `BYTEA` column) in a dedicated table so the
@@ -994,6 +1050,33 @@ which checks for a `docker` binary on PATH to tell *not installed* from
 plus a pointer to `--sandbox-backend` as the alternative to a local daemon.
 `HEZO_SKIP_DOCKER` (the same flag that swaps in the in-process fake docker for dev/tests)
 bypasses it by taking the fake branch in `startup()` before the backend is opened.
+
+**A vault-backed credential defers the open to unlock, and only then.** The provider API
+key lives in the `secrets` vault, encrypted with the master key, which is memory-only — so
+an instance, which comes back **locked** after every restart, cannot read it at the moment
+the backend is chosen. Making that fatal meant a managed backend could not survive a
+restart at all: a stored key read back as "no API key is configured", and a
+`HEZO_DAYTONA_API_KEY` supplied at launch threw "the instance is locked" from
+`storeDaytonaApiKey`. Both aborted startup on every boot, and the only workaround was
+passing the master key on the command line — the one thing Hezo never asks an operator to
+persist.
+
+So `resolveStartupBackend` returns `deferred` when (and only when) the backend needs a
+credential, none is in hand, the vault is locked, and `hasDaytonaApiKey` says one is on
+file — an existence check, so it never decrypts. `startup()` then holds a **pending
+engine** (`sandbox/pending.ts`: a `Proxy` whose every member throws `SandboxBackendError`
+naming the unlock) and `masterKeyManager.onUnlock` runs
+`completeSandboxBackendOnUnlock`, which opens for real and `holder.swap`s it in — ahead of
+`startUnlockedServices`, so the job manager, the chat manager and the HQ warm-up each start
+against a real engine and never observe the deferral. Nothing is lost by waiting: those
+consumers already start on that same unlock, because a locked instance cannot run an agent
+whichever backend it is on. The launch-supplied key that could not be written is flushed to
+the vault there too, guarded on an actual change so a boot does not leave a dead tuple.
+
+The two cases this deliberately does **not** cover are the ones that must stay loud. A
+provider selected with no credential anywhere is a misconfiguration that unlocking cannot
+fix, so it still aborts startup. And a deferred open that fails leaves the pending engine
+in place rather than falling back to Docker, so every container operation reports it.
 
 There is deliberately **no** earlier gate at the top of `index.ts`. One used to sit there,
 before the database was open, which meant it could only read the *launch flag* — while the
@@ -2328,8 +2411,8 @@ delivered verbatim via `postAgentComment` — the same insert + broadcast + `fir
 path `create_comment` uses — so it fans out to the admin inbox / agent wakeup instead of
 vanishing (the agent wrote an explicit, unambiguous wake; delivering it is safe). This flips an
 otherwise no-op run to a success and is why the one-block judge ceiling is acceptable.
-(2) an **unlinked bold/leading-line address that reads like an ask** (`**slug** — … when you
-resume …`, the name after a short routing label like `Next step: slug — …`, or an
+(2) a **name-only address that reads like an ask** - the unlinked bold/leading-line form
+(`**slug** — … when you resume …`, the name after a short routing label like `Next step: slug — …`, or an
 action-assignment heading/label line like `## Required actions for slug` — where the phrase on
 the line is itself the ask signal, since the imperative list below it carries none — or a **name
 bound directly to a sign-off/approval gate mid-sentence** (`awaiting slug sign-off`, `needs
@@ -2343,7 +2426,10 @@ both the phrasings that name the recipient ("ready for review", "all yours", "ha
 "passing this to …", "take it from here") and the ones that name only the gate being waited on
 ("awaiting review", "for review", "pending approval", "sign-off needed") — the latter is the same
 handoff with its `ready` opener dropped, and it carries no pronoun, no imperative and no `?` at
-all; a bold name written for mere emphasis is never touched) is the wakes-no-one
+all; a bold name written for mere emphasis is never touched) — **or** the same address written in
+the **passive** `@@slug` form, via `detectPassiveTeammateAsks`, which is the likelier spelling of
+a closing verdict line (`APPROVED. Ready for @@marketing-lead review.`) and wakes exactly as many
+people as the bare name does. Either is the wakes-no-one
 trap — but the net does **not** rewrite the
 agent's words or auto-deliver it (guessing intent to force a wake overreaches). `create_comment`
 already warns the agent interactively when it posts such a comment; the final-message path skips
@@ -2374,17 +2460,24 @@ backticked-entity check would otherwise tell the author to un-backtick exactly t
 `detectQuotedMentionTokens` subtracts backticked-and-narrated slugs from its candidates, so the
 two advisories can never contradict each other.
 
-`detectPassiveTeammateAsks` gates its two addressing forms differently, because they differ in
+`detectPassiveTeammateAsks` gates its forms differently, because they differ in
 how ambiguous they are. A **leading-line** `@@slug — …` (including one behind a routing label,
 `Next step: @@slug — …`) is flagged **unconditionally, with no ask gate**: opening a line with a
 teammate reference and a separator is the *address* shape, and the address shape is reserved for
 active mentions — a reference you only mean to make belongs inside a sentence. This is what
 catches `@@admin — release is done.`, which is asking the admin to register the fact but carries
-no pronoun, no `please` and no `?`, so no ask gate could see it. An **emphasised** `**@@slug**`
-stays gated on `readsAsAsk` over its own paragraph(s), since bold marks attribution and headings
-as much as address. `SHARED_INSTRUCTIONS` teaches the matching rules: an active mention's shape
-is a line opening `@<slug> - ` then the ask, several recipients get one such line each, and a
-line never opens with `@@<slug> - `.
+no pronoun, no `please` and no `?`, so no ask gate could see it. An **action-assignment line**
+(`## Required actions for @@slug`) is likewise self-gating - the phrase on the line assigns the
+work. A **name bound directly to a sign-off/approval gate** (`Ready for @@slug review`, `awaiting
+@@slug sign-off`, `@@slug to approve`) is the mid-sentence case every address-position form
+misses, and it is the shape a review verdict ends on: it shares `hasNameBoundSignoffGate` with the
+bare-name detector, so `Ready for marketing-lead review.` and `Ready for @@marketing-lead review.`
+warn alike rather than the `@@` spelling being a way around the check. An **emphasised**
+`**@@slug**` stays gated on `readsAsAsk` over its own paragraph(s), since bold marks attribution
+and headings as much as address. `SHARED_INSTRUCTIONS` teaches the matching rules: an active
+mention's shape is a line opening `@<slug> - ` then the ask, several recipients get one such line
+each, a line never opens with `@@<slug> - `, and a baton-passing handoff ("ready for review") is
+an ask however stative its grammar.
 
 ---
 

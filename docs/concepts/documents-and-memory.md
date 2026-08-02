@@ -110,9 +110,12 @@ The list in the rail shows **Active** documents by default; the **Active / Archi
 pills under the filter box switch views, each with a live count, and archived entries carry
 an "Archived" chip. Opening an archived document shows a banner naming who archived it and
 when, with a one-click **Restore**. While archived, a document is **read-only** - no edits,
-status changes, or version restores until you restore it. (The repo-backed `AGENTS.md`
-entry is a file in your repository, not a project document - it's always visible and can't
-be archived.)
+status changes, or version restores until you restore it, and that holds for agents and
+for changes you had already approved. Archiving and restoring are both recorded in the
+project's [activity log](/docs/security/activity-log), separately from ordinary edits, and
+when an agent does either, the entry names the task and run it came from. (The repo-backed
+`AGENTS.md` entry is a file in your repository, not a project document - it's always
+visible and can't be archived.)
 
 **Deletion is permanent and admin-only.** Agents can never delete a document. The Delete
 action only appears on archived documents, so removing one for good is a deliberate

@@ -158,7 +158,13 @@ function lockup(spec: FrameSpec): string {
 /**
  * Build one icon variant as a standalone SVG string.
  *
- *  any        - rounded plate, frame at full size. The unmasked face: browser tabs, favicon.
+ *  any        - rounded plate, lockup inside the 80% safe circle. The unmasked face: browser
+ *               tabs, favicon, install dialogs. It carries the safe-circle lockup rather than
+ *               the full-size one because `any` is not reliably left unmasked: an Android
+ *               launcher handed this icon (Brave's home-screen shortcuts pick it over the
+ *               maskable variant) wraps it in an adaptive icon and crops, and at full size the
+ *               frame reached 110% of the safe radius - so the crop ate the frame outright and
+ *               clipped the glyph. Sized to the same budget as `maskable`, it survives that.
  *  maskable   - full bleed, no plate rounding, lockup inside the 80% safe circle. The launcher
  *               supplies the only rounded edge, so nothing nests inside its silhouette.
  *  monochrome - the maskable lockup as alpha only, for Android 13+ themed icons. No background:
@@ -177,7 +183,7 @@ export function iconSvg(variant: IconVariant): string {
 
 	switch (variant) {
 		case 'any':
-			return `${open}${plate(48)}${lockup(FULL_FRAME)}</svg>`;
+			return `${open}${plate(48)}${lockup(MASKED_FRAME)}</svg>`;
 		case 'maskable':
 			return `${open}${plate()}${lockup(MASKED_FRAME)}</svg>`;
 		case 'apple':

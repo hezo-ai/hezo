@@ -62,9 +62,9 @@
 				"design",
 				"analytics"
 			],
-			"version": 5,
+			"version": 7,
 			"roster_count": 7,
-			"latest_notes": "Captain now checks the team marketplace for a proven, fully-written role before authoring a hire's system prompt from scratch."
+			"latest_notes": "Captain: the planning-task lifecycle moves into a shared partial, so the rules for closing it out (and for reporting no work while its sub-tasks run) are now stated on every team rather than only where they happened to be written."
 		},
 		{
 			"slug": "investment",
@@ -127,9 +127,9 @@
 				"report",
 				"review"
 			],
-			"version": 5,
+			"version": 7,
 			"roster_count": 6,
-			"latest_notes": "Captain now checks the team marketplace for a proven, fully-written role before authoring a hire's system prompt from scratch."
+			"latest_notes": "Captain: the planning-task lifecycle moves into a shared partial, so the rules for closing it out (and for reporting no work while its sub-tasks run) are now stated on every team rather than only where they happened to be written."
 		},
 		{
 			"slug": "software-development",
@@ -211,7 +211,7 @@
 				"testing",
 				"security review"
 			],
-			"version": 11,
+			"version": 13,
 			"roster_count": 10,
 			"latest_notes": "Engineer, QA, Architect, DevOps and Security roles must build the planned mechanism once and never invent a fallback path - if the designated mechanism fails, fail loudly and ask the admin rather than quietly doing it another way."
 		}

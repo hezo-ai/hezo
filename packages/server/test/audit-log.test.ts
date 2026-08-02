@@ -63,6 +63,47 @@ describe('audit log', () => {
 		expect(entry.details).toEqual({ title: 'Test' });
 	});
 
+	// An archive/restore row records the run's task in `details.task_id`, which is
+	// what the route's join onto tasks reads — so the feed deep-links the row to
+	// the task whose run did it, with no extra column.
+	it('resolves ref_task_identifier from an archive row task_id', async () => {
+		const agentRes = await app.request(`/api/projects/${projectSlug}/agents`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Curator' }),
+		});
+		const agentId = (await agentRes.json()).data.id as string;
+
+		const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ project_id: projectId, title: 'Curation run', assignee_id: agentId }),
+		});
+		expect(taskRes.status).toBe(201);
+		const task = (await taskRes.json()).data as { id: string; identifier: string };
+
+		await auditLog(db, {
+			projectId,
+			actorType: 'agent',
+			actorMemberId: null,
+			action: 'updated',
+			entityType: 'asset',
+			entityId: null,
+			details: { filename: 'reports/q3.html', archived: false, task_id: task.id, run_id: 'r1' },
+		});
+
+		const res = await app.request(`/api/projects/${projectSlug}/audit-log?entity_type=asset`, {
+			headers: authHeader(token),
+		});
+		const body = await res.json();
+		const entry = body.data.find(
+			(e: Record<string, unknown>) =>
+				(e.details as Record<string, unknown>)?.filename === 'reports/q3.html',
+		);
+		expect(entry).toBeDefined();
+		expect(entry.ref_task_identifier).toBe(task.identifier);
+	});
+
 	it('filters by entity_type', async () => {
 		await auditLog(db, {
 			projectId,

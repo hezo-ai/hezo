@@ -116,6 +116,21 @@ Selecting a managed service Hezo cannot reach is **fatal at startup**. Hezo repo
 problem and exits rather than silently falling back to local Docker: an instance that
 quietly switched substrates would look healthy while doing something you did not ask for.
 
+### Restarting an instance on a managed service
+
+Your service's API key is kept encrypted, so Hezo can only read it once the instance is
+unlocked. Every restart comes back locked by design, which means Hezo connects to the
+service a moment after you unlock rather than during startup. Nothing is lost by that:
+agent runs do not start while the instance is locked either way.
+
+If the connection then fails, Hezo records the reason in the server log and stays
+disconnected. It never falls back to local Docker, so container operations report that
+failure instead of running somewhere you did not choose.
+
+Passing `--daytona-api-key` (or `HEZO_DAYTONA_API_KEY`) at startup works on a locked
+instance too. Hezo uses the key straight away for that run and saves it once you unlock,
+so later restarts no longer need it.
+
 See the [CLI reference](/docs/reference/cli#environment-variables) and the
 [Configuration reference](/docs/deployment/configuration) for the full list of flags and
 environment variables.

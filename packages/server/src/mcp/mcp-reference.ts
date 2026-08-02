@@ -126,7 +126,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	update_project_progress: {
 		category: 'Projects',
 		returns:
-			'`{ summary, updated_at }` after replacing the project’s progress summary (shown at the top of the Progress page). Returns `{ error }` if the project is HQ/internal (no progress summary) or the call is not from within an agent run.',
+			'`{ summary, activity, updated_at }` after replacing the Progress page - the summary and the three activity columns (`activity.actioned` / `.created` / `.closed`, each up to 5 entries of `{ identifier, title, summary }`). Adds `unknown_tasks` listing any identifier that does not resolve in the project, so a mistyped task is reported rather than silently dropped. Omitting all three lists leaves the stored columns untouched. Returns `{ error }` if the project is HQ/internal (no Progress page) or the call is not from within an agent run.',
 		auth: 'Captain only, and only from within a progress-update agent run.',
 	},
 
@@ -424,13 +424,13 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	archive_project_doc: {
 		category: 'Project docs & assets',
 		returns:
-			'`{ archived: true, filename, changed }` (`changed: false` when it was already archived - the call is idempotent), or `{ error }` if the file is not found. The archived doc leaves listings, search, and agent-run context but keeps its filename reserved and its revision history.',
+			'`{ archived: true, filename, changed }` (`changed: false` when it was already archived - the call is idempotent), or `{ error }` if the file is not found. The archived doc leaves listings, search, and agent-run context but keeps its filename reserved and its revision history. While archived it is read-only: no writes and no revision restores until unarchive_project_doc restores it.',
 		auth: 'Archival is the agent-facing soft delete; hard deletion of docs is admin-only in the web app.',
 	},
 	unarchive_project_doc: {
 		category: 'Project docs & assets',
 		returns:
-			'`{ archived: false, filename, changed }` (`changed: false` when it was already active), or `{ error }` if the file is not found.',
+			'`{ archived: false, filename, changed }` (`changed: false` when it was already active), or `{ error }` if the file is not found. Restoring is recorded in the project activity log, naming the task and run it came from - so restore a doc because it is genuinely back in use, not merely to get around the archived-write refusal.',
 	},
 	list_project_assets: {
 		category: 'Project docs & assets',
@@ -460,13 +460,13 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	archive_project_asset: {
 		category: 'Project docs & assets',
 		returns:
-			'`{ archived: true, reference: "assets/<path>", changed }` (`changed: false` when it was already archived - the call is idempotent), or `{ error }` if the asset is not found. The archived asset leaves listings and default reads but keeps its path reserved; existing `assets/<path>` references keep resolving.',
+			'`{ archived: true, reference: "assets/<path>", changed }` (`changed: false` when it was already archived - the call is idempotent), or `{ error }` if the asset is not found. The archived asset leaves listings and default reads but keeps its path reserved; existing `assets/<path>` references keep resolving. While archived it is read-only: it cannot be overwritten, moved, renamed, or reviewed until unarchive_project_asset restores it.',
 		auth: 'Archival is the agent-facing soft delete; hard deletion of assets is admin-only in the web app.',
 	},
 	unarchive_project_asset: {
 		category: 'Project docs & assets',
 		returns:
-			'`{ archived: false, reference: "assets/<path>", changed }` (`changed: false` when it was already active), or `{ error }` if the asset is not found.',
+			'`{ archived: false, reference: "assets/<path>", changed }` (`changed: false` when it was already active), or `{ error }` if the asset is not found. Restoring is recorded in the project activity log, naming the task and run it came from - so restore an asset because it is genuinely back in use, not merely to get around the archived-write refusal.',
 	},
 
 	// Costs

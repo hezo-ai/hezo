@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { extname, join, resolve } from 'node:path';
 import { API_BODY_MAX_BYTES, ATTACHMENT_MAX_BYTES } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
@@ -102,6 +102,10 @@ import { LogStreamBroker } from './services/log-stream-broker';
 import { registerGenericOAuthRefresh } from './services/oauth/generic-refresh';
 import { adminPasswordIsSet } from './services/password';
 import { PricingService } from './services/pricing';
+import {
+	completeSandboxBackendOnUnlock,
+	type StartupBackendResolution,
+} from './services/sandbox/backend-store';
 import { SandboxBackendHolder } from './services/sandbox/holder';
 import { openSandboxBackend } from './services/sandbox/open';
 import type { ContainerEngine } from './services/sandbox/types';
@@ -263,8 +267,12 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	// Still no dynamic failover. A backend that cannot be reached aborts startup
 	// exactly as before; the holder swaps *which* backend is current, never picks
 	// a second one because the first is down.
+	setStartupPhase('sandbox');
 	let initialEngine: ContainerEngine;
 	let sandboxBackendInfo: SandboxBackendInfo;
+	// Set when the backend's credential is in the locked vault, so the open has
+	// to wait for the unlock. Null on every other path, including Docker.
+	let deferredBackend: StartupBackendResolution | null = null;
 	if (process.env.HEZO_SKIP_DOCKER) {
 		// The fake needs the db (it synthesizes agent output), which is why this
 		// branch stays here rather than inside `openSandboxBackend`.
@@ -278,11 +286,30 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 			daytonaApiKey: config.daytonaApiKey,
 			daytonaApiUrl: config.daytonaApiUrl,
 		});
-		({ engine: initialEngine, info: sandboxBackendInfo } = await openSandboxBackend({
-			backend: resolved.backend,
-			daytonaApiKey: resolved.daytonaApiKey,
-			daytonaApiUrl: resolved.daytonaApiUrl,
-		}));
+		deferredBackend = resolved;
+		if (resolved.deferred) {
+			// The credential exists but only the vault has it, and an instance boots
+			// locked by design. Holding a pending engine until the unlock is what lets
+			// a managed backend survive a restart at all - the alternatives were
+			// failing every boot, or quietly running on Docker instead.
+			const { createPendingEngine, pendingUnlockMessage } = await import(
+				'./services/sandbox/pending.js'
+			);
+			const { redactSandboxApiUrl } = await import('./lib/sandbox-backend-info.js');
+			const { DEFAULT_DAYTONA_API_URL } = await import('./services/sandbox/daytona/client.js');
+			const display = redactSandboxApiUrl(resolved.daytonaApiUrl || DEFAULT_DAYTONA_API_URL);
+			initialEngine = createPendingEngine(pendingUnlockMessage(display));
+			sandboxBackendInfo = { backend: resolved.backend, display };
+			log.info(
+				`Sandbox backend: ${resolved.backend} (${display}) - connecting once the instance is unlocked`,
+			);
+		} else {
+			({ engine: initialEngine, info: sandboxBackendInfo } = await openSandboxBackend({
+				backend: resolved.backend,
+				daytonaApiKey: resolved.daytonaApiKey,
+				daytonaApiUrl: resolved.daytonaApiUrl,
+			}));
+		}
 	}
 	const { SandboxBackendHolder } = await import('./services/sandbox/holder.js');
 	const sandboxHolder = new SandboxBackendHolder({
@@ -446,7 +473,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		log.error('Failed to seed default team:', err);
 	}
 
-	masterKeyManager.onUnlock(() => {
+	function startUnlockedServices(): void {
 		jobManager
 			.reconcileOnStartup()
 			.catch((err) => log.error('Startup reconciliation failed:', err))
@@ -466,12 +493,33 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 			.reconcileOnStartup()
 			.catch((err) => log.error('CEO session reconciliation failed:', err))
 			.finally(() => chatSessionManager.start());
-		// Bring enabled external chat channels online (register webhooks / open
-		// gateways). Needs the master key (bot tokens) — hence after unlock.
+		// Bring enabled external chat channel adapters online (register webhooks /
+		// open gateways). Needs the master key (bot tokens) — hence after unlock.
 		trackBackground(
 			chatChannelRegistry
 				.startAll()
 				.catch((err) => log.error('Failed to start chat channels:', err)),
+		);
+	}
+
+	masterKeyManager.onUnlock(() => {
+		// Connecting the backend goes first, because everything in
+		// `startUnlockedServices` drives the container engine and a deferred open is
+		// still holding the pending one. Sequencing here is what keeps "deferred"
+		// invisible downstream: the job manager, the chat manager and the HQ warm-up
+		// each start against a real backend, exactly as they would have if the vault
+		// had been readable at boot.
+		const connected = deferredBackend
+			? completeSandboxBackendOnUnlock(db, masterKeyManager, sandboxHolder, deferredBackend)
+			: Promise.resolve();
+		trackBackground(
+			connected
+				// Not fatal to the process - this is long past startup - but not
+				// papered over either: the pending engine stays in place, so every
+				// container operation reports this instead of running somewhere
+				// unintended.
+				.catch((err) => log.error('Failed to connect the container backend after unlock:', err))
+				.then(startUnlockedServices),
 		);
 	});
 

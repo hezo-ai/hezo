@@ -2,7 +2,7 @@ import { DEFAULT_CONTAINER_DISK_GB, poolDiskCeilingBytes } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDataPreservationHarness, type DataPreservationHarness } from './helpers/migrate';
 
-const TARGET = '049_container_pool.sql';
+const TARGET = '050_container_pool.sql';
 
 interface Seeded {
 	running: string;
@@ -20,7 +20,7 @@ interface Seeded {
  * indistinguishable from today after the pool lands, so it is the thing worth
  * asserting rather than "the table exists".
  */
-describe('049_container_pool migration', () => {
+describe('050_container_pool migration', () => {
 	let h: DataPreservationHarness;
 	let seeded: Seeded;
 
@@ -174,7 +174,7 @@ describe('049_container_pool migration', () => {
  * terminal" is what makes that true without naming the new value - which the
  * same transaction could not use anyway.
  */
-describe('049_container_pool migration: chat session suspend', () => {
+describe('050_container_pool migration: chat session suspend', () => {
 	let h: DataPreservationHarness;
 	let memberId: string;
 	let otherMemberId: string;

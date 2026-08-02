@@ -154,10 +154,25 @@ const AUDIT_MAPPERS: AuditMappers = {
 		row(event, AuditAction.Updated, AuditEntityType.Asset, event.assetId, {
 			filename: event.filename,
 			archived: event.archived,
+			task_id: event.taskId ?? null,
+			run_id: event.runId ?? null,
 		}),
 	'document.created': mapDocument,
 	'document.updated': mapDocument,
 	'document.deleted': mapDocument,
+	// `details.archived` is the discriminator (as for assets) rather than a new
+	// AuditAction — existing archive rows are already recorded as `updated`, and a
+	// new action would split the history. `task_id` also lights up the audit-log
+	// route's join onto tasks, so the row deep-links to the run's task for free.
+	'document.archived': (event) =>
+		row(event, AuditAction.Updated, AuditEntityType.Document, event.documentId, {
+			document_type: event.documentType,
+			slug: event.slug ?? null,
+			title: event.title ?? null,
+			archived: event.archived,
+			task_id: event.taskId ?? null,
+			run_id: event.runId ?? null,
+		}),
 	'agent.created': mapAgent,
 	'agent.updated': mapAgent,
 	'agent.disabled': mapAgent,

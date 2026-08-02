@@ -95,15 +95,6 @@ function ContainerPage() {
 
 	return (
 		<div className="flex flex-col gap-5">
-			{/* Containers run on demand: agent runs and chats start this container
-			    automatically, and it stops again after the global idle timeout
-			    (Settings → Containers). The controls below are manual overrides. */}
-			<p className="text-[13px] text-text-2 max-w-[680px]">
-				This container starts automatically whenever an agent run or the assistant needs it, and
-				stops after sitting idle (configurable in Settings → Concurrency). Starting or stopping it
-				here is a manual override.
-			</p>
-
 			{/* Controls */}
 			<div className="flex flex-col gap-3 rounded-lg border border-border-subtle bg-surface px-4 py-3 sm:flex-row sm:items-center">
 				<div className="flex items-center gap-3">

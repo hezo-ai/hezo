@@ -38,6 +38,7 @@ import {
 	type McpMethodInfo,
 	matchesArchiveFilter,
 	normalizeAssetPath,
+	PROGRESS_ACTIVITY_PER_COLUMN,
 	REQUIRED_SYSTEM_PROMPT_VARS,
 	ReactionKind,
 	requiredSystemPromptVarsError,
@@ -58,7 +59,7 @@ import { readRunLogTail, runLogLengthSql } from '../db/run-log-chunks';
 import type { DomainEventBus } from '../events/bus';
 import { assertNoActiveRun } from '../lib/active-run';
 import { isHqInstanceAgent, isVirtualHqMemberInTeam } from '../lib/agent-roles';
-import { upsertProjectAsset } from '../lib/asset-name';
+import { archivedAssetHolderId, upsertProjectAsset } from '../lib/asset-name';
 import { assetSortOrderBy } from '../lib/asset-sort';
 import { signAgentAssetUrl } from '../lib/asset-urls';
 import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
@@ -146,6 +147,10 @@ import {
 } from '../services/hire-proposal';
 import { insertHireProposalComment } from '../services/hire-proposal-comment';
 import { getMarketplaceCatalog, getMarketplaceTeam } from '../services/marketplace';
+import {
+	buildProgressActivitySnapshot,
+	type ProgressActivityInput,
+} from '../services/project-activity';
 import { createProjectWithTeam } from '../services/project-create';
 import { completeProjectIntakeAfterProvisioning } from '../services/project-intake';
 import { ProjectProgressError, updateProjectProgress } from '../services/projects';
@@ -302,7 +307,8 @@ async function buildUnlinkedMentionWarning(
  * Returns a warning when a comment addresses a teammate with the PASSIVE mention
  * form (@@slug) yet the surrounding text reads like an ask — the passive form
  * links but notifies no one, so an intended handoff stalls silently. Only an
- * addressing use paired with a directed-ask signal is flagged (see
+ * addressing use paired with a directed-ask signal, or a name bound directly to a
+ * sign-off/approval gate ("Ready for @@slug review"), is flagged (see
  * detectPassiveTeammateAsks), so a deliberate passive reference is left alone.
  * Same scoping as buildUnlinkedMentionWarning; best-effort and non-blocking.
  */
@@ -322,8 +328,11 @@ async function buildPassiveMentionWarning(
 		`notifies no one, so no wakeup or admin-inbox alert was created. If you need them to ` +
 		`act on this ticket, edit this comment or post a follow-up with an active mention ` +
 		`(${fixes}). If you only meant to refer to them, keep the passive form but move the ` +
-		`reference inside the sentence: a line that opens with a teammate reference and a ` +
-		`dash is an address, and the address form is reserved for active mentions.`
+		`reference out of the handoff position: a line that opens with a teammate reference and ` +
+		`a dash is an address, and a name bound to a sign-off gate ("ready for <name> review", ` +
+		`"awaiting <name> sign-off", "<name> to approve") hands them the next action - both ` +
+		`shapes are reserved for active mentions, so a plain reference belongs inside a ` +
+		`sentence that asks for nothing.`
 	);
 }
 
@@ -976,6 +985,28 @@ const projectArg = () =>
 		);
 
 /**
+ * One activity column on `update_project_progress`. The three columns differ only in which tasks
+ * belong in them and what their line should answer, so the shape is declared once here.
+ */
+const progressActivityArg = (which: string, answers: string) =>
+	z
+		.array(
+			z.object({
+				task: z.string().describe('Task identifier, e.g. BE-2. Must exist in this project.'),
+				summary: z
+					.string()
+					.describe(
+						`One line, in your own words, answering: ${answers}. Pitch it at what this means for the project, not a log of what happened inside the task. Do not paste the task's own progress summary or description, and leave out mechanics like branches, CI and review round-trips.`,
+					),
+			}),
+		)
+		.max(PROGRESS_ACTIVITY_PER_COLUMN)
+		.optional()
+		.describe(
+			`Up to ${PROGRESS_ACTIVITY_PER_COLUMN} tasks ${which}, most significant first. Omit all three lists to leave the columns as they are.`,
+		);
+
+/**
  * Standard `filter` entry for doc/asset tools that can see archived items.
  * Defaults to 'active' so archived (soft-deleted) items stay invisible unless
  * a call explicitly asks for 'archived' or 'all'.
@@ -1470,14 +1501,17 @@ export function registerTools(
 	tool(
 		server,
 		'update_project_progress',
-		"Replace the project's progress summary shown at the top of the Progress page. Only the Captain does this, and only from within a progress-update run. Keep it a concise summary, not a backlog: lead with the key points in **bold**, then a short narrative of what is done, what is in progress, and what is still to do. You may reference a few of the most relevant tickets by their bare identifier (e.g. BE-2) - link sparingly. This overwrites the whole summary, so include everything that should remain.",
+		"Replace the whole Progress page for the project: the summary at the top and the three recent-activity columns beneath it. Only the Captain does this, and only from within a progress-update run. The summary and the columns work at two different levels and must not repeat each other. The SUMMARY is the high-level read: where the project stands, what has taken place, and what is being planned. Do NOT name individual tickets in it - no identifiers at all - because the columns below already link the specific work. The COLUMNS are that specific work: up to 5 tasks each in `actioned` (being worked now), `created` (newly filed) and `closed` (finished), each with a one-line `summary` you write yourself. Pitch every line at what it means for the project - what was accomplished, what is being accomplished, or what is outstanding - not a log of what happened inside the task; never paste the task's own progress summary or description, and leave out mechanics like branches, CI and review round-trips. A reader should be able to read the three columns top to bottom and know where the project stands. This overwrites the summary and all three columns, so include everything that should remain.",
 		{
 			project: projectArg(),
 			summary: z
 				.string()
 				.describe(
-					'Markdown summary of project progress. Lead with the key points in **bold**, then a short narrative of done / in-progress / to-do. Link only a few key tickets by identifier; keep it a summary.',
+					'Markdown summary of where the project stands: what has taken place and what is being planned. Lead with the key points in **bold**, then a short narrative. Do not reference ticket identifiers - the activity columns carry the specific tasks.',
 				),
+			actioned: progressActivityArg('being worked on right now', 'what is being accomplished'),
+			created: progressActivityArg('newly filed', 'what it sets out to accomplish, and why'),
+			closed: progressActivityArg('recently finished', 'what was accomplished'),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -1486,13 +1520,28 @@ export function registerTools(
 				return { error: 'update_project_progress can only be called from within an agent run' };
 			}
 			try {
-				return await updateProjectProgress(
+				// Omitting all three lists leaves the stored snapshot alone, so a caller refreshing
+				// only the summary never blanks the columns.
+				const lists = {
+					actioned: args.actioned as ProgressActivityInput[] | undefined,
+					created: args.created as ProgressActivityInput[] | undefined,
+					closed: args.closed as ProgressActivityInput[] | undefined,
+				};
+				const hasLists = Object.values(lists).some((l) => l !== undefined);
+				const snapshot = hasLists
+					? await buildProgressActivitySnapshot(db, scope.projectId, lists)
+					: null;
+				const result = await updateProjectProgress(
 					db,
 					scope.teamId,
 					scope.projectId,
 					args.summary as string,
 					wsManager,
+					snapshot?.activity,
 				);
+				// Report unresolvable identifiers rather than dropping the rows silently, so the
+				// Captain learns it named a task that does not exist in this project.
+				return snapshot?.unknown.length ? { ...result, unknown_tasks: snapshot.unknown } : result;
 			} catch (e) {
 				if (e instanceof ProjectProgressError) return { error: e.message };
 				throw e;
@@ -3982,7 +4031,7 @@ export function registerTools(
 				),
 			);
 
-			return { applied: true, document_id: doc.id };
+			return { applied: true, document_id: doc.row.id };
 		},
 		db,
 	);
@@ -4065,7 +4114,7 @@ export function registerTools(
 					changeSummary: u.change_summary,
 					authorMemberId: callerMemberId,
 				});
-				results.push({ index: i, agent_id: u.agent_id, slug, ok: true, document_id: doc.id });
+				results.push({ index: i, agent_id: u.agent_id, slug, ok: true, document_id: doc.row.id });
 				applied.push({ slug, change_summary: u.change_summary });
 			}
 
@@ -4161,7 +4210,7 @@ export function registerTools(
 				);
 			}
 
-			return { applied: true, document_id: doc.id, length: (args.content as string).length };
+			return { applied: true, document_id: doc.row.id, length: (args.content as string).length };
 		},
 		db,
 	);
@@ -4580,6 +4629,10 @@ export function registerTools(
 	const assetPathError = (raw: string) =>
 		`Invalid asset path '${raw}': up to ${ASSET_MAX_FOLDER_DEPTH} folder levels, each segment starting with a letter or digit (e.g. "launch/images/hero.png").`;
 
+	/** Refusal copy for a write aimed at a path an archived asset still holds. */
+	const archivedAssetWriteError = (filename: string) =>
+		`Asset 'assets/${filename}' exists but is archived - call unarchive_project_asset first to overwrite it, or write under a different path.`;
+
 	tool(
 		server,
 		'list_project_assets',
@@ -4728,15 +4781,11 @@ export function registerTools(
 			}
 
 			// An archived asset keeps its path reserved; overwriting it would
-			// silently resurrect (and clobber) soft-deleted content.
-			const archivedHolder = await db.query<{ id: string }>(
-				'SELECT id FROM assets WHERE project_id = $1 AND original_filename = $2 AND archived_at IS NOT NULL',
-				[projectId, filename],
-			);
-			if (archivedHolder.rows.length > 0) {
-				return {
-					error: `Asset 'assets/${filename}' exists but is archived - call unarchive_project_asset first to overwrite it, or write under a different path.`,
-				};
+			// silently resurrect (and clobber) soft-deleted content. The upsert
+			// refuses it transactionally too — this pre-flight just avoids spending
+			// the blob write on a doomed call.
+			if (await archivedAssetHolderId(db, projectId, filename)) {
+				return { error: archivedAssetWriteError(filename) };
 			}
 
 			// Capture raster-image pixel dimensions so read_project_asset /
@@ -4765,6 +4814,12 @@ export function registerTools(
 				await assets.delete(projectId, assetId).catch(() => {});
 				throw e;
 			}
+			if (result.status === 'archived') {
+				// Archived between the pre-flight and the upsert — the bytes we just
+				// stored have no row pointing at them.
+				await assets.delete(projectId, assetId).catch(() => {});
+				return { error: archivedAssetWriteError(filename) };
+			}
 			if (result.replacedAssetId) {
 				await assets.delete(projectId, result.replacedAssetId).catch(() => {});
 			}
@@ -4784,16 +4839,16 @@ export function registerTools(
 				);
 			}
 			broadcastRowChange(wsManager, wsRoom.team(teamId), 'assets', 'INSERT', {
-				id: result.id,
+				id: result.asset.id,
 				team_id: teamId,
 				project_id: projectId,
-				original_filename: result.original_filename,
+				original_filename: result.asset.original_filename,
 			});
 			return {
 				written: true,
-				id: result.id,
-				reference: `assets/${result.original_filename}`,
-				byte_size: result.byte_size,
+				id: result.asset.id,
+				reference: `assets/${result.asset.original_filename}`,
+				byte_size: result.asset.byte_size,
 				...(dims ? { width: dims.width, height: dims.height } : {}),
 			};
 		},
@@ -4896,14 +4951,20 @@ export function registerTools(
 							width = dims.width;
 							height = dims.height;
 							// Self-heal: persist so future reads / list_project_assets
-							// don't re-parse this pre-existing asset's blob.
-							await db
-								.query('UPDATE assets SET width = $1, height = $2 WHERE id = $3', [
-									dims.width,
-									dims.height,
-									asset.id,
-								])
-								.catch(() => {});
+							// don't re-parse this pre-existing asset's blob. Skipped on an
+							// archived row — nothing writes an archived asset, and an
+							// invariant with a carve-out is one no reader can rely on. The
+							// dimensions are still reported; only the caching is skipped,
+							// and archived reads are rare (explicitly opted into).
+							if (!archived) {
+								await db
+									.query('UPDATE assets SET width = $1, height = $2 WHERE id = $3', [
+										dims.width,
+										dims.height,
+										asset.id,
+									])
+									.catch(() => {});
+							}
 						}
 					}
 				}
@@ -5134,6 +5195,10 @@ export function registerTools(
 			assetId: asset.id,
 			filename,
 			archived,
+			// Attribution: an agent restoring an asset so it can overwrite it is
+			// exactly what the operator needs to trace back to a run.
+			taskId: auth.type === AuthType.Agent ? auth.taskId : null,
+			runId: auth.type === AuthType.Agent ? auth.runId : null,
 		});
 		broadcastRowChange(wsManager, wsRoom.team(scope.teamId), 'assets', 'UPDATE', {
 			id: asset.id,
@@ -5323,18 +5388,6 @@ export function registerTools(
 						'Project docs must be markdown (.md). Non-markdown files belong in the assets library, referenced as assets/<filename>.',
 				};
 			}
-			// An archived doc is read-only; writing would silently resurrect it.
-			const prior = await getDocument(db, {
-				type: DocumentType.ProjectDoc,
-				teamId: scope.teamId,
-				projectId: scope.projectId,
-				slug: args.filename as string,
-			});
-			if (prior?.archived_at) {
-				return {
-					error: `Doc '${args.filename}' is archived - call unarchive_project_doc first, or write under a different filename.`,
-				};
-			}
 			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 			const callerApiKeyId = apiKeyIdFromAuth(auth);
 			const doc = await upsertDocument(db, wsManager, {
@@ -5355,7 +5408,14 @@ export function registerTools(
 					actorApiKeyId: callerApiKeyId,
 				},
 			});
-			return { written: true, id: doc.id, filename: doc.slug };
+			// An archived doc is read-only; writing would silently resurrect it. The
+			// refusal comes from upsertDocument itself, so no caller can forget it.
+			if (doc.status === 'archived') {
+				return {
+					error: `Doc '${args.filename}' is archived - call unarchive_project_doc first, or write under a different filename.`,
+				};
+			}
+			return { written: true, id: doc.row.id, filename: doc.row.slug };
 		},
 		db,
 	);
@@ -5387,6 +5447,10 @@ export function registerTools(
 				events,
 				actorType: actorTypeFromAuth(auth),
 				actorApiKeyId: apiKeyIdFromAuth(auth),
+				// Attribution: an agent restoring a doc so it can overwrite it is
+				// exactly what the operator needs to trace back to a run.
+				taskId: auth.type === AuthType.Agent ? auth.taskId : null,
+				runId: auth.type === AuthType.Agent ? auth.runId : null,
 			},
 		);
 		if (!result) return { error: `File '${args.filename}' not found` };

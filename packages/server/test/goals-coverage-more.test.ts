@@ -752,7 +752,7 @@ describe('run-now dispatch and queued-run lifecycle', () => {
 			[captainId],
 		);
 		try {
-			const res = await ctx.app.request(`/api/projects/${projectSlug}/goals/run-now`, {
+			const res = await ctx.app.request(`/api/projects/${projectSlug}/progress/run-now`, {
 				method: 'POST',
 				headers: jsonHeaders(),
 				body: '{}',
@@ -770,7 +770,7 @@ describe('run-now dispatch and queued-run lifecycle', () => {
 			[captainId],
 		);
 		try {
-			const res = await ctx.app.request(`/api/projects/${projectSlug}/goals/run-now`, {
+			const res = await ctx.app.request(`/api/projects/${projectSlug}/progress/run-now`, {
 				method: 'POST',
 				headers: jsonHeaders(),
 				body: '{}',
@@ -792,7 +792,7 @@ describe('run-now dispatch and queued-run lifecycle', () => {
 		// limit: cap 1, held by a filler project's running container.
 		await setContainerCapacityForTest(ctx.db, 1);
 		await seedRunningContainerProject(ctx.db, 'cap-goals-more');
-		const res = await ctx.app.request(`/api/projects/${projectSlug}/goals/run-now`, {
+		const res = await ctx.app.request(`/api/projects/${projectSlug}/progress/run-now`, {
 			method: 'POST',
 			headers: jsonHeaders(),
 			body: '{}',
@@ -804,7 +804,7 @@ describe('run-now dispatch and queued-run lifecycle', () => {
 		expect(wakeupId).toBeTruthy();
 
 		// The queued run surfaces on the project-scoped queued-run endpoint.
-		const queued = await ctx.app.request(`/api/projects/${projectSlug}/goals/queued-run`, {
+		const queued = await ctx.app.request(`/api/projects/${projectSlug}/progress/queued-run`, {
 			headers: authHeader(token),
 		});
 		expect(queued.status).toBe(200);
@@ -813,27 +813,27 @@ describe('run-now dispatch and queued-run lifecycle', () => {
 
 		// Cancelling an unknown wakeup id is a 404 (no existence leak).
 		const unknown = await ctx.app.request(
-			`/api/projects/${projectSlug}/goals/queued-run/${crypto.randomUUID()}/cancel`,
+			`/api/projects/${projectSlug}/progress/queued-run/${crypto.randomUUID()}/cancel`,
 			{ method: 'POST', headers: jsonHeaders(), body: '{}' },
 		);
 		expect(unknown.status).toBe(404);
 
 		// Cancel the real one.
 		const cancel = await ctx.app.request(
-			`/api/projects/${projectSlug}/goals/queued-run/${wakeupId}/cancel`,
+			`/api/projects/${projectSlug}/progress/queued-run/${wakeupId}/cancel`,
 			{ method: 'POST', headers: jsonHeaders(), body: '{}' },
 		);
 		expect(cancel.status).toBe(200);
 		expect((await cancel.json()).data.cancelled).toBe(true);
 
-		const after = await ctx.app.request(`/api/projects/${projectSlug}/goals/queued-run`, {
+		const after = await ctx.app.request(`/api/projects/${projectSlug}/progress/queued-run`, {
 			headers: authHeader(token),
 		});
 		expect((await after.json()).data.queued).toBeNull();
 
 		// Cancelling again is a 409 — the wakeup is no longer queued.
 		const again = await ctx.app.request(
-			`/api/projects/${projectSlug}/goals/queued-run/${wakeupId}/cancel`,
+			`/api/projects/${projectSlug}/progress/queued-run/${wakeupId}/cancel`,
 			{ method: 'POST', headers: jsonHeaders(), body: '{}' },
 		);
 		expect(again.status).toBe(409);
@@ -842,21 +842,21 @@ describe('run-now dispatch and queued-run lifecycle', () => {
 		await clearContainerCapacityForTest(ctx.db);
 	});
 
-	it('reports no_due_goals as a valid 200 no-op once nothing is due', async () => {
-		// Mark every active goal as freshly checked with future/absent deadlines.
+	// "Run now" bypasses the due-check entirely, so freshly-checked goals are no longer a reason
+	// to no-op: the run still rebuilds the Progress page.
+	it('runs even when every goal was just checked', async () => {
 		await ctx.db.query(
 			`UPDATE goals SET last_checked_at = now(), target_date = NULL WHERE project_id = $1`,
 			[projectId],
 		);
-		const res = await ctx.app.request(`/api/projects/${projectSlug}/goals/run-now`, {
+		const res = await ctx.app.request(`/api/projects/${projectSlug}/progress/run-now`, {
 			method: 'POST',
 			headers: jsonHeaders(),
 			body: '{}',
 		});
 		expect(res.status).toBe(200);
 		const body = (await res.json()).data;
-		expect(body.dispatched).toBe(false);
-		expect(body.reason).toBe('no_due_goals');
+		expect(body.dispatched === true || body.queued === true).toBe(true);
 	});
 
 	it('accepts run-now from a superuser with no member row in the team (null triggered_by)', async () => {
@@ -866,14 +866,13 @@ describe('run-now dispatch and queued-run lifecycle', () => {
 			`INSERT INTO users (display_name, is_superuser) VALUES ('Outside Admin', true) RETURNING id`,
 		);
 		const outsiderToken = await signAdminJwt(ctx.masterKeyManager, user.rows[0].id);
-		const res = await ctx.app.request(`/api/projects/${projectSlug}/goals/run-now`, {
+		const res = await ctx.app.request(`/api/projects/${projectSlug}/progress/run-now`, {
 			method: 'POST',
 			headers: { ...authHeader(outsiderToken), 'content-type': 'application/json' },
 			body: '{}',
 		});
 		expect(res.status).toBe(200);
 		const body = (await res.json()).data;
-		expect(body.dispatched).toBe(false);
-		expect(body.reason).toBe('no_due_goals');
+		expect(body.dispatched === true || body.queued === true).toBe(true);
 	});
 });

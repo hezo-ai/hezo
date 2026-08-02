@@ -1,9 +1,11 @@
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
+import { upsertProjectAsset } from '../src/lib/asset-name';
 import type { Env } from '../src/lib/types';
 import { blobBytes, safeClose } from './helpers';
 import {
@@ -811,6 +813,47 @@ describe('MCP asset upload (POST /mcp/assets)', () => {
 		});
 		expect(res.status).toBe(409);
 		expect((await res.json()).error.code).toBe('ASSET_ARCHIVED');
+	});
+
+	// The route pre-check above is a fast path, not the rule. This drives the
+	// helper directly — the way any future caller would — to prove the refusal
+	// lives inside the transaction that does the write, not at each call site.
+	it('refuses the upsert helper itself, leaving the row and its review intact', async () => {
+		const upload = await uploadProjectAsset(
+			'helper-guard.txt',
+			'text/plain',
+			new TextEncoder().encode('original bytes'),
+		);
+		const assetId = (await upload.json()).data.id as string;
+		await app.request(`/api/projects/${projectId}/assets/${assetId}/review-comments`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ comment: 'please revise', quote: 'original' }),
+		});
+		await db.query('UPDATE assets SET archived_at = now() WHERE id = $1', [assetId]);
+
+		const result = await upsertProjectAsset(db, {
+			assetId: randomUUID(),
+			teamId,
+			projectId,
+			contentType: 'text/plain',
+			byteSize: 9,
+			sha256: 'deadbeef',
+			desiredName: 'helper-guard.txt',
+			uploadedByMemberId: null,
+		});
+
+		expect(result.status).toBe('archived');
+		const row = await db.query<{ id: string; byte_size: string; archived_at: string | null }>(
+			'SELECT id, byte_size, archived_at FROM assets WHERE original_filename = $1 AND project_id = $2',
+			['helper-guard.txt', projectId],
+		);
+		expect(row.rows[0].id).toBe(assetId);
+		expect(Number(row.rows[0].byte_size)).toBe('original bytes'.length);
+		expect(row.rows[0].archived_at).not.toBeNull();
+		// A refused write must not consume the pending review either.
+		const review = await db.query('SELECT 1 FROM review_comments WHERE asset_id = $1', [assetId]);
+		expect(review.rows.length).toBe(1);
 	});
 
 	it('rejects a path deeper than 2 folder levels', async () => {

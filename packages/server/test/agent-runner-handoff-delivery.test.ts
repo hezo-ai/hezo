@@ -493,6 +493,49 @@ describe('runAgent handoff-delivery guardrail', () => {
 		expect(run.rows[0].log_text).toContain(`@${otherSlug}`);
 	});
 
+	it('warns about a stranded PASSIVE "Ready for @@<slug> review" verdict but does not deliver or wake', async () => {
+		const other = await db.query<{ id: string; slug: string }>(
+			`SELECT ma.id, ma.slug FROM member_agents ma
+			 JOIN members m ON m.id = ma.id
+			 WHERE m.team_id = $1 AND ma.id <> $2 LIMIT 1`,
+			[teamId, agentId],
+		);
+		const { id: otherId, slug: otherSlug } = other.rows[0];
+		await db.query(`DELETE FROM agent_wakeup_requests WHERE member_id = $1`, [otherId]);
+
+		// The passive spelling of the same stranded handoff. `@@<slug>` renders as a
+		// delivered-looking chip, so the verdict reads as routed while waking nobody —
+		// the net has to treat it exactly like the bare name above, or the `@@` form
+		// becomes the way around the check.
+		const deps = makeDeps(
+			createMockDocker({
+				producesOutput: true,
+				execStart: streamResult(
+					`**Verdict:** APPROVED — the fix is correct and complete. Ready for @@${otherSlug} review.`,
+				),
+			}),
+		);
+
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+		expect(result.success).toBe(true);
+
+		// Not delivered, not rewritten, nobody force-woken.
+		const comments = await textComments(runIdOf(result));
+		expect(comments.rows.length).toBe(0);
+		const wakeups = await db.query(
+			`SELECT 1 FROM agent_wakeup_requests WHERE member_id = $1 AND source = 'mention'`,
+			[otherId],
+		);
+		expect(wakeups.rows.length).toBe(0);
+
+		const run = await db.query<{ log_text: string }>(
+			`SELECT ${runLogTextSql('heartbeat_runs.id')} AS log_text FROM heartbeat_runs WHERE id = $1`,
+			[result.heartbeatRunId],
+		);
+		expect(run.rows[0].log_text).toContain('wakes no one');
+		expect(run.rows[0].log_text).toContain(`@${otherSlug}`);
+	});
+
 	it('does not warn about the sign-off recap when the run already posted the @-mention ask this turn', async () => {
 		const other = await db.query<{ id: string; slug: string }>(
 			`SELECT ma.id, ma.slug FROM member_agents ma

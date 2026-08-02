@@ -185,8 +185,16 @@ projectsRoutes.get('/projects', async (c) => {
 	}
 
 	const result = await db.query(query, params);
+	// Drop the Progress page payload from the index. `p.*` picks up the Captain's
+	// `progress_summary` (unbounded markdown) and `progress_activity` (up to 15 authored lines),
+	// and this route lists *every* project for the rail, so leaving them in multiplies two
+	// unbounded columns by the project count on a request that fires constantly. Both are served
+	// in full by `GET /projects/:projectId/progress`, which is per-page; nothing reads them here.
 	const rows = await Promise.all(
-		result.rows.map((r) => withIconUrl(c, r as Record<string, unknown>)),
+		result.rows.map(async (r) => {
+			const { progress_summary, progress_activity, ...rest } = r as Record<string, unknown>;
+			return withIconUrl(c, rest);
+		}),
 	);
 	return ok(c, rows);
 });
@@ -531,8 +539,9 @@ projectsRoutes.get('/projects/:projectId', async (c) => {
 	return ok(c, { ...row, repos: repos.rows });
 });
 
-// The Captain-maintained progress summary shown at the top of the Progress page. Kept off the
-// project index (which lists every project) so the potentially-long summary is fetched per page.
+// The Captain-maintained Progress page payload: the high-level summary plus the three
+// recent-activity columns, both written in the same progress-update run. Kept off the project
+// index (which lists every project) so the potentially-long summary is fetched per page.
 projectsRoutes.get('/projects/:projectId/progress', async (c) => {
 	const projectId = c.get('projectId') as string;
 	const progress = await getProjectProgress(c.get('db'), projectId);

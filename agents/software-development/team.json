@@ -81,8 +81,16 @@
 	],
 	"changelog": [
 		{
-			"version": 11,
+			"version": 13,
 			"notes": "Engineer, QA, Architect, DevOps and Security roles must build the planned mechanism once and never invent a fallback path - if the designated mechanism fails, fail loudly and ask the admin rather than quietly doing it another way."
+		},
+		{
+			"version": 12,
+			"notes": "Captain: the planning-task lifecycle moves into a shared partial, so the rules for closing it out (and for reporting no work while its sub-tasks run) are now stated on every team rather than only where they happened to be written."
+		},
+		{
+			"version": 11,
+			"notes": "Captain now owns the project Progress page as a first-class duty: it rebuilds the page on every progress-update run whether or not the project has goals, writes a high-level summary that names no ticket identifiers, and authors a one-line, project-level summary for each task in the recently actioned / created / closed columns. Goals are now described as the optional layer on top."
 		},
 		{
 			"version": 10,

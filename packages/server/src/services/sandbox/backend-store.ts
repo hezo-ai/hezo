@@ -19,6 +19,8 @@ import { decrypt, encrypt } from '../../crypto/encryption';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Db } from '../../db/database';
 import { getSystemMeta, setSystemMeta } from '../../lib/system-meta';
+import type { SandboxBackendHolder } from './holder';
+import { openSandboxBackend } from './open';
 
 export const SANDBOX_BACKEND_KEY = 'sandbox_backend';
 export const DAYTONA_API_URL_KEY = 'sandbox_daytona_api_url';
@@ -105,6 +107,19 @@ export async function hasDaytonaApiKey(db: Db): Promise<boolean> {
 	return res.rows.length > 0;
 }
 
+export interface StartupBackendResolution {
+	backend: SandboxBackend;
+	daytonaApiKey?: string;
+	daytonaApiUrl?: string;
+	/**
+	 * The backend needs a credential that only the encrypted vault holds, and the
+	 * vault is locked - so it cannot be opened yet, but it is not misconfigured
+	 * either. The caller holds a pending engine and finishes the open on unlock
+	 * (see {@link completeSandboxBackendOnUnlock}).
+	 */
+	deferred: boolean;
+}
+
 /**
  * Resolve which backend to open at startup, and with what.
  *
@@ -112,37 +127,99 @@ export async function hasDaytonaApiKey(db: Db): Promise<boolean> {
  * The flag is written through to storage when it seeds, so the choice a fresh
  * instance boots with is visible on the Containers page rather than being
  * invisible state that only the launch command knows about.
+ *
+ * **Nothing here is fatal because the instance is locked.** An instance comes
+ * back locked after every restart by design, so a rule that needed the vault at
+ * this point would fire on every single boot: reading a stored provider key
+ * would fail ("no API key is configured", for a key that is plainly on file),
+ * and writing a flag-supplied one would fail outright ("the instance is
+ * locked"). Between them they made `HEZO_DAYTONA_API_KEY` unusable in exactly
+ * the setup that needs it - an operator who put it in their launch env and
+ * unlocks from the browser. So the vault write is opportunistic and the vault
+ * read is allowed to defer; both are completed on unlock.
  */
 export async function resolveStartupBackend(
 	db: Db,
 	masterKeyManager: MasterKeyManager,
 	flags: { backend?: string; daytonaApiKey?: string; daytonaApiUrl?: string },
-): Promise<{ backend: SandboxBackend; daytonaApiKey?: string; daytonaApiUrl?: string }> {
+): Promise<StartupBackendResolution> {
 	const stored = await getStoredSandboxBackend(db);
 
 	// A key or URL supplied at launch is stored so a later switch does not have to
-	// ask for it again - the operator already provided it once.
-	if (flags.daytonaApiKey) await storeDaytonaApiKey(db, masterKeyManager, flags.daytonaApiKey);
+	// ask for it again - the operator already provided it once. The vault needs
+	// the master key, so when the instance is still locked this write waits for
+	// the unlock rather than failing the boot.
+	if (flags.daytonaApiKey && masterKeyManager.getKey()) {
+		await storeDaytonaApiKey(db, masterKeyManager, flags.daytonaApiKey);
+	}
 	if (flags.daytonaApiUrl) await setStoredDaytonaApiUrl(db, flags.daytonaApiUrl);
 
-	if (stored) {
-		return {
-			backend: stored,
-			daytonaApiKey:
-				(await readDaytonaApiKey(db, masterKeyManager)) ?? flags.daytonaApiKey ?? undefined,
-			daytonaApiUrl: (await getStoredDaytonaApiUrl(db)) || flags.daytonaApiUrl || undefined,
-		};
+	const backend =
+		stored ??
+		(flags.backend && isSandboxBackend(flags.backend.trim().toLowerCase())
+			? (flags.backend.trim().toLowerCase() as SandboxBackend)
+			: SandboxBackend.Docker);
+	if (!stored) await setStoredSandboxBackend(db, backend);
+
+	// The flag wins over the vault, and did before: the write above lands first,
+	// so a stored read returned the flag's own value anyway. Stating it once
+	// removes an asymmetry between the two branches that never meant anything,
+	// and makes rotating by flag work while locked.
+	const daytonaApiKey =
+		flags.daytonaApiKey ?? (await readDaytonaApiKey(db, masterKeyManager)) ?? undefined;
+	const daytonaApiUrl = flags.daytonaApiUrl || (await getStoredDaytonaApiUrl(db)) || undefined;
+
+	// A key we cannot read is not the same as a key that is not there. `has` asks
+	// without decrypting, which is what separates "wait for the unlock" from the
+	// genuine misconfiguration of selecting a provider and never giving it a
+	// credential - that one still fails the boot, because it will never work.
+	const deferred =
+		backend !== SandboxBackend.Docker &&
+		!daytonaApiKey &&
+		!masterKeyManager.getKey() &&
+		(await hasDaytonaApiKey(db));
+
+	return { backend, daytonaApiKey, daytonaApiUrl, deferred };
+}
+
+/**
+ * Finish the boot-time backend decision once the vault is readable.
+ *
+ * Two things wait for the unlock, and both are here so the caller has one hook
+ * rather than two: a launch-supplied key that could not be written, and a
+ * deferred open whose credential could not be read.
+ *
+ * Nothing is lost by waiting. Every consumer of the engine already starts on
+ * this same unlock, because a locked instance cannot run an agent whichever
+ * backend it is on.
+ *
+ * **This is not a fallback.** A deferred open that fails leaves the pending
+ * engine in place, so every container operation reports that failure instead of
+ * quietly succeeding on some other backend.
+ */
+export async function completeSandboxBackendOnUnlock(
+	db: Db,
+	masterKeyManager: MasterKeyManager,
+	holder: SandboxBackendHolder,
+	startup: StartupBackendResolution,
+): Promise<void> {
+	// Persist the launch-supplied key now that the vault accepts writes, so the
+	// Containers page shows a credential on file and the next restart needs no
+	// flag. Guarded on a real change: this runs on every unlock, and an
+	// unconditional UPDATE would leave a dead tuple per boot under MVCC.
+	if (startup.daytonaApiKey) {
+		const current = await readDaytonaApiKey(db, masterKeyManager);
+		if (current !== startup.daytonaApiKey) {
+			await storeDaytonaApiKey(db, masterKeyManager, startup.daytonaApiKey);
+		}
 	}
 
-	const seeded =
-		flags.backend && isSandboxBackend(flags.backend.trim().toLowerCase())
-			? (flags.backend.trim().toLowerCase() as SandboxBackend)
-			: SandboxBackend.Docker;
-	await setStoredSandboxBackend(db, seeded);
-	return {
-		backend: seeded,
-		daytonaApiKey:
-			flags.daytonaApiKey ?? (await readDaytonaApiKey(db, masterKeyManager)) ?? undefined,
-		daytonaApiUrl: flags.daytonaApiUrl ?? (await getStoredDaytonaApiUrl(db)) ?? undefined,
-	};
+	if (!startup.deferred) return;
+
+	const opened = await openSandboxBackend({
+		backend: startup.backend,
+		daytonaApiKey: (await readDaytonaApiKey(db, masterKeyManager)) ?? undefined,
+		daytonaApiUrl: (await getStoredDaytonaApiUrl(db)) || startup.daytonaApiUrl || undefined,
+	});
+	holder.swap(opened);
 }
