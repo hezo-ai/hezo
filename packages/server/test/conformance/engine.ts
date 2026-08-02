@@ -258,5 +258,151 @@ export function describeEngineConformance(
 			});
 			expect((await engine.execStart(read)).stdout).toContain('kept');
 		}, 300_000);
+
+		it('comes back from a stop with no processes from before it', async () => {
+			// The other half of suspend, and the half a filesystem check cannot see.
+			// A resumed pool member is handed to a *new* run, so a backend whose stop
+			// merely pauses would return it carrying the previous run's process tree -
+			// the agent CLI, its children, a dev server holding a port. Providers
+			// really do offer both (Daytona has `stopped` *and* `paused`), so which
+			// one `stopContainer` maps to is a per-adapter decision this pins.
+			//
+			// It is also why `chat-session-manager` keeps a marker reap as a backstop
+			// on resume: that backstop exists because this property was assumed rather
+			// than asserted.
+			const spawn = await engine.execCreate(containerId, {
+				Cmd: ['sh', '-c', 'sleep 300'],
+				AttachStdout: true,
+				AttachStderr: true,
+			});
+			void engine.execStart(spawn).catch(() => undefined);
+			await new Promise((r) => setTimeout(r, 2000));
+
+			await engine.stopContainer(containerId);
+			await engine.startContainer(containerId);
+
+			const check = await engine.execCreate(containerId, {
+				Cmd: ['sh', '-c', 'ps -eo args | grep -c "[s]leep 300" || true'],
+				User: 'root',
+				AttachStdout: true,
+				AttachStderr: true,
+			});
+			expect((await engine.execStart(check)).stdout.trim()).toBe('0');
+		}, 300_000);
+
+		it('carries a large stream incrementally and intact', async () => {
+			// The run-log path in miniature. Raw stream-json from a coding CLI reaches
+			// hundreds of MB, and the contract is that it is consumed incrementally
+			// and *never retained* - so a transport that buffers to completion is not
+			// slow, it is a memory bug that only appears on a long run.
+			//
+			// Asserted on volume rather than on a couple of lines because buffering is
+			// invisible at small sizes: a relay that accumulated the whole body looked
+			// perfectly incremental until the payload was big enough to matter.
+			const lines = 20_000;
+			const exec = await engine.execCreate(containerId, {
+				Cmd: [
+					'sh',
+					'-c',
+					`i=0; while [ $i -lt ${lines} ]; do echo "line-$i-padding-payload"; i=$((i+1)); done`,
+				],
+				AttachStdout: true,
+				AttachStderr: true,
+			});
+			let chunks = 0;
+			let bytes = 0;
+			let sawFirstLine = false;
+			let sawLastLine = false;
+			await engine.execStart(exec, {
+				onChunk: (chunk) => {
+					chunks += 1;
+					bytes += chunk.text.length;
+					if (chunk.text.includes('line-0-')) sawFirstLine = true;
+					if (chunk.text.includes(`line-${lines - 1}-`)) sawLastLine = true;
+				},
+			});
+			// Arrived in pieces, not as one buffered blob.
+			expect(chunks).toBeGreaterThan(1);
+			// And nothing was dropped between the first line and the last.
+			expect(sawFirstLine).toBe(true);
+			expect(sawLastLine).toBe(true);
+			expect(bytes).toBeGreaterThan(lines * 10);
+		}, 300_000);
+
+		it('gives a second container its own filesystem and process space', async () => {
+			// The premise the whole pool rests on. `selectPoolMember` decides *which*
+			// container a run gets and is pure, so it is unit-tested - but "two
+			// containers are genuinely independent" is a property of the backend, and
+			// the pool's headline promise (one greedy run can no longer take down its
+			// siblings) is worth nothing if a provider shares state between sandboxes.
+			//
+			// Worth the second container it costs: this is the one assertion that
+			// fails if a backend turns out to hand out views of one machine.
+			const second = await engine.createContainer(`hezo-conf-pool-${conformanceRunId()}`, {
+				Image: fixture.image,
+				Cmd: ['sleep', 'infinity'],
+				Labels: { [CONFORMANCE_LABEL]: '1' },
+				HostConfig: { Memory: fixture.memoryBytes },
+			});
+			await engine.startContainer(second.Id);
+			try {
+				const marker = '/tmp/hezo-conformance-isolation';
+				const write = await engine.execCreate(containerId, {
+					Cmd: ['sh', '-c', `echo first > ${marker}`],
+					User: 'root',
+					AttachStdout: true,
+					AttachStderr: true,
+				});
+				await engine.execStart(write);
+
+				// Not visible next door: separate writable layers.
+				const peek = await engine.execCreate(second.Id, {
+					Cmd: ['sh', '-c', `cat ${marker} 2>/dev/null || echo ABSENT`],
+					User: 'root',
+					AttachStdout: true,
+					AttachStderr: true,
+				});
+				expect((await engine.execStart(peek)).stdout).toContain('ABSENT');
+
+				// And a marker kill aimed at one leaves the other's processes alone,
+				// which is the sibling-safety claim stated directly.
+				const runId = `conf-iso-${conformanceRunId()}`;
+				const victim = await engine.execCreate(containerId, {
+					Cmd: ['sh', '-c', 'sleep 300'],
+					Env: [`HEZO_HEARTBEAT_RUN_ID=${runId}`],
+					AttachStdout: true,
+					AttachStderr: true,
+				});
+				const bystander = await engine.execCreate(second.Id, {
+					Cmd: ['sh', '-c', 'sleep 301'],
+					Env: [`HEZO_HEARTBEAT_RUN_ID=${runId}`],
+					AttachStdout: true,
+					AttachStderr: true,
+				});
+				void engine.execStart(victim).catch(() => undefined);
+				void engine.execStart(bystander).catch(() => undefined);
+				await new Promise((r) => setTimeout(r, 2000));
+
+				await engine.killRunProcesses(containerId, runId);
+				await new Promise((r) => setTimeout(r, 1000));
+
+				const survivor = await engine.execCreate(second.Id, {
+					Cmd: ['sh', '-c', 'ps -eo args | grep -c "[s]leep 301" || true'],
+					User: 'root',
+					AttachStdout: true,
+					AttachStderr: true,
+				});
+				// "At least one", not "exactly one": the claim is that the bystander
+				// survived. An exact count would be counting the *adapter's* exec
+				// wrapping - Daytona renders a deprivileged exec as `runuser -u node --
+				// sh -c …`, so the process table legitimately shows more entries than
+				// Docker's would, and a suite that pinned the number would fail the
+				// next adapter for having a different wrapper rather than for sharing
+				// process space.
+				expect(Number((await engine.execStart(survivor)).stdout.trim())).toBeGreaterThanOrEqual(1);
+			} finally {
+				await engine.removeContainer(second.Id, true).catch(() => undefined);
+			}
+		}, 600_000);
 	});
 }
