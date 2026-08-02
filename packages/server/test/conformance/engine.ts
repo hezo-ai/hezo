@@ -210,6 +210,34 @@ export function describeEngineConformance(
 			}
 		});
 
+		/**
+		 * How many processes in `target` have `needle` in their command line.
+		 *
+		 * Scans `/proc` the way production's own scripts do (`proc-scripts.ts`)
+		 * rather than shelling out to `ps`, and that is not a style choice: the
+		 * agent image installs no `procps`, so `ps` does not exist in it. A `ps`
+		 * pipeline therefore prints nothing, `grep -c` counts zero, and `|| true`
+		 * swallows the "not found" - which means every assertion of the form
+		 * "expect 0 processes" passed whether or not the kill did anything. CI
+		 * surfaced it only when an assertion finally demanded a *positive* count.
+		 *
+		 * Pass the needle in `[n]eedle` form so the scan cannot count the grep
+		 * process reading it, whose own cmdline contains the pattern.
+		 */
+		async function countProcesses(target: string, needle: string): Promise<number> {
+			const exec = await engine.execCreate(target, {
+				Cmd: [
+					'sh',
+					'-c',
+					`n=0; for d in /proc/[0-9]*; do tr "\\0" " " < "$d/cmdline" 2>/dev/null | grep -q "${needle}" && n=$((n+1)); done; echo $n`,
+				],
+				User: 'root',
+				AttachStdout: true,
+				AttachStderr: true,
+			});
+			return Number((await engine.execStart(exec)).stdout.trim());
+		}
+
 		it('lists and kills processes it started, by run marker', async () => {
 			const runId = `conf-${conformanceRunId()}`;
 			const execId = await engine.execCreate(containerId, {
@@ -222,16 +250,15 @@ export function describeEngineConformance(
 			void engine.execStart(execId).catch(() => undefined);
 			await new Promise((r) => setTimeout(r, 2000));
 
+			// Asserted *before* the kill, because "no such process" and "the kill
+			// worked" produce the same zero. Without this the test passes on a
+			// backend whose exec never started anything at all.
+			expect(await countProcesses(containerId, '[s]leep 120')).toBeGreaterThanOrEqual(1);
+
 			await engine.killRunProcesses(containerId, runId);
 			await new Promise((r) => setTimeout(r, 1000));
 
-			const check = await engine.execCreate(containerId, {
-				Cmd: ['sh', '-c', 'ps -eo args | grep -c "[s]leep 120" || true'],
-				AttachStdout: true,
-				AttachStderr: true,
-			});
-			const { stdout } = await engine.execStart(check);
-			expect(stdout.trim()).toBe('0');
+			expect(await countProcesses(containerId, '[s]leep 120')).toBe(0);
 		}, 90_000);
 
 		it('stops and restarts the container without losing its filesystem', async () => {
@@ -277,17 +304,14 @@ export function describeEngineConformance(
 			});
 			void engine.execStart(spawn).catch(() => undefined);
 			await new Promise((r) => setTimeout(r, 2000));
+			// Same reason as the marker-kill test: a zero afterwards means nothing
+			// unless there was something to clear.
+			expect(await countProcesses(containerId, '[s]leep 300')).toBeGreaterThanOrEqual(1);
 
 			await engine.stopContainer(containerId);
 			await engine.startContainer(containerId);
 
-			const check = await engine.execCreate(containerId, {
-				Cmd: ['sh', '-c', 'ps -eo args | grep -c "[s]leep 300" || true'],
-				User: 'root',
-				AttachStdout: true,
-				AttachStderr: true,
-			});
-			expect((await engine.execStart(check)).stdout.trim()).toBe('0');
+			expect(await countProcesses(containerId, '[s]leep 300')).toBe(0);
 		}, 300_000);
 
 		it('carries a large stream incrementally and intact', async () => {
@@ -382,24 +406,22 @@ export function describeEngineConformance(
 				void engine.execStart(victim).catch(() => undefined);
 				void engine.execStart(bystander).catch(() => undefined);
 				await new Promise((r) => setTimeout(r, 2000));
+				// Both alive before the kill, so a failure below distinguishes "the kill
+				// crossed containers" from "the exec never started".
+				expect(await countProcesses(containerId, '[s]leep 300')).toBeGreaterThanOrEqual(1);
+				expect(await countProcesses(second.Id, '[s]leep 301')).toBeGreaterThanOrEqual(1);
 
 				await engine.killRunProcesses(containerId, runId);
 				await new Promise((r) => setTimeout(r, 1000));
 
-				const survivor = await engine.execCreate(second.Id, {
-					Cmd: ['sh', '-c', 'ps -eo args | grep -c "[s]leep 301" || true'],
-					User: 'root',
-					AttachStdout: true,
-					AttachStderr: true,
-				});
+				expect(await countProcesses(containerId, '[s]leep 300')).toBe(0);
 				// "At least one", not "exactly one": the claim is that the bystander
-				// survived. An exact count would be counting the *adapter's* exec
-				// wrapping - Daytona renders a deprivileged exec as `runuser -u node --
-				// sh -c …`, so the process table legitimately shows more entries than
-				// Docker's would, and a suite that pinned the number would fail the
-				// next adapter for having a different wrapper rather than for sharing
-				// process space.
-				expect(Number((await engine.execStart(survivor)).stdout.trim())).toBeGreaterThanOrEqual(1);
+				// survived. An exact count would be counting the *adapter's* exec wrapping -
+				// Daytona renders a deprivileged exec as `runuser -u node -- sh -c …`, so the
+				// process table legitimately shows more entries than Docker's would, and a
+				// suite that pinned the number would fail the next adapter for having a
+				// different wrapper rather than for sharing process space.
+				expect(await countProcesses(second.Id, '[s]leep 301')).toBeGreaterThanOrEqual(1);
 			} finally {
 				await engine.removeContainer(second.Id, true).catch(() => undefined);
 			}
