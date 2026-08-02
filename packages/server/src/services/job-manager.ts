@@ -8,6 +8,7 @@ import {
 	CommentContentType,
 	ContainerStatus,
 	DEFAULT_TEAM_ID,
+	HeartbeatRunKind,
 	HeartbeatRunStatus,
 	INSTANCE_AGENT_SLUGS,
 	RepoSetupStatus,
@@ -71,6 +72,7 @@ import type { LogStreamBroker } from './log-stream-broker';
 import { detectOrphans, healStaleRunState, STALE_STATE_GRACE_SECONDS } from './orphan-detector';
 import type { PricingService } from './pricing';
 import { collectCandidateRunIds, decideSweepKills } from './process-sweeper';
+import { buildProgressActivityCandidates } from './project-activity';
 import { ensureRepoSetupAction } from './repo-setup';
 import { getActiveContainers, isTaskBusyInDb } from './run-concurrency';
 import type { SshAgentServer } from './ssh-agent';
@@ -91,6 +93,11 @@ const MAX_CONSECUTIVE_FAILURE_PINGS = 3;
 // how many consecutive timeouts we re-queue through before parking the task, so a task that
 // never fits its run window can't loop forever; a non-timeout run in between resets the streak.
 const MAX_CONSECUTIVE_TIMEOUT_CONTINUATIONS = 5;
+// How stale the Progress page may get before the Captain rebuilds it, independently of goals.
+// Matches the default daily goal cadence, and is deliberately conservative: paired with the
+// "has anything changed since?" guard in `isProgressSnapshotDue`, it means an active project
+// gets at most one progress run a day from this path and a dormant one gets none.
+const PROGRESS_REFRESH_INTERVAL_HOURS = 24;
 const FAILURE_PING_ERROR_MAX_LEN = 500;
 const FAILURE_TERMINAL_STATUSES: HeartbeatRunStatus[] = [
 	HeartbeatRunStatus.Failed,
@@ -151,13 +158,13 @@ export type DispatchNowResult =
 	  };
 
 /** Why a progress-update ("Run now") dispatch did or didn't start. `no_captain`/`captain_disabled`/
- * `no_project` only arise on the manual `dispatchProgressUpdateNow` path; the scheduled heartbeat
- * path only produces the others. */
+ * `no_project` only arise on the manual `dispatchProgressUpdateNow` path; `not_due` only on the
+ * scheduled path, which is the only one that runs the due-check. */
 export type ProgressUpdateDispatchReason =
 	| 'no_project'
 	| 'no_captain'
 	| 'captain_disabled'
-	| 'no_due_goals'
+	| 'not_due'
 	| 'agent_busy'
 	| 'instance_at_capacity'
 	| 'over_budget'
@@ -2241,12 +2248,65 @@ export class JobManager {
 
 	/**
 	 * If the Captain has goals due for a check, launch one progress-update run (no task) covering
-	 * all of them. Returns `{ dispatched: true }` so the scheduled caller yields this activation;
-	 * returns `{ dispatched: false, reason }` when there are no due goals or the run can't start
-	 * right now (the scheduled caller then falls through to normal task selection and the goals
-	 * stay due for the next heartbeat). Shared by the scheduled heartbeat and the manual
-	 * `dispatchProgressUpdateNow` ("Run now") path.
+	 * all of them, and refreshes the project's Progress page either way. Returns
+	 * `{ dispatched: true }` so the scheduled caller yields this activation; returns
+	 * `{ dispatched: false, reason }` when nothing is due or the run can't start right now (the
+	 * scheduled caller then falls through to normal task selection and the work stays due for the
+	 * next heartbeat). Shared by the scheduled heartbeat and the manual `dispatchProgressUpdateNow`
+	 * ("Run now") path, which passes `manual` to bypass the due-check.
 	 */
+	/**
+	 * Is the project's Progress page stale enough to rebuild, independently of goals?
+	 *
+	 * Two conditions, both required. **Stale**: the anchor is older than
+	 * `PROGRESS_REFRESH_INTERVAL_HOURS`. **Active**: a task has moved since that anchor. The
+	 * activity half keeps this off dormant projects — without it a quiet project would burn a
+	 * Captain run every day rewriting an identical summary.
+	 *
+	 * The anchor is the later of two timestamps, falling back to the project's creation:
+	 *
+	 * - `progress_summary_updated_at` — when the page was last actually written.
+	 * - the last progress-update **run**, even one that wrote nothing. This is what makes the
+	 *   cadence about how often we *run* rather than how often the write succeeds: without it, a
+	 *   run that ended without calling `update_project_progress` would leave the page stale and
+	 *   the condition true, so the next heartbeat would dispatch again, and again — a hot loop
+	 *   costing a Captain run every few seconds.
+	 * - `projects.created_at` is the fallback when neither exists, so a brand-new project isn't
+	 *   immediately "overdue": on day one the anchor is "now", the Captain gets on with its
+	 *   planning task, and the Progress page arrives once there is something to report. It is a
+	 *   fallback rather than a third `GREATEST` argument on purpose — a recently-created project
+	 *   whose page is genuinely stale must still be due.
+	 *
+	 * `GREATEST` ignores nulls, so a project with only one of the two still anchors on it.
+	 */
+	private async isProgressSnapshotDue(projectId: string): Promise<boolean> {
+		const r = await this.deps.db.query<{ due: boolean }>(
+			`SELECT (
+			   anchor < now() - ($3 || ' hours')::interval
+			   AND EXISTS (
+			     SELECT 1 FROM tasks t WHERE t.project_id = p.id AND t.updated_at > anchor
+			   )
+			 ) AS due
+			 FROM projects p,
+			      LATERAL (
+			        SELECT COALESCE(
+			          GREATEST(
+			            p.progress_summary_updated_at,
+			            (SELECT max(COALESCE(hr.started_at, hr.created_at))
+			               FROM heartbeat_runs hr
+			              WHERE hr.team_id = p.team_id
+			                AND hr.task_id IS NULL
+			                AND hr.kind = $2)
+			          ),
+			          p.created_at
+			        ) AS anchor
+			      ) a
+			 WHERE p.id = $1`,
+			[projectId, HeartbeatRunKind.ProgressUpdate, String(PROGRESS_REFRESH_INTERVAL_HOURS)],
+		);
+		return r.rows[0]?.due ?? false;
+	}
+
 	private async tryDispatchProgressUpdate(
 		memberId: string,
 		teamId: string,
@@ -2261,6 +2321,7 @@ export class JobManager {
 		},
 		wakeupId: string | undefined,
 		wakeupPayload: Record<string, unknown>,
+		manual = false,
 	): Promise<TryProgressUpdateResult> {
 		const { db, docker, masterKeyManager, serverPort } = this.deps;
 
@@ -2285,12 +2346,19 @@ export class JobManager {
 		const projectRow = project.rows[0];
 		if (!projectRow) return { dispatched: false, reason: 'no_project' };
 
+		// Goals are not a dependency of progress. A run is due when a goal is due (the goals get
+		// assessed) OR when the Progress page itself has gone stale with work having happened
+		// since — so a project that has never set a goal still gets a maintained summary and
+		// activity columns. `manual` ("Run now") skips the check entirely: a human pressing the
+		// button is explicit intent, not a cadence.
 		const dueGoals = await getDueGoals(db, projectRow.id);
-		if (dueGoals.length === 0) return { dispatched: false, reason: 'no_due_goals' };
+		if (!manual && dueGoals.length === 0 && !(await this.isProgressSnapshotDue(projectRow.id))) {
+			return { dispatched: false, reason: 'not_due' };
+		}
 
 		// Don't start a progress update while the Captain is already running in this
 		// project, the instance is at its global run capacity, or the Captain/project
-		// is over budget. The scheduled caller falls through — the goals remain due
+		// is over budget. The scheduled caller falls through — the run stays due
 		// for the next heartbeat. A stopped container is no blocker: the runner
 		// lazy-starts it.
 		if (await this.isAgentBusyInProject(memberId, projectRow.id)) {
@@ -2304,6 +2372,10 @@ export class JobManager {
 		}
 
 		const progressUpdate: ProgressUpdateContext = {
+			// The deterministic half of the Progress page: recency, the progress-run exclusion and
+			// the close-time inference all resolved in SQL, handed over as candidates the Captain
+			// picks from and writes prose for.
+			activityCandidates: await buildProgressActivityCandidates(db, projectRow.id, teamId),
 			goals: dueGoals.map((g) => ({
 				id: g.id as string,
 				title: g.title as string,
@@ -2448,11 +2520,13 @@ export class JobManager {
 	}
 
 	/**
-	 * Manually trigger the Captain's progress-update run for a project on demand (the Goals page
-	 * "Run now" button). Reuses the exact scheduled logic (`tryDispatchProgressUpdate` → due-goal
-	 * selection, gating and launch) so a manual run is identical to a heartbeat-scheduled one. No
-	 * wakeup id is passed: `runAgent` synthesises an on-demand wakeup, so there is no queued row for
-	 * the 5s cron to double-dispatch. Returns the discriminated result the route maps to HTTP.
+	 * Manually trigger the Captain's progress-update run for a project on demand (the Progress page
+	 * "Run now" button). Reuses the scheduled logic (`tryDispatchProgressUpdate` → goal selection,
+	 * gating and launch) so a manual run is identical to a heartbeat-scheduled one, except that it
+	 * passes `manual` to skip the due-check: pressing the button always runs, whether or not the
+	 * project has goals and whether or not the page is stale. No wakeup id is passed: `runAgent`
+	 * synthesises an on-demand wakeup, so there is no queued row for the 5s cron to double-dispatch.
+	 * Returns the discriminated result the route maps to HTTP.
 	 */
 	async dispatchProgressUpdateNow(
 		projectId: string,
@@ -2511,13 +2585,14 @@ export class JobManager {
 				trigger: 'progress_update_now',
 				...(triggeredBy ? { triggered_by: triggeredBy } : {}),
 			},
+			true, // manual: the button is explicit intent, so skip the due-check entirely
 		);
 
 		// A transient conflict (Captain already running, the instance at its global
 		// run capacity, or a launch race) is queued rather than surfaced as an
 		// error: the 5s dispatcher retries the wakeup and the run fires once the
 		// Captain frees up. Terminal reasons (no project/captain, disabled, over
-		// budget, nothing due) fall through unchanged.
+		// budget) fall through unchanged.
 		if (
 			!result.dispatched &&
 			(result.reason === 'agent_busy' ||

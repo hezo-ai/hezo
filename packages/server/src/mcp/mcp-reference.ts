@@ -126,7 +126,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	update_project_progress: {
 		category: 'Projects',
 		returns:
-			'`{ summary, updated_at }` after replacing the project’s progress summary (shown at the top of the Progress page). Returns `{ error }` if the project is HQ/internal (no progress summary) or the call is not from within an agent run.',
+			'`{ summary, activity, updated_at }` after replacing the Progress page - the summary and the three activity columns (`activity.actioned` / `.created` / `.closed`, each up to 5 entries of `{ identifier, title, summary }`). Adds `unknown_tasks` listing any identifier that does not resolve in the project, so a mistyped task is reported rather than silently dropped. Omitting all three lists leaves the stored columns untouched. Returns `{ error }` if the project is HQ/internal (no Progress page) or the call is not from within an agent run.',
 		auth: 'Captain only, and only from within a progress-update agent run.',
 	},
 

@@ -125,7 +125,9 @@ export function useGoalQueuedRun(projectId: string) {
 	return useQuery({
 		queryKey: queryKeys.projects.goalQueuedRun(projectId),
 		queryFn: () =>
-			api.get<{ queued: QueuedProgressRun | null }>(`/api/projects/${projectId}/goals/queued-run`),
+			api.get<{ queued: QueuedProgressRun | null }>(
+				`/api/projects/${projectId}/progress/queued-run`,
+			),
 	});
 }
 
@@ -227,7 +229,7 @@ export function useRunProgressUpdateNow(projectId: string) {
 	return useMutation({
 		mutationFn: () =>
 			api.post<{ dispatched?: boolean; queued?: boolean; reason?: string }>(
-				`/api/projects/${projectId}/goals/run-now`,
+				`/api/projects/${projectId}/progress/run-now`,
 				{},
 			),
 		onSuccess: (data) => {
@@ -261,7 +263,7 @@ export function useCancelQueuedProgressRun(projectId: string) {
 	return useMutation({
 		mutationFn: (wakeupId: string) =>
 			api.post<{ cancelled: boolean }>(
-				`/api/projects/${projectId}/goals/queued-run/${wakeupId}/cancel`,
+				`/api/projects/${projectId}/progress/queued-run/${wakeupId}/cancel`,
 				{},
 			),
 		onSuccess: () => {

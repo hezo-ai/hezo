@@ -129,14 +129,24 @@ export function ProjectSidebar({
 		testId: 'project-sidebar-custom-prompt',
 	};
 
-	// Progress (the project's goals + Captain-maintained summary) leads under Inbox; it's a
-	// normal-project concept, so HQ (internal) has none.
+	// Progress (the Captain-maintained summary + recent task activity) leads under Inbox; it's a
+	// normal-project concept, so HQ (internal) has none. Goals disclose beneath it — they are the
+	// optional layer on top of progress, not the other way round.
+	const goalsPage = {
+		to: '/projects/$projectId/progress/goals',
+		params: projectParams,
+		label: t('nav.goals'),
+		testId: 'project-sidebar-goals',
+	};
+	// The "no goals yet" nudge stays on the Progress row even though goals are what it is about:
+	// sub-items only render once their parent's route is active, so on the Goals row the nudge
+	// would only be visible to someone who had already navigated to it.
 	const progressPage = {
-		to: '/projects/$projectId/goals',
+		to: '/projects/$projectId/progress',
 		params: projectParams,
 		label: (
 			<span className="inline-flex items-center gap-1.5">
-				<span>Progress</span>
+				<span>{t('nav.progress')}</span>
 				{hasNoGoals && (
 					<Tooltip content="No goals yet — create one to focus the team" side="right">
 						<span
@@ -150,6 +160,7 @@ export function ProjectSidebar({
 			</span>
 		),
 		testId: 'project-sidebar-progress',
+		subItems: [goalsPage],
 	};
 
 	const projectPages = [

@@ -1040,9 +1040,46 @@ export interface GoalRunActivity {
 	commented_tasks: (GoalRunTaskRef & { comment_count: number })[];
 }
 
-/** The Captain-maintained project progress summary shown at the top of the Progress page. */
+/**
+ * The three recent-activity columns on the Progress page. Each is a *frozen snapshot* the
+ * Captain writes during a progress-update run: it picks the tasks and authors every summary
+ * line itself, so the lines read at project altitude (what was accomplished, what is being
+ * accomplished, what is outstanding) rather than restating the task's own fields.
+ *
+ * Identifier and title are captured at write time, so rendering needs no task lookup — a task
+ * deleted between runs simply renders its captured row until the next run drops it.
+ */
+export const PROGRESS_ACTIVITY_KINDS = ['actioned', 'created', 'closed'] as const;
+export type ProgressActivityKind = (typeof PROGRESS_ACTIVITY_KINDS)[number];
+
+/** Longest Captain-authored line stored per task. Enforced on write, so reads are bounded. */
+export const PROGRESS_ACTIVITY_SUMMARY_MAX = 200;
+/** Rows kept per column. The Captain is offered more candidates than this and picks. */
+export const PROGRESS_ACTIVITY_PER_COLUMN = 5;
+
+export interface ProgressActivityEntry {
+	/** Task identifier as captured at write time (e.g. `BE-42`); links to the task page. */
+	identifier: string;
+	/** Task title as captured at write time. */
+	title: string;
+	/** The Captain's one-line summary for this task, in its own words. */
+	summary: string;
+}
+
+export type ProgressActivity = Record<ProgressActivityKind, ProgressActivityEntry[]>;
+
+export function emptyProgressActivity(): ProgressActivity {
+	return { actioned: [], created: [], closed: [] };
+}
+
+/**
+ * The Captain-maintained project progress shown on the Progress page: a high-level summary
+ * (deliberately naming no task identifiers — the columns carry the specifics) plus the three
+ * activity columns. Both are written in the same progress-update run and share `updated_at`.
+ */
 export interface ProjectProgress {
 	summary: string;
+	activity: ProgressActivity;
 	updated_at: string | null;
 }
 

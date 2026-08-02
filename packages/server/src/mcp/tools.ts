@@ -38,6 +38,7 @@ import {
 	type McpMethodInfo,
 	matchesArchiveFilter,
 	normalizeAssetPath,
+	PROGRESS_ACTIVITY_PER_COLUMN,
 	REQUIRED_SYSTEM_PROMPT_VARS,
 	ReactionKind,
 	requiredSystemPromptVarsError,
@@ -146,6 +147,10 @@ import {
 } from '../services/hire-proposal';
 import { insertHireProposalComment } from '../services/hire-proposal-comment';
 import { getMarketplaceCatalog, getMarketplaceTeam } from '../services/marketplace';
+import {
+	buildProgressActivitySnapshot,
+	type ProgressActivityInput,
+} from '../services/project-activity';
 import { createProjectWithTeam } from '../services/project-create';
 import { completeProjectIntakeAfterProvisioning } from '../services/project-intake';
 import { ProjectProgressError, updateProjectProgress } from '../services/projects';
@@ -966,6 +971,28 @@ const projectArg = () =>
 		);
 
 /**
+ * One activity column on `update_project_progress`. The three columns differ only in which tasks
+ * belong in them and what their line should answer, so the shape is declared once here.
+ */
+const progressActivityArg = (which: string, answers: string) =>
+	z
+		.array(
+			z.object({
+				task: z.string().describe('Task identifier, e.g. BE-2. Must exist in this project.'),
+				summary: z
+					.string()
+					.describe(
+						`One line, in your own words, answering: ${answers}. Pitch it at what this means for the project, not a log of what happened inside the task. Do not paste the task's own progress summary or description, and leave out mechanics like branches, CI and review round-trips.`,
+					),
+			}),
+		)
+		.max(PROGRESS_ACTIVITY_PER_COLUMN)
+		.optional()
+		.describe(
+			`Up to ${PROGRESS_ACTIVITY_PER_COLUMN} tasks ${which}, most significant first. Omit all three lists to leave the columns as they are.`,
+		);
+
+/**
  * Standard `filter` entry for doc/asset tools that can see archived items.
  * Defaults to 'active' so archived (soft-deleted) items stay invisible unless
  * a call explicitly asks for 'archived' or 'all'.
@@ -1456,14 +1483,17 @@ export function registerTools(
 	tool(
 		server,
 		'update_project_progress',
-		"Replace the project's progress summary shown at the top of the Progress page. Only the Captain does this, and only from within a progress-update run. Keep it a concise summary, not a backlog: lead with the key points in **bold**, then a short narrative of what is done, what is in progress, and what is still to do. You may reference a few of the most relevant tickets by their bare identifier (e.g. BE-2) - link sparingly. This overwrites the whole summary, so include everything that should remain.",
+		"Replace the whole Progress page for the project: the summary at the top and the three recent-activity columns beneath it. Only the Captain does this, and only from within a progress-update run. The summary and the columns work at two different levels and must not repeat each other. The SUMMARY is the high-level read: where the project stands, what has taken place, and what is being planned. Do NOT name individual tickets in it - no identifiers at all - because the columns below already link the specific work. The COLUMNS are that specific work: up to 5 tasks each in `actioned` (being worked now), `created` (newly filed) and `closed` (finished), each with a one-line `summary` you write yourself. Pitch every line at what it means for the project - what was accomplished, what is being accomplished, or what is outstanding - not a log of what happened inside the task; never paste the task's own progress summary or description, and leave out mechanics like branches, CI and review round-trips. A reader should be able to read the three columns top to bottom and know where the project stands. This overwrites the summary and all three columns, so include everything that should remain.",
 		{
 			project: projectArg(),
 			summary: z
 				.string()
 				.describe(
-					'Markdown summary of project progress. Lead with the key points in **bold**, then a short narrative of done / in-progress / to-do. Link only a few key tickets by identifier; keep it a summary.',
+					'Markdown summary of where the project stands: what has taken place and what is being planned. Lead with the key points in **bold**, then a short narrative. Do not reference ticket identifiers - the activity columns carry the specific tasks.',
 				),
+			actioned: progressActivityArg('being worked on right now', 'what is being accomplished'),
+			created: progressActivityArg('newly filed', 'what it sets out to accomplish, and why'),
+			closed: progressActivityArg('recently finished', 'what was accomplished'),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -1472,13 +1502,28 @@ export function registerTools(
 				return { error: 'update_project_progress can only be called from within an agent run' };
 			}
 			try {
-				return await updateProjectProgress(
+				// Omitting all three lists leaves the stored snapshot alone, so a caller refreshing
+				// only the summary never blanks the columns.
+				const lists = {
+					actioned: args.actioned as ProgressActivityInput[] | undefined,
+					created: args.created as ProgressActivityInput[] | undefined,
+					closed: args.closed as ProgressActivityInput[] | undefined,
+				};
+				const hasLists = Object.values(lists).some((l) => l !== undefined);
+				const snapshot = hasLists
+					? await buildProgressActivitySnapshot(db, scope.projectId, lists)
+					: null;
+				const result = await updateProjectProgress(
 					db,
 					scope.teamId,
 					scope.projectId,
 					args.summary as string,
 					wsManager,
+					snapshot?.activity,
 				);
+				// Report unresolvable identifiers rather than dropping the rows silently, so the
+				// Captain learns it named a task that does not exist in this project.
+				return snapshot?.unknown.length ? { ...result, unknown_tasks: snapshot.unknown } : result;
 			} catch (e) {
 				if (e instanceof ProjectProgressError) return { error: e.message };
 				throw e;
