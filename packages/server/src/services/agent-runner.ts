@@ -2325,8 +2325,11 @@ export interface ProgressUpdateGoal {
 export interface ProgressUpdateContext {
 	/** Due goals. May be empty — a progress-update run does not require goals. */
 	goals: ProgressUpdateGoal[];
-	/** Deterministically-selected candidate tasks for the Progress page's three columns. */
-	activityCandidates: ProgressActivityCandidates;
+	/**
+	 * Deterministically-selected candidate tasks for the Progress page's three columns. Optional
+	 * so a caller that only wants the goal half (tests, previews) need not build them.
+	 */
+	activityCandidates?: ProgressActivityCandidates;
 }
 
 /** One candidate column rendered into the prompt, with the question its lines must answer. */
@@ -2352,11 +2355,15 @@ const ACTIVITY_COLUMN_PROMPTS: {
 	},
 ];
 
-/** Render the candidate tasks for one column as compact prompt lines. */
-function renderActivityCandidates(candidates: ProgressActivityCandidates): string[] {
+/**
+ * Render the candidate tasks for one column as compact prompt lines. Tolerates a missing or
+ * partial candidates object — this is a pure formatter, and a column with nothing in it should
+ * render as "nothing yet" rather than throw.
+ */
+function renderActivityCandidates(candidates?: Partial<ProgressActivityCandidates>): string[] {
 	const parts: string[] = [];
 	for (const col of ACTIVITY_COLUMN_PROMPTS) {
-		const rows = candidates[col.kind] ?? [];
+		const rows = candidates?.[col.kind] ?? [];
 		parts.push(`### ${col.heading}`);
 		parts.push(`Each line answers: *${col.answers}.*`);
 		if (rows.length === 0) {

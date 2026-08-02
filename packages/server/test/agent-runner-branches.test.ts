@@ -303,7 +303,7 @@ describe('buildProgressUpdatePrompt', () => {
 	it('uses singular phrasing and renders all optional fields for one goal', () => {
 		const out = buildProgressUpdatePrompt('SYS', { goals: [goal()] });
 		expect(out.startsWith('SYS')).toBe(true);
-		expect(out).toContain('1 goal is due for a progress check');
+		expect(out).toContain('1 goal is also due for a progress check');
 		// The status_blurb guidance tells the Captain it renders as markdown and to link PRs.
 		expect(out).toContain('The blurb renders as markdown');
 		expect(out).toContain('[PR #502](https://github.com/owner/repo/pull/502)');
@@ -324,7 +324,7 @@ describe('buildProgressUpdatePrompt', () => {
 				goal({ id: 'g2', title: 'Second', target_date: null, status_blurb: '', actions: '' }),
 			],
 		});
-		expect(out).toContain('2 goals are due for a progress check');
+		expect(out).toContain('2 goals are also due for a progress check');
 		// No deadline / last-status / suggested-actions lines on any goal.
 		expect(out).not.toContain('deadline');
 		expect(out).not.toContain('- Last status: ');
