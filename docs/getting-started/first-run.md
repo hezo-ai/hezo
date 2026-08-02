@@ -18,11 +18,12 @@ is a bad way to start.
 
 Hezo guesses from your browser, so the screen usually arrives already answered and you can
 just continue. Alongside the language you pick a **date format** and a **currency format**;
-each option shows you a real example rather than a pattern to decode.
+each option shows you a real example rather than a pattern to decode. Picking a language
+re-renders the picker itself right away, so you can read it back before continuing.
 
-The choice applies to the whole instance and is saved straight away, so a refresh
+The choice applies to the whole instance and is saved when you continue, so a refresh
 mid-setup won't lose it. You can change it later in **Settings -> Languages & formats**, and
-a globe button in the top right stays available throughout setup. See
+a language button in the top right stays available throughout setup. See
 [Languages & formats](/docs/concepts/languages-and-formats).
 
 ## 2. Create your master key

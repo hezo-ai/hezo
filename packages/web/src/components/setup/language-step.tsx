@@ -28,7 +28,7 @@ export function LanguageStep() {
 			</div>
 			<div className="rounded-lg border border-border bg-surface p-5 sm:p-8 shadow-sm">
 				<LocaleEditor
-					submitLabel={t('locale.continue')}
+					submitLabelKey="locale.continue"
 					fullWidthSubmit
 					testId="setup-step-language"
 				/>
