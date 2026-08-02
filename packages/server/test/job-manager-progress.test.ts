@@ -206,7 +206,10 @@ describe('JobManager progress-update flows', () => {
 			manager.shutdown();
 		});
 
-		it('returns no_due_goals when nothing is due', async () => {
+		// On the scheduled path a run is due when a goal is due OR the Progress page has gone
+		// stale with work having happened since. A fresh project with no goals and no tasks is
+		// neither, so nothing dispatches.
+		it('returns not_due when neither a goal nor the Progress page needs a refresh', async () => {
 			const manager = createJobManager();
 			const result = await internals(manager).tryDispatchProgressUpdate(
 				captainId,
@@ -215,7 +218,90 @@ describe('JobManager progress-update flows', () => {
 				undefined,
 				{},
 			);
-			expect(result).toEqual({ dispatched: false, reason: 'no_due_goals' });
+			expect(result).toEqual({ dispatched: false, reason: 'not_due' });
+			manager.shutdown();
+		});
+
+		// Goals are not a dependency of progress: a project that has never set one still gets its
+		// Progress page rebuilt once the snapshot is stale and a task has moved since.
+		it('is due with no goals at all once the snapshot is stale and a task has moved', async () => {
+			const manager = createJobManager();
+			// Snapshot written two days ago; a task has moved since.
+			await ctx.db.query(
+				`UPDATE projects SET progress_summary_updated_at = now() - interval '2 days' WHERE id = $1`,
+				[projectId],
+			);
+			await ctx.db.query(
+				`INSERT INTO tasks (team_id, project_id, number, identifier, title)
+				 VALUES ($1, $2, 9001, 'PU-9001', 'Some work')`,
+				[teamId, projectId],
+			);
+			const goals = await ctx.db.query<{ c: number }>(
+				`SELECT COUNT(*)::int AS c FROM goals WHERE project_id = $1`,
+				[projectId],
+			);
+			expect(goals.rows[0].c).toBe(0);
+
+			const result = await internals(manager).tryDispatchProgressUpdate(
+				captainId,
+				teamId,
+				await captainRow(),
+				undefined,
+				{},
+			);
+			// Past the due-check: it reaches run-gating rather than short-circuiting as not_due.
+			expect(result.dispatched === false && result.reason === 'not_due').toBe(false);
+			manager.shutdown();
+		});
+
+		// A run that ended without calling update_project_progress leaves the page stale. If the
+		// cadence were anchored only on the write, the very next heartbeat would dispatch again,
+		// and again — a Captain run every few seconds. The run itself has to hold the anchor.
+		it('is not due again straight after a progress run that wrote nothing', async () => {
+			const manager = createJobManager();
+			await ctx.db.query(
+				`UPDATE projects SET progress_summary_updated_at = now() - interval '30 days' WHERE id = $1`,
+				[projectId],
+			);
+			await ctx.db.query(
+				`INSERT INTO tasks (team_id, project_id, number, identifier, title)
+				 VALUES ($1, $2, 9002, 'PU-9002', 'Recent work')`,
+				[teamId, projectId],
+			);
+			// A progress-update run just happened and wrote nothing.
+			await ctx.db.query(
+				`INSERT INTO heartbeat_runs (team_id, member_id, kind, status, started_at)
+				 VALUES ($1, $2, 'progress_update'::heartbeat_run_kind,
+				         'succeeded'::heartbeat_run_status, now())`,
+				[teamId, captainId],
+			);
+
+			const result = await internals(manager).tryDispatchProgressUpdate(
+				captainId,
+				teamId,
+				await captainRow(),
+				undefined,
+				{},
+			);
+			expect(result).toEqual({ dispatched: false, reason: 'not_due' });
+			manager.shutdown();
+		});
+
+		// The activity guard: stale alone is not enough, or a dormant project would burn a
+		// Captain run every day rewriting an identical summary.
+		it('is not due when the snapshot is stale but nothing has moved since', async () => {
+			const manager = createJobManager();
+			await ctx.db.query(`UPDATE projects SET progress_summary_updated_at = now() WHERE id = $1`, [
+				projectId,
+			]);
+			const result = await internals(manager).tryDispatchProgressUpdate(
+				captainId,
+				teamId,
+				await captainRow(),
+				undefined,
+				{},
+			);
+			expect(result).toEqual({ dispatched: false, reason: 'not_due' });
 			manager.shutdown();
 		});
 
@@ -344,10 +430,15 @@ describe('JobManager progress-update flows', () => {
 			manager.shutdown();
 		});
 
-		it('passes a terminal no_due_goals result through unchanged', async () => {
+		// "Run now" is explicit human intent, so it skips the due-check entirely: it dispatches
+		// with no goals and a freshly-written snapshot, where the scheduled path would say not_due.
+		it('dispatches with no goals and nothing stale, because the button bypasses the due-check', async () => {
 			const manager = createJobManager();
+			await ctx.db.query(`UPDATE projects SET progress_summary_updated_at = now() WHERE id = $1`, [
+				projectId,
+			]);
 			const result = await manager.dispatchProgressUpdateNow(projectId);
-			expect(result).toEqual({ dispatched: false, reason: 'no_due_goals' });
+			expect('dispatched' in result && result.reason === 'not_due').toBe(false);
 			manager.shutdown();
 		});
 
@@ -598,9 +689,9 @@ describe('JobManager progress-update flows', () => {
 			manager.shutdown();
 		});
 
-		it('completes a manual progress_update_now wakeup as a no-op when goals are no longer due', async () => {
+		it('completes a manual progress_update_now wakeup as a no-op when nothing is due', async () => {
 			const manager = createJobManager();
-			// No goals exist → terminal no_due_goals by dispatch time.
+			// No goals, and a fresh project's snapshot anchors to its creation → terminal not_due.
 			const wakeupId = await insertClaimedWakeup({ trigger: 'progress_update_now' });
 
 			await internals(manager).activateAgent(
@@ -621,7 +712,9 @@ describe('JobManager progress-update flows', () => {
 			manager.shutdown();
 		});
 
-		it('falls through to task selection when no goals are due, dispatching the planning task', async () => {
+		// A brand-new project must get on with its planning task, not a progress update: the
+		// never-written snapshot anchors to the project's creation, so it is not yet stale.
+		it('falls through to task selection when nothing is due, dispatching the planning task', async () => {
 			const manager = createJobManager();
 			// Unblock the planning task (a fresh team blocks it on the CEO's
 			// coherence pass) and bypass the repo gate for the Captain.

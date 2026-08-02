@@ -23,6 +23,7 @@ import {
 	HeartbeatRunStatus,
 	opencodeModelArg,
 	PROVIDER_RUNTIME_ADAPTERS,
+	type ProgressActivityKind,
 	providerDirectUpstreamHosts,
 	RUNTIME_AUTO_APPROVE_ARGS,
 	RUNTIME_COMMANDS,
@@ -107,6 +108,7 @@ import { buildGitIdentityEnv } from './git-identity';
 import type { LogStreamBroker } from './log-stream-broker';
 import { MCP_ADAPTERS, type McpDescriptor, validateInjection } from './mcp-injectors';
 import type { PricingService } from './pricing';
+import type { ProgressActivityCandidates } from './project-activity';
 import { loadReactionsForTask, type ReactionGroup } from './reactions';
 import { ensureProjectRepos } from './repo-sync';
 import {
@@ -2321,13 +2323,65 @@ export interface ProgressUpdateGoal {
 }
 
 export interface ProgressUpdateContext {
+	/** Due goals. May be empty — a progress-update run does not require goals. */
 	goals: ProgressUpdateGoal[];
+	/** Deterministically-selected candidate tasks for the Progress page's three columns. */
+	activityCandidates: ProgressActivityCandidates;
+}
+
+/** One candidate column rendered into the prompt, with the question its lines must answer. */
+const ACTIVITY_COLUMN_PROMPTS: {
+	kind: ProgressActivityKind;
+	heading: string;
+	answers: string;
+}[] = [
+	{
+		kind: 'actioned',
+		heading: 'Recently actioned (being worked now)',
+		answers: 'what is being accomplished here, and how far it has got',
+	},
+	{
+		kind: 'created',
+		heading: 'Recently created (newly filed)',
+		answers: 'what this sets out to accomplish, and why it is outstanding',
+	},
+	{
+		kind: 'closed',
+		heading: 'Recently closed (finished)',
+		answers: 'what was accomplished - the outcome that matters to the project',
+	},
+];
+
+/** Render the candidate tasks for one column as compact prompt lines. */
+function renderActivityCandidates(candidates: ProgressActivityCandidates): string[] {
+	const parts: string[] = [];
+	for (const col of ACTIVITY_COLUMN_PROMPTS) {
+		const rows = candidates[col.kind] ?? [];
+		parts.push(`### ${col.heading}`);
+		parts.push(`Each line answers: *${col.answers}.*`);
+		if (rows.length === 0) {
+			parts.push('- (nothing yet - omit this column)');
+		} else {
+			for (const r of rows) {
+				const meta = [r.status, r.actor].filter(Boolean).join(' · ');
+				parts.push(
+					`- \`${r.identifier}\` ${r.title}${meta ? ` — ${meta}` : ''}` +
+						(r.excerpt ? `\n  > ${r.excerpt.replace(/\s+/g, ' ').trim()}` : ''),
+				);
+			}
+		}
+		parts.push('');
+	}
+	return parts;
 }
 
 /**
- * The user-message body for a Captain progress-update run. Lists every due goal with its current
- * estimate and instructs the Captain to assess each and call `update_goal_progress`. No task is
- * attached — the run exists only to refresh goal status.
+ * The user-message body for a Captain progress-update run. No task is attached.
+ *
+ * The run's primary job is refreshing the project's **Progress page** — the high-level summary and
+ * the three activity columns — which happens on every progress-update run whether or not the
+ * project has goals. Goal assessment is the *second* section and is emitted only when goals are
+ * actually due, so a project that has never set one still gets a maintained Progress page.
  */
 export function buildProgressUpdatePrompt(
 	systemPrompt: string,
@@ -2335,38 +2389,71 @@ export function buildProgressUpdatePrompt(
 ): string {
 	const parts = [systemPrompt, '', '---', '', '## Progress Update', ''];
 	parts.push(
-		`${ctx.goals.length} goal${ctx.goals.length === 1 ? ' is' : 's are'} due for a progress check. ` +
-			'For each goal below, assess real progress toward the objective — read the relevant tickets, ' +
-			'comments, and repo state; do not just count tasks. Then call `update_goal_progress` once per ' +
-			'goal with a fresh `progress_percent` (0-100), a `health` (on_track / at_risk / off_track, ' +
-			'weighing progress against any target date), and a one-paragraph `status_blurb` describing where ' +
-			'the goal stands and the next step needed. The blurb renders as markdown on the Progress page — ' +
-			'reference tasks by their identifier (e.g. `HM-51`, which auto-links) and link PRs or other URLs ' +
-			'as markdown links (e.g. `[PR #502](https://github.com/owner/repo/pull/502)`). Do not lower a ' +
-			'percentage without explaining why in the blurb. A goal at 100% is not finished for tracking ' +
-			'purposes: progress can drop back below 100 if the measurement is no longer met, and some goals ' +
-			'are never-ending and measured continuously forever — so re-assess a 100% goal exactly like any ' +
-			'other and record your honest current estimate, even if that means lowering it (with the reason ' +
-			'in the blurb). When a goal needs a push, you can either comment on an existing in-flight ticket ' +
-			'(`create_comment`) to steer or unblock it, or file new task(s) (with `goal_id` set) when a ' +
-			'concrete next step is actually missing — existing backlog or in-flight work often already ' +
-			'covers the goal. Never re-open a closed ticket (done/cancelled are terminal and the system will ' +
-			'refuse it); if work must be redone, file a new ticket that references the old one by identifier. ' +
-			'Finally, call `update_project_progress` once to refresh the project progress summary shown at the ' +
-			'top of the Progress page: a concise markdown blurb leading with the key points in **bold**, then ' +
-			'a short narrative of what is done, in progress, and still to do (link only a few key tickets).',
+		"Refresh this project's Progress page. Call `update_project_progress` **once**, with a " +
+			'`summary` and the three activity columns (`actioned`, `created`, `closed`). The summary and ' +
+			'the columns sit at two different levels and must not repeat each other.',
 	);
 	parts.push('');
-	for (const g of ctx.goals) {
-		parts.push(`### ${g.title}  \`${g.id}\``);
-		parts.push(
-			`- Current: ${g.progress_percent}% · health ${g.health} · checked ${g.check_frequency}` +
-				(g.target_date ? ` · deadline ${g.target_date}` : ''),
-		);
-		if (g.status_blurb) parts.push(`- Last status: ${g.status_blurb}`);
-		parts.push(`- Achieved when: ${g.measurement || 'Not specified.'}`);
-		if (g.actions) parts.push(`- Suggested actions: ${g.actions}`);
+	parts.push(
+		'**The summary** is the high-level read: where the project stands, what has taken place, and ' +
+			'what is being planned. Lead with the key points in **bold**, then a short narrative. Do ' +
+			'**not** name individual tickets in it — no identifiers at all — because the columns below ' +
+			'already link the specific work. It overwrites the whole summary, so include everything that ' +
+			'should remain.',
+	);
+	parts.push('');
+	parts.push(
+		'**The columns** are that specific work: up to 5 tasks each, chosen from the candidates below, ' +
+			'each with a one-line summary you write yourself. Pitch every line at what it means for the ' +
+			'project — what was accomplished, what is being accomplished, or what is outstanding. Do ' +
+			"**not** paste the task's own progress summary or the first line of its description, and do " +
+			'not narrate mechanics (branches, CI, who commented when, review round-trips). A reader ' +
+			'should be able to read the three columns top to bottom and come away knowing where the ' +
+			"project stands. Drop any candidate that is not worth a reader's attention rather than " +
+			'padding a column to five, and omit a column entirely if it has nothing in it.',
+	);
+	parts.push('');
+	parts.push('## Candidate tasks');
+	parts.push('');
+	parts.push(...renderActivityCandidates(ctx.activityCandidates));
+
+	// Goals are an optional layer on top of progress: this section only exists when some are due.
+	if (ctx.goals.length > 0) {
+		parts.push('---');
 		parts.push('');
+		parts.push('## Goals due for a check');
+		parts.push('');
+		parts.push(
+			`${ctx.goals.length} goal${ctx.goals.length === 1 ? ' is' : 's are'} also due for a progress check. ` +
+				'For each goal below, assess real progress toward the objective — read the relevant tickets, ' +
+				'comments, and repo state; do not just count tasks. Then call `update_goal_progress` once per ' +
+				'goal with a fresh `progress_percent` (0-100), a `health` (on_track / at_risk / off_track, ' +
+				'weighing progress against any target date), and a one-paragraph `status_blurb` describing where ' +
+				"the goal stands and the next step needed. The blurb renders as markdown on the goal's own page — " +
+				'reference tasks by their identifier (e.g. `HM-51`, which auto-links) and link PRs or other URLs ' +
+				'as markdown links (e.g. `[PR #502](https://github.com/owner/repo/pull/502)`). Do not lower a ' +
+				'percentage without explaining why in the blurb. A goal at 100% is not finished for tracking ' +
+				'purposes: progress can drop back below 100 if the measurement is no longer met, and some goals ' +
+				'are never-ending and measured continuously forever — so re-assess a 100% goal exactly like any ' +
+				'other and record your honest current estimate, even if that means lowering it (with the reason ' +
+				'in the blurb). When a goal needs a push, you can either comment on an existing in-flight ticket ' +
+				'(`create_comment`) to steer or unblock it, or file new task(s) (with `goal_id` set) when a ' +
+				'concrete next step is actually missing — existing backlog or in-flight work often already ' +
+				'covers the goal. Never re-open a closed ticket (done/cancelled are terminal and the system will ' +
+				'refuse it); if work must be redone, file a new ticket that references the old one by identifier.',
+		);
+		parts.push('');
+		for (const g of ctx.goals) {
+			parts.push(`### ${g.title}  \`${g.id}\``);
+			parts.push(
+				`- Current: ${g.progress_percent}% · health ${g.health} · checked ${g.check_frequency}` +
+					(g.target_date ? ` · deadline ${g.target_date}` : ''),
+			);
+			if (g.status_blurb) parts.push(`- Last status: ${g.status_blurb}`);
+			parts.push(`- Achieved when: ${g.measurement || 'Not specified.'}`);
+			if (g.actions) parts.push(`- Suggested actions: ${g.actions}`);
+			parts.push('');
+		}
 	}
 	return parts.join('\n');
 }

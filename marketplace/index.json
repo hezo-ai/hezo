@@ -62,9 +62,9 @@
 				"design",
 				"analytics"
 			],
-			"version": 5,
+			"version": 6,
 			"roster_count": 7,
-			"latest_notes": "Captain now checks the team marketplace for a proven, fully-written role before authoring a hire's system prompt from scratch."
+			"latest_notes": "Captain now owns the project Progress page as a first-class duty: it rebuilds the page on every progress-update run whether or not the project has goals, writes a high-level summary that names no ticket identifiers, and authors a one-line, project-level summary for each task in the recently actioned / created / closed columns. Goals are now described as the optional layer on top."
 		},
 		{
 			"slug": "investment",
@@ -127,9 +127,9 @@
 				"report",
 				"review"
 			],
-			"version": 5,
+			"version": 6,
 			"roster_count": 6,
-			"latest_notes": "Captain now checks the team marketplace for a proven, fully-written role before authoring a hire's system prompt from scratch."
+			"latest_notes": "Captain now owns the project Progress page as a first-class duty: it rebuilds the page on every progress-update run whether or not the project has goals, writes a high-level summary that names no ticket identifiers, and authors a one-line, project-level summary for each task in the recently actioned / created / closed columns. Goals are now described as the optional layer on top."
 		},
 		{
 			"slug": "software-development",
@@ -211,9 +211,9 @@
 				"testing",
 				"security review"
 			],
-			"version": 10,
+			"version": 11,
 			"roster_count": 10,
-			"latest_notes": "Captain now checks the team marketplace for a proven, fully-written role before authoring a hire's system prompt from scratch."
+			"latest_notes": "Captain now owns the project Progress page as a first-class duty: it rebuilds the page on every progress-update run whether or not the project has goals, writes a high-level summary that names no ticket identifiers, and authors a one-line, project-level summary for each task in the recently actioned / created / closed columns. Goals are now described as the optional layer on top."
 		}
 	]
 }

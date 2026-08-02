@@ -44,6 +44,7 @@ import { Route as ProjectsProjectIdAssetsRouteImport } from './routes/projects/$
 import { Route as PreviewProjectIdFilenameRouteImport } from './routes/preview/$projectId/$filename'
 import { Route as ProjectsProjectIdTasksIndexRouteImport } from './routes/projects/$projectId/tasks/index'
 import { Route as ProjectsProjectIdSettingsIndexRouteImport } from './routes/projects/$projectId/settings/index'
+import { Route as ProjectsProjectIdProgressIndexRouteImport } from './routes/projects/$projectId/progress/index'
 import { Route as ProjectsProjectIdInboxIndexRouteImport } from './routes/projects/$projectId/inbox/index'
 import { Route as ProjectsProjectIdGoalsIndexRouteImport } from './routes/projects/$projectId/goals/index'
 import { Route as ProjectsProjectIdAgentsIndexRouteImport } from './routes/projects/$projectId/agents/index'
@@ -53,7 +54,9 @@ import { Route as ProjectsProjectIdGoalsGoalIdRouteImport } from './routes/proje
 import { Route as ProjectsProjectIdAssetsViewRouteImport } from './routes/projects/$projectId/assets_.view'
 import { Route as ProjectsProjectIdAgentsHireRouteImport } from './routes/projects/$projectId/agents/hire'
 import { Route as ProjectsProjectIdAgentsAgentIdRouteRouteImport } from './routes/projects/$projectId/agents/$agentId/route'
+import { Route as ProjectsProjectIdProgressGoalsIndexRouteImport } from './routes/projects/$projectId/progress/goals/index'
 import { Route as ProjectsProjectIdAgentsAgentIdIndexRouteImport } from './routes/projects/$projectId/agents/$agentId/index'
+import { Route as ProjectsProjectIdProgressGoalsGoalIdRouteImport } from './routes/projects/$projectId/progress/goals/$goalId'
 import { Route as ProjectsProjectIdAgentsAgentIdSettingsRouteImport } from './routes/projects/$projectId/agents/$agentId/settings'
 import { Route as ProjectsProjectIdAgentsAgentIdChatHistoryRouteImport } from './routes/projects/$projectId/agents/$agentId/chat-history'
 import { Route as ProjectsProjectIdAgentsAgentIdExecutionsIndexRouteImport } from './routes/projects/$projectId/agents/$agentId/executions/index'
@@ -243,6 +246,12 @@ const ProjectsProjectIdSettingsIndexRoute =
     path: '/settings/',
     getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
+const ProjectsProjectIdProgressIndexRoute =
+  ProjectsProjectIdProgressIndexRouteImport.update({
+    id: '/progress/',
+    path: '/progress/',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
+  } as any)
 const ProjectsProjectIdInboxIndexRoute =
   ProjectsProjectIdInboxIndexRouteImport.update({
     id: '/inbox/',
@@ -297,11 +306,23 @@ const ProjectsProjectIdAgentsAgentIdRouteRoute =
     path: '/agents/$agentId',
     getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
+const ProjectsProjectIdProgressGoalsIndexRoute =
+  ProjectsProjectIdProgressGoalsIndexRouteImport.update({
+    id: '/progress/goals/',
+    path: '/progress/goals/',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
+  } as any)
 const ProjectsProjectIdAgentsAgentIdIndexRoute =
   ProjectsProjectIdAgentsAgentIdIndexRouteImport.update({
     id: '/',
     path: '/',
     getParentRoute: () => ProjectsProjectIdAgentsAgentIdRouteRoute,
+  } as any)
+const ProjectsProjectIdProgressGoalsGoalIdRoute =
+  ProjectsProjectIdProgressGoalsGoalIdRouteImport.update({
+    id: '/progress/goals/$goalId',
+    path: '/progress/goals/$goalId',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
 const ProjectsProjectIdAgentsAgentIdSettingsRoute =
   ProjectsProjectIdAgentsAgentIdSettingsRouteImport.update({
@@ -371,11 +392,14 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId/agents/': typeof ProjectsProjectIdAgentsIndexRoute
   '/projects/$projectId/goals/': typeof ProjectsProjectIdGoalsIndexRoute
   '/projects/$projectId/inbox/': typeof ProjectsProjectIdInboxIndexRoute
+  '/projects/$projectId/progress/': typeof ProjectsProjectIdProgressIndexRoute
   '/projects/$projectId/settings/': typeof ProjectsProjectIdSettingsIndexRoute
   '/projects/$projectId/tasks/': typeof ProjectsProjectIdTasksIndexRoute
   '/projects/$projectId/agents/$agentId/chat-history': typeof ProjectsProjectIdAgentsAgentIdChatHistoryRoute
   '/projects/$projectId/agents/$agentId/settings': typeof ProjectsProjectIdAgentsAgentIdSettingsRoute
+  '/projects/$projectId/progress/goals/$goalId': typeof ProjectsProjectIdProgressGoalsGoalIdRoute
   '/projects/$projectId/agents/$agentId/': typeof ProjectsProjectIdAgentsAgentIdIndexRoute
+  '/projects/$projectId/progress/goals/': typeof ProjectsProjectIdProgressGoalsIndexRoute
   '/projects/$projectId/agents/$agentId/executions/$runId': typeof ProjectsProjectIdAgentsAgentIdExecutionsRunIdRoute
   '/projects/$projectId/agents/$agentId/executions/': typeof ProjectsProjectIdAgentsAgentIdExecutionsIndexRoute
 }
@@ -419,11 +443,14 @@ export interface FileRoutesByTo {
   '/projects/$projectId/agents': typeof ProjectsProjectIdAgentsIndexRoute
   '/projects/$projectId/goals': typeof ProjectsProjectIdGoalsIndexRoute
   '/projects/$projectId/inbox': typeof ProjectsProjectIdInboxIndexRoute
+  '/projects/$projectId/progress': typeof ProjectsProjectIdProgressIndexRoute
   '/projects/$projectId/settings': typeof ProjectsProjectIdSettingsIndexRoute
   '/projects/$projectId/tasks': typeof ProjectsProjectIdTasksIndexRoute
   '/projects/$projectId/agents/$agentId/chat-history': typeof ProjectsProjectIdAgentsAgentIdChatHistoryRoute
   '/projects/$projectId/agents/$agentId/settings': typeof ProjectsProjectIdAgentsAgentIdSettingsRoute
+  '/projects/$projectId/progress/goals/$goalId': typeof ProjectsProjectIdProgressGoalsGoalIdRoute
   '/projects/$projectId/agents/$agentId': typeof ProjectsProjectIdAgentsAgentIdIndexRoute
+  '/projects/$projectId/progress/goals': typeof ProjectsProjectIdProgressGoalsIndexRoute
   '/projects/$projectId/agents/$agentId/executions/$runId': typeof ProjectsProjectIdAgentsAgentIdExecutionsRunIdRoute
   '/projects/$projectId/agents/$agentId/executions': typeof ProjectsProjectIdAgentsAgentIdExecutionsIndexRoute
 }
@@ -471,11 +498,14 @@ export interface FileRoutesById {
   '/projects/$projectId/agents/': typeof ProjectsProjectIdAgentsIndexRoute
   '/projects/$projectId/goals/': typeof ProjectsProjectIdGoalsIndexRoute
   '/projects/$projectId/inbox/': typeof ProjectsProjectIdInboxIndexRoute
+  '/projects/$projectId/progress/': typeof ProjectsProjectIdProgressIndexRoute
   '/projects/$projectId/settings/': typeof ProjectsProjectIdSettingsIndexRoute
   '/projects/$projectId/tasks/': typeof ProjectsProjectIdTasksIndexRoute
   '/projects/$projectId/agents/$agentId/chat-history': typeof ProjectsProjectIdAgentsAgentIdChatHistoryRoute
   '/projects/$projectId/agents/$agentId/settings': typeof ProjectsProjectIdAgentsAgentIdSettingsRoute
+  '/projects/$projectId/progress/goals/$goalId': typeof ProjectsProjectIdProgressGoalsGoalIdRoute
   '/projects/$projectId/agents/$agentId/': typeof ProjectsProjectIdAgentsAgentIdIndexRoute
+  '/projects/$projectId/progress/goals/': typeof ProjectsProjectIdProgressGoalsIndexRoute
   '/projects/$projectId/agents/$agentId/executions/$runId': typeof ProjectsProjectIdAgentsAgentIdExecutionsRunIdRoute
   '/projects/$projectId/agents/$agentId/executions/': typeof ProjectsProjectIdAgentsAgentIdExecutionsIndexRoute
 }
@@ -524,11 +554,14 @@ export interface FileRouteTypes {
     | '/projects/$projectId/agents/'
     | '/projects/$projectId/goals/'
     | '/projects/$projectId/inbox/'
+    | '/projects/$projectId/progress/'
     | '/projects/$projectId/settings/'
     | '/projects/$projectId/tasks/'
     | '/projects/$projectId/agents/$agentId/chat-history'
     | '/projects/$projectId/agents/$agentId/settings'
+    | '/projects/$projectId/progress/goals/$goalId'
     | '/projects/$projectId/agents/$agentId/'
+    | '/projects/$projectId/progress/goals/'
     | '/projects/$projectId/agents/$agentId/executions/$runId'
     | '/projects/$projectId/agents/$agentId/executions/'
   fileRoutesByTo: FileRoutesByTo
@@ -572,11 +605,14 @@ export interface FileRouteTypes {
     | '/projects/$projectId/agents'
     | '/projects/$projectId/goals'
     | '/projects/$projectId/inbox'
+    | '/projects/$projectId/progress'
     | '/projects/$projectId/settings'
     | '/projects/$projectId/tasks'
     | '/projects/$projectId/agents/$agentId/chat-history'
     | '/projects/$projectId/agents/$agentId/settings'
+    | '/projects/$projectId/progress/goals/$goalId'
     | '/projects/$projectId/agents/$agentId'
+    | '/projects/$projectId/progress/goals'
     | '/projects/$projectId/agents/$agentId/executions/$runId'
     | '/projects/$projectId/agents/$agentId/executions'
   id:
@@ -623,11 +659,14 @@ export interface FileRouteTypes {
     | '/projects/$projectId/agents/'
     | '/projects/$projectId/goals/'
     | '/projects/$projectId/inbox/'
+    | '/projects/$projectId/progress/'
     | '/projects/$projectId/settings/'
     | '/projects/$projectId/tasks/'
     | '/projects/$projectId/agents/$agentId/chat-history'
     | '/projects/$projectId/agents/$agentId/settings'
+    | '/projects/$projectId/progress/goals/$goalId'
     | '/projects/$projectId/agents/$agentId/'
+    | '/projects/$projectId/progress/goals/'
     | '/projects/$projectId/agents/$agentId/executions/$runId'
     | '/projects/$projectId/agents/$agentId/executions/'
   fileRoutesById: FileRoutesById
@@ -890,6 +929,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdSettingsIndexRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
+    '/projects/$projectId/progress/': {
+      id: '/projects/$projectId/progress/'
+      path: '/progress'
+      fullPath: '/projects/$projectId/progress/'
+      preLoaderRoute: typeof ProjectsProjectIdProgressIndexRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
     '/projects/$projectId/inbox/': {
       id: '/projects/$projectId/inbox/'
       path: '/inbox'
@@ -953,12 +999,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdAgentsAgentIdRouteRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
+    '/projects/$projectId/progress/goals/': {
+      id: '/projects/$projectId/progress/goals/'
+      path: '/progress/goals'
+      fullPath: '/projects/$projectId/progress/goals/'
+      preLoaderRoute: typeof ProjectsProjectIdProgressGoalsIndexRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
     '/projects/$projectId/agents/$agentId/': {
       id: '/projects/$projectId/agents/$agentId/'
       path: '/'
       fullPath: '/projects/$projectId/agents/$agentId/'
       preLoaderRoute: typeof ProjectsProjectIdAgentsAgentIdIndexRouteImport
       parentRoute: typeof ProjectsProjectIdAgentsAgentIdRouteRoute
+    }
+    '/projects/$projectId/progress/goals/$goalId': {
+      id: '/projects/$projectId/progress/goals/$goalId'
+      path: '/progress/goals/$goalId'
+      fullPath: '/projects/$projectId/progress/goals/$goalId'
+      preLoaderRoute: typeof ProjectsProjectIdProgressGoalsGoalIdRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
     }
     '/projects/$projectId/agents/$agentId/settings': {
       id: '/projects/$projectId/agents/$agentId/settings'
@@ -1078,8 +1138,11 @@ interface ProjectsProjectIdRouteRouteChildren {
   ProjectsProjectIdAgentsIndexRoute: typeof ProjectsProjectIdAgentsIndexRoute
   ProjectsProjectIdGoalsIndexRoute: typeof ProjectsProjectIdGoalsIndexRoute
   ProjectsProjectIdInboxIndexRoute: typeof ProjectsProjectIdInboxIndexRoute
+  ProjectsProjectIdProgressIndexRoute: typeof ProjectsProjectIdProgressIndexRoute
   ProjectsProjectIdSettingsIndexRoute: typeof ProjectsProjectIdSettingsIndexRoute
   ProjectsProjectIdTasksIndexRoute: typeof ProjectsProjectIdTasksIndexRoute
+  ProjectsProjectIdProgressGoalsGoalIdRoute: typeof ProjectsProjectIdProgressGoalsGoalIdRoute
+  ProjectsProjectIdProgressGoalsIndexRoute: typeof ProjectsProjectIdProgressGoalsIndexRoute
 }
 
 const ProjectsProjectIdRouteRouteChildren: ProjectsProjectIdRouteRouteChildren =
@@ -1105,8 +1168,13 @@ const ProjectsProjectIdRouteRouteChildren: ProjectsProjectIdRouteRouteChildren =
     ProjectsProjectIdAgentsIndexRoute: ProjectsProjectIdAgentsIndexRoute,
     ProjectsProjectIdGoalsIndexRoute: ProjectsProjectIdGoalsIndexRoute,
     ProjectsProjectIdInboxIndexRoute: ProjectsProjectIdInboxIndexRoute,
+    ProjectsProjectIdProgressIndexRoute: ProjectsProjectIdProgressIndexRoute,
     ProjectsProjectIdSettingsIndexRoute: ProjectsProjectIdSettingsIndexRoute,
     ProjectsProjectIdTasksIndexRoute: ProjectsProjectIdTasksIndexRoute,
+    ProjectsProjectIdProgressGoalsGoalIdRoute:
+      ProjectsProjectIdProgressGoalsGoalIdRoute,
+    ProjectsProjectIdProgressGoalsIndexRoute:
+      ProjectsProjectIdProgressGoalsIndexRoute,
   }
 
 const ProjectsProjectIdRouteRouteWithChildren =

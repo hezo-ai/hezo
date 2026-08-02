@@ -240,9 +240,34 @@ Together these back the goal detail page's per-goal **run activity** feed (`list
 the progress-update runs that estimated *that* goal, created tickets linked to it, or commented on its
 linked tickets. During a progress-update run the Captain may comment on an in-flight ticket instead of
 filing a new one, and it can never re-open a terminal ticket (blocked in both the REST and MCP
-update paths — only the admin can). A separate Captain-maintained **project progress summary**
-(`projects.progress_summary` + `progress_summary_updated_at`, set via the `update_project_progress`
-MCP tool) is the markdown blurb shown at the top of the Progress page.
+update paths — only the admin can).
+
+**Progress page (independent of goals).** The Captain maintains the Progress page on
+`projects`: `progress_summary` (markdown blurb, deliberately naming no ticket identifiers) +
+`progress_activity` (jsonb) + a shared `progress_summary_updated_at`, all written by one
+`update_project_progress` MCP call in a single `UPDATE`, so summary and columns can never be
+observed half-updated. `progress_activity` is a **frozen snapshot** of the page's three
+recent-activity columns — `{actioned|created|closed: [{identifier, title, summary}]}`, ≤5 each —
+where each `summary` is prose the Captain wrote for that ticket at project altitude (what was
+accomplished / is being accomplished / is outstanding), not a copy of the ticket's own fields.
+Identifier and title are captured at write time, so rendering needs no join and a ticket deleted
+between runs simply renders its captured row. `buildProgressActivitySnapshot`
+(`services/project-activity.ts`) validates on write and returns unresolvable identifiers to the
+caller; `readProgressActivity` tolerates the `{}` default.
+In the web app the page is `/projects/$projectId/progress`, with **Goals nested beneath it**
+(`/progress/goals`, `/progress/goals/$goalId`) so the URL matches the sidebar disclosure and the
+breadcrumb; the pre-nesting `/goals` paths survive as redirect-only routes. The sidebar's Progress
+row carries `subItems: [goals]` and, because a nested sub-item fuzzy-matches its parent, the parent
+row highlights on an *exact* match so only one row reads as active (`sidebar-nav.tsx`).
+The *selection* half is deterministic and stays in SQL — `buildProgressActivityCandidates` builds
+the candidate lists handed to the run prompt: actioned ranks open tickets by
+`GREATEST(tasks.updated_at, latest run on the ticket)` (a progress-update run carries
+`task_id IS NULL`, so it structurally cannot lift a ticket into its own report), created is
+`created_at DESC`, and closed resolves each candidate's real close time from the latest
+`status_change → done` system comment (handling re-opens, cascade closes via
+`content.triggered_by_actor_id`, and a missing comment by falling back to `updated_at`);
+`cancelled` is excluded from the page entirely. Migration 049 adds the column plus the partial
+indexes each candidate window needs.
 
 **Secrets, OAuth, connectors.** `secrets` stores AES-256-GCM ciphertext gated by
 `allowed_hosts` (§ 7). `oauth_connections` records connected GitHub/SaaS accounts; their
@@ -267,11 +292,21 @@ execution (status, timing, tokens, cost, captured logs, `wakeup_id` provenance, 
 success-gate flags `produced_output`/`reported_no_work`). A `kind` enum distinguishes a
 normal `task` run from a `progress_update` run (the Captain's task-less goal assessment —
 `task_id IS NULL`); progress-update runs reuse the full run lifecycle but skip the task comment,
-status flip, and code worktree. They fire on the Captain's heartbeat when goals are due
-(`JobManager.tryDispatchProgressUpdate` → `getDueGoals`), and can also be triggered on demand from
-the Goals page's **Run now** button (`POST /projects/:projectId/goals/run-now` →
-`JobManager.dispatchProgressUpdateNow`, which resolves the project's Captain and reuses the same
-due-goal logic). If **Run now** hits a *transient* conflict — the Captain is already running, the
+status flip, and code worktree. **They do not depend on goals**: a run is due on the Captain's
+heartbeat when a goal is due (`getDueGoals`) *or* when the Progress page has gone stale and a task
+has moved since (`JobManager.isProgressSnapshotDue`, over `PROGRESS_REFRESH_INTERVAL_HOURS`). Its
+anchor is `COALESCE(GREATEST(progress_summary_updated_at, last progress-update run), created_at)`:
+the **run** term is what stops a run that ended without calling `update_project_progress` from
+leaving the page stale and re-dispatching every heartbeat, and `created_at` is a fallback (not a
+third `GREATEST` argument) so a new project runs its planning task first while a recently-created
+project with a genuinely stale page still qualifies. The activity term keeps dormant projects from
+being woken to rewrite an identical summary. Neither being true yields
+`reason: 'not_due'`. The run prompt (`buildProgressUpdatePrompt`) is correspondingly
+progress-first: the Progress page rebuild plus candidate tickets always, and a due-goal section
+only when `ctx.goals` is non-empty. A run can also be triggered on demand from the Progress page's
+**Run now** button (`POST /projects/:projectId/progress/run-now` →
+`JobManager.dispatchProgressUpdateNow`), which passes `manual` to skip the due-check entirely —
+pressing the button always runs. If **Run now** hits a *transient* conflict — the Captain is already running, the
 instance is at its active-container limit, or a launch race — the run is
 **queued** rather than erroring: a task-less `agent_wakeup_requests` row tagged
 `payload.trigger='progress_update_now'` (deduped per Captain by `createProgressUpdateWakeup`, so
@@ -279,7 +314,7 @@ instance is at its active-container limit, or a launch race — the run is
 also makes such a wakeup guard against fall-through: when it is finally dispatched, `activateAgent`
 runs *only* the progress update — it never lets the Captain pick up ordinary task work — and completes
 the wakeup as a no-op if nothing is due by then. A queued run is listed/cancelled through
-`GET`/`POST /projects/:projectId/goals/queued-run[/:wakeupId/cancel]` (scheduled heartbeat checks
+`GET`/`POST /projects/:projectId/progress/queued-run[/:wakeupId/cancel]` (scheduled heartbeat checks
 carry no trigger tag, so they are never surfaced or cancellable here). The isolation is
 two-way: `createProgressUpdateWakeup` never coalesces onto a heartbeat wakeup, and
 `createWakeup`'s generic coalescing skips marker-carrying (`payload.trigger`) rows — so a

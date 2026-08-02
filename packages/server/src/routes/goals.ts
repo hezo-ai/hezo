@@ -99,7 +99,7 @@ const PROGRESS_UPDATE_MESSAGES: Record<ProgressUpdateDispatchReason, string> = {
 	no_project: 'Project not found.',
 	no_captain: 'This project has no Captain to run progress updates.',
 	captain_disabled: 'The Captain is currently disabled.',
-	no_due_goals: 'No goals are due for a progress update right now.',
+	not_due: 'No progress update is due for this project right now.',
 	agent_busy: 'The Captain is already running in this project.',
 	instance_at_capacity:
 		'Hezo is at its active-container limit; the run will start when a container goes idle.',
@@ -107,10 +107,11 @@ const PROGRESS_UPDATE_MESSAGES: Record<ProgressUpdateDispatchReason, string> = {
 	launch_conflict: 'A progress-update run is already starting.',
 };
 
-// Manually run the Captain's progress-update ("Run now" on the Goals page). Reuses the scheduled
-// logic: it assesses the goals currently due and refreshes the project progress summary. "Nothing
-// due" is a valid no-op (200), not an error.
-goalsRoutes.post('/projects/:projectId/goals/run-now', async (c) => {
+// Manually run the Captain's progress-update ("Run now" on the Progress page). Reuses the
+// scheduled logic, minus its due-check: pressing the button is explicit intent, so this always
+// dispatches, whether or not the project has goals and whether or not any are due. Only the
+// busy / capacity / budget guards still apply, and those queue or 409 rather than no-op.
+goalsRoutes.post('/projects/:projectId/progress/run-now', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const projectId = c.get('projectId') as string;
 	const db = c.get('db');
@@ -126,9 +127,6 @@ goalsRoutes.post('/projects/:projectId/goals/run-now', async (c) => {
 	// race) was queued instead of erroring — it runs when the Captain frees up.
 	if ('queued' in result) return ok(c, { queued: true, wakeup_id: result.wakeupId });
 
-	if (result.reason === 'no_due_goals') {
-		return ok(c, { dispatched: false, reason: result.reason });
-	}
 	const message = PROGRESS_UPDATE_MESSAGES[result.reason];
 	if (result.reason === 'no_project' || result.reason === 'no_captain') {
 		return err(c, 'NOT_FOUND', message, 404);
@@ -139,7 +137,7 @@ goalsRoutes.post('/projects/:projectId/goals/run-now', async (c) => {
 // The single queued manual progress-update run for this project ("Run now" while the Captain was
 // busy), if any. At most one exists (deduped by `createProgressUpdateWakeup`). Scheduled heartbeat
 // progress checks have no `progress_update_now` trigger, so they are never surfaced here.
-goalsRoutes.get('/projects/:projectId/goals/queued-run', async (c) => {
+goalsRoutes.get('/projects/:projectId/progress/queued-run', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const projectId = c.get('projectId') as string;
 	const db = c.get('db');
@@ -164,7 +162,7 @@ goalsRoutes.get('/projects/:projectId/goals/queued-run', async (c) => {
 
 // Cancel the queued manual progress-update run. Only manually-initiated ("Run now") runs carry the
 // `progress_update_now` trigger, so scheduled heartbeat checks can't be cancelled through here.
-goalsRoutes.post('/projects/:projectId/goals/queued-run/:wakeupId/cancel', async (c) => {
+goalsRoutes.post('/projects/:projectId/progress/queued-run/:wakeupId/cancel', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const projectId = c.get('projectId') as string;
 	const db = c.get('db');

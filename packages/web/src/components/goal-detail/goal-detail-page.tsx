@@ -3,8 +3,8 @@ import {
 	type GoalRunActivity,
 	HeartbeatRunStatus,
 } from '@hezo/shared';
-import { Link } from '@tanstack/react-router';
-import { ChevronRight, Pencil } from 'lucide-react';
+import { Link, useNavigate } from '@tanstack/react-router';
+import { Pencil } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useGoal, useGoalHistory, useGoalRunActivity } from '../../hooks/use-goals';
 import { formatDateTime, formatRelativeTime } from '../../lib/format-date';
@@ -17,6 +17,7 @@ import { GoalProgressChart } from '../goal-progress-chart';
 import { InfiniteScrollSentinel } from '../infinite-scroll-sentinel';
 import { MarkdownProse } from '../markdown-prose';
 import { Badge, type BadgeColor } from '../ui/badge';
+import { Breadcrumb } from '../ui/breadcrumb';
 
 interface GoalDetailPageProps {
 	projectId: string;
@@ -199,6 +200,7 @@ function GoalRunsFeed({ projectId, goalId }: { projectId: string; goalId: string
 
 export function GoalDetailPage({ projectId, goalId }: GoalDetailPageProps) {
 	const { t } = useI18n();
+	const navigate = useNavigate();
 	const { data: goal, isLoading } = useGoal(projectId, goalId);
 	const { data: history } = useGoalHistory(projectId, goalId);
 	const [editOpen, setEditOpen] = useState(false);
@@ -219,23 +221,28 @@ export function GoalDetailPage({ projectId, goalId }: GoalDetailPageProps) {
 
 	return (
 		<div className="max-w-3xl">
-			<nav
-				aria-label="Breadcrumb"
-				data-testid="goal-breadcrumb"
-				className="mb-2 flex flex-wrap items-center gap-x-1 text-[13px] text-text-2"
-			>
-				<Link
-					to="/projects/$projectId/goals"
-					params={{ projectId }}
-					className="hover:text-text-1 hover:underline transition-colors"
-				>
-					Progress
-				</Link>
-				<ChevronRight className="w-3 h-3 shrink-0 text-text-3" />
-				<span aria-current="page" className="text-text-1 break-words">
-					{goal.title}
-				</span>
-			</nav>
+			{/* `Progress › Goals › <goal>` — the shared primitive, so this reads the same as the
+			    task and asset breadcrumbs rather than being a third hand-rolled one. */}
+			<div className="mb-2">
+				<Breadcrumb
+					data-testid="goal-breadcrumb"
+					segments={[
+						{
+							key: 'progress',
+							label: t('nav.progress'),
+							onNavigate: () =>
+								navigate({ to: '/projects/$projectId/progress', params: { projectId } }),
+						},
+						{
+							key: 'goals',
+							label: t('nav.goals'),
+							onNavigate: () =>
+								navigate({ to: '/projects/$projectId/progress/goals', params: { projectId } }),
+						},
+						{ key: 'goal', label: goal.title, title: goal.title },
+					]}
+				/>
+			</div>
 
 			<div className="mb-4 flex items-start justify-between gap-3">
 				<div className="flex min-w-0 flex-col gap-2">
