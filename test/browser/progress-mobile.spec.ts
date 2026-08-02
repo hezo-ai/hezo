@@ -34,13 +34,16 @@ test.describe('Progress page at mobile width', () => {
 		await expect(closedTab).toBeVisible();
 		await expect(page.getByTestId('progress-column-actioned')).toBeHidden();
 
-		// Exactly one panel is mounted at a time, so an empty project shows the explanation once
-		// rather than three times over.
-		await expect(page.getByTestId('progress-column-empty')).toHaveCount(1);
+		// Exactly one panel is on screen, so an empty project shows the explanation once rather
+		// than three times over. Filtered to visible on purpose: the desktop grid is `hidden
+		// md:grid`, so its three columns stay in the DOM at this width and a bare `toHaveCount`
+		// would count them.
+		const visibleEmpty = page.getByTestId('progress-column-empty').filter({ visible: true });
+		await expect(visibleEmpty).toHaveCount(1);
 
 		// Tapping a tab keeps that single-panel shape.
 		await closedTab.click();
-		await expect(page.getByTestId('progress-column-empty')).toHaveCount(1);
+		await expect(visibleEmpty).toHaveCount(1);
 
 		// Tap targets stay thumb-sized.
 		const box = await actionedTab.boundingBox();
