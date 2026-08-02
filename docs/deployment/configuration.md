@@ -23,6 +23,7 @@ handy for baking defaults into a service definition while still overriding per r
 | `--sandbox-backend <name>` | `HEZO_SANDBOX_BACKEND` | `docker` | Where agent containers run on a **new** instance: `docker` (the local daemon) or `daytona` (a [managed sandbox service](#running-agent-containers-on-a-managed-sandbox-service)). Once set in Settings -> Containers, the stored choice wins and this is ignored. Selecting a managed backend Hezo cannot reach is fatal at startup - it never falls back to local Docker. |
 | `--daytona-api-key <key>` | `HEZO_DAYTONA_API_KEY` | - | Daytona API key. Required when `--sandbox-backend` is `daytona`. Used only by Hezo itself to reach the provider - it is never placed inside an agent container. |
 | `--daytona-api-url <url>` | `HEZO_DAYTONA_API_URL` | Daytona's public API | Daytona API base URL, for a regional or self-hosted endpoint. |
+| - | `HEZO_AGENT_BASE_IMAGE` | the release's published image | Container image every project's agents run in, overriding the default for this instance. Must be a reference the backend in use can pull, e.g. `ghcr.io/hezo-ai/agent-base:0.42.0`. Mainly for running a development server against a managed sandbox service, where the default is built into the local Docker daemon and a managed service has nothing to pull. A project that names its own base image keeps it. |
 | `--master-key <phrase>` | `HEZO_MASTER_KEY` | - | The twelve-word master key, to set up or unlock without the web gate. |
 | `--web-url <url>` | `HEZO_WEB_URL` | same origin | Public base URL, used so account sign-ins redirect back correctly. |
 | `--reset` | `HEZO_RESET` | off | Start fresh with an empty **embedded** database (the existing `pgdata` is renamed aside, not deleted). Not applicable with `--database-url` - recreate an external database with your provider's tools. |
@@ -255,6 +256,26 @@ or self-hosted endpoint; it defaults to Daytona's public API.
 setting for it in the web UI, and the API key does not go in the secrets vault. The
 General settings page shows which backend is in use, read-only, next to the database and
 asset backends.
+
+### The agent image on a managed backend
+
+A released Hezo pulls its agent image from a public registry, so this needs no thought:
+the managed service pulls the same image your local Docker would.
+
+A **development server** is the exception, and it is worth knowing before you try it.
+Running from source, Hezo builds the agent image into your local Docker daemon from the
+Dockerfile in your working tree - which is what makes edits to it take effect on the next
+restart. A managed sandbox service cannot see that image; it pulls from a registry. So
+point the instance at a published image instead:
+
+```sh
+HEZO_AGENT_BASE_IMAGE=ghcr.io/hezo-ai/agent-base:0.42.0 \
+HEZO_SANDBOX_BACKEND=daytona HEZO_DAYTONA_API_KEY=dtn_... bun run dev
+```
+
+That applies to every project. A project that names its own base image on its Container
+settings keeps it. Without it, Hezo refuses at provision time with a message saying so,
+rather than letting the provider fail the build against an image it cannot find.
 
 ### It is fatal, never a silent fallback
 

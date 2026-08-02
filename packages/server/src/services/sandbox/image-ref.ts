@@ -1,4 +1,6 @@
 import { logger } from '../../logger';
+import { MANAGED_AGENT_BASE_IMAGE } from '../image-registry';
+import { SandboxImageNotPullableError } from './errors';
 
 const log = logger.child('image-ref');
 
@@ -103,6 +105,26 @@ function pinnedRef(parsed: ParsedImageRef, digest: string): string {
  * concern would break a setup that otherwise works. The fallback is logged with
  * what it costs, because the failure it re-admits is otherwise invisible.
  */
+/**
+ * Refuse an image a registry-backed backend cannot possibly pull.
+ *
+ * Shared rather than written per adapter, because it is a property of *building
+ * from a registry* and not of any one provider: every managed backend is handed
+ * a reference and pulls it, so every one of them fails the same way on a
+ * local-build tag. An adapter with its own image store (Docker) does not call
+ * this - it can resolve the reference locally, which is the whole point of it.
+ *
+ * Deliberately narrow: it refuses **only** the managed local-build sentinel, not
+ * every reference lacking a registry host. `node:24-slim` has no host either and
+ * is a perfectly good Docker Hub image a project may legitimately name, so a
+ * host-based rule would reject valid configuration to catch one known-bad value.
+ */
+export function assertRegistryPullableImage(image: string, backendName: string): void {
+	if (image.trim() === MANAGED_AGENT_BASE_IMAGE) {
+		throw new SandboxImageNotPullableError(image, backendName);
+	}
+}
+
 export async function resolveDigestPinnedRef(ref: string): Promise<string> {
 	const parsed = parseImageRef(ref);
 	if (parsed.digest) return ref;

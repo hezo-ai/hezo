@@ -43,6 +43,27 @@ const LOCAL_IMAGES: Record<string, LocalImageSpec> = {
 };
 
 /**
+ * Explicit agent-base image, overriding what this build would otherwise use.
+ *
+ * Exists for one combination that has no other answer: **a dev server on a
+ * managed sandbox backend.** Dev deliberately builds agent-base from the
+ * working-tree Dockerfile into the local daemon's image store, which is exactly
+ * right for local Docker and useless to a provider - it pulls from a registry
+ * and can never see that image. Without an override the only route is editing
+ * every project's base image by hand, and a newly created project silently goes
+ * back to the local-build sentinel.
+ *
+ * Set it to the image CI published for the branch under test:
+ *
+ *   HEZO_AGENT_BASE_IMAGE=ghcr.io/hezo-ai/agent-base:<sha> bun run dev
+ *
+ * It applies on every backend, not just managed ones - on Docker it pulls that
+ * exact image instead of building locally, which is the honest way to test
+ * against what CI produced rather than against your working tree.
+ */
+export const AGENT_BASE_IMAGE_OVERRIDE_ENV = 'HEZO_AGENT_BASE_IMAGE';
+
+/**
  * The published agent-base ref to fetch, or `null` when none should exist. Only a
  * compiled release binary (`IS_PACKAGED_BUILD`) uses the published image; dev
  * (`bun run`) and tests build from the working-tree Dockerfile so edits take
@@ -51,8 +72,16 @@ const LOCAL_IMAGES: Record<string, LocalImageSpec> = {
  * refreshes it each boot since Docker otherwise caches `:latest` by name. The
  * `packaged` param defaults to the module constant but is injectable so the logic
  * is unit-testable without env munging.
+ *
+ * {@link AGENT_BASE_IMAGE_OVERRIDE_ENV} wins over both, because the case it
+ * exists for is precisely the one where the build-type default is wrong.
  */
-export function publishedAgentBaseRef(packaged: boolean = IS_PACKAGED_BUILD): string | null {
+export function publishedAgentBaseRef(
+	packaged: boolean = IS_PACKAGED_BUILD,
+	env: NodeJS.ProcessEnv = process.env,
+): string | null {
+	const override = env[AGENT_BASE_IMAGE_OVERRIDE_ENV]?.trim();
+	if (override) return override;
 	return packaged ? `${AGENT_BASE_GHCR_REPO}:latest` : null;
 }
 

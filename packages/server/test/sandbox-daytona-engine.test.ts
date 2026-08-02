@@ -881,3 +881,53 @@ describe('DaytonaEngine byte channel (the tunnel transport)', () => {
 		expect(closes).toBe(1);
 	});
 });
+
+/**
+ * A managed backend pulls its image from a registry, so an image reference only
+ * a local Docker daemon can resolve is unusable there - and the combination that
+ * produces one is ordinary: a dev server (which builds agent-base into the local
+ * image store) switched onto a managed backend.
+ */
+describe('DaytonaEngine image reference', () => {
+	it('refuses the local-build sentinel instead of letting the provider fail the build', async () => {
+		// Left to Daytona this surfaces as `build_failed: ghcr.io/... not found`
+		// against a Docker Hub repository the operator never typed, several steps
+		// from the cause. Measured: that is exactly what a sandbox created from an
+		// unresolvable ref reports.
+		const { api, rec } = fakeApi();
+		await expect(
+			new DaytonaEngine(api).createContainer('hezo-p1', {
+				...CONFIG,
+				Image: 'hezo/agent-base:latest',
+			}),
+		).rejects.toThrow(/local-build reference/);
+		// And nothing was provisioned, so a refused image costs no sandbox.
+		expect(rec.creates).toEqual([]);
+	});
+
+	it('names the override that fixes it', async () => {
+		const { api } = fakeApi();
+		const err = await new DaytonaEngine(api)
+			.createContainer('hezo-p1', { ...CONFIG, Image: 'hezo/agent-base:latest' })
+			.catch((e) => e);
+		expect(err.message).toContain('HEZO_AGENT_BASE_IMAGE');
+	});
+
+	it('accepts any published reference, including a project’s own', async () => {
+		// The check is narrow on purpose: it refuses one known-unpullable value, not
+		// every reference without a registry host - `node:24-slim` has no host
+		// either and is a perfectly good image a project may legitimately name.
+		//
+		// Asserted as "was accepted and provisioned", not on the exact `FROM` text:
+		// whether the ref reaches Daytona as a tag or digest-pinned depends on
+		// whether the registry answered, which is a different property (covered
+		// above) and not one this test should be coupled to.
+		const { api, rec } = fakeApi();
+		const engine = new DaytonaEngine(api);
+		await engine.createContainer('hezo-p1', { ...CONFIG, Image: 'node:24-slim' });
+		await engine.createContainer('hezo-p2', { ...CONFIG, Image: 'ghcr.io/acme/custom:1' });
+		expect(rec.creates).toHaveLength(2);
+		expect(rec.creates[0].dockerfileContent).toContain('node');
+		expect(rec.creates[1].dockerfileContent).toContain('ghcr.io/acme/custom');
+	});
+});

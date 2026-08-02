@@ -3,7 +3,7 @@ import { statSync } from 'node:fs';
 import { DEFAULT_CONTAINER_DISK_GB } from '@hezo/shared';
 import { logger } from '../../../logger';
 import { parseDfKilobytes, parseHezoProcessList } from '../../docker';
-import { resolveDigestPinnedRef } from '../image-ref';
+import { assertRegistryPullableImage, resolveDigestPinnedRef } from '../image-ref';
 import {
 	buildDiskUsageScript,
 	buildKillByEnvMarkerScript,
@@ -208,6 +208,13 @@ export class DaytonaEngine implements ContainerEngine {
 		if (memoryGb !== undefined && memoryGb > MAX_MEMORY_GB) {
 			throw new DaytonaMemoryCapExceededError(memoryGb);
 		}
+
+		// Refused here rather than left to the provider: a sandbox built `FROM` a
+		// local-only tag dies mid-build reporting a Docker Hub repository the
+		// operator never typed, which is several steps from the real cause (a dev
+		// instance switched to a managed backend while keeping the image reference
+		// only local Docker could resolve).
+		assertRegistryPullableImage(config.Image, 'Daytona');
 
 		// Daytona keys its build cache on a hash of the Dockerfile *text*, so a
 		// tag-pinned reference is byte-identical forever: the key never moves and

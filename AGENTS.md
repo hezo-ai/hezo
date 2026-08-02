@@ -478,6 +478,8 @@ change, and move anything provider-specific you find in the generic prose into i
 
 `conformance/egress.ts` needs the image to carry `hezo-tunnel` (there is no container-to-host path otherwise) and **refuses with that reason** rather than skipping, since a skip there would report green while asserting nothing about the only path it covers. That bites a managed backend before it bites Docker: Docker builds from the working tree, while a provider pulls a *published* image, so `agent-base:latest` is main's and lacks anything a branch added.
 
+**The same gap bites a dev server on a managed backend, and has its own variable.** Running from source, `publishedAgentBaseRef()` returns null and agent-base is built from the working-tree Dockerfile into the *local daemon's* image store - right for Docker, invisible to a provider, which pulls from a registry. `HEZO_AGENT_BASE_IMAGE=ghcr.io/hezo-ai/agent-base:<sha>` overrides it for every project (a project naming its own image keeps it), and applies on Docker too, so you can test against exactly what CI built rather than your tree. Forgetting it is caught at provision: `assertRegistryPullableImage` refuses the local-build sentinel with a message naming the variable, rather than letting the provider report a build failure against a Docker Hub repository nobody typed. A registry-backed adapter calls it; one with its own image store does not.
+
 Point `HEZO_CONFORMANCE_IMAGE` at the image CI published for the branch. **Finding its tag is not obvious**: `build-agent-image` tags with `github.sha`, which on a `pull_request` event is the *merge* commit rather than the branch head, so the tag matches no SHA `git log` will show you. Resolve it with `git ls-remote origin refs/pull/<pr>/merge`, then:
 
 ```sh
