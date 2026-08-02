@@ -100,8 +100,15 @@ describe('committed icon bitmaps', () => {
 		expect(minAlpha(load(file))).toBe(255);
 	});
 
+	// `any` is held to the same budget as `maskable`, not because the spec masks it
+	// but because launchers do: Brave's home-screen shortcut picks the `any` icon
+	// over the maskable one, wraps it in an adaptive icon and crops. At the frame's
+	// old full size (110% of the safe radius) that crop removed the frame entirely
+	// and cut the glyph off at the bottom.
 	test.each(
-		ICON_TARGETS.filter((t) => t.variant === 'maskable').map((t) => [t.file, t] as const),
+		ICON_TARGETS.filter((t) => t.variant === 'maskable' || t.variant === 'any').map(
+			(t) => [t.file, t] as const,
+		),
 	)('%s keeps its mark inside the safe circle', (file, target) => {
 		expect(markReach(load(file))).toBeLessThanOrEqual(safeReachLimit(target.size));
 	});
