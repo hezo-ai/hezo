@@ -17,6 +17,7 @@ import { resolve } from 'node:path';
 import { describe, expect, test } from 'vitest';
 import {
 	BRAND_GLYPH_FILL,
+	BRAND_RED,
 	BRAND_RX_RATIO,
 	BRAND_STROKE_RATIO,
 	CANVAS,
@@ -134,6 +135,8 @@ describe('committed icon bitmaps', () => {
 describe('manifest agrees with what is on disk', () => {
 	const manifest = JSON.parse(readFileSync(resolve(PUBLIC, 'manifest.webmanifest'), 'utf8')) as {
 		icons: { src: string; sizes: string; type: string; purpose: string }[];
+		theme_color: string;
+		background_color: string;
 	};
 
 	test('every declared icon exists at its declared size', () => {
@@ -160,6 +163,29 @@ describe('manifest agrees with what is on disk', () => {
 		for (const t of ICON_TARGETS) {
 			expect(`${t.file}: ${declared.has(t.file) || html.includes(t.file)}`).toBe(`${t.file}: true`);
 		}
+	});
+
+	/**
+	 * The launch screen is one flat brand-red field: Android fills it with
+	 * `background_color`, and the icon's own plate is painted in BRAND_RED, so the
+	 * plate dissolves into the backdrop and only the white frame and glyph remain.
+	 * That effect is exact-match or nothing - a background a shade off turns the
+	 * plate back into a visible square, which is the mismatched look this replaced
+	 * (red band over a white void with a red tile stranded in it).
+	 *
+	 * The literal is hand-written in three places nothing else keeps in step, so
+	 * pin all three to the geometry module's BRAND_RED, which is what the bitmaps
+	 * are actually rendered from.
+	 */
+	test('the splash colours match the red the icon plate is painted in', () => {
+		const html = readFileSync(resolve(PUBLIC, '../index.html'), 'utf8');
+		const meta = html.match(/<meta\s+name="theme-color"\s+content="([^"]+)"/i)?.[1];
+		const brand = BRAND_RED.toLowerCase();
+		expect({
+			background: manifest.background_color.toLowerCase(),
+			theme: manifest.theme_color.toLowerCase(),
+			meta: meta?.toLowerCase(),
+		}).toEqual({ background: brand, theme: brand, meta: brand });
 	});
 });
 
