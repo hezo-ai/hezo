@@ -28,7 +28,7 @@ test('HQ task list does not show the project progress bar', async () => {
 	expect(queryByTestId('task-progress-bar')).toBeNull();
 });
 
-test('sidebar exposes Tasks, Documents, Assets and Container for the HQ project (not Settings)', async () => {
+test('sidebar exposes Tasks, Documents, Assets, Connectors, Skills and Container for the HQ project (not Settings)', async () => {
 	const { findAllByRole, queryAllByRole, container, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
@@ -57,6 +57,21 @@ test('sidebar exposes Tasks, Documents, Assets and Container for the HQ project 
 		expect(queryAllByRole('link', { name: 'Documents' }).length).toBeGreaterThan(0),
 	);
 	await waitFor(() => expect(queryAllByRole('link', { name: 'Assets' }).length).toBeGreaterThan(0));
+
+	// Connectors and Skills are top-level pages on HQ too — HQ has no Settings row
+	// to nest them under, and neither route redirects an internal project away.
+	await waitFor(() =>
+		expect(
+			queryAllByRole('link', { name: 'Connectors' }).some(
+				(l) => l.getAttribute('href') === `/projects/${HQ_PROJECT_SLUG}/connectors`,
+			),
+		).toBe(true),
+	);
+	expect(
+		queryAllByRole('link', { name: 'Skills' }).some(
+			(l) => l.getAttribute('href') === `/projects/${HQ_PROJECT_SLUG}/skills`,
+		),
+	).toBe(true);
 
 	// No settings link pointing at the HQ project.
 	const settingsLinks = queryAllByRole('link', { name: 'Settings' });
@@ -116,6 +131,21 @@ test('HQ /documents and /assets render while /settings still redirects to /tasks
 	});
 	await new Promise((r) => setTimeout(r, 200));
 	expect(router.state.location.pathname).toBe(`/projects/${HQ_PROJECT_SLUG}/assets`);
+
+	// Connectors and Skills are real pages for HQ — the menu rows have somewhere to land.
+	await router.navigate({
+		to: '/projects/$projectId/connectors',
+		params: { projectId: HQ_PROJECT_SLUG },
+	});
+	await new Promise((r) => setTimeout(r, 200));
+	expect(router.state.location.pathname).toBe(`/projects/${HQ_PROJECT_SLUG}/connectors`);
+
+	await router.navigate({
+		to: '/projects/$projectId/skills',
+		params: { projectId: HQ_PROJECT_SLUG },
+	});
+	await new Promise((r) => setTimeout(r, 200));
+	expect(router.state.location.pathname).toBe(`/projects/${HQ_PROJECT_SLUG}/skills`);
 
 	// Settings still redirects to tasks.
 	await router.navigate({
