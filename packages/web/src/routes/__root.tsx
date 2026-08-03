@@ -437,7 +437,15 @@ function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
 					)}
 					{/* Collapsed: a slim expand tab docked to the project rail's right
 					    edge, flush under the app header. Desktop-only — below lg the
-					    project menu is a drawer, so there is nothing to collapse. */}
+					    project menu is a drawer, so there is nothing to collapse.
+					    z-50 is load-bearing, not decorative: collapsed, <main> starts at
+					    the rail's right edge, so this tab shares its top-left corner with
+					    whatever <main> stickies there — today ContainerStatusBanner (z-40)
+					    and BudgetBanner (z-30), which sit in this same stacking context.
+					    Anything at or below their z-index gets painted over and the tab
+					    silently vanishes, stranding the user with no way to re-expand.
+					    Keep this above every sticky banner; the only other z-50 is the
+					    mobile drawer, which is lg:hidden and never coexists with it. */}
 					{menuProjectSlug && menuCollapsed && (
 						<Tooltip content="Expand menu" side="right">
 							<button
@@ -445,7 +453,7 @@ function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
 								aria-label="Expand menu"
 								data-testid="project-sidebar-expand"
 								onClick={() => setMenuCollapsed(false)}
-								className="absolute left-[60px] top-0 z-20 hidden h-[22px] w-7 items-center justify-center rounded-br-[9px] border border-l-0 border-t-0 border-border bg-surface text-text-2 shadow-sm transition-colors hover:text-text-1 lg:flex"
+								className="absolute left-[60px] top-0 z-50 hidden h-[22px] w-7 items-center justify-center rounded-br-[9px] border border-l-0 border-t-0 border-border bg-surface text-text-2 shadow-sm transition-colors hover:text-text-1 lg:flex"
 							>
 								<ChevronsRight className="h-4 w-4" aria-hidden="true" />
 							</button>

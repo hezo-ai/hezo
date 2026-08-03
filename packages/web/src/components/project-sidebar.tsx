@@ -276,7 +276,7 @@ export function ProjectSidebar({
 					to="/projects/$projectId"
 					params={projectParams}
 					data-testid="project-sidebar-name"
-					className="min-w-0 flex-1 text-[13px] font-semibold text-text-1 truncate"
+					className="min-w-0 text-[13px] font-semibold text-text-1 truncate"
 				>
 					{project ? (
 						isInternal ? (
