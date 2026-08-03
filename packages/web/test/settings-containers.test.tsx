@@ -116,3 +116,31 @@ test('switching the container service warns with real numbers and needs a key', 
 	const keyInput = getByTestId('daytona-api-key-input') as HTMLInputElement;
 	expect(keyInput.type).toBe('password');
 });
+
+test('offers the key field even when one is already stored, so an expired key can be replaced', async () => {
+	// The dead end this closes: hiding the field once *any* key was on file read
+	// as "handled", but a stored key that has expired or been revoked is refused
+	// by the preflight - and the dialog reporting that refusal was the same
+	// dialog that gave no way to supply a working one. The only escape was a
+	// launch flag, which is not a thing the Containers page should require.
+	const { findByTestId, getByTestId, user } = await renderApp({
+		initialPath: '/settings/containers',
+		seed: async (ctx) => {
+			// Only existence matters here: `credential_configured` comes from
+			// hasDaytonaApiKey, which never decrypts.
+			await ctx.db.query(
+				`INSERT INTO secrets (name, encrypted_value, category, allowed_hosts, allow_all_hosts, allow_body_substitution)
+				 VALUES ('HEZO_DAYTONA_API_KEY', 'stale-ciphertext', 'api_token', $1, false, false)`,
+				[[]],
+			);
+		},
+	});
+
+	await user.click(await findByTestId('backend-select-daytona'));
+
+	const keyInput = getByTestId('daytona-api-key-input') as HTMLInputElement;
+	expect(keyInput.type).toBe('password');
+	// Blank is legitimate here - it means "keep the stored key" - so the dialog
+	// says which of the two it is doing rather than leaving the operator to guess.
+	expect(document.body.textContent).toContain('A key is already stored');
+});

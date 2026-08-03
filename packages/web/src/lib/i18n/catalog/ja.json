@@ -75,6 +75,7 @@
 	"container.strandedCommits.title": "コミット済みの作業がリモートに届いていません",
 	"containers.backend.apiKey.hint": "暗号化して保存されます。Hezo がプロバイダーに接続するためだけに使い、エージェントのコンテナには一切渡りません。",
 	"containers.backend.apiKey.label": "Daytona API キー",
+	"containers.backend.apiKey.stored": "キーはすでに保存されています。そのまま使う場合は空欄のままにし、置き換える場合は新しいキーを入力してください。",
 	"containers.backend.apiKey.required": "切り替えるには API キーを入力してください。",
 	"containers.backend.confirm.action": "切り替えてコンテナを破棄",
 	"containers.backend.confirm.body": "実行中のコンテナ {containers} 個を破棄し、進行中のエージェント実行 {runs} 件を終了します。それらの実行は各プロジェクトのコンテナページに失敗として表示され、あとから再実行できます。",

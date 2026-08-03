@@ -20,6 +20,16 @@ carries the figures and caveats that are Daytona's own.
 The key is stored encrypted in the secrets vault and used only by Hezo to reach Daytona.
 It never enters an agent container.
 
+### Replacing an expired or revoked key
+
+The same form replaces it. Choose Daytona in **Settings -> Containers** and paste the new
+key: the field is always offered, and leaving it blank keeps the key already saved. If
+Daytona refuses the stored key, that is where you correct it.
+
+If the stored key stops working while Hezo is running on Daytona, containers stop being
+provisioned and the reason is reported in the server log. Hezo still starts and the web
+app still loads, so you can paste a new key or switch back to local Docker.
+
 You can also set it at startup on a brand-new instance, with
 `--sandbox-backend daytona --daytona-api-key "<key>"` or the matching
 `HEZO_SANDBOX_BACKEND` and `HEZO_DAYTONA_API_KEY` environment variables. That only chooses

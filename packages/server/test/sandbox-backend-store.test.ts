@@ -1,7 +1,9 @@
 import { SandboxBackend } from '@hezo/shared';
+import { Logger } from '@hiddentao/logger';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
+import { DockerClient } from '../src/services/docker';
 import {
 	completeSandboxBackendOnUnlock,
 	hasDaytonaApiKey,
@@ -14,6 +16,7 @@ import { DaytonaClient } from '../src/services/sandbox/daytona/client';
 import { SandboxBackendError } from '../src/services/sandbox/errors';
 import { SandboxBackendHolder } from '../src/services/sandbox/holder';
 import { createPendingEngine, pendingUnlockMessage } from '../src/services/sandbox/pending';
+import { describeSwitchImpact, switchSandboxBackend } from '../src/services/sandbox/switch-backend';
 import { safeClose } from './helpers';
 import { createStubDocker, createTestApp } from './helpers/app';
 
@@ -58,6 +61,22 @@ afterEach(async () => {
 
 function daytonaAnswers(): void {
 	vi.spyOn(DaytonaClient.prototype, 'ping').mockResolvedValue(true);
+}
+
+/**
+ * Record warnings from every logger, not from a freshly built child.
+ *
+ * `logger.child(...)` returns a new instance per call, so spying on one made
+ * here never touches the module-level logger the code under test captured at
+ * import. Patching the prototype does, which is the same reason `logger.ts`
+ * patches `shouldSkipLevel` there rather than on an instance.
+ */
+function captureWarnings(): () => string[] {
+	const seen: string[] = [];
+	vi.spyOn(Logger.prototype, 'warn').mockImplementation((...args: unknown[]) => {
+		seen.push(args.map(String).join(' '));
+	});
+	return () => seen;
 }
 
 describe('resolveStartupBackend on a locked instance', () => {
@@ -105,6 +124,40 @@ describe('resolveStartupBackend on a locked instance', () => {
 		await setStoredSandboxBackend(db, SandboxBackend.Docker);
 		const resolved = await resolveStartupBackend(db, locked, {});
 		expect(resolved).toMatchObject({ backend: SandboxBackend.Docker, deferred: false });
+	});
+
+	it('says so when a provider key is supplied but no provider is selected', async () => {
+		// The trap that reads as "I set up Daytona and it ran on Docker anyway":
+		// the key is a credential, not a selection, and nothing said so.
+		const warnings = captureWarnings();
+		const resolved = await resolveStartupBackend(db, unlocked, { daytonaApiKey: 'dtn_x' });
+
+		expect(resolved.backend).toBe(SandboxBackend.Docker);
+		expect(warnings().join(' ')).toMatch(/HEZO_SANDBOX_BACKEND=daytona/);
+	});
+
+	it('says so when the launch flag disagrees with the stored setting', async () => {
+		// Stored wins by design, so this changes nothing - but an operator who
+		// typed a backend and got another one should not have to infer that.
+		await setStoredSandboxBackend(db, SandboxBackend.Docker);
+		const warnings = captureWarnings();
+
+		const resolved = await resolveStartupBackend(db, unlocked, { backend: 'daytona' });
+
+		expect(resolved.backend).toBe(SandboxBackend.Docker);
+		expect(warnings().join(' ')).toMatch(/stored setting wins/);
+	});
+
+	it('stays quiet when the flag agrees with what is stored', async () => {
+		await setStoredSandboxBackend(db, SandboxBackend.Daytona);
+		await storeDaytonaApiKey(db, unlocked, 'dtn_x');
+		const warnings = captureWarnings();
+
+		await resolveStartupBackend(db, unlocked, { backend: 'daytona', daytonaApiKey: 'dtn_x' });
+
+		// Scoped to this module's two warnings rather than "nothing warned at all",
+		// which any unrelated background line would break.
+		expect(warnings().filter((w) => /sandbox-backend|HEZO_SANDBOX_BACKEND/i.test(w))).toEqual([]);
 	});
 
 	it('still writes the key through when the instance is already unlocked', async () => {
@@ -198,6 +251,57 @@ describe('completeSandboxBackendOnUnlock', () => {
 
 		expect(writes).toEqual([]);
 	});
+});
+
+describe('recovering from a stored key that no longer works', () => {
+	/**
+	 * The end-to-end trap, which only closes if every step holds: an operator
+	 * whose stored Daytona key has expired must still be able to boot, reach the
+	 * Containers page, and switch back to Docker.
+	 *
+	 * Each step used to break on its own. The boot aborted (fixed by deferring);
+	 * then the deferred open failed and left a pending engine that threw
+	 * *synchronously*, which `.catch()` does not catch - so listing containers
+	 * took out both the page that shows the switch and the switch itself.
+	 */
+	it('boots, renders the switch impact, and switches to Docker', async () => {
+		vi.spyOn(DaytonaClient.prototype, 'ping').mockResolvedValue(false);
+		vi.spyOn(DockerClient.prototype, 'ping').mockResolvedValue(true);
+		await storeDaytonaApiKey(db, unlocked, 'dtn_expired');
+		await setStoredSandboxBackend(db, SandboxBackend.Daytona);
+
+		// 1. Boot is not fatal - the key is on file, just unreadable while locked.
+		const resolved = await resolveStartupBackend(db, locked, {});
+		expect(resolved.deferred).toBe(true);
+
+		const holder = new SandboxBackendHolder({
+			engine: createPendingEngine(pendingUnlockMessage('https://app.daytona.io/api')),
+			info: { backend: SandboxBackend.Daytona, display: 'https://app.daytona.io/api' },
+		});
+
+		// 2. Unlock connects for real, and the expired key is refused.
+		await expect(
+			completeSandboxBackendOnUnlock(db, unlocked, holder, resolved),
+		).rejects.toBeInstanceOf(SandboxBackendError);
+
+		// 3. The Containers page still renders: this is what the switch dialog's
+		//    numbers come from, and it runs against the pending engine.
+		await expect(describeSwitchImpact(db, holder.engine)).resolves.toMatchObject({
+			containers: 0,
+		});
+
+		// 4. And the switch away actually completes.
+		const result = await switchSandboxBackend(
+			db,
+			unlocked,
+			holder,
+			{ backend: SandboxBackend.Docker },
+			async () => null,
+		);
+		expect(result.backend).toBe(SandboxBackend.Docker);
+		expect(holder.backend).toBe(SandboxBackend.Docker);
+		await expect(holder.engine.ping()).resolves.toBe(true);
+	}, 20_000);
 });
 
 describe('the pending engine', () => {

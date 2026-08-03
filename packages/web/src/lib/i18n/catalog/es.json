@@ -75,6 +75,7 @@
 	"container.strandedCommits.title": "Hay trabajo confirmado que no llegó a ningún remoto",
 	"containers.backend.apiKey.hint": "Se guarda cifrada. Solo la usa Hezo para llegar al proveedor: nunca entra en un contenedor de agente.",
 	"containers.backend.apiKey.label": "Clave de API de Daytona",
+	"containers.backend.apiKey.stored": "Ya hay una clave guardada. Deja este campo vacío para conservarla, o introduce una nueva para reemplazarla.",
 	"containers.backend.apiKey.required": "Introduce la clave de API para cambiar.",
 	"containers.backend.confirm.action": "Cambiar y destruir contenedores",
 	"containers.backend.confirm.body": "Esto destruye {containers} contenedor(es) en marcha y termina {runs} ejecución(es) de agente en curso. Esas ejecuciones se marcan como fallidas en la página Contenedor de su proyecto y se pueden volver a lanzar después.",

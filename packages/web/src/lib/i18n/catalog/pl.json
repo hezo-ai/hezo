@@ -75,6 +75,7 @@
 	"container.strandedCommits.title": "Zatwierdzona praca nie trafiła do żadnego zdalnego repozytorium",
 	"containers.backend.apiKey.hint": "Przechowywany w postaci zaszyfrowanej. Używa go tylko Hezo do połączenia z dostawcą - nigdy nie trafia do kontenera agenta.",
 	"containers.backend.apiKey.label": "Klucz API Daytony",
+	"containers.backend.apiKey.stored": "Klucz jest już zapisany. Zostaw to pole puste, aby go zachować, albo wpisz nowy, aby go zastąpić.",
 	"containers.backend.apiKey.required": "Podaj klucz API, aby przełączyć.",
 	"containers.backend.confirm.action": "Przełącz i zniszcz kontenery",
 	"containers.backend.confirm.body": "To zniszczy {containers} działających kontenerów i zakończy {runs} trwających uruchomień agentów. Te uruchomienia zostaną oznaczone jako nieudane na stronie Kontener ich projektu i będzie można je uruchomić ponownie.",

@@ -75,6 +75,7 @@
 	"container.strandedCommits.title": "Committete Arbeit hat kein Remote erreicht",
 	"containers.backend.apiKey.hint": "Verschlüsselt gespeichert. Wird nur von Hezo für den Zugriff auf den Anbieter genutzt - er gelangt nie in einen Agent-Container.",
 	"containers.backend.apiKey.label": "Daytona-API-Schlüssel",
+	"containers.backend.apiKey.stored": "Ein Schlüssel ist bereits gespeichert. Lassen Sie dieses Feld leer, um ihn zu behalten, oder geben Sie einen neuen ein, um ihn zu ersetzen.",
 	"containers.backend.apiKey.required": "Geben Sie den API-Schlüssel ein, um zu wechseln.",
 	"containers.backend.confirm.action": "Wechseln und Container zerstören",
 	"containers.backend.confirm.body": "Dabei werden {containers} laufende Container zerstört und {runs} laufende Agentenläufe beendet. Diese Läufe werden auf der Container-Seite des jeweiligen Projekts als fehlgeschlagen gemeldet und können danach erneut gestartet werden.",

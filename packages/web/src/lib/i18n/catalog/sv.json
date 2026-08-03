@@ -75,6 +75,7 @@
 	"container.strandedCommits.title": "Committat arbete har inte nått något fjärrarkiv",
 	"containers.backend.apiKey.hint": "Lagras krypterad. Används bara av Hezo för att nå leverantören - den hamnar aldrig i en agentcontainer.",
 	"containers.backend.apiKey.label": "Daytona API-nyckel",
+	"containers.backend.apiKey.stored": "En nyckel är redan sparad. Lämna fältet tomt för att behålla den, eller ange en ny för att ersätta den.",
 	"containers.backend.apiKey.required": "Ange API-nyckeln för att byta.",
 	"containers.backend.confirm.action": "Byt och förstör containrar",
 	"containers.backend.confirm.body": "Detta förstör {containers} körande container och avslutar {runs} pågående agentkörningar. De körningarna rapporteras som misslyckade på projektets Container-sida och kan startas om efteråt.",

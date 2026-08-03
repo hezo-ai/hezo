@@ -19,8 +19,11 @@ import { decrypt, encrypt } from '../../crypto/encryption';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Db } from '../../db/database';
 import { getSystemMeta, setSystemMeta } from '../../lib/system-meta';
+import { logger } from '../../logger';
 import type { SandboxBackendHolder } from './holder';
 import { openSandboxBackend } from './open';
+
+const log = logger.child('sandbox-backend');
 
 export const SANDBOX_BACKEND_KEY = 'sandbox_backend';
 export const DAYTONA_API_URL_KEY = 'sandbox_daytona_api_url';
@@ -154,12 +157,34 @@ export async function resolveStartupBackend(
 	}
 	if (flags.daytonaApiUrl) await setStoredDaytonaApiUrl(db, flags.daytonaApiUrl);
 
+	const requested = flags.backend?.trim().toLowerCase();
 	const backend =
 		stored ??
-		(flags.backend && isSandboxBackend(flags.backend.trim().toLowerCase())
-			? (flags.backend.trim().toLowerCase() as SandboxBackend)
+		(requested && isSandboxBackend(requested)
+			? (requested as SandboxBackend)
 			: SandboxBackend.Docker);
 	if (!stored) await setStoredSandboxBackend(db, backend);
+
+	// Two ways a launch command can mean less than it appears to, both of which
+	// were silent - the operator read the Containers page, saw a backend they did
+	// not ask for, and had nothing to connect it to.
+	if (requested && stored && requested !== stored) {
+		log.warn(
+			`Ignoring --sandbox-backend / HEZO_SANDBOX_BACKEND=${requested}: this instance is set to ` +
+				`${stored}, and the stored setting wins so a stale launch script cannot undo a switch ` +
+				'made from the Containers page. Change it in Settings -> Containers.',
+		);
+	}
+	if (!requested && flags.daytonaApiKey && backend === SandboxBackend.Docker) {
+		// A provider credential is not a provider selection: pre-seeding a key for
+		// a later switch is a real use, so this is a warning rather than an
+		// inference about what the operator meant.
+		log.warn(
+			'HEZO_DAYTONA_API_KEY is set but containers run on local Docker. The key selects no ' +
+				'backend on its own - add --sandbox-backend daytona / HEZO_SANDBOX_BACKEND=daytona to ' +
+				'run on Daytona, or switch from Settings -> Containers. The key is saved either way.',
+		);
+	}
 
 	// The flag wins over the vault, and did before: the write above lands first,
 	// so a stored read returned the flag's own value anyway. Stating it once

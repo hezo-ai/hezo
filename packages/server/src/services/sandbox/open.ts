@@ -13,6 +13,21 @@ const log = logger.child('sandbox-backend');
 /** Preflight retry backoff - a briefly-restarting endpoint shouldn't kill startup. */
 const CONNECT_RETRY_DELAYS_MS = [2000, 4000];
 
+/**
+ * How an operator actually gets out of a bad credential, on either surface this
+ * error reaches - the boot log and the Containers switch dialog.
+ *
+ * It used to end "drop --sandbox-backend / HEZO_SANDBOX_BACKEND to run
+ * containers on local Docker", which is **false**: the backend is a stored
+ * setting that the flag only seeds, so removing the flag changes nothing on an
+ * instance that has already chosen a provider. Following it leaves the operator
+ * with the same failure and the belief that they are now on Docker.
+ */
+const KEY_RECOVERY_HINT =
+	'Supply a working key with --daytona-api-key / HEZO_DAYTONA_API_KEY, or set one from ' +
+	'Settings -> Containers. The key is used for this startup and saved once the instance ' +
+	'is unlocked.';
+
 export interface OpenSandboxBackendOptions {
 	/** `docker` (default) or a managed provider. */
 	backend?: string;
@@ -73,9 +88,7 @@ export async function openSandboxBackend(
 		// mistake, and reporting it as an unreachable API would send the operator
 		// looking at the wrong thing.
 		throw new SandboxBackendError(
-			'The Daytona sandbox backend is selected but no API key is configured.\n' +
-				'Set --daytona-api-key / HEZO_DAYTONA_API_KEY, or drop ' +
-				'--sandbox-backend / HEZO_SANDBOX_BACKEND to run containers on local Docker.',
+			`The Daytona sandbox backend is selected but no API key is configured.\n${KEY_RECOVERY_HINT}`,
 		);
 	}
 
@@ -85,10 +98,9 @@ export async function openSandboxBackend(
 		options.retryDelaysMs,
 		() =>
 			`Cannot reach the configured Daytona API at ${redacted}.\n` +
-			'Check that --daytona-api-key / HEZO_DAYTONA_API_KEY is valid and not expired, that ' +
-			'the key carries the sandbox permission scopes, and that --daytona-api-url / ' +
-			'HEZO_DAYTONA_API_URL points at the right region. ' +
-			'Drop --sandbox-backend / HEZO_SANDBOX_BACKEND to run containers on local Docker.',
+			'Check that the API key is valid and not expired, that it carries the sandbox ' +
+			'permission scopes, and that --daytona-api-url / HEZO_DAYTONA_API_URL points at the ' +
+			`right region.\n${KEY_RECOVERY_HINT}`,
 		'Daytona',
 	);
 

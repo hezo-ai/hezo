@@ -93,8 +93,17 @@ function BackendSwitcher({ info }: { info: SandboxBackendInfo }) {
 	const [apiKey, setApiKey] = useState('');
 	const [error, setError] = useState<string | null>(null);
 
-	const needsKey = target === SandboxBackend.Daytona && !info.credential_configured;
-	const canConfirm = !needsKey || apiKey.trim().length > 0;
+	// Offered whenever the destination needs a credential, **including** when one
+	// is already on file. Hiding it then read as "this is handled" and was instead
+	// a dead end: a stored key that has expired or been revoked is refused by the
+	// preflight, and the dialog reporting that refusal was the same dialog that
+	// gave no way to supply a working one.
+	const takesKey = target === SandboxBackend.Daytona;
+	// Required only when there is nothing to fall back on. With a key on file,
+	// blank means "keep it" - so rotating is possible without making every switch
+	// re-type a key that is already correct.
+	const keyRequired = takesKey && !info.credential_configured;
+	const canConfirm = !keyRequired || apiKey.trim().length > 0;
 
 	async function handleConfirm() {
 		if (!target) return;
@@ -164,7 +173,7 @@ function BackendSwitcher({ info }: { info: SandboxBackendInfo }) {
 				// lives in the handler so the missing key can say so instead.
 				onConfirm={handleConfirm}
 			>
-				{needsKey && (
+				{takesKey && (
 					<div className="flex flex-col gap-1.5">
 						<label className="text-[13px] font-medium" htmlFor="daytona-api-key-input">
 							{t('containers.backend.apiKey.label')}
@@ -177,6 +186,9 @@ function BackendSwitcher({ info }: { info: SandboxBackendInfo }) {
 							value={apiKey}
 							onChange={(e) => setApiKey(e.target.value)}
 						/>
+						{info.credential_configured && (
+							<p className="text-[12px] text-text-2">{t('containers.backend.apiKey.stored')}</p>
+						)}
 						<p className="text-[12px] text-text-2">{t('containers.backend.apiKey.hint')}</p>
 					</div>
 				)}

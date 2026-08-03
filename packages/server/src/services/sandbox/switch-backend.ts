@@ -39,6 +39,28 @@ const log = logger.child('sandbox-switch');
 /** Every container Hezo owns carries this, whichever backend created it. */
 const HEZO_OWNED_LABEL = 'hezo.project';
 
+/**
+ * The containers this instance owns on the current backend, or none when the
+ * backend cannot answer.
+ *
+ * The tolerance is the point, and it is needed on both call sites: an operator
+ * whose backend is unreachable - a dead provider key, a stopped daemon, a
+ * deferred open that failed - must still be able to load the Containers page
+ * and switch away from it. A backend that cannot be listed has containers
+ * nothing can do anything about either way.
+ *
+ * try/catch rather than `.catch()` because a pending engine throws
+ * **synchronously**, so a rejection handler on the returned promise never runs.
+ */
+async function listOwnedContainers(engine: ContainerEngine): Promise<Array<{ Id: string }>> {
+	try {
+		return await engine.listContainersByLabel(HEZO_OWNED_LABEL);
+	} catch (e) {
+		log.error(`could not list containers on the current backend: ${(e as Error).message}`);
+		return [];
+	}
+}
+
 export interface SwitchImpact {
 	/** Containers that will be destroyed. */
 	containers: number;
@@ -52,7 +74,11 @@ export interface SwitchImpact {
  */
 export async function describeSwitchImpact(db: Db, engine: ContainerEngine): Promise<SwitchImpact> {
 	const [owned, runs] = await Promise.all([
-		engine.listContainersByLabel(HEZO_OWNED_LABEL).catch(() => []),
+		// Wrapped rather than `.catch()`-ed for the same reason as `destroyAll`: a
+		// pending engine (deferred open that failed) throws synchronously, and this
+		// runs on every load of the Containers page - so the throw escaping here
+		// took out the very page the operator needs in order to switch away.
+		listOwnedContainers(engine),
 		db.query<{ n: number }>(
 			`SELECT COUNT(*)::int AS n FROM heartbeat_runs WHERE status IN ('queued', 'running')`,
 		),
@@ -69,13 +95,9 @@ export async function describeSwitchImpact(db: Db, engine: ContainerEngine): Pro
  * to see it.
  */
 async function destroyAll(db: Db, engine: ContainerEngine): Promise<number> {
-	const owned = await engine.listContainersByLabel(HEZO_OWNED_LABEL).catch((e) => {
-		// If the outgoing backend cannot even be listed there is nothing to be
-		// done about its containers, and blocking the switch would strand the
-		// operator on a backend that is already broken. Loud, then continue.
-		log.error(`could not list containers on the outgoing backend: ${(e as Error).message}`);
-		return [] as Array<{ Id: string }>;
-	});
+	// Tolerates a backend that cannot be listed, which is exactly the state an
+	// operator switching away from a broken backend is in.
+	const owned = await listOwnedContainers(engine);
 	let destroyed = 0;
 	for (const c of owned) {
 		try {

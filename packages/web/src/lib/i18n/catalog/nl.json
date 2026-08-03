@@ -75,6 +75,7 @@
 	"container.strandedCommits.title": "Vastgelegd werk heeft geen remote bereikt",
 	"containers.backend.apiKey.hint": "Versleuteld opgeslagen. Alleen Hezo gebruikt hem om de provider te bereiken - hij komt nooit in een agentcontainer.",
 	"containers.backend.apiKey.label": "Daytona API-sleutel",
+	"containers.backend.apiKey.stored": "Er is al een sleutel opgeslagen. Laat dit veld leeg om die te behouden, of voer een nieuwe in om die te vervangen.",
 	"containers.backend.apiKey.required": "Voer de API-sleutel in om te wisselen.",
 	"containers.backend.confirm.action": "Wisselen en containers vernietigen",
 	"containers.backend.confirm.body": "Dit vernietigt {containers} draaiende container(s) en beëindigt {runs} lopende agentruns. Die runs worden als mislukt gemeld op de Containerpagina van hun project en kunnen daarna opnieuw worden gestart.",

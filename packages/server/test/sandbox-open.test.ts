@@ -88,7 +88,13 @@ describe('openSandboxBackend is fatal, never degraded', () => {
 			...NO_RETRY,
 		}).catch((e) => e);
 		expect(err).toBeInstanceOf(SandboxBackendError);
-		expect(err.message).toContain('--sandbox-backend');
+		// Points at the credential, which is what an unreachable API most often
+		// means. It used to say "drop --sandbox-backend to run on local Docker",
+		// which is false once the backend is a stored setting the flag only seeds -
+		// following it left the operator with the same failure.
+		expect(err.message).toContain('--daytona-api-key');
+		expect(err.message).toContain('Settings -> Containers');
+		expect(err.message).not.toContain('drop --sandbox-backend');
 	});
 
 	it('never hands back a Docker engine on any failing path', async () => {

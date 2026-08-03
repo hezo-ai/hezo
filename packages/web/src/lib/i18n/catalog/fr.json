@@ -75,6 +75,7 @@
 	"container.strandedCommits.title": "Du travail validé n'a atteint aucun dépôt distant",
 	"containers.backend.apiKey.hint": "Stockée chiffrée. Utilisée uniquement par Hezo pour joindre le fournisseur - elle n'entre jamais dans un conteneur d'agent.",
 	"containers.backend.apiKey.label": "Clé API Daytona",
+	"containers.backend.apiKey.stored": "Une clé est déjà enregistrée. Laissez ce champ vide pour la conserver, ou saisissez-en une nouvelle pour la remplacer.",
 	"containers.backend.apiKey.required": "Saisissez la clé API pour changer.",
 	"containers.backend.confirm.action": "Changer et détruire les conteneurs",
 	"containers.backend.confirm.body": "Cela détruit {containers} conteneur(s) en cours et met fin à {runs} exécution(s) d'agent en cours. Ces exécutions sont signalées comme échouées sur la page Conteneur de leur projet et peuvent être relancées ensuite.",
