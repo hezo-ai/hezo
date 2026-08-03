@@ -1697,6 +1697,23 @@ reason on it (`setPoolMemberState` + `setPoolMemberOutcome`), so it lists as Fai
 is the fix - rather than a container left running on the engine that nothing references and
 nobody can see.
 
+**A dropped output stream resumes rather than killing the run.** A run's entire stdout
+arrives over one long-lived connection - a `follow=true` log stream on Daytona, a hijacked
+attach socket on Docker - held open for the whole command, so it sits idle whenever the agent
+is thinking or waiting on a tool call and a gateway in front of the provider reaps it.
+(Measured: Bun's `fetch` client imposes no idle timeout of its own, so a mid-stream close is
+always the far end's.) Daytona's adapter reopens the stream and discards the bytes it already
+delivered, counted at line granularity so the skip can never cut a multi-byte character. That
+client-side skip is the only exact resume available: measured against the live API, the logs
+endpoint accepts `?offset`, `?from`, `?since`, `?tail` and a `Range:` header and **silently
+ignores every one**, and a reopened follow stream replays from the first byte - so a naive
+reconnect would double-count token usage and re-emit the final assistant message. Bounded,
+because each reconnect re-sends the whole log. When the reconnects are exhausted, or the log
+turns out to have been truncated under us, it raises `ExecStreamLostError` - which
+`agent-runner` routes into the same bounded retry the orphan detector uses
+(`retryOrEscalateLostRun`), because the infrastructure losing a run is not the agent failing
+it.
+
 A container is destroyed only on its **second consecutive sighting**. Provisioning still has a
 window where a container exists on the engine and is recorded nowhere yet - `createContainer`
 has returned an id and the member INSERT has not committed - and one caught there is

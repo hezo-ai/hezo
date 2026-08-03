@@ -49,3 +49,37 @@ export class SandboxImageNotPullableError extends Error {
 		this.name = 'SandboxImageNotPullableError';
 	}
 }
+
+/**
+ * The channel carrying a run's output died before the command finished.
+ *
+ * **A property of the transport, not of the agent.** The run's entire stdout
+ * arrives over one long-lived connection - a `follow=true` log stream on
+ * Daytona, a hijacked attach socket on Docker - held open for as long as the
+ * command runs. A remote peer closing an idle one is ordinary: an agent thinking,
+ * or waiting on a slow tool call, sends nothing for tens of seconds, and a
+ * gateway in front of the provider reaps the connection. (Measured: Bun's `fetch`
+ * client imposes no idle timeout of its own, so a mid-stream close is always the
+ * far end's doing.)
+ *
+ * Worth its own type for two reasons. It reached the operator as
+ * `The socket connection was closed unexpectedly` - Bun's wording, which names
+ * none of the several sockets a run holds and reads like the agent crashed. And
+ * it was classified as a run failure, burning the agent's turn and posting a
+ * failure ping, when the honest reading is that the infrastructure lost the run:
+ * the same class as a driver dying, which already has a bounded retry.
+ *
+ * Backend-agnostic on purpose. Both transports have the shape, and nothing above
+ * the `ContainerEngine` seam may learn which backend is in use.
+ */
+export class ExecStreamLostError extends Error {
+	constructor(transport: string, options?: { cause?: unknown }) {
+		const cause = options?.cause;
+		const detail = cause instanceof Error ? `: ${cause.message}` : '';
+		super(
+			`the container's output stream (${transport}) closed before the command finished${detail}`,
+			options,
+		);
+		this.name = 'ExecStreamLostError';
+	}
+}

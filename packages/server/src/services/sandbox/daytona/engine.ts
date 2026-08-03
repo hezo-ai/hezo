@@ -26,7 +26,12 @@ import type {
 	ProcessEnvMarker,
 	SandboxFiles,
 } from '../types';
-import { type DaytonaApi, DaytonaApiError, type DaytonaSandbox } from './client';
+import {
+	type CreateSandboxSpec,
+	type DaytonaApi,
+	DaytonaApiError,
+	type DaytonaSandbox,
+} from './client';
 import {
 	asShellCommand,
 	renderDaytonaExec,
@@ -135,6 +140,29 @@ export class DaytonaMemoryCapExceededError extends Error {
 	}
 }
 
+/**
+ * Thrown when the account has no room left for another sandbox.
+ *
+ * The provider answers a `400` whose body is a JSON blob naming a limit, and it
+ * reached the operator pasted verbatim into a task comment - a stack trace where
+ * a sentence was needed. It is also not a Hezo failure at all: the account is
+ * full, usually of *disk* rather than memory, which is the quota that binds
+ * first on a small plan and the one Hezo cannot see. Naming the lever matters
+ * more than naming the error, because the number of sandboxes that fit is
+ * `quota / disk-per-container`, and disk-per-container is a Hezo setting.
+ */
+export class DaytonaQuotaExceededError extends Error {
+	constructor(detail: string) {
+		super(
+			`this sandbox service account has no capacity left for another container: ${detail} ` +
+				'Remove sandboxes you no longer need from the provider dashboard, or lower ' +
+				"Settings > Containers > Disk per container - it decides how many fit in the account's " +
+				'quota at all. Hezo reclaims its own containers automatically once nothing is using them.',
+		);
+		this.name = 'DaytonaQuotaExceededError';
+	}
+}
+
 /** Bound on a single exec's stderr read-back. */
 const STDERR_TAIL_BYTES = 256 * 1024;
 
@@ -234,7 +262,7 @@ export class DaytonaEngine implements ContainerEngine {
 		// digest is what makes that cache correct, not a nicety.
 		const image = await resolveDigestPinnedRef(config.Image);
 
-		const sandbox = await this.client.createSandbox({
+		const sandbox = await this.createSandboxOrExplainQuota({
 			dockerfileContent: `FROM ${image}\n`,
 			// The *requested* image is recorded, not the resolved digest, so
 			// `inspectContainer().Config.Image` answers the same question it
@@ -438,6 +466,33 @@ export class DaytonaEngine implements ContainerEngine {
 	}
 
 	// ---- exec --------------------------------------------------------------
+
+	/**
+	 * Create, turning the provider's "you are full" refusal into advice.
+	 *
+	 * Absorbed here rather than at the call site because it is a fact about this
+	 * provider, and nothing above the seam may learn which backend is in use. The
+	 * shape is matched on the message text: the status is a plain `400`, shared
+	 * with every other bad request, so only the body distinguishes them.
+	 */
+	private async createSandboxOrExplainQuota(spec: CreateSandboxSpec): Promise<DaytonaSandbox> {
+		try {
+			return await this.client.createSandbox(spec);
+		} catch (e) {
+			const body = e instanceof DaytonaApiError ? e.body : '';
+			if (/limit exceeded|quota|insufficient/i.test(body)) {
+				let detail = body;
+				try {
+					const parsed = JSON.parse(body) as { message?: string };
+					if (parsed.message) detail = parsed.message.replace(/\s+/g, ' ').trim();
+				} catch {
+					// Not JSON - the raw body is still better than nothing.
+				}
+				throw new DaytonaQuotaExceededError(detail.endsWith('.') ? detail : `${detail}.`);
+			}
+			throw e;
+		}
+	}
 
 	async execCreate(containerId: string, config: ExecConfig): Promise<string> {
 		const id = `dtn-exec-${randomBytes(8).toString('hex')}`;

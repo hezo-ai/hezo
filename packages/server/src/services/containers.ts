@@ -181,6 +181,11 @@ export async function detectHostEgressMtu(): Promise<number | null> {
 	}
 }
 
+/** Human-readable elapsed time for a provision, e.g. `58.2s`. */
+function elapsedSeconds(startedAt: number): string {
+	return `${((Date.now() - startedAt) / 1000).toFixed(1)}s`;
+}
+
 function provisionStreamId(containerId: string): string {
 	return `provision:${containerId}`;
 }
@@ -374,6 +379,11 @@ export async function provisionContainer(
 	const { db, docker, dataDir, wsManager, masterKeyManager, logs } = deps;
 	const teamId = project.team_id;
 
+	// Measured from the moment the project goes `creating`, which is also when the
+	// Containers page starts showing it as Starting - so "how long did that take?"
+	// is answerable from the log rather than inferred from the gap between two
+	// unrelated lines.
+	const provisionStartedAt = Date.now();
 	await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
 		ContainerStatus.Creating,
 		project.id,
@@ -572,7 +582,7 @@ export async function provisionContainer(
 			}
 		}
 		log.info(
-			`project ${ref(project.slug, project.id)} container ${ref(project.slug, Id.slice(0, 12))} provisioned and started`,
+			`project ${ref(project.slug, project.id)} container ${ref(project.slug, Id.slice(0, 12))} provisioned and started in ${elapsedSeconds(provisionStartedAt)}`,
 		);
 
 		await db.query(
@@ -725,7 +735,10 @@ export async function provisionContainer(
 		return Id;
 	} catch (error) {
 		const errorMessage = error instanceof Error ? error.message : String(error);
-		emit('stderr', `✗ Provisioning failed: ${errorMessage}`);
+		emit(
+			'stderr',
+			`✗ Provisioning failed after ${elapsedSeconds(provisionStartedAt)}: ${errorMessage}`,
+		);
 		// A container that was created and then failed part-way through setup is
 		// still a real container on the engine, so it is left in the pool as
 		// `error` with the reason on it: it lists as Failed, its detail page shows

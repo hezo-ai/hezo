@@ -70,6 +70,10 @@ Daytona would keep serving a stale toolchain.
   ordinary account, so Hezo cannot watch a container approach its cap and stop it
   gracefully. Daytona's own out-of-memory handling applies instead. Because a container
   serves one run at a time, that ends the run that overran and nothing else.
+- **Agent output arrives over one long-lived connection**, which Daytona's gateway closes when
+  it goes quiet - and an agent thinking or waiting on a tool call is quiet for tens of seconds
+  at a time. Hezo reopens it and carries on from where it stopped, so a run is not affected. If
+  it cannot stay open at all, the run is retried rather than failed.
 - **Suspended sandboxes still count.** A suspended container holds its memory and disk
   against your account quota. On a small plan, idle projects can hold the whole allowance.
 

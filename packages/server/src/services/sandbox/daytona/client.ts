@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { basename } from 'node:path';
 import { trackBackground } from '../../../lib/background';
 import { logger } from '../../../logger';
+import { ExecStreamLostError } from '../errors';
 import { chunkPtyPayload } from './command';
 
 const log = logger.child('daytona');
@@ -13,6 +14,14 @@ export const DEFAULT_DAYTONA_API_URL = 'https://app.daytona.io/api';
 const FILE_TIMEOUT_MS = 120_000;
 
 const CONTROL_TIMEOUT_MS = 60_000;
+
+/**
+ * How many times a dropped command-log stream is resumed before the run is
+ * failed. Bounded because every reconnect replays the log from byte 0 - the
+ * endpoint offers no offset - so retrying a genuinely-down provider costs
+ * increasingly more each time for increasingly less chance of success.
+ */
+const MAX_LOG_STREAM_RECONNECTS = 5;
 
 /**
  * How long the PTY has to reach raw mode and echo its sentinel.
@@ -545,27 +554,11 @@ export class DaytonaClient implements DaytonaApi {
 			const cmdId = started.cmdId;
 			if (!cmdId) throw new Error('Daytona session exec returned no cmdId');
 
-			// Deliberately no timeout on the follow stream: it stays open for the
-			// whole command, and an agent run legitimately runs for its full timeout.
-			// `opts.signal` is how a caller ends it early.
-			const logsRes = await fetch(
-				`${base}/process/session/${sessionId}/command/${cmdId}/logs?follow=true`,
-				{ headers: { Authorization: `Bearer ${this.apiKey}` }, signal: opts.signal },
+			await this.followCommandLog(
+				`${base}/process/session/${sessionId}/command/${cmdId}/logs`,
+				onLine,
+				opts.signal,
 			);
-			if (logsRes.body) {
-				const reader = logsRes.body.getReader();
-				const decoder = new TextDecoder();
-				let buf = '';
-				while (true) {
-					const { done, value } = await reader.read();
-					if (done) break;
-					buf += decoder.decode(value, { stream: true });
-					const lines = buf.split('\n');
-					buf = lines.pop() ?? '';
-					for (const line of lines) await onLine(`${line}\n`);
-				}
-				if (buf) await onLine(buf);
-			}
 
 			// The follow stream ends when the command does; the exit code is only on
 			// the command record, so it is fetched rather than parsed out of the logs.
@@ -582,6 +575,118 @@ export class DaytonaClient implements DaytonaApi {
 			await this.deleteSession(sandbox, sessionId).catch((e) => {
 				log.warn(`could not delete exec session ${sessionId}: ${(e as Error).message}`);
 			});
+		}
+	}
+
+	/**
+	 * Follow one command's log to completion, reconnecting where it left off if
+	 * the stream drops.
+	 *
+	 * **Why it drops.** The stream is held open for the whole command, so it sits
+	 * idle whenever the agent is thinking or waiting on a tool call - tens of
+	 * seconds at a time - and a gateway in front of the provider reaps idle
+	 * connections. Measured: Bun's `fetch` client imposes no idle timeout of its
+	 * own (a local stream survives a 30s gap untouched), so a mid-stream close is
+	 * always the far end's. Left unhandled it killed the run outright, with Bun's
+	 * `socket connection was closed unexpectedly` for a diagnosis.
+	 *
+	 * **How the resume is exact**, measured against the live API rather than read
+	 * off the docs:
+	 *
+	 * - the endpoint has **no offset support at all** - `?offset`, `?from`,
+	 *   `?since`, `?tail` and a `Range:` header are each accepted and *silently
+	 *   ignored*, all returning the identical full log;
+	 * - a reopened `follow=true` stream **replays from the first byte**, so a naive
+	 *   reconnect would duplicate everything already emitted - double-counted token
+	 *   usage and a re-emitted final assistant message;
+	 * - but the log is append-only and complete from byte 0 on every read.
+	 *
+	 * So the resume is done here: reopen, and discard exactly the bytes already
+	 * delivered. `delivered` is counted at **line** granularity, so the skip always
+	 * lands on a line boundary and can never cut a multi-byte character in half.
+	 * A replay shorter than what was already delivered would mean the provider
+	 * truncated or rotated the log, which no byte offset can survive - that fails
+	 * rather than emitting misaligned output.
+	 *
+	 * Bounded, because each reconnect re-sends the whole log: a provider that is
+	 * genuinely down would otherwise retry forever at growing cost.
+	 */
+	private async followCommandLog(
+		logsUrl: string,
+		onLine: (line: string) => void | Promise<void>,
+		signal?: AbortSignal,
+	): Promise<void> {
+		let delivered = 0;
+		let reconnects = 0;
+
+		for (;;) {
+			// Deliberately no timeout: the stream stays open for the whole command,
+			// and an agent run legitimately runs for its full budget. `signal` is how
+			// a caller ends it early.
+			const res = await fetch(`${logsUrl}?follow=true`, {
+				headers: { Authorization: `Bearer ${this.apiKey}` },
+				signal,
+			});
+			if (!res.body) return;
+
+			const reader = res.body.getReader();
+			const decoder = new TextDecoder();
+			let skip = delivered;
+			let buf = '';
+			let done = false;
+
+			try {
+				for (;;) {
+					const read = await reader.read();
+					if (read.done) {
+						done = true;
+						break;
+					}
+					let chunk = read.value;
+					if (!chunk) continue;
+					// Drop the replayed prefix. It is byte-exact: `delivered` only ever
+					// counts whole lines, so what remains starts at a line boundary.
+					if (skip > 0) {
+						if (chunk.byteLength <= skip) {
+							skip -= chunk.byteLength;
+							continue;
+						}
+						chunk = chunk.subarray(skip);
+						skip = 0;
+					}
+					buf += decoder.decode(chunk, { stream: true });
+					const lines = buf.split('\n');
+					buf = lines.pop() ?? '';
+					for (const line of lines) {
+						delivered += Buffer.byteLength(`${line}\n`);
+						await onLine(`${line}\n`);
+					}
+				}
+			} catch (e) {
+				if (signal?.aborted) throw e;
+				reconnects += 1;
+				if (reconnects > MAX_LOG_STREAM_RECONNECTS) {
+					throw new ExecStreamLostError('Daytona session logs', { cause: e });
+				}
+				log.warn(
+					`log stream dropped after ${delivered} byte(s); resuming (attempt ${reconnects}/${MAX_LOG_STREAM_RECONNECTS})`,
+				);
+				continue;
+			} finally {
+				reader.releaseLock();
+			}
+
+			if (done) {
+				// The stream ends when the command does. Anything left in the buffer is
+				// a final line with no trailing newline.
+				if (skip > 0) {
+					// The replay ran out before reaching where we had got to, so the log
+					// is no longer the one we were reading. Nothing can realign it.
+					throw new ExecStreamLostError('Daytona session logs (log truncated under us)');
+				}
+				if (buf) await onLine(buf);
+				return;
+			}
 		}
 	}
 

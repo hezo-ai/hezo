@@ -986,3 +986,50 @@ describe('DaytonaEngine image reference', () => {
 		expect(rec.creates[1].dockerfileContent).toContain('ghcr.io/acme/custom');
 	});
 });
+
+describe('a full provider account', () => {
+	it('explains the quota refusal instead of pasting the provider JSON', async () => {
+		// This reached the operator verbatim in a task comment - a JSON blob where a
+		// sentence was needed - and it is not a Hezo failure at all: the account is
+		// full. Naming the lever matters more than naming the error, because how
+		// many sandboxes fit is quota / disk-per-container, and that is a setting.
+		const { api } = fakeApi({
+			createSandbox: async () => {
+				throw new DaytonaApiError(
+					'Daytona POST /sandbox failed (400): ...',
+					400,
+					JSON.stringify({
+						statusCode: 400,
+						message: 'Total disk limit exceeded. Maximum allowed: 30GiB',
+					}),
+				);
+			},
+		});
+		const engine = new DaytonaEngine(api);
+
+		await expect(
+			engine.createContainer('c', {
+				Image: 'ghcr.io/hezo-ai/agent-base:pinned',
+				HostConfig: { Memory: 2 * 1024 ** 3 },
+			} as never),
+		).rejects.toThrow(/no capacity left .* Total disk limit exceeded/s);
+	});
+
+	it('leaves an unrelated 400 alone', async () => {
+		// Only the body distinguishes them - the status is a plain 400 shared with
+		// every other bad request - so a broad match here would relabel real bugs.
+		const { api } = fakeApi({
+			createSandbox: async () => {
+				throw new DaytonaApiError('Daytona POST /sandbox failed (400): ...', 400, 'bad image ref');
+			},
+		});
+		const engine = new DaytonaEngine(api);
+
+		await expect(
+			engine.createContainer('c', {
+				Image: 'ghcr.io/hezo-ai/agent-base:pinned',
+				HostConfig: { Memory: 2 * 1024 ** 3 },
+			} as never),
+		).rejects.toThrow(/bad image ref|400/);
+	});
+});

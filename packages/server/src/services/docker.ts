@@ -6,6 +6,7 @@ import type { ContainerHostMemory } from '@hezo/shared';
 import { getHostMemory } from '../lib/host-memory';
 import { DockerFrameDecoder, demuxDockerStream } from './docker-frames';
 import { resolvedDockerSocketPath } from './docker-socket';
+import { ExecStreamLostError } from './sandbox/errors';
 import type { SandboxFiles } from './sandbox/files';
 import {
 	buildDiskUsageScript,
@@ -1173,7 +1174,18 @@ async function streamDockerExec(
 			if (signal?.aborted) {
 				throw new DOMException('Aborted', 'AbortError');
 			}
-			const { done, value } = await reader.read();
+			let read: Awaited<ReturnType<typeof reader.read>>;
+			try {
+				read = await reader.read();
+			} catch (e) {
+				// The attach socket is held open for the whole command. A daemon
+				// restart or a broken pipe kills it mid-run, which is a transport
+				// failure rather than the agent's - the same shape a managed backend
+				// hits when a gateway reaps an idle stream, so it reads the same way.
+				if (signal?.aborted) throw e;
+				throw new ExecStreamLostError('Docker exec attach', { cause: e });
+			}
+			const { done, value } = read;
 			if (done) break;
 			if (value) {
 				frames.push(value);

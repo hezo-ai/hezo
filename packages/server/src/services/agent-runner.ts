@@ -101,6 +101,7 @@ import {
 	type McpDescriptor,
 	validateInjection,
 } from './mcp-injectors';
+import { retryOrEscalateLostRun } from './orphan-detector';
 import type { PricingService } from './pricing';
 import type { ProgressActivityCandidates } from './project-activity';
 import { loadReactionsForTask, type ReactionGroup } from './reactions';
@@ -120,6 +121,7 @@ import {
 import { resolveRuntimeForTask } from './runtime-resolver';
 import { createBundleVault } from './sandbox/bundle-vault';
 import type { RunEndpoints } from './sandbox/endpoints';
+import { ExecStreamLostError } from './sandbox/errors';
 import type { SandboxFiles } from './sandbox/files';
 import { dockerSandboxHandle } from './sandbox/handle';
 import { setPoolMemberDiskUsage, setPoolMemberUnpushedFlag } from './sandbox/pool-db';
@@ -1288,7 +1290,7 @@ export async function runAgent(
 		const message = e instanceof Error ? e.message : String(e);
 		await broadcastProjectUpdate(deps.db, deps.wsManager, project.team_id, project.id);
 		return finalizeFailure(
-			`Could not start the project container: ${message}. See the Container page for logs.`,
+			`Could not start the project container: ${message} See Settings > Containers for its log.`,
 		);
 	}
 	// The run may have been aborted (e.g. timed out) while a slow provision ran.
@@ -2031,6 +2033,35 @@ export async function runAgent(
 				},
 				runBroadcast,
 			);
+
+			// A lost output stream is the infrastructure losing the run, not the agent
+			// failing it: the channel carrying stdout died while the command was still
+			// going. That is the same class as the run's driver dying, which already
+			// has a bounded retry that carries the previous attempt's log tail
+			// forward and escalates to an approval once it stops being worth
+			// retrying - so it takes that path instead of burning the agent's turn on
+			// a transport fault. Best-effort: a failure to queue the retry must not
+			// replace the real error.
+			if (error instanceof ExecStreamLostError) {
+				await (async () => {
+					// Counted the same way the orphan detector counts it, so repeated
+					// transport losses on one agent converge on the same ceiling rather
+					// than retrying forever.
+					const bumped = await deps.db.query<{ process_loss_retry_count: number }>(
+						`UPDATE heartbeat_runs SET process_loss_retry_count = process_loss_retry_count + 1
+						 WHERE id = $1 RETURNING process_loss_retry_count`,
+						[heartbeatRunId],
+					);
+					await retryOrEscalateLostRun(deps.db, {
+						runId: heartbeatRunId,
+						memberId: agent.id,
+						teamId: runTeamId,
+						priorRetries: Math.max(0, (bumped.rows[0]?.process_loss_retry_count ?? 1) - 1),
+					});
+				})().catch((e) =>
+					log.error(`Run ${heartbeatRunId}: could not queue a transport retry:`, e),
+				);
+			}
 
 			await cleanupRunArtifacts();
 			return {

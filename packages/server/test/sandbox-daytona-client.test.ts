@@ -127,6 +127,86 @@ describe('executeStreaming does not leak its session', () => {
 		expect(deletes[0].url).toContain('/process/session/hezo-');
 	});
 
+	it('resumes a dropped log stream exactly where it left off', async () => {
+		// Measured against the live API, and the reason the resume is done here
+		// rather than with a request parameter: the endpoint accepts `?offset`,
+		// `?from`, `?since`, `?tail` and a `Range:` header and *silently ignores*
+		// every one, and a reopened follow stream replays from the first byte. So a
+		// naive reconnect duplicates the whole log - double-counted token usage and
+		// a re-emitted final message. The client skips what it already delivered.
+		let attempt = 0;
+		vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
+			const url = typeof input === 'string' ? input : input.toString();
+			if (url.endsWith('/exec')) return Response.json({ cmdId: 'cmd-1' });
+			if (url.includes('/logs')) {
+				attempt += 1;
+				if (attempt === 1) {
+					// Two whole lines, then the peer closes mid-command. The error has to
+					// land on a *later* pull than the data, or the reader never sees the
+					// bytes and the test would pass with no resume logic at all.
+					let pulls = 0;
+					return new Response(
+						new ReadableStream({
+							pull(c) {
+								pulls += 1;
+								if (pulls === 1) {
+									c.enqueue(new TextEncoder().encode('one\ntwo\n'));
+									return;
+								}
+								c.error(new Error('socket closed unexpectedly'));
+							},
+						}),
+					);
+				}
+				// The replay: from byte 0, as the provider really does it.
+				return new Response('one\ntwo\nthree\nfour\n');
+			}
+			if (url.includes('/command/cmd-1')) return Response.json({ exitCode: 0 });
+			void init;
+			return Response.json({});
+		});
+
+		const lines: string[] = [];
+		const { exitCode } = await new DaytonaClient('k', BASE).executeStreaming(
+			sandbox,
+			'echo hi',
+			(l) => {
+				lines.push(l);
+			},
+		);
+
+		expect(exitCode).toBe(0);
+		// Each line exactly once, in order - no gap at the drop, no duplicate from
+		// the replay.
+		expect(lines).toEqual(['one\n', 'two\n', 'three\n', 'four\n']);
+		expect(attempt).toBe(2);
+	});
+
+	it('gives up on a stream that will not stay open, naming the transport', async () => {
+		// Every reconnect replays the whole log, so an endlessly-failing provider
+		// has to stop costing more for less. The error names the channel rather
+		// than leaving Bun's "socket connection was closed unexpectedly", which
+		// identifies none of the several sockets a run holds.
+		vi.stubGlobal('fetch', async (input: string | URL | Request) => {
+			const url = typeof input === 'string' ? input : input.toString();
+			if (url.endsWith('/exec')) return Response.json({ cmdId: 'cmd-1' });
+			if (url.includes('/logs')) {
+				return new Response(
+					new ReadableStream({
+						start(c) {
+							c.error(new Error('socket closed unexpectedly'));
+						},
+					}),
+				);
+			}
+			return Response.json({});
+		});
+
+		await expect(
+			new DaytonaClient('k', BASE).executeStreaming(sandbox, 'echo hi', () => {}),
+		).rejects.toThrow(/output stream .* closed before the command finished/);
+	});
+
 	it('deletes the session even when the command stream fails', async () => {
 		// The path that actually leaks in production - a clean run is the easy case.
 		const calls = scriptExec({ failLogs: true });
