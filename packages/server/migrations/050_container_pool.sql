@@ -38,7 +38,13 @@ CREATE TABLE container_pool_members (
     -- task run is invisible and harmless, a queued chat turn is a person
     -- watching a spinner.
     reserved_for_chat    BOOLEAN NOT NULL DEFAULT false,
+    -- What became of this container: the error that ended it, and the last
+    -- output it produced. Both used to live on `projects` (one column each) and
+    -- had to move here for the same reason the table exists: a project now holds
+    -- several containers, so a single column could only describe whichever one
+    -- stopped last, and attributed its account to all of them.
     last_error           TEXT,
+    last_logs            TEXT,
     last_started_at      TIMESTAMPTZ,
     last_released_at     TIMESTAMPTZ,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -67,7 +73,8 @@ CREATE INDEX idx_container_pool_members_running
 -- nothing is genuinely serving a run. `stopping` maps to `suspended` for the
 -- same reason - it is transitional, and the resting state it is heading for is
 -- the one that matters.
-INSERT INTO container_pool_members (project_id, container_id, state, last_error, last_started_at)
+INSERT INTO container_pool_members
+    (project_id, container_id, state, last_error, last_logs, last_started_at)
 SELECT
     p.id,
     p.container_id,
@@ -80,6 +87,9 @@ SELECT
         ELSE 'idle'::container_pool_state
     END,
     p.container_error,
+    -- Matched by construction: this row IS the container `projects.container_id`
+    -- named, which is exactly what that column's logs described.
+    p.container_last_logs,
     p.container_last_started_at
 FROM projects p
 WHERE p.container_id IS NOT NULL

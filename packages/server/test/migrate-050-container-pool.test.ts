@@ -35,15 +35,25 @@ describe('050_container_pool migration', () => {
 			containerId: string | null,
 			status: string | null,
 			error: string | null = null,
+			lastLogs: string | null = null,
 		): Promise<string> => {
 			const team = await h.db.query<{ id: string }>(
 				`INSERT INTO teams (name, slug) VALUES ($1, $1) RETURNING id`,
 				[`team-${slug}`],
 			);
 			const res = await h.db.query<{ id: string }>(
-				`INSERT INTO projects (team_id, name, slug, task_prefix, container_id, container_status, container_error)
-				 VALUES ($1, $2, $2, $3, $4, $5::container_status, $6) RETURNING id`,
-				[team.rows[0].id, slug, slug.slice(0, 3).toUpperCase(), containerId, status, error],
+				`INSERT INTO projects (team_id, name, slug, task_prefix, container_id, container_status,
+				                       container_error, container_last_logs)
+				 VALUES ($1, $2, $2, $3, $4, $5::container_status, $6, $7) RETURNING id`,
+				[
+					team.rows[0].id,
+					slug,
+					slug.slice(0, 3).toUpperCase(),
+					containerId,
+					status,
+					error,
+					lastLogs,
+				],
 			);
 			return res.rows[0].id;
 		};
@@ -51,7 +61,13 @@ describe('050_container_pool migration', () => {
 		seeded = {
 			running: await project('running', 'ctr-running', 'running'),
 			stopped: await project('stopped', 'ctr-stopped', 'stopped'),
-			errored: await project('errored', 'ctr-errored', 'error', 'OOM killed'),
+			errored: await project(
+				'errored',
+				'ctr-errored',
+				'error',
+				'OOM killed',
+				'npm ERR! killed\nexit 137\n',
+			),
 			creating: await project('creating', 'ctr-creating', 'creating'),
 			noContainer: await project('none', null, null),
 		};
@@ -119,6 +135,29 @@ describe('050_container_pool migration', () => {
 			`SELECT last_error FROM container_pool_members WHERE container_id = 'ctr-errored'`,
 		);
 		expect(row.rows[0].last_error).toBe('OOM killed');
+	});
+
+	it('carries the captured logs forward onto the container they describe', async () => {
+		// `projects.container_last_logs` is one column for what is now several
+		// containers, so whichever stopped last had its output attributed to every
+		// sibling - an operator opening one container to find out why it died was
+		// reading another one's. The backfill is exact rather than approximate: the
+		// row it lands on IS the container `projects.container_id` named, which is
+		// the only container that column ever described.
+		const row = await h.db.query<{ last_logs: string | null }>(
+			`SELECT last_logs FROM container_pool_members WHERE container_id = 'ctr-errored'`,
+		);
+		expect(row.rows[0].last_logs).toContain('exit 137');
+	});
+
+	it('leaves last_logs null for a container that never captured any', async () => {
+		// Null rather than an empty string: "nothing was captured" and "the capture
+		// was empty" read the same on the page, but only the first must be allowed
+		// to be overwritten by a later capture.
+		const row = await h.db.query<{ last_logs: string | null }>(
+			`SELECT last_logs FROM container_pool_members WHERE container_id = 'ctr-running'`,
+		);
+		expect(row.rows[0].last_logs).toBeNull();
 	});
 
 	it('creates no member for a project that never had a container', async () => {
