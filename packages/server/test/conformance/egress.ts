@@ -185,10 +185,22 @@ export function describeEgressConformance(
 				);
 			}
 
-			// The CA goes into the image's own trust store, exactly as provisioning
-			// does it - so this also proves the backend's file seam and elevated exec
-			// can put a file where the system trust store reads it. `--cacert` would
-			// have been simpler and would have tested less.
+			// The CA goes into the image's own trust store the way provisioning does
+			// it - `SandboxFiles.write` then an elevated `update-ca-certificates` - so
+			// this also proves the backend's file seam and elevated exec can put a
+			// file where the system trust store reads it. `--cacert` would have been
+			// simpler and would have tested less.
+			//
+			// That claim was **false** when it was first written, and the gap it hid
+			// is worth recording: provisioning delivered the CA as a Docker
+			// `host:container` bind, which a managed backend cannot honour - Daytona's
+			// adapter created the directory and dropped the file. This suite
+			// reconstructed the state provisioning failed to produce, so it passed on
+			// Daytona while every real run there had `NODE_EXTRA_CA_CERTS` pointing at
+			// nothing. Provisioning uses this same seam now (`provisionContainer`),
+			// which is what makes the sentence above true; the assertion that it
+			// *does* is a unit test on provisioning, because it is a fact about
+			// Hezo's code rather than about the backend.
 			const caFiles = engine.files(containerId, '/usr/local/share/ca-certificates');
 			await caFiles.write('hezo-egress.crt', ca.cert, { mode: 0o644 });
 			const install = await engine.execCreate(containerId, {

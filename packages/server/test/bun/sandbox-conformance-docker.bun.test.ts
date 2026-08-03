@@ -30,6 +30,7 @@ import type {
 	LiveAdapterFixture,
 	LiveModelProvider,
 } from '../conformance/fixture';
+import { describeTunnelConformance } from '../conformance/tunnel';
 
 const IMAGE = 'hezo/agent-base:latest';
 
@@ -90,6 +91,7 @@ if (reason) {
 	describeFilesConformance(fixture, harness);
 	describeAgentCliConformance(fixture, harness);
 	describeEgressConformance(fixture, harness);
+	describeTunnelConformance(fixture, harness);
 }
 
 /** Reads the optional model-provider key. Same env contract as `test/live/`. */

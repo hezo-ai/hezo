@@ -473,6 +473,7 @@ change, and move anything provider-specific you find in the generic prose into i
 | `conformance/files.ts` | the whole `SandboxFiles` contract - byte fidelity, sizes, listing, recursive removal, root escape refusal, and that a mode reaches **every** directory it creates |
 | `conformance/agent-cli.ts` | a real coding-CLI run inside a provisioned container, against a real model provider (opt-in via a second key) |
 | `conformance/egress.ts` | the red line end to end: a placeholder written inside the container is substituted at the proxy, the value exists nowhere the container can read, and a host outside `allowed_hosts` gets the placeholder rather than the secret |
+| `conformance/tunnel.ts` | what a run depends on *after* readiness: a connection made inside the container reaches the host address, every target key binds, the channel survives an idle period, an unrequested death fires `onClosed` while a caller's own `close()` does not, and the client's stderr reaches the host |
 
 **Never add a backend-specific end-to-end test.** If something is worth asserting against a live backend, it is worth asserting against all of them - put it in `conformance/`, add whatever the fixture must declare, and let each adapter answer. A suite only one provider runs stops describing the interface and starts describing that provider, which is the failure this whole directory exists to prevent.
 

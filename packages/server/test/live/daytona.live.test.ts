@@ -31,6 +31,7 @@ import type {
 	LiveAdapterFixture,
 	LiveModelProvider,
 } from '../conformance/fixture';
+import { describeTunnelConformance } from '../conformance/tunnel';
 
 const apiKey = process.env.HEZO_DAYTONA_API_KEY;
 // A second, independent key: the Daytona key buys a sandbox, this buys the
@@ -92,4 +93,5 @@ if (!apiKey) {
 	describeFilesConformance(fixture, harness);
 	describeAgentCliConformance(fixture, harness);
 	describeEgressConformance(fixture, harness);
+	describeTunnelConformance(fixture, harness);
 }
