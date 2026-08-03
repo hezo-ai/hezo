@@ -139,7 +139,7 @@ export async function evaluateDockerPreflight(
  * untrusted-ish code, so isolating them from the host is the whole point.
  */
 const SANDBOX_RATIONALE = [
-	"Hezo runs each project's AI agents inside isolated Docker containers. That",
+	"Hezo runs each project's AI agents inside isolated OS containers. That",
 	'sandbox is a security boundary: it keeps agents off your host so a buggy or',
 	"compromised agent can't reach your files, credentials, or wider network.",
 ];

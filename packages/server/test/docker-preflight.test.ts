@@ -238,7 +238,7 @@ describe('formatDockerPreflightMessage', () => {
 	it('explains the security rationale (isolation / host protection) in every variant', () => {
 		for (const result of [notInstalled, notRunning, unsupported]) {
 			const msg = formatDockerPreflightMessage(result);
-			expect(msg).toContain('isolated Docker containers');
+			expect(msg).toContain('isolated OS containers');
 			expect(msg).toContain('security boundary');
 			expect(msg).toContain('host');
 		}
