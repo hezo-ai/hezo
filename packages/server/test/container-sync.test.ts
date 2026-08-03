@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { wsRoom } from '@hezo/shared';
@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import {
+	CONTAINER_CA_PATH,
 	type ContainerDeps,
 	consumeFinalMemoryLine,
 	type ProjectRow,
@@ -928,7 +929,7 @@ describe('provisionContainer broadcasting', () => {
 		expect(bindsAfter.join('\n')).not.toContain('renamed-project-slug');
 	});
 
-	it('bind-mounts the egress CA when egressCAPath is provided', async () => {
+	it('writes the egress CA through the file seam when egressCAPath is provided', async () => {
 		await db.query(
 			'UPDATE projects SET container_id = NULL, container_status = NULL WHERE id = $1',
 			[projectId],
@@ -936,14 +937,28 @@ describe('provisionContainer broadcasting', () => {
 
 		const dataDir = mkdtempSync(join(tmpdir(), 'hezo-test-'));
 		const egressCAPath = join(dataDir, 'ca.pem');
-		const mockDocker = {
+		writeFileSync(egressCAPath, '-----BEGIN CERTIFICATE-----\nsync-test\n');
+
+		// Built from `createStubDocker` rather than hand-rolled: this spec used to
+		// assemble a six-method object behind `as any`, which is precisely the shape
+		// that breaks the moment production calls a method the stub omitted - and
+		// `files()` is the method this test now depends on.
+		const writes: Array<{ path: string; contents: string }> = [];
+		const mockDocker = createStubDocker({
 			imageExists: vi.fn().mockResolvedValue(false),
 			pullImage: vi.fn().mockResolvedValue(undefined),
 			createContainer: vi.fn().mockResolvedValue({ Id: 'egress-ca-container' }),
 			startContainer: vi.fn().mockResolvedValue(undefined),
 			execCreate: vi.fn().mockResolvedValue('exec-id'),
 			execStart: vi.fn().mockResolvedValue({ stdout: '', stderr: '' }),
-		} as any;
+		});
+		const realFiles = mockDocker.files;
+		mockDocker.files = (containerId: string, root: string) => ({
+			...realFiles(containerId, root),
+			write: async (rel: string, contents: string) => {
+				writes.push({ path: `${root}/${rel}`, contents });
+			},
+		});
 
 		const project = (
 			await db.query<ProjectRow>('SELECT * FROM projects WHERE id = $1', [projectId])
@@ -955,8 +970,13 @@ describe('provisionContainer broadcasting', () => {
 			'container-sync-co',
 		);
 
-		const binds = mockDocker.createContainer.mock.calls[0][1].HostConfig.Binds as string[];
-		expect(binds).toContain(`${egressCAPath}:/usr/local/share/ca-certificates/hezo-egress.crt:ro`);
+		const binds = (mockDocker.createContainer as ReturnType<typeof vi.fn>).mock.calls[0][1] as {
+			HostConfig: { Binds: string[] };
+		};
+		expect(binds.HostConfig.Binds.some((b) => b.includes('hezo-egress.crt'))).toBe(false);
+
+		const caWrite = writes.find((w) => w.path === CONTAINER_CA_PATH);
+		expect(caWrite?.contents).toContain('sync-test');
 		expect(mockDocker.execCreate).toHaveBeenCalled();
 	});
 

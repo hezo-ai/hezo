@@ -26,6 +26,21 @@ export interface RunTunnel {
 	endpoints: RunEndpoints;
 	/** Idempotent. Must be called when the run ends - see the note on {@link startRunTunnel}. */
 	close(): void;
+	/**
+	 * Called if the tunnel dies **on its own**, before the caller closed it.
+	 *
+	 * Without this there was no way to find out. The tunnel is the container's
+	 * only path to Hezo, so losing it means the agent has no MCP tools, no egress
+	 * proxy and no ssh agent for the rest of the run - but the exec kept running,
+	 * the container stayed up, and nothing in the run loop ever looked at the
+	 * tunnel again after `startRunTunnel` resolved. The run burned its whole
+	 * budget and was recorded as having produced no output, which reads as a lazy
+	 * model rather than a dead transport.
+	 *
+	 * Fires at most once, and never for a caller-initiated {@link close} - a
+	 * normal run end is not a failure.
+	 */
+	onClosed(cb: (reason: string) => void): void;
 }
 
 export interface StartRunTunnelOptions {
@@ -91,10 +106,40 @@ export async function startRunTunnel(opts: StartRunTunnelOptions): Promise<RunTu
 		throw err;
 	}
 
+	let closed = false;
+	let notified = false;
+	const closedCallbacks: Array<(reason: string) => void> = [];
+	/**
+	 * Report an unrequested death, exactly once.
+	 *
+	 * Guarded on `closed` so a caller's own teardown - which also runs the channel
+	 * down - is never mistaken for one. That distinction is the whole point: every
+	 * run ends with the tunnel closing, and only the ones that end that way
+	 * *first* are failures.
+	 */
+	const fireClosed = (reason: string) => {
+		if (closed || notified) return;
+		notified = true;
+		log.warn(`tunnel for ${opts.containerId} closed unexpectedly: ${reason}`);
+		for (const cb of closedCallbacks) {
+			try {
+				cb(reason);
+			} catch (e) {
+				log.error(`tunnel onClosed handler threw: ${(e as Error).message}`);
+			}
+		}
+	};
+
 	const mux = new TunnelMux(
 		{
 			write: (data) => channel.write(data),
-			close: () => channel.close(),
+			// Wrapping the mux's close is what catches the framing-error path: a
+			// desynchronised stream tears the tunnel down from the inside, and that
+			// is just as fatal to the run as the channel dropping.
+			close: () => {
+				channel.close();
+				fireClosed('the tunnel stream desynchronised and was torn down');
+			},
 		},
 		connectToRunTargets(opts.addresses),
 	);
@@ -106,9 +151,16 @@ export async function startRunTunnel(opts: StartRunTunnelOptions): Promise<RunTu
 		const text = new TextDecoder().decode(chunk).trim();
 		if (text) log.warn(`hezo-tunnel: ${text}`);
 	});
-	channel.onClose(() => mux.closeAll());
+	channel.onClose(() => {
+		// Reported *before* the mux is torn down, and the order is the whole point:
+		// `closeAll` closes the channel through the wrapper above, so doing it
+		// first would let the mux's own "desynchronised" reason land for what is
+		// really a dropped channel. `fireClosed` reports once, so whichever cause
+		// is stated first is the one recorded - and this one is the true cause.
+		fireClosed('the exec channel carrying the tunnel closed');
+		mux.closeAll();
+	});
 
-	let closed = false;
 	const close = () => {
 		if (closed) return;
 		closed = true;
@@ -130,7 +182,13 @@ export async function startRunTunnel(opts: StartRunTunnelOptions): Promise<RunTu
 		throw err;
 	}
 
-	return { endpoints: tunnelRunEndpoints(allocation.ports), close };
+	return {
+		endpoints: tunnelRunEndpoints(allocation.ports),
+		close,
+		onClosed: (cb) => {
+			closedCallbacks.push(cb);
+		},
+	};
 }
 
 /** How long the in-container client has to bind before the run is failed. */

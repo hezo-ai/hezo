@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { TaskStatus, TEST_CONTAINERS_ENV, WakeupStatus } from '@hezo/shared';
@@ -313,11 +313,31 @@ describe('provisionContainer', () => {
 		}
 	});
 
-	it('bind-mounts the egress CA, runs update-ca-certificates, and surfaces its stderr', async () => {
+	it('writes the egress CA through the file seam, runs update-ca-certificates, and surfaces its stderr', async () => {
+		// It used to arrive as a `host:container` bind, which only Docker can
+		// honour: a managed backend has no host to bind from, and Daytona's adapter
+		// could render it only as "create the parent directory" - so the cert never
+		// landed, `NODE_EXTRA_CA_CERTS` named a missing file, and every proxied TLS
+		// call failed on an unknown issuer. Asserting the *write* is what makes the
+		// delivery backend-agnostic rather than Docker-shaped.
 		await resetContainerRow();
 		const { docker, created } = recordingDocker({ execStderr: 'ca-store warning line' });
 		const logs = new LogStreamBroker();
-		const egressCAPath = '/tmp/hezo-fake-egress-ca.pem';
+		const caDir = mkdtempSync(join(tmpdir(), 'hezo-ca-'));
+		const egressCAPath = join(caDir, 'egress-ca.pem');
+		writeFileSync(egressCAPath, '-----BEGIN CERTIFICATE-----\nprovision-test\n');
+
+		const writes: Array<{ root: string; rel: string; contents: string }> = [];
+		const realFiles = docker.files;
+		docker.files = (containerId: string, root: string) => {
+			const inner = realFiles(containerId, root);
+			return {
+				...inner,
+				write: async (rel: string, contents: string) => {
+					writes.push({ root, rel, contents });
+				},
+			};
+		};
 
 		await provisionContainer(
 			baseDeps(docker, { logs, egressCAPath }),
@@ -325,7 +345,14 @@ describe('provisionContainer', () => {
 			teamSlug,
 		);
 
-		expect(created[0].config.HostConfig.Binds).toContain(`${egressCAPath}:${CONTAINER_CA_PATH}:ro`);
+		// No bind carries it any more - that is the regression this guards.
+		const binds = created[0].config.HostConfig.Binds as string[];
+		expect(binds.some((b) => b.includes(CONTAINER_CA_PATH))).toBe(false);
+
+		const caWrite = writes.find((w) => `${w.root}/${w.rel}` === CONTAINER_CA_PATH);
+		expect(caWrite).toBeDefined();
+		expect(caWrite?.contents).toContain('provision-test');
+
 		const execCreate = docker.execCreate as ReturnType<typeof vi.fn>;
 		const caExec = execCreate.mock.calls.find(
 			(c) => (c[1] as { Cmd: string[] }).Cmd[0] === 'update-ca-certificates',
@@ -420,20 +447,27 @@ describe('provisionContainer', () => {
 		}
 	});
 
-	it('reports a failed update-ca-certificates without failing the provision', async () => {
+	it('reports a failed egress-CA install without failing the provision', async () => {
 		await resetContainerRow();
 		const { docker } = recordingDocker({ execCreateError: new Error('exec transport down') });
 		const logs = new LogStreamBroker();
+		const caDir = mkdtempSync(join(tmpdir(), 'hezo-ca-'));
+		const egressCAPath = join(caDir, 'egress-ca.pem');
+		writeFileSync(egressCAPath, '-----BEGIN CERTIFICATE-----\ninstall-failure\n');
 
 		const id = await provisionContainer(
-			baseDeps(docker, { logs, egressCAPath: '/tmp/hezo-fake-egress-ca.pem' }),
+			baseDeps(docker, { logs, egressCAPath }),
 			await projectRow(),
 			teamSlug,
 		);
 
+		// The write lands and the install exec is what fails, so the step is
+		// reported and the container still comes up: a container without the CA
+		// works for everything that does not transit the proxy, and failing the
+		// whole provision would be a worse trade than saying so here.
 		expect(id).toBeTruthy();
 		const text = logs.getLogText(`provision:${projectId}`);
-		expect(text).toContain('⚠ update-ca-certificates failed: exec transport down');
+		expect(text).toContain('⚠ installing the egress CA failed: exec transport down');
 		const row = await db.query<{ container_status: string }>(
 			'SELECT container_status FROM projects WHERE id = $1',
 			[projectId],

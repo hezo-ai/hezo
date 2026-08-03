@@ -76,6 +76,70 @@ describe('Claude Code — session/init fallback arms', () => {
 		expect(out).toBe('[session] model=m tools=3\n');
 	});
 
+	it('records a terminal error when the Hezo MCP server did not connect', () => {
+		// The transcript this comes from: the tunnel died, the MCP server could not
+		// be reached, and the agent ran a full max-effort budget with 25 built-in
+		// tools and none of Hezo's. Claude Code reported the failure in this very
+		// event and nothing read it, so the run was recorded as "produced no
+		// output" - which blames the model for a dead transport.
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		const out = feed(parser, [
+			{
+				type: 'system',
+				subtype: 'init',
+				model: 'deepseek-v4-pro',
+				tools: Array.from({ length: 25 }, (_, i) => `builtin-${i}`),
+				mcp_servers: [{ name: 'hezo', status: 'failed' }],
+			},
+		]);
+
+		expect(out).toContain('mcp: hezo=failed');
+		const terminal = parser.getTerminalError();
+		expect(terminal).toContain('Hezo MCP server did not connect');
+		// Names the transport, because that is where the fix is.
+		expect(terminal).toContain('tunnel');
+	});
+
+	it('stays silent when the Hezo MCP server connected', () => {
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		const out = feed(parser, [
+			{
+				type: 'system',
+				subtype: 'init',
+				model: 'm',
+				tools: ['a'],
+				mcp_servers: [{ name: 'hezo', status: 'connected' }],
+			},
+		]);
+		expect(out).toContain('mcp: hezo=connected');
+		expect(parser.getTerminalError()).toBeNull();
+	});
+
+	it('does not invent a failure when the runtime reports no MCP servers at all', () => {
+		// An older CLI that never sends the array told us nothing, which is not the
+		// same as telling us the server failed. The tunnel's own guard is the
+		// backstop there; guessing here would fail healthy runs.
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		const out = feed(parser, [{ type: 'system', subtype: 'init', model: 'm', tools: ['a'] }]);
+		expect(out).toBe('[session] model=m tools=1\n');
+		expect(parser.getTerminalError()).toBeNull();
+	});
+
+	it('ignores a server entry for a different MCP server', () => {
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		feed(parser, [
+			{
+				type: 'system',
+				subtype: 'init',
+				model: 'm',
+				tools: ['a'],
+				mcp_servers: [{ name: 'github', status: 'failed' }],
+			},
+		]);
+		// A connector failing is the connector's problem, not a toolless run.
+		expect(parser.getTerminalError()).toBeNull();
+	});
+
 	it('ignores a system event whose subtype is not init', () => {
 		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
 		expect(feed(parser, [{ type: 'system', subtype: 'other' }])).toBe('');

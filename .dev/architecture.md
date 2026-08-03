@@ -1314,6 +1314,32 @@ container cannot reach MCP, the egress proxy or the ssh-agent, so proceeding wou
 exactly the silent no-op it exists to prevent. The wait lives in the shared tunnel code, not in
 either adapter - the race is Docker's too, just narrower.
 
+**And the readiness poll is only the start of the run.** A tunnel that bound and then died
+produced exactly the same toolless run, and for a long time nothing could observe it:
+`RunTunnel` was `{endpoints, close()}`, the channel's close handler tore the multiplexer down
+and told no one, and the container stayed *alive* - so no `container_*` transition fired
+either. A real CEO run on Daytona burned a full max-effort budget that way and was recorded as
+"produced no output", which reads as a lazy model rather than a dead transport. Two guards now
+cover the rest of the run:
+
+- **`RunTunnel.onClosed(cb)`** fires when the tunnel dies unrequested - the exec channel
+  dropping, or the multiplexer tearing itself down on a framing error - and never for a
+  caller's own `close()`, since every run ends that way. The runner aborts on it with the
+  named reason **`tunnel_lost`** (a derived `AbortController`, so the caller keeps ownership
+  of its own signal) and the chat manager tears the session down, because a session that has
+  lost its tunnel would answer every later turn from the model alone.
+- **The runtime's own MCP report.** Claude Code states each configured server's connection
+  status in the `system`/`init` event - the first event the parser already reads for
+  `tools=N` - and does not retry one that failed. `agent-stream-parser` now records a Hezo
+  server that is present-but-not-connected as the run's terminal error, naming the tunnel,
+  and the session line carries `mcp: hezo=<status>` so a log read after the fact answers the
+  question `tools=25` only hinted at. An absent `mcp_servers` array is *not* read as a
+  failure: a runtime that reports nothing is not the same as one reporting a failure, and
+  the tunnel guard above is the backstop there.
+
+The runner also orders the two: a captured terminal error outranks "produced no output" on
+the run row, because the first is the cause and the second is its symptom.
+
 **The tunnel is the only way a container reaches Hezo**, on every backend, with no gate and
 no second path. `RunEndpoints` always names container loopback, where the in-container
 client listens; `host.docker.internal` survives only for an operator-configured local model
@@ -2545,9 +2571,18 @@ the secret and fires a `credential_provided` wakeup so the agent retries.
 substitution — there is **no fall-through**; if it can't bind, the run aborts
 (`EgressProxyUnavailableError`). On first boot Hezo generates a per-instance RSA CA
 (`<dataDir>/ca/`, cert world-readable, key host-owner-only) that both signs per-host leaf
-certs and is bind-mounted into every container's trust store, installed there by
-`update-ca-certificates` at provision and additionally handed to Node via
-`NODE_EXTRA_CA_CERTS`.
+certs and is **written into every container through `SandboxFiles`** at provision, then
+installed into the trust store by `update-ca-certificates` and additionally handed to Node
+via `NODE_EXTRA_CA_CERTS`.
+
+It used to arrive as a `host:container` **bind**, which is a Docker primitive: a managed
+backend has no host to bind from, and Daytona's adapter can only render a file bind as
+"create its parent directory" - so the directory appeared, the cert did not,
+`NODE_EXTRA_CA_CERTS` named a missing file and `update-ca-certificates` installed nothing.
+The blast radius was wider than Node: curl, git, Codex and Grok read only the system store
+(see the `CURL_CA_BUNDLE` note below), so every proxied TLS call failed on an unknown
+issuer, on one backend, with nothing naming the cause. Anything a container needs the
+*bytes* of goes through the file seam; a bind can only ever mean "this directory exists".
 
 **`CURL_CA_BUNDLE` and `GIT_SSL_CAINFO` are deliberately not set**, for the same reason
 `SSL_CERT_FILE` is not: they **replace** the trust bundle rather than adding to it.

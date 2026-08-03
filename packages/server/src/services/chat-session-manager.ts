@@ -1150,6 +1150,19 @@ export class ChatSessionManager {
 				// proxy, so a connector host routed direct from here would skip it.
 				policy: await buildTunnelHostPolicy(this.deps.db, connectorDescriptors),
 			});
+			// A session outlives many turns, so this is the tunnel most exposed to an
+			// idle drop - and a chat that has lost its tunnel cannot reach Hezo at
+			// all, so every later turn would answer from the model alone with none of
+			// its tools. Tear the session down instead; the next turn rebuilds it with
+			// a fresh tunnel and fresh host-side ports.
+			tunnel.onClosed((why) => {
+				log.warn(`CEO chat session ${sessionId} lost its tunnel (${why}); tearing it down`);
+				trackBackground(
+					this.teardown(ChatSessionStatus.Crashed).catch((e) =>
+						log.error('tearing down the chat session after tunnel loss failed', e),
+					),
+				);
+			});
 			const endpoints = tunnel.endpoints;
 
 			const bridge: BridgeRunnerArgs | null =

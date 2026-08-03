@@ -57,17 +57,26 @@ const IMAGE_LABEL = 'hezo.image';
  * that follows, and every clone and worktree after it, fails on a missing path
  * here and nowhere else.
  *
- * The only judgement call is that one bind is a **file** (the egress CA), whose
- * parent is what must exist rather than the path itself. This used to be decided
- * by asking whether the container path contained a dot, which is true of any
- * dotted *directory* - so `/workspace/.previews` was read as a file and
- * `/workspace` was created in its place, leaving the one target that had to be
- * created the one that never was. The host side answers it properly: it is the
- * real path, it exists by the time a container is created
- * (`ensureProjectWorkspace` for the workspace tree, startup for the CA), and it
- * is a file or a directory rather than a guess about a name. An unreadable host
- * path is treated as a directory, which is what Docker itself does with a
- * missing bind source.
+ * **Every bind is a directory now, and a file bind must never come back.** One
+ * used to be a file - the egress CA - and this is where that broke: a file bind
+ * can only be rendered here as "create its parent", so the directory appeared
+ * and the cert never did, leaving `NODE_EXTRA_CA_CERTS` pointing at nothing and
+ * `update-ca-certificates` installing nothing. It presented as TLS failing
+ * against an unknown issuer, on Daytona only, with nothing naming the cause. The
+ * CA now arrives through `SandboxFiles` (`provisionContainer`), which is the seam
+ * that can actually carry contents. Anything else a container needs the *bytes*
+ * of goes the same way; a bind can only ever mean "this directory exists".
+ *
+ * The file branch below stays because it is still the correct rendering of a
+ * file bind, and because getting it wrong is worse than not handling it: an
+ * earlier version guessed from a dot in the container path, read
+ * `/workspace/.previews` as a file, and created `/workspace` in its place - so
+ * the one target that had to be created was the one that never was. The host
+ * side answers it properly, since the path is real and exists by the time a
+ * container is created. An unreadable host path is treated as a directory,
+ * matching what Docker does with a missing bind source - which is also the trap:
+ * a file bind whose source is not on this host yet would `mkdir` a **directory**
+ * at the file's path, and every later write there fails with `EISDIR`.
  */
 export function bindMountDirs(binds: readonly string[]): Set<string> {
 	const targets = new Set<string>();

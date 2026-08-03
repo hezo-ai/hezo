@@ -36,6 +36,9 @@ function recordingEngine(opts: { neverBinds?: boolean } = {}) {
 		closed: false,
 		listening: false,
 		stderr: undefined as ((c: Uint8Array) => void) | undefined,
+		// Captured so a spec can make the channel die the way a dropped exec or a
+		// dropped WebSocket does, which is the case nothing could observe before.
+		fireClose: undefined as (() => void) | undefined,
 	};
 	const probes: string[] = [];
 	const base = createStubDocker({
@@ -48,7 +51,9 @@ function recordingEngine(opts: { neverBinds?: boolean } = {}) {
 				onStderr: (handler) => {
 					state.stderr = handler;
 				},
-				onClose: () => {},
+				onClose: (handler) => {
+					state.fireClose = handler;
+				},
 				close: () => {
 					state.closed = true;
 				},
@@ -152,6 +157,57 @@ describe('startRunTunnel', () => {
 
 		tunnel.close();
 		expect(state.closed).toBe(true);
+	});
+
+	it('reports a channel that dies on its own, which nothing could see before', async () => {
+		// The transcript that motivated this: the tunnel bound (so the run started),
+		// then died. The container stayed up, so no container_* transition fired,
+		// nothing in the run loop looked at the tunnel again, and the agent burned a
+		// full max-effort budget with no Hezo tools - recorded as "produced no
+		// output", which reads as a lazy model rather than a dead transport.
+		const root = scratch();
+		const { engine, state } = recordingEngine();
+		const tunnel = await start(root, engine);
+
+		const reasons: string[] = [];
+		tunnel.onClosed((r) => reasons.push(r));
+		expect(reasons).toEqual([]);
+
+		state.fireClose?.();
+
+		expect(reasons.length).toBe(1);
+		expect(reasons[0]).toMatch(/closed/i);
+	});
+
+	it('does not report a teardown the caller asked for', async () => {
+		// Every run ends with the tunnel closing. Only the ones that close *first*
+		// are failures, so conflating the two would fail every healthy run.
+		const root = scratch();
+		const { engine, state } = recordingEngine();
+		const tunnel = await start(root, engine);
+
+		const reasons: string[] = [];
+		tunnel.onClosed((r) => reasons.push(r));
+
+		tunnel.close();
+		// The channel's own close handler fires as a consequence of our teardown.
+		state.fireClose?.();
+
+		expect(reasons).toEqual([]);
+	});
+
+	it('reports an unexpected close once, however many times the channel says so', async () => {
+		const root = scratch();
+		const { engine, state } = recordingEngine();
+		const tunnel = await start(root, engine);
+
+		const reasons: string[] = [];
+		tunnel.onClosed((r) => reasons.push(r));
+		state.fireClose?.();
+		state.fireClose?.();
+		state.fireClose?.();
+
+		expect(reasons.length).toBe(1);
 	});
 
 	it('is idempotent on close', async () => {

@@ -118,8 +118,18 @@ export interface ContainerDeps {
 	memoryCheckIntervalMs?: number;
 }
 
-/** In-container path the egress CA is bind-mounted to. */
+/**
+ * In-container path the egress CA is written to.
+ *
+ * Split into its directory and filename because the file seam is rooted on a
+ * directory, and derived from the one constant so the two can never disagree -
+ * `NODE_EXTRA_CA_CERTS` names the full path while the write names the parts.
+ */
 export const CONTAINER_CA_PATH = '/usr/local/share/ca-certificates/hezo-egress.crt';
+export const CONTAINER_CA_DIR = CONTAINER_CA_PATH.slice(0, CONTAINER_CA_PATH.lastIndexOf('/'));
+export const CONTAINER_CA_FILENAME = CONTAINER_CA_PATH.slice(
+	CONTAINER_CA_PATH.lastIndexOf('/') + 1,
+);
 
 const PROVISION_CAP_BYTES = 64 * 1024;
 
@@ -345,14 +355,20 @@ export async function provisionContainer(
 		// Assets are deliberately NOT mounted: blobs live in the configured asset
 		// store (local dir or S3-compatible bucket) and agents fetch them over
 		// signed download URLs from the asset tools, never the filesystem.
+		// The egress CA is deliberately NOT here. It used to ride in as a
+		// `<host file>:<container file>` bind, which is a Docker primitive: a
+		// managed backend has no host to bind *from*, and Daytona's adapter -
+		// which can only render a bind as a directory to create - resolved it to
+		// `mkdir -p /usr/local/share/ca-certificates` and dropped the file. The
+		// result was a container where `NODE_EXTRA_CA_CERTS` named a path that did
+		// not exist and `update-ca-certificates` installed nothing, so every TLS
+		// call through the proxy failed on an unknown issuer. It is written
+		// through `SandboxFiles` below instead - one path, both backends.
 		const binds = [
 			`${workspacePath}:/workspace:rw`,
 			`${worktreesPath}:/worktrees:rw`,
 			`${previewsPath}:/workspace/.previews:rw`,
 		];
-		if (deps.egressCAPath) {
-			binds.push(`${deps.egressCAPath}:${CONTAINER_CA_PATH}:ro`);
-		}
 
 		const portBindings: Record<string, Array<{ HostPort: string }>> = {};
 		const exposedPorts: Record<string, object> = {};
@@ -510,6 +526,16 @@ export async function provisionContainer(
 		if (deps.egressCAPath) {
 			emit('stdout', '→ Trusting Hezo egress CA (update-ca-certificates)');
 			try {
+				// Copy the CA in through the file seam, then install it. Both steps
+				// have to happen on every backend: `NODE_EXTRA_CA_CERTS` points at the
+				// file itself, while curl, git, Codex and Grok read only the system
+				// trust store `update-ca-certificates` builds from it - so a missing
+				// file breaks far more than Node.
+				await docker
+					.files(Id, CONTAINER_CA_DIR)
+					.write(CONTAINER_CA_FILENAME, await readFile(deps.egressCAPath, 'utf8'), {
+						mode: 0o644,
+					});
 				const execId = await docker.execCreate(Id, {
 					Cmd: ['update-ca-certificates'],
 					AttachStdout: true,
@@ -518,7 +544,11 @@ export async function provisionContainer(
 				const out = await docker.execStart(execId);
 				if (out.stderr.trim()) emit('stderr', out.stderr);
 			} catch (e) {
-				emit('stderr', `⚠ update-ca-certificates failed: ${(e as Error).message}`);
+				// Loud, and not fatal to provisioning: a container without the CA is
+				// still usable for everything that does not transit the proxy, and the
+				// failure is legible here rather than as an unknown-issuer error
+				// thousands of lines into a run.
+				emit('stderr', `⚠ installing the egress CA failed: ${(e as Error).message}`);
 			}
 		}
 

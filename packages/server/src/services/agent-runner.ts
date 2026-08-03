@@ -95,7 +95,12 @@ import {
 import { ContainerGitExecutor, GIT_SSH_COMMAND_VALUE, type GitExecutor } from './git-executor';
 import { buildGitIdentityEnv } from './git-identity';
 import type { LogStreamBroker } from './log-stream-broker';
-import { MCP_ADAPTERS, type McpDescriptor, validateInjection } from './mcp-injectors';
+import {
+	HEZO_MCP_SERVER_NAME,
+	MCP_ADAPTERS,
+	type McpDescriptor,
+	validateInjection,
+} from './mcp-injectors';
 import type { PricingService } from './pricing';
 import type { ProgressActivityCandidates } from './project-activity';
 import { loadReactionsForTask, type ReactionGroup } from './reactions';
@@ -597,7 +602,7 @@ export async function buildRuntimeInvocation(
 	const mcpDescriptors: McpDescriptor[] = [
 		{
 			kind: 'http',
-			name: 'hezo',
+			name: HEZO_MCP_SERVER_NAME,
 			url: `${endpoints.hezoBaseUrl}/mcp`,
 			bearerToken: agentJwt,
 		},
@@ -950,20 +955,32 @@ export type ContainerExitAbortReason = 'container_error' | 'container_stopped';
 /**
  * Reasons the runner tags on a run's AbortSignal. A bare abort — a user cancel via
  * `cancelTask`, server shutdown, or the stale-dispatch reaper — carries none.
+ *
+ * `tunnel_lost` is the runner's own: the container reaches Hezo only through the
+ * run tunnel, so a tunnel that dies mid-run leaves the agent unable to read a
+ * task, post a comment, or record anything at all. The container is still alive,
+ * so no `container_*` transition fires and nothing else would notice.
  */
-export type RunAbortReason = ContainerExitAbortReason | 'run_timeout';
+export type RunAbortReason = ContainerExitAbortReason | 'run_timeout' | 'tunnel_lost';
+
+const RUN_ABORT_REASONS: readonly string[] = [
+	'container_error',
+	'container_stopped',
+	'run_timeout',
+	'tunnel_lost',
+];
 
 function runAbortReason(signal?: AbortSignal): RunAbortReason | null {
 	const reason = signal?.reason as unknown;
-	if (reason === 'container_error' || reason === 'container_stopped' || reason === 'run_timeout')
-		return reason;
+	if (typeof reason === 'string' && RUN_ABORT_REASONS.includes(reason))
+		return reason as RunAbortReason;
 	return null;
 }
 
 /**
  * Terminal status for an aborted run: a wall-clock timeout is `TimedOut` (and drives an
- * automatic same-task continuation — see `JobManager.onAgentComplete`), container death is
- * `Failed`, and a bare abort (user cancel / shutdown) is `Cancelled`.
+ * automatic same-task continuation — see `JobManager.onAgentComplete`), container death and
+ * a lost tunnel are `Failed`, and a bare abort (user cancel / shutdown) is `Cancelled`.
  */
 function abortedRunStatus(reason: RunAbortReason | null): HeartbeatRunStatus {
 	if (reason === 'run_timeout') return HeartbeatRunStatus.TimedOut;
@@ -974,6 +991,12 @@ function abortedRunStatus(reason: RunAbortReason | null): HeartbeatRunStatus {
 /** Error string stamped on an aborted run row — a friendly line for a timeout, else the raw reason. */
 function abortErrorMessage(reason: RunAbortReason | null): string | undefined {
 	if (reason === 'run_timeout') return 'run reached its time limit';
+	if (reason === 'tunnel_lost')
+		return (
+			'the run tunnel to the container closed mid-run, so the agent lost its Hezo tools, ' +
+			'the egress proxy and the ssh agent - the run was failed rather than left to finish ' +
+			'with no way to record anything'
+		);
 	return reason ?? undefined;
 }
 
@@ -1110,10 +1133,28 @@ export async function runAgent(
 		};
 	};
 
+	/**
+	 * The signal the run actually executes under: the caller's, plus the run's own
+	 * fatal conditions.
+	 *
+	 * The caller owns an `AbortSignal` it can cancel or time out; the runner has
+	 * one condition of its own that is just as terminal and that nothing could
+	 * previously act on - the tunnel dying, which leaves a perfectly healthy
+	 * container with no route to Hezo. Deriving rather than reaching into the
+	 * caller's controller keeps ownership where it is, and forwarding
+	 * `signal.reason` verbatim keeps `runAbortReason` reading exactly what it read
+	 * before for every case that already existed.
+	 */
+	const runAbort = new AbortController();
+	if (signal) {
+		if (signal.aborted) runAbort.abort(signal.reason);
+		else signal.addEventListener('abort', () => runAbort.abort(signal.reason), { once: true });
+	}
+
 	const finalizeAbort = async (): Promise<RunResult> => {
 		const durationMs = Date.now() - startTime;
 		await deps.logs.end(streamId);
-		const reason = runAbortReason(signal);
+		const reason = runAbortReason(runAbort.signal);
 		const status = abortedRunStatus(reason);
 		await updateHeartbeatRun(
 			deps.db,
@@ -1387,6 +1428,18 @@ export async function runAgent(
 			policy: await buildTunnelHostPolicy(deps.db, connectorDescriptors),
 		});
 		runTunnel = tunnel;
+		// The tunnel is the container's only path to Hezo, so losing it mid-run
+		// leaves the agent with no MCP tools, no egress proxy and no ssh agent for
+		// the rest of its budget - and it cannot even call `report_no_work`, which
+		// is itself an MCP tool. Fail the run at once and say why, rather than let
+		// it run on to be recorded as having produced no output.
+		tunnel.onClosed((why) => {
+			emit(
+				'stderr',
+				`\n[runner] ${why} — failing the run: the container can no longer reach Hezo\n`,
+			);
+			if (!runAbort.signal.aborted) runAbort.abort('tunnel_lost');
+		});
 		const endpoints: RunEndpoints = tunnel.endpoints;
 
 		const bridge: BridgeRunnerArgs | null =
@@ -1524,13 +1577,13 @@ export async function runAgent(
 			await step('release-pool-container', () => releaseContainer());
 		};
 
-		if (signal?.aborted) {
+		if (runAbort.signal.aborted) {
 			await cleanupRunArtifacts();
 			return finalizeAbort();
 		}
 
 		try {
-			if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+			if (runAbort.signal.aborted) throw new DOMException('Aborted', 'AbortError');
 
 			// Progress-update runs only call MCP tools; they need no code worktree.
 			const prep = task
@@ -1554,7 +1607,7 @@ export async function runAgent(
 						recoveryFailed: new Set<string>(),
 					};
 
-			if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+			if (runAbort.signal.aborted) throw new DOMException('Aborted', 'AbortError');
 
 			// Through SandboxFiles rather than a host write: the container reads this
 			// file, so on a backend whose container is not on this machine the write
@@ -1595,7 +1648,9 @@ export async function runAgent(
 				cmd: context.execCmd,
 				env: context.env,
 				workingDir: prep.workingDir,
-				signal,
+				// The derived signal, so a tunnel that dies mid-run tears the exec down
+				// instead of leaving it to burn the rest of the budget toolless.
+				signal: runAbort.signal,
 				onChunk,
 			});
 			const tail = parser.flush();
@@ -1869,12 +1924,18 @@ export async function runAgent(
 			// Ordered by what the human has to act on. Stranded commits come first
 			// because they are the only one where the fix is time-sensitive: the work
 			// exists in exactly one container.
+			//
+			// `terminalError` outranks `noOutputError` because it is the *cause* and
+			// the other is the symptom: a run whose MCP server never connected, or
+			// whose provider rejected the credential, produced no output precisely
+			// because of that - and reporting "produced no output" first sends the
+			// reader after the model instead of the transport.
 			if (unpushedError) emit('stderr', `\n[runner] ${unpushedError}\n`);
 			else if (backgroundError) emit('stderr', `\n[runner] ${backgroundError}\n`);
+			else if (terminalError) emit('stderr', `\n[runner] ${terminalError}\n`);
 			else if (noOutputError) emit('stderr', `\n[runner] ${noOutputError}\n`);
 			else if (reportedNoWork && !producedOutput)
 				emit('stdout', `\n[runner] no work to do${noWorkReason ? ` — ${noWorkReason}` : ''}\n`);
-			else if (terminalError) emit('stderr', `\n[runner] ${terminalError}\n`);
 
 			await deps.logs.end(streamId);
 			await updateHeartbeatRun(
@@ -1884,7 +1945,7 @@ export async function runAgent(
 					status: success ? HeartbeatRunStatus.Succeeded : HeartbeatRunStatus.Failed,
 					exitCode: execOutcome.exitCode,
 					durationMs,
-					error: unpushedError ?? backgroundError ?? noOutputError ?? terminalError ?? undefined,
+					error: unpushedError ?? backgroundError ?? terminalError ?? noOutputError ?? undefined,
 					// Grok's usage comes from the debug log (runUsage); every other
 					// runtime reports it on the stream (parser.getUsage()).
 					usage: runUsage ?? parser.getUsage(),
@@ -1900,7 +1961,7 @@ export async function runAgent(
 		} catch (error) {
 			const durationMs = Date.now() - startTime;
 			const isAbort = (error as Error).name === 'AbortError';
-			const reason = runAbortReason(signal);
+			const reason = runAbortReason(runAbort.signal);
 			const errorMessage = abortErrorMessage(reason) ?? (error as Error).message;
 			// The **signal** decides the status, not the shape of the thrown error.
 			// Only Docker's exec reliably rejects with an `AbortError` when its
