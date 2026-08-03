@@ -17,12 +17,13 @@ const BACKEND_BASE = {
 
 // Full-route render against the real in-process backend: local Docker is what a
 // test server actually reports, and the card's placement on the Storage subpage
-// is part of the requirement.
+// is part of the requirement. It is *named* for what it is rather than for
+// Docker specifically - a Docker-compatible runtime is equally supported.
 test('storage subpage shows the sandbox-backend card', async () => {
 	const { findByTestId } = await renderApp({ initialPath: '/settings/storage' });
 
 	const name = await findByTestId('settings-sandbox-backend-name');
-	expect(name.textContent).toBe('Local Docker daemon');
+	expect(name.textContent).toBe('Local container service');
 
 	const storage = await findByTestId('settings-storage');
 	const card = await findByTestId('settings-sandbox-backend');
