@@ -52,6 +52,29 @@ import {
  */
 const IDLE_SECONDS = 25;
 
+/**
+ * How long the exec that runs *alongside* the tunnel lasts.
+ *
+ * Long enough that the two genuinely overlap - a backend that reaps the tunnel's
+ * session when another exec starts, streams or finishes has to do it inside this
+ * window - and short enough that the suite stays cheap. A real agent run holds
+ * both open for minutes; this asserts the property, not the duration.
+ */
+const CONCURRENT_EXEC_SECONDS = 20;
+
+/**
+ * Size of the body the `/bulk` route answers with.
+ *
+ * Comfortably past the point where the reply stops fitting in one write, one
+ * frame, or one buffer anywhere along the path, and in the range production
+ * really moves: an MCP `tools/list` response for ~73 tools is tens of KB, and a
+ * signed asset read is explicitly allowed to be multi-MB. 1 MiB is enough to
+ * exercise every chunking boundary without making the suite slow.
+ */
+const BULK_BYTES = 1024 * 1024;
+/** Printable, so a truncation shows up as a short count rather than as binary noise. */
+const BULK_BODY = Buffer.alloc(BULK_BYTES, 'hezo-bulk-payload\n');
+
 export function describeTunnelConformance(
 	fixture: LiveAdapterFixture,
 	h: ConformanceHarness,
@@ -72,8 +95,18 @@ export function describeTunnelConformance(
 			// would really reach (the MCP endpoint). `curl` is in the agent image, so
 			// the container side needs nothing installed - and an HTTP round trip
 			// proves the whole path rather than just that a socket accepted.
+			//
+			// `/bulk` answers with a large body, because host-to-container is the
+			// direction with real volume behind it and the one every other assertion
+			// here leaves at nine bytes.
 			upstream = createServer((req, res) => {
-				hits.push(req.url ?? '');
+				const url = req.url ?? '';
+				hits.push(url);
+				if (url.startsWith('/bulk')) {
+					res.writeHead(200, { 'Content-Type': 'application/octet-stream' });
+					res.end(BULK_BODY);
+					return;
+				}
 				res.writeHead(200, { 'Content-Type': 'text/plain' });
 				res.end('tunnel-ok');
 			});
@@ -221,6 +254,93 @@ export function describeTunnelConformance(
 				await new Promise((r) => setTimeout(r, IDLE_SECONDS * 1000));
 				expect(await curlThroughTunnel(mcpPort(tunnel), '/after')).toContain('tunnel-ok');
 				expect(hits).toContain('/after');
+			} finally {
+				tunnel.close();
+			}
+		}, 300_000);
+
+		it('carries a large response back into the container without dropping the channel', async () => {
+			// The direction with real volume behind it, and the one every other
+			// assertion here leaves at nine bytes. Production moves an MCP
+			// `tools/list` catalogue (tens of KB for ~73 tools) through this within
+			// seconds of a run starting, and signed asset reads that are allowed to be
+			// multi-MB after that.
+			//
+			// The live agent-CLI run is what pointed here: `initialize` and
+			// `tools/list` reached the host, and the tunnel died ~150ms later - i.e.
+			// while the catalogue was on its way back. A small-response test cannot
+			// see that, so the tunnel suite passed on the same backend a real run
+			// could not get through.
+			hits = [];
+			const tunnel = await openTunnel(`bulk-${conformanceRunId()}`);
+			const reasons: string[] = [];
+			tunnel.onClosed((r) => reasons.push(r));
+			try {
+				// `wc -c` rather than the body itself: a byte count is the assertion,
+				// and piping a megabyte through the exec transport would be testing
+				// that instead of the tunnel.
+				const exec = await engine.execCreate(containerId, {
+					Cmd: [
+						'sh',
+						'-c',
+						`curl -sS --max-time 60 http://127.0.0.1:${mcpPort(tunnel)}/bulk | wc -c`,
+					],
+					User: fixture.runUser,
+					AttachStdout: true,
+					AttachStderr: true,
+				});
+				const out = await engine.execStart(exec);
+				expect(`${out.stdout}${out.stderr}`.trim()).toContain(String(BULK_BYTES));
+
+				// Still alive afterwards, in both senses - a channel that delivered the
+				// bytes and then died is exactly the failure this is chasing.
+				expect(reasons).toEqual([]);
+				expect(await curlThroughTunnel(mcpPort(tunnel), '/after-bulk')).toContain('tunnel-ok');
+			} finally {
+				tunnel.close();
+			}
+		}, 300_000);
+
+		it('survives a long-running exec on the same container', async () => {
+			// What a run actually looks like: the tunnel is open for the *whole* of
+			// the agent's exec, and on a managed backend the two ride the same
+			// per-sandbox session machinery rather than independent sockets. If
+			// starting, streaming or reaping one tears the other down, the agent loses
+			// its tools partway through and the only symptom is a run that did
+			// nothing.
+			//
+			// Every other test here opens the tunnel and uses it within a second or
+			// two, which is precisely the shape that would miss this.
+			hits = [];
+			const tunnel = await openTunnel(`exec-${conformanceRunId()}`);
+			const reasons: string[] = [];
+			tunnel.onClosed((r) => reasons.push(r));
+			try {
+				const exec = await engine.execCreate(containerId, {
+					Cmd: [
+						'sh',
+						'-c',
+						`for i in $(seq 1 ${CONCURRENT_EXEC_SECONDS}); do echo "tick $i"; sleep 1; done`,
+					],
+					User: fixture.runUser,
+					AttachStdout: true,
+					AttachStderr: true,
+				});
+				let chunks = 0;
+				await engine.execStart(exec, {
+					onChunk: () => {
+						chunks += 1;
+					},
+				});
+				expect(chunks).toBeGreaterThan(0);
+				expect((await engine.execInspect(exec)).ExitCode).toBe(0);
+
+				// Both halves matter: the tunnel must not have *reported* a death, and
+				// it must still carry a connection. A backend could fail either without
+				// the other - a silent death is the worse of the two, since that is the
+				// one a run cannot react to.
+				expect(reasons).toEqual([]);
+				expect(await curlThroughTunnel(mcpPort(tunnel), '/after-exec')).toContain('tunnel-ok');
 			} finally {
 				tunnel.close();
 			}

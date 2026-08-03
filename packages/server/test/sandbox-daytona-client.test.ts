@@ -163,3 +163,112 @@ describe('executeStreaming does not leak its session', () => {
 		expect(seen.size).toBe(5);
 	});
 });
+
+/**
+ * A stand-in for the PTY WebSocket, complete enough that `openPty` completes its
+ * real handshake against it.
+ *
+ * It echoes the sentinel back out of the launch line it is sent, which is what
+ * makes the handshake settle - so the object under test runs its actual code
+ * path rather than a shortened one.
+ */
+class FakePtySocket {
+	static last: FakePtySocket | undefined;
+	binaryType = '';
+	bufferedAmount = 0;
+	onopen?: () => void;
+	onerror?: () => void;
+	onclose?: () => void;
+	onmessage?: (event: { data: ArrayBuffer | string }) => void;
+	/** Binary frames written after the handshake - i.e. what the tunnel sent. */
+	readonly sent: Uint8Array[] = [];
+
+	constructor() {
+		FakePtySocket.last = this;
+		queueMicrotask(() => this.onopen?.());
+	}
+
+	send(data: string | Uint8Array): void {
+		if (typeof data === 'string') {
+			// The launch line. Its sentinel is printed from two halves precisely so
+			// the echoed command line does not contain it contiguously; reassemble
+			// and hand it back the way a real PTY's output would.
+			const m = data.match(/printf '%s%s' '([^']*)' '([^']*)'/);
+			if (!m) throw new Error(`launch line carried no sentinel: ${data}`);
+			const bytes = new TextEncoder().encode(m[1] + m[2]);
+			queueMicrotask(() => this.onmessage?.({ data: bytes.buffer.slice(0) as ArrayBuffer }));
+			return;
+		}
+		this.sent.push(new Uint8Array(data));
+	}
+
+	close(): void {
+		this.onclose?.();
+	}
+	ping(): void {}
+}
+
+describe('openPty keeps its writes inside what a PTY can take', () => {
+	/** Every request answers 200; only the socket matters here. */
+	function stubTransport(): void {
+		vi.stubGlobal('fetch', async () => new Response('{}', { status: 200 }));
+		vi.stubGlobal('WebSocket', FakePtySocket);
+	}
+
+	function joined(chunks: Uint8Array[]): Uint8Array {
+		const out = new Uint8Array(chunks.reduce((n, c) => n + c.byteLength, 0));
+		let at = 0;
+		for (const c of chunks) {
+			out.set(c, at);
+			at += c.byteLength;
+		}
+		return out;
+	}
+
+	it('splits a frame-sized write into PTY-sized messages, in order', async () => {
+		// The regression this exists for. The tunnel's framing caps a payload at
+		// 64 KiB on every backend, but this transport ends at a terminal whose input
+		// queue is 4 KiB - hand it a 64 KiB message and the channel closes. Live, a
+		// run died ~150ms after Hezo answered `tools/list`, i.e. while the catalogue
+		// was travelling back, leaving the agent with a server it had been told was
+		// connected and no tools from it.
+		//
+		// Asserted here as well as in `chunkPtyPayload`'s own tests because this is
+		// the seam a refactor can bypass: the pure function can stay perfect while
+		// `send` stops calling it.
+		stubTransport();
+		const pty = await new DaytonaClient('k', BASE).openPty(sandbox, 'sess-1', 'hezo-tunnel /c');
+		const socket = FakePtySocket.last;
+		expect(socket).toBeDefined();
+
+		const payload = new Uint8Array(64 * 1024);
+		for (let i = 0; i < payload.length; i++) payload[i] = i % 251;
+		pty.send(payload);
+
+		await vi.waitFor(() => expect(joined(socket?.sent ?? []).byteLength).toBe(payload.byteLength));
+		// Every message within the terminal's bound...
+		for (const chunk of socket?.sent ?? []) expect(chunk.byteLength).toBeLessThanOrEqual(4096);
+		// ...and the bytes reassemble exactly, because a framed protocol rides this
+		// and a dropped or reordered byte desynchronises the decoder.
+		expect(joined(socket?.sent ?? [])).toEqual(payload);
+	});
+
+	it('preserves order across separate writes', async () => {
+		// `send` is paced, so it is no longer synchronous. Two writes that raced
+		// would interleave their chunks and tear the tunnel down on a framing error
+		// - a failure that only shows up under load, which is the worst kind.
+		stubTransport();
+		const pty = await new DaytonaClient('k', BASE).openPty(sandbox, 'sess-2', 'hezo-tunnel /c');
+		const socket = FakePtySocket.last;
+
+		const first = new Uint8Array(10_000).fill(1);
+		const second = new Uint8Array(5_000).fill(2);
+		pty.send(first);
+		pty.send(second);
+
+		await vi.waitFor(() => expect(joined(socket?.sent ?? []).byteLength).toBe(15_000));
+		const all = joined(socket?.sent ?? []);
+		expect(all.slice(0, 10_000).every((b) => b === 1)).toBe(true);
+		expect(all.slice(10_000).every((b) => b === 2)).toBe(true);
+	});
+});

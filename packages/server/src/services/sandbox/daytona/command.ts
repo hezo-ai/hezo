@@ -101,3 +101,35 @@ export function renderStderrDrain(stderrPath: string, maxBytes: number): string 
 	const p = shellQuote(stderrPath);
 	return asShellCommand(`tail -c ${maxBytes} ${p} 2>/dev/null; rm -f ${p}`);
 }
+
+/**
+ * Split a channel write into messages small enough for Daytona's PTY endpoint.
+ *
+ * **Measured, and it is the failure that made an agent run on this backend
+ * useless.** The tunnel's framing already caps a payload at 64 KiB and meters it
+ * against a credit window, so nothing above this layer writes without bound. The
+ * PTY still cannot take a 64 KiB message: send one and the WebSocket closes. In
+ * a real run that is a couple of seconds in - Claude Code connects its MCP
+ * client, Hezo answers `tools/list` with a catalogue of ~73 tools, the reply
+ * comes back through the tunnel and the channel dies mid-response. The agent
+ * then has a server it was told is connected, no tools from it, and a whole
+ * budget to burn finding that out.
+ *
+ * The other end is a terminal, so the ceiling is a terminal's: a PTY's input
+ * queue is 4 KiB (`N_TTY_BUF_SIZE`), and a bridge that hands it more in one
+ * write has nowhere to put the remainder. Chunking to that bound is what makes
+ * the framing layer's guarantees survive the transport underneath it.
+ *
+ * A provider quirk, absorbed inside the provider's adapter: the framing layer
+ * has one cap for every backend, and teaching it about this one would put
+ * provider knowledge above the seam.
+ */
+export function chunkPtyPayload(data: Uint8Array, maxBytes: number): Uint8Array[] {
+	if (maxBytes <= 0) throw new Error('chunkPtyPayload needs a positive maxBytes');
+	if (data.byteLength <= maxBytes) return data.byteLength === 0 ? [] : [data];
+	const out: Uint8Array[] = [];
+	for (let offset = 0; offset < data.byteLength; offset += maxBytes) {
+		out.push(data.subarray(offset, Math.min(offset + maxBytes, data.byteLength)));
+	}
+	return out;
+}

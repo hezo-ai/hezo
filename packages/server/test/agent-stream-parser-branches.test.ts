@@ -115,6 +115,46 @@ describe('Claude Code — session/init fallback arms', () => {
 		expect(parser.getTerminalError()).toBeNull();
 	});
 
+	it('treats `pending` as "not yet", because that is what a healthy run reports', () => {
+		// Measured on Claude Code 2.1.220 against a live backend: MCP servers connect
+		// asynchronously *after* `init`, so a healthy run's init says `pending` and
+		// lists the built-ins only (the CLI ships `WaitForMcpServers` for exactly
+		// this). The first cut of this check read anything-but-connected as a
+		// failure, which would have failed every Claude Code run on that CLI.
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		const out = feed(parser, [
+			{
+				type: 'system',
+				subtype: 'init',
+				model: 'deepseek-v4-flash',
+				tools: Array.from({ length: 20 }, (_, i) => `builtin-${i}`),
+				mcp_servers: [{ name: 'hezo', status: 'pending' }],
+			},
+		]);
+
+		// Still recorded verbatim - the operator gets to see it, they just are not
+		// told the run is doomed on the strength of it.
+		expect(out).toContain('mcp: hezo=pending');
+		expect(parser.getTerminalError()).toBeNull();
+	});
+
+	it('does not fail a run on a status the CLI has never emitted before', () => {
+		// The same lesson generalised: an unknown string is "we do not know", not
+		// "it failed". A CLI upgrade that renames or adds a status must not take
+		// every run down with it.
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		feed(parser, [
+			{
+				type: 'system',
+				subtype: 'init',
+				model: 'm',
+				tools: ['a'],
+				mcp_servers: [{ name: 'hezo', status: 'reconnecting-v2' }],
+			},
+		]);
+		expect(parser.getTerminalError()).toBeNull();
+	});
+
 	it('does not invent a failure when the runtime reports no MCP servers at all', () => {
 		// An older CLI that never sends the array told us nothing, which is not the
 		// same as telling us the server failed. The tunnel's own guard is the

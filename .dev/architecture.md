@@ -1366,12 +1366,21 @@ cover the rest of the run:
   lost its tunnel would answer every later turn from the model alone.
 - **The runtime's own MCP report.** Claude Code states each configured server's connection
   status in the `system`/`init` event - the first event the parser already reads for
-  `tools=N` - and does not retry one that failed. `agent-stream-parser` now records a Hezo
-  server that is present-but-not-connected as the run's terminal error, naming the tunnel,
-  and the session line carries `mcp: hezo=<status>` so a log read after the fact answers the
-  question `tools=25` only hinted at. An absent `mcp_servers` array is *not* read as a
-  failure: a runtime that reports nothing is not the same as one reporting a failure, and
-  the tunnel guard above is the backstop there.
+  `tools=N`. `agent-stream-parser` records a Hezo server reported as **failed** there as the
+  run's terminal error, naming the tunnel, and the session line carries
+  `mcp: hezo=<status>` so a log read after the fact answers the question `tools=25` only
+  hinted at.
+
+  **The report can only ever rule a server out, never in.** Measured against Claude Code
+  2.1.220: MCP servers connect *asynchronously, after* `init` is emitted, so a healthy run
+  reports `pending` there and lists its built-ins only (the CLI ships a `WaitForMcpServers`
+  tool for an agent to block on), and nothing restates the status later. Whether a run sees
+  `pending` or `connected` is therefore a race. So only the known failure statuses
+  (`failed` / `error` / `needs-auth`) are terminal; `pending`, an absent `mcp_servers`
+  array, and any status the CLI has not emitted before are all read as "not known", with
+  the tunnel guard above as the backstop. Reading anything-but-`connected` as a failure -
+  the first cut of this check - would have failed every Claude Code run on that CLI, and
+  the live agent-CLI conformance suite is what caught it.
 
 The runner also orders the two: a captured terminal error outranks "produced no output" on
 the run row, because the first is the cause and the second is its symptom.
@@ -1462,6 +1471,19 @@ prevent.
 
 Raw mode is enough for the bytes themselves: measured, all 256 byte values survive a 64 KiB
 payload intact, NUL and XON/XOFF included, so nothing has to be escaped.
+
+**The message *size* is a different limit, and it is the adapter's to keep.** The far end of
+this WebSocket is a terminal, whose input queue is 4 KiB, and a larger single message closes
+the channel rather than being split. The framing layer's payload cap is 64 KiB on every
+backend, so a catalogue-sized reply crossing host-to-container killed the tunnel outright:
+measured, an agent run died ~150ms after Hezo answered `tools/list`, i.e. while the response
+was on its way back - the client kept its ports, the host's mux was gone, and the run spent
+its whole budget with a server it had been told was connected and no tools from it.
+`openPty` therefore splits every write to `PTY_MAX_SEND_BYTES` and paces it against the
+socket's `bufferedAmount`, with all writes serialised through one chain so a framed protocol
+cannot interleave. The split itself is `chunkPtyPayload` in `daytona/command.ts`, pure and
+unit-tested; the cap lives in the adapter because it is this provider's terminal, not a
+property of the framing.
 
 **Both directions fail closed and stay bounded.** A throw anywhere in the mux's frame
 dispatch - not just in the decode - tears the tunnel down, because the alternative is worse
@@ -3877,9 +3899,13 @@ failures — is in `AGENTS.md` › Testing, which is authoritative):
 **Backend conformance** cuts across those tiers rather than being one of them. The
 `ContainerEngine` and `SandboxFiles` contracts have more than one implementation, and the
 only way "one seam, no provider knowledge above it" stays true is if the same assertions run
-against every implementation - so `packages/server/test/conformance/{engine,files}.ts` are
+against every implementation - so `packages/server/test/conformance/*.ts` are
 backend-agnostic suites parameterised by a `LiveAdapterFixture`, and a new provider is a
-fixture file rather than a second suite. They run against the **real** backend, because the
+fixture file rather than a second suite. The set covers the engine and files contracts, the
+egress red line, the **tunnel** (reachability, idle survival, a large response back into the
+container, survival of a concurrent exec, observable death, stderr) and a real **agent-CLI
+run** wired to a real Hezo over a real tunnel - which asserts the agent both receives Hezo's
+tools and calls one, evidenced host-side by the `tools/call` arriving. They run against the **real** backend, because the
 adapter unit suites drive a fake API and can only pin the requests Hezo sends: every
 non-obvious behaviour the Daytona adapter encodes was measured live and several contradicted
 the documentation, and nothing in a fake notices when one of them changes. Docker's fixture
@@ -3893,7 +3919,14 @@ asserts the documented alternative instead of skipping. That has already paid: t
 established that Daytona's telemetry endpoint answers 403 on an ordinary account
 ("Telemetry endpoints are disabled when Analytics API is configured"), so `containerStats`
 is null there - Hezo's stop-before-the-cap does not operate on that backend and the
-provider's own OOM handling applies, ending the one run that overran.
+provider's own OOM handling applies, ending the one run that overran. The adapter latches
+that 403 and stops asking, because the caller is a 15s loop over every running project and
+the answer never changes; any other error is treated as transient and retried, so one
+network blip cannot silently disable memory enforcement on an account that supports it.
+
+Running the suites live has repeatedly been the only thing that could find a class of bug:
+the PTY message-size limit that killed the tunnel mid-`tools/list`, and the init-event MCP
+status whose `pending` a unit test would happily have asserted as a failure forever.
 
 All changes ship with tests that exercise functionality, preferring integration over
 heavily-mocked unit tests, and a green run keeps a quiet log (no stray `[error]`/`[warn]`).

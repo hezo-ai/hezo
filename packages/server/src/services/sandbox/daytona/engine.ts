@@ -192,6 +192,8 @@ export class DaytonaEngine implements ContainerEngine {
 	 * is scoped to the sandbox's life rather than growing with it.
 	 */
 	private readonly sandboxes = new Map<string, DaytonaSandbox>();
+	/** Set once the account has answered 403 for telemetry; see `containerStats`. */
+	private metricsDisabled = false;
 
 	constructor(private readonly client: DaytonaApi) {}
 
@@ -358,8 +360,23 @@ export class DaytonaEngine implements ContainerEngine {
 	 * treats as "no reading this tick" - so a sandbox whose metrics have not
 	 * landed yet is simply not enforced against, never mistaken for one using
 	 * zero.
+	 *
+	 * **The caller is a 15s loop over every running project**, so an endpoint the
+	 * account has switched off must be asked once, not forever. Daytona answers
+	 * 403 permanently ("Telemetry endpoints are disabled when Analytics API is
+	 * configured") on an ordinary account, which produced one identical warn line
+	 * per project per tick and a wasted HTTP request behind each - while the
+	 * outcome (`null`, no enforcement, Daytona's own OOM handling instead of
+	 * Hezo's graceful stop) never changed. So a 403 latches: the answer is
+	 * remembered and no further request is made.
+	 *
+	 * Latched on 403 **only**. Any other error is transient as far as we can tell
+	 * - a network blip, a restarting collector - and disabling the reading for the
+	 * process's life over one of those would silently turn off memory enforcement
+	 * on an account that supports it.
 	 */
 	async containerStats(containerId: string): Promise<ContainerMemoryStats | null> {
+		if (this.metricsDisabled) return null;
 		try {
 			const metrics = await this.client.getMetrics(containerId, METRICS_WINDOW_MS);
 			for (const [name, value] of metrics) {
@@ -370,7 +387,17 @@ export class DaytonaEngine implements ContainerEngine {
 			}
 			return null;
 		} catch (e) {
-			log.warn(`memory metrics unavailable for ${containerId}: ${(e as Error).message}`);
+			const message = `memory metrics unavailable for ${containerId}: ${(e as Error).message}`;
+			if (e instanceof DaytonaApiError && e.status === 403) {
+				this.metricsDisabled = true;
+				log.warn(
+					`${message} - this account has telemetry disabled, so Hezo's memory-cap ` +
+						"enforcement does not operate on it and Daytona's own OOM handling applies. " +
+						'Not asking again.',
+				);
+			} else {
+				log.warn(message);
+			}
 			return null;
 		}
 	}

@@ -428,26 +428,46 @@ interface ClaudeStreamEvent {
 }
 
 /**
- * Whether the runtime reported the Hezo MCP server as usable this session.
+ * Statuses in the `init` report that mean the run will **not** get that
+ * server's tools, as opposed to "not yet".
  *
- * Claude Code reports each configured server's connection state once, in the
- * `init` event, and **does not retry a server that failed** - so a Hezo server
- * that did not connect means the agent has no Hezo tools for the entire run: it
- * cannot read a task, post a comment, or even call `report_no_work`. It then
- * runs to completion against a system prompt that assumes ~73 tools exist,
+ * Measured against Claude Code 2.1.220 on a live run, and it is not what the
+ * event's shape suggests: MCP servers connect **asynchronously, after** `init`
+ * is emitted, so a perfectly healthy run reports `pending` there and its `tools`
+ * array carries the built-ins only - the CLI even ships a `WaitForMcpServers`
+ * tool for an agent to block on. Reading anything-but-`connected` as a failure
+ * therefore fails every healthy Claude Code run, which is exactly what the live
+ * agent-CLI conformance suite caught before it shipped.
+ *
+ * An unrecognised status is deliberately **not** a failure, for the same reason:
+ * this set is what the CLI is known to emit, and a CLI upgrade that adds a
+ * status must not start failing runs on a string nobody has seen.
+ */
+const CLAUDE_MCP_FAILED_STATUSES = new Set(['failed', 'error', 'needs-auth']);
+
+/**
+ * Whether the runtime reported the Hezo MCP server as unusable this session.
+ *
+ * A Hezo server that failed means the agent has no Hezo tools for the entire
+ * run: it cannot read a task, post a comment, or even call `report_no_work`. It
+ * then runs to completion against a system prompt that assumes ~73 tools exist,
  * burns its whole budget, and fails as "produced no output" - which reads as a
  * lazy model rather than a dead transport. `tools=25` in the session line was
  * the only tell, and nothing looked at it.
  *
+ * **This can only ever rule a server out, never in.** `init` is the sole event
+ * carrying the status and it fires before the servers have connected, so
+ * `pending` there says nothing either way and no later event restates it. The
+ * guard for a server that quietly never connects is the tunnel's own `onClosed`,
+ * which is backend-agnostic and needs no cooperation from the runtime.
+ *
  * A missing `mcp_servers` array means the runtime told us nothing (an older CLI,
- * or a runtime that does not report it), which is not the same as a failure -
- * answer null and let the tunnel's own guard be the backstop rather than
- * inventing a proxy signal.
+ * or a runtime that does not report it), which is likewise not a failure.
  */
 function claudeHezoMcpFailure(servers: ClaudeMcpServerStatus[] | undefined): string | null {
 	if (!Array.isArray(servers) || servers.length === 0) return null;
 	const hezo = servers.find((s) => s?.name === HEZO_MCP_SERVER_NAME);
-	if (!hezo || hezo.status === 'connected') return null;
+	if (!hezo || !CLAUDE_MCP_FAILED_STATUSES.has((hezo.status ?? '').toLowerCase())) return null;
 	return (
 		`the Hezo MCP server did not connect (status: ${hezo.status ?? 'unknown'}), so this run had ` +
 		'no Hezo tools at all - it could not read tasks, post comments, or record any work. ' +

@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { basename } from 'node:path';
 import { trackBackground } from '../../../lib/background';
 import { logger } from '../../../logger';
+import { chunkPtyPayload } from './command';
 
 const log = logger.child('daytona');
 
@@ -53,6 +54,28 @@ const PTY_KEEPALIVE_MS = 20_000;
  */
 const PTY_DELETE_ATTEMPTS = 3;
 const PTY_DELETE_RETRY_MS = 500;
+
+/**
+ * Largest single WebSocket message written to a PTY, and how much may sit
+ * unflushed behind it.
+ *
+ * See {@link chunkPtyPayload} for the measurement: the far end of this socket is
+ * a terminal, whose input queue is 4 KiB, and a larger message closes the
+ * channel rather than being split for us. The tunnel's own frames are capped at
+ * 64 KiB, so without this every catalogue-sized MCP response killed the tunnel a
+ * couple of seconds into the run.
+ *
+ * The high-water mark is the second half of the same problem. `socket.send()`
+ * queues, so chunking alone just hands the same bytes over in more pieces as
+ * fast as the loop can run; the sender pauses when the socket has that much
+ * still unflushed, which is the backpressure AGENTS.md asks for on an ignored
+ * `send()` result. One frame's worth, so a single tunnel frame never blocks
+ * mid-way through itself.
+ */
+const PTY_MAX_SEND_BYTES = 4 * 1024;
+const PTY_SEND_HIGH_WATER_BYTES = 64 * 1024;
+/** How long to wait between checks that the socket has drained. */
+const PTY_DRAIN_POLL_MS = 5;
 
 /**
  * Pages `listSandboxes` will follow before giving up.
@@ -737,8 +760,40 @@ export class DaytonaClient implements DaytonaApi {
 			clearTimeout(timer);
 		}
 
+		/**
+		 * Writes are serialised through one chain, and paced.
+		 *
+		 * A framed protocol rides this channel, so order is not negotiable - two
+		 * overlapping `send`s that interleaved their chunks would desynchronise the
+		 * decoder, which is the same class of failure the sentinel handshake above
+		 * exists to prevent. Chaining also makes the drain wait apply across calls
+		 * rather than per call.
+		 */
+		let sendChain: Promise<void> = Promise.resolve();
+		// A transport with no `bufferedAmount` cannot be paced; chunking still
+		// applies, which is the half that stops the channel being closed outright.
+		const buffered = () => (socket as unknown as { bufferedAmount?: number }).bufferedAmount ?? 0;
+		const sendPaced = (data: Uint8Array) => {
+			sendChain = sendChain
+				.then(async () => {
+					for (const chunk of chunkPtyPayload(data, PTY_MAX_SEND_BYTES)) {
+						if (closed) return;
+						socket.send(chunk);
+						while (!closed && buffered() > PTY_SEND_HIGH_WATER_BYTES) {
+							await new Promise((r) => setTimeout(r, PTY_DRAIN_POLL_MS));
+						}
+					}
+				})
+				.catch((e) => {
+					// A write that fails means the channel is gone; `onclose`/`onerror`
+					// carry that to the caller, and rejecting this chain would only
+					// strand every later write behind an unhandled rejection.
+					log.warn(`Daytona PTY ${sessionId} write failed: ${(e as Error).message}`);
+				});
+		};
+
 		return {
-			send: (data) => socket.send(data),
+			send: sendPaced,
 			onData: (handler) => {
 				onData = handler;
 			},

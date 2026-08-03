@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	chunkPtyPayload,
 	renderDaytonaExec,
 	renderDaytonaExecScript,
 	renderStderrDrain,
@@ -105,5 +106,57 @@ describe('renderStderrDrain', () => {
 		const out = renderStderrDrain('/tmp/.hezo-exec-1.err', 4096);
 		expect(out).toContain('tail -c 4096');
 		expect(out).toContain('rm -f');
+	});
+});
+
+/**
+ * The transport under the tunnel, and the one that made a live agent run on this
+ * backend useless: the framing layer caps a payload at 64 KiB, but the PTY on
+ * the far end of the WebSocket cannot take a message that size and closes the
+ * channel instead of splitting it. Measured - a run died ~150ms after Hezo
+ * answered `tools/list`, i.e. while the catalogue was on its way back.
+ */
+describe('chunkPtyPayload', () => {
+	it('leaves a payload that already fits as a single write', () => {
+		const data = new Uint8Array(100).fill(7);
+		const chunks = chunkPtyPayload(data, 4096);
+		expect(chunks.length).toBe(1);
+		expect(chunks[0]).toBe(data);
+	});
+
+	it('splits a large payload into pieces no bigger than the cap', () => {
+		const data = new Uint8Array(64 * 1024).fill(3);
+		const chunks = chunkPtyPayload(data, 4096);
+		expect(chunks.length).toBe(16);
+		for (const chunk of chunks) expect(chunk.byteLength).toBeLessThanOrEqual(4096);
+	});
+
+	it('preserves the bytes and their order exactly', () => {
+		// A framed protocol rides this: a chunker that dropped, duplicated or
+		// reordered a byte would desynchronise the decoder, which fails as a torn
+		// down tunnel rather than as corrupt data.
+		const data = new Uint8Array(10_000);
+		for (let i = 0; i < data.length; i++) data[i] = i % 251;
+		const joined = new Uint8Array(data.length);
+		let at = 0;
+		for (const chunk of chunkPtyPayload(data, 1024)) {
+			joined.set(chunk, at);
+			at += chunk.byteLength;
+		}
+		expect(at).toBe(data.length);
+		expect(joined).toEqual(data);
+	});
+
+	it('handles a final short chunk', () => {
+		const chunks = chunkPtyPayload(new Uint8Array(4097), 4096);
+		expect(chunks.map((c) => c.byteLength)).toEqual([4096, 1]);
+	});
+
+	it('writes nothing for an empty payload', () => {
+		expect(chunkPtyPayload(new Uint8Array(0), 4096)).toEqual([]);
+	});
+
+	it('refuses a non-positive cap rather than looping forever', () => {
+		expect(() => chunkPtyPayload(new Uint8Array(10), 0)).toThrow(/positive/);
 	});
 });
