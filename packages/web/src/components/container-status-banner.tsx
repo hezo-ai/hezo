@@ -2,19 +2,21 @@ import { Link } from '@tanstack/react-router';
 import { AlertTriangle, Loader2, RefreshCw } from 'lucide-react';
 import { useCallback, useState } from 'react';
 import { useContainerHealth } from '../hooks/use-container-health';
+import { useProjectMenuCollapsed } from '../hooks/use-project-menu-collapsed';
 import { useProjectMeta } from '../hooks/use-projects';
 import { api } from '../lib/api';
+import { bannerInnerClass, bannerInsetClass } from '../lib/banner-classes';
 import { queryClient } from '../lib/query-client';
 import { queryKeys } from '../lib/query-keys';
 import { Button } from './ui/button';
 import { Progress } from './ui/progress';
 
 const BANNER_OUTER = 'sticky top-0 z-40 bg-surface';
-const BANNER_INNER = 'flex items-center gap-2 px-4 py-2 text-[13px] font-medium';
 
 export function ContainerStatusBanner({ projectId }: { projectId: string }) {
 	const project = useProjectMeta(projectId);
 	const health = useContainerHealth(project);
+	const [menuCollapsed] = useProjectMenuCollapsed();
 	const [isRebuilding, setIsRebuilding] = useState(false);
 
 	const bannerRef = useCallback((node: HTMLDivElement | null) => {
@@ -46,7 +48,7 @@ export function ContainerStatusBanner({ projectId }: { projectId: string }) {
 					params={{ projectId }}
 					data-testid="container-status-banner-building"
 					aria-label={`Rebuilding ${project.name}'s base image. View container logs`}
-					className="flex flex-col gap-1 px-4 py-2 bg-info/10 text-info transition-colors hover:bg-info/20"
+					className={`flex flex-col gap-1 px-4 py-2 ${bannerInsetClass(menuCollapsed)} bg-info/10 text-info transition-colors hover:bg-info/20`}
 				>
 					<div className="flex items-center gap-2 text-[13px] font-medium">
 						<Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin" />
@@ -75,7 +77,7 @@ export function ContainerStatusBanner({ projectId }: { projectId: string }) {
 					params={{ projectId }}
 					data-testid="container-status-banner-provisioning"
 					aria-label={`${message} View container logs`}
-					className={`${BANNER_INNER} bg-info/10 text-info transition-colors hover:bg-info/20`}
+					className={`${bannerInnerClass(menuCollapsed)} bg-info/10 text-info transition-colors hover:bg-info/20`}
 				>
 					<Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin" />
 					<span data-testid="container-status-banner-message" className="min-w-0 truncate">
@@ -113,7 +115,7 @@ export function ContainerStatusBanner({ projectId }: { projectId: string }) {
 				params={{ projectId }}
 				data-testid="container-status-banner"
 				aria-label={`${message}. View container`}
-				className={`${BANNER_INNER} ${tone} transition-colors`}
+				className={`${bannerInnerClass(menuCollapsed)} ${tone} transition-colors`}
 			>
 				<AlertTriangle className="w-3.5 h-3.5 shrink-0" />
 				<span data-testid="container-status-banner-message" className="min-w-0 truncate">
