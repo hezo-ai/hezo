@@ -103,15 +103,25 @@ export async function loadPoolMembers(db: Db, projectId: string): Promise<PoolMe
  * Record a container as a member of a project's pool.
  *
  * Idempotent on `container_id`, which is the engine's own id and therefore
- * unique across every backend. Provisioning calls this after the container is
- * up, so a member never exists in a state no run could use - `creating` is for a
- * member the engine is still building, and the ladder skips it.
+ * unique across every backend.
+ *
+ * Provisioning calls this **twice**: once as `creating` the moment the engine
+ * returns an id, and again as `idle` once the container is set up. The early
+ * write is what puts a container on the global Containers page while it is still
+ * coming up - the pool member and `projects.container_id` are the only two things
+ * the listing reads, and before this neither existed until provisioning had
+ * finished, so the page that answers "what is running right now" could not see a
+ * container that was starting, and its log had no row to be reached from.
+ *
+ * A `creating` member is never reachable by a run: `loadPoolMembers` above drops
+ * every state outside the ladder, so the container becomes allocatable only on
+ * the second call.
  */
 export async function upsertPoolMember(
 	db: Db,
 	projectId: string,
 	containerId: string,
-	state: PoolMemberState,
+	state: PoolMemberState | 'creating',
 	/**
 	 * Disk this container was actually provisioned with, in GB. Recorded on the
 	 * member rather than read from the setting at judgement time, so raising the

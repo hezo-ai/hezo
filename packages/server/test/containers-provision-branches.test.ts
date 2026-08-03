@@ -15,6 +15,7 @@ import {
 	provisionContainer,
 } from '../src/services/containers';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
+import { type ContainerListing, listAllContainers } from '../src/services/sandbox/pool-db';
 import { getProjectDir } from '../src/services/workspace';
 import type { WebSocketManager } from '../src/services/ws';
 import { safeClose } from './helpers';
@@ -60,6 +61,12 @@ function recordingDocker(
 		execStderr?: string;
 		execExitCode?: number;
 		execCreateError?: Error;
+		/**
+		 * Runs in place of `startContainer`, which is the first thing to happen
+		 * after the engine hands back an id - the earliest point a test can observe
+		 * the half-provisioned state, and the point everything slow comes after.
+		 */
+		onStart?: (containerId: string) => Promise<void>;
 	} = {},
 ) {
 	const created: CreateContainerCall[] = [];
@@ -69,7 +76,9 @@ function recordingDocker(
 			created.push({ name, config });
 			return { Id: `prov-cid-${Date.now().toString(16)}-${seq++}`, Warnings: [] };
 		}),
-		startContainer: vi.fn(async () => {}),
+		startContainer: vi.fn(async (id: string) => {
+			if (opts.onStart) await opts.onStart(id);
+		}),
 		execCreate: vi.fn(async () => {
 			if (opts.execCreateError) throw opts.execCreateError;
 			return 'exec-y';
@@ -291,6 +300,66 @@ describe('provisionContainer', () => {
 		expect(snapshots[0].projectId).toBe(projectId);
 		expect(snapshots[0].stream).toBe('stdout');
 		expect(String(snapshots[0].text)).toContain('✓ Container ready');
+	});
+
+	it('joins the pool as `creating` the moment the container exists, then becomes idle', async () => {
+		// The regression this pins: the member row and `projects.container_id` were
+		// both written at the *end* of provisioning, and they are the only two things
+		// the global Containers page reads - so a container that was starting was
+		// listed nowhere, and its log stream (already open, keyed on its id) had no
+		// row to be reached from. On a fresh instance that is the whole of what an
+		// operator sees: "Starting the HQ container..." beside an empty list.
+		await resetContainerRow();
+		// Read it back through `listAllContainers` - what GET /api/containers calls -
+		// rather than off the member row directly, so this asserts the page would
+		// actually show it rather than that a row exists somewhere.
+		let inFlight: ContainerListing | undefined;
+		const { docker } = recordingDocker({
+			onStart: async (id) => {
+				const rows = await listAllContainers(db, 2);
+				inFlight = rows.find((r) => r.container_id === id);
+			},
+		});
+
+		const id = await provisionContainer(baseDeps(docker), await projectRow(), teamSlug);
+
+		expect(inFlight?.state).toBe('creating');
+		expect(inFlight?.project_id).toBe(projectId);
+
+		// And it is allocatable only once provisioning finished - `creating` is
+		// dropped by the ladder, so registering early cannot hand a half-built
+		// container to a run.
+		const after = await db.query<{ state: string }>(
+			`SELECT state::text AS state FROM container_pool_members WHERE container_id = $1`,
+			[id],
+		);
+		expect(after.rows[0].state).toBe('idle');
+	});
+
+	it('leaves a container that failed part-way through setup in the pool, marked and explained', async () => {
+		// It is a real container on the engine. Dropping the member row would leave
+		// it running and referenced by nothing - invisible on a local daemon, billed
+		// for on a managed backend - and an operator with no row to remove.
+		await resetContainerRow();
+		const { docker } = recordingDocker({
+			onStart: async () => {
+				throw new Error('container exited immediately');
+			},
+		});
+
+		await expect(
+			provisionContainer(baseDeps(docker), await projectRow(), teamSlug),
+		).rejects.toThrow('container exited immediately');
+
+		const member = await db.query<{ state: string; last_error: string | null }>(
+			`SELECT state::text AS state, last_error FROM container_pool_members
+			  WHERE project_id = $1 AND state = 'error'::container_pool_state`,
+			[projectId],
+		);
+		expect(member.rows).toHaveLength(1);
+		expect(member.rows[0].last_error).toContain('container exited immediately');
+
+		await db.query(`DELETE FROM container_pool_members WHERE project_id = $1`, [projectId]);
 	});
 
 	it('labels the container as a test container only when the test-containers env is set', async () => {

@@ -1655,10 +1655,26 @@ several - the operator was looking at one container and the button acted on all 
 the pool provisions a replacement on the next run that needs one, which is the path every other
 container already takes.
 
-A container is destroyed only on its **second consecutive sighting**. Provisioning has a
+**A container joins the pool as `creating` the moment the engine returns an id**, not once
+provisioning finishes - the same instant its provisioning log stream opens, and before
+`startContainer`. Both facts about a container that the global Containers page reads (the
+member row and `projects.container_id`) used to be written at the *end*, so for the whole
+expensive stretch - starting, the MTU pin, the CA, the repo sync, the MCP installs - a real
+container existed, was streaming its log to a room keyed on its own id, and was listed
+nowhere: on a fresh instance the operator saw "Starting the HQ container..." beside an empty
+list, with no row to reach the log from. `creating` is safe to write early because
+`loadPoolMembers` drops every state outside the ladder, so a half-built container can never
+be handed to a run; the `idle` upsert at the end of provisioning is what makes it allocatable.
+A provision that fails *after* the container exists leaves the member as `error` with the
+reason on it (`setPoolMemberState` + `setPoolMemberOutcome`), so it lists as Failed and Remove
+is the fix - rather than a container left running on the engine that nothing references and
+nobody can see.
+
+A container is destroyed only on its **second consecutive sighting**. Provisioning still has a
 window where a container exists on the engine and is recorded nowhere yet - `createContainer`
-has returned an id and the pool row is written only after it starts - and one caught there is
-indistinguishable from an orphan. No ordering of the two reads closes that window, and no
+has returned an id and the member INSERT has not committed - and one caught there is
+indistinguishable from an orphan. Registering at create narrows that window from the whole of
+setup to a single statement, but does not close it: no ordering of the two reads can, and no
 engine exposes a creation time to age it out with, so the sweep carries its suspicions to the
 next tick instead: whatever was mid-provision has since been recorded, while a real orphan is
 still there. The cost is one extra billing period, against the alternative of destroying a

@@ -508,7 +508,7 @@ test.describe('CEO chat widget — dismissal on navigation', () => {
 
 		// The sheet and its scrim both go, and the page it navigated to is what the
 		// reader is actually left looking at.
-		await expect(page).toHaveURL(/\/projects\/hq\/container$/);
+		await expect(page).toHaveURL(/\/settings\/containers$/);
 		await expect(panel).toBeHidden();
 		await expect(page.getByTestId('chat-overlay')).toBeHidden();
 		await expect(launcher).toBeVisible();

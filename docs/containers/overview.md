@@ -53,11 +53,16 @@ run. A project therefore has as many containers as it has runs going at once - t
 working in the same project get a container each - and they all go away when the work does.
 
 **Settings -> Containers lists every container running on your instance**, whichever
-project it belongs to and whatever state it is in, with the task it last served. Open one
-to see its output, including the output it captured on the way down if it failed. The only
-action there is **Remove**, which is the fix for a container that has wedged: Hezo starts a
-fresh one the next time a run needs it. Removing a container that is running a task ends
-that task's run, and the confirmation says so.
+project it belongs to and whatever state it is in, with the task it last served. A
+container appears there as soon as it exists, marked **Starting** while it is still being
+set up, so you can watch a slow start rather than wait for it. Open one to see its output,
+including the output it captured on the way down if it failed. The only action there is
+**Remove**, which is the fix for a container that has wedged: Hezo starts a fresh one the
+next time a run needs it. Removing a container that is running a task ends that task's run,
+and the confirmation says so.
+
+A container that fails while it is being set up stays in the list as **Failed**, with the
+reason and whatever its output captured, so you can read what went wrong and remove it.
 
 ## Choosing where containers run
 

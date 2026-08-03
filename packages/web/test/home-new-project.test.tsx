@@ -50,12 +50,12 @@ test('the create-project dialog blocks on the container state when HQ is down', 
 	const section = await findByTestId('home-projects', undefined, { timeout: 15_000 });
 	await user.click(within(section).getByTestId('home-new-project'));
 
-	// The form is replaced by the container-state notice + a link to the HQ
-	// container page; the create button is gone.
+	// The form is replaced by the container-state notice + a link to the global
+	// Containers page; the create button is gone.
 	const notice = await screen.findByTestId('hq-container-notice');
 	expect(notice.textContent ?? '').toContain('error');
 	expect(screen.queryByTestId('create-project-submit')).toBeNull();
 	expect(screen.getByTestId('hq-container-notice-link').getAttribute('href')).toContain(
-		'/projects/hq/container',
+		'/settings/containers',
 	);
 });

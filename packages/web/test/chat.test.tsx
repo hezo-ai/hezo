@@ -139,9 +139,11 @@ test('blocks the composer and links to the container page when the HQ container 
 	expect(notice.textContent ?? '').toContain('error');
 	expect(panel.querySelector('[data-testid="chat-input"]')).toBeNull();
 
-	// It links to the HQ container page.
+	// It links to the global Containers page, where HQ's container is listed as
+	// itself with its own log - the project's own page holds only per-project
+	// settings and shows no container at all.
 	const link = notice.querySelector('[data-testid="hq-container-notice-link"]');
-	expect(link?.getAttribute('href')).toContain('/projects/hq/container');
+	expect(link?.getAttribute('href')).toContain('/settings/containers');
 });
 
 test('each message carries its role eyebrow — "You" for the operator, "CEO · HQ" for the CEO', async () => {

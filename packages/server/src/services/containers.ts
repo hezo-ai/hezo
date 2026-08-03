@@ -387,6 +387,10 @@ export async function provisionContainer(
 	// lines) rather than by anything an agent controls.
 	const preContainer: Array<{ stream: 'stdout' | 'stderr'; text: string }> = [];
 	let streamId: string | null = null;
+	// The id the engine handed back, readable from the catch below - where the
+	// `const` from the try block is out of scope. Null means the failure landed
+	// before any container existed, so there is nothing to mark or to show.
+	let createdContainerId: string | null = null;
 	const emit = (stream: 'stdout' | 'stderr', text: string) => {
 		if (streamId === null) {
 			preContainer.push({ stream, text });
@@ -397,6 +401,7 @@ export async function provisionContainer(
 	const openStream = (containerId: string) => {
 		beginProvisionStream(logs, project.id, containerId);
 		streamId = provisionStreamId(containerId);
+		createdContainerId = containerId;
 		for (const line of preContainer) logs?.emit(streamId, line.stream, line.text);
 		preContainer.length = 0;
 	};
@@ -536,6 +541,16 @@ export async function provisionContainer(
 		});
 
 		openStream(Id);
+		// Joined the pool the moment the container exists, not once it is finished.
+		// Everything below - starting, the MTU pin, the CA, the repo sync, the MCP
+		// installs - is the expensive part, and until this write the container was
+		// recorded nowhere: `projects.container_id` is set at the end and the member
+		// row was written beside it, so the global Containers page showed nothing
+		// while a container was coming up and its log stream (already open, keyed on
+		// this id) had no row to be reached from. `creating` is skipped by the
+		// allocation ladder, so registering early cannot hand a half-built container
+		// to a run; the `idle` upsert below is what makes it allocatable.
+		await upsertPoolMember(db, project.id, Id, 'creating', diskGb);
 		emit('stdout', '→ Starting container');
 		await docker.startContainer(Id);
 		if (pinMtu !== null) {
@@ -711,6 +726,16 @@ export async function provisionContainer(
 	} catch (error) {
 		const errorMessage = error instanceof Error ? error.message : String(error);
 		emit('stderr', `✗ Provisioning failed: ${errorMessage}`);
+		// A container that was created and then failed part-way through setup is
+		// still a real container on the engine, so it is left in the pool as
+		// `error` with the reason on it: it lists as Failed, its detail page shows
+		// the reason and whatever its log captured, and Remove is exactly the fix.
+		// Dropping the member instead would leave it running and unreachable -
+		// invisible on a local daemon, billed for on a managed backend.
+		if (createdContainerId) {
+			await setPoolMemberState(db, createdContainerId, 'error');
+			await setPoolMemberOutcome(db, createdContainerId, null, errorMessage);
+		}
 		await db.query(
 			'UPDATE projects SET container_status = $1::container_status, container_error = $2 WHERE id = $3',
 			[ContainerStatus.Error, errorMessage, project.id],

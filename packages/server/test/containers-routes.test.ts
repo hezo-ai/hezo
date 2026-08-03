@@ -115,6 +115,25 @@ describe('GET /api/containers', () => {
 		expect(legacy?.state).toBe('idle');
 	});
 
+	it('lists a container that is still coming up', async () => {
+		// The state the page most needs to show, and the one it used to miss: while a
+		// container is provisioning it is neither `projects.container_id` (set at the
+		// end) nor an allocatable member, so a listing that only wanted runnable
+		// containers would answer "nothing is running" to someone watching one start.
+		await addMember(projectA.id, 'a-starting', 'creating');
+
+		const { rows } = await list();
+		const starting = rows.find((r) => r.container_id === 'a-starting');
+		expect(starting?.state).toBe('creating');
+		expect(starting?.project_slug).toBe(projectA.slug);
+
+		// And it is reachable as itself, which is what makes its log readable while
+		// it is still being written.
+		const res = await app.request('/api/containers/a-starting', { headers: authHeader(token) });
+		expect(res.status).toBe(200);
+		expect(((await res.json()).data as ContainerRow).state).toBe('creating');
+	});
+
 	it('counts a container recorded in both representations once', async () => {
 		await addMember(projectB.id, 'both-ways');
 		await db.query(
