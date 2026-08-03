@@ -1,9 +1,9 @@
 // Before the first project is created, the app lands on /home, which has no
 // project-scoped route. The persistent project menu (ProjectSidebar) used to be
 // gated purely on a route-active project, so it never rendered on /home and the
-// operator could not view or expand the HQ menu — the one place to reach HQ's
-// Container page and diagnose a failed provision. The shell now falls back to HQ
-// as the menu's project while there are zero visible projects.
+// operator could not view or expand the HQ menu at all - including the marker
+// that says HQ's container failed. The shell now falls back to HQ as the menu's
+// project while there are zero visible projects.
 //
 // Component tier: the menu's presence is conditional-rendering logic (does the
 // panel mount), not a real-layout/viewport assertion — happy-dom mounts the
@@ -21,11 +21,11 @@ test('the HQ menu is viewable on /home when no project has been created', async 
 
 	// The persistent menu panel renders (previously absent on /home), showing the
 	// HQ project's own menu: its name link, the coordination info tooltip that
-	// marks the internal HQ shape, and the Container link the user needs.
+	// marks the internal HQ shape, and the Containers link the user needs.
 	await findByTestId('project-menu', undefined, { timeout: 15_000 });
 	await findByTestId('project-sidebar-name');
 	await findByTestId('project-sidebar-info');
-	const containerLinks = await findAllByRole('link', { name: 'Container' });
+	const containerLinks = await findAllByRole('link', { name: 'Containers' });
 	expect(containerLinks.length).toBeGreaterThan(0);
 });
 
@@ -39,8 +39,8 @@ test('the HQ menu surfaces the container failure indicator on /home', async () =
 		},
 	});
 
-	// The Container item in the HQ menu shows its failure marker, so the operator
-	// can click through to diagnose — the whole point of reaching the menu here.
+	// The Containers item in the HQ menu shows its failure marker, so the operator
+	// knows to go and look - the whole point of reaching the menu here.
 	await findByTestId('project-sidebar-container-error', undefined, { timeout: 15_000 });
 });
 
