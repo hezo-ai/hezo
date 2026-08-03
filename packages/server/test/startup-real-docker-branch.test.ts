@@ -14,8 +14,9 @@ import { type HezoConfig, type StartupResult, startup } from '../src/startup';
 // agent-base refresh. No Docker daemon is required — the prune's inspect calls
 // fail against the missing socket and are skipped per image (that warn is the
 // asserted error path here), and the published-image refresh is a no-op outside
-// a packaged build. The container→host connectivity probe is skipped via its
-// documented opt-out so no throwaway container is ever attempted.
+// a packaged build. The container→host connectivity probe and the bind-mount
+// probe are skipped via their documented opt-outs so no throwaway container is
+// ever attempted (on a CI runner that DOES have a daemon, they otherwise would).
 
 describe('startup real-Docker branch (no daemon required)', () => {
 	let dataDir: string;
@@ -27,9 +28,11 @@ describe('startup real-Docker branch (no daemon required)', () => {
 		savedEnv.HEZO_SKIP_PRICING_REFRESH = process.env.HEZO_SKIP_PRICING_REFRESH;
 		savedEnv.HEZO_SKIP_CONTAINER_CONNECTIVITY_CHECK =
 			process.env.HEZO_SKIP_CONTAINER_CONNECTIVITY_CHECK;
+		savedEnv.HEZO_SKIP_MOUNT_CHECK = process.env.HEZO_SKIP_MOUNT_CHECK;
 		delete process.env.HEZO_SKIP_DOCKER;
 		process.env.HEZO_SKIP_PRICING_REFRESH = '1';
 		process.env.HEZO_SKIP_CONTAINER_CONNECTIVITY_CHECK = '1';
+		process.env.HEZO_SKIP_MOUNT_CHECK = '1';
 		dataDir = mkdtempSync(join(tmpdir(), 'hezo-real-docker-'));
 	});
 

@@ -20,8 +20,8 @@ import { canAuthAccessTeam, verifyToken } from './middleware/auth';
 import { getActiveRuntime, setActiveRuntime, shutdownRuntime } from './runtime-control';
 import type { ContainerLogStreamer } from './services/container-logs';
 import { setKeepOldContainers } from './services/containers';
-import { DockerClient } from './services/docker';
 import { evaluateDockerPreflight, formatDockerPreflightMessage } from './services/docker-preflight';
+import { describeDockerSocket } from './services/docker-socket';
 import { getSharedImageBuildTracker } from './services/image-build-tracker';
 import type { LogStreamBroker } from './services/log-stream-broker';
 import { formatPortInUseMessage, probePort } from './services/port-preflight';
@@ -162,14 +162,20 @@ if (!globalThis.__hezoPortProbed) {
 // Docker is a hard prerequisite — every agent runs in a per-project container.
 // Detect a missing or unreachable daemon at launch and exit with actionable
 // guidance (install link / start instructions) rather than booting a server
-// that can't run a single agent. HEZO_SKIP_DOCKER swaps in the in-process fake
-// docker for UI/dev work and tests, so the gate is skipped when it is set.
+// that can't run a single agent. Any Docker-API-compatible runtime works, so the
+// preflight walks every socket a supported runtime is known to use and records
+// the one that answered — every DockerClient then reads that socket. The
+// resolved socket is logged: "which daemon did it even look at" is the first
+// question a failure on a non-default runtime raises. HEZO_SKIP_DOCKER swaps in
+// the in-process fake docker for UI/dev work and tests, so the gate is skipped
+// when it is set.
 if (!process.env.HEZO_SKIP_DOCKER) {
-	const availability = await evaluateDockerPreflight(new DockerClient());
-	if (availability !== 'ok') {
-		log.error(`\n${formatDockerPreflightMessage(availability)}\n`);
+	const preflight = await evaluateDockerPreflight({ override: config.dockerSocket });
+	if (preflight.status !== 'ok') {
+		log.error(`\n${formatDockerPreflightMessage({ ...preflight, status: preflight.status })}\n`);
 		process.exit(1);
 	}
+	if (preflight.socket) log.info(describeDockerSocket(preflight.socket));
 }
 
 /** Bumped on each module load so stale async startup completions are ignored after HMR. */

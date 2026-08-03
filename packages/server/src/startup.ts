@@ -102,6 +102,7 @@ import {
 } from './services/image-registry';
 import { JobManager } from './services/job-manager';
 import { LogStreamBroker } from './services/log-stream-broker';
+import { checkContainerMounts } from './services/mount-preflight';
 import { registerGenericOAuthRefresh } from './services/oauth/generic-refresh';
 import { adminPasswordIsSet } from './services/password';
 import { PricingService } from './services/pricing';
@@ -356,12 +357,31 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	// no duplicate probe container). maxAge 0 forces the initial probe; the boot closure
 	// logs. Whichever ensureFresh starts first wins — boot starts here, before any request.
 	trackBackground(
-		connectivityStatus.ensureFresh(makeConnectivityProbe(true), 0).catch((err) => {
-			log.info('container→host connectivity check failed', {
-				error: err instanceof Error ? err.message : String(err),
-			});
-			connectivityStatus.set('skipped', bindHost.get());
-		}),
+		connectivityStatus
+			.ensureFresh(makeConnectivityProbe(true), 0)
+			.catch((err) => {
+				log.info('container→host connectivity check failed', {
+					error: err instanceof Error ? err.message : String(err),
+				});
+				connectivityStatus.set('skipped', bindHost.get());
+			})
+			// Then verify agent containers get a WRITABLE view of the data directory.
+			// Every agent works on a bind mount of it, and a VM-backed runtime only
+			// shares the host paths it was told to — Colima shares $HOME read-only by
+			// default — so an otherwise healthy Docker setup can leave every run
+			// failing on its first write. Chained after connectivity rather than run
+			// alongside it: both boot a throwaway container from the same agent-base
+			// image, so running them concurrently on a cold cache would fire two
+			// simultaneous pulls of an image neither has yet. Backgrounded and
+			// non-fatal for the same reason as the connectivity check — the operator
+			// needs the web UI up to act on the guidance.
+			.then(() =>
+				checkContainerMounts({ docker, dataDir: config.dataDir }).catch((err) => {
+					log.info('container mount check failed', {
+						error: err instanceof Error ? err.message : String(err),
+					});
+				}),
+			),
 	);
 	const events = new DomainEventBus();
 	const jobManager = new JobManager({
