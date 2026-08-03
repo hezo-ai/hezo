@@ -155,6 +155,12 @@ this is effectively the only path forward once the master key is lost.
 exits with an error. To start an external database fresh, drop and recreate it with your
 provider's tools.
 
+The containers the previous life was running are reclaimed on the next start. Hezo
+identifies its own containers by an id that lives beside the data directory rather than
+inside the database, so a reset does not lose track of them - which matters most on a
+[managed container service](/docs/containers/remote/overview), where a forgotten sandbox
+holds its disk against your account quota until something removes it.
+
 ## Uninstall
 
 ```sh

@@ -1,16 +1,10 @@
 import { logger } from '../../logger';
+import { INSTANCE_LABEL } from './labels';
 import type { ContainerEngine } from './types';
 
 const log = logger.child('sandbox-reaper');
 
-/**
- * The label every container Hezo creates carries, naming the instance that made
- * it. On local Docker this is belt-and-braces; on a managed backend it is the
- * thing that makes reaping safe at all, because several Hezo instances can
- * share one provider account and a sweep keyed on anything less specific would
- * destroy another instance's live sandboxes.
- */
-export const INSTANCE_LABEL = 'hezo.instance';
+export { INSTANCE_LABEL } from './labels';
 
 /**
  * Ceiling on how many orphans one pass destroys. Every recurring job is bounded
@@ -63,6 +57,14 @@ export interface ReapResult {
  * bills for one extra period, which is the right trade against destroying a
  * container that is running someone's work.
  *
+ * `requireSecondSighting: false` lifts that on the **startup** pass only, where
+ * the window it guards cannot be open: reconciliation has just failed every
+ * stranded run and nothing is provisioning yet. Its caller is responsible for
+ * establishing that this process is the data dir's sole owner - see
+ * `JobManager.reconcileOnStartup`. Without it, a dev loop that restarts more
+ * often than the sweep's cadence never reaps anything at all, because the
+ * suspicion set lives in memory and starts empty on every boot.
+ *
  * Best-effort throughout: an engine that cannot be reached returns no work
  * rather than throwing, and one failed destroy never aborts the sweep.
  */
@@ -71,7 +73,9 @@ export async function reapOrphanedContainers(
 	instanceId: string,
 	liveContainerIds: ReadonlySet<string>,
 	previouslySuspected: ReadonlySet<string> = new Set(),
+	opts: { requireSecondSighting?: boolean } = {},
 ): Promise<ReapResult> {
+	const requireSecondSighting = opts.requireSecondSighting ?? true;
 	const result: ReapResult = { examined: 0, destroyed: [], deferred: 0, suspected: new Set() };
 
 	let owned: Array<{ Id: string; Names: string[] }>;
@@ -88,8 +92,11 @@ export async function reapOrphanedContainers(
 	for (const orphan of orphans) result.suspected.add(orphan.Id);
 
 	// Only a container suspected on the previous pass as well is actually gone;
-	// see the note above on the provisioning window.
-	const confirmed = orphans.filter((c) => previouslySuspected.has(c.Id));
+	// see the note above on the provisioning window, and on when it is safe to
+	// skip the wait.
+	const confirmed = requireSecondSighting
+		? orphans.filter((c) => previouslySuspected.has(c.Id))
+		: orphans;
 	if (confirmed.length > MAX_PER_PASS) {
 		result.deferred = confirmed.length - MAX_PER_PASS;
 	}

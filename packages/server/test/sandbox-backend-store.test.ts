@@ -1,3 +1,6 @@
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { SandboxBackend } from '@hezo/shared';
 import { Logger } from '@hiddentao/logger';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -37,6 +40,7 @@ import { createStubDocker, createTestApp } from './helpers/app';
  */
 
 let db: Db;
+const dataDir = mkdtempSync(join(tmpdir(), 'hezo-backend-store-'));
 let unlocked: MasterKeyManager;
 /** State every boot starts in: enrolled, but no key in memory yet. */
 const locked = new MasterKeyManager();
@@ -286,7 +290,7 @@ describe('recovering from a stored key that no longer works', () => {
 
 		// 3. The Containers page still renders: this is what the switch dialog's
 		//    numbers come from, and it runs against the pending engine.
-		await expect(describeSwitchImpact(db, holder.engine)).resolves.toMatchObject({
+		await expect(describeSwitchImpact(db, holder.engine, dataDir)).resolves.toMatchObject({
 			containers: 0,
 		});
 
@@ -297,6 +301,7 @@ describe('recovering from a stored key that no longer works', () => {
 			holder,
 			{ backend: SandboxBackend.Docker },
 			async () => null,
+			dataDir,
 		);
 		expect(result.backend).toBe(SandboxBackend.Docker);
 		expect(holder.backend).toBe(SandboxBackend.Docker);

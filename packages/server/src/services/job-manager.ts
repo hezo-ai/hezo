@@ -885,6 +885,44 @@ export class JobManager {
 		await this.restartStoppedRunningContainers(docker);
 		await this.repairStaleContainerMounts(docker);
 		await this.sweepDanglingContainerProcesses(docker);
+		await this.reapOrphanedContainersAtStartup();
+	}
+
+	/**
+	 * Reclaim the containers a previous life of this instance left behind, before
+	 * the first run needs one.
+	 *
+	 * Every other startup pass above is DB-driven: it starts from a project row
+	 * and looks outward, so a container the database has forgotten is invisible to
+	 * all of them. That is exactly what a `--reset` leaves - and on a managed
+	 * backend those sandboxes hold their disk against the account quota until
+	 * something reclaims them, which is how a handful of dev restarts can fill it
+	 * and make the *next* provision fail. (The instance id now outlives the
+	 * database, so they still carry this instance's label and are ours to reap;
+	 * see `getOrCreateInstanceId`.)
+	 *
+	 * **Destroys on the first sighting, unlike the cron.** The second-sighting rule
+	 * guards one window - a container created but not yet recorded - and that
+	 * window cannot be open here: reconciliation has just failed every stranded run
+	 * and no run has started. The wait is not merely unnecessary, it defeats the
+	 * sweep entirely for the case this exists to fix, because the suspicion set is
+	 * in memory and a dev loop restarting every few minutes never reaches a second
+	 * pass.
+	 *
+	 * Gated on this process owning the data dir's lock, which is what makes "no
+	 * concurrent provisioning" true. The lock is embedded-only by design, so an
+	 * external-database deployment - where two servers can share one instance id -
+	 * gets no startup pass and keeps the conservative cron behaviour.
+	 */
+	private async reapOrphanedContainersAtStartup(): Promise<void> {
+		const { readLiveInstanceLock } = await import('../db/instance-lock');
+		if (readLiveInstanceLock(this.deps.dataDir)?.pid !== process.pid) {
+			log.debug('Not the sole owner of this data dir; leaving orphans to the periodic sweep');
+			return;
+		}
+		await this.reapOrphanedContainers({ atStartup: true }).catch((e) =>
+			log.error('Startup orphan sweep failed:', e),
+		);
 	}
 
 	/**
@@ -3121,7 +3159,11 @@ export class JobManager {
 	 * The live set is read from `projects` rather than from the engine, so a
 	 * container is only ever destroyed when Hezo itself has forgotten it.
 	 */
-	private async reapOrphanedContainers(): Promise<void> {
+	/**
+	 * `atStartup` skips the wait for a second sighting. See
+	 * {@link reconcileOnStartup} for why that is safe there and nowhere else.
+	 */
+	private async reapOrphanedContainers(opts: { atStartup?: boolean } = {}): Promise<void> {
 		const { db, docker } = this.deps;
 		if (!(await docker.ping())) {
 			log.debug('Container engine not reachable; skipping orphan sweep');
@@ -3132,9 +3174,10 @@ export class JobManager {
 		const { getOrCreateInstanceId } = await import('./telemetry');
 		const result = await reapOrphanedContainers(
 			docker,
-			await getOrCreateInstanceId(db),
+			await getOrCreateInstanceId(db, this.deps.dataDir),
 			await listReferencedContainerIds(db),
 			this.suspectedOrphanContainers,
+			{ requireSecondSighting: !opts.atStartup },
 		);
 		// Carried to the next tick: a container is only destroyed once it has looked
 		// orphaned twice running, which is what keeps a mid-provision container -
@@ -3249,6 +3292,6 @@ export class JobManager {
 	private async runTelemetry(): Promise<void> {
 		const t = this.deps.telemetry;
 		if (!t?.enabled) return;
-		await reportTelemetry(this.deps.db, { endpoint: t.endpoint });
+		await reportTelemetry(this.deps.db, { endpoint: t.endpoint, dataDir: this.deps.dataDir });
 	}
 }

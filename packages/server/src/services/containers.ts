@@ -42,7 +42,7 @@ import type { LogStreamBroker } from './log-stream-broker';
 import { ensureProjectRepos } from './repo-sync';
 import { getActiveContainers, projectContainerMemoryGb } from './run-concurrency';
 import { DOCKER_HOST_GATEWAY_ENTRY } from './sandbox/endpoints';
-import { INSTANCE_LABEL } from './sandbox/orphan-reaper';
+import { INSTANCE_LABEL, PROJECT_LABEL, TEAM_LABEL } from './sandbox/labels';
 import {
 	claimPoolMember,
 	clearProjectContainerIfNamed,
@@ -463,7 +463,7 @@ export async function provisionContainer(
 			// Names the instance that created it, so the orphan sweep can never
 			// destroy another instance's containers - several Hezo instances can
 			// share one managed-backend account.
-			[INSTANCE_LABEL]: await getOrCreateInstanceId(deps.db),
+			[INSTANCE_LABEL]: await getOrCreateInstanceId(deps.db, dataDir),
 		};
 		// Mark containers spawned by a test run so the test harness's cleanup can scope
 		// itself to them and never delete a developer's live dev-server containers.

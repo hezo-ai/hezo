@@ -24,6 +24,7 @@ import { SandboxBackend } from '@hezo/shared';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Db } from '../../db/database';
 import { logger } from '../../logger';
+import { getOrCreateInstanceId } from '../telemetry';
 import {
 	setStoredDaytonaApiUrl,
 	setStoredSandboxBackend,
@@ -31,17 +32,23 @@ import {
 } from './backend-store';
 import { SandboxBackendError } from './errors';
 import type { SandboxBackendHolder } from './holder';
+import { INSTANCE_LABEL } from './labels';
 import { openSandboxBackend } from './open';
 import type { ContainerEngine } from './types';
 
 const log = logger.child('sandbox-switch');
 
-/** Every container Hezo owns carries this, whichever backend created it. */
-const HEZO_OWNED_LABEL = 'hezo.project';
-
 /**
- * The containers this instance owns on the current backend, or none when the
+ * The containers **this instance** owns on the current backend, or none when the
  * backend cannot answer.
+ *
+ * Scoped on `hezo.instance`, which is the only label that names an owner. It
+ * used to query the bare key `hezo.project`, and on Daytona a bare key has no
+ * server-side equivalent at all - the adapter falls back to listing *every*
+ * sandbox in the account and filtering on the key's presence, which every Hezo
+ * container everywhere carries. Switching backends therefore destroyed another
+ * instance's live sandboxes, which is precisely what labelling by instance
+ * exists to prevent.
  *
  * The tolerance is the point, and it is needed on both call sites: an operator
  * whose backend is unreachable - a dead provider key, a stopped daemon, a
@@ -52,9 +59,12 @@ const HEZO_OWNED_LABEL = 'hezo.project';
  * try/catch rather than `.catch()` because a pending engine throws
  * **synchronously**, so a rejection handler on the returned promise never runs.
  */
-async function listOwnedContainers(engine: ContainerEngine): Promise<Array<{ Id: string }>> {
+async function listOwnedContainers(
+	engine: ContainerEngine,
+	instanceId: string,
+): Promise<Array<{ Id: string }>> {
 	try {
-		return await engine.listContainersByLabel(HEZO_OWNED_LABEL);
+		return await engine.listContainersByLabel(`${INSTANCE_LABEL}=${instanceId}`);
 	} catch (e) {
 		log.error(`could not list containers on the current backend: ${(e as Error).message}`);
 		return [];
@@ -72,13 +82,18 @@ export interface SwitchImpact {
  * What a switch would cost right now, so the operator confirms against real
  * numbers rather than a generic warning.
  */
-export async function describeSwitchImpact(db: Db, engine: ContainerEngine): Promise<SwitchImpact> {
+export async function describeSwitchImpact(
+	db: Db,
+	engine: ContainerEngine,
+	dataDir: string,
+): Promise<SwitchImpact> {
+	const instanceId = await getOrCreateInstanceId(db, dataDir);
 	const [owned, runs] = await Promise.all([
 		// Wrapped rather than `.catch()`-ed for the same reason as `destroyAll`: a
 		// pending engine (deferred open that failed) throws synchronously, and this
 		// runs on every load of the Containers page - so the throw escaping here
 		// took out the very page the operator needs in order to switch away.
-		listOwnedContainers(engine),
+		listOwnedContainers(engine, instanceId),
 		db.query<{ n: number }>(
 			`SELECT COUNT(*)::int AS n FROM heartbeat_runs WHERE status IN ('queued', 'running')`,
 		),
@@ -94,10 +109,10 @@ export async function describeSwitchImpact(db: Db, engine: ContainerEngine): Pro
  * crash mid-provision leaves behind, and the last moment anything will be able
  * to see it.
  */
-async function destroyAll(db: Db, engine: ContainerEngine): Promise<number> {
+async function destroyAll(db: Db, engine: ContainerEngine, dataDir: string): Promise<number> {
 	// Tolerates a backend that cannot be listed, which is exactly the state an
 	// operator switching away from a broken backend is in.
-	const owned = await listOwnedContainers(engine);
+	const owned = await listOwnedContainers(engine, await getOrCreateInstanceId(db, dataDir));
 	let destroyed = 0;
 	for (const c of owned) {
 		try {
@@ -143,6 +158,7 @@ export async function switchSandboxBackend(
 	holder: SandboxBackendHolder,
 	req: SwitchRequest,
 	resolveExistingKey: () => Promise<string | null>,
+	dataDir: string,
 ): Promise<SwitchResult> {
 	const apiKey =
 		req.backend === SandboxBackend.Daytona
@@ -171,7 +187,7 @@ export async function switchSandboxBackend(
 		return { containersDestroyed: 0, backend: req.backend };
 	}
 
-	const containersDestroyed = await destroyAll(db, holder.engine);
+	const containersDestroyed = await destroyAll(db, holder.engine, dataDir);
 
 	if (req.daytonaApiKey?.trim()) {
 		await storeDaytonaApiKey(db, masterKeyManager, req.daytonaApiKey.trim());

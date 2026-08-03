@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { arch, platform } from 'node:os';
+import { join } from 'node:path';
 import { TaskStatus } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { getSystemMeta } from '../lib/system-meta';
@@ -10,6 +12,41 @@ const log = logger.child('telemetry');
 
 /** `system_meta` key holding this instance's anonymous, randomly-generated id. */
 export const INSTANCE_ID_KEY = 'instance_id';
+
+/**
+ * Where the id is durably kept, relative to the data dir.
+ *
+ * **A file rather than the database, because the id outlives the database.**
+ * `--reset` renames `pgdata` aside, so a DB-resident id is minted afresh on the
+ * next boot - and every container the previous life created keeps the *old*
+ * `hezo.instance` label. The orphan sweep queries the new one, so those
+ * containers become invisible to it permanently: on a managed backend they bill
+ * until somebody notices them in a dashboard, and nothing in the product can
+ * see them. The egress CA sits beside the data dir for the same reason.
+ */
+const INSTANCE_ID_FILE = 'instance-id';
+
+/** A minted id is a v4 UUID; anything else on disk is treated as absent. */
+const INSTANCE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function readInstanceIdFile(path: string): string | null {
+	try {
+		const raw = readFileSync(path, 'utf8').trim();
+		if (INSTANCE_ID_PATTERN.test(raw)) return raw;
+		// Truncated or hand-edited: fall through and re-derive rather than
+		// stamping containers with a label nothing will match.
+		if (raw.length > 0) log.warn(`Ignoring malformed instance id at ${path}`);
+		return null;
+	} catch {
+		return null;
+	}
+}
+
+function writeInstanceIdFile(path: string, id: string): void {
+	// Host-owner only. Nothing in a container ever reads this - it identifies the
+	// instance to the *engine*, via a label Hezo sets.
+	writeFileSync(path, `${id}\n`, { mode: 0o600 });
+}
 
 /** Where daily reports are posted unless overridden via config. */
 export const DEFAULT_TELEMETRY_ENDPOINT = 'https://hezo.ai/api/telemetry';
@@ -42,20 +79,59 @@ export interface TelemetryPayload {
 }
 
 /**
- * Read this instance's anonymous id, generating and persisting one on first
- * call. The insert is `ON CONFLICT DO NOTHING` and re-reads, so concurrent
- * callers converge on the same id rather than clobbering it — the id is stable
- * for the life of the data dir.
+ * This instance's id, generated and persisted on first call. Stable for the life
+ * of the **data dir**, which is a stronger promise than it sounds: it survives a
+ * `--reset`, because it is kept in a file rather than in the database.
+ *
+ * It is two things at once, and the second is why the durability matters. It is
+ * the anonymous identifier telemetry de-dupes installs by, and it is the value
+ * of the `hezo.instance` label on every container Hezo creates - the label the
+ * orphan sweep scopes itself to, so that several Hezo instances can share one
+ * provider account without reaping each other's live sandboxes.
+ *
+ * Resolution order is load-bearing:
+ *
+ * 1. the file, once it exists;
+ * 2. otherwise **the id already in the database** - an instance that predates
+ *    the file keeps what it had. Minting a new one here would orphan its live
+ *    containers on the first boot after upgrading, which is precisely the bug
+ *    the file exists to prevent;
+ * 3. otherwise a fresh one. The `ON CONFLICT DO NOTHING` insert and re-read stay
+ *    the arbiter, so concurrent callers still converge on a single id before it
+ *    is written to disk.
+ *
+ * The database copy is kept in step either way, since telemetry reads it and an
+ * operator inspecting `system_meta` should not see a stale value.
  */
-export async function getOrCreateInstanceId(db: Db): Promise<string> {
-	const existing = await getSystemMeta(db, INSTANCE_ID_KEY);
-	if (existing) return existing;
-	const id = randomUUID();
+export async function getOrCreateInstanceId(db: Db, dataDir: string): Promise<string> {
+	mkdirSync(dataDir, { recursive: true });
+	const path = join(dataDir, INSTANCE_ID_FILE);
+
+	const fromFile = readInstanceIdFile(path);
+	if (fromFile) {
+		await db.query(
+			`INSERT INTO system_meta (key, value) VALUES ($1, $2)
+			 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+			 WHERE system_meta.value IS DISTINCT FROM EXCLUDED.value`,
+			[INSTANCE_ID_KEY, fromFile],
+		);
+		return fromFile;
+	}
+
+	const fromDb = await getSystemMeta(db, INSTANCE_ID_KEY);
+	if (fromDb) {
+		writeInstanceIdFile(path, fromDb);
+		return fromDb;
+	}
+
+	const minted = randomUUID();
 	await db.query(
 		`INSERT INTO system_meta (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`,
-		[INSTANCE_ID_KEY, id],
+		[INSTANCE_ID_KEY, minted],
 	);
-	return (await getSystemMeta(db, INSTANCE_ID_KEY)) ?? id;
+	const id = (await getSystemMeta(db, INSTANCE_ID_KEY)) ?? minted;
+	writeInstanceIdFile(path, id);
+	return id;
 }
 
 /**
@@ -64,8 +140,8 @@ export async function getOrCreateInstanceId(db: Db): Promise<string> {
  * the whole installation. Token sums are read as `float8` (exact for integers
  * well past any daily volume) to avoid bigint-as-string surprises.
  */
-export async function buildTelemetryPayload(db: Db): Promise<TelemetryPayload> {
-	const instanceId = await getOrCreateInstanceId(db);
+export async function buildTelemetryPayload(db: Db, dataDir: string): Promise<TelemetryPayload> {
+	const instanceId = await getOrCreateInstanceId(db, dataDir);
 
 	const counts = await db.query<{ teams: number; projects: number; agents: number }>(
 		`SELECT
@@ -133,9 +209,12 @@ export async function buildTelemetryPayload(db: Db): Promise<TelemetryPayload> {
  * never disrupt the instance. Mirrors the update-check's direct `fetch` (server
  * outbound calls do not route through the agent egress proxy).
  */
-export async function reportTelemetry(db: Db, opts: { endpoint: string }): Promise<void> {
+export async function reportTelemetry(
+	db: Db,
+	opts: { endpoint: string; dataDir: string },
+): Promise<void> {
 	try {
-		const payload = await buildTelemetryPayload(db);
+		const payload = await buildTelemetryPayload(db, opts.dataDir);
 		const res = await fetch(opts.endpoint, {
 			method: 'POST',
 			headers: {

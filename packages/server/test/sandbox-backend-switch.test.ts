@@ -1,8 +1,48 @@
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { SandboxBackend } from '@hezo/shared';
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Db } from '../src/db/database';
 import { SandboxBackendHolder } from '../src/services/sandbox/holder';
+import { INSTANCE_LABEL } from '../src/services/sandbox/labels';
+import { describeSwitchImpact } from '../src/services/sandbox/switch-backend';
 import type { ContainerEngine } from '../src/services/sandbox/types';
-import { createStubDocker } from './helpers/app';
+import { getOrCreateInstanceId } from '../src/services/telemetry';
+import { safeClose } from './helpers';
+import { createStubDocker, createTestApp } from './helpers/app';
+
+describe('the switch is scoped to this instance', () => {
+	let db: Db;
+	const dataDir = mkdtempSync(join(tmpdir(), 'hezo-switch-scope-'));
+
+	beforeAll(async () => {
+		db = (await createTestApp()).db;
+	});
+	afterAll(async () => {
+		await safeClose(db);
+	});
+
+	it("asks for this instance's containers, not every Hezo container", async () => {
+		// The bug: it queried the bare key `hezo.project`. On Daytona a bare key has
+		// no server-side equivalent, so the adapter lists **every sandbox in the
+		// account** and filters on the key's presence - which every Hezo container
+		// everywhere carries. Switching backends destroyed another instance's live
+		// sandboxes, which is exactly what labelling by instance exists to prevent.
+		const queried: string[] = [];
+		const engine = createStubDocker({
+			listContainersByLabel: async (label: string) => {
+				queried.push(label);
+				return [];
+			},
+		});
+
+		await describeSwitchImpact(db, engine, dataDir);
+
+		const instanceId = await getOrCreateInstanceId(db, dataDir);
+		expect(queried).toEqual([`${INSTANCE_LABEL}=${instanceId}`]);
+	});
+});
 
 /**
  * The backend is switchable at runtime now, and the hazard that creates is a

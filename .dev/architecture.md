@@ -1626,6 +1626,33 @@ provider account, so a broader query would destroy another instance's live sandb
 pass is bounded and states what it deferred, since a silently-truncated sweep reads as
 "everything was cleaned up" when it was not.
 
+**That label's value outlives the database.** `getOrCreateInstanceId` keeps the id in
+`<dataDir>/instance-id` and only falls back to `system_meta` for an instance that predates the
+file (which it then adopts, rather than minting - minting there would orphan that instance's
+live containers on its first boot after upgrading). It has to outlive the database because
+`--reset` renames `pgdata` aside: a DB-resident id was minted afresh on the next boot, every
+container the previous life created kept the *old* label, and the sweep - which queries the new
+one - could never see them again. On Daytona they then held their disk against the account
+quota indefinitely, and six of them is a 30 GB plan full, which surfaces as the *next* provision
+being refused rather than as anything pointing at the leak.
+
+**The sweep also runs once during `reconcileOnStartup`, destroying on the first sighting.**
+Every other startup pass is DB-driven - it starts from a project row and looks outward - so a
+container the database has forgotten is invisible to all of them, which is exactly what a reset
+leaves. The second-sighting rule is skipped there because the window it guards (a container
+created but not yet recorded) cannot be open before any run has started, and because keeping it
+would defeat the sweep for this case entirely: the suspicion set is in memory, so an instance
+restarting more often than the cron's cadence never reaches a second pass. It is gated on this
+process holding the data dir's lock, which is embedded-only; an external-database deployment,
+where two servers can share an instance id, keeps the conservative path.
+
+**Anything that destroys scopes on `hezo.instance`.** The other two labels (`hezo.team`,
+`hezo.project`, all three in `sandbox/labels.ts`) are descriptive: every container of every
+instance carries them, so a query on either reaches across instances. Backend switching used to
+tear down by the bare key `hezo.project`, and on Daytona a bare key has no server-side
+equivalent - the adapter lists the whole account and filters client-side - so switching backends
+destroyed another instance's live sandboxes.
+
 The live set (`listReferencedContainerIds`) is the union of **both** representations of a
 container - the project row and the pool member - across **every** pool state. A pooled
 project owns several containers at once while `projects.container_id` names only the most

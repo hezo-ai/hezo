@@ -72,3 +72,17 @@ Daytona would keep serving a stale toolchain.
   serves one run at a time, that ends the run that overran and nothing else.
 - **Suspended sandboxes still count.** A suspended container holds its memory and disk
   against your account quota. On a small plan, idle projects can hold the whole allowance.
+
+## When the quota is already full
+
+A create refused with `Total disk limit exceeded` means the account has no room left,
+not that anything is wrong with Hezo. Hezo removes its own sandboxes once nothing
+references them - including the ones a previous life of the same instance left behind,
+which it recognises by a label carrying an id kept beside the data directory rather than
+in the database, so a `--reset` does not lose track of them. That sweep runs at startup
+and every ten minutes after.
+
+What Hezo will **not** touch is a sandbox another Hezo created, because several instances
+can share one Daytona account and it has no way to know whether that one is busy. If the
+dashboard shows sandboxes from an instance you no longer run, remove them there. Lowering
+**Disk per container** is the other lever: it decides how many fit in the quota at all.

@@ -85,6 +85,35 @@ describe('reapOrphanedContainers', () => {
 		expect(second.suspected.size).toBe(0);
 	});
 
+	it('destroys on the first sighting when the second-sighting wait is lifted', async () => {
+		// The startup pass. The wait guards a container created but not yet
+		// recorded, and that window cannot be open during reconciliation - no run
+		// has started. Waiting there does not just cost a cycle, it defeats the
+		// sweep for the case it exists to fix: the suspicion set is in memory, so a
+		// dev loop restarting every few minutes never reaches a second pass and the
+		// previous lives' sandboxes hold the provider quota forever.
+		const { engine, destroyed } = engineWith(['from-a-previous-life']);
+
+		const result = await reapOrphanedContainers(engine, INSTANCE, new Set(), new Set(), {
+			requireSecondSighting: false,
+		});
+
+		expect(destroyed).toEqual(['from-a-previous-life']);
+		expect(result.destroyed).toEqual(['from-a-previous-life']);
+	});
+
+	it('still spares a live container when the wait is lifted', async () => {
+		// Lifting the wait must not widen *what* is swept - only when. A container
+		// the DB still references is not an orphan under either rule.
+		const { engine, destroyed } = engineWith(['live-one']);
+
+		await reapOrphanedContainers(engine, INSTANCE, new Set(['live-one']), new Set(), {
+			requireSecondSighting: false,
+		});
+
+		expect(destroyed).toEqual([]);
+	});
+
 	it('scopes the query to this instance', async () => {
 		// The assertion that makes the sweep safe at all: several Hezo instances
 		// can share one provider account, and a broader query would destroy

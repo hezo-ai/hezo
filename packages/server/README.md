@@ -61,7 +61,7 @@ The master key encrypts all secrets using AES-256-GCM. It is held in memory only
 - If `--master-key` wrong: starts in `locked` state
 - If no key: starts in `locked` state - web UI prompts for the key
 
-**Reset**: `--reset` wipes the database directory and starts fresh.
+**Reset**: `--reset` starts fresh with an empty embedded database. The existing `pgdata` is renamed aside rather than deleted, and the containers the previous life left behind are reclaimed on the next start.
 
 ## Migrations
 

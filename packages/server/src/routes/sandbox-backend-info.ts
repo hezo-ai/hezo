@@ -38,7 +38,7 @@ export function buildSandboxBackendInfoRoutes(holder: SandboxBackendHolder): Hon
 			credential_configured: await hasDaytonaApiKey(db),
 			// What a switch would cost right now, so the confirmation dialog names
 			// real numbers instead of warning in the abstract.
-			impact: await describeSwitchImpact(db, holder.engine),
+			impact: await describeSwitchImpact(db, holder.engine, c.get('dataDir')),
 		});
 	});
 
@@ -90,13 +90,14 @@ export function buildSandboxBackendInfoRoutes(holder: SandboxBackendHolder): Hon
 					daytonaApiUrl: body.daytona_api_url,
 				},
 				() => readDaytonaApiKey(db, masterKeyManager),
+				c.get('dataDir'),
 			);
 			return ok(c, {
 				...holder.info,
 				available: SANDBOX_BACKENDS,
 				credential_configured: await hasDaytonaApiKey(db),
 				containers_destroyed: result.containersDestroyed,
-				impact: await describeSwitchImpact(db, holder.engine),
+				impact: await describeSwitchImpact(db, holder.engine, c.get('dataDir')),
 			});
 		} catch (e) {
 			if (e instanceof SandboxBackendError) {
