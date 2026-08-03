@@ -189,7 +189,7 @@ describe('openSandboxBackend preflights Docker', () => {
 			vi.stubEnv('PATH', dir);
 			const err = await openSandboxBackend({ backend: 'docker', ...NO_RETRY }).catch((e) => e);
 			expect(err).toBeInstanceOf(SandboxBackendError);
-			expect(err.message).toContain('not appear to be installed');
+			expect(err.message).toContain('none appears');
 			expect(err.message).toContain(DOCKER_INSTALL_URL);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
@@ -202,8 +202,8 @@ describe('openSandboxBackend preflights Docker', () => {
 		try {
 			vi.stubEnv('PATH', dir);
 			const err = await openSandboxBackend({ backend: 'docker', ...NO_RETRY }).catch((e) => e);
-			expect(err.message).toContain('daemon is not reachable');
-			expect(err.message).not.toContain('not appear to be installed');
+			expect(err.message).toContain('no daemon answered');
+			expect(err.message).not.toContain('none appears');
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}

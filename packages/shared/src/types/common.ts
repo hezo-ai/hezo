@@ -1889,7 +1889,39 @@ export const RUNTIME_DISALLOWED_TOOLS_ARGS: Record<AgentRuntime, readonly string
 	// answered, so a model that drifts into plan mode parks there and exits 0 with
 	// only a plan written — a false success. Removing the tool forces the agent to
 	// act on the work directly.
-	[AgentRuntime.ClaudeCode]: ['--disallowedTools', 'WebFetch', 'ExitPlanMode'],
+	//
+	// The three below are removed because Hezo owns what they do, and each of them
+	// silently does nothing useful here rather than failing:
+	//
+	// - **EnterWorktree** switches the session's working directory into
+	//   `.claude/worktrees/<name>/`. Hezo prepares the worktree a run works in and
+	//   watches *that* for changes (`anyWorktreeChanged`, and the push path after
+	//   it), so an agent that moves itself writes where nothing is looking - the
+	//   work is invisible and the run grades as having produced nothing.
+	// - **CronCreate / CronDelete / CronList** schedule inside the session, and the
+	//   container is destroyed when the run ends. Anything scheduled past that
+	//   point is silently lost, and Hezo's own heartbeats and wakeups are the real
+	//   scheduler.
+	// - **ScheduleWakeup** only means anything in `/loop` dynamic mode, which a
+	//   one-shot `-p` run is not.
+	//
+	// Deliberately NOT removed, though a failed run made all three look guilty:
+	// the `Task*` family is the agent's own in-session checklist (what replaced
+	// TodoWrite) and persists nothing; `Skill` loads `.claude/skills/` from the
+	// project's own repo, which is a real capability; and `WebSearch` is proxied
+	// server-side so container egress does not affect it. They only misled an
+	// agent that had lost its Hezo tools entirely - a transport failure, fixed
+	// where transport failures belong.
+	[AgentRuntime.ClaudeCode]: [
+		'--disallowedTools',
+		'WebFetch',
+		'ExitPlanMode',
+		'EnterWorktree',
+		'CronCreate',
+		'CronDelete',
+		'CronList',
+		'ScheduleWakeup',
+	],
 	[AgentRuntime.Codex]: [],
 	[AgentRuntime.Gemini]: [],
 	[AgentRuntime.OpenCode]: [],

@@ -65,6 +65,15 @@ export interface HezoConfig {
 	 */
 	autoInstallUpdates: boolean;
 	/**
+	 * Explicit path to the container runtime's Unix socket (`--docker-socket` /
+	 * `HEZO_DOCKER_SOCKET`). Unset by default, in which case the startup preflight
+	 * discovers it: `DOCKER_HOST`, then the docker CLI's current context, then the
+	 * well-known path for each supported runtime (Docker Engine/Desktop, Colima,
+	 * Rancher Desktop, OrbStack, Lima, rootless Docker). Set it only when the
+	 * daemon listens somewhere none of those cover.
+	 */
+	dockerSocket?: string;
+	/**
 	 * Require a per-run token on every request to the egress proxy. On by
 	 * default: each run's `HTTP(S)_PROXY` URL carries a random token that the
 	 * proxy checks (constant-time) before substituting any secret, so a
@@ -617,6 +626,8 @@ export interface SandboxBackendOptions {
 	backend?: string;
 	daytonaApiKey?: string;
 	daytonaApiUrl?: string;
+	/** Carried through for the same reason startup carries it: a pinned socket is pinned because discovery misses it. */
+	dockerSocket?: string;
 }
 
 /**
@@ -736,6 +747,7 @@ export async function runUninstall(
 		backend: process.env.HEZO_SANDBOX_BACKEND ?? opts.sandboxBackend,
 		daytonaApiKey: process.env.HEZO_DAYTONA_API_KEY ?? opts.daytonaApiKey,
 		daytonaApiUrl: process.env.HEZO_DAYTONA_API_URL ?? opts.daytonaApiUrl,
+		dockerSocket: process.env.HEZO_DOCKER_SOCKET ?? opts.dockerSocket,
 	};
 	const managed = (backendOpts.backend ?? 'docker') !== 'docker';
 	try {
@@ -825,6 +837,10 @@ export function parseConfig(
 			'Skip removal of old containers on rebuild/teardown/provision — useful for inspecting crashed containers via `docker logs` / `docker inspect`. Subsequent rebuilds will fail with a name conflict until the operator removes them manually. (env: HEZO_KEEP_OLD_CONTAINERS)',
 		)
 		.option(
+			'--docker-socket <path>',
+			"Path to the container runtime's Unix socket. By default Hezo finds it automatically: DOCKER_HOST, then the docker CLI's current context, then the well-known path for each supported runtime (Docker Engine/Desktop, Colima, Rancher Desktop, OrbStack, Lima, rootless Docker). Set this only when the daemon listens somewhere none of those cover. Unix sockets only - tcp:// and npipe:// are not supported. (env: HEZO_DOCKER_SOCKET)",
+		)
+		.option(
 			'--no-egress-proxy-auth',
 			"Disable per-run egress proxy authentication. On by default: each run's HTTP(S)_PROXY URL carries a token the proxy verifies before substituting secrets. Only disable to unblock a runtime whose HTTP client cannot send proxy credentials — the secret red line still holds (an unauthenticated caller only ships unsubstituted placeholders). (env: HEZO_EGRESS_PROXY_AUTH=0)",
 		)
@@ -904,6 +920,7 @@ export function parseConfig(
 		logLevel: parseLogLevel(pick('HEZO_LOG_LEVEL', cli.logLevel) ?? 'info'),
 		keepOldContainers: pickBool('HEZO_KEEP_OLD_CONTAINERS', cli.keepOldContainers),
 		autoInstallUpdates: pickBool('HEZO_AUTO_INSTALL_UPDATES', cli.autoInstallUpdates),
+		dockerSocket: pick('HEZO_DOCKER_SOCKET', cli.dockerSocket),
 		// Egress-proxy auth defaults ON. The env var (when set) wins; otherwise
 		// `--no-egress-proxy-auth` sets cli.egressProxyAuth=false, absent it is true.
 		egressProxyAuth: pickOpen('HEZO_EGRESS_PROXY_AUTH', cli.egressProxyAuth),

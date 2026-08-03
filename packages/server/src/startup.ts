@@ -99,6 +99,7 @@ import {
 } from './services/image-registry';
 import { JobManager } from './services/job-manager';
 import { LogStreamBroker } from './services/log-stream-broker';
+import { checkContainerMounts } from './services/mount-preflight';
 import { registerGenericOAuthRefresh } from './services/oauth/generic-refresh';
 import { adminPasswordIsSet } from './services/password';
 import { PricingService } from './services/pricing';
@@ -308,6 +309,10 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 				backend: resolved.backend,
 				daytonaApiKey: resolved.daytonaApiKey,
 				daytonaApiUrl: resolved.daytonaApiUrl,
+				// An operator who pinned a socket did so because discovery does not
+				// reach their daemon; dropping it here would silently ignore the flag
+				// and send them round the discovery loop it exists to bypass.
+				dockerSocket: config.dockerSocket,
 			}));
 		}
 	}
@@ -399,6 +404,33 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	});
 	// Decrypted secrets must never outlive the unlock that produced them.
 	bindSecretsVaultToMasterKey(masterKeyManager);
+	// Verify agent containers get a WRITABLE view of the data directory. Every
+	// agent works on a bind mount of it, and a VM-backed runtime only shares the
+	// host paths it was told to - Colima shares $HOME read-only by default - so an
+	// otherwise healthy Docker setup can leave every run failing on its first
+	// write, with an error that reads as a broken agent. Backgrounded and
+	// non-fatal: the operator needs the web UI up to act on the guidance.
+	//
+	// Docker only, and deliberately: the check is about *bind mounts of a host
+	// path*, which a managed backend has none of - its filesystem is the
+	// sandbox's own. Running it there would boot a throwaway container on a paid
+	// provider to answer a question that cannot apply. Tested against the concrete
+	// engine rather than the holder's proxy, for the same reason the image setup
+	// above is.
+	//
+	// The container-to-host connectivity probe that used to sit here is gone: the
+	// container reaches Hezo over its own loopback through the tunnel, so there is
+	// no host firewall or bind-host to detect (see the tunnel section of
+	// .dev/architecture.md).
+	if (initialEngine instanceof DockerClient) {
+		trackBackground(
+			checkContainerMounts({ docker: initialEngine, dataDir: config.dataDir }).catch((err) => {
+				log.info('container mount check failed', {
+					error: err instanceof Error ? err.message : String(err),
+				});
+			}),
+		);
+	}
 	const events = new DomainEventBus();
 	const jobManager = new JobManager({
 		db,

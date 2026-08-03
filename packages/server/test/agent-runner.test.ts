@@ -1853,7 +1853,20 @@ describe('runAgent', () => {
 			expect(capturedCmd[idx + 1]).toBe('WebFetch');
 			// ExitPlanMode is disallowed so a model can't park in headless plan-mode approval.
 			expect(capturedCmd).toContain('ExitPlanMode');
+			// Hezo owns what these do, and each fails silently rather than loudly here:
+			// EnterWorktree moves the agent out of the worktree Hezo watches for
+			// changes, and the Cron/wakeup tools schedule past the life of a container
+			// that is destroyed when the run ends.
+			expect(capturedCmd).toContain('EnterWorktree');
+			expect(capturedCmd).toContain('CronCreate');
+			expect(capturedCmd).toContain('ScheduleWakeup');
+			// Deliberately kept: WebSearch is proxied server-side, the Task* family is
+			// the agent's own in-session checklist, and Skill loads a project repo's
+			// own `.claude/skills/`. They looked guilty in a failed run only because
+			// that run had lost its Hezo tools entirely.
 			expect(capturedCmd).not.toContain('WebSearch');
+			expect(capturedCmd).not.toContain('TaskList');
+			expect(capturedCmd).not.toContain('Skill');
 		});
 
 		it('does not pass --disallowedTools for codex runtime', async () => {

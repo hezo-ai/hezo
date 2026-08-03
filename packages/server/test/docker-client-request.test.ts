@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DockerClient, MEMORY_HARD_CAP_HEADROOM_BYTES } from '../src/services/docker';
+import { setResolvedDockerSocket } from '../src/services/docker-socket';
 import { startDockerSockSim } from './helpers/docker-sock-sim';
 
 // The DockerClient's one-shot calls ride `fetch` with Bun's `unix` option; under
@@ -63,10 +64,29 @@ describe('request transport', () => {
 		expect(calls[0].contentType).toBeUndefined();
 	});
 
-	it('defaults to the standard docker socket path', async () => {
-		const calls = stubFetch(() => text('OK'));
-		await new DockerClient().ping();
-		expect(calls[0].unix).toBe('/var/run/docker.sock');
+	it('reads the socket the startup preflight resolved when given none', async () => {
+		setResolvedDockerSocket({ path: '/tmp/hezo-colima.sock', source: 'docker-context' });
+		try {
+			const calls = stubFetch(() => text('OK'));
+			await new DockerClient().ping();
+			expect(calls[0].unix).toBe('/tmp/hezo-colima.sock');
+		} finally {
+			setResolvedDockerSocket(null);
+		}
+	});
+
+	it('resolves the socket per request, not at construction', async () => {
+		// The preflight's own client is built before resolution happens; a snapshot
+		// taken in the constructor would leave it on a different socket than the rest.
+		const client = new DockerClient();
+		setResolvedDockerSocket({ path: '/tmp/hezo-late.sock', source: 'flag' });
+		try {
+			const calls = stubFetch(() => text('OK'));
+			await client.ping();
+			expect(calls[0].unix).toBe('/tmp/hezo-late.sock');
+		} finally {
+			setResolvedDockerSocket(null);
+		}
 	});
 
 	it('ping returns false on a non-ok status and on transport failure', async () => {

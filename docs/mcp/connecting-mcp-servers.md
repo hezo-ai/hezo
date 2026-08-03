@@ -179,7 +179,7 @@ and the global scope both define a connection of the same name, the project's ow
 
 Manage connections two ways:
 
-- **Project → Settings → Connectors** shows just that project's connectors. **Add** a
+- **Project → Connectors** shows just that project's connectors. **Add** a
   connector here - an MCP server (name + URL) or a REST API (base URL, allowed hosts,
   and where the credential goes) - and it's scoped to that project. For an MCP server,
   Hezo probes it for OAuth and opens the connect popup automatically, or you attach an

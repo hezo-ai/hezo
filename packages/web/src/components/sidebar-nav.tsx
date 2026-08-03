@@ -117,7 +117,7 @@ export function SidebarNav({ sections }: SidebarNavProps) {
 					{section.items.map((item) => {
 						// A sub-item disclosure also stays open while the user is on one of the
 						// sub-item routes. Those routes come in two shapes: siblings that don't
-						// fuzzy-match the parent at all (Settings → /git, /connectors), and children
+						// fuzzy-match the parent at all (Settings → /git, /container), and children
 						// nested under it (Progress → /progress/goals).
 						const subActive =
 							item.subItems?.some((s) => matchRoute({ to: s.to, params: s.params, fuzzy: true })) ??

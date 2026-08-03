@@ -389,7 +389,22 @@ describe('system prompt fetch / preview / revisions / restore', () => {
 		);
 		expect(res.status).toBe(200);
 		const content = (await res.json()).data.content as string;
-		expect(content).not.toMatch(/\{\{[a-z_]+\}\}/);
+
+		// The Captain's hire guidance has to *name* the variables a prompt it
+		// authors must contain, and the validator matches the full `{{…}}` token -
+		// so that list renders as placeholder text on purpose. Strip exactly those
+		// before checking, rather than loosening the pattern: the assertion that
+		// matters is "nothing was left unresolved", and it still holds for
+		// everything else.
+		const withoutNamedVars = REQUIRED_SYSTEM_PROMPT_VARS.reduce(
+			(text, token) => text.replaceAll(token, '<named>'),
+			content,
+		);
+		expect(withoutNamedVars).not.toMatch(/\{\{[a-z_]+\}\}/);
+		// And the naming really did survive - the point of rendering it that way.
+		for (const token of REQUIRED_SYSTEM_PROMPT_VARS) {
+			expect(content).toContain(token);
+		}
 	});
 
 	it('preview / revisions / restore 404 when the prompt document is missing', async () => {

@@ -5,6 +5,7 @@ import { Readable } from 'node:stream';
 import type { ContainerHostMemory } from '@hezo/shared';
 import { getHostMemory } from '../lib/host-memory';
 import { DockerFrameDecoder, demuxDockerStream } from './docker-frames';
+import { resolvedDockerSocketPath } from './docker-socket';
 import type { SandboxFiles } from './sandbox/files';
 import {
 	buildDiskUsageScript,
@@ -48,7 +49,6 @@ export type {
 	ProcessEnvMarker,
 } from './sandbox/types';
 
-const SOCKET_PATH = '/var/run/docker.sock';
 /** Cap on a hijack response's header block - a daemon that never terminates them is broken, not slow. */
 const MAX_HIJACK_HEADER_BYTES = 64 * 1024;
 
@@ -219,10 +219,17 @@ function shellQuote(arg: string): string {
 }
 
 export class DockerClient implements ContainerEngine {
-	private socketPath: string;
+	/**
+	 * An explicit socket path pins this client; otherwise it reads the socket the
+	 * startup preflight resolved. Read LAZILY (a getter, not a constructor-time
+	 * field) because the preflight's own client is constructed before resolution
+	 * happens - a snapshot taken at construction would leave the preflight client
+	 * and the startup clients pointing at different sockets.
+	 */
+	constructor(private readonly socketOverride?: string) {}
 
-	constructor(socketPath = SOCKET_PATH) {
-		this.socketPath = socketPath;
+	private get socketPath(): string {
+		return this.socketOverride ?? resolvedDockerSocketPath();
 	}
 
 	private async request(
@@ -508,14 +515,14 @@ export class DockerClient implements ContainerEngine {
 		});
 	}
 
-	async ping(): Promise<boolean> {
+	/**
+	 * `timeoutMs` overrides the default request ceiling. The startup preflight
+	 * passes a much tighter one: it may walk several candidate sockets, and a
+	 * dead path should fail fast rather than multiply the 10s default.
+	 */
+	async ping(timeoutMs: number = DOCKER_REQUEST_TIMEOUT_MS): Promise<boolean> {
 		try {
-			const res = await this.request(
-				'GET',
-				'/_ping',
-				undefined,
-				AbortSignal.timeout(DOCKER_REQUEST_TIMEOUT_MS),
-			);
+			const res = await this.request('GET', '/_ping', undefined, AbortSignal.timeout(timeoutMs));
 			return res.ok;
 		} catch {
 			return false;

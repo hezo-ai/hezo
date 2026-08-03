@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { statSync } from 'node:fs';
 import { DEFAULT_CONTAINER_DISK_GB } from '@hezo/shared';
+import { trackBackground } from '../../../lib/background';
 import { logger } from '../../../logger';
 import { parseDfKilobytes, parseHezoProcessList } from '../../docker';
 import { assertRegistryPullableImage, resolveDigestPinnedRef } from '../image-ref';
@@ -510,13 +511,60 @@ export class DaytonaEngine implements ContainerEngine {
 			),
 		);
 
+		const stderrPath = `/tmp/.hezo-chan-${sessionId}.err`;
 		return {
 			write: (data) => pty.send(data),
 			onData: (handler) => pty.onData(handler),
-			onStderr: () => {},
+			/**
+			 * The channel's stderr is a **file** here, not a stream: the PTY merges
+			 * both directions, so the launch line redirects stderr away to keep the
+			 * framed protocol clean. That left it written to a path nothing ever read,
+			 * and the tunnel's client writes its diagnostics there - `cannot listen on
+			 * 127.0.0.1:19080: EADDRINUSE` and every other reason it failed to start.
+			 * `run-tunnel.ts` calls its stderr handler "the one place a tunnel problem
+			 * is legible rather than just a dead stream", and on this backend it was
+			 * wired to a no-op, so the 30s bind timeout was the only signal and it said
+			 * nothing about the cause.
+			 *
+			 * Read on close rather than tailed live: one exec at the end costs nothing
+			 * on a channel that normally writes no stderr at all, and the moment the
+			 * caller needs it is exactly when the channel has gone.
+			 */
+			onStderr: (handler) => {
+				pty.onClose(() => {
+					trackBackground(
+						this.drainChannelStderr(sandbox, stderrPath)
+							.then((text) => {
+								if (text.trim()) handler(new TextEncoder().encode(text));
+							})
+							.catch(() => undefined),
+					);
+				});
+			},
 			onClose: (handler) => pty.onClose(handler),
 			close: () => pty.close(),
 		};
+	}
+
+	/**
+	 * Read back what a channel's command wrote to stderr, then remove the file.
+	 *
+	 * Separate from {@link drainStderr} only because that one is keyed on a
+	 * tracked exec record; the underlying read is the same, and both go through
+	 * `renderStderrDrain` so the tail bound is stated once.
+	 */
+	private async drainChannelStderr(sandbox: DaytonaSandbox, stderrPath: string): Promise<string> {
+		try {
+			const res = await this.client.execute(
+				sandbox,
+				renderStderrDrain(stderrPath, STDERR_TAIL_BYTES),
+			);
+			return res.output;
+		} catch {
+			// The sandbox may be gone with the channel; losing the diagnostic must
+			// never become a second failure on top of the first.
+			return '';
+		}
 	}
 
 	async execInspect(execId: string): Promise<{ ExitCode: number; Running: boolean; Pid: number }> {

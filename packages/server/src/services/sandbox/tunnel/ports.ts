@@ -12,9 +12,20 @@ import { TUNNEL_PORT_BASE, TUNNEL_PORT_RANGE, type TunnelPorts } from '../endpoi
  * would have let the first tunnel bind and the second fail, and the second is
  * the one nobody tests.
  *
- * Allocation is per container and in-process only, which is all it has to be:
+ * Allocation is per container and in-process only, which rests on one property:
  * a tunnel's client dies with the exec channel that carries it, so a server
  * restart cannot leave a listener behind for this to collide with.
+ *
+ * **That property is Docker's for free and Daytona's only by construction.**
+ * Closing a Daytona PTY socket does not kill what runs on it - measured; only
+ * deleting the session does - so the client survives its channel unless that
+ * delete lands. It used to be attempted once, in the background, and a failure
+ * was logged and forgotten: the orphan then held this container's three ports,
+ * and the next run's client died with `EADDRINUSE` having lost MCP and egress
+ * for the whole run. The delete is retried now (`deletePtySessionWithRetry`),
+ * which is what makes the sentence above true on that backend rather than
+ * merely assumed. If a third backend cannot promise it either, this allocator -
+ * not that adapter - is what has to change.
  */
 
 /** Ports in one triple. Kept adjacent so a triple is identified by its base. */

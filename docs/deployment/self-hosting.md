@@ -12,7 +12,9 @@ keys, and the spend.
 
 ## What you need
 
-- A host that can run **Docker** (your laptop, a home server, or a cloud VPS).
+- A host that can run a **Docker-compatible container runtime** (your laptop,
+  a home server, or a cloud VPS). Colima, Rancher Desktop, OrbStack, Lima and rootless
+  Docker all work - see [Container runtimes](/docs/deployment/container-runtimes).
 - The **`hezo` binary** (see [Installation](/docs/getting-started/installation)).
 - Your **master key** (created on first run; see
   [First-run setup](/docs/getting-started/first-run)).
@@ -199,6 +201,12 @@ resolves or dials a host address, so:
 - **Hezo needs no public hostname and no inbound port** for agent runs. Outbound access to
   the container backend is enough, which is also what lets a laptop drive a managed
   sandbox service.
+
+This is the same on every supported runtime - Docker Engine and Docker Desktop, Colima,
+Rancher Desktop, OrbStack, Lima and rootless Docker alike. Earlier versions needed a
+firewall rule and a bind-host setting on native-Linux Docker, because a container reached
+the host across the bridge gateway; containers now reach Hezo over their own loopback
+through the run tunnel, so there is no interface to pick and nothing to open.
 
 Only requests that need a security check - a host that could carry a substituted secret,
 or one whose connector has a method allowlist - travel the tunnel to the egress proxy.

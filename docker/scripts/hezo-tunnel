@@ -106,7 +106,22 @@ function hostNeedsProxy(policy, host) {
 
 // ---- the tunnel -----------------------------------------------------------
 
-const config = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+// Validated before use: without this a missing or mistyped argument came back as
+// a raw `ENOENT ... open '--help'` stack from deep inside `fs`, which says
+// nothing about what this program wanted. It is the first thing anyone
+// investigating a dead tunnel runs by hand.
+const configPath = process.argv[2];
+if (!configPath || configPath.startsWith('-')) {
+	process.stderr.write('usage: hezo-tunnel <config.json>\n');
+	process.exit(2);
+}
+let config;
+try {
+	config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+} catch (e) {
+	process.stderr.write(`hezo-tunnel: cannot read config ${configPath}: ${e.message}\n`);
+	process.exit(2);
+}
 const policy = config.policy || { proxiedHosts: [], proxyEverything: false };
 
 let nextStreamId = 1;

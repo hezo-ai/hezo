@@ -1550,6 +1550,14 @@ export async function runAgent(
 			await step('close-tunnel', () => tunnel?.close());
 			await step('persist-rotated-auth', persistRotatedAuth);
 			await step('remove-prompt', () => workspaceFiles.remove(promptRelPath));
+			// The tunnel's config, for the same reason as the prompt: a pooled
+			// container serves run after run, so one file per run accumulates there
+			// forever. It carries hostnames only - never a secret value - so this is
+			// housekeeping rather than a scrub, but on a container with a 3 GB disk
+			// budget nothing gets to grow without a bound.
+			await step('remove-tunnel-config', () =>
+				workspaceFiles.remove(join('.hezo', 'tunnel', `${heartbeatRunId}.json`)),
+			);
 			await step('remove-home-mount', async () => {
 				// Removing the per-run home was never tidiness - it holds the provider
 				// credential, so this is a scrub. It goes through the seam because on a
@@ -1743,9 +1751,20 @@ export async function runAgent(
 					'SELECT produced_output, reported_no_work, no_work_reason FROM heartbeat_runs WHERE id = $1',
 					[heartbeatRunId],
 				);
+				const hezoWrite = flagged.rows[0]?.produced_output ?? false;
+				// A dirty worktree counts as output **only** if the run could reach Hezo
+				// at all. Without that qualifier a run whose MCP server never connected -
+				// so it could not read a task, post a comment, or even call
+				// `report_no_work`, all of which are MCP tools - graded as a success on
+				// the strength of a scratch file, with no Hezo-side record of anything.
+				// A terminal error captured from the runtime's own report is exactly the
+				// signal for "nothing this run did was persisted anywhere Hezo can see".
+				const reachedHezo = hezoWrite || parser.getTerminalError() === null;
 				producedOutput =
-					(flagged.rows[0]?.produced_output ?? false) ||
-					(prep.executor !== null && (await anyWorktreeChanged(prep.executor, prep.worktrees)));
+					hezoWrite ||
+					(reachedHezo &&
+						prep.executor !== null &&
+						(await anyWorktreeChanged(prep.executor, prep.worktrees)));
 				reportedNoWork = flagged.rows[0]?.reported_no_work ?? false;
 				noWorkReason = flagged.rows[0]?.no_work_reason ?? null;
 			}

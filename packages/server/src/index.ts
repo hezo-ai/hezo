@@ -170,6 +170,12 @@ if (!globalThis.__hezoPortProbed) {
 // `openSandboxBackend` inside `startup()` is the single preflight for whichever
 // backend is selected, and it carries the same install/start guidance. It throws
 // `SandboxBackendError`, which the catch below turns into the same fatal exit.
+//
+// It also owns **socket resolution** for Docker-compatible runtimes (Colima,
+// Rancher Desktop, OrbStack, rootless): walking the candidate sockets and
+// recording the winner has to happen before any `DockerClient` is used, and the
+// Docker branch of that preflight is the first place that is both after the
+// backend is known and before an engine is handed out.
 
 /** Bumped on each module load so stale async startup completions are ignored after HMR. */
 let startupGeneration = 0;

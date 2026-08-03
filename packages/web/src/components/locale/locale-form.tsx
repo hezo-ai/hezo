@@ -10,7 +10,7 @@ import {
 	NUMBER_FORMATS,
 	type NumberFormat,
 } from '@hezo/shared';
-import { Check } from 'lucide-react';
+import { Check, Languages } from 'lucide-react';
 import { useI18n } from '../../lib/i18n';
 
 /**
@@ -41,7 +41,10 @@ interface LocaleFormProps {
 
 function FieldLabel({ htmlFor, children }: { htmlFor: string; children: React.ReactNode }) {
 	return (
-		<label htmlFor={htmlFor} className="block text-[13px] font-medium text-text-1 mb-1.5">
+		<label
+			htmlFor={htmlFor}
+			className="flex items-center gap-1.5 text-[13px] font-medium text-text-1 mb-1.5"
+		>
 			{children}
 		</label>
 	);
@@ -100,7 +103,13 @@ export function LocaleForm({ value, onChange, disabled, children }: LocaleFormPr
 	return (
 		<div className="space-y-5">
 			<div>
-				<FieldLabel htmlFor="locale-language">{t('locale.language.label')}</FieldLabel>
+				<FieldLabel htmlFor="locale-language">
+					{t('locale.language.label')}
+					{/* The same translate glyph the pre-auth locale button carries - see
+					    locale-switcher.tsx for why it is that and not a globe. Decorative:
+					    the label text already names the field. */}
+					<Languages className="h-3.5 w-3.5 shrink-0 text-text-2" aria-hidden="true" />
+				</FieldLabel>
 				<select
 					id="locale-language"
 					value={value.language}

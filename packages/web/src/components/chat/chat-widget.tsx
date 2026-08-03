@@ -27,6 +27,7 @@ import {
 	useChatConversations,
 	writeStoredThreadId,
 } from '../../hooks/use-chat';
+import { useCloseOnRouteChange } from '../../hooks/use-close-on-route-change';
 import { useContainerHealth } from '../../hooks/use-container-health';
 import { useDraggableFab } from '../../hooks/use-draggable-fab';
 import { useFileAttachments } from '../../hooks/use-file-attachments';
@@ -177,6 +178,20 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 		window.addEventListener('keydown', onKey);
 		return () => window.removeEventListener('keydown', onKey);
 	}, [open, setOpen]);
+
+	// Navigating away only strands the reader in the BLOCKING presentations: the
+	// mobile full-screen panel and the desktop expanded view, both of which carry
+	// the backdrop below. The anchored desktop corner panel is a deliberately
+	// persistent companion — it doesn't cover the page, and it is meant to survive
+	// navigation — so it is excluded. Expanding is a view mode rather than a
+	// session, so desktop collapses back to anchored instead of closing, keeping
+	// the thread up while the page is unblocked. (`md` matches the backdrop's
+	// `md:hidden`.)
+	const isDesktop = useMediaQuery('(min-width: 768px)');
+	useCloseOnRouteChange(open && (!isDesktop || expanded), () => {
+		if (isDesktop) setExpanded(false);
+		else setOpen(false);
+	});
 
 	// Grow the composer with its content (capped by `max-h-32`, then it scrolls),
 	// and collapse it back to a single row when the draft is cleared on submit.

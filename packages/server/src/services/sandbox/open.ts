@@ -2,7 +2,12 @@ import { isSandboxBackend, SANDBOX_BACKENDS, SandboxBackend } from '@hezo/shared
 import { redactSandboxApiUrl, type SandboxBackendInfo } from '../../lib/sandbox-backend-info';
 import { logger } from '../../logger';
 import { DockerClient } from '../docker';
-import { dockerBinaryInstalled, formatDockerPreflightMessage } from '../docker-preflight';
+import {
+	type DockerPreflightResult,
+	evaluateDockerPreflight,
+	formatDockerPreflightMessage,
+} from '../docker-preflight';
+import { describeDockerSocket } from '../docker-socket';
 import { DaytonaClient, DEFAULT_DAYTONA_API_URL } from './daytona/client';
 import { DaytonaEngine } from './daytona/engine';
 import { SandboxBackendError } from './errors';
@@ -33,6 +38,8 @@ export interface OpenSandboxBackendOptions {
 	backend?: string;
 	daytonaApiKey?: string;
 	daytonaApiUrl?: string;
+	/** `--docker-socket` / `HEZO_DOCKER_SOCKET`, when the operator pinned one. */
+	dockerSocket?: string;
 	/** Test hook: overrides the preflight retry backoff. */
 	retryDelaysMs?: number[];
 }
@@ -75,9 +82,18 @@ export async function openSandboxBackend(
 		// client. `switchSandboxBackend` destroys every container before swapping,
 		// so the operator lost the fleet and gained a backend that could not be
 		// reached - precisely what its ordering exists to prevent.
+		//
+		// This is also where the **socket** is resolved. Hezo supports any
+		// Docker-API-compatible runtime (Colima, Rancher Desktop, OrbStack, Lima,
+		// rootless), so the daemon has to be *found* rather than assumed at
+		// `/var/run/docker.sock` - and the winner recorded before any `DockerClient`
+		// is handed out, since every one of them reads it. Doing that here rather
+		// than at the top of `index.ts` is what stops it firing on an instance that
+		// runs on a managed backend and has no local daemon at all.
+		const resolved = await dockerPreflightWithRetry(options);
+		if (resolved.socket) log.info(describeDockerSocket(resolved.socket));
 		const engine = new DockerClient();
 		const info = { backend: SandboxBackend.Docker, display: 'local Docker daemon' } as const;
-		await preflight(engine, options.retryDelaysMs, dockerUnreachableMessage);
 		return { engine, info };
 	}
 
@@ -112,23 +128,42 @@ export async function openSandboxBackend(
 }
 
 /**
- * Guidance for a local daemon that will not answer. Kept beside Daytona's so the
- * two backends fail the same way - a switch that cannot reach its destination
- * must abort before anything is destroyed, whichever destination it is.
+ * Find a reachable daemon, with the same bounded backoff every other backend
+ * gets, and record the socket that answered.
  *
- * Only reached once every ping attempt has failed, which is exactly
- * `checkDockerAvailability`'s failed-ping branch - so the binary probe alone
- * distinguishes "not installed" from "installed but stopped" without pinging a
- * third time, and the operator gets the install link or the start instructions
- * rather than a generic "cannot reach".
+ * `evaluateDockerPreflight` already walks the candidates in the right order
+ * (operator override, `DOCKER_HOST`, the docker CLI's context, then each
+ * supported runtime's well-known path) and calls `setResolvedDockerSocket` for
+ * the winner - so this only adds the retry, which exists because a daemon that
+ * is *starting* is the common case at boot and one that never answers is not
+ * distinguishable from it on a single pass.
+ *
+ * The failure message is the preflight's own - which sockets were tried, and the
+ * start command for each runtime it recognised - plus the one thing it cannot
+ * know: that a managed backend is an alternative to having a local daemon at all.
  */
-function dockerUnreachableMessage(): string {
-	const status = dockerBinaryInstalled() ? 'not-running' : 'not-installed';
-	return (
-		`${formatDockerPreflightMessage(status)}\n\n` +
-		'Alternatively, set --sandbox-backend / HEZO_SANDBOX_BACKEND to run containers ' +
-		'on a managed sandbox service instead of a local daemon.'
-	);
+async function dockerPreflightWithRetry(
+	options: OpenSandboxBackendOptions,
+): Promise<DockerPreflightResult> {
+	const delays = options.retryDelaysMs ?? CONNECT_RETRY_DELAYS_MS;
+	for (let attempt = 0; ; attempt++) {
+		const result = await evaluateDockerPreflight({ override: options.dockerSocket });
+		if (result.status === 'ok') return result;
+		// An endpoint Hezo structurally cannot speak (tcp://, npipe://, ssh://) will
+		// not become speakable by waiting, so that one fails on the first pass.
+		if (attempt < delays.length && result.status !== 'unsupported-docker-host') {
+			log.warn(
+				`Docker preflight failed (attempt ${attempt + 1}/${delays.length + 1}), retrying in ${delays[attempt]}ms...`,
+			);
+			await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+			continue;
+		}
+		throw new SandboxBackendError(
+			`${formatDockerPreflightMessage({ ...result, status: result.status })}\n\n` +
+				'Alternatively, set --sandbox-backend / HEZO_SANDBOX_BACKEND to run containers ' +
+				'on a managed sandbox service instead of a local daemon.',
+		);
+	}
 }
 
 /**

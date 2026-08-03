@@ -106,22 +106,26 @@ export function ProjectSidebar({
 		label: 'Git',
 		testId: 'project-sidebar-git',
 	};
-	// Connectors (this project's MCP servers + GitHub) also disclose under Settings.
+	// Connectors (this project's MCP servers + GitHub) and Skills (its scoped skills +
+	// globals) are top-level pages, not Settings sub-items: they're working surfaces the
+	// team reaches constantly, not configuration set once. Both exist on HQ too — neither
+	// route redirects internal projects away, unlike Git/Budget/Settings. They reuse the
+	// `settings.*` catalog keys the global settings nav already carries, rather than
+	// duplicating the same word into a `nav.*` key across all twelve catalogs.
 	const connectorsPage = {
 		to: '/projects/$projectId/connectors',
 		params: projectParams,
-		label: 'Connectors',
+		label: t('settings.connectors'),
 		testId: 'project-sidebar-connectors',
 	};
-	// Skills (this project's scoped skills + globals) disclose under Settings, below Connectors.
 	const skillsPage = {
 		to: '/projects/$projectId/skills',
 		params: projectParams,
-		label: 'Skills',
+		label: t('settings.skills'),
 		testId: 'project-sidebar-skills',
 	};
 	// Custom Prompt — the project-wide instruction block injected into every agent's
-	// prompt — discloses under Settings, alongside Skills.
+	// prompt — discloses under Settings, alongside Git.
 	const customPromptPage = {
 		to: '/projects/$projectId/custom-prompt',
 		params: projectParams,
@@ -190,8 +194,9 @@ export function ProjectSidebar({
 			label: t('nav.assets'),
 		},
 		...(isInternal
-			? // HQ has no Settings — keep Container and Activity at the top level.
-				[containerPage, activityPage]
+			? // HQ has no Budget or Settings — Container and Activity stay at the top level,
+				// after Connectors and Skills.
+				[connectorsPage, skillsPage, containerPage, activityPage]
 			: [
 					{
 						to: '/projects/$projectId/budget',
@@ -199,21 +204,16 @@ export function ProjectSidebar({
 						label: t('nav.budget'),
 						testId: 'project-sidebar-budget',
 					},
+					connectorsPage,
+					skillsPage,
 					{
 						to: '/projects/$projectId/settings',
 						params: projectParams,
 						label: t('nav.settings'),
 						testId: 'project-sidebar-settings',
-						// Git, Connectors, Skills, Container and Activity disclose under Settings
+						// Git, Custom Prompt, Container and Activity disclose under Settings
 						// when it (or one of them) is the active route.
-						subItems: [
-							gitPage,
-							connectorsPage,
-							skillsPage,
-							customPromptPage,
-							containerPage,
-							activityPage,
-						],
+						subItems: [gitPage, customPromptPage, containerPage, activityPage],
 					},
 				]),
 	];

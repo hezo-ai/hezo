@@ -15,8 +15,10 @@ import { testHezoConfig } from './helpers/config';
 // agent-base refresh. No Docker daemon is required — the prune's inspect calls
 // fail against the missing socket and are skipped per image (that warn is the
 // asserted error path here), and the published-image refresh is a no-op outside
-// a packaged build. The container→host connectivity probe is skipped via its
-// documented opt-out so no throwaway container is ever attempted.
+// a packaged build. The bind-mount probe is skipped via its documented opt-out so
+// no throwaway container is ever attempted (on a CI runner that DOES have a
+// daemon, it otherwise would). There is no connectivity probe to skip any more -
+// the tunnel replaced it.
 //
 // Only the daemon **ping** is faked, and only because `openSandboxBackend` now
 // preflights Docker and refuses to hand back an unreachable engine (see
@@ -34,9 +36,11 @@ describe('startup real-Docker branch (no daemon required)', () => {
 		savedEnv.HEZO_SKIP_PRICING_REFRESH = process.env.HEZO_SKIP_PRICING_REFRESH;
 		savedEnv.HEZO_SKIP_CONTAINER_CONNECTIVITY_CHECK =
 			process.env.HEZO_SKIP_CONTAINER_CONNECTIVITY_CHECK;
+		savedEnv.HEZO_SKIP_MOUNT_CHECK = process.env.HEZO_SKIP_MOUNT_CHECK;
 		delete process.env.HEZO_SKIP_DOCKER;
 		process.env.HEZO_SKIP_PRICING_REFRESH = '1';
 		process.env.HEZO_SKIP_CONTAINER_CONNECTIVITY_CHECK = '1';
+		process.env.HEZO_SKIP_MOUNT_CHECK = '1';
 		dataDir = mkdtempSync(join(tmpdir(), 'hezo-real-docker-'));
 	});
 

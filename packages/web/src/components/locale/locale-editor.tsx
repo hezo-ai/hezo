@@ -1,7 +1,7 @@
 import type { LocaleSettings } from '@hezo/shared';
-import { type ReactNode, useEffect, useState } from 'react';
-import { useSaveLocale } from '../../hooks/use-locale-settings';
-import { useI18n } from '../../lib/i18n';
+import { useEffect, useState } from 'react';
+import { type LocaleSaveScope, useSaveLocale } from '../../hooks/use-locale-settings';
+import { LanguagePreview, type MessageKey, useI18n } from '../../lib/i18n';
 import { Button } from '../ui/button';
 import { LocaleForm } from './locale-form';
 
@@ -10,15 +10,24 @@ import { LocaleForm } from './locale-form';
  * the error / saved-locally messages.
  *
  * Extracted because the same editor has three hosts: the onboarding language
- * step, the dialog behind the pre-auth globe button, and the Settings subpage.
+ * step, the dialog behind the pre-auth locale button, and the Settings subpage.
  * Only the surrounding chrome differs, so only the chrome is written three
  * times.
+ *
+ * The card renders inside a {@link LanguagePreview} keyed on the *draft*
+ * language, so picking a language re-translates the picker itself immediately -
+ * the operator sees the language they chose before committing to it. Nothing
+ * outside the card moves, and nothing is written, until Continue/Save.
  */
 interface LocaleEditorProps {
-	/** Label for the primary action ("Continue" during onboarding, "Save" after). */
-	submitLabel: string;
-	/** Rendered to the left of the submit button (e.g. a dialog Cancel). */
-	secondaryAction?: ReactNode;
+	/**
+	 * Message key for the primary action ("Continue" during onboarding, "Save"
+	 * after). A key rather than a rendered string - the hosts sit outside the
+	 * preview, so a string they translated would be frozen in the old language.
+	 */
+	submitLabelKey: MessageKey;
+	/** Render a Cancel beside the submit (the dialog host); called on click. */
+	onCancel?: () => void;
 	/** Called after a save lands, so a dialog host can close itself. */
 	onSaved?: () => void;
 	/** Stack the actions full-width (onboarding) instead of right-aligning them. */
@@ -27,14 +36,13 @@ interface LocaleEditorProps {
 }
 
 export function LocaleEditor({
-	submitLabel,
-	secondaryAction,
+	submitLabelKey,
+	onCancel,
 	onSaved,
 	fullWidthSubmit,
 	testId,
 }: LocaleEditorProps) {
 	const i18n = useI18n();
-	const { t } = i18n;
 	const [draft, setDraft] = useState<LocaleSettings>({
 		language: i18n.language,
 		date_format: i18n.date_format,
@@ -44,6 +52,8 @@ export function LocaleEditor({
 
 	// Re-seed whenever the active locale changes underneath us - another session
 	// may have changed it, and a cancelled dialog must not leave a stale draft.
+	// Keyed on the *committed* locale (this component sits outside its own
+	// preview), so previewing a draft can never re-enter and clobber it.
 	useEffect(() => {
 		setDraft({
 			language: i18n.language,
@@ -63,9 +73,56 @@ export function LocaleEditor({
 
 	return (
 		<div data-testid={testId}>
-			<LocaleForm value={draft} onChange={setDraft} disabled={isPending} />
+			<LanguagePreview language={draft.language}>
+				<LocaleEditorBody
+					draft={draft}
+					onChange={setDraft}
+					onSave={handleSave}
+					onCancel={onCancel}
+					submitLabelKey={submitLabelKey}
+					fullWidthSubmit={fullWidthSubmit}
+					isPending={isPending}
+					hasError={Boolean(error)}
+					scope={scope}
+				/>
+			</LanguagePreview>
+		</div>
+	);
+}
 
-			{error && (
+/**
+ * Everything that renders *in the draft language*. Split out so its `t()` calls
+ * resolve against the preview context rather than the committed one - a hook
+ * cannot read a provider its own component renders.
+ */
+function LocaleEditorBody({
+	draft,
+	onChange,
+	onSave,
+	onCancel,
+	submitLabelKey,
+	fullWidthSubmit,
+	isPending,
+	hasError,
+	scope,
+}: {
+	draft: LocaleSettings;
+	onChange: (next: LocaleSettings) => void;
+	onSave: () => void;
+	onCancel?: () => void;
+	submitLabelKey: MessageKey;
+	fullWidthSubmit?: boolean;
+	isPending: boolean;
+	hasError: boolean;
+	scope: LocaleSaveScope | null;
+}) {
+	const { t } = useI18n();
+
+	return (
+		<>
+			<LocaleForm value={draft} onChange={onChange} disabled={isPending} />
+
+			{hasError && (
 				<p className="mt-4 text-[13px] text-danger" role="alert">
 					{t('locale.saveFailed')}
 				</p>
@@ -81,16 +138,20 @@ export function LocaleEditor({
 					fullWidthSubmit ? 'mt-6' : 'mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end'
 				}
 			>
-				{secondaryAction}
+				{onCancel && (
+					<Button variant="secondary" onClick={onCancel}>
+						{t('locale.settings.cancel')}
+					</Button>
+				)}
 				<Button
-					onClick={handleSave}
+					onClick={onSave}
 					disabled={isPending}
 					className={fullWidthSubmit ? 'w-full' : undefined}
 					data-testid="locale-save"
 				>
-					{isPending ? t('locale.saving') : submitLabel}
+					{isPending ? t('locale.saving') : t(submitLabelKey)}
 				</Button>
 			</div>
-		</div>
+		</>
 	);
 }

@@ -1051,6 +1051,42 @@ plus a pointer to `--sandbox-backend` as the alternative to a local daemon.
 `HEZO_SKIP_DOCKER` (the same flag that swaps in the in-process fake docker for dev/tests)
 bypasses it by taking the fake branch in `startup()` before the backend is opened.
 
+**Any Docker-compatible runtime qualifies, and the socket is resolved rather than assumed.**
+The client speaks the Engine API over a Unix socket (Bun `fetch({unix})` for one-shot calls,
+`node:http` `socketPath` for streams), so `tcp://`/`npipe://`/`ssh://` endpoints are
+structurally unsupported and are reported as such rather than silently ignored.
+`services/docker-socket.ts` resolves it, most-explicit first: `--docker-socket` /
+`HEZO_DOCKER_SOCKET` -> `DOCKER_HOST` -> the docker CLI's **current context** (read straight
+from `${DOCKER_CONFIG:-~/.docker}/config.json` + `contexts/meta/<sha256(name)>/meta.json`,
+no subprocess, `DOCKER_CONTEXT` winning) -> the well-known path per supported runtime
+(`/var/run/docker.sock`, `~/.docker/run`, `~/.colima/<profile>`, `~/.rd`, `~/.orbstack/run`,
+`~/.lima/<instance>/sock`, `$XDG_RUNTIME_DIR`). An explicit endpoint is used *alone*, so a
+typo fails loudly. Podman is deliberately not auto-discovered (unverified exec-streaming /
+host-gateway behaviour); it is reachable only via an explicit override. The filesystem reads
+are injected (`DockerSocketFs`), so the whole resolver unit-tests without a real FS.
+
+The Docker branch of `openSandboxBackend` pings each candidate in order (2s each - it may
+walk several), records the first that answers via `setResolvedDockerSocket`, and logs which
+one it was; `DockerClient` reads that path through a **getter, not a constructor snapshot**,
+so every client converges on the same socket however early it was built. Resolution lives
+there rather than in `index.ts` for the same reason the ping does: an instance running on a
+managed backend has no local daemon to find, and walking Colima's and OrbStack's socket
+paths to tell it so would be noise at best. The failure message names every socket tried
+plus the start command for each runtime it recognised.
+
+**Container mount preflight.** `services/mount-preflight.ts` runs backgrounded from
+`startup()`, and **only when the engine is `DockerClient`** - it is a question about bind
+mounts of a *host* path, which a managed backend has none of, so asking it there would boot
+a throwaway container on a paid provider to answer something that cannot apply. Agents work
+on a bind mount of the data dir (workspace / worktrees / previews), and a VM-backed runtime
+only shares the host paths it was configured with - Colima shares `$HOME` **read-only** by
+default - so an otherwise healthy daemon can leave every run failing on its first write. The
+probe mounts a scratch dir from the data dir into a throwaway container, has it read a
+host-written sentinel and write back, and checks host-side that the write landed: missing
+sentinel (or a write the host never sees) -> `not-mounted`, sentinel visible but write
+refused -> `read-only`. Logged at `error` with the runtime-specific fix but **non-fatal** -
+exiting would take down the UI the operator needs. Opt out with `HEZO_SKIP_MOUNT_CHECK`.
+
 **A vault-backed credential defers the open to unlock, and only then.** The provider API
 key lives in the `secrets` vault, encrypted with the master key, which is memory-only — so
 an instance, which comes back **locked** after every restart, cannot read it at the moment
@@ -3115,6 +3151,21 @@ transient state** (`creating` / `stopping` — deliberately not the `null` of a 
 project, which would poll forever). That bounds the damage of a missed transition to a few
 seconds of stale banner instead of "stuck until the operator reloads the page."
 
+**Overlay lifetime across navigation.** Overlays rendered under the `<Outlet />` unmount on
+navigation; the ones rendered by the shell chrome in `routes/__root.tsx` — the project rail's
+New project dialog, the mobile nav drawer, the Cmd/Ctrl+K search palette, the CEO chat — sit
+above it and keep their `open` state, so a link inside them swaps the page underneath and
+leaves the overlay covering it. `hooks/use-close-on-route-change.ts` is the single seam. It
+fires on a real **pathname** change only: search params are page state (a task filter, an
+assets folder) and a hash is an in-page jump (the comment deep-link executor strips
+`#comment-…` once it settles), so neither counts, and it never fires on mount. Closing at the
+route rather than in each link's `onClick` is deliberate — the global Cmd/Ctrl+K handler is a
+`window` keydown listener and Radix only intercepts Escape, so the palette opens on top of an
+open modal and navigates from somewhere that modal never sees. The CEO chat is
+**viewport-conditional**: only its blocking presentations (the mobile full-screen sheet, the
+desktop expanded view) react, and expanded collapses back to anchored rather than closing; the
+anchored desktop panel is a deliberately persistent companion that survives navigation.
+
 **Connection indicator.** `useConnectionMonitor` (`hooks/use-connection-status.ts`) drives a
 module-level store from two signals - `navigator.onLine` (catches a dropped network an
 already-open half-open socket hasn't noticed) and the socket's own `connected` flag (catches a
@@ -3187,10 +3238,23 @@ would freeze English word order into every translation. The system-comment timel
 still English, so a translated status sentence carries English status words until the board's
 status vocabulary is localized too.
 
+`LanguagePreview` (`lib/i18n`) nests a second `I18nContext.Provider` so the locale editor's
+card renders in the language the operator just picked, before it is saved - the card *is* the
+language picker, so it has to answer in the language being chosen. It shares `buildI18nValue`
+with the real provider (one lookup path, never two), overrides **language only** (date and
+money formats apply on save, and already preview inside their own option rows), and reuses the
+outer context value by identity when the previewed language matches the committed one. It
+touches nothing global - no render hint, no `document.documentElement.lang`, no
+`setActiveLocale`, no request - which is what makes it droppable with no cleanup on unmount or
+cancel. `LocaleEditor` therefore splits in two: the outer half owns the draft and reads the
+*committed* locale (so the re-seed effect can never be re-entered by a preview), the inner half
+renders under the preview. Its hosts pass a `MessageKey` rather than a translated
+`submitLabel`, since a string translated in the host is frozen in the committed language.
+
 `PATCH /api/instance-settings/locale` is the single write path. It is listed in
 `PUBLIC_PATHS` but self-authenticating: open only while no admin password is enrolled (the
 same window `POST /api/auth/setup` is open in), superuser-only after, resolving the bearer
-in-route via `requireAdminEquivalentBearer`. The globe button that hosts the editor appears
+in-route via `requireAdminEquivalentBearer`. The language button that hosts the editor appears
 only on pre-auth surfaces; an unauthorized save there applies to that browser alone rather
 than failing.
 

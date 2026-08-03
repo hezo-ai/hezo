@@ -1,4 +1,4 @@
-import { HEZO_DOCS_URL, repoNameFromIdentifier } from '@hezo/shared';
+import { HEZO_DOCS_URL, REQUIRED_SYSTEM_PROMPT_VARS, repoNameFromIdentifier } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { terminalStatusParams } from '../lib/sql';
 import { buildConnectorRecipesSkill } from './connector-registry';
@@ -270,6 +270,12 @@ const SHARED_INSTRUCTIONS = `
 - This holds for everything, not just code: a process step, a checklist item, a prompt instruction, a clause in a document. Removing something is a change like any other, and it needs the same evidence.
 `;
 
+/**
+ * The placeholder a prompt uses to *name* the required substitution variables
+ * rather than writing them out - see where it is resolved, last of all.
+ */
+export const REQUIRED_PROMPT_VARS_PLACEHOLDER = '{{required_prompt_vars}}';
+
 export async function resolveSystemPrompt(
 	db: Db,
 	template: string,
@@ -433,6 +439,30 @@ export async function resolveSystemPrompt(
 	}
 
 	resolved = resolved.replace(/\{\{requester_context\}\}/g, '');
+
+	// The one placeholder that expands *to* placeholders, and therefore the last
+	// one resolved.
+	//
+	// Several prompts have to tell an agent which substitution variables a system
+	// prompt it authors must contain - `create_hire_proposal` and
+	// `update_agent_system_prompt` reject one that drops any. Writing that list as
+	// prose meant writing `{{team_name}}` literally, which every branch above
+	// happily substituted: the CEO was told its required variables were the team's
+	// name, an empty string, and "No preferences set." - so every hire it filed
+	// was rejected for missing variables it had never been shown.
+	//
+	// Rendering it from `REQUIRED_SYSTEM_PROMPT_VARS` fixes both halves at once:
+	// the list can no longer be eaten, and it can no longer drift from what the
+	// validator actually enforces (it was hand-copied into four prompts). Position
+	// is load-bearing rather than incidental - every `{{…}}` replace above targets
+	// one specific literal and has already run, so the text inserted here is not
+	// re-scanned by anything. Keep it last.
+	if (resolved.includes(REQUIRED_PROMPT_VARS_PLACEHOLDER)) {
+		resolved = resolved.replaceAll(
+			REQUIRED_PROMPT_VARS_PLACEHOLDER,
+			REQUIRED_SYSTEM_PROMPT_VARS.map((v) => `\`${v}\``).join(', '),
+		);
+	}
 
 	// Inject the docs at the CEO prompt's HEZO_DOCS marker. The live chat embeds
 	// the full bundled documentation so the CEO can answer setup/usage questions

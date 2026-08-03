@@ -34,6 +34,27 @@ const PTY_SYNC_TIMEOUT_MS = 30_000;
 const PTY_CONNECT_TIMEOUT_MS = 30_000;
 
 /**
+ * How often an idle PTY socket is pinged.
+ *
+ * The tunnel rides this socket and carries **no bytes at all** while the agent
+ * is thinking - minutes at a time for a coding CLI. Idle is precisely what a
+ * load balancer or proxy reaps, and neither end is told: the container's
+ * listeners stay bound, the host's multiplexer is gone, and the agent's next MCP
+ * call hangs rather than failing. Well inside the 60s that intermediaries
+ * commonly use.
+ */
+const PTY_KEEPALIVE_MS = 20_000;
+
+/**
+ * Deleting the PTY session is the only thing that kills the process on the far
+ * end, so it is retried rather than attempted once - a silent failure leaves a
+ * tunnel client holding this container's loopback ports with nothing on the
+ * host still speaking to it.
+ */
+const PTY_DELETE_ATTEMPTS = 3;
+const PTY_DELETE_RETRY_MS = 500;
+
+/**
  * Pages `listSandboxes` will follow before giving up.
  *
  * A backstop against a server that never stops handing back a cursor, not a
@@ -654,9 +675,39 @@ export class DaytonaClient implements DaytonaApi {
 		};
 		socket.onclose = () => {
 			closed = true;
+			clearInterval(keepalive);
 			ready.reject(new Error('Daytona PTY closed before the launch completed'));
 			onClose?.();
 		};
+		// Rebound now that the connect handshake has settled. It was set once above
+		// for `connected`, and a post-connect error then resolved into an
+		// already-settled promise - a no-op. In practice `close` follows `error` and
+		// carried the signal, but that is the transport's habit rather than a
+		// guarantee, and the one thing this channel must never do is die quietly.
+		socket.onerror = () => {
+			if (closed) return;
+			log.warn(`Daytona PTY ${sessionId} errored; treating the channel as closed`);
+			closed = true;
+			clearInterval(keepalive);
+			onClose?.();
+		};
+
+		// The tunnel carries **zero bytes** whenever the agent is thinking, which
+		// for a coding CLI is minutes at a stretch - and an idle WebSocket is
+		// exactly what an intermediary drops. Nothing then tells either end: the
+		// container's listeners stay bound while the host's mux is gone, so the
+		// agent's next MCP call hangs instead of failing. A periodic ping keeps the
+		// connection observably alive rather than merely believed to be.
+		const keepalive = setInterval(() => {
+			if (closed) return;
+			try {
+				(socket as unknown as { ping?: () => void }).ping?.();
+			} catch {
+				// A transport without `ping` loses the keepalive, not the channel.
+			}
+		}, PTY_KEEPALIVE_MS);
+		// Never hold the process open on this alone.
+		(keepalive as unknown as { unref?: () => void }).unref?.();
 
 		// The sentinel is emitted from two halves. While echo is still on the
 		// command line itself comes back, and a line carrying the sentinel
@@ -695,6 +746,8 @@ export class DaytonaClient implements DaytonaApi {
 				onClose = handler;
 			},
 			close: () => {
+				closed = true;
+				clearInterval(keepalive);
 				socket.close();
 				// Closing the socket does **not** end the session or kill what runs
 				// on it - measured: a process launched on a PTY was still listening
@@ -707,13 +760,49 @@ export class DaytonaClient implements DaytonaApi {
 				// holds the run's three loopback ports, and because a pooled
 				// container serves many runs in sequence, the *next* run's client
 				// dies with `EADDRINUSE` and the whole run loses MCP and egress.
+				//
+				// **Retried, not fire-and-once.** A delete that quietly failed left a
+				// live client bound to those ports with the host side gone - so the
+				// agent hung on MCP rather than getting a fast `ECONNREFUSED`, which
+				// is strictly worse than the Docker failure mode. Still backgrounded:
+				// teardown runs on the run's exit path and must not block it.
 				trackBackground(
-					this.deletePtySession(sandbox, sessionId).catch((e) => {
-						log.warn(`could not delete PTY session ${sessionId}: ${(e as Error).message}`);
+					this.deletePtySessionWithRetry(sandbox, sessionId).catch((e) => {
+						log.error(
+							`could not delete PTY session ${sessionId} after retries: ${(e as Error).message} - ` +
+								'its client may still hold the tunnel ports on this container',
+						);
 					}),
 				);
 			},
 		};
+	}
+
+	/**
+	 * {@link deletePtySession} with bounded retries.
+	 *
+	 * The delete is the *only* thing that kills the process on the other end, so a
+	 * single transient failure is not something to log and forget: it leaves a
+	 * tunnel client alive, holding this container's three loopback ports, with
+	 * nothing on the host still talking to it.
+	 */
+	private async deletePtySessionWithRetry(
+		sandbox: DaytonaSandbox,
+		sessionId: string,
+	): Promise<void> {
+		let lastError: unknown;
+		for (let attempt = 0; attempt < PTY_DELETE_ATTEMPTS; attempt++) {
+			try {
+				await this.deletePtySession(sandbox, sessionId);
+				return;
+			} catch (e) {
+				lastError = e;
+				if (attempt < PTY_DELETE_ATTEMPTS - 1) {
+					await new Promise((r) => setTimeout(r, PTY_DELETE_RETRY_MS * (attempt + 1)));
+				}
+			}
+		}
+		throw lastError;
 	}
 
 	/** End a PTY session, terminating whatever is running on it. */
