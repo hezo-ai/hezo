@@ -255,6 +255,160 @@ export async function listReferencedContainerIds(db: Db): Promise<Set<string>> {
 }
 
 /**
+ * One container, as an operator sees it on the global Containers page.
+ *
+ * Flat and pre-joined rather than a member row the caller enriches: the page's
+ * whole job is to answer "what is this container, whose is it, and is anything
+ * using it", and three of those four facts live in a different table from the
+ * member.
+ */
+export interface ContainerListing {
+	container_id: string;
+	project_id: string;
+	project_slug: string;
+	project_name: string;
+	/** Pool vocabulary, including the two states the ladder itself skips. */
+	state: 'creating' | 'idle' | 'busy' | 'suspended' | 'error';
+	reserved_for_chat: boolean;
+	has_unpushed_commits: boolean;
+	disk_used_bytes: number;
+	disk_ceiling_bytes: number;
+	/** Effective per-container cap: the project's override, else the instance default. */
+	memory_limit_gib: number;
+	last_task_id: string | null;
+	last_task_identifier: string | null;
+	/** The run currently executing on it, when one is. */
+	run_id: string | null;
+	last_error: string | null;
+	/** The container's own last captured output, for a container that is not streaming. */
+	last_logs: string | null;
+	last_started_at: string | null;
+	last_released_at: string | null;
+	created_at: string | null;
+}
+
+/**
+ * Every container this instance owns, one row each.
+ *
+ * **Unions both representations**, the same way `getActiveContainers`
+ * (`services/run-concurrency.ts`) does and for the same reason: `container_pool_members`
+ * is additive and `projects.container_*` is still written, so during provisioning a
+ * container can be recorded in either place or both. A list built from the pool alone
+ * would silently omit containers that exist - which on a page whose entire purpose is
+ * "what is running right now" is the one failure that matters.
+ *
+ * A container with no member row has no pool state, so its state is derived from
+ * `projects.container_status`. The mapping is stated rather than assumed: `running`
+ * reads as `idle` because a legacy row cannot tell us whether a run holds it, and
+ * calling it busy would misreport a container an operator may safely remove.
+ *
+ * `defaultMemoryGb` is passed in rather than read here so this file stays the one that
+ * knows the table and nothing else - the instance default is a settings concern.
+ */
+export async function listAllContainers(
+	db: Db,
+	defaultMemoryGb: number,
+): Promise<ContainerListing[]> {
+	const res = await db.query<ContainerListingRow>(
+		`${CONTAINER_LISTING_SQL} ORDER BY p.name ASC, c.created_at ASC NULLS LAST`,
+		[defaultMemoryGb],
+	);
+	return res.rows.map(toContainerListing);
+}
+
+/** One container by its engine id, or null when nothing references it. */
+export async function getContainerListing(
+	db: Db,
+	defaultMemoryGb: number,
+	containerId: string,
+): Promise<ContainerListing | null> {
+	const res = await db.query<ContainerListingRow>(
+		`${CONTAINER_LISTING_SQL} AND c.container_id = $2`,
+		[defaultMemoryGb, containerId],
+	);
+	return res.rows[0] ? toContainerListing(res.rows[0]) : null;
+}
+
+interface ContainerListingRow {
+	container_id: string;
+	project_id: string;
+	project_slug: string;
+	project_name: string;
+	state: ContainerListing['state'];
+	reserved_for_chat: boolean;
+	has_unpushed_commits: boolean;
+	disk_used_bytes: string | number;
+	disk_ceiling_bytes: string | number;
+	memory_limit_gib: string | number;
+	last_task_id: string | null;
+	last_task_identifier: string | null;
+	run_id: string | null;
+	last_error: string | null;
+	last_logs: string | null;
+	last_started_at: string | null;
+	last_released_at: string | null;
+	created_at: string | null;
+}
+
+/**
+ * Shared body of the two listing reads, so "one row per container" is defined
+ * once. `$1` is the instance default memory cap; the caller appends its own
+ * ordering or its `container_id` predicate.
+ */
+const CONTAINER_LISTING_SQL = `
+	SELECT c.container_id,
+	       p.id   AS project_id,
+	       p.slug AS project_slug,
+	       p.name AS project_name,
+	       COALESCE(
+	         m.state::text,
+	         CASE p.container_status::text
+	           WHEN 'creating' THEN 'creating'
+	           WHEN 'error'    THEN 'error'
+	           WHEN 'running'  THEN 'idle'
+	           ELSE 'suspended'
+	         END
+	       ) AS state,
+	       COALESCE(m.reserved_for_chat, false)    AS reserved_for_chat,
+	       COALESCE(m.has_unpushed_commits, false) AS has_unpushed_commits,
+	       COALESCE(m.disk_used_bytes, 0)          AS disk_used_bytes,
+	       COALESCE(m.disk_ceiling_bytes, ${DEFAULT_DISK_CEILING_SQL}) AS disk_ceiling_bytes,
+	       COALESCE(p.memory_limit_gib, $1)        AS memory_limit_gib,
+	       m.last_task_id,
+	       t.identifier AS last_task_identifier,
+	       r.id         AS run_id,
+	       COALESCE(m.last_error, p.container_error) AS last_error,
+	       COALESCE(m.last_logs, p.container_last_logs) AS last_logs,
+	       m.last_started_at,
+	       m.last_released_at,
+	       m.created_at
+	  FROM (
+	         SELECT container_id, id AS project_id FROM projects WHERE container_id IS NOT NULL
+	         UNION
+	         SELECT container_id, project_id FROM container_pool_members
+	       ) AS c
+	  JOIN projects p ON p.id = c.project_id
+	  LEFT JOIN container_pool_members m ON m.container_id = c.container_id
+	  LEFT JOIN tasks t ON t.id = m.last_task_id
+	  -- The run on it right now, if any. heartbeat_runs.container_id exists for
+	  -- exactly this, and its index is partial on the running status.
+	  LEFT JOIN LATERAL (
+	         SELECT hr.id FROM heartbeat_runs hr
+	          WHERE hr.container_id = c.container_id AND hr.status = 'running'
+	          ORDER BY hr.started_at DESC LIMIT 1
+	       ) AS r ON true
+	 WHERE true`;
+
+function toContainerListing(row: ContainerListingRow): ContainerListing {
+	return {
+		...row,
+		disk_used_bytes: Number(row.disk_used_bytes),
+		disk_ceiling_bytes: Number(row.disk_ceiling_bytes),
+		memory_limit_gib: Number(row.memory_limit_gib),
+	};
+}
+
+/**
  * Clear `projects.container_id` when, and only when, it names `containerId`.
  *
  * The project row still points at a single "the" container - the newest one
@@ -286,6 +440,40 @@ export async function listPoolContainerIds(db: Db, projectId: string): Promise<s
 		[projectId],
 	);
 	return res.rows.map((r) => r.container_id);
+}
+
+/**
+ * What became of a container: its last output, and the error that ended it.
+ *
+ * Both used to live on `projects` (`container_last_logs` / `container_error`),
+ * one column each for what is now N containers - so whichever container stopped
+ * last had its account attributed to every sibling. An operator opening one
+ * container to find out why it died was reading another one's output. Migration
+ * 051 moves the logs; the error follows here for the same reason.
+ *
+ * The two fields have deliberately different null semantics, matching the
+ * `projects` write they replace:
+ *
+ * - `lastLogs === null` means "the capture came back empty", and leaves the
+ *   previous snapshot alone - erasing it would delete the only account of the
+ *   failure precisely when the container is least able to reproduce it.
+ * - `lastError` is written as given, so `null` **clears** it. A container that
+ *   stopped cleanly must not keep wearing a stale error.
+ */
+export async function setPoolMemberOutcome(
+	db: Db,
+	containerId: string,
+	lastLogs: string | null,
+	lastError: string | null,
+): Promise<void> {
+	await db.query(
+		`UPDATE container_pool_members
+		    SET last_logs = COALESCE($2, last_logs), last_error = $3, updated_at = now()
+		  WHERE container_id = $1
+		    AND (last_logs IS DISTINCT FROM COALESCE($2, last_logs)
+		         OR last_error IS DISTINCT FROM $3)`,
+		[containerId, lastLogs, lastError],
+	);
 }
 
 /** Record a member's measured disk use, which decides whether it is recycled rather than reused. */

@@ -413,9 +413,12 @@ describe('JobManager recovery & maintenance', () => {
 			manager.shutdown();
 		});
 
-		it('rebuilds a running container whose /workspace probe fails', async () => {
+		it('removes a running container whose /workspace probe fails', async () => {
+			// Removed rather than replaced. Provisioning a fresh container here would
+			// race the pool, which provisions one anyway on the next run that needs
+			// it - and eagerly rebuilding meant a stale mount on an idle project paid
+			// for a container nobody was waiting on.
 			const { db } = ctx;
-			// No designated repo → the rebuild bring-up has nothing to clone.
 			await db.query('UPDATE projects SET designated_repo_id = NULL WHERE id = $1', [projectId]);
 			await db.query(
 				`UPDATE projects SET container_status = 'running'::container_status, container_id = 'stale-box'
@@ -425,6 +428,7 @@ describe('JobManager recovery & maintenance', () => {
 
 			let probeExecId = '';
 			let rebuilt = false;
+			const removed: string[] = [];
 			const manager = createJobManager({
 				docker: createStubDocker({
 					execCreate: async (_id: string, opts: { Cmd: string[] }) => {
@@ -443,6 +447,9 @@ describe('JobManager recovery & maintenance', () => {
 						rebuilt = true;
 						return { Id: 'rebuilt-box', Warnings: [] };
 					},
+					removeContainer: async (id: string) => {
+						removed.push(id);
+					},
 				}),
 			});
 
@@ -451,16 +458,19 @@ describe('JobManager recovery & maintenance', () => {
 			);
 			await waitForBackground();
 
-			expect(rebuilt).toBe(true);
+			expect(removed).toContain('stale-box');
+			// And nothing was provisioned in its place - that is the pool's job, on
+			// the next run that actually needs a container.
+			expect(rebuilt).toBe(false);
 			const row = await db.query<{ container_id: string | null }>(
 				'SELECT container_id FROM projects WHERE id = $1',
 				[projectId],
 			);
-			expect(row.rows[0].container_id).toBe('rebuilt-box');
+			expect(row.rows[0].container_id).toBeNull();
 			manager.shutdown();
 		});
 
-		it('logs and continues when the stale-mount rebuild itself fails', async () => {
+		it('logs and continues when the stale-mount removal itself fails', async () => {
 			const { db } = ctx;
 			await db.query(
 				`UPDATE projects SET container_status = 'running'::container_status, container_id = 'stale-box2'
@@ -474,9 +484,16 @@ describe('JobManager recovery & maintenance', () => {
 					execCreate: async () => 'probe-exec',
 					execStart: async () => ({ stdout: '', stderr: '' }),
 					execInspect: async () => ({ ExitCode: 1, Running: false, Pid: 0 }),
-					// …and the rebuild blows up.
-					createContainer: async () => {
-						throw new Error('expected: rebuild failure');
+					// …and the pass that would clear it blows up. One project failing
+					// must not stop the sweep from reaching the rest.
+					containerLogs: async () => {
+						throw new Error('expected: removal failure');
+					},
+					stopContainer: async () => {
+						throw new Error('expected: removal failure');
+					},
+					removeContainer: async () => {
+						throw new Error('expected: removal failure');
 					},
 				}),
 			});

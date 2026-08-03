@@ -49,6 +49,7 @@ import { chatChannelRoutes } from './routes/chat-channels';
 import { chatWebhookRoutes } from './routes/chat-webhooks';
 import { commentsRoutes } from './routes/comments';
 import { connectorsRoutes } from './routes/connectors';
+import { buildContainerRoutes } from './routes/containers';
 import { costsRoutes } from './routes/costs';
 import { customPromptRoutes } from './routes/custom-prompt';
 import { buildDatabaseInfoRoutes } from './routes/database-info';
@@ -817,6 +818,7 @@ export function buildApp(
 	app.route('/api', usersRoutes);
 	app.route('/api', agentsRoutes);
 	app.route('/api', projectsRoutes);
+	app.route('/api', buildContainerRoutes());
 	app.route('/api', tasksRoutes);
 	app.route('/api', goalsRoutes);
 	app.route('/api', commentsRoutes);

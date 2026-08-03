@@ -7,6 +7,39 @@ import { hostSandboxFiles, type SandboxFiles } from './sandbox/files';
 import { dockerSandboxHandle, type SandboxHandle } from './sandbox/handle';
 import { type BridgeRunnerArgs, buildBridgeRunnerArgv } from './ssh-agent';
 
+/** Where the ssh config Hezo writes into every container lives. */
+export const CONTAINER_SSH_CONFIG_PATH = '/etc/hezo/ssh_config';
+
+/**
+ * The ssh config every in-container git op is pointed at.
+ *
+ * **GitHub over port 443, not 22.** A container's egress is not the operator's:
+ * a managed sandbox provider commonly allows only 80 and 443 out, and a dropped
+ * SYN on 22 surfaces as `ssh: connect to host github.com port 22: Connection
+ * timed out` after `ConnectTimeout` - so every clone, fetch and push failed on
+ * that backend while working perfectly on a local daemon, where the daemon NATs
+ * the container onto a network that has 22 open. `ssh.github.com:443` is
+ * GitHub's own endpoint for exactly this, serving the same SSH service.
+ *
+ * Applied on **every** backend rather than only where 22 is blocked. A
+ * per-backend branch would mean the path local dev and CI exercise is not the
+ * one production runs, which is the failure this whole seam exists to prevent -
+ * and there is nothing to gain from 22 where both work.
+ *
+ * `HostKeyAlias` is load-bearing and easy to miss: the image pins GitHub's host
+ * keys under the name `github.com` (`docker/Dockerfile.agent-base`), and without
+ * the alias ssh would look them up under `ssh.github.com` and refuse the
+ * connection it just successfully made. The alias keeps the pin exact while the
+ * address changes.
+ */
+export const CONTAINER_SSH_CONFIG = `# Written by Hezo at container provision. Do not edit.
+Host github.com
+    HostName ssh.github.com
+    Port 443
+    User git
+    HostKeyAlias github.com
+`;
+
 /**
  * SSH options applied to every in-container git transport op so a stalled
  * connection fails fast instead of hanging on OS TCP defaults. `ConnectTimeout`
@@ -14,9 +47,17 @@ import { type BridgeRunnerArgs, buildBridgeRunnerArgv } from './ssh-agent';
  * an established-then-silent connection (~30s) without tripping a slow-but-alive
  * transfer; `BatchMode` guarantees git never blocks on an interactive prompt.
  * Worst case (~45s) stays under the fetch (60s) and clone (120s) op caps.
+ *
+ * `-F` names {@link CONTAINER_SSH_CONFIG_PATH} explicitly rather than relying on
+ * the distro dropping our file into an `Include`: the base image is Debian
+ * today, the include layout is a distro convention rather than an ssh one, and a
+ * config silently not read presents as the same connect timeout it was written
+ * to fix. The system config still applies underneath; ours is consulted first,
+ * and ssh takes the first value it obtains for a keyword.
  */
 export const GIT_SSH_COMMAND_VALUE =
-	'ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3';
+	`ssh -F ${CONTAINER_SSH_CONFIG_PATH} -o BatchMode=yes -o ConnectTimeout=15 ` +
+	'-o ServerAliveInterval=10 -o ServerAliveCountMax=3';
 
 /**
  * Mint a scope id for container git ops that run outside an agent run or a

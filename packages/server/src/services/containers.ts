@@ -31,7 +31,12 @@ import {
 } from './container-user';
 import type { ContainerEngine } from './docker';
 import { ensureImage } from './ensure-image';
-import { ContainerGitExecutor, mintGitOpScopeId } from './git-executor';
+import {
+	CONTAINER_SSH_CONFIG,
+	CONTAINER_SSH_CONFIG_PATH,
+	ContainerGitExecutor,
+	mintGitOpScopeId,
+} from './git-executor';
 import { resolveAgentBaseImage } from './image-registry';
 import type { LogStreamBroker } from './log-stream-broker';
 import { ensureProjectRepos } from './repo-sync';
@@ -40,6 +45,7 @@ import { DOCKER_HOST_GATEWAY_ENTRY } from './sandbox/endpoints';
 import { INSTANCE_LABEL } from './sandbox/orphan-reaper';
 import {
 	claimPoolMember,
+	clearProjectContainerIfNamed,
 	decidePoolAcquisition,
 	listPoolContainerIds,
 	listPoolMembersForReconcile,
@@ -47,6 +53,7 @@ import {
 	releasePoolMember,
 	removePoolMember,
 	setPoolMemberChatReservation,
+	setPoolMemberOutcome,
 	setPoolMemberState,
 	upsertPoolMember,
 } from './sandbox/pool-db';
@@ -126,6 +133,19 @@ export interface ContainerDeps {
  * `NODE_EXTRA_CA_CERTS` names the full path while the write names the parts.
  */
 export const CONTAINER_CA_PATH = '/usr/local/share/ca-certificates/hezo-egress.crt';
+/**
+ * The ssh config's directory and filename, split from the one path constant so
+ * the two halves cannot disagree - `SandboxFiles` is rooted at a directory and
+ * writes a relative name, while `GIT_SSH_COMMAND` names the absolute file.
+ */
+export const CONTAINER_SSH_CONFIG_DIR = CONTAINER_SSH_CONFIG_PATH.slice(
+	0,
+	CONTAINER_SSH_CONFIG_PATH.lastIndexOf('/'),
+);
+export const CONTAINER_SSH_CONFIG_FILENAME = CONTAINER_SSH_CONFIG_PATH.slice(
+	CONTAINER_SSH_CONFIG_PATH.lastIndexOf('/') + 1,
+);
+
 export const CONTAINER_CA_DIR = CONTAINER_CA_PATH.slice(0, CONTAINER_CA_PATH.lastIndexOf('/'));
 export const CONTAINER_CA_FILENAME = CONTAINER_CA_PATH.slice(
 	CONTAINER_CA_PATH.lastIndexOf('/') + 1,
@@ -521,6 +541,22 @@ export async function provisionContainer(
 
 		if (deps.containerLogStreamer && deps.logs) {
 			deps.containerLogStreamer.subscribe(project.id, Id, deps.logs, docker);
+		}
+
+		// Through the file seam like the CA below, and for the same reason: it has
+		// to land on a container that is not on this machine. Unconditional - a
+		// container reaches its git remote on every backend, and a config only
+		// written where 22 is known to be blocked would leave the failure to be
+		// rediscovered on the next provider.
+		try {
+			await docker
+				.files(Id, CONTAINER_SSH_CONFIG_DIR)
+				.write(CONTAINER_SSH_CONFIG_FILENAME, CONTAINER_SSH_CONFIG, { mode: 0o644 });
+		} catch (e) {
+			// Loud, not fatal: everything that is not git still works, and the
+			// alternative is a clone timing out on port 22 with nothing connecting it
+			// to a file that failed to be written minutes earlier.
+			emit('stderr', `⚠ writing the git ssh config failed: ${(e as Error).message}`);
 		}
 
 		if (deps.egressCAPath) {
@@ -1037,6 +1073,93 @@ async function loadProjectRow(
 	return proj;
 }
 
+/**
+ * Stop and remove one container on the engine, tolerating one that is already
+ * gone in either direction.
+ *
+ * Three callers wanted this exact pair, which is two more than a copy survives:
+ * project teardown, the operator's own Remove, and (formerly) rebuild. It also
+ * owns the `--keep-old-containers` escape in one place - a flag honoured at two
+ * of three call sites is worse than one honoured nowhere, because the
+ * inconsistency is invisible until someone is debugging a container they were
+ * promised would still be there.
+ *
+ * It deliberately touches **only** the engine. The database half differs per
+ * caller (teardown clears the whole project, Remove clears one row), and folding
+ * them together is what made the old rebuild path forget the pool.
+ */
+async function removeFromEngine(docker: ContainerEngine, containerId: string): Promise<void> {
+	if (keepOldContainersFlag) return;
+	try {
+		await docker.stopContainer(containerId);
+	} catch {
+		// Container may already be stopped
+	}
+	try {
+		await docker.removeContainer(containerId, true);
+	} catch {
+		// Container may already be removed
+	}
+}
+
+/**
+ * Remove **one** container at an operator's request, from the global Containers
+ * page.
+ *
+ * This is what replaced Rebuild. Rebuild meant "throw away this project's
+ * containers and provision a new one", which stopped corresponding to anything
+ * once a project could hold several: the operator was looking at one container
+ * and the button acted on all of them. A container that has wedged is one
+ * container, and removing it is the whole fix - the pool provisions a
+ * replacement on the next run that needs one, which is the path every other
+ * container already takes.
+ *
+ * Removing one that is **serving a run** is allowed, and is in fact the main
+ * reason to reach for this: the run dies through the ordinary container-death
+ * path (`failProjectRuns`, scoped to this container so a sibling run in another
+ * container of the same project is untouched), exactly as it would if the
+ * container had crashed. Refusing while busy would block precisely the case the
+ * button exists for.
+ */
+export async function destroyContainer(
+	deps: ContainerDeps,
+	projectId: string,
+	projectSlug: string,
+	teamId: string,
+	containerId: string,
+): Promise<void> {
+	const { db, docker, wsManager } = deps;
+
+	// Captured before the container goes, and kept on the member row: it is the
+	// only account of why this container was worth removing, and the detail page
+	// shows it after the container itself is gone.
+	const lastLogs = await captureContainerLogs(docker, containerId, projectSlug);
+	const annotated = appendMemoryLine(lastLogs, consumeFinalMemoryLine(projectId));
+	await setPoolMemberOutcome(db, containerId, annotated, null);
+
+	await removeFromEngine(docker, containerId);
+	await removePoolMember(db, containerId);
+	// The project row still names a single "the" container; leaving it pointing at
+	// one that no longer exists makes the 1 Hz sync read a container it cannot
+	// inspect as one that died, and report a spurious error on a project whose
+	// other containers are fine.
+	await clearProjectContainerIfNamed(db, projectId, containerId);
+
+	await failProjectRuns(
+		deps,
+		projectId,
+		projectSlug,
+		teamId,
+		'container_stopped',
+		containerId,
+	).catch((e) => log.error('Failed to fail runs on container removal:', e));
+
+	await broadcastProjectUpdate(db, wsManager, teamId, projectId);
+	log.info(
+		`container ${ref(projectSlug, containerId.slice(0, 12))} removed from project ${ref(projectSlug, projectId)}`,
+	);
+}
+
 export async function teardownContainer(
 	deps: ContainerDeps,
 	projectId: string,
@@ -1058,20 +1181,7 @@ export async function teardownContainer(
 	const teardownContainerId = result.rows[0]?.container_id;
 	const toRemove = new Set(poolIds);
 	if (teardownContainerId) toRemove.add(teardownContainerId);
-	if (!keepOldContainersFlag) {
-		for (const id of toRemove) {
-			try {
-				await docker.stopContainer(id);
-			} catch {
-				// Container may already be stopped
-			}
-			try {
-				await docker.removeContainer(id, true);
-			} catch {
-				// Container may already be removed
-			}
-		}
-	}
+	for (const id of toRemove) await removeFromEngine(docker, id);
 	for (const id of toRemove) await removePoolMember(db, id);
 
 	await db.query('UPDATE projects SET container_id = NULL, container_status = NULL WHERE id = $1', [
@@ -1114,6 +1224,7 @@ export async function stopContainerGracefully(
 			 WHERE id = $3`,
 			[ContainerStatus.Stopped, annotatedLogs, projectId],
 		);
+		await setPoolMemberOutcome(db, containerId, annotatedLogs, null);
 		// A stopped container is a *suspended* pool member: it still exists and its
 		// filesystem is intact, but it is not running. Recording that here rather
 		// than at each caller is what stops the ladder from handing a run a
@@ -1133,6 +1244,7 @@ export async function stopContainerGracefully(
 			 WHERE id = $4`,
 			[ContainerStatus.Error, annotatedLogs, errorMessage, projectId],
 		);
+		await setPoolMemberOutcome(db, containerId, annotatedLogs, errorMessage);
 		exitReason = 'container_error';
 		log.warn(
 			`project ${ref(projectSlug, projectId)} container ${ref(projectSlug, containerId.slice(0, 12))} stop failed: ${errorMessage}`,
@@ -1280,81 +1392,6 @@ export async function verifyContainerWorkspace(
 	}
 }
 
-/**
- * Replace a project's containers with a freshly provisioned one.
- *
- * **Every member, not just the one `projects.container_id` names.** A rebuild is
- * an operator saying "this project's container is wrong" - a changed base image,
- * a broken toolchain, a wedged daemon - and a project can hold several. Removing
- * only the named one left the rest running on the *old* image, still reachable
- * by the allocation ladder and still charged against the instance memory budget:
- * the operator's explicit fix silently applied to one container out of three,
- * and the next run could land on either. `teardownContainer` already sweeps the
- * whole pool for the same reason; this is the other half of it.
- */
-export async function rebuildContainer(
-	deps: ContainerDeps,
-	project: ProjectRow,
-	teamSlug: string,
-): Promise<string> {
-	const { db, docker, logs } = deps;
-	beginProvisionStream(logs, project.id);
-	const streamId = provisionStreamId(project.id);
-
-	const toRemove = new Set(await listPoolContainerIds(db, project.id));
-	if (project.container_id) toRemove.add(project.container_id);
-
-	if (toRemove.size > 0) {
-		log.info(
-			`project ${ref(project.slug, project.id)} rebuild started (${toRemove.size} container(s) to remove)`,
-		);
-		// Only the named container's logs are kept: `container_last_logs` is a
-		// single column describing "the project's container", and the operator is
-		// looking at the one the Container page showed them.
-		if (project.container_id) {
-			logs?.emit(
-				streamId,
-				'stdout',
-				`→ Removing previous container ${project.container_id.slice(0, 12)}`,
-			);
-			const lastLogs = await captureContainerLogs(docker, project.container_id, project.slug);
-			const annotatedLogs = appendMemoryLine(lastLogs, consumeFinalMemoryLine(project.id));
-			if (annotatedLogs) {
-				await db.query('UPDATE projects SET container_last_logs = $1 WHERE id = $2', [
-					annotatedLogs,
-					project.id,
-				]);
-			}
-		}
-		for (const id of toRemove) {
-			if (id !== project.container_id) {
-				logs?.emit(streamId, 'stdout', `→ Removing pool container ${id.slice(0, 12)}`);
-			}
-			if (!keepOldContainersFlag) {
-				try {
-					await docker.stopContainer(id);
-				} catch {
-					// Already stopped
-				}
-				try {
-					await docker.removeContainer(id, true);
-				} catch {
-					// Already removed
-				}
-			}
-			// Dropped whether or not the engine call succeeded, and whether or not
-			// `keepOldContainersFlag` spared the container itself: a member row
-			// pointing at a container this rebuild has replaced would hand the next
-			// run the container the operator just asked to be rid of.
-			await removePoolMember(db, id);
-		}
-	} else {
-		log.info(`project ${ref(project.slug, project.id)} rebuild started (no previous container)`);
-	}
-
-	return provisionContainer(deps, project, teamSlug);
-}
-
 export async function syncContainerStatus(
 	db: Db,
 	docker: ContainerEngine,
@@ -1413,6 +1450,7 @@ export async function syncContainerStatus(
 			 WHERE id = $4`,
 			[status, annotatedLogs, errorMessage, projectId],
 		);
+		await setPoolMemberOutcome(db, containerId, annotatedLogs, errorMessage);
 	} else {
 		// Only write on an actual transition. This runs for every project with a
 		// container on every sync tick, and `projects` carries `container_last_logs`
@@ -1505,6 +1543,7 @@ async function enforceContainerMemoryLimit(
 		 WHERE id = $4`,
 		[ContainerStatus.Error, lastLogs, errorMessage, projectId],
 	);
+	await setPoolMemberOutcome(db, containerId, lastLogs, errorMessage);
 
 	log.warn(
 		`Auto-stopped container ${ref(projectSlug, containerId.slice(0, 12))} for project ${ref(projectSlug, projectId)}: used ${usedGiB} GiB (> ${memoryLimitGib} GiB)`,

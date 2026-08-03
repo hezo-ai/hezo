@@ -23,6 +23,7 @@ import {
 	broadcastProjectUpdate,
 } from '../lib/broadcast';
 import { budgetWindowsError } from '../lib/budget-validation';
+import { buildContainerDeps } from '../lib/container-deps';
 import { readImageDimensions } from '../lib/image-dimensions';
 import { ref } from '../lib/log-ref';
 import { signProjectIconUrl, verifyProjectIconUrl } from '../lib/project-icon-urls';
@@ -33,14 +34,7 @@ import { getMaxContainerMemoryGb } from '../lib/system-meta';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireAdminEquivalent, requireSuperuser } from '../middleware/auth';
-import {
-	type ContainerDeps,
-	type ProjectRow,
-	rebuildContainer,
-	stopContainerGracefully,
-	teardownContainer,
-	wakeAgentsWithPendingWork,
-} from '../services/containers';
+import { stopContainerGracefully, teardownContainer } from '../services/containers';
 import { loadCoordinationContext } from '../services/internal-intake';
 import type { JobManager } from '../services/job-manager';
 import { getMarketplaceTeam } from '../services/marketplace';
@@ -56,20 +50,6 @@ import { strandedCommitsExistsSql } from '../services/sandbox/pool-db';
 import { exportTeamBundle, TeamBundleExportError } from '../services/team-bundle-export';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function buildContainerDeps(c: Context<Env>): ContainerDeps {
-	return {
-		db: c.get('db'),
-		docker: c.get('docker'),
-		dataDir: c.get('dataDir'),
-		wsManager: c.get('wsManager'),
-		masterKeyManager: c.get('masterKeyManager'),
-		logs: c.get('logs'),
-		containerLogStreamer: c.get('containerLogStreamer'),
-		sshAgentServer: c.get('sshAgentServer'),
-		egressCAPath: c.get('egressProxy')?.caCertPath ?? null,
-	};
-}
 
 const log = logger.child('routes');
 
@@ -958,161 +938,6 @@ projectsRoutes.delete('/projects/:projectId', async (c) => {
 	await db.query('DELETE FROM projects WHERE id = $1', [projectId]);
 	broadcastChange(c, wsRoom.team(teamId), 'projects', 'DELETE', { id: projectId });
 	return c.json({ data: null }, 200);
-});
-
-projectsRoutes.post('/projects/:projectId/container/start', async (c) => {
-	const teamId = c.get('teamId') as string;
-	const db = c.get('db');
-	const projectId = c.get('projectId') as string;
-	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
-
-	const result = await db.query<{ slug: string; container_id: string | null }>(
-		'SELECT slug, container_id FROM projects WHERE id = $1 AND team_id = $2',
-		[projectId, teamId],
-	);
-	if (result.rows.length === 0) return err(c, 'NOT_FOUND', 'Project not found', 404);
-	if (!result.rows[0].container_id) return err(c, 'NO_CONTAINER', 'No container provisioned', 400);
-
-	const docker = c.get('docker');
-	const projectSlug = result.rows[0].slug;
-	const containerId = result.rows[0].container_id;
-	try {
-		await docker.startContainer(containerId);
-		await db.query(
-			`UPDATE projects
-			 SET container_status = $1::container_status, container_last_started_at = now()
-			 WHERE id = $2`,
-			[ContainerStatus.Running, projectId],
-		);
-		c.get('containerLogStreamer').subscribe(projectId, containerId, c.get('logs'), docker);
-		await broadcastProjectUpdate(db, c.get('wsManager'), teamId, projectId);
-		await wakeAgentsWithPendingWork(db, projectId, teamId);
-		log.info(
-			`project ${ref(projectSlug, projectId)} container ${ref(projectSlug, containerId.slice(0, 12))} started`,
-		);
-		return ok(c, { container_status: ContainerStatus.Running });
-	} catch (error) {
-		const message = (error as Error).message;
-		log.warn(
-			`project ${ref(projectSlug, projectId)} container ${ref(projectSlug, containerId.slice(0, 12))} start failed: ${message}`,
-		);
-		return err(c, 'DOCKER_ERROR', `Failed to start container: ${message}`, 500);
-	}
-});
-
-projectsRoutes.post('/projects/:projectId/container/stop', async (c) => {
-	const teamId = c.get('teamId') as string;
-	const db = c.get('db');
-	const projectId = c.get('projectId') as string;
-	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
-
-	const result = await db.query<{
-		slug: string;
-		container_id: string | null;
-		container_status: string | null;
-	}>('SELECT slug, container_id, container_status FROM projects WHERE id = $1 AND team_id = $2', [
-		projectId,
-		teamId,
-	]);
-	if (result.rows.length === 0) return err(c, 'NOT_FOUND', 'Project not found', 404);
-
-	const row = result.rows[0];
-
-	if (!row.container_id) {
-		// No container yet (e.g. still provisioning) — just set status to stopped
-		await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
-			ContainerStatus.Stopped,
-			projectId,
-		]);
-		await broadcastProjectUpdate(db, c.get('wsManager'), teamId, projectId);
-		return ok(c, { container_status: ContainerStatus.Stopped });
-	}
-
-	await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
-		ContainerStatus.Stopping,
-		projectId,
-	]);
-	await broadcastProjectUpdate(db, c.get('wsManager'), teamId, projectId);
-
-	const jobManager = c.get('jobManager');
-	const containerDeps = buildContainerDeps(c);
-
-	await cancelRunningAgentTasks(db, jobManager, projectId, teamId);
-
-	const containerId = row.container_id;
-	if (!containerId) return ok(c, { container_status: ContainerStatus.Stopping });
-
-	const projectSlug = row.slug;
-	const taskKey = `stop:${projectId}`;
-	jobManager.launchTask(
-		taskKey,
-		async () => {
-			await stopContainerGracefully(containerDeps, projectId, projectSlug, teamId, containerId);
-		},
-		60_000,
-	);
-
-	return ok(c, { container_status: ContainerStatus.Stopping });
-});
-
-const REBUILD_TIMEOUT_MS = 5 * 60 * 1000;
-
-projectsRoutes.post('/projects/:projectId/container/rebuild', async (c) => {
-	const teamId = c.get('teamId') as string;
-	const db = c.get('db');
-	const projectId = c.get('projectId') as string;
-	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
-
-	const projectResult = await db.query<ProjectRow>(
-		'SELECT * FROM projects WHERE id = $1 AND team_id = $2',
-		[projectId, teamId],
-	);
-	if (projectResult.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Project not found', 404);
-	}
-
-	const teamSlugResult = await db.query<{ slug: string }>('SELECT slug FROM teams WHERE id = $1', [
-		teamId,
-	]);
-	const teamSlug = teamSlugResult.rows[0]?.slug;
-	if (!teamSlug) {
-		return err(c, 'NOT_FOUND', 'Team not found', 404);
-	}
-
-	const jobManager = c.get('jobManager');
-	const taskKey = `rebuild:${projectId}`;
-
-	// Cancel any conflicting tasks before launching rebuild
-	jobManager.cancelTask(`stop:${projectId}`);
-	jobManager.cancelTask(taskKey);
-	await cancelRunningAgentTasks(db, jobManager, projectId, teamId);
-
-	const containerDeps = buildContainerDeps(c);
-
-	await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
-		ContainerStatus.Creating,
-		projectId,
-	]);
-
-	await broadcastProjectUpdate(db, c.get('wsManager'), teamId, projectId);
-
-	jobManager.launchTask(
-		taskKey,
-		async () => {
-			try {
-				await rebuildContainer(containerDeps, projectResult.rows[0], teamSlug);
-				await wakeAgentsWithPendingWork(db, projectId, teamId);
-			} catch (error) {
-				log.error(
-					`Container rebuild failed for project ${ref(projectResult.rows[0].slug, projectId)}:`,
-					error,
-				);
-			}
-		},
-		REBUILD_TIMEOUT_MS,
-	);
-
-	return ok(c, { container_status: ContainerStatus.Creating });
 });
 
 // Public signed-URL read endpoint for a project icon. Rendered in an `<img>`

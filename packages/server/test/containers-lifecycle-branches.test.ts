@@ -7,10 +7,10 @@ import {
 	type ContainerDeps,
 	captureContainerLogs,
 	consumeFinalMemoryLine,
+	destroyContainer,
 	ensureProjectContainerRunning,
 	failProjectRuns,
 	type ProjectRow,
-	rebuildContainer,
 	setKeepOldContainers,
 	shouldKeepOldContainers,
 	stopContainerGracefully,
@@ -18,6 +18,7 @@ import {
 	syncContainerStatus,
 	teardownContainer,
 } from '../src/services/containers';
+import { setPoolMemberOutcome } from '../src/services/sandbox/pool-db';
 import type { ContainerEngine } from '../src/services/sandbox/types';
 import { ensureProjectWorkspace, getProjectDir } from '../src/services/workspace';
 import type { WebSocketManager } from '../src/services/ws';
@@ -461,11 +462,16 @@ describe('stopContainerGracefully', () => {
 	});
 });
 
-describe('rebuildContainer', () => {
-	it('snapshots the old container logs, removes it, and provisions a replacement', async () => {
+describe('destroyContainer', () => {
+	it('snapshots the container, removes it from the engine, and drops its member row', async () => {
 		await resetContainerRow();
 		await db.query(
-			"UPDATE projects SET container_id = 'old-rebuild-cid', container_status = 'running'::container_status WHERE id = $1",
+			"UPDATE projects SET container_id = 'doomed-cid', container_status = 'running'::container_status WHERE id = $1",
+			[projectId],
+		);
+		await db.query(
+			`INSERT INTO container_pool_members (project_id, container_id, state, disk_ceiling_bytes)
+			 VALUES ($1, 'doomed-cid', 'idle', 1000000)`,
 			[projectId],
 		);
 		const stopContainer = vi.fn(async () => {});
@@ -474,71 +480,96 @@ describe('rebuildContainer', () => {
 			stopContainer,
 			removeContainer,
 			containerLogs: vi.fn(async () => ({
-				arrayBuffer: async () => logsBody('pre-rebuild console output\n'),
+				arrayBuffer: async () => logsBody('why it died\n'),
 			})),
 		});
 
-		const newId = await rebuildContainer(deps(docker), await projectRow(), 'lifecycle-coverage-co');
+		await destroyContainer(deps(docker), projectId, projectSlug, teamId, 'doomed-cid');
 
-		expect(newId).not.toBe('old-rebuild-cid');
-		expect(stopContainer).toHaveBeenCalledWith('old-rebuild-cid');
-		expect(removeContainer).toHaveBeenCalledWith('old-rebuild-cid', true);
-		const row = await db.query<{
-			container_id: string;
-			container_status: string;
-			container_last_logs: string | null;
-		}>('SELECT container_id, container_status, container_last_logs FROM projects WHERE id = $1', [
-			projectId,
+		expect(stopContainer).toHaveBeenCalledWith('doomed-cid');
+		expect(removeContainer).toHaveBeenCalledWith('doomed-cid', true);
+		const left = await db.query('SELECT 1 FROM container_pool_members WHERE container_id = $1', [
+			'doomed-cid',
 		]);
-		expect(row.rows[0].container_id).toBe(newId);
-		expect(row.rows[0].container_status).toBe('running');
-		expect(row.rows[0].container_last_logs).toContain('pre-rebuild console output');
+		expect(left.rows.length).toBe(0);
 	});
 
-	it('removes every pool member, not just the one the project row names', async () => {
-		// A rebuild is an operator saying "this project's container is wrong" - a
-		// changed base image, a broken toolchain. Removing only the named container
-		// left the project's other members running on the **old** image, still
-		// reachable by the allocation ladder and still charged against the instance
-		// memory budget: the fix applied to one container out of three, and the next
-		// run could land on either.
+	it('keeps the snapshot on the member row until the row itself goes', async () => {
+		// The account of why a container was worth removing is the one thing the
+		// detail page still has after the container is gone, and it used to be
+		// written to `projects.container_last_logs` - one column for what is now N
+		// containers, so whichever stopped last was attributed to all of them.
+		await resetContainerRow();
+		await db.query(
+			`INSERT INTO container_pool_members (project_id, container_id, state, disk_ceiling_bytes)
+			 VALUES ($1, 'snapshot-cid', 'idle', 1000000)`,
+			[projectId],
+		);
+		const docker = provisioningDocker({
+			stopContainer: vi.fn(async () => {}),
+			removeContainer: vi.fn(async () => {}),
+			containerLogs: vi.fn(async () => ({
+				arrayBuffer: async () => logsBody('segfault at 0x0\n'),
+			})),
+		});
+
+		await setPoolMemberOutcome(db, 'snapshot-cid', 'segfault at 0x0', null);
+		const stored = await db.query<{ last_logs: string | null }>(
+			'SELECT last_logs FROM container_pool_members WHERE container_id = $1',
+			['snapshot-cid'],
+		);
+		expect(stored.rows[0].last_logs).toContain('segfault at 0x0');
+
+		await destroyContainer(deps(docker), projectId, projectSlug, teamId, 'snapshot-cid');
+	});
+
+	it('clears projects.container_id only when it names the container being removed', async () => {
+		// The project row names a single "the" container while the pool holds
+		// several. Nulling it for a sibling would make the 1 Hz sync read a
+		// container it cannot inspect as one that died - a spurious error on a
+		// project whose other containers are fine.
 		await resetContainerRow();
 		await db.query(
 			"UPDATE projects SET container_id = 'named-cid', container_status = 'running'::container_status WHERE id = $1",
 			[projectId],
 		);
-		for (const id of ['named-cid', 'sibling-a', 'sibling-b']) {
+		for (const id of ['named-cid', 'sibling-cid']) {
 			await db.query(
 				`INSERT INTO container_pool_members (project_id, container_id, state, disk_ceiling_bytes)
 				 VALUES ($1, $2, 'idle', 1000000)`,
 				[projectId, id],
 			);
 		}
-		const removeContainer = vi.fn(async (_id: string, _force?: boolean) => {});
 		const docker = provisioningDocker({
 			stopContainer: vi.fn(async () => {}),
-			removeContainer,
+			removeContainer: vi.fn(async () => {}),
 			containerLogs: vi.fn(async () => null),
 		});
 
-		const newId = await rebuildContainer(deps(docker), await projectRow(), 'lifecycle-coverage-co');
-
-		const removed = removeContainer.mock.calls.map((c) => c[0]).sort();
-		expect(removed).toEqual(['named-cid', 'sibling-a', 'sibling-b']);
-		// And their rows are gone, so nothing hands a later run a container this
-		// rebuild replaced.
-		const left = await db.query<{ container_id: string }>(
-			'SELECT container_id FROM container_pool_members WHERE project_id = $1',
+		await destroyContainer(deps(docker), projectId, projectSlug, teamId, 'sibling-cid');
+		let row = await db.query<{ container_id: string | null }>(
+			'SELECT container_id FROM projects WHERE id = $1',
 			[projectId],
 		);
-		expect(left.rows.map((r) => r.container_id)).toEqual([newId]);
+		expect(row.rows[0].container_id).toBe('named-cid');
+
+		await destroyContainer(deps(docker), projectId, projectSlug, teamId, 'named-cid');
+		row = await db.query<{ container_id: string | null }>(
+			'SELECT container_id FROM projects WHERE id = $1',
+			[projectId],
+		);
+		expect(row.rows[0].container_id).toBeNull();
 	});
 
-	it('keeps the old container when keep-old-containers is enabled', async () => {
+	it('drops the member row even when keep-old-containers spares the container', async () => {
+		// A row pointing at a container this removal retired would hand the next run
+		// exactly what the operator asked to be rid of.
 		await resetContainerRow();
-		await db.query("UPDATE projects SET container_id = 'kept-rebuild-cid' WHERE id = $1", [
-			projectId,
-		]);
+		await db.query(
+			`INSERT INTO container_pool_members (project_id, container_id, state, disk_ceiling_bytes)
+			 VALUES ($1, 'kept-cid', 'idle', 1000000)`,
+			[projectId],
+		);
 		const stopContainer = vi.fn();
 		const removeContainer = vi.fn();
 		const docker = provisioningDocker({
@@ -548,22 +579,27 @@ describe('rebuildContainer', () => {
 		});
 
 		setKeepOldContainers(true);
-		let newId: string;
 		try {
-			newId = await rebuildContainer(deps(docker), await projectRow(), 'lifecycle-coverage-co');
+			await destroyContainer(deps(docker), projectId, projectSlug, teamId, 'kept-cid');
 		} finally {
 			setKeepOldContainers(false);
 		}
 
 		expect(stopContainer).not.toHaveBeenCalled();
 		expect(removeContainer).not.toHaveBeenCalled();
-		expect(newId).toBeTruthy();
-		expect(docker.createContainer).toHaveBeenCalledTimes(1);
+		const left = await db.query('SELECT 1 FROM container_pool_members WHERE container_id = $1', [
+			'kept-cid',
+		]);
+		expect(left.rows.length).toBe(0);
 	});
 
-	it('tolerates stop/remove failures on the old container and still provisions', async () => {
+	it('tolerates a container the engine has already lost', async () => {
 		await resetContainerRow();
-		await db.query("UPDATE projects SET container_id = 'half-gone-cid' WHERE id = $1", [projectId]);
+		await db.query(
+			`INSERT INTO container_pool_members (project_id, container_id, state, disk_ceiling_bytes)
+			 VALUES ($1, 'half-gone-cid', 'idle', 1000000)`,
+			[projectId],
+		);
 		const docker = provisioningDocker({
 			stopContainer: vi.fn(async () => {
 				throw new Error('already stopped');
@@ -574,28 +610,12 @@ describe('rebuildContainer', () => {
 			containerLogs: vi.fn(async () => null),
 		});
 
-		const newId = await rebuildContainer(deps(docker), await projectRow(), 'lifecycle-coverage-co');
+		await destroyContainer(deps(docker), projectId, projectSlug, teamId, 'half-gone-cid');
 
-		expect(newId).toBeTruthy();
-		expect(docker.createContainer).toHaveBeenCalledTimes(1);
-		const row = await db.query<{ container_id: string; container_status: string }>(
-			'SELECT container_id, container_status FROM projects WHERE id = $1',
-			[projectId],
-		);
-		expect(row.rows[0].container_id).toBe(newId);
-		expect(row.rows[0].container_status).toBe('running');
-	});
-
-	it('provisions directly when there is no previous container', async () => {
-		await resetContainerRow();
-		const stopContainer = vi.fn();
-		const docker = provisioningDocker({ stopContainer });
-
-		const newId = await rebuildContainer(deps(docker), await projectRow(), 'lifecycle-coverage-co');
-
-		expect(stopContainer).not.toHaveBeenCalled();
-		expect(docker.createContainer).toHaveBeenCalledTimes(1);
-		expect(newId).toBeTruthy();
+		const left = await db.query('SELECT 1 FROM container_pool_members WHERE container_id = $1', [
+			'half-gone-cid',
+		]);
+		expect(left.rows.length).toBe(0);
 	});
 });
 

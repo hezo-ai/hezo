@@ -52,12 +52,12 @@ import {
 	type ContainerDeps,
 	type ContainerExitReason,
 	type ContainerTransition,
+	destroyContainer,
 	ensureProjectContainerRunning,
 	failProjectRuns,
 	findIdleContainerCandidates,
 	isProjectIdleForContainerStop,
 	provisionContainer,
-	rebuildContainer,
 	reconcilePoolMembers,
 	stopContainerGracefully,
 	syncAllContainerStatuses,
@@ -1053,27 +1053,22 @@ export class JobManager {
 			if (ok) continue;
 
 			log.warn(
-				`Container ${ref(row.slug, row.container_id.slice(0, 12))} for project ${ref(row.slug, row.id)} has unreachable /workspace mount — rebuilding`,
+				`Container ${ref(row.slug, row.container_id.slice(0, 12))} for project ${ref(row.slug, row.id)} has unreachable /workspace mount — removing`,
 			);
+			// Removed, not replaced. Provisioning a fresh container here would race
+			// the pool, which provisions one anyway on the next run that needs one -
+			// and eagerly rebuilding meant a stale mount on an idle project paid for
+			// a container nobody was waiting on.
 			try {
-				await rebuildContainer(
+				await destroyContainer(
 					this.buildContainerDeps(),
-					{
-						id: row.id,
-						team_id: row.team_id,
-						slug: row.slug,
-						docker_base_image: row.docker_base_image,
-						container_id: row.container_id,
-						container_status: row.container_status,
-						dev_ports: row.dev_ports ?? [],
-					},
-					row.team_slug,
-				);
-				log.info(
-					`Rebuilt container for project ${ref(row.slug, row.id)} after stale-mount detection`,
+					row.id,
+					row.slug,
+					row.team_id,
+					row.container_id,
 				);
 			} catch (err) {
-				log.error(`Failed to rebuild stale container for project ${ref(row.slug, row.id)}:`, err);
+				log.error(`Failed to remove stale container for project ${ref(row.slug, row.id)}:`, err);
 			}
 		}
 	}
