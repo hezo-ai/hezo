@@ -3,7 +3,9 @@ import type { Socket } from 'node:net';
 import { connect as netConnect } from 'node:net';
 import { Readable } from 'node:stream';
 import type { ContainerHostMemory } from '@hezo/shared';
+import { trackBackground } from '../lib/background';
 import { getHostMemory } from '../lib/host-memory';
+import { logger } from '../logger';
 import { DockerFrameDecoder, demuxDockerStream } from './docker-frames';
 import { resolvedDockerSocketPath } from './docker-socket';
 import { ExecStreamLostError } from './sandbox/errors';
@@ -16,6 +18,9 @@ import {
 } from './sandbox/proc-scripts';
 import { tarSingleFile, untarFirstFile } from './sandbox/tar';
 import { DockerBinaryFrameDecoder } from './sandbox/tunnel/docker-frames-binary';
+
+const log = logger.child('docker');
+
 import type {
 	ContainerByteChannel,
 	ContainerConfig,
@@ -521,6 +526,74 @@ export class DockerClient implements ContainerEngine {
 	 * passes a much tighter one: it may walk several candidate sockets, and a
 	 * dead path should fail fast rather than multiply the 10s default.
 	 */
+	/**
+	 * The local daemon's own host setup: the embedded build context, the bundled
+	 * image prune, the published agent-base refresh, and the bind-mount probe.
+	 *
+	 * All four are meaningless on a backend that builds from Dockerfile text on
+	 * someone else's machines, which is exactly why they used to sit behind an
+	 * `instanceof DockerClient` check in `startup.ts`. Here the caller asks every
+	 * engine and learns nothing about which one answered.
+	 *
+	 * Imported lazily: this pulls in the image builder and registry, and
+	 * `docker.ts` is on the CLI's import path where none of that is wanted.
+	 */
+	async prepareHost({ dataDir }: { dataDir: string }): Promise<void> {
+		const [
+			{ extractBundledDockerContext },
+			{ pruneStaleBundledImages, refreshPublishedAgentBaseImage, setDockerBaseDir },
+			{ checkContainerMounts },
+		] = await Promise.all([
+			import('./docker-assets'),
+			import('./image-registry'),
+			import('./mount-preflight'),
+		]);
+
+		// A compiled binary has no repo checkout, so extract the embedded agent-base
+		// build context to the data dir and point the image resolver at it. This is
+		// the local-build fallback for when the published-image pull fails, and it's
+		// fast (writing files), so it stays on the critical path. No-op in dev/source
+		// (returns null - the resolver falls back to the repo's docker/ dir).
+		try {
+			const contextDir = await extractBundledDockerContext(dataDir);
+			if (contextDir) setDockerBaseDir(contextDir);
+		} catch (err) {
+			log.error('Failed to extract bundled agent-base build context (continuing):', err);
+		}
+
+		// Backgrounded, all of it: the pull is network-bound and can take minutes on
+		// a cold cache, and none of it may gate the server coming up. Best-effort
+		// anyway - provisioning pulls-then-builds on demand and falls back to a local
+		// build, so a missing or slow refresh self-heals on first use.
+		trackBackground(
+			(async () => {
+				try {
+					const outcome = await pruneStaleBundledImages(this);
+					if (outcome.removed.length > 0 || outcome.skipped.length > 0) {
+						log.info(
+							`bundled-image prune: kept=${outcome.kept.length} removed=${outcome.removed.length} skipped=${outcome.skipped.length}`,
+						);
+					}
+				} catch (err) {
+					log.error('bundled-image prune failed (continuing startup):', err);
+				}
+				try {
+					const refreshed = await refreshPublishedAgentBaseImage(this);
+					if (refreshed) log.info(`refreshed published agent-base image ${refreshed}`);
+				} catch (err) {
+					log.warn('agent-base image refresh failed (continuing startup):', err);
+				}
+				try {
+					await checkContainerMounts({ docker: this, dataDir });
+				} catch (err) {
+					log.info('container mount check failed', {
+						error: err instanceof Error ? err.message : String(err),
+					});
+				}
+			})(),
+		);
+	}
+
 	async ping(timeoutMs: number = DOCKER_REQUEST_TIMEOUT_MS): Promise<boolean> {
 		try {
 			const res = await this.request('GET', '/_ping', undefined, AbortSignal.timeout(timeoutMs));

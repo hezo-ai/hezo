@@ -1074,10 +1074,21 @@ managed backend has no local daemon to find, and walking Colima's and OrbStack's
 paths to tell it so would be noise at best. The failure message names every socket tried
 plus the start command for each runtime it recognised.
 
+**Host setup runs through the seam, not a branch.** `ContainerEngine.prepareHost({ dataDir })`
+is asked of whichever backend is in use, once per boot, and what it does is that backend's
+business: `DockerClient` extracts the embedded agent-base build context, prunes stale bundled
+images, refreshes the published tag and probes its bind mounts, while `DaytonaEngine`
+implements it as an explicit no-op - a sandbox is built from Dockerfile text on the provider's
+machines and has no host image store or binds to touch. `startup()` used to carry two
+`initialEngine instanceof DockerClient` branches doing that work inline, which is the
+capability-branch-above-a-seam the design forbids, and it had already failed silently once:
+callers hold the backend holder's **proxy**, against which `instanceof` is always false, so
+introducing the holder turned the image setup into dead code with nothing logged.
+
 **Container mount preflight.** `services/mount-preflight.ts` runs backgrounded from
-`startup()`, and **only when the engine is `DockerClient`** - it is a question about bind
-mounts of a *host* path, which a managed backend has none of, so asking it there would boot
-a throwaway container on a paid provider to answer something that cannot apply. Agents work
+`DockerClient.prepareHost` - it is a question about bind mounts of a *host* path, which a
+managed backend has none of, so asking it there would boot a throwaway container on a paid
+provider to answer something that cannot apply. Agents work
 on a bind mount of the data dir (workspace / worktrees / previews), and a VM-backed runtime
 only shares the host paths it was configured with - Colima shares `$HOME` **read-only** by
 default - so an otherwise healthy daemon can leave every run failing on its first write. The

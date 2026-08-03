@@ -1033,3 +1033,21 @@ describe('a full provider account', () => {
 		).rejects.toThrow(/bad image ref|400/);
 	});
 });
+
+describe('host setup', () => {
+	it('does nothing, because a managed sandbox has no host state', async () => {
+		// The other half of removing startup's `instanceof DockerClient` branches:
+		// every backend has to answer `prepareHost`, and "nothing to prepare" is a
+		// real answer rather than a reason for the caller to check who it is talking
+		// to. A sandbox is built from Dockerfile text on the provider's machines and
+		// has no binds, so there is no image store or mount to touch here.
+		const { api, rec } = fakeApi();
+		const engine = new DaytonaEngine(api);
+
+		await expect(engine.prepareHost({ dataDir: '/nonexistent' })).resolves.toBeUndefined();
+
+		expect(rec.creates).toEqual([]);
+		expect(rec.started).toEqual([]);
+		expect(rec.destroyed).toEqual([]);
+	});
+});

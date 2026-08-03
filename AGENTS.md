@@ -433,6 +433,29 @@ Agent-run containers run either on the operator's local Docker daemon or on a th
 - **`services/sandbox/<provider>/command.ts`** — pure, testable rendering of an exec into whatever the provider accepts. This is where an argv-to-string translation, a user-switching workaround or a stream-separation trick belongs.
 - **`services/sandbox/<provider>/engine.ts`** — the `ContainerEngine` implementation.
 
+**A backend that needs host-side work gets a seam method, never a branch at the call site.** The rule above is easy to keep while writing an adapter and easy to break while writing a *caller*, because the violation does not look provider-specific - it looks like a type check. `startup.ts` carried two of them:
+
+```ts
+// WRONG - a capability branch above the seam.
+if (initialEngine instanceof DockerClient) {
+    await extractBundledDockerContext(dataDir);   // no image store on a managed backend
+    trackBackground(checkContainerMounts({ docker: initialEngine, dataDir }));  // no binds either
+}
+```
+
+Both existed because the *other* backend cannot do those things, which is exactly the shape the seam is for. The fix is a method every backend answers - `ContainerEngine.prepareHost({ dataDir })`, where `DockerClient` extracts its build context, prunes bundled images, refreshes the published tag and probes its mounts, and `DaytonaEngine` implements it as an explicit no-op with a comment saying why. The caller then does the work unconditionally and learns nothing:
+
+```ts
+await docker.prepareHost({ dataDir: config.dataDir });
+```
+
+Two things make this worth stating rather than leaving to the general rule:
+
+- **`instanceof` evades every grep you would write for the general rule.** It carries no provider *name*, no enum value, no `'daytona'` string - a search for those comes back clean while the branch sits there. Grep for the shape instead: `grep -rn "instanceof DockerClient\|instanceof DaytonaEngine\|=== SandboxBackend\." packages/server/src --include=*.ts` and expect hits **only** in the backend factory and the settings/credential plumbing (`sandbox/open.ts`, `sandbox/backend-store.ts`, `sandbox/switch-backend.ts`, `routes/sandbox-backend-info.ts`), which must name what they construct. A hit anywhere on the run path is a bug.
+- **`instanceof` against the holder is always false**, because callers hold `SandboxBackendHolder.engine`, a proxy. So the branch does not merely couple the caller to a provider, it silently stops running: introducing the holder turned the image setup above into dead code - agent-base was never extracted and stale images were never pruned, with nothing logged. It was caught by `startup-real-docker-branch.test.ts` rather than by anything noticing at runtime. Routing the work through the seam removes the hazard entirely, since a proxy forwards a method call just fine.
+
+Reach for a new `ContainerEngine` method whenever you catch yourself asking *which* backend you have. Adding one is cheap and the compiler finds every implementation for you - including `createStubDocker` and `fake-docker.ts`, which must both answer it (start from a complete stub, never a partial object).
+
 **Runtime-agnostic logic is shared, not reimplemented per adapter.** The in-container `/proc` scan and kill scripts live in `services/sandbox/proc-scripts.ts` and **both** engines run the identical script — only the transport that carries it differs. A second copy of one of those scripts is how the two backends silently drift apart. Same rule for the endpoint map (`sandbox/endpoints.ts`), file access (`sandbox/files.ts`) and the exec handle (`sandbox/handle.ts`).
 
 **Never provision a container with less of a resource than was asked for - refuse instead.** A provider has ceilings (Daytona allocates at most 8 GB of RAM per sandbox) and it is always tempting to clamp a larger request down to what it will give. Don't: the per-container RAM cap is a *guarantee* the rest of the system is sized against - `enforceContainerMemoryLimit` stops a container that exceeds it, and the instance memory budget is spent in units of it - so a container quietly provisioned smaller OOMs partway through a run and reads as an agent failure rather than as the misconfiguration it is. Round *up* when the provider's unit is coarser than the request (a 1.5 GB cap asks for 2 GB, never 1), and throw a named, actionable error when the request exceeds the ceiling (`DaytonaMemoryCapExceededError` is the worked example: it states the request, the ceiling, and which setting to lower). The same holds for disk and CPU. This is the **One mechanism, no silent fallbacks** rule applied to sizing - degrading the allocation is a fallback with a bill and an OOM attached.

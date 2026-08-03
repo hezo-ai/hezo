@@ -207,6 +207,27 @@ export type ProcessEnvMarker = 'HEZO_HEARTBEAT_RUN_ID' | 'HEZO_EXEC_SCOPE_ID';
 export interface ContainerEngine {
 	ping(): Promise<boolean>;
 
+	/**
+	 * Do whatever this backend needs on the **host** before it can serve
+	 * containers, once per boot.
+	 *
+	 * Exists so that startup does not have to ask which backend it is talking to.
+	 * The work is entirely provider-shaped - the local daemon extracts an embedded
+	 * build context, prunes stale bundled images, refreshes the published
+	 * agent-base tag and probes its bind mounts; a service that builds from
+	 * Dockerfile text on someone else's machines has no host state to prepare and
+	 * does nothing. That used to be two `initialEngine instanceof DockerClient`
+	 * branches in `startup.ts`, which is the capability-branch-above-a-seam that
+	 * AGENTS.md forbids - and it had already bitten once: `instanceof` against the
+	 * backend holder's proxy is always false, so introducing the holder silently
+	 * skipped image setup entirely, with nothing saying so.
+	 *
+	 * Best-effort by contract: an implementation reports its own problems and
+	 * resolves. Nothing here may gate the server coming up, and slow work
+	 * (a network pull) belongs in the background rather than on the caller's await.
+	 */
+	prepareHost(opts: { dataDir: string }): Promise<void>;
+
 	imageExists(image: string): Promise<boolean>;
 	inspectImage(image: string): Promise<ImageInfo | null>;
 	removeImage(image: string, force?: boolean): Promise<void>;

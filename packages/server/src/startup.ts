@@ -90,17 +90,10 @@ import { ChatSessionManager } from './services/chat-session-manager';
 import { ContainerLogStreamer } from './services/container-logs';
 import type { ContainerDeps } from './services/containers';
 import { DockerClient } from './services/docker';
-import { extractBundledDockerContext } from './services/docker-assets';
 import { bindSecretsVaultToMasterKey, EgressProxy, loadOrCreateCA } from './services/egress';
 import { ImageBuildTracker, setSharedImageBuildTracker } from './services/image-build-tracker';
-import {
-	pruneStaleBundledImages,
-	refreshPublishedAgentBaseImage,
-	setDockerBaseDir,
-} from './services/image-registry';
 import { JobManager } from './services/job-manager';
 import { LogStreamBroker } from './services/log-stream-broker';
-import { checkContainerMounts } from './services/mount-preflight';
 import { registerGenericOAuthRefresh } from './services/oauth/generic-refresh';
 import { adminPasswordIsSet } from './services/password';
 import { PricingService } from './services/pricing';
@@ -327,59 +320,14 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 
 	// Image management below is Docker's alone - a managed backend builds from a
 	// Dockerfile at sandbox create and has no image store to seed or prune. Keyed
-	// on the engine itself rather than on how it was constructed, so a Docker
-	// engine gets this setup whichever path produced it.
-	// Tested against the **concrete** engine, never the holder's proxy: a proxy is
-	// not an instance of anything, so branching on `docker` here silently skipped
-	// image setup entirely the moment the holder was introduced - agent-base was
-	// never extracted and stale bundled images were never pruned, with nothing
-	// saying so. `startup-real-docker-branch` is what caught it.
-	//
-	// Boot-time only, and knowingly: switching *to* Docker at runtime does not
-	// re-run this. The image resolver falls back to pulling the published image,
-	// so a switched instance still works; it just does not get the local-build
-	// fallback until the next restart.
-	if (initialEngine instanceof DockerClient) {
-		// A compiled binary has no repo checkout, so extract the embedded agent-base
-		// build context to the data dir and point the image resolver at it. This is
-		// the local-build fallback for when the published-image pull fails, and it's
-		// fast (writing files), so it stays on the critical path. No-op in dev/source
-		// (returns null — the resolver falls back to the repo's docker/ dir).
-		try {
-			const contextDir = await extractBundledDockerContext(config.dataDir);
-			if (contextDir) setDockerBaseDir(contextDir);
-		} catch (err) {
-			log.error('Failed to extract bundled agent-base build context (continuing):', err);
-		}
-		// Prune stale bundled images and refresh the published agent-base image (so a
-		// long-running install picks up a newer release's :latest on restart — Docker
-		// caches :latest by name and never refreshes it on its own). The pull is
-		// network-bound and can take minutes on a cold cache, so run it in the
-		// BACKGROUND: it must not gate `serverReady` (the web UI, master-key unlock,
-		// and project creation are all usable without it). It's best-effort anyway —
-		// container provisioning pulls-then-builds on demand and falls back to a local
-		// build, so a missing/slow refresh self-heals on first use. No-op in dev/tests.
-		trackBackground(
-			(async () => {
-				try {
-					const outcome = await pruneStaleBundledImages(docker);
-					if (outcome.removed.length > 0 || outcome.skipped.length > 0) {
-						log.info(
-							`bundled-image prune: kept=${outcome.kept.length} removed=${outcome.removed.length} skipped=${outcome.skipped.length}`,
-						);
-					}
-				} catch (err) {
-					log.error('bundled-image prune failed (continuing startup):', err);
-				}
-				try {
-					const refreshed = await refreshPublishedAgentBaseImage(docker);
-					if (refreshed) log.info(`refreshed published agent-base image ${refreshed}`);
-				} catch (err) {
-					log.warn('agent-base image refresh failed (continuing startup):', err);
-				}
-			})(),
-		);
-	}
+	// Host-side setup, asked of whichever backend is in use. What it does is that
+	// backend's business: the local daemon extracts its embedded build context and
+	// refreshes images, a managed service has no host state and does nothing. This
+	// used to be two `initialEngine instanceof DockerClient` branches - a capability
+	// branch above the seam, which had already silently broken once when the holder
+	// proxy made `instanceof` false and image setup stopped happening at all.
+	await docker.prepareHost({ dataDir: config.dataDir });
+
 	const wsManager = new WebSocketManager();
 	const logs = new LogStreamBroker();
 	logs.setWsManager(wsManager);
@@ -415,23 +363,6 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	// Docker only, and deliberately: the check is about *bind mounts of a host
 	// path*, which a managed backend has none of - its filesystem is the
 	// sandbox's own. Running it there would boot a throwaway container on a paid
-	// provider to answer a question that cannot apply. Tested against the concrete
-	// engine rather than the holder's proxy, for the same reason the image setup
-	// above is.
-	//
-	// The container-to-host connectivity probe that used to sit here is gone: the
-	// container reaches Hezo over its own loopback through the tunnel, so there is
-	// no host firewall or bind-host to detect (see the tunnel section of
-	// .dev/architecture.md).
-	if (initialEngine instanceof DockerClient) {
-		trackBackground(
-			checkContainerMounts({ docker: initialEngine, dataDir: config.dataDir }).catch((err) => {
-				log.info('container mount check failed', {
-					error: err instanceof Error ? err.message : String(err),
-				});
-			}),
-		);
-	}
 	const events = new DomainEventBus();
 	const jobManager = new JobManager({
 		db,

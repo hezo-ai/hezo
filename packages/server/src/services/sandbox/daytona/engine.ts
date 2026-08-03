@@ -227,6 +227,19 @@ export class DaytonaEngine implements ContainerEngine {
 
 	// ---- lifecycle ---------------------------------------------------------
 
+	/**
+	 * Nothing to do. Every host-side preparation the local daemon needs - an
+	 * extracted build context, a bundled-image prune, a published-tag refresh, a
+	 * bind-mount probe - is about images and mounts on *this* machine, and this
+	 * backend has neither: a sandbox is built from Dockerfile text on the
+	 * provider's machines and has no binds at all.
+	 *
+	 * Spelled out rather than left off the class, because the seam asks every
+	 * backend and "this provider genuinely has no host state" is an answer.
+	 * Startup asks unconditionally and learns nothing about which one replied.
+	 */
+	async prepareHost(_opts: { dataDir: string }): Promise<void> {}
+
 	ping(): Promise<boolean> {
 		return this.client.ping();
 	}

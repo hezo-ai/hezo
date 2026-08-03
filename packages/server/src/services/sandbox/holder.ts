@@ -110,6 +110,7 @@ export class SandboxBackendHolder {
 			execInspect: (...a) => e().execInspect(...a),
 			killProcessesByEnvMarker: (...a) => e().killProcessesByEnvMarker(...a),
 			killRunProcesses: (...a) => e().killRunProcesses(...a),
+			prepareHost: (...a) => e().prepareHost(...a),
 			listHezoProcesses: (...a) => e().listHezoProcesses(...a),
 			killPids: (...a) => e().killPids(...a),
 			diskUsedBytes: (...a) => e().diskUsedBytes(...a),

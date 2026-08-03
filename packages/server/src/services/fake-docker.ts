@@ -200,6 +200,8 @@ export function createFakeDockerClient(db?: Db, dataDir?: string): ContainerEngi
 		// every HEZO_SKIP_DOCKER harness.
 		listHezoProcesses: async () => [],
 		killPids: async () => {},
+		// No host state to prepare: there is no daemon behind this.
+		prepareHost: async () => {},
 		// No real filesystem quota behind the fake, so it reports "could not tell"
 		// rather than 0 - a fake claiming an empty disk would make the pool's
 		// recycle rung untestable by asserting the opposite of what it guards.

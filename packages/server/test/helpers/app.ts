@@ -61,6 +61,8 @@ export function stubEngineSeams(): Pick<ContainerEngine, 'files' | 'openExecChan
 
 const STUB_DOCKER_METHODS: ContainerEngine = {
 	ping: async () => true,
+	// No host state behind a stub; the real per-backend work lives in each adapter.
+	prepareHost: async () => {},
 	imageExists: async () => true,
 	pullImage: async () => {},
 	createContainer: async () => ({ Id: 'stub-container', Warnings: [] }),

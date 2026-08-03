@@ -9,10 +9,17 @@ import { getRunSocketDir } from '../src/services/workspace';
 import { type HezoConfig, type StartupResult, startup } from '../src/startup';
 import { testHezoConfig } from './helpers/config';
 
-// Exercises startup()'s REAL-Docker branch (HEZO_SKIP_DOCKER unset): the
-// DockerClient construction, the bundled-context extraction no-op (dev has no
-// embedded docker bundle), and the backgrounded bundled-image prune + published
-// agent-base refresh. No Docker daemon is required — the prune's inspect calls
+// Exercises startup() against a REAL DockerClient (HEZO_SKIP_DOCKER unset): the
+// client's construction, and the host setup it does through `prepareHost` - the
+// bundled-context extraction no-op (dev has no embedded docker bundle) and the
+// backgrounded bundled-image prune + published agent-base refresh.
+//
+// There is no longer a *branch* to exercise. Startup used to ask
+// `initialEngine instanceof DockerClient` before doing any of this, which is the
+// capability-branch-above-a-seam AGENTS.md forbids - and which had already broken
+// silently once, when the backend holder's proxy made that `instanceof` false and
+// image setup stopped happening with nothing saying so. This test is what caught
+// it then; it still covers the same work, now reached through the seam. No Docker daemon is required — the prune's inspect calls
 // fail against the missing socket and are skipped per image (that warn is the
 // asserted error path here), and the published-image refresh is a no-op outside
 // a packaged build. The bind-mount probe is skipped via its documented opt-out so
