@@ -86,7 +86,7 @@ service in use and shows which of the two rules applies.
 **Your provider account, which Hezo cannot see.** Providers cap how much memory and disk
 your organisation may hold across all sandboxes at once, and on a small plan that ceiling
 is reached well before Hezo's memory budget is. Hezo keeps admitting runs the provider
-then refuses, and the refusal surfaces on the project's Container page naming the
+then refuses, and the refusal surfaces as a container error on the project, naming the
 provider's limit.
 
 To size the budget so this does not happen, divide your plan's total memory **and** its
@@ -104,7 +104,7 @@ of the system is sized against that promise.
 - **Disk is finite, and you choose how much.** A local workspace has your whole disk behind
   it; a sandbox gets exactly what Hezo asks for. **Disk per container** in Settings ->
   Containers sets that (5 GB by default), and a project that needs more can override it on
-  its own Container page - the same shape as the RAM cap. Hezo prunes worktrees for closed
+  its own Containers page - the same shape as the RAM cap. Hezo prunes worktrees for closed
   tasks and replaces a container that fills most of its allocation, so a run never runs out
   of space partway through.
 

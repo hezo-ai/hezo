@@ -6,8 +6,8 @@ section: Containers
 
 # Containers
 
-Agents write and run real code. Hezo never runs that code on your host: **every project
-gets its own container, and agents only ever work inside it.**
+Agents write and run real code. Hezo never runs that code on your host: **agents only ever
+work inside a container, and a container is only ever used by one project.**
 
 That single decision is what makes the rest of the product safe to use. A container is
 the boundary between an agent's work and everything else you own, and it is also the unit
@@ -49,7 +49,15 @@ container warm between one run and the next in the same project. Because contain
 stay up between bursts, they are not a place to run a long-lived dev or preview server.
 
 Each container serves one run at a time, which is why a problem in one run stays in one
-run.
+run. A project therefore has as many containers as it has runs going at once - two agents
+working in the same project get a container each - and they all go away when the work does.
+
+**Settings -> Containers lists every container running on your instance**, whichever
+project it belongs to and whatever state it is in, with the task it last served. Open one
+to see its output, including the output it captured on the way down if it failed. The only
+action there is **Remove**, which is the fix for a container that has wedged: Hezo starts a
+fresh one the next time a run needs it. Removing a container that is running a task ends
+that task's run, and the confirmation says so.
 
 ## Choosing where containers run
 
@@ -88,9 +96,8 @@ Three things happen, in this order, and the order is the point:
    unreachable, the switch is refused and you stay exactly where you were. Nothing is
    destroyed before the new service has answered.
 2. **Every container running at that moment is destroyed.** Agent runs in progress end and
-   are reported as failed on their project's Container page, and can be started again once
-   the switch is done. Hezo tells you how many containers and how many runs that is before
-   you confirm.
+   are reported as failed, and can be started again once the switch is done. Hezo tells you
+   how many containers and how many runs that is before you confirm.
 3. **New runs provision on the new service.**
 
 Containers cannot be moved between services, which is why the switch destroys rather than
@@ -151,12 +158,12 @@ consume:
   limit on the *number* of containers: how many fit follows from this budget and the cap
   below.
 - **RAM cap per container** - the memory limit applied to every container (2 GB by
-  default). A project that needs more can override it on its own Container page. A
+  default). A project that needs more can override it on its own Containers page. A
   container over its cap is stopped, or has its biggest process killed by the kernel,
   rather than taking down anything else.
 - **Disk per container** - how much disk each container is given for its checkouts,
   dependencies and build output (5 GB by default). Like the RAM cap, a project that needs
-  more can override it on its own Container page. A container that fills most of its
+  more can override it on its own Containers page. A container that fills most of its
   allocation is replaced rather than reused, so a run never runs out of space partway
   through. This only allocates anything where the container service gives each container
   its own filesystem: on [local Docker](/docs/containers/local-docker) a container's

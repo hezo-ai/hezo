@@ -36,7 +36,7 @@ the assistant chat always starts.
 
 You can set the total explicitly in **Settings -> Containers** if you would rather keep
 more headroom, and a project that needs a bigger container than the 2 GB default can raise
-its own cap on its Container page.
+its own cap on its Containers page.
 
 Because the budget is derived from your machine, it follows the machine. Move Hezo to a
 larger host and the automatic figure grows with it.

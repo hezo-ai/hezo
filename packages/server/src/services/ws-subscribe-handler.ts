@@ -58,20 +58,38 @@ export async function handleWsSubscribe(
 
 	const logsMatch = room.match(/^container-logs:(.+)$/);
 	if (logsMatch && deps.db && deps.docker) {
-		const projectId = logsMatch[1];
-		const project = await deps.db.query<{
-			container_id: string | null;
-			team_id: string;
-			container_status: string | null;
-		}>('SELECT container_id, team_id, container_status FROM projects WHERE id = $1', [projectId]);
-		if (project.rows.length === 0) return;
-		const row = project.rows[0];
+		// The room names a **container**, so the project has to be resolved from it
+		// to run the team check. Both representations are asked, in the order that
+		// makes the newer one win: a pool member is the authoritative record, and
+		// `projects.container_id` still names a container during provisioning before
+		// its member row exists.
+		const containerId = logsMatch[1];
+		const owner = await deps.db.query<{ project_id: string; team_id: string; live: boolean }>(
+			`SELECT p.id AS project_id, p.team_id,
+			        m.state IN ('idle', 'busy') AS live
+			   FROM container_pool_members m JOIN projects p ON p.id = m.project_id
+			  WHERE m.container_id = $1
+			  UNION
+			 SELECT p.id, p.team_id, p.container_status = 'running'
+			   FROM projects p WHERE p.container_id = $1
+			  LIMIT 1`,
+			[containerId],
+		);
+		const row = owner.rows[0];
+		// An unknown container is refused rather than subscribed to an empty room:
+		// a client watching a room nothing will ever publish to looks identical to
+		// one watching a quiet container.
+		if (!row) return;
 		const allowed = await deps.canAccessTeam(ws.data.auth, row.team_id);
 		if (!allowed) return;
 
 		deps.wsManager.subscribe(ws, room);
-		if (row.container_id && row.container_status === 'running' && deps.logs) {
-			deps.containerLogStreamer.subscribe(projectId, row.container_id, deps.logs, deps.docker);
+		// Only a container that is actually up gets a follow stream. A stopped one
+		// has nothing to emit, and opening a second stream into this room would
+		// publish an *empty* replace-snapshot on replay - wiping the provisioning
+		// output the client had just been sent.
+		if (deps.logs && row.live) {
+			deps.containerLogStreamer.subscribe(row.project_id, containerId, deps.logs, deps.docker);
 		}
 		deps.logs?.replay(room, (payload) => {
 			deps.sendToSocket(ws, payload);

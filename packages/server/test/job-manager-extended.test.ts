@@ -1026,10 +1026,14 @@ describe('JobManager — extended coverage', () => {
 			);
 		});
 
-		it('rebuilds a running container whose /workspace mount is unreachable', async () => {
-			// Drop the repo row so the rebuild's downstream bring-up (provisionContainer
-			// → ensureProjectRepos) has nothing to clone — avoids an incidental
-			// repo-sync error from the stubbed exec. Restored below.
+		it('removes a running container whose /workspace mount is unreachable', async () => {
+			// Removed rather than rebuilt: provisioning a replacement here races the
+			// pool, which provisions one on the next run that needs it anyway, and
+			// eagerly rebuilding meant a stale mount on an idle project paid for a
+			// container nobody was waiting on.
+			//
+			// Drop the repo row so nothing downstream reaches for a clone. Restored
+			// below.
 			const savedRepo = await db.query<{ id: string; repo_identifier: string; host_type: string }>(
 				'SELECT id, repo_identifier, host_type::text AS host_type FROM repos WHERE project_id = $1 LIMIT 1',
 				[projectId],
@@ -1046,6 +1050,7 @@ describe('JobManager — extended coverage', () => {
 			// succeeds, so the rebuild completes quietly.
 			let probeExecId = '';
 			let rebuilt = false;
+			const removed: string[] = [];
 			const manager = createJobManager({
 				docker: createStubDocker({
 					execCreate: async (_id: string, opts: { Cmd: string[] }) => {
@@ -1064,6 +1069,9 @@ describe('JobManager — extended coverage', () => {
 						rebuilt = true;
 						return { Id: 'rebuilt-box', Warnings: [] };
 					},
+					removeContainer: async (id: string) => {
+						removed.push(id);
+					},
 				}),
 			});
 
@@ -1073,7 +1081,8 @@ describe('JobManager — extended coverage', () => {
 				(manager as unknown as { deps: { docker: unknown } }).deps.docker,
 			);
 
-			expect(rebuilt).toBe(true);
+			expect(removed).toContain('stale-box');
+			expect(rebuilt).toBe(false);
 
 			// Restore the repo row + designation for the rest of the suite.
 			const r = await db.query<{ id: string }>(

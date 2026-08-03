@@ -276,14 +276,14 @@ describe('provisionContainer', () => {
 
 		expect(subscribe).toHaveBeenCalledWith(projectId, id, logs, docker);
 
-		const text = logs.getLogText(`provision:${projectId}`);
+		const text = logs.getLogText(`provision:${id}`);
 		expect(text).toContain('→ Preparing workspace');
 		expect(text).toContain('→ Starting container');
 		expect(text).toContain('✓ Container ready');
 
 		// A late subscriber replay gets the buildSnapshot message with replace: true.
 		const snapshots: Array<Record<string, unknown>> = [];
-		logs.replay(`container-logs:${projectId}`, (payload) =>
+		logs.replay(`container-logs:${id}`, (payload) =>
 			snapshots.push(payload as Record<string, unknown>),
 		);
 		expect(snapshots).toHaveLength(1);
@@ -339,7 +339,7 @@ describe('provisionContainer', () => {
 			};
 		};
 
-		await provisionContainer(
+		const id = await provisionContainer(
 			baseDeps(docker, { logs, egressCAPath }),
 			await projectRow(),
 			teamSlug,
@@ -359,7 +359,7 @@ describe('provisionContainer', () => {
 		);
 		expect(caExec).toBeDefined();
 
-		const text = logs.getLogText(`provision:${projectId}`);
+		const text = logs.getLogText(`provision:${id}`);
 		expect(text).toContain('→ Trusting Hezo egress CA');
 		expect(text).toContain('ca-store warning line');
 	});
@@ -369,7 +369,7 @@ describe('provisionContainer', () => {
 		const { docker, created } = recordingDocker();
 		const logs = new LogStreamBroker();
 
-		await provisionContainer(
+		const id = await provisionContainer(
 			baseDeps(docker, { logs, detectEgressMtu: async () => 1420 }),
 			await projectRow(),
 			teamSlug,
@@ -390,7 +390,7 @@ describe('provisionContainer', () => {
 			'mtu',
 			'1420',
 		]);
-		expect(logs.getLogText(`provision:${projectId}`)).toContain('pinning container MTU to 1420');
+		expect(logs.getLogText(`provision:${id}`)).toContain('pinning container MTU to 1420');
 	});
 
 	it('leaves MTU untouched and grants only base capabilities on a normal (>=1500) egress host', async () => {
@@ -466,7 +466,7 @@ describe('provisionContainer', () => {
 		// works for everything that does not transit the proxy, and failing the
 		// whole provision would be a worse trade than saying so here.
 		expect(id).toBeTruthy();
-		const text = logs.getLogText(`provision:${projectId}`);
+		const text = logs.getLogText(`provision:${id}`);
 		expect(text).toContain('⚠ installing the egress CA failed: exec transport down');
 		const row = await db.query<{ container_status: string }>(
 			'SELECT container_status FROM projects WHERE id = $1',
@@ -495,7 +495,7 @@ describe('provisionContainer', () => {
 			);
 
 			expect(id).toBeTruthy();
-			const text = logs.getLogText(`provision:${projectId}`);
+			const text = logs.getLogText(`provision:${id}`);
 			expect(text).toContain('→ Syncing project repos');
 			expect(text).toContain('coverage-repo');
 			expect(text).toContain('⚠ 1 repo(s) failed to clone');
@@ -539,7 +539,7 @@ describe('provisionContainer', () => {
 		expect(identity).toEqual({ teamId, agentId: 'host', label: 'provision-git' });
 		// The short-lived bridge is always released, even with no repos to sync.
 		expect(releaseRunSocket).toHaveBeenCalledWith(runId);
-		expect(logs.getLogText(`provision:${projectId}`)).toContain('→ Syncing project repos');
+		expect(logs.getLogText(`provision:${id}`)).toContain('→ Syncing project repos');
 	});
 
 	it('reports failed local MCP installs without failing the provision', async () => {
@@ -553,9 +553,9 @@ describe('provisionContainer', () => {
 			const { docker } = recordingDocker();
 			const logs = new LogStreamBroker();
 
-			await provisionContainer(baseDeps(docker, { logs }), await projectRow(), teamSlug);
+			const id = await provisionContainer(baseDeps(docker, { logs }), await projectRow(), teamSlug);
 
-			const text = logs.getLogText(`provision:${projectId}`);
+			const text = logs.getLogText(`provision:${id}`);
 			expect(text).toContain('→ Installing pending local MCP servers');
 			expect(text).toContain('⚠ 1 MCP server install(s) failed');
 
@@ -593,8 +593,10 @@ describe('provisionContainer', () => {
 		expect(row.rows[0].container_status).toBe('error');
 		expect(row.rows[0].container_error).toContain('no space left on device');
 
-		const text = logs.getLogText(`provision:${projectId}`);
-		expect(text).toContain('✗ Provisioning failed: no space left on device');
+		// No log assertion here, deliberately: the failure landed before the engine
+		// returned an id, so there is no container to attach output to and the
+		// provisioning stream was never opened. `projects.container_error` above is
+		// what carries the reason, and it is what the banner reads.
 
 		// creating → error transitions were both broadcast.
 		const statuses = wsManager.broadcast.mock.calls.map(

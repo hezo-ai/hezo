@@ -122,6 +122,12 @@ describe('message catalogs', () => {
 		// Dutch really does write "containers" - the loanword, plural and all.
 		// Every other language differs (Container, Conteneurs, Contêineres, ...).
 		'settings.concurrency': ['nl'],
+		'containers.tab.list': ['nl'],
+		// The singular is the same loanword in these four; French and the rest
+		// differ (Conteneur, Contêiner, Kontener, ...).
+		'containers.column.container': ['de', 'it', 'nl', 'sv'],
+		'containers.column.project': ['nl'],
+		'containers.badge.assistant': ['fr'],
 		'setup.step.password': ['it'],
 		// "Audio" and "Video" are the same loanword in these languages, colon and
 		// all - German, Spanish, Italian and Dutch all write Audio; German, Italian,

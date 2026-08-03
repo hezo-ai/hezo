@@ -12,27 +12,26 @@ import {
 	usableMemoryGibForContainers,
 } from '@hezo/shared';
 import { createFileRoute } from '@tanstack/react-router';
-import { Loader2 } from 'lucide-react';
+import { ChevronDown, Loader2 } from 'lucide-react';
 import { useState } from 'react';
-import { Button } from '../../components/ui/button';
-import { ConfirmDialog } from '../../components/ui/confirm-dialog';
-import { InfoTooltip } from '../../components/ui/info-tooltip';
-import { Input } from '../../components/ui/input';
+import { Button } from '../../../components/ui/button';
+import { ConfirmDialog } from '../../../components/ui/confirm-dialog';
+import { Input } from '../../../components/ui/input';
+import { SearchableSelect } from '../../../components/ui/searchable-select';
 import {
 	type InstanceSettings,
 	useInstanceSettings,
 	useUpdateInstanceSettings,
-} from '../../hooks/use-instance-settings';
-import { useMe } from '../../hooks/use-me';
+} from '../../../hooks/use-instance-settings';
 import {
 	type SandboxBackendInfo,
 	useSandboxBackendInfo,
 	useSwitchSandboxBackend,
-} from '../../hooks/use-sandbox-backend-info';
-import { toast } from '../../hooks/use-toast';
-import type { ApiError } from '../../lib/api';
-import { type MessageKey, useI18n } from '../../lib/i18n';
-import { backendDisplayName } from '../../lib/sandbox-backend';
+} from '../../../hooks/use-sandbox-backend-info';
+import { toast } from '../../../hooks/use-toast';
+import type { ApiError } from '../../../lib/api';
+import { type MessageKey, useI18n } from '../../../lib/i18n';
+import { backendDisplayName } from '../../../lib/sandbox-backend';
 
 const GIB = 1024 ** 3;
 
@@ -63,6 +62,28 @@ const BACKEND_NOTE: Record<SandboxBackend, MessageKey | null> = {
 	[SandboxBackend.Docker]: 'concurrency.backend.dockerNote',
 	[SandboxBackend.Daytona]: 'concurrency.backend.daytonaNote',
 };
+
+/**
+ * The one line under each option in the Change dropdown.
+ *
+ * Deliberately not `BACKEND_NOTE` above: that explains what the *budget* means
+ * on a backend already in use, which is a paragraph and reads as a warning. This
+ * says what the option **is**, which is what someone choosing needs - and for
+ * the local one it is the part that has been wrong: it is Docker or anything
+ * Docker-compatible, not Docker specifically.
+ */
+const BACKEND_OPTION_HINT: Record<SandboxBackend, MessageKey | null> = {
+	[SandboxBackend.Docker]: 'settings.sandboxBackend.dockerHint',
+	[SandboxBackend.Daytona]: null,
+};
+
+function backendOptionHint(
+	backend: SandboxBackend,
+	t: (key: MessageKey) => string,
+): string | undefined {
+	const key = BACKEND_OPTION_HINT[backend];
+	return key ? t(key) : undefined;
+}
 
 /**
  * Which backend is running the containers these limits apply to, and what it
@@ -130,28 +151,47 @@ function BackendSwitcher({ info }: { info: SandboxBackendInfo }) {
 		}
 	}
 
+	// One row of equal-looking buttons could not say which service was in use -
+	// the current one was merely disabled, which reads as "unavailable" at least
+	// as readily as "already selected". State the answer, then offer the change.
+	const options = info.available.map((backend) => ({
+		value: backend,
+		label: backendDisplayName(backend, t),
+		description: backendOptionHint(backend, t),
+	}));
+
 	return (
 		<>
-			<div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-				{info.available.map((backend) => {
-					const current = backend === info.backend;
-					return (
-						<Button
-							key={backend}
-							size="sm"
-							variant={current ? 'primary' : 'outline'}
-							disabled={current || switchBackend.isPending}
-							data-testid={`backend-select-${backend}`}
-							onClick={() => {
-								setApiKey('');
-								setError(null);
-								setTarget(backend);
-							}}
+			<div className="flex flex-wrap items-center gap-2">
+				<span className="text-[13px] text-text-2">{t('containers.backend.current')}</span>
+				<span className="text-[13px] font-medium" data-testid="backend-current">
+					{backendDisplayName(info.backend, t)}
+				</span>
+				<SearchableSelect
+					// Two or three services is a list to pick from, not one to search.
+					searchable={false}
+					options={options}
+					value={info.backend}
+					onChange={(backend) => {
+						setApiKey('');
+						setError(null);
+						setTarget(backend as SandboxBackend);
+					}}
+					disabled={switchBackend.isPending}
+					align="start"
+					testId="backend-change"
+					trigger={
+						<button
+							type="button"
+							data-testid="backend-change"
+							disabled={switchBackend.isPending}
+							className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2.5 py-1 text-[13px] text-text-1 hover:border-border-strong disabled:opacity-50 cursor-pointer"
 						>
-							{backendDisplayName(backend, t)}
-						</Button>
-					);
-				})}
+							{t('containers.backend.change')}
+							<ChevronDown className="w-3.5 h-3.5 text-text-3" />
+						</button>
+					}
+				/>
 			</div>
 
 			<ConfirmDialog
@@ -270,82 +310,73 @@ function Points({
 	);
 }
 
-function ConcurrencySettingsPage() {
+/**
+ * The limits tab: what a container gets, and where containers run.
+ *
+ * The page header, the superuser gate and the tabs live in the layout route
+ * beside this one - they are shared with the container list, and duplicating a
+ * gate is how one of two surfaces ends up ungated.
+ */
+function ContainerSettingsTab() {
 	const { t } = useI18n();
-	const { data: me } = useMe();
 	const { data: settings } = useInstanceSettings();
 
-	const content =
-		me && !me.is_superuser ? (
-			<p className="text-[13px] text-text-2">{t('concurrency.adminOnly')}</p>
-		) : (
-			<>
-				<div className="mb-5">
-					<div className="flex items-center gap-1.5">
-						<h1 className="text-[22px] font-medium">{t('settings.concurrency')}</h1>
-						<InfoTooltip
-							label={t('concurrency.about.label')}
-							content={t('concurrency.about.content')}
-							data-testid="concurrency-info"
-						/>
-					</div>
-					<p className="text-[13px] text-text-2 mt-1 max-w-[680px]">{t('concurrency.intro')}</p>
-					<ContainerBackendNote />
-				</div>
+	return (
+		<div className="max-w-[900px]">
+			<ContainerBackendNote />
+			<div className="mb-4" />
 
-				<ContainerBackendSection />
+			<ContainerBackendSection />
 
-				<section className="border border-border rounded-md p-4 bg-surface mb-4">
-					<label
-						className="block text-[13px] font-medium mb-1"
-						htmlFor="container-memory-budget-input"
-					>
-						{t('concurrency.memoryBudget.label')}
-					</label>
-					<Points
-						keys={MAX_CONTAINERS_POINTS}
-						vars={{
-							min: MAX_CONTAINER_MEMORY_GB_MIN,
-							max: MAX_CONTAINER_MEMORY_GB_MAX,
-							reserved: HOST_RESERVED_MEMORY_GB,
-						}}
-					/>
-					{settings === undefined ? null : <ContainerMemoryBudgetForm settings={settings} />}
-				</section>
+			<section className="border border-border rounded-md p-4 bg-surface mb-4">
+				<label
+					className="block text-[13px] font-medium mb-1"
+					htmlFor="container-memory-budget-input"
+				>
+					{t('concurrency.memoryBudget.label')}
+				</label>
+				<Points
+					keys={MAX_CONTAINERS_POINTS}
+					vars={{
+						min: MAX_CONTAINER_MEMORY_GB_MIN,
+						max: MAX_CONTAINER_MEMORY_GB_MAX,
+						reserved: HOST_RESERVED_MEMORY_GB,
+					}}
+				/>
+				{settings === undefined ? null : <ContainerMemoryBudgetForm settings={settings} />}
+			</section>
 
-				<section className="border border-border rounded-md p-4 bg-surface mb-4">
-					<label className="block text-[13px] font-medium mb-1" htmlFor="ram-cap-input">
-						{t('concurrency.ramCap.label')}
-					</label>
-					<Points
-						keys={RAM_CAP_POINTS}
-						vars={{
-							min: RAM_CAP_PER_CONTAINER_GB_MIN,
-							max: RAM_CAP_PER_CONTAINER_GB_MAX,
-							default: DEFAULT_RAM_CAP_PER_CONTAINER_GB,
-						}}
-					/>
-					{settings === undefined ? null : <RamCapForm settings={settings} />}
-				</section>
+			<section className="border border-border rounded-md p-4 bg-surface mb-4">
+				<label className="block text-[13px] font-medium mb-1" htmlFor="ram-cap-input">
+					{t('concurrency.ramCap.label')}
+				</label>
+				<Points
+					keys={RAM_CAP_POINTS}
+					vars={{
+						min: RAM_CAP_PER_CONTAINER_GB_MIN,
+						max: RAM_CAP_PER_CONTAINER_GB_MAX,
+						default: DEFAULT_RAM_CAP_PER_CONTAINER_GB,
+					}}
+				/>
+				{settings === undefined ? null : <RamCapForm settings={settings} />}
+			</section>
 
-				<section className="border border-border rounded-md p-4 bg-surface mb-4">
-					<label className="block text-[13px] font-medium mb-1" htmlFor="container-disk-input">
-						{t('concurrency.diskSize.label')}
-					</label>
-					<Points
-						keys={DISK_SIZE_POINTS}
-						vars={{
-							min: CONTAINER_DISK_GB_MIN,
-							max: CONTAINER_DISK_GB_MAX,
-							default: DEFAULT_CONTAINER_DISK_GB,
-						}}
-					/>
-					{settings === undefined ? null : <ContainerDiskForm settings={settings} />}
-				</section>
-			</>
-		);
-
-	return <div className="max-w-[900px]">{content}</div>;
+			<section className="border border-border rounded-md p-4 bg-surface mb-4">
+				<label className="block text-[13px] font-medium mb-1" htmlFor="container-disk-input">
+					{t('concurrency.diskSize.label')}
+				</label>
+				<Points
+					keys={DISK_SIZE_POINTS}
+					vars={{
+						min: CONTAINER_DISK_GB_MIN,
+						max: CONTAINER_DISK_GB_MAX,
+						default: DEFAULT_CONTAINER_DISK_GB,
+					}}
+				/>
+				{settings === undefined ? null : <ContainerDiskForm settings={settings} />}
+			</section>
+		</div>
+	);
 }
 
 function ContainerMemoryBudgetForm({ settings }: { settings: InstanceSettings }) {
@@ -524,8 +555,8 @@ function RamCapForm({ settings }: { settings: InstanceSettings }) {
 	);
 }
 
-export const Route = createFileRoute('/settings/containers')({
-	component: ConcurrencySettingsPage,
+export const Route = createFileRoute('/settings/containers/settings')({
+	component: ContainerSettingsTab,
 });
 
 /**

@@ -1147,13 +1147,16 @@ describe('provisionContainer broadcasting', () => {
 			await db.query<ProjectRow>('SELECT * FROM projects WHERE id = $1', [projectId])
 		).rows[0];
 
-		await provisionContainer(
+		const containerId = await provisionContainer(
 			{ db, docker: mockDocker, dataDir, wsManager: mockWsManager, logs },
 			project,
 			'container-sync-co',
 		);
 
-		const logRoom = `container-logs:${projectId}`;
+		// The room names the container, not its project: a project holds as many
+		// containers as it has concurrent runs, and a project-keyed room interleaved
+		// their provisioning output into one stream.
+		const logRoom = `container-logs:${containerId}`;
 		// Log frames are coalesced on a short window, and the provisioning stream is
 		// never ended (it stays open for replay), so the last batch lands on the
 		// timer rather than synchronously. Read lines, not frames: a frame's text
@@ -1201,19 +1204,21 @@ describe('provisionContainer broadcasting', () => {
 			),
 		).rejects.toThrow('boom');
 
-		const logRoom = `container-logs:${projectId}`;
-		// Log frames are coalesced on a short window, and the provisioning stream is
-		// never ended (it stays open for replay), so the last batch lands on the
-		// timer rather than synchronously. Read lines, not frames: a frame's text
-		// carries however many lines the window happened to collect.
+		// The pull failed before the engine returned an id, so there is no container
+		// to attach output to and no room to publish into. The reason is carried by
+		// `projects.container_error`, which is what the banner reads.
 		await waitForLogBatch();
-		const logLines = mockWsManager.broadcast.mock.calls
-			.filter(([room]: [string]) => room === logRoom)
-			.flatMap(([, event]: [string, any]) => (event.text as string).split('\n'));
-
-		expect(logLines.some((line: string) => line.includes('✗ Provisioning failed: boom'))).toBe(
-			true,
+		const containerRooms = mockWsManager.broadcast.mock.calls.filter(([room]: [string]) =>
+			room.startsWith('container-logs:'),
 		);
+		expect(containerRooms).toHaveLength(0);
+
+		const row = await db.query<{ container_status: string; container_error: string | null }>(
+			'SELECT container_status::text AS container_status, container_error FROM projects WHERE id = $1',
+			[projectId],
+		);
+		expect(row.rows[0].container_status).toBe('error');
+		expect(row.rows[0].container_error).toContain('boom');
 	});
 });
 

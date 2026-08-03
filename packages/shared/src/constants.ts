@@ -341,6 +341,15 @@ export const wsRoom = {
 	 */
 	imageBuilds: () => 'image-builds',
 	/**
+	 * One container's log stream.
+	 *
+	 * Keyed on the **container**, not the project that owns it. A project holds as
+	 * many containers as it has concurrent runs, so a project-keyed room merged
+	 * several containers' output into one stream and attributed it to whichever
+	 * container the page happened to be showing.
+	 */
+	containerLogs: (containerId: string) => `container-logs:${containerId}`,
+	/**
 	 * The single global project-index room. A project is created in a brand-new
 	 * team whose `team:<id>` room no client has joined yet (and whose row isn't in
 	 * the cached index to resolve a slug from), so a project-INSERT on the team

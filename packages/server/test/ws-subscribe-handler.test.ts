@@ -246,41 +246,113 @@ describe('handleWsSubscribe', () => {
 	});
 
 	it('subscribes to container-logs and replays buffered logs for that room', async () => {
-		const { userId, projectId } = await seedTeamWithProject(db);
+		// The room names a container, not its project - so the handler has to
+		// resolve the owner before it can run the team check at all.
+		const containerId = 'ctr-live';
+		const { userId, projectId } = await seedTeamWithProject(db, { container_id: containerId });
 		const ws = createMockWs({ type: AuthType.Admin, userId });
 
+		// The provisioning stream, which publishes into the same room as the
+		// follow stream the handler starts - so the replay has to survive the
+		// handler opening its own.
 		logs.begin({
-			streamId: `provision:${projectId}`,
-			room: `container-logs:${projectId}`,
+			streamId: `provision:${containerId}`,
+			room: wsRoom.containerLogs(containerId),
 			buildMessage: (line) => ({
 				type: WsMessageType.ContainerLog,
+				containerId,
 				projectId,
 				stream: line.stream,
 				text: line.text,
 			}),
 			buildSnapshot: (text) => ({
 				type: WsMessageType.ContainerLog,
+				containerId,
 				projectId,
 				stream: 'stdout',
 				text,
 				replace: true,
 			}),
 		});
-		logs.emit(`provision:${projectId}`, 'stdout', 'replayed line\n');
+		logs.emit(`provision:${containerId}`, 'stdout', 'replayed line\n');
 
 		const sendToSocket = vi.fn((_s: WsSocket, _payload: unknown) => {});
 
-		await handleWsSubscribe(ws, `container-logs:${projectId}`, deps({ sendToSocket }));
+		await handleWsSubscribe(ws, wsRoom.containerLogs(containerId), deps({ sendToSocket }));
 
-		expect(wsManager.getRoomSize(`container-logs:${projectId}`)).toBe(1);
+		expect(wsManager.getRoomSize(wsRoom.containerLogs(containerId))).toBe(1);
 		expect(sendToSocket).toHaveBeenCalledTimes(1);
 		expect(sendToSocket).toHaveBeenCalledWith(ws, {
 			type: WsMessageType.ContainerLog,
+			containerId,
 			projectId,
 			stream: 'stdout',
 			text: 'replayed line\n',
 			replace: true,
 		});
+	});
+
+	it('resolves a container recorded only as a pool member, and follows it while it is up', async () => {
+		// The other half of the dual representation: once provisioning finishes the
+		// member row is the authoritative record, and a handler reading only
+		// `projects.container_id` would refuse the very containers a run is using.
+		const containerId = 'ctr-pooled';
+		const { userId, projectId } = await seedTeamWithProject(db);
+		await db.query(
+			`INSERT INTO container_pool_members (project_id, container_id, state, disk_ceiling_bytes)
+			 VALUES ($1, $2, 'idle', 1000000)`,
+			[projectId, containerId],
+		);
+		const ws = createMockWs({ type: AuthType.Admin, userId });
+		const followed: string[] = [];
+		const docker = {
+			containerLogs: async (id: string) => {
+				followed.push(id);
+				return new Response(new ReadableStream({ start: (c) => c.close() }));
+			},
+		} as unknown as ContainerEngine;
+
+		await handleWsSubscribe(ws, wsRoom.containerLogs(containerId), deps({ docker }));
+
+		expect(wsManager.getRoomSize(wsRoom.containerLogs(containerId))).toBe(1);
+		expect(followed).toEqual([containerId]);
+	});
+
+	it('does not open a follow stream for a container that is not running', async () => {
+		// A suspended container has nothing to emit, and a second stream in this
+		// room replays an *empty* replace-snapshot that wipes the provisioning
+		// output the client was just sent.
+		const containerId = 'ctr-suspended';
+		const { userId, projectId } = await seedTeamWithProject(db);
+		await db.query(
+			`INSERT INTO container_pool_members (project_id, container_id, state, disk_ceiling_bytes)
+			 VALUES ($1, $2, 'suspended', 1000000)`,
+			[projectId, containerId],
+		);
+		const ws = createMockWs({ type: AuthType.Admin, userId });
+		const followed: string[] = [];
+		const docker = {
+			containerLogs: async (id: string) => {
+				followed.push(id);
+				return new Response(new ReadableStream({ start: (c) => c.close() }));
+			},
+		} as unknown as ContainerEngine;
+
+		await handleWsSubscribe(ws, wsRoom.containerLogs(containerId), deps({ docker }));
+
+		expect(wsManager.getRoomSize(wsRoom.containerLogs(containerId))).toBe(1);
+		expect(followed).toEqual([]);
+	});
+
+	it('refuses a container this instance does not own', async () => {
+		// Subscribing to a room nothing will ever publish to is indistinguishable
+		// from watching a quiet container, so an unknown id is refused outright.
+		const { userId } = await seedTeamWithProject(db);
+		const ws = createMockWs({ type: AuthType.Admin, userId });
+
+		await handleWsSubscribe(ws, wsRoom.containerLogs('ctr-nobody'), deps());
+
+		expect(wsManager.getRoomSize(wsRoom.containerLogs('ctr-nobody'))).toBe(0);
 	});
 
 	it('replays buffered run logs as a single snapshot when subscribing to project-runs', async () => {

@@ -40,7 +40,9 @@ function streamingDocker(chunks: Uint8Array[]): ContainerEngine {
 	} as unknown as ContainerEngine;
 }
 
-const streamId = (projectId: string) => `container:${projectId}`;
+// Keyed on the container, not its project: a project holds several containers
+// and a project-keyed stream merged their output into one.
+const streamId = (containerId: string) => `container:${containerId}`;
 
 describe('ContainerLogStreamer — frame parsing', () => {
 	let streamer: ContainerLogStreamer;
@@ -64,7 +66,7 @@ describe('ContainerLogStreamer — frame parsing', () => {
 		streamer.subscribe('p1', 'c1', logs, docker);
 
 		await vi.waitFor(() => {
-			const text = logs.getLogText(streamId('p1'));
+			const text = logs.getLogText(streamId('c1'));
 			expect(text).toContain('hello world');
 			expect(text).toContain('a warning');
 		});
@@ -77,7 +79,7 @@ describe('ContainerLogStreamer — frame parsing', () => {
 		streamer.subscribe('p2', 'c2', logs, docker);
 
 		await vi.waitFor(() => {
-			expect(logs.getLogText(streamId('p2'))).toContain('split across reads');
+			expect(logs.getLogText(streamId('c2'))).toContain('split across reads');
 		});
 	});
 
@@ -91,7 +93,7 @@ describe('ContainerLogStreamer — frame parsing', () => {
 		streamer.subscribe('p3', 'c3', logs, docker);
 
 		await vi.waitFor(() => {
-			const text = logs.getLogText(streamId('p3'));
+			const text = logs.getLogText(streamId('c3'));
 			expect(text).toContain('line-A');
 			expect(text).toContain('line-B');
 		});
@@ -102,7 +104,7 @@ describe('ContainerLogStreamer — frame parsing', () => {
 		streamer.subscribe('p4', 'c4', logs, docker);
 		// Give the async startStreaming a tick; nothing should be emitted.
 		await new Promise((r) => setTimeout(r, 10));
-		expect(logs.getLogText(streamId('p4'))).toBe('');
+		expect(logs.getLogText(streamId('c4'))).toBe('');
 	});
 
 	it('returns early when the response has no readable body', async () => {
@@ -111,7 +113,7 @@ describe('ContainerLogStreamer — frame parsing', () => {
 		} as unknown as ContainerEngine;
 		streamer.subscribe('p5', 'c5', logs, docker);
 		await new Promise((r) => setTimeout(r, 10));
-		expect(logs.getLogText(streamId('p5'))).toBe('');
+		expect(logs.getLogText(streamId('c5'))).toBe('');
 	});
 
 	it('swallows an AbortError raised mid-stream without rejecting', async () => {
@@ -135,12 +137,12 @@ describe('ContainerLogStreamer — frame parsing', () => {
 
 		streamer.subscribe('p6', 'c6', logs, docker);
 		await vi.waitFor(() => {
-			expect(logs.getLogText(streamId('p6'))).toContain('before abort');
+			expect(logs.getLogText(streamId('c6'))).toContain('before abort');
 		});
 		// Aborting triggers the AbortError path in the reader loop's catch.
-		streamer.unsubscribe('p6');
+		streamer.unsubscribe('c6');
 		// No unhandled rejection / throw escapes; a follow-up unsubscribe is a no-op.
-		expect(() => streamer.unsubscribe('p6')).not.toThrow();
+		expect(() => streamer.unsubscribe('c6')).not.toThrow();
 	});
 
 	it('cleans up the stream when startStreaming rejects (containerLogs throws)', async () => {
@@ -155,22 +157,31 @@ describe('ContainerLogStreamer — frame parsing', () => {
 		// stream. Wait for the rejection to settle, then confirm the broker no
 		// longer reports the stream as active.
 		await vi.waitFor(() => {
-			expect(logs.isActive(streamId('p8'))).toBe(false);
+			expect(logs.isActive(streamId('c8'))).toBe(false);
 		});
-		expect(() => streamer.unsubscribe('p8')).not.toThrow();
+		expect(() => streamer.unsubscribe('c8')).not.toThrow();
 	});
 
 	it('emits a replace-snapshot via buildSnapshot when the room is replayed', async () => {
 		const docker = streamingDocker([frame('stdout', 'snapshot line\n')]);
 		streamer.subscribe('p9', 'c9', logs, docker);
 		await vi.waitFor(() => {
-			expect(logs.getLogText(streamId('p9'))).toContain('snapshot line');
+			expect(logs.getLogText(streamId('c9'))).toContain('snapshot line');
 		});
 
 		const sent: unknown[] = [];
-		logs.replay('container-logs:p9', (payload) => sent.push(payload));
+		logs.replay('container-logs:c9', (payload) => sent.push(payload));
 		expect(sent.length).toBe(1);
-		const snap = sent[0] as { projectId: string; replace: boolean; text: string; stream: string };
+		const snap = sent[0] as {
+			containerId: string;
+			projectId: string;
+			replace: boolean;
+			text: string;
+			stream: string;
+		};
+		// The container identifies the stream; the project rides along so a client
+		// can link back to it.
+		expect(snap.containerId).toBe('c9');
 		expect(snap.projectId).toBe('p9');
 		expect(snap.replace).toBe(true);
 		expect(snap.stream).toBe('stdout');
@@ -181,11 +192,11 @@ describe('ContainerLogStreamer — frame parsing', () => {
 		const docker = streamingDocker([frame('stdout', 'done\n')]);
 		streamer.subscribe('p7', 'c7', logs, docker);
 		await vi.waitFor(() => {
-			expect(logs.getLogText(streamId('p7'))).toContain('done');
+			expect(logs.getLogText(streamId('c7'))).toContain('done');
 		});
 		// After the source stream completes, startStreaming's finally deletes the
 		// entry, so a subsequent unsubscribe is a no-op rather than a double-abort.
 		await new Promise((r) => setTimeout(r, 10));
-		expect(() => streamer.unsubscribe('p7')).not.toThrow();
+		expect(() => streamer.unsubscribe('c7')).not.toThrow();
 	});
 });

@@ -13,7 +13,7 @@ test('concurrency settings page shows the computed default, saves, and resets to
 	setHostMemoryForTest({ totalRamBytes: 1.92 * GIB, totalSwapBytes: 6 * GIB });
 
 	const { findByTestId, findByRole, queryByTestId, user } = await renderApp({
-		initialPath: '/settings/containers',
+		initialPath: '/settings/containers/settings',
 	});
 
 	await findByRole('heading', { name: 'Containers' });
@@ -25,9 +25,11 @@ test('concurrency settings page shows the computed default, saves, and resets to
 	expect(maxInput.value).toBe('5');
 	// The backend running the containers is named, with only its own caveats: the
 	// numbers a provider enforces are its own, and stating one provider's in the
-	// general prose would read as a property of every backend.
+	// general prose would read as a property of every backend. It is named for what
+	// it is - a local container service - rather than for Docker specifically,
+	// since a Docker-compatible runtime is equally supported.
 	const backend = await findByTestId('concurrency-backend');
-	expect(backend.textContent).toContain('Local Docker daemon');
+	expect(backend.textContent).toContain('Local container service');
 	expect(backend.textContent).toContain('share this machine');
 	expect(backend.textContent).not.toContain('Daytona');
 
@@ -66,7 +68,7 @@ test('raising the ram cap lowers the automatic memory budget and persists', asyn
 	setHostMemoryForTest({ totalRamBytes: 1.92 * GIB, totalSwapBytes: 6 * GIB });
 
 	const { findByTestId, findByRole, user } = await renderApp({
-		initialPath: '/settings/containers',
+		initialPath: '/settings/containers/settings',
 	});
 	await findByRole('heading', { name: 'Containers' });
 
@@ -93,16 +95,35 @@ test('raising the ram cap lowers the automatic memory budget and persists', asyn
 	expect(data.max_container_memory_gb).toBe(4);
 });
 
-test('switching the container service warns with real numbers and needs a key', async () => {
-	const { findByTestId, getByTestId, user } = await renderApp({
-		initialPath: '/settings/containers',
+test('the service panel names the current service and offers the rest behind Change', async () => {
+	// The row of equal-looking buttons this replaced could not say which service
+	// was in use: the current one was merely disabled, which reads as
+	// "unavailable" at least as readily as "already selected".
+	const { findByTestId, user } = await renderApp({
+		initialPath: '/settings/containers/settings',
 	});
 
-	// Docker is current, so it is the one option that cannot be chosen again.
-	const docker = (await findByTestId('backend-select-docker')) as HTMLButtonElement;
-	expect(docker.disabled).toBe(true);
+	const current = await findByTestId('backend-current');
+	expect(current.textContent).toBe('Local container service');
 
-	await user.click(await findByTestId('backend-select-daytona'));
+	await user.click(await findByTestId('backend-change'));
+
+	// Radix renders the options into a portal on document.body.
+	const local = await findByTestId('backend-change-option-docker');
+	// The option says what it *is* - not Docker specifically, since anything
+	// Docker-compatible on this machine works the same way.
+	expect(local.textContent).toContain('Local container service');
+	expect(local.textContent).toContain('Docker-compatible');
+	await findByTestId('backend-change-option-daytona');
+});
+
+test('switching the container service warns with real numbers and needs a key', async () => {
+	const { findByTestId, getByTestId, user } = await renderApp({
+		initialPath: '/settings/containers/settings',
+	});
+
+	await user.click(await findByTestId('backend-change'));
+	await user.click(await findByTestId('backend-change-option-daytona'));
 
 	// The confirmation states what will be destroyed rather than warning in the
 	// abstract - a fresh instance has nothing running, and "0" is exactly the
@@ -124,7 +145,7 @@ test('offers the key field even when one is already stored, so an expired key ca
 	// dialog that gave no way to supply a working one. The only escape was a
 	// launch flag, which is not a thing the Containers page should require.
 	const { findByTestId, getByTestId, user } = await renderApp({
-		initialPath: '/settings/containers',
+		initialPath: '/settings/containers/settings',
 		seed: async (ctx) => {
 			// Only existence matters here: `credential_configured` comes from
 			// hasDaytonaApiKey, which never decrypts.
@@ -136,7 +157,8 @@ test('offers the key field even when one is already stored, so an expired key ca
 		},
 	});
 
-	await user.click(await findByTestId('backend-select-daytona'));
+	await user.click(await findByTestId('backend-change'));
+	await user.click(await findByTestId('backend-change-option-daytona'));
 
 	const keyInput = getByTestId('daytona-api-key-input') as HTMLInputElement;
 	expect(keyInput.type).toBe('password');

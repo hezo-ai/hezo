@@ -181,23 +181,44 @@ export async function detectHostEgressMtu(): Promise<number | null> {
 	}
 }
 
-function provisionStreamId(projectId: string): string {
-	return `provision:${projectId}`;
+function provisionStreamId(containerId: string): string {
+	return `provision:${containerId}`;
 }
 
-function beginProvisionStream(logs: LogStreamBroker | undefined, projectId: string): void {
+/**
+ * Provisioning output, streamed to the container it is bringing up.
+ *
+ * **Keyed on the container, which does not exist yet when provisioning starts.**
+ * The stream therefore opens only once the engine has returned an id, and the
+ * lines emitted before that - workspace preparation, and waiting on the shared
+ * base image - are buffered and flushed into it (see `bufferedEmit` in
+ * `provisionContainer`). Nothing is dropped, and nothing is attributed to a
+ * project rather than to the container an operator is actually looking at.
+ *
+ * The alternative, a project-keyed stream, is what this replaced: a project
+ * holds as many containers as it has concurrent runs, so their provisioning
+ * output interleaved into one stream and was shown as whichever container the
+ * page happened to be displaying.
+ */
+function beginProvisionStream(
+	logs: LogStreamBroker | undefined,
+	projectId: string,
+	containerId: string,
+): void {
 	if (!logs) return;
 	logs.begin({
-		streamId: provisionStreamId(projectId),
-		room: `container-logs:${projectId}`,
+		streamId: provisionStreamId(containerId),
+		room: wsRoom.containerLogs(containerId),
 		buildMessage: (line) => ({
 			type: WsMessageType.ContainerLog,
+			containerId,
 			projectId,
 			stream: line.stream,
 			text: line.text,
 		}),
 		buildSnapshot: (text) => ({
 			type: WsMessageType.ContainerLog,
+			containerId,
 			projectId,
 			stream: 'stdout',
 			text,
@@ -361,9 +382,24 @@ export async function provisionContainer(
 	// don't go through the rebuild route (startup repair, self-heal, reprovision).
 	await broadcastProjectUpdate(db, wsManager, teamId, project.id);
 
-	beginProvisionStream(logs, project.id);
-	const streamId = provisionStreamId(project.id);
-	const emit = (stream: 'stdout' | 'stderr', text: string) => logs?.emit(streamId, stream, text);
+	// Held until the engine hands back an id, then flushed into that container's
+	// stream. Bounded by the provisioning sequence itself (a couple of dozen
+	// lines) rather than by anything an agent controls.
+	const preContainer: Array<{ stream: 'stdout' | 'stderr'; text: string }> = [];
+	let streamId: string | null = null;
+	const emit = (stream: 'stdout' | 'stderr', text: string) => {
+		if (streamId === null) {
+			preContainer.push({ stream, text });
+			return;
+		}
+		logs?.emit(streamId, stream, text);
+	};
+	const openStream = (containerId: string) => {
+		beginProvisionStream(logs, project.id, containerId);
+		streamId = provisionStreamId(containerId);
+		for (const line of preContainer) logs?.emit(streamId, line.stream, line.text);
+		preContainer.length = 0;
+	};
 
 	try {
 		emit('stdout', `→ Preparing workspace for ${teamSlug}/${project.slug}`);
@@ -499,6 +535,7 @@ export async function provisionContainer(
 			ExposedPorts: exposedPorts,
 		});
 
+		openStream(Id);
 		emit('stdout', '→ Starting container');
 		await docker.startContainer(Id);
 		if (pinMtu !== null) {

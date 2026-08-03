@@ -117,7 +117,7 @@ three things rather than one.
 - **The container is held open** if the copy could not be made, so the machine holding the
   only version of your work is never recycled while it is the only version.
 
-The project's Container page shows when a project is in this state. The fix is almost always
+The project's Containers page shows when a project is in this state. The fix is almost always
 the connected GitHub account's write access to that repository - once a later run pushes
 successfully, everything clears on its own.
 

@@ -48,6 +48,12 @@ export interface WsConnectedMessage {
 
 export interface WsContainerLogMessage {
 	type: WsMessageType.ContainerLog;
+	/**
+	 * The container this line came from. Was the project, which could not
+	 * distinguish between the several containers a project now holds - so a
+	 * viewer showed one container's output labelled as another's.
+	 */
+	containerId: string;
 	projectId: string;
 	stream: 'stdout' | 'stderr';
 	text: string;

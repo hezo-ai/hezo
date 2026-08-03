@@ -19,7 +19,6 @@ import { Route as SettingsStorageRouteImport } from './routes/settings/storage'
 import { Route as SettingsSkillsRouteImport } from './routes/settings/skills'
 import { Route as SettingsLocaleRouteImport } from './routes/settings/locale'
 import { Route as SettingsCredentialsRouteImport } from './routes/settings/credentials'
-import { Route as SettingsContainersRouteImport } from './routes/settings/containers'
 import { Route as SettingsConnectorsRouteImport } from './routes/settings/connectors'
 import { Route as SettingsChatboxRouteImport } from './routes/settings/chatbox'
 import { Route as SettingsChatChannelsRouteImport } from './routes/settings/chat-channels'
@@ -29,9 +28,13 @@ import { Route as SettingsApiKeysRouteImport } from './routes/settings/api-keys'
 import { Route as SettingsAiProvidersRouteImport } from './routes/settings/ai-providers'
 import { Route as SettingsAdminPasswordRouteImport } from './routes/settings/admin-password'
 import { Route as MarketplaceSlugRouteImport } from './routes/marketplace/$slug'
+import { Route as SettingsContainersRouteRouteImport } from './routes/settings/containers/route'
 import { Route as ProjectsProjectIdRouteRouteImport } from './routes/projects/$projectId/route'
+import { Route as SettingsContainersIndexRouteImport } from './routes/settings/containers/index'
 import { Route as ProjectsProjectIdIndexRouteImport } from './routes/projects/$projectId/index'
 import { Route as HomeInboxIndexRouteImport } from './routes/home/inbox/index'
+import { Route as SettingsContainersSettingsRouteImport } from './routes/settings/containers/settings'
+import { Route as SettingsContainersContainerIdRouteImport } from './routes/settings/containers/$containerId'
 import { Route as ProjectsProjectIdSkillsRouteImport } from './routes/projects/$projectId/skills'
 import { Route as ProjectsProjectIdGitRouteImport } from './routes/projects/$projectId/git'
 import { Route as ProjectsProjectIdDocumentsRouteImport } from './routes/projects/$projectId/documents'
@@ -112,11 +115,6 @@ const SettingsCredentialsRoute = SettingsCredentialsRouteImport.update({
   path: '/credentials',
   getParentRoute: () => SettingsRouteRoute,
 } as any)
-const SettingsContainersRoute = SettingsContainersRouteImport.update({
-  id: '/containers',
-  path: '/containers',
-  getParentRoute: () => SettingsRouteRoute,
-} as any)
 const SettingsConnectorsRoute = SettingsConnectorsRouteImport.update({
   id: '/connectors',
   path: '/connectors',
@@ -163,10 +161,20 @@ const MarketplaceSlugRoute = MarketplaceSlugRouteImport.update({
   path: '/marketplace/$slug',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SettingsContainersRouteRoute = SettingsContainersRouteRouteImport.update({
+  id: '/containers',
+  path: '/containers',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
 const ProjectsProjectIdRouteRoute = ProjectsProjectIdRouteRouteImport.update({
   id: '/projects/$projectId',
   path: '/projects/$projectId',
   getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsContainersIndexRoute = SettingsContainersIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => SettingsContainersRouteRoute,
 } as any)
 const ProjectsProjectIdIndexRoute = ProjectsProjectIdIndexRouteImport.update({
   id: '/',
@@ -178,6 +186,18 @@ const HomeInboxIndexRoute = HomeInboxIndexRouteImport.update({
   path: '/home/inbox/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SettingsContainersSettingsRoute =
+  SettingsContainersSettingsRouteImport.update({
+    id: '/settings',
+    path: '/settings',
+    getParentRoute: () => SettingsContainersRouteRoute,
+  } as any)
+const SettingsContainersContainerIdRoute =
+  SettingsContainersContainerIdRouteImport.update({
+    id: '/$containerId',
+    path: '/$containerId',
+    getParentRoute: () => SettingsContainersRouteRoute,
+  } as any)
 const ProjectsProjectIdSkillsRoute = ProjectsProjectIdSkillsRouteImport.update({
   id: '/skills',
   path: '/skills',
@@ -353,6 +373,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/settings': typeof SettingsRouteRouteWithChildren
   '/projects/$projectId': typeof ProjectsProjectIdRouteRouteWithChildren
+  '/settings/containers': typeof SettingsContainersRouteRouteWithChildren
   '/marketplace/$slug': typeof MarketplaceSlugRoute
   '/settings/admin-password': typeof SettingsAdminPasswordRoute
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
@@ -362,7 +383,6 @@ export interface FileRoutesByFullPath {
   '/settings/chat-channels': typeof SettingsChatChannelsRoute
   '/settings/chatbox': typeof SettingsChatboxRoute
   '/settings/connectors': typeof SettingsConnectorsRoute
-  '/settings/containers': typeof SettingsContainersRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
   '/settings/locale': typeof SettingsLocaleRoute
   '/settings/skills': typeof SettingsSkillsRoute
@@ -381,8 +401,11 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId/documents': typeof ProjectsProjectIdDocumentsRoute
   '/projects/$projectId/git': typeof ProjectsProjectIdGitRoute
   '/projects/$projectId/skills': typeof ProjectsProjectIdSkillsRoute
+  '/settings/containers/$containerId': typeof SettingsContainersContainerIdRoute
+  '/settings/containers/settings': typeof SettingsContainersSettingsRoute
   '/home/inbox/': typeof HomeInboxIndexRoute
   '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
+  '/settings/containers/': typeof SettingsContainersIndexRoute
   '/projects/$projectId/agents/$agentId': typeof ProjectsProjectIdAgentsAgentIdRouteRouteWithChildren
   '/projects/$projectId/agents/hire': typeof ProjectsProjectIdAgentsHireRoute
   '/projects/$projectId/assets/view': typeof ProjectsProjectIdAssetsViewRoute
@@ -414,7 +437,6 @@ export interface FileRoutesByTo {
   '/settings/chat-channels': typeof SettingsChatChannelsRoute
   '/settings/chatbox': typeof SettingsChatboxRoute
   '/settings/connectors': typeof SettingsConnectorsRoute
-  '/settings/containers': typeof SettingsContainersRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
   '/settings/locale': typeof SettingsLocaleRoute
   '/settings/skills': typeof SettingsSkillsRoute
@@ -433,8 +455,11 @@ export interface FileRoutesByTo {
   '/projects/$projectId/documents': typeof ProjectsProjectIdDocumentsRoute
   '/projects/$projectId/git': typeof ProjectsProjectIdGitRoute
   '/projects/$projectId/skills': typeof ProjectsProjectIdSkillsRoute
+  '/settings/containers/$containerId': typeof SettingsContainersContainerIdRoute
+  '/settings/containers/settings': typeof SettingsContainersSettingsRoute
   '/home/inbox': typeof HomeInboxIndexRoute
   '/projects/$projectId': typeof ProjectsProjectIdIndexRoute
+  '/settings/containers': typeof SettingsContainersIndexRoute
   '/projects/$projectId/agents/hire': typeof ProjectsProjectIdAgentsHireRoute
   '/projects/$projectId/assets/view': typeof ProjectsProjectIdAssetsViewRoute
   '/projects/$projectId/goals/$goalId': typeof ProjectsProjectIdGoalsGoalIdRoute
@@ -459,6 +484,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/settings': typeof SettingsRouteRouteWithChildren
   '/projects/$projectId': typeof ProjectsProjectIdRouteRouteWithChildren
+  '/settings/containers': typeof SettingsContainersRouteRouteWithChildren
   '/marketplace/$slug': typeof MarketplaceSlugRoute
   '/settings/admin-password': typeof SettingsAdminPasswordRoute
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
@@ -468,7 +494,6 @@ export interface FileRoutesById {
   '/settings/chat-channels': typeof SettingsChatChannelsRoute
   '/settings/chatbox': typeof SettingsChatboxRoute
   '/settings/connectors': typeof SettingsConnectorsRoute
-  '/settings/containers': typeof SettingsContainersRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
   '/settings/locale': typeof SettingsLocaleRoute
   '/settings/skills': typeof SettingsSkillsRoute
@@ -487,8 +512,11 @@ export interface FileRoutesById {
   '/projects/$projectId/documents': typeof ProjectsProjectIdDocumentsRoute
   '/projects/$projectId/git': typeof ProjectsProjectIdGitRoute
   '/projects/$projectId/skills': typeof ProjectsProjectIdSkillsRoute
+  '/settings/containers/$containerId': typeof SettingsContainersContainerIdRoute
+  '/settings/containers/settings': typeof SettingsContainersSettingsRoute
   '/home/inbox/': typeof HomeInboxIndexRoute
   '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
+  '/settings/containers/': typeof SettingsContainersIndexRoute
   '/projects/$projectId/agents/$agentId': typeof ProjectsProjectIdAgentsAgentIdRouteRouteWithChildren
   '/projects/$projectId/agents/hire': typeof ProjectsProjectIdAgentsHireRoute
   '/projects/$projectId/assets_/view': typeof ProjectsProjectIdAssetsViewRoute
@@ -515,6 +543,7 @@ export interface FileRouteTypes {
     | '/'
     | '/settings'
     | '/projects/$projectId'
+    | '/settings/containers'
     | '/marketplace/$slug'
     | '/settings/admin-password'
     | '/settings/ai-providers'
@@ -524,7 +553,6 @@ export interface FileRouteTypes {
     | '/settings/chat-channels'
     | '/settings/chatbox'
     | '/settings/connectors'
-    | '/settings/containers'
     | '/settings/credentials'
     | '/settings/locale'
     | '/settings/skills'
@@ -543,8 +571,11 @@ export interface FileRouteTypes {
     | '/projects/$projectId/documents'
     | '/projects/$projectId/git'
     | '/projects/$projectId/skills'
+    | '/settings/containers/$containerId'
+    | '/settings/containers/settings'
     | '/home/inbox/'
     | '/projects/$projectId/'
+    | '/settings/containers/'
     | '/projects/$projectId/agents/$agentId'
     | '/projects/$projectId/agents/hire'
     | '/projects/$projectId/assets/view'
@@ -576,7 +607,6 @@ export interface FileRouteTypes {
     | '/settings/chat-channels'
     | '/settings/chatbox'
     | '/settings/connectors'
-    | '/settings/containers'
     | '/settings/credentials'
     | '/settings/locale'
     | '/settings/skills'
@@ -595,8 +625,11 @@ export interface FileRouteTypes {
     | '/projects/$projectId/documents'
     | '/projects/$projectId/git'
     | '/projects/$projectId/skills'
+    | '/settings/containers/$containerId'
+    | '/settings/containers/settings'
     | '/home/inbox'
     | '/projects/$projectId'
+    | '/settings/containers'
     | '/projects/$projectId/agents/hire'
     | '/projects/$projectId/assets/view'
     | '/projects/$projectId/goals/$goalId'
@@ -620,6 +653,7 @@ export interface FileRouteTypes {
     | '/'
     | '/settings'
     | '/projects/$projectId'
+    | '/settings/containers'
     | '/marketplace/$slug'
     | '/settings/admin-password'
     | '/settings/ai-providers'
@@ -629,7 +663,6 @@ export interface FileRouteTypes {
     | '/settings/chat-channels'
     | '/settings/chatbox'
     | '/settings/connectors'
-    | '/settings/containers'
     | '/settings/credentials'
     | '/settings/locale'
     | '/settings/skills'
@@ -648,8 +681,11 @@ export interface FileRouteTypes {
     | '/projects/$projectId/documents'
     | '/projects/$projectId/git'
     | '/projects/$projectId/skills'
+    | '/settings/containers/$containerId'
+    | '/settings/containers/settings'
     | '/home/inbox/'
     | '/projects/$projectId/'
+    | '/settings/containers/'
     | '/projects/$projectId/agents/$agentId'
     | '/projects/$projectId/agents/hire'
     | '/projects/$projectId/assets_/view'
@@ -754,13 +790,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsCredentialsRouteImport
       parentRoute: typeof SettingsRouteRoute
     }
-    '/settings/containers': {
-      id: '/settings/containers'
-      path: '/containers'
-      fullPath: '/settings/containers'
-      preLoaderRoute: typeof SettingsContainersRouteImport
-      parentRoute: typeof SettingsRouteRoute
-    }
     '/settings/connectors': {
       id: '/settings/connectors'
       path: '/connectors'
@@ -824,12 +853,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MarketplaceSlugRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/settings/containers': {
+      id: '/settings/containers'
+      path: '/containers'
+      fullPath: '/settings/containers'
+      preLoaderRoute: typeof SettingsContainersRouteRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
     '/projects/$projectId': {
       id: '/projects/$projectId'
       path: '/projects/$projectId'
       fullPath: '/projects/$projectId'
       preLoaderRoute: typeof ProjectsProjectIdRouteRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/settings/containers/': {
+      id: '/settings/containers/'
+      path: '/'
+      fullPath: '/settings/containers/'
+      preLoaderRoute: typeof SettingsContainersIndexRouteImport
+      parentRoute: typeof SettingsContainersRouteRoute
     }
     '/projects/$projectId/': {
       id: '/projects/$projectId/'
@@ -844,6 +887,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/home/inbox/'
       preLoaderRoute: typeof HomeInboxIndexRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/settings/containers/settings': {
+      id: '/settings/containers/settings'
+      path: '/settings'
+      fullPath: '/settings/containers/settings'
+      preLoaderRoute: typeof SettingsContainersSettingsRouteImport
+      parentRoute: typeof SettingsContainersRouteRoute
+    }
+    '/settings/containers/$containerId': {
+      id: '/settings/containers/$containerId'
+      path: '/$containerId'
+      fullPath: '/settings/containers/$containerId'
+      preLoaderRoute: typeof SettingsContainersContainerIdRouteImport
+      parentRoute: typeof SettingsContainersRouteRoute
     }
     '/projects/$projectId/skills': {
       id: '/projects/$projectId/skills'
@@ -1051,7 +1108,26 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface SettingsContainersRouteRouteChildren {
+  SettingsContainersContainerIdRoute: typeof SettingsContainersContainerIdRoute
+  SettingsContainersSettingsRoute: typeof SettingsContainersSettingsRoute
+  SettingsContainersIndexRoute: typeof SettingsContainersIndexRoute
+}
+
+const SettingsContainersRouteRouteChildren: SettingsContainersRouteRouteChildren =
+  {
+    SettingsContainersContainerIdRoute: SettingsContainersContainerIdRoute,
+    SettingsContainersSettingsRoute: SettingsContainersSettingsRoute,
+    SettingsContainersIndexRoute: SettingsContainersIndexRoute,
+  }
+
+const SettingsContainersRouteRouteWithChildren =
+  SettingsContainersRouteRoute._addFileChildren(
+    SettingsContainersRouteRouteChildren,
+  )
+
 interface SettingsRouteRouteChildren {
+  SettingsContainersRouteRoute: typeof SettingsContainersRouteRouteWithChildren
   SettingsAdminPasswordRoute: typeof SettingsAdminPasswordRoute
   SettingsAiProvidersRoute: typeof SettingsAiProvidersRoute
   SettingsApiKeysRoute: typeof SettingsApiKeysRoute
@@ -1060,7 +1136,6 @@ interface SettingsRouteRouteChildren {
   SettingsChatChannelsRoute: typeof SettingsChatChannelsRoute
   SettingsChatboxRoute: typeof SettingsChatboxRoute
   SettingsConnectorsRoute: typeof SettingsConnectorsRoute
-  SettingsContainersRoute: typeof SettingsContainersRoute
   SettingsCredentialsRoute: typeof SettingsCredentialsRoute
   SettingsLocaleRoute: typeof SettingsLocaleRoute
   SettingsSkillsRoute: typeof SettingsSkillsRoute
@@ -1070,6 +1145,7 @@ interface SettingsRouteRouteChildren {
 }
 
 const SettingsRouteRouteChildren: SettingsRouteRouteChildren = {
+  SettingsContainersRouteRoute: SettingsContainersRouteRouteWithChildren,
   SettingsAdminPasswordRoute: SettingsAdminPasswordRoute,
   SettingsAiProvidersRoute: SettingsAiProvidersRoute,
   SettingsApiKeysRoute: SettingsApiKeysRoute,
@@ -1078,7 +1154,6 @@ const SettingsRouteRouteChildren: SettingsRouteRouteChildren = {
   SettingsChatChannelsRoute: SettingsChatChannelsRoute,
   SettingsChatboxRoute: SettingsChatboxRoute,
   SettingsConnectorsRoute: SettingsConnectorsRoute,
-  SettingsContainersRoute: SettingsContainersRoute,
   SettingsCredentialsRoute: SettingsCredentialsRoute,
   SettingsLocaleRoute: SettingsLocaleRoute,
   SettingsSkillsRoute: SettingsSkillsRoute,

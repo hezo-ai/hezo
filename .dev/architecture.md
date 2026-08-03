@@ -1262,7 +1262,7 @@ marker kill and teardown. Four findings are worth carrying:
   Hezo's memory budget.** A create past the quota fails with `400 Total disk limit
   exceeded`, and Hezo's admission check (`projectMemoryFitsBudget`) models memory only, so
   on a disk-constrained account it will keep admitting runs the provider then refuses; the
-  failure surfaces as a provisioning error on the project's Container page. What the
+  failure surfaces as a provisioning error on the project, flagged by the error banner. What the
   operator *can* do about it is the per-container disk allocation, which is now a setting
   (`default_container_disk_gb`, default 5 GB) with a per-project override
   (`projects.container_disk_gb`) rather than the flat 10 GB the adapter used to hardcode -
@@ -1634,16 +1634,26 @@ container, an idle member a task has affinity with, the chat's container and a m
 for unpushed commits as unreferenced. `suspended` matters most: that is the state a container
 the pool means to resume sits in, and destroying one loses its filesystem.
 
-**Operator-driven teardown covers the whole pool too, for the same reason.** Both
-`teardownContainer` (project deletion) and `rebuildContainer` (the Container page's Rebuild)
-remove every `container_pool_members` row of the project plus whatever `projects.container_id`
-names, not the named container alone. A rebuild is an operator saying "this project's
-container is wrong" - a changed base image, a broken toolchain - and removing one member of
-three left the rest running the **old** image, still reachable by the allocation ladder and
-still charged against the memory budget, so the fix applied to whichever container the next
-run happened to land on. The member row is dropped even when the engine call fails or
-`--keep-old-containers` spares the container itself: a row pointing at a container this
-rebuild replaced would hand the next run exactly what the operator asked to be rid of.
+**Project-wide teardown covers the whole pool too, for the same reason.**
+`teardownContainer` (project deletion, archive) removes every `container_pool_members` row of
+the project plus whatever `projects.container_id` names, not the named container alone: a
+pooled project owns several at once, and removing one member of three leaves the rest running,
+still reachable by the allocation ladder and still charged against the memory budget. The
+member row is dropped even when the engine call fails or `--keep-old-containers` spares the
+container itself, so a row can never point at a container the project no longer owns.
+
+**Operator-driven removal is per container, not per project.** `destroyContainer` (the global
+Containers page's Remove, `DELETE /api/containers/:containerId`) captures the container's log
+onto its member row, removes it from the engine, drops the member row, clears
+`projects.container_id` when it named that container, and fails the run it was serving - scoped
+to that container, so a sibling run in another container of the same project is untouched.
+Removing a **busy** container is allowed and is in fact the main reason to reach for it: the run
+dies through the ordinary container-death path, exactly as it would have if the container had
+crashed. There is no Rebuild and no per-container Start/Stop. Rebuild meant "replace this
+project's containers", which stopped corresponding to anything once a project could hold
+several - the operator was looking at one container and the button acted on all of them - and
+the pool provisions a replacement on the next run that needs one, which is the path every other
+container already takes.
 
 A container is destroyed only on its **second consecutive sighting**. Provisioning has a
 window where a container exists on the engine and is recorded nowhere yet - `createContainer`
@@ -3173,6 +3183,23 @@ transient state** (`creating` / `stopping` — deliberately not the `null` of a 
 project, which would poll forever). That bounds the damage of a missed transition to a few
 seconds of stale banner instead of "stuck until the operator reloads the page."
 
+The **banner reports errors only**. It used to announce provisioning and base-image builds
+too, from when a project had one container whose bring-up was an event; a project now gets a
+container whenever a run needs one, so "provisioning" fires on almost every page several
+times an hour about something the operator did not ask for and cannot act on. The banner
+links to the global Containers page, where the failed container is addressed as itself.
+
+**Containers are a global surface** (`routes/settings/containers/`), tabbed into a list and
+the limits: `index.tsx` is one row per real container across every project (backed by
+`GET /api/containers`, polled - the pool table has no row-change broadcast to key off),
+`$containerId.tsx` is one container's page with its log and the only lifecycle action there
+is, Remove, and `settings.tsx` holds the backend switcher and the memory/RAM/disk limits. The
+project's own Container page keeps only what is genuinely per project: the caps its containers
+are provisioned with, the image, the dev ports, and the stranded-commits warning. Container
+log rooms are keyed on the **container** (`wsRoom.containerLogs(containerId)`), not its
+project - a project-keyed room merged several containers' output into one stream and served it
+as whichever container the page happened to be showing.
+
 **Overlay lifetime across navigation.** Overlays rendered under the `<Outlet />` unmount on
 navigation; the ones rendered by the shell chrome in `routes/__root.tsx` — the project rail's
 New project dialog, the mobile nav drawer, the Cmd/Ctrl+K search palette, the CEO chat — sit
@@ -3796,7 +3823,10 @@ shapes.
 - **Integrations & secrets** — `ai-providers`, `secrets`, `connectors`, `oauth`
   (connectors: ensure / auth-start — project-scoped and instance-admin
   (`/connectors/:id/auth-start`) / device / callbacks), `skills`.
-- **Ops** — `health`, `updates`, `preview` (HMAC-signed file URLs), public assets.
+- **Ops** — `health`, `updates`, `preview` (HMAC-signed file URLs), public assets,
+  `containers` (global, superuser-only: `GET /containers`, `GET /containers/:containerId`,
+  `DELETE /containers/:containerId` — one row per real container across every project,
+  unioning both representations; no start, stop or rebuild).
 
 **Request-body ceiling.** `/api/*` carries a global `bodyLimit` at `API_BODY_MAX_BYTES`
 (32 MB). Only the handful of upload routes were capped before, so a JSON body had no bound

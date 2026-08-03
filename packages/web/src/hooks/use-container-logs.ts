@@ -1,14 +1,21 @@
-import { type WsContainerLogMessage, WsMessageType } from '@hezo/shared';
+import { type WsContainerLogMessage, WsMessageType, wsRoom } from '@hezo/shared';
 import { type LogStreamLine, useLogStream } from './use-log-stream';
 
 export type LogLine = LogStreamLine;
 
-export function useContainerLogs(projectId: string, phase: string | null) {
+/**
+ * One container's log stream.
+ *
+ * Keyed on the container rather than its project: a project holds as many
+ * containers as it has concurrent runs, and a project-keyed room merged their
+ * output and served it as whichever container the page was showing.
+ */
+export function useContainerLogs(containerId: string, phase: string | null) {
 	return useLogStream<WsContainerLogMessage>({
-		room: phase && projectId ? `container-logs:${projectId}` : null,
+		room: phase && containerId ? wsRoom.containerLogs(containerId) : null,
 		messageType: WsMessageType.ContainerLog,
-		enabled: !!phase && !!projectId,
+		enabled: !!phase && !!containerId,
 		extractChunk: (m) =>
-			m.projectId === projectId ? { stream: m.stream, text: m.text, replace: m.replace } : null,
+			m.containerId === containerId ? { stream: m.stream, text: m.text, replace: m.replace } : null,
 	});
 }
