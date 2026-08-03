@@ -153,10 +153,21 @@ reposRoutes.post('/projects/:projectId/repos', async (c) => {
 			return err(c, 'REPO_CREATE_FAILED', (e as Error).message, 500);
 		}
 		if (created.status === 'already_exists') {
+			// Says which repo is in the way, and what to do instead. "Already exists"
+			// alone left an operator staring at a picker that does not list it - the
+			// name is most often held by a **private** repo, which is exactly the one
+			// they cannot see - so the visibility is named whenever it could be read.
+			const visibility =
+				created.existingPrivate === null
+					? ''
+					: created.existingPrivate
+						? ' It is private, which is why it does not appear in the repository picker.'
+						: ' It is public.';
 			return err(
 				c,
 				'GITHUB_REPO_EXISTS',
-				`A repository named "${created.owner}/${created.name}" already exists on GitHub.`,
+				`A repository named "${created.owner}/${created.name}" already exists on GitHub.${visibility}` +
+					' Link that repository instead, or choose a different name.',
 				409,
 			);
 		}

@@ -310,7 +310,7 @@ export async function listAllContainers(
 	defaultMemoryGb: number,
 ): Promise<ContainerListing[]> {
 	const res = await db.query<ContainerListingRow>(
-		`${CONTAINER_LISTING_SQL} ORDER BY p.name ASC, c.created_at ASC NULLS LAST`,
+		`${CONTAINER_LISTING_SQL} ORDER BY p.name ASC, m.created_at ASC NULLS LAST, c.container_id ASC`,
 		[defaultMemoryGb],
 	);
 	return res.rows.map(toContainerListing);

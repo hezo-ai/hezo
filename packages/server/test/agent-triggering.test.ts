@@ -214,21 +214,14 @@ describe('agent triggering', () => {
 
 		await clearWakeups();
 
-		// Simulate a container start by setting a fake container_id and calling start
 		await db.query(
 			"UPDATE projects SET container_id = 'fake-container-id', container_status = 'stopped' WHERE id = $1",
 			[projectId],
 		);
 
-		await app.request(`/api/projects/${projectSlug}/container/start`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		});
-		// This will fail because of Docker, but the wakeup creation happens before Docker call
-		// So let's check at DB level instead — just verify the wakeAgentsWithPendingWork function
-		// by calling the route (even if Docker fails, the function may or may not run)
-
-		// Direct DB test: insert a stopped container and manually verify the query finds pending work
+		// The assertion was always this query rather than the route above it: the
+		// route call could not complete against a stub docker, so it proved nothing
+		// either way and only described a lifecycle endpoint that no longer exists.
 		const pending = await db.query<{ agent_id: string }>(
 			`SELECT DISTINCT i.assignee_id AS agent_id
 			 FROM tasks i

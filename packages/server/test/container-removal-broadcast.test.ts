@@ -1,4 +1,4 @@
-import { ContainerStatus, WsMessageType, wsRoom } from '@hezo/shared';
+import { WsMessageType, wsRoom } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../src/lib/types';
 import { WebSocketManager, type WsEvent } from '../src/services/ws';
@@ -10,7 +10,7 @@ interface CapturedBroadcast {
 	event: WsEvent;
 }
 
-describe('container lifecycle broadcasts carry team_id', () => {
+describe('container removal broadcasts carry team_id', () => {
 	let ctx: Awaited<ReturnType<typeof createTestApp>>;
 	let teamId: string;
 	let projectId: string;
@@ -70,58 +70,26 @@ describe('container lifecycle broadcasts carry team_id', () => {
 		return undefined;
 	}
 
-	it('rebuild broadcasts a full project row with team_id', async () => {
-		captured.length = 0;
-
-		const res = await ctx.app.request(`/api/projects/${projectSlug}/container/rebuild`, {
-			method: 'POST',
-			headers: authHeader(ctx.token),
-		});
-		expect(res.status).toBe(200);
-		const body = await res.json();
-		expect(body.data.container_status).toBe(ContainerStatus.Creating);
-
-		const update = lastProjectUpdate();
-		expect(update).toBeDefined();
-		const row = update?.event.row as Record<string, unknown>;
-		expect(row.id).toBe(projectId);
-		expect(row.team_id).toBe(teamId);
-		expect(row.container_status).toBe(ContainerStatus.Creating);
-	});
-
-	it('stop broadcasts a full project row with team_id', async () => {
-		// Give the project a container_id so the stop route takes the "in progress" branch.
+	it('removing a container broadcasts a full project row with team_id', async () => {
+		// The broadcast is what a client's project row refetches off, and its
+		// `team_id` is what routes it to the right room. Rebuild used to be the
+		// operator action that produced one; removal is now, and it must carry the
+		// same shape or every open project page goes stale on the change an operator
+		// just made.
 		await ctx.db.query(
 			"UPDATE projects SET container_id = 'stub-running', container_status = 'running'::container_status WHERE id = $1",
 			[projectId],
 		);
-
-		captured.length = 0;
-
-		const res = await ctx.app.request(`/api/projects/${projectSlug}/container/stop`, {
-			method: 'POST',
-			headers: authHeader(ctx.token),
-		});
-		expect(res.status).toBe(200);
-
-		const update = lastProjectUpdate();
-		expect(update).toBeDefined();
-		const row = update?.event.row as Record<string, unknown>;
-		expect(row.id).toBe(projectId);
-		expect(row.team_id).toBe(teamId);
-		expect(row.container_status).toBe(ContainerStatus.Stopping);
-	});
-
-	it('start broadcasts a full project row with team_id', async () => {
 		await ctx.db.query(
-			"UPDATE projects SET container_id = 'stub-stopped', container_status = 'stopped'::container_status WHERE id = $1",
+			`INSERT INTO container_pool_members (project_id, container_id, state, disk_ceiling_bytes)
+			 VALUES ($1, 'stub-running', 'idle', 1000000)`,
 			[projectId],
 		);
 
 		captured.length = 0;
 
-		const res = await ctx.app.request(`/api/projects/${projectSlug}/container/start`, {
-			method: 'POST',
+		const res = await ctx.app.request('/api/containers/stub-running', {
+			method: 'DELETE',
 			headers: authHeader(ctx.token),
 		});
 		expect(res.status).toBe(200);
@@ -131,6 +99,7 @@ describe('container lifecycle broadcasts carry team_id', () => {
 		const row = update?.event.row as Record<string, unknown>;
 		expect(row.id).toBe(projectId);
 		expect(row.team_id).toBe(teamId);
-		expect(row.container_status).toBe(ContainerStatus.Running);
+		// The project no longer names a container, because the one it named is gone.
+		expect(row.container_id).toBeNull();
 	});
 });
