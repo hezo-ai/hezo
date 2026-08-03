@@ -8,9 +8,9 @@ section: Security
 
 Agents execute real, often AI-generated code. Hezo runs that code where it can't hurt
 you: **every project gets its own container, and agents only ever run inside it** - never
-on your host directly. Hezo drives that through Docker or any
+on your host directly. Hezo drives that through any
 [Docker-compatible runtime](/docs/deployment/container-runtimes); the isolation described
-here is the same either way.
+here is the same whichever you use.
 
 ## A sandbox per project
 

@@ -195,7 +195,7 @@ describe('formatDockerPreflightMessage', () => {
 	it('points at the Docker install page when nothing is installed', () => {
 		const msg = formatDockerPreflightMessage(notInstalled);
 		expect(msg).toContain(DOCKER_INSTALL_URL);
-		expect(msg).toContain('no container runtime appears to be installed');
+		expect(msg).toContain('A Docker-compatible container runtime is required');
 	});
 
 	it('names the Docker-compatible runtimes rather than assuming Docker Desktop', () => {

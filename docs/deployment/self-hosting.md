@@ -12,7 +12,7 @@ keys, and the spend.
 
 ## What you need
 
-- A host that can run **Docker, or any Docker-compatible container runtime** (your laptop,
+- A host that can run a **Docker-compatible container runtime** (your laptop,
   a home server, or a cloud VPS). Colima, Rancher Desktop, OrbStack, Lima and rootless
   Docker all work - see [Container runtimes](/docs/deployment/container-runtimes).
 - The **`hezo` binary** (see [Installation](/docs/getting-started/installation)).

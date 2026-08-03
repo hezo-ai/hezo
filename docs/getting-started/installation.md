@@ -8,12 +8,12 @@ section: Getting started
 
 Hezo ships as a **single self-contained binary** - there's no runtime, language
 toolchain, or dependencies to install. Download it, run it, and you're up in seconds.
-The one thing to have in place first is a **container runtime**, which Hezo uses to run
-each project's agents in an isolated container.
+The one thing to have in place first is a **Docker-compatible runtime**, which Hezo uses
+to run each project's agents in an isolated container.
 
 ## Prerequisites
 
-- **Docker, or any Docker-compatible container runtime**, running and reachable. Docker
+- **A Docker-compatible container runtime**, running and reachable. Docker
   Engine (Linux), Docker Desktop, Colima, Rancher Desktop, OrbStack, Lima and rootless
   Docker all work - Hezo finds the daemon's socket automatically, whichever you use. On
   startup it checks for a working daemon and, if none is reachable, prints how to install

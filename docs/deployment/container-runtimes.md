@@ -12,8 +12,7 @@ compromised agent can't reach your files, credentials, or wider network (see
 [Container isolation](/docs/security/container-isolation)).
 
 Hezo talks to the container runtime over the **Docker Engine API on a Unix socket**, so it
-works with Docker and with any Docker-compatible runtime. You do not have to run Docker
-Desktop.
+works with any Docker-compatible runtime. You do not have to run Docker Desktop.
 
 ## Supported runtimes
 

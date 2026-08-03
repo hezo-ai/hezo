@@ -9,7 +9,7 @@ import {
 } from './docker-socket';
 
 /**
- * Canonical Docker install page, shown to operators when Docker is missing.
+ * Canonical Docker install page, shown to operators when no runtime is found.
  * Covers Docker Engine (Linux), Docker Desktop (macOS/Windows), and the
  * post-install steps for starting the daemon.
  */
@@ -192,12 +192,13 @@ export function formatDockerPreflightMessage(
 ): string {
 	if (result.status === 'not-installed') {
 		return [
-			'Docker is required to run Hezo, but no container runtime appears to be installed.',
+			'A Docker-compatible container runtime is required to run Hezo, but none appears',
+			'to be installed.',
 			'',
 			...SANDBOX_RATIONALE,
 			'',
-			'Install Docker, or any Docker-compatible runtime (Colima, Rancher Desktop,',
-			'OrbStack, Lima), then start Hezo again:',
+			'Install a Docker-compatible runtime (Docker, Colima, Rancher Desktop, OrbStack,',
+			'Lima), then start Hezo again:',
 			'',
 			`  ${DOCKER_INSTALL_URL}`,
 			'',
@@ -223,7 +224,8 @@ export function formatDockerPreflightMessage(
 	}
 
 	return [
-		'Docker is installed but no daemon answered on any socket Hezo could find.',
+		'A Docker-compatible runtime is installed, but no daemon answered on any socket',
+		'Hezo could find.',
 		'',
 		...SANDBOX_RATIONALE,
 		'',
