@@ -451,10 +451,28 @@ await docker.prepareHost({ dataDir: config.dataDir });
 
 Two things make this worth stating rather than leaving to the general rule:
 
-- **`instanceof` evades every grep you would write for the general rule.** It carries no provider *name*, no enum value, no `'daytona'` string - a search for those comes back clean while the branch sits there. Grep for the shape instead: `grep -rn "instanceof DockerClient\|instanceof DaytonaEngine\|=== SandboxBackend\." packages/server/src --include=*.ts` and expect hits **only** in the backend factory and the settings/credential plumbing (`sandbox/open.ts`, `sandbox/backend-store.ts`, `sandbox/switch-backend.ts`, `routes/sandbox-backend-info.ts`), which must name what they construct. A hit anywhere on the run path is a bug.
+- **`instanceof` evades every grep you would write for the general rule.** It carries no provider *name*, no enum value, no `'daytona'` string - a search for those comes back clean while the branch sits there. Grep for the shape instead: `grep -rn "instanceof DockerClient\|instanceof DaytonaEngine\|=== SandboxBackend\.\|!== SandboxBackend\." packages/server/src packages/web/src --include=*.ts --include=*.tsx` and expect hits **only** where a provider is genuinely being *constructed or named* - `sandbox/open.ts` picking a client, and a display/label table keyed by backend. Everything else is a bug, including in the settings and credential plumbing (see the next bullet). A hit anywhere on the run path is always a bug.
 - **`instanceof` against the holder is always false**, because callers hold `SandboxBackendHolder.engine`, a proxy. So the branch does not merely couple the caller to a provider, it silently stops running: introducing the holder turned the image setup above into dead code - agent-base was never extracted and stale images were never pruned, with nothing logged. It was caught by `startup-real-docker-branch.test.ts` rather than by anything noticing at runtime. Routing the work through the seam removes the hazard entirely, since a proxy forwards a method call just fine.
 
 Reach for a new `ContainerEngine` method whenever you catch yourself asking *which* backend you have. Adding one is cheap and the compiler finds every implementation for you - including `createStubDocker` and `fake-docker.ts`, which must both answer it (start from a complete stub, never a partial object).
+
+**Ask what *kind* of backend it is, never which one - a provider name in a conditional is a class property in disguise.** The settings and credential plumbing sits above the seam but outside the run path, and it is where this hides best, because naming a provider there looks like configuration rather than a branch. It is not. Four sites decided "does this backend need an API key?" by writing `=== SandboxBackend.Daytona` / `!== SandboxBackend.Docker` - `switch-backend.ts`, `routes/sandbox-backend-info.ts`, `backend-store.ts` (twice) and the web switcher. Each reads as a statement about Daytona; each is actually the rule *every third-party container service is reached with an account credential*, and a second provider would have silently inherited "needs no key" at all of them - the route skipping its guard, the switch passing no key to the preflight, and the dialog rendering no field to type one into. Nothing would have failed to compile.
+
+So the classification lives in **one table in `@hezo/shared`**, and callers ask the derived question:
+
+```ts
+export const SANDBOX_BACKEND_KIND: Record<SandboxBackend, 'local' | 'remote'> = {
+    [SandboxBackend.Docker]: 'local',
+    [SandboxBackend.Daytona]: 'remote',
+};
+export function sandboxBackendNeedsApiKey(b: SandboxBackend): boolean {
+    return SANDBOX_BACKEND_KIND[b] === 'remote';
+}
+```
+
+`Record<SandboxBackend, …>` is the whole point (**Table over branch**): adding a backend is a *compile error* until it declares its kind, where an `if` would have let it default into a branch. In `@hezo/shared` because the server enforces the requirement and the web app renders the field for it - one rule, two enforcers, per **pick the home by reach**. And it is the *kind* rather than a bare `needsApiKey` boolean, so the next class-wide question ("does it bill?", "can it bind-mount?") extends the same table instead of starting a parallel one.
+
+What may still name a provider here: **which credential**, not **whether one is needed**. `--daytona-api-key`, the `DAYTONA_API_KEY` vault entry and `DaytonaClient` are per-provider *configuration* - one account, one key, one client - and stay named. The moment a *decision* keys off the name, it is this bug.
 
 **Runtime-agnostic logic is shared, not reimplemented per adapter.** The in-container `/proc` scan and kill scripts live in `services/sandbox/proc-scripts.ts` and **both** engines run the identical script — only the transport that carries it differs. A second copy of one of those scripts is how the two backends silently drift apart. Same rule for the endpoint map (`sandbox/endpoints.ts`), file access (`sandbox/files.ts`) and the exec handle (`sandbox/handle.ts`).
 

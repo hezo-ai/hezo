@@ -9,6 +9,7 @@ import {
 	RAM_CAP_PER_CONTAINER_GB_MAX,
 	RAM_CAP_PER_CONTAINER_GB_MIN,
 	SandboxBackend,
+	sandboxBackendNeedsApiKey,
 	usableMemoryGibForContainers,
 } from '@hezo/shared';
 import { createFileRoute } from '@tanstack/react-router';
@@ -119,7 +120,11 @@ function BackendSwitcher({ info }: { info: SandboxBackendInfo }) {
 	// a dead end: a stored key that has expired or been revoked is refused by the
 	// preflight, and the dialog reporting that refusal was the same dialog that
 	// gave no way to supply a working one.
-	const takesKey = target === SandboxBackend.Daytona;
+	//
+	// Asked of the backend's kind, not its name: every remote container service is
+	// reached with an account credential, so naming one here would leave the next
+	// one with no field to type its key into.
+	const takesKey = target !== null && sandboxBackendNeedsApiKey(target);
 	// Required only when there is nothing to fall back on. With a key on file,
 	// blank means "keep it" - so rotating is possible without making every switch
 	// re-type a key that is already correct.
@@ -213,14 +218,14 @@ function BackendSwitcher({ info }: { info: SandboxBackendInfo }) {
 				// lives in the handler so the missing key can say so instead.
 				onConfirm={handleConfirm}
 			>
-				{takesKey && (
+				{takesKey && target && (
 					<div className="flex flex-col gap-1.5">
-						<label className="text-[13px] font-medium" htmlFor="daytona-api-key-input">
-							{t('containers.backend.apiKey.label')}
+						<label className="text-[13px] font-medium" htmlFor="backend-api-key-input">
+							{t('containers.backend.apiKey.label', { name: backendDisplayName(target, t) })}
 						</label>
 						<Input
-							id="daytona-api-key-input"
-							data-testid="daytona-api-key-input"
+							id="backend-api-key-input"
+							data-testid="backend-api-key-input"
 							type="password"
 							autoComplete="off"
 							value={apiKey}

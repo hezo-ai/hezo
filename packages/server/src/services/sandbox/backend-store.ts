@@ -14,7 +14,7 @@
  * agent container, and is not the kind of secret the egress proxy substitutes.
  */
 
-import { isSandboxBackend, SandboxBackend } from '@hezo/shared';
+import { isSandboxBackend, SandboxBackend, sandboxBackendNeedsApiKey } from '@hezo/shared';
 import { decrypt, encrypt } from '../../crypto/encryption';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Db } from '../../db/database';
@@ -175,7 +175,7 @@ export async function resolveStartupBackend(
 				'made from the Containers page. Change it in Settings -> Containers.',
 		);
 	}
-	if (!requested && flags.daytonaApiKey && backend === SandboxBackend.Docker) {
+	if (!requested && flags.daytonaApiKey && !sandboxBackendNeedsApiKey(backend)) {
 		// A provider credential is not a provider selection: pre-seeding a key for
 		// a later switch is a real use, so this is a warning rather than an
 		// inference about what the operator meant.
@@ -199,7 +199,7 @@ export async function resolveStartupBackend(
 	// genuine misconfiguration of selecting a provider and never giving it a
 	// credential - that one still fails the boot, because it will never work.
 	const deferred =
-		backend !== SandboxBackend.Docker &&
+		sandboxBackendNeedsApiKey(backend) &&
 		!daytonaApiKey &&
 		!masterKeyManager.getKey() &&
 		(await hasDaytonaApiKey(db));

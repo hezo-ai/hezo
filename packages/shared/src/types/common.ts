@@ -2358,3 +2358,35 @@ export const SANDBOX_BACKENDS: readonly SandboxBackend[] = Object.values(Sandbox
 export function isSandboxBackend(value: string): value is SandboxBackend {
 	return (SANDBOX_BACKENDS as readonly string[]).includes(value);
 }
+
+/**
+ * Whether a backend runs containers on this machine or on a third party's.
+ *
+ * This is the only thing about a backend that code outside its own adapter is
+ * allowed to know - everything else a provider does differently is that
+ * adapter's business. It matches how the docs are split (`docs/containers/
+ * local-docker.md` vs `docs/containers/remote/`), so the two cannot drift.
+ *
+ * A table rather than a predicate over a provider name, so adding a backend is a
+ * **compile error** until it declares which kind it is. The alternative -
+ * `=== SandboxBackend.Daytona` at each site - states a fact about one service
+ * where a property of the whole class is meant, and a new provider then silently
+ * inherits whichever branch the comparison happened to fall through to.
+ */
+export const SANDBOX_BACKEND_KIND: Record<SandboxBackend, 'local' | 'remote'> = {
+	[SandboxBackend.Docker]: 'local',
+	[SandboxBackend.Daytona]: 'remote',
+};
+
+/**
+ * Does this backend need an API key before it can be selected?
+ *
+ * True for every remote backend and false for the local daemon: a third-party
+ * container service is reached over the internet behind an account, so an API
+ * key is what makes it usable at all, while a local daemon is a socket on the
+ * host. That is a property of the class, not of any one provider - which is why
+ * this asks the kind rather than naming a service.
+ */
+export function sandboxBackendNeedsApiKey(backend: SandboxBackend): boolean {
+	return SANDBOX_BACKEND_KIND[backend] === 'remote';
+}

@@ -134,7 +134,7 @@ test('switching the container service warns with real numbers and needs a key', 
 
 	// Daytona has no stored credential here, so the key field is part of the
 	// decision rather than a separate step the operator discovers afterwards.
-	const keyInput = getByTestId('daytona-api-key-input') as HTMLInputElement;
+	const keyInput = getByTestId('backend-api-key-input') as HTMLInputElement;
 	expect(keyInput.type).toBe('password');
 });
 
@@ -160,7 +160,7 @@ test('offers the key field even when one is already stored, so an expired key ca
 	await user.click(await findByTestId('backend-change'));
 	await user.click(await findByTestId('backend-change-option-daytona'));
 
-	const keyInput = getByTestId('daytona-api-key-input') as HTMLInputElement;
+	const keyInput = getByTestId('backend-api-key-input') as HTMLInputElement;
 	expect(keyInput.type).toBe('password');
 	// Blank is legitimate here - it means "keep the stored key" - so the dialog
 	// says which of the two it is doing rather than leaving the operator to guess.

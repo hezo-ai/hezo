@@ -1,4 +1,4 @@
-import { isSandboxBackend, SANDBOX_BACKENDS, SandboxBackend } from '@hezo/shared';
+import { isSandboxBackend, SANDBOX_BACKENDS, sandboxBackendNeedsApiKey } from '@hezo/shared';
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
@@ -66,15 +66,19 @@ export function buildSandboxBackendInfoRoutes(holder: SandboxBackendHolder): Hon
 		// Refused before the preflight rather than surfacing as an opaque
 		// connection error: a missing credential is a configuration mistake and the
 		// message should say which.
+		//
+		// Gated on the backend's kind rather than its name - every remote container
+		// service is reached with an account credential - so a second provider
+		// cannot silently skip the check by not being the one named here.
 		if (
-			target === SandboxBackend.Daytona &&
+			sandboxBackendNeedsApiKey(target) &&
 			!body.daytona_api_key?.trim() &&
 			!(await hasDaytonaApiKey(db))
 		) {
 			return err(
 				c,
 				'CREDENTIAL_REQUIRED',
-				'Daytona needs an API key. Enter one to switch to it.',
+				'That container service needs an API key. Enter one to switch to it.',
 				400,
 			);
 		}

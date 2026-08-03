@@ -20,7 +20,7 @@
  * before the operator commits.
  */
 
-import { SandboxBackend } from '@hezo/shared';
+import { type SandboxBackend, sandboxBackendNeedsApiKey } from '@hezo/shared';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Db } from '../../db/database';
 import { logger } from '../../logger';
@@ -160,10 +160,11 @@ export async function switchSandboxBackend(
 	resolveExistingKey: () => Promise<string | null>,
 	dataDir: string,
 ): Promise<SwitchResult> {
-	const apiKey =
-		req.backend === SandboxBackend.Daytona
-			? ((req.daytonaApiKey?.trim() || (await resolveExistingKey())) ?? undefined)
-			: undefined;
+	// Asked of the destination's *kind*, not its name: every remote backend is
+	// reached with an account credential, and the local daemon needs none.
+	const apiKey = sandboxBackendNeedsApiKey(req.backend)
+		? ((req.daytonaApiKey?.trim() || (await resolveExistingKey())) ?? undefined)
+		: undefined;
 
 	// Opening the destination *is* the preflight - `openSandboxBackend` pings and
 	// retries, and throws a named error when it cannot connect. Reusing it rather

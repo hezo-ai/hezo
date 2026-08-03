@@ -1110,7 +1110,19 @@ persist.
 
 So `resolveStartupBackend` returns `deferred` when (and only when) the backend needs a
 credential, none is in hand, the vault is locked, and `hasDaytonaApiKey` says one is on
-file — an existence check, so it never decrypts. `startup()` then holds a **pending
+file — an existence check, so it never decrypts.
+
+**"Needs a credential" is asked of the backend's kind, never its name.**
+`SANDBOX_BACKEND_KIND` (`@hezo/shared`) classifies every backend as `local` or `remote` and
+`sandboxBackendNeedsApiKey` derives the requirement from it: a remote service is reached
+over the internet behind an account, a local daemon is a socket on the host. Four sites used
+to spell this `=== SandboxBackend.Daytona` / `!== SandboxBackend.Docker` — the deferral here,
+the launch-key warning beside it, the switch route's `CREDENTIAL_REQUIRED` guard, and the web
+switcher's key field — so a second provider would have inherited "needs no key" at all four
+with nothing failing to compile. The `Record<SandboxBackend, …>` makes adding a backend a
+compile error until it declares its kind. Naming a provider is still right for *which*
+credential (`--daytona-api-key`, the vault entry, `DaytonaClient`); it is never right for
+*whether* one is needed. `startup()` then holds a **pending
 engine** (`sandbox/pending.ts`: a `Proxy` whose every member throws `SandboxBackendError`
 naming the unlock) and `masterKeyManager.onUnlock` runs
 `completeSandboxBackendOnUnlock`, which opens for real and `holder.swap`s it in — ahead of
