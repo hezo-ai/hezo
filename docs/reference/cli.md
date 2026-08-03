@@ -17,9 +17,10 @@ hezo [options]
 ```
 
 Boots the Hezo server and web app (default port 3100) against the data directory
-(default `~/.hezo/`). Docker must be installed and running first - Hezo checks at startup
-and exits with install/start guidance if the daemon isn't reachable (see
-[Installation](/docs/getting-started/installation)). See the
+(default `~/.hezo/`). A Docker-compatible container runtime must be installed and running
+first - Hezo checks at startup and exits with install/start guidance if no
+daemon is reachable (see [Installation](/docs/getting-started/installation) and
+[Container runtimes](/docs/deployment/container-runtimes)). See the
 [Configuration reference](/docs/deployment/configuration) for the full table of flags and
 their environment-variable equivalents. The most common:
 
@@ -32,6 +33,7 @@ hezo --master-key "<phrase>"     # set up or unlock without the web gate
 hezo --web-url https://hezo.example.com   # public base URL for sign-in redirects
 hezo --no-open                   # don't open the web app in your browser on start
 hezo --container-bind-host 0.0.0.0  # native-Linux Docker: let agent containers reach the egress proxy/SSH bridge
+hezo --docker-socket /path/to/docker.sock   # point at a container runtime socket Hezo didn't find on its own
 hezo --no-egress-proxy-auth      # drop per-run egress-proxy auth (escape hatch; on by default)
 hezo --auto-install-updates      # restart onto downloaded updates automatically (waits for idle; comes back unlocked)
 hezo --disable-telemetry         # turn off the anonymous daily usage report (on by default)
@@ -56,6 +58,12 @@ auto-rebinds the egress proxy / SSH bridge to the detected bridge gateway IP whe
 bind is unreachable, so `--container-bind-host` usually needs no change - set it only to pin a
 specific interface. See
 [Self-hosting → Networking & firewall](/docs/deployment/self-hosting) for the details.
+
+Hezo finds the runtime's socket by itself - `DOCKER_HOST`, then the current docker context,
+then the well-known path for each supported runtime - and names the one it used in the
+startup log. Set `--docker-socket` (or `HEZO_DOCKER_SOCKET`) only when the daemon listens
+somewhere none of those cover; Unix sockets only, so `tcp://` and `npipe://` endpoints are
+not supported. See [Container runtimes](/docs/deployment/container-runtimes).
 
 On a desktop machine Hezo opens the web app in your default browser once the server is
 ready. It skips this automatically in environments without a browser - CI, containers,

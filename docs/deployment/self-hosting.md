@@ -12,7 +12,9 @@ keys, and the spend.
 
 ## What you need
 
-- A host that can run **Docker** (your laptop, a home server, or a cloud VPS).
+- A host that can run a **Docker-compatible container runtime** (your laptop,
+  a home server, or a cloud VPS). Colima, Rancher Desktop, OrbStack, Lima and rootless
+  Docker all work - see [Container runtimes](/docs/deployment/container-runtimes).
 - The **`hezo` binary** (see [Installation](/docs/getting-started/installation)).
 - Your **master key** (created on first run; see
   [First-run setup](/docs/getting-started/first-run)).
@@ -191,7 +193,8 @@ There is a second path that is easy to miss: agents run inside Docker containers
 - **20000-29999** - the per-run egress proxy (outbound API calls and secret substitution).
 
 On **Docker Desktop** (macOS/Windows) this just works - it tunnels `host.docker.internal`
-to the host. On **native-Linux Docker** `host.docker.internal` resolves to the *bridge
+to the host, as do the other VM-backed runtimes (Colima, Lima, Rancher Desktop, OrbStack).
+On **native-Linux Docker** `host.docker.internal` resolves to the *bridge
 gateway IP*, so two things have to be true or **every agent run hangs with no tools and the
 CEO chat reports its tools "aren't available"**:
 
@@ -219,7 +222,8 @@ CEO chat reports its tools "aren't available"**:
    trusts `docker0` already.
 
 2. **The egress proxy and SSH bridge bind a container-reachable interface - usually
-   automatically.** They default to `127.0.0.1` (loopback - correct for Docker Desktop), which a
+   automatically.** They default to `127.0.0.1` (loopback - correct for Docker Desktop and the
+   other VM-backed runtimes, which tunnel `host.docker.internal` to host loopback), which a
    container can't reach via the bridge gateway. On native-Linux Docker the **boot-time
    connectivity check below detects this and auto-rebinds them to the docker bridge gateway IP**
    (host-local and container-reachable - not exposed on external interfaces), so proxied egress

@@ -1,8 +1,8 @@
 import { request as httpRequest } from 'node:http';
 import { Readable } from 'node:stream';
 import { DockerFrameDecoder, demuxDockerStream } from './docker-frames';
+import { resolvedDockerSocketPath } from './docker-socket';
 
-const SOCKET_PATH = '/var/run/docker.sock';
 const API_VERSION = 'v1.44';
 
 /**
@@ -171,10 +171,17 @@ async function parseJsonOrThrow<T>(res: Response, op: string): Promise<T> {
 }
 
 export class DockerClient {
-	private socketPath: string;
+	/**
+	 * An explicit socket path pins this client; otherwise it reads the socket the
+	 * startup preflight resolved. Read LAZILY (a getter, not a constructor-time
+	 * field) because the preflight's own client is constructed before resolution
+	 * happens — a snapshot taken at construction would leave the preflight client
+	 * and the startup clients pointing at different sockets.
+	 */
+	constructor(private readonly socketOverride?: string) {}
 
-	constructor(socketPath = SOCKET_PATH) {
-		this.socketPath = socketPath;
+	private get socketPath(): string {
+		return this.socketOverride ?? resolvedDockerSocketPath();
 	}
 
 	private async request(
@@ -275,14 +282,14 @@ export class DockerClient {
 		});
 	}
 
-	async ping(): Promise<boolean> {
+	/**
+	 * `timeoutMs` overrides the default request ceiling. The startup preflight
+	 * passes a much tighter one: it may walk several candidate sockets, and a
+	 * dead path should fail fast rather than multiply the 10s default.
+	 */
+	async ping(timeoutMs: number = DOCKER_REQUEST_TIMEOUT_MS): Promise<boolean> {
 		try {
-			const res = await this.request(
-				'GET',
-				'/_ping',
-				undefined,
-				AbortSignal.timeout(DOCKER_REQUEST_TIMEOUT_MS),
-			);
+			const res = await this.request('GET', '/_ping', undefined, AbortSignal.timeout(timeoutMs));
 			return res.ok;
 		} catch {
 			return false;

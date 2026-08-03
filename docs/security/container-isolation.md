@@ -7,8 +7,10 @@ section: Security
 # Container isolation
 
 Agents execute real, often AI-generated code. Hezo runs that code where it can't hurt
-you: **every project gets its own Docker container, and agents only ever run inside
-it** - never on your host directly.
+you: **every project gets its own container, and agents only ever run inside it** - never
+on your host directly. Hezo drives that through any
+[Docker-compatible runtime](/docs/deployment/container-runtimes); the isolation described
+here is the same whichever you use.
 
 ## A sandbox per project
 
@@ -71,8 +73,9 @@ container starts with all capabilities dropped and only the few the workload nee
 back). A proper init process runs as PID 1 so exited helper processes are always cleaned up.
 
 One honest note on the boundary: a container shares your machine's Linux kernel, so it is a
-strong sandbox, not a virtual machine. On macOS and Windows, Docker Desktop already runs
-every container inside a lightweight VM; on a server, the usual and recommended setup is to
+strong sandbox, not a virtual machine. On macOS and Windows the runtime already runs every
+container inside a lightweight VM (Docker Desktop, Colima, Rancher Desktop, OrbStack and
+Lima all work this way); on a server, the usual and recommended setup is to
 run Hezo on its own VM or host. If you're running untrusted work, keep Hezo on a dedicated
 machine or VM - that is the boundary that isolates it from everything else.
 

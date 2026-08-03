@@ -57,6 +57,15 @@ export interface HezoConfig {
 	 */
 	containerBindHost: string;
 	/**
+	 * Explicit path to the container runtime's Unix socket (`--docker-socket` /
+	 * `HEZO_DOCKER_SOCKET`). Unset by default, in which case the startup preflight
+	 * discovers it: `DOCKER_HOST`, then the docker CLI's current context, then the
+	 * well-known path for each supported runtime (Docker Engine/Desktop, Colima,
+	 * Rancher Desktop, OrbStack, Lima, rootless Docker). Set it only when the
+	 * daemon listens somewhere none of those cover.
+	 */
+	dockerSocket?: string;
+	/**
 	 * Require a per-run token on every request to the egress proxy. On by
 	 * default: each run's `HTTP(S)_PROXY` URL carries a random token that the
 	 * proxy checks (constant-time) before substituting any secret, so a
@@ -765,6 +774,10 @@ export function parseConfig(
 			'Interface the egress proxy and SSH bridge bind to so agent containers can reach them. Default 127.0.0.1 (works with Docker Desktop). On native-Linux Docker set 0.0.0.0 (or the bridge gateway IP) and firewall-restrict the egress port range to the docker bridge. (env: HEZO_CONTAINER_BIND_HOST)',
 		)
 		.option(
+			'--docker-socket <path>',
+			"Path to the container runtime's Unix socket. By default Hezo finds it automatically: DOCKER_HOST, then the docker CLI's current context, then the well-known path for each supported runtime (Docker Engine/Desktop, Colima, Rancher Desktop, OrbStack, Lima, rootless Docker). Set this only when the daemon listens somewhere none of those cover. Unix sockets only - tcp:// and npipe:// are not supported. (env: HEZO_DOCKER_SOCKET)",
+		)
+		.option(
 			'--no-egress-proxy-auth',
 			"Disable per-run egress proxy authentication. On by default: each run's HTTP(S)_PROXY URL carries a token the proxy verifies before substituting secrets. Only disable to unblock a runtime whose HTTP client cannot send proxy credentials — the secret red line still holds (an unauthenticated caller only ships unsubstituted placeholders). (env: HEZO_EGRESS_PROXY_AUTH=0)",
 		)
@@ -842,6 +855,7 @@ export function parseConfig(
 		keepOldContainers: pickBool('HEZO_KEEP_OLD_CONTAINERS', cli.keepOldContainers),
 		autoInstallUpdates: pickBool('HEZO_AUTO_INSTALL_UPDATES', cli.autoInstallUpdates),
 		containerBindHost: pick('HEZO_CONTAINER_BIND_HOST', cli.containerBindHost) ?? '127.0.0.1',
+		dockerSocket: pick('HEZO_DOCKER_SOCKET', cli.dockerSocket),
 		// Egress-proxy auth defaults ON. The env var (when set) wins; otherwise
 		// `--no-egress-proxy-auth` sets cli.egressProxyAuth=false, absent it is true.
 		egressProxyAuth: pickOpen('HEZO_EGRESS_PROXY_AUTH', cli.egressProxyAuth),

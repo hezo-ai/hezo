@@ -1012,12 +1012,44 @@ instance-agent task selection).
 
 ## 5. Agent execution & run lifecycle
 
-**Startup Docker gate.** Every run executes in a per-project Docker container, so Docker
-is a hard prerequisite. Before `startup()` boots the server, `index.ts` runs a preflight
-(`services/docker-preflight.ts`): it pings the daemon and, on failure, checks for a
-`docker` binary on PATH to tell *not installed* from *installed-but-stopped*, prints the
-matching guidance (install link / start command), and **exits non-zero**. `HEZO_SKIP_DOCKER`
-(the same flag that swaps in the in-process fake docker for dev/tests) bypasses the gate.
+**Startup Docker gate.** Every run executes in a per-project container, so a reachable
+Docker-API daemon is a hard prerequisite. Any Docker-compatible runtime qualifies — the
+client speaks the Engine API over a Unix socket (Bun `fetch({unix})` for one-shot calls,
+`node:http` `socketPath` for streams), so `tcp://`/`npipe://`/`ssh://` endpoints are
+structurally unsupported and are reported as such rather than silently ignored.
+
+`services/docker-socket.ts` resolves the socket, most-explicit first: `--docker-socket` /
+`HEZO_DOCKER_SOCKET` → `DOCKER_HOST` → the docker CLI's **current context** (read straight
+from `${DOCKER_CONFIG:-~/.docker}/config.json` + `contexts/meta/<sha256(name)>/meta.json`,
+no subprocess, `DOCKER_CONTEXT` winning) → the well-known path per supported runtime
+(`/var/run/docker.sock`, `~/.docker/run`, `~/.colima/<profile>`, `~/.rd`, `~/.orbstack/run`,
+`~/.lima/<instance>/sock`, `$XDG_RUNTIME_DIR`). An explicit endpoint is used *alone*, so a
+typo fails loudly. Podman is deliberately not auto-discovered (unverified exec-streaming /
+host-gateway behaviour); it is reachable only via an explicit override. The filesystem reads
+are injected (`DockerSocketFs`), so the whole resolver unit-tests without a real FS.
+
+Before `startup()` boots the server, `index.ts` runs the preflight
+(`services/docker-preflight.ts`): it pings each candidate in order (2s each — it may walk
+several), records the first that answers via `setResolvedDockerSocket` and logs it, else
+checks for a `docker` binary on PATH to tell *not installed* from *installed-but-stopped*,
+prints the matching guidance (install link, or per-runtime start commands plus the sockets
+it tried and the `--docker-socket` override), and **exits non-zero**. `DockerClient` reads
+the resolved path through a **getter, not a constructor snapshot**, because the preflight's
+own client is constructed before resolution — so all four production clients converge on the
+same socket. `HEZO_SKIP_DOCKER` (the same flag that swaps in the in-process fake docker for
+dev/tests) bypasses the gate.
+
+**Container mount preflight.** `services/mount-preflight.ts` runs backgrounded from
+`startup()` alongside the connectivity check. Agents work on a bind mount of the data dir
+(workspace / worktrees / previews), and a VM-backed runtime only shares the host paths it
+was configured with — Colima shares `$HOME` **read-only** by default — so an otherwise
+healthy daemon can leave every run failing on its first write. The probe mounts a scratch
+dir from the data dir into a throwaway container, has it read a host-written sentinel and
+write back, and checks host-side that the write landed: missing sentinel (or a write the
+host never sees) → `not-mounted`, sentinel visible but write refused → `read-only`. Logged
+at `error` with the runtime-specific fix but **non-fatal**, same reasoning as the
+connectivity check — exiting would take down the UI the operator needs. Opt out with
+`HEZO_SKIP_MOUNT_CHECK`.
 
 Work reaches an agent through the **wakeup → job-manager → agent-runner** pipeline.
 
