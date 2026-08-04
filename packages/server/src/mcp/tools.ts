@@ -2588,7 +2588,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_team_templates',
-		`List local team templates: the built-in Blank template plus any custom templates saved from existing teams. The default specialist rosters (e.g. the software-development "Startup" team) live in the marketplace, not here. Use when recommending a team structure to hire. Paged: returns \`limit\` entries (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false.`,
+		`List local team templates: the built-in Blank template plus any custom templates saved from existing teams. The default specialist rosters (e.g. the software-development "App Team") live in the marketplace, not here. Use when recommending a team structure to hire. Paged: returns \`limit\` entries (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false.`,
 		{ ...listPagingArgs() },
 		async (args, db) => {
 			const r = await db.query<{

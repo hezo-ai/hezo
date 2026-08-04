@@ -10,7 +10,7 @@ import { HEZO_DOCS_URL } from '@hezo/shared';
  * exactly the registered tools, so a new tool cannot ship undocumented.
  *
  * The page is written to disk by `scripts/build-mcp-reference.ts` (run as part of
- * `bun run build:docs`) and committed, because the public docs site renders the
+ * `bun run --cwd packages/server build:docs`) and committed, because the public docs site renders the
  * committed `docs/**​/*.md` files directly.
  */
 
@@ -583,7 +583,8 @@ export function generateMcpReference(
 		'',
 		'<!-- GENERATED FILE - do not edit by hand. Source: packages/server/src/mcp/mcp-reference.ts',
 		'     (generator + per-tool metadata) and the live MCP tool registry. Regenerate with',
-		'     `bun run build:docs`; mcp-reference.test.ts fails if this file is stale. -->',
+		'     `bun run --cwd packages/server build:docs`; mcp-reference.test.ts fails if this file',
+		'     is stale. -->',
 		'',
 		'# MCP API reference',
 		'',

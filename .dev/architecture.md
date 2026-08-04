@@ -3122,7 +3122,8 @@ the user-JWT (human/browser) surface. `GET /SKILL.md` serves the
 manifest that teaches an external agent how to use it — including the connect/register
 flow — and `GET /llms.txt` points to it. The matching **human** reference — a full
 tool-by-tool page with parameters and return shapes — is generated from the same registry
-by `packages/server/scripts/build-mcp-reference.ts` (run under `bun run build:docs`, guarded by
+by `packages/server/scripts/build-mcp-reference.ts` (run under
+`bun run --cwd packages/server build:docs`, guarded by
 `mcp-reference.test.ts`) and committed as `docs/reference/mcp-api.md`. Authorization for
 both the REST and MCP surfaces is § 10.
 
@@ -3161,21 +3162,28 @@ and would otherwise prevent requests from ever overlapping.
 
 ## 14. Testing
 
-Four tiers (full guidance — when to use each, how to run one file, how to diagnose
+Five tiers (full guidance — when to use each, how to run one file, how to diagnose
 failures — is in `AGENTS.md` › Testing, which is authoritative):
 
 - **Server unit/integration** (`packages/server/test/**/*.test.ts`, vitest/Node) — API
   handlers, DB queries, services, MCP tools; each test boots a fresh PGlite + Hono app via
   `createTestContext()`. The default home for backend work.
-- **Web component** (`packages/web/test/**/*.test.tsx`, vitest/happy-dom) — the React tree
-  against an in-process Hono + PGlite backend via `renderApp()`. Covers ~80% of what would
-  otherwise be a browser test (forms, mutations, refetches, navigation, rendering).
+- **Web component** (`packages/web/test/**/*.test.{ts,tsx}`, vitest/happy-dom) — the React
+  tree against an in-process Hono + PGlite backend via `renderApp()`. Covers ~80% of what
+  would otherwise be a browser test (forms, mutations, refetches, navigation, rendering).
+- **Shared pure-logic** (`packages/shared/test/**/*.test.ts`, vitest/Node) — the pure
+  functions in `@hezo/shared`: crypto/auth, mnemonic, mention parsing, budget/pricing math,
+  enum guards. No DB, no DOM.
 - **Playwright browser** (`test/browser/**/*.spec.ts`) — the thin slice that genuinely
   needs Chromium: real CSS layout, viewport-conditional behavior, native input events,
   windowed-list virtualization, real WebSocket streams, the master-key gate.
 - **Bun-native runtime** (`packages/server/test/bun/**/*.bun.test.ts`, `bun test`) — code
   whose behavior diverges between Node and Bun, exercised on the production Bun runtime.
-  Today: the egress proxy's TLS MITM path (§ 7).
+  Reach here only when the assertion depends on `node:` runtime behavior (TLS, `net`,
+  `crypto`, `child_process`) that a Node-only test would get wrong: the egress proxy's TLS
+  MITM path and its streaming (§ 7), the docker exec/log frame transport, the node-postgres
+  driver, the S3 asset client's SigV4 over the runtime's own `fetch`/`crypto.subtle`, and
+  the updater / shutdown / unlock-handoff paths.
 
 All changes ship with tests that exercise functionality, preferring integration over
 heavily-mocked unit tests, and a green run keeps a quiet log (no stray `[error]`/`[warn]`).
