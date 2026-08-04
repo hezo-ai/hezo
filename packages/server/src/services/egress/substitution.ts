@@ -309,28 +309,58 @@ function applyToAuthorization(
 	secretsUsed: Set<string>,
 	checkAccess: (name: string) => SubstitutionFailure | null,
 ): ApplyResult {
-	const match = /^(\s*Basic\s+)([A-Za-z0-9+/=]+)\s*$/i.exec(raw);
-	if (!match) return applyToString(raw, secrets, secretsUsed, checkAccess);
+	const basic = decodeBasicCredential(raw);
+	// Not Basic, not valid base64, or carrying no placeholder: the ordinary
+	// literal path, so a bearer token or a hand-written header behaves exactly as
+	// before. Re-encoding a value that round-trips differently would corrupt a
+	// credential that never carried a placeholder in the first place.
+	if (!basic) return applyToString(raw, secrets, secretsUsed, checkAccess);
 
+	const out = applyToString(basic.decoded, secrets, secretsUsed, checkAccess);
+	if (!out.changed) return { value: raw, changed: false, failure: out.failure };
+	return {
+		value: `${basic.prefix}${Buffer.from(out.value, 'utf8').toString('base64')}`,
+		changed: true,
+		failure: out.failure,
+	};
+}
+
+/**
+ * The base64 inside a `Basic` credential, **only** when it carries a placeholder.
+ *
+ * Two callers need this and they must agree, which is why it is one function
+ * rather than two copies of the same regex. `applyToAuthorization` needs the
+ * decoded text to substitute into; the proxy's cheap pre-flight scan needs to
+ * know that a header carries a placeholder *at all*, and its literal scan cannot
+ * see through base64 - so a disagreement means the proxy skips substitution
+ * entirely for exactly the credential shape this path exists to handle. It did:
+ * `applyToAuthorization` was correct and unreachable, because the gate above it
+ * looked at the header verbatim and found nothing.
+ *
+ * Returns null for anything that is not a placeholder-carrying Basic value, so
+ * both callers fall back to their ordinary literal behaviour.
+ */
+export function decodeBasicCredential(raw: string): { prefix: string; decoded: string } | null {
+	const match = /^(\s*Basic\s+)([A-Za-z0-9+/=]+)\s*$/i.exec(raw);
+	if (!match) return null;
 	let decoded: string;
 	try {
 		decoded = Buffer.from(match[2], 'base64').toString('utf8');
 	} catch {
-		return applyToString(raw, secrets, secretsUsed, checkAccess);
+		return null;
 	}
-	// Re-encoding a value that round-trips differently would corrupt a credential
-	// that never carried a placeholder in the first place.
-	if (!PLACEHOLDER_PROBE_REGEX.test(decoded)) {
-		return applyToString(raw, secrets, secretsUsed, checkAccess);
-	}
+	if (!PLACEHOLDER_PROBE_REGEX.test(decoded)) return null;
+	return { prefix: match[1], decoded };
+}
 
-	const out = applyToString(decoded, secrets, secretsUsed, checkAccess);
-	if (!out.changed) return { value: raw, changed: false, failure: out.failure };
-	return {
-		value: `${match[1]}${Buffer.from(out.value, 'utf8').toString('base64')}`,
-		changed: true,
-		failure: out.failure,
-	};
+/**
+ * Whether a header value carries a placeholder, **including** one hidden inside a
+ * base64 Basic credential. The proxy gates all substitution on this, so it has to
+ * see everything {@link substituteRequest} would act on.
+ */
+export function headerValueCarriesPlaceholder(name: string, value: string): boolean {
+	if (PLACEHOLDER_PROBE_REGEX.test(value)) return true;
+	return name.toLowerCase() === 'authorization' && decodeBasicCredential(value) !== null;
 }
 
 /**

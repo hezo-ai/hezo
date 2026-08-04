@@ -35,6 +35,7 @@ import {
 	PortAllocator,
 } from './port-allocator';
 import {
+	headerValueCarriesPlaceholder,
 	loadAllSecrets,
 	PLACEHOLDER_PROBE_REGEX,
 	type ResolvedSecret,
@@ -554,12 +555,24 @@ class RunProxyInstance {
 		// Proxy-Authorization on the CONNECT (never inside the TLS tunnel), so
 		// this is the only place to enforce it for HTTPS egress.
 		if (!this.isAuthorized(req.headers['proxy-authorization'])) {
-			client.write(
+			// `Connection: close` and a flushing `end()` are both load-bearing, and
+			// the reason is a client that *probes* before it authenticates.
+			//
+			// git sets libcurl's `CURLOPT_PROXYAUTH` to `CURLAUTH_ANY`, so its first
+			// CONNECT deliberately carries no credentials: it reads this 407 to learn
+			// which scheme the proxy wants, then retries. Announcing only
+			// `Content-Length: 0` tells it the connection is still reusable, so the
+			// retry goes out on *this* socket - which `destroy()` had already torn
+			// down without flushing. libcurl reports `Proxy CONNECT aborted` and the
+			// clone fails. curl's own `-x user:pass@` sends Basic on the first
+			// CONNECT and never reaches this path, which is why every curl-driven
+			// assertion passed while every in-container `git clone` failed.
+			client.end(
 				`HTTP/1.1 407 Proxy Authentication Required\r\n` +
 					`Proxy-Authenticate: Basic realm="${PROXY_AUTH_REALM}"\r\n` +
+					`Connection: close\r\n` +
 					`Content-Length: 0\r\n\r\n`,
 			);
-			client.destroy();
 			return;
 		}
 
@@ -1154,9 +1167,12 @@ function respondProxyAuthRequired(res: ServerResponse): void {
 }
 
 function headersContainProbe(headers: Record<string, string | string[] | undefined>): boolean {
-	for (const v of Object.values(headers)) {
-		if (typeof v === 'string' && PLACEHOLDER_PROBE_REGEX.test(v)) return true;
-		if (Array.isArray(v) && v.some((s) => PLACEHOLDER_PROBE_REGEX.test(s))) return true;
+	// Header-aware on purpose: a placeholder inside a base64 Basic credential is
+	// invisible to a literal scan, and this gate decides whether substitution runs
+	// at all. See `headerValueCarriesPlaceholder`.
+	for (const [name, v] of Object.entries(headers)) {
+		if (typeof v === 'string' && headerValueCarriesPlaceholder(name, v)) return true;
+		if (Array.isArray(v) && v.some((s) => headerValueCarriesPlaceholder(name, s))) return true;
 	}
 	return false;
 }

@@ -2083,8 +2083,13 @@ everywhere rather than a per-backend branch, so dev and CI exercise what product
 Git base64s a URL credential into `Authorization: Basic`, so `substituteRequest` decodes
 that header, substitutes inside and re-encodes (`applyToAuthorization`) — a literal scan
 finds nothing there, and every clone would otherwise ship the raw placeholder as its
-password. `codeload.github.com` is in the GitHub capability's `allowedHosts` because it
-serves the packfiles; without it the ref advertisement succeeds and the transfer is refused.
+password. The proxy's cheap pre-flight scan (`headersContainProbe`), which decides whether
+substitution runs at all, therefore decodes the same way: both call
+`headerValueCarriesPlaceholder`/`decodeBasicCredential` so they cannot disagree. A literal
+gate in front of a decoding substitution leaves `applyToAuthorization` correct and
+unreachable, which is exactly how it shipped. `codeload.github.com` is in the GitHub
+capability's `allowedHosts` because it serves the packfiles; without it the ref
+advertisement succeeds and the transfer is refused.
 
 Remote ops (`needsNetwork`, formerly `needsSsh`) carry git's own HTTP timeouts
 (`http.lowSpeedLimit`/`lowSpeedTime`) and still run under `hezo-run-with-bridge`, which is
@@ -2829,7 +2834,12 @@ no firewall rule to open (§ Container tunnel).
 shares, each run's proxy also mints a
 16-byte token (mirroring the ssh-agent bridge) and requires it as `Proxy-Authorization: Basic
 run:<token>` on every plain request and CONNECT — verified constant-time (`timingSafeEqual`),
-missing/wrong ⇒ **407**, and stripped before the upstream re-request. The token rides the
+missing/wrong ⇒ **407**, and stripped before the upstream re-request. The CONNECT 407 is
+flushed with `end()` and carries `Connection: close`, because a client may legitimately probe
+before it authenticates: git sets libcurl's `CURLOPT_PROXYAUTH` to `CURLAUTH_ANY`, so its
+first CONNECT is unauthenticated and it reads the 407 to learn the scheme. Announcing no
+connection management told it to retry on a socket the proxy had already destroyed, which
+surfaced as `Proxy CONNECT aborted` on every clone. The token rides the
 `HTTP(S)_PROXY` URL userinfo, so each runtime's standard proxy handling sends it with no
 per-runtime change. This closes the gap where any process reaching the proxy port could drive
 substitution for another run; it does not weaken the red line — an unauthenticated caller only

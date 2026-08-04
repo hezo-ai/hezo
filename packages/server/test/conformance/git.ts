@@ -24,6 +24,24 @@
  *    substitute/re-encode path - a literal placeholder scan sees nothing there,
  *    and the failure mode is a clone that ships the placeholder as its password.
  *
+ * **It found two, immediately, and neither was reachable from any other test.**
+ * Both were invisible because every other assertion about the proxy drives it
+ * with curl, and curl and git differ in ways that turn out to matter:
+ *
+ * - The proxy answered an unauthenticated CONNECT with a 407 that named no
+ *   connection management, then destroyed the socket. curl's `-x user:pass@`
+ *   sends Basic on the *first* CONNECT and never sees it; git sets libcurl's
+ *   `CURLOPT_PROXYAUTH` to `CURLAUTH_ANY`, so it probes first, then retried down
+ *   a socket that was already gone - `Proxy CONNECT aborted`, on every clone.
+ * - The proxy gates substitution on a cheap literal scan of the headers, which
+ *   cannot see through base64. So `applyToAuthorization`, written for exactly
+ *   this credential shape and unit-tested directly, was never called on a real
+ *   request: every clone would have shipped the placeholder as its password.
+ *
+ * The lesson is the one this directory exists for - a host-side test can only
+ * check the request Hezo builds, and a test that drives the path with a
+ * different client is checking a different path.
+ *
  * Generic like its siblings: a new adapter (Modal, E2B, …) is a fixture entry,
  * not another copy of this file. It needs nothing beyond a `ContainerEngine`,
  * the run user, and an image carrying `git` and `hezo-tunnel`.
