@@ -919,7 +919,52 @@ export class JobManager {
 		await this.restartStoppedRunningContainers(docker);
 		await this.repairStaleContainerMounts(docker);
 		await this.sweepDanglingContainerProcesses(docker);
+		await this.sweepStaleTunnelClients(docker);
 		await this.reapOrphanedContainersAtStartup();
+	}
+
+	/**
+	 * Kill the tunnel clients a previous life of this process left listening.
+	 *
+	 * Safe here and nowhere else: at reconcile this process holds **no** tunnel,
+	 * so every client alive in one of its containers is by definition stale. A
+	 * container legitimately carries several at once during normal operation (a
+	 * run, a chat turn, a provisioning git op) and they are indistinguishable from
+	 * inside, which is why this is a startup pass rather than a cron.
+	 *
+	 * The orphan is Daytona-shaped but the sweep is not: closing a PTY there does
+	 * not kill what runs on it, so a server stopped before its close path ran
+	 * (every `ctrl-c` on a dev loop) abandons a client that goes on holding that
+	 * sandbox's three loopback ports. The next tunnel into the container then dies
+	 * on `EADDRINUSE` and the run loses MCP, egress and ssh entirely - reported
+	 * only as a 30s bind timeout. It became reachable when containers started
+	 * outliving the process (`reapOrphanedContainersAtStartup`): before that a
+	 * restart abandoned the container too, so the orphan went with it.
+	 *
+	 * Enumerated by label rather than from `projects.container_id`, so pool members
+	 * no project currently points at are swept too - they are the ones a later run
+	 * is most likely to be handed.
+	 */
+	private async sweepStaleTunnelClients(docker: ContainerEngine): Promise<void> {
+		if (!(await docker.ping())) {
+			log.warn('Container backend not reachable at startup; skipping stale-tunnel sweep');
+			return;
+		}
+		let containers: Array<{ Id: string }>;
+		try {
+			const { INSTANCE_LABEL } = await import('./sandbox/labels');
+			const { getOrCreateInstanceId } = await import('./telemetry');
+			const instanceId = await getOrCreateInstanceId(this.deps.db, this.deps.dataDir);
+			containers = await docker.listContainersByLabel(`${INSTANCE_LABEL}=${instanceId}`);
+		} catch (err) {
+			log.warn('Stale-tunnel sweep could not list this instance’s containers:', err);
+			return;
+		}
+		for (const c of containers) {
+			await docker
+				.killTunnelClients(c.Id)
+				.catch((err) => log.warn(`Stale-tunnel sweep failed for container ${c.Id}:`, err));
+		}
 	}
 
 	/**

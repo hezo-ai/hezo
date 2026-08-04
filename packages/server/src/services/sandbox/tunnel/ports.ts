@@ -83,6 +83,45 @@ export function allocateTunnelPorts(containerId: string): AllocatedTunnelPorts {
 	};
 }
 
+/**
+ * Reserve a triple that is free **in the container**, not merely free in this
+ * process's book-keeping.
+ *
+ * The in-process map above is necessary and not sufficient. It is authoritative
+ * for tunnels *this* process opened, and it is empty at startup - which is
+ * exactly when it is wrong, because the container outlives the process now that
+ * an instance reclaims its previous life's containers. A client abandoned by a
+ * server that was killed mid-flight goes on listening, the fresh map hands out
+ * the same base, and the new client dies on `EADDRINUSE`.
+ *
+ * So the map decides what to *offer* and the container decides what is
+ * *acceptable*. A rejected triple is released rather than kept poisoned: the
+ * probe is the authority, so the next caller should ask again rather than
+ * inherit this one's answer - the orphan holding it may be gone by then.
+ *
+ * `isBusy` failing is treated as "not busy" by the caller that supplies it: a
+ * container that cannot answer an exec is a bigger problem than a port guess,
+ * and the reservation above still stops this process colliding with itself.
+ */
+export async function allocateFreeTunnelPorts(
+	containerId: string,
+	isBusy: (ports: TunnelPorts) => Promise<boolean>,
+): Promise<AllocatedTunnelPorts> {
+	const rejected: AllocatedTunnelPorts[] = [];
+	try {
+		for (;;) {
+			// Throws TunnelPortsExhaustedError once every triple is spoken for,
+			// which ends the loop: `rejected` holds the ones we probed and refused,
+			// so they are counted as taken until the `finally` gives them back.
+			const candidate = allocateTunnelPorts(containerId);
+			if (!(await isBusy(candidate.ports))) return candidate;
+			rejected.push(candidate);
+		}
+	} finally {
+		for (const r of rejected) r.release();
+	}
+}
+
 /** Test-only: assert the allocator is not leaking triples. */
 export function liveTunnelPortCount(containerId?: string): number {
 	if (containerId !== undefined) return taken.get(containerId)?.size ?? 0;

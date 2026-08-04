@@ -14,6 +14,7 @@ import {
 	buildDiskUsageScript,
 	buildKillByEnvMarkerScript,
 	buildKillPidsScript,
+	buildKillTunnelClientsScript,
 	buildListHezoProcessesScript,
 } from './sandbox/proc-scripts';
 import { tarSingleFile, untarFirstFile } from './sandbox/tar';
@@ -983,6 +984,26 @@ export class DockerClient implements ContainerEngine {
 	 * and kills by pid. Validates every pid so nothing unexpected reaches the
 	 * shell; a no-op on an empty list. Best-effort, bounded like the marker kill.
 	 */
+	/**
+	 * SIGKILL every tunnel client in `containerId`. Same script the managed
+	 * backends run - the scan is runtime-agnostic and only its transport differs.
+	 * Best-effort and bounded like the other kills.
+	 */
+	async killTunnelClients(containerId: string): Promise<void> {
+		const execId = await this.execCreate(containerId, {
+			Cmd: ['sh', '-c', buildKillTunnelClientsScript()],
+			AttachStdout: false,
+			AttachStderr: false,
+		});
+		const ac = new AbortController();
+		const timer = setTimeout(() => ac.abort(), KILL_EXEC_TIMEOUT_MS);
+		try {
+			await this.execStart(execId, { signal: ac.signal });
+		} finally {
+			clearTimeout(timer);
+		}
+	}
+
 	async killPids(containerId: string, pids: number[]): Promise<void> {
 		if (pids.length === 0) return;
 		const script = buildKillPidsScript(pids);

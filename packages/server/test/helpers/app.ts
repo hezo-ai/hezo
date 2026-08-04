@@ -99,6 +99,7 @@ const STUB_DOCKER_METHODS: ContainerEngine = {
 	killProcessesByEnvMarker: async () => {},
 	listHezoProcesses: async () => [],
 	killPids: async () => {},
+	killTunnelClients: async () => {},
 	diskUsedBytes: async () => null,
 	// Same answer the fake gives: a stub engine stands in for the local daemon.
 	containerHostMemory: () => getHostMemory(),

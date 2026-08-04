@@ -1480,6 +1480,19 @@ Daytona alone - and for the tunnel that is not cosmetic, since the client holds 
 loopback ports and a pooled container serves many runs in sequence: the next run's client dies
 with `EADDRINUSE` and that run loses MCP, egress and the ssh-agent entirely.
 
+**That delete runs on the host's close path, so a server that dies first cannot perform it**,
+and two things now cover the gap rather than assuming it away. The port allocator
+(`allocateFreeTunnelPorts`) **probes the container** for a triple that is actually free instead
+of trusting its in-process map - which is authoritative for tunnels this process opened and
+empty at startup, exactly when a container reclaimed from a previous life is most likely to
+carry an abandoned client. And `JobManager.sweepStaleTunnelClients`, a startup reconcile pass,
+SIGKILLs every tunnel client in every container this instance owns: at reconcile the process
+holds no tunnel, so any client alive in one of its containers is by definition stale. That
+reasoning is what makes it a startup pass rather than a cron - during normal operation a
+container legitimately carries several tunnels at once and they are indistinguishable from
+inside. It became reachable when containers started outliving the process (§ orphan sweep);
+before that a restart abandoned the container too, so the orphan went with it.
+
 **Above the transport, the framing layer syncs too, and the two are not redundant.** The
 client emits a NUL-delimited `TUNNEL_PREAMBLE` before its first frame and the decoder
 discards everything up to it. That lives in the shared protocol rather than in an adapter

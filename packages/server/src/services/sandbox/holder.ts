@@ -113,6 +113,7 @@ export class SandboxBackendHolder {
 			prepareHost: (...a) => e().prepareHost(...a),
 			listHezoProcesses: (...a) => e().listHezoProcesses(...a),
 			killPids: (...a) => e().killPids(...a),
+			killTunnelClients: (...a) => e().killTunnelClients(...a),
 			diskUsedBytes: (...a) => e().diskUsedBytes(...a),
 			containerHostMemory: () => e().containerHostMemory(),
 			files: (...a) => e().files(...a),

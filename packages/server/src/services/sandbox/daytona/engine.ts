@@ -9,6 +9,7 @@ import {
 	buildDiskUsageScript,
 	buildKillByEnvMarkerScript,
 	buildKillPidsScript,
+	buildKillTunnelClientsScript,
 	buildListHezoProcessesScript,
 } from '../proc-scripts';
 import type {
@@ -705,6 +706,16 @@ export class DaytonaEngine implements ContainerEngine {
 	async killPids(containerId: string, pids: number[]): Promise<void> {
 		if (pids.length === 0) return;
 		await this.runScript(containerId, buildKillPidsScript(pids));
+	}
+
+	/**
+	 * The backend this exists for. A Daytona PTY does not kill what runs on it
+	 * when its socket closes - only deleting the session does - so a server that
+	 * died before its close path ran leaves a client holding this sandbox's tunnel
+	 * ports for as long as the sandbox lives.
+	 */
+	async killTunnelClients(containerId: string): Promise<void> {
+		await this.runScript(containerId, buildKillTunnelClientsScript());
 	}
 
 	/**

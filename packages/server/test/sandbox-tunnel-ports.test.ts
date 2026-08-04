@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { TUNNEL_PORT_BASE, TUNNEL_PORT_RANGE } from '../src/services/sandbox/endpoints';
 import {
+	allocateFreeTunnelPorts,
 	allocateTunnelPorts,
 	liveTunnelPortCount,
 	TunnelPortsExhaustedError,
@@ -117,5 +118,59 @@ describe('allocateTunnelPorts', () => {
 		expect(liveTunnelPortCount('transient')).toBe(1);
 		a.release();
 		expect(liveTunnelPortCount('transient')).toBe(0);
+	});
+});
+
+describe('allocateFreeTunnelPorts', () => {
+	it('skips a triple something else in the container already holds', async () => {
+		// The bug this exists for: the in-process map is empty at startup, but the
+		// container outlives the process, so an abandoned client from a previous
+		// life is still listening on the first triple.
+		const first = allocateTunnelPorts('c1');
+		const held = first.ports;
+		first.release();
+
+		const a = await allocateFreeTunnelPorts('c1', async (ports) => ports.proxy === held.proxy);
+		expect(a.ports.proxy).not.toBe(held.proxy);
+		a.release();
+	});
+
+	it('releases the triples it probed and refused, so the next caller re-asks', async () => {
+		// A refused triple is not poisoned: the orphan holding it may be gone by
+		// the time anyone asks again, and the probe is the authority.
+		const first = allocateTunnelPorts('c2');
+		const held = first.ports;
+		first.release();
+
+		let busy = true;
+		const a = await allocateFreeTunnelPorts(
+			'c2',
+			async (ports) => busy && ports.proxy === held.proxy,
+		);
+		expect(a.ports.proxy).not.toBe(held.proxy);
+		a.release();
+
+		busy = false;
+		const b = await allocateFreeTunnelPorts('c2', async () => false);
+		expect(b.ports.proxy).toBe(held.proxy);
+		b.release();
+		expect(liveTunnelPortCount('c2')).toBe(0);
+	});
+
+	it('still refuses to hand the same triple to two live tunnels', async () => {
+		const a = await allocateFreeTunnelPorts('c3', async () => false);
+		const b = await allocateFreeTunnelPorts('c3', async () => false);
+		expect(b.ports.proxy).not.toBe(a.ports.proxy);
+		a.release();
+		b.release();
+	});
+
+	it('gives every triple back when the container has no room left', async () => {
+		// Every triple probes busy, so the loop exhausts the range and throws - and
+		// must not leak the reservations it took on the way.
+		await expect(allocateFreeTunnelPorts('c4', async () => true)).rejects.toThrow(
+			TunnelPortsExhaustedError,
+		);
+		expect(liveTunnelPortCount('c4')).toBe(0);
 	});
 });

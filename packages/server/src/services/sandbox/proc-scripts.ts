@@ -108,6 +108,45 @@ export function buildDiskUsageScript(path: string): string {
 	);
 }
 
+/**
+ * The in-container tunnel client, as `/proc/<pid>/cmdline` sees it.
+ *
+ * The client's shebang is `#!/usr/bin/env node`, so by the time it is running
+ * the kernel has replaced `env` and argv reads `node /usr/local/bin/hezo-tunnel
+ * <config>`. Matching **argv[1]** rather than scanning the whole cmdline is what
+ * makes this safe to run from a shell whose own `-c` argument contains this very
+ * string: the sweeping shell's argv[1] is `-c`, so it can never match itself. A
+ * whole-cmdline grep here would SIGKILL the sweep mid-sweep.
+ */
+const TUNNEL_CLIENT_ARGV1 = 'hezo-tunnel';
+
+/**
+ * SIGKILL every tunnel client running in this container.
+ *
+ * Only ever correct when the caller owns **no** live tunnel into the container -
+ * at startup reconcile, before this process has opened any - because a container
+ * legitimately carries several at once (a run, a chat turn, a provisioning git
+ * op), and they are indistinguishable from a stale one from inside.
+ *
+ * The stale ones exist because a Daytona PTY does not kill what runs on it when
+ * its socket closes; only deleting the session does, and that delete runs on the
+ * host's close path. A server killed mid-flight (any `ctrl-c` on a dev loop)
+ * therefore abandons a client that goes on holding this container's three
+ * loopback ports, and every later tunnel into that container dies on
+ * `EADDRINUSE` having lost MCP, egress and ssh for the whole run.
+ */
+export function buildKillTunnelClientsScript(): string {
+	return (
+		'for d in /proc/[0-9]*; do ' +
+		'pid=${d#/proc/}; ' +
+		'[ "$pid" = "$$" ] && continue; ' +
+		'a=$(tr "\\0" "\\n" < "$d/cmdline" 2>/dev/null | sed -n 2p); ' +
+		`case "$a" in */${TUNNEL_CLIENT_ARGV1}|${TUNNEL_CLIENT_ARGV1}) ` +
+		'kill -9 "$pid" 2>/dev/null || true;; esac; ' +
+		'done'
+	);
+}
+
 /** SIGKILL an explicit pid list. Validates every pid so nothing unexpected reaches the shell. */
 export function buildKillPidsScript(pids: number[]): string {
 	for (const pid of pids) {
@@ -149,4 +188,34 @@ export function buildPortsListeningScript(ports: readonly number[]): string {
 		})
 		.join(' && ');
 	return `${tests} && echo ready`;
+}
+
+/**
+ * Report whether **any** of `ports` is already being listened on, on loopback.
+ *
+ * The inverse question to {@link buildPortsListeningScript}, and deliberately a
+ * separate script rather than a negation of it: that one asks "are all three up
+ * yet" (readiness), this one asks "is this triple already taken" (allocation).
+ * Same `/proc/net/tcp` reasoning - the pseudo-file is always there, while `ss`
+ * and `netstat` are packages a custom `docker_base_image` need not carry, and a
+ * missing tool reading as "free" would hand out a port that is not.
+ *
+ * Prints `busy` when at least one is taken and nothing otherwise, so the caller
+ * tests one exact string. Silence means free, which is the safe default here
+ * only because the allocator still holds its own in-process reservation on top.
+ */
+export function buildAnyPortListeningScript(ports: readonly number[]): string {
+	if (ports.length === 0) return '';
+	for (const port of ports) {
+		if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+			throw new Error(`invalid port: ${String(port)}`);
+		}
+	}
+	const tests = ports
+		.map((port) => {
+			const hex = port.toString(16).toUpperCase().padStart(4, '0');
+			return `grep -qi " 0100007F:${hex} .* 0A " /proc/net/tcp`;
+		})
+		.join(' || ');
+	return `{ ${tests} ; } && echo busy`;
 }

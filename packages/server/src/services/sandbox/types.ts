@@ -271,6 +271,15 @@ export interface ContainerEngine {
 	killRunProcesses(containerId: string, runId: string): Promise<void>;
 	listHezoProcesses(containerId: string): Promise<ContainerProcessInfo[]>;
 	killPids(containerId: string, pids: number[]): Promise<void>;
+	/**
+	 * SIGKILL every tunnel client in `containerId`, whoever started it.
+	 *
+	 * A seam method rather than a caller-side script because the *transport* is
+	 * per-backend while the scan is not - both engines run the identical
+	 * `buildKillTunnelClientsScript`. Only correct when the caller holds no live
+	 * tunnel into the container; see that script for why.
+	 */
+	killTunnelClients(containerId: string): Promise<void>;
 
 	/**
 	 * Bytes used on the filesystem holding `path` inside the container, or null

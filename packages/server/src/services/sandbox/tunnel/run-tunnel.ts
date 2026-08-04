@@ -2,11 +2,11 @@ import { logger } from '../../../logger';
 import type { ContainerRunUser } from '../../container-user';
 import { type RunEndpoints, tunnelRunEndpoints } from '../endpoints';
 import type { SandboxFiles } from '../files';
-import { buildPortsListeningScript } from '../proc-scripts';
+import { buildAnyPortListeningScript, buildPortsListeningScript } from '../proc-scripts';
 import type { ContainerByteChannel, ContainerEngine } from '../types';
 import { TunnelMux } from './mux';
 import { connectToRunTargets, type TargetAddresses } from './net-socket';
-import { allocateTunnelPorts } from './ports';
+import { allocateFreeTunnelPorts } from './ports';
 import type { TunnelHostPolicy } from './split-routing';
 
 const log = logger.child('run-tunnel');
@@ -82,7 +82,26 @@ export async function startRunTunnel(opts: StartRunTunnelOptions): Promise<RunTu
 	// Allocated, not fixed: a container carries several tunnels at once (a run,
 	// a chat turn, a provisioning git op), each with its own host-side egress and
 	// ssh allocation behind it, so a shared triple would cross them.
-	const allocation = allocateTunnelPorts(opts.containerId);
+	//
+	// Probed as well as reserved, because the container outlives this process and
+	// an abandoned client from a previous life still holds its ports (see
+	// `allocateFreeTunnelPorts`). A probe that cannot run is treated as free: the
+	// in-process reservation still holds, and a container that will not exec is
+	// about to fail the readiness wait below with a better message than a port
+	// guess would produce.
+	const allocation = await allocateFreeTunnelPorts(opts.containerId, async (ports) => {
+		try {
+			const exec = await opts.engine.execCreate(opts.containerId, {
+				Cmd: ['sh', '-c', buildAnyPortListeningScript([ports.proxy, ports.mcp, ports.ssh])],
+				User: 'root',
+				AttachStdout: true,
+				AttachStderr: false,
+			});
+			return (await opts.engine.execStart(exec)).stdout.includes('busy');
+		} catch {
+			return false;
+		}
+	});
 	try {
 		await opts.files.write(
 			opts.configRelPath,
