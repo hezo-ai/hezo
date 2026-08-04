@@ -253,7 +253,11 @@ accomplished / is being accomplished / is outstanding), not a copy of the ticket
 Identifier and title are captured at write time, so rendering needs no join and a ticket deleted
 between runs simply renders its captured row. `buildProgressActivitySnapshot`
 (`services/project-activity.ts`) validates on write and returns unresolvable identifiers to the
-caller; `readProgressActivity` tolerates the `{}` default.
+caller; `readProgressActivity` tolerates the `{}` default. Each `summary` is bounded to
+`PROGRESS_ACTIVITY_SUMMARY_MAX` (200) **at a sentence boundary** by `clampToWholeSentence`, so the
+stored line is always a finished thought — the page renders it in full, with no `line-clamp` or
+ellipsis to hide a mid-clause cut behind, and the bound therefore has to hold in the data rather
+than in the CSS.
 In the web app the page is `/projects/$projectId/progress`, with **Goals nested beneath it**
 (`/progress/goals`, `/progress/goals/$goalId`) so the URL matches the sidebar disclosure and the
 breadcrumb; the pre-nesting `/goals` paths survive as redirect-only routes. The sidebar's Progress

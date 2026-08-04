@@ -10,6 +10,7 @@ Once per progress-update run, call `update_project_progress` with a `summary` an
 
 Write every line at the level of **what it means for the project** — what was accomplished, what is being accomplished, or what is outstanding:
 
+- **Write a complete sentence, under 200 characters.** The page renders your line in full rather than clipping it, so a line that runs long is trimmed back to its last complete sentence and the rest is lost. Say the one thing that matters and stop.
 - **Do not** paste the task's own progress summary or the first line of its description. Write the line yourself, from what you saw this run.
 - **Do not** narrate mechanics: branches pushed, CI green, who commented when, review round-trips. Those belong on the ticket.
 - Someone should be able to read the three columns top to bottom and come away knowing where the project stands.

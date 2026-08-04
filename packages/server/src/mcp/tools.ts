@@ -39,6 +39,7 @@ import {
 	matchesArchiveFilter,
 	normalizeAssetPath,
 	PROGRESS_ACTIVITY_PER_COLUMN,
+	PROGRESS_ACTIVITY_SUMMARY_MAX,
 	REQUIRED_SYSTEM_PROMPT_VARS,
 	ReactionKind,
 	requiredSystemPromptVarsError,
@@ -982,7 +983,7 @@ const progressActivityArg = (which: string, answers: string) =>
 				summary: z
 					.string()
 					.describe(
-						`One line, in your own words, answering: ${answers}. Pitch it at what this means for the project, not a log of what happened inside the task. Do not paste the task's own progress summary or description, and leave out mechanics like branches, CI and review round-trips.`,
+						`One line, in your own words, answering: ${answers}. Pitch it at what this means for the project, not a log of what happened inside the task. Do not paste the task's own progress summary or description, and leave out mechanics like branches, CI and review round-trips. Write a complete sentence and keep it under ${PROGRESS_ACTIVITY_SUMMARY_MAX} characters - the Progress page renders the line in full, and anything longer is trimmed back to its last complete sentence.`,
 					),
 			}),
 		)
@@ -1483,7 +1484,7 @@ export function registerTools(
 	tool(
 		server,
 		'update_project_progress',
-		"Replace the whole Progress page for the project: the summary at the top and the three recent-activity columns beneath it. Only the Captain does this, and only from within a progress-update run. The summary and the columns work at two different levels and must not repeat each other. The SUMMARY is the high-level read: where the project stands, what has taken place, and what is being planned. Do NOT name individual tickets in it - no identifiers at all - because the columns below already link the specific work. The COLUMNS are that specific work: up to 5 tasks each in `actioned` (being worked now), `created` (newly filed) and `closed` (finished), each with a one-line `summary` you write yourself. Pitch every line at what it means for the project - what was accomplished, what is being accomplished, or what is outstanding - not a log of what happened inside the task; never paste the task's own progress summary or description, and leave out mechanics like branches, CI and review round-trips. A reader should be able to read the three columns top to bottom and know where the project stands. This overwrites the summary and all three columns, so include everything that should remain.",
+		"Replace the whole Progress page for the project: the summary at the top and the three recent-activity columns beneath it. Only the Captain does this, and only from within a progress-update run. The summary and the columns work at two different levels and must not repeat each other. The SUMMARY is the high-level read: where the project stands, what has taken place, and what is being planned. Do NOT name individual tickets in it - no identifiers at all - because the columns below already link the specific work. The COLUMNS are that specific work: up to 5 tasks each in `actioned` (being worked now), `created` (newly filed) and `closed` (finished), each with a one-line `summary` you write yourself. Pitch every line at what it means for the project - what was accomplished, what is being accomplished, or what is outstanding - not a log of what happened inside the task; never paste the task's own progress summary or description, and leave out mechanics like branches, CI and review round-trips. Each column line must be a complete sentence under 200 characters: the page renders it in full rather than clipping it, so a longer line is trimmed back to its last complete sentence and the rest is lost. A reader should be able to read the three columns top to bottom and know where the project stands. This overwrites the summary and all three columns, so include everything that should remain.",
 		{
 			project: projectArg(),
 			summary: z

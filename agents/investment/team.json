@@ -62,6 +62,10 @@
 	],
 	"changelog": [
 		{
+			"version": 8,
+			"notes": "Captain: each Progress page activity line must be a complete sentence under 200 characters - the page now renders the line in full instead of clipping it, so an over-long line is trimmed back to its last complete sentence."
+		},
+		{
 			"version": 7,
 			"notes": "Captain: the planning-task lifecycle moves into a shared partial, so the rules for closing it out (and for reporting no work while its sub-tasks run) are now stated on every team rather than only where they happened to be written."
 		},
