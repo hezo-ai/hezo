@@ -44,6 +44,9 @@ they are written to answer *what does this mean for the project*: what was accom
 being accomplished, or what is outstanding. Read the three columns top to bottom and you should
 come away knowing where things stand.
 
+Each line is shown in full, never cut off part-way with an ellipsis, so what you read is always a
+finished sentence.
+
 Click any row to open that task.
 
 On a phone the three columns become a **tab strip** - Actioned / Created / Closed - with the count

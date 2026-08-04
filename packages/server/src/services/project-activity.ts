@@ -185,6 +185,31 @@ export interface ProgressActivityInput {
 	summary: string;
 }
 
+/**
+ * Trim a Captain-written activity line to `max` characters **at a sentence boundary**, so what is
+ * stored is always a finished thought. The page renders the stored line in full - there is no
+ * clamp or ellipsis to hide a mid-clause cut behind - so a blind slice would surface as a sentence
+ * that simply stops.
+ *
+ * A boundary is terminal punctuation followed by the start of another sentence (whitespace, then a
+ * capital or an opening quote) or by the end of the budget, which keeps an abbreviation like "e.g."
+ * from reading as an ending. When nothing finishes inside the budget - a run-on far longer than the
+ * one line the prompt asks for - the cut falls back to the last whole word, and then to a hard
+ * slice for text carrying no spaces at all.
+ */
+export function clampToWholeSentence(text: string, max: number): string {
+	const trimmed = text.trim();
+	if (trimmed.length <= max) return trimmed;
+	const window = trimmed.slice(0, max);
+	let cut = 0;
+	for (const m of window.matchAll(/[.!?]["'’”)\]]*(?=$|\s+["'“([]?[A-Z0-9])/g)) {
+		cut = (m.index ?? 0) + m[0].length;
+	}
+	if (cut > 0) return window.slice(0, cut);
+	const lastSpace = window.lastIndexOf(' ');
+	return (lastSpace > 0 ? window.slice(0, lastSpace) : window).trimEnd();
+}
+
 export interface ProgressActivitySnapshot {
 	activity: ProgressActivity;
 	/** Identifiers the Captain named that do not resolve in this project, reported back to it. */
@@ -237,7 +262,7 @@ export async function buildProgressActivitySnapshot(
 			activity[kind].push({
 				identifier: task.identifier,
 				title: task.title,
-				summary: summary.slice(0, PROGRESS_ACTIVITY_SUMMARY_MAX),
+				summary: clampToWholeSentence(summary, PROGRESS_ACTIVITY_SUMMARY_MAX),
 			});
 		}
 	}
