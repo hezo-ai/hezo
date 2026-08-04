@@ -144,6 +144,20 @@ export default defineConfig({
 			url: `http://localhost:${SERVER_PORT}/api/status`,
 			reuseExistingServer: false,
 			timeout: WEB_SERVER_TIMEOUT_MS,
+			// Playwright ignores a webServer's stdout by default and pipes only its
+			// stderr, and Hezo's logger writes at INFO to stdout - so a boot that is
+			// slow rather than broken produces *nothing*. `test-browser (3)` died
+			// exactly that way: three webServers must come up (this one plus the two
+			// vite previews below), the timeout names none of them, and the 180s
+			// between launch and failure held not one line of log. A crash would have
+			// shown on stderr; the silence is what a server still working through
+			// migrations and seeding looks like, and it left the failure impossible
+			// to attribute.
+			//
+			// Cheap, because the log is activity-gated rather than per-tick: the 1Hz
+			// wakeup and heartbeat crons say nothing on a quiet tick, so this costs
+			// the startup sequence and real work, not a line a second.
+			stdout: 'pipe',
 			env: {
 				SKIP_AI_KEY_VALIDATION: '1',
 				HEZO_SKIP_DOCKER: '1',
