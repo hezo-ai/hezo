@@ -119,7 +119,11 @@ async function callListTasks(
 	const body = (await res.json()) as {
 		result: { content: Array<{ type: string; text: string }> };
 	};
-	return JSON.parse(body.result.content[0].text) as Array<Record<string, unknown>>;
+	// list_tasks pages: the rows live under `items` alongside the cursor.
+	const page = JSON.parse(body.result.content[0].text) as {
+		items: Array<Record<string, unknown>>;
+	};
+	return page.items;
 }
 
 describe('list_tasks MCP tool: assignee filters', () => {
@@ -152,7 +156,7 @@ describe('list_tasks MCP tool: assignee filters', () => {
 		}
 	});
 
-	it('returns an empty array (not an error) for an unknown assignee_slug', async () => {
+	it('returns an empty page (not an error) for an unknown assignee_slug', async () => {
 		const rows = await callListTasks({ assignee_slug: 'nonexistent-agent-slug' });
 		expect(Array.isArray(rows)).toBe(true);
 		expect(rows.length).toBe(0);

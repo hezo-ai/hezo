@@ -252,22 +252,22 @@ describe('project doc archival — MCP', () => {
 		});
 
 		const list = (await callToolViaMcp(t, 'list_project_docs', { project: projectId })) as {
-			files: Array<{ filename: string }>;
+			items: Array<{ filename: string }>;
 		};
-		expect(list.files.some((f) => f.filename === 'mcp-hidden.md')).toBe(false);
+		expect(list.items.some((f) => f.filename === 'mcp-hidden.md')).toBe(false);
 
 		const listArchived = (await callToolViaMcp(t, 'list_project_docs', {
 			project: projectId,
 			filter: 'archived',
-		})) as { files: Array<{ filename: string; archived?: boolean }> };
-		expect(listArchived.files.every((f) => f.archived === true)).toBe(true);
-		expect(listArchived.files.some((f) => f.filename === 'mcp-hidden.md')).toBe(true);
+		})) as { items: Array<{ filename: string; archived?: boolean }> };
+		expect(listArchived.items.every((f) => f.archived === true)).toBe(true);
+		expect(listArchived.items.some((f) => f.filename === 'mcp-hidden.md')).toBe(true);
 
 		const listAll = (await callToolViaMcp(t, 'list_project_docs', {
 			project: projectId,
 			filter: 'all',
-		})) as { files: Array<{ filename: string; archived?: boolean }> };
-		const entry = listAll.files.find((f) => f.filename === 'mcp-hidden.md');
+		})) as { items: Array<{ filename: string; archived?: boolean }> };
+		const entry = listAll.items.find((f) => f.filename === 'mcp-hidden.md');
 		expect(entry?.archived).toBe(true);
 
 		const read = await callToolViaMcp(t, 'read_project_doc', {
@@ -416,22 +416,22 @@ describe('asset archival — MCP', () => {
 		});
 
 		const list = (await callToolViaMcp(t, 'list_project_assets', { project: projectId })) as {
-			files: Array<{ filename: string }>;
+			items: Array<{ filename: string }>;
 		};
-		expect(list.files.some((f) => f.filename === 'mcp-frozen.txt')).toBe(false);
+		expect(list.items.some((f) => f.filename === 'mcp-frozen.txt')).toBe(false);
 
 		const listArchived = (await callToolViaMcp(t, 'list_project_assets', {
 			project: projectId,
 			filter: 'archived',
-		})) as { files: Array<{ filename: string; archived?: boolean }> };
-		expect(listArchived.files.every((f) => f.archived === true)).toBe(true);
-		expect(listArchived.files.some((f) => f.filename === 'mcp-frozen.txt')).toBe(true);
+		})) as { items: Array<{ filename: string; archived?: boolean }> };
+		expect(listArchived.items.every((f) => f.archived === true)).toBe(true);
+		expect(listArchived.items.some((f) => f.filename === 'mcp-frozen.txt')).toBe(true);
 
 		const listAll = (await callToolViaMcp(t, 'list_project_assets', {
 			project: projectId,
 			filter: 'all',
-		})) as { files: Array<{ filename: string; archived?: boolean }> };
-		expect(listAll.files.find((f) => f.filename === 'mcp-frozen.txt')?.archived).toBe(true);
+		})) as { items: Array<{ filename: string; archived?: boolean }> };
+		expect(listAll.items.find((f) => f.filename === 'mcp-frozen.txt')?.archived).toBe(true);
 
 		const read = await callToolViaMcp(t, 'read_project_asset', {
 			project: projectId,

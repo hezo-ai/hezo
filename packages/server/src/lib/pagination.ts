@@ -58,21 +58,33 @@ export function parseCursorPagination(c: Context): CursorPagination {
 	);
 	const raw = c.req.query('cursor');
 	if (!raw) return { limit, cursor: null, invalidCursor: false };
-	// Split on the LAST separator: the sort value may itself contain one.
-	const at = raw.lastIndexOf('|');
-	if (at <= 0 || at === raw.length - 1) return { limit, cursor: null, invalidCursor: true };
-	const value = raw.slice(0, at);
-	const id = raw.slice(at + 1);
+	const cursor = decodeCursor(raw);
 	// The cursor is client-supplied and is interpolated into a typed comparison,
 	// so a malformed half would otherwise reach the database and 500 on a cast.
-	if (!UUID_RE.test(id) || Number.isNaN(Date.parse(value))) {
+	if (!cursor || !UUID_RE.test(cursor.id) || Number.isNaN(Date.parse(cursor.value))) {
 		return { limit, cursor: null, invalidCursor: true };
 	}
-	return { limit, cursor: { value, id }, invalidCursor: false };
+	return { limit, cursor, invalidCursor: false };
 }
 
 export function encodeCursor(value: string, id: string): string {
 	return `${value}|${id}`;
+}
+
+/**
+ * Split a cursor back into its two halves, or null if it is not well-formed.
+ *
+ * Structural only - it does not assume the sort value is a timestamp or the id
+ * a uuid, because the MCP surface pages feeds keyed on a name, a title, or a
+ * date. Callers that interpolate into a typed comparison validate the halves
+ * themselves (see `parseCursorPagination`).
+ */
+export function decodeCursor(raw: string | undefined): { value: string; id: string } | null {
+	if (!raw) return null;
+	// Split on the LAST separator: the sort value may itself contain one.
+	const at = raw.lastIndexOf('|');
+	if (at <= 0 || at === raw.length - 1) return null;
+	return { value: raw.slice(0, at), id: raw.slice(at + 1) };
 }
 
 /**

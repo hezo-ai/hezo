@@ -176,7 +176,7 @@ describe('asset image dimensions & inline image content', () => {
 			encoding: 'base64',
 		});
 		const list = await callTool(tk, 'list_project_assets', { project: projectId });
-		const files = list.files as Array<{ filename: string; width?: number; height?: number }>;
+		const files = list.items as Array<{ filename: string; width?: number; height?: number }>;
 		const entry = files.find((f) => f.filename === 'diagrams/listed.png');
 		expect(entry?.width).toBe(800);
 		expect(entry?.height).toBe(600);

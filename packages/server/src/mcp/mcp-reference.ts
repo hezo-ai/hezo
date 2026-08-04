@@ -63,7 +63,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_teams: {
 		category: 'Teams',
 		returns:
-			'An array of team rows (`id`, `name`, `slug`, `description`, …). An API key, the instance CEO, and an agent run with cross-team scope get every team; an ordinary agent run gets only its own team; a board user gets the teams they belong to (all teams for a superuser).',
+			'Team rows (`id`, `name`, `slug`, `description`, …) ordered by name. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. An API key, the instance CEO, and an agent run with cross-team scope get every team; an ordinary agent run gets only its own team; a board user gets the teams they belong to (all teams for a superuser).',
 	},
 	get_team: {
 		category: 'Teams',
@@ -79,7 +79,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_projects: {
 		category: 'Projects',
 		returns:
-			'An array of project rows (`id`, `team_id`, `name`, `slug`, `task_prefix`, `description`, `is_internal`, `created_at`, `updated_at`). With `excerpt_chars`, `description` is truncated and `description_truncated`/`description_length` companions are added.',
+			'Project rows (`id`, `team_id`, `name`, `slug`, `task_prefix`, `is_internal`, `created_at`, `updated_at`) ordered by name. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. `description` comes back as an excerpt (default 500 chars) with `description_truncated`/`description_length` companions; raise or lower it with `excerpt_chars`.',
 		auth: 'An API key, CEO cross-team access, or a superuser returns every project; a board user gets the projects on their teams; an agent run gets its own project.',
 	},
 	create_project: {
@@ -97,12 +97,12 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_team_templates: {
 		category: 'Projects',
 		returns:
-			'An array of local templates (`id`, `name`, `description`, `is_builtin`, `agent_types[]` where each entry has `slug`, `name`, `role_description`). Only the built-in Blank template and custom saved templates appear here - the default specialist rosters live in the marketplace (`get_marketplace_team`).',
+			'Local templates (`id`, `name`, `description`, `is_builtin`, `agent_types[]` where each entry has `slug`, `name`, `role_description`). Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. Only the built-in Blank template and custom saved templates appear here - the default specialist rosters live in the marketplace (`get_marketplace_team`).',
 	},
 	list_marketplace_teams: {
 		category: 'Projects',
 		returns:
-			'`{ teams }` - every marketplace team available to this instance, each with `slug`, `name`, `description`, `summary`, `version`, and `roster_count`. Search keywords are omitted. Fetch one team’s full roster and prompts with `get_marketplace_team`.',
+			'Marketplace teams available to this instance, each with `slug`, `name`, `description`, `summary`, `version`, and `roster_count`. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. Search keywords are omitted. Fetch one team’s full roster and prompts with `get_marketplace_team`.',
 		auth: 'CEO or a team Captain.',
 	},
 	get_marketplace_team: {
@@ -134,7 +134,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_tasks: {
 		category: 'Tasks',
 		returns:
-			'Up to 50 task rows ordered newest-first, each including `project_name`. With `excerpt_chars`, `description` and `rules` are replaced with excerpts plus `_truncated`/`_length` companions.',
+			'Task rows ordered newest-first, each including `project_name`. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. `description` and `rules` come back as excerpts (default 500 chars) plus `_truncated`/`_length` companions; read a task in full with `get_task`.',
 	},
 	get_task: {
 		category: 'Tasks',
@@ -172,12 +172,12 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_task_runs: {
 		category: 'Tasks',
 		returns:
-			"An array of up to 50 run rows for the task, newest-first: `id`, `status`, `exit_code`, `started_at`, `finished_at`, `invocation_command`, `log_length` (characters), plus `agent_title`/`agent_slug`. Metadata only - fetch a run's log with `get_run_log`.",
+			"Run rows for the task, newest-first: `id`, `status`, `exit_code`, `started_at`, `finished_at`, `invocation_command`, `log_length` (characters), plus `agent_title`/`agent_slug`. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. Metadata only - fetch a run's log with `get_run_log`.",
 	},
 	get_run_log: {
 		category: 'Tasks',
 		returns:
-			"`{ id, status, exit_code, task_id, log, length, truncated }` for one run - `log` is the tail of the container log capped at `excerpt_chars` (default 12000); `truncated` flags dropped earlier output. Returns `{ error }` for a malformed `run_id` or a run outside the resolved project's team.",
+			"`{ id, status, exit_code, task_id, log, length, truncated }` for one run. By default `log` is the **tail** of the container log capped at `excerpt_chars` (default 12000), and `truncated` flags dropped earlier output. Pass `offset` (start at 0) to read forward from the beginning instead: the result then also carries `offset`, `returned_chars`, and `next_offset`, and you page until `next_offset` is null. The tail default cannot reach the start of a long log, so use `offset` for a run that failed during setup, clone, or install. Returns `{ error }` for a malformed `run_id` or a run outside the resolved project's team.",
 	},
 
 	// Goals
@@ -203,7 +203,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_comments: {
 		category: 'Comments & reactions',
 		returns:
-			'Up to 50 comment rows newest-first, each with `id`, `public_id`, `task_id`, `author_member_id`, `author_api_key_id`, `parent_comment_id`, `content_type`, `content`, `chosen_option`, `created_at`, `author_type`, `author_name`, `reactions[]`, and `attachments[]`. Pass `before` to walk older; `excerpt_chars` truncates text comments (adds `text_truncated`/`text_length`).',
+			'Comment rows newest-first, each with `id`, `public_id`, `task_id`, `author_member_id`, `author_api_key_id`, `parent_comment_id`, `content_type`, `content`, `chosen_option`, `created_at`, `author_type`, `author_name`, `reactions[]`, and `attachments[]`. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. `before` still walks back from a comment you already know. Text comments come back truncated at `excerpt_chars` (default 2000) with `text_truncated`/`text_length` companions.',
 	},
 	create_comment: {
 		category: 'Comments & reactions',
@@ -230,7 +230,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_agents: {
 		category: 'Agents & hiring',
 		returns:
-			'An array of agent rows (`id`, `agent_type_id`, `title`, `slug`, `daily_budget_cents`, `weekly_budget_cents`, `monthly_budget_cents`, `runtime_status`, `admin_status`).',
+			'Agent rows (`id`, `agent_type_id`, `title`, `slug`, `daily_budget_cents`, `weekly_budget_cents`, `monthly_budget_cents`, `runtime_status`, `admin_status`) ordered by title. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false.',
 	},
 	create_hire_proposal: {
 		category: 'Agents & hiring',
@@ -267,13 +267,13 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	get_agent_system_prompt: {
 		category: 'Agent prompts & context',
 		returns:
-			'`{ title, slug, system_prompt }`, or `{ error }` if the agent is not in the team. By default `{{…}}` placeholders are resolved; pass `placeholders: false` for the raw stored template.',
+			'`{ title, slug, system_prompt, offset, returned_bytes, total_bytes, next_offset, truncated }`, or `{ error }` if the agent is not in the team. By default `{{…}}` placeholders are resolved; pass `placeholders: false` for the raw stored template. A prompt larger than the cap comes back as a byte window - page it with `offset` until `next_offset` is null.',
 		auth: 'Any agent or the admin in the same team.',
 	},
 	get_agent_system_prompts: {
 		category: 'Agent prompts & context',
 		returns:
-			'An array of per-item results: `{ index, ok: true, title, slug, system_prompt }` or `{ index, ok: false, agent_id, error }`. Up to 50 items; each `mode` is `placeholders` (default), `preview`, or `raw`.',
+			'`{ items, start_index, returned, total, next_index }`, where `items` are per-item results: `{ index, ok: true, title, slug, system_prompt }` or `{ index, ok: false, agent_id, error }`. Up to 50 items per call; each `mode` is `placeholders` (default), `preview`, or `raw`. Only the prompts that fit under the cap are returned - when `next_index` is non-null, call again with the same `items` and `start_index` set to it, and repeat until it is null. A single prompt too large on its own comes back truncated with `truncated: true` rather than stalling the cursor.',
 		auth: 'Any agent or the admin in the same team.',
 	},
 	update_agent_system_prompt: {
@@ -332,7 +332,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_approvals: {
 		category: 'Approvals',
 		returns:
-			'An array of pending approval rows (`id`, `team_id`, `type`, `status`, `requested_by_member_id`, `resolution_note`, `resolved_at`, `created_at`, `payload`). `excerpt_chars` truncates long string fields inside `payload`.',
+			'Pending approval rows (`id`, `team_id`, `type`, `status`, `requested_by_member_id`, `resolution_note`, `resolved_at`, `created_at`, `payload`) newest-first. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. Long string fields inside `payload` come back truncated at `excerpt_chars` (default 500) with `_truncated`/`_length` companions.',
 	},
 	resolve_approval: {
 		category: 'Approvals',
@@ -344,7 +344,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_skills: {
 		category: 'Skills & search',
 		returns:
-			'`{ skills: [{ id, name, slug, description, tags, created_at, updated_at }] }`. Pass `tags` (comma-separated) to filter.',
+			'Skill rows (`id`, `name`, `slug`, `description`, `tags`, `created_at`, `updated_at`) ordered by name. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. Pass `tags` (comma-separated) to filter. A project skill shadows a global one of the same slug.',
 	},
 	get_skill: {
 		category: 'Skills & search',
@@ -409,7 +409,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_project_docs: {
 		category: 'Project docs & assets',
 		returns:
-			"`{ files: [{ id, filename, description, updated_at }] }` - the markdown project docs, where `description` is the overall \"what this is\" summary (`''` if unset). The `filter` param defaults to `'active'` (archived docs excluded); with `'archived'` or `'all'` each entry also carries `archived: boolean`.",
+			"Markdown project doc entries (`id`, `filename`, `description`, `content_length`, `created_at`, `updated_at`), where `description` is the overall \"what this is\" summary (`''` if unset) and `content_length` is the doc's size so you can tell before opening it whether `read_project_doc` will need more than one window. Bodies are not returned here. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. The `filter` param defaults to `'active'` (archived docs excluded); with `'archived'` or `'all'` each entry also carries `archived: boolean`.",
 	},
 	read_project_doc: {
 		category: 'Project docs & assets',
@@ -435,7 +435,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_project_assets: {
 		category: 'Project docs & assets',
 		returns:
-			"`{ files: [{ id, filename, content_type, created_at, width?, height? }] }` - the project asset files; raster images (PNG/JPEG/GIF/WebP) also carry pixel `width`/`height`. `filename` is the full path and may carry a folder prefix up to 2 levels (e.g. `launch/images/hero.png`). The `filter` param defaults to `'active'` (archived assets excluded); with `'archived'` or `'all'` each entry also carries `archived: boolean`.",
+			"Project asset entries (`id`, `filename`, `content_type`, `created_at`, `width?`, `height?`); raster images (PNG/JPEG/GIF/WebP) also carry pixel `width`/`height`. `filename` is the full path and may carry a folder prefix up to 2 levels (e.g. `launch/images/hero.png`). Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. The `filter` param defaults to `'active'` (archived assets excluded); with `'archived'` or `'all'` each entry also carries `archived: boolean`.",
 	},
 	read_project_asset: {
 		category: 'Project docs & assets',
@@ -473,7 +473,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	get_costs: {
 		category: 'Costs',
 		returns:
-			'With `group_by: "agent"`, an array of `{ member_id, agent_title, total_cents }`; with `group_by: "day"`, an array of `{ day, total_cents }`; otherwise `{ total_cents, entry_count }`.',
+			'With `group_by: "agent"`, an array of `{ member_id, agent_title, total_cents }` (bounded by the roster). With `group_by: "day"`, day rows `{ day, total_cents }` newest-first Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. - that set grows for the life of the project, so it is the one grouping that pages. Otherwise `{ total_cents, entry_count }`.',
 	},
 
 	// Onboarding
@@ -612,17 +612,33 @@ export function generateMcpReference(
 		'  **Authorization** below.',
 		'- **Errors:** a handled failure comes back as `{ "error": "<message>" }` in the tool',
 		'  result (the HTTP response itself stays successful).',
-		'- **Result size:** a tool result is capped at 64 KB (higher for a few',
-		'  full-resource inspection tools, e.g. `get_agent_system_prompts`); over the',
-		'  cap you get `{ "error": "result_too_large", … }`. Narrow it with filters, a',
-		'  single-resource `get_*`, `before` pagination, or `excerpt_chars`.',
-		'  `read_project_doc` never returns that error for a big doc: it returns a UTF-8',
-		'  byte window with a `next_offset` cursor so you can page the rest (see its',
-		'  entry below).',
-		'- **Excerpts (`excerpt_chars`):** list tools accept `excerpt_chars` to truncate long',
-		'  text fields, adding `_truncated`/`_length` companions.',
-		'- **Pagination (`before`):** `list_comments` walks older items by passing the oldest',
-		'  `id` you have seen as `before`.',
+		'- **Paging is the norm, in one of three shapes.** A read that can return many rows,',
+		'  or content with no size ceiling, always returns a bounded slice plus the cursor to',
+		'  continue. A response carrying `has_more: true`, `next_cursor`, `next_offset`, or',
+		'  `next_index` is telling you it is partial - keep calling until the cursor is null or',
+		'  `has_more` is false. Treating the first page as the whole set is the one failure',
+		'  mode none of these shapes can protect you from.',
+		'  - **Lists** take `limit` (default 50, ceiling 200) and an opaque `cursor`, and return',
+		'    `{ items, next_cursor, has_more }`. Pass back the `next_cursor` you were given;',
+		'    do not construct or parse one. `list_comments` also still accepts `before`',
+		'    (a comment `id` or `public_id`) to resume from a comment you already know.',
+		'  - **Large single content** (`read_project_doc`, `get_agent_system_prompt`,',
+		'    `get_run_log`) takes `offset` plus `max_bytes` and returns a UTF-8 window with',
+		'    `next_offset`. Note `get_run_log` defaults to the log **tail**; pass `offset: 0`',
+		'    to read a run that failed early, since the tail cannot reach the start.',
+		'  - **Batch tools** (`get_agent_system_prompts`) return as many items as fit plus',
+		'    `next_index`; call again with the same `items` and `start_index` set to it.',
+		'- **Result size:** a tool result is capped at 64 KB (higher for a few full-resource',
+		'  inspection tools, e.g. `get_agent_system_prompt`). Over the cap the whole result is',
+		'  discarded and you get `{ "error": "result_too_large", "remedies": [...] }`. The',
+		'  `remedies` are built from the parameters that tool actually declares, so follow',
+		'  them rather than guessing - and when the tool takes a batch, they name the exact',
+		'  item count to retry with. Split the work and retry; do not fall back to one call',
+		'  per item, and do not narrow what you cover to whatever fits in one call.',
+		'- **Excerpts (`excerpt_chars`):** list tools return long free-text fields as excerpts',
+		'  with `_truncated`/`_length` companions, so one page cannot be dominated by a few',
+		'  large rows. Raise or lower the cap with `excerpt_chars`; read the full text from the',
+		'  matching single-item `get_*`.',
 		'- **Secrets:** agents reference secrets by placeholder (`__HEZO_SECRET_<NAME>__`); the',
 		"  egress proxy substitutes the real value only for the secret's `allowed_hosts`.",
 		'- **Write tools:** tools marked _Write tool_ persist data - a successful call from an',

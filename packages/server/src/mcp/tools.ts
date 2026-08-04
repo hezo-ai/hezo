@@ -55,7 +55,7 @@ import { LocalAssetStore } from '../assets/drivers/local';
 import type { AssetStore } from '../assets/store';
 import type { MasterKeyManager } from '../crypto/master-key';
 import type { Db } from '../db/database';
-import { readRunLogTail, runLogLengthSql } from '../db/run-log-chunks';
+import { readRunLogTail, readRunLogWindow, runLogLengthSql } from '../db/run-log-chunks';
 import type { DomainEventBus } from '../events/bus';
 import { assertNoActiveRun } from '../lib/active-run';
 import { isHqInstanceAgent, isVirtualHqMemberInTeam } from '../lib/agent-roles';
@@ -128,7 +128,7 @@ import { enqueueTeamCoherenceReviewTask } from '../services/description-tasks';
 import {
 	getAgentSystemPrompt,
 	getDocument,
-	listDocuments,
+	listDocumentSummaries,
 	setDocumentArchived,
 	upsertDocument,
 } from '../services/documents';
@@ -183,6 +183,25 @@ import {
 import { resolveSystemPrompt } from '../services/template-resolver';
 import { createWakeup } from '../services/wakeup';
 import type { WebSocketManager } from '../services/ws';
+import {
+	type ContentWindow,
+	DEFAULT_LIST_LIMIT,
+	decodeCursor,
+	type KeysetRow,
+	keysetOrderBy,
+	keysetPredicate,
+	listPagingArgs,
+	pagedList,
+	parseListLimit,
+	utf8FloorBoundary,
+	windowContent,
+} from './paging';
+
+/**
+ * Minimal row shape the keyset pager needs. List tools select far more columns;
+ * this only pins the two the cursor is built from.
+ */
+type ListRow = KeysetRow & Record<string, unknown>;
 
 const log = logger.child('mcp');
 
@@ -575,6 +594,9 @@ const SKILL_COLUMNS = `id, name, slug, description, content, source_url,
 const APPROVAL_COLUMNS = `id, team_id, type, status, requested_by_member_id,
 	resolution_note, resolved_at, created_at, payload`;
 
+/** APPROVAL_COLUMNS qualified with the `a` alias, for the keyset-paged read. */
+const APPROVAL_COLUMNS_ALIASED = APPROVAL_COLUMNS.replace(/[A-Za-z_][A-Za-z_0-9]*/g, 'a.$&');
+
 // Cap MCP tool result payloads at 64 000 bytes, comfortably under a typical agent
 // runtime's tool-result limit (e.g. the Claude Code harness's ~25k-token ceiling).
 // An oversized result is discarded whole and replaced with a `result_too_large`
@@ -591,14 +613,115 @@ export const MCP_RESULT_BYTE_LIMIT = 64_000;
 // `result_too_large`; the generic cap still guards every list/query tool against
 // context bloat. Keyed by tool name; falls back to MCP_RESULT_BYTE_LIMIT.
 export const MCP_RESULT_BYTE_LIMIT_OVERRIDES: Readonly<Record<string, number>> = {
+	get_agent_system_prompt: 131_072,
 	get_agent_system_prompts: 131_072,
 };
+
+/**
+ * Tools taking an array of work items, keyed by the argument holding it.
+ *
+ * Used by the `result_too_large` guard to turn an overflow into a concrete
+ * "retry with at most N items" instruction. Without it the guard can only
+ * offer generic advice, and the only generic remedy that fits a batch tool is
+ * "fetch a single resource" - which collapses one call into N and is almost
+ * never what the cap was asking for.
+ */
+export const MCP_BATCH_ARRAY_PARAMS: Readonly<Record<string, string>> = {
+	create_tasks: 'items',
+	get_agent_system_prompts: 'items',
+	update_agent_system_prompts: 'updates',
+};
+
+/**
+ * Fraction of the theoretical fit to actually suggest on a batch retry. Rows
+ * vary in size, so proposing exactly `limit / size` of the batch would put the
+ * retry right at the cap and risk a second rejection.
+ */
+const BATCH_RETRY_SAFETY = 0.8;
+
+/**
+ * Remedies for an oversized result, built from what the called tool actually
+ * declares rather than from a fixed list.
+ *
+ * A fixed list is worse than no list: it names parameters the tool may not
+ * have, and an agent that discards the inapplicable ones is left with whatever
+ * remains, however bad. That is the exact path that turned one overflowing
+ * batch read into ten single reads.
+ */
+export function oversizeRemedies(
+	name: string,
+	schema: Record<string, z.ZodType>,
+	args: Record<string, unknown>,
+	sizeBytes: number,
+	byteLimit: number,
+): string[] {
+	const remedies: string[] = [];
+
+	const batchParam = MCP_BATCH_ARRAY_PARAMS[name];
+	const batch = batchParam ? args[batchParam] : undefined;
+	if (batchParam && Array.isArray(batch) && batch.length > 1) {
+		const safe = Math.max(
+			1,
+			Math.floor((batch.length * byteLimit * BATCH_RETRY_SAFETY) / sizeBytes),
+		);
+		const calls = Math.ceil(batch.length / safe);
+		remedies.push(
+			`Split the batch and retry: you sent ${batch.length} items in \`${batchParam}\`, so retry as ${calls} calls of at most ${safe}. Do NOT fall back to one item per call - that is ${batch.length} round trips for work that fits in ${calls}.`,
+		);
+	}
+
+	if ('cursor' in schema) {
+		remedies.push('Lower `limit` and page with `cursor` until `has_more` is false.');
+	}
+	if ('offset' in schema) {
+		remedies.push('Lower `max_bytes` and page with `offset` until `next_offset` is null.');
+	}
+	if ('before' in schema) {
+		remedies.push('Page backwards with `before`.');
+	}
+	if ('excerpt_chars' in schema) {
+		remedies.push('Pass `excerpt_chars: 300` to truncate long fields.');
+	}
+	const filters = ['status', 'assignee_slug', 'assignee_id', 'filter', 'type', 'project'].filter(
+		(f) => f in schema && args[f] === undefined,
+	);
+	if (filters.length > 0) {
+		remedies.push(`Narrow the query with ${filters.map((f) => `\`${f}\``).join(' / ')}.`);
+	}
+
+	if (remedies.length === 0) {
+		remedies.push(
+			'This tool exposes no narrowing parameter - request less of the underlying resource, or read it through a tool that pages.',
+		);
+	}
+	return remedies;
+}
 
 // Headroom reserved for the JSON result envelope (field names, pretty-print
 // indentation, string-escaping inflation of newlines/quotes/backslashes, and any
 // review_comments) when read_project_doc sizes a content window under its effective
 // result cap, so the serialized window stays under the byte guard.
 const DOC_READ_ENVELOPE_RESERVE = 4_096;
+
+/**
+ * Default cap for the long free-text columns a list route returns per row.
+ *
+ * Paging bounds a list's row *count*; this bounds its row *width*. Without it a
+ * page of 50 tasks carrying unbounded description and rules can exceed the
+ * result cap at any page size, and the whole page is discarded rather than
+ * trimmed. Wide enough to triage from, and the single-item `get_*` read still
+ * serves the full text.
+ */
+const DEFAULT_TASK_EXCERPT_CHARS = 500;
+
+/**
+ * Default cap for a comment's text in a listing. Higher than the task default:
+ * a thread is read to follow a conversation, so an over-tight excerpt costs a
+ * round trip per comment, which is the failure this whole convention is here to
+ * avoid. The full text is one `get_task`-style read away via `before`/`cursor`
+ * on a narrower page.
+ */
+const DEFAULT_COMMENT_EXCERPT_CHARS = 2_000;
 
 // Inline-image cap for read_project_asset. A raster asset at or under this many
 // bytes is returned as an actual MCP image content block (base64) so a
@@ -640,20 +763,6 @@ export function excerpt(text: string | null | undefined, maxChars: number): Exce
 	const lastSpace = slice.lastIndexOf(' ');
 	const cut = lastSpace > maxChars * 0.5 ? slice.slice(0, lastSpace) : slice;
 	return { excerpt: cut, truncated: true, length };
-}
-
-/**
- * Largest index <= `end` that does not fall inside a multi-byte UTF-8 codepoint,
- * so a Buffer slice taken at this index never splits a character. UTF-8
- * continuation bytes match 0b10xxxxxx; back off them onto the preceding lead byte.
- * Used to window read_project_doc content on codepoint boundaries: applied to the
- * window start (slice includes it, keeping the whole leading codepoint) and to the
- * window end (slice excludes it, dropping a partial trailing codepoint).
- */
-function utf8FloorBoundary(buf: Buffer, end: number): number {
-	let e = Math.max(0, Math.min(end, buf.length));
-	while (e > 0 && e < buf.length && (buf[e] & 0xc0) === 0x80) e--;
-	return e;
 }
 
 /**
@@ -770,7 +879,8 @@ function tool(
 					tool: name,
 					size_bytes: sizeBytes,
 					limit_bytes: byteLimit,
-					hint: 'Narrow the query - add filters, fetch a single resource via get_*, paginate with `before` (where supported), or pass `excerpt_chars: 300` to truncate long fields.',
+					hint: 'This result exceeded the cap and was discarded whole - nothing was returned. Split the work and retry; do not narrow what you cover to whatever fits in one call.',
+					remedies: oversizeRemedies(name, schema, args, sizeBytes, byteLimit),
 				},
 				null,
 				2,
@@ -1046,36 +1156,43 @@ export function registerTools(
 	tool(
 		server,
 		'list_teams',
-		'List teams accessible to the caller. An API key and the instance CEO (cross-team session) get every team in the instance; an ordinary agent run gets only its own team.',
-		{},
-		async (_args, db, auth) => {
+		`List teams accessible to the caller, by name. An API key and the instance CEO (cross-team session) get every team in the instance; an ordinary agent run gets only its own team. Paged: returns \`limit\` rows (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false.`,
+		{ ...listPagingArgs() },
+		async (args, db, auth) => {
+			const limit = parseListLimit(args.limit);
+			const cursor = decodeCursor(args.cursor as string | undefined);
+			const byName = { column: 'name', direction: 'asc', cast: 'text' } as const;
 			// The instance CEO chat session acts across every team (cross-team gated
 			// at mint time), so it discovers the whole roster — not just HQ. An
 			// approved API key is admin-equivalent and spans the instance too.
+			const all = async (extraJoin: string, extraWhere: string, base: unknown[]) => {
+				const params = [...base];
+				const keyset = keysetPredicate('c', cursor, params, byName);
+				const where = [extraWhere, keyset].filter(Boolean).join(' AND ');
+				const r = await db.query<ListRow>(
+					`SELECT c.* FROM teams c ${extraJoin}
+					 ${where ? `WHERE ${where}` : ''}
+					 ORDER BY ${keysetOrderBy('c', byName)} LIMIT ${limit + 1}`,
+					params,
+				);
+				return pagedList(r.rows, limit, 'list_teams', { column: 'name' });
+			};
 			if (auth.type === AuthType.ApiKey || (auth.type === AuthType.Agent && auth.crossTeam)) {
-				const r = await db.query('SELECT * FROM teams ORDER BY name');
-				return r.rows;
+				return all('', '', []);
 			}
 			if (auth.type === AuthType.Agent) {
-				const r = await db.query('SELECT * FROM teams WHERE id = $1', [auth.teamId]);
-				return r.rows;
+				return all('', 'c.id = $1', [auth.teamId]);
 			}
 			if (auth.type === AuthType.Admin) {
-				if (auth.isSuperuser) {
-					const r = await db.query('SELECT * FROM teams ORDER BY name');
-					return r.rows;
-				}
-				const r = await db.query(
-					`SELECT c.* FROM teams c
-					 JOIN members m ON m.team_id = c.id
-					 JOIN member_users mu ON mu.id = m.id
-					 WHERE mu.user_id = $1
-					 ORDER BY c.name`,
+				if (auth.isSuperuser) return all('', '', []);
+				return all(
+					`JOIN members m ON m.team_id = c.id
+					 JOIN member_users mu ON mu.id = m.id`,
+					'mu.user_id = $1',
 					[auth.userId],
 				);
-				return r.rows;
 			}
-			return [];
+			return pagedList([], limit, 'list_teams', { column: 'name' });
 		},
 		db,
 	);
@@ -1125,7 +1242,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_tasks',
-		"List a project's tasks. Returns up to 50 tasks ordered by creation date (newest first). Omit `project` to use the project your run is in; pass it (slug or ID) to inspect another project. Narrow with status (comma-separated) or assignee_id/assignee_slug. The Project State block in your system prompt already gives you the active tickets in the current project - only call this if you need older or terminal tickets, another project, or a specific status filter. Pass excerpt_chars (e.g. 300) to truncate description and rules to triage-sized excerpts; omit for full content.",
+		`List a project's tasks, newest first. Omit \`project\` to use the project your run is in; pass it (slug or ID) to inspect another project. Narrow with status (comma-separated) or assignee_id/assignee_slug. The Project State block in your system prompt already gives you the active tickets in the current project - only call this if you need older or terminal tickets, another project, or a specific status filter. Paged: returns \`limit\` rows (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false. description and rules come back as excerpts capped at \`excerpt_chars\` (default ${DEFAULT_TASK_EXCERPT_CHARS}) so one page cannot be dominated by a few long tickets - read a task's full text with get_task.`,
 		{
 			project: projectArg(),
 			status: z.string().optional().describe('Filter by status (comma-separated)'),
@@ -1143,12 +1260,15 @@ export function registerTools(
 				.positive()
 				.optional()
 				.describe(
-					'When set, replaces description and rules with first-paragraph excerpts capped at this many characters, plus _truncated and _length companion fields',
+					`Cap for the description and rules excerpts, with _truncated and _length companion fields (default ${DEFAULT_TASK_EXCERPT_CHARS}). Use get_task for a task's full text.`,
 				),
+			...listPagingArgs(),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
+			const limit = parseListLimit(args.limit);
+			const empty = pagedList([], limit, 'list_tasks');
 			const conditions = ['i.project_id = $1'];
 			const params: unknown[] = [scope.projectId];
 			let idx = 2;
@@ -1163,7 +1283,7 @@ export function registerTools(
 				? ((await resolveAssigneeId(db, scope.teamId, args.assignee_id as string)) ?? undefined)
 				: undefined;
 			// An assignee_id that resolves to nobody (unknown slug/id) matches nothing.
-			if (args.assignee_id && !assigneeId) return [];
+			if (args.assignee_id && !assigneeId) return empty;
 			if (!assigneeId && args.assignee_slug) {
 				const agent = await db.query<{ id: string }>(
 					`SELECT ma.id FROM member_agents ma
@@ -1171,7 +1291,7 @@ export function registerTools(
 					 WHERE ma.slug = $1 AND m.team_id = $2`,
 					[args.assignee_slug, scope.teamId],
 				);
-				if (agent.rows.length === 0) return [];
+				if (agent.rows.length === 0) return empty;
 				assigneeId = agent.rows[0].id;
 			}
 			if (assigneeId) {
@@ -1179,20 +1299,25 @@ export function registerTools(
 				params.push(assigneeId);
 				idx++;
 			}
-			const r = await db.query(
+			const keyset = keysetPredicate('i', decodeCursor(args.cursor as string | undefined), params);
+			if (keyset) conditions.push(keyset);
+			const orderBy = keysetOrderBy('i');
+			// limit + 1 is the has_more probe: the extra row answers "is there another
+			// page" exactly, without a COUNT(*) over a table that only grows.
+			const r = await db.query<ListRow>(
 				`SELECT ${TASK_COLUMNS}, p.name AS project_name
 				 FROM tasks i JOIN projects p ON p.id = i.project_id
 				 WHERE ${conditions.join(' AND ')}
-				 ORDER BY i.created_at DESC LIMIT 50`,
+				 ORDER BY ${orderBy} LIMIT ${limit + 1}`,
 				params,
 			);
-			const max = args.excerpt_chars as number | undefined;
-			if (max == null) return r.rows;
-			return r.rows.map((row) => {
-				let next = applyExcerpt(row as Record<string, unknown>, 'description', max);
+			const max = (args.excerpt_chars as number | undefined) ?? DEFAULT_TASK_EXCERPT_CHARS;
+			const rows = r.rows.map((row) => {
+				let next = applyExcerpt(row as unknown as Record<string, unknown>, 'description', max);
 				next = applyExcerpt(next, 'rules', max);
-				return next;
+				return next as unknown as ListRow;
 			});
+			return pagedList(rows, limit, 'list_tasks');
 		},
 		db,
 	);
@@ -1417,13 +1542,26 @@ export function registerTools(
 		{
 			project: projectArg(),
 			include_archived: z.boolean().optional().describe('Include archived goals (default false).'),
+			...listPagingArgs(),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
-			return listGoals(db, scope.projectId, {
+			const limit = parseListLimit(args.limit);
+			const all = await listGoals(db, scope.projectId, {
 				includeArchived: args.include_archived === true,
 			});
+			// Goals are admin-authored objectives - a handful per project, and the
+			// service orders them by a composite (archived, created_at) the keyset
+			// predicate cannot express. Slicing the resolved set keeps the envelope
+			// uniform without pushing a cursor into a query that would not benefit.
+			const cursor = decodeCursor(args.cursor as string | undefined);
+			const from = cursor ? all.findIndex((g) => g.id === cursor.id) + 1 : 0;
+			return pagedList(
+				all.slice(from, from + limit + 1) as unknown as ListRow[],
+				limit,
+				'list_goals',
+			);
 		},
 		db,
 	);
@@ -2001,21 +2139,33 @@ export function registerTools(
 	tool(
 		server,
 		'list_agents',
-		"List the agents on a project's team",
+		`List the agents on a project's team, by title. Paged: returns \`limit\` rows (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false.`,
 		{
 			project: projectArg(),
+			...listPagingArgs(),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
-			const r = await db.query(
+			const limit = parseListLimit(args.limit);
+			const byTitle = { column: 'title', direction: 'asc', cast: 'text', idAlias: 'm' } as const;
+			const params: unknown[] = [scope.teamId];
+			const keyset = keysetPredicate(
+				'ma',
+				decodeCursor(args.cursor as string | undefined),
+				params,
+				byTitle,
+			);
+			const r = await db.query<ListRow>(
 				`SELECT m.id, ma.agent_type_id, ma.title, ma.slug,
 				        ma.daily_budget_cents, ma.weekly_budget_cents, ma.monthly_budget_cents,
 				        ma.runtime_status, ma.admin_status
-				 FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.team_id = $1 ORDER BY ma.title`,
-				[scope.teamId],
+				 FROM members m JOIN member_agents ma ON ma.id = m.id
+				 WHERE m.team_id = $1${keyset ? ` AND ${keyset}` : ''}
+				 ORDER BY ${keysetOrderBy('ma', byTitle)} LIMIT ${limit + 1}`,
+				params,
 			);
-			return r.rows;
+			return pagedList(r.rows, limit, 'list_agents', { column: 'title' });
 		},
 		db,
 	);
@@ -2437,9 +2587,9 @@ export function registerTools(
 	tool(
 		server,
 		'list_team_templates',
-		'List local team templates: the built-in Blank template plus any custom templates saved from existing teams. The default specialist rosters (e.g. the software-development "Startup" team) live in the marketplace, not here. Use when recommending a team structure to hire.',
-		{},
-		async (_args, db) => {
+		`List local team templates: the built-in Blank template plus any custom templates saved from existing teams. The default specialist rosters (e.g. the software-development "Startup" team) live in the marketplace, not here. Use when recommending a team structure to hire. Paged: returns \`limit\` entries (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false.`,
+		{ ...listPagingArgs() },
+		async (args, db) => {
 			const r = await db.query<{
 				id: string;
 				name: string;
@@ -2466,7 +2616,17 @@ export function registerTools(
 				 GROUP BY ct.id
 				 ORDER BY ct.is_builtin DESC, ct.name ASC`,
 			);
-			return r.rows;
+			// Ordered by a composite (is_builtin, name) the keyset predicate cannot
+			// express, and bounded by however many templates an operator has saved,
+			// so the cursor anchors on row identity.
+			const limit = parseListLimit(args.limit);
+			const cursor = decodeCursor(args.cursor as string | undefined);
+			const from = cursor ? r.rows.findIndex((t) => t.id === cursor.id) + 1 : 0;
+			return pagedList(
+				r.rows.slice(from, from + limit + 1) as unknown as ListRow[],
+				limit,
+				'list_team_templates',
+			);
 		},
 		db,
 	);
@@ -2474,22 +2634,28 @@ export function registerTools(
 	tool(
 		server,
 		'list_marketplace_teams',
-		'Browse the team marketplace: every ready-made team available to this instance, with its name, description, summary, role count, and version. Callable by the CEO or a team Captain. Use it before staffing a team - the marketplace carries proven, fully-written roles, so check whether one already covers the role you need (then pull its prompt with get_marketplace_team) instead of authoring a system prompt from scratch. You can take a whole roster (apply_marketplace_team) or lift out a single role (apply_marketplace_agent).',
-		{},
-		async () => {
+		`Browse the team marketplace: every ready-made team available to this instance, with its name, description, summary, role count, and version. Callable by the CEO or a team Captain. Use it before staffing a team - the marketplace carries proven, fully-written roles, so check whether one already covers the role you need (then pull its prompt with get_marketplace_team) instead of authoring a system prompt from scratch. You can take a whole roster (apply_marketplace_team) or lift out a single role (apply_marketplace_agent). Paged: returns \`limit\` entries (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false.`,
+		{ ...listPagingArgs() },
+		async (args) => {
 			const catalog = await getMarketplaceCatalog();
 			// `keywords` is search vocabulary for the New Project picker - long, and
 			// noise in an agent's context. Deliberately omitted.
-			return {
-				teams: catalog.map((t) => ({
-					slug: t.slug,
-					name: t.name,
-					description: t.description,
-					summary: t.summary,
-					version: t.version,
-					roster_count: t.roster_count,
-				})),
-			};
+			const teams = catalog.map((t) => ({
+				slug: t.slug,
+				name: t.name,
+				description: t.description,
+				summary: t.summary,
+				version: t.version,
+				roster_count: t.roster_count,
+			}));
+			// A marketplace team is identified by slug, not a row id.
+			const limit = parseListLimit(args.limit);
+			const cursor = decodeCursor(args.cursor as string | undefined);
+			const from = cursor ? teams.findIndex((t) => t.slug === cursor.id) + 1 : 0;
+			return pagedList(teams.slice(from, from + limit + 1), limit, 'list_marketplace_teams', {
+				column: 'name',
+				idKey: 'slug',
+			});
 		},
 		db,
 	);
@@ -2632,58 +2798,69 @@ export function registerTools(
 	tool(
 		server,
 		'list_projects',
-		'List projects. With CEO cross-team access (or as superuser) returns every project across the instance; a board user gets the projects on teams they belong to; an agent run gets its own project. Pass excerpt_chars (e.g. 300) to truncate description; omit for full content.',
+		`List projects, by name. With CEO cross-team access (or as superuser) returns every project across the instance; a board user gets the projects on teams they belong to; an agent run gets its own project. description comes back as an excerpt capped at \`excerpt_chars\` (default ${DEFAULT_TASK_EXCERPT_CHARS}); read a project's full description with get_team or the project's own docs. Paged: returns \`limit\` rows (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false.`,
 		{
 			excerpt_chars: z
 				.number()
 				.int()
 				.positive()
 				.optional()
-				.describe('When set, truncates description and adds description_truncated/_length'),
+				.describe(
+					`Cap for the description excerpt, with description_truncated/_length companions (default ${DEFAULT_TASK_EXCERPT_CHARS}).`,
+				),
+			...listPagingArgs(),
 		},
 		async (args, db, auth) => {
-			const max = args.excerpt_chars as number | undefined;
-			const withExcerpt = (rows: Record<string, unknown>[]) =>
-				max == null ? rows : rows.map((row) => applyExcerpt(row, 'description', max));
+			const max = (args.excerpt_chars as number | undefined) ?? DEFAULT_TASK_EXCERPT_CHARS;
+			const limit = parseListLimit(args.limit);
+			const cursor = decodeCursor(args.cursor as string | undefined);
+			const byName = { column: 'name', direction: 'asc', cast: 'text' } as const;
+			const page = (rows: ListRow[]) =>
+				pagedList(
+					rows.map((row) => applyExcerpt(row, 'description', max) as ListRow),
+					limit,
+					'list_projects',
+					{ column: 'name' },
+				);
+			const PROJECT_COLS = `p.id, p.team_id, p.name, p.slug, p.task_prefix, p.description,
+			        p.is_internal, p.created_at, p.updated_at`;
 
 			const instanceWide =
 				(auth.type === AuthType.Agent && auth.crossTeam) ||
 				(auth.type === AuthType.Admin && auth.isSuperuser) ||
 				auth.type === AuthType.ApiKey;
 			if (instanceWide) {
-				const r = await db.query<Record<string, unknown>>(
-					`SELECT p.id, p.team_id,
-					        p.name, p.slug, p.task_prefix, p.description, p.is_internal,
-					        p.created_at, p.updated_at
-					 FROM projects p
-					 ORDER BY p.name`,
+				const params: unknown[] = [];
+				const keyset = keysetPredicate('p', cursor, params, byName);
+				const r = await db.query<ListRow>(
+					`SELECT ${PROJECT_COLS} FROM projects p
+					 ${keyset ? `WHERE ${keyset}` : ''}
+					 ORDER BY ${keysetOrderBy('p', byName)} LIMIT ${limit + 1}`,
+					params,
 				);
-				return withExcerpt(r.rows);
+				return page(r.rows);
 			}
 
 			if (auth.type === AuthType.Admin) {
-				const r = await db.query<Record<string, unknown>>(
-					`SELECT DISTINCT p.id, p.team_id,
-					        p.name, p.slug, p.task_prefix, p.description, p.is_internal,
-					        p.created_at, p.updated_at
-					 FROM projects p
+				const params: unknown[] = [auth.userId];
+				const keyset = keysetPredicate('p', cursor, params, byName);
+				const r = await db.query<ListRow>(
+					`SELECT DISTINCT ${PROJECT_COLS} FROM projects p
 					 JOIN members m ON m.team_id = p.team_id
 					 JOIN member_users mu ON mu.id = m.id
-					 WHERE mu.user_id = $1
-					 ORDER BY p.name`,
-					[auth.userId],
+					 WHERE mu.user_id = $1${keyset ? ` AND ${keyset}` : ''}
+					 ORDER BY ${keysetOrderBy('p', byName)} LIMIT ${limit + 1}`,
+					params,
 				);
-				return withExcerpt(r.rows);
+				return page(r.rows);
 			}
 
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
-			const r = await db.query<Record<string, unknown>>(
-				`SELECT id, team_id, name, slug, task_prefix, description, is_internal, created_at, updated_at
-				 FROM projects WHERE id = $1`,
-				[scope.projectId],
-			);
-			return withExcerpt(r.rows);
+			const r = await db.query<ListRow>(`SELECT ${PROJECT_COLS} FROM projects p WHERE p.id = $1`, [
+				scope.projectId,
+			]);
+			return page(r.rows);
 		},
 		db,
 	);
@@ -2692,7 +2869,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_comments',
-		"List comments for an task. Returns up to 50 most-recent comments (newest first). Pass before (a comment ID) to walk older. Pass excerpt_chars (e.g. 500) to truncate long text comments; structured comments (system/option/task_link) are always returned whole. Each row includes parent_comment_id (UUID or null) so you can see reply threading - when you reply substantively to a comment, pass that comment's id back as parent_comment_id in create_comment. Each row also has a public_id (a creation-timestamp slug like 20261009112345); that's how you cite a specific comment elsewhere: write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345), which renders as a clickable link straight to that comment.",
+		`List comments for an task, newest first. Paged: returns \`limit\` rows (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false. (\`before\`, taking a comment id or public_id, still works for walking back from a known comment.) Long text comments come back truncated at \`excerpt_chars\` (default ${DEFAULT_COMMENT_EXCERPT_CHARS}); structured comments (system/option/task_link) are always returned whole. Each row includes parent_comment_id (UUID or null) so you can see reply threading - when you reply substantively to a comment, pass that comment's id back as parent_comment_id in create_comment. Each row also has a public_id (a creation-timestamp slug like 20261009112345); that's how you cite a specific comment elsewhere: write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345), which renders as a clickable link straight to that comment.`,
 		{
 			project: projectArg(),
 			task_id: z.string().describe('Task identifier or UUID'),
@@ -2700,7 +2877,7 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					'A comment id (UUID) or public_id - return only comments created before that one',
+					'A comment id (UUID) or public_id - return only comments created before that one. Prefer `cursor` for straight paging; this is for resuming from a comment you already know.',
 				),
 			excerpt_chars: z
 				.number()
@@ -2708,13 +2885,15 @@ export function registerTools(
 				.positive()
 				.optional()
 				.describe(
-					'When set, truncates content.text on text-typed comments to this many characters and adds text_truncated/text_length',
+					`Cap for content.text on text-typed comments, with text_truncated/text_length companions (default ${DEFAULT_COMMENT_EXCERPT_CHARS}).`,
 				),
+			...listPagingArgs(),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveTaskScope(db, auth, args);
 			if ('error' in scope) return scope;
 			const { teamId, taskId } = scope;
+			const limit = parseListLimit(args.limit);
 			const conditions = ['ic.task_id = $1'];
 			const params: unknown[] = [taskId];
 			if (args.before) {
@@ -2723,6 +2902,8 @@ export function registerTools(
 					`(ic.created_at, ic.id) < (SELECT created_at, id FROM task_comments WHERE (id::text = $${params.length} OR public_id = $${params.length}) AND task_id = $1 LIMIT 1)`,
 				);
 			}
+			const keyset = keysetPredicate('ic', decodeCursor(args.cursor as string | undefined), params);
+			if (keyset) conditions.push(keyset);
 			const r = await db.query<Record<string, unknown>>(
 				`SELECT ic.id, ic.public_id, ic.task_id, ic.author_member_id, ic.author_api_key_id,
 				        ic.parent_comment_id,
@@ -2734,7 +2915,7 @@ export function registerTools(
 				 LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
 				 LEFT JOIN api_keys ca ON ca.id = ic.author_api_key_id
 				 WHERE ${conditions.join(' AND ')}
-				 ORDER BY ic.created_at DESC, ic.id DESC LIMIT 50`,
+				 ORDER BY ${keysetOrderBy('ic')} LIMIT ${limit + 1}`,
 				params,
 			);
 			const viewerMemberId = await resolveReactorMemberId(db, auth, teamId);
@@ -2751,9 +2932,8 @@ export function registerTools(
 				reactions: reactionsByComment.get(row.id as string) ?? [],
 				attachments: attachmentsByComment.get(row.id as string) ?? [],
 			}));
-			const max = args.excerpt_chars as number | undefined;
-			if (max == null) return enriched;
-			return enriched.map((row) => {
+			const max = (args.excerpt_chars as number | undefined) ?? DEFAULT_COMMENT_EXCERPT_CHARS;
+			const rows = enriched.map((row) => {
 				if (row.content_type !== CommentContentType.Text) return row;
 				const content = row.content as { text?: string } | null;
 				const text = content?.text;
@@ -2766,6 +2946,7 @@ export function registerTools(
 					text_length: ex.length,
 				};
 			});
+			return pagedList(rows as ListRow[], limit, 'list_comments');
 		},
 		db,
 	);
@@ -2773,27 +2954,37 @@ export function registerTools(
 	tool(
 		server,
 		'list_task_runs',
-		"List the agent runs (container executions) recorded for a task, newest first (up to 50). Each row is one run: which agent ran, its status and exit code, when it started/finished, the invocation command, and the log length. Metadata only - fetch a run's actual container log with get_run_log(run_id). Useful for reviewing HOW a task was worked (e.g. the Coach checking what an agent actually did, beyond the comments it left).",
+		`List the agent runs (container executions) recorded for a task, newest first. Each row is one run: which agent ran, its status and exit code, when it started/finished, the invocation command, and the log length. Metadata only - fetch a run's actual container log with get_run_log(run_id). Useful for reviewing HOW a task was worked (e.g. the Coach checking what an agent actually did, beyond the comments it left). Paged: returns \`limit\` rows (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false.`,
 		{
 			project: projectArg(),
 			task_id: z.string().describe('Task identifier or UUID'),
+			...listPagingArgs(),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveTaskScope(db, auth, args);
 			if ('error' in scope) return scope;
 			const { teamId, taskId } = scope;
-			const r = await db.query<Record<string, unknown>>(
+			const limit = parseListLimit(args.limit);
+			const params: unknown[] = [taskId, teamId];
+			const runKeyset = { column: 'started_at' } as const;
+			const keyset = keysetPredicate(
+				'hr',
+				decodeCursor(args.cursor as string | undefined),
+				params,
+				runKeyset,
+			);
+			const r = await db.query<ListRow>(
 				`SELECT hr.id, hr.status, hr.exit_code, hr.started_at, hr.finished_at,
 				        hr.invocation_command, ${runLogLengthSql('hr.id')} AS log_length,
 				        ma.title AS agent_title, ma.slug AS agent_slug
 				 FROM heartbeat_runs hr
 				 LEFT JOIN member_agents ma ON ma.id = hr.member_id
-				 WHERE hr.task_id = $1 AND hr.team_id = $2
-				 ORDER BY hr.started_at DESC
-				 LIMIT 50`,
-				[taskId, teamId],
+				 WHERE hr.task_id = $1 AND hr.team_id = $2${keyset ? ` AND ${keyset}` : ''}
+				 ORDER BY ${keysetOrderBy('hr', runKeyset)}
+				 LIMIT ${limit + 1}`,
+				params,
 			);
-			return r.rows;
+			return pagedList(r.rows, limit, 'list_task_runs', { column: 'started_at' });
 		},
 		db,
 	);
@@ -2801,7 +2992,7 @@ export function registerTools(
 	tool(
 		server,
 		'get_run_log',
-		"Fetch the container log for a single agent run (a run_id from list_task_runs). Returns the run's log capped to the most recent excerpt_chars characters (default 12000 - the tail, where the outcome and any errors are) with truncated/length flags so you can tell when earlier output was dropped. Team-scoped: the run must belong to the project you're acting in.",
+		"Fetch the container log for a single agent run (a run_id from list_task_runs). Team-scoped: the run must belong to the project you're acting in. By default returns the most recent excerpt_chars characters (default 12000 - the tail, where the outcome and any errors usually are). To read a run that failed EARLY, pass offset (start at 0) and page forward with next_offset until it is null: the tail default would otherwise hide the start of the log, which is where a setup, clone, or install failure appears.",
 		{
 			project: projectArg(),
 			run_id: z.string().describe('Run ID (UUID) from list_task_runs'),
@@ -2810,7 +3001,25 @@ export function registerTools(
 				.int()
 				.positive()
 				.optional()
-				.describe('Max characters to return from the END of the log (default 12000).'),
+				.describe(
+					'Max characters to return from the END of the log (default 12000). Ignored when `offset` is set.',
+				),
+			offset: z
+				.number()
+				.int()
+				.min(0)
+				.optional()
+				.describe(
+					'Byte offset to read forward from, instead of the tail. Pass 0 to start at the beginning of the log, then pass back `next_offset` until it is null. Snapped down to a UTF-8 character boundary.',
+				),
+			max_bytes: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe(
+					'Max bytes of log to return in this window when paging with `offset` (default and ceiling is the read budget).',
+				),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -2831,18 +3040,45 @@ export function registerTools(
 			);
 			if (r.rows.length === 0) return { error: `Run not found in this project: ${runId}` };
 			const run = r.rows[0];
-			const max = (args.excerpt_chars as number | undefined) ?? 12_000;
-			// Read the tail from storage rather than aggregating the whole log and
-			// slicing it here: a run's log reaches 10 MB and this returns ~12 KB.
-			const tail = await readRunLogTail(db, run.id, max);
-			return {
+			const meta = {
 				id: run.id,
 				status: run.status,
 				exit_code: run.exit_code,
 				task_id: run.task_id,
+			};
+			// Either read is a window over storage rather than an aggregate of the
+			// whole log: a run's log reaches 10 MB and either mode returns ~12 KB.
+			const offset = args.offset as number | undefined;
+			if (offset !== undefined) {
+				const max = (args.max_bytes as number | undefined) ?? 12_000;
+				const w = await readRunLogWindow(db, run.id, offset, max);
+				return {
+					...meta,
+					log: w.text,
+					offset: w.offset,
+					returned_chars: w.text.length,
+					length: w.length,
+					next_offset: w.nextOffset,
+					truncated: w.offset > 0 || w.nextOffset !== null,
+					...(w.nextOffset !== null
+						? {
+								paging_hint: `Log is larger than one read. Returned characters ${w.offset}-${w.offset + w.text.length} of ${w.length}. Call get_run_log again with offset: ${w.nextOffset}; repeat until next_offset is null.`,
+							}
+						: {}),
+				};
+			}
+			const max = (args.excerpt_chars as number | undefined) ?? 12_000;
+			const tail = await readRunLogTail(db, run.id, max);
+			return {
+				...meta,
 				log: tail.text,
 				length: tail.length,
 				truncated: tail.truncated,
+				...(tail.truncated
+					? {
+							paging_hint: `This is the last ${tail.text.length} of ${tail.length} characters. Earlier output was NOT returned - if the run failed early, call get_run_log again with offset: 0 and page forward with next_offset to reach the start.`,
+						}
+					: {}),
 			};
 		},
 		db,
@@ -3705,7 +3941,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_approvals',
-		'List pending approvals. Pass excerpt_chars (e.g. 500) to truncate long fields inside payload (e.g. skill-proposal content); omit for full payload.',
+		`List pending approvals, newest first. Long string fields inside payload (e.g. skill-proposal content) come back truncated at \`excerpt_chars\` (default ${DEFAULT_TASK_EXCERPT_CHARS}) with *_truncated/_length companions, so one page cannot be dominated by a single large proposal - read a proposal in full from the approval itself. Paged: returns \`limit\` rows (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false.`,
 		{
 			project: projectArg(),
 			excerpt_chars: z
@@ -3714,21 +3950,28 @@ export function registerTools(
 				.positive()
 				.optional()
 				.describe(
-					'When set, truncates long string fields inside payload (e.g. skill-proposal content) and adds *_truncated/_length companions',
+					`Cap for long string fields inside payload, with *_truncated/_length companions (default ${DEFAULT_TASK_EXCERPT_CHARS}).`,
 				),
+			...listPagingArgs(),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
-			const r = await db.query<Record<string, unknown>>(
-				`SELECT ${APPROVAL_COLUMNS} FROM approvals
-				 WHERE team_id = $1 AND status = $2::approval_status
-				 ORDER BY created_at DESC`,
-				[scope.teamId, ApprovalStatus.Pending],
+			const limit = parseListLimit(args.limit);
+			const params: unknown[] = [scope.teamId, ApprovalStatus.Pending];
+			const keyset = keysetPredicate('a', decodeCursor(args.cursor as string | undefined), params);
+			const r = await db.query<ListRow>(
+				`SELECT ${APPROVAL_COLUMNS_ALIASED} FROM approvals a
+				 WHERE a.team_id = $1 AND a.status = $2::approval_status${keyset ? ` AND ${keyset}` : ''}
+				 ORDER BY ${keysetOrderBy('a')} LIMIT ${limit + 1}`,
+				params,
 			);
-			const max = args.excerpt_chars as number | undefined;
-			if (max == null) return r.rows;
-			return r.rows.map((row) => excerptApprovalPayload(row, max));
+			const max = (args.excerpt_chars as number | undefined) ?? DEFAULT_TASK_EXCERPT_CHARS;
+			return pagedList(
+				r.rows.map((row) => excerptApprovalPayload(row, max)),
+				limit,
+				'list_approvals',
+			);
 		},
 		db,
 	);
@@ -3797,10 +4040,11 @@ export function registerTools(
 	tool(
 		server,
 		'get_costs',
-		'Get the cost summary for a project',
+		`Get the cost summary for a project. Ungrouped returns a single total. group_by: 'agent' returns one row per agent (bounded by the roster). group_by: 'day' returns one row per day, newest first - that set grows for as long as the project runs, so it is paged: it returns \`limit\` days (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`, and when \`has_more\` is true you call again with \`cursor\` set to \`next_cursor\` until it is false.`,
 		{
 			project: projectArg(),
 			group_by: z.enum(['agent', 'day']).optional().describe('Group costs by'),
+			...listPagingArgs(),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -3815,12 +4059,24 @@ export function registerTools(
 				return r.rows;
 			}
 			if (args.group_by === 'day') {
-				const r = await db.query(
+				// Cost rows accumulate for the life of the project, so the day grouping
+				// is the one branch here without a natural ceiling. It keys on the day
+				// itself: the grouping makes it unique, so no id tiebreak is needed.
+				const limit = parseListLimit(args.limit);
+				const cursor = decodeCursor(args.cursor as string | undefined);
+				const params: unknown[] = [scope.projectId];
+				let dayFilter = '';
+				if (cursor) {
+					params.push(cursor.value);
+					dayFilter = ` AND date_trunc('day', ce.created_at)::date < $${params.length}::date`;
+				}
+				const r = await db.query<{ day: string; total_cents: number }>(
 					`SELECT date_trunc('day', ce.created_at)::date AS day, sum(ce.amount_cents)::int AS total_cents
-				 FROM cost_entries ce WHERE ce.project_id = $1 GROUP BY day ORDER BY day`,
-					[scope.projectId],
+				 FROM cost_entries ce WHERE ce.project_id = $1${dayFilter}
+				 GROUP BY day ORDER BY day DESC LIMIT ${limit + 1}`,
+					params,
 				);
-				return r.rows;
+				return pagedList(r.rows, limit, 'get_costs', { column: 'day', idKey: 'day' });
 			}
 			const r = await db.query(
 				`SELECT sum(amount_cents)::int AS total_cents, count(*)::int AS entry_count FROM cost_entries WHERE project_id = $1`,
@@ -3835,7 +4091,7 @@ export function registerTools(
 	tool(
 		server,
 		'get_agent_system_prompt',
-		"Read an agent's system prompt. Accessible by any agent or the admin in the same team. Returns the resolved role doc by default - `{{…}}` placeholders substituted with the real team name, manager, skills, project docs, and team context - so you can see what the agent actually says about itself with real values. Pass placeholders=false to get the raw stored template with `{{…}}` placeholders intact; only do this when you intend to edit the prompt and need a safe round-trip back through update_agent_system_prompt.",
+		"Read an agent's system prompt. Accessible by any agent or the admin in the same team. Returns the resolved role doc by default - `{{…}}` placeholders substituted with the real team name, manager, skills, project docs, and team context - so you can see what the agent actually says about itself with real values. Pass placeholders=false to get the raw stored template with `{{…}}` placeholders intact; only do this when you intend to edit the prompt and need a safe round-trip back through update_agent_system_prompt. A prompt too large for one read comes back as a byte window: when `next_offset` is non-null, call again with `offset` set to it until it is null. To read several prompts, use get_agent_system_prompts rather than looping this tool.",
 		{
 			project: projectArg(),
 			agent_id: z.string().describe('Target agent - its slug (e.g. "engineer") or member ID'),
@@ -3845,6 +4101,22 @@ export function registerTools(
 				.default(true)
 				.describe(
 					'When true (default) substitutes `{{…}}` placeholders with real team/team values. When false returns the raw stored template - needed when reading before update_agent_system_prompt so placeholders survive the round-trip.',
+				),
+			offset: z
+				.number()
+				.int()
+				.min(0)
+				.optional()
+				.describe(
+					'Byte offset to start reading the prompt from (default 0). Pass back `next_offset` to page a prompt too large for one read. Snapped down to a UTF-8 character boundary.',
+				),
+			max_bytes: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe(
+					'Max bytes of prompt text to return in this window (default and ceiling is the read budget, so a normal-size prompt comes back whole).',
 				),
 		},
 		async (args, db, auth) => {
@@ -3878,7 +4150,22 @@ export function registerTools(
 						mode: 'placeholders',
 					})
 				: raw;
-			return { ...agent.rows[0], system_prompt };
+			// A resolved prompt grows with shared guidance and can outgrow the cap on
+			// its own; window it so the single-resource read an agent falls back to is
+			// never the one that fails.
+			return windowContent({
+				text: system_prompt,
+				offset: args.offset as number | undefined,
+				maxBytes: args.max_bytes as number | undefined,
+				limit: MCP_RESULT_BYTE_LIMIT_OVERRIDES.get_agent_system_prompt ?? MCP_RESULT_BYTE_LIMIT,
+				reserve: DOC_READ_ENVELOPE_RESERVE,
+				hint: ({ start, end, total }) =>
+					`Prompt is larger than one read. Returned bytes ${start}-${end} of ${total}. Call get_agent_system_prompt again with offset: ${end}; repeat until next_offset is null.`,
+				build: (w: ContentWindow) => {
+					const { content, ...rest } = w;
+					return { ...agent.rows[0], system_prompt: content, ...rest };
+				},
+			});
 		},
 		db,
 	);
@@ -3886,7 +4173,7 @@ export function registerTools(
 	tool(
 		server,
 		'get_agent_system_prompts',
-		`Read multiple agent system prompts in one call (max ${MAX_BATCH_AGENT_SYSTEM_PROMPTS}). Per-item \`mode\` chooses the resolution depth: \`placeholders\` (default) substitutes \`{{…}}\` with real values and stops, matching get_agent_system_prompt's default; \`preview\` additionally appends the resolver's runtime blocks (Project State, Team Context, Teammates, Working Guidelines) minus the per-run Run Context, matching the web UI's preview panel; \`raw\` returns the stored template untouched. Use this to compare prompts across the team in one round-trip - e.g. Captain auditing how team_context renders for every agent. SIZE: this tool has a raised 128KB result cap (a fully-resolved \`preview\` prompt is large), but still batch multiple items only as \`raw\`/\`placeholders\` and fetch previews one at a time so a multi-\`preview\` call can't exceed even the raised cap (result_too_large). For a single prompt, use get_agent_system_prompt.`,
+		`Read multiple agent system prompts in one call (max ${MAX_BATCH_AGENT_SYSTEM_PROMPTS}). Per-item \`mode\` chooses the resolution depth: \`placeholders\` (default) substitutes \`{{…}}\` with real values and stops, matching get_agent_system_prompt's default; \`preview\` additionally appends the resolver's runtime blocks (Project State, Team Context, Teammates, Working Guidelines) minus the per-run Run Context, matching the web UI's preview panel; \`raw\` returns the stored template untouched. Use this to compare prompts across the team in one round-trip - e.g. Captain auditing how team_context renders for every agent. PAGING: batch as many items as you like in any mode. The result carries as many prompts as fit under the cap plus \`next_index\`; when it is non-null, call again with the SAME \`items\` and \`start_index\` set to it, and repeat until it is null. Do not split the roster into single-item calls. For one prompt, use get_agent_system_prompt.`,
 		{
 			project: projectArg(),
 			items: z
@@ -3904,6 +4191,14 @@ export function registerTools(
 				.min(1)
 				.max(MAX_BATCH_AGENT_SYSTEM_PROMPTS)
 				.describe(`Up to ${MAX_BATCH_AGENT_SYSTEM_PROMPTS} items.`),
+			start_index: z
+				.number()
+				.int()
+				.min(0)
+				.optional()
+				.describe(
+					'Index into `items` to resume from (default 0). Pass back the `next_index` from the previous call, with the same `items`, to fetch the prompts that did not fit.',
+				),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -3915,31 +4210,87 @@ export function registerTools(
 			}
 
 			const items = args.items as Array<{ agent_id: string; mode?: SystemPromptMode }>;
-			const results = await Promise.all(
-				items.map(async (item, index) => {
-					try {
-						const out = await fetchAgentSystemPromptForBatch(
-							db,
-							teamId,
-							item.agent_id,
-							item.mode ?? 'placeholders',
-						);
-						return { index, ok: true as const, ...out };
-					} catch (e) {
-						if (e instanceof AgentSystemPromptError) {
-							return { index, ok: false as const, agent_id: item.agent_id, error: e.message };
-						}
-						log.error('Unexpected error in get_agent_system_prompts:', e);
-						return {
-							index,
-							ok: false as const,
-							agent_id: item.agent_id,
-							error: e instanceof Error ? e.message : 'internal_error',
-						};
+			const startIndex = Math.min((args.start_index as number | undefined) ?? 0, items.length);
+			const byteLimit =
+				MCP_RESULT_BYTE_LIMIT_OVERRIDES.get_agent_system_prompts ?? MCP_RESULT_BYTE_LIMIT;
+			const budget = byteLimit - DOC_READ_ENVELOPE_RESERVE;
+
+			const resolveItem = async (item: (typeof items)[number], index: number) => {
+				try {
+					const out = await fetchAgentSystemPromptForBatch(
+						db,
+						teamId,
+						item.agent_id,
+						item.mode ?? 'placeholders',
+					);
+					return { index, ok: true as const, ...out };
+				} catch (e) {
+					if (e instanceof AgentSystemPromptError) {
+						return { index, ok: false as const, agent_id: item.agent_id, error: e.message };
 					}
-				}),
+					log.error('Unexpected error in get_agent_system_prompts:', e);
+					return {
+						index,
+						ok: false as const,
+						agent_id: item.agent_id,
+						error: e instanceof Error ? e.message : 'internal_error',
+					};
+				}
+			};
+
+			// Resolve the whole requested tail in parallel (as before), then emit only
+			// the prefix that fits under the cap and hand back a cursor for the rest.
+			// A prompt is a single DB read, so resolving a few extra is far cheaper
+			// than the round trip an agent pays to discover the page boundary.
+			const resolved = await Promise.all(
+				items.slice(startIndex).map((item, i) => resolveItem(item, startIndex + i)),
 			);
-			return results;
+
+			const page: unknown[] = [];
+			let used = 0;
+			let nextIndex: number | null = null;
+			for (const [i, entry] of resolved.entries()) {
+				const cost = Buffer.byteLength(JSON.stringify(entry), 'utf8');
+				// Always emit at least one entry so the cursor cannot stall. A single
+				// oversized `preview` is truncated to a window rather than dropped -
+				// otherwise this index would never advance and the caller would loop.
+				if (page.length > 0 && used + cost > budget) {
+					nextIndex = startIndex + i;
+					break;
+				}
+				if (page.length === 0 && cost > budget && entry.ok) {
+					const buf = Buffer.from(entry.system_prompt, 'utf8');
+					const keep = buf.subarray(0, utf8FloorBoundary(buf, budget - 2_048));
+					page.push({
+						...entry,
+						system_prompt: keep.toString('utf8'),
+						truncated: true,
+						returned_bytes: keep.length,
+						total_bytes: buf.length,
+						truncation_hint: `This prompt alone exceeds the result cap. Read the rest with get_agent_system_prompt (agent_id: "${entry.agent_id}"), which pages via offset/next_offset.`,
+					});
+					used = budget;
+					continue;
+				}
+				page.push(entry);
+				used += cost;
+			}
+			if (nextIndex === null && startIndex + page.length < items.length) {
+				nextIndex = startIndex + page.length;
+			}
+
+			return {
+				items: page,
+				start_index: startIndex,
+				returned: page.length,
+				total: items.length,
+				next_index: nextIndex,
+				...(nextIndex !== null
+					? {
+							paging_hint: `Returned prompts ${startIndex}-${startIndex + page.length - 1} of ${items.length}. Call get_agent_system_prompts again with the same items and start_index: ${nextIndex}; repeat until next_index is null.`,
+						}
+					: {}),
+			};
 		},
 		db,
 	);
@@ -4577,32 +4928,39 @@ export function registerTools(
 	tool(
 		server,
 		'list_project_docs',
-		"List project documentation files (PRD, spec, implementation plan, etc.). Each entry carries its `filename` and a one-line `description` (what the doc is / when to read it, '' if unset). Archived (soft-deleted) docs are excluded by default - set filter: 'archived' or 'all' to see them (entries then carry an `archived` flag).",
+		`List project documentation files (PRD, spec, implementation plan, etc.). Each entry carries its \`filename\`, a one-line \`description\` (what the doc is / when to read it, '' if unset), and \`content_length\` - the doc's size, so you can tell before opening it whether read_project_doc will need more than one window. Bodies are not returned here; read one with read_project_doc. Archived (soft-deleted) docs are excluded by default - set filter: 'archived' or 'all' to see them (entries then carry an \`archived\` flag). Paged: returns \`limit\` entries (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false.`,
 		{
 			project: projectArg(),
 			filter: archiveFilterArg(),
+			...listPagingArgs(),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
 			const filter = toArchiveFilter(args.filter);
-			const docs = await listDocuments(db, {
+			const limit = parseListLimit(args.limit);
+			// Summaries, not documents: the full-body read would ship every doc in
+			// the project to render a list of filenames.
+			const docs = await listDocumentSummaries(db, {
 				type: DocumentType.ProjectDoc,
 				teamId: scope.teamId,
 				projectId: scope.projectId,
 				includeArchived: filter !== ArchiveFilter.Active,
 			});
-			return {
-				files: docs
-					.filter((d) => matchesArchiveFilter(d.archived_at, filter))
-					.map((d) => ({
-						id: d.id,
-						filename: d.slug,
-						description: d.description,
-						updated_at: d.updated_at,
-						...(filter !== ArchiveFilter.Active ? { archived: d.archived_at !== null } : {}),
-					})),
-			};
+			const visible = docs
+				.filter((d) => matchesArchiveFilter(d.archived_at, filter))
+				.map((d) => ({
+					id: d.id,
+					filename: d.slug,
+					description: d.description,
+					content_length: d.content_length,
+					created_at: d.created_at,
+					updated_at: d.updated_at,
+					...(filter !== ArchiveFilter.Active ? { archived: d.archived_at !== null } : {}),
+				}));
+			const cursor = decodeCursor(args.cursor as string | undefined);
+			const from = cursor ? visible.findIndex((d) => d.id === cursor.id) + 1 : 0;
+			return pagedList(visible.slice(from, from + limit + 1), limit, 'list_project_docs');
 		},
 		db,
 	);
@@ -4623,12 +4981,14 @@ export function registerTools(
 			project: projectArg(),
 			filter: archiveFilterArg(),
 			sort: assetSortArg(),
+			...listPagingArgs(),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
 			const filter = toArchiveFilter(args.filter);
 			const sort = toAssetSortOrder(args.sort);
+			const limit = parseListLimit(args.limit);
 			const where =
 				filter === ArchiveFilter.Active
 					? ' AND archived_at IS NULL'
@@ -4649,16 +5009,19 @@ export function registerTools(
 				 ORDER BY ${assetSortOrderBy(sort)}`,
 				[scope.projectId],
 			);
-			return {
-				files: assets.rows.map((a) => ({
-					id: a.id,
-					filename: a.original_filename,
-					content_type: a.content_type,
-					created_at: a.created_at,
-					...(a.width !== null && a.height !== null ? { width: a.width, height: a.height } : {}),
-					...(filter !== ArchiveFilter.Active ? { archived: a.archived_at !== null } : {}),
-				})),
-			};
+			// The caller picks the sort (newest / oldest / alphabetical), so the
+			// cursor anchors on row identity rather than a fixed sort column.
+			const rows = assets.rows.map((a) => ({
+				id: a.id,
+				filename: a.original_filename,
+				content_type: a.content_type,
+				created_at: a.created_at,
+				...(a.width !== null && a.height !== null ? { width: a.width, height: a.height } : {}),
+				...(filter !== ArchiveFilter.Active ? { archived: a.archived_at !== null } : {}),
+			}));
+			const cursor = decodeCursor(args.cursor as string | undefined);
+			const from = cursor ? rows.findIndex((a) => a.id === cursor.id) + 1 : 0;
+			return pagedList(rows.slice(from, from + limit + 1), limit, 'list_project_assets');
 		},
 		db,
 	);
@@ -5284,58 +5647,25 @@ export function registerTools(
 
 			// Window the body so the serialized result stays under this tool's cap,
 			// letting an agent page an arbitrarily large doc via offset/next_offset
-			// instead of tripping the generic result_too_large guard. Byte units keep
-			// next_offset exact; utf8FloorBoundary keeps every window on a codepoint
-			// boundary (the cap is bytes, but String.slice cuts UTF-16 units).
-			const effectiveLimit =
-				MCP_RESULT_BYTE_LIMIT_OVERRIDES.read_project_doc ?? MCP_RESULT_BYTE_LIMIT;
-			const buf = Buffer.from(doc.content, 'utf8');
-			const total = buf.length;
-			const start = utf8FloorBoundary(
-				buf,
-				Math.max(0, Math.min((args.offset as number | undefined) ?? 0, total)),
-			);
-			const requested = (args.max_bytes as number | undefined) ?? effectiveLimit;
-			let budget = Math.min(requested, effectiveLimit - DOC_READ_ENVELOPE_RESERVE);
-			let end = utf8FloorBoundary(buf, start + budget);
-
-			const build = (e: number) => {
-				const nextOffset = e < total ? e : null;
-				return {
+			// instead of tripping the generic result_too_large guard. The windowing
+			// itself is the shared convention (mcp/paging.ts); only the result shape
+			// and the continuation sentence are this tool's own.
+			return windowContent({
+				text: doc.content,
+				offset: args.offset as number | undefined,
+				maxBytes: args.max_bytes as number | undefined,
+				limit: MCP_RESULT_BYTE_LIMIT_OVERRIDES.read_project_doc ?? MCP_RESULT_BYTE_LIMIT,
+				reserve: DOC_READ_ENVELOPE_RESERVE,
+				hint: ({ start, end, total }) =>
+					`Doc is larger than one read. Returned bytes ${start}-${end} of ${total}. Call read_project_doc again with offset: ${end}; repeat until next_offset is null.`,
+				build: (w: ContentWindow) => ({
 					filename: doc.slug,
 					...descriptionField,
-					content: buf.subarray(start, e).toString('utf8'),
-					offset: start,
-					returned_bytes: e - start,
-					total_bytes: total,
-					next_offset: nextOffset,
-					truncated: start > 0 || e < total,
-					...(nextOffset !== null
-						? {
-								paging_hint: `Doc is larger than one read. Returned bytes ${start}-${e} of ${total}. Call read_project_doc again with offset: ${e}; repeat until next_offset is null.`,
-							}
-						: {}),
+					...w,
 					...archivedField,
 					...reviewCommentsField,
-				};
-			};
-
-			let result = build(end);
-			// A byte-accurate content window can still serialize larger than its byte
-			// count (JSON escaping inflates newlines/quotes, and review_comments add
-			// bytes). Measure with the same serialization the wrapper guard uses and
-			// trim the window until it fits. Terminates because the budget strictly
-			// shrinks; if the metadata alone (huge review_comments) exceeds the cap,
-			// content trims to empty and the generic guard reports result_too_large.
-			while (
-				end > start &&
-				Buffer.byteLength(JSON.stringify(result, null, 2), 'utf8') > effectiveLimit
-			) {
-				budget = Math.max(0, Math.floor(budget * 0.9) - 1);
-				end = utf8FloorBoundary(buf, start + budget);
-				result = build(end);
-			}
-			return result;
+				}),
+			});
 		},
 		db,
 	);
@@ -5571,10 +5901,11 @@ export function registerTools(
 	tool(
 		server,
 		'list_skills',
-		"List the team's skills database - the manifest of reusable team know-how (MCP server usage, integration steps, conventions, how agents coordinate). Returns each skill's name, slug, and description; call get_skill to load a skill's full body on demand.",
+		`List the team's skills database - the manifest of reusable team know-how (MCP server usage, integration steps, conventions, how agents coordinate). Returns each skill's name, slug, and description; call get_skill to load a skill's full body on demand. Paged: returns \`limit\` entries (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false.`,
 		{
 			project: projectArg(),
 			tags: z.string().optional().describe('Filter by tag (comma-separated)'),
+			...listPagingArgs(),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -5594,14 +5925,22 @@ export function registerTools(
 
 			// Project row before global so the de-dupe keeps the project's shadowing copy.
 			query += ' ORDER BY name, project_id NULLS LAST';
-			const result = await db.query<{ slug: string }>(query, params);
+			const result = await db.query<ListRow & { slug: string }>(query, params);
 			const seen = new Set<string>();
+			// De-dupe must run over the whole set before paging: shadowed globals are
+			// dropped here, so slicing first would leave short pages and could hide a
+			// project skill behind the global it shadows.
 			const skills = result.rows.filter((r) => {
 				if (seen.has(r.slug)) return false;
 				seen.add(r.slug);
 				return true;
 			});
-			return { skills };
+			const limit = parseListLimit(args.limit);
+			const cursor = decodeCursor(args.cursor as string | undefined);
+			const from = cursor ? skills.findIndex((s) => s.id === cursor.id) + 1 : 0;
+			return pagedList(skills.slice(from, from + limit + 1), limit, 'list_skills', {
+				column: 'name',
+			});
 		},
 		db,
 	);
@@ -5739,6 +6078,7 @@ export function registerTools(
 		'List the connectors available to agent runs in your project (its own connectors plus global "all projects" ones; a project connector shadows a global one of the same name). Each row includes a derived `oauth_status` so you can tell whether a connector is usable: "active" means OAuth completed and the MCP tools should appear in your tool list on your next run; "pending" means waiting on the human to click Connect; "failed" means the OAuth flow errored (see auth_error); "revoked" means a human disconnected it; "none" means no OAuth needed (e.g., an env-var-token MCP or a public one). Do NOT confuse `install_status` (which tracks local-package install state and is meaningless for SaaS MCPs) with `oauth_status`. An active OAuth-backed connector also carries `rest_auth` = `{ placeholder, allowed_hosts, scopes }`: put `placeholder` (e.g. in an `Authorization: Bearer <placeholder>` header) on a raw HTTP request to authenticate the provider\'s REST API directly when no MCP tool covers what you need - the egress proxy substitutes the real token, but ONLY for requests to `allowed_hosts`; you never see the value. Use this instead of requesting a PAT (e.g. for GitHub repo-settings edits that the `github` MCP does not expose). A connector of kind `api` (a credentialed REST API with no MCP server) carries `api_auth` = `{ base_url, placeholder, allowed_hosts, placement, name, docs_url }` instead: put `placeholder` in the `name` header (when `placement` is "header", prefixed by any scheme) or `name` query parameter (when `placement` is "query") and send the request to `base_url` - the egress proxy substitutes the real key, scoped to `allowed_hosts`. `placeholder` is null until a human attaches the credential on the Connectors page; `api_auth` is null for non-api rows. An `api` connector may instead be OAuth-backed (a human connected it via the device flow): then `api_auth.placeholder` is a broker-managed OAuth access token that Hezo keeps refreshed host-side - use it exactly the same way.',
 		{
 			project: projectArg(),
+			...listPagingArgs(),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -5797,7 +6137,7 @@ export function registerTools(
 			// first, so keep the first occurrence per name.
 			const byName = new Map<string, (typeof r.rows)[number]>();
 			for (const row of r.rows) if (!byName.has(row.name)) byName.set(row.name, row);
-			return [...byName.values()].map((row) => {
+			const connectors = [...byName.values()].map((row) => {
 				let oauth_status: 'active' | 'pending' | 'failed' | 'revoked' | 'none';
 				if (row.kind !== 'saas') oauth_status = 'none';
 				else if (row.revoked_at) oauth_status = 'revoked';
@@ -5887,6 +6227,15 @@ export function registerTools(
 						: null,
 				};
 			});
+			// Shadowed duplicates are dropped above, so page the de-duped set.
+			const limit = parseListLimit(args.limit);
+			const cursor = decodeCursor(args.cursor as string | undefined);
+			const from = cursor ? connectors.findIndex((c) => c.id === cursor.id) + 1 : 0;
+			return pagedList(
+				connectors.slice(from, from + limit + 1) as unknown as ListRow[],
+				limit,
+				'list_connectors',
+			);
 		},
 		db,
 	);
