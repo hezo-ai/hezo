@@ -3,7 +3,7 @@
 // project's Settings page, and the Home dashboard - the first screen after login
 // - still shows the bare initials. These specs pin the icon onto both Home
 // surfaces (the Active card and the Other-projects row) and onto the rail's
-// pinned HQ entry, which used to hardcode a building glyph. Component tier.
+// pinned HQ entry, which used to hardcode a glyph. Component tier.
 
 import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
@@ -88,7 +88,7 @@ test('the Home Other-projects row renders the uploaded project icon', async () =
 	expect(img?.getAttribute('src') ?? '').toContain(`/api/projects/${ref.id}/icon`);
 });
 
-test('the project rail shows HQ’s uploaded icon in place of the building glyph', async () => {
+test('the project rail shows HQ’s uploaded icon in place of the globe glyph', async () => {
 	const ref = { hqId: '' };
 	const { findByTestId, router } = await renderApp({
 		initialPath: '/',
@@ -111,7 +111,7 @@ test('the project rail shows HQ’s uploaded icon in place of the building glyph
 	expect(img?.getAttribute('src') ?? '').toContain(`/api/projects/${ref.hqId}/icon`);
 });
 
-test('the project rail falls back to the building glyph when HQ has no icon', async () => {
+test('the project rail falls back to the globe glyph when HQ has no icon', async () => {
 	const { findByTestId, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
@@ -124,5 +124,7 @@ test('the project rail falls back to the building glyph when HQ has no icon', as
 
 	const hqEntry = await findByTestId('project-rail-hq', undefined, { timeout: 20_000 });
 	expect(hqEntry.querySelector('img')).toBeNull();
-	expect(hqEntry.querySelector('svg')).not.toBeNull();
+	// The globe specifically: HQ is the global project, and the sidebar already
+	// marks the global agents it hosts (CEO, Coach) with the same glyph.
+	expect(hqEntry.querySelector('svg.lucide-globe')).not.toBeNull();
 });

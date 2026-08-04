@@ -1,5 +1,5 @@
 import { Link } from '@tanstack/react-router';
-import { Building2, Home, Plus } from 'lucide-react';
+import { Globe, Home, Plus } from 'lucide-react';
 import { useState } from 'react';
 import { useActiveProject } from '../hooks/use-active-project';
 import { useInboxUnreadCount, useInboxUnreadCountsBySlug } from '../hooks/use-inbox-count';
@@ -168,7 +168,8 @@ export function ProjectRail({ showHome = false }: { showHome?: boolean } = {}) {
 								data-testid="project-rail-hq"
 								// A full-bleed icon drops the border and surface fill (the same rule
 								// `Avatar` follows): keeping them would leave a grey ring between the
-								// image and the active ring. Without an icon, HQ keeps its glyph.
+								// image and the active ring. Without an icon, HQ keeps its globe glyph
+								// — the same mark the sidebar puts on the global agents HQ hosts.
 								className={`relative w-9 h-9 rounded-full flex items-center justify-center overflow-hidden transition-colors ${
 									hq.icon_url
 										? ''
@@ -178,7 +179,7 @@ export function ProjectRail({ showHome = false }: { showHome?: boolean } = {}) {
 								{hq.icon_url ? (
 									<img src={hq.icon_url} alt="" className="w-full h-full object-cover" />
 								) : (
-									<Building2 className="w-4 h-4" />
+									<Globe className="w-4 h-4" />
 								)}
 								<CountOverlayBadge
 									count={hqInbox?.unread ?? 0}

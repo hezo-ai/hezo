@@ -640,7 +640,7 @@ live-refreshes. `project_icons`
 unlike assets the **bytes live in the DB** (a `BYTEA` column) in a dedicated table so the
 hot `projects.*` list query never pulls the blob; it is rendered on every surface that draws
 a project avatar — the project rail (including the pinned HQ entry, which falls back to a
-building glyph when HQ has no icon) and the home dashboard's Active cards and Other rows — and
+globe glyph when HQ has no icon) and the home dashboard's Active cards and Other rows — and
 served from a public HMAC-signed read route (`GET /api/projects/:projectId/icon`, the `sig`
 query param is the credential since an `<img>` carries no bearer token). The serialized
 project carries a freshly-signed `icon_url` (null when unset); the client normalizes any
