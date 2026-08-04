@@ -136,8 +136,8 @@ describe('MCP endpoint', () => {
 		expect(body.result.content[0].type).toBe('text');
 		const payload = JSON.parse(body.result.content[0].text);
 		expect(payload).not.toHaveProperty('error');
-		expect(Array.isArray(payload)).toBe(true);
-		expect(payload.length).toBeGreaterThan(0);
+		expect(Array.isArray(payload.items)).toBe(true);
+		expect(payload.items.length).toBeGreaterThan(0);
 	});
 
 	it('passes through non-empty arguments to the tool handler', async () => {
@@ -155,7 +155,7 @@ describe('MCP endpoint', () => {
 		const body = await res.json();
 		const payload = JSON.parse(body.result.content[0].text);
 		expect(payload).not.toHaveProperty('error');
-		expect(Array.isArray(payload)).toBe(true);
+		expect(Array.isArray(payload.items)).toBe(true);
 	});
 
 	it('accepts an agent token whose run is active', async () => {
@@ -174,7 +174,7 @@ describe('MCP endpoint', () => {
 		const body = await res.json();
 		const payload = JSON.parse(body.result.content[0].text);
 		expect(payload).not.toHaveProperty('error');
-		expect(Array.isArray(payload)).toBe(true);
+		expect(Array.isArray(payload.items)).toBe(true);
 	});
 
 	it('returns 202 with no body for notifications/initialized (no id)', async () => {
