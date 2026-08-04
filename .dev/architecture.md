@@ -53,7 +53,7 @@ manager (agents bring their own models and runtimes).
 | Realtime | WebSocket row-change events → client invalidates React Query keys |
 | Agent interface | MCP (Streamable HTTP) at `POST /mcp` via `@modelcontextprotocol/sdk` |
 | Crypto | AES-256-GCM at rest; master key held in memory only |
-| Containers | Docker Engine API or a managed sandbox service, behind one `ContainerEngine` seam — a pool per project, one run per container, started on demand and retired after a fixed 2-minute idle window |
+| Containers | Docker Engine API or a managed sandbox service, behind one `ContainerEngine` seam — a pool per project, one run per container, started on demand and retired after a fixed 2-minute idle window (15 for a live assistant chat) |
 
 **Monorepo** — Bun workspaces + Turborepo. **Three** packages plus a root `agents/`
 tree:
@@ -1720,6 +1720,18 @@ reason on it (`setPoolMemberState` + `setPoolMemberOutcome`), so it lists as Fai
 is the fix - rather than a container left running on the engine that nothing references and
 nobody can see.
 
+**Before that id exists there is still a row**, a third arm of the listing's union keyed on
+`provisioningContainerKey(projectId)` = `provisioning:<uuid>` (`@hezo/shared`). Registering the
+member early closed the *back* half of the blank window; the front half - workspace prep, image
+resolution, and on a managed backend the sandbox build, which is the longest part of a cold
+start - has no engine id to key on at all, so the page "View container" sends the operator to
+was still empty exactly when they went looking. The placeholder is suppressed the moment a real
+`creating` member appears, so one provision is never two rows. It is deliberately **not** an
+engine id: `isProvisioningPlaceholder` is how both sides tell them apart, so
+`DELETE /api/containers/:id` refuses it with `CONTAINER_PROVISIONING` (409) - checked on the id
+alone, ahead of the lookup, since the answer does not depend on the provision still being in
+that window - and the detail page renders neither the id nor Remove.
+
 **A dropped output stream resumes rather than killing the run.** A run's entire stdout
 arrives over one long-lived connection - a `follow=true` log stream on Daytona, a hijacked
 attach socket on Docker - held open for the whole command, so it sits idle whenever the agent
@@ -1856,7 +1868,14 @@ is replayed a **line-aligned tail** of the buffer rather than the whole thing (`
 for every live stream in the room, so a project with ten concurrent runs would otherwise push
 ten full logs into one socket on tab open); the pending batch is drained first, since the
 snapshot replaces the client's buffer and a line arriving after it would render twice. The
-full log stays available from the REST run endpoint, which is what the run view seeds from.
+full log stays available from the REST run endpoint, which is what the run view seeds from -
+and a cut snapshot is flagged `trimmed`, because "replaces the client's buffer" and "seeds
+from REST" are in direct conflict otherwise. The run view loaded the whole log, joined the
+room, and had it replaced by its own last 256 KB, rendering "earlier output trimmed - open the
+run to see the full log" on the very view that had the rest, until the next event happened to
+re-seed it and it silently came back. `useLogStream` now drops a `trimmed` replace-snapshot
+when it is already holding lines; a client with nothing buffered still applies it, since a
+trimmed log beats no log.
 Sockets carry a `backpressureLimit` with `closeOnBackpressureLimit`, so a client that falls
 irrecoverably behind is dropped and recovers through the existing reconnect-and-resubscribe
 path instead of growing an unbounded send queue.
@@ -1940,7 +1959,29 @@ server it kept alive belongs in something with its own lifecycle. "Idle" means:
 no active (queued/running) run, no run finished inside the window, no queued wakeup that could
 dispatch (capacity-skipped wakeups deliberately don't pin containers), and no chat session with
 recent `last_activity_at` or an in-flight turn; `projects.container_last_started_at` floors the
-check so a fresh start always gets one full window. Every lifecycle *decision* — ensure-running
+check so a fresh start always gets one full window.
+
+**A live chat session is measured on its own, longer window** — `CHAT_IDLE_TIMEOUT_MIN`
+(`@hezo/shared`, **15 minutes**), interpolated into that one arm of `BUSY_PROJECTS_SQL`. The
+two clocks measure different things: between runs the gap is mechanical, while between chat
+messages it is a person reading a reply, so reclaiming at the run window suspended the
+container out from under an open chatbox and made the next message pay a cold start (~30s on
+a managed backend). It applies only while a session is `starting`/`running`; once it stops,
+the project falls back to the ordinary window at once.
+
+**The idle pass parks a live assistant session before it takes the container down**, via the
+narrow `ChatSessionPark` port on `JobManagerDeps` (`ChatSessionManager.parkForContainerSuspend`,
+attached with `jobManager.setChatSessions` in `startup.ts` because the chat manager is
+constructed second). Ordering is the whole point. `checkHealth` already parks a session whose
+container it *finds* stopped, but it polls, so the idle pass won the race every time and the
+session learned about the suspension from its tunnel dying — the unrequested-death path. That
+logged "closed unexpectedly", ended the session as `crashed` rather than parking it as
+`suspended` (so the next message started a fresh conversation instead of resuming in place),
+and the provider's PTY `DELETE` arrived after the sandbox had begun stopping and 400'd,
+leaking the session on the provider. Parking first closes the tunnel deliberately — which
+`RunTunnel` does not report as a death (`fireClosed` is guarded on `closed`) — so the delete
+lands on a reachable sandbox. It is best-effort: a park that throws is logged and the pool is
+retired anyway, since one wedged session must not leave a container billing. Every lifecycle *decision* — ensure-running
 and the cron's check-then-stop (which re-verifies the predicate plus the scheduler's in-memory
 run/pending refcounts under the lock) — serializes per project through
 `withContainerLifecycleLock` (`services/containers.ts`), so a start and a stop can never

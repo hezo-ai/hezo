@@ -143,6 +143,80 @@ test('clicking a row opens that container’s own page, with its captured log', 
 	await findByText('killed: out of memory');
 });
 
+test('a container’s page links out to its project and to the task it last ran', async () => {
+	// Both used to be dead ends: the project name pointed at the per-project
+	// container page this rearchitecture reduced to settings, and the task was
+	// plain text - so the two questions the page raises ("whose is this", "what
+	// was it doing") could not be followed up from it.
+	let seeded!: Seeded;
+	let taskIdentifier!: string;
+	const { findByTestId, user } = await renderApp({
+		initialPath: '/settings/containers',
+		seed: async () => {
+			const { db } = getTestContext();
+			await clearSeededContainers();
+			seeded = await seedTwoProjects();
+			// Numbered past whatever provisioning the project already created (its
+			// planning task is #1), so this is about the link, not the sequence.
+			const task = await db.query<{ id: string; identifier: string }>(
+				`WITH n AS (SELECT COALESCE(MAX(number), 0) + 1 AS next FROM tasks WHERE project_id = $1)
+				 INSERT INTO tasks (project_id, team_id, number, title, identifier, status)
+				 SELECT $1, p.team_id, n.next, 'Ran here', p.task_prefix || '-' || n.next,
+				        'in_progress'::task_status
+				   FROM projects p, n WHERE p.id = $1
+				 RETURNING id, identifier`,
+				[seeded.alpha.id],
+			);
+			taskIdentifier = task.rows[0].identifier;
+			await addMember(seeded.alpha.id, 'alpha-linked');
+			await db.query(
+				'UPDATE container_pool_members SET last_task_id = $1 WHERE container_id = $2',
+				[task.rows[0].id, 'alpha-linked'],
+			);
+		},
+	});
+
+	const list = within(await findByTestId('containers-list', undefined, { timeout: 20_000 }));
+	await user.click(await list.findByText('Alpha', undefined, { timeout: 20_000 }));
+
+	const detail = await findByTestId('container-detail', undefined, { timeout: 20_000 });
+	const projectLink = within(detail).getByRole('link', { name: 'Alpha' });
+	expect(projectLink.getAttribute('href')).toBe(`/projects/${seeded.alpha.slug}`);
+
+	const taskLink = await findByTestId('container-detail-task');
+	expect(taskLink.getAttribute('href')).toBe(
+		`/projects/${seeded.alpha.slug}/tasks/${taskIdentifier.toLowerCase()}`,
+	);
+});
+
+test('a provision with no engine id yet is listed, and offers no Remove', async () => {
+	// The window an operator is sent into by "View container" on the HQ notice:
+	// the container has no id until the engine returns one, so the page it links
+	// to had nothing at all to show.
+	let seeded!: Seeded;
+	const { findByTestId, queryByTestId, user } = await renderApp({
+		initialPath: '/settings/containers',
+		seed: async () => {
+			const { db } = getTestContext();
+			await clearSeededContainers();
+			seeded = await seedTwoProjects();
+			await db.query(
+				`UPDATE projects SET container_id = NULL,
+				        container_status = 'creating'::container_status WHERE id = $1`,
+				[seeded.alpha.id],
+			);
+		},
+	});
+
+	const list = within(await findByTestId('containers-list', undefined, { timeout: 20_000 }));
+	await user.click(await list.findByText('Alpha', undefined, { timeout: 20_000 }));
+
+	const detail = await findByTestId('container-detail', undefined, { timeout: 20_000 });
+	expect(within(detail).getByTestId('container-detail-state').textContent).toBe('Starting');
+	// Nothing exists on the engine to remove, so the affordance is not offered.
+	expect(queryByTestId('container-remove')).toBeNull();
+});
+
 test('Remove confirms, deletes the container, and drops it from the list', async () => {
 	let seeded!: Seeded;
 	const { findByText, findByTestId, user, router } = await renderApp({

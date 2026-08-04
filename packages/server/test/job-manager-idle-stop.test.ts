@@ -1,4 +1,4 @@
-import { CONTAINER_IDLE_TIMEOUT_MIN } from '@hezo/shared';
+import { CHAT_IDLE_TIMEOUT_MIN, CONTAINER_IDLE_TIMEOUT_MIN } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
@@ -243,6 +243,76 @@ describe('container-idle-stop', () => {
 			[conversation.rows[0].id, session.rows[0].id],
 		);
 		expect((await runIdlePass()).stops).toEqual([]);
+	});
+
+	it('a chat pause holds the container well past the run window', async () => {
+		// The two windows measure different things. Between runs the gap is
+		// mechanical and two minutes covers it; between chat messages it is a person
+		// reading a reply, and reclaiming there suspended the container out from
+		// under an open chatbox so the next message paid a cold start.
+		await db.query(
+			`INSERT INTO chat_sessions (member_id, team_id, project_id, runtime_type, status, last_activity_at)
+			 VALUES ($1, $2, $3, 'claude_code', 'running', now() - interval '5 minutes')`,
+			[agentId, teamId, projectId],
+		);
+		// Comfortably past CONTAINER_IDLE_TIMEOUT_MIN, comfortably inside
+		// CHAT_IDLE_TIMEOUT_MIN.
+		expect(CONTAINER_IDLE_TIMEOUT_MIN).toBeLessThan(5);
+		expect(CHAT_IDLE_TIMEOUT_MIN).toBeGreaterThan(5);
+		expect((await runIdlePass()).stops).toEqual([]);
+	});
+
+	it('parks a live assistant session before taking its container down', async () => {
+		// Ordering, and it is the whole point: suspending first meant the session
+		// found out by its tunnel dying - the unrequested-death path - so it ended
+		// as `crashed` rather than parking as `suspended`, and the provider's PTY
+		// delete raced the sandbox already stopping and 400'd.
+		const parked: string[] = [];
+		const order: string[] = [];
+		const stops: string[] = [];
+		const manager = new JobManager({
+			db,
+			docker: createStubDocker({
+				ping: async () => true,
+				stopContainer: async (id: string) => {
+					order.push(`stop:${id}`);
+					stops.push(id);
+				},
+			}),
+			masterKeyManager,
+			serverPort: 3100,
+			dataDir,
+			wsManager: { broadcast: () => {} } as unknown as JobManagerDeps['wsManager'],
+			logs: new LogStreamBroker(),
+			containerLogStreamer: new ContainerLogStreamer(),
+		});
+		manager.setChatSessions({
+			parkForContainerSuspend: async (id: string) => {
+				order.push(`park:${id}`);
+				parked.push(id);
+			},
+		});
+
+		await (manager as unknown as { stopIdleContainers(): Promise<void> }).stopIdleContainers();
+		manager.shutdown();
+
+		expect(parked).toEqual([CONTAINER_ID]);
+		expect(order).toEqual([`park:${CONTAINER_ID}`, `stop:${CONTAINER_ID}`]);
+	});
+
+	it('retires the pool even when parking the assistant session fails', async () => {
+		// Best-effort: a park that throws must not strand a container that is
+		// otherwise idle, or one failure bills forever on a managed backend.
+		const stops: string[] = [];
+		const manager = createManager(stops);
+		manager.setChatSessions({
+			parkForContainerSuspend: async () => {
+				throw new Error('chat manager is wedged');
+			},
+		});
+		await (manager as unknown as { stopIdleContainers(): Promise<void> }).stopIdleContainers();
+		manager.shutdown();
+		expect(stops).toContain(CONTAINER_ID);
 	});
 
 	it('the in-memory dispatch recheck blocks a stop even before any run row exists', async () => {

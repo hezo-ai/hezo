@@ -396,6 +396,21 @@ const CONTAINER_LISTING_SQL = `
 	         SELECT container_id, id AS project_id FROM projects WHERE container_id IS NOT NULL
 	         UNION
 	         SELECT container_id, project_id FROM container_pool_members
+	         UNION
+	         -- A provision that has not been given an engine id yet. Both arms above
+	         -- are keyed on one, and there is a real window before it exists - on a
+	         -- managed backend the sandbox build is the longest part of a cold start.
+	         -- Without this the page an operator is sent to during provisioning is
+	         -- empty. Suppressed the moment a real member row appears, so the
+	         -- placeholder is never listed beside the container it stood in for.
+	         SELECT 'provisioning:' || p.id, p.id
+	           FROM projects p
+	          WHERE p.container_status = 'creating'::container_status
+	            AND p.container_id IS NULL
+	            AND NOT EXISTS (
+	                  SELECT 1 FROM container_pool_members m
+	                   WHERE m.project_id = p.id AND m.state = 'creating'
+	                )
 	       ) AS c
 	  JOIN projects p ON p.id = c.project_id
 	  LEFT JOIN container_pool_members m ON m.container_id = c.container_id

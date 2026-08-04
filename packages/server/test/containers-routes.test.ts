@@ -134,6 +134,37 @@ describe('GET /api/containers', () => {
 		expect(((await res.json()).data as ContainerRow).state).toBe('creating');
 	});
 
+	it('lists a provision that has not been given an engine id yet', async () => {
+		// The window before `createContainer` returns - workspace prep, image
+		// resolution, and on a managed backend the sandbox build, which is the
+		// longest part of a cold start. Neither keyed representation exists yet, so
+		// the page an operator reaches from "View container" was simply empty.
+		await db.query(
+			`UPDATE projects SET container_id = NULL,
+			        container_status = 'creating'::container_status WHERE id = $1`,
+			[projectB.id],
+		);
+
+		const { rows } = await list();
+		const placeholder = rows.find((r) => r.container_id === `provisioning:${projectB.id}`);
+		expect(placeholder?.state).toBe('creating');
+		expect(placeholder?.project_slug).toBe(projectB.slug);
+	});
+
+	it('drops the placeholder as soon as the real container exists', async () => {
+		// Otherwise the operator watches one provision as two rows.
+		await db.query(
+			`UPDATE projects SET container_id = NULL,
+			        container_status = 'creating'::container_status WHERE id = $1`,
+			[projectB.id],
+		);
+		await addMember(projectB.id, 'b-just-created', 'creating');
+
+		const { rows } = await list();
+		expect(rows.some((r) => r.container_id === `provisioning:${projectB.id}`)).toBe(false);
+		expect(rows.some((r) => r.container_id === 'b-just-created')).toBe(true);
+	});
+
 	it('counts a container recorded in both representations once', async () => {
 		await addMember(projectB.id, 'both-ways');
 		await db.query(
@@ -283,5 +314,21 @@ describe('DELETE /api/containers/:containerId', () => {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(404);
+	});
+
+	it('refuses a provisioning placeholder, which names nothing on any engine', async () => {
+		// It resolves through the listing exactly like a real row, so without this
+		// the teardown would ask the backend to delete an id it never issued.
+		await db.query(
+			`UPDATE projects SET container_id = NULL,
+			        container_status = 'creating'::container_status WHERE id = $1`,
+			[projectB.id],
+		);
+		const res = await app.request(`/api/containers/provisioning:${projectB.id}`, {
+			method: 'DELETE',
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(409);
+		expect((await res.json()).error.code).toBe('CONTAINER_PROVISIONING');
 	});
 });

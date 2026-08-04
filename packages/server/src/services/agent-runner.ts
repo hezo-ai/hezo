@@ -1085,7 +1085,7 @@ export async function runAgent(
 			stream: line.stream,
 			text: line.text,
 		}),
-		buildSnapshot: (text) => ({
+		buildSnapshot: (text, trimmed) => ({
 			type: WsMessageType.RunLog,
 			projectId: project.id,
 			runId: heartbeatRunId,
@@ -1093,6 +1093,7 @@ export async function runAgent(
 			stream: 'stdout',
 			text,
 			replace: true,
+			trimmed,
 		}),
 		onFlush: async (delta) => {
 			// Append only the new log text as chunk rows (never rewrite the whole

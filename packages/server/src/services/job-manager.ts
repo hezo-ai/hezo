@@ -203,6 +203,21 @@ export type ProgressUpdateDispatchResult =
 	| TryProgressUpdateResult
 	| { queued: true; wakeupId: string };
 
+/**
+ * The one thing the idle pass needs from the assistant: park a session whose
+ * container is about to go down, while that container is still up.
+ *
+ * Without it the container is suspended first and the session finds out by its
+ * tunnel dying - the *failure* path. That reported "closed unexpectedly", tore
+ * the session down as `crashed` instead of parking it as `suspended` (losing the
+ * resume-in-place path entirely), and left the provider's PTY session undeleted
+ * because the DELETE raced the sandbox already stopping.
+ */
+export interface ChatSessionPark {
+	/** No-op unless a live session is pinned to exactly this container. */
+	parkForContainerSuspend(containerId: string): Promise<void>;
+}
+
 export interface JobManagerDeps {
 	db: Db;
 	docker: ContainerEngine;
@@ -224,6 +239,14 @@ export interface JobManagerDeps {
 	storageBackend?: StorageBackend;
 	/** Anonymous daily usage telemetry. Omitted/disabled → the cron is not registered. */
 	telemetry?: { enabled: boolean; endpoint: string };
+	/**
+	 * Park a live assistant session before its container is taken down.
+	 *
+	 * A narrow port rather than the `ChatSessionManager` itself: the idle pass
+	 * needs one verb from it, and the manager is constructed after this one, so
+	 * it is attached with {@link JobManager.setChatSessions} once both exist.
+	 */
+	chatSessions?: ChatSessionPark;
 	/**
 	 * Install staged updates automatically (`--auto-install-updates` /
 	 * `HEZO_AUTO_INSTALL_UPDATES`): restart onto a staged newer binary without
@@ -517,6 +540,17 @@ export class JobManager {
 		}
 
 		return { dispatched: true };
+	}
+
+	/**
+	 * Attach the assistant park hook after construction.
+	 *
+	 * The chat manager is built after this one (it takes no job manager, this
+	 * takes one verb from it), so the edge is closed here rather than by
+	 * reordering two constructors around a dependency neither really has.
+	 */
+	setChatSessions(chatSessions: ChatSessionPark): void {
+		this.deps.chatSessions = chatSessions;
 	}
 
 	private buildContainerDeps(): ContainerDeps {
@@ -3112,6 +3146,19 @@ export class JobManager {
 						},
 						destroy: [],
 					};
+
+		// Park any live assistant session on these containers *first*, while they
+		// are still up: closing the tunnel deliberately deletes the provider's PTY
+		// session on a reachable sandbox and skips the tunnel's unrequested-death
+		// path, so the session ends up `suspended` (resumable in place) instead of
+		// `crashed`. Best-effort - a park that fails must not strand the pool.
+		for (const member of [...plan.destroy, ...(plan.suspend ? [plan.suspend] : [])]) {
+			await this.deps.chatSessions?.parkForContainerSuspend(member.id).catch((e) => {
+				log.warn(
+					`could not park the assistant session on ${ref(candidate.slug, member.id.slice(0, 12))} before retiring it: ${(e as Error).message}`,
+				);
+			});
+		}
 
 		let retired = 0;
 		for (const member of plan.destroy) {

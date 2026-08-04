@@ -1,3 +1,4 @@
+import { isProvisioningPlaceholder } from '@hezo/shared';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { Box, Loader2 } from 'lucide-react';
 import { Badge } from '../../../components/ui/badge';
@@ -103,8 +104,12 @@ function ContainersList() {
 			header: t('containers.column.container'),
 			width: '140px',
 			hideOnMobile: true,
+			// A provisioning placeholder is not an engine id, so it is shown as
+			// nothing rather than as a fake one.
 			render: (row) => (
-				<span className="font-mono text-[11px] text-text-2">{row.container_id.slice(0, 12)}</span>
+				<span className="font-mono text-[11px] text-text-2">
+					{isProvisioningPlaceholder(row.container_id) ? '-' : row.container_id.slice(0, 12)}
+				</span>
 			),
 		},
 		{

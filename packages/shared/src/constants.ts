@@ -279,6 +279,23 @@ export function poolDiskCeilingBytes(diskGb: number): number {
 export const CONTAINER_IDLE_TIMEOUT_MIN = 2;
 
 /**
+ * The same window, for a project whose **assistant chat session is live**.
+ *
+ * Longer because the two are measuring different things. Between agent runs the
+ * gap is mechanical - a wakeup fires, the dispatch cron ticks, a container is
+ * acquired - and two minutes covers it. Between chat messages the gap is a
+ * person reading a reply and deciding what to say next, and two minutes of that
+ * is an ordinary pause, not an idle instance. Reclaiming there suspended the
+ * container out from under an open chatbox, so the next message paid a cold
+ * start (~30s on a managed backend) for a conversation the operator never left.
+ *
+ * Fifteen minutes is "you have gone away" rather than "you are thinking". It
+ * applies only while a session is `starting`/`running` - once it stops, the
+ * project falls back to the ordinary window immediately.
+ */
+export const CHAT_IDLE_TIMEOUT_MIN = 15;
+
+/**
  * The "latest few" messages kept in the active window after a compaction flush.
  * Internal constant (not an operator setting): everything older than this tail
  * is summarized into long-term memory and dropped from the chatbox.

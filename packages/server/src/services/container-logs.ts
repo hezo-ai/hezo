@@ -78,13 +78,14 @@ export class ContainerLogStreamer {
 					stream: line.stream,
 					text: line.text,
 				}),
-				buildSnapshot: (text) => ({
+				buildSnapshot: (text, trimmed) => ({
 					type: WsMessageType.ContainerLog,
 					containerId,
 					projectId,
 					stream: 'stdout',
 					text,
 					replace: true,
+					trimmed,
 				}),
 				capBytes: CONTAINER_LOG_CAP_BYTES,
 			});

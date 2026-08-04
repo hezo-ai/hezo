@@ -48,6 +48,12 @@ containers. That window is fixed rather than configurable: its only job is to ke
 container warm between one run and the next in the same project. Because containers do not
 stay up between bursts, they are not a place to run a long-lived dev or preview server.
 
+**An open assistant chat gets a longer window.** A pause between chat messages is you
+reading a reply, not an idle project, so a container serving a live chat session is kept
+up for about fifteen minutes after the last message rather than a couple of minutes. That
+way a reply you take a few minutes to answer does not cost a container start. Once the
+session ends, the ordinary window applies again.
+
 Each container serves one run at a time, which is why a problem in one run stays in one
 run. A project therefore has as many containers as it has runs going at once - two agents
 working in the same project get a container each - and they all go away when the work does.

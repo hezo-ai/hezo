@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
+	CHAT_IDLE_TIMEOUT_MIN,
 	ContainerStatus,
 	HeartbeatRunStatus,
 	TEST_CONTAINER_LABEL_KEY,
@@ -221,13 +222,14 @@ function beginProvisionStream(
 			stream: line.stream,
 			text: line.text,
 		}),
-		buildSnapshot: (text) => ({
+		buildSnapshot: (text, trimmed) => ({
 			type: WsMessageType.ContainerLog,
 			containerId,
 			projectId,
 			stream: 'stdout',
 			text,
 			replace: true,
+			trimmed,
 		}),
 		capBytes: PROVISION_CAP_BYTES,
 	});
@@ -1386,9 +1388,12 @@ const BUSY_PROJECTS_SQL = `
 	   AND (w.last_skipped_reason IS NULL
 	     OR w.last_skipped_reason NOT IN ('instance_at_capacity', 'project_at_capacity'))
 	UNION
+	-- A live chat keeps its container on its **own**, longer window. A pause
+	-- between messages is a person thinking, not an idle project, and reclaiming
+	-- at the run window suspended the container out from under an open chatbox.
 	SELECT cs.project_id FROM chat_sessions cs
 	 WHERE cs.status IN ('starting', 'running')
-	   AND (cs.last_activity_at > now() - ($1 * interval '1 minute')
+	   AND (cs.last_activity_at > now() - (${CHAT_IDLE_TIMEOUT_MIN} * interval '1 minute')
 	     OR EXISTS (SELECT 1 FROM chat_messages cm
 	                WHERE cm.session_id = cs.id AND cm.status IN ('pending', 'streaming')))
 `;

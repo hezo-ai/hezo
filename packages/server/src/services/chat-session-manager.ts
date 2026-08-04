@@ -1695,6 +1695,32 @@ export class ChatSessionManager {
 	}
 
 	/**
+	 * Park ahead of a container the idle pass is about to take down.
+	 *
+	 * `checkHealth` already parks a session whose container it *finds* stopped,
+	 * but it polls - so the idle pass won the race every time and the session
+	 * learned about the suspension from its tunnel dying instead. That is the
+	 * unrequested-death path: it logged "closed unexpectedly", ended the session
+	 * as `crashed` rather than parking it as `suspended` (so the next message
+	 * started a fresh conversation instead of resuming), and the provider's PTY
+	 * DELETE arrived after the sandbox had begun stopping and 400'd, leaking the
+	 * session on the provider.
+	 *
+	 * Called with the container still up, this closes the tunnel deliberately -
+	 * which `RunTunnel` does not report as a death - so the teardown is orderly
+	 * and the PTY delete lands on a reachable sandbox.
+	 *
+	 * A no-op unless a live, unparked session is pinned to exactly this container:
+	 * the idle pass calls it for every container it retires, most of which the
+	 * assistant has nothing to do with.
+	 */
+	async parkForContainerSuspend(containerId: string): Promise<void> {
+		const live = this.live;
+		if (!live || this.suspended || live.containerId !== containerId) return;
+		await this.suspend();
+	}
+
+	/**
 	 * Park the session on its stopped-but-intact container: release the host-side
 	 * allocations (their ports do not survive) and record `suspended`, keeping the
 	 * row live so it still owns its container and still blocks a second session.

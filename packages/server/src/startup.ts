@@ -409,6 +409,10 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		sink: buildInboundEventSink({ db, manager: chatSessionManager }),
 	});
 	wireManagerToChannels(chatSessionManager, chatChannelRegistry);
+	// Closes the one edge that runs the other way: the idle pass parks a live
+	// assistant session before taking its container down, so the session is
+	// suspended deliberately rather than discovering it through a dead tunnel.
+	jobManager.setChatSessions(chatSessionManager);
 
 	setStartupPhase('workspace');
 	// On a genuinely fresh instance (HQ not yet seeded) install the default skills

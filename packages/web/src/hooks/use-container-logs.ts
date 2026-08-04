@@ -16,6 +16,8 @@ export function useContainerLogs(containerId: string, phase: string | null) {
 		messageType: WsMessageType.ContainerLog,
 		enabled: !!phase && !!containerId,
 		extractChunk: (m) =>
-			m.containerId === containerId ? { stream: m.stream, text: m.text, replace: m.replace } : null,
+			m.containerId === containerId
+				? { stream: m.stream, text: m.text, replace: m.replace, trimmed: m.trimmed }
+				: null,
 	});
 }

@@ -1,3 +1,4 @@
+import { isProvisioningPlaceholder } from '@hezo/shared';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { Trash2 } from 'lucide-react';
 import { useState } from 'react';
@@ -33,6 +34,10 @@ function ContainerDetail() {
 	const removeContainer = useRemoveContainer();
 	const [confirmOpen, setConfirmOpen] = useState(false);
 
+	// A provision that has no engine id yet: there is a row so the page an
+	// operator is sent to during provisioning is not empty, but nothing exists to
+	// stream from or remove.
+	const provisioning = isProvisioningPlaceholder(containerId);
 	// Live only while the container is up; a stopped one has nothing to stream and
 	// falls back to the snapshot captured when it stopped.
 	const streaming = container?.state === 'busy' || container?.state === 'idle';
@@ -70,27 +75,34 @@ function ContainerDetail() {
 					<Badge color={CONTAINER_STATE_TONE[container.state]} testId="container-detail-state">
 						{t(CONTAINER_STATE_LABEL[container.state])}
 					</Badge>
-					<span className="font-mono text-[12px] text-text-2 truncate">
-						{container.container_id}
-					</span>
+					{!provisioning && (
+						<span className="font-mono text-[12px] text-text-2 truncate">
+							{container.container_id}
+						</span>
+					)}
 				</div>
-				<Button
-					variant="destructive"
-					onClick={() => setConfirmOpen(true)}
-					disabled={removeContainer.isPending}
-					data-testid="container-remove"
-				>
-					<Trash2 className="size-3.5" />
-					{t('containers.detail.remove')}
-				</Button>
+				{!provisioning && (
+					<Button
+						variant="destructive"
+						onClick={() => setConfirmOpen(true)}
+						disabled={removeContainer.isPending}
+						data-testid="container-remove"
+					>
+						<Trash2 className="size-3.5" />
+						{t('containers.detail.remove')}
+					</Button>
+				)}
 			</div>
 
 			<dl className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4 text-[13px]">
 				<div>
 					<dt className="text-text-3">{t('containers.column.project')}</dt>
 					<dd className="mt-0.5">
+						{/* The project itself, not its container settings: from here the
+						    question is "whose container is this", and the answer is the
+						    project you want to look at. */}
 						<Link
-							to="/projects/$projectId/container"
+							to="/projects/$projectId"
 							params={{ projectId: container.project_slug }}
 							className="text-accent hover:underline"
 						>
@@ -100,7 +112,24 @@ function ContainerDetail() {
 				</div>
 				<div>
 					<dt className="text-text-3">{t('containers.column.task')}</dt>
-					<dd className="mt-0.5">{container.last_task_identifier ?? '-'}</dd>
+					<dd className="mt-0.5">
+						{container.last_task_identifier ? (
+							<Link
+								to="/projects/$projectId/tasks/$taskId"
+								params={{
+									projectId: container.project_slug,
+									// Task routes take the lowercased identifier, not the UUID.
+									taskId: container.last_task_identifier.toLowerCase(),
+								}}
+								className="text-accent hover:underline"
+								data-testid="container-detail-task"
+							>
+								{container.last_task_identifier}
+							</Link>
+						) : (
+							'-'
+						)}
+					</dd>
 				</div>
 				<div>
 					<dt className="text-text-3">{t('containers.column.disk')}</dt>

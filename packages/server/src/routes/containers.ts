@@ -1,3 +1,4 @@
+import { isProvisioningPlaceholder } from '@hezo/shared';
 import { Hono } from 'hono';
 import type { Db } from '../db/database';
 import { buildContainerDeps } from '../lib/container-deps';
@@ -56,6 +57,21 @@ export function buildContainerRoutes(): Hono<Env> {
 		if (denied) return denied;
 		const db = c.get('db');
 		const containerId = c.req.param('containerId');
+
+		// A provisioning placeholder names no container on any engine, so there is
+		// nothing to remove and `destroyContainer` would ask the backend to delete
+		// an id it never issued. Refused on the id alone, ahead of the lookup: the
+		// answer does not depend on whether the provision is still in that window
+		// by the time this resolves, and "still coming up" is a truer report than
+		// the 404 a placeholder that just became real would otherwise get.
+		if (isProvisioningPlaceholder(containerId)) {
+			return err(
+				c,
+				'CONTAINER_PROVISIONING',
+				'This container is still being created. Wait for it to come up, then remove it.',
+				409,
+			);
+		}
 
 		// Resolved through the listing rather than trusting the path param: it is
 		// what proves this instance owns the container at all, and it carries the

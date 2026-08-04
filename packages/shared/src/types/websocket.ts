@@ -58,6 +58,16 @@ export interface WsContainerLogMessage {
 	stream: 'stdout' | 'stderr';
 	text: string;
 	replace?: boolean;
+	/**
+	 * The `replace` text is only the tail of the log, not all of it.
+	 *
+	 * A subscriber that already seeded the **whole** log from REST must not apply
+	 * a trimmed snapshot: doing so replaced a complete log with its last 256 KB
+	 * and rendered "earlier output trimmed" on the very view that had the rest,
+	 * until the next event happened to re-seed it. A client holding nothing still
+	 * applies it - a trimmed log beats no log.
+	 */
+	trimmed?: boolean;
 }
 
 /**
@@ -85,6 +95,8 @@ export interface WsRunLogMessage {
 	stream: 'stdout' | 'stderr';
 	text: string;
 	replace?: boolean;
+	/** See {@link WsContainerLogMessage.trimmed}. */
+	trimmed?: boolean;
 }
 
 export interface WsErrorMessage {

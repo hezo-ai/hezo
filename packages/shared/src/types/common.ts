@@ -2360,6 +2360,30 @@ export function isSandboxBackend(value: string): value is SandboxBackend {
 }
 
 /**
+ * The stand-in id for a container that is being provisioned but has no engine id
+ * yet.
+ *
+ * Everything about a container is keyed on the id the engine returns, and there
+ * is a real window before that: workspace preparation, resolving the base image,
+ * and - on a managed backend - the sandbox build itself, which is the longest
+ * part of a cold start. The project is already `creating` and the UI already
+ * says so, but the Containers page had nothing to list, so following "View
+ * container" from that notice landed on an empty page.
+ *
+ * A placeholder row closes that. It is deliberately **not** an engine id and
+ * nothing may treat it as one - {@link isProvisioningPlaceholder} is how both
+ * sides tell them apart, so the removal route refuses it and the UI does not
+ * offer Remove for a container that does not exist yet.
+ */
+export function provisioningContainerKey(projectId: string): string {
+	return `provisioning:${projectId}`;
+}
+
+export function isProvisioningPlaceholder(containerId: string): boolean {
+	return containerId.startsWith('provisioning:');
+}
+
+/**
  * Whether a backend runs containers on this machine or on a third party's.
  *
  * This is the only thing about a backend that code outside its own adapter is
