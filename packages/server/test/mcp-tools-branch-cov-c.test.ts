@@ -440,7 +440,7 @@ describe('skills', () => {
 			items: Array<{ slug: string }>;
 		};
 		expect(byTag.items.map((s) => s.slug)).toContain('tagged-skill');
-		const noMatch = (await admin('list_skills', { tags: 'zzz' })) as { skills: unknown[] };
+		const noMatch = (await admin('list_skills', { tags: 'zzz' })) as { items: unknown[] };
 		expect(noMatch.items).toEqual([]);
 
 		const got = (await admin('get_skill', { slug: 'tagged-skill' })) as { content: string };
