@@ -186,11 +186,11 @@ describe('MCP get_team / list_team_templates', () => {
 	});
 
 	it('list_team_templates returns the built-in templates with their roles', async () => {
-		const rows = (await callTool('list_team_templates', {})) as Array<{
-			name: string;
-			is_builtin: boolean;
-			agent_types: Array<{ slug: string }>;
-		}>;
+		const rows = (
+			(await callTool('list_team_templates', {})) as {
+				items: Array<{ name: string; is_builtin: boolean; agent_types: Array<{ slug: string }> }>;
+			}
+		).items;
 		expect(Array.isArray(rows)).toBe(true);
 		// Blank is the only surviving built-in template; the App Team roster comes from
 		// the marketplace (seeded as a non-builtin fixture in tests).
@@ -227,29 +227,34 @@ describe('MCP list_tasks filters', () => {
 	it('filters by status (comma-separated list)', async () => {
 		const id = await createTask('Status filter target');
 		await db.query("UPDATE tasks SET status = 'review'::task_status WHERE id = $1", [id]);
-		const rows = (await callTool('list_tasks', {
-			project: projectId,
-			status: 'review,blocked',
-		})) as Array<{ id: string; status: string }>;
+		const rows = (
+			(await callTool('list_tasks', {
+				project: projectId,
+				status: 'review,blocked',
+			})) as { items: Array<{ id: string; status: string }> }
+		).items;
 		expect(rows.some((r) => r.id === id)).toBe(true);
 		for (const row of rows) expect(['review', 'blocked']).toContain(row.status);
 	});
 
 	it('filters by assignee_slug', async () => {
-		const rows = (await callTool('list_tasks', {
-			project: projectId,
-			assignee_slug: 'engineer',
-		})) as Array<{ assignee_id: string }>;
+		const rows = (
+			(await callTool('list_tasks', {
+				project: projectId,
+				assignee_slug: 'engineer',
+			})) as { items: Array<{ assignee_id: string }> }
+		).items;
 		expect(rows.length).toBeGreaterThan(0);
 		for (const row of rows) expect(row.assignee_id).toBe(agentId);
 	});
 
-	it('returns an empty list for an unknown assignee_slug', async () => {
+	it('returns an empty page for an unknown assignee_slug', async () => {
 		const rows = (await callTool('list_tasks', {
 			project: projectId,
 			assignee_slug: 'no-such-role',
-		})) as unknown[];
-		expect(rows).toEqual([]);
+		})) as { items: unknown[]; has_more: boolean };
+		expect(rows.items).toEqual([]);
+		expect(rows.has_more).toBe(false);
 	});
 });
 
@@ -676,10 +681,12 @@ describe('MCP list_approvals / resolve_approval', () => {
 			 VALUES ($1, 'skill_proposal'::approval_type, $2::jsonb)`,
 			[teamId, JSON.stringify({ skill_name: 'X', content: 'y'.repeat(2000) })],
 		);
-		const rows = (await callTool('list_approvals', {
-			project: projectId,
-			excerpt_chars: 100,
-		})) as Array<{ payload: Record<string, unknown> }>;
+		const rows = (
+			(await callTool('list_approvals', {
+				project: projectId,
+				excerpt_chars: 100,
+			})) as { items: Array<{ payload: Record<string, unknown> }> }
+		).items;
 		expect(rows.length).toBeGreaterThanOrEqual(1);
 	});
 
@@ -791,10 +798,12 @@ describe('MCP get_costs grouping', () => {
 	});
 
 	it('group_by=day returns per-day totals', async () => {
-		const rows = (await callTool('get_costs', {
-			project: projectId,
-			group_by: 'day',
-		})) as Array<{ day: string; total_cents: number }>;
+		const rows = (
+			(await callTool('get_costs', {
+				project: projectId,
+				group_by: 'day',
+			})) as { items: Array<{ day: string; total_cents: number }> }
+		).items;
 		expect(rows.length).toBeGreaterThanOrEqual(1);
 	});
 
@@ -818,10 +827,14 @@ describe('MCP agent system prompt tools', () => {
 	});
 
 	it('get_agent_system_prompts batches results and reports per-item errors', async () => {
-		const results = (await callTool('get_agent_system_prompts', {
-			project: projectId,
-			items: [{ agent_id: 'engineer' }, { agent_id: 'no-such-agent', mode: 'raw' }],
-		})) as Array<{ index: number; ok: boolean; system_prompt?: string; error?: string }>;
+		const results = (
+			(await callTool('get_agent_system_prompts', {
+				project: projectId,
+				items: [{ agent_id: 'engineer' }, { agent_id: 'no-such-agent', mode: 'raw' }],
+			})) as {
+				items: Array<{ index: number; ok: boolean; system_prompt?: string; error?: string }>;
+			}
+		).items;
 		expect(results.length).toBe(2);
 		const ok = results.find((r) => r.ok);
 		const bad = results.find((r) => !r.ok);
@@ -1164,9 +1177,9 @@ describe('MCP project docs & assets', () => {
 		expect(read.content).toBe('# Design\nbody');
 
 		const listed = (await callTool('list_project_docs', { project: projectId })) as {
-			files: Array<{ filename: string }>;
+			items: Array<{ filename: string }>;
 		};
-		expect(listed.files.some((f) => f.filename === 'design.md')).toBe(true);
+		expect(listed.items.some((f) => f.filename === 'design.md')).toBe(true);
 	});
 
 	it('read_project_doc errors for an unknown file', async () => {
@@ -1184,9 +1197,9 @@ describe('MCP project docs & assets', () => {
 			content: '<svg></svg>',
 		});
 		const listed = (await callTool('list_project_assets', { project: projectId })) as {
-			files: Array<{ filename: string; content_type: string }>;
+			items: Array<{ filename: string; content_type: string }>;
 		};
-		expect(listed.files.some((f) => f.filename === 'diagram.svg')).toBe(true);
+		expect(listed.items.some((f) => f.filename === 'diagram.svg')).toBe(true);
 	});
 
 	it('write_project_asset rejects a disallowed extension', async () => {
@@ -1253,8 +1266,8 @@ describe('MCP skills (propose / list / get / create / full_text_search)', () => 
 		const listed = (await callTool('list_skills', {
 			project: projectId,
 			tags: 'ci',
-		})) as { skills: Array<{ slug: string }> };
-		expect(listed.skills.some((s) => s.slug === 'lint-setup')).toBe(true);
+		})) as { items: Array<{ slug: string }> };
+		expect(listed.items.some((s) => s.slug === 'lint-setup')).toBe(true);
 	});
 
 	it('get_skill errors for an unknown slug', async () => {
@@ -1293,11 +1306,11 @@ describe('MCP MCP-connection tools', () => {
 		expect(added.id).toBeTruthy();
 		expect(added.install_status).toBe('installed');
 
-		const listed = (await callTool('list_connectors', { project: projectId })) as Array<{
-			id: string;
-			name: string;
-			oauth_status: string;
-		}>;
+		const listed = (
+			(await callTool('list_connectors', { project: projectId })) as {
+				items: Array<{ id: string; name: string; oauth_status: string }>;
+			}
+		).items;
 		const row = listed.find((r) => r.name === 'extra-saas');
 		expect(row).toBeDefined();
 		expect(row?.oauth_status).toBe('none');
@@ -1472,11 +1485,15 @@ describe('MCP MCP-connection tools', () => {
 			hosts: ['api.example.com'],
 			activated: true,
 		});
-		const rows = (await callTool('list_connectors', { project: projectId })) as Array<{
-			name: string;
-			oauth_status: string;
-			rest_auth: { placeholder: string; allowed_hosts: string[] } | null;
-		}>;
+		const rows = (
+			(await callTool('list_connectors', { project: projectId })) as {
+				items: Array<{
+					name: string;
+					oauth_status: string;
+					rest_auth: { placeholder: string; allowed_hosts: string[] } | null;
+				}>;
+			}
+		).items;
 		const active = rows.find((r) => r.name === 'active-conn');
 		expect(active?.oauth_status).toBe('active');
 		expect(active?.rest_auth).not.toBeNull();
@@ -1657,13 +1674,13 @@ describe('MCP marketplace tools', () => {
 
 	it('list_marketplace_teams returns the shipped catalog without search keywords', async () => {
 		const result = (await callTool('list_marketplace_teams', {})) as {
-			teams?: Array<Record<string, unknown>>;
+			items?: Array<Record<string, unknown>>;
 			error?: string;
 		};
 		expect(result.error).toBeUndefined();
-		const slugs = (result.teams ?? []).map((t) => t.slug);
+		const slugs = (result.items ?? []).map((t) => t.slug);
 		expect(slugs).toContain('software-development');
-		const appTeam = (result.teams ?? []).find((t) => t.slug === 'software-development');
+		const appTeam = (result.items ?? []).find((t) => t.slug === 'software-development');
 		expect(appTeam?.name).toBe('App Team');
 		expect(appTeam?.roster_count).toBe(10);
 		// Keywords are picker vocabulary, deliberately kept out of an agent's context.

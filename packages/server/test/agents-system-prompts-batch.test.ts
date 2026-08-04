@@ -218,49 +218,73 @@ describe('POST /teams/:teamId/agents/system-prompts/batch', () => {
 });
 
 describe('MCP tool: get_agent_system_prompts', () => {
-	// The MCP transport caps one tool result at 64KB (`result_too_large`). A
+	// The MCP transport caps one tool result (`result_too_large`), and a
 	// `preview`-mode prompt carries the full resolver output (role doc +
-	// Working Guidelines + runtime blocks), so a single preview already fills
-	// most of that budget and two in one batch exceed it. Over MCP, batch
-	// multiple items only in the cheap modes and fetch previews one at a time;
-	// the REST batch route (tested above) has no transport cap.
-	it('returns per-item resolved prompts via MCP transport', async () => {
-		const result = (await callMcpTool('get_agent_system_prompts', {
-			project: projectSlug,
-			items: [{ agent_id: agentAId }, { agent_id: agentBId }],
-		})) as Array<{
+	// Working Guidelines + runtime blocks), so a batch of them can exceed it.
+	// The tool therefore pages: it returns the prompts that fit plus a
+	// `next_index` to resume from, rather than rejecting the call and pushing
+	// the caller into one request per agent.
+	type PromptPage = {
+		items: Array<{
 			ok: boolean;
 			agent_id: string;
 			mode?: string;
 			system_prompt?: string;
 			error?: string;
 		}>;
-		expect(Array.isArray(result)).toBe(true);
-		expect(result).toHaveLength(2);
-		expect(result[0].ok).toBe(true);
-		expect(result[0].mode).toBe('placeholders');
-		expect(result[1].ok).toBe(true);
-		expect(result[1].mode).toBe('placeholders');
+		start_index: number;
+		returned: number;
+		total: number;
+		next_index: number | null;
+	};
+
+	it('returns per-item resolved prompts via MCP transport', async () => {
+		const page = (await callMcpTool('get_agent_system_prompts', {
+			project: projectSlug,
+			items: [{ agent_id: agentAId }, { agent_id: agentBId }],
+		})) as PromptPage;
+		expect(page.items).toHaveLength(2);
+		expect(page.total).toBe(2);
+		expect(page.next_index).toBeNull();
+		expect(page.items[0].ok).toBe(true);
+		expect(page.items[0].mode).toBe('placeholders');
+		expect(page.items[1].ok).toBe(true);
+		expect(page.items[1].mode).toBe('placeholders');
 	});
 
 	it('resolves a preview prompt via MCP transport (single item)', async () => {
-		const result = (await callMcpTool('get_agent_system_prompts', {
+		const page = (await callMcpTool('get_agent_system_prompts', {
 			project: projectSlug,
 			items: [{ agent_id: agentAId, mode: 'preview' }],
-		})) as Array<{ ok: boolean; mode?: string; system_prompt?: string }>;
-		expect(result).toHaveLength(1);
-		expect(result[0].ok).toBe(true);
-		expect(result[0].mode).toBe('preview');
-		expect(result[0].system_prompt).toContain('## Teammates');
+		})) as PromptPage;
+		expect(page.items).toHaveLength(1);
+		expect(page.items[0].ok).toBe(true);
+		expect(page.items[0].mode).toBe('preview');
+		expect(page.items[0].system_prompt).toContain('## Teammates');
+	});
+
+	it('batches previews in one call instead of forcing one request per agent', async () => {
+		const page = (await callMcpTool('get_agent_system_prompts', {
+			project: projectSlug,
+			items: [
+				{ agent_id: agentAId, mode: 'preview' },
+				{ agent_id: agentBId, mode: 'preview' },
+			],
+		})) as PromptPage & { error?: string };
+		// The regression guard: this call used to come back result_too_large.
+		expect(page.error).toBeUndefined();
+		expect(page.total).toBe(2);
+		expect(page.items.length).toBeGreaterThan(0);
+		expect(page.items[0].ok).toBe(true);
 	});
 
 	it("returns per-item NOT_FOUND when an agent doesn't belong to the queried team", async () => {
-		const result = (await callMcpTool('get_agent_system_prompts', {
+		const page = (await callMcpTool('get_agent_system_prompts', {
 			project: projectSlug,
 			items: [{ agent_id: foreignAgentId }],
-		})) as Array<{ ok: boolean; error?: string }>;
-		expect(result).toHaveLength(1);
-		expect(result[0].ok).toBe(false);
-		expect(result[0].error).toMatch(/not found/i);
+		})) as PromptPage;
+		expect(page.items).toHaveLength(1);
+		expect(page.items[0].ok).toBe(false);
+		expect(page.items[0].error).toMatch(/not found/i);
 	});
 });

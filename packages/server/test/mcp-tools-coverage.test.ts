@@ -181,7 +181,7 @@ describe('resolveScope branches', () => {
 	it('an agent run scoped to its own project resolves with no project arg', async () => {
 		const t = await agentToken(engineerId, teamId, taskId);
 		const r = await call(t, 'list_tasks', {});
-		expect(Array.isArray(r)).toBe(true);
+		expect(Array.isArray(r.items)).toBe(true);
 	});
 
 	it('an agent run is denied a different project it is not cross-project for', async () => {
@@ -220,7 +220,7 @@ describe('non-superuser board user authorization', () => {
 
 	it('allows a member to act in their team', async () => {
 		const r = await call(memberUserToken, 'list_tasks', { project: projectSlug });
-		expect(Array.isArray(r)).toBe(true);
+		expect(Array.isArray(r.items)).toBe(true);
 	});
 
 	it('denies a non-member from acting in a team they are not in', async () => {
@@ -229,15 +229,19 @@ describe('non-superuser board user authorization', () => {
 	});
 
 	it('list_teams returns only the board user’s teams', async () => {
-		const r = (await call(memberUserToken, 'list_teams', {})) as unknown as Array<{ id: string }>;
+		const r = (
+			(await call(memberUserToken, 'list_teams', {})) as unknown as { items: Array<{ id: string }> }
+		).items;
 		expect(r.map((t) => t.id)).toContain(teamId);
 		expect(r.map((t) => t.id)).not.toContain(teamBId);
 	});
 
 	it('list_projects returns only the board user’s projects', async () => {
-		const r = (await call(memberUserToken, 'list_projects', {})) as unknown as Array<{
-			id: string;
-		}>;
+		const r = (
+			(await call(memberUserToken, 'list_projects', {})) as unknown as {
+				items: Array<{ id: string }>;
+			}
+		).items;
 		expect(r.map((p) => p.id)).toContain(projectId);
 		expect(r.map((p) => p.id)).not.toContain(projectBId);
 	});
@@ -288,23 +292,26 @@ describe('list_tasks filter branches', () => {
 		const r = (await admin('list_tasks', {
 			project: projectSlug,
 			status: 'backlog,in_progress',
-		})) as unknown as Array<Record<string, unknown>>;
-		expect(Array.isArray(r)).toBe(true);
+		})) as unknown as { items: Array<Record<string, unknown>> };
+		expect(Array.isArray(r.items)).toBe(true);
 	});
 
-	it('assignee_slug that does not resolve returns empty array', async () => {
+	it('assignee_slug that does not resolve returns an empty page', async () => {
 		const r = (await admin('list_tasks', {
 			project: projectSlug,
 			assignee_slug: 'no-such-agent',
-		})) as unknown as unknown[];
-		expect(r).toEqual([]);
+		})) as unknown as { items: unknown[]; has_more: boolean };
+		expect(r.items).toEqual([]);
+		expect(r.has_more).toBe(false);
 	});
 
 	it('assignee_slug resolves to a real agent', async () => {
-		const r = (await admin('list_tasks', {
-			project: projectSlug,
-			assignee_slug: 'engineer',
-		})) as unknown as Array<{ title: string }>;
+		const r = (
+			(await admin('list_tasks', {
+				project: projectSlug,
+				assignee_slug: 'engineer',
+			})) as unknown as { items: Array<{ title: string }> }
+		).items;
 		expect(r.map((t) => t.title)).toContain('Seed Task');
 	});
 
@@ -312,10 +319,12 @@ describe('list_tasks filter branches', () => {
 		await makeTask(projectSlug, 'Long desc task', engineerId, {
 			description: 'A'.repeat(500),
 		});
-		const r = (await admin('list_tasks', {
-			project: projectSlug,
-			excerpt_chars: 50,
-		})) as unknown as Array<Record<string, unknown>>;
+		const r = (
+			(await admin('list_tasks', {
+				project: projectSlug,
+				excerpt_chars: 50,
+			})) as unknown as { items: Array<Record<string, unknown>> }
+		).items;
 		const row = r.find((t) => t.title === 'Long desc task');
 		expect(row).toBeDefined();
 		expect(row).toHaveProperty('description_excerpt');

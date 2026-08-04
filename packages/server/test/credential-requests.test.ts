@@ -556,11 +556,15 @@ describe('list_connectors rest_auth', () => {
 			[conn.id],
 		);
 
-		const rows = (await callTool('list_connectors', { project: projectId })) as Array<{
-			name: string;
-			oauth_status: string;
-			rest_auth: { placeholder: string; allowed_hosts: string[]; scopes: string[] } | null;
-		}>;
+		const rows = (
+			(await callTool('list_connectors', { project: projectId })) as {
+				items: Array<{
+					name: string;
+					oauth_status: string;
+					rest_auth: { placeholder: string; allowed_hosts: string[]; scopes: string[] } | null;
+				}>;
+			}
+		).items;
 		const gh = rows.find((row) => row.name === 'github');
 		expect(gh?.oauth_status).toBe('active');
 		expect(gh?.rest_auth?.placeholder).toBe(`__HEZO_SECRET_${conn.accessTokenSecretName}__`);
@@ -603,17 +607,21 @@ describe('list_connectors rest_auth', () => {
 			],
 		);
 
-		const rows = (await callTool('list_connectors', { project: projectId })) as Array<{
-			name: string;
-			oauth_status: string;
-			api_auth: {
-				base_url: string | null;
-				placeholder: string | null;
-				allowed_hosts: string[];
-				placement: string | null;
-				name: string | null;
-			} | null;
-		}>;
+		const rows = (
+			(await callTool('list_connectors', { project: projectId })) as {
+				items: Array<{
+					name: string;
+					oauth_status: string;
+					api_auth: {
+						base_url: string | null;
+						placeholder: string | null;
+						allowed_hosts: string[];
+						placement: string | null;
+						name: string | null;
+					} | null;
+				}>;
+			}
+		).items;
 		const yt = rows.find((row) => row.name === 'youtube');
 		// api rows report oauth_status="none" (that field is saas-only) …
 		expect(yt?.oauth_status).toBe('none');

@@ -295,12 +295,51 @@ describe('buildProgressActivitySnapshot', () => {
 		expect(activity.actioned[0].identifier).toBe(t.identifier);
 	});
 
-	it('truncates an over-long Captain line', async () => {
+	// The page renders the stored line in full, so an over-long line has to be cut back to a
+	// finished thought here rather than clipped behind an ellipsis there.
+	it('trims an over-long Captain line back to its last complete sentence', async () => {
 		const t = await seedTask('Long line');
+		const first = 'Live cards work end to end.';
+		const { activity } = await buildProgressActivitySnapshot(db, projectId, {
+			actioned: [
+				{
+					task: t.identifier,
+					summary: `${first} ${'Refunds are the last remaining gap. '.repeat(10)}`,
+				},
+			],
+		});
+		const stored = activity.actioned[0].summary;
+		expect(stored.length).toBeLessThanOrEqual(200);
+		expect(stored.startsWith(first)).toBe(true);
+		expect(stored.endsWith('.')).toBe(true);
+		// Whole sentences only: never a dangling fragment of the one that did not fit.
+		expect(stored.split('. ').at(-1)).toBe('Refunds are the last remaining gap.');
+	});
+
+	it('falls back to a whole word when nothing finishes inside the budget', async () => {
+		const t = await seedTask('Run on');
+		const { activity } = await buildProgressActivitySnapshot(db, projectId, {
+			actioned: [{ task: t.identifier, summary: `${'refactoring '.repeat(40)}done` }],
+		});
+		const stored = activity.actioned[0].summary;
+		expect(stored.length).toBeLessThanOrEqual(200);
+		expect(stored.endsWith('refactoring')).toBe(true);
+	});
+
+	it('hard-slices a line carrying no boundary of any kind', async () => {
+		const t = await seedTask('No spaces');
 		const { activity } = await buildProgressActivitySnapshot(db, projectId, {
 			actioned: [{ task: t.identifier, summary: 'y'.repeat(1000) }],
 		});
 		expect(activity.actioned[0].summary.length).toBe(200);
+	});
+
+	it('leaves a line that already fits exactly as written', async () => {
+		const t = await seedTask('Short line');
+		const { activity } = await buildProgressActivitySnapshot(db, projectId, {
+			actioned: [{ task: t.identifier, summary: 'Payments can now take live cards end to end.' }],
+		});
+		expect(activity.actioned[0].summary).toBe('Payments can now take live cards end to end.');
 	});
 
 	it('skips an entry with no summary rather than storing a blank row', async () => {

@@ -82,11 +82,11 @@
 	"changelog": [
 		{
 			"version": 14,
-			"notes": "Captain's hire and description-maintenance guidance now names the required substitution variables through a placeholder rendered from the validator's own list, so the names can no longer be substituted away before the Captain reads them."
+			"notes": "Engineer, QA, Architect, DevOps and Security roles must build the planned mechanism once and never invent a fallback path - if the designated mechanism fails, fail loudly and ask the admin rather than quietly doing it another way. Captain's hire and description-maintenance guidance now names the required substitution variables through a placeholder rendered from the validator's own list, so the names can no longer be substituted away before the Captain reads them."
 		},
 		{
 			"version": 13,
-			"notes": "Engineer, QA, Architect, DevOps and Security roles must build the planned mechanism once and never invent a fallback path - if the designated mechanism fails, fail loudly and ask the admin rather than quietly doing it another way."
+			"notes": "Captain: each Progress page activity line must be a complete sentence under 200 characters - the page now renders the line in full instead of clipping it, so an over-long line is trimmed back to its last complete sentence."
 		},
 		{
 			"version": 12,

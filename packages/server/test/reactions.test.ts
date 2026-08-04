@@ -516,7 +516,8 @@ describe('MCP add_reaction / remove_reaction tools', () => {
 			project: projectId,
 			task_id: taskId,
 		});
-		const rows = list.result as Array<{ id: string; reactions: ReactionGroup[] }>;
+		const rows = (list.result as { items: Array<{ id: string; reactions: ReactionGroup[] }> })
+			.items;
 		const c = rows.find((r) => r.id === commentId)!;
 		expect(c.reactions).toHaveLength(1);
 		expect(c.reactions[0].kind).toBe(ReactionKind.Ack);

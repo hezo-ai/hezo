@@ -35,17 +35,33 @@ connect, authenticate, and register for access, see
   **Authorization** below.
 - **Errors:** a handled failure comes back as `{ "error": "<message>" }` in the tool
   result (the HTTP response itself stays successful).
-- **Result size:** a tool result is capped at 64 KB (higher for a few
-  full-resource inspection tools, e.g. `get_agent_system_prompts`); over the
-  cap you get `{ "error": "result_too_large", … }`. Narrow it with filters, a
-  single-resource `get_*`, `before` pagination, or `excerpt_chars`.
-  `read_project_doc` never returns that error for a big doc: it returns a UTF-8
-  byte window with a `next_offset` cursor so you can page the rest (see its
-  entry below).
-- **Excerpts (`excerpt_chars`):** list tools accept `excerpt_chars` to truncate long
-  text fields, adding `_truncated`/`_length` companions.
-- **Pagination (`before`):** `list_comments` walks older items by passing the oldest
-  `id` you have seen as `before`.
+- **Paging is the norm, in one of three shapes.** A read that can return many rows,
+  or content with no size ceiling, always returns a bounded slice plus the cursor to
+  continue. A response carrying `has_more: true`, `next_cursor`, `next_offset`, or
+  `next_index` is telling you it is partial - keep calling until the cursor is null or
+  `has_more` is false. Treating the first page as the whole set is the one failure
+  mode none of these shapes can protect you from.
+  - **Lists** take `limit` (default 50, ceiling 200) and an opaque `cursor`, and return
+    `{ items, next_cursor, has_more }`. Pass back the `next_cursor` you were given;
+    do not construct or parse one. `list_comments` also still accepts `before`
+    (a comment `id` or `public_id`) to resume from a comment you already know.
+  - **Large single content** (`read_project_doc`, `get_agent_system_prompt`,
+    `get_run_log`) takes `offset` plus `max_bytes` and returns a UTF-8 window with
+    `next_offset`. Note `get_run_log` defaults to the log **tail**; pass `offset: 0`
+    to read a run that failed early, since the tail cannot reach the start.
+  - **Batch tools** (`get_agent_system_prompts`) return as many items as fit plus
+    `next_index`; call again with the same `items` and `start_index` set to it.
+- **Result size:** a tool result is capped at 64 KB (higher for a few full-resource
+  inspection tools, e.g. `get_agent_system_prompt`). Over the cap the whole result is
+  discarded and you get `{ "error": "result_too_large", "remedies": [...] }`. The
+  `remedies` are built from the parameters that tool actually declares, so follow
+  them rather than guessing - and when the tool takes a batch, they name the exact
+  item count to retry with. Split the work and retry; do not fall back to one call
+  per item, and do not narrow what you cover to whatever fits in one call.
+- **Excerpts (`excerpt_chars`):** list tools return long free-text fields as excerpts
+  with `_truncated`/`_length` companions, so one page cannot be dominated by a few
+  large rows. Raise or lower the cap with `excerpt_chars`; read the full text from the
+  matching single-item `get_*`.
 - **Secrets:** agents reference secrets by placeholder (`__HEZO_SECRET_<NAME>__`); the
   egress proxy substitutes the real value only for the secret's `allowed_hosts`.
 - **Write tools:** tools marked _Write tool_ persist data - a successful call from an
@@ -57,11 +73,16 @@ connect, authenticate, and register for access, see
 
 _Read-only._
 
-List teams accessible to the caller. An API key and the instance CEO (cross-team session) get every team in the instance; an ordinary agent run gets only its own team.
+List teams accessible to the caller, by name. An API key and the instance CEO (cross-team session) get every team in the instance; an ordinary agent run gets only its own team. Paged: returns `limit` rows (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false.
 
-**Parameters:** none.
+**Parameters:**
 
-**Returns:** An array of team rows (`id`, `name`, `slug`, `description`, …). An API key, the instance CEO, and an agent run with cross-team scope get every team; an ordinary agent run gets only its own team; a board user gets the teams they belong to (all teams for a superuser).
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
+| `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
+
+**Returns:** Team rows (`id`, `name`, `slug`, `description`, …) ordered by name. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. An API key, the instance CEO, and an agent run with cross-team scope get every team; an ordinary agent run gets only its own team; a board user gets the teams they belong to (all teams for a superuser).
 
 ### `get_team`
 
@@ -100,7 +121,7 @@ Create a new team (superuser only)
 
 _Write tool._
 
-Replace the whole Progress page for the project: the summary at the top and the three recent-activity columns beneath it. Only the Captain does this, and only from within a progress-update run. The summary and the columns work at two different levels and must not repeat each other. The SUMMARY is the high-level read: where the project stands, what has taken place, and what is being planned. Do NOT name individual tickets in it - no identifiers at all - because the columns below already link the specific work. The COLUMNS are that specific work: up to 5 tasks each in `actioned` (being worked now), `created` (newly filed) and `closed` (finished), each with a one-line `summary` you write yourself. Pitch every line at what it means for the project - what was accomplished, what is being accomplished, or what is outstanding - not a log of what happened inside the task; never paste the task's own progress summary or description, and leave out mechanics like branches, CI and review round-trips. A reader should be able to read the three columns top to bottom and know where the project stands. This overwrites the summary and all three columns, so include everything that should remain.
+Replace the whole Progress page for the project: the summary at the top and the three recent-activity columns beneath it. Only the Captain does this, and only from within a progress-update run. The summary and the columns work at two different levels and must not repeat each other. The SUMMARY is the high-level read: where the project stands, what has taken place, and what is being planned. Do NOT name individual tickets in it - no identifiers at all - because the columns below already link the specific work. The COLUMNS are that specific work: up to 5 tasks each in `actioned` (being worked now), `created` (newly filed) and `closed` (finished), each with a one-line `summary` you write yourself. Pitch every line at what it means for the project - what was accomplished, what is being accomplished, or what is outstanding - not a log of what happened inside the task; never paste the task's own progress summary or description, and leave out mechanics like branches, CI and review round-trips. Each column line must be a complete sentence under 200 characters: the page renders it in full rather than clipping it, so a longer line is trimmed back to its last complete sentence and the rest is lost. A reader should be able to read the three columns top to bottom and know where the project stands. This overwrites the summary and all three columns, so include everything that should remain.
 
 **Parameters:**
 
@@ -159,21 +180,31 @@ Kick off the initial team-coherence/setup run for a project you created via crea
 
 _Read-only._
 
-List local team templates: the built-in Blank template plus any custom templates saved from existing teams. The default specialist rosters (e.g. the software-development "Startup" team) live in the marketplace, not here. Use when recommending a team structure to hire.
+List local team templates: the built-in Blank template plus any custom templates saved from existing teams. The default specialist rosters (e.g. the software-development "Startup" team) live in the marketplace, not here. Use when recommending a team structure to hire. Paged: returns `limit` entries (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false.
 
-**Parameters:** none.
+**Parameters:**
 
-**Returns:** An array of local templates (`id`, `name`, `description`, `is_builtin`, `agent_types[]` where each entry has `slug`, `name`, `role_description`). Only the built-in Blank template and custom saved templates appear here - the default specialist rosters live in the marketplace (`get_marketplace_team`).
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
+| `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
+
+**Returns:** Local templates (`id`, `name`, `description`, `is_builtin`, `agent_types[]` where each entry has `slug`, `name`, `role_description`). Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. Only the built-in Blank template and custom saved templates appear here - the default specialist rosters live in the marketplace (`get_marketplace_team`).
 
 ### `list_marketplace_teams`
 
 _Read-only._
 
-Browse the team marketplace: every ready-made team available to this instance, with its name, description, summary, role count, and version. Callable by the CEO or a team Captain. Use it before staffing a team - the marketplace carries proven, fully-written roles, so check whether one already covers the role you need (then pull its prompt with get_marketplace_team) instead of authoring a system prompt from scratch. You can take a whole roster (apply_marketplace_team) or lift out a single role (apply_marketplace_agent).
+Browse the team marketplace: every ready-made team available to this instance, with its name, description, summary, role count, and version. Callable by the CEO or a team Captain. Use it before staffing a team - the marketplace carries proven, fully-written roles, so check whether one already covers the role you need (then pull its prompt with get_marketplace_team) instead of authoring a system prompt from scratch. You can take a whole roster (apply_marketplace_team) or lift out a single role (apply_marketplace_agent). Paged: returns `limit` entries (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false.
 
-**Parameters:** none.
+**Parameters:**
 
-**Returns:** `{ teams }` - every marketplace team available to this instance, each with `slug`, `name`, `description`, `summary`, `version`, and `roster_count`. Search keywords are omitted. Fetch one team’s full roster and prompts with `get_marketplace_team`.
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
+| `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
+
+**Returns:** Marketplace teams available to this instance, each with `slug`, `name`, `description`, `summary`, `version`, and `roster_count`. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. Search keywords are omitted. Fetch one team’s full roster and prompts with `get_marketplace_team`.
 
 **Authorization:** CEO or a team Captain.
 
@@ -233,15 +264,17 @@ Add ONE role from a marketplace team to a project's team. CEO-only. Use this whe
 
 _Read-only._
 
-List projects. With CEO cross-team access (or as superuser) returns every project across the instance; a board user gets the projects on teams they belong to; an agent run gets its own project. Pass excerpt_chars (e.g. 300) to truncate description; omit for full content.
+List projects, by name. With CEO cross-team access (or as superuser) returns every project across the instance; a board user gets the projects on teams they belong to; an agent run gets its own project. description comes back as an excerpt capped at `excerpt_chars` (default 500); read a project's full description with get_team or the project's own docs. Paged: returns `limit` rows (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false.
 
 **Parameters:**
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
-| `excerpt_chars` | `integer` | No | When set, truncates description and adds description_truncated/_length |
+| `excerpt_chars` | `integer` | No | Cap for the description excerpt, with description_truncated/_length companions (default 500). |
+| `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
+| `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
 
-**Returns:** An array of project rows (`id`, `team_id`, `name`, `slug`, `task_prefix`, `description`, `is_internal`, `created_at`, `updated_at`). With `excerpt_chars`, `description` is truncated and `description_truncated`/`description_length` companions are added.
+**Returns:** Project rows (`id`, `team_id`, `name`, `slug`, `task_prefix`, `is_internal`, `created_at`, `updated_at`) ordered by name. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. `description` comes back as an excerpt (default 500 chars) with `description_truncated`/`description_length` companions; raise or lower it with `excerpt_chars`.
 
 **Authorization:** An API key, CEO cross-team access, or a superuser returns every project; a board user gets the projects on their teams; an agent run gets its own project.
 
@@ -251,7 +284,7 @@ List projects. With CEO cross-team access (or as superuser) returns every projec
 
 _Read-only._
 
-List a project's tasks. Returns up to 50 tasks ordered by creation date (newest first). Omit `project` to use the project your run is in; pass it (slug or ID) to inspect another project. Narrow with status (comma-separated) or assignee_id/assignee_slug. The Project State block in your system prompt already gives you the active tickets in the current project - only call this if you need older or terminal tickets, another project, or a specific status filter. Pass excerpt_chars (e.g. 300) to truncate description and rules to triage-sized excerpts; omit for full content.
+List a project's tasks, newest first. Omit `project` to use the project your run is in; pass it (slug or ID) to inspect another project. Narrow with status (comma-separated) or assignee_id/assignee_slug. The Project State block in your system prompt already gives you the active tickets in the current project - only call this if you need older or terminal tickets, another project, or a specific status filter. Paged: returns `limit` rows (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false. description and rules come back as excerpts capped at `excerpt_chars` (default 500) so one page cannot be dominated by a few long tickets - read a task's full text with get_task.
 
 **Parameters:**
 
@@ -261,9 +294,11 @@ List a project's tasks. Returns up to 50 tasks ordered by creation date (newest 
 | `status` | `string` | No | Filter by status (comma-separated) |
 | `assignee_id` | `string` | No | Filter by assignee - an agent slug (e.g. "engineer") or a member UUID |
 | `assignee_slug` | `string` | No | Filter by assignee agent slug (alternative to assignee_id) |
-| `excerpt_chars` | `integer` | No | When set, replaces description and rules with first-paragraph excerpts capped at this many characters, plus _truncated and _length companion fields |
+| `excerpt_chars` | `integer` | No | Cap for the description and rules excerpts, with _truncated and _length companion fields (default 500). Use get_task for a task's full text. |
+| `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
+| `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
 
-**Returns:** Up to 50 task rows ordered newest-first, each including `project_name`. With `excerpt_chars`, `description` and `rules` are replaced with excerpts plus `_truncated`/`_length` companions.
+**Returns:** Task rows ordered newest-first, each including `project_name`. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. `description` and `rules` come back as excerpts (default 500 chars) plus `_truncated`/`_length` companions; read a task in full with `get_task`.
 
 ### `get_task`
 
@@ -385,7 +420,7 @@ Remove a blocker between two tasks. Call this when a dependency that was previou
 
 _Read-only._
 
-List the agent runs (container executions) recorded for a task, newest first (up to 50). Each row is one run: which agent ran, its status and exit code, when it started/finished, the invocation command, and the log length. Metadata only - fetch a run's actual container log with get_run_log(run_id). Useful for reviewing HOW a task was worked (e.g. the Coach checking what an agent actually did, beyond the comments it left).
+List the agent runs (container executions) recorded for a task, newest first. Each row is one run: which agent ran, its status and exit code, when it started/finished, the invocation command, and the log length. Metadata only - fetch a run's actual container log with get_run_log(run_id). Useful for reviewing HOW a task was worked (e.g. the Coach checking what an agent actually did, beyond the comments it left). Paged: returns `limit` rows (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false.
 
 **Parameters:**
 
@@ -393,14 +428,16 @@ List the agent runs (container executions) recorded for a task, newest first (up
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `task_id` | `string` | Yes | Task identifier or UUID |
+| `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
+| `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
 
-**Returns:** An array of up to 50 run rows for the task, newest-first: `id`, `status`, `exit_code`, `started_at`, `finished_at`, `invocation_command`, `log_length` (characters), plus `agent_title`/`agent_slug`. Metadata only - fetch a run's log with `get_run_log`.
+**Returns:** Run rows for the task, newest-first: `id`, `status`, `exit_code`, `started_at`, `finished_at`, `invocation_command`, `log_length` (characters), plus `agent_title`/`agent_slug`. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. Metadata only - fetch a run's log with `get_run_log`.
 
 ### `get_run_log`
 
 _Read-only._
 
-Fetch the container log for a single agent run (a run_id from list_task_runs). Returns the run's log capped to the most recent excerpt_chars characters (default 12000 - the tail, where the outcome and any errors are) with truncated/length flags so you can tell when earlier output was dropped. Team-scoped: the run must belong to the project you're acting in.
+Fetch the container log for a single agent run (a run_id from list_task_runs). Team-scoped: the run must belong to the project you're acting in. By default returns the most recent excerpt_chars characters (default 12000 - the tail, where the outcome and any errors usually are). To read a run that failed EARLY, pass offset (start at 0) and page forward with next_offset until it is null: the tail default would otherwise hide the start of the log, which is where a setup, clone, or install failure appears.
 
 **Parameters:**
 
@@ -408,9 +445,11 @@ Fetch the container log for a single agent run (a run_id from list_task_runs). R
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `run_id` | `string` | Yes | Run ID (UUID) from list_task_runs |
-| `excerpt_chars` | `integer` | No | Max characters to return from the END of the log (default 12000). |
+| `excerpt_chars` | `integer` | No | Max characters to return from the END of the log (default 12000). Ignored when `offset` is set. |
+| `offset` | `integer` | No | Byte offset to read forward from, instead of the tail. Pass 0 to start at the beginning of the log, then pass back `next_offset` until it is null. Snapped down to a UTF-8 character boundary. |
+| `max_bytes` | `integer` | No | Max bytes of log to return in this window when paging with `offset` (default and ceiling is the read budget). |
 
-**Returns:** `{ id, status, exit_code, task_id, log, length, truncated }` for one run - `log` is the tail of the container log capped at `excerpt_chars` (default 12000); `truncated` flags dropped earlier output. Returns `{ error }` for a malformed `run_id` or a run outside the resolved project's team.
+**Returns:** `{ id, status, exit_code, task_id, log, length, truncated }` for one run. By default `log` is the **tail** of the container log capped at `excerpt_chars` (default 12000), and `truncated` flags dropped earlier output. Pass `offset` (start at 0) to read forward from the beginning instead: the result then also carries `offset`, `returned_chars`, and `next_offset`, and you page until `next_offset` is null. The tail default cannot reach the start of a long log, so use `offset` for a run that failed during setup, clone, or install. Returns `{ error }` for a malformed `run_id` or a run outside the resolved project's team.
 
 ## Goals
 
@@ -448,6 +487,8 @@ List a project's goals (the objectives the Captain tracks). Each goal has a titl
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `include_archived` | `boolean` | No | Include archived goals (default false). |
+| `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
+| `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
 
 **Returns:** An array of the project's goal rows, each with `project_name`/`project_slug` and an embedded `history[]` of recent progress snapshots (`{ t, percent, health }`). Archived goals are excluded unless `include_archived` is true.
 
@@ -477,7 +518,7 @@ Record your current assessment of a goal's progress. Only the Captain does this,
 
 _Read-only._
 
-List comments for an task. Returns up to 50 most-recent comments (newest first). Pass before (a comment ID) to walk older. Pass excerpt_chars (e.g. 500) to truncate long text comments; structured comments (system/option/task_link) are always returned whole. Each row includes parent_comment_id (UUID or null) so you can see reply threading - when you reply substantively to a comment, pass that comment's id back as parent_comment_id in create_comment. Each row also has a public_id (a creation-timestamp slug like 20261009112345); that's how you cite a specific comment elsewhere: write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345), which renders as a clickable link straight to that comment.
+List comments for an task, newest first. Paged: returns `limit` rows (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false. (`before`, taking a comment id or public_id, still works for walking back from a known comment.) Long text comments come back truncated at `excerpt_chars` (default 2000); structured comments (system/option/task_link) are always returned whole. Each row includes parent_comment_id (UUID or null) so you can see reply threading - when you reply substantively to a comment, pass that comment's id back as parent_comment_id in create_comment. Each row also has a public_id (a creation-timestamp slug like 20261009112345); that's how you cite a specific comment elsewhere: write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345), which renders as a clickable link straight to that comment.
 
 **Parameters:**
 
@@ -485,10 +526,12 @@ List comments for an task. Returns up to 50 most-recent comments (newest first).
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `task_id` | `string` | Yes | Task identifier or UUID |
-| `before` | `string` | No | A comment id (UUID) or public_id - return only comments created before that one |
-| `excerpt_chars` | `integer` | No | When set, truncates content.text on text-typed comments to this many characters and adds text_truncated/text_length |
+| `before` | `string` | No | A comment id (UUID) or public_id - return only comments created before that one. Prefer `cursor` for straight paging; this is for resuming from a comment you already know. |
+| `excerpt_chars` | `integer` | No | Cap for content.text on text-typed comments, with text_truncated/text_length companions (default 2000). |
+| `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
+| `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
 
-**Returns:** Up to 50 comment rows newest-first, each with `id`, `public_id`, `task_id`, `author_member_id`, `author_api_key_id`, `parent_comment_id`, `content_type`, `content`, `chosen_option`, `created_at`, `author_type`, `author_name`, `reactions[]`, and `attachments[]`. Pass `before` to walk older; `excerpt_chars` truncates text comments (adds `text_truncated`/`text_length`).
+**Returns:** Comment rows newest-first, each with `id`, `public_id`, `task_id`, `author_member_id`, `author_api_key_id`, `parent_comment_id`, `content_type`, `content`, `chosen_option`, `created_at`, `author_type`, `author_name`, `reactions[]`, and `attachments[]`. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. `before` still walks back from a comment you already know. Text comments come back truncated at `excerpt_chars` (default 2000) with `text_truncated`/`text_length` companions.
 
 ### `add_reaction`
 
@@ -566,15 +609,17 @@ Edit the text of a comment you posted earlier in THIS run - use it to fix a mist
 
 _Read-only._
 
-List the agents on a project's team
+List the agents on a project's team, by title. Paged: returns `limit` rows (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false.
 
 **Parameters:**
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
+| `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
 
-**Returns:** An array of agent rows (`id`, `agent_type_id`, `title`, `slug`, `daily_budget_cents`, `weekly_budget_cents`, `monthly_budget_cents`, `runtime_status`, `admin_status`).
+**Returns:** Agent rows (`id`, `agent_type_id`, `title`, `slug`, `daily_budget_cents`, `weekly_budget_cents`, `monthly_budget_cents`, `runtime_status`, `admin_status`) ordered by title. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false.
 
 ### `update_hire_proposal`
 
@@ -685,7 +730,7 @@ Retire (disable) or reinstate (enable) an agent on a project's team. Callable by
 
 _Read-only._
 
-Read an agent's system prompt. Accessible by any agent or the admin in the same team. Returns the resolved role doc by default - `{{…}}` placeholders substituted with the real team name, manager, skills, project docs, and team context - so you can see what the agent actually says about itself with real values. Pass placeholders=false to get the raw stored template with `{{…}}` placeholders intact; only do this when you intend to edit the prompt and need a safe round-trip back through update_agent_system_prompt.
+Read an agent's system prompt. Accessible by any agent or the admin in the same team. Returns the resolved role doc by default - `{{…}}` placeholders substituted with the real team name, manager, skills, project docs, and team context - so you can see what the agent actually says about itself with real values. Pass placeholders=false to get the raw stored template with `{{…}}` placeholders intact; only do this when you intend to edit the prompt and need a safe round-trip back through update_agent_system_prompt. A prompt too large for one read comes back as a byte window: when `next_offset` is non-null, call again with `offset` set to it until it is null. To read several prompts, use get_agent_system_prompts rather than looping this tool.
 
 **Parameters:**
 
@@ -694,8 +739,10 @@ Read an agent's system prompt. Accessible by any agent or the admin in the same 
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `agent_id` | `string` | Yes | Target agent - its slug (e.g. "engineer") or member ID |
 | `placeholders` | `boolean` | No | When true (default) substitutes `{{…}}` placeholders with real team/team values. When false returns the raw stored template - needed when reading before update_agent_system_prompt so placeholders survive the round-trip. |
+| `offset` | `integer` | No | Byte offset to start reading the prompt from (default 0). Pass back `next_offset` to page a prompt too large for one read. Snapped down to a UTF-8 character boundary. |
+| `max_bytes` | `integer` | No | Max bytes of prompt text to return in this window (default and ceiling is the read budget, so a normal-size prompt comes back whole). |
 
-**Returns:** `{ title, slug, system_prompt }`, or `{ error }` if the agent is not in the team. By default `{{…}}` placeholders are resolved; pass `placeholders: false` for the raw stored template.
+**Returns:** `{ title, slug, system_prompt, offset, returned_bytes, total_bytes, next_offset, truncated }`, or `{ error }` if the agent is not in the team. By default `{{…}}` placeholders are resolved; pass `placeholders: false` for the raw stored template. A prompt larger than the cap comes back as a byte window - page it with `offset` until `next_offset` is null.
 
 **Authorization:** Any agent or the admin in the same team.
 
@@ -703,7 +750,7 @@ Read an agent's system prompt. Accessible by any agent or the admin in the same 
 
 _Read-only._
 
-Read multiple agent system prompts in one call (max 50). Per-item `mode` chooses the resolution depth: `placeholders` (default) substitutes `{{…}}` with real values and stops, matching get_agent_system_prompt's default; `preview` additionally appends the resolver's runtime blocks (Project State, Team Context, Teammates, Working Guidelines) minus the per-run Run Context, matching the web UI's preview panel; `raw` returns the stored template untouched. Use this to compare prompts across the team in one round-trip - e.g. Captain auditing how team_context renders for every agent. SIZE: this tool has a raised 128KB result cap (a fully-resolved `preview` prompt is large), but still batch multiple items only as `raw`/`placeholders` and fetch previews one at a time so a multi-`preview` call can't exceed even the raised cap (result_too_large). For a single prompt, use get_agent_system_prompt.
+Read multiple agent system prompts in one call (max 50). Per-item `mode` chooses the resolution depth: `placeholders` (default) substitutes `{{…}}` with real values and stops, matching get_agent_system_prompt's default; `preview` additionally appends the resolver's runtime blocks (Project State, Team Context, Teammates, Working Guidelines) minus the per-run Run Context, matching the web UI's preview panel; `raw` returns the stored template untouched. Use this to compare prompts across the team in one round-trip - e.g. Captain auditing how team_context renders for every agent. PAGING: batch as many items as you like in any mode. The result carries as many prompts as fit under the cap plus `next_index`; when it is non-null, call again with the SAME `items` and `start_index` set to it, and repeat until it is null. Do not split the roster into single-item calls. For one prompt, use get_agent_system_prompt.
 
 **Parameters:**
 
@@ -711,8 +758,9 @@ Read multiple agent system prompts in one call (max 50). Per-item `mode` chooses
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `items` | `object[]` | Yes | Up to 50 items. |
+| `start_index` | `integer` | No | Index into `items` to resume from (default 0). Pass back the `next_index` from the previous call, with the same `items`, to fetch the prompts that did not fit. |
 
-**Returns:** An array of per-item results: `{ index, ok: true, title, slug, system_prompt }` or `{ index, ok: false, agent_id, error }`. Up to 50 items; each `mode` is `placeholders` (default), `preview`, or `raw`.
+**Returns:** `{ items, start_index, returned, total, next_index }`, where `items` are per-item results: `{ index, ok: true, title, slug, system_prompt }` or `{ index, ok: false, agent_id, error }`. Up to 50 items per call; each `mode` is `placeholders` (default), `preview`, or `raw`. Only the prompts that fit under the cap are returned - when `next_index` is non-null, call again with the same `items` and `start_index` set to it, and repeat until it is null. A single prompt too large on its own comes back truncated with `truncated: true` rather than stalling the cursor.
 
 **Authorization:** Any agent or the admin in the same team.
 
@@ -876,16 +924,18 @@ Replace your long-term chat memory - the durable notes carried into every turn o
 
 _Read-only._
 
-List pending approvals. Pass excerpt_chars (e.g. 500) to truncate long fields inside payload (e.g. skill-proposal content); omit for full payload.
+List pending approvals, newest first. Long string fields inside payload (e.g. skill-proposal content) come back truncated at `excerpt_chars` (default 500) with *_truncated/_length companions, so one page cannot be dominated by a single large proposal - read a proposal in full from the approval itself. Paged: returns `limit` rows (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false.
 
 **Parameters:**
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
-| `excerpt_chars` | `integer` | No | When set, truncates long string fields inside payload (e.g. skill-proposal content) and adds *_truncated/_length companions |
+| `excerpt_chars` | `integer` | No | Cap for long string fields inside payload, with *_truncated/_length companions (default 500). |
+| `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
+| `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
 
-**Returns:** An array of pending approval rows (`id`, `team_id`, `type`, `status`, `requested_by_member_id`, `resolution_note`, `resolved_at`, `created_at`, `payload`). `excerpt_chars` truncates long string fields inside `payload`.
+**Returns:** Pending approval rows (`id`, `team_id`, `type`, `status`, `requested_by_member_id`, `resolution_note`, `resolved_at`, `created_at`, `payload`) newest-first. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. Long string fields inside `payload` come back truncated at `excerpt_chars` (default 500) with `_truncated`/`_length` companions.
 
 ### `resolve_approval`
 
@@ -947,7 +997,7 @@ Full-text keyword search across the team skills database, tasks, project docs, a
 
 _Read-only._
 
-List the team's skills database - the manifest of reusable team know-how (MCP server usage, integration steps, conventions, how agents coordinate). Returns each skill's name, slug, and description; call get_skill to load a skill's full body on demand.
+List the team's skills database - the manifest of reusable team know-how (MCP server usage, integration steps, conventions, how agents coordinate). Returns each skill's name, slug, and description; call get_skill to load a skill's full body on demand. Paged: returns `limit` entries (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false.
 
 **Parameters:**
 
@@ -955,8 +1005,10 @@ List the team's skills database - the manifest of reusable team know-how (MCP se
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `tags` | `string` | No | Filter by tag (comma-separated) |
+| `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
+| `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
 
-**Returns:** `{ skills: [{ id, name, slug, description, tags, created_at, updated_at }] }`. Pass `tags` (comma-separated) to filter.
+**Returns:** Skill rows (`id`, `name`, `slug`, `description`, `tags`, `created_at`, `updated_at`) ordered by name. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. Pass `tags` (comma-separated) to filter. A project skill shadows a global one of the same slug.
 
 ### `get_skill`
 
@@ -1077,6 +1129,8 @@ List the connectors available to agent runs in your project (its own connectors 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
+| `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
 
 **Returns:** An array of connector rows with a derived `oauth_status` (`active` | `pending` | `failed` | `revoked` | `none`) and, for an active OAuth-backed connector, `rest_auth` = `{ placeholder, allowed_hosts, scopes }` (else `null`). Other fields include `id`, `name`, `display_name`, `kind`, `config`, `project_id`, `oauth_account_label`, `install_status`, `install_error`, `skill_id`, `created_by_task_id`, `activated_at`, `revoked_at`, `auth_error`. A hosted MCP connector whose methods have been listed also carries `method_access` = `{ mode: "all" | "restricted", enabled, total, disabled_write }` (else `null`) - when `mode` is `restricted`, the withheld methods are absent from your tool list on purpose, so a tool you expect and cannot see is disabled rather than missing. Scoped to your project: its own connectors plus global ("all projects") ones, with a project connector shadowing a global one of the same name.
 
@@ -1133,7 +1187,7 @@ Remove one of your project's registered MCP connections. Only connectors owned b
 
 _Read-only._
 
-List project documentation files (PRD, spec, implementation plan, etc.). Each entry carries its `filename` and a one-line `description` (what the doc is / when to read it, '' if unset). Archived (soft-deleted) docs are excluded by default - set filter: 'archived' or 'all' to see them (entries then carry an `archived` flag).
+List project documentation files (PRD, spec, implementation plan, etc.). Each entry carries its `filename`, a one-line `description` (what the doc is / when to read it, '' if unset), and `content_length` - the doc's size, so you can tell before opening it whether read_project_doc will need more than one window. Bodies are not returned here; read one with read_project_doc. Archived (soft-deleted) docs are excluded by default - set filter: 'archived' or 'all' to see them (entries then carry an `archived` flag). Paged: returns `limit` entries (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false.
 
 **Parameters:**
 
@@ -1141,8 +1195,10 @@ List project documentation files (PRD, spec, implementation plan, etc.). Each en
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `filter` | `active` \| `archived` \| `all` | No | Which archive states to consider: 'active' (default - archived items are excluded), 'archived' (only archived), or 'all'. |
+| `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
+| `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
 
-**Returns:** `{ files: [{ id, filename, description, updated_at }] }` - the markdown project docs, where `description` is the overall "what this is" summary (`''` if unset). The `filter` param defaults to `'active'` (archived docs excluded); with `'archived'` or `'all'` each entry also carries `archived: boolean`.
+**Returns:** Markdown project doc entries (`id`, `filename`, `description`, `content_length`, `created_at`, `updated_at`), where `description` is the overall "what this is" summary (`''` if unset) and `content_length` is the doc's size so you can tell before opening it whether `read_project_doc` will need more than one window. Bodies are not returned here. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. The `filter` param defaults to `'active'` (archived docs excluded); with `'archived'` or `'all'` each entry also carries `archived: boolean`.
 
 ### `list_project_assets`
 
@@ -1157,8 +1213,10 @@ List the project's assets - files in the assets library (UI mockups, wireframes,
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `filter` | `active` \| `archived` \| `all` | No | Which archive states to consider: 'active' (default - archived items are excluded), 'archived' (only archived), or 'all'. |
 | `sort` | `newest` \| `oldest` \| `alphabetical` | No | Order of the returned assets: 'newest' (default - most recently created first), 'oldest', or 'alphabetical' (by filename, A→Z). |
+| `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
+| `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
 
-**Returns:** `{ files: [{ id, filename, content_type, created_at, width?, height? }] }` - the project asset files; raster images (PNG/JPEG/GIF/WebP) also carry pixel `width`/`height`. `filename` is the full path and may carry a folder prefix up to 2 levels (e.g. `launch/images/hero.png`). The `filter` param defaults to `'active'` (archived assets excluded); with `'archived'` or `'all'` each entry also carries `archived: boolean`.
+**Returns:** Project asset entries (`id`, `filename`, `content_type`, `created_at`, `width?`, `height?`); raster images (PNG/JPEG/GIF/WebP) also carry pixel `width`/`height`. `filename` is the full path and may carry a folder prefix up to 2 levels (e.g. `launch/images/hero.png`). Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. The `filter` param defaults to `'active'` (archived assets excluded); with `'archived'` or `'all'` each entry also carries `archived: boolean`.
 
 ### `write_project_asset`
 
@@ -1333,7 +1391,7 @@ Restore an archived project doc to active. It reappears in list_project_docs and
 
 _Read-only._
 
-Get the cost summary for a project
+Get the cost summary for a project. Ungrouped returns a single total. group_by: 'agent' returns one row per agent (bounded by the roster). group_by: 'day' returns one row per day, newest first - that set grows for as long as the project runs, so it is paged: it returns `limit` days (default 50) plus `next_cursor`/`has_more`, and when `has_more` is true you call again with `cursor` set to `next_cursor` until it is false.
 
 **Parameters:**
 
@@ -1341,8 +1399,10 @@ Get the cost summary for a project
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `group_by` | `agent` \| `day` | No | Group costs by |
+| `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
+| `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
 
-**Returns:** With `group_by: "agent"`, an array of `{ member_id, agent_title, total_cents }`; with `group_by: "day"`, an array of `{ day, total_cents }`; otherwise `{ total_cents, entry_count }`.
+**Returns:** With `group_by: "agent"`, an array of `{ member_id, agent_title, total_cents }` (bounded by the roster). With `group_by: "day"`, day rows `{ day, total_cents }` newest-first Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. - that set grows for the life of the project, so it is the one grouping that pages. Otherwise `{ total_cents, entry_count }`.
 
 ## Onboarding
 

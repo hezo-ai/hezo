@@ -159,7 +159,7 @@ async function makeTask(title: string, assignee: string = engineerId): Promise<s
 
 describe('API key principal (instance-wide)', () => {
 	it('list_teams returns every team in the instance', async () => {
-		const r = (await viaKey('list_teams')) as unknown as Array<{ id: string }>;
+		const r = ((await viaKey('list_teams')) as unknown as { items: Array<{ id: string }> }).items;
 		const ids = r.map((t) => t.id);
 		expect(ids).toContain(teamId);
 		expect(ids).toContain(teamBId);
@@ -167,16 +167,19 @@ describe('API key principal (instance-wide)', () => {
 	});
 
 	it('list_projects returns every project (instance-wide branch)', async () => {
-		const r = (await viaKey('list_projects')) as unknown as Array<{ slug: string }>;
+		const r = ((await viaKey('list_projects')) as unknown as { items: Array<{ slug: string }> })
+			.items;
 		const slugs = r.map((p) => p.slug);
 		expect(slugs).toContain(projectSlug);
 		expect(slugs).toContain(projectBSlug);
 	});
 
 	it('list_projects applies excerpt_chars', async () => {
-		const r = (await viaKey('list_projects', { excerpt_chars: 5 })) as unknown as Array<
-			Record<string, unknown>
-		>;
+		const r = (
+			(await viaKey('list_projects', { excerpt_chars: 5 })) as unknown as {
+				items: Array<Record<string, unknown>>;
+			}
+		).items;
 		expect(r.length).toBeGreaterThan(0);
 		expect(r[0]).toHaveProperty('description_excerpt');
 		expect(r[0]).not.toHaveProperty('description');
@@ -184,7 +187,7 @@ describe('API key principal (instance-wide)', () => {
 
 	it('list_tasks works for any project via authorizeScope ApiKey branch', async () => {
 		const r = await viaKey('list_tasks', { project: projectBSlug });
-		expect(Array.isArray(r)).toBe(true);
+		expect(Array.isArray(r.items)).toBe(true);
 	});
 
 	it('still requires `project` on project-scoped tools', async () => {
@@ -195,16 +198,20 @@ describe('API key principal (instance-wide)', () => {
 
 describe('non-superuser board user branches', () => {
 	it('list_teams returns only their teams (member join branch)', async () => {
-		const r = (await call(memberUserToken, 'list_teams', {})) as unknown as Array<{ id: string }>;
+		const r = (
+			(await call(memberUserToken, 'list_teams', {})) as unknown as { items: Array<{ id: string }> }
+		).items;
 		const ids = r.map((t) => t.id);
 		expect(ids).toContain(teamId);
 		expect(ids).not.toContain(teamBId);
 	});
 
 	it('list_projects returns only their projects (admin non-superuser branch)', async () => {
-		const r = (await call(memberUserToken, 'list_projects', {})) as unknown as Array<{
-			slug: string;
-		}>;
+		const r = (
+			(await call(memberUserToken, 'list_projects', {})) as unknown as {
+				items: Array<{ slug: string }>;
+			}
+		).items;
 		const slugs = r.map((p) => p.slug);
 		expect(slugs).toContain(projectSlug);
 		expect(slugs).not.toContain(projectBSlug);
@@ -235,26 +242,31 @@ describe('non-superuser board user branches', () => {
 describe('list_projects for an ordinary agent', () => {
 	it('returns only the run project (agent scope branch)', async () => {
 		const at = await agentToken(engineerId, teamId, taskId);
-		const r = (await call(at, 'list_projects', {})) as unknown as Array<{ slug: string }>;
+		const r = (
+			(await call(at, 'list_projects', {})) as unknown as { items: Array<{ slug: string }> }
+		).items;
 		expect(r.map((p) => p.slug)).toEqual([projectSlug]);
 	});
 });
 
 describe('list_tasks filters', () => {
 	it('assignee_slug resolves an agent on the team', async () => {
-		const r = (await admin('list_tasks', {
-			project: projectSlug,
-			assignee_slug: 'engineer',
-		})) as unknown as Array<{ id: string }>;
+		const r = (
+			(await admin('list_tasks', {
+				project: projectSlug,
+				assignee_slug: 'engineer',
+			})) as unknown as { items: Array<{ id: string }> }
+		).items;
 		expect(r.map((t) => t.id)).toContain(taskId);
 	});
 
-	it('unknown assignee_slug returns an empty list', async () => {
+	it('unknown assignee_slug returns an empty page', async () => {
 		const r = (await admin('list_tasks', {
 			project: projectSlug,
 			assignee_slug: 'nobody-here',
-		})) as unknown as unknown[];
-		expect(r).toEqual([]);
+		})) as unknown as { items: unknown[]; has_more: boolean };
+		expect(r.items).toEqual([]);
+		expect(r.has_more).toBe(false);
 	});
 
 	it('excerpt_chars truncates descriptions', async () => {
@@ -263,10 +275,12 @@ describe('list_tasks filters', () => {
 			task_id: taskId,
 			description: 'A long description paragraph that will surely be truncated by excerpting.',
 		});
-		const r = (await admin('list_tasks', {
-			project: projectSlug,
-			excerpt_chars: 10,
-		})) as unknown as Array<Record<string, unknown>>;
+		const r = (
+			(await admin('list_tasks', {
+				project: projectSlug,
+				excerpt_chars: 10,
+			})) as unknown as { items: Array<Record<string, unknown>> }
+		).items;
 		const row = r.find((t) => t.id === taskId);
 		expect(row).toBeDefined();
 		expect(row).toHaveProperty('description_excerpt');
@@ -601,11 +615,13 @@ describe('list_comments', () => {
 			content: 'first long comment body for excerpting purposes',
 		});
 		const c2 = await call(at, 'create_comment', { task_id: taskId, content: 'second' });
-		const rows = (await call(at, 'list_comments', {
-			task_id: taskId,
-			before: c2.id,
-			excerpt_chars: 10,
-		})) as unknown as Array<Record<string, unknown>>;
+		const rows = (
+			(await call(at, 'list_comments', {
+				task_id: taskId,
+				before: c2.id,
+				excerpt_chars: 10,
+			})) as unknown as { items: Array<Record<string, unknown>> }
+		).items;
 		expect(rows.map((r) => r.id)).toContain(c1.id);
 		expect(rows.map((r) => r.id)).not.toContain(c2.id);
 	});
@@ -708,11 +724,11 @@ describe('report_no_work / update_chat_memory / progress', () => {
 
 describe('read tools', () => {
 	it('list_team_templates returns builtin templates with agent types', async () => {
-		const r = (await admin('list_team_templates')) as unknown as Array<{
-			name: string;
-			is_builtin: boolean;
-			agent_types: Array<{ slug: string }>;
-		}>;
+		const r = (
+			(await admin('list_team_templates')) as unknown as {
+				items: Array<{ name: string; is_builtin: boolean; agent_types: Array<{ slug: string }> }>;
+			}
+		).items;
 		const startup = r.find((t) => t.name === 'App Team');
 		// The App Team (formerly Startup) comes from the marketplace now (non-builtin fixture); Blank is builtin.
 		expect(startup?.is_builtin).toBe(false);
@@ -720,10 +736,11 @@ describe('read tools', () => {
 	});
 
 	it('list_agents returns the roster with budgets and statuses', async () => {
-		const r = (await admin('list_agents', { project: projectSlug })) as unknown as Array<{
-			slug: string;
-			admin_status: string;
-		}>;
+		const r = (
+			(await admin('list_agents', { project: projectSlug })) as unknown as {
+				items: Array<{ slug: string; admin_status: string }>;
+			}
+		).items;
 		expect(r.map((a) => a.slug)).toContain('engineer');
 		expect(r.every((a) => typeof a.admin_status === 'string')).toBe(true);
 	});
@@ -731,8 +748,10 @@ describe('read tools', () => {
 	it('get_costs supports group_by agent and day', async () => {
 		const byAgent = await admin('get_costs', { project: projectSlug, group_by: 'agent' });
 		expect(Array.isArray(byAgent)).toBe(true);
+		// The day grouping is the one that pages: cost rows accumulate forever.
 		const byDay = await admin('get_costs', { project: projectSlug, group_by: 'day' });
-		expect(Array.isArray(byDay)).toBe(true);
+		expect(Array.isArray(byDay.items)).toBe(true);
+		expect(byDay.has_more).toBe(false);
 		const total = await admin('get_costs', { project: projectSlug });
 		expect(total.error).toBeUndefined();
 	});
@@ -757,10 +776,12 @@ describe('read tools', () => {
 			reason: 'Testing approvals listing.',
 		});
 		expect(proposed.error).toBeUndefined();
-		const r = (await admin('list_approvals', {
-			project: projectSlug,
-			excerpt_chars: 10,
-		})) as unknown as Array<{ type: string }>;
+		const r = (
+			(await admin('list_approvals', {
+				project: projectSlug,
+				excerpt_chars: 10,
+			})) as unknown as { items: Array<{ type: string }> }
+		).items;
 		expect(r.length).toBeGreaterThan(0);
 	});
 });

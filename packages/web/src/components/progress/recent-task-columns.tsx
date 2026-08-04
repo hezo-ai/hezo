@@ -42,9 +42,12 @@ function TaskRow({ projectId, entry }: { projectId: string; entry: ProgressActiv
 						{entry.title}
 					</span>
 				</div>
-				<p className="line-clamp-2 text-[11.5px] leading-relaxed text-text-3 break-words">
-					{entry.summary}
-				</p>
+				{/*
+				 * Rendered in full, never clamped. The line is one finished sentence bounded at write
+				 * time (`clampToWholeSentence`), so a `line-clamp` here would only cut a complete
+				 * thought off mid-clause behind an ellipsis.
+				 */}
+				<p className="text-[11.5px] leading-relaxed text-text-3 break-words">{entry.summary}</p>
 			</div>
 		</li>
 	);

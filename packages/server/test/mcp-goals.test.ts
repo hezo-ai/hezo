@@ -92,9 +92,11 @@ describe('MCP goals tools', () => {
 	});
 
 	it('list_goals returns the project goals', async () => {
-		const goals = (await callTool(token, 'list_goals', { project: projectSlug })) as Array<{
-			id: string;
-		}>;
+		const goals = (
+			(await callTool(token, 'list_goals', { project: projectSlug })) as {
+				items: Array<{ id: string }>;
+			}
+		).items;
 		expect(goals.map((g) => g.id)).toContain(goalId);
 	});
 
@@ -125,10 +127,11 @@ describe('MCP goals tools', () => {
 		expect(updated.last_checked_at).not.toBeNull();
 
 		// The snapshot is linked to the run, so it shows in the goal's history.
-		const goals = (await callTool(token, 'list_goals', { project: projectSlug })) as Array<{
-			id: string;
-			history: Array<{ percent: number }>;
-		}>;
+		const goals = (
+			(await callTool(token, 'list_goals', { project: projectSlug })) as {
+				items: Array<{ id: string; history: Array<{ percent: number }> }>;
+			}
+		).items;
 		const goal = goals.find((g) => g.id === goalId);
 		expect(goal?.history.at(-1)?.percent).toBe(45);
 	});
@@ -352,9 +355,11 @@ describe('MCP suggest_goal', () => {
 		expect(suggested.status).toBe('pending');
 
 		// A suggestion is NOT a goal yet — list_goals doesn't include it.
-		const before = (await callTool(token, 'list_goals', { project: projectSlug })) as Array<{
-			title: string;
-		}>;
+		const before = (
+			(await callTool(token, 'list_goals', { project: projectSlug })) as {
+				items: Array<{ title: string }>;
+			}
+		).items;
 		expect(before.map((g) => g.title)).not.toContain('Reach 5k Instagram followers');
 
 		// It shows on the project's suggestions endpoint.
@@ -375,10 +380,11 @@ describe('MCP suggest_goal', () => {
 		});
 		expect(resolveRes.status).toBe(200);
 
-		const after = (await callTool(token, 'list_goals', { project: projectSlug })) as Array<{
-			title: string;
-			check_frequency: string;
-		}>;
+		const after = (
+			(await callTool(token, 'list_goals', { project: projectSlug })) as {
+				items: Array<{ title: string; check_frequency: string }>;
+			}
+		).items;
 		const goal = after.find((g) => g.title === 'Reach 5k Instagram followers');
 		expect(goal).toBeTruthy();
 		expect(goal?.check_frequency).toBe('weekly');

@@ -65,6 +65,40 @@ test('the Progress page renders all three activity columns with the Captain line
 	}
 });
 
+// The Captain's line is bounded to a complete sentence on write, so the row shows it whole. A
+// `line-clamp` here would put an ellipsis back over a thought that had already finished.
+test('a task row renders the whole Captain line rather than clamping it', async () => {
+	const LONG =
+		'Live cards work end to end and the provider webhooks are trusted, so refunds are now the only gap left before the payments work can close.';
+	let projectSlug = '';
+	const { findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Unclamped Demo' });
+			projectSlug = project.slug;
+			await seedProjectProgress(project, '**Payments are close.**', {
+				actioned: [{ identifier: 'PR-1', title: 'Card payments', summary: LONG }],
+			});
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/progress',
+		params: { projectId: projectSlug },
+	});
+
+	const column = await findByTestId('progress-column-actioned', undefined, { timeout: 10_000 });
+	const line = (await waitFor(() => {
+		const el = column.querySelector('[data-testid="progress-task-row"] p');
+		if (!el) throw new Error('task row not rendered yet');
+		return el;
+	})) as HTMLParagraphElement;
+	expect(line.textContent).toBe(LONG);
+	// happy-dom runs no layout, so the clamp can only be checked as the class that applies it.
+	expect(line.className).not.toContain('line-clamp');
+});
+
 test('a task row links to that task', async () => {
 	let projectSlug = '';
 	const { findByTestId, router } = await renderApp({

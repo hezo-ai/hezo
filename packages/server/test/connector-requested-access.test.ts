@@ -331,17 +331,21 @@ describe('list_connectors method_access', () => {
 		await discoverConnectorMethods({ db, masterKeyManager }, row.id, 'connect');
 
 		const { agentToken } = await taskWithAgentToken('LST');
-		const rows = (await callTool(agentToken, 'list_connectors', {
-			project: projectSlug,
-		})) as Array<{
-			name: string;
-			method_access: {
-				mode: string;
-				enabled: number;
-				total: number;
-				disabled_write: number;
-			} | null;
-		}>;
+		const rows = (
+			(await callTool(agentToken, 'list_connectors', {
+				project: projectSlug,
+			})) as {
+				items: Array<{
+					name: string;
+					method_access: {
+						mode: string;
+						enabled: number;
+						total: number;
+						disabled_write: number;
+					} | null;
+				}>;
+			}
+		).items;
 
 		const tracker = rows.find((r) => r.name === 'tracker');
 		expect(tracker?.method_access).toEqual({
@@ -364,9 +368,16 @@ describe('list_connectors method_access', () => {
 		await discoverConnectorMethods({ db, masterKeyManager }, row.id, 'connect');
 
 		const { agentToken } = await taskWithAgentToken('ALL');
-		const rows = (await callTool(agentToken, 'list_connectors', {
-			project: projectSlug,
-		})) as Array<{ name: string; method_access: { mode: string; disabled_write: number } | null }>;
+		const rows = (
+			(await callTool(agentToken, 'list_connectors', {
+				project: projectSlug,
+			})) as {
+				items: Array<{
+					name: string;
+					method_access: { mode: string; disabled_write: number } | null;
+				}>;
+			}
+		).items;
 
 		const tracker = rows.find((r) => r.name === 'tracker');
 		expect(tracker?.method_access?.mode).toBe('all');
@@ -383,9 +394,11 @@ describe('list_connectors method_access', () => {
 		});
 
 		const { agentToken } = await taskWithAgentToken('NUL');
-		const rows = (await callTool(agentToken, 'list_connectors', {
-			project: projectSlug,
-		})) as Array<{ name: string; method_access: unknown }>;
+		const rows = (
+			(await callTool(agentToken, 'list_connectors', {
+				project: projectSlug,
+			})) as { items: Array<{ name: string; method_access: unknown }> }
+		).items;
 
 		expect(rows.find((r) => r.name === 'tracker')?.method_access).toBeNull();
 	});

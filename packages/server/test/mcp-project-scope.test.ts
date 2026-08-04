@@ -46,6 +46,12 @@ async function callMcp(token: string, toolName: string, args: Record<string, unk
 	return JSON.parse(body.result.content[0].text) as Record<string, unknown> | unknown[];
 }
 
+/** Call a paged list tool and return just its rows. */
+async function callMcpList(token: string, toolName: string, args: Record<string, unknown>) {
+	const page = (await callMcp(token, toolName, args)) as { items?: unknown[] };
+	return page.items ?? [];
+}
+
 async function makeTeam(name: string): Promise<{ teamId: string; captainId: string }> {
 	const teamRes = await createTestTeam(db, { name });
 	const teamId = (await teamRes.json()).data.id as string;
@@ -122,13 +128,15 @@ describe('MCP project scope — agent run scoped to its project', () => {
 	});
 
 	it('list_projects returns the run`s own project', async () => {
-		const rows = (await callMcp(scopedToken, 'list_projects', {})) as Array<{ id: string }>;
+		const rows = (await callMcpList(scopedToken, 'list_projects', {})) as Array<{ id: string }>;
 		expect(rows).toHaveLength(1);
 		expect(rows[0].id).toBe(projectAId);
 	});
 
 	it('list_tasks with no project arg implicitly scopes to the run`s project', async () => {
-		const rows = (await callMcp(scopedToken, 'list_tasks', {})) as Array<{ project_id: string }>;
+		const rows = (await callMcpList(scopedToken, 'list_tasks', {})) as Array<{
+			project_id: string;
+		}>;
 		expect(rows.length).toBeGreaterThan(0);
 		for (const row of rows) expect(row.project_id).toBe(projectAId);
 	});
@@ -224,7 +232,7 @@ describe('MCP cross-team CEO — instance-wide discovery', () => {
 	});
 
 	it('list_teams returns every team in the instance, not just HQ', async () => {
-		const rows = (await callMcp(ceoToken, 'list_teams', {})) as Array<{ id: string }>;
+		const rows = (await callMcpList(ceoToken, 'list_teams', {})) as Array<{ id: string }>;
 		const ids = rows.map((r) => r.id);
 		expect(ids).toContain(DEFAULT_TEAM_ID);
 		expect(ids).toContain(teamAId);
@@ -232,7 +240,7 @@ describe('MCP cross-team CEO — instance-wide discovery', () => {
 	});
 
 	it('list_projects returns every project across all teams, with team_id but no team name or slug', async () => {
-		const rows = (await callMcp(ceoToken, 'list_projects', {})) as Array<{
+		const rows = (await callMcpList(ceoToken, 'list_projects', {})) as Array<{
 			id: string;
 			team_id: string;
 			is_internal: boolean;
@@ -253,7 +261,7 @@ describe('MCP cross-team CEO — instance-wide discovery', () => {
 	});
 
 	it('can list tasks in any project without being scoped to it', async () => {
-		const rows = (await callMcp(ceoToken, 'list_tasks', { project: projectBId })) as Array<{
+		const rows = (await callMcpList(ceoToken, 'list_tasks', { project: projectBId })) as Array<{
 			id: string;
 		}>;
 		expect(rows.some((r) => r.id === taskInBId)).toBe(true);
