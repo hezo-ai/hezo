@@ -322,8 +322,8 @@ describe('list_approvals excerpt branch', () => {
 		const r = (await admin('list_approvals', {
 			project: projectSlug,
 			excerpt_chars: 100,
-		})) as unknown as Array<{ payload: Record<string, unknown> }>;
-		const withLong = r.find((a) => 'content_excerpt' in (a.payload ?? {}));
+		})) as unknown as { items: Array<{ payload: Record<string, unknown> }> };
+		const withLong = r.items.find((a) => 'content_excerpt' in (a.payload ?? {}));
 		expect(withLong).toBeDefined();
 	});
 });
@@ -353,10 +353,10 @@ describe('get_agent_system_prompts batch branches', () => {
 		const r = (await admin('get_agent_system_prompts', {
 			project: projectSlug,
 			items: [{ agent_id: 'engineer' }, { agent_id: 'no-such-agent' }],
-		})) as unknown as Array<{ index: number; ok: boolean; error?: string }>;
-		expect(r[0].ok).toBe(true);
-		expect(r[1].ok).toBe(false);
-		expect(typeof r[1].error).toBe('string');
+		})) as unknown as { items: Array<{ index: number; ok: boolean; error?: string }> };
+		expect(r.items[0].ok).toBe(true);
+		expect(r.items[1].ok).toBe(false);
+		expect(typeof r.items[1].error).toBe('string');
 	});
 });
 
@@ -607,9 +607,9 @@ describe('project docs / assets branches', () => {
 
 	it('list_project_docs returns the written doc', async () => {
 		const r = (await admin('list_project_docs', { project: projectSlug })) as {
-			files: Array<{ filename: string }>;
+			items: Array<{ filename: string }>;
 		};
-		expect(r.files.map((f) => f.filename)).toContain('cov-spec.md');
+		expect(r.items.map((f) => f.filename)).toContain('cov-spec.md');
 	});
 
 	it('write_project_asset rejects a binary extension written without base64', async () => {
@@ -662,9 +662,9 @@ describe('skills branches', () => {
 
 	it('list_skills filters by tag', async () => {
 		const r = (await admin('list_skills', { project: projectSlug, tags: 'ops' })) as {
-			skills: Array<{ slug: string }>;
+			items: Array<{ slug: string }>;
 		};
-		expect(r.skills.map((s) => s.slug)).toContain('cov-skill');
+		expect(r.items.map((s) => s.slug)).toContain('cov-skill');
 	});
 
 	it('propose_skill creates an approval', async () => {
@@ -735,9 +735,11 @@ describe('mcp connection branches', () => {
 	});
 
 	it('list_connectors derives oauth_status', async () => {
-		const r = (await admin('list_connectors', { project: projectSlug })) as unknown as Array<{
-			oauth_status: string;
-		}>;
+		const r = (
+			(await admin('list_connectors', { project: projectSlug })) as unknown as {
+				items: Array<{ oauth_status: string }>;
+			}
+		).items;
 		expect(Array.isArray(r)).toBe(true);
 		for (const row of r) expect(typeof row.oauth_status).toBe('string');
 	});
@@ -820,8 +822,8 @@ describe('full_text_search / get_costs branches', () => {
 		const byDay = (await admin('get_costs', {
 			project: projectSlug,
 			group_by: 'day',
-		})) as unknown as unknown[];
-		expect(Array.isArray(byDay)).toBe(true);
+		})) as unknown as { items: unknown[] };
+		expect(Array.isArray(byDay.items)).toBe(true);
 		const total = await admin('get_costs', { project: projectSlug });
 		expect(total).toHaveProperty('total_cents');
 	});

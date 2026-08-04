@@ -130,6 +130,17 @@ async function callToolViaMcp(toolName: string, args: Record<string, unknown>): 
 	return JSON.parse(body.result.content[0].text);
 }
 
+/** Call a paged list tool and return just its rows. */
+async function callListViaMcp(
+	toolName: string,
+	args: Record<string, unknown>,
+): Promise<Array<Record<string, unknown>>> {
+	const page = (await callToolViaMcp(toolName, args)) as {
+		items: Array<Record<string, unknown>>;
+	};
+	return page.items;
+}
+
 describe('MCP endpoint: tool registration', () => {
 	it('lists all registered tools', async () => {
 		const res = await app.request('/mcp', {
@@ -977,8 +988,8 @@ describe('MCP tool handlers: additional data queries via DB', () => {
 
 		const listed = (await callToolViaMcp('list_project_docs', {
 			project: projectId,
-		})) as { files: Array<{ filename: string; description?: string }> };
-		const entry = listed.files.find((f) => f.filename === 'mcp-described.md');
+		})) as { items: Array<{ filename: string; description?: string }> };
+		const entry = listed.items.find((f) => f.filename === 'mcp-described.md');
 		expect(entry?.description).toBe('How we track and report campaign analytics each week.');
 	});
 
@@ -1616,10 +1627,10 @@ describe('MCP tools: project arg accepts a slug or UUID', () => {
 	// must resolve that slug so a cross-project status query returns real data instead
 	// of coming back empty.
 	it('list_agents resolves a project slug to the same roster as the UUID', async () => {
-		const bySlug = (await callToolViaMcp('list_agents', { project: projectSlug })) as Array<{
+		const bySlug = (await callListViaMcp('list_agents', { project: projectSlug })) as Array<{
 			slug: string;
 		}>;
-		const byUuid = (await callToolViaMcp('list_agents', { project: projectId })) as Array<{
+		const byUuid = (await callListViaMcp('list_agents', { project: projectId })) as Array<{
 			slug: string;
 		}>;
 		expect(Array.isArray(bySlug)).toBe(true);
@@ -1628,7 +1639,7 @@ describe('MCP tools: project arg accepts a slug or UUID', () => {
 	});
 
 	it('list_tasks resolves a project slug and returns the seeded task', async () => {
-		const rows = (await callToolViaMcp('list_tasks', { project: projectSlug })) as Array<{
+		const rows = (await callListViaMcp('list_tasks', { project: projectSlug })) as Array<{
 			title: string;
 		}>;
 		expect(rows.map((t) => t.title)).toContain('Seed Task');
@@ -1899,14 +1910,14 @@ describe('MCP tool: update_task re-parenting', () => {
 
 describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard', () => {
 	it('list_tasks never returns the embedding column', async () => {
-		const rows = (await callToolViaMcp('list_tasks', {
-			project: projectId,
-		})) as Array<Record<string, unknown>>;
+		const rows = await callListViaMcp('list_tasks', { project: projectId });
 		expect(Array.isArray(rows)).toBe(true);
 		expect(rows.length).toBeGreaterThan(0);
 		for (const row of rows) {
 			expect(row).not.toHaveProperty('embedding');
-			expect(row).toHaveProperty('description');
+			// description is excerpted by default now, so the width of one page is
+			// bounded; the excerpt triple stands in for the raw column.
+			expect(row).toHaveProperty('description_excerpt');
 			expect(row).toHaveProperty('progress_summary');
 		}
 	});
@@ -1950,7 +1961,7 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 			assignee_id: agentId,
 		})) as { id: string; identifier: string };
 
-		const comments = await callToolViaMcp('list_comments', {
+		const comments = await callListViaMcp('list_comments', {
 			project: projectId,
 			task_id: created.identifier,
 		});
@@ -2005,10 +2016,10 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 			assignee_id: agentId,
 		})) as { id: string };
 
-		const rows = (await callToolViaMcp('list_tasks', {
+		const rows = await callListViaMcp('list_tasks', {
 			project: projectId,
 			excerpt_chars: 50,
-		})) as Array<Record<string, unknown>>;
+		});
 		const target = rows.find((r) => r.id === created.id) as Record<string, unknown>;
 		expect(target).toBeDefined();
 		expect(target).not.toHaveProperty('description');
@@ -2017,7 +2028,10 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 		expect(target.description_length).toBe(longBody.length);
 	});
 
-	it('list_tasks without excerpt_chars returns the full description', async () => {
+	it('list_tasks excerpts by default, returning a short description whole', async () => {
+		// Row width is bounded whether or not the caller asks: a page of long
+		// tickets must not be able to blow the result cap. A description under the
+		// default cap still comes back in full, just under the excerpt key.
 		const body = 'Single short body.';
 		const created = (await callToolViaMcp('create_task', {
 			project: projectId,
@@ -2026,15 +2040,15 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 			assignee_id: agentId,
 		})) as { id: string };
 
-		const rows = (await callToolViaMcp('list_tasks', {
-			project: projectId,
-		})) as Array<Record<string, unknown>>;
+		const rows = await callListViaMcp('list_tasks', { project: projectId });
 		const target = rows.find((r) => r.id === created.id) as Record<string, unknown>;
-		expect(target.description).toBe(body);
-		expect(target).not.toHaveProperty('description_excerpt');
+		expect(target).not.toHaveProperty('description');
+		expect(target.description_excerpt).toBe(body);
+		expect(target.description_truncated).toBe(false);
+		expect(target.description_length).toBe(body.length);
 	});
 
-	it('list_comments caps at 50, walks backward via `before`, and truncates with excerpt_chars', async () => {
+	it('list_comments pages at 50, walks backward via `before`, and truncates with excerpt_chars', async () => {
 		const task = (await callToolViaMcp('create_task', {
 			project: projectId,
 			title: 'Comment pagination target',
@@ -2050,19 +2064,24 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 			);
 		}
 
-		const first = (await callToolViaMcp('list_comments', {
+		const firstPage = (await callToolViaMcp('list_comments', {
 			project: projectId,
 			task_id: task.id,
-		})) as Array<Record<string, unknown>>;
+		})) as { items: Array<Record<string, unknown>>; has_more: boolean; next_cursor: string | null };
+		const first = firstPage.items;
 		expect(first.length).toBe(50);
+		// More remain, and the response says so and how to reach them - the gap
+		// this whole change exists to close.
+		expect(firstPage.has_more).toBe(true);
+		expect(firstPage.next_cursor).toBeTruthy();
 		expect((first[0].content as { text: string }).text).toBe('comment 59');
 
 		const oldest = first[first.length - 1] as { id: string };
-		const next = (await callToolViaMcp('list_comments', {
+		const next = await callListViaMcp('list_comments', {
 			project: projectId,
 			task_id: task.id,
 			before: oldest.id,
-		})) as Array<Record<string, unknown>>;
+		});
 		expect(next.length).toBeGreaterThan(0);
 		expect(next.length).toBeLessThanOrEqual(50);
 		for (const row of next) {
@@ -2076,11 +2095,11 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 			         now() + interval '1 hour')`,
 			[task.id, JSON.stringify({ text: longText })],
 		);
-		const truncated = (await callToolViaMcp('list_comments', {
+		const truncated = await callListViaMcp('list_comments', {
 			project: projectId,
 			task_id: task.id,
 			excerpt_chars: 100,
-		})) as Array<Record<string, unknown>>;
+		});
 		const longRow = truncated[0] as {
 			content: { text: string };
 			text_truncated?: boolean;
@@ -2108,31 +2127,40 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 			});
 		}
 
+		// A page of fat tickets used to blow the cap and be discarded whole. The
+		// default excerpt bounds row width, so the ordinary call now succeeds.
+		const ok = (await callToolViaMcp('list_tasks', { project: fatProjectId })) as {
+			error?: string;
+			items?: Array<Record<string, unknown>>;
+		};
+		expect(ok.error).toBeUndefined();
+		expect(ok.items?.length).toBeGreaterThanOrEqual(8);
+		for (const row of ok.items ?? []) {
+			expect(row).toHaveProperty('description_excerpt');
+			expect(row).toHaveProperty('description_truncated');
+			expect(row).toHaveProperty('description_length');
+		}
+
+		// Opting out of the width bound is what can still overflow, and the guard
+		// then names remedies drawn from this tool's own parameters.
 		const result = (await callToolViaMcp('list_tasks', {
 			project: fatProjectId,
+			excerpt_chars: 100_000,
 		})) as {
 			error?: string;
 			tool?: string;
 			size_bytes?: number;
 			limit_bytes?: number;
 			hint?: string;
+			remedies?: string[];
 		};
 		expect(result.error).toBe('result_too_large');
 		expect(result.tool).toBe('list_tasks');
 		expect(result.size_bytes).toBeGreaterThan(result.limit_bytes ?? 0);
-		expect(result.hint).toContain('excerpt_chars');
-
-		const slim = (await callToolViaMcp('list_tasks', {
-			project: fatProjectId,
-			excerpt_chars: 200,
-		})) as Array<Record<string, unknown>>;
-		expect(Array.isArray(slim)).toBe(true);
-		expect(slim.length).toBeGreaterThanOrEqual(8);
-		for (const row of slim) {
-			expect(row).toHaveProperty('description_excerpt');
-			expect(row).toHaveProperty('description_truncated');
-			expect(row).toHaveProperty('description_length');
-		}
+		expect(result.hint).toContain('Split the work');
+		const remedies = (result.remedies ?? []).join(' ');
+		expect(remedies).toContain('cursor');
+		expect(remedies).toContain('excerpt_chars');
 	});
 });
 
@@ -2170,7 +2198,7 @@ describe('MCP reference params accept the human identifier, not only the UUID', 
 	it('list_tasks.assignee_id filters by an agent slug', async () => {
 		const captainId = await captainMemberId();
 		const mine = await insertTaskDirect(captainId, 'Captain task for slug filter');
-		const rows = (await callToolViaMcp('list_tasks', {
+		const rows = (await callListViaMcp('list_tasks', {
 			project: projectId,
 			assignee_id: 'captain', // slug, not member UUID
 		})) as Array<{ id: string; assignee_id: string }>;
@@ -2192,13 +2220,13 @@ describe('MCP reference params accept the human identifier, not only the UUID', 
 				[task.id, JSON.stringify({ text: `c${i}` }), i],
 			);
 		}
-		const all = (await callToolViaMcp('list_comments', {
+		const all = (await callListViaMcp('list_comments', {
 			project: projectId,
 			task_id: task.id,
 		})) as Array<{ id: string; public_id: string }>;
 		expect(all.length).toBe(3);
 		const newest = all[0];
-		const older = (await callToolViaMcp('list_comments', {
+		const older = (await callListViaMcp('list_comments', {
 			project: projectId,
 			task_id: task.id,
 			before: newest.public_id, // cite by public_id, not the UUID

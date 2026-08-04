@@ -149,6 +149,57 @@ export async function appendRunLogChunks(
 }
 
 /**
+ * A forward window of a run's log: `maxChars` characters starting at
+ * `offsetChars`, plus its full length and the offset to resume from.
+ *
+ * The counterpart to `readRunLogTail`, and the only way to reach the START of a
+ * long log: a run that dies during setup, clone, or install puts its real error
+ * in the first few KB, which a tail read can never return. Offsets are in
+ * characters, matching this log's existing `excerpt_chars` vocabulary.
+ *
+ * Reads only the chunks overlapping the window. The running total is computed
+ * in SQL so the predicate can skip whole chunks, rather than aggregating the
+ * log (up to the 10 MB cap) and slicing it in JS.
+ */
+export async function readRunLogWindow(
+	q: Queryable,
+	runId: string,
+	offsetChars: number,
+	maxChars: number,
+): Promise<{ text: string; length: number; offset: number; nextOffset: number | null }> {
+	const total = await q.query<{ len: number }>(
+		`SELECT COALESCE(SUM(length(content))::int, 0) AS len
+		 FROM heartbeat_run_log_chunks WHERE run_id = $1`,
+		[runId],
+	);
+	const length = Number(total.rows[0]?.len ?? 0);
+	const start = Math.max(0, Math.min(offsetChars, length));
+	if (length === 0 || maxChars <= 0 || start >= length) {
+		return { text: '', length, offset: start, nextOffset: null };
+	}
+	const end = Math.min(start + maxChars, length);
+
+	const r = await q.query<{ content: string; start_pos: number }>(
+		`WITH c AS (
+		   SELECT seq, content, length(content) AS len,
+		          SUM(length(content)) OVER (ORDER BY seq) AS end_pos
+		   FROM heartbeat_run_log_chunks WHERE run_id = $1
+		 )
+		 SELECT content, (end_pos - len)::int AS start_pos
+		 FROM c
+		 WHERE end_pos > $2 AND (end_pos - len) < $3
+		 ORDER BY seq`,
+		[runId, start, end],
+	);
+	if (r.rows.length === 0) return { text: '', length, offset: start, nextOffset: null };
+
+	const first = r.rows[0];
+	const joined = r.rows.map((row) => row.content).join('');
+	const text = joined.slice(start - first.start_pos, end - first.start_pos);
+	return { text, length, offset: start, nextOffset: end < length ? end : null };
+}
+
+/**
  * The last `maxChars` characters of a run's log, plus its full length.
  *
  * Reads only the chunks it needs. Every caller that wants a tail — the

@@ -593,9 +593,9 @@ describe('MCP asset upload (POST /mcp/assets)', () => {
 
 		// Visible to the agent through the existing read tools.
 		const list = (await callToolViaMcp(agentToken, 'list_project_assets', {})) as {
-			files: Array<{ filename: string }>;
+			items: Array<{ filename: string }>;
 		};
-		expect(list.files.some((f) => f.filename === 'diagram.png')).toBe(true);
+		expect(list.items.some((f) => f.filename === 'diagram.png')).toBe(true);
 
 		const read = (await callToolViaMcp(agentToken, 'read_project_asset', {
 			filename: 'diagram.png',
@@ -1276,9 +1276,9 @@ describe('asset sort order (REST + MCP)', () => {
 
 	async function mcpList(args: Record<string, unknown>): Promise<string[]> {
 		const out = (await callToolViaMcp(sortAgentToken, 'list_project_assets', args)) as {
-			files: Array<{ filename: string }>;
+			items: Array<{ filename: string }>;
 		};
-		return out.files.map((f) => f.filename);
+		return out.items.map((f) => f.filename);
 	}
 
 	beforeAll(async () => {

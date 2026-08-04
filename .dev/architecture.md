@@ -448,11 +448,12 @@ list/header, in `list_project_docs` / `read_project_doc`, and — in place of th
 `title` column — in the `{{project_docs_context}}` run manifest; agents set it via
 `write_project_doc`, admins via the doc PUT, both threaded through `upsertDocument` with a
 `COALESCE` so an omitted value leaves the existing description untouched (a description-only
-edit records no revision). `read_project_doc` returns the body in UTF-8 byte windows
-sized under the MCP result cap (an `offset`/`max_bytes` request plus a `next_offset`
-cursor and `total_bytes`/`returned_bytes`/`truncated` flags), so an agent pages a doc of
-any size instead of hitting `result_too_large`; the window end is snapped to a codepoint
-boundary so a multi-byte character is never split. The `team_preferences`
+edit records no revision). `read_project_doc` returns the body in UTF-8 byte windows via
+the shared `windowContent` helper (see **MCP paging** below), so an agent pages a doc of
+any size instead of hitting `result_too_large`; `list_project_docs` reads through
+`listDocumentSummaries`, which returns each doc's `content_length` as a size hint rather
+than its body, so rendering a file listing no longer detoasts every doc in the project.
+The `team_preferences`
 document is the project's **Custom Prompt** — a per-team instruction block injected verbatim
 into every in-project agent's prompt via `{{team_preferences_context}}`; it is edited from the
 web **Settings → Custom Prompt** page (`PATCH /api/projects/:projectId/custom-prompt`) and, for

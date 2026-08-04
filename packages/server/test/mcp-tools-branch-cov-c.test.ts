@@ -359,17 +359,17 @@ describe('project assets', () => {
 
 	it('list_project_assets filters by archive state', async () => {
 		const all = (await admin('list_project_assets', { filter: 'all' })) as {
-			files: Array<{ filename: string; archived: boolean }>;
+			items: Array<{ filename: string; archived: boolean }>;
 		};
-		expect(all.files.map((f) => f.filename)).toContain('arch-src.txt');
+		expect(all.items.map((f) => f.filename)).toContain('arch-src.txt');
 		const active = (await admin('list_project_assets', {})) as {
-			files: Array<{ filename: string }>;
+			items: Array<{ filename: string }>;
 		};
-		expect(active.files.map((f) => f.filename)).not.toContain('arch-src.txt');
+		expect(active.items.map((f) => f.filename)).not.toContain('arch-src.txt');
 		const archivedOnly = (await admin('list_project_assets', { filter: 'archived' })) as {
-			files: Array<{ filename: string }>;
+			items: Array<{ filename: string }>;
 		};
-		expect(archivedOnly.files.map((f) => f.filename)).toContain('arch-src.txt');
+		expect(archivedOnly.items.map((f) => f.filename)).toContain('arch-src.txt');
 	});
 });
 
@@ -433,15 +433,15 @@ describe('skills', () => {
 		});
 		expect(updated.skill_id).toBe(created.skill_id);
 
-		const all = (await admin('list_skills', {})) as { skills: Array<{ slug: string }> };
-		expect(all.skills.map((s) => s.slug)).toContain('tagged-skill');
+		const all = (await admin('list_skills', {})) as { items: Array<{ slug: string }> };
+		expect(all.items.map((s) => s.slug)).toContain('tagged-skill');
 
 		const byTag = (await admin('list_skills', { tags: 'infra' })) as {
-			skills: Array<{ slug: string }>;
+			items: Array<{ slug: string }>;
 		};
-		expect(byTag.skills.map((s) => s.slug)).toContain('tagged-skill');
+		expect(byTag.items.map((s) => s.slug)).toContain('tagged-skill');
 		const noMatch = (await admin('list_skills', { tags: 'zzz' })) as { skills: unknown[] };
-		expect(noMatch.skills).toEqual([]);
+		expect(noMatch.items).toEqual([]);
 
 		const got = (await admin('get_skill', { slug: 'tagged-skill' })) as { content: string };
 		expect(got.content).toContain('Body two.');
@@ -534,11 +534,11 @@ describe('mcp connections', () => {
 	});
 
 	it('list_connectors derives oauth_status', async () => {
-		const r = (await admin('list_connectors', {})) as unknown as Array<{
-			name: string;
-			kind: string;
-			oauth_status: string;
-		}>;
+		const r = (
+			(await admin('list_connectors', {})) as unknown as {
+				items: Array<{ name: string; kind: string; oauth_status: string }>;
+			}
+		).items;
 		const local = r.find((c) => c.name === 'probe-local');
 		expect(local?.oauth_status).toBe('none');
 		const saas = r.find((c) => c.name === 'probe-saas');

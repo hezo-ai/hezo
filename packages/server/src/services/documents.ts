@@ -184,6 +184,56 @@ export async function listDocuments(
 	return result.rows;
 }
 
+/**
+ * A doc's metadata plus a size hint, with the body deliberately omitted.
+ *
+ * `content_length` is the size hint AGENTS.md asks a list route to send in
+ * place of an unbounded column: a listing shows how big each doc is, and
+ * `read_project_doc` serves the body (in byte windows) for the one the caller
+ * actually opens.
+ */
+export interface DocumentSummaryRow {
+	id: string;
+	slug: string;
+	title: string | null;
+	description: string | null;
+	archived_at: string | null;
+	created_at: string;
+	updated_at: string;
+	content_length: number;
+}
+
+/**
+ * List docs without their bodies.
+ *
+ * `listDocuments` selects `d.content` for every row, so using it to render a
+ * file listing detoasts and ships every doc in the project to display a set of
+ * filenames. This is the read for any surface that only needs metadata.
+ */
+export async function listDocumentSummaries(
+	db: Db,
+	options: ListDocumentsOptions,
+): Promise<DocumentSummaryRow[]> {
+	const params: unknown[] = [options.type, options.teamId];
+	let where = 'd.type = $1 AND d.team_id = $2';
+	if (options.projectId !== undefined) {
+		params.push(options.projectId);
+		where += ' AND d.project_id = $3';
+	}
+	if (!options.includeArchived) {
+		where += ' AND d.archived_at IS NULL';
+	}
+	const result = await db.query<DocumentSummaryRow>(
+		`SELECT d.id, d.slug, d.title, d.description, d.archived_at,
+		        d.created_at, d.updated_at, length(d.content)::int AS content_length
+		 FROM documents d
+		 WHERE ${where}
+		 ORDER BY COALESCE(NULLIF(d.title, ''), d.slug) ASC, d.id ASC`,
+		params,
+	);
+	return result.rows;
+}
+
 export interface UpsertDocumentInput {
 	scope: DocumentScope;
 	title?: string;
