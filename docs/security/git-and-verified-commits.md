@@ -12,10 +12,10 @@ agent's sandbox**, and so the commits your agents make land as **Verified** on G
 
 ## One key per project
 
-Each project has its **own [Ed25519](https://en.wikipedia.org/wiki/EdDSA) key**, used for
-two things: signing the project's git commits, and authenticating git transport over SSH.
-The private key is [encrypted at rest](/docs/security/master-key) and lives **on the
-host** - it is never written into the container where agent code runs.
+Each project has its **own [Ed25519](https://en.wikipedia.org/wiki/EdDSA) key**, used to
+sign the project's git commits. The private key is
+[encrypted at rest](/docs/security/master-key) and lives **on the host** - it is never
+written into the container where agent code runs.
 
 ## Connect GitHub once
 
@@ -23,9 +23,9 @@ To give a project access to GitHub, you connect a GitHub account once from the p
 **Connections** page using GitHub's **device flow**: Hezo shows you a short code, you
 enter it on GitHub, and you're done - there's no OAuth app to pre-register and no redirect
 URL to configure. On connect, the project's public key is **automatically registered** on
-your GitHub account as both a *signing* key (so commits show the Verified badge) and an
-*authentication* key (so SSH git operations work). Subsequent repositories reuse that
-connection.
+your GitHub account as a *signing* key, so commits show the Verified badge. Subsequent
+repositories reuse that connection, and the same connection is what authenticates clones,
+fetches and pushes.
 
 When you link or create a repository, Hezo records it right away and prepares the
 checkout **in the background** - starting the project's workspace and cloning the
@@ -75,12 +75,21 @@ Hezo to sign, but never sees the key. Because the project's key is registered as
 key on GitHub, those commits arrive **signed and marked Verified**, so you can trust at a
 glance that work attributed to your project genuinely came through your instance.
 
-## Clone, fetch, and push over SSH
+## Clone, fetch, and push over HTTPS
 
-Git transport runs over **SSH** (`git@github.com:owner/repo.git`), authenticated by the
-same per-project key. The container reaches it through a tightly-scoped, per-run bridge to
-the host - so an agent can clone, fetch, and push during its run without the key ever
-being present inside the sandbox.
+Git transport runs over **HTTPS** (`https://github.com/owner/repo.git`), authenticated by
+the token from the GitHub account you connected.
+
+**That token is never inside the container.** The remote carries a placeholder in place of
+the credential, and Hezo's egress proxy swaps in the real value as each request leaves the
+host - the same mechanism that protects every other secret an agent uses. A request that
+somehow avoided the proxy would carry the placeholder, which is not a valid credential, so
+it fails rather than leaking anything.
+
+HTTPS rather than SSH because it is the transport that works everywhere. A
+[remote container service](/docs/containers/remote/overview) may carry only HTTPS out of
+the sandbox - Daytona, for instance, blocks SSH on every port - and a transport that works
+on your laptop but not in production is worse than one that works in both.
 
 ## Committed work is never lost
 

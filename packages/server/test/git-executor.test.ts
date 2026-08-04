@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ContainerRunUser } from '../src/services/container-user';
-import { ContainerGitExecutor, GIT_SSH_COMMAND_VALUE } from '../src/services/git-executor';
+import { ContainerGitExecutor, GIT_HTTP_CONFIG_ARGS } from '../src/services/git-executor';
 import {
 	BRIDGE_RUNNER_BINARY,
 	type BridgeRunnerArgs,
@@ -112,19 +112,20 @@ describe('ContainerGitExecutor', () => {
 			scopeId: 'gitop-0000000000000000',
 		});
 
-		await exec.exec(['fetch', '--all', '--prune'], { cwd: '/workspace/repo', needsSsh: true });
+		await exec.exec(['fetch', '--all', '--prune'], { cwd: '/workspace/repo', needsNetwork: true });
 
 		expect(calls[0].Cmd[0]).toBe(BRIDGE_RUNNER_BINARY);
 		expect(calls[0].Cmd).toEqual([
 			...buildBridgeRunnerArgv(bridge),
 			'git',
+			...GIT_HTTP_CONFIG_ARGS,
 			'fetch',
 			'--all',
 			'--prune',
 		]);
 	});
 
-	it('does not wrap when needsSsh but no bridge is available', async () => {
+	it('does not wrap when needsNetwork but no bridge is available', async () => {
 		const { docker, calls } = recordingDocker();
 		const exec = new ContainerGitExecutor(docker, 'cid', {
 			baseEnv: [],
@@ -133,9 +134,9 @@ describe('ContainerGitExecutor', () => {
 			scopeId: 'gitop-0000000000000000',
 		});
 
-		await exec.exec(['fetch'], { cwd: '/workspace/repo', needsSsh: true });
+		await exec.exec(['fetch'], { cwd: '/workspace/repo', needsNetwork: true });
 
-		expect(calls[0].Cmd).toEqual(['git', 'fetch']);
+		expect(calls[0].Cmd).toEqual(['git', ...GIT_HTTP_CONFIG_ARGS, 'fetch']);
 	});
 
 	it('passes identity + SSH_AUTH_SOCK but never HEZO_PROMPT_FILE', async () => {
@@ -165,24 +166,41 @@ describe('ContainerGitExecutor', () => {
 			'GIT_CONFIG_VALUE_0=octocat',
 		]);
 
-		// A merge (the catch-up that can create a commit) runs without needsSsh, so it
-		// inherits the executor's baseEnv: prep defaults + the git identity.
+		// A merge (the catch-up that can create a commit) runs without needsNetwork,
+		// so it inherits the executor's baseEnv: prep defaults + the git identity.
 		await exec.exec(['merge', '--no-edit', 'origin/main'], { cwd: '/worktrees/T-1/repo' });
 
 		expect(calls[0].User).toBe('node');
 		expect(calls[0].Env).toContain('GIT_TERMINAL_PROMPT=0');
 		expect(calls[0].Env).toContain(`SSH_AUTH_SOCK=${bridge.socketPath}`);
-		expect(calls[0].Env).toContain(`GIT_SSH_COMMAND=${GIT_SSH_COMMAND_VALUE}`);
 		expect(calls[0].Env).toContain('GIT_CONFIG_COUNT=2');
 		expect(calls[0].Env).toContain('GIT_CONFIG_KEY_0=user.name');
 		expect(calls[0].Env).toContain('GIT_CONFIG_VALUE_0=octocat');
 	});
 
-	it('forPrep sets fail-fast SSH options so a stalled transport cannot hang forever', () => {
-		expect(GIT_SSH_COMMAND_VALUE).toContain('BatchMode=yes');
-		expect(GIT_SSH_COMMAND_VALUE).toContain('ConnectTimeout=15');
-		expect(GIT_SSH_COMMAND_VALUE).toContain('ServerAliveInterval=10');
-		expect(GIT_SSH_COMMAND_VALUE).toContain('ServerAliveCountMax=3');
+	it('carries git HTTP timeouts on a remote op, and nothing extra on a local one', async () => {
+		// A stalled transfer has to fail fast rather than hang on libcurl's defaults;
+		// a rev-parse has no transport to bound, so it stays a bare argv.
+		const { docker, calls } = recordingDocker();
+		const exec = ContainerGitExecutor.forPrep(docker, 'cid', null, runUser, 'scope-http');
+
+		await exec.exec(['fetch', 'origin'], { cwd: '/workspace/repo', needsNetwork: true });
+		expect(calls[0]?.Cmd.slice(0, 1 + GIT_HTTP_CONFIG_ARGS.length)).toEqual([
+			'git',
+			...GIT_HTTP_CONFIG_ARGS,
+		]);
+		expect(GIT_HTTP_CONFIG_ARGS.join(' ')).toContain('http.lowSpeedLimit');
+
+		await exec.exec(['rev-parse', 'HEAD'], { cwd: '/workspace/repo' });
+		expect(calls[1]?.Cmd).toEqual(['git', 'rev-parse', 'HEAD']);
+	});
+
+	it('no longer sets GIT_SSH_COMMAND - transport is HTTPS, ssh is for signing', async () => {
+		const { docker, calls } = recordingDocker();
+		const exec = ContainerGitExecutor.forPrep(docker, 'cid', null, runUser, 'scope-nossh');
+		await exec.exec(['status'], { cwd: '/workspace/repo' });
+		const env: string[] = calls[0]?.Env ?? [];
+		expect(env.some((e) => e.startsWith('GIT_SSH_COMMAND='))).toBe(false);
 	});
 
 	it('surfaces a non-zero exit code from execInspect', async () => {
@@ -217,7 +235,11 @@ describe('ContainerGitExecutor', () => {
 		const exec = ContainerGitExecutor.forPrep(docker, 'cid', bridge, runUser, 'run-scope-1');
 
 		await exec.exec(['status'], { cwd: '/w' });
-		await exec.exec(['fetch', '--prune', 'origin'], { cwd: '/w', needsSsh: true, timeout: 60_000 });
+		await exec.exec(['fetch', '--prune', 'origin'], {
+			cwd: '/w',
+			needsNetwork: true,
+			timeout: 60_000,
+		});
 
 		// Both plain and bridge-wrapped ops carry the marker, so an abandoned tree
 		// (git, ssh, socat, the bridge wrapper) is killable by env scan.
@@ -229,7 +251,11 @@ describe('ContainerGitExecutor', () => {
 		const { docker, calls } = recordingDocker();
 		const exec = ContainerGitExecutor.forPrep(docker, 'cid', bridge, runUser, 'run-scope-1');
 
-		await exec.exec(['fetch', '--prune', 'origin'], { cwd: '/w', needsSsh: true, timeout: 60_000 });
+		await exec.exec(['fetch', '--prune', 'origin'], {
+			cwd: '/w',
+			needsNetwork: true,
+			timeout: 60_000,
+		});
 		await exec.exec(['status'], { cwd: '/w', timeout: 30_000 });
 
 		// 60s op cap + 15s slack, so the host-side abort always fires first and the
@@ -244,7 +270,7 @@ describe('ContainerGitExecutor', () => {
 
 		const res = await exec.exec(['fetch', '--prune', 'origin'], {
 			cwd: '/workspace/repo',
-			needsSsh: true,
+			needsNetwork: true,
 			timeout: 50,
 		});
 
@@ -272,7 +298,7 @@ describe('ContainerGitExecutor', () => {
 
 		const p = exec.exec(['fetch', '--prune', 'origin'], {
 			cwd: '/workspace/repo',
-			needsSsh: true,
+			needsNetwork: true,
 			timeout: 60_000,
 		});
 		ac.abort();
@@ -288,7 +314,11 @@ describe('ContainerGitExecutor', () => {
 	it('does not fire the marker kill on success or on a docker transport error', async () => {
 		const ok = recordingDocker();
 		const okExec = ContainerGitExecutor.forPrep(ok.docker, 'cid', bridge, runUser, 'run-scope-1');
-		await okExec.exec(['fetch', '--prune', 'origin'], { cwd: '/w', needsSsh: true, timeout: 50 });
+		await okExec.exec(['fetch', '--prune', 'origin'], {
+			cwd: '/w',
+			needsNetwork: true,
+			timeout: 50,
+		});
 
 		// Transport error (daemon unreachable): the container is likely gone, so no
 		// kill is attempted — the startup sweep is the backstop.
@@ -300,7 +330,7 @@ describe('ContainerGitExecutor', () => {
 			runUser,
 			'run-scope-1',
 		);
-		await brokenExec.exec(['fetch', '--prune', 'origin'], { cwd: '/w', needsSsh: true });
+		await brokenExec.exec(['fetch', '--prune', 'origin'], { cwd: '/w', needsNetwork: true });
 
 		expect(ok.kills).toEqual([]);
 		expect(broken.kills).toEqual([]);

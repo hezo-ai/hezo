@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { RepoHostType } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
-	buildGitSshUrl,
+	buildGitRemoteUrl,
 	connectExistingRepo,
 	createWorktree,
 	ensureTaskWorktree,
@@ -67,15 +67,25 @@ class ScriptedExecutor implements GitExecutor {
 const ok = (stdout = ''): GitExecResult => ({ exitCode: 0, stdout, stderr: '' });
 const fail = (stderr = 'boom', exitCode = 1): GitExecResult => ({ exitCode, stdout: '', stderr });
 
-describe('buildGitSshUrl', () => {
-	it('builds a github SSH url', () => {
-		expect(buildGitSshUrl(RepoHostType.GitHub, 'acme/widgets')).toBe(
-			'git@github.com:acme/widgets.git',
+describe('buildGitRemoteUrl', () => {
+	it('builds an HTTPS url carrying the credential as a placeholder', () => {
+		// Never a value: the egress proxy substitutes it at request time, so the
+		// token exists nowhere the container can read (AGENTS.md red line).
+		expect(buildGitRemoteUrl(RepoHostType.GitHub, 'acme/widgets', 'OAUTH_GITHUB_ABC12345')).toBe(
+			'https://x-access-token:__HEZO_SECRET_OAUTH_GITHUB_ABC12345__@github.com/acme/widgets.git',
+		);
+	});
+
+	it('builds a plain HTTPS url when no connection is linked', () => {
+		// A public repo still clones; a private one fails upstream with git's own
+		// 403 rather than being refused here for a credential it may not need.
+		expect(buildGitRemoteUrl(RepoHostType.GitHub, 'acme/widgets', null)).toBe(
+			'https://github.com/acme/widgets.git',
 		);
 	});
 
 	it('throws on an unsupported host type', () => {
-		expect(() => buildGitSshUrl('gitlab' as RepoHostType, 'acme/widgets')).toThrow(
+		expect(() => buildGitRemoteUrl('gitlab' as RepoHostType, 'acme/widgets', null)).toThrow(
 			/Unsupported repo host type/,
 		);
 	});

@@ -175,7 +175,7 @@ describe('ensureProjectRepos', () => {
 		// was told to replace - which on a managed backend is what happened, while
 		// the action reported success.
 		await withRepo('owner/staleclone', async (targetDir, sync) => {
-			makeRepo(targetDir, 'git@github.com:owner/staleclone.git');
+			makeRepo(targetDir, 'https://github.com/owner/staleclone.git');
 			writeFileSync(join(targetDir, 'leftover.txt'), 'from the clone being replaced');
 
 			// Without the request this is a no-op: origin is already correct.
@@ -204,7 +204,7 @@ describe('ensureProjectRepos', () => {
 		// their admin files dangle, and a later worktree add for the same task would
 		// collide with the orphan.
 		await withRepo('owner/wtclone', async (targetDir, sync) => {
-			makeRepo(targetDir, 'git@github.com:owner/wtclone.git');
+			makeRepo(targetDir, 'https://github.com/owner/wtclone.git');
 			const worktreesRoot = join(dataDir, 'teams', teamId, 'projects', projectId, 'worktrees');
 			const taskWorktree = join(worktreesRoot, 'TASK-1', 'wtclone');
 			mkdirSync(taskWorktree, { recursive: true });
@@ -224,7 +224,7 @@ describe('ensureProjectRepos', () => {
 
 	it('skips a clone whose origin already points at the linked repo', async () => {
 		await withRepo('owner/preexisting', async (targetDir, sync) => {
-			makeRepo(targetDir, 'git@github.com:owner/preexisting.git');
+			makeRepo(targetDir, 'https://github.com/owner/preexisting.git');
 
 			const result = await sync(exec);
 			expect(result.skipped).toContain('preexisting');
@@ -261,20 +261,45 @@ describe('ensureProjectRepos', () => {
 			expect(result.skipped).not.toContain('stray');
 			expect(result.failed).toEqual([]);
 			// Origin now tracks the linked repo, and the agent's draft survived.
-			expect(rawOriginUrl(targetDir)).toBe('git@github.com:owner/stray.git');
+			expect(rawOriginUrl(targetDir)).toBe('https://github.com/owner/stray.git');
 			expect(readFileSync(join(targetDir, 'draft.md'), 'utf8')).toBe('agent draft\n');
 			expect(logs.some((l) => l.text.includes('Repairing owner/stray'))).toBe(true);
 		});
 	});
 
+	it('repoints a clone left on the retired SSH transport', async () => {
+		// How every pre-HTTPS clone migrates: no migration, nothing stored to
+		// change, just the next sync noticing that `origin` is not the URL Hezo
+		// would write. The permissive matcher this replaced accepted the scp form,
+		// so these clones kept "matching" and stayed on a transport that cannot
+		// reach GitHub from a managed sandbox at all.
+		await withRepo('owner/legacyssh', async (targetDir, sync) => {
+			makeRepo(targetDir, 'git@github.com:owner/legacyssh.git');
+
+			const result = await sync(exec);
+			expect(result.repaired).toContain('legacyssh');
+			expect(result.failed).toEqual([]);
+			expect(rawOriginUrl(targetDir)).toBe('https://github.com/owner/legacyssh.git');
+		});
+	});
+
+	it('leaves an HTTPS origin that already tracks the repo alone', async () => {
+		await withRepo('owner/alreadyhttps', async (targetDir, sync) => {
+			makeRepo(targetDir, 'https://github.com/owner/alreadyhttps.git');
+			const result = await sync(exec);
+			expect(result.skipped).toContain('alreadyhttps');
+			expect(result.repaired).toEqual([]);
+		});
+	});
+
 	it('repoints an origin configured at the wrong repo', async () => {
 		await withRepo('owner/repointed', async (targetDir, sync) => {
-			makeRepo(targetDir, 'git@github.com:someone/else.git');
+			makeRepo(targetDir, 'https://github.com/someone/else.git');
 
 			const result = await sync(exec);
 			expect(result.repaired).toContain('repointed');
 			expect(result.failed).toEqual([]);
-			expect(rawOriginUrl(targetDir)).toBe('git@github.com:owner/repointed.git');
+			expect(rawOriginUrl(targetDir)).toBe('https://github.com/owner/repointed.git');
 		});
 	});
 

@@ -12,12 +12,12 @@ import {
 	fetchRepo,
 	getOriginRemote,
 	getRemoteDefaultBranch,
+	isExpectedRemoteUrl,
 	isTransientMountError,
 	localGitLoc,
 	mergeDefaultIntoWorktree,
 	pruneWorktrees,
 	type RepoLoc,
-	remoteUrlMatchesRepo,
 	setOriginUrl,
 	type WorktreeLoc,
 } from '../src/services/git';
@@ -75,21 +75,21 @@ class RecordingExecutor implements GitExecutor {
 	files(containerPath: string) {
 		return hostSandboxFiles(containerPath);
 	}
-	calls: Array<{ args: string[]; needsSsh: boolean }> = [];
+	calls: Array<{ args: string[]; needsNetwork: boolean }> = [];
 	async exec(args: string[], opts: GitExecOpts): Promise<GitExecResult> {
-		this.calls.push({ args, needsSsh: !!opts.needsSsh });
+		this.calls.push({ args, needsNetwork: !!opts.needsNetwork });
 		return { exitCode: 0, stdout: '', stderr: '' };
 	}
 }
 
 describe('transport ops request SSH, local ops do not', () => {
-	it('marks clone + fetch as needsSsh and worktree add as not', async () => {
+	it('marks clone + fetch as needsNetwork and worktree add as not', async () => {
 		const rec = new RecordingExecutor();
-		await cloneRepo(rec, 'owner/repo', repoLoc('/w/repo'));
+		await cloneRepo(rec, 'owner/repo', repoLoc('/w/repo'), null);
 		await fetchRepo(rec, repoLoc('/w/repo'));
 		await createWorktree(rec, repoLoc('/w/repo'), wtLoc('/wt/repo'), 'b');
 
-		const need = (sub: string) => rec.calls.find((c) => c.args[0] === sub)?.needsSsh;
+		const need = (sub: string) => rec.calls.find((c) => c.args[0] === sub)?.needsNetwork;
 		expect(need('clone')).toBe(true);
 		expect(need('fetch')).toBe(true);
 		expect(need('worktree')).toBe(false);
@@ -581,25 +581,38 @@ describe('origin remote inspection and repair', () => {
 		GIT_CONFIG_SYSTEM: '/dev/null',
 	});
 
-	it('remoteUrlMatchesRepo accepts the URL forms that address the repo', () => {
+	it('isExpectedRemoteUrl accepts the HTTPS forms, credential or not', () => {
 		const id = 'hezo-ai/website';
-		expect(remoteUrlMatchesRepo('git@github.com:hezo-ai/website.git', id)).toBe(true);
-		expect(remoteUrlMatchesRepo('git@github.com:hezo-ai/website', id)).toBe(true);
-		expect(remoteUrlMatchesRepo('ssh://git@github.com/hezo-ai/website.git', id)).toBe(true);
-		expect(remoteUrlMatchesRepo('https://github.com/hezo-ai/website.git', id)).toBe(true);
-		expect(remoteUrlMatchesRepo('https://github.com/hezo-ai/website', id)).toBe(true);
-		expect(remoteUrlMatchesRepo('https://user@github.com/hezo-ai/website.git', id)).toBe(true);
-		expect(remoteUrlMatchesRepo('HTTPS://GitHub.com/Hezo-AI/Website.git', id)).toBe(true);
+		expect(isExpectedRemoteUrl('https://github.com/hezo-ai/website.git', id)).toBe(true);
+		expect(isExpectedRemoteUrl('https://github.com/hezo-ai/website', id)).toBe(true);
+		expect(isExpectedRemoteUrl('https://user@github.com/hezo-ai/website.git', id)).toBe(true);
+		expect(isExpectedRemoteUrl('HTTPS://GitHub.com/Hezo-AI/Website.git', id)).toBe(true);
+		// The form Hezo writes: a placeholder, never a value.
+		expect(
+			isExpectedRemoteUrl(
+				'https://x-access-token:__HEZO_SECRET_OAUTH_GITHUB_ABC12345__@github.com/hezo-ai/website.git',
+				id,
+			),
+		).toBe(true);
 	});
 
-	it('remoteUrlMatchesRepo rejects other repos and other hosts', () => {
+	it('isExpectedRemoteUrl rejects the SSH forms, which is what migrates a live clone', () => {
+		// A pre-HTTPS clone points at the right repo over a transport that no longer
+		// works on a managed backend. Treating it as a match is what left it stranded;
+		// rejecting it is what makes repo-sync rewrite origin on the next sync.
 		const id = 'hezo-ai/website';
-		expect(remoteUrlMatchesRepo('git@github.com:hezo-ai/hezo.git', id)).toBe(false);
-		expect(remoteUrlMatchesRepo('git@github.com:other/website.git', id)).toBe(false);
-		expect(remoteUrlMatchesRepo('git@github.com:prefix-hezo-ai/website.git', id)).toBe(false);
-		expect(remoteUrlMatchesRepo('git@gitlab.com:hezo-ai/website.git', id)).toBe(false);
-		expect(remoteUrlMatchesRepo('https://github.com/hezo-ai/website/extra', id)).toBe(false);
-		expect(remoteUrlMatchesRepo('', id)).toBe(false);
+		expect(isExpectedRemoteUrl('git@github.com:hezo-ai/website.git', id)).toBe(false);
+		expect(isExpectedRemoteUrl('ssh://git@github.com/hezo-ai/website.git', id)).toBe(false);
+	});
+
+	it('isExpectedRemoteUrl rejects other repos and other hosts', () => {
+		const id = 'hezo-ai/website';
+		expect(isExpectedRemoteUrl('https://github.com/hezo-ai/hezo.git', id)).toBe(false);
+		expect(isExpectedRemoteUrl('https://github.com/other/website.git', id)).toBe(false);
+		expect(isExpectedRemoteUrl('https://github.com/prefix-hezo-ai/website.git', id)).toBe(false);
+		expect(isExpectedRemoteUrl('https://gitlab.com/hezo-ai/website.git', id)).toBe(false);
+		expect(isExpectedRemoteUrl('https://github.com/hezo-ai/website/extra', id)).toBe(false);
+		expect(isExpectedRemoteUrl('', id)).toBe(false);
 	});
 
 	it('getOriginRemote reads a configured origin and repairs via setOriginUrl', async () => {

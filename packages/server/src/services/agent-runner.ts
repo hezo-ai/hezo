@@ -92,7 +92,7 @@ import {
 	type WorktreeLoc,
 	worktreeHasChanges,
 } from './git';
-import { ContainerGitExecutor, GIT_SSH_COMMAND_VALUE, type GitExecutor } from './git-executor';
+import { ContainerGitExecutor, type GitExecutor } from './git-executor';
 import { buildGitIdentityEnv } from './git-identity';
 import type { LogStreamBroker } from './log-stream-broker';
 import {
@@ -661,10 +661,11 @@ export async function buildRuntimeInvocation(
 		...(subscriptionMount?.envEntries ?? (homeMount ? [homeMount.envEntry] : [])),
 		...mcpInjection.envEntries,
 	];
+	// The agent socket is for commit *signing* (`ssh-keygen -Y sign`), which is
+	// local. Git transport is HTTPS and needs no ssh at all, so there is no
+	// `GIT_SSH_COMMAND` to set alongside it any more.
 	if (sshSocketContainerPath) {
 		env.push(`SSH_AUTH_SOCK=${sshSocketContainerPath}`);
-		// Fail fast on a stalled git transport instead of hanging on OS TCP defaults.
-		env.push(`GIT_SSH_COMMAND=${GIT_SSH_COMMAND_VALUE}`);
 	}
 	// Configure git author/committer identity and SSH commit signing from the
 	// team's connected GitHub account + Ed25519 key, so in-container commits

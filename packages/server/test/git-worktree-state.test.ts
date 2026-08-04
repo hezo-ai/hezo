@@ -103,6 +103,7 @@ describe('initRepoInPlace (SSH transport)', () => {
 			failSshExec,
 			'nonexistent-org-hezo/nonexistent-repo',
 			repoLoc(dir),
+			null,
 		);
 		expect(result.success).toBe(false);
 		expect(typeof result.error).toBe('string');

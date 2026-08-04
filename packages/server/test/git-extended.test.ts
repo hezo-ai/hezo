@@ -19,7 +19,7 @@ afterAll(() => {
 
 describe('cloneRepo', { timeout: 30_000 }, () => {
 	it('returns { success: false, error } when the transport is unreachable', async () => {
-		const result = await cloneRepo(exec, MISSING, loc(join(testDir, 'clone-fail')));
+		const result = await cloneRepo(exec, MISSING, loc(join(testDir, 'clone-fail')), null);
 
 		expect(result.success).toBe(false);
 		expect(typeof result.error).toBe('string');
@@ -28,13 +28,13 @@ describe('cloneRepo', { timeout: 30_000 }, () => {
 
 	it('does not throw on clone failure', async () => {
 		await expect(
-			cloneRepo(exec, MISSING, loc(join(testDir, 'clone-no-throw'))),
+			cloneRepo(exec, MISSING, loc(join(testDir, 'clone-no-throw')), null),
 		).resolves.not.toThrow();
 	});
 
 	it('does not leave a usable clone on failure', async () => {
 		const targetDir = join(testDir, 'clone-no-dir');
-		const result = await cloneRepo(exec, MISSING, loc(targetDir));
+		const result = await cloneRepo(exec, MISSING, loc(targetDir), null);
 
 		expect(result.success).toBe(false);
 		expect(existsSync(join(targetDir, '.git'))).toBe(false);

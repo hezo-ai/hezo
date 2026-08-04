@@ -215,7 +215,10 @@ export function substituteRequest(
 			}
 			headersOut[name] = replaced;
 		} else {
-			const out = applyToString(raw, secrets, secretsUsed, checkAccess);
+			const out =
+				name.toLowerCase() === 'authorization'
+					? applyToAuthorization(raw, secrets, secretsUsed, checkAccess)
+					: applyToString(raw, secrets, secretsUsed, checkAccess);
 			if (out.failure) failure ??= out.failure;
 			if (out.changed) headersChanged = true;
 			headersOut[name] = out.value;
@@ -277,6 +280,57 @@ function applyToString(
 		return secret.value;
 	});
 	return { value: result, changed: result !== input, failure };
+}
+
+/**
+ * An `Authorization` header, substituting **inside** a `Basic` credential.
+ *
+ * A placeholder does not always reach the wire as text. Git turns the credential
+ * in an HTTPS remote into a base64 Basic header - measured:
+ * `https://x-access-token:__HEZO_SECRET_GITHUB_TOKEN__@github.com/…` arrives as
+ * `Basic eC1hY2Nlc3MtdG9rZW46X19IRVpPX1NFQ1JFVF9HSVRIVUJfVE9LRU5fXw==`. A
+ * literal scan finds nothing there, so every clone, fetch and push would ship the
+ * unsubstituted placeholder as its password and be refused by GitHub.
+ *
+ * Decode, substitute, re-encode. Deliberately generic rather than git-shaped:
+ * any API taking a credential through Basic auth gets the same treatment, and
+ * nothing here knows what a git remote is.
+ *
+ * The security properties are unchanged, because this only reaches
+ * {@link applyToString}: the same per-secret `allowed_hosts` gate, the same
+ * `secretsUsed` accounting, the same failure kinds. A value that is not Basic, or
+ * not valid base64, or carries no placeholder, is passed to the ordinary
+ * literal path so a bearer token or a hand-written header behaves exactly as
+ * before.
+ */
+function applyToAuthorization(
+	raw: string,
+	secrets: Map<string, ResolvedSecret>,
+	secretsUsed: Set<string>,
+	checkAccess: (name: string) => SubstitutionFailure | null,
+): ApplyResult {
+	const match = /^(\s*Basic\s+)([A-Za-z0-9+/=]+)\s*$/i.exec(raw);
+	if (!match) return applyToString(raw, secrets, secretsUsed, checkAccess);
+
+	let decoded: string;
+	try {
+		decoded = Buffer.from(match[2], 'base64').toString('utf8');
+	} catch {
+		return applyToString(raw, secrets, secretsUsed, checkAccess);
+	}
+	// Re-encoding a value that round-trips differently would corrupt a credential
+	// that never carried a placeholder in the first place.
+	if (!PLACEHOLDER_PROBE_REGEX.test(decoded)) {
+		return applyToString(raw, secrets, secretsUsed, checkAccess);
+	}
+
+	const out = applyToString(decoded, secrets, secretsUsed, checkAccess);
+	if (!out.changed) return { value: raw, changed: false, failure: out.failure };
+	return {
+		value: `${match[1]}${Buffer.from(out.value, 'utf8').toString('base64')}`,
+		changed: true,
+		failure: out.failure,
+	};
 }
 
 /**

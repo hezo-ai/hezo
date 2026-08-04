@@ -4,12 +4,12 @@ import { RepoHostType, repoNameFromIdentifier } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { logger } from '../logger';
 import {
-	buildGitSshUrl,
+	buildGitRemoteUrl,
 	cloneRepo,
 	getOriginRemote,
 	initRepoInPlace,
+	isExpectedRemoteUrl,
 	type RepoLoc,
-	remoteUrlMatchesRepo,
 	setOriginUrl,
 } from './git';
 import type { GitExecutor } from './git-executor';
@@ -111,9 +111,16 @@ export async function ensureProjectRepos(
 ): Promise<RepoSyncResult> {
 	const result: RepoSyncResult = { cloned: [], repaired: [], skipped: [], failed: [] };
 
+	// The connection's vault secret *name* - never its value. It goes into the
+	// remote URL as a placeholder for the egress proxy to substitute at request
+	// time. LEFT JOINed because a repo can legitimately have no connection yet; a
+	// public one still clones, and a private one fails with git's own 403.
 	const repos = await db.query<RepoRow>(
-		`SELECT repo_identifier FROM repos
-		 WHERE project_id = $1 ORDER BY created_at ASC`,
+		`SELECT r.repo_identifier, s.name AS token_secret_name
+		   FROM repos r
+		   LEFT JOIN oauth_connections oc ON oc.id = r.oauth_connection_id
+		   LEFT JOIN secrets s ON s.id = oc.access_token_secret_id
+		  WHERE r.project_id = $1 ORDER BY r.created_at ASC`,
 		[project.id],
 	);
 
@@ -152,7 +159,11 @@ export async function ensureProjectRepos(
 				pending.push({ repo: r, mode: 'adopt', loc });
 			} else if (
 				origin.status === 'configured' &&
-				!remoteUrlMatchesRepo(origin.url, r.repo_identifier)
+				// Covers both "points at the wrong repo" and "points at the right one
+				// over the retired SSH transport". The second is why this is the
+				// strict check: a permissive matcher accepts `git@host:owner/repo`,
+				// so every pre-HTTPS clone would keep matching and never be rewritten.
+				!isExpectedRemoteUrl(origin.url, r.repo_identifier)
 			) {
 				pending.push({ repo: r, mode: 'repoint', loc, badOrigin: origin.url });
 			} else {
@@ -193,16 +204,16 @@ export async function ensureProjectRepos(
 		let res: { success: boolean; error?: string };
 		switch (mode) {
 			case 'clone':
-				res = await cloneRepo(executor, r.repo_identifier, loc);
+				res = await cloneRepo(executor, r.repo_identifier, loc, r.token_secret_name);
 				break;
 			case 'init':
 			case 'adopt':
-				res = await initRepoInPlace(executor, r.repo_identifier, loc);
+				res = await initRepoInPlace(executor, r.repo_identifier, loc, r.token_secret_name);
 				break;
 			case 'repoint':
 				res = await setOriginUrl(
 					executor,
-					buildGitSshUrl(RepoHostType.GitHub, r.repo_identifier),
+					buildGitRemoteUrl(RepoHostType.GitHub, r.repo_identifier, r.token_secret_name),
 					loc,
 				);
 				break;
@@ -223,6 +234,8 @@ export async function ensureProjectRepos(
 
 interface RepoRow {
 	repo_identifier: string;
+	/** Vault name of the linked connection's access token, or null when unlinked. */
+	token_secret_name: string | null;
 }
 
 /**

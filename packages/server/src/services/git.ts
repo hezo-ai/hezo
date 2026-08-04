@@ -1,5 +1,6 @@
 import { dirname } from 'node:path';
 import { RepoHostType } from '@hezo/shared';
+import { credentialPlaceholder } from '../lib/credential-placeholder';
 import type { GitExecutor } from './git-executor';
 import { hostSandboxFiles, type SandboxFiles } from './sandbox/files';
 
@@ -45,14 +46,46 @@ function formatGitError(stderr: string): string {
 	return stderr.trim();
 }
 
-const SSH_HOSTS: Record<RepoHostType, string> = {
+const REMOTE_HOSTS: Record<RepoHostType, string> = {
 	[RepoHostType.GitHub]: 'github.com',
 };
 
-export function buildGitSshUrl(hostType: RepoHostType, repoIdentifier: string): string {
-	const host = SSH_HOSTS[hostType];
+/**
+ * The remote URL every git op uses: **HTTPS, on every backend.**
+ *
+ * It was `git@github.com:owner/repo.git` over SSH, which cannot work on a
+ * managed sandbox service. Measured on Daytona: port 22 is dropped, and
+ * `ssh.github.com:443` - GitHub's own endpoint for firewalled networks - accepts
+ * the connection and is then reset the moment the payload turns out not to be
+ * TLS (`kex_exchange_identification: read: Connection reset by peer`, 20/20).
+ * Neither of the provider's own network settings lifts it: a domain allowlist
+ * matches on TLS SNI, which SSH has none of, and naming GitHub's own CIDRs still
+ * left both ports dead. HTTPS to the same repos worked in the same sandbox.
+ *
+ * One transport on every backend rather than HTTPS-there-SSH-here: a per-backend
+ * branch means local dev and CI exercise a path production does not, which is the
+ * failure the container seam exists to prevent.
+ *
+ * The credential is a **placeholder**, never a value - the egress proxy
+ * substitutes `__HEZO_SECRET_<NAME>__` at request time (AGENTS.md red line).
+ * Git base64s it into an `Authorization: Basic` header, which is why the proxy's
+ * substitution decodes that header rather than only scanning literals.
+ *
+ * A repo with no linked connection gets the plain URL: a public repo still
+ * clones, and a private one fails upstream with git's own 403 rather than being
+ * refused here for a credential it may not need.
+ */
+export function buildGitRemoteUrl(
+	hostType: RepoHostType,
+	repoIdentifier: string,
+	tokenSecretName: string | null,
+): string {
+	const host = REMOTE_HOSTS[hostType];
 	if (!host) throw new Error(`Unsupported repo host type: ${hostType}`);
-	return `git@${host}:${repoIdentifier}.git`;
+	if (!tokenSecretName) return `https://${host}/${repoIdentifier}.git`;
+	// `x-access-token` is GitHub's documented username for a token-as-password
+	// Basic credential; the token itself is the password half.
+	return `https://x-access-token:${credentialPlaceholder(tokenSecretName)}@${host}/${repoIdentifier}.git`;
 }
 
 function escapeRegExp(s: string): string {
@@ -60,25 +93,32 @@ function escapeRegExp(s: string): string {
 }
 
 /**
- * Whether a configured remote URL points at the given repo (`owner/repo`) on the
- * given host. Accepts the scp-style SSH form Hezo writes plus the `ssh://` and
- * `http(s)://` forms a human may have configured by hand — a different repo or a
- * different host is a mismatch.
+ * Whether a clone's `origin` is a remote Hezo is willing to leave alone: HTTPS,
+ * on the right host, naming the right repo.
+ *
+ * **This deliberately rejects the SSH forms**, and that is the whole point.
+ * It replaced a permissive matcher that accepted `git@host:owner/repo.git` and
+ * `ssh://` alongside HTTPS, on the reasoning that a human may have configured one
+ * by hand and it is not wrong about *which* repo. True, but `repo-sync` asks this
+ * question to decide whether to rewrite `origin` - so every clone made before the
+ * move to HTTPS kept "matching" and was left on a transport that no longer works
+ * on a managed backend. Rejecting them is what migrates a live clone, on its next
+ * sync, with no migration and nothing stored to change.
+ *
+ * A credential in the URL is ignored, so a rotated secret name does not churn
+ * every clone: git substitutes it at request time either way. A plain
+ * `https://host/owner/repo.git` a human configured is therefore also left alone.
  */
-export function remoteUrlMatchesRepo(
+export function isExpectedRemoteUrl(
 	url: string,
 	repoIdentifier: string,
 	hostType: RepoHostType = RepoHostType.GitHub,
 ): boolean {
-	const host = SSH_HOSTS[hostType];
+	const host = REMOTE_HOSTS[hostType];
 	if (!host) return false;
 	const h = escapeRegExp(host);
 	const id = escapeRegExp(repoIdentifier);
-	const forms = new RegExp(
-		`^(?:git@${h}:|ssh://git@${h}(?::\\d+)?/|https?://(?:[^/@]+@)?${h}/)${id}(?:\\.git)?/?$`,
-		'i',
-	);
-	return forms.test(url.trim());
+	return new RegExp(`^https://(?:[^/@]+@)?${h}/${id}(?:\\.git)?/?$`, 'i').test(url.trim());
 }
 
 export type OriginRemote =
@@ -134,12 +174,13 @@ export async function cloneRepo(
 	executor: GitExecutor,
 	repoIdentifier: string,
 	target: RepoLoc,
+	tokenSecretName: string | null,
 	hostType: RepoHostType = RepoHostType.GitHub,
 ): Promise<{ success: boolean; error?: string }> {
-	const url = buildGitSshUrl(hostType, repoIdentifier);
+	const url = buildGitRemoteUrl(hostType, repoIdentifier, tokenSecretName);
 	const { exitCode, stderr } = await executor.exec(['clone', url, target.containerPath], {
 		cwd: dirname(target.containerPath),
-		needsSsh: true,
+		needsNetwork: true,
 		timeout: 120_000,
 	});
 	if (exitCode !== 0) return { success: false, error: formatGitError(stderr) };
@@ -155,14 +196,14 @@ export async function cloneRepo(
  * abort rather than clobber either side); when the remote is empty the existing
  * files are kept as the working tree to become the repo's initial content on the
  * first commit/push. A `.git` created here is removed on failure so the
- * directory stays eligible for a clean retry. `needsSsh` gates the network ops
+ * directory stays eligible for a clean retry. `needsNetwork` gates the network ops
  * (false for the `file://` repos used in tests).
  */
 export async function connectExistingRepo(
 	executor: GitExecutor,
 	url: string,
 	target: RepoLoc,
-	needsSsh: boolean,
+	needsNetwork: boolean,
 ): Promise<{ success: boolean; error?: string }> {
 	const cwd = target.containerPath;
 	const hadGit = await target.files.exists('.git');
@@ -188,13 +229,13 @@ export async function connectExistingRepo(
 	// A remote with no refs has no commits yet — keep the existing files as the
 	// initial working tree. `ls-remote --symref HEAD` can print a symref line even
 	// for an unborn HEAD, so emptiness is judged by the full ref listing.
-	const refs = await executor.exec(['ls-remote', 'origin'], { cwd, needsSsh, timeout: 60_000 });
+	const refs = await executor.exec(['ls-remote', 'origin'], { cwd, needsNetwork, timeout: 60_000 });
 	if (refs.exitCode !== 0) return fail(formatGitError(refs.stderr));
 
 	if (refs.stdout.trim().length > 0) {
 		const head = await executor.exec(['ls-remote', '--symref', 'origin', 'HEAD'], {
 			cwd,
-			needsSsh,
+			needsNetwork,
 			timeout: 60_000,
 		});
 		if (head.exitCode !== 0) return fail(formatGitError(head.stderr));
@@ -203,7 +244,7 @@ export async function connectExistingRepo(
 
 		const fetch = await executor.exec(['fetch', 'origin', branch], {
 			cwd,
-			needsSsh,
+			needsNetwork,
 			timeout: 120_000,
 		});
 		if (fetch.exitCode !== 0) return fail(formatGitError(fetch.stderr));
@@ -227,9 +268,15 @@ export async function initRepoInPlace(
 	executor: GitExecutor,
 	repoIdentifier: string,
 	target: RepoLoc,
+	tokenSecretName: string | null,
 	hostType: RepoHostType = RepoHostType.GitHub,
 ): Promise<{ success: boolean; error?: string }> {
-	return connectExistingRepo(executor, buildGitSshUrl(hostType, repoIdentifier), target, true);
+	return connectExistingRepo(
+		executor,
+		buildGitRemoteUrl(hostType, repoIdentifier, tokenSecretName),
+		target,
+		true,
+	);
 }
 
 /** The minimal README seeded as an empty repo's initial commit — just the repo name. */
@@ -251,28 +298,28 @@ export function initialReadmeContent(repoIdentifier: string): string {
  *
  * The commit is deliberately unsigned (`-c commit.gpgsign=false`): SSH commit
  * signing runs `ssh-keygen -Y sign` against `SSH_AUTH_SOCK`, which is only live for
- * bridged (`needsSsh`) ops — a signed local `git commit` here would fail. The push
+ * bridged (`needsNetwork`) ops — a signed local `git commit` here would fail. The push
  * still runs bridged, so it authenticates as the project over the run's SSH bridge.
  * The caller must supply a git identity on the executor env (the prep executor does).
  *
  * A pre-populated working tree (a directory adopted in place) is preserved: the
  * README is only written when absent, and `add -A` folds any existing files into the
  * same initial commit — matching {@link connectExistingRepo}'s "existing files become
- * the initial content" contract. `needsSsh` gates the network ops (false for the
+ * the initial content" contract. `needsNetwork` gates the network ops (false for the
  * `file://` remotes used in tests).
  */
 export async function seedInitialCommitIfEmpty(
 	executor: GitExecutor,
 	repoIdentifier: string,
 	repo: RepoLoc,
-	needsSsh: boolean,
+	needsNetwork: boolean,
 ): Promise<{ seeded: boolean; error?: string }> {
 	const cwd = repo.containerPath;
 
 	// Emptiness is judged by the full remote ref listing: `ls-remote --symref HEAD`
 	// can print a symref line even for an unborn HEAD (see connectExistingRepo), so a
 	// bare `ls-remote` is the authoritative "has any commit" probe.
-	const refs = await executor.exec(['ls-remote', 'origin'], { cwd, needsSsh, timeout: 60_000 });
+	const refs = await executor.exec(['ls-remote', 'origin'], { cwd, needsNetwork, timeout: 60_000 });
 	if (refs.exitCode !== 0) return { seeded: false, error: formatGitError(refs.stderr) };
 	if (refs.stdout.trim().length > 0) return { seeded: false };
 
@@ -315,7 +362,7 @@ export async function seedInitialCommitIfEmpty(
 
 	const push = await executor.exec(['push', '-u', 'origin', 'HEAD:main'], {
 		cwd,
-		needsSsh,
+		needsNetwork,
 		timeout: 120_000,
 	});
 	if (push.exitCode !== 0) return { seeded: false, error: formatGitError(push.stderr) };
@@ -333,7 +380,7 @@ export async function fetchRepo(
 	// that state fail loudly instead.
 	const { exitCode, stderr } = await executor.exec(['fetch', '--prune', 'origin'], {
 		cwd: repo.containerPath,
-		needsSsh: true,
+		needsNetwork: true,
 		timeout: 60_000,
 	});
 	if (exitCode !== 0) return { success: false, error: formatGitError(stderr) };

@@ -32,12 +32,7 @@ import {
 } from './container-user';
 import type { ContainerEngine } from './docker';
 import { ensureImage } from './ensure-image';
-import {
-	CONTAINER_SSH_CONFIG,
-	CONTAINER_SSH_CONFIG_PATH,
-	ContainerGitExecutor,
-	mintGitOpScopeId,
-} from './git-executor';
+import { ContainerGitExecutor, mintGitOpScopeId } from './git-executor';
 import { resolveAgentBaseImage } from './image-registry';
 import type { LogStreamBroker } from './log-stream-broker';
 import { ensureProjectRepos } from './repo-sync';
@@ -134,19 +129,6 @@ export interface ContainerDeps {
  * `NODE_EXTRA_CA_CERTS` names the full path while the write names the parts.
  */
 export const CONTAINER_CA_PATH = '/usr/local/share/ca-certificates/hezo-egress.crt';
-/**
- * The ssh config's directory and filename, split from the one path constant so
- * the two halves cannot disagree - `SandboxFiles` is rooted at a directory and
- * writes a relative name, while `GIT_SSH_COMMAND` names the absolute file.
- */
-export const CONTAINER_SSH_CONFIG_DIR = CONTAINER_SSH_CONFIG_PATH.slice(
-	0,
-	CONTAINER_SSH_CONFIG_PATH.lastIndexOf('/'),
-);
-export const CONTAINER_SSH_CONFIG_FILENAME = CONTAINER_SSH_CONFIG_PATH.slice(
-	CONTAINER_SSH_CONFIG_PATH.lastIndexOf('/') + 1,
-);
-
 export const CONTAINER_CA_DIR = CONTAINER_CA_PATH.slice(0, CONTAINER_CA_PATH.lastIndexOf('/'));
 export const CONTAINER_CA_FILENAME = CONTAINER_CA_PATH.slice(
 	CONTAINER_CA_PATH.lastIndexOf('/') + 1,
@@ -605,22 +587,6 @@ export async function provisionContainer(
 
 		if (deps.containerLogStreamer && deps.logs) {
 			deps.containerLogStreamer.subscribe(project.id, Id, deps.logs, docker);
-		}
-
-		// Through the file seam like the CA below, and for the same reason: it has
-		// to land on a container that is not on this machine. Unconditional - a
-		// container reaches its git remote on every backend, and a config only
-		// written where 22 is known to be blocked would leave the failure to be
-		// rediscovered on the next provider.
-		try {
-			await docker
-				.files(Id, CONTAINER_SSH_CONFIG_DIR)
-				.write(CONTAINER_SSH_CONFIG_FILENAME, CONTAINER_SSH_CONFIG, { mode: 0o644 });
-		} catch (e) {
-			// Loud, not fatal: everything that is not git still works, and the
-			// alternative is a clone timing out on port 22 with nothing connecting it
-			// to a file that failed to be written minutes earlier.
-			emit('stderr', `⚠ writing the git ssh config failed: ${(e as Error).message}`);
 		}
 
 		if (deps.egressCAPath) {

@@ -2069,14 +2069,28 @@ imports no `node:fs` at all now, which is what stops the assumption returning. T
 deliberate exception is `removeRepoFromWorkspace`/`removeTaskWorktrees`, which still reclaim
 host disk only - that leaves a managed backend's copy in place, which costs disk rather than
 correctness, and the disk-ceiling rung already recycles a container that fills up.
-SSH-transport ops (clone /
-fetch) are wrapped with the per-run SSH bridge (`hezo-run-with-bridge`) so `git@github.com:`
-authenticates through the host ssh-agent; the container's baked-in `/etc/ssh/ssh_known_hosts`
-verifies the host key. Cloning outside a run (container provision, repo link) uses a
-short-lived `withProvisionBridge`. **Git-over-SSH fails fast.** Every git exec sets a
-`GIT_SSH_COMMAND` carrying `ConnectTimeout` + `ServerAliveInterval`/`ServerAliveCountMax` +
-`BatchMode`, so a stalled or black-holed `git@github.com` connection dies in ~45s rather than
-hanging on OS TCP defaults; each exec also carries a per-op timeout (fetch 60s, clone 120s)
+**Git transport is HTTPS, on every backend** (`buildGitRemoteUrl`):
+`https://x-access-token:__HEZO_SECRET_<NAME>__@github.com/owner/repo.git`, where the
+credential is the GitHub connection's access-token secret as a **placeholder** the egress
+proxy substitutes at request time — so the red line holds and nothing decrypts a token into
+a run. It was SSH (`git@github.com:owner/repo.git`, later pinned to `ssh.github.com:443`),
+which cannot work on a managed sandbox at all: measured on Daytona, port 22 is dropped and
+443 admits the connection then resets it once the payload is not TLS
+(`kex_exchange_identification`, 20/20), and neither `domainAllowList` (matches TLS SNI,
+which SSH lacks) nor `networkAllowList` (GitHub's own CIDRs) lifts it. One transport
+everywhere rather than a per-backend branch, so dev and CI exercise what production runs.
+
+Git base64s a URL credential into `Authorization: Basic`, so `substituteRequest` decodes
+that header, substitutes inside and re-encodes (`applyToAuthorization`) — a literal scan
+finds nothing there, and every clone would otherwise ship the raw placeholder as its
+password. `codeload.github.com` is in the GitHub capability's `allowedHosts` because it
+serves the packfiles; without it the ref advertisement succeeds and the transfer is refused.
+
+Remote ops (`needsNetwork`, formerly `needsSsh`) carry git's own HTTP timeouts
+(`http.lowSpeedLimit`/`lowSpeedTime`) and still run under `hezo-run-with-bridge`, which is
+what scopes the process tree for the marker kill. Cloning outside a run (container provision,
+repo link) uses a short-lived `withProvisionBridge`. Each exec also carries a per-op timeout
+(fetch 60s, clone 120s)
 and, for prep, the run's own abort signal — both abort the `docker exec` stream, so a hung
 transport can no longer block the run (or the per-project git lock) until it is killed by
 hand. The abort actually tears the exec down because the streaming Docker transport removes
@@ -2879,10 +2893,11 @@ timeout plus slack for bridge-wrapped ops), the wrapper runs the command under `
 so the tree self-destructs even if the server process died mid-op; the env is ignored by
 older images and absent for the agent CLI run, keeping every old/new image × server
 combination compatible. The container sees a normal `SSH_AUTH_SOCK` Unix socket and is
-unaware of the relay. The same socket serves both commit signing and `git@github.com:`
-clone/fetch/push — including the per-commit auto-push fired by the durability `post-commit`
-hook (§ Agent runtime, Commit durability), which is why that hook keys off a live
-`SSH_AUTH_SOCK`.
+unaware of the relay. The socket now serves **commit signing only** — git transport moved to
+HTTPS and authenticates with a proxy-substituted token, so no `GIT_SSH_COMMAND` is set and no
+ssh config is written into the container. The durability `post-commit` hook still keys off a
+live `SSH_AUTH_SOCK` (§ Agent runtime, Commit durability): it gates on the socket because a
+commit it could not sign is one it should not push, not because the push needs ssh.
 Repo/worktree prep wraps individual git commands with the same `hezo-run-with-bridge` runner;
 cloning outside a run (provision, repo link) allocates a short-lived bridge via
 `withProvisionBridge`, whose per-op `provision-<hex>` id doubles as the exec scope marker
@@ -2891,8 +2906,10 @@ cloning outside a run (provision, repo link) allocates a short-lived bridge via
 **Verified-on-GitHub bootstrap.** On every successful GitHub OAuth connect the project's
 public key is auto-registered on the connecting user's account as **both** a signing key
 (`POST /user/ssh_signing_keys` — drives `Verified` badges) and an authentication key
-(`POST /user/keys` — so SSH git works). Registration is idempotent (GitHub 422 "already
-in use" → no-op). Commit *authorship* comes from the project's own GitHub connection (its
+(`POST /user/keys`). The authentication key is now vestigial for Hezo's own transport, which
+is HTTPS; it is still registered because it costs one idempotent call and an operator may
+well use the same key by hand. Registration is idempotent (GitHub 422 "already in use" →
+no-op). Commit *authorship* comes from the project's own GitHub connection (its
 `project_id`-scoped `oauth_connections` row, or a global one as fallback); *signing* uses
 the project's (team's) own key.
 
