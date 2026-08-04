@@ -932,10 +932,30 @@ export class DaytonaClient implements DaytonaApi {
 	 */
 	async openPty(sandbox: DaytonaSandbox, sessionId: string, launch: string): Promise<DaytonaPty> {
 		const base = await this.toolboxBase(sandbox);
-		await this.send('POST', `${base}/process/pty`, {
+		// The only `send` whose response may not be discarded. Connecting the socket
+		// to a session that was never created does not fail here - it fails as a
+		// socket that closes on its own a moment later, which the tunnel reports as
+		// "the exec channel carrying the tunnel closed" and the run as "the tunnel
+		// client did not bind its ports within 30000ms". That names neither the
+		// provider nor the status, and reads as the container being broken rather
+		// than as one refused request.
+		//
+		// Not retried, unlike a GET: `send` retries only idempotent methods, and a
+		// duplicate create carries a caller-chosen session id whose conflict
+		// behaviour has not been measured against the live API. Failing by name is
+		// the honest answer until it has been.
+		const res = await this.send('POST', `${base}/process/pty`, {
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ id: sessionId, cols: 200, rows: 50 }),
 		});
+		if (!res.ok) {
+			const text = await res.text().catch(() => '');
+			throw new DaytonaApiError(
+				`Daytona POST /process/pty failed (${res.status}): ${bodySnippet(text)}`,
+				res.status,
+				text,
+			);
+		}
 
 		const url = `${base.replace(/^http/, 'ws')}/process/pty/${encodeURIComponent(sessionId)}/connect`;
 		const socket = new WebSocket(url, {

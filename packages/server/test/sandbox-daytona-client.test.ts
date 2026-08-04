@@ -568,3 +568,51 @@ describe('openPty keeps its writes inside what a PTY can take', () => {
 		expect(all.slice(10_000).every((b) => b === 2)).toBe(true);
 	});
 });
+
+describe('openPty refuses a session the provider did not create', () => {
+	it('throws a named error instead of connecting a socket to nothing', async () => {
+		// The gap this closes. `send` hands the response back rather than
+		// interpreting it, and this was the one call site that discarded it - so a
+		// refused create fell through to a WebSocket for a session that does not
+		// exist. That socket closes on its own a moment later, which the tunnel
+		// reports as "the exec channel carrying the tunnel closed" and the run as
+		// "the tunnel client did not bind its ports within 30000ms": a 30-second
+		// wait naming neither the provider nor the status, reading as a broken
+		// container rather than as one refused request.
+		let socketsOpened = 0;
+		vi.stubGlobal(
+			'fetch',
+			async () => new Response('<html>502 Bad Gateway</html>', { status: 502 }),
+		);
+		vi.stubGlobal(
+			'WebSocket',
+			class {
+				constructor() {
+					socketsOpened++;
+				}
+			},
+		);
+
+		await expect(
+			new DaytonaClient('k', BASE).openPty(sandbox, 'sess-fail', 'hezo-tunnel /c'),
+		).rejects.toThrow(DaytonaApiError);
+		// And it fails *before* the socket, so nothing is left half-open.
+		expect(socketsOpened).toBe(0);
+	});
+
+	it('names the provider and the status, and collapses the gateway HTML', async () => {
+		vi.stubGlobal(
+			'fetch',
+			async () =>
+				new Response('<html>\n  <title>502 Bad Gateway</title>\n</html>', { status: 502 }),
+		);
+		vi.stubGlobal('WebSocket', class {});
+		const err = await new DaytonaClient('k', BASE)
+			.openPty(sandbox, 'sess-fail-2', 'hezo-tunnel /c')
+			.catch((e: unknown) => e as DaytonaApiError);
+		expect(err).toBeInstanceOf(DaytonaApiError);
+		expect((err as DaytonaApiError).message).toContain('POST /process/pty failed (502)');
+		// One line, not the page's layout - this lands in a run log.
+		expect((err as DaytonaApiError).message).not.toContain('\n');
+	});
+});
