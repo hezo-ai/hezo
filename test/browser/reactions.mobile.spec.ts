@@ -1,3 +1,8 @@
+// Criteria #1 and #2 (real CSS layout + viewport-conditional behavior): the point
+// of this spec is the tap-target size of the reaction chip, measured with
+// boundingBox() at the `mobile` project's 390px viewport. happy-dom returns no
+// box, so the reaction flow itself is covered by a component test and only the
+// touch-affordance assertion lives here.
 import { expect, test } from '@playwright/test';
 import { authenticate, createProjectAndClearPlanning, getToken, waitForPageLoad } from './helpers';
 

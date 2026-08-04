@@ -1,3 +1,8 @@
+// Criterion #1 (real CSS layout): the assertions here are scroll and position
+// measurements - `toBeInViewport` after a scroll-to-bottom, and a boundingBox
+// centre comparison proving the scroll pills centre over the content column
+// rather than over content + the sticky meta rail. happy-dom lays nothing out, so
+// all of it would read 0. Per-test rationale is inline below.
 import { expect, test } from './fixtures';
 import { createProjectAndClearPlanning, uniqueName, waitForPageLoad } from './helpers';
 

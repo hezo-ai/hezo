@@ -1,3 +1,9 @@
+// Criteria #1, #2 and #5: most tests here are boundingBox/scrollHeight
+// measurements (header wrap inside the viewport, icon centring, line-clamp) that
+// happy-dom reports as 0, several only render at the 375px branch, and the
+// streaming test needs the real clipboard permission plus a live run's log
+// stream. Per-test rationale is inline below where a test turns on a specific
+// criterion.
 import { expect, type Locator, type Page, test } from '@playwright/test';
 import {
 	authenticate,

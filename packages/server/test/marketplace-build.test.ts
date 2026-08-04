@@ -177,25 +177,36 @@ describe('marketplace build helpers', () => {
 });
 
 describe('committed marketplace JSON is not stale', () => {
-	it('software-development.json matches a fresh rebuild from its sources', async () => {
-		const marketplaceDir = process.env.HEZO_MARKETPLACE_DIR;
-		expect(marketplaceDir, 'HEZO_MARKETPLACE_DIR must be set in tests').toBeTruthy();
-		// agents/ and marketplace/ are siblings at the repo root.
-		const agentsDir = join(marketplaceDir as string, '..', 'agents');
+	// Every slug in the committed index, not just one: production fetches each
+	// marketplace/teams/<slug>.json from GitHub raw, so a stale file on any of
+	// them ships the wrong roster. Missing files FAIL rather than skip - a
+	// silently-absent committed JSON is exactly the drift this guards.
+	const marketplaceDir = process.env.HEZO_MARKETPLACE_DIR;
+	// agents/ and marketplace/ are siblings at the repo root.
+	const agentsDir = join(marketplaceDir ?? '', '..', 'agents');
+	const indexPath = join(marketplaceDir ?? '', 'index.json');
+	const slugs: string[] = marketplaceDir
+		? (JSON.parse(readFileSync(indexPath, 'utf8')) as { teams: { slug: string }[] }).teams.map(
+				(t) => t.slug,
+			)
+		: [];
 
-		const manifestPath = join(agentsDir, 'software-development', 'team.json');
-		const committedPath = join(marketplaceDir as string, 'teams', 'software-development.json');
-		if (!existsSync(manifestPath) || !existsSync(committedPath)) return;
+	it('HEZO_MARKETPLACE_DIR is set and the index lists at least one team', () => {
+		expect(marketplaceDir, 'HEZO_MARKETPLACE_DIR must be set in tests').toBeTruthy();
+		expect(slugs.length).toBeGreaterThan(0);
+	});
+
+	it.each(slugs)('%s.json matches a fresh rebuild from its sources', async (slug) => {
+		const manifestPath = join(agentsDir, slug, 'team.json');
+		const committedPath = join(marketplaceDir as string, 'teams', `${slug}.json`);
+		expect(existsSync(manifestPath), `${manifestPath} is missing`).toBe(true);
+		expect(existsSync(committedPath), `${committedPath} is missing`).toBe(true);
 
 		const teamManifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as TeamManifest;
 		const committed = JSON.parse(readFileSync(committedPath, 'utf8')) as MarketplaceTeamDef;
 
 		const resolved = resolvePartials(await loadFilesystemAgentRoles(agentsDir));
-		const rebuilt = buildTeamDef(
-			teamManifest,
-			(role) => resolved[`software-development/${role}.md`],
-			committed,
-		);
+		const rebuilt = buildTeamDef(teamManifest, (role) => resolved[`${slug}/${role}.md`], committed);
 
 		// If this fails, run `bun run --cwd packages/server build:marketplace` and commit
 		// the regenerated marketplace/teams/*.json (the prompts/manifest drifted).

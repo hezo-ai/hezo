@@ -2,6 +2,12 @@
 // (which doubles as PRM authority + Authorization Server) spun up in the
 // test process — both the Hezo server and the user's browser reach it via
 // 127.0.0.1, so the real round-trip works end-to-end.
+//
+// Playwright tier for a reason outside decision-tree items 1-6: the flow is a
+// real cross-origin redirect chain (Hezo -> Authorization Server -> callback)
+// driven by the browser itself. The component harness has no navigation stack
+// that can leave the app's origin and come back, so nothing short of Chromium
+// exercises the authorization-code hand-off.
 
 import { randomBytes } from 'node:crypto';
 import { createServer, type Server } from 'node:http';

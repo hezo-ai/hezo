@@ -1,3 +1,7 @@
+// Criteria #1 and #2 (real CSS layout + viewport-conditional behavior): the
+// collapse assertion is a clientHeight comparison before and after the toggle,
+// run at both 375px and 1280px. happy-dom returns 0 for clientHeight and runs no
+// media queries, so neither half survives a component test.
 import { expect, test } from './fixtures';
 
 test.describe('team summary collapse', () => {

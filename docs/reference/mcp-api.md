@@ -6,7 +6,8 @@ section: Reference
 
 <!-- GENERATED FILE - do not edit by hand. Source: packages/server/src/mcp/mcp-reference.ts
      (generator + per-tool metadata) and the live MCP tool registry. Regenerate with
-     `bun run build:docs`; mcp-reference.test.ts fails if this file is stale. -->
+     `bun run --cwd packages/server build:docs`; mcp-reference.test.ts fails if this file
+     is stale. -->
 
 # MCP API reference
 
@@ -180,7 +181,7 @@ Kick off the initial team-coherence/setup run for a project you created via crea
 
 _Read-only._
 
-List local team templates: the built-in Blank template plus any custom templates saved from existing teams. The default specialist rosters (e.g. the software-development "Startup" team) live in the marketplace, not here. Use when recommending a team structure to hire. Paged: returns `limit` entries (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false.
+List local team templates: the built-in Blank template plus any custom templates saved from existing teams. The default specialist rosters (e.g. the software-development "App Team") live in the marketplace, not here. Use when recommending a team structure to hire. Paged: returns `limit` entries (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false.
 
 **Parameters:**
 

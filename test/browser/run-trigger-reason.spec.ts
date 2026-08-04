@@ -1,3 +1,8 @@
+// Criterion #1 (real CSS layout): the deep link from a run back to its source
+// comment is only meaningful if the viewport actually moves, so the assertion
+// reads `main`'s live scrollTop after the deep-link navigation and requires it to
+// be non-zero. happy-dom neither lays the page out nor scrolls it, so scrollTop
+// would read 0 whether the deep link worked or not.
 import { expect, type Page, test } from '@playwright/test';
 import {
 	authenticate,
