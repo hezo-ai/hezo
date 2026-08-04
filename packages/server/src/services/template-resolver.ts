@@ -1,8 +1,15 @@
-import { HEZO_DOCS_URL, REQUIRED_SYSTEM_PROMPT_VARS, repoNameFromIdentifier } from '@hezo/shared';
+import {
+	HEZO_DOCS_URL,
+	REQUIRED_SYSTEM_PROMPT_VARS,
+	repoNameFromIdentifier,
+	SandboxBackend,
+} from '@hezo/shared';
 import type { Db } from '../db/database';
 import { terminalStatusParams } from '../lib/sql';
 import { buildConnectorRecipesSkill } from './connector-registry';
 import { buildHezoDocsBlock } from './docs-bundle';
+import { buildContainerEnvironmentBlock as buildAgentContainerEnvironmentBlock } from './sandbox/agent-environment';
+import { getStoredSandboxBackend } from './sandbox/backend-store';
 import { CONTAINER_WORKTREES_ROOT } from './workspace';
 
 /**
@@ -493,8 +500,27 @@ export async function resolveSystemPrompt(
 		resolved += await buildTeammatesBlock(db, ctx);
 	}
 	resolved += SHARED_INSTRUCTIONS;
+	// Beside SHARED_INSTRUCTIONS, and for the same reason: it has to reach every
+	// agent on every run, including one hired at runtime. Unlike the rest it is
+	// resolved per run, because the container service is a setting an operator can
+	// change - so it is a block rather than prose.
+	resolved += await buildContainerEnvironmentBlock(db);
 
 	return resolved;
+}
+
+/**
+ * What an agent can reach from inside its container, which differs per container
+ * service and which an agent has no other way to find out.
+ *
+ * Read from the **stored** backend setting rather than threaded in from the
+ * engine: the stored value is what selects the backend at boot and what a
+ * runtime switch writes, so it is the same answer the holder would give, and
+ * asking the database keeps every `resolveTemplate` caller unchanged.
+ */
+async function buildContainerEnvironmentBlock(db: Db): Promise<string> {
+	const backend = (await getStoredSandboxBackend(db)) ?? SandboxBackend.Docker;
+	return buildAgentContainerEnvironmentBlock(backend);
 }
 
 async function buildTeamContextBlock(db: Db, ctx: ResolveContext): Promise<string> {

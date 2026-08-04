@@ -60,6 +60,17 @@ that matters in practice is a **local AI model provider**: pointing an AI provid
 `http://host.docker.internal:11434` (Ollama, LM Studio and similar) works here and only
 here. See [AI models](/docs/ai-models).
 
+## Network access from a container
+
+Outbound network is whatever your machine allows, so it is normally unrestricted: HTTPS,
+SSH and other protocols all work unless you run a firewall of your own. This is the
+practical difference from a [remote service](/docs/containers/remote/overview), where the
+provider may carry only some protocols - so if your agents need to reach something over
+SSH from inside the container, local Docker is the option that has it.
+
+HTTP and HTTPS still pass through Hezo's egress proxy either way. That is what substitutes
+credentials into agent requests, and it applies on every container service.
+
 ## Startup
 
 The first container for a project takes a few seconds. Hezo builds the agent image once

@@ -64,6 +64,32 @@ The build is cached on the text of the Dockerfile Hezo sends rather than on an i
 which is why Hezo pins the image by digest. A tag would be byte-identical forever and
 Daytona would keep serving a stale toolchain.
 
+## Network access from a sandbox
+
+**Daytona filters outbound traffic by protocol, not just by destination**, and this is the
+one limit most likely to surprise you. Measured from a live sandbox:
+
+- **HTTPS works**, to the common developer hosts Daytona pre-approves - GitHub, package
+  registries and similar. A host outside that set has its connection accepted and then
+  reset partway through, which surfaces as `curl: (35) Recv failure: Connection reset by peer`.
+- **SSH does not work, on any port.** Port 22 is dropped, so you get a connect timeout.
+  Port 443 accepts the connection and then resets it once the traffic turns out not to be
+  TLS, which surfaces as `kex_exchange_identification: read: Connection reset by peer`. It
+  reads like the far end refusing you, but the reset comes from Daytona.
+- **Other non-TLS protocols behave like SSH** - admitted, then reset.
+
+Daytona does expose network settings on a sandbox (an allowlist of domains, or one of IP
+ranges), and Hezo could set them, but neither lifts this. A domain allowlist matches on the
+server name inside a TLS handshake, which SSH has none of; and allowing the destination's
+own IP ranges outright still leaves both SSH ports dead, because the filter is looking at
+the protocol.
+
+**What this means in practice.** Agents are told which container service they are on and
+what its network will carry, so they reach for an HTTPS equivalent - a REST API or an MCP
+connector - rather than retrying an `ssh` that cannot succeed. If you are choosing a
+container service and your work genuinely needs SSH out of the container, local Docker is
+the one that has it.
+
 ## Caveats
 
 - **No per-sandbox memory statistics.** Daytona's telemetry endpoint is unavailable on an

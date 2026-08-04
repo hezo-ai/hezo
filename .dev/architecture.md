@@ -1887,7 +1887,21 @@ document, loaded from its **home** team) is resolved per run by
 `linkTeamCaptainToInstanceCeo` — `{{skills_context}}`, `{{project_docs_context}}`,
 `{{team_preferences_context}}`, `{{team_description}}`, `{{team_context}}`,
 `{{current_date}}`, and the CEO-only `{{projects_context}}`), then the resolver appends the
-Run Context / Repository / Project State / Teammates blocks and `SHARED_INSTRUCTIONS`.
+Run Context / Repository / Project State / Teammates blocks, `SHARED_INSTRUCTIONS`, and the
+**Container Environment** block.
+
+That last one tells the agent which container service it is running on and what that
+service's network will carry, from `SANDBOX_AGENT_ENVIRONMENTS`
+(`services/sandbox/agent-environment.ts`) — a `Record<SandboxBackend, …>`, so adding a
+backend is a compile error until it states its egress. It exists because an agent cannot
+distinguish "this command is wrong" from "this container's egress will not carry that
+protocol" and has no way to find out: on Daytona `ssh` fails on every port (22 dropped; 443
+admits the connection then resets it once the payload is not TLS), which reads as the remote
+host refusing its key, so it retries. It sits beside `SHARED_INSTRUCTIONS` for the same
+reach — every agent, every run, including runtime hires — but is *resolved per run*, since
+the backend is an operator setting; the resolver reads the **stored** backend
+(`getStoredSandboxBackend`) rather than taking the engine, which is the same answer the
+holder would give and leaves every caller's signature unchanged.
 The **Repository** block names the designated repo *and every other linked repo*, giving each
 additional one its on-disk worktree path (`/worktrees/<task>/<repo>`, a sibling of the working
 directory), and directs agents to read connected repos from disk (`ls`/`Read`/`grep`) rather
