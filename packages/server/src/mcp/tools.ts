@@ -255,8 +255,10 @@ const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'update_agent_system_prompts',
 	'set_agent_status',
 	'set_agent_summary',
+	'set_agent_summaries',
 	'set_team_summary',
 	'set_agent_team_context',
+	'set_agent_team_contexts',
 	'set_agent_reports_to',
 	'write_project_asset',
 	'move_project_asset',
@@ -703,6 +705,26 @@ export function oversizeRemedies(
 // review_comments) when read_project_doc sizes a content window under its effective
 // result cap, so the serialized window stays under the byte guard.
 const DOC_READ_ENVELOPE_RESERVE = 4_096;
+
+/**
+ * Byte budget a *chunked* batch result aims to fill, as distinct from the cap
+ * that decides whether a result is admitted at all.
+ *
+ * The two are not the same number, and conflating them is a real failure we hit:
+ * chunking to the raised `MCP_RESULT_BYTE_LIMIT_OVERRIDES` value (128 KB) let a
+ * batch return ~125 KB, which is roughly 31k tokens - over the ~25k-token
+ * tool-result ceiling a runtime like the Claude Code harness enforces. The
+ * chunker had "succeeded" into a result the client could not accept, so the
+ * harness spilled it to a file and the agent spent several turns writing a
+ * script to slice it back out.
+ *
+ * A raised per-tool cap exists so a single inherently-large resource is not
+ * rejected outright. It is the wrong target when we control how many items to
+ * include: there, aim under the generic cap, which was picked to sit
+ * comfortably inside a runtime's token ceiling. The envelope reserve comes off
+ * the top so the serialized wrapper still fits.
+ */
+const MCP_BATCH_CHUNK_TARGET_BYTES = MCP_RESULT_BYTE_LIMIT - DOC_READ_ENVELOPE_RESERVE;
 
 /**
  * Default cap for the long free-text columns a list route returns per row.
@@ -2140,7 +2162,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_agents',
-		`List the agents on a project's team, by title. Paged: returns \`limit\` rows (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false.`,
+		`List the agents on a project's team, by title. Each row carries \`reports_to\` (the manager's member ID, null when unset) plus \`reports_to_slug\`/\`reports_to_title\` - this is the structural reporting line that gates delegation, so it is what to read when auditing the org chart for orphans (\`reports_to\` null) or cycles. Do NOT infer reporting lines from an agent's team_context prose: that prose is a rendered description which can itself be stale, and is exactly what a coherence review is meant to check against this field. Paged: returns \`limit\` rows (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false.`,
 		{
 			project: projectArg(),
 			...listPagingArgs(),
@@ -2158,10 +2180,16 @@ export function registerTools(
 				byTitle,
 			);
 			const r = await db.query<ListRow>(
+				// reports_to is the column delegation is actually gated on, and the
+				// only way to detect an orphan or a cycle. The manager's slug/title
+				// ride along because agents address each other by slug, so without
+				// them every caller pays a second lookup per row to resolve the id.
 				`SELECT m.id, ma.agent_type_id, ma.title, ma.slug,
 				        ma.daily_budget_cents, ma.weekly_budget_cents, ma.monthly_budget_cents,
-				        ma.runtime_status, ma.admin_status
+				        ma.runtime_status, ma.admin_status,
+				        ma.reports_to, mgr.slug AS reports_to_slug, mgr.title AS reports_to_title
 				 FROM members m JOIN member_agents ma ON ma.id = m.id
+				 LEFT JOIN member_agents mgr ON mgr.id = ma.reports_to
 				 WHERE m.team_id = $1${keyset ? ` AND ${keyset}` : ''}
 				 ORDER BY ${keysetOrderBy('ma', byTitle)} LIMIT ${limit + 1}`,
 				params,
@@ -4214,7 +4242,7 @@ export function registerTools(
 			const startIndex = Math.min((args.start_index as number | undefined) ?? 0, items.length);
 			const byteLimit =
 				MCP_RESULT_BYTE_LIMIT_OVERRIDES.get_agent_system_prompts ?? MCP_RESULT_BYTE_LIMIT;
-			const budget = byteLimit - DOC_READ_ENVELOPE_RESERVE;
+			const budget = MCP_BATCH_CHUNK_TARGET_BYTES;
 
 			const resolveItem = async (item: (typeof items)[number], index: number) => {
 				try {
@@ -4709,6 +4737,142 @@ export function registerTools(
 
 	tool(
 		server,
+		'set_agent_team_contexts',
+		`Save team-relationships contexts for MULTIPLE agents in one call (max ${MAX_BATCH_AGENT_SYSTEM_PROMPTS}) - the preferred way during a coherence review, which rewrites every affected agent's context together. Same rules and caller as set_agent_team_context (the Captain of the same team); each content is ≤6000 chars of plain second-person prose. Returns a per-item result so one bad agent_id does not lose the rest of the batch. Prefer this over calling set_agent_team_context in a loop.`,
+		{
+			project: projectArg(),
+			updates: z
+				.array(
+					z.object({
+						agent_id: z.string().describe('Target agent - its slug (e.g. "engineer") or member ID'),
+						content: z
+							.string()
+							.trim()
+							.min(1, 'content must be non-empty')
+							.max(6000, 'content too long (max 6000)')
+							.describe('The new team_context for this agent, ≤6000 chars'),
+					}),
+				)
+				.min(1)
+				.max(MAX_BATCH_AGENT_SYSTEM_PROMPTS)
+				.describe(`Up to ${MAX_BATCH_AGENT_SYSTEM_PROMPTS} context updates.`),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId } = scope;
+
+			if (!(await canCoordinateTeam(db, auth, teamId))) {
+				return { error: 'Access denied: only the Captain can update agent team contexts' };
+			}
+
+			const updates = args.updates as Array<{ agent_id: string; content: string }>;
+			const results: Array<Record<string, unknown>> = [];
+			for (let i = 0; i < updates.length; i++) {
+				const u = updates[i];
+				const agentId = await resolveAgentId(db, teamId, u.agent_id);
+				const r = agentId
+					? await db.query<{ id: string; slug: string }>(
+							`UPDATE member_agents SET team_context = $1, updated_at = now()
+							 WHERE id = $2 AND id IN (
+							   SELECT m.id FROM members m WHERE m.id = $2 AND m.team_id = $3
+							 )
+							 RETURNING id, slug`,
+							[u.content.trim(), agentId, teamId],
+						)
+					: null;
+				if (!agentId || !r || r.rows.length === 0) {
+					results.push({
+						index: i,
+						agent_id: u.agent_id,
+						ok: false,
+						error: 'Agent not found in this team',
+					});
+					continue;
+				}
+				results.push({ index: i, agent_id: agentId, slug: r.rows[0].slug, ok: true });
+			}
+			return { items: results, updated: results.filter((r) => r.ok).length, total: updates.length };
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'set_agent_summaries',
+		`Save short human-readable summaries for MULTIPLE agents in one call (max ${MAX_BATCH_AGENT_SYSTEM_PROMPTS}) - the preferred way during a coherence review, which rewrites every affected agent's summary together. Same rules and callers as set_agent_summary (any agent in the same team, or the admin); each summary is ≤1000 chars, a single plain-prose paragraph. Files a SINGLE team-coherence review for the whole batch rather than one per agent. Returns a per-item result so one bad agent_id does not lose the rest of the batch. Prefer this over calling set_agent_summary in a loop.`,
+		{
+			project: projectArg(),
+			updates: z
+				.array(
+					z.object({
+						agent_id: z.string().describe('Target agent - its slug (e.g. "engineer") or member ID'),
+						summary: z
+							.string()
+							.trim()
+							.min(1, 'summary must be non-empty')
+							.max(1000, 'summary too long (max 1000)')
+							.describe('The new summary for this agent, ≤1000 chars'),
+					}),
+				)
+				.min(1)
+				.max(MAX_BATCH_AGENT_SYSTEM_PROMPTS)
+				.describe(`Up to ${MAX_BATCH_AGENT_SYSTEM_PROMPTS} summary updates.`),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId } = scope;
+
+			if (auth.type !== AuthType.Agent && auth.type !== AuthType.Admin) {
+				return { error: 'Access denied' };
+			}
+
+			const updates = args.updates as Array<{ agent_id: string; summary: string }>;
+			const results: Array<Record<string, unknown>> = [];
+			for (let i = 0; i < updates.length; i++) {
+				const u = updates[i];
+				const agentId = await resolveAgentId(db, teamId, u.agent_id);
+				const r = agentId
+					? await db.query<{ id: string; slug: string }>(
+							`UPDATE member_agents SET summary = $1, updated_at = now()
+							 WHERE id = $2 AND id IN (
+							   SELECT m.id FROM members m WHERE m.id = $2 AND m.team_id = $3
+							 )
+							 RETURNING id, slug`,
+							[u.summary.trim(), agentId, teamId],
+						)
+					: null;
+				if (!agentId || !r || r.rows.length === 0) {
+					results.push({
+						index: i,
+						agent_id: u.agent_id,
+						ok: false,
+						error: 'Agent not found in this team',
+					});
+					continue;
+				}
+				results.push({ index: i, agent_id: agentId, slug: r.rows[0].slug, ok: true });
+			}
+
+			// One review for the batch, not one per agent - the singular tool files
+			// its own, so a loop over it would queue N coalescing events for what is
+			// a single roster-wide edit.
+			if (results.some((r) => r.ok)) {
+				trackBackground(
+					enqueueTeamCoherenceReviewTask(db, teamId, 'summary_updated').catch((e) =>
+						log.error('Failed to enqueue team coherence review after summary batch:', e),
+					),
+				);
+			}
+
+			return { items: results, updated: results.filter((r) => r.ok).length, total: updates.length };
+		},
+		db,
+	);
+
+	tool(
+		server,
 		'set_agent_reports_to',
 		"Set or change the manager an agent reports to - the structural reporting line in the org chart that gates delegation. Work can only be assigned to/from an agent along this line, so an agent whose manager is unset can't be delegated to or hand work down. Use this to wire up reporting structure (e.g. after hiring specialists, point them at their lead) or fix it during a coherence review. Pass the target agent and its new manager (both by slug or member ID); pass an empty reports_to to clear the line. Callable by the team's Captain or an HQ instance agent (CEO/Coach) acting in the team. The Captain, CEO, and Coach have fixed reporting lines (Captain → CEO; CEO/Coach → admin) that cannot be changed.",
 		{
@@ -4831,6 +4995,104 @@ export function registerTools(
 			if (r.rows.length === 0) return { error: 'Agent not found in this team' };
 
 			return r.rows[0];
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'get_agent_team_contexts',
+		`Read the stored team-relationships context for MULTIPLE agents in one call (max ${MAX_BATCH_AGENT_SYSTEM_PROMPTS}). This is the read a coherence review wants: regenerating one agent's context requires seeing its siblings', so fetch the whole roster at once rather than calling get_agent_team_context per agent. Contexts are capped at 6000 chars each, so a normal roster comes back whole. PAGING: the result carries as many contexts as fit under the cap plus \`next_index\`; when it is non-null, call again with the SAME \`items\` and \`start_index\` set to it, and repeat until it is null. Accessible by any agent or the admin in the same team.`,
+		{
+			project: projectArg(),
+			items: z
+				.array(
+					z.object({
+						agent_id: z.string().describe('Target agent member ID or slug'),
+					}),
+				)
+				.min(1)
+				.max(MAX_BATCH_AGENT_SYSTEM_PROMPTS)
+				.describe(`Up to ${MAX_BATCH_AGENT_SYSTEM_PROMPTS} items.`),
+			start_index: z
+				.number()
+				.int()
+				.min(0)
+				.optional()
+				.describe(
+					'Index into `items` to resume from (default 0). Pass back the `next_index` from the previous call, with the same `items`.',
+				),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId } = scope;
+
+			if (auth.type !== AuthType.Agent && auth.type !== AuthType.Admin) {
+				return { error: 'Access denied' };
+			}
+
+			const items = args.items as Array<{ agent_id: string }>;
+			const startIndex = Math.min((args.start_index as number | undefined) ?? 0, items.length);
+
+			const resolveItem = async (item: { agent_id: string }, index: number) => {
+				// The team-scoped query is the authorization check, keeping an HQ
+				// agent (resolveAgentId's fallback) out of this team's results.
+				const agentId = await resolveAgentId(db, teamId, item.agent_id);
+				const r = agentId
+					? await db.query<{ title: string; slug: string; team_context: string }>(
+							`SELECT ma.title, ma.slug, ma.team_context
+							 FROM member_agents ma JOIN members m ON m.id = ma.id
+							 WHERE ma.id = $1 AND m.team_id = $2`,
+							[agentId, teamId],
+						)
+					: null;
+				if (!agentId || !r || r.rows.length === 0) {
+					return {
+						index,
+						ok: false as const,
+						agent_id: item.agent_id,
+						error: 'Agent not found in this team',
+					};
+				}
+				return { index, ok: true as const, agent_id: agentId, ...r.rows[0] };
+			};
+
+			const resolved = await Promise.all(
+				items.slice(startIndex).map((item, i) => resolveItem(item, startIndex + i)),
+			);
+
+			// Same chunking contract as get_agent_system_prompts: emit the prefix
+			// that fits and hand back a cursor for the rest, always at least one
+			// entry so the cursor cannot stall.
+			const page: unknown[] = [];
+			let used = 0;
+			let nextIndex: number | null = null;
+			for (const [i, entry] of resolved.entries()) {
+				const cost = Buffer.byteLength(JSON.stringify(entry), 'utf8');
+				if (page.length > 0 && used + cost > MCP_BATCH_CHUNK_TARGET_BYTES) {
+					nextIndex = startIndex + i;
+					break;
+				}
+				page.push(entry);
+				used += cost;
+			}
+			if (nextIndex === null && startIndex + page.length < items.length) {
+				nextIndex = startIndex + page.length;
+			}
+
+			return {
+				items: page,
+				start_index: startIndex,
+				returned: page.length,
+				total: items.length,
+				next_index: nextIndex,
+				...(nextIndex !== null
+					? {
+							paging_hint: `Returned contexts ${startIndex}-${startIndex + page.length - 1} of ${items.length}. Call get_agent_team_contexts again with the same items and start_index: ${nextIndex}; repeat until next_index is null.`,
+						}
+					: {}),
+			};
 		},
 		db,
 	);

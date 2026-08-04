@@ -609,7 +609,7 @@ Edit the text of a comment you posted earlier in THIS run - use it to fix a mist
 
 _Read-only._
 
-List the agents on a project's team, by title. Paged: returns `limit` rows (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false.
+List the agents on a project's team, by title. Each row carries `reports_to` (the manager's member ID, null when unset) plus `reports_to_slug`/`reports_to_title` - this is the structural reporting line that gates delegation, so it is what to read when auditing the org chart for orphans (`reports_to` null) or cycles. Do NOT infer reporting lines from an agent's team_context prose: that prose is a rendered description which can itself be stale, and is exactly what a coherence review is meant to check against this field. Paged: returns `limit` rows (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false.
 
 **Parameters:**
 
@@ -619,7 +619,7 @@ List the agents on a project's team, by title. Paged: returns `limit` rows (defa
 | `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
 | `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
 
-**Returns:** Agent rows (`id`, `agent_type_id`, `title`, `slug`, `daily_budget_cents`, `weekly_budget_cents`, `monthly_budget_cents`, `runtime_status`, `admin_status`) ordered by title. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false.
+**Returns:** Agent rows (`id`, `agent_type_id`, `title`, `slug`, `daily_budget_cents`, `weekly_budget_cents`, `monthly_budget_cents`, `runtime_status`, `admin_status`) ordered by title, each with `reports_to` (manager member ID, null when unset) plus `reports_to_slug`/`reports_to_title`. `reports_to` is the structural line that gates delegation, so it is the field to audit for orphans and cycles - not an agent’s team_context prose, which is a rendered description that can itself be stale. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false.
 
 ### `update_hire_proposal`
 
@@ -885,6 +885,40 @@ Save the team-relationships context for an agent (≤6000 chars, plain prose, se
 
 **Authorization:** The team's Captain only.
 
+### `set_agent_team_contexts`
+
+_Write tool._
+
+Save team-relationships contexts for MULTIPLE agents in one call (max 50) - the preferred way during a coherence review, which rewrites every affected agent's context together. Same rules and caller as set_agent_team_context (the Captain of the same team); each content is ≤6000 chars of plain second-person prose. Returns a per-item result so one bad agent_id does not lose the rest of the batch. Prefer this over calling set_agent_team_context in a loop.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `updates` | `object[]` | Yes | Up to 50 context updates. |
+
+**Returns:** `{ items, updated, total }`, where `items` are per-item results: `{ index, agent_id, slug, ok: true }` or `{ index, agent_id, ok: false, error }`. A bad agent_id fails only its own item; the rest of the batch still applies.
+
+**Authorization:** The team's Captain only.
+
+### `set_agent_summaries`
+
+_Write tool._
+
+Save short human-readable summaries for MULTIPLE agents in one call (max 50) - the preferred way during a coherence review, which rewrites every affected agent's summary together. Same rules and callers as set_agent_summary (any agent in the same team, or the admin); each summary is ≤1000 chars, a single plain-prose paragraph. Files a SINGLE team-coherence review for the whole batch rather than one per agent. Returns a per-item result so one bad agent_id does not lose the rest of the batch. Prefer this over calling set_agent_summary in a loop.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `updates` | `object[]` | Yes | Up to 50 summary updates. |
+
+**Returns:** `{ items, updated, total }`, where `items` are per-item results: `{ index, agent_id, slug, ok: true }` or `{ index, agent_id, ok: false, error }`. Files a single team-coherence review for the whole batch rather than one per agent.
+
+**Authorization:** Any agent or the admin in the same team (the Captain is the expected caller).
+
 ### `get_agent_team_context`
 
 _Read-only._
@@ -899,6 +933,24 @@ Read an agent's stored team-relationships context. Useful for the Captain when r
 | `agent_id` | `string` | Yes | Target agent - its slug (e.g. "engineer") or member ID |
 
 **Returns:** `{ title, slug, team_context }`, or `{ error }` if the agent is not in the team.
+
+**Authorization:** Any agent or the admin in the same team.
+
+### `get_agent_team_contexts`
+
+_Read-only._
+
+Read the stored team-relationships context for MULTIPLE agents in one call (max 50). This is the read a coherence review wants: regenerating one agent's context requires seeing its siblings', so fetch the whole roster at once rather than calling get_agent_team_context per agent. Contexts are capped at 6000 chars each, so a normal roster comes back whole. PAGING: the result carries as many contexts as fit under the cap plus `next_index`; when it is non-null, call again with the SAME `items` and `start_index` set to it, and repeat until it is null. Accessible by any agent or the admin in the same team.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `items` | `object[]` | Yes | Up to 50 items. |
+| `start_index` | `integer` | No | Index into `items` to resume from (default 0). Pass back the `next_index` from the previous call, with the same `items`. |
+
+**Returns:** `{ items, start_index, returned, total, next_index }`, where `items` are per-item results: `{ index, ok: true, agent_id, title, slug, team_context }` or `{ index, ok: false, agent_id, error }`. Up to 50 items per call. Only the contexts that fit under the cap are returned - when `next_index` is non-null, call again with the same `items` and `start_index` set to it, and repeat until it is null.
 
 **Authorization:** Any agent or the admin in the same team.
 
