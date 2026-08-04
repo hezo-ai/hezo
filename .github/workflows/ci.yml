@@ -201,8 +201,9 @@ jobs:
           if-no-files-found: ignore
 
   # The pure-logic shared package (packages/shared) has no DB/DOM/browser
-  # dependencies, so it runs as a single fast job (no sharding). Its coverage
-  # joins the same Coveralls parallel build under the `shared` flag.
+  # dependencies, so it runs as a single fast job (no sharding). Its
+  # coverage-final.json is uploaded as an artifact like every other tier's and
+  # folded into the single Coveralls upload by the coverage-merge job below.
   test-shared:
     runs-on: ubuntu-latest
     timeout-minutes: 10

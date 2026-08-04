@@ -1,3 +1,9 @@
+// Criteria #1, #2 and #5: most tests here are boundingBox/scrollHeight
+// measurements (header wrap inside the viewport, icon centring, line-clamp) that
+// happy-dom reports as 0, several only render at the 375px branch, and the
+// streaming test needs the real clipboard permission plus a live run's log
+// stream. Per-test rationale is inline below where a test turns on a specific
+// criterion.
 import { expect, type Locator, type Page, test } from '@playwright/test';
 import {
 	authenticate,
@@ -234,7 +240,12 @@ test('task page renders completed run as a collapsed inline comment with summary
 	await expect(header).toHaveAttribute('aria-expanded', 'false');
 });
 
-async function mockCompletedRun(page: Page, token: string, logTextOverride?: string) {
+async function mockCompletedRun(
+	page: Page,
+	token: string,
+	opts: { logText?: string; status?: 'succeeded' | 'failed' } = {},
+) {
+	const { logText: logTextOverride, status = 'succeeded' } = opts;
 	const headers = { Authorization: `Bearer ${token}` };
 
 	const projectRes = await createProjectAndClearPlanning(page, '', token, {
@@ -294,10 +305,10 @@ async function mockCompletedRun(page: Page, token: string, logTextOverride?: str
 					task_identifier: null,
 					task_title: null,
 					project_id: project.id,
-					status: 'succeeded',
+					status,
 					started_at: startedAt,
 					finished_at: finishedAt,
-					exit_code: 0,
+					exit_code: status === 'succeeded' ? 0 : 1,
 					error: null,
 					input_tokens: 0,
 					output_tokens: 0,
@@ -422,6 +433,67 @@ test('completed run header wraps within the viewport when the log expands (mobil
 	await assertNoHorizontalOverflow();
 });
 
+// #1 (real CSS layout): the chevron's position is decided by flex distribution —
+// only a real layout pass says where it lands (happy-dom returns 0 boxes). A
+// retryable (failed) run is the forcing case: its header shares a flex row with
+// the Retry button and takes `flex-1`, so the button stretches the full width.
+// With the chevron as a trailing sibling of the `flex-1` summary row it was
+// stranded against the far right edge, detached from what it toggles; it belongs
+// immediately after the "N ago" timestamp.
+test('the expand chevron sits beside the timestamp on a retryable run header', async ({ page }) => {
+	await authenticate(page);
+	const token = await getToken(page);
+
+	const { task, projectSlug } = await mockCompletedRun(page, token, { status: 'failed' });
+
+	// Retry only shows while no run is active, and assigning the task woke the
+	// agent for real — pin `has_active_run` so the header variant is deterministic.
+	await page.route('**/api/projects/*/tasks/*', async (route) => {
+		if (route.request().method() !== 'GET') return route.continue();
+		const response = await route.fetch();
+		const body = (await response.json()) as { data: Record<string, unknown> };
+		await route.fulfill({
+			response,
+			json: { data: { ...body.data, has_active_run: false } },
+		});
+	});
+
+	await page.goto(`/projects/${projectSlug}/tasks/${task.id}`);
+
+	const runCommentEl = page.getByTestId('run-comment').first();
+	await expect(runCommentEl).toBeVisible({ timeout: 20_000 });
+
+	// Retry present ⇒ this really is the stretched, full-width header variant.
+	await expect(runCommentEl.getByTestId('retry-failed-run')).toBeVisible({ timeout: 20_000 });
+
+	const header = runCommentEl.getByTestId('run-comment-header');
+	await expect(header.getByTestId('run-comment-summary')).toBeVisible({ timeout: 20_000 });
+
+	// The synthetic comment carries no public_id, so the timestamp renders as the
+	// plain <time> element rather than the self-anchor link variant.
+	const timestamp = header.locator('time');
+	// The chevron is the only <svg> in the header (the status dot is a <span>, and
+	// Retry's icon lives in a sibling button outside it).
+	const chevron = header.locator('svg');
+
+	const headerBox = await header.boundingBox();
+	const timestampBox = await timestamp.boundingBox();
+	const chevronBox = await chevron.boundingBox();
+	if (!headerBox || !timestampBox || !chevronBox) throw new Error('element has no bounding box');
+
+	// The header does stretch — otherwise this asserts nothing.
+	expect(headerBox.width).toBeGreaterThan(timestampBox.width * 3);
+	// Chevron hugs the timestamp: it starts right after it, on the same line…
+	const gap = chevronBox.x - (timestampBox.x + timestampBox.width);
+	expect(gap).toBeGreaterThanOrEqual(0);
+	expect(gap).toBeLessThanOrEqual(12);
+	expect(
+		Math.abs(chevronBox.y + chevronBox.height / 2 - (timestampBox.y + timestampBox.height / 2)),
+	).toBeLessThanOrEqual(2);
+	// …and is nowhere near the stretched header's right edge.
+	expect(headerBox.x + headerBox.width - (chevronBox.x + chevronBox.width)).toBeGreaterThan(40);
+});
+
 // #1 (real CSS layout): the leading inline-event icon must share a vertical
 // centre-line with the run summary's "<agent> run" label. The icon sits in a
 // 26px slot while the label is a 16px text-xs line, so their centres only line
@@ -520,7 +592,7 @@ test('formatted view collapses a long thinking block behind a Show more/less tog
 		'\n',
 	);
 
-	const { task, projectSlug } = await mockCompletedRun(page, token, logText);
+	const { task, projectSlug } = await mockCompletedRun(page, token, { logText });
 
 	await page.goto(`/projects/${projectSlug}/tasks/${task.id}`);
 

@@ -9,9 +9,9 @@ import { migration013UserPassword } from './013_user_password';
  * here — the same module-graph mechanism the SQL bundle relies on, but with no
  * serialization (a function can't travel through JSON).
  *
- * The registry is currently empty: at the v1.0 launch the historical migrations
- * were collapsed into the fresh `001_initial_schema.sql` baseline, and no code
- * migration has landed since.
+ * The registry starts at `013_user_password`: at the v1.0 launch the historical
+ * migrations were collapsed into the fresh `001_initial_schema.sql` baseline,
+ * so everything before that number is already folded into the baseline.
  *
  * To add one:
  *   1. Create `src/db/migrations/code/NNN_description.ts` exporting a

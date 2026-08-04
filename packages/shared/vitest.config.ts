@@ -9,6 +9,15 @@ export default defineConfig({
 	test: {
 		globals: true,
 		include: ['test/**/*.test.ts'],
+		// Collapse the password-verifier KDF to its cheapest valid cost (scrypt
+		// N=2**1), matching the server and web configs so a direct
+		// `cd packages/shared && bunx vitest run` costs the same as a full
+		// `bun run test` (which sets this for every tier from scripts/test.ts).
+		// Honoured only under NODE_ENV=test and clamped to lower-only — see
+		// passwordScryptParams in src/crypto/auth.ts.
+		env: {
+			HEZO_TEST_SCRYPT_LOG_N: '1',
+		},
 		// Off by default so normal runs stay uninstrumented; scripts/test.ts flips
 		// `enabled` on with --coverage. Its coverage-final.json joins the merged
 		// Coveralls total via the merge job (see scripts/coverage/).

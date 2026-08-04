@@ -10,7 +10,7 @@ import { HEZO_DOCS_URL } from '@hezo/shared';
  * exactly the registered tools, so a new tool cannot ship undocumented.
  *
  * The page is written to disk by `scripts/build-mcp-reference.ts` (run as part of
- * `bun run build:docs`) and committed, because the public docs site renders the
+ * `bun run --cwd packages/server build:docs`) and committed, because the public docs site renders the
  * committed `docs/**​/*.md` files directly.
  */
 
@@ -230,7 +230,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_agents: {
 		category: 'Agents & hiring',
 		returns:
-			'Agent rows (`id`, `agent_type_id`, `title`, `slug`, `daily_budget_cents`, `weekly_budget_cents`, `monthly_budget_cents`, `runtime_status`, `admin_status`) ordered by title. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false.',
+			'Agent rows (`id`, `agent_type_id`, `title`, `slug`, `daily_budget_cents`, `weekly_budget_cents`, `monthly_budget_cents`, `runtime_status`, `admin_status`) ordered by title, each with `reports_to` (manager member ID, null when unset) plus `reports_to_slug`/`reports_to_title`. `reports_to` is the structural line that gates delegation, so it is the field to audit for orphans and cycles - not an agent’s team_context prose, which is a rendered description that can itself be stale. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false.',
 	},
 	create_hire_proposal: {
 		category: 'Agents & hiring',
@@ -320,6 +320,24 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 		category: 'Agent prompts & context',
 		returns: '`{ title, slug, team_context }`, or `{ error }` if the agent is not in the team.',
 		auth: 'Any agent or the admin in the same team.',
+	},
+	get_agent_team_contexts: {
+		category: 'Agent prompts & context',
+		returns:
+			'`{ items, start_index, returned, total, next_index }`, where `items` are per-item results: `{ index, ok: true, agent_id, title, slug, team_context }` or `{ index, ok: false, agent_id, error }`. Up to 50 items per call. Only the contexts that fit under the cap are returned - when `next_index` is non-null, call again with the same `items` and `start_index` set to it, and repeat until it is null.',
+		auth: 'Any agent or the admin in the same team.',
+	},
+	set_agent_team_contexts: {
+		category: 'Agent prompts & context',
+		returns:
+			'`{ items, updated, total }`, where `items` are per-item results: `{ index, agent_id, slug, ok: true }` or `{ index, agent_id, ok: false, error }`. A bad agent_id fails only its own item; the rest of the batch still applies.',
+		auth: "The team's Captain only.",
+	},
+	set_agent_summaries: {
+		category: 'Agent prompts & context',
+		returns:
+			'`{ items, updated, total }`, where `items` are per-item results: `{ index, agent_id, slug, ok: true }` or `{ index, agent_id, ok: false, error }`. Files a single team-coherence review for the whole batch rather than one per agent.',
+		auth: 'Any agent or the admin in the same team (the Captain is the expected caller).',
 	},
 	set_agent_reports_to: {
 		category: 'Agents & hiring',
@@ -583,7 +601,8 @@ export function generateMcpReference(
 		'',
 		'<!-- GENERATED FILE - do not edit by hand. Source: packages/server/src/mcp/mcp-reference.ts',
 		'     (generator + per-tool metadata) and the live MCP tool registry. Regenerate with',
-		'     `bun run build:docs`; mcp-reference.test.ts fails if this file is stale. -->',
+		'     `bun run --cwd packages/server build:docs`; mcp-reference.test.ts fails if this file',
+		'     is stale. -->',
 		'',
 		'# MCP API reference',
 		'',

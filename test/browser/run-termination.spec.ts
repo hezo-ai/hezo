@@ -1,3 +1,7 @@
+// Criterion #2 (viewport-conditional behavior): the terminate control has to
+// stay reachable once the run card collapses at 375px, which is a media-query
+// branch happy-dom never evaluates. The rest of the terminate flow is exercised
+// by the server tier; only the mobile-affordance assertion needs Chromium.
 import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { createProjectAndClearPlanning, uniqueName } from './helpers';

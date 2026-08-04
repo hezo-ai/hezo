@@ -1,3 +1,8 @@
+// Criterion #3 (native input events the test runner can't synthesize): the drop
+// path is driven by a real `DataTransfer` built in the page and dispatched as
+// dragenter/dragover/drop (see the `dropFile` helper below), which is the exact
+// shape happy-dom + user-event cannot construct. Criterion #2 also applies to the
+// mobile case, where the drag hint is replaced by an Upload button at 375px.
 import { expect, test } from './fixtures';
 import {
 	createProjectAndClearPlanning,
