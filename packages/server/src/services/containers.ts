@@ -23,7 +23,7 @@ import { stripNulBytes, terminalStatusParams } from '../lib/sql';
 import { getDefaultRamCapPerContainerGb, getProjectContainerDiskGb } from '../lib/system-meta';
 import { logger } from '../logger';
 import { setAgentIdleIfNoActiveRuns } from './agent-runtime-status';
-import type { ContainerLogStreamer } from './container-logs';
+import { type ContainerLogStreamer, containerStreamId } from './container-logs';
 import {
 	chownToRunUser,
 	clearContainerRunUserCache,
@@ -186,10 +186,6 @@ function elapsedSeconds(startedAt: number): string {
 	return `${((Date.now() - startedAt) / 1000).toFixed(1)}s`;
 }
 
-function provisionStreamId(containerId: string): string {
-	return `provision:${containerId}`;
-}
-
 /**
  * Provisioning output, streamed to the container it is bringing up.
  *
@@ -204,6 +200,10 @@ function provisionStreamId(containerId: string): string {
  * holds as many containers as it has concurrent runs, so their provisioning
  * output interleaved into one stream and was shown as whichever container the
  * page happened to be displaying.
+ *
+ * It opens **the** container stream ({@link containerStreamId}), not a
+ * provisioning-only one beside it - see that function for why two streams in one
+ * room silently erased each other.
  */
 function beginProvisionStream(
 	logs: LogStreamBroker | undefined,
@@ -212,7 +212,7 @@ function beginProvisionStream(
 ): void {
 	if (!logs) return;
 	logs.begin({
-		streamId: provisionStreamId(containerId),
+		streamId: containerStreamId(containerId),
 		room: wsRoom.containerLogs(containerId),
 		buildMessage: (line) => ({
 			type: WsMessageType.ContainerLog,
@@ -410,7 +410,7 @@ export async function provisionContainer(
 	};
 	const openStream = (containerId: string) => {
 		beginProvisionStream(logs, project.id, containerId);
-		streamId = provisionStreamId(containerId);
+		streamId = containerStreamId(containerId);
 		createdContainerId = containerId;
 		for (const line of preContainer) logs?.emit(streamId, line.stream, line.text);
 		preContainer.length = 0;
@@ -1208,8 +1208,17 @@ export async function destroyContainer(
 	// Captured before the container goes, and kept on the member row: it is the
 	// only account of why this container was worth removing, and the detail page
 	// shows it after the container itself is gone.
-	const lastLogs = await captureContainerLogs(docker, containerId, projectSlug);
-	const annotated = appendMemoryLine(lastLogs, consumeFinalMemoryLine(projectId));
+	//
+	// The engine's own log is empty on every backend (PID 1 is `sleep infinity`)
+	// and absent entirely on a managed one, so the live stream's buffer - the
+	// provisioning and lifecycle output Hezo wrote itself - is what actually
+	// carries the account. Falling back to it is the difference between a removed
+	// container's page reading "No output was captured" and showing how it came up.
+	const lastLogs =
+		(await captureContainerLogs(docker, containerId, projectSlug)) ??
+		deps.logs?.getLogText(containerStreamId(containerId)) ??
+		null;
+	const annotated = appendMemoryLine(lastLogs || null, consumeFinalMemoryLine(projectId));
 	await setPoolMemberOutcome(db, containerId, annotated, null);
 
 	await removeFromEngine(docker, containerId);
@@ -1228,6 +1237,12 @@ export async function destroyContainer(
 		'container_stopped',
 		containerId,
 	).catch((e) => log.error('Failed to fail runs on container removal:', e));
+
+	// The one event that ends a container's log stream. Viewer churn deliberately
+	// does not (see `ContainerLogStreamer.unsubscribe`), so this is also what
+	// bounds the broker's map - every stream it opens is closed by the container
+	// it belongs to going away.
+	if (deps.logs) await deps.containerLogStreamer?.end(containerId, deps.logs);
 
 	await broadcastProjectUpdate(db, wsManager, teamId, projectId);
 	log.info(

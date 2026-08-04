@@ -285,7 +285,7 @@ describe('provisionContainer', () => {
 
 		expect(subscribe).toHaveBeenCalledWith(projectId, id, logs, docker);
 
-		const text = logs.getLogText(`provision:${id}`);
+		const text = logs.getLogText(`container:${id}`);
 		expect(text).toContain('→ Preparing workspace');
 		expect(text).toContain('→ Starting container');
 		expect(text).toContain('✓ Container ready');
@@ -428,7 +428,7 @@ describe('provisionContainer', () => {
 		);
 		expect(caExec).toBeDefined();
 
-		const text = logs.getLogText(`provision:${id}`);
+		const text = logs.getLogText(`container:${id}`);
 		expect(text).toContain('→ Trusting Hezo egress CA');
 		expect(text).toContain('ca-store warning line');
 	});
@@ -459,7 +459,7 @@ describe('provisionContainer', () => {
 			'mtu',
 			'1420',
 		]);
-		expect(logs.getLogText(`provision:${id}`)).toContain('pinning container MTU to 1420');
+		expect(logs.getLogText(`container:${id}`)).toContain('pinning container MTU to 1420');
 	});
 
 	it('leaves MTU untouched and grants only base capabilities on a normal (>=1500) egress host', async () => {
@@ -535,7 +535,7 @@ describe('provisionContainer', () => {
 		// works for everything that does not transit the proxy, and failing the
 		// whole provision would be a worse trade than saying so here.
 		expect(id).toBeTruthy();
-		const text = logs.getLogText(`provision:${id}`);
+		const text = logs.getLogText(`container:${id}`);
 		expect(text).toContain('⚠ installing the egress CA failed: exec transport down');
 		const row = await db.query<{ container_status: string }>(
 			'SELECT container_status FROM projects WHERE id = $1',
@@ -564,7 +564,7 @@ describe('provisionContainer', () => {
 			);
 
 			expect(id).toBeTruthy();
-			const text = logs.getLogText(`provision:${id}`);
+			const text = logs.getLogText(`container:${id}`);
 			expect(text).toContain('→ Syncing project repos');
 			expect(text).toContain('coverage-repo');
 			expect(text).toContain('⚠ 1 repo(s) failed to clone');
@@ -608,7 +608,7 @@ describe('provisionContainer', () => {
 		expect(identity).toEqual({ teamId, agentId: 'host', label: 'provision-git' });
 		// The short-lived bridge is always released, even with no repos to sync.
 		expect(releaseRunSocket).toHaveBeenCalledWith(runId);
-		expect(logs.getLogText(`provision:${id}`)).toContain('→ Syncing project repos');
+		expect(logs.getLogText(`container:${id}`)).toContain('→ Syncing project repos');
 	});
 
 	it('reports failed local MCP installs without failing the provision', async () => {
@@ -624,7 +624,7 @@ describe('provisionContainer', () => {
 
 			const id = await provisionContainer(baseDeps(docker, { logs }), await projectRow(), teamSlug);
 
-			const text = logs.getLogText(`provision:${id}`);
+			const text = logs.getLogText(`container:${id}`);
 			expect(text).toContain('→ Installing pending local MCP servers');
 			expect(text).toContain('⚠ 1 MCP server install(s) failed');
 

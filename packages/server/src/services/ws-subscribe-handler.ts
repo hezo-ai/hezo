@@ -84,10 +84,11 @@ export async function handleWsSubscribe(
 		if (!allowed) return;
 
 		deps.wsManager.subscribe(ws, room);
-		// Only a container that is actually up gets a follow stream. A stopped one
-		// has nothing to emit, and opening a second stream into this room would
-		// publish an *empty* replace-snapshot on replay - wiping the provisioning
-		// output the client had just been sent.
+		// Only a container that is actually up gets a follow stream: a stopped one
+		// has nothing to emit, and attaching to it is an engine call that can only
+		// fail. It can no longer *erase* anything - the follow stream and the
+		// provisioning trace are one stream now (see `containerStreamId`) - but
+		// there is still no reason to open it.
 		if (deps.logs && row.live) {
 			deps.containerLogStreamer.subscribe(row.project_id, containerId, deps.logs, deps.docker);
 		}

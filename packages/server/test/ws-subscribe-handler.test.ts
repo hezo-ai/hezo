@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Db } from '../src/db/database';
 import type { AuthInfo } from '../src/lib/types';
 import { canAuthAccessTeam } from '../src/middleware/auth';
-import { ContainerLogStreamer } from '../src/services/container-logs';
+import { ContainerLogStreamer, containerStreamId } from '../src/services/container-logs';
 import { ImageBuildTracker } from '../src/services/image-build-tracker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import type { ContainerEngine } from '../src/services/sandbox/types';
@@ -83,6 +83,32 @@ describe('handleWsSubscribe', () => {
 		containerLogStreamer.stopAll(logs);
 		await safeClose(db);
 	});
+
+	/**
+	 * Open a container's log stream the way `provisionContainer` does - the same
+	 * id, so the test cannot drift from what the handler will find.
+	 */
+	function beginContainerStream(containerId: string, projectId: string) {
+		logs.begin({
+			streamId: containerStreamId(containerId),
+			room: wsRoom.containerLogs(containerId),
+			buildMessage: (line) => ({
+				type: WsMessageType.ContainerLog,
+				containerId,
+				projectId,
+				stream: line.stream,
+				text: line.text,
+			}),
+			buildSnapshot: (text) => ({
+				type: WsMessageType.ContainerLog,
+				containerId,
+				projectId,
+				stream: 'stdout',
+				text,
+				replace: true,
+			}),
+		});
+	}
 
 	function deps(overrides: Partial<Parameters<typeof handleWsSubscribe>[2]> = {}) {
 		return {
@@ -252,29 +278,8 @@ describe('handleWsSubscribe', () => {
 		const { userId, projectId } = await seedTeamWithProject(db, { container_id: containerId });
 		const ws = createMockWs({ type: AuthType.Admin, userId });
 
-		// The provisioning stream, which publishes into the same room as the
-		// follow stream the handler starts - so the replay has to survive the
-		// handler opening its own.
-		logs.begin({
-			streamId: `provision:${containerId}`,
-			room: wsRoom.containerLogs(containerId),
-			buildMessage: (line) => ({
-				type: WsMessageType.ContainerLog,
-				containerId,
-				projectId,
-				stream: line.stream,
-				text: line.text,
-			}),
-			buildSnapshot: (text) => ({
-				type: WsMessageType.ContainerLog,
-				containerId,
-				projectId,
-				stream: 'stdout',
-				text,
-				replace: true,
-			}),
-		});
-		logs.emit(`provision:${containerId}`, 'stdout', 'replayed line\n');
+		beginContainerStream(containerId, projectId);
+		logs.emit(containerStreamId(containerId), 'stdout', 'replayed line\n');
 
 		const sendToSocket = vi.fn((_s: WsSocket, _payload: unknown) => {});
 
@@ -342,6 +347,71 @@ describe('handleWsSubscribe', () => {
 
 		expect(wsManager.getRoomSize(wsRoom.containerLogs(containerId))).toBe(1);
 		expect(followed).toEqual([]);
+	});
+
+	it('keeps the provisioning trace when it follows a container that is up', async () => {
+		// The regression this exists for. An `idle` container is live, so the
+		// handler starts a follow stream on it - and a container's own log is empty
+		// on every backend (PID 1 is `sleep infinity`) and absent on a managed one.
+		// While that follow stream was a *second* stream in the room, replay sent
+		// two `replace: true` snapshots carrying the same containerId and the empty
+		// one landed last, so a container that had finished coming up read as "No
+		// output was captured from this container". One stream per container makes
+		// that impossible: exactly one snapshot, and it has the trace in it.
+		const containerId = 'ctr-idle';
+		const { userId, projectId } = await seedTeamWithProject(db);
+		await db.query(
+			`INSERT INTO container_pool_members (project_id, container_id, state, disk_ceiling_bytes)
+			 VALUES ($1, $2, 'idle', 1000000)`,
+			[projectId, containerId],
+		);
+		beginContainerStream(containerId, projectId);
+		logs.emit(containerStreamId(containerId), 'stdout', '→ Creating container\n');
+
+		const ws = createMockWs({ type: AuthType.Admin, userId });
+		const followed: string[] = [];
+		// Returning null is Daytona's answer, by design: it exposes no container
+		// log at all, so this stream can never contribute a line.
+		const docker = {
+			containerLogs: async (id: string) => {
+				followed.push(id);
+				return null;
+			},
+		} as unknown as ContainerEngine;
+		const sendToSocket = vi.fn((_s: WsSocket, _payload: unknown) => {});
+
+		await handleWsSubscribe(ws, wsRoom.containerLogs(containerId), deps({ docker, sendToSocket }));
+
+		expect(followed).toEqual([containerId]);
+		expect(sendToSocket).toHaveBeenCalledTimes(1);
+		expect(sendToSocket).toHaveBeenCalledWith(ws, {
+			type: WsMessageType.ContainerLog,
+			containerId,
+			projectId,
+			stream: 'stdout',
+			text: '→ Creating container\n',
+			replace: true,
+		});
+	});
+
+	it('keeps a container log across viewers coming and going', async () => {
+		// Closing the page used to `end` the stream, which discarded the trace: the
+		// log belongs to the container, not to whoever happens to be watching it.
+		const containerId = 'ctr-revisited';
+		const { projectId } = await seedTeamWithProject(db);
+		beginContainerStream(containerId, projectId);
+		logs.emit(containerStreamId(containerId), 'stdout', '→ Starting container\n');
+
+		containerLogStreamer.subscribe(projectId, containerId, logs, {
+			containerLogs: async () => null,
+		} as unknown as ContainerEngine);
+		containerLogStreamer.unsubscribe(containerId, logs);
+
+		expect(logs.getLogText(containerStreamId(containerId))).toContain('→ Starting container');
+
+		// Destroying the container is what ends it - and what bounds the map.
+		await containerLogStreamer.end(containerId, logs);
+		expect(logs.isActive(containerStreamId(containerId))).toBe(false);
 	});
 
 	it('refuses a container this instance does not own', async () => {

@@ -10,7 +10,26 @@ interface StreamState {
 
 const CONTAINER_LOG_CAP_BYTES = 64 * 1024;
 
-function containerStreamId(containerId: string): string {
+/**
+ * The id of a container's log stream - **one per container, never one per
+ * producer.**
+ *
+ * Provisioning output and the follow stream on the container's own stdout both
+ * write here. They used to be two streams (`provision:<id>` and `container:<id>`)
+ * sharing one room, and that broke on replay: `LogStreamBroker.replay` sends a
+ * snapshot for *every* stream in the room, both snapshots carry `replace: true`
+ * and the same `containerId`, so a client applied both and the last one won.
+ *
+ * The follow stream is empty by construction - PID 1 is `sleep infinity`, and a
+ * managed backend has no container log to follow at all (`DaytonaEngine.
+ * containerLogs` returns null by design). So its empty snapshot landed second
+ * and wiped the provisioning trace, which is the only content the log ever had.
+ * A container that had finished coming up read as "No output was captured".
+ *
+ * One stream makes that structurally impossible: the room is 1:1 with the
+ * stream, so there is no second snapshot to clobber the first.
+ */
+export function containerStreamId(containerId: string): string {
 	return `container:${containerId}`;
 }
 
@@ -42,34 +61,51 @@ export class ContainerLogStreamer {
 		const state: StreamState = { abortController, refCount: 1 };
 		this.streams.set(containerId, state);
 
-		logs.begin({
-			streamId: containerStreamId(containerId),
-			room: wsRoom.containerLogs(containerId),
-			buildMessage: (line) => ({
-				type: WsMessageType.ContainerLog,
-				containerId,
-				projectId,
-				stream: line.stream,
-				text: line.text,
-			}),
-			buildSnapshot: (text) => ({
-				type: WsMessageType.ContainerLog,
-				containerId,
-				projectId,
-				stream: 'stdout',
-				text,
-				replace: true,
-			}),
-			capBytes: CONTAINER_LOG_CAP_BYTES,
-		});
+		// Join the container's stream rather than restart it. `begin` allocates a
+		// fresh buffer, so beginning again here would throw away the provisioning
+		// trace already in it - which on a managed backend is the entire log, since
+		// the follow stream below has nothing to add. The provisioner opens the
+		// stream for a container it created; this opens it for one adopted at
+		// startup, where nothing else has.
+		if (!logs.isActive(containerStreamId(containerId))) {
+			logs.begin({
+				streamId: containerStreamId(containerId),
+				room: wsRoom.containerLogs(containerId),
+				buildMessage: (line) => ({
+					type: WsMessageType.ContainerLog,
+					containerId,
+					projectId,
+					stream: line.stream,
+					text: line.text,
+				}),
+				buildSnapshot: (text) => ({
+					type: WsMessageType.ContainerLog,
+					containerId,
+					projectId,
+					stream: 'stdout',
+					text,
+					replace: true,
+				}),
+				capBytes: CONTAINER_LOG_CAP_BYTES,
+			});
+		}
 
 		this.startStreaming(containerId, logs, docker, abortController).catch(() => {
 			this.streams.delete(containerId);
-			void logs.end(containerStreamId(containerId));
 		});
 	}
 
-	unsubscribe(containerId: string, logs?: LogStreamBroker): void {
+	/**
+	 * Stop following, when the last viewer goes.
+	 *
+	 * **The broker stream is deliberately left open.** It holds the container's
+	 * log, which outlives every tab that watched it: ending it here meant closing
+	 * the Containers page discarded the provisioning trace, so re-opening the page
+	 * showed an empty log for a container that had come up fine. {@link end} is
+	 * what closes it, on the one event that makes the log meaningless - the
+	 * container being destroyed - which is also what bounds the map.
+	 */
+	unsubscribe(containerId: string, _logs?: LogStreamBroker): void {
 		const state = this.streams.get(containerId);
 		if (!state) return;
 
@@ -77,8 +113,22 @@ export class ContainerLogStreamer {
 		if (state.refCount <= 0) {
 			state.abortController.abort();
 			this.streams.delete(containerId);
-			if (logs) void logs.end(containerStreamId(containerId));
 		}
+	}
+
+	/** Whether a follow stream is currently attached to this container. */
+	isFollowing(containerId: string): boolean {
+		return this.streams.has(containerId);
+	}
+
+	/** Drop a destroyed container's stream, flushing whatever it still held. */
+	async end(containerId: string, logs: LogStreamBroker): Promise<void> {
+		const state = this.streams.get(containerId);
+		if (state) {
+			state.abortController.abort();
+			this.streams.delete(containerId);
+		}
+		await logs.end(containerStreamId(containerId));
 	}
 
 	stopAll(logs?: LogStreamBroker): void {

@@ -145,7 +145,7 @@ describe('ContainerLogStreamer — frame parsing', () => {
 		expect(() => streamer.unsubscribe('c6')).not.toThrow();
 	});
 
-	it('cleans up the stream when startStreaming rejects (containerLogs throws)', async () => {
+	it('keeps the container log when startStreaming rejects (containerLogs throws)', async () => {
 		const docker = {
 			containerLogs: async () => {
 				throw new Error('docker exploded');
@@ -153,12 +153,16 @@ describe('ContainerLogStreamer — frame parsing', () => {
 		} as unknown as ContainerEngine;
 
 		streamer.subscribe('p8', 'c8', logs, docker);
-		// The .catch in subscribe deletes the streamer entry and ends the broker
-		// stream. Wait for the rejection to settle, then confirm the broker no
-		// longer reports the stream as active.
+		// The .catch drops the *follow* attempt, not the container's log. Ending the
+		// broker stream here is what used to erase a provisioning trace over an
+		// engine that could not be followed - which is every managed backend, where
+		// there is no container log to follow in the first place.
 		await vi.waitFor(() => {
-			expect(logs.isActive(streamId('c8'))).toBe(false);
+			expect(streamer.isFollowing('c8')).toBe(false);
 		});
+		expect(logs.isActive(streamId('c8'))).toBe(true);
+		logs.emit(streamId('c8'), 'stdout', 'still writable\n');
+		expect(logs.getLogText(streamId('c8'))).toContain('still writable');
 		expect(() => streamer.unsubscribe('c8')).not.toThrow();
 	});
 
