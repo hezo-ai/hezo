@@ -1249,6 +1249,42 @@ and draining it with a bounded `tail -c`. On the streaming path that means stder
 as one chunk at the end rather than interleaved: the honest cost of a provider that merges
 the two.
 
+**A transient gateway failure is retried inside the client, not surfaced.** Daytona's front
+door answers a bare nginx `502 Bad Gateway` from time to time, and the first non-2xx used to
+be final at every call site — so one blip during a create settle (which polls twice a second
+for the length of a build), a resume, or a run's exec killed the whole operation, while the
+container sync, the one caller that did catch it, made the problem look cosmetic. Every
+non-streaming call now goes through a single attempt loop that owns the auth header, a
+**per-attempt** timeout (a shared signal is already counting down when the second attempt
+starts) and a bounded jittered backoff on `408/429/502/503/504` or a transport-level
+rejection. It deliberately does not interpret the result: "not ok" means something different
+at each endpoint, so the response is handed back and the caller raises its own named error on
+give-up, exactly as before there was a retry. An abort is never retried in either of its
+forms — a caller cancelling is a decision, and re-sending after a timeout would stack whole
+control timeouts past the deadline the waiter is measuring against.
+
+What may be re-sent is decided by the method (`GET`/`HEAD`/`DELETE`), which keeps the
+billable `POST /sandbox` and the command-starting `POST …/exec` out by construction. One
+endpoint overrides that on measured behaviour: `executeStreaming`'s session create *is*
+retried, because the session id is minted on Hezo's side, so a re-send carries the same id —
+and the live API answers `409 CONFLICT` while leaving the session fully usable (its exec, log
+stream and command record all still work). The conflict is therefore the success case. That
+is worth having because the session create is the first call of the exec every agent run, git
+operation and chat turn goes through. Teardown rests on the mirror-image fact: a repeat
+`DELETE` of a session answers `404`, which is already the desired end state. Both are pinned
+in the live suite rather than assumed, since if either stops holding the retry has to go.
+
+**A gateway error page is not command output.** The log-follow stream is the one place a
+retry cannot help, because the failure is not an exception: a 502 carries a perfectly good
+HTML body, and the reader decoded it and handed it to the caller as the command's own stdout
+— `<html><head><title>502 Bad Gateway</title>` in an agent's run log — and then reported a
+clean exit, since the stream ends normally and the exit code comes from a separate call. The
+status is now checked before the body is touched, with a transient one feeding the reconnect
+counter that already exists rather than a second mechanism. The exit-code fetch is checked
+the same way: `json()` on an HTML page throws a bare `SyntaxError` naming neither the
+provider nor the status, and any shape that *did* parse would take the `?? 0` and report a
+failed command as a clean one.
+
 Per-sandbox memory comes from Daytona's OTEL metrics endpoint as a windowed query rather
 than a live gauge; an absent or empty series reports as **null**, which the caller already
 treats as "no reading this tick" (reporting zero would read as a sandbox using no memory

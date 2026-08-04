@@ -16,6 +16,73 @@ const FILE_TIMEOUT_MS = 120_000;
 const CONTROL_TIMEOUT_MS = 60_000;
 
 /**
+ * Statuses that mean the provider's edge never reached the service behind it,
+ * so the same request can be sent again without first establishing whether it
+ * landed. Everything else is an *answer*: a 4xx is the service saying no, and
+ * repeating it changes nothing.
+ *
+ * Observed in the wild as a bare nginx `502 Bad Gateway` page from Daytona's
+ * front door, which matters far past the call it interrupts - without this the
+ * first one to land during a create settles, a resume, or a run's exec killed
+ * the whole operation.
+ */
+const TRANSIENT_STATUSES = new Set([408, 429, 502, 503, 504]);
+
+/**
+ * Backoff between attempts at a transient failure, jittered on use.
+ *
+ * Short and bounded on purpose. This sits underneath poll loops that carry
+ * their own deadline (`settle`), so the budget it adds has to be small enough
+ * to disappear inside one poll interval; and a provider that is genuinely down
+ * should surface as an error promptly rather than as a request that takes a
+ * minute to fail. The jitter is not cosmetic: the container sync fans out over
+ * every project at once, so a fixed backoff has every project retry in
+ * lockstep and arrive as one burst.
+ */
+const RETRY_DELAYS_MS = [250, 750, 2000];
+
+/**
+ * Methods that may be re-sent on a transient failure purely from their own
+ * semantics, with nothing else known about the endpoint.
+ *
+ * The default is deliberately conservative rather than clever: it leaves the
+ * billable `POST /sandbox` and the command-starting `POST …/exec` out by
+ * construction, so retrying either has to be an explicit, justified decision at
+ * the call site rather than something a shared helper does on their behalf.
+ */
+const IDEMPOTENT_METHODS = new Set(['GET', 'HEAD', 'DELETE']);
+
+/**
+ * A response body reduced to one line, for embedding in an error message.
+ *
+ * Gateways answer with an HTML page rather than the API's JSON, so the raw body
+ * turns a one-line failure into a six-line one - and this is a message that
+ * lands in the log once per project per tick while an outage lasts. Collapsing
+ * the whitespace keeps the diagnosis (the status and what the page said) and
+ * drops the layout.
+ */
+function bodySnippet(text: string, maxLength = 400): string {
+	const collapsed = text.replace(/\s+/g, ' ').trim();
+	return collapsed.length > maxLength ? `${collapsed.slice(0, maxLength)}…` : collapsed;
+}
+
+/**
+ * Whether a thrown request failure is worth another attempt.
+ *
+ * An abort is excluded in both its forms - the caller cancelling, and this
+ * attempt's own timeout. Neither is a blip: the first is a decision, and
+ * retrying the second would stack whole control timeouts, taking a wedged call
+ * far past the deadline whoever is waiting on it is measuring against. What
+ * remains out of `fetch` is a transport failure (refused, reset, DNS, TLS),
+ * which is precisely what a second attempt exists for.
+ */
+function isRetryableFailure(error: unknown): boolean {
+	if (error instanceof DaytonaApiError) return TRANSIENT_STATUSES.has(error.status);
+	const name = (error as { name?: string } | null)?.name;
+	return name !== 'AbortError' && name !== 'TimeoutError';
+}
+
+/**
  * How many times a dropped command-log stream is resumed before the run is
  * failed. Bounded because every reconnect replays the log from byte 0 - the
  * endpoint offers no offset - so retrying a genuinely-down provider costs
@@ -268,26 +335,95 @@ export interface DaytonaPty {
  * makes the error shapes ours to map.
  */
 export class DaytonaClient implements DaytonaApi {
+	private readonly retryDelaysMs: number[];
+
 	constructor(
 		private readonly apiKey: string,
 		private readonly apiUrl: string = DEFAULT_DAYTONA_API_URL,
-	) {}
+		/** Test hook: overrides the transient-failure backoff so specs don't sleep. */
+		opts: { retryDelaysMs?: number[] } = {},
+	) {
+		this.retryDelaysMs = opts.retryDelaysMs ?? RETRY_DELAYS_MS;
+	}
+
+	/**
+	 * The one HTTP attempt loop every non-streaming call goes through.
+	 *
+	 * It owns exactly three things - the auth header, a **per-attempt** timeout,
+	 * and the transient retry - and deliberately does not interpret the result.
+	 * "Not ok" means something different at every endpoint here (a 404 from
+	 * `files` is an answer, a 404 from the control plane is not; a 409 from
+	 * session create means the session is already there and usable, a 409 from
+	 * destroy means the sandbox is already gone), so the response is handed back
+	 * for the caller to read. On give-up that means the caller raises its own
+	 * named error carrying the transient status, exactly as it did before there
+	 * was a retry at all.
+	 *
+	 * The timeout is minted per attempt rather than shared: one signal created
+	 * outside the loop is already counting down when the second attempt starts,
+	 * and would abort it instantly.
+	 */
+	private async send(
+		method: string,
+		url: string,
+		init: {
+			body?: BodyInit;
+			headers?: Record<string, string>;
+			timeoutMs?: number;
+			/** A caller-owned cancel. Replaces the per-attempt timeout when given. */
+			signal?: AbortSignal;
+			/** Overrides the method-derived default. */
+			retry?: boolean;
+		} = {},
+	): Promise<Response> {
+		const retry = init.retry ?? IDEMPOTENT_METHODS.has(method.toUpperCase());
+		const delays = retry ? this.retryDelaysMs : [];
+
+		for (let attempt = 0; ; attempt++) {
+			let failure: unknown;
+			try {
+				const res = await fetch(url, {
+					method,
+					headers: { Authorization: `Bearer ${this.apiKey}`, ...init.headers },
+					body: init.body,
+					signal: init.signal ?? AbortSignal.timeout(init.timeoutMs ?? CONTROL_TIMEOUT_MS),
+				});
+				if (res.ok || !TRANSIENT_STATUSES.has(res.status)) {
+					if (attempt > 0) {
+						log.debug(`${method} ${url} recovered on attempt ${attempt + 1}`);
+					}
+					return res;
+				}
+				if (attempt >= delays.length) return res;
+				// Drained rather than abandoned: an unread body holds its connection
+				// open, and this path runs on every sync tick during an outage.
+				await res.arrayBuffer().catch(() => undefined);
+				failure = new DaytonaApiError(`transient ${res.status}`, res.status, '');
+			} catch (e) {
+				if (attempt >= delays.length || !isRetryableFailure(e)) throw e;
+				failure = e;
+			}
+			const base = delays[attempt];
+			await new Promise((r) => setTimeout(r, base + Math.random() * base * 0.5));
+			log.debug(
+				`${method} ${url} retrying after ${(failure as Error).message} ` +
+					`(attempt ${attempt + 2}/${delays.length + 1})`,
+			);
+		}
+	}
 
 	private async request<T>(
 		method: string,
 		path: string,
 		body?: unknown,
-		opts: { timeoutMs?: number; base?: string } = {},
+		opts: { timeoutMs?: number; base?: string; retry?: boolean } = {},
 	): Promise<T> {
 		const base = opts.base ?? this.apiUrl;
-		const res = await fetch(`${base}${path}`, {
-			method,
-			headers: {
-				Authorization: `Bearer ${this.apiKey}`,
-				...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-			},
+		const res = await this.send(method, `${base}${path}`, {
+			...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' } }),
 			body: body === undefined ? undefined : JSON.stringify(body),
-			signal: AbortSignal.timeout(opts.timeoutMs ?? CONTROL_TIMEOUT_MS),
+			timeoutMs: opts.timeoutMs,
+			retry: opts.retry,
 		});
 		const text = await res.text();
 		if (!res.ok) {
@@ -306,7 +442,7 @@ export class DaytonaClient implements DaytonaApi {
 					? ' (the API key is likely missing a permission scope - volumes need read:volumes/write:volumes/delete:volumes)'
 					: '';
 			throw new DaytonaApiError(
-				`Daytona ${method} ${path} failed (${res.status})${hint}: ${text.slice(0, 400)}`,
+				`Daytona ${method} ${path} failed (${res.status})${hint}: ${bodySnippet(text)}`,
 				res.status,
 				text,
 			);
@@ -406,8 +542,12 @@ export class DaytonaClient implements DaytonaApi {
 		try {
 			await this.request('DELETE', `/sandbox/${encodeURIComponent(id)}?force=true`);
 		} catch (e) {
-			// Already gone is success. A sandbox mid-build answers 409; the caller
-			// (the orphan reaper) retries, so surfacing it is correct.
+			// Already gone is success. 409 is deliberately *not* folded in with it:
+			// measured against the live API, both a sandbox mid-build and one whose
+			// destroy has already been accepted answer 409, and the status alone
+			// cannot tell them apart. Surfacing it is right for either - the caller
+			// (the orphan reaper) retries, and a second destroy of something already
+			// going away costs nothing.
 			if (e instanceof DaytonaApiError && e.status === 404) return;
 			throw e;
 		}
@@ -479,16 +619,18 @@ export class DaytonaClient implements DaytonaApi {
 		opts: { cwd?: string; timeoutMs?: number; signal?: AbortSignal } = {},
 	): Promise<{ exitCode: number; output: string }> {
 		const base = await this.toolboxBase(sandbox);
-		const res = await fetch(`${base}/process/execute`, {
-			method: 'POST',
-			headers: { Authorization: `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' },
+		// Never retried: this runs a command, so a request that turns out to have
+		// landed would run it a second time.
+		const res = await this.send('POST', `${base}/process/execute`, {
+			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ command, ...(opts.cwd ? { cwd: opts.cwd } : {}) }),
-			signal: opts.signal ?? AbortSignal.timeout(opts.timeoutMs ?? CONTROL_TIMEOUT_MS),
+			signal: opts.signal,
+			timeoutMs: opts.timeoutMs,
 		});
 		const text = await res.text();
 		if (!res.ok) {
 			throw new DaytonaApiError(
-				`Daytona execute failed (${res.status}): ${text.slice(0, 400)}`,
+				`Daytona execute failed (${res.status}): ${bodySnippet(text)}`,
 				res.status,
 				text,
 			);
@@ -519,36 +661,46 @@ export class DaytonaClient implements DaytonaApi {
 		opts: { cwd?: string; signal?: AbortSignal } = {},
 	): Promise<{ exitCode: number }> {
 		const base = await this.toolboxBase(sandbox);
-		const auth = { Authorization: `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' };
 		const sessionId = `hezo-${randomBytes(6).toString('hex')}`;
 
-		const created = await fetch(`${base}/process/session`, {
-			method: 'POST',
-			headers: auth,
+		// The one POST here that *is* retried, and it is safe for a reason specific
+		// to this endpoint rather than to the method. The session id is minted on
+		// this side, so a retry after a request that actually landed re-sends the
+		// same id - and measured against the live API that answers `409` with
+		// `code: "CONFLICT"` ("conflict: session already exists") while leaving the
+		// session fully usable: the exec, its log stream and its command record all
+		// work against it afterwards. So the conflict *is* the success case. Worth
+		// having, because this is the first call of the exec every agent run, git
+		// operation and chat turn goes through, and losing it to a gateway blip
+		// fails the whole run.
+		const created = await this.send('POST', `${base}/process/session`, {
+			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ sessionId }),
-			signal: opts.signal ?? AbortSignal.timeout(CONTROL_TIMEOUT_MS),
+			signal: opts.signal,
+			retry: true,
 		});
-		if (!created.ok) {
+		if (!created.ok && created.status !== 409) {
 			// Reported rather than swallowed: every later call in this method is
 			// addressed to a session that does not exist, so the real failure would
 			// otherwise surface as a confusing "returned no cmdId" one step later.
 			const body = await created.text();
 			throw new DaytonaApiError(
-				`Daytona session create failed (${created.status}): ${body.slice(0, 400)}`,
+				`Daytona session create failed (${created.status}): ${bodySnippet(body)}`,
 				created.status,
 				body,
 			);
 		}
 
 		try {
-			const startRes = await fetch(`${base}/process/session/${sessionId}/exec`, {
-				method: 'POST',
-				headers: auth,
+			// Not retried, unlike the session create above: this one starts the
+			// command, and a re-send of a request that landed runs it twice.
+			const startRes = await this.send('POST', `${base}/process/session/${sessionId}/exec`, {
+				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					command: opts.cwd ? `cd ${JSON.stringify(opts.cwd)} && ${command}` : command,
 					runAsync: true,
 				}),
-				signal: opts.signal ?? AbortSignal.timeout(CONTROL_TIMEOUT_MS),
+				signal: opts.signal,
 			});
 			const started = (await startRes.json()) as { cmdId?: string };
 			const cmdId = started.cmdId;
@@ -562,10 +714,25 @@ export class DaytonaClient implements DaytonaApi {
 
 			// The follow stream ends when the command does; the exit code is only on
 			// the command record, so it is fetched rather than parsed out of the logs.
-			const infoRes = await fetch(`${base}/process/session/${sessionId}/command/${cmdId}`, {
-				headers: { Authorization: `Bearer ${this.apiKey}` },
-				signal: AbortSignal.timeout(CONTROL_TIMEOUT_MS),
-			});
+			// By the time the stream has closed the record is final - measured, with
+			// 7, 0, 127 and 1 all read back correctly on the first request.
+			const infoRes = await this.send(
+				'GET',
+				`${base}/process/session/${sessionId}/command/${cmdId}`,
+			);
+			if (!infoRes.ok) {
+				// Checked rather than parsed straight through. A gateway answers with
+				// an HTML page, so `json()` would throw a bare SyntaxError naming
+				// neither the provider nor the status - and any shape that *did* parse
+				// would take the `?? 0` below and report a failed command as a clean
+				// exit.
+				const body = await infoRes.text();
+				throw new DaytonaApiError(
+					`Daytona command record fetch failed (${infoRes.status}): ${bodySnippet(body)}`,
+					infoRes.status,
+					body,
+				);
+			}
 			const info = (await infoRes.json()) as { exitCode?: number | null };
 			return { exitCode: info.exitCode ?? 0 };
 		} finally {
@@ -627,6 +794,34 @@ export class DaytonaClient implements DaytonaApi {
 				headers: { Authorization: `Bearer ${this.apiKey}` },
 				signal,
 			});
+			// Checked **before** the body is touched, because a gateway failure here
+			// is not an empty response - it is an HTML error page with a perfectly
+			// good body, which the reader below would decode and hand to `onLine` as
+			// the command's own output. That put `<html><head><title>502 Bad
+			// Gateway</title>` into an agent's run log and then reported the exec as
+			// a clean exit, since the stream ends and the exit code comes from a
+			// separate call. A transient status feeds the reconnect counter that is
+			// already here, so the bound and the backoff need no second mechanism.
+			if (!res.ok) {
+				await res.arrayBuffer().catch(() => undefined);
+				if (!TRANSIENT_STATUSES.has(res.status)) {
+					throw new DaytonaApiError(
+						`Daytona command log stream failed (${res.status})`,
+						res.status,
+						'',
+					);
+				}
+				reconnects += 1;
+				if (reconnects > MAX_LOG_STREAM_RECONNECTS) {
+					throw new ExecStreamLostError(
+						`Daytona session logs (gateway kept answering ${res.status})`,
+					);
+				}
+				const backoff =
+					this.retryDelaysMs[Math.min(reconnects - 1, this.retryDelaysMs.length - 1)] ?? 0;
+				await new Promise((r) => setTimeout(r, backoff + Math.random() * backoff * 0.5));
+				continue;
+			}
 			if (!res.body) return;
 
 			const reader = res.body.getReader();
@@ -693,12 +888,14 @@ export class DaytonaClient implements DaytonaApi {
 	/** End a command session, terminating the shell it holds. */
 	private async deleteSession(sandbox: DaytonaSandbox, sessionId: string): Promise<void> {
 		const base = await this.toolboxBase(sandbox);
-		const res = await fetch(`${base}/process/session/${encodeURIComponent(sessionId)}`, {
-			method: 'DELETE',
-			headers: { Authorization: `Bearer ${this.apiKey}` },
-			signal: AbortSignal.timeout(CONTROL_TIMEOUT_MS),
-		});
-		// A session that is already gone is the desired end state, not an error.
+		const res = await this.send(
+			'DELETE',
+			`${base}/process/session/${encodeURIComponent(sessionId)}`,
+		);
+		// A session that is already gone is the desired end state, not an error -
+		// which is also what makes the retry above safe here: measured, a repeat
+		// delete answers 404 `PROCESS_NOT_FOUND`, so a re-send of a request that
+		// had already landed lands on this branch rather than failing the teardown.
 		if (!res.ok && res.status !== 404) {
 			const body = await res.text();
 			throw new DaytonaApiError(`Daytona session delete failed (${res.status})`, res.status, body);
@@ -735,11 +932,9 @@ export class DaytonaClient implements DaytonaApi {
 	 */
 	async openPty(sandbox: DaytonaSandbox, sessionId: string, launch: string): Promise<DaytonaPty> {
 		const base = await this.toolboxBase(sandbox);
-		await fetch(`${base}/process/pty`, {
-			method: 'POST',
-			headers: { Authorization: `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' },
+		await this.send('POST', `${base}/process/pty`, {
+			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ id: sessionId, cols: 200, rows: 50 }),
-			signal: AbortSignal.timeout(CONTROL_TIMEOUT_MS),
 		});
 
 		const url = `${base.replace(/^http/, 'ws')}/process/pty/${encodeURIComponent(sessionId)}/connect`;
@@ -968,11 +1163,7 @@ export class DaytonaClient implements DaytonaApi {
 	/** End a PTY session, terminating whatever is running on it. */
 	private async deletePtySession(sandbox: DaytonaSandbox, sessionId: string): Promise<void> {
 		const base = await this.toolboxBase(sandbox);
-		const res = await fetch(`${base}/process/pty/${encodeURIComponent(sessionId)}`, {
-			method: 'DELETE',
-			headers: { Authorization: `Bearer ${this.apiKey}` },
-			signal: AbortSignal.timeout(CONTROL_TIMEOUT_MS),
-		});
+		const res = await this.send('DELETE', `${base}/process/pty/${encodeURIComponent(sessionId)}`);
 		// A session that is already gone is the desired end state, not an error.
 		if (!res.ok && res.status !== 404) {
 			throw new DaytonaApiError(
@@ -1001,16 +1192,16 @@ export class DaytonaClient implements DaytonaApi {
 		init: { body?: BodyInit; accept?: 'json' | 'bytes' | 'none' } = {},
 	): Promise<Response> {
 		const base = await this.toolboxBase(sandbox);
-		const res = await fetch(`${base}${path}`, {
-			method,
-			headers: { Authorization: `Bearer ${this.apiKey}` },
+		// Reads and deletes carry the method default and retry; an upload does not,
+		// since a re-sent write is a second write.
+		const res = await this.send(method, `${base}${path}`, {
 			body: init.body,
-			signal: AbortSignal.timeout(FILE_TIMEOUT_MS),
+			timeoutMs: FILE_TIMEOUT_MS,
 		});
 		if (!res.ok && res.status !== 404) {
 			const text = await res.text();
 			throw new DaytonaApiError(
-				`Daytona file ${method} ${path} failed (${res.status}): ${text.slice(0, 300)}`,
+				`Daytona file ${method} ${path} failed (${res.status}): ${bodySnippet(text, 300)}`,
 				res.status,
 				text,
 			);

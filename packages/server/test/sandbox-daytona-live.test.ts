@@ -19,6 +19,7 @@
  * moved, not just the expectation that broke.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { DaytonaClient } from '../src/services/sandbox/daytona/client';
 import { dockerSandboxHandle } from '../src/services/sandbox/handle';
 import { openSandboxBackend } from '../src/services/sandbox/open';
 import { INSTANCE_LABEL, reapOrphanedContainers } from '../src/services/sandbox/orphan-reaper';
@@ -249,6 +250,73 @@ describe.skipIf(!apiKey)('Daytona adapter — live API', () => {
 		const files = engine.files(containerId, '/workspace/runfiles');
 		await expect(files.read('../../etc/passwd')).rejects.toThrow(/escapes its root/);
 	});
+
+	it(
+		'answers a duplicate session create with a usable 409, and a repeat delete with 404',
+		async () => {
+			// The measurement the transient-retry policy rests on, kept here because
+			// it is a claim about the provider and nothing else can notice it moving.
+			//
+			// `executeStreaming` re-sends its session create on a gateway failure -
+			// the only POST in the client that is retried - and that is safe solely
+			// because the session id is minted on this side, so the re-send carries
+			// the same id. Two things have to hold for that: the duplicate has to be
+			// *recognised* rather than silently opening a second shell, and the
+			// session has to still work afterwards, since the retry's whole point is
+			// that the exec then proceeds on it. If either stops being true, the
+			// retry must go, so this failing is a signal to change the client - not
+			// a test to relax.
+			//
+			// The delete is the same argument for teardown: a re-sent delete that had
+			// already landed must not read as a failed teardown.
+			const client = new DaytonaClient(apiKey as string, process.env.HEZO_DAYTONA_API_URL);
+			const record = await client.getSandbox(containerId);
+			expect(record).not.toBeNull();
+			const base = `${record?.toolboxProxyUrl}/${containerId}`;
+			const auth = { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' };
+			const sessionId = `hezo-live-${Math.random().toString(36).slice(2, 10)}`;
+			const post = (path: string, body?: unknown) =>
+				fetch(`${base}${path}`, {
+					method: 'POST',
+					headers: auth,
+					body: body === undefined ? undefined : JSON.stringify(body),
+				});
+
+			expect((await post('/process/session', { sessionId })).status).toBe(201);
+
+			const duplicate = await post('/process/session', { sessionId });
+			expect(duplicate.status).toBe(409);
+			expect(await duplicate.text()).toContain('already exists');
+
+			// Usable after the conflict - the exec, its log stream and its command
+			// record all still answer for this session.
+			const started = await post(`/process/session/${sessionId}/exec`, {
+				command: `sh -c 'echo still-usable; exit 7'`,
+				runAsync: true,
+			});
+			const { cmdId } = (await started.json()) as { cmdId: string };
+			const logs = await fetch(
+				`${base}/process/session/${sessionId}/command/${cmdId}/logs?follow=true`,
+				{ headers: { Authorization: `Bearer ${apiKey}` } },
+			);
+			expect(await logs.text()).toContain('still-usable');
+			// Final by the time the follow stream closes, which is what lets
+			// `executeStreaming` read it in one request rather than polling.
+			const info = await fetch(`${base}/process/session/${sessionId}/command/${cmdId}`, {
+				headers: { Authorization: `Bearer ${apiKey}` },
+			});
+			expect(((await info.json()) as { exitCode?: number }).exitCode).toBe(7);
+
+			const del = (n: number) =>
+				fetch(`${base}/process/session/${sessionId}`, {
+					method: 'DELETE',
+					headers: { Authorization: `Bearer ${apiKey}` },
+				}).then((r) => [n, r.status] as const);
+			expect(await del(1)).toEqual([1, 204]);
+			expect(await del(2)).toEqual([2, 404]);
+		},
+		TIMEOUT,
+	);
 
 	it(
 		'reaps a sandbox this instance owns but no longer references',

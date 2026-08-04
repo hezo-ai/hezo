@@ -1465,10 +1465,15 @@ export async function syncContainerStatus(
 	try {
 		info = await docker.inspectContainer(containerId);
 	} catch (err) {
+		// The message, not the error object. An occasional transport failure is
+		// expected on this path - the engine has already exhausted its own retries
+		// and the next tick simply asks again - so a stack per project per tick
+		// buries everything else in the log during a provider outage. The stack is
+		// one level away rather than gone.
 		log.warn(
-			`Container sync transport error for project ${ref(projectSlug, projectId)}; will retry`,
-			err,
+			`Container sync transport error for project ${ref(projectSlug, projectId)}; will retry: ${(err as Error).message}`,
 		);
+		log.debug(`Container sync transport error for ${ref(projectSlug, projectId)}`, err);
 		return null;
 	}
 

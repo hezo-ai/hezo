@@ -100,6 +100,11 @@ the one that has it.
   it goes quiet - and an agent thinking or waiting on a tool call is quiet for tens of seconds
   at a time. Hezo reopens it and carries on from where it stopped, so a run is not affected. If
   it cannot stay open at all, the run is retried rather than failed.
+- **Daytona's gateway returns a brief error now and then** - most often a `502 Bad Gateway`
+  while it cannot reach the service behind it. Hezo retries these itself, so a passing blip
+  does not fail a container that is starting up, a project resuming, or a run in progress. If
+  it lasts longer than that the operation fails with the status Daytona returned, and the
+  container list shows the project's real state on the next refresh.
 - **Suspended sandboxes still count.** A suspended container holds its memory and disk
   against your account quota. On a small plan, idle projects can hold the whole allowance.
 

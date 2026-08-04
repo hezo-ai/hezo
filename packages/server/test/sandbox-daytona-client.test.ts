@@ -16,8 +16,13 @@ const BASE = 'https://app.daytona.io/api';
 
 afterEach(() => vi.restoreAllMocks());
 
-/** Reply to each call in order; the last entry repeats. */
-function scriptFetch(replies: Array<{ status?: number; body: unknown }>): {
+/**
+ * Reply to each call in order; the last entry repeats.
+ *
+ * `raw` sends the string as-is instead of JSON, which is how a gateway failure
+ * actually arrives - an HTML error page rather than the API's own shape.
+ */
+function scriptFetch(replies: Array<{ status?: number; body?: unknown; raw?: string }>): {
 	calls: Array<{ url: string; method: string }>;
 } {
 	const calls: Array<{ url: string; method: string }> = [];
@@ -27,6 +32,12 @@ function scriptFetch(replies: Array<{ status?: number; body: unknown }>): {
 		calls.push({ url, method: init?.method ?? 'GET' });
 		const reply = replies[Math.min(i, replies.length - 1)];
 		i += 1;
+		if (reply.raw !== undefined) {
+			return new Response(reply.raw, {
+				status: reply.status ?? 200,
+				headers: { 'content-type': 'text/html' },
+			});
+		}
 		return new Response(JSON.stringify(reply.body), {
 			status: reply.status ?? 200,
 			headers: { 'content-type': 'application/json' },
@@ -34,6 +45,19 @@ function scriptFetch(replies: Array<{ status?: number; body: unknown }>): {
 	});
 	return { calls };
 }
+
+/**
+ * A client whose retries don't sleep. The backoff itself is not what these
+ * specs are about, and paying it in every one of them would add seconds.
+ */
+function client(retryDelaysMs: number[] = [0, 0, 0]) {
+	return new DaytonaClient('k', BASE, { retryDelaysMs });
+}
+
+/** What Daytona's front door actually returns when it cannot reach the service. */
+const GATEWAY_502 =
+	'<html>\n<head><title>502 Bad Gateway</title></head>\n' +
+	'<body>\n<center><h1>502 Bad Gateway</h1></center>\n</body>\n</html>\n';
 
 const sandbox = {
 	id: 'sbx-1',
@@ -218,7 +242,7 @@ describe('executeStreaming does not leak its session', () => {
 
 	it('reports a session that could not be created rather than failing one step later', async () => {
 		vi.stubGlobal('fetch', async () => new Response('over quota', { status: 429 }));
-		const err = await new DaytonaClient('k', BASE)
+		const err = await client()
 			.executeStreaming(sandbox, 'echo hi', () => {})
 			.catch((e) => e);
 		expect(err).toBeInstanceOf(DaytonaApiError);
@@ -241,6 +265,198 @@ describe('executeStreaming does not leak its session', () => {
 			seen.add(id as string);
 		}
 		expect(seen.size).toBe(5);
+	});
+});
+
+/**
+ * Daytona's front door answers a bare nginx `502 Bad Gateway` from time to time.
+ * Before this the first non-2xx was final everywhere, so one blip during a
+ * create settle, a resume or a run's exec killed the whole operation - while the
+ * container sync, the single caller that did catch it, made the problem look
+ * cosmetic.
+ *
+ * What is retried is decided by the method, with two endpoints overriding it on
+ * behaviour measured against the live API rather than assumed.
+ */
+describe('a transient gateway failure is retried rather than surfaced', () => {
+	it('recovers a control-plane read that blips once', async () => {
+		const { calls } = scriptFetch([
+			{ status: 502, raw: GATEWAY_502 },
+			{ body: { id: 'sbx-1', state: 'started' } },
+		]);
+		const got = await client().getSandbox('sbx-1');
+		expect(got?.id).toBe('sbx-1');
+		expect(calls).toHaveLength(2);
+	});
+
+	it('gives up after a bounded number of attempts, on one readable line', async () => {
+		// Bounded, because a provider that is genuinely down should surface as an
+		// error promptly rather than as a request that takes a minute to fail. The
+		// message is collapsed to a line: this one lands once per project per sync
+		// tick while an outage lasts, and the raw HTML page made it six.
+		const { calls } = scriptFetch([{ status: 502, raw: GATEWAY_502 }]);
+		const err = await client()
+			.getSandbox('sbx-1')
+			.catch((e) => e);
+		expect(err).toBeInstanceOf(DaytonaApiError);
+		expect(err.status).toBe(502);
+		expect(calls).toHaveLength(4);
+		expect(err.message).not.toContain('\n');
+		expect(err.message).toContain('502 Bad Gateway');
+	});
+
+	it('never re-sends a sandbox create', async () => {
+		// A create that turns out to have landed would be a second billable
+		// sandbox, so this one stays out by the method default.
+		const { calls } = scriptFetch([{ status: 502, raw: GATEWAY_502 }]);
+		await expect(client().createSandbox({ dockerfileContent: 'FROM x\n' })).rejects.toBeInstanceOf(
+			DaytonaApiError,
+		);
+		expect(calls).toHaveLength(1);
+	});
+
+	it('re-sends an idempotent delete and reads the follow-up 404 as done', async () => {
+		// The other half of what makes a delete safe to retry: measured, a repeat
+		// answers "not there", which is the desired end state rather than a failure.
+		const { calls } = scriptFetch([
+			{ status: 502, raw: GATEWAY_502 },
+			{ status: 404, body: { message: 'not found' } },
+		]);
+		await expect(client().deleteFile(sandbox, '/workspace/gone')).resolves.toBeUndefined();
+		expect(calls).toHaveLength(2);
+	});
+
+	it('retries a session create and reads the conflict as already-created', async () => {
+		// The one POST that is retried, and it is safe for a reason specific to the
+		// endpoint rather than to the method: the session id is minted on this side,
+		// so a re-send carries the same id. Measured against the live API, that
+		// answers 409 CONFLICT and leaves the session fully usable - the exec, its
+		// log stream and its command record all work against it afterwards. Worth
+		// having because this is the first call of the exec every agent run, git
+		// operation and chat turn goes through.
+		let creates = 0;
+		vi.stubGlobal('fetch', async (input: string | URL | Request) => {
+			const url = typeof input === 'string' ? input : input.toString();
+			if (url.endsWith('/process/session')) {
+				creates += 1;
+				if (creates === 1) return new Response(GATEWAY_502, { status: 502 });
+				return new Response(
+					JSON.stringify({ statusCode: 409, code: 'CONFLICT', message: 'session already exists' }),
+					{ status: 409 },
+				);
+			}
+			if (url.endsWith('/exec')) return Response.json({ cmdId: 'cmd-1' });
+			if (url.includes('/logs')) return new Response('one\ntwo\n');
+			if (url.includes('/command/cmd-1')) return Response.json({ exitCode: 3 });
+			return Response.json({});
+		});
+
+		const lines: string[] = [];
+		const { exitCode } = await client().executeStreaming(sandbox, 'echo hi', (l) => {
+			lines.push(l);
+		});
+		expect(creates).toBe(2);
+		expect(exitCode).toBe(3);
+		expect(lines).toEqual(['one\n', 'two\n']);
+	});
+
+	it('never re-sends the exec that starts the command', async () => {
+		// Unlike the session create above: a re-send of a request that landed runs
+		// the command twice.
+		let execs = 0;
+		vi.stubGlobal('fetch', async (input: string | URL | Request) => {
+			const url = typeof input === 'string' ? input : input.toString();
+			if (url.endsWith('/exec')) {
+				execs += 1;
+				return new Response(GATEWAY_502, { status: 502 });
+			}
+			return Response.json({});
+		});
+		await expect(client().executeStreaming(sandbox, 'echo hi', () => {})).rejects.toThrow();
+		expect(execs).toBe(1);
+	});
+});
+
+/**
+ * The failure the retry cannot cover, because it is not an exception: a gateway
+ * error page is a perfectly good response body, and the log reader consumed it
+ * as if the command had written it.
+ */
+describe('a gateway error page is never mistaken for command output', () => {
+	function scriptLogStream(logReply: (attempt: number) => Response) {
+		let attempts = 0;
+		vi.stubGlobal('fetch', async (input: string | URL | Request) => {
+			const url = typeof input === 'string' ? input : input.toString();
+			if (url.endsWith('/exec')) return Response.json({ cmdId: 'cmd-1' });
+			if (url.includes('/logs')) {
+				attempts += 1;
+				return logReply(attempts);
+			}
+			if (url.includes('/command/cmd-1')) return Response.json({ exitCode: 0 });
+			return Response.json({});
+		});
+		return () => attempts;
+	}
+
+	it('keeps the 502 page out of the agent log and reopens the stream', async () => {
+		// Left unchecked this decoded the page and handed it to `onLine` as the
+		// command's own output - `<html><head><title>502 Bad Gateway</title>` in an
+		// agent's run log - and then reported a clean exit, because the stream ends
+		// and the exit code comes from a separate call.
+		const attempts = scriptLogStream((n) =>
+			n === 1 ? new Response(GATEWAY_502, { status: 502 }) : new Response('one\ntwo\n'),
+		);
+
+		const lines: string[] = [];
+		const { exitCode } = await client().executeStreaming(sandbox, 'echo hi', (l) => {
+			lines.push(l);
+		});
+
+		expect(attempts()).toBe(2);
+		expect(exitCode).toBe(0);
+		expect(lines).toEqual(['one\n', 'two\n']);
+		expect(lines.join('')).not.toContain('502');
+	});
+
+	it('gives up on a stream the gateway will not open, naming the transport', async () => {
+		// The same bound the mid-stream drop already had, reused rather than
+		// duplicated: every reopen replays the whole log from byte 0.
+		const attempts = scriptLogStream(() => new Response(GATEWAY_502, { status: 502 }));
+		await expect(client().executeStreaming(sandbox, 'echo hi', () => {})).rejects.toThrow(
+			/output stream .* closed before the command finished/,
+		);
+		expect(attempts()).toBe(6);
+	});
+
+	it('surfaces a refused log stream that will not come back on its own', async () => {
+		// A 4xx is the service answering, not the edge failing - reconnecting is
+		// pointless and would just spend the bound.
+		const attempts = scriptLogStream(() => new Response('nope', { status: 403 }));
+		const err = await client()
+			.executeStreaming(sandbox, 'echo hi', () => {})
+			.catch((e) => e);
+		expect(err).toBeInstanceOf(DaytonaApiError);
+		expect(err.status).toBe(403);
+		expect(attempts()).toBe(1);
+	});
+
+	it('names the provider when the command record cannot be read', async () => {
+		// `json()` on an HTML page throws a bare SyntaxError naming neither the
+		// provider nor the status - and any shape that did parse would take the
+		// `?? 0` and report a failed command as a clean exit.
+		vi.stubGlobal('fetch', async (input: string | URL | Request) => {
+			const url = typeof input === 'string' ? input : input.toString();
+			if (url.endsWith('/exec')) return Response.json({ cmdId: 'cmd-1' });
+			if (url.includes('/logs')) return new Response('one\n');
+			if (url.includes('/command/cmd-1')) return new Response(GATEWAY_502, { status: 502 });
+			return Response.json({});
+		});
+		const err = await client()
+			.executeStreaming(sandbox, 'echo hi', () => {})
+			.catch((e) => e);
+		expect(err).toBeInstanceOf(DaytonaApiError);
+		expect(err.status).toBe(502);
+		expect(err.message).toContain('command record fetch failed');
 	});
 });
 
