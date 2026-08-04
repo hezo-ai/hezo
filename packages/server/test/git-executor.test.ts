@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ContainerRunUser } from '../src/services/container-user';
-import { ContainerGitExecutor, GIT_HTTP_CONFIG_ARGS } from '../src/services/git-executor';
+import { ContainerGitExecutor, GIT_HTTP_TIMEOUT_ENV } from '../src/services/git-executor';
 import {
 	BRIDGE_RUNNER_BINARY,
 	type BridgeRunnerArgs,
@@ -118,7 +118,6 @@ describe('ContainerGitExecutor', () => {
 		expect(calls[0].Cmd).toEqual([
 			...buildBridgeRunnerArgv(bridge),
 			'git',
-			...GIT_HTTP_CONFIG_ARGS,
 			'fetch',
 			'--all',
 			'--prune',
@@ -136,7 +135,7 @@ describe('ContainerGitExecutor', () => {
 
 		await exec.exec(['fetch'], { cwd: '/workspace/repo', needsNetwork: true });
 
-		expect(calls[0].Cmd).toEqual(['git', ...GIT_HTTP_CONFIG_ARGS, 'fetch']);
+		expect(calls[0].Cmd).toEqual(['git', 'fetch']);
 	});
 
 	it('passes identity + SSH_AUTH_SOCK but never HEZO_PROMPT_FILE', async () => {
@@ -179,20 +178,19 @@ describe('ContainerGitExecutor', () => {
 	});
 
 	it('carries git HTTP timeouts on a remote op, and nothing extra on a local one', async () => {
-		// A stalled transfer has to fail fast rather than hang on libcurl's defaults;
-		// a rev-parse has no transport to bound, so it stays a bare argv.
+		// A stalled transfer has to fail fast rather than hang on libcurl's defaults.
+		// Env, not `-c` argv: a prefix on the command line silently stops the
+		// scripted-docker suites from matching their own `fetch` rules.
 		const { docker, calls } = recordingDocker();
 		const exec = ContainerGitExecutor.forPrep(docker, 'cid', null, runUser, 'scope-http');
 
 		await exec.exec(['fetch', 'origin'], { cwd: '/workspace/repo', needsNetwork: true });
-		expect(calls[0]?.Cmd.slice(0, 1 + GIT_HTTP_CONFIG_ARGS.length)).toEqual([
-			'git',
-			...GIT_HTTP_CONFIG_ARGS,
-		]);
-		expect(GIT_HTTP_CONFIG_ARGS.join(' ')).toContain('http.lowSpeedLimit');
+		expect(calls[0]?.Cmd).toEqual(['git', 'fetch', 'origin']);
+		for (const entry of GIT_HTTP_TIMEOUT_ENV) expect(calls[0]?.Env).toContain(entry);
 
 		await exec.exec(['rev-parse', 'HEAD'], { cwd: '/workspace/repo' });
 		expect(calls[1]?.Cmd).toEqual(['git', 'rev-parse', 'HEAD']);
+		for (const entry of GIT_HTTP_TIMEOUT_ENV) expect(calls[1]?.Env).not.toContain(entry);
 	});
 
 	it('no longer sets GIT_SSH_COMMAND - transport is HTTPS, ssh is for signing', async () => {

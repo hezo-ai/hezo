@@ -9,10 +9,17 @@ import { type BridgeRunnerArgs, buildBridgeRunnerArgv } from './ssh-agent';
 
 /**
  * Git's own network timeouts, so a stalled transfer fails fast instead of hanging
- * on libcurl's defaults. `connectTimeout` bounds the initial connect, and the
- * low-speed pair aborts a transfer that has effectively stopped (under 1 KB/s for
- * 30s) without tripping a slow-but-alive one. Worst case stays under the fetch
- * (60s) and clone (120s) op caps.
+ * on libcurl's defaults: one under 1 KB/s for 30s is abandoned, without tripping
+ * a slow-but-alive one. The host-side per-op abort (fetch 60s, clone 120s) is
+ * still the outer bound; this just fails sooner and says why.
+ *
+ * Delivered as **env rather than `-c` argv**, and that is not cosmetic. Several
+ * suites script a docker exec by matching the exact git command line, so
+ * prefixing every remote op with two `-c` pairs stopped their `fetch` rules from
+ * matching - the scripted failure never fired and the tests asserted against a
+ * success they had not asked for. `git-remote-http` reads these two names
+ * directly (verified against the shipped binary), so the argv stays exactly what
+ * the caller passed.
  *
  * **There is no ssh config any more.** Git transport is HTTPS on every backend
  * (see `buildGitRemoteUrl`), so the file this module used to write into every
@@ -20,7 +27,7 @@ import { type BridgeRunnerArgs, buildBridgeRunnerArgv } from './ssh-agent';
  * against the image's pinned host keys - configured a transport nothing uses.
  * SSH remains only for commit *signing*, which is local and needs no network.
  */
-export const GIT_HTTP_CONFIG_ARGS = ['-c', 'http.lowSpeedLimit=1000', '-c', 'http.lowSpeedTime=30'];
+export const GIT_HTTP_TIMEOUT_ENV = ['GIT_HTTP_LOW_SPEED_LIMIT=1000', 'GIT_HTTP_LOW_SPEED_TIME=30'];
 
 /**
  * Mint a scope id for container git ops that run outside an agent run or a
@@ -213,13 +220,12 @@ export class ContainerGitExecutor implements GitExecutor {
 
 	async exec(args: string[], opts: GitExecOpts): Promise<GitExecResult> {
 		const wrapped = Boolean(opts.needsNetwork && this.bridge);
-		// Only a remote op gets the HTTP timeouts; a local one has no transport to
-		// bound and the extra `-c` pairs would be noise on every rev-parse.
-		const gitArgs = opts.needsNetwork ? [...GIT_HTTP_CONFIG_ARGS, ...args] : args;
 		const cmd = wrapped
-			? [...buildBridgeRunnerArgv(this.bridge as BridgeRunnerArgs), 'git', ...gitArgs]
-			: ['git', ...gitArgs];
-		const env = [...this.baseEnv];
+			? [...buildBridgeRunnerArgv(this.bridge as BridgeRunnerArgs), 'git', ...args]
+			: ['git', ...args];
+		// Only a remote op gets the HTTP timeouts; a local one has no transport to
+		// bound.
+		const env = [...this.baseEnv, ...(opts.needsNetwork ? GIT_HTTP_TIMEOUT_ENV : [])];
 		// Self-deadline for bridge-wrapped ops: newer container images run the
 		// wrapped command under `timeout` so the tree dies on its own even if this
 		// server process is gone before the op finishes (crash, hard kill). Old

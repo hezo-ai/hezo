@@ -22,16 +22,12 @@ import { AiProvider } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DaytonaClient, DEFAULT_DAYTONA_API_URL } from '../../src/services/sandbox/daytona/client';
 import { DaytonaEngine } from '../../src/services/sandbox/daytona/engine';
-import { describeAgentCliConformance } from '../conformance/agent-cli';
-import { describeEgressConformance } from '../conformance/egress';
-import { describeEngineConformance } from '../conformance/engine';
-import { describeFilesConformance } from '../conformance/files';
+import { describeContainerBackendConformance } from '../conformance';
 import type {
 	ConformanceHarness,
 	LiveAdapterFixture,
 	LiveModelProvider,
 } from '../conformance/fixture';
-import { describeTunnelConformance } from '../conformance/tunnel';
 
 const apiKey = process.env.HEZO_DAYTONA_API_KEY;
 // A second, independent key: the Daytona key buys a sandbox, this buys the
@@ -89,9 +85,7 @@ if (!apiKey) {
 	};
 
 	const harness: ConformanceHarness = { describe, it, expect, beforeAll, afterAll };
-	describeEngineConformance(fixture, harness);
-	describeFilesConformance(fixture, harness);
-	describeAgentCliConformance(fixture, harness);
-	describeEgressConformance(fixture, harness);
-	describeTunnelConformance(fixture, harness);
+	// One call, deliberately: a suite added to the set reaches this backend
+	// without editing this file, and a new adapter cannot register a subset.
+	describeContainerBackendConformance(fixture, harness);
 }

@@ -21,16 +21,12 @@ import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { AiProvider } from '@hezo/shared';
 import { DockerClient } from '../../src/services/docker';
 import { CONTAINER_WORKSPACE_ROOT } from '../../src/services/workspace';
-import { describeAgentCliConformance } from '../conformance/agent-cli';
-import { describeEgressConformance } from '../conformance/egress';
-import { describeEngineConformance } from '../conformance/engine';
-import { describeFilesConformance } from '../conformance/files';
+import { describeContainerBackendConformance } from '../conformance';
 import type {
 	ConformanceHarness,
 	LiveAdapterFixture,
 	LiveModelProvider,
 } from '../conformance/fixture';
-import { describeTunnelConformance } from '../conformance/tunnel';
 
 const IMAGE = 'hezo/agent-base:latest';
 
@@ -87,11 +83,9 @@ if (reason) {
 		modelProvider: liveModelProvider(),
 	};
 
-	describeEngineConformance(fixture, harness);
-	describeFilesConformance(fixture, harness);
-	describeAgentCliConformance(fixture, harness);
-	describeEgressConformance(fixture, harness);
-	describeTunnelConformance(fixture, harness);
+	// One call, deliberately: a suite added to the set reaches this backend
+	// without editing this file, and a new adapter cannot register a subset.
+	describeContainerBackendConformance(fixture, harness);
 }
 
 /** Reads the optional model-provider key. Same env contract as `test/live/`. */
