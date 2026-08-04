@@ -183,10 +183,11 @@ export function describeGitConformance(fixture: LiveAdapterFixture, h: Conforman
 					mcp: { host: allocated.proxyHost, port: allocated.proxyPort },
 					ssh: { host: allocated.proxyHost, port: allocated.proxyPort },
 				},
-				// Everything, because the reach test names a host on the public
-				// internet and the credential test names localhost - both have to
-				// travel the same way a run's git does.
-				policy: { proxiedHosts: ['localhost'], proxyEverything: true },
+				// Exactly the egress suite's policy, which is the configuration CI
+				// already proves works: split routing with `localhost` proxied. The
+				// reach test deliberately runs *outside* the proxy (see below), so
+				// nothing here needs `proxyEverything`.
+				policy: { proxiedHosts: ['localhost'], proxyEverything: false },
 			});
 			const url = `http://run:${allocated.token}@127.0.0.1:${tunnel.endpoints.proxyPort}`;
 			// Git reads these the way every other HTTP client does, which is the
@@ -217,11 +218,14 @@ export function describeGitConformance(fixture: LiveAdapterFixture, h: Conforman
 		}
 
 		it('reaches a real git host over the transport Hezo builds', async () => {
-			// The Daytona-class assertion. It is deliberately a *public* repo over
-			// plain HTTPS: no credential, no proxy substitution, nothing but "can a
-			// container on this backend speak git's transport to the outside world".
-			// SSH could not, on any port, and nothing noticed for months.
-			const out = await sh(`git ls-remote --heads ${PUBLIC_REMOTE} 2>&1 | head -5; echo "rc=$?"`);
+			// The Daytona-class assertion, and deliberately the plainest thing in the
+			// file: a public repo, no credential, and **no proxy** - `sh` is called
+			// with an empty env on purpose. The question is only "can a container on
+			// this backend speak git's transport to the outside world", which SSH
+			// could not on any port. Routing it through the proxy would answer a
+			// different question and drag the MITM's upstream trust of a public CA
+			// into an assertion that has nothing to do with it.
+			const out = await sh(`git ls-remote --heads ${PUBLIC_REMOTE} 2>&1 | head -5`, []);
 			expect(out).toContain('refs/heads/');
 			expect(out).not.toContain('kex_exchange_identification');
 		}, 180_000);
