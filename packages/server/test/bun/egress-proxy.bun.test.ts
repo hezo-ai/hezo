@@ -55,6 +55,10 @@ beforeAll(async () => {
 	// proxy runs with auth disabled. Authed CONNECT (407 without a token, a full
 	// MITM handshake with one) is covered in its own describe block below.
 	proxy = new EgressProxy({
+		// Upstreams in this suite are on loopback, which the destination
+		// guard blocks by default. Opt in so the guard under test elsewhere
+		// does not mask what these cases actually assert.
+		allowPrivateTargets: true,
 		db,
 		masterKeyManager,
 		ca,
@@ -362,6 +366,10 @@ describe('EgressProxy per-run CONNECT auth under Bun', () => {
 
 	beforeAll(() => {
 		authProxy = new EgressProxy({
+			// Upstreams in this suite are on loopback, which the destination
+			// guard blocks by default. Opt in so the guard under test elsewhere
+			// does not mask what these cases actually assert.
+			allowPrivateTargets: true,
 			db,
 			masterKeyManager,
 			ca,

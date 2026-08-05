@@ -35,6 +35,7 @@ hezo --web-url https://hezo.example.com   # public base URL for sign-in redirect
 hezo --no-open                   # don't open the web app in your browser on start
 hezo --docker-socket /path/to/docker.sock   # point at a container runtime socket Hezo didn't find on its own
 hezo --no-egress-proxy-auth      # drop per-run egress-proxy auth (escape hatch; on by default)
+hezo --egress-allow-private-targets  # let agent egress reach loopback/private addresses (blocked by default)
 hezo --auto-install-updates      # restart onto downloaded updates automatically (waits for idle; comes back unlocked)
 hezo --disable-telemetry         # turn off the anonymous daily usage report (on by default)
 ```

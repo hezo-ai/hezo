@@ -81,7 +81,9 @@ describe('POST /webhooks/chat/:channel/:secret', () => {
 		app = new Hono<Env>();
 		app.use('*', async (c, next) => {
 			c.set('db', db);
-			c.set('masterKeyManager', {} as MasterKeyManager);
+			// Complete enough to satisfy every method the webhook path can reach: these
+			// rows carry a legacy plaintext webhook_secret, so no decrypt is needed.
+			c.set('masterKeyManager', { getKey: () => null } as unknown as MasterKeyManager);
 			c.set('chatSessionManager', manager);
 			c.set('chatChannelRegistry', registry);
 			await next();
@@ -206,7 +208,9 @@ describe('group dispatch + observation on the generic webhook route', () => {
 		app = new Hono<Env>();
 		app.use('*', async (c, next) => {
 			c.set('db', db);
-			c.set('masterKeyManager', {} as MasterKeyManager);
+			// Complete enough to satisfy every method the webhook path can reach: these
+			// rows carry a legacy plaintext webhook_secret, so no decrypt is needed.
+			c.set('masterKeyManager', { getKey: () => null } as unknown as MasterKeyManager);
 			c.set('chatSessionManager', manager);
 			c.set('chatChannelRegistry', registry);
 			await next();

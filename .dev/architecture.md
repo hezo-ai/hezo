@@ -2796,6 +2796,12 @@ assumes the agent itself may misbehave; the egress proxy is the choke point.
 
 **Secrets.** `secrets` rows are AES-256-GCM ciphertext plus `allowed_hosts` (e.g.
 `['api.stripe.com']`, `*.googleapis.com` wildcards) or the `allow_all_hosts` escape hatch.
+Entries are normalized on every write path through `normalizeAllowedHosts`
+(`lib/credential-placeholder.ts`, beside the grammar it has to agree with): scheme,
+userinfo, path and port are stripped to the bare lowercase host the proxy actually
+compares against, since the matcher strips the port from the CONNECT target first — so an
+entry stored as `https://api.stripe.com:443` would otherwise match nothing, silently and
+with a 403 that reads like a scoping decision.
 They are **instance-global** — `name` is globally unique and the egress proxy resolves the
 placeholder by name with no project context — bounded per-secret by `allowed_hosts`. The
 master key (§ 10) decrypts at request time.
@@ -2919,6 +2925,71 @@ is on Hezo's own loopback and the container reaches it through the tunnel - so t
 probe, its auto-rebind of the bind host, and the run/chat abort gate it fed were all deleted
 along with `--container-bind-host`. A tunnel that cannot be established fails the run
 directly, with the error from the exec channel.
+
+For each request the proxy terminates TLS, matches placeholders **in the URL and headers**,
+loads the named secret, verifies the host against `allowed_hosts`, substitutes, and
+forwards. **Request bodies** are forwarded byte-for-byte by default and never buffered —
+except a narrowly-gated path for secrets a human has opted into body substitution
+(`secrets.allow_body_substitution`): a `POST`/`PUT`/`PATCH` with an uncompressed
+`application/json` body and a fixed `Content-Length` ≤ 8 KB is buffered, has its placeholders
+substituted, and is forwarded with a recomputed `Content-Length`. Everything else — larger,
+non-JSON, compressed, chunked, or streaming bodies (SSE, Streamable-HTTP MCP) — streams
+through untouched, so long-lived connections are never held in memory. Body substitution
+still enforces `allowed_hosts`, and a body placeholder for a secret without the opt-in is
+rejected, not leaked. This exists for APIs that take credentials in the body, such as a login
+POST that returns a token (the agent then uses that token via the `Authorization` header).
+Failures are explicit HTTP errors returned to the agent: `unknown_secret` (400),
+`secret_not_allowed_for_host` (403), `secret_not_allowed_in_body` (403), `body_too_large`
+(413), `secrets_unavailable` (503, master key locked).
+
+**Destination guard** (`services/egress/net-guard.ts`). The proxy runs in the **host's**
+network namespace and will dial whatever an authenticated caller names, so it refuses
+targets that resolve to loopback / unspecified / link-local (incl. `169.254.169.254`) /
+RFC1918 / CGNAT / IPv6 `::1`, `fe80::/10`, `fc00::/7` and IPv4-mapped forms of the same.
+Without it, a run holding the proxy token could `CONNECT 127.0.0.1:5432` and reach
+Hezo's own API, its database, or any host-bound daemon; `NO_PROXY` is a client-side hint
+the agent controls, not an enforcement point. Enforcement is by **resolved address**, not
+by name — the guard is installed as the request's `lookup`, so a hostname pointing at a
+private address (`evil.example.com A 127.0.0.1`) fails there and the socket connects to
+exactly the address that was checked (no TOCTOU). CONNECT and plain requests also take a
+synchronous pre-check on IP literals and `localhost`, so a blocked tunnel never mints a
+leaf cert. **One exemption:** Hezo's own endpoint (`host.docker.internal:<serverPort>`,
+matched on host *and* port by `isSelfEndpoint`) — it is already in the run's `NO_PROXY`
+so it should never arrive here, but `NO_PROXY` is a client-side convention and a runtime
+that ignored it would otherwise lose its whole tool surface; the run already holds an
+agent JWT for exactly that endpoint, so this grants nothing new, and the port match keeps
+`host.docker.internal:5432` refused. Off-switch: `--egress-allow-private-targets` /
+`HEZO_EGRESS_ALLOW_PRIVATE_TARGETS=1`, for an operator whose MCP server or git remote is
+genuinely on the LAN. The proxy's own MITM bridge dials loopback directly (`netConnect`),
+not through this path, so it is unaffected.
+
+**Routing to the proxy is env-var convention, not enforcement.** `HTTP(S)_PROXY`/`NO_PROXY`
+are set per run, but the container gets no `NetworkMode` restriction and there are no
+firewall rules, so an agent can unset them and egress directly. That is **fail-closed for
+secret values** — a direct request carries the unsubstituted placeholder, which is inert
+and simply fails upstream — but it does bypass the MCP method allowlist
+(`mcp-method-guard.ts`), the destination guard above, and all egress visibility. Closing
+it properly means a container network namespace plus firewall rules; until then the
+substitution red line, not the routing, is what the guarantee rests on.
+
+**No egress audit.** The egress proxy does not record per-request audit rows, and secret
+values are never written to logs regardless — including the **substituted** request path.
+A placeholder in a query string becomes a live credential in `upstreamPath`, so the
+failure logger is handed the **pre-substitution** path instead (`UpstreamTarget.path`),
+which still carries `__HEZO_SECRET_<NAME>__` and is inert. Guarded by a Bun-tier test that
+forces an upstream failure with the placeholder in the query string. Earlier builds wrote one `egress_request`
+`audit_log` row per substitution (surfaced on an "Outbound traffic" tab, and the source of
+the per-credential "last used"/"use count" stats on the Credentials page); that logging was
+removed because it flooded the project Activity feed with per-request noise. The tab and the
+usage stats are gone, and any `egress_request` rows left in older databases are filtered out
+of the activity-log reads (`routes/audit-log.ts`) rather than deleted.
+
+**Bun & topology notes.** The proxy runs on Bun, whose TLS stack forces a
+**one-listening-`https.Server`-per-host** topology bridged from the CONNECT socket over an
+**explicitly-allocated** loopback port (never read back from `server.address()`, which
+collapses under Bun). Long-lived streams (SSE, Streamable-HTTP MCP) are tracked and
+severed on run teardown. These divergences are why the egress proxy has a Bun-native test
+tier. Full rationale: `AGENTS.md` › Bun-native runtime rules.
 
 ---
 

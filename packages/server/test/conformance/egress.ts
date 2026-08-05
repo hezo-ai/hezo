@@ -143,6 +143,12 @@ export function describeEgressConformance(
 				// is what lets the proxy verify it. Production trusts the real world.
 				extraUpstreamTrustedCAs: ca.cert,
 				authEnabled: true,
+				// The suite's upstream is a throwaway HTTPS server on the host's
+				// loopback, which the destination guard refuses by default - correctly,
+				// since in production nothing behind a container's tunnel should reach
+				// Hezo's own address space. The fixture is the exception, not the rule:
+				// production keeps the guard on.
+				allowPrivateTargets: true,
 			});
 			const allocated = await proxy.allocateRunProxy(runId, {
 				teamId: team.id,

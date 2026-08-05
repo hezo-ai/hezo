@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { type ChatChannel, isChatChannel } from '@hezo/shared';
 import { Hono } from 'hono';
-import { encrypt } from '../crypto/encryption';
+import { decrypt, encrypt } from '../crypto/encryption';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
@@ -48,10 +48,12 @@ chatChannelRoutes.get('/chat/channels', async (c) => {
 		enabled: boolean;
 		bot_token_secret: string | null;
 		webhook_secret: string | null;
+		webhook_secret_encrypted: string | null;
 		metadata: Record<string, unknown>;
 		updated_at: string;
 	}>(
-		`SELECT channel, enabled, bot_token_secret, webhook_secret, metadata, updated_at
+		`SELECT channel, enabled, bot_token_secret, webhook_secret, webhook_secret_encrypted,
+		        metadata, updated_at
 		 FROM chat_channel_configs ORDER BY channel`,
 	);
 	// Never return the raw token or webhook secret — just whether they're set.
@@ -61,7 +63,7 @@ chatChannelRoutes.get('/chat/channels', async (c) => {
 			enabled: r.enabled,
 			has_token: !!r.bot_token_secret,
 			has_app_token: typeof (r.metadata ?? {}).app_token_secret === 'string',
-			has_webhook: !!r.webhook_secret,
+			has_webhook: !!(r.webhook_secret_encrypted ?? r.webhook_secret),
 			metadata: r.metadata ?? {},
 			updated_at: r.updated_at,
 		})),
@@ -124,28 +126,50 @@ chatChannelRoutes.put('/chat/channels/:channel', async (c) => {
 	// Reuse an existing webhook secret if present; otherwise mint one on first setup.
 	const existing = await db.query<{
 		webhook_secret: string | null;
+		webhook_secret_encrypted: string | null;
 		bot_token_secret: string | null;
 		metadata: Record<string, unknown> | null;
 	}>(
-		`SELECT webhook_secret, bot_token_secret, metadata FROM chat_channel_configs WHERE channel = $1`,
+		`SELECT webhook_secret, webhook_secret_encrypted, bot_token_secret, metadata
+		 FROM chat_channel_configs WHERE channel = $1`,
 		[channel],
 	);
-	const webhookSecret = existing.rows[0]?.webhook_secret ?? randomUUID().replace(/-/g, '');
-	if (!botTokenSecret) botTokenSecret = existing.rows[0]?.bot_token_secret ?? null;
+	// Carry the existing secret forward whichever column it currently lives in —
+	// the platform already holds a webhook URL containing it, so re-minting here
+	// would silently break inbound delivery until the operator re-registered.
+	// Either way it is stored back encrypted, and the legacy column is cleared.
+	// Ciphertext that will not open (the master key was reset) is unrecoverable,
+	// so mint a fresh secret rather than 500 — the adapter re-registers the new
+	// webhook URL on the `start()` below, which is the only way back anyway.
+	const existingRow = existing.rows[0];
+	let carriedSecret: string | null = existingRow?.webhook_secret ?? null;
+	if (existingRow?.webhook_secret_encrypted) {
+		try {
+			carriedSecret = decrypt(existingRow.webhook_secret_encrypted, key);
+		} catch {
+			log.warn('stored webhook secret could not be decrypted; minting a new one', { channel });
+			carriedSecret = null;
+		}
+	}
+	const webhookSecret = carriedSecret ?? randomUUID().replace(/-/g, '');
+	if (!botTokenSecret) botTokenSecret = existingRow?.bot_token_secret ?? null;
 	// A token-less re-save must not orphan the stored app token: carry the existing
 	// vault reference forward when the client's metadata omits it.
-	const existingAppSecret = existing.rows[0]?.metadata?.app_token_secret;
+	const existingAppSecret = existingRow?.metadata?.app_token_secret;
 	if (metadata.app_token_secret === undefined && typeof existingAppSecret === 'string') {
 		metadata.app_token_secret = existingAppSecret;
 	}
 
 	await db.query(
-		`INSERT INTO chat_channel_configs (channel, enabled, bot_token_secret, webhook_secret, metadata)
-		 VALUES ($1, $2, $3, $4, $5::jsonb)
+		`INSERT INTO chat_channel_configs
+		     (channel, enabled, bot_token_secret, webhook_secret, webhook_secret_encrypted, metadata)
+		 VALUES ($1, $2, $3, NULL, $4, $5::jsonb)
 		 ON CONFLICT (channel) DO UPDATE
 		 SET enabled = EXCLUDED.enabled, bot_token_secret = EXCLUDED.bot_token_secret,
-		     webhook_secret = EXCLUDED.webhook_secret, metadata = EXCLUDED.metadata, updated_at = now()`,
-		[channel, enabled, botTokenSecret, webhookSecret, JSON.stringify(metadata)],
+		     webhook_secret = NULL,
+		     webhook_secret_encrypted = EXCLUDED.webhook_secret_encrypted,
+		     metadata = EXCLUDED.metadata, updated_at = now()`,
+		[channel, enabled, botTokenSecret, encrypt(webhookSecret, key), JSON.stringify(metadata)],
 	);
 
 	// Bring the adapter online/offline to match. Best-effort — surfaced via logs; the

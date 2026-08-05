@@ -168,7 +168,13 @@ beforeAll(async () => {
 	upstreamHost = `127.0.0.1:${(upstream.address() as { port: number }).port}`;
 
 	ca = await loadOrCreateCA(dataDir);
-	proxy = new EgressProxy({ db, masterKeyManager: ctx.masterKeyManager, ca, authEnabled: false });
+	proxy = new EgressProxy({
+		db,
+		masterKeyManager: ctx.masterKeyManager,
+		ca,
+		authEnabled: false,
+		allowPrivateTargets: true,
+	});
 }, 30_000);
 
 afterAll(async () => {

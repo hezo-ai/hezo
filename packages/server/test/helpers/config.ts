@@ -25,6 +25,9 @@ export function testHezoConfig(dataDir: string, overrides: Partial<HezoConfig> =
 			keepOldContainers: false,
 			autoInstallUpdates: false,
 			egressProxyAuth: true,
+			// Inert like the rest: the destination guard stays *on*, which is the
+			// production posture. A test that needs to reach a private target says so.
+			egressAllowPrivateTargets: false,
 			telemetry: { enabled: false, endpoint: 'https://example.invalid/telemetry' },
 		},
 		overrides,
