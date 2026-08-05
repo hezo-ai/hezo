@@ -102,6 +102,7 @@ import {
 	completeSandboxBackendOnUnlock,
 	type StartupBackendResolution,
 } from './services/sandbox/backend-store';
+import { DOCKER_CONTAINER_HOST_ALIAS } from './services/sandbox/endpoints';
 import { SandboxBackendHolder } from './services/sandbox/holder';
 import { openSandboxBackend } from './services/sandbox/open';
 import type { ContainerEngine } from './services/sandbox/types';
@@ -356,7 +357,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		// run's NO_PROXY, so it should never reach the proxy — but NO_PROXY is a
 		// client-side convention, and a runtime that ignores it would otherwise have
 		// its tool traffic refused by the destination guard.
-		selfEndpoint: { host: 'host.docker.internal', port: config.port },
+		selfEndpoint: { host: DOCKER_CONTAINER_HOST_ALIAS, port: config.port },
 	});
 	// Decrypted secrets must never outlive the unlock that produced them.
 	bindSecretsVaultToMasterKey(masterKeyManager);
