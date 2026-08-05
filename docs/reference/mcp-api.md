@@ -1191,7 +1191,7 @@ List the connectors available to agent runs in your project (its own connectors 
 
 _Read-only._
 
-Test an MCP connector end-to-end from the server side. Resolves the stored OAuth token from the vault and makes a direct HTTP call to the MCP server (bypassing the agent container and its egress proxy entirely). Returns the upstream status code, response excerpt, and the secret name + masked-token-prefix used. Use this when oauth_status says "active" but the MCP's tools are absent from your tool list - it isolates "is the token still valid against the provider?" from "does the proxy chain in the container work?".
+Test an MCP connector end-to-end from the server side. Resolves the stored OAuth token from the vault and makes a direct HTTP call to the MCP server. Returns the upstream status code, a response excerpt, the secret name used, and whether a token was attached - never the token or any part of it. Use this when oauth_status says "active" but the MCP's tools are absent from your tool list - it isolates "is the token still valid against the provider?" from "does the proxy chain in the container work?".
 
 **Parameters:**
 
@@ -1200,7 +1200,7 @@ Test an MCP connector end-to-end from the server side. Resolves the stored OAuth
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `connector_id` | `string` | Yes | connector id or name (both shown by list_connectors) |
 
-**Returns:** `{ ok, status, mcp_url, secret_name, token_prefix, token_length, www_authenticate, body_excerpt, hint }` from a direct server-side probe of the MCP URL. Returns `{ error }` if the connector is missing, not `saas`, or its token cannot be decrypted.
+**Returns:** `{ ok, status, mcp_url, secret_name, token_sent, www_authenticate, body_excerpt, hint }` from a direct server-side probe of the MCP URL. `token_sent` is a boolean - no part of the token value is ever returned, and any occurrence of it in `body_excerpt` / `www_authenticate` is redacted in case the upstream echoes what it was sent. Returns `{ error }` if the connector is missing, not `saas`, or its token cannot be decrypted.
 
 ### `add_connector`
 
@@ -1217,7 +1217,7 @@ Register a connector for your project - a SaaS HTTP MCP server (`saas`), a local
 | `kind` | `saas` \| `local` \| `api` | Yes | saas = HTTP MCP, local = stdio MCP, api = direct REST API (no MCP server) |
 | `config` | `object` | Yes | For saas: { url, headers? }. For local: { command, args?, env?, package? }. For api: { base_url, allowed_hosts: string[], auth: { placement: "header"\|"query", name, scheme? }, docs_url? }. |
 
-**Returns:** `{ id, install_status, note }`, or `{ error }` if `config.url` (saas) / `config.command` (local) is missing. Upserts by `name` within your project.
+**Returns:** `{ id, install_status, note }`, or `{ error }` if `config.url` (saas) / `config.command` (local) is missing. Upserts by `name` within your project. A connector that already carries a credential (a completed OAuth connection or an attached API key) cannot be re-pointed from here: changing its `kind` or `config` returns `{ error, connector_id, hint }` and leaves the row untouched, since re-binding a credentialed connector is a human-only operation on the Connectors page. Re-registering it at its existing configuration still succeeds.
 
 ### `remove_connector`
 

@@ -410,12 +410,12 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	test_connector: {
 		category: 'MCP connections',
 		returns:
-			'`{ ok, status, mcp_url, secret_name, token_prefix, token_length, www_authenticate, body_excerpt, hint }` from a direct server-side probe of the MCP URL. Returns `{ error }` if the connector is missing, not `saas`, or its token cannot be decrypted.',
+			'`{ ok, status, mcp_url, secret_name, token_sent, www_authenticate, body_excerpt, hint }` from a direct server-side probe of the MCP URL. `token_sent` is a boolean - no part of the token value is ever returned, and any occurrence of it in `body_excerpt` / `www_authenticate` is redacted in case the upstream echoes what it was sent. Returns `{ error }` if the connector is missing, not `saas`, or its token cannot be decrypted.',
 	},
 	add_connector: {
 		category: 'MCP connections',
 		returns:
-			'`{ id, install_status, note }`, or `{ error }` if `config.url` (saas) / `config.command` (local) is missing. Upserts by `name` within your project.',
+			'`{ id, install_status, note }`, or `{ error }` if `config.url` (saas) / `config.command` (local) is missing. Upserts by `name` within your project. A connector that already carries a credential (a completed OAuth connection or an attached API key) cannot be re-pointed from here: changing its `kind` or `config` returns `{ error, connector_id, hint }` and leaves the row untouched, since re-binding a credentialed connector is a human-only operation on the Connectors page. Re-registering it at its existing configuration still succeeds.',
 	},
 	remove_connector: {
 		category: 'MCP connections',

@@ -3,6 +3,7 @@ import {
 	createPlaceholderRegex,
 	credentialPlaceholder,
 	extractPlaceholderNames,
+	normalizeAllowedHosts,
 	PLACEHOLDER_PROBE,
 	SECRET_NAME_PATTERN,
 	validateSecretName,
@@ -75,5 +76,43 @@ describe('extractPlaceholderNames', () => {
 
 	it('ignores malformed placeholders (lowercase body)', () => {
 		expect(extractPlaceholderNames('__HEZO_SECRET_lower__')).toEqual([]);
+	});
+});
+
+describe('normalizeAllowedHosts', () => {
+	// The proxy compares against a bare lowercase hostname (it strips the port from
+	// the CONNECT target first), so an entry carrying a scheme or a port could
+	// never match anything — and the failure was silent, surfacing as a 403 that
+	// looked like a deliberate scoping decision rather than a typo.
+	it('strips a scheme, port, path and userinfo down to the bare host', () => {
+		expect(normalizeAllowedHosts(['https://api.stripe.com'])).toEqual(['api.stripe.com']);
+		expect(normalizeAllowedHosts(['api.stripe.com:443'])).toEqual(['api.stripe.com']);
+		expect(normalizeAllowedHosts(['https://api.stripe.com:443/v1/charges?x=1'])).toEqual([
+			'api.stripe.com',
+		]);
+		expect(normalizeAllowedHosts(['http://user:pw@api.stripe.com/'])).toEqual(['api.stripe.com']);
+	});
+
+	it('lowercases, trims, and drops the fully-qualified trailing dot', () => {
+		expect(normalizeAllowedHosts(['  API.Stripe.Com.  '])).toEqual(['api.stripe.com']);
+	});
+
+	it('leaves a wildcard entry intact', () => {
+		expect(normalizeAllowedHosts(['*.googleapis.com'])).toEqual(['*.googleapis.com']);
+	});
+
+	it('preserves an IPv6 literal without its brackets or port', () => {
+		expect(normalizeAllowedHosts(['[2606:4700::1111]:443'])).toEqual(['2606:4700::1111']);
+	});
+
+	it('drops empties and de-duplicates what normalizes to the same host', () => {
+		expect(normalizeAllowedHosts(['api.foo.com', 'https://api.foo.com:443', '', '   '])).toEqual([
+			'api.foo.com',
+		]);
+	});
+
+	it('returns an empty array for a non-array input', () => {
+		expect(normalizeAllowedHosts(undefined)).toEqual([]);
+		expect(normalizeAllowedHosts('api.foo.com')).toEqual([]);
 	});
 });

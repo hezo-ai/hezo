@@ -78,6 +78,7 @@ import { buildUpdatesRoutes } from './routes/updates';
 import { publicUsersRoutes, usersRoutes } from './routes/users';
 import { AuthChallengeStore } from './services/auth-challenges';
 import {
+	backfillChatWebhookSecrets,
 	buildChatChannelRegistry,
 	buildInboundEventSink,
 	type ChatChannelRegistry,
@@ -322,6 +323,12 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		proxyBindHost: config.containerBindHost,
 		bindHostRef: bindHost,
 		authEnabled: config.egressProxyAuth,
+		allowPrivateTargets: config.egressAllowPrivateTargets,
+		// Hezo's own MCP/asset endpoint as a container addresses it. Already in the
+		// run's NO_PROXY, so it should never reach the proxy — but NO_PROXY is a
+		// client-side convention, and a runtime that ignores it would otherwise have
+		// its tool traffic refused by the destination guard.
+		selfEndpoint: { host: 'host.docker.internal', port: config.port },
 	});
 	// Decrypted secrets must never outlive the unlock that produced them.
 	bindSecretsVaultToMasterKey(masterKeyManager);
@@ -481,12 +488,26 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 			.reconcileOnStartup()
 			.catch((err) => log.error('CEO session reconciliation failed:', err))
 			.finally(() => chatSessionManager.start());
-		// Bring enabled external chat channels online (register webhooks / open
-		// gateways). Needs the master key (bot tokens) — hence after unlock.
+		// Re-encode any legacy plaintext webhook secret (migration 050) before the
+		// adapters come up. Needs the master key, which migrations at boot do not
+		// have — this is the first moment it exists. Idempotent: a no-op once every
+		// row is converted. Sequenced ahead of startAll() only for tidiness; reads
+		// fall back to the legacy column, so the order is not load-bearing.
 		trackBackground(
-			chatChannelRegistry
-				.startAll()
-				.catch((err) => log.error('Failed to start chat channels:', err)),
+			backfillChatWebhookSecrets({ db, masterKeyManager })
+				.then((n) => {
+					if (n > 0) log.info(`Encrypted ${n} legacy chat webhook secret(s) at rest`);
+				})
+				.catch((err) => log.error('Failed to encrypt legacy chat webhook secrets:', err))
+				.finally(() => {
+					// Bring enabled external chat channels online (register webhooks / open
+					// gateways). Needs the master key (bot tokens) — hence after unlock.
+					trackBackground(
+						chatChannelRegistry
+							.startAll()
+							.catch((err) => log.error('Failed to start chat channels:', err)),
+					);
+				}),
 		);
 	});
 

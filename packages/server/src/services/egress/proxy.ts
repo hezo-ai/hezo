@@ -29,6 +29,7 @@ import {
 } from '../connectors/connections';
 import type { HezoCA } from './ca';
 import { mcpMethodBlockedMessage, shouldBlockMcpRequest } from './mcp-method-guard';
+import { guardedLookup, isBlockedEgressHost, isSelfEndpoint, type SelfEndpoint } from './net-guard';
 import {
 	EGRESS_HOST_PORT_RANGE_END,
 	EGRESS_HOST_PORT_RANGE_START,
@@ -131,6 +132,16 @@ export interface EgressProxyDeps {
 	 * secret-substitution red line still holds either way, since an
 	 * unauthenticated caller only ever ships unsubstituted placeholders. */
 	authEnabled?: boolean;
+	/** Permit proxied egress to loopback / link-local / private addresses.
+	 * Defaults to `false`: the proxy runs in the host's network namespace, so
+	 * without this an agent could reach Hezo's own API, its database, or any
+	 * host-bound daemon through the tunnel (see `net-guard.ts`). Set `true` (via
+	 * `--egress-allow-private-targets` / `HEZO_EGRESS_ALLOW_PRIVATE_TARGETS=1`)
+	 * for an operator whose MCP server or git remote genuinely lives on the LAN. */
+	allowPrivateTargets?: boolean;
+	/** Hezo's own endpoint as a container reaches it, exempted from the
+	 * destination guard above (see `isSelfEndpoint`). */
+	selfEndpoint?: SelfEndpoint;
 }
 
 export interface RunProxyScope {
@@ -174,6 +185,8 @@ export class EgressProxy {
 	private readonly proxyHost: string;
 	private readonly proxyBindHost: string;
 	private readonly authEnabled: boolean;
+	private readonly allowPrivateTargets: boolean;
+	private readonly selfEndpoint: SelfEndpoint | null;
 	private mintCa: Promise<CA> | null = null;
 
 	constructor(private readonly deps: EgressProxyDeps) {
@@ -184,6 +197,8 @@ export class EgressProxy {
 		this.proxyHost = deps.proxyHost ?? PROXY_HOST;
 		this.proxyBindHost = deps.proxyBindHost ?? PROXY_BIND_HOST;
 		this.authEnabled = deps.authEnabled ?? true;
+		this.allowPrivateTargets = deps.allowPrivateTargets ?? false;
+		this.selfEndpoint = deps.selfEndpoint ?? null;
 	}
 
 	get caCertPath(): string {
@@ -241,6 +256,8 @@ export class EgressProxy {
 					upstreamTrustedCAs: this.deps.extraUpstreamTrustedCAs,
 					hostPortAllocator: this.hostPortAllocator,
 					mcpRestrictions,
+					allowPrivateTargets: this.allowPrivateTargets,
+					selfEndpoint: this.selfEndpoint,
 				});
 
 				try {
@@ -311,6 +328,10 @@ interface RunProxyConfig {
 	 * inspection path at all. Resolved once at allocation: the allowlist is an
 	 * operator setting, not something that should change under a live run. */
 	mcpRestrictions: Map<string, McpHostRestriction>;
+	/** When true, skip the private/loopback destination guard (`net-guard.ts`). */
+	allowPrivateTargets: boolean;
+	/** Hezo's own endpoint, exempt from that guard. */
+	selfEndpoint: SelfEndpoint | null;
 }
 
 /** A per-host internal TLS-terminating server. The agent's CONNECT socket is
@@ -560,6 +581,24 @@ class RunProxyInstance {
 			return;
 		}
 
+		// Refuse an obviously-blocked tunnel before minting a per-host TLS server
+		// and leaf cert for it. A hostname is undecidable here and is caught on the
+		// upstream leg by `guardedLookup`, which sees the resolved address.
+		const connectPort = Number(target.slice(sep + 1)) || 443;
+		if (
+			!this.cfg.allowPrivateTargets &&
+			!isSelfEndpoint(host, connectPort, this.cfg.selfEndpoint) &&
+			isBlockedEgressHost(host)
+		) {
+			log.warn('egress CONNECT to a private or loopback target refused', {
+				run: ref(this.cfg.scope.label, this.cfg.runId),
+				host,
+			});
+			client.write(`HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`);
+			client.destroy();
+			return;
+		}
+
 		client.pause();
 
 		this.bridgeConnect(host, client, head).catch((e: Error) => {
@@ -726,6 +765,24 @@ class RunProxyInstance {
 		req.pause();
 
 		const { host, port, path } = resolveTarget(isSSL, connectHost, req);
+		// Plain (non-CONNECT) requests never passed through `onConnect`, so this is
+		// their first destination check. An IP-literal target is refused outright;
+		// a hostname falls through to `guardedLookup` on the upstream leg.
+		const selfTarget = isSelfEndpoint(host, port, this.cfg.selfEndpoint);
+		if (!this.cfg.allowPrivateTargets && !selfTarget && isBlockedEgressHost(host)) {
+			log.warn('egress request to a private or loopback target refused', {
+				run: ref(this.cfg.scope.label, this.cfg.runId),
+				host,
+			});
+			respondEarly(
+				res,
+				403,
+				'target_not_allowed',
+				`Egress to ${host} is blocked: private and loopback addresses are not reachable through the proxy.`,
+			);
+			req.resume();
+			return;
+		}
 		const method = req.method ?? 'GET';
 		const headers: Record<string, string | string[] | undefined> = {};
 		for (const [name, value] of Object.entries(req.headers)) {
@@ -869,14 +926,18 @@ class RunProxyInstance {
 					// pre-validated regex match — defensive only
 				}
 			}
+			// `upstreamPath` now carries real secret values whenever the agent put a
+			// placeholder in the query string, so it must never reach a log line. The
+			// pre-substitution `path` still holds the placeholder — the same diagnostic
+			// value, inert — so that is what rides to the failure logger.
 			if (bufferedBody !== null) {
 				const outBody =
 					result.bodyChanged && result.body !== null
 						? Buffer.from(result.body, 'utf8')
 						: bufferedBody;
-				this.forwardBuffered(isSSL, host, port, method, upstreamPath, headers, outBody, res);
+				this.forwardBuffered(isSSL, host, port, method, upstreamPath, headers, outBody, res, path);
 			} else {
-				this.pipeUpstream(isSSL, host, port, method, upstreamPath, headers, req, res);
+				this.pipeUpstream(isSSL, host, port, method, upstreamPath, headers, req, res, path);
 			}
 			return;
 		}
@@ -899,6 +960,7 @@ class RunProxyInstance {
 		headers: Record<string, string | string[] | undefined>,
 		req: IncomingMessage,
 		res: ServerResponse,
+		logPath: string = path,
 	): void {
 		const requestFn = isSSL ? httpsRequest : httpRequest;
 		const upstream = requestFn(
@@ -908,6 +970,13 @@ class RunProxyInstance {
 				method,
 				path,
 				headers,
+				// Resolve through the destination guard so a name that points at a
+				// private address (`evil.example.com A 127.0.0.1`) fails here rather
+				// than reaching Hezo's own host services. The socket connects to the
+				// address this lookup returned, so there is no check/connect gap.
+				...(this.cfg.allowPrivateTargets || isSelfEndpoint(host, port, this.cfg.selfEndpoint)
+					? {}
+					: { lookup: guardedLookup(host) }),
 				...(isSSL
 					? { servername: host, agent: this.upstreamAgent }
 					: { agent: this.upstreamHttpAgent }),
@@ -918,7 +987,9 @@ class RunProxyInstance {
 			},
 		);
 		this.trackUpstream(upstream);
-		upstream.on('error', (err) => this.onForwardError(res, err, { host, port, method, path }));
+		upstream.on('error', (err) =>
+			this.onForwardError(res, err, { host, port, method, path: logPath }),
+		);
 		req.pipe(upstream);
 	}
 
@@ -935,6 +1006,7 @@ class RunProxyInstance {
 		headers: Record<string, string | string[] | undefined>,
 		body: Buffer,
 		res: ServerResponse,
+		logPath: string = path,
 	): void {
 		const outHeaders: Record<string, string | string[] | undefined> = { ...headers };
 		outHeaders['content-length'] = String(body.byteLength);
@@ -952,6 +1024,10 @@ class RunProxyInstance {
 				method,
 				path,
 				headers: outHeaders,
+				// Same destination guard as `pipeUpstream` — see the note there.
+				...(this.cfg.allowPrivateTargets || isSelfEndpoint(host, port, this.cfg.selfEndpoint)
+					? {}
+					: { lookup: guardedLookup(host) }),
 				...(isSSL
 					? { servername: host, agent: this.upstreamAgent }
 					: { agent: this.upstreamHttpAgent }),
@@ -962,7 +1038,9 @@ class RunProxyInstance {
 			},
 		);
 		this.trackUpstream(upstream);
-		upstream.on('error', (err) => this.onForwardError(res, err, { host, port, method, path }));
+		upstream.on('error', (err) =>
+			this.onForwardError(res, err, { host, port, method, path: logPath }),
+		);
 		upstream.end(body);
 	}
 
@@ -1034,7 +1112,12 @@ interface TargetAddress {
 }
 
 /** The upstream a forwarded request was aimed at, attached to failure logs so a
- * connection error names the host it could not reach. */
+ * connection error names the host it could not reach.
+ *
+ * `path` is the **pre-substitution** path — the one still carrying
+ * `__HEZO_SECRET_<NAME>__`, not the value. This struct feeds `failureMeta`, i.e.
+ * a log line, and a URL-placed placeholder is substituted before forwarding; the
+ * post-substitution path is a live credential and must never be logged. */
 interface UpstreamTarget {
 	host: string;
 	port: number;

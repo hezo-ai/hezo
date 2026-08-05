@@ -62,7 +62,13 @@ beforeAll(async () => {
 	// auth, so the shared proxy runs with auth disabled. The authed path (407 on a
 	// missing/wrong token, and substitution succeeding *with* a token) has its own
 	// describe block below, which stands up a separate auth-enabled proxy.
-	proxy = new EgressProxy({ db, masterKeyManager, ca, authEnabled: false });
+	proxy = new EgressProxy({
+		db,
+		masterKeyManager,
+		ca,
+		authEnabled: false,
+		allowPrivateTargets: true,
+	});
 }, 30_000);
 
 afterAll(async () => {
@@ -297,6 +303,10 @@ describe('EgressProxy', () => {
 		// placeholder is substituted, then the request is re-encrypted to the
 		// upstream — all without a container.
 		const httpsProxy = new EgressProxy({
+			// Upstreams in this suite are on loopback, which the destination
+			// guard blocks by default. Opt in so the guard under test elsewhere
+			// does not mask what these cases actually assert.
+			allowPrivateTargets: true,
 			db,
 			masterKeyManager,
 			ca,
@@ -595,6 +605,10 @@ describe('EgressProxy per-host cert routing', () => {
 	// must always be served that host's cert — never a stale or recycled one.
 	it('serves each concurrent host its own leaf cert (no cross-host mix-up)', async () => {
 		const httpsProxy = new EgressProxy({
+			// Upstreams in this suite are on loopback, which the destination
+			// guard blocks by default. Opt in so the guard under test elsewhere
+			// does not mask what these cases actually assert.
+			allowPrivateTargets: true,
 			db,
 			masterKeyManager,
 			ca,
@@ -636,6 +650,10 @@ describe('EgressProxy per-host cert routing', () => {
 			release(): void {}
 		}
 		const hostProxy = new EgressProxy({
+			// Upstreams in this suite are on loopback, which the destination
+			// guard blocks by default. Opt in so the guard under test elsewhere
+			// does not mask what these cases actually assert.
+			allowPrivateTargets: true,
 			db,
 			masterKeyManager,
 			ca,
@@ -665,6 +683,10 @@ describe('EgressProxy per-host cert routing', () => {
 	// (ECONNREFUSED) for the rest of the run.
 	it('rebuilds a per-host server after it dies and still serves the right cert', async () => {
 		const httpsProxy = new EgressProxy({
+			// Upstreams in this suite are on loopback, which the destination
+			// guard blocks by default. Opt in so the guard under test elsewhere
+			// does not mask what these cases actually assert.
+			allowPrivateTargets: true,
 			db,
 			masterKeyManager,
 			ca,
@@ -710,6 +732,10 @@ describe('EgressProxy per-host cert routing', () => {
 		}
 
 		const retryProxy = new EgressProxy({
+			// Upstreams in this suite are on loopback, which the destination
+			// guard blocks by default. Opt in so the guard under test elsewhere
+			// does not mask what these cases actually assert.
+			allowPrivateTargets: true,
 			db,
 			masterKeyManager,
 			ca,
@@ -741,7 +767,7 @@ describe('EgressProxy per-run caller auth', () => {
 	let authProxy: EgressProxy;
 
 	beforeAll(() => {
-		authProxy = new EgressProxy({ db, masterKeyManager, ca });
+		authProxy = new EgressProxy({ db, masterKeyManager, ca, allowPrivateTargets: true });
 	});
 	afterAll(() => authProxy.releaseAll());
 
@@ -834,7 +860,13 @@ describe('EgressProxy per-run caller auth', () => {
 	}, 30_000);
 
 	it('allocates a null token and skips auth when authEnabled is false', async () => {
-		const openProxy = new EgressProxy({ db, masterKeyManager, ca, authEnabled: false });
+		const openProxy = new EgressProxy({
+			db,
+			masterKeyManager,
+			ca,
+			authEnabled: false,
+			allowPrivateTargets: true,
+		});
 		const runId = `auth-off-${Date.now()}`;
 		await insertSecret('AUTH_KEY_OFF', 'open-value', ['127.0.0.1']);
 		const allocated = await openProxy.allocateRunProxy(runId, { teamId, agentId });
@@ -879,3 +911,73 @@ async function connectStatusLine(
 		sock.setTimeout(20_000, () => sock.destroy(new Error('CONNECT status timed out')));
 	});
 }
+
+describe('EgressProxy destination guard', () => {
+	let guardedProxy: EgressProxy;
+
+	// This proxy keeps the production default (allowPrivateTargets off). The rest
+	// of the suite opts in because its upstreams are on loopback — which is
+	// precisely what this block asserts is refused.
+	beforeAll(() => {
+		guardedProxy = new EgressProxy({ db, masterKeyManager, ca, authEnabled: false });
+	});
+	afterAll(() => guardedProxy.releaseAll());
+
+	it('refuses a plain request to a loopback target and never substitutes', async () => {
+		const runId = `guard-plain-${Date.now()}`;
+		await insertSecret('GUARD_LOOPBACK', 'guard-secret-value', ['127.0.0.1']);
+		const before = upstreamRequests.length;
+		const allocated = await guardedProxy.allocateRunProxy(runId, { teamId, agentId });
+		try {
+			const res = await fetchThroughProxy({
+				proxyHost: '127.0.0.1',
+				proxyPort: allocated.proxyPort,
+				url: `${upstreamUrl}/echo`,
+				headers: { authorization: 'Bearer __HEZO_SECRET_GUARD_LOOPBACK__' },
+			});
+			expect(res.status).toBe(403);
+			expect(JSON.parse(res.body).error).toBe('target_not_allowed');
+			// The request must not have reached the upstream at all, so there was
+			// never a moment at which the real value was on the wire.
+			expect(upstreamRequests.length).toBe(before);
+		} finally {
+			await guardedProxy.releaseRunProxy(runId);
+		}
+	}, 30_000);
+
+	it('refuses a CONNECT tunnel to a loopback target', async () => {
+		const runId = `guard-connect-${Date.now()}`;
+		const allocated = await guardedProxy.allocateRunProxy(runId, { teamId, agentId });
+		try {
+			const line = await connectStatusLine(allocated.proxyPort, '127.0.0.1', null);
+			expect(line).toContain('403');
+		} finally {
+			await guardedProxy.releaseRunProxy(runId);
+		}
+	}, 30_000);
+
+	it('refuses a CONNECT tunnel to localhost by name', async () => {
+		const runId = `guard-connect-name-${Date.now()}`;
+		const allocated = await guardedProxy.allocateRunProxy(runId, { teamId, agentId });
+		try {
+			const line = await connectStatusLine(allocated.proxyPort, 'localhost', null);
+			expect(line).toContain('403');
+		} finally {
+			await guardedProxy.releaseRunProxy(runId);
+		}
+	}, 30_000);
+
+	it('still allows a CONNECT to an ordinary public hostname', async () => {
+		// Establishing the tunnel mints a per-host leaf cert and bridges into the
+		// MITM server; it does not dial the real upstream, so this needs no network.
+		// The point is only that normal egress is untouched by the guard.
+		const runId = `guard-public-${Date.now()}`;
+		const allocated = await guardedProxy.allocateRunProxy(runId, { teamId, agentId });
+		try {
+			const line = await connectStatusLine(allocated.proxyPort, 'api.stripe.com', null);
+			expect(line).toContain('200');
+		} finally {
+			await guardedProxy.releaseRunProxy(runId);
+		}
+	}, 30_000);
+});

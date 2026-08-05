@@ -653,17 +653,20 @@ describe('mcp connections', () => {
 		const row = await db.query<{ id: string }>(
 			`SELECT id FROM mcp_connections WHERE name = 'probe-oauth'`,
 		);
-		const r = (await admin('test_connector', { connector_id: row.rows[0].id })) as {
-			status: number;
-			secret_name: string;
-			token_prefix: string;
-			token_length: number;
-			hint: string;
-		};
+		const r = (await admin('test_connector', { connector_id: row.rows[0].id })) as Record<
+			string,
+			unknown
+		>;
 		expect(r.status).toBe(401);
 		expect(r.secret_name).toBe('PROBE_OAUTH_TOKEN');
-		expect(r.token_prefix).toBe('tok-secr');
-		expect(r.token_length).toBe('tok-secret-value-123'.length);
+		// The token was resolved and sent, but nothing derived from its value comes
+		// back: a prefix plus an exact length is a partial credential disclosure
+		// across the agent boundary, so `token_sent` answers the diagnostic question
+		// instead.
+		expect(r.token_sent).toBe(true);
+		expect(r).not.toHaveProperty('token_prefix');
+		expect(r).not.toHaveProperty('token_length');
+		expect(JSON.stringify(r)).not.toContain('tok-secret-value-123');
 		expect(r.hint).toContain('Token rejected by upstream');
 	});
 
