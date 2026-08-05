@@ -77,6 +77,15 @@ export interface HezoConfig {
 	 */
 	egressProxyAuth: boolean;
 	/**
+	 * Permit proxied agent egress to loopback / link-local / private addresses.
+	 * Off by default: the egress proxy runs in the host's network namespace, so
+	 * without the guard an agent could tunnel to Hezo's own API, its database, or
+	 * any host-bound daemon. Enable only when an MCP server or git remote the
+	 * agents legitimately need lives on the LAN.
+	 * `--egress-allow-private-targets` / `HEZO_EGRESS_ALLOW_PRIVATE_TARGETS=1`.
+	 */
+	egressAllowPrivateTargets: boolean;
+	/**
 	 * Anonymous daily usage telemetry. On by default (opt-out): once a day the
 	 * server POSTs aggregate counts (projects, tasks, tokens, AI-provider mix,
 	 * version) — no names, content, or costs — to `endpoint`, keyed by a random
@@ -782,6 +791,10 @@ export function parseConfig(
 			"Disable per-run egress proxy authentication. On by default: each run's HTTP(S)_PROXY URL carries a token the proxy verifies before substituting secrets. Only disable to unblock a runtime whose HTTP client cannot send proxy credentials — the secret red line still holds (an unauthenticated caller only ships unsubstituted placeholders). (env: HEZO_EGRESS_PROXY_AUTH=0)",
 		)
 		.option(
+			'--egress-allow-private-targets',
+			"Allow agent egress through the proxy to reach loopback, link-local and private (RFC1918) addresses. Blocked by default: the proxy runs on the host, so without the guard an agent could tunnel to Hezo's own API, its database, or any host-bound daemon. Enable only when an MCP server or git remote your agents genuinely need lives on the LAN. (env: HEZO_EGRESS_ALLOW_PRIVATE_TARGETS=1)",
+		)
+		.option(
 			'--auto-install-updates',
 			'Install updates automatically: once a newer release is downloaded and verified, gracefully restart onto it without waiting for "Install & restart" in the web UI (in-flight agent runs delay the restart). Only takes effect where in-app auto-update is available — the self-managed binary, not inside a container. The instance comes back unlocked: the in-memory unlock key is handed to the relaunched process over IPC, never written to disk. (env: HEZO_AUTO_INSTALL_UPDATES)',
 		)
@@ -859,6 +872,10 @@ export function parseConfig(
 		// Egress-proxy auth defaults ON. The env var (when set) wins; otherwise
 		// `--no-egress-proxy-auth` sets cli.egressProxyAuth=false, absent it is true.
 		egressProxyAuth: pickOpen('HEZO_EGRESS_PROXY_AUTH', cli.egressProxyAuth),
+		egressAllowPrivateTargets: pickBool(
+			'HEZO_EGRESS_ALLOW_PRIVATE_TARGETS',
+			cli.egressAllowPrivateTargets,
+		),
 		telemetry: {
 			enabled: telemetryEnabled,
 			endpoint:

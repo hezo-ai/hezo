@@ -35,6 +35,7 @@ hezo --no-open                   # don't open the web app in your browser on sta
 hezo --container-bind-host 0.0.0.0  # native-Linux Docker: let agent containers reach the egress proxy/SSH bridge
 hezo --docker-socket /path/to/docker.sock   # point at a container runtime socket Hezo didn't find on its own
 hezo --no-egress-proxy-auth      # drop per-run egress-proxy auth (escape hatch; on by default)
+hezo --egress-allow-private-targets  # let agent egress reach loopback/private addresses (blocked by default)
 hezo --auto-install-updates      # restart onto downloaded updates automatically (waits for idle; comes back unlocked)
 hezo --disable-telemetry         # turn off the anonymous daily usage report (on by default)
 ```

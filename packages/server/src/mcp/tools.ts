@@ -6506,7 +6506,7 @@ export function registerTools(
 	tool(
 		server,
 		'test_connector',
-		'Test an MCP connector end-to-end from the server side. Resolves the stored OAuth token from the vault and makes a direct HTTP call to the MCP server (bypassing the agent container and its egress proxy entirely). Returns the upstream status code, response excerpt, and the secret name + masked-token-prefix used. Use this when oauth_status says "active" but the MCP\'s tools are absent from your tool list - it isolates "is the token still valid against the provider?" from "does the proxy chain in the container work?".',
+		'Test an MCP connector end-to-end from the server side. Resolves the stored OAuth token from the vault and makes a direct HTTP call to the MCP server. Returns the upstream status code, a response excerpt, the secret name used, and whether a token was attached - never the token or any part of it. Use this when oauth_status says "active" but the MCP\'s tools are absent from your tool list - it isolates "is the token still valid against the provider?" from "does the proxy chain in the container work?".',
 		{
 			project: projectArg(),
 			connector_id: z.string().describe('connector id or name (both shown by list_connectors)'),
@@ -6540,7 +6540,6 @@ export function registerTools(
 
 			let bearerToken: string | null = null;
 			let secretName: string | null = null;
-			let tokenPrefix: string | null = null;
 			if (connector.oauth_connection_id) {
 				const secret = await db.query<{ name: string; encrypted_value: string }>(
 					`SELECT s.name, s.encrypted_value FROM oauth_connections oc
@@ -6568,7 +6567,6 @@ export function registerTools(
 					};
 				}
 				secretName = secret.rows[0].name;
-				tokenPrefix = bearerToken.slice(0, 8);
 			}
 
 			const headers: Record<string, string> = { Accept: 'application/json' };
@@ -6583,20 +6581,27 @@ export function registerTools(
 					error: `network probe failed: ${(e as Error).message}`,
 					mcp_url: config.url,
 					secret_name: secretName,
-					token_prefix: tokenPrefix,
+					token_sent: bearerToken !== null,
 				};
 			}
 			const bodyText = await probeRes.text().catch(() => '');
 			const wwwAuth = probeRes.headers.get('WWW-Authenticate') ?? null;
+			// The upstream may reflect the credential we just sent it (an echo route,
+			// or an error quoting the Authorization header). This response crosses the
+			// agent boundary, so scrub the token out of anything we relay. Nothing
+			// derived from the token value itself is returned either — a prefix plus an
+			// exact length is a partial credential disclosure, and the diagnostic
+			// question ("was a token attached?") is answered by `token_sent`.
+			const redact = (s: string): string =>
+				bearerToken ? s.split(bearerToken).join('[redacted]') : s;
 			return {
 				ok: probeRes.ok,
 				status: probeRes.status,
 				mcp_url: config.url,
 				secret_name: secretName,
-				token_prefix: tokenPrefix,
-				token_length: bearerToken?.length ?? 0,
-				www_authenticate: wwwAuth,
-				body_excerpt: bodyText.slice(0, 400),
+				token_sent: bearerToken !== null,
+				www_authenticate: redact(wwwAuth ?? '') || null,
+				body_excerpt: redact(bodyText.slice(0, 400)),
 				hint:
 					probeRes.status === 401
 						? bearerToken
@@ -6655,6 +6660,18 @@ export function registerTools(
 			// api behaves like saas for install state (nothing to install — it's a
 			// direct REST call); only local needs an installer pass.
 			const initialStatus = kind === 'local' ? 'pending' : 'installed';
+			// A connector carrying a credential (a completed OAuth flow, or an
+			// attached API key) may NOT be re-pointed by an agent. Without this the
+			// upsert rewrote `config` — the destination URL — while leaving
+			// `oauth_connection_id` attached, and `test_connector` would then resolve
+			// that token and send it, in plaintext and off the egress proxy, to a host
+			// the agent chose. Re-binding a credentialed connector is a widening of
+			// access and stays human-only (Connectors page), like every other widening.
+			//
+			// The guard is the `WHERE` on the DO UPDATE rather than a preceding SELECT
+			// so it is atomic: a check-then-upsert could be raced by a concurrent OAuth
+			// completion. An unchanged re-registration still succeeds, so an agent
+			// re-declaring a connector it already owns is a no-op, not an error.
 			const r = await db.query<{
 				id: string;
 				install_status: string;
@@ -6667,9 +6684,29 @@ export function registerTools(
 				     install_status = EXCLUDED.install_status,
 				     install_error = NULL,
 				     updated_at = now()
+				 WHERE (mcp_connections.oauth_connection_id IS NULL
+				        AND mcp_connections.api_key_secret_id IS NULL)
+				    OR (mcp_connections.kind = EXCLUDED.kind
+				        AND mcp_connections.config IS NOT DISTINCT FROM EXCLUDED.config)
 				 RETURNING id, install_status::text AS install_status`,
 				[name, kind, JSON.stringify(config), initialStatus, scope.projectId],
 			);
+			if (r.rows.length === 0) {
+				// The DO UPDATE was suppressed: the row exists and is credentialed.
+				const existing = await db.query<{ id: string; has_oauth: boolean }>(
+					`SELECT id, oauth_connection_id IS NOT NULL AS has_oauth
+					 FROM mcp_connections
+					 WHERE project_id = $1 AND name = $2`,
+					[scope.projectId, name],
+				);
+				return {
+					error: `connector ${name} already exists and has a credential attached (${
+						existing.rows[0]?.has_oauth ? 'OAuth connection' : 'API key'
+					}); its configuration cannot be changed from here`,
+					connector_id: existing.rows[0]?.id ?? null,
+					hint: 'Re-pointing a credentialed connector is a human-only operation - ask an admin to change it on the Connectors page, or register a new connector under a different name.',
+				};
+			}
 			const note =
 				kind === 'local'
 					? 'Local MCP registered with status pending. Install via the installer or container provision before agent runs can use it.'

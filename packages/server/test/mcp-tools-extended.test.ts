@@ -1443,19 +1443,16 @@ describe('MCP MCP-connection tools', () => {
 		const result = (await callTool('test_connector', {
 			project: projectId,
 			connector_id: connectorId,
-		})) as {
-			ok?: boolean;
-			error?: string;
-			secret_name?: string;
-			token_prefix?: string;
-			mcp_url?: string;
-		};
-		// Decryption succeeded (secret name + token prefix surfaced); the probe to
-		// 127.0.0.1:1 fails fast → the network-probe-failed branch.
+		})) as Record<string, unknown>;
+		// Decryption succeeded (the secret name and `token_sent` surfaced); the probe
+		// to 127.0.0.1:1 fails fast → the network-probe-failed branch. No part of the
+		// token value crosses back, on this branch or the success one.
 		expect(result.ok).toBe(false);
 		expect(result.error).toContain('network probe failed');
 		expect(result.secret_name).toContain('TOKEN');
-		expect(result.token_prefix).toBe('super-se');
+		expect(result.token_sent).toBe(true);
+		expect(result).not.toHaveProperty('token_prefix');
+		expect(JSON.stringify(result)).not.toContain('super-secret');
 	});
 
 	it('test_connector reports a decrypt failure when the stored ciphertext is malformed', async () => {
