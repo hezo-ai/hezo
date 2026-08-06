@@ -225,6 +225,47 @@ test('a passive @@agent mention renders the bare slug as a passive-flagged link'
 	);
 	// Passive form drops the leading "@" in the visible label.
 	expect(passiveLink.textContent).toBe(seeded.agentSlug);
+	// …and is muted rather than sharing the active chip's colour. Without this the
+	// only difference between "notified" and "merely named" is the missing "@", so
+	// a reader scanning a thread cannot tell a routed handoff from a stranded one.
+	expect(passiveLink.className).toContain('text-neutral-soft-fg');
+	expect(passiveLink.className).not.toContain('text-info-soft-fg');
+});
+
+test('an active @agent mention keeps the emphasised chip styling', async () => {
+	const seeded = { projectSlug: '', taskId: '', agentSlug: '' };
+	const { container, findByText, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Active Mention Project' });
+			const task = await seedTask(ws, project, { title: 'Active Mention Task' });
+			const agentSlug = ws.agents.find((a) => a.slug === 'captain')?.slug ?? ws.agents[0].slug;
+			await seedComment(ws, task, `@${agentSlug} - please take a look at this one.`);
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
+			seeded.agentSlug = agentSlug;
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
+	});
+
+	await findByText(/take a look at this one/, undefined, { timeout: 20_000 });
+	const activeLink = await waitFor(() => {
+		const el = container.querySelector(
+			'[data-testid="agent-mention-link"]:not([data-mention-passive])',
+		) as HTMLAnchorElement | null;
+		if (!el) throw new Error('active mention link not yet resolved');
+		return el;
+	});
+	// The active chip keeps the leading "@" and the emphasised treatment — the
+	// contrast with the passive case above is the whole affordance.
+	expect(activeLink.textContent).toBe(`@${seeded.agentSlug}`);
+	expect(activeLink.className).toContain('text-info-soft-fg');
+	expect(activeLink.className).toContain('font-semibold');
 });
 
 test('a mention of a done task strikes through the link and carries its status', async () => {

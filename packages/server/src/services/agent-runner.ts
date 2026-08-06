@@ -49,7 +49,9 @@ import { withProjectGitLock } from '../lib/git-lock';
 import {
 	detectPassiveTeammateAsks,
 	detectUnlinkedTeammateAsks,
+	detectUnlinkedTeammateReferences,
 	extractMentionSlugs,
+	extractPassiveMentionSlugs,
 } from '../lib/mentions';
 import { terminalStatusParams, withTransaction } from '../lib/sql';
 import { logger } from '../logger';
@@ -1664,6 +1666,79 @@ export async function runAgent(
 					}
 				} catch (e) {
 					log.error(`Run ${heartbeatRunId} handoff-delivery guardrail failed:`, e);
+				}
+			}
+
+			// Structural "no-wake exit" backstop — the one check in this file that
+			// reads no prose at all.
+			//
+			// The two guardrails above and create_comment's advisories all classify
+			// TEXT, so each new phrasing that strands a handoff needs new vocabulary.
+			// This one asks a question the system can answer from its own state: did
+			// this run end having woken NOBODY, on a task it left open, after naming a
+			// teammate in a form that notifies no one? That combination is what a
+			// stranded handoff actually IS, whatever words carried it.
+			//
+			// It also covers the structural hole the net above cannot reach: that net
+			// only inspects the run's FINAL MESSAGE, and create_comment only inspects
+			// one comment at a time, so nothing looks at what a run achieved in
+			// aggregate — which is exactly where a passively-addressed ask posted as a
+			// comment lives.
+			//
+			// Warn-only, deliberately: the standing posture is that the system never
+			// fabricates a wake from a non-`@` signal.
+			if (exitedClean && task) {
+				try {
+					const fresh = await deps.db.query<{ status: string }>(
+						'SELECT status::text AS status FROM tasks WHERE id = $1',
+						[task.id],
+					);
+					const status = fresh.rows[0]?.status;
+					const stillOpen =
+						Boolean(status) && !(TERMINAL_TASK_STATUSES as readonly string[]).includes(status);
+					if (stillOpen) {
+						const posted = await deps.db.query<{
+							content: unknown;
+							parent_comment_id: string | null;
+						}>(
+							`SELECT content, parent_comment_id FROM task_comments
+							 WHERE created_by_run_id = $1 AND content_type = 'text'`,
+							[heartbeatRunId],
+						);
+						// A wake is an active `@`-mention or a reply (which wakes the parent
+						// author). agent_wakeup_requests carries no created_by_run_id, so this
+						// is derived from the run's own comments rather than queried directly.
+						const wokeSomeone = posted.rows.some(
+							(c) => extractMentionSlugs(c.content).length > 0 || c.parent_comment_id !== null,
+						);
+						if (!wokeSomeone) {
+							const finalMessage = parser.getFinalAssistantMessage() ?? '';
+							const outward = [...posted.rows.map((c) => c.content), finalMessage];
+							const roster = await resolveWarnableSlugs(deps.db, runTeamId, agent.id);
+							const named = new Set<string>();
+							for (const text of outward) {
+								for (const slug of extractPassiveMentionSlugs(text)) {
+									if (roster.includes(slug)) named.add(slug);
+								}
+								for (const slug of detectUnlinkedTeammateReferences(text, roster)) named.add(slug);
+							}
+							if (named.size > 0) {
+								const list = Array.from(named);
+								const namedList = list.map((s) => `**${s}**`).join(', ');
+								const fixes = list.map((s) => `@${s}`).join(', ');
+								emit(
+									'stdout',
+									`\n[runner] WARNING: this run woke no one. It named ${namedList} without an ` +
+										`active @-mention and left ${task.identifier} open, so whoever acts next was ` +
+										`never notified. If you were handing the work over, post a comment with an ` +
+										`active mention (${fixes}); if you were only referring to them, no action ` +
+										`is needed.\n`,
+								);
+							}
+						}
+					}
+				} catch (e) {
+					log.error(`Run ${heartbeatRunId} no-wake exit check failed:`, e);
 				}
 			}
 

@@ -796,3 +796,94 @@ describe('runAgent handoff-delivery guardrail', () => {
 		expect(run.rows[0].log_text).not.toContain('wakes no one');
 	});
 });
+
+// The structural backstop, which reads no prose at all: a run that ends having
+// woken NOBODY, on a task it left open, after naming a teammate in a form that
+// notifies no one. It exists because the guardrails above only inspect the FINAL
+// MESSAGE and create_comment only inspects one comment at a time, so nothing
+// looked at what a run achieved in aggregate — which is where a passively
+// addressed ask posted as a comment lives.
+describe('no-wake exit check', () => {
+	async function otherAgent(): Promise<{ id: string; slug: string }> {
+		const r = await db.query<{ id: string; slug: string }>(
+			`SELECT ma.id, ma.slug FROM member_agents ma
+			 JOIN members m ON m.id = ma.id
+			 WHERE m.team_id = $1 AND ma.id <> $2 LIMIT 1`,
+			[teamId, agentId],
+		);
+		return r.rows[0];
+	}
+
+	async function logFor(runId: string): Promise<string> {
+		const r = await db.query<{ log_text: string }>(
+			`SELECT ${runLogTextSql('heartbeat_runs.id')} AS log_text FROM heartbeat_runs WHERE id = $1`,
+			[runId],
+		);
+		return r.rows[0].log_text;
+	}
+
+	it('warns when a run wakes no one on an open task while naming a teammate', async () => {
+		const { slug } = await otherAgent();
+		await db.query(`UPDATE tasks SET status = 'in_progress'::task_status WHERE id = $1`, [taskId]);
+		// Deliberately carries NO ask vocabulary — none of the phrase-based
+		// detectors fire on it, which is exactly what this check is for.
+		const deps = makeDeps(
+			createMockDocker({
+				producesOutput: true,
+				execStart: streamResult(`Analysis complete, alongside @@${slug}'s earlier notes.`),
+			}),
+		);
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+		expect(result.success).toBe(true);
+
+		const log = await logFor(result.heartbeatRunId);
+		expect(log).toContain('woke no one');
+		expect(log).toContain(`@${slug}`);
+	});
+
+	it('stays silent when the run actually woke someone', async () => {
+		const { slug } = await otherAgent();
+		await db.query(`UPDATE tasks SET status = 'in_progress'::task_status WHERE id = $1`, [taskId]);
+		// An active mention is auto-delivered as a real comment by the guardrail
+		// above, so the run HAS woken someone and this check must not fire.
+		const deps = makeDeps(
+			createMockDocker({
+				producesOutput: true,
+				execStart: streamResult(`@${slug} - please re-run the fixture.`),
+			}),
+		);
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+		expect(result.success).toBe(true);
+		expect(await logFor(result.heartbeatRunId)).not.toContain('woke no one');
+	});
+
+	it('stays silent when the task was closed', async () => {
+		const { slug } = await otherAgent();
+		await db.query(`UPDATE tasks SET status = 'done'::task_status WHERE id = $1`, [taskId]);
+		// A terminal task routes through the status cascade, so naming a teammate
+		// in the wrap-up is attribution and not a stranded handoff.
+		const deps = makeDeps(
+			createMockDocker({
+				producesOutput: true,
+				execStart: streamResult(`Shipped. Thanks to @@${slug} for the review.`),
+			}),
+		);
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+		expect(result.success).toBe(true);
+		expect(await logFor(result.heartbeatRunId)).not.toContain('woke no one');
+		await db.query(`UPDATE tasks SET status = 'in_progress'::task_status WHERE id = $1`, [taskId]);
+	});
+
+	it('stays silent when the run names nobody', async () => {
+		await db.query(`UPDATE tasks SET status = 'in_progress'::task_status WHERE id = $1`, [taskId]);
+		const deps = makeDeps(
+			createMockDocker({
+				producesOutput: true,
+				execStart: streamResult('Rebuilt the index and re-ran the import. No errors.'),
+			}),
+		);
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+		expect(result.success).toBe(true);
+		expect(await logFor(result.heartbeatRunId)).not.toContain('woke no one');
+	});
+});

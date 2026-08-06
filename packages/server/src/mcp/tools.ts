@@ -113,6 +113,7 @@ import { broadcastApprovalChange } from '../services/approval-broadcast';
 import { resolveApproval } from '../services/approval-resolve';
 import { upsertChatMemory } from '../services/chat-memory';
 import {
+	buildWakeReceipt,
 	fireCommentWakeups,
 	postAgentComment,
 	resolveWarnableSlugs,
@@ -3266,7 +3267,7 @@ export function registerTools(
 			// comment the agent posts and one auto-delivered from a stranded final
 			// message are byte-identical. RETURNING * includes public_id (the
 			// comment-link slug), so the agent gets it back without a list_comments.
-			const row = await postAgentComment({
+			const { row, wake } = await postAgentComment({
 				db,
 				wsManager,
 				teamId,
@@ -3334,9 +3335,13 @@ export function registerTools(
 				]
 					.filter((w): w is string => Boolean(w))
 					.join(' ');
-				if (warning) return { ...row, warning };
+				if (warning) return { ...row, wake, warning };
 			}
-			return row;
+			// The receipt ships on every write, warning or not: it is a fact about what
+			// the comment delivered, not an advisory that fires when a heuristic guessed
+			// right. An agent that meant to ask sees `woke: []` with the teammate it
+			// addressed sitting in `named_not_woken`.
+			return { ...row, wake };
 		},
 		db,
 	);
@@ -3402,7 +3407,7 @@ export function registerTools(
 			// a mention or a task link that was previously backticked and inert —
 			// fires for the first time. That is what makes "fix it by editing"
 			// behave the same as posting it correctly the first time.
-			await fireCommentWakeups({
+			const woke = await fireCommentWakeups({
 				db,
 				taskId,
 				teamId,
@@ -3413,7 +3418,14 @@ export function registerTools(
 				authorRunId: auth.runId,
 				parentCommentId: row.parent_comment_id,
 				wsManager,
-			}).catch((e) => log.error('Failed to fire wakeups for edited comment:', e));
+			}).catch((e) => {
+				log.error('Failed to fire wakeups for edited comment:', e);
+				return [] as string[];
+			});
+			const wake = await buildWakeReceipt(db, teamId, auth.memberId, content, woke).catch((e) => {
+				log.error('Failed to build wake receipt for edited comment:', e);
+				return { woke, named_not_woken: [] };
+			});
 			trackBackground(
 				recordTaskLinks(
 					db,
@@ -3457,8 +3469,8 @@ export function registerTools(
 			const warning = [teammateWarning, passiveWarning, narratedWarning, backtickWarning]
 				.filter((w): w is string => Boolean(w))
 				.join(' ');
-			if (warning) return { ...r.rows[0], warning };
-			return r.rows[0];
+			if (warning) return { ...r.rows[0], wake, warning };
+			return { ...r.rows[0], wake };
 		},
 		db,
 	);

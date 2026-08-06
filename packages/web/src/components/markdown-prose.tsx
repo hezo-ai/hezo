@@ -23,7 +23,7 @@ import {
 	type TaskMentionData,
 } from '../lib/remark-mentions';
 import { remarkNormalizeInlineCode } from '../lib/remark-normalize-inline-code';
-import { CommentRefLink, MENTION_CLASSES } from './comment-ref-link';
+import { CommentRefLink, MENTION_CLASSES, PASSIVE_MENTION_CLASSES } from './comment-ref-link';
 import { useOpenPreview } from './task-detail/preview-context';
 import { TaskStatusBadge } from './task-status-badge';
 import { Tooltip } from './ui/tooltip';
@@ -431,7 +431,7 @@ export function MarkdownProse({
 							<Link
 								to="/projects/$projectId/agents/$agentId"
 								params={{ projectId: agentProjectSlug, agentId: agentSlug }}
-								className={MENTION_CLASSES}
+								className={agentPassive ? PASSIVE_MENTION_CLASSES : MENTION_CLASSES}
 								data-testid="agent-mention-link"
 								data-mention-passive={agentPassive ? 'true' : undefined}
 							>
@@ -442,17 +442,27 @@ export function MarkdownProse({
 				}
 
 				if (attrs['data-mention-admin'] === 'true' && mentionsEnabled) {
+					// `@@admin` is a reference, not an inbox ask — mute it the same way a
+					// passive teammate chip is muted, so the thread shows at a glance
+					// which mentions actually reached someone.
+					const adminClasses = agentPassive ? PASSIVE_MENTION_CLASSES : MENTION_CLASSES;
 					const adminLink = projectId ? (
 						<Link
 							to="/projects/$projectId/inbox"
 							params={{ projectId }}
-							className={MENTION_CLASSES}
+							className={adminClasses}
 							data-testid="admin-mention-link"
+							data-mention-passive={agentPassive ? 'true' : undefined}
 						>
 							{props.children}
 						</Link>
 					) : (
-						<Link to="/home/inbox" className={MENTION_CLASSES} data-testid="admin-mention-link">
+						<Link
+							to="/home/inbox"
+							className={adminClasses}
+							data-testid="admin-mention-link"
+							data-mention-passive={agentPassive ? 'true' : undefined}
+						>
 							{props.children}
 						</Link>
 					);
