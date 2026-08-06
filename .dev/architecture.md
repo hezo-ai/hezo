@@ -2980,9 +2980,24 @@ RFC1918 / CGNAT / IPv6 `::1`, `fe80::/10`, `fc00::/7` and IPv4-mapped forms of t
 Without it, a run holding the proxy token could `CONNECT 127.0.0.1:5432` and reach
 Hezo's own API, its database, or any host-bound daemon; `NO_PROXY` is a client-side hint
 the agent controls, not an enforcement point. Enforcement is by **resolved address**, not
-by name — the guard is installed as the request's `lookup`, so a hostname pointing at a
-private address (`evil.example.com A 127.0.0.1`) fails there and the socket connects to
-exactly the address that was checked (no TOCTOU). CONNECT and plain requests also take a
+by name: `forward` calls `resolveGuardedAddress(host)` and then **dials the address it
+returned**, so a hostname pointing at a private address (`evil.example.com A 127.0.0.1`)
+fails there and the socket connects to exactly the address that was checked (no TOCTOU).
+Because the dial target is then an address, the upstream request restates `Host` from the
+original name and passes it as `servername`, so TLS still validates against the name.
+
+That is deliberately **not** the request's `lookup` option, which is the obvious way to
+write it and is broken on Bun: a request carrying a **body** never delivers that body, so
+the upstream answers as though it received an empty one. A `GET` is unaffected, which is
+why it stayed hidden - a proxied `git` clone fetched its ref advertisement normally and
+then hung on `POST /git-upload-pack` (`RPC failed; curl 28`, `expected flush after ref
+listing`), while every agent's POSTed API and MCP call was silently sent empty. It was
+production-only because the guard is skipped when `allowPrivateTargets` is set, and every
+suite in the repo set it; `conformance/git.ts` now exempts its loopback fixture by
+`selfEndpoint` instead, so its real-host legs run the guarded path. See
+oven-sh/bun#28396 for the wider set of `node:http` proxy defects.
+
+CONNECT and plain requests also take a
 synchronous pre-check on IP literals and `localhost`, so a blocked tunnel never mints a
 leaf cert. **One exemption:** Hezo's own endpoint (`host.docker.internal:<serverPort>`,
 matched on host *and* port by `isSelfEndpoint`) — it is already in the run's `NO_PROXY`

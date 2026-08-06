@@ -5,6 +5,7 @@ import {
 	Agent as HttpAgent,
 	type Server as HttpServer,
 	request as httpRequest,
+	type IncomingHttpHeaders,
 	type IncomingMessage,
 	type ServerResponse,
 } from 'node:http';
@@ -30,7 +31,13 @@ import {
 } from '../connectors/connections';
 import type { HezoCA } from './ca';
 import { mcpMethodBlockedMessage, shouldBlockMcpRequest } from './mcp-method-guard';
-import { guardedLookup, isBlockedEgressHost, isSelfEndpoint, type SelfEndpoint } from './net-guard';
+import {
+	BlockedEgressTargetError,
+	isBlockedEgressHost,
+	isSelfEndpoint,
+	resolveGuardedAddress,
+	type SelfEndpoint,
+} from './net-guard';
 import {
 	EGRESS_HOST_PORT_RANGE_END,
 	EGRESS_HOST_PORT_RANGE_START,
@@ -607,7 +614,7 @@ class RunProxyInstance {
 
 		// Refuse an obviously-blocked tunnel before minting a per-host TLS server
 		// and leaf cert for it. A hostname is undecidable here and is caught on the
-		// upstream leg by `guardedLookup`, which sees the resolved address.
+		// upstream leg by `resolveGuardedAddress`, which sees the resolved address.
 		const connectPort = Number(target.slice(sep + 1)) || 443;
 		if (
 			!this.cfg.allowPrivateTargets &&
@@ -789,11 +796,13 @@ class RunProxyInstance {
 		req.pause();
 
 		const { host, port, path } = resolveTarget(isSSL, connectHost, req);
+
 		// Plain (non-CONNECT) requests never passed through `onConnect`, so this is
 		// their first destination check. An IP-literal target is refused outright;
-		// a hostname falls through to `guardedLookup` on the upstream leg.
+		// a hostname is resolved and checked below, before anything is dialed.
 		const selfTarget = isSelfEndpoint(host, port, this.cfg.selfEndpoint);
-		if (!this.cfg.allowPrivateTargets && !selfTarget && isBlockedEgressHost(host)) {
+		const guardTarget = !this.cfg.allowPrivateTargets && !selfTarget;
+		if (guardTarget && isBlockedEgressHost(host)) {
 			log.warn('egress request to a private or loopback target refused', {
 				run: ref(this.cfg.scope.label, this.cfg.runId),
 				host,
@@ -806,6 +815,34 @@ class RunProxyInstance {
 			);
 			req.resume();
 			return;
+		}
+
+		// Resolved here, once, so the upstream legs dial an address that has already
+		// passed the guard. `resolveGuardedAddress` explains why this is not a
+		// `lookup` option on the request.
+		let dialHost = host;
+		if (guardTarget) {
+			try {
+				dialHost = await resolveGuardedAddress(host);
+			} catch (e) {
+				const blocked = e instanceof BlockedEgressTargetError;
+				if (blocked) {
+					log.warn('egress request to a private or loopback target refused', {
+						run: ref(this.cfg.scope.label, this.cfg.runId),
+						host,
+					});
+				}
+				respondEarly(
+					res,
+					blocked ? 403 : 502,
+					blocked ? 'target_not_allowed' : 'dns_failed',
+					blocked
+						? `Egress to ${host} is blocked: private and loopback addresses are not reachable through the proxy.`
+						: `Egress to ${host} failed: ${(e as Error).message}`,
+				);
+				req.resume();
+				return;
+			}
 		}
 		const method = req.method ?? 'GET';
 		const headers: Record<string, string | string[] | undefined> = {};
@@ -829,6 +866,15 @@ class RunProxyInstance {
 			// correct host:port to the upstream.
 			delete headers.host;
 			delete headers.Host;
+		}
+
+		// Except when the dial target is an address rather than the name: the
+		// runtime would then regenerate `Host` from that address, and the upstream
+		// answers a redirect to its own canonical name instead of serving the
+		// request. Restated explicitly here, which is safe because TLS validates
+		// against `servername` (set to the real name) rather than this header.
+		if (dialHost !== host) {
+			headers.host = port === (isSSL ? 443 : 80) ? host : `${host}:${port}`;
 		}
 
 		const protocol = isSSL ? 'https' : 'http';
@@ -959,9 +1005,31 @@ class RunProxyInstance {
 					result.bodyChanged && result.body !== null
 						? Buffer.from(result.body, 'utf8')
 						: bufferedBody;
-				this.forwardBuffered(isSSL, host, port, method, upstreamPath, headers, outBody, res, path);
+				this.forwardBuffered(
+					isSSL,
+					host,
+					dialHost,
+					port,
+					method,
+					upstreamPath,
+					headers,
+					outBody,
+					res,
+					path,
+				);
 			} else {
-				this.pipeUpstream(isSSL, host, port, method, upstreamPath, headers, req, res, path);
+				this.pipeUpstream(
+					isSSL,
+					host,
+					dialHost,
+					port,
+					method,
+					upstreamPath,
+					headers,
+					req,
+					res,
+					path,
+				);
 			}
 			return;
 		}
@@ -969,15 +1037,16 @@ class RunProxyInstance {
 		// No placeholder anywhere. A buffered (eligible) body must be forwarded from
 		// the buffer — its stream is already consumed; otherwise stream as usual.
 		if (bufferedBody !== null) {
-			this.forwardBuffered(isSSL, host, port, method, path, headers, bufferedBody, res);
+			this.forwardBuffered(isSSL, host, dialHost, port, method, path, headers, bufferedBody, res);
 		} else {
-			this.pipeUpstream(isSSL, host, port, method, path, headers, req, res);
+			this.pipeUpstream(isSSL, host, dialHost, port, method, path, headers, req, res);
 		}
 	}
 
 	private pipeUpstream(
 		isSSL: boolean,
 		host: string,
+		dialHost: string,
 		port: number,
 		method: string,
 		path: string,
@@ -989,24 +1058,21 @@ class RunProxyInstance {
 		const requestFn = isSSL ? httpsRequest : httpRequest;
 		const upstream = requestFn(
 			{
-				host,
 				port,
 				method,
 				path,
 				headers,
-				// Resolve through the destination guard so a name that points at a
-				// private address (`evil.example.com A 127.0.0.1`) fails here rather
-				// than reaching Hezo's own host services. The socket connects to the
-				// address this lookup returned, so there is no check/connect gap.
-				...(this.cfg.allowPrivateTargets || isSelfEndpoint(host, port, this.cfg.selfEndpoint)
-					? {}
-					: { lookup: guardedLookup(host) }),
+				// `dialHost` is the guarded resolution of `host` (see
+				// `resolveGuardedAddress`): dialing the literal already checked leaves
+				// no check/connect gap, and `servername` keeps TLS validating against
+				// the real name rather than the address.
+				host: dialHost,
 				...(isSSL
 					? { servername: host, agent: this.upstreamAgent }
 					: { agent: this.upstreamHttpAgent }),
 			},
 			(upstreamRes) => {
-				res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers);
+				res.writeHead(upstreamRes.statusCode ?? 502, relayedResponseHeaders(upstreamRes.headers));
 				upstreamRes.pipe(res);
 			},
 		);
@@ -1024,6 +1090,7 @@ class RunProxyInstance {
 	private forwardBuffered(
 		isSSL: boolean,
 		host: string,
+		dialHost: string,
 		port: number,
 		method: string,
 		path: string,
@@ -1043,21 +1110,21 @@ class RunProxyInstance {
 		const requestFn = isSSL ? httpsRequest : httpRequest;
 		const upstream = requestFn(
 			{
-				host,
 				port,
 				method,
 				path,
 				headers: outHeaders,
-				// Same destination guard as `pipeUpstream` — see the note there.
-				...(this.cfg.allowPrivateTargets || isSelfEndpoint(host, port, this.cfg.selfEndpoint)
-					? {}
-					: { lookup: guardedLookup(host) }),
+				// `dialHost` is the guarded resolution of `host` (see
+				// `resolveGuardedAddress`): dialing the literal already checked leaves
+				// no check/connect gap, and `servername` keeps TLS validating against
+				// the real name rather than the address.
+				host: dialHost,
 				...(isSSL
 					? { servername: host, agent: this.upstreamAgent }
 					: { agent: this.upstreamHttpAgent }),
 			},
 			(upstreamRes) => {
-				res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers);
+				res.writeHead(upstreamRes.statusCode ?? 502, relayedResponseHeaders(upstreamRes.headers));
 				upstreamRes.pipe(res);
 			},
 		);
@@ -1296,6 +1363,42 @@ function discardingDestroy(sock: Socket, host: string, leg: 'agent' | 'upstream'
 		log.warn(`egress bridge for ${host} discarded ${pending} unflushed byte(s) on the ${leg} leg`);
 	}
 	sock.destroy();
+}
+
+/**
+ * Headers for a relayed response, closing the client connection after it.
+ *
+ * **The close is a runtime workaround, and the body depends on it.** Measured on
+ * Bun (1.3.14), which is what production runs: the *first* response on a client
+ * connection is framed correctly, and every **reused** one carries a spurious
+ * `Content-Length: 0` beside its `Transfer-Encoding: chunked`. A client that
+ * honours the length reads an empty body from a response that actually has one.
+ *
+ * That shape is invisible to a client which opens a connection per request -
+ * which is every `curl` assertion in this repo, and why this survived so long -
+ * and fatal to one that reuses. `git` reuses: it fetches `/info/refs` (fine, the
+ * first response), then `POST`s `git-upload-pack` down the same connection and
+ * reads an empty pack, reported as `RPC failed` plus `expected flush after ref
+ * listing`. Every agent-facing HTTP client that keeps connections alive had the
+ * same silent truncation on its second request onwards.
+ *
+ * `Connection: close` makes every response the first on its connection, which is
+ * the one case the runtime frames correctly. The cost is a handshake per request
+ * against a loopback MITM server; the alternative is silently truncating
+ * responses. Remove it only once a Bun release is confirmed to frame reused
+ * responses correctly - `egress-keepalive.bun.test.ts` is what proves that.
+ */
+function relayedResponseHeaders(
+	headers: IncomingHttpHeaders,
+): Record<string, string | string[] | undefined> {
+	const out: Record<string, string | string[] | undefined> = {};
+	for (const [name, value] of Object.entries(headers)) {
+		// The upstream's own connection management describes its hop, not ours.
+		if (HOP_BY_HOP_HEADERS.has(name.toLowerCase())) continue;
+		out[name] = value;
+	}
+	out.connection = 'close';
+	return out;
 }
 
 /** Whether a request is eligible for body placeholder substitution, decided from

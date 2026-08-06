@@ -201,9 +201,18 @@ export function describeGitConformance(fixture: LiveAdapterFixture, h: Conforman
 				// The suite's upstream is a throwaway HTTPS server on the host's
 				// loopback, which the destination guard refuses by default - correctly,
 				// since in production nothing behind a container's tunnel should reach
-				// Hezo's own address space. The fixture is the exception, not the rule:
-				// production keeps the guard on.
-				allowPrivateTargets: true,
+				// Hezo's own address space.
+				//
+				// Exempted by address rather than by switching the guard off with
+				// `allowPrivateTargets`, deliberately. That flag disables the guard for
+				// *every* host, which takes the public-host legs off the resolve-then-
+				// dial path production actually runs - and that path is where a
+				// production-only defect lived unseen: a custom DNS `lookup` on the
+				// upstream request silently dropped the body of any request that had
+				// one, so a proxied `POST` (git's `git-upload-pack`, and every agent's
+				// POSTed API call) reached its upstream empty. Every suite in this repo
+				// set `allowPrivateTargets: true`, so nothing exercised it.
+				selfEndpoint: { host: 'localhost', port: serverPort },
 			});
 			const allocated = await proxy.allocateRunProxy(runId, {
 				teamId: team.id,
@@ -475,15 +484,25 @@ export function describeGitConformance(fixture: LiveAdapterFixture, h: Conforman
 						egressProxy: proxy as EgressProxy,
 						projectId: null,
 					},
-					async ({ scopeId, proxyEnv: seamProxyEnv }) => {
+					async ({ bridge, scopeId, proxyEnv: seamProxyEnv }) => {
 						// The seam's env verbatim, `NO_PROXY` included. The loopback
 						// collision that forced the local-server leg to strip it does not
 						// arise for a real host, so this runs the production environment
 						// unaltered - which is the whole point of the leg.
+						//
+						// And the **real bridge**, not null. The legs above pass null
+						// because the bridge carries commit signing rather than the HTTPS
+						// transport, which is true and makes them a narrower test - but it
+						// also means they never run `hezo-run-with-bridge`, and production
+						// runs every network git op inside it. That wrapper starts socat
+						// under setsid, waits for a unix socket, writes apt's proxy config
+						// through sudo, and re-execs the command under `timeout`. None of
+						// that is git, all of it is between git and the network, and no
+						// assertion covered it.
 						const executor = ContainerGitExecutor.forPrep(
 							engine,
 							containerId,
-							null,
+							bridge,
 							containerRunUser,
 							scopeId,
 							seamProxyEnv,
