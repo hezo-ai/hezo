@@ -659,23 +659,27 @@ export async function provisionContainer(
 					ContainerGitExecutor.forPrep(docker, Id, bridge, runUser, scopeId, proxyEnv),
 					(stream, text) => emit(stream, text),
 				);
-			const syncRes =
-				deps.sshAgentServer && deps.egressProxy
-					? await withProvisionBridge(
-							deps.sshAgentServer,
-							{
-								engine: docker,
-								containerId: Id,
-								teamId,
-								dataDir,
-								runUser,
-								db,
-								egressProxy: deps.egressProxy,
-								projectId: project.id,
-							},
-							({ bridge, scopeId, proxyEnv }) => syncRepos(bridge, scopeId, proxyEnv),
-						)
-					: await syncRepos(null, mintGitOpScopeId());
+			// Guarded on the ssh server alone. The egress proxy is *not* a second
+			// condition: it is mandatory, and `withProvisionBridge` says so by
+			// throwing. Adding it here would make that throw unreachable and
+			// silently degrade to an uncredentialed clone instead — the fallback
+			// the mandatory rule exists to prevent.
+			const syncRes = deps.sshAgentServer
+				? await withProvisionBridge(
+						deps.sshAgentServer,
+						{
+							engine: docker,
+							containerId: Id,
+							teamId,
+							dataDir,
+							runUser,
+							db,
+							egressProxy: deps.egressProxy as EgressProxy,
+							projectId: project.id,
+						},
+						({ bridge, scopeId, proxyEnv }) => syncRepos(bridge, scopeId, proxyEnv),
+					)
+				: await syncRepos(null, mintGitOpScopeId());
 			if (syncRes.failed.length > 0) {
 				emit(
 					'stderr',

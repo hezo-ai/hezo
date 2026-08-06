@@ -1252,6 +1252,11 @@ export async function runAgent(
 				logs: deps.logs,
 				containerLogStreamer: deps.containerLogStreamer,
 				sshAgentServer: deps.sshAgentServer,
+				// A run that has to provision its container clones through the
+				// provisioning bridge, which needs this to substitute the remote's
+				// credential placeholder — the run's own allocation comes later and is
+				// a different one.
+				egressProxy: deps.egressProxy,
 				egressCAPath: deps.egressCAPath,
 			},
 			project.id,

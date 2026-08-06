@@ -12,6 +12,7 @@ import { logger } from '../logger';
 import { requireSuperuser } from '../middleware/auth';
 import { resolveContainerRunUser } from '../services/container-user';
 import type { ContainerDeps } from '../services/containers';
+import type { EgressProxy } from '../services/egress';
 import {
 	getCloneState,
 	getWorktreeState,
@@ -597,10 +598,22 @@ reposRoutes.post('/projects/:projectId/repos/:repoId/reset', async (c) => {
 					files: resetExecutor.files(repo.repoContainerPath),
 				});
 			};
-			return sshAgentServer && egressProxy
+			// Ssh server only — the egress proxy is mandatory, and
+			// `withProvisionBridge` enforces that by throwing. See the note at the
+			// equivalent guard in `containers.ts`.
+			return sshAgentServer
 				? withProvisionBridge(
 						sshAgentServer,
-						{ engine: docker, containerId, teamId, dataDir, runUser, db, egressProxy, projectId },
+						{
+							engine: docker,
+							containerId,
+							teamId,
+							dataDir,
+							runUser,
+							db,
+							egressProxy: egressProxy as EgressProxy,
+							projectId,
+						},
 						({ bridge, scopeId, proxyEnv }) => runReset(bridge, scopeId, proxyEnv),
 					)
 				: runReset(null, mintGitOpScopeId());

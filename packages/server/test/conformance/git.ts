@@ -308,7 +308,7 @@ export function describeGitConformance(fixture: LiveAdapterFixture, h: Conforman
 		 */
 		it('clones through the production provisioning seam, with nothing hand-wired', async () => {
 			const remote = `https://x-access-token:${PLACEHOLDER}@localhost:${serverPort}/served.git`;
-			const out = await withProvisionBridge(
+			const { clone, show } = await withProvisionBridge(
 				sshAgentServer as SshAgentServer,
 				{
 					engine,
@@ -320,29 +320,42 @@ export function describeGitConformance(fixture: LiveAdapterFixture, h: Conforman
 					egressProxy: proxy as EgressProxy,
 					projectId: null,
 				},
-				async ({ bridge, scopeId, proxyEnv: seamProxyEnv }) => {
+				async ({ scopeId, proxyEnv: seamProxyEnv }) => {
+					// `bridge: null` deliberately. The bridge carries commit *signing*,
+					// not the HTTPS transport this leg is about, and the ssh leg is
+					// already asserted on every backend by `conformance/tunnel.ts`.
+					// Wrapping the clone in it here would put an orthogonal dependency
+					// inside a credential assertion. `proxyEnv` still comes from the
+					// real seam, which is the thing under test.
 					const executor = ContainerGitExecutor.forPrep(
 						engine,
 						containerId,
-						bridge,
+						null,
 						containerRunUser,
 						scopeId,
 						seamProxyEnv,
 					);
-					await executor.exec(['clone', remote, '/tmp/conf-seam-clone'], {
+					const cloneRes = await executor.exec(['clone', remote, '/tmp/conf-seam-clone'], {
 						cwd: '/tmp',
 						needsNetwork: true,
 						timeout: 120_000,
 					});
-					// Read the file back through the same executor's container, so a
-					// clone that silently produced nothing cannot pass.
-					return executor.exec(['--no-pager', 'show', `HEAD:${REPO_FILE}`], {
-						cwd: '/tmp/conf-seam-clone',
-					});
+					// Only read it back if the clone worked. Asserting on a follow-up
+					// command first is how this failed opaquely: the clone's own error
+					// was discarded and CI reported `chdir: no such file or directory`
+					// from the *next* exec, which says nothing about the cause.
+					if (cloneRes.exitCode !== 0) return { clone: cloneRes, show: null };
+					return {
+						clone: cloneRes,
+						show: await executor.exec(['--no-pager', 'show', `HEAD:${REPO_FILE}`], {
+							cwd: '/tmp/conf-seam-clone',
+						}),
+					};
 				},
 			);
-			expect(`${out.stdout}${out.stderr}`).toContain(REPO_CONTENT.trim());
-			expect(out.exitCode).toBe(0);
+			// The clone's own output, so a failure names itself in the CI log.
+			expect(`clone exit ${clone.exitCode}: ${clone.stdout}${clone.stderr}`).toContain('exit 0');
+			expect(`${show?.stdout}${show?.stderr}`).toContain(REPO_CONTENT.trim());
 		}, 300_000);
 
 		it('never lets the real token into the container', async () => {
