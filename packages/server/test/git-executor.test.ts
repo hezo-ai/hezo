@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ContainerRunUser } from '../src/services/container-user';
+import { buildEgressProxyEnv } from '../src/services/egress';
 import { ContainerGitExecutor, GIT_HTTP_TIMEOUT_ENV } from '../src/services/git-executor';
 import {
 	BRIDGE_RUNNER_BINARY,
@@ -175,6 +176,35 @@ describe('ContainerGitExecutor', () => {
 		expect(calls[0].Env).toContain('GIT_CONFIG_COUNT=2');
 		expect(calls[0].Env).toContain('GIT_CONFIG_KEY_0=user.name');
 		expect(calls[0].Env).toContain('GIT_CONFIG_VALUE_0=octocat');
+	});
+
+	/**
+	 * The proxy entries are how a clone's `__HEZO_SECRET_<NAME>__` ever becomes a
+	 * credential: substitution happens at the egress proxy, and git only reaches
+	 * it if these are in the exec env. Nothing in this executor supplies them —
+	 * the caller passes them through `extraEnv` — so the regression is a caller
+	 * that forgets, and the symptom is GitHub reporting a perfectly good token as
+	 * invalid because it was shown a placeholder instead.
+	 */
+	it('carries caller-supplied proxy env onto remote ops', async () => {
+		const { docker, calls } = recordingDocker();
+		const proxyEnv = buildEgressProxyEnv({ host: '127.0.0.1', port: 34567, token: 'tok' });
+		const exec = ContainerGitExecutor.forPrep(
+			docker,
+			'cid',
+			null,
+			runUser,
+			'scope-proxy',
+			proxyEnv,
+		);
+
+		await exec.exec(['clone', 'https://github.com/o/r.git'], {
+			cwd: '/workspace',
+			needsNetwork: true,
+		});
+		expect(calls[0]?.Env).toContain('HTTPS_PROXY=http://run:tok@127.0.0.1:34567');
+		expect(calls[0]?.Env).toContain('https_proxy=http://run:tok@127.0.0.1:34567');
+		expect(calls[0]?.Env).toContain('HTTP_PROXY=http://run:tok@127.0.0.1:34567');
 	});
 
 	it('carries git HTTP timeouts on a remote op, and nothing extra on a local one', async () => {

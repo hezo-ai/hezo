@@ -2145,10 +2145,25 @@ unreachable, which is exactly how it shipped. `codeload.github.com` is in the Gi
 capability's `allowedHosts` because it serves the packfiles; without it the ref
 advertisement succeeds and the transfer is refused.
 
+**Every in-container git op that talks to a remote carries the run's proxy env**
+(`HTTP(S)_PROXY`/`NO_PROXY`, from the shared `buildEgressProxyEnv`), because that is the only
+way the placeholder in its remote URL ever becomes a credential. Git reads those variables the
+way any HTTP client does, so nothing git-specific carries a clone to the proxy - and nothing
+supplies them implicitly either: `ContainerGitExecutor` takes them through its `baseEnv`, so
+each caller passes them. Run prep gets them from the run's own allocation (`prepareWorktrees`);
+provisioning gets them from `withProvisionBridge`. A caller that omits them does not fail
+loudly - the clone connects direct, ships `__HEZO_SECRET_<NAME>__` as its Basic password, and
+the remote reports a bad token, which points at the credential rather than at the routing.
+
 Remote ops (`needsNetwork`, formerly `needsSsh`) carry git's own HTTP timeouts
 (`http.lowSpeedLimit`/`lowSpeedTime`) and still run under `hezo-run-with-bridge`, which is
 what scopes the process tree for the marker kill. Cloning outside a run (container provision,
-repo link) uses a short-lived `withProvisionBridge`. Each exec also carries a per-op timeout
+repo link) uses a short-lived `withProvisionBridge`, which allocates the same pair an agent run
+does - the ssh-agent socket **and** an egress proxy - points the tunnel's `ssh` and `proxy`
+targets at them, and derives the tunnel's split-routing policy from the vault via
+`buildTunnelHostPolicy(db, [])` (no descriptors: provisioning loads no connectors). Only `mcp`
+stays unrouted, since a provisioning op has no MCP identity. The egress leg is mandatory and
+missing one throws rather than standing up a tunnel with nowhere to route. Each exec also carries a per-op timeout
 (fetch 60s, clone 120s)
 and, for prep, the run's own abort signal — both abort the `docker exec` stream, so a hung
 transport can no longer block the run (or the per-project git lock) until it is killed by
@@ -3034,9 +3049,10 @@ ssh config is written into the container. The durability `post-commit` hook stil
 live `SSH_AUTH_SOCK` (§ Agent runtime, Commit durability): it gates on the socket because a
 commit it could not sign is one it should not push, not because the push needs ssh.
 Repo/worktree prep wraps individual git commands with the same `hezo-run-with-bridge` runner;
-cloning outside a run (provision, repo link) allocates a short-lived bridge via
-`withProvisionBridge`, whose per-op `provision-<hex>` id doubles as the exec scope marker
-(§ Agent execution, Process-tree lifecycle).
+cloning outside a run (provision, repo link) allocates a short-lived bridge **and egress proxy**
+via `withProvisionBridge`, whose per-op `provision-<hex>` id doubles as the exec scope marker
+(§ Agent execution, Process-tree lifecycle) and keys both allocations. The proxy is what
+substitutes the clone's credential, so it is as load-bearing here as the socket is for signing.
 
 **Verified-on-GitHub bootstrap.** On every successful GitHub OAuth connect the project's
 public key is auto-registered on the connecting user's account as **both** a signing key

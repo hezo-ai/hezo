@@ -5,6 +5,9 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
+import { loadOrCreateCA } from '../src/services/egress/ca';
+import { EgressProxy } from '../src/services/egress/proxy';
+import type { ProvisionBridgeTarget } from '../src/services/ssh-agent/host';
 import { withProvisionBridge } from '../src/services/ssh-agent/host';
 import {
 	FrameReader,
@@ -22,6 +25,7 @@ let teamId: string;
 let publicKey: string;
 let server: SshAgentServer;
 let dataDir: string;
+let egressProxy: EgressProxy;
 
 function frame(payload: Buffer): Buffer {
 	const len = Buffer.alloc(4);
@@ -75,9 +79,27 @@ beforeAll(async () => {
 
 	dataDir = mkdtempSync(join(tmpdir(), 'hezo-host-agent-'));
 	server = new SshAgentServer({ db, masterKeyManager });
+
+	// A provisioning clone authenticates with a placeholder only the proxy can
+	// substitute, so the bridge now allocates one — a real instance, because the
+	// point of these tests is that the allocation happens and is released.
+	egressProxy = new EgressProxy({
+		db,
+		masterKeyManager,
+		ca: await loadOrCreateCA(join(dataDir, 'ca')),
+	});
+
+	// Gives `buildTunnelHostPolicy` something to derive, so the policy assertion
+	// below is checking a real vault read rather than an empty list.
+	await db.query(
+		`INSERT INTO secrets (name, encrypted_value, category, allowed_hosts)
+		 VALUES ('PROVISION_TEST_TOKEN', 'x', 'api_token'::secret_category, $1)`,
+		[['github.com', 'codeload.github.com']],
+	);
 });
 
 afterAll(async () => {
+	await egressProxy.releaseAll().catch(() => undefined);
 	await server.releaseAll();
 	await safeClose(db);
 });
@@ -91,7 +113,19 @@ const runUser = { name: 'node', uid: 1000, gid: 1000 } as const;
  * host-side end - which is why the test has to capture it from the allocation
  * rather than read it off the bridge.
  */
-function provisionTarget(capture: { hostPort: number }) {
+interface Capture {
+	hostPort: number;
+	/** Host-side port of the egress allocation the tunnel's `proxy` target names. */
+	proxyHostPort: number;
+	/** The tunnel config written into the container, so its policy is checkable. */
+	tunnelConfig: { policy?: { proxiedHosts?: string[]; proxyEverything?: boolean } };
+}
+
+function newCapture(): Capture {
+	return { hostPort: 0, proxyHostPort: 0, tunnelConfig: {} };
+}
+
+function provisionTarget(capture: Capture): ProvisionBridgeTarget {
 	const engine = createStubDocker({
 		openExecChannel: async () => ({
 			write: () => {},
@@ -105,7 +139,11 @@ function provisionTarget(capture: { hostPort: number }) {
 			read: async () => '',
 			remove: async () => {},
 			findByName: async () => [],
-			write: async () => {},
+			// The tunnel writes `{ports, policy}` here for the in-container client;
+			// capturing it is how the split-routing policy becomes observable.
+			write: async (_path: string, contents: string) => {
+				capture.tunnelConfig = JSON.parse(contents);
+			},
 			mkdir: async () => {},
 			removeDir: async () => {},
 		}),
@@ -116,12 +154,27 @@ function provisionTarget(capture: { hostPort: number }) {
 		capture.hostPort = allocated.tcpHostPort;
 		return allocated;
 	};
-	return { engine, containerId: 'ctr-provision', teamId, dataDir, runUser };
+	const allocateProxy = egressProxy.allocateRunProxy.bind(egressProxy);
+	egressProxy.allocateRunProxy = async (...args: Parameters<typeof allocateProxy>) => {
+		const allocated = await allocateProxy(...args);
+		capture.proxyHostPort = allocated.proxyPort;
+		return allocated;
+	};
+	return {
+		engine,
+		containerId: 'ctr-provision',
+		teamId,
+		dataDir,
+		runUser,
+		db,
+		egressProxy,
+		projectId: null,
+	};
 }
 
 describe('withProvisionBridge', () => {
 	it('allocates a bridge over the tunnel, advertising the team key, then releases on exit', async () => {
-		const capture = { hostPort: 0 };
+		const capture = newCapture();
 		await withProvisionBridge(server, provisionTarget(capture), async ({ bridge }) => {
 			expect(bridge.tokenHex).toMatch(/^[0-9a-f]{32}$/);
 			expect(bridge.socketPath.startsWith('/run/hezo/')).toBe(true);
@@ -144,8 +197,52 @@ describe('withProvisionBridge', () => {
 		expect(await connectRefused(capture.hostPort)).toBe(true);
 	});
 
-	it('releases the bridge even if fn throws', async () => {
-		const capture = { hostPort: 0 };
+	/**
+	 * The regression this whole path exists for. Git transport moved from SSH to
+	 * HTTPS, so a provisioning clone's remote now carries
+	 * `__HEZO_SECRET_<NAME>__` and only the egress proxy can turn it into a
+	 * credential. The tunnel used to point its `proxy` target at port 0 with an
+	 * empty policy, so every private clone connected direct and shipped the
+	 * placeholder as its password — which GitHub reports as `Invalid username or
+	 * token`, sending the reader after the one thing that is not wrong.
+	 */
+	it('routes the container at a real egress proxy, with a vault-derived policy', async () => {
+		const capture = newCapture();
+		await withProvisionBridge(server, provisionTarget(capture), async ({ proxyEnv }) => {
+			expect(capture.proxyHostPort).toBeGreaterThan(0);
+
+			// Split routing is derived from the vault, never hand-written, so the
+			// seeded secret's `allowed_hosts` is what the container is told to proxy.
+			expect(capture.tunnelConfig.policy?.proxiedHosts).toContain('github.com');
+			expect(capture.tunnelConfig.policy?.proxiedHosts).toContain('codeload.github.com');
+			expect(capture.tunnelConfig.policy?.proxyEverything).toBe(false);
+
+			// Git reads these the way every other HTTP client does; without them the
+			// clone never reaches the proxy at all.
+			const proxyUrl = proxyEnv
+				.find((e) => e.startsWith('HTTPS_PROXY='))
+				?.slice('HTTPS_PROXY='.length);
+			expect(proxyUrl).toBeDefined();
+			// Container loopback, never the host allocation behind it — a container
+			// has no route to Hezo's loopback on any backend.
+			const parsed = new URL(proxyUrl as string);
+			expect(parsed.hostname).toBe('127.0.0.1');
+			expect(Number(parsed.port)).toBeGreaterThan(0);
+			expect(Number(parsed.port)).not.toBe(capture.proxyHostPort);
+			expect(parsed.username).toBe('run');
+			expect(parsed.password.length).toBeGreaterThan(0);
+			// Both spellings, because clients disagree about which they read.
+			expect(proxyEnv).toContain(`https_proxy=${proxyUrl}`);
+			expect(proxyEnv.some((e) => e.startsWith('NO_PROXY='))).toBe(true);
+		});
+
+		// Released with the bridge: a leaked per-op proxy is a bound port and a live
+		// server for the life of the process.
+		expect(await connectRefused(capture.proxyHostPort)).toBe(true);
+	});
+
+	it('releases the bridge and the egress proxy even if fn throws', async () => {
+		const capture = newCapture();
 		await expect(
 			withProvisionBridge(server, provisionTarget(capture), async () => {
 				throw new Error('boom');
@@ -153,5 +250,23 @@ describe('withProvisionBridge', () => {
 		).rejects.toThrow('boom');
 
 		expect(await connectRefused(capture.hostPort)).toBe(true);
+		expect(await connectRefused(capture.proxyHostPort)).toBe(true);
+	});
+
+	/**
+	 * Fail closed and *named*. Standing the tunnel up without an egress
+	 * allocation is what shipped: the clone still ran, reached GitHub with an
+	 * unsubstituted placeholder, and failed as a credential problem.
+	 */
+	it('refuses to run without an egress proxy, rather than cloning uncredentialed', async () => {
+		const capture = newCapture();
+		const target = provisionTarget(capture);
+		await expect(
+			withProvisionBridge(
+				server,
+				{ ...target, egressProxy: undefined as unknown as EgressProxy },
+				async () => 'unreachable',
+			),
+		).rejects.toThrow(/egress proxy/i);
 	});
 });

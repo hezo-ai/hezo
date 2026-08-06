@@ -160,6 +160,10 @@ describe('099_example migration', () => {
 
 ## Testing
 
+**CI is the canonical check, not a local full run.** Do not run the whole suite locally to find out whether a change is green - **commit and push to your branch and let CI answer**. CI has the machines for it: `test-backend` fans across 5 shards, `test-integration` 5, `test-browser` 3, each on its own runner, with `test-postgres` and `test-s3` running the external-driver legs no local `bun run test` reaches at all. A single dev box runs those same suites serially against one PGlite, which is both far slower and a **worse** signal - a laptop or a container without a Docker daemon fails suites (`startup-real-docker-branch`, the `*-docker.test.ts` container suites) for reasons that have nothing to do with the change, and an under-resourced box OOMs the runner (exit 137), which reads as a failure but is not one.
+
+Run a **subset** locally whenever it helps you iterate - that is what it is for. Narrow to what you touched (`--pattern`, `--package`, or a single file via `bunx vitest run <path>`; see *Running one file or one test*), sanity-check, and push. `bun run typecheck` locally is cheap and worth it, since a type error blocks the commit hook anyway. Reserve a full local `bun run test` for when you are specifically chasing a cross-suite interaction that CI has already flagged.
+
 All changes ship with tests that exercise functionality (not "code runs without throwing"). Prefer integration over heavily-mocked unit tests. Five tiers:
 
 | Tier | Where | Run cost | What it tests | When to use |

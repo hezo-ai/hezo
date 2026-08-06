@@ -73,7 +73,7 @@ import { acquireRunContainer, PoolCapacityError } from './containers';
 import type { ContainerEngine, ExecLogChunk } from './docker';
 import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
-import { type EgressProxy, formatEgressProxyUrl } from './egress';
+import { buildEgressProxyEnv, type EgressProxy } from './egress';
 import {
 	clearPushErrors,
 	describeUnpushedWork,
@@ -677,35 +677,13 @@ export async function buildRuntimeInvocation(
 		})),
 	);
 	if (egress) {
-		// Per-run token rides the userinfo so every client sends it as
-		// Proxy-Authorization; the proxy 407s any caller without it. A non-null
-		// token here means auth is on (the default).
-		const proxyUrl = formatEgressProxyUrl(egress.host, egress.port, egress.token);
-		const noProxyHosts = [
-			egress.host,
-			'localhost',
-			'127.0.0.1',
-			// The Hezo MCP endpoint and agent asset URLs arrive on container loopback,
-			// where the tunnel client listens — covered by the `127.0.0.1`/`localhost`
-			// entries above. MCP auth there is a real per-run JWT and asset URLs are
-			// HMAC-signed, so there is no `__HEZO_SECRET_*__` placeholder to
-			// substitute: routing them through the proxy would buy nothing and add a
-			// hop on every (potentially multi-MB) binary read. Connector MCP servers
-			// live on their own remote hosts (reached via HTTPS CONNECT) and still
-			// traverse the proxy.
+		env.push(
+			// The same entries every in-container git op gets, from the same builder -
+			// a run's agent CLI and its `git clone` reach the proxy identically.
 			// For a locally-hosted provider the upstream is the operator's own machine,
 			// known only from the config's stored base URL — pass it so that host
 			// bypasses the MITM proxy like any other model-provider endpoint.
-			...providerDirectUpstreamHosts(provider, credential.baseUrl),
-		];
-		const noProxy = [...new Set(noProxyHosts)].join(',');
-		env.push(
-			`HTTP_PROXY=${proxyUrl}`,
-			`http_proxy=${proxyUrl}`,
-			`HTTPS_PROXY=${proxyUrl}`,
-			`https_proxy=${proxyUrl}`,
-			`NO_PROXY=${noProxy}`,
-			`no_proxy=${noProxy}`,
+			...buildEgressProxyEnv(egress, providerDirectUpstreamHosts(provider, credential.baseUrl)),
 			// Defense-in-depth: make Node's *built-in* global fetch/undici honor the
 			// proxy env vars for any Node process the agent spawns that doesn't set
 			// its own dispatcher. Node ≥24 gates this behind NODE_USE_ENV_PROXY; it
@@ -1274,6 +1252,11 @@ export async function runAgent(
 				logs: deps.logs,
 				containerLogStreamer: deps.containerLogStreamer,
 				sshAgentServer: deps.sshAgentServer,
+				// A run that has to provision its container clones through the
+				// provisioning bridge, which needs this to substitute the remote's
+				// credential placeholder — the run's own allocation comes later and is
+				// a different one.
+				egressProxy: deps.egressProxy,
 				egressCAPath: deps.egressCAPath,
 			},
 			project.id,
@@ -1606,6 +1589,7 @@ export async function runAgent(
 						heartbeatRunId,
 						bridge,
 						runUser,
+						egressEnv,
 						emit,
 						signal,
 					)
@@ -2227,6 +2211,13 @@ async function prepareWorktrees(
 	heartbeatRunId: string,
 	bridge: BridgeRunnerArgs | null,
 	runUser: ContainerRunUser,
+	/**
+	 * The run's egress proxy as the container reaches it. Prep clones and
+	 * fetches authenticate with a placeholder only the proxy can substitute, so
+	 * without this a private repo is refused upstream as a bad token — the same
+	 * failure a provisioning clone hits without its own allocation.
+	 */
+	egress: EgressEnvDescriptor | null,
 	emit: (stream: 'stdout' | 'stderr', text: string) => void,
 	signal?: AbortSignal,
 ): Promise<{
@@ -2277,14 +2268,19 @@ async function prepareWorktrees(
 		// "nothing unpushed here" as "the work reached origin".
 		const recoveryFailed = new Set<string>();
 		// All git runs inside the project container; the host only does the bind-mount
-		// filesystem checks. SSH-transport ops authenticate through the run's bridge.
-		// The team's git identity (+ signing) is passed so the worktree catch-up merge
-		// can record a (verified) merge commit; the run team owns this, matching the
-		// agent's own in-container commits.
+		// filesystem checks. Remote ops authenticate over HTTPS with a placeholder the
+		// egress proxy substitutes, so they carry the run's proxy env — the same
+		// entries the agent CLI gets, from the same builder. The team's git identity
+		// (+ signing) is passed so the worktree catch-up merge can record a (verified)
+		// merge commit; the run team owns this, matching the agent's own in-container
+		// commits.
 		const gitIdentityEnv = await buildGitIdentityEnv(deps.db, deps.masterKeyManager, {
 			projectId: project.id,
 			teamId: project.team_id,
 		});
+		const gitPrepEnv = egress
+			? [...gitIdentityEnv, ...buildEgressProxyEnv(egress)]
+			: gitIdentityEnv;
 		// The run id doubles as the exec scope marker so an abandoned prep op's
 		// git/ssh/bridge tree stays killable; the agent CLI hasn't started yet, so
 		// a prep-abort marker kill can only hit prep's own processes.
@@ -2294,7 +2290,7 @@ async function prepareWorktrees(
 			bridge,
 			runUser,
 			heartbeatRunId,
-			gitIdentityEnv,
+			gitPrepEnv,
 			signal,
 		);
 

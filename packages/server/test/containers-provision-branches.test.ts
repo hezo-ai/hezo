@@ -589,11 +589,25 @@ describe('provisionContainer', () => {
 			allocateRunSocket,
 			releaseRunSocket,
 		} as unknown as NonNullable<ContainerDeps['sshAgentServer']>;
+		// The bridge allocates an egress proxy as well as an ssh socket — a
+		// provisioning clone's remote carries a credential placeholder only the
+		// proxy can substitute — and refuses to run without one, so a test that
+		// exercises the bridge has to supply both.
+		const allocateRunProxy = vi.fn(async () => ({
+			proxyHost: '127.0.0.1',
+			proxyPort: 29999,
+			token: 'provision-token',
+		}));
+		const releaseRunProxy = vi.fn(async () => {});
+		const egressProxy = {
+			allocateRunProxy,
+			releaseRunProxy,
+		} as unknown as NonNullable<ContainerDeps['egressProxy']>;
 		const { docker } = recordingDocker();
 		const logs = new LogStreamBroker();
 
 		const id = await provisionContainer(
-			baseDeps(docker, { logs, masterKeyManager, sshAgentServer }),
+			baseDeps(docker, { logs, masterKeyManager, sshAgentServer, egressProxy }),
 			await projectRow(),
 			teamSlug,
 		);
@@ -606,8 +620,10 @@ describe('provisionContainer', () => {
 		];
 		expect(runId).toMatch(/^provision-[0-9a-f]{16}$/);
 		expect(identity).toEqual({ teamId, agentId: 'host', label: 'provision-git' });
-		// The short-lived bridge is always released, even with no repos to sync.
+		// The short-lived pair is always released, even with no repos to sync.
 		expect(releaseRunSocket).toHaveBeenCalledWith(runId);
+		expect(allocateRunProxy).toHaveBeenCalledTimes(1);
+		expect(releaseRunProxy).toHaveBeenCalledWith(runId);
 		expect(logs.getLogText(`container:${id}`)).toContain('→ Syncing project repos');
 	});
 

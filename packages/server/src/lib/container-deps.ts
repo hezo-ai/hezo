@@ -22,6 +22,7 @@ export function buildContainerDeps(c: Context<Env>): ContainerDeps {
 		logs: c.get('logs'),
 		containerLogStreamer: c.get('containerLogStreamer'),
 		sshAgentServer: c.get('sshAgentServer'),
+		egressProxy: c.get('egressProxy'),
 		egressCAPath: c.get('egressProxy')?.caCertPath ?? null,
 	};
 }
