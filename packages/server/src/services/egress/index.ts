@@ -12,6 +12,7 @@ export {
 	formatEgressProxyUrl,
 	type RunProxyScope,
 } from './proxy';
+export { buildEgressProxyEnv, type EgressProxyEndpoint } from './proxy-env';
 export {
 	bindSecretsVaultToMasterKey,
 	invalidateSecretsVault,

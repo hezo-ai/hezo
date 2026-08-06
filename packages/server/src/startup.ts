@@ -655,6 +655,7 @@ export function buildApp(
 		logs,
 		containerLogStreamer,
 		sshAgentServer,
+		egressProxy,
 		egressCAPath: egressProxy?.caCertPath ?? null,
 	};
 	initMcpServer(

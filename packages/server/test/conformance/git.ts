@@ -55,10 +55,15 @@ import { join } from 'node:path';
 import { encrypt } from '../../src/crypto/encryption';
 import type { MasterKeyManager } from '../../src/crypto/master-key';
 import type { Db } from '../../src/db/database';
+import type { ContainerRunUser } from '../../src/services/container-user';
 import { type HezoCA, loadOrCreateCA } from '../../src/services/egress/ca';
 import { EgressProxy } from '../../src/services/egress/proxy';
 import { invalidateSecretsVault } from '../../src/services/egress/substitution';
+import { ContainerGitExecutor } from '../../src/services/git-executor';
 import { type RunTunnel, startRunTunnel } from '../../src/services/sandbox/tunnel/run-tunnel';
+import { withProvisionBridge } from '../../src/services/ssh-agent/host';
+import { SshAgentServer } from '../../src/services/ssh-agent/server';
+import { generateTeamSSHKey } from '../../src/services/ssh-keys';
 import { createTestApp, createTestProject, createTestTeam } from '../helpers/app';
 import { mintCertFromCA } from '../helpers/self-signed-cert';
 import {
@@ -99,6 +104,9 @@ export function describeGitConformance(fixture: LiveAdapterFixture, h: Conforman
 		let proxy: EgressProxy | null = null;
 		let tunnel: RunTunnel | null = null;
 		let proxyEnv: string[] = [];
+		let teamId = '';
+		let sshAgentServer: SshAgentServer | null = null;
+		let containerRunUser: ContainerRunUser = { name: 'node', uid: 1000, gid: 1000 };
 		const runId = `conf-git-${conformanceRunId()}`;
 
 		beforeAll(async () => {
@@ -109,6 +117,8 @@ export function describeGitConformance(fixture: LiveAdapterFixture, h: Conforman
 			masterKeyManager = ctx.masterKeyManager;
 			closeApp = () => ctx.db.close();
 			const team = (await (await createTestTeam(ctx.db, { name: 'Git Conformance' })).json()).data;
+			teamId = team.id;
+			containerRunUser = { name: fixture.runUser, uid: 1000, gid: 1000 };
 			const projectSlug = (
 				await (await createTestProject(ctx.db, team.id, { name: 'Git Conformance' })).json()
 			).data.slug;
@@ -183,7 +193,18 @@ export function describeGitConformance(fixture: LiveAdapterFixture, h: Conforman
 			// would report green while asserting nothing about the only path this
 			// file exists for. On a managed backend the image is *pulled*, so point
 			// HEZO_CONFORMANCE_IMAGE at one built from this branch.
-			await requireBinaries(engine, containerId, fixture, ['git', 'hezo-tunnel']);
+			await requireBinaries(engine, containerId, fixture, [
+				'git',
+				'hezo-tunnel',
+				// The production seam wraps a remote op in the bridge runner, so a
+				// missing one must name itself rather than surface as a git failure.
+				'hezo-run-with-bridge',
+			]);
+
+			// The production provisioning path allocates its own ssh + egress pair,
+			// so the seam leg below needs a server holding the team's key.
+			await generateTeamSSHKey(db, team.id, masterKeyManager);
+			sshAgentServer = new SshAgentServer({ db, masterKeyManager });
 
 			const caFiles = engine.files(containerId, '/usr/local/share/ca-certificates');
 			await caFiles.write('hezo-egress.crt', ca.cert, { mode: 0o644 });
@@ -221,6 +242,7 @@ export function describeGitConformance(fixture: LiveAdapterFixture, h: Conforman
 
 		afterAll(async () => {
 			tunnel?.close();
+			await sshAgentServer?.releaseAll().catch(() => undefined);
 			await proxy?.releaseAll().catch(() => undefined);
 			if (server) await new Promise<void>((resolve) => server?.close(() => resolve()));
 			await sweepConformanceContainers(engine);
@@ -268,6 +290,60 @@ export function describeGitConformance(fixture: LiveAdapterFixture, h: Conforman
 			// because a literal scan cannot see inside base64.
 			expect(out).not.toContain('Authentication failed');
 		}, 180_000);
+
+		/**
+		 * The same clone, driven by the code production actually runs.
+		 *
+		 * The legs above hand-build `HTTPS_PROXY` and call `sh` directly, which
+		 * proves the *proxy* substitutes for git but says nothing about whether
+		 * anything points git at it. That gap shipped: `ContainerGitExecutor` set
+		 * no proxy env at all and `withProvisionBridge` pointed its tunnel's proxy
+		 * target at port 0, so every private clone connected direct and sent
+		 * `__HEZO_SECRET_<NAME>__` as its password - while this file stayed green,
+		 * because it was driving a different path with a different client.
+		 *
+		 * So this leg builds nothing by hand: `withProvisionBridge` allocates the
+		 * ssh + egress pair and derives the split-routing policy from the vault,
+		 * and `ContainerGitExecutor` runs the clone exactly as provisioning does.
+		 */
+		it('clones through the production provisioning seam, with nothing hand-wired', async () => {
+			const remote = `https://x-access-token:${PLACEHOLDER}@localhost:${serverPort}/served.git`;
+			const out = await withProvisionBridge(
+				sshAgentServer as SshAgentServer,
+				{
+					engine,
+					containerId,
+					teamId,
+					dataDir: workDir,
+					runUser: containerRunUser,
+					db,
+					egressProxy: proxy as EgressProxy,
+					projectId: null,
+				},
+				async ({ bridge, scopeId, proxyEnv: seamProxyEnv }) => {
+					const executor = ContainerGitExecutor.forPrep(
+						engine,
+						containerId,
+						bridge,
+						containerRunUser,
+						scopeId,
+						seamProxyEnv,
+					);
+					await executor.exec(['clone', remote, '/tmp/conf-seam-clone'], {
+						cwd: '/tmp',
+						needsNetwork: true,
+						timeout: 120_000,
+					});
+					// Read the file back through the same executor's container, so a
+					// clone that silently produced nothing cannot pass.
+					return executor.exec(['--no-pager', 'show', `HEAD:${REPO_FILE}`], {
+						cwd: '/tmp/conf-seam-clone',
+					});
+				},
+			);
+			expect(`${out.stdout}${out.stderr}`).toContain(REPO_CONTENT.trim());
+			expect(out.exitCode).toBe(0);
+		}, 300_000);
 
 		it('never lets the real token into the container', async () => {
 			// Including the clone's own `.git/config`, which is where a credential in

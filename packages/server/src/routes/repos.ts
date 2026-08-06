@@ -258,6 +258,7 @@ reposRoutes.post('/projects/:projectId/repos', async (c) => {
 		logs: c.get('logs'),
 		containerLogStreamer: c.get('containerLogStreamer'),
 		sshAgentServer: c.get('sshAgentServer'),
+		egressProxy: c.get('egressProxy'),
 		egressCAPath: c.get('egressProxy')?.caCertPath ?? null,
 	};
 	trackBackground(
@@ -505,6 +506,7 @@ reposRoutes.post('/projects/:projectId/repos/:repoId/reset', async (c) => {
 			logs: c.get('logs'),
 			containerLogStreamer: c.get('containerLogStreamer'),
 			sshAgentServer: c.get('sshAgentServer'),
+			egressProxy: c.get('egressProxy'),
 			egressCAPath: c.get('egressProxy')?.caCertPath ?? null,
 		};
 		trackBackground(
@@ -569,9 +571,16 @@ reposRoutes.post('/projects/:projectId/repos/:repoId/reset', async (c) => {
 				);
 				return { success: true, removed };
 			}
-			// discard_local: the best-effort fetch needs the SSH bridge.
+			// discard_local: the best-effort fetch reaches the remote, so it needs the
+			// egress proxy to substitute the origin's credential placeholder as much
+			// as it needs the bridge.
 			const sshAgentServer = c.get('sshAgentServer');
-			const runReset = (bridge: BridgeRunnerArgs | null, scopeId: string) => {
+			const egressProxy = c.get('egressProxy');
+			const runReset = (
+				bridge: BridgeRunnerArgs | null,
+				scopeId: string,
+				proxyEnv: string[] = [],
+			) => {
 				// The loc's files come from this executor, not another: pairing a cwd
 				// with a seam rooted in a different container is the drift the shared
 				// `files()` accessor exists to prevent.
@@ -581,17 +590,18 @@ reposRoutes.post('/projects/:projectId/repos/:repoId/reset', async (c) => {
 					bridge,
 					runUser,
 					scopeId,
+					proxyEnv,
 				);
 				return resetCloneToOrigin(resetExecutor, {
 					containerPath: repo.repoContainerPath,
 					files: resetExecutor.files(repo.repoContainerPath),
 				});
 			};
-			return sshAgentServer
+			return sshAgentServer && egressProxy
 				? withProvisionBridge(
 						sshAgentServer,
-						{ engine: docker, containerId, teamId, dataDir, runUser },
-						({ bridge, scopeId }) => runReset(bridge, scopeId),
+						{ engine: docker, containerId, teamId, dataDir, runUser, db, egressProxy, projectId },
+						({ bridge, scopeId, proxyEnv }) => runReset(bridge, scopeId, proxyEnv),
 					)
 				: runReset(null, mintGitOpScopeId());
 		},

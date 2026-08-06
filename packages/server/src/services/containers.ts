@@ -31,6 +31,7 @@ import {
 	resolveContainerRunUser,
 } from './container-user';
 import type { ContainerEngine } from './docker';
+import type { EgressProxy } from './egress';
 import { ensureImage } from './ensure-image';
 import { ContainerGitExecutor, mintGitOpScopeId } from './git-executor';
 import { resolveAgentBaseImage } from './image-registry';
@@ -110,6 +111,11 @@ export interface ContainerDeps {
 	logs?: LogStreamBroker;
 	containerLogStreamer?: ContainerLogStreamer;
 	sshAgentServer?: SshAgentServer | null;
+	/**
+	 * Substitutes the credential placeholder in a provisioning clone's remote.
+	 * Required for a private repo to clone at all - see `withProvisionBridge`.
+	 */
+	egressProxy?: EgressProxy | null;
 	egressCAPath?: string | null;
 	/** Test seam: override host egress-MTU detection. Defaults to the real probe. */
 	detectEgressMtu?: () => Promise<number | null>;
@@ -636,25 +642,40 @@ export async function provisionContainer(
 
 		if (masterKeyManager) {
 			emit('stdout', '→ Syncing project repos');
-			// Clone in-container (the host has no git). Repos clone over SSH, which
-			// needs a bridge back to the host ssh-agent — provisioning isn't a run, so
-			// allocate a short-lived one. No agent → no bridge → clone fails and is
-			// reported (same as a missing key today).
-			const syncRepos = (bridge: BridgeRunnerArgs | null, scopeId: string) =>
+			// Clone in-container (the host has no git). A private repo's remote carries
+			// a credential placeholder the egress proxy substitutes, and the bridge
+			// carries commit signing — provisioning isn't a run, so allocate a
+			// short-lived pair. Without them the clone still runs but ships the
+			// placeholder unsubstituted, so a private repo fails as a bad token.
+			const syncRepos = (
+				bridge: BridgeRunnerArgs | null,
+				scopeId: string,
+				proxyEnv: string[] = [],
+			) =>
 				ensureProjectRepos(
 					db,
 					{ id: project.id, team_id: teamId },
 					dataDir,
-					ContainerGitExecutor.forPrep(docker, Id, bridge, runUser, scopeId),
+					ContainerGitExecutor.forPrep(docker, Id, bridge, runUser, scopeId, proxyEnv),
 					(stream, text) => emit(stream, text),
 				);
-			const syncRes = deps.sshAgentServer
-				? await withProvisionBridge(
-						deps.sshAgentServer,
-						{ engine: docker, containerId: Id, teamId, dataDir, runUser },
-						({ bridge, scopeId }) => syncRepos(bridge, scopeId),
-					)
-				: await syncRepos(null, mintGitOpScopeId());
+			const syncRes =
+				deps.sshAgentServer && deps.egressProxy
+					? await withProvisionBridge(
+							deps.sshAgentServer,
+							{
+								engine: docker,
+								containerId: Id,
+								teamId,
+								dataDir,
+								runUser,
+								db,
+								egressProxy: deps.egressProxy,
+								projectId: project.id,
+							},
+							({ bridge, scopeId, proxyEnv }) => syncRepos(bridge, scopeId, proxyEnv),
+						)
+					: await syncRepos(null, mintGitOpScopeId());
 			if (syncRes.failed.length > 0) {
 				emit(
 					'stderr',

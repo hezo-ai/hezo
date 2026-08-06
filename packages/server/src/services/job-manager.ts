@@ -563,6 +563,7 @@ export class JobManager {
 			logs: this.deps.logs,
 			containerLogStreamer: this.deps.containerLogStreamer,
 			sshAgentServer: this.deps.sshAgentServer,
+			egressProxy: this.deps.egressProxy ?? null,
 			egressCAPath: this.deps.egressCAPath ?? null,
 		};
 	}

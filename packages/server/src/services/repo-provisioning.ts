@@ -99,25 +99,40 @@ export async function performRepoSetup(
 
 			if (containerId && running) {
 				// Git runs inside the project container; the host runs no git. The
-				// provisioning bridge carries the project SSH key into the exec.
+				// provisioning bridge carries the project SSH key for commit signing,
+				// and the egress proxy substitutes the clone's credential placeholder.
 				const runUser = await resolveContainerRunUser(docker, containerId);
-				const syncRepos = (bridge: BridgeRunnerArgs | null, scopeId: string) =>
+				const syncRepos = (
+					bridge: BridgeRunnerArgs | null,
+					scopeId: string,
+					proxyEnv: string[] = [],
+				) =>
 					ensureProjectRepos(
 						db,
 						{ id: input.projectId, team_id: input.teamId },
 						dataDir,
-						ContainerGitExecutor.forPrep(docker, containerId, bridge, runUser, scopeId),
+						ContainerGitExecutor.forPrep(docker, containerId, bridge, runUser, scopeId, proxyEnv),
 						undefined,
 						undefined,
 						{ freshClone: input.freshClone ? new Set([input.repoIdentifier]) : undefined },
 					);
-				const syncRes = deps.sshAgentServer
-					? await withProvisionBridge(
-							deps.sshAgentServer,
-							{ engine: docker, containerId, teamId: input.teamId, dataDir, runUser },
-							({ bridge, scopeId }) => syncRepos(bridge, scopeId),
-						)
-					: await syncRepos(null, mintGitOpScopeId());
+				const syncRes =
+					deps.sshAgentServer && deps.egressProxy
+						? await withProvisionBridge(
+								deps.sshAgentServer,
+								{
+									engine: docker,
+									containerId,
+									teamId: input.teamId,
+									dataDir,
+									runUser,
+									db,
+									egressProxy: deps.egressProxy,
+									projectId: input.projectId,
+								},
+								({ bridge, scopeId, proxyEnv }) => syncRepos(bridge, scopeId, proxyEnv),
+							)
+						: await syncRepos(null, mintGitOpScopeId());
 				const failed = syncRes.failed.find((f) => f.name === repoName);
 				if (failed) {
 					setupError = failed.error;
