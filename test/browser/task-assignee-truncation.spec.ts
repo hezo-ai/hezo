@@ -6,29 +6,13 @@
 // that only a browser engine resolves (decision tree point 1), so it lives here
 // rather than in the component tier.
 
-import type { Locator } from '@playwright/test';
 import { expect, test } from './fixtures';
-import { createProjectAndClearPlanning, uniqueName, waitForPageLoad } from './helpers';
-
-/** Assert an element renders on a single text line (nowrap + height ≤ ~1.5 lines). */
-async function expectSingleLine(locator: Locator): Promise<void> {
-	const metrics = await locator.evaluate((el) => {
-		const style = getComputedStyle(el);
-		const lineHeightPx = Number.parseFloat(style.lineHeight);
-		const fontSizePx = Number.parseFloat(style.fontSize);
-		return {
-			whiteSpace: style.whiteSpace,
-			height: el.getBoundingClientRect().height,
-			// line-height: normal resolves to "normal" in Chromium getComputedStyle,
-			// so fall back to a generous multiple of the font size.
-			oneLine: Number.isNaN(lineHeightPx) ? fontSizePx * 1.6 : lineHeightPx,
-		};
-	});
-	// nowrap is the single-line guarantee; the height check confirms it isn't
-	// silently spilling onto a second line. Two wrapped lines roughly double it.
-	expect(metrics.whiteSpace).toBe('nowrap');
-	expect(metrics.height).toBeLessThan(metrics.oneLine * 1.5);
-}
+import {
+	createProjectAndClearPlanning,
+	expectSingleLine,
+	uniqueName,
+	waitForPageLoad,
+} from './helpers';
 
 test('long assignee names stay on one line in the task list and side panel', async ({
 	sharedPage: page,

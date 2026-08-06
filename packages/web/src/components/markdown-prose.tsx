@@ -25,7 +25,7 @@ import {
 import { remarkNormalizeInlineCode } from '../lib/remark-normalize-inline-code';
 import { CommentRefLink, MENTION_CLASSES } from './comment-ref-link';
 import { useOpenPreview } from './task-detail/preview-context';
-import { TaskStatusBadge } from './task-status-badge';
+import { TaskMentionTooltipContent } from './task-mention-tooltip';
 import { Tooltip } from './ui/tooltip';
 
 type RemarkPlugin = Parameters<typeof Markdown>[0]['remarkPlugins'];
@@ -391,18 +391,11 @@ export function MarkdownProse({
 					return (
 						<Tooltip
 							content={
-								<span className="flex flex-col gap-1">
-									<span>
-										<strong>{taskIdentifier.toUpperCase()}:</strong> {taskTitle}
-									</span>
-									{taskStatus ? (
-										<TaskStatusBadge
-											status={taskStatus}
-											className="self-start"
-											testId="task-mention-status-pill"
-										/>
-									) : null}
-								</span>
+								<TaskMentionTooltipContent
+									identifier={taskIdentifier}
+									title={taskTitle}
+									status={taskStatus}
+								/>
 							}
 						>
 							<Link
