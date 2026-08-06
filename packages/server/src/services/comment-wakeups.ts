@@ -185,15 +185,16 @@ export async function fireCommentWakeups(params: FireCommentWakeupsParams): Prom
  * Complete a receipt: pair the slugs the fan-out actually woke with the roster
  * teammates the same text names but does NOT wake. Purely structural — no ask
  * heuristic runs here, so the receipt stays true whatever the prose looks like.
+ *
+ * Takes the roster rather than resolving it, so a caller that already holds one
+ * (every comment-write path does, for the mention advisories) adds no DB round
+ * trip to produce the receipt.
  */
-export async function buildWakeReceipt(
-	db: Db,
-	teamId: string,
-	selfMemberId: string,
+export function buildWakeReceipt(
 	content: unknown,
 	woke: string[],
-): Promise<CommentWakeReceipt> {
-	const roster = await resolveWarnableSlugs(db, teamId, selfMemberId);
+	roster: string[],
+): CommentWakeReceipt {
 	const known = new Set(roster.map((s) => s.toLowerCase()));
 	const wokeSet = new Set(woke.map((s) => s.toLowerCase()));
 	const named = new Set<string>();
@@ -230,12 +231,13 @@ export interface PostAgentCommentParams {
  * `create_comment` tool and the runner's handoff-delivery guardrail so an
  * auto-delivered final message is byte-identical to a comment the agent posts
  * itself. Returns the inserted row (`RETURNING *`, so it carries `public_id`)
- * alongside the wake receipt the fan-out produced, so every caller can report
- * what the write delivered instead of inferring it.
+ * alongside the slugs the fan-out actually woke, so a caller can report what the
+ * write delivered instead of inferring it. Pair `woke` with a roster through
+ * {@link buildWakeReceipt} for the full receipt.
  */
 export async function postAgentComment(params: PostAgentCommentParams): Promise<{
 	row: { id: string; public_id: string } & Record<string, unknown>;
-	wake: CommentWakeReceipt;
+	woke: string[];
 }> {
 	const {
 		db,
@@ -283,12 +285,7 @@ export async function postAgentComment(params: PostAgentCommentParams): Promise<
 		parentCommentId,
 		wsManager,
 	});
-	// named_not_woken is roster-relative, so it needs an author to exclude; a
-	// human-authored comment still reports what it woke.
-	const wake = authorMemberId
-		? await buildWakeReceipt(db, teamId, authorMemberId, content, woke)
-		: { woke, named_not_woken: [] };
-	return { row, wake };
+	return { row, woke };
 }
 
 interface ReplyWakeupCtx {
