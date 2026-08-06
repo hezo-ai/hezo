@@ -28,6 +28,7 @@
  * one is the one that failed in production.
  */
 
+import { createHash, randomBytes } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import { type RunTunnel, startRunTunnel } from '../../src/services/sandbox/tunnel/run-tunnel';
 import type { ContainerEngine } from '../../src/services/sandbox/types';
@@ -75,6 +76,44 @@ const BULK_BYTES = 1024 * 1024;
 /** Printable, so a truncation shows up as a short count rather than as binary noise. */
 const BULK_BODY = Buffer.alloc(BULK_BYTES, 'hezo-bulk-payload\n');
 
+/**
+ * The same volume again, in bytes that are nobody's text.
+ *
+ * `BULK_BODY` is printable on purpose and that costs it this question: ASCII
+ * survives a UTF-8 decode, a line discipline and an escape filter unchanged, so
+ * a channel that mangles anything else passes it. Every byte production sends
+ * through here is the other kind - a CONNECT tunnel carries TLS records, which
+ * are indistinguishable from noise - and until this existed nothing had ever
+ * pushed one through. The transports differ exactly where that matters: Docker
+ * hands the tunnel a raw socket, while a managed backend may put a **terminal**
+ * in the path and a WebSocket around it.
+ *
+ * The prologue is not left to probability. NUL, LF, CR, XON, XOFF, SUB, DEL and
+ * the whole 0x80-0xff range each cross on every run, because those are the
+ * bytes a tty line discipline eats and the ones that make a sequence invalid
+ * UTF-8; the random tail then supplies invalid sequences in bulk. A digest
+ * rather than a byte count, because the failure being chased is corruption,
+ * which a length check cannot see.
+ */
+const BINARY_BODY = Buffer.concat([
+	Buffer.from(Array.from({ length: 256 }, (_, i) => i)),
+	randomBytes(BULK_BYTES - 256),
+]);
+const BINARY_SHA = createHash('sha256').update(BINARY_BODY).digest('hex');
+
+/**
+ * Floor on how fast the tunnel must move bytes, and a correctness bound rather
+ * than a benchmark.
+ *
+ * An in-container `git` abandons a transfer that spends 30s under 1000 B/s
+ * (`GIT_HTTP_TIMEOUT_ENV` in git-executor.ts), so a backend below that cannot
+ * clone a repository at all - which is a broken backend, not a slow one. This
+ * sits 32x above it, so it fails only on a channel that is genuinely unusable.
+ * One shared constant and not a per-fixture field: a backend allowed to declare
+ * its own floor would declare itself conforming.
+ */
+const MIN_TUNNEL_BYTES_PER_SEC = 32 * 1024;
+
 export function describeTunnelConformance(
 	fixture: LiveAdapterFixture,
 	h: ConformanceHarness,
@@ -87,6 +126,7 @@ export function describeTunnelConformance(
 		let upstream: Server | undefined;
 		let upstreamPort = 0;
 		let hits: string[] = [];
+		let uploads: Array<{ bytes: number; sha256: string }> = [];
 
 		beforeAll(async () => {
 			await sweepConformanceContainers(engine);
@@ -105,6 +145,29 @@ export function describeTunnelConformance(
 				if (url.startsWith('/bulk')) {
 					res.writeHead(200, { 'Content-Type': 'application/octet-stream' });
 					res.end(BULK_BODY);
+					return;
+				}
+				if (url.startsWith('/binary-echo')) {
+					// Digested as it arrives rather than accumulated: the assertion is
+					// the digest, and holding a megabyte per request in the test server
+					// would be the copy-instead-of-stream shape the code under test is
+					// required to avoid.
+					const hash = createHash('sha256');
+					let bytes = 0;
+					req.on('data', (chunk: Buffer) => {
+						hash.update(chunk);
+						bytes += chunk.byteLength;
+					});
+					req.on('end', () => {
+						uploads.push({ bytes, sha256: hash.digest('hex') });
+						res.writeHead(200, { 'Content-Type': 'text/plain' });
+						res.end('upload-ok');
+					});
+					return;
+				}
+				if (url.startsWith('/binary')) {
+					res.writeHead(200, { 'Content-Type': 'application/octet-stream' });
+					res.end(BINARY_BODY);
 					return;
 				}
 				res.writeHead(200, { 'Content-Type': 'text/plain' });
@@ -296,6 +359,83 @@ export function describeTunnelConformance(
 				// bytes and then died is exactly the failure this is chasing.
 				expect(reasons).toEqual([]);
 				expect(await curlThroughTunnel(mcpPort(tunnel), '/after-bulk')).toContain('tunnel-ok');
+			} finally {
+				tunnel.close();
+			}
+		}, 300_000);
+
+		it('round-trips incompressible binary bytes intact, at a usable rate', async () => {
+			// The case above moves volume but only printable volume, so it cannot see
+			// a channel that mangles anything else - and every byte production sends
+			// through here is the other kind, because a CONNECT tunnel carries TLS
+			// records. A transport that puts a terminal or a text-framed socket in
+			// the path passes the ASCII case and destroys this one.
+			//
+			// Both directions in one round trip, compared by digest rather than by
+			// length: the failure being chased is corruption, and a byte count is
+			// blind to it. Timed in-container around the transfers alone, because an
+			// exec's own startup is not the tunnel's throughput and folding it in
+			// would make the floor a lie.
+			hits = [];
+			uploads = [];
+			const tunnel = await openTunnel(`binary-${conformanceRunId()}`);
+			const reasons: string[] = [];
+			tunnel.onClosed((r) => reasons.push(r));
+			try {
+				const port = mcpPort(tunnel);
+				const exec = await engine.execCreate(containerId, {
+					Cmd: [
+						'sh',
+						'-c',
+						[
+							'S=$(date +%s%N)',
+							`curl -sS --max-time 180 -o /tmp/hezo-binary http://127.0.0.1:${port}/binary`,
+							'D=$(date +%s%N)',
+							'echo "down_ns=$((D-S))"',
+							'wc -c < /tmp/hezo-binary',
+							'sha256sum < /tmp/hezo-binary | cut -d" " -f1',
+							'U=$(date +%s%N)',
+							`curl -sS --max-time 180 --data-binary @/tmp/hezo-binary ` +
+								`-H 'Content-Type: application/octet-stream' http://127.0.0.1:${port}/binary-echo`,
+							'V=$(date +%s%N)',
+							'echo "up_ns=$((V-U))"',
+						].join('; '),
+					],
+					User: fixture.runUser,
+					AttachStdout: true,
+					AttachStderr: true,
+				});
+				const out = await engine.execStart(exec);
+				const text = `${out.stdout}${out.stderr}`;
+
+				// Host -> container: the direction a clone's packfile travels.
+				expect(text).toContain(String(BULK_BYTES));
+				expect(text).toContain(BINARY_SHA);
+
+				// Container -> host: the direction a request body travels, asserted
+				// against the same buffer so this is a round trip rather than two
+				// unrelated halves.
+				expect(uploads).toHaveLength(1);
+				expect(uploads[0]?.bytes).toBe(BULK_BYTES);
+				expect(uploads[0]?.sha256).toBe(BINARY_SHA);
+
+				for (const dir of ['down', 'up'] as const) {
+					const ns = Number(new RegExp(`${dir}_ns=(\\d+)`).exec(text)?.[1] ?? '0');
+					expect(ns).toBeGreaterThan(0);
+					const bytesPerSec = BULK_BYTES / (ns / 1e9);
+					// Thrown rather than `expect`ed so the message carries the measured
+					// rate; a bare comparison would report only that a number was too
+					// small, and the number is the whole finding.
+					if (bytesPerSec < MIN_TUNNEL_BYTES_PER_SEC) {
+						throw new Error(
+							`${fixture.name}: tunnel moved ${Math.round(bytesPerSec)} B/s ${dir}stream, ` +
+								`below the ${MIN_TUNNEL_BYTES_PER_SEC} B/s floor a git clone needs`,
+						);
+					}
+				}
+
+				expect(reasons).toEqual([]);
+				expect(await curlThroughTunnel(port, '/after-binary')).toContain('tunnel-ok');
 			} finally {
 				tunnel.close();
 			}

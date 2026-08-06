@@ -16,10 +16,24 @@ import {
  * A string assertion would have passed on the version of the kill script that
  * greps the whole cmdline - which SIGKILLs the shell running it, because that
  * shell's own `-c` argument *contains* the pattern. The hazard only shows up
- * when the script actually runs, so that is what these do. Same `/proc` and same
- * POSIX shell the container has; nothing here is Docker- or Daytona-specific,
- * which is the point of the scripts living in one place.
+ * when the script actually runs, so that is what these do.
+ *
+ * **Linux only, and gated rather than left to fail.** The scripts read `/proc`,
+ * which a macOS host does not have, and the failure is not honest: the port
+ * probe's `grep` errors on the missing file and the kill loop's `/proc/[0-9]*`
+ * glob matches nothing, so both degrade to silence - and every assertion here
+ * that expects silence then passes while asserting nothing. Four of these six
+ * did exactly that on a Mac while the other two failed, which is a worse signal
+ * than not running at all.
+ *
+ * The version that cannot pass vacuously lives in `conformance/engine.ts`,
+ * where the same scripts run inside a container - Linux on every backend, and
+ * per backend, which is what proves each engine's transport carries them
+ * intact. This file is the fast local echo of that on a Linux box, not the
+ * coverage.
  */
+const LINUX = process.platform === 'linux';
+const describeOnLinux = LINUX ? describe : describe.skip;
 
 let dir = '';
 /** A stand-in for the tunnel client: argv[1] ends in `hezo-tunnel`, and it sleeps. */
@@ -58,7 +72,7 @@ function alive(pid: number): boolean {
 	}
 }
 
-describe('buildKillTunnelClientsScript', () => {
+describeOnLinux('buildKillTunnelClientsScript', () => {
 	it('does not kill the shell running it', async () => {
 		// The script's own text contains `hezo-tunnel`, and `sh -c <script>` puts
 		// that text in the shell's cmdline. Matching argv[1] is what keeps the
@@ -102,7 +116,7 @@ describe('buildKillTunnelClientsScript', () => {
 	});
 });
 
-describe('buildAnyPortListeningScript', () => {
+describeOnLinux('buildAnyPortListeningScript', () => {
 	it('says nothing when none of the ports is listening', async () => {
 		// Silence means free. Ports well above anything this machine binds.
 		const { stdout } = await sh(buildAnyPortListeningScript([59991, 59992, 59993]));
@@ -132,7 +146,11 @@ describe('buildAnyPortListeningScript', () => {
 			await new Promise<void>((resolve) => server.close(() => resolve()));
 		}
 	});
+});
 
+// Ungated: rejecting a nonsensical port happens while *building* the string, so
+// it never touches `/proc` and holds on every host.
+describe('buildAnyPortListeningScript argument validation', () => {
 	it('refuses a port that could not be a port', () => {
 		expect(() => buildAnyPortListeningScript([0])).toThrow(/invalid port/);
 		expect(() => buildAnyPortListeningScript([70000])).toThrow(/invalid port/);

@@ -152,6 +152,10 @@ const PTY_MAX_SEND_BYTES = 4 * 1024;
 const PTY_SEND_HIGH_WATER_BYTES = 64 * 1024;
 /** How long to wait between checks that the socket has drained. */
 const PTY_DRAIN_POLL_MS = 5;
+/** How long a single drain wait may run before it is reported as a stall.
+ * Below git's own low-speed floor, so a clone blocked behind this channel is
+ * diagnosed here before git abandons it. */
+const PTY_DRAIN_WARN_MS = 10_000;
 
 /**
  * Pages `listSandboxes` will follow before giving up.
@@ -992,13 +996,30 @@ export class DaytonaClient implements DaytonaApi {
 		const sentinelBytes = new TextEncoder().encode(sentinel);
 		let synced = false;
 		let preamble = new Uint8Array(0);
+		let ptyTextFramesAfterSync = 0;
 		const ready = Promise.withResolvers<void>();
 
 		socket.onmessage = (event) => {
-			const raw =
-				typeof event.data === 'string'
-					? new TextEncoder().encode(event.data)
-					: new Uint8Array(event.data as ArrayBuffer);
+			const frame = classifyPtyFrame(event.data);
+			if (frame.kind === 'text' && synced) {
+				// A framed binary protocol rides this channel once the handshake is
+				// done, and a text frame cannot carry one: whatever produced it has
+				// already UTF-8 decoded the bytes, so every sequence that was not
+				// valid UTF-8 is now a replacement character and the original is
+				// unrecoverable. Re-encoding it would feed that damage to the frame
+				// decoder, which desynchronises and stalls rather than failing.
+				//
+				// Reported rather than refused for now, so a benign provider control
+				// frame does not take down every run on this backend before we know
+				// whether one exists; the count is what settles that.
+				ptyTextFramesAfterSync += 1;
+				log.warn(
+					`Daytona PTY ${sessionId} delivered a text frame after the handshake ` +
+						`(${frame.text.length} chars, starts ${JSON.stringify(frame.text.slice(0, 64))}); ` +
+						'binary framing cannot survive this',
+				);
+			}
+			const raw = frame.kind === 'binary' ? frame.bytes : new TextEncoder().encode(frame.text);
 			if (synced) {
 				onData?.(raw);
 				return;
@@ -1099,8 +1120,22 @@ export class DaytonaClient implements DaytonaApi {
 					for (const chunk of chunkPtyPayload(data, PTY_MAX_SEND_BYTES)) {
 						if (closed) return;
 						socket.send(chunk);
+						const waitStarted = Date.now();
+						let reported = false;
 						while (!closed && buffered() > PTY_SEND_HIGH_WATER_BYTES) {
 							await new Promise((r) => setTimeout(r, PTY_DRAIN_POLL_MS));
+							// This wait has no ceiling, by design - the alternative is
+							// dropping bytes the framing layer has already counted. But an
+							// unbounded wait that nobody can see is indistinguishable from
+							// a hang, and the keepalive ping keeps the socket looking
+							// healthy right through one, so say so once.
+							if (!reported && Date.now() - waitStarted > PTY_DRAIN_WARN_MS) {
+								reported = true;
+								log.warn(
+									`Daytona PTY ${sessionId} has waited ${Math.round((Date.now() - waitStarted) / 1000)}s ` +
+										`for the socket to drain (${buffered()} byte(s) still queued); the far end is not reading`,
+								);
+							}
 						}
 					}
 				})
@@ -1325,6 +1360,37 @@ export class DaytonaClient implements DaytonaApi {
  */
 function shellQuoteSingle(value: string): string {
 	return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+/** A PTY WebSocket message, classified rather than coerced. */
+export type PtyFrame = { kind: 'binary'; bytes: Uint8Array } | { kind: 'text'; text: string };
+
+/**
+ * Classify a PTY WebSocket message without guessing at its type.
+ *
+ * The unchecked alternative - reading `event.data` as an `ArrayBuffer` whenever
+ * it is not a string - is silent in two different ways, and a framed binary
+ * protocol survives neither. A text frame has already been UTF-8 decoded by the
+ * transport, so any sequence that was not valid UTF-8 is now a replacement
+ * character and re-encoding cannot restore it. Anything that is neither a
+ * string nor an `ArrayBuffer` - a `Blob`, which is what a runtime that ignores
+ * `binaryType` hands back - yields a **zero-length** array rather than throwing,
+ * so the entire message disappears without an error anywhere.
+ *
+ * Naming the three cases makes both of those loud instead.
+ */
+export function classifyPtyFrame(data: unknown): PtyFrame {
+	if (typeof data === 'string') return { kind: 'text', text: data };
+	if (data instanceof ArrayBuffer) return { kind: 'binary', bytes: new Uint8Array(data) };
+	if (ArrayBuffer.isView(data)) {
+		return {
+			kind: 'binary',
+			bytes: new Uint8Array(data.buffer, data.byteOffset, data.byteLength),
+		};
+	}
+	throw new Error(
+		`Daytona PTY delivered an unsupported message type ${Object.prototype.toString.call(data)}`,
+	);
 }
 
 function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array<ArrayBuffer> {

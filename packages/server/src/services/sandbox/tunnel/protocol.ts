@@ -242,6 +242,19 @@ export class FrameDecoder {
 	}
 
 	/**
+	 * The first bytes still buffered, for diagnosing a desync.
+	 *
+	 * On the throwing paths above the buffer still starts at the header that
+	 * failed to parse, so this is the evidence for *why* it failed: UTF-8
+	 * replacement characters (`ef bf bd`) mean something re-encoded the stream as
+	 * text, while plausible payload bytes mean a header was read at the wrong
+	 * offset because bytes were lost.
+	 */
+	peek(n: number): Uint8Array {
+		return this.buffer.slice(0, n);
+	}
+
+	/**
 	 * Discard everything up to and including the preamble.
 	 *
 	 * Returns false while it has not arrived yet, which is an ordinary partial

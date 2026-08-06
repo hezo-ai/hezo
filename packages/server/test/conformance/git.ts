@@ -83,10 +83,33 @@ const PLACEHOLDER = `__HEZO_SECRET_${SECRET_NAME}__`;
  * the ref advertisement, so this costs one request and clones nothing.
  */
 const PUBLIC_REMOTE = 'https://github.com/octocat/Hello-World.git';
+const PUBLIC_REMOTE_HOST = new URL(PUBLIC_REMOTE).hostname;
 
 /** The file the served repo contains, so a successful clone is checkable. */
 const REPO_FILE = 'conformance.txt';
 const REPO_CONTENT = 'cloned through the proxy\n';
+
+/**
+ * An operator-supplied **private** repository on a real host, cloned through
+ * the production seam.
+ *
+ * Opt-in, because it needs a credential no CI run has. It exists because every
+ * other credential assertion in this file holds one variable constant that
+ * production does not: they authenticate against this fixture's own server,
+ * which speaks git's **dumb** HTTP protocol, so the sequence a real host
+ * actually performs - an unauthenticated advertisement request, a `401` with
+ * `WWW-Authenticate`, then a retry carrying `Authorization: Basic` over a
+ * connection the proxy has already handled once - has never run end to end.
+ * That is the exact shape a provisioning clone was failing on.
+ *
+ * Set both to enable:
+ *   HEZO_LIVE_GIT_REMOTE=https://github.com/<owner>/<repo>.git
+ *   HEZO_LIVE_GIT_TOKEN=<a read-only token for it>
+ */
+const LIVE_REMOTE = process.env.HEZO_LIVE_GIT_REMOTE;
+const LIVE_TOKEN = process.env.HEZO_LIVE_GIT_TOKEN;
+const LIVE_SECRET_NAME = 'CONFORMANCE_LIVE_GIT_TOKEN';
+const LIVE_PLACEHOLDER = `__HEZO_SECRET_${LIVE_SECRET_NAME}__`;
 
 /** Registers the git-transport conformance suite for one backend. */
 export function describeGitConformance(fixture: LiveAdapterFixture, h: ConformanceHarness): void {
@@ -160,6 +183,14 @@ export function describeGitConformance(fixture: LiveAdapterFixture, h: Conforman
 			serverPort = (server.address() as { port: number }).port;
 
 			await insertSecret(db, masterKeyManager, SECRET_NAME, SECRET_VALUE, ['localhost']);
+			if (LIVE_REMOTE && LIVE_TOKEN) {
+				// Scoped to the remote's own host, which is also what puts that host
+				// into the seam's split-routing policy - the policy is derived from
+				// the vault, so the secret and the routing cannot disagree.
+				await insertSecret(db, masterKeyManager, LIVE_SECRET_NAME, LIVE_TOKEN, [
+					new URL(LIVE_REMOTE).hostname,
+				]);
+			}
 
 			proxy = new EgressProxy({
 				db,
@@ -228,11 +259,12 @@ export function describeGitConformance(fixture: LiveAdapterFixture, h: Conforman
 					mcp: { host: allocated.proxyHost, port: allocated.proxyPort },
 					ssh: { host: allocated.proxyHost, port: allocated.proxyPort },
 				},
-				// Exactly the egress suite's policy, which is the configuration CI
-				// already proves works: split routing with `localhost` proxied. The
-				// reach test deliberately runs *outside* the proxy (see below), so
-				// nothing here needs `proxyEverything`.
-				policy: { proxiedHosts: ['localhost'], proxyEverything: false },
+				// Split routing with the fixture's own upstream proxied, plus the
+				// public git host - which is what production does with a real remote,
+				// since `github.com` arrives in `proxiedHosts` from the GitHub token's
+				// `allowed_hosts`. The reach test deliberately runs *outside* the
+				// proxy (see below), so nothing here needs `proxyEverything`.
+				policy: { proxiedHosts: ['localhost', PUBLIC_REMOTE_HOST], proxyEverything: false },
 			});
 			const url = `http://run:${allocated.token}@127.0.0.1:${tunnel.endpoints.proxyPort}`;
 			// Git reads these the way every other HTTP client does, which is the
@@ -274,6 +306,54 @@ export function describeGitConformance(fixture: LiveAdapterFixture, h: Conforman
 			const out = await sh(`git ls-remote --heads ${PUBLIC_REMOTE} 2>&1 | head -5`, []);
 			expect(out).toContain('refs/heads/');
 			expect(out).not.toContain('kex_exchange_identification');
+		}, 180_000);
+
+		/**
+		 * The combination provisioning actually runs, and the one nothing covered.
+		 *
+		 * Every other leg here holds one half of it constant. The reach test above
+		 * uses a real remote but **no proxy**; the credential and seam legs go
+		 * through the proxy but against this fixture's own server, which publishes
+		 * git's **dumb** HTTP protocol - static files, a ref list that is a plain
+		 * `GET`, and no `git-upload-pack` request at all. A real host speaks
+		 * **smart** HTTP: a `service=git-upload-pack` advertisement in pkt-line
+		 * framing, a chunked response, and a negotiation `POST` that streams both
+		 * ways at once. So "the proxy carries git" was proven for a protocol
+		 * production never speaks to a remote it never uses.
+		 *
+		 * That gap is not hypothetical - it is where a repo clone was failing on a
+		 * managed backend with `expected flush after ref listing`, git's way of
+		 * saying the advertisement it read was not framed the way smart HTTP says
+		 * it must be, while this file stayed green.
+		 *
+		 * `ls-remote` rather than a clone: it is exactly the advertisement request
+		 * and nothing else, so a failure lands on the step being tested rather than
+		 * somewhere in a pack transfer, and it costs one round trip.
+		 */
+		it('speaks smart HTTP to a real git host through the proxy', async () => {
+			const out = await sh(`git ls-remote --heads ${PUBLIC_REMOTE} 2>&1 | head -5`);
+			expect(out).toContain('refs/heads/');
+			// The named symptoms, so a regression says which one it is rather than
+			// only that `refs/heads/` was missing.
+			expect(out).not.toContain('expected flush after ref listing');
+			expect(out).not.toContain('RPC failed');
+		}, 180_000);
+
+		it('completes a real smart-HTTP clone through the proxy, negotiation and pack', async () => {
+			// `ls-remote` stops at the advertisement, which leaves smart HTTP's other
+			// half untested: a `POST /git-upload-pack` whose request and response
+			// stream **concurrently**, the request chunked and the response carrying
+			// the pack. That is the one exchange on the path where the proxy has to
+			// be piping both directions of the same request at once, and a proxy
+			// that reads a body before opening its upstream deadlocks exactly there
+			// while every request/response test stays green.
+			const out = await sh(
+				`rm -rf /tmp/conf-public && git clone ${shellQuote(PUBLIC_REMOTE)} /tmp/conf-public 2>&1; ` +
+					'git -C /tmp/conf-public rev-parse --verify HEAD 2>&1',
+			);
+			expect(out).toMatch(/^[0-9a-f]{40}$/m);
+			expect(out).not.toContain('RPC failed');
+			expect(out).not.toContain('early EOF');
 		}, 180_000);
 
 		it('clones with a credential the container never holds', async () => {
@@ -374,6 +454,138 @@ export function describeGitConformance(fixture: LiveAdapterFixture, h: Conforman
 			// The clone's own output, so a failure names itself in the CI log.
 			expect(`clone exit ${clone.exitCode}: ${clone.stdout}${clone.stderr}`).toContain('exit 0');
 			expect(`${show?.stdout}${show?.stderr}`).toContain(REPO_CONTENT.trim());
+		}, 300_000);
+
+		// Registered only when the operator supplied a repository and a token: an
+		// assertion that cannot run is better absent than reported as a skip that
+		// reads like coverage.
+		if (LIVE_REMOTE && LIVE_TOKEN) {
+			it('clones a real private repository through the production seam', async () => {
+				const url = new URL(LIVE_REMOTE);
+				const remote = `${url.protocol}//x-access-token:${LIVE_PLACEHOLDER}@${url.host}${url.pathname}`;
+				const { clone, head } = await withProvisionBridge(
+					sshAgentServer as SshAgentServer,
+					{
+						engine,
+						containerId,
+						teamId,
+						dataDir: workDir,
+						runUser: containerRunUser,
+						db,
+						egressProxy: proxy as EgressProxy,
+						projectId: null,
+					},
+					async ({ scopeId, proxyEnv: seamProxyEnv }) => {
+						// The seam's env verbatim, `NO_PROXY` included. The loopback
+						// collision that forced the local-server leg to strip it does not
+						// arise for a real host, so this runs the production environment
+						// unaltered - which is the whole point of the leg.
+						const executor = ContainerGitExecutor.forPrep(
+							engine,
+							containerId,
+							null,
+							containerRunUser,
+							scopeId,
+							seamProxyEnv,
+						);
+						const cloneRes = await executor.exec(['clone', remote, '/tmp/conf-live-clone'], {
+							cwd: '/tmp',
+							needsNetwork: true,
+							timeout: 120_000,
+						});
+						if (cloneRes.exitCode !== 0) return { clone: cloneRes, head: null };
+						return {
+							clone: cloneRes,
+							head: await executor.exec(['rev-parse', '--verify', 'HEAD'], {
+								cwd: '/tmp/conf-live-clone',
+							}),
+						};
+					},
+				);
+				expect(`clone exit ${clone.exitCode}: ${clone.stdout}${clone.stderr}`).toContain('exit 0');
+				expect(`${head?.stdout}`.trim()).toMatch(/^[0-9a-f]{40}$/);
+
+				// The credential must not have reached the container even on the
+				// success path - the placeholder is what the stored remote keeps.
+				const config = await sh('cat /tmp/conf-live-clone/.git/config 2>&1');
+				expect(config).toContain(LIVE_PLACEHOLDER);
+				expect(config).not.toContain(LIVE_TOKEN);
+			}, 300_000);
+		}
+
+		it('clones through the seam while the container is already streaming a large exec', async () => {
+			// A project's container is not idle when a repo is added to it. It is
+			// running the agent, so it already holds a tunnel, and its exec output is
+			// being streamed back the whole time - on a managed backend that stream
+			// is a separate long-lived HTTP response, and it is observably fragile
+			// under volume ("log stream dropped after N byte(s); resuming").
+			//
+			// Every other leg here clones on a quiet container, which is the one
+			// state production never provisions in. This runs the seam clone with a
+			// second tunnel already up and a megabytes-scale exec streaming
+			// concurrently on the same container, because contention between those
+			// three is invisible to any of them tested alone.
+			let streamed = 0;
+			const noisy = await engine.execCreate(containerId, {
+				// Incompressible and line-oriented, so it exercises the stream rather
+				// than something's compression, and at a size that crosses the point
+				// where a resumable log stream has to actually resume.
+				Cmd: [
+					'sh',
+					'-c',
+					'i=0; while [ $i -lt 400 ]; do head -c 8192 /dev/urandom | base64; i=$((i+1)); done',
+				],
+				User: fixture.runUser,
+				AttachStdout: true,
+				AttachStderr: true,
+			});
+			const noisyDone = engine
+				.execStart(noisy, {
+					onChunk: (chunk) => {
+						streamed += chunk.text.length;
+					},
+				})
+				.catch(() => undefined);
+
+			const remote = `https://x-access-token:${PLACEHOLDER}@localhost:${serverPort}/served.git`;
+			const clone = await withProvisionBridge(
+				sshAgentServer as SshAgentServer,
+				{
+					engine,
+					containerId,
+					teamId,
+					dataDir: workDir,
+					runUser: containerRunUser,
+					db,
+					egressProxy: proxy as EgressProxy,
+					projectId: null,
+				},
+				async ({ scopeId, proxyEnv: seamProxyEnv }) => {
+					// Same loopback exemption as the quiet seam leg above, for the same
+					// fixture-only reason.
+					const seamEnv = seamProxyEnv.filter((e) => !/^no_proxy=/i.test(e));
+					const executor = ContainerGitExecutor.forPrep(
+						engine,
+						containerId,
+						null,
+						containerRunUser,
+						scopeId,
+						seamEnv,
+					);
+					return executor.exec(['clone', remote, '/tmp/conf-busy-clone'], {
+						cwd: '/tmp',
+						needsNetwork: true,
+						timeout: 120_000,
+					});
+				},
+			);
+			await noisyDone;
+
+			expect(`clone exit ${clone.exitCode}: ${clone.stdout}${clone.stderr}`).toContain('exit 0');
+			// The named symptom, so a regression says which failure it was.
+			expect(`${clone.stdout}${clone.stderr}`).not.toContain('expected flush after ref listing');
+			// The load has to have been real, or this asserts nothing.
+			expect(streamed).toBeGreaterThan(1_000_000);
 		}, 300_000);
 
 		it('never lets the real token into the container', async () => {

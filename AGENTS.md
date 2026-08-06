@@ -2,6 +2,17 @@
 
 **This file carries rules, not rationale, in as few words as leave them unambiguous.** No incident narratives, no "this exists because PR #N", no defence of a rejected alternative, no example that only re-illustrates the rule above it. Cut every hedge, restatement and connective carrying no constraint. Rationale goes in `.dev/architecture.md` (or another `.dev/*.md`); link to it in one clause only when the rule can't be applied without it. A rule needing a paragraph of context is two things: the rule here, the context in `.dev/`. **Edit every entry down after writing it** — if a sentence can go without losing a constraint, it goes.
 
+**Where a piece of writing goes** — decided by who needs it and when, not by what it is about:
+
+| Writing | Home |
+|---|---|
+| A rule that binds anyone, or that someone could break without knowing they were in that territory | **this file** |
+| The how-to for one kind of work — authoring an adapter, writing a migration | a `.dev/<doing-the-thing>.md` guide, summarized here as its trip-wires plus a link |
+| What the system *does* — data model, run pipeline, mechanisms | `.dev/architecture.md` |
+| Anything a Hezo user or operator reads | `docs/` |
+
+**A new specialized area is born as a `.dev/` guide, not as a new section here.** This file reached 150K by accreting them; the summary it keeps is only the rules that bind someone who does not yet know they are in that territory. When you add a guide, link it from the matching section, list it in the `.dev/` bullet under **Layout**, and add its row to **Mirrored surfaces**. **When a surface list or a seam home would go inline, extend the table that already holds it** rather than writing a thirteenth restatement in prose.
+
 ## Commands
 
 - `bun run test` — server vitest + server Bun-native (`bun test`) + web component + shared unit + Playwright, in that order.
@@ -49,25 +60,39 @@
   - `agents/_partials/<group>/<name>.md` resolves at **build/load time only** (`db/resolve-partials.ts`, baked in by `build:agents`) and reaches only seeded built-in agents. Use for guidance shared by a subset of seeded roles; changing one requires re-running `build:agents`.
   - `agents/<template>/*.md` — one seeded role's own prose.
   - Decision rule: every agent incl. future hires → `SHARED_INSTRUCTIONS`; a subset of seeded roles → a partial; one role → that role's `.md`.
-- `.dev/architecture.md` — the consolidated architecture reference and the home for rationale. Describe what the system **does**. Any architecture-altering change updates it in the same PR.
-- `docs/` — user-facing documentation rendered at `https://hezo.ai/docs`. A change to user-visible behaviour updates the relevant page in the same PR. `docs/reference/cli.md` is hand-written; `docs/reference/mcp-api.md` is **generated** from the MCP tool registry — never hand-edit it. After touching an MCP tool, author its return shape / authorization note in `TOOL_DOC_META` (`mcp/mcp-reference.ts`) and rebuild with `bun run --cwd packages/server build:docs`.
+- `.dev/` — internal engineering docs and the home for the rationale this file omits. `architecture.md` is the consolidated **descriptive** reference; alongside it sit the **prescriptive** guides — `adding-a-container-backend.md`, `adding-a-chat-channel.md`, `writing-migrations.md`. Which of them a given piece of writing belongs in is the routing table at the top of this file.
+- `docs/` — user-facing documentation rendered at `https://hezo.ai/docs`. `docs/reference/cli.md` is hand-written; `docs/reference/mcp-api.md` is **generated** from the MCP tool registry — never hand-edit it. After touching an MCP tool, author its return shape / authorization note in `TOOL_DOC_META` (`mcp/mcp-reference.ts`) and rebuild with `bun run --cwd packages/server build:docs`.
   - The full `docs/` tree is bundled into the binary and injected into the CEO real-time chat. Each `.md` carries `title`/`order`/`section` frontmatter; `bundle-docs.ts` writes `docs-bundle.json`, `docs-bundle.ts` organises it, `template-resolver.ts` swaps it in at the `<!-- HEZO_DOCS -->` marker in `agents/_instance/ceo.md`. **Keep the marker; never copy doc prose into the role doc.** Adding/removing a page or changing frontmatter must keep `docs-bundle.test.ts` green.
-- **API/route changes propagate to every agent-facing surface in the same PR.** Adding, renaming, removing or changing an MCP tool or REST route updates: (1) the docs reference — `docs/reference/cli.md`, `docs/mcp/hezo-mcp-server.md`, and the generated `docs/reference/mcp-api.md` (rebuild it; `mcp-reference.test.ts` fails if stale); (2) the SKILL.md generator (`mcp/skill-file.ts`, served at `GET /SKILL.md`); (3) `llms.txt` (`mcp/llms-txt.ts`) if the change touches the MCP endpoint, the SKILL.md pointer or the docs links. Update the generators and their tests, not a static file. SKILL.md covers the MCP surface plus a pointer to `HEZO_DOCS_URL` — not the REST API, not the docs themselves.
+- **The agent-facing surfaces are generated — update the generator and its test, never a static file.** Which surfaces mirror an MCP tool or REST route is in **Mirrored surfaces** below. Scope: `SKILL.md` (`mcp/skill-file.ts`, served at `GET /SKILL.md`) covers the MCP surface plus a pointer to `HEZO_DOCS_URL` — not the REST API, and not the docs themselves, which reach agents via the CEO chat bundle instead.
 - **A REST route and its MCP-tool twin must be named in parallel**, wherever both expose the same resource/action. Not every route needs a tool (`routes/connectors.ts` documents a deliberate no-twin case).
   - **The resource noun is mandatory and must match on both sides** (kebab-case in the path, snake_case in the tool): `GET`/`PATCH /api/projects/:projectId/custom-prompt` ↔ `get_project_custom_prompt`/`update_project_custom_prompt`. No exceptions.
   - **The verb mapping is the default, not a law:** `GET`→`get_`/`list_`, `PATCH`/`PUT`→`update_`, `POST`→`create_`, `DELETE`→`delete_`/`remove_`. These departures are correct — do not "fix" them: `read_project_doc`/`write_project_doc`, `apply_marketplace_team`, `add_connector`/`register_connector`, `resolve_approval`, `full_text_search`. Follow the table for a new pair unless a comment says why a departure reads better.
   - Rename both sides in the same change. Only internal identifiers a route reads from (DB columns, enum values, template variables) may keep historical names.
 
-## Keeping docs in sync with code
+## Mirrored surfaces
 
-**Every code change ships with a docs-alignment pass in the same PR.** Find what the change touched:
+**A fact represented in more than one place changes in all of them, in one commit — every code change ships with this pass, not a follow-up.** This table is the canonical list; when a rule elsewhere in this file says "update it in the same change", this is what it means. **Extend the table rather than restating the obligation in prose.** The last column is the one to read: where it says *nothing*, no test will catch you.
 
-- **CLI flag / subcommand / env var / port / default** (`src/cli.ts`) → `docs/reference/cli.md`, `docs/deployment/configuration.md`, the CLI table in `packages/server/README.md`, and any getting-started/deployment page showing the command.
-- **MCP tool / REST route / auth / response shape** → every surface in the "API/route changes propagate" bullet above.
-- **Data model, agent runtime, providers/runtimes, egress/credentials, SSH/git, OAuth/MCP, auth, build/release** → `.dev/architecture.md`.
-- **Adding/changing an AI provider** (`AiProvider` + `PROVIDER_RUNTIME_ADAPTERS` in `packages/shared/src/types/common.ts`) → `.dev/architecture.md`, the provider docs, and verify the pricing table carries rates for its models (an unpriced model records $0). Decide whether it belongs in `claudeCodeProviderUsesCustomEndpoint`.
-- **User-visible behaviour, a feature, or the setup/onboarding flow** → the relevant `docs/` page(s).
-- **Removing a feature** → grep the whole repo and delete every stale reference (`docs/**`, `.dev/`, READMEs, comments).
+| Change | What mirrors it | Enforced by |
+|---|---|---|
+| MCP tool / REST route (params, response shape, auth) | `docs/reference/cli.md`, `docs/mcp/hezo-mcp-server.md`, generated `docs/reference/mcp-api.md`, the `SKILL.md` generator, `llms.txt` | `mcp-reference.test.ts`, `llms-txt.test.ts` |
+| A REST route name | its MCP-tool twin (same resource noun) | **nothing - on you** |
+| A user-facing string | the 11 non-English catalogs | `i18n-catalog.test.ts` |
+| A team prompt or `team.json` | committed `marketplace/teams/*.json` + `index.json` | `marketplace-build.test.ts` |
+| A docs page (add / remove / frontmatter) | the embedded docs bundle | `docs-bundle.test.ts` |
+| A new conformance suite | `conformance/index.ts` | `conformance-coverage.test.ts` |
+| A new doc- or string-bearing path | `DOC_BEARING_PATTERNS` / `STRING_BEARING_PATTERNS` | its ack-hook test |
+| Container backend behaviour | `SANDBOX_AGENT_ENVIRONMENTS`, that provider's `docs/containers/remote/` page, the Containers settings UI | compile error, **new backend only** |
+| Architecture (data model, run pipeline, providers, egress, SSH/git, OAuth, auth, build) | `.dev/architecture.md` | the `Docs-Checked:` trailer |
+| A `.dev/` guide added, renamed or removed | the link from its section here, the `.dev/` bullet under **Layout**, this table | **nothing - on you** |
+| A rule this file states | its guide in `.dev/`, if one covers that area - they must not disagree | **nothing - on you** |
+| CLI flag / subcommand / env var / port / default (`src/cli.ts`) | `docs/reference/cli.md`, `docs/deployment/configuration.md`, the CLI table in `packages/server/README.md`, any page showing the command | **nothing - on you** |
+| A sharded, renamed or newly-required CI job | its `*-complete` rollup, a shard-unique matrix artifact name, the `main` ruleset's required checks | **nothing - on you** |
+| A tool added to the container image | the toolset paragraph in `SHARED_INSTRUCTIONS` | **nothing - on you** |
+| A new MCP tool taking an array | `MCP_BATCH_ARRAY_PARAMS` | **nothing - on you** |
+| A new AI provider (`AiProvider` + `PROVIDER_RUNTIME_ADAPTERS`) | `.dev/architecture.md`, the provider docs, `model_pricing` rows, and a decision on `claudeCodeProviderUsesCustomEndpoint` | **nothing** - an unpriced model silently records $0 |
+| User-visible behaviour, a feature, the setup/onboarding flow | the relevant `docs/` page(s) | **nothing - on you** |
+| **Removing** a feature | every stale reference repo-wide (`docs/**`, `.dev/`, READMEs, comments) - grep for it | **nothing - on you** |
 
 **Verify, don't assume.** Generated surfaces have drift tests (`{mcp-reference,llms-txt,docs-bundle}.test.ts`); hand-written prose has one guard, `docs-terminology.test.ts`, checking punctuation only. Nothing checks whether prose is *true* — re-read the pages describing what you changed and confirm every concrete claim still matches the code.
 
@@ -99,58 +124,13 @@ Project-teams get a Captain plus the roster's worker roles; rosters never includ
 
 ## Database migrations
 
-Migrations are real, tracked, append-only and data-preserving. `packages/server/migrations/001_initial_schema.sql` is the frozen baseline. Never edit a shipped migration — each is checksummed and applied once, so an edit is logged as a warning and skipped on existing instances.
+Migrations are real, tracked, append-only and data-preserving; real instances hold real user data, so one that drops or corrupts it is a production incident. **How to author one, and its data-preservation test, is in `.dev/writing-migrations.md`.** The rules that bind before you get there:
 
-- **Every new migration MUST preserve existing data.** Additive or reshaping DDL carries data forward (backfill, re-encode, re-key).
-- **Every new migration MUST ship a data-preservation test**, one file per migration named `packages/server/test/migrate-<NNN>-<slug>.test.ts`, using `createDataPreservationHarness()` (`test/helpers/migrate.ts`). Seed representative rows at the prior schema, apply through the real `runMigrations`, then assert **both** that pre-existing data survived **and** that the change took effect. Don't just assert "the migration ran".
-- **Before creating a file, check for an unshipped migration to extend** — the first step, not a cleanup:
-  ```sh
-  git fetch origin main
-  for f in packages/server/migrations/*.sql; do
-    git cat-file -e "origin/main:$f" 2>/dev/null || echo "UNSHIPPED: $f"
-  done
-  ```
-  Anything printed was added by this branch and applied nowhere. If one belongs to your change, put your DDL in that file and your assertions in its existing test. Only when nothing related comes back do you add a new `NNN_description.sql`. Never edit `001` or any file the loop did not print.
-- **Append-only binds on *shipped*, not on *written*.** Merge sibling migrations from the same unmerged PR into one file, and their tests into one test file. Three constraints survive: keep each `NNN` distinct from anything on `main` (rebase if `main` took your number); the whole file runs in **one transaction**, so `ALTER TYPE … ADD VALUE` cannot have its new value *used* further down the same file (state predicates in terms of pre-existing values, as `049` does); and a dev instance that already applied the old version will not re-apply the edited one — reset the local data dir or you are coding against a schema that silently lacks the change.
-- **Data transforms SQL can't express** (parse/re-encode/re-encrypt with app-side logic) → a code migration under `src/db/migrations/code/`, registered in that dir's `index.ts`. SQL and code migrations share one ordered `NNN_` sequence and one per-migration transaction.
-- **How they apply:** the embedded backend migrates a copy (`<dataDir>/.migrate-tmp`) and atomically swaps on success, leaving live `pgdata` untouched on failure. External Postgres migrates in place — per-migration transactions under a session `pg_advisory_lock` (`applyPendingMigrationsExternal`) — so a migration must be safe to half-apply-and-roll-back alone. A data dir carrying unrecognized migrations (a downgrade) makes the server exit.
-- Runner guarantees are covered by `migrate-data-preservation.test.ts`, `migrate-runner.test.ts` and `migrate-code-steps.test.ts`; the baseline by `migrate-baseline-schema.test.ts`. Per-migration tests are additive.
-
-```ts
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDataPreservationHarness, type DataPreservationHarness } from './helpers/migrate';
-
-const TARGET = '099_example.sql';
-
-describe('099_example migration', () => {
-  let h: DataPreservationHarness;
-  let seededId: string;
-
-  beforeAll(async () => {
-    h = await createDataPreservationHarness();
-    await h.applyUpToExclusive(TARGET);          // schema at N-1
-    const r = await h.db.query<{ id: string }>(  // seed representative data
-      `INSERT INTO teams (name, slug) VALUES ('Acme', 'acme') RETURNING id`,
-    );
-    seededId = r.rows[0].id;
-    await h.applyTarget(TARGET);
-  });
-  afterAll(() => h.close());
-
-  it('applies the change', async () => {
-    const c = await h.db.query<{ c: number }>(
-      `SELECT COUNT(*)::int AS c FROM information_schema.columns
-       WHERE table_name = 'teams' AND column_name = 'new_col'`,
-    );
-    expect(c.rows[0].c).toBe(1);
-  });
-
-  it('preserves pre-existing rows', async () => {
-    const kept = await h.db.query(`SELECT 1 FROM teams WHERE id = $1`, [seededId]);
-    expect(kept.rows.length).toBe(1);
-  });
-});
-```
+- **Never edit a shipped migration.** `001_initial_schema.sql` is the frozen baseline. Each migration is checksummed and applied once, so an edit is logged as a warning and silently skipped on existing instances - including your own dev instance.
+- **Every new migration MUST preserve existing data** (backfill, re-encode, re-key) **and MUST ship a data-preservation test** asserting both that pre-existing rows survived and that the change took effect. Not "the migration ran".
+- **A schema change starts by checking for an unshipped migration to extend**, not by creating a file. A migration this branch added has been applied nowhere and is ordinary unmerged code - extend it, and merge siblings from the same PR into one file rather than stacking numbers.
+- **The whole file runs in one transaction**, so `ALTER TYPE … ADD VALUE` cannot have its new value *used* further down the same file.
+- **Every cron or per-request query ships with its index** in the same migration.
 
 ## Testing
 
@@ -265,12 +245,34 @@ Write the second occurrence as shared code, not a copy. These are decision rules
 - **Pick the home by reach.** Server *and* web, or a pure-logic test → `@hezo/shared`. Several server modules → `src/lib/` or `services/`. Several components → `packages/web/src/lib/` or `hooks/`. One consumer → keep it local until there is a second.
 - **Validation lives once and runs twice.** A rule the client checks for inline feedback and the server enforces for real is one exported function in `@hezo/shared`, called from both.
 - **Table over branch.** Behaviour varying by enum is a `Record<Enum, Descriptor>` read from, not a repeated `switch`: an unhandled value becomes a compile error and a new case becomes one row.
-- **Extend the existing seam before adding a parallel one.** A new instance setting extends `routes/instance-settings.ts` and the `system-meta` helpers; new date behaviour extends `packages/web/src/lib/format-date.ts`; a new chat app implements `ChatChannelAdapter`. If the seam genuinely doesn't fit, **widen it** rather than routing around it.
+- **Extend the existing seam before adding a parallel one** — check the seam registry below first. If the seam genuinely doesn't fit, **widen it** rather than routing around it. A second stack doing an existing stack's job is how a codebase ends up with two of everything.
 - **Preserve public signatures when changing internals** — keep a shared helper's exported shape and delegate inward.
 - **Generate what would otherwise be hand-synced**, and guard the remainder with a drift test.
 - **Follow the idiom already in the file.** A context provider copies `lib/theme.tsx`; a settings row copies `InstanceSettingsSection`; a mutation picks one of the three documented strategies. Novel structure needs a reason beyond preference.
 
 **Don't over-rotate.** Extract on the second *real* occurrence, not the first imagined one.
+
+### Seam registry
+
+Before writing a helper, check whether it already has a home. **Extend the seam; never add a parallel one** — and extend this table when you add one, rather than naming the home inline somewhere else.
+
+| Need | Home |
+|---|---|
+| Guidance reaching every agent, now and future | `SHARED_INSTRUCTIONS` (`services/template-resolver.ts`) |
+| Guidance for a subset of seeded roles | `agents/_partials/<group>/` |
+| A container backend | `ContainerEngine` (`services/sandbox/types.ts`), always reached via `SandboxBackendHolder.engine` |
+| "Does this backend class need X?" | `SANDBOX_BACKEND_KIND` (`@hezo/shared`) |
+| A chat platform | `ChatChannelAdapter` (`services/chat-channels/`) |
+| Fire-and-forget work | `trackBackground()` (`lib/background.ts`) |
+| Paging (lists and large content) | `mcp/paging.ts` |
+| Shared enums, constants, validation run on both sides | `@hezo/shared` (`types/common.ts`) |
+| An instance setting | `routes/instance-settings.ts` + the `system-meta` helpers |
+| Date formatting | `packages/web/src/lib/format-date.ts` |
+| An optimistic mutation | `useOptimisticMutation` (`hooks/use-optimistic-mutation.ts`) |
+| A server test context | `createTestContext()` (`test/helpers/context.ts`) |
+| A migration test | `createDataPreservationHarness()` (`test/helpers/migrate.ts`) |
+| A component test | `renderApp()` + `seed*()` (`packages/web/test/helpers/`) |
+| A complete test double | `createStubDocker()` (`test/helpers/app.ts`) - never a hand-rolled partial |
 
 ## One mechanism, no silent fallbacks
 
@@ -384,92 +386,29 @@ Never commit `.js`/`.d.ts`/`.js.map`/`.d.ts.map` alongside source. Compiled outp
 - Use shared constants/enums from `@hezo/shared` (`packages/shared/src/types/common.ts`) — no raw status/type strings. Add new enum values there first.
 - `bunx`, not `npx`, in this repo's scripts, CI and docs. The rule stops at the repo boundary: inside the agent-run container `npx` is correct and is what `SHARED_INSTRUCTIONS` and the skills tell agents to use.
 
-### Adding a container backend (Docker, Daytona, …)
+### Container backends
 
-One seam: `ContainerEngine` (`services/sandbox/types.ts`), implemented by `DockerClient` (`services/docker.ts`) and `DaytonaEngine` (`services/sandbox/daytona/`). Every caller above it — `agent-runner.ts`, `containers.ts`, `git-executor.ts`, `chat-session-manager.ts`, `job-manager.ts`, the process sweeper — talks only to that interface.
+Every backend - local Docker, a third-party sandbox service - sits behind one seam, `ContainerEngine` (`services/sandbox/types.ts`). **Authoring or changing an adapter: `.dev/adding-a-container-backend.md`.** Two rules bind every caller, not just adapter authors:
 
-**Nothing above the seam may learn which backend is in use** — no provider name in a conditional, no provider-shaped field on a shared type, no "if remote". Every provider-specific fact lives in its adapter directory:
+- **Nothing above the seam may learn which backend is in use** - no provider name in a conditional, no provider-shaped field on a shared type, no "if remote". A backend needing host-side work gets a seam method every backend answers, never a branch at the call site. Ask what *kind* of backend it is (`SANDBOX_BACKEND_KIND` in `@hezo/shared`), never which one.
+- **Take `SandboxBackendHolder.engine`, never a concrete engine.** The backend is switchable at runtime, so a captured reference keeps driving the one the operator just left. `instanceof` against the holder is always false, so such a branch silently stops running rather than failing.
 
-- **`sandbox/<provider>/client.ts`** — REST/SDK client and wire types, hand-rolled so the vendor dependency stays out of the single-binary build. Export the narrow port interface the engine drives (`DaytonaApi`) and have the client implement it, so tests supply a complete fake rather than a partial cast through `unknown`.
-- **`sandbox/<provider>/command.ts`** — pure rendering of an exec into what the provider accepts (argv-to-string, user-switching, stream separation).
-- **`sandbox/<provider>/engine.ts`** — the `ContainerEngine` implementation.
+Catch violations by grepping the shape, since `instanceof` carries no provider name:
 
-**Host-side work gets a seam method, never a call-site branch.** `ContainerEngine.prepareHost({ dataDir })` is the pattern: `DockerClient` extracts its build context, prunes bundled images, refreshes the published tag and probes mounts; `DaytonaEngine` no-ops with a comment. Reach for a new method whenever you catch yourself asking *which* backend you have; `createStubDocker` and `fake-docker.ts` must both answer it.
-
-- **Grep the shape, not the name** — `instanceof` carries no provider name for a name-grep to find: `grep -rn "instanceof DockerClient\|instanceof DaytonaEngine\|=== SandboxBackend\.\|!== SandboxBackend\." packages/server/src packages/web/src --include=*.ts --include=*.tsx`. Hits are legitimate **only** where a provider is constructed or labelled (`sandbox/open.ts`, a display table); anything else is a bug, and a hit on the run path always is.
-- **`instanceof` against the holder is always false** — callers hold the `SandboxBackendHolder.engine` proxy — so the branch doesn't just couple to a provider, it silently stops running.
-
-**Ask what *kind* of backend it is, never which one** — a provider name in a conditional is a class property in disguise, hiding best in settings and credential plumbing where it reads as configuration. One table in `@hezo/shared`, callers asking the derived question:
-
-```ts
-export const SANDBOX_BACKEND_KIND: Record<SandboxBackend, 'local' | 'remote'> = {
-    [SandboxBackend.Docker]: 'local',
-    [SandboxBackend.Daytona]: 'remote',
-};
-export function sandboxBackendNeedsApiKey(b: SandboxBackend): boolean {
-    return SANDBOX_BACKEND_KIND[b] === 'remote';
-}
+```sh
+grep -rn "instanceof DockerClient\|instanceof DaytonaEngine\|=== SandboxBackend\.\|!== SandboxBackend\." \
+  packages/server/src packages/web/src --include=*.ts --include=*.tsx
 ```
 
-`Record<SandboxBackend, …>` makes a new backend a compile error until it declares its kind; use the *kind* rather than a bare `needsApiKey` so the next class-wide question extends the same table. Naming a provider is still fine for **which credential** (`--daytona-api-key`, the `DAYTONA_API_KEY` vault entry, `DaytonaClient`) — never for **whether one is needed**.
+Hits are legitimate **only** where a provider is constructed or labelled; a hit on the run path is always a bug.
 
-**Runtime-agnostic logic is shared, not reimplemented per adapter** — both engines run the identical `/proc` scan and kill scripts from `sandbox/proc-scripts.ts`, differing only in transport. Same for `sandbox/endpoints.ts`, `sandbox/files.ts` and `sandbox/handle.ts`.
+### Chat channel adapters
 
-**Never provision less of a resource than was asked for — refuse instead.** The per-container RAM cap is a guarantee the rest of the system is sized against. Round *up* when the provider's unit is coarser (a 1.5 GB cap asks for 2 GB, never 1); over the ceiling, throw a named error stating request, ceiling and which setting to lower (`DaytonaMemoryCapExceededError`). Same for disk and CPU.
+External chat avenues to the CEO sit behind a channel-adapter abstraction plus registry in `services/chat-channels/`. **Adding one: `.dev/adding-a-chat-channel.md`.** What binds anyone who touches this area:
 
-**The backend is switchable at runtime, so nothing may capture the engine.** It comes from a stored setting (the CLI flag seeds a fresh instance only) and changes from Settings → Containers. Take `SandboxBackendHolder.engine`, never a concrete engine, and add each new `ContainerEngine` method to the holder's delegation. Switching preflights the destination, destroys every container, then swaps — never another order, never a fallback when one backend is unreachable.
-
-**Elevation is a flag, not a username.** Docker honours a per-exec `User`; Daytona execs as root and renders non-root as `runuser -u <user> --`. State `elevated` at the call site; each adapter renders it.
-
-**Probe the provider; don't infer from its docs.** Measure every non-obvious behaviour against the live API, and say what was measured in the comment on each workaround.
-
-**Declare what an agent can reach from inside each backend** in `SANDBOX_AGENT_ENVIRONMENTS` (`sandbox/agent-environment.ts`): service name, where the container runs, and the egress facts in an agent's terms — what works, what doesn't, what to use instead. `buildContainerEnvironmentBlock` renders it beside `SHARED_INSTRUCTIONS`, per run. **Update the entry whenever you touch that adapter** — a new backend is a compile error until it states its egress, but a changed one isn't, so re-probe. Provider-specific facts also go on that provider's `docs/containers/**` page.
-
-**Keep a provider's numbers in its own docs section.** `docs/containers/remote/overview.md` states each limit's *shape* generically, never a figure; `docs/containers/remote/<provider>.md` carries the numbers. The Containers settings page shows only the caveats of the backend in use — **local Docker included, a backend like any other**. A new adapter ships its docs page (linked from the overview list) and its UI branch in the same change.
-
-**Tests: unit plus a conformance fixture.**
-
-- **Unit, against a fake API** — command rendering (quoting, user rendering, stream handling), state mapping onto `ContainerInfo` (transitional states never reading as dead), the exec triad's exit-code propagation, each accepted degradation. Crib `sandbox-daytona-{command,engine}.test.ts`.
-- **Conformance, against the real backend** — `packages/server/test/conformance/` is backend-agnostic, parameterised by a `LiveAdapterFixture`, so a new provider is a fixture rather than a second suite. Docker's (`test/bun/sandbox-conformance-docker.bun.test.ts`) runs in CI, self-skipping with a logged reason without a daemon or agent-base image; a paid provider's lives in `test/live/` and is manual. Where a backend legitimately can't answer (`diskUsedBytes` may be null by design), the fixture declares it with a flag and the suite asserts the documented alternative rather than skipping silently.
-
-**Every suite in `conformance/` runs against every adapter** (today `engine`, `files`, `agent-cli`, `egress`, `tunnel`, `git`); write any new suite generically so existing adapters pick it up.
-
-- **A fixture registers the set, never individual suites** — `describeContainerBackendConformance(fixture, harness)` (`conformance/index.ts`) is a backend entry point's only call, and `conformance-coverage.test.ts` asserts both directions. **A new container service adds its fixture under `test/live/` (paid, manual) or `test/bun/` (free, CI) and calls the aggregate; a new suite goes into `conformance/index.ts` in the same change.**
-- **Never add a backend-specific end-to-end test.** Worth asserting against one live backend means worth asserting against all.
-- `conformance/egress.ts` needs the image to carry `hezo-tunnel`, and **refuses with that reason** rather than skipping.
-- **From source, agent-base builds into the local daemon's image store** — right for Docker, invisible to a registry-backed provider. `HEZO_AGENT_BASE_IMAGE=ghcr.io/hezo-ai/agent-base:<sha>` overrides it for every project that doesn't name its own, on Docker too; `assertRegistryPullableImage` refuses the local-build sentinel with a message naming the variable.
-- `HEZO_CONFORMANCE_IMAGE` points at the image CI published. `build-agent-image` tags with `github.sha`, the *merge* commit on a `pull_request` — resolve with `git ls-remote origin refs/pull/<pr>/merge`, re-resolving rather than reusing a stale tag:
-  ```sh
-  HEZO_CONFORMANCE_IMAGE=ghcr.io/hezo-ai/agent-base:<merge-sha> \
-  HEZO_DAYTONA_API_KEY=… HEZO_DEEPSEEK_API_KEY=… bun run test:daytona
-  ```
-- `test/live/**` is excluded from `vitest.config.ts`, and `vitest.live.config.ts` **throws if `CI` is set**. Every container the suites create carries the `hezo.conformance` label and is swept on the way in as well as out.
-
-### Adding a chat channel adapter
-
-External chat avenues to the CEO use a channel-adapter abstraction plus registry in `services/chat-channels/`. The manager (`chat-session-manager.ts`), the generic inbound webhook route (`routes/chat-webhooks.ts`), the conversation model and the web thread switcher are channel-agnostic — they resolve a channel only through the registry, never by branching on a platform name.
-
-**Thread model (no mirroring).** Every conversation has exactly one home surface — a web thread, a Telegram DM, a Slack channel, a Discord channel — each its own `chat_conversations` row, and `(channel, external_thread_id, closed_at IS NULL)` is the inbound routing key (there is no bindings table).
-
-- **One home surface per thread.** An adapter never creates threads on other channels and never re-implements cross-surface sync. Closing a thread (web ✕, or `parseClose` → `closeConversationByExternalThread`) ends it; the next inbound message on that surface starts a fresh conversation.
-- **Reply-where-asked.** `finalize` calls `ChannelHooks.deliver` with the **turn's** origin channel. A web-composed turn into an external assistant thread answers on web only; an adapter's `deliver` only addresses its own platform.
-- **The web view is the hub.** `listConversations` returns all kinds with `channel` + `kind`. Assistant threads stay fully interactive from web; **coworker threads are read-only in web** (`POST /api/chat/messages` 409s).
-- **History capability is required for group mode.** A group-capable adapter MUST provide real channel context via `fetchThreadContext` — fetch-on-demand where the platform has a history API, or passive accumulation where it doesn't (Telegram: `observeMessage` → the bounded `chat_observed_messages` buffer, ~200/chat, topic-scoped reads). Don't ship group mode without it.
-
-**Two integration modes**, discriminated by `chat_conversations.kind`; an adapter implements one or both:
-
-- **Assistant/DM** (`kind='assistant'`) — a private chat with the bot is a real-time CEO thread listed in the web chatbox. Identity-allowlist gated.
-- **Group/coworker** (`kind='coworker'`) — the CEO is invited into a group channel and responds to @-mentions with platform history as ephemeral context, replying in-thread. **Channel invite is the authorization** (no identity gate). Read-only in web; turns queue instead of interrupting; no compaction or auto-title.
-
-To add a channel:
-
-1. Add a `ChatChannel` enum value in `packages/shared/src/types/common.ts` **and** an additive `ALTER TYPE chat_channel ADD VALUE` migration with a data-preservation test.
-2. Implement a `ChatChannelAdapter` (`chat-channels/<channel>.ts`): `parseInbound`, `deliver` (splitting via `splitMessageForLimit` from `chat-channels/format.ts` where the platform caps length), optional `start`/`stop`, `closeThread` + `parseClose`, `observeMessage`, `promptToLink`/`validateConfig`. Group mode is the optional trio `parseGroupMention`/`supportsGroupMode`/`fetchThreadContext` — the adapter owns the history fetch and its filtering, the core owns prompt formatting via `formatGroupContextBlock`, and a one-hop reply-quote rides on the event as `inlineContext`. Register it in `buildChatChannelRegistry`.
-3. Inbound transport: webhook channels flow through the generic route, dispatching `parseGroupMention` → `parseInbound` → `parseClose` → `observeMessage`; a socket-transport adapter pushes parsed events through the `InboundEventSink` on its deps instead. DMs land in `ingestInboundEvent`, group mentions in the deliberately separate `ingestGroupMentionEvent` (`chat-channels/ingest-group.ts`) — never overload `ingestInboundEvent` with group semantics. A **true-fanout** transport (Discord's gateway) must also hold the single-instance ownership lease (`metadata.gateway_owner`, TTL-renewed from the heartbeat; stand down on loss) so two instances sharing a DB never double-answer.
-4. Store all channel-specific settings in `chat_channel_configs.metadata` (jsonb) — **never add per-channel columns**. The bot token goes in the `secrets` vault and is decrypted in-process by trusted server code, NOT via the agent egress proxy. A channel needing a second secret stores its vault name in metadata (Slack: `metadata.app_token_secret` → `SLACK_APP_TOKEN`).
-5. Ship the channel's unit tests (parse → event shape, mention/reply detection, close no-op safety) plus routing coverage (crib `chat-thread-routing.test.ts`) and, for a group-capable adapter, coworker-semantics coverage (crib `chat-group-ingest.test.ts`).
-
-**Do not touch** the manager, `ingestInboundEvent`/`ingestGroupMentionEvent`, the generic webhook route, or the conversation/identity schema — if a new channel forces a change there, close the gap in the abstraction instead. Worked examples: `slack.ts` + `slack-socket.ts` (persistent transport), `discord.ts` + `discord-gateway.ts` (true-fanout + lease), `telegram.ts` (webhook + passive accumulation).
+- **The core is channel-agnostic and stays that way.** The manager, both ingest paths, the generic webhook route and the conversation/identity schema resolve a channel only through the registry, never by branching on a platform name. If a new channel forces a change there, close the gap in the abstraction instead.
+- **One home surface per thread, and replies go where the turn was asked.** No adapter creates or mirrors threads on another channel.
+- **Channel-specific settings live in `chat_channel_configs.metadata` (jsonb) - never a per-channel column.** Bot tokens go in the `secrets` vault and are decrypted in-process by trusted server code, not via the agent egress proxy.
 
 ### User-facing docs terminology
 
@@ -568,22 +507,24 @@ Every agent run is gated by a completeness judge firing when the assistant ends 
 
 A run legitimately parked on input it can't obtain itself — an `@admin` question, a `request_credential`, a filed hire proposal or pending approval, with the task left non-terminal — is **allowed** to stop; the admin's reply or resolution auto-wakes it. Every judge short-circuits on `stop_hook_active` so a persistent verdict can't loop the same exec (command-script runtimes guard it in code, the Claude Code prompt carries the same instruction). The judge LLM runs inside the container against the team's primary-provider credential, through the normal egress path. The hook is on for every runtime exposing a block-and-continue turn-end hook, with no per-team or per-agent opt-out.
 
-Per-runtime wiring lives in `services/mcp-injectors/<runtime>.ts`, with the judge specs in `JUDGE_SPECS`:
+Wiring lives in `services/mcp-injectors/<runtime>.ts`, specs in `JUDGE_SPECS`, the shared prompt body in `STOP_HOOK_RULES` (`stop-hook-prompt.ts`) — one body, so a rule change reaches every runtime. Where a runtime's native hook can run the judge itself the injector writes a prompt hook; otherwise it writes a helper script that calls the provider API. What you must know per runtime is only the constraint that bites:
 
-- **Claude Code** (Anthropic, DeepSeek, Z.ai, Kimi, plus the local runners Ollama and LM Studio): native `Stop` hook of `type: "prompt"` in a per-run `settings.json` loaded via `--settings`; Claude Code makes the judge call itself. The prompt points the judge at `last_assistant_message` in `$ARGUMENTS` and tells it to allow the stop when `stop_hook_active` is true. For every provider `claudeCodeProviderUsesCustomEndpoint` covers, the judge **tracks the run's own selected model** (`judgeModelForProvider`), falling back to `CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER` only when the run pins no model. Anthropic is excluded and always uses its cheaper Sonnet constant. The same run model overrides `CLAUDE_CODE_SUBAGENT_MODEL` for those providers (`buildProviderEnv`).
-- **Codex** (OpenAI): native `Stop` hook of `type: "command"` in `config.toml` — its `type: "prompt"` is parsed-but-skipped. The command is a Node script reading StopCommandInput from stdin, calling the OpenAI Chat Completions API, and writing `{"decision":"block","reason":...}` when work is incomplete. See `buildCodexJudgeScript`.
-- **Gemini** (Google): native `AfterAgent` hook (the Stop analogue). Same command-script pattern against Google's Generative AI API. See `buildGeminiJudgeScript`.
-- **OpenCode** (OpenRouter, …): **no completeness judge** — its plugin API can't block-and-continue in headless `opencode run`. Runs fail-open.
-- **Grok** (xAI): **no completeness judge** — Grok Build's hooks advertise `blockingEvents: ["pre_tool_use"]` only; `Stop`/`SessionEnd` are passive notifications. Runs fail-open.
-- **Kimi Code**: native `Stop` hook of `type: "command"`, a flat `[[hooks]]` entry in `config.toml` under `$KIMI_CODE_HOME`. Two opt-in `JudgeRuntimeSpec` fields cover its differences: its stdin payload carries no final assistant message (`sessionLogLookup` reads it from the run's `wire.jsonl`) and no `stop_hook_active` (`loopGuardFile` writes/checks a `.hezo-stop-blocked` marker). A block is emitted on all three channels Kimi documents: exit code **2** (any other non-zero reads as a broken script and fails open), the reason on stderr, the decision JSON on stdout. **`[[hooks]]` entries accept exactly four keys** (`event`, `matcher`, `command`, `timeout`) — any other makes the CLI refuse the whole config, breaking every run on the runtime.
+| Runtime | Judge | Constraint |
+|---|---|---|
+| Claude Code | native prompt hook | Judge model **tracks the run's own selected model** for every provider `claudeCodeProviderUsesCustomEndpoint` covers, falling back to the per-provider constant only when the run pins no model. Anthropic is excluded and keeps its cheaper constant. The same run model overrides `CLAUDE_CODE_SUBAGENT_MODEL` for those providers. |
+| Codex | helper script | Its `type: "prompt"` is parsed-but-skipped — the hook must be `type: "command"`. |
+| Gemini | helper script | The Stop analogue is `AfterAgent`, not `Stop`. |
+| Kimi Code | helper script | `[[hooks]]` entries accept **exactly four keys** (`event`, `matcher`, `command`, `timeout`) — any other makes the CLI refuse the whole config, breaking every run on the runtime. Block via exit code **2**; any other non-zero reads as a broken script and fails open. Its stdin payload carries neither the final assistant message nor `stop_hook_active`, so the spec opts into a session-log lookup and an on-disk loop-guard marker. |
+| OpenCode | **none** | Its plugin API can't block-and-continue in headless mode. Fails open. |
+| Grok | **none** | Its hooks block only on pre-tool-use; Stop is a passive notification. Fails open. |
 
-`STOP_HOOK_RULES` (`stop-hook-prompt.ts`) is identical across every runtime that runs the judge. Judge-model constants: `claude-sonnet-4-6` (Anthropic), `deepseek-v4-pro` (DeepSeek), `GLM-4.7` (Z.ai), `kimi-k2.7-code` (Kimi), `gpt-4o-mini` (OpenAI), `gemini-1.5-flash` (Google) — a fallback only for the custom-endpoint providers, which track the run's live-selected model. A newly selected model needs a `model_pricing` row or its runs price to $0. For the file-mount subscription providers (Codex / Gemini OAuth) the helper script has no API key and fails open silently. **Anthropic subscription is the exception** — it runs via `CLAUDE_CODE_OAUTH_TOKEN`, so the native prompt judge still fires.
+A newly selected judge model needs a `model_pricing` row or its runs price to $0. For the file-mount subscription providers (Codex / Gemini OAuth) the helper script has no API key and fails open silently. **Anthropic subscription is the exception** — it runs via `CLAUDE_CODE_OAUTH_TOKEN`, so the native prompt judge still fires.
 
-**Deterministic handoff-delivery net (independent of the judge).** At run completion `agent-runner.ts` reads the final assistant message via `getFinalAssistantMessage()` and handles three stranded forms, each checked against `task_comments` with `created_by_run_id = <run>` so an agent that already posted isn't re-processed. It runs on **every** runtime, including those with no judge.
+**Deterministic handoff-delivery net (independent of the judge).** At run completion `agent-runner.ts` reads the run's final assistant message and handles three stranded forms. It runs on **every** runtime, including those with no judge, and skips anything the run already posted (checked against that run's own comments), so an echoed handoff isn't delivered twice.
 
-1. **An active `@`-mention** the run never posted is **delivered verbatim** as a real comment via `postAgentComment` (`comment-wakeups.ts`) — the same insert + broadcast + `fireCommentWakeups` path `create_comment` uses. Detection uses `extractMentionSlugs`, matching exactly who would be woken. Flips an otherwise no-op run to success.
-2. **A name-only address that reads as an ask** — the unlinked bold/leading-line form (`detectUnlinkedTeammateAsks`) or the passive one (`detectPassiveTeammateAsks`), both run against the run team's roster + HQ + `@admin` and gated on directed-ask intent so a name written for emphasis is never touched — is **not** rewritten or auto-delivered. The runner logs the same warning `create_comment` gives interactively and leaves the handoff undelivered.
-3. **A plain direct answer** to a human who addressed this agent: when the run was woken by a `WakeupSource.Reply`/`Mention` whose waking comment was authored by a human (author not in `member_agents`) and the run posted no comment of its own, the final message is delivered verbatim via `postAgentComment` threaded under the waking comment (`parentCommentId`).
+1. **An active `@`-mention** the run never posted is **delivered verbatim** as a real comment via `postAgentComment` (`comment-wakeups.ts`) — the same insert + broadcast + wakeup path `create_comment` uses, detected with the same extractor, so it matches exactly who would be woken. Flips an otherwise no-op run to success.
+2. **A name-only address that reads as an ask** — the unlinked bold/leading-line form or the passive one, matched against the run team's roster + HQ + `@admin` and gated on directed-ask intent so a name written for emphasis is never touched — is **not** rewritten or auto-delivered; guessing intent to force a wake overreaches. The runner logs the same warning `create_comment` gives interactively and leaves the handoff undelivered.
+3. **A plain direct answer** to a human who addressed this agent: when the run was woken by a reply or mention from a human (not another agent) and posted no comment of its own, the final message is delivered verbatim, threaded under the waking comment.
 
 OpenCode, Grok and Kimi Code take the task prompt as a CLI **argument** rather than on stdin, so the runner sets `HEZO_PROMPT_MODE=arg` (`RUNTIME_PROMPT_DELIVERY`) and the exec wrapper appends `"$(cat $HEZO_PROMPT_FILE)"`. Kimi Code additionally gets **no auto-approve flag** — `--yolo`/`--auto`/`--plan` are mutually exclusive with `--prompt`; `-p` already applies the `auto` permission policy and the injected `[permission.rules]` covers the rest.
 
@@ -591,10 +532,11 @@ OpenCode, Grok and Kimi Code take the task prompt as a CLI **argument** rather t
 
 Per-run cost is computed in `agent-stream-parser.ts` **always** from the `model_pricing` table (`price()` via `PricingService`), using the token buckets each runtime reports (regular input, cache read, cache creation, output). Runtimes' own dollar figures (`total_cost_usd` and similar) are **ignored in every parser** — they are client-side estimates from the CLI's built-in rate card, which for third-party Anthropic-compatible endpoints belongs to the wrong provider entirely. The CLIs' only job in cost accounting is accurate token counts. An unknown model prices to $0 — fail-low, never fail-high. The local providers (Ollama, LM Studio) have no pricing rows by design; $0 is correct there.
 
-**Two runtimes report no token usage on stdout and recover it from a file in the per-run home.** `recoverOffStreamRunUsage` (`agent-runner.ts`) dispatches them and scrubs the file after parsing (each can carry the provider credential); everything downstream is identical to any other runtime.
+**Grok and Kimi Code report no token usage on stdout**, so the runner recovers it from a file in the per-run home and **scrubs that file after parsing** — each can carry the provider credential in plaintext. Everything downstream is identical to any other runtime. Three rules for that parsing, each a trap that otherwise prices runs silently wrong:
 
-- **Grok**: the per-run `--debug-file`. `extractGrokUsageFromDebugLog` parses `process_conversation_turn` spans for `input_tokens`/`output_tokens`/`cache_read_tokens`, keyed by `request_id` to dedup. The file also contains `XAI_API_KEY` in plaintext.
-- **Kimi Code**: the per-session `wire.jsonl` under `$KIMI_CODE_HOME`. `extractKimiUsageFromSessionLog` reads `inputOther`/`output`/`inputCacheRead`/`inputCacheCreation`, deduping by request id. Two rules: session-scoped records are **cumulative totals**, so sum turn-scoped records when they exist and otherwise take the *last* session record (never the sum); and `inputOther` is already the non-cached remainder, so unlike Codex/Grok the cached portion is **not** subtracted from the input bucket. Probe field names in both camelCase and snake_case — upstream ships two engine generations with duplicated logging paths.
+- **Dedup by request id** — both logs repeat records per turn.
+- **Cumulative vs turn-scoped.** Where a log carries session-scoped totals, sum the turn-scoped records when they exist and otherwise take the *last* session record — never the sum.
+- **Know whether the input bucket already excludes cache.** Kimi's does, so unlike Codex/Grok the cached portion is **not** subtracted out. Probe field names in both camelCase and snake_case: upstream ships two engine generations with duplicated logging paths, and a spelling change would price every run at $0.
 
 ## Container toolset & installing packages at runtime
 

@@ -15,6 +15,7 @@ import {
 	request as httpsRequest,
 } from 'node:https';
 import { connect as netConnect, type Socket } from 'node:net';
+import { rootCertificates } from 'node:tls';
 import type { CA } from 'mockttp/dist/util/certificates';
 import { getCA } from 'mockttp/dist/util/certificates';
 import type { MasterKeyManager } from '../../crypto/master-key';
@@ -398,7 +399,14 @@ class RunProxyInstance {
 	constructor(private readonly cfg: RunProxyConfig) {
 		this.upstreamAgent = new HttpsAgent({
 			keepAlive: false,
-			...(cfg.upstreamTrustedCAs ? { ca: cfg.upstreamTrustedCAs } : {}),
+			// Appended to the public roots, never substituted for them: passing `ca`
+			// alone *replaces* the default trust store, so naming one extra
+			// certificate would silently make every public upstream unverifiable.
+			// The option means what it says - an addition, for an upstream whose
+			// certificate is not publicly rooted.
+			...(cfg.upstreamTrustedCAs
+				? { ca: [...rootCertificates, ...[cfg.upstreamTrustedCAs].flat()] }
+				: {}),
 		});
 		this.upstreamHttpAgent = new HttpAgent({ keepAlive: false });
 	}
@@ -660,8 +668,8 @@ class RunProxyInstance {
 			client.resume();
 		});
 		up.on('error', () => client.destroy());
-		up.on('close', () => client.destroy());
-		client.on('close', () => up.destroy());
+		up.on('close', () => discardingDestroy(client, host, 'agent'));
+		client.on('close', () => discardingDestroy(up, host, 'upstream'));
 	}
 
 	/** Return a live per-host TLS server, rebuilding it if the cached one has
@@ -1268,6 +1276,26 @@ function headerValue(
 	if (typeof v === 'string') return v;
 	if (Array.isArray(v)) return v[0] ?? null;
 	return null;
+}
+
+/**
+ * Tear down one leg of a CONNECT bridge, reporting anything the teardown throws
+ * away.
+ *
+ * `destroy()` cancels queued writes rather than flushing them, so a leg torn
+ * down while its peer is behind loses whatever had not yet reached the kernel.
+ * The agent side falls behind by design - the tunnel multiplexer pauses its
+ * socket whenever a stream runs out of credit - and a body that stops short
+ * presents to the client as a stall rather than as an error, so a discard is
+ * invisible unless it says so here. Silent on a healthy connection, which is
+ * every connection where the peer kept up.
+ */
+function discardingDestroy(sock: Socket, host: string, leg: 'agent' | 'upstream'): void {
+	const pending = sock.writableLength;
+	if (pending > 0) {
+		log.warn(`egress bridge for ${host} discarded ${pending} unflushed byte(s) on the ${leg} leg`);
+	}
+	sock.destroy();
 }
 
 /** Whether a request is eligible for body placeholder substitution, decided from

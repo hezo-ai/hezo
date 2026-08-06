@@ -9,6 +9,12 @@
  * that never existed.
  */
 
+import {
+	buildAnyPortListeningScript,
+	buildKillPidsScript,
+	buildKillTunnelClientsScript,
+	buildPortsListeningScript,
+} from '../../src/services/sandbox/proc-scripts';
 import type { ContainerEngine } from '../../src/services/sandbox/types';
 import {
 	CONFORMANCE_LABEL,
@@ -237,6 +243,83 @@ export function describeEngineConformance(
 			});
 			return Number((await engine.execStart(exec)).stdout.trim());
 		}
+
+		/**
+		 * The `/proc` scripts, run where they actually run.
+		 *
+		 * They are pure strings built on the host, so it is tempting to execute
+		 * them there - and `sandbox-proc-scripts.test.ts` does, for fast feedback.
+		 * But they read `/proc`, which only Linux has: on a macOS dev box the
+		 * port probe's `grep` fails on a missing file and the kill loop's
+		 * `/proc/[0-9]*` glob matches nothing, so both degrade to silence and the
+		 * assertions that expect silence pass while asserting nothing at all.
+		 *
+		 * A container is Linux on every backend, so this is the version that
+		 * cannot pass vacuously - and running it per backend is the point, since
+		 * both engines are required to run the identical script and only this
+		 * proves each one's transport carries it intact.
+		 */
+		it('runs the /proc port and kill scripts against a real container', async () => {
+			const sh = async (script: string): Promise<string> => {
+				const exec = await engine.execCreate(containerId, {
+					Cmd: ['sh', '-c', script],
+					User: 'root',
+					AttachStdout: true,
+					AttachStderr: true,
+				});
+				const { stdout } = await engine.execStart(exec);
+				return stdout.trim();
+			};
+
+			// Ports nothing binds, so silence here is a real answer rather than the
+			// absence of `/proc`.
+			const free = [59991, 59992, 59993];
+			expect(await sh(buildAnyPortListeningScript(free))).toBe('');
+			expect(await sh(buildPortsListeningScript(free))).toBe('');
+
+			// Bound with node rather than a networking tool, because node is the one
+			// thing the agent image is guaranteed to carry - the image installs no
+			// `procps` and cannot be assumed to carry `nc` either. Anything
+			// conditional on a tool being present would make these assertions skip
+			// themselves, which is the failure this whole test exists to correct.
+			const port = 59994;
+			const listenerPid = Number(
+				await sh(
+					`nohup node -e 'require("net").createServer().listen(${port},"127.0.0.1")' ` +
+						'>/dev/null 2>&1 & echo $!',
+				),
+			);
+			expect(listenerPid).toBeGreaterThan(1);
+			await new Promise((r) => setTimeout(r, 1_000));
+
+			try {
+				// The two probes are inverses on the same set: "any taken" is not
+				// "all ready".
+				expect(await sh(buildAnyPortListeningScript([port]))).toBe('busy');
+				expect(await sh(buildAnyPortListeningScript([59991, port, 59993]))).toBe('busy');
+				expect(await sh(buildPortsListeningScript([59991, port, 59993]))).toBe('');
+				expect(await sh(buildPortsListeningScript([port]))).toBe('ready');
+			} finally {
+				await sh(buildKillPidsScript([listenerPid]));
+			}
+
+			// The kill script must not end the shell running it: `sh -c <script>`
+			// puts the script's own text - which contains the client's name - into
+			// that shell's cmdline, so a whole-cmdline match dies on its first
+			// iteration and sweeps nothing after it. Only argv[1] counts.
+			expect(await sh(`${buildKillTunnelClientsScript()}; echo survived`)).toContain('survived');
+
+			// A stand-in whose argv[1] basename is the client's, which is the only
+			// thing the sweep matches on. The real binary would exit immediately
+			// without a config and prove nothing about the kill.
+			await sh(
+				`printf 'setTimeout(function(){},60000);\\n' > /tmp/hezo-tunnel; ` +
+					'nohup node /tmp/hezo-tunnel /tmp/cfg.json >/dev/null 2>&1 & sleep 1',
+			);
+			expect(await countProcesses(containerId, '[h]ezo-tunnel')).toBeGreaterThan(0);
+			await sh(buildKillTunnelClientsScript());
+			expect(await countProcesses(containerId, '[h]ezo-tunnel')).toBe(0);
+		}, 180_000);
 
 		it('lists and kills processes it started, by run marker', async () => {
 			const runId = `conf-${conformanceRunId()}`;
