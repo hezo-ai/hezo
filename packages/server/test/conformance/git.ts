@@ -321,11 +321,29 @@ export function describeGitConformance(fixture: LiveAdapterFixture, h: Conforman
 					projectId: null,
 				},
 				async ({ scopeId, proxyEnv: seamProxyEnv }) => {
+					// This fixture's upstream is on **container loopback**, which the
+					// seam's `NO_PROXY` deliberately exempts - Hezo's own MCP endpoint
+					// and its HMAC-signed asset URLs arrive there and must not be
+					// routed through the MITM. So git skipped the proxy and dialled
+					// `localhost:<port>` inside the container, where nothing listens.
+					//
+					// That collision belongs to the fixture, not the code: a real remote
+					// is `github.com`, and a LAN-hosted one is a private IP, which is not
+					// in the defaults (the proxy's `allowPrivateTargets` covers that).
+					// So drop the exemption here rather than weaken the production
+					// default to make a test pass.
+					//
+					// The cost is stated: this leg can no longer catch a regression that
+					// wrongly *added* the git host to `NO_PROXY`. That direction is
+					// covered host-side - `ssh-agent-host.test.ts` asserts the emitted
+					// `proxyEnv` shape, and `egress-proxy-env.test.ts` pins the
+					// `NO_PROXY` contents exactly.
+					const seamEnv = seamProxyEnv.filter((e) => !/^no_proxy=/i.test(e));
 					// `bridge: null` deliberately. The bridge carries commit *signing*,
 					// not the HTTPS transport this leg is about, and the ssh leg is
 					// already asserted on every backend by `conformance/tunnel.ts`.
 					// Wrapping the clone in it here would put an orthogonal dependency
-					// inside a credential assertion. `proxyEnv` still comes from the
+					// inside a credential assertion. The proxy env still comes from the
 					// real seam, which is the thing under test.
 					const executor = ContainerGitExecutor.forPrep(
 						engine,
@@ -333,7 +351,7 @@ export function describeGitConformance(fixture: LiveAdapterFixture, h: Conforman
 						null,
 						containerRunUser,
 						scopeId,
-						seamProxyEnv,
+						seamEnv,
 					);
 					const cloneRes = await executor.exec(['clone', remote, '/tmp/conf-seam-clone'], {
 						cwd: '/tmp',
