@@ -522,6 +522,26 @@ export function uniqueName(base: string): string {
 	return `${base} ${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/** Assert an element renders on a single text line (nowrap + height ≤ ~1.5 lines). */
+export async function expectSingleLine(locator: Locator): Promise<void> {
+	const metrics = await locator.evaluate((el) => {
+		const style = getComputedStyle(el);
+		const lineHeightPx = Number.parseFloat(style.lineHeight);
+		const fontSizePx = Number.parseFloat(style.fontSize);
+		return {
+			whiteSpace: style.whiteSpace,
+			height: el.getBoundingClientRect().height,
+			// line-height: normal resolves to "normal" in Chromium getComputedStyle,
+			// so fall back to a generous multiple of the font size.
+			oneLine: Number.isNaN(lineHeightPx) ? fontSizePx * 1.6 : lineHeightPx,
+		};
+	});
+	// nowrap is the single-line guarantee; the height check confirms it isn't
+	// silently spilling onto a second line. Two wrapped lines roughly double it.
+	expect(metrics.whiteSpace).toBe('nowrap');
+	expect(metrics.height).toBeLessThan(metrics.oneLine * 1.5);
+}
+
 export type HttpMethod = 'GET' | 'PATCH' | 'POST' | 'DELETE' | 'PUT';
 
 export type ResponseMatcher = (url: URL, method: string) => boolean;
