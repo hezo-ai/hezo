@@ -184,7 +184,7 @@ export async function switchSandboxBackend(
 			await storeDaytonaApiKey(db, masterKeyManager, req.daytonaApiKey.trim());
 		}
 		if (req.daytonaApiUrl !== undefined) await setStoredDaytonaApiUrl(db, req.daytonaApiUrl.trim());
-		holder.swap(opened);
+		await holder.swap(opened);
 		return { containersDestroyed: 0, backend: req.backend };
 	}
 
@@ -196,7 +196,12 @@ export async function switchSandboxBackend(
 	if (req.daytonaApiUrl !== undefined) await setStoredDaytonaApiUrl(db, req.daytonaApiUrl.trim());
 	await setStoredSandboxBackend(db, req.backend);
 
-	holder.swap(opened);
+	// The swap prepares the incoming backend's host state, which a switch never
+	// did: an instance that booted on a managed provider and moved to the local
+	// daemon reached it with no extracted build context, no bundled-image prune
+	// and no bind-mount probe - all of which only ever ran at startup, for
+	// whichever backend happened to be selected then.
+	await holder.swap(opened);
 	log.info(`switched to ${req.backend}, destroying ${containersDestroyed} container(s) on the way`);
 	return { containersDestroyed, backend: req.backend };
 }

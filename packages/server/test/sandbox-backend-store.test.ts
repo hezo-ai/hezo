@@ -16,6 +16,7 @@ import {
 	storeDaytonaApiKey,
 } from '../src/services/sandbox/backend-store';
 import { DaytonaClient } from '../src/services/sandbox/daytona/client';
+import { DaytonaEngine } from '../src/services/sandbox/daytona/engine';
 import { SandboxBackendError } from '../src/services/sandbox/errors';
 import { SandboxBackendHolder } from '../src/services/sandbox/holder';
 import { createPendingEngine, pendingUnlockMessage } from '../src/services/sandbox/pending';
@@ -45,7 +46,17 @@ let unlocked: MasterKeyManager;
 /** State every boot starts in: enrolled, but no key in memory yet. */
 const locked = new MasterKeyManager();
 
+/**
+ * The switch below opens a real `DockerClient`, whose host preparation probes
+ * bind mounts by booting a throwaway container. On a machine that has a daemon
+ * that is a real container per run of this file, for a property none of these
+ * assert. Documented opt-out rather than a mock, so the rest of the preparation
+ * still runs.
+ */
+const savedMountCheck = process.env.HEZO_SKIP_MOUNT_CHECK;
+
 beforeAll(async () => {
+	process.env.HEZO_SKIP_MOUNT_CHECK = '1';
 	const ctx = await createTestApp();
 	db = ctx.db;
 	unlocked = ctx.masterKeyManager;
@@ -53,6 +64,8 @@ beforeAll(async () => {
 
 afterAll(async () => {
 	await safeClose(db);
+	if (savedMountCheck === undefined) delete process.env.HEZO_SKIP_MOUNT_CHECK;
+	else process.env.HEZO_SKIP_MOUNT_CHECK = savedMountCheck;
 });
 
 afterEach(async () => {
@@ -179,6 +192,7 @@ describe('completeSandboxBackendOnUnlock', () => {
 		return new SandboxBackendHolder({
 			engine: createPendingEngine(pendingUnlockMessage('https://app.daytona.io/api')),
 			info: { backend: SandboxBackend.Daytona, display: 'https://app.daytona.io/api' },
+			dataDir,
 		});
 	}
 
@@ -198,6 +212,28 @@ describe('completeSandboxBackendOnUnlock', () => {
 		// deferral invisible to the job manager, the chat manager and the HQ warm-up.
 		await expect(captured.ping()).resolves.toBe(true);
 		expect(holder.backend).toBe(SandboxBackend.Daytona);
+	});
+
+	it('prepares the host of the engine it swapped in', async () => {
+		// Startup could not: it held the pending engine, which has no host and
+		// throws from every member, so asking it there exited the boot instead.
+		// Preparation therefore has to happen here or nowhere - and "nowhere" is
+		// invisible, since a backend that never extracted its build context or
+		// probed its mounts fails much later and reads as a broken agent run.
+		daytonaAnswers();
+		await storeDaytonaApiKey(db, unlocked, 'dtn_stored');
+		await setStoredSandboxBackend(db, SandboxBackend.Daytona);
+		const resolved = await resolveStartupBackend(db, locked, {});
+
+		const prepared: string[] = [];
+		const holder = pendingHolder();
+		vi.spyOn(DaytonaEngine.prototype, 'prepareHost').mockImplementation(async ({ dataDir: d }) => {
+			prepared.push(d);
+		});
+
+		await completeSandboxBackendOnUnlock(db, unlocked, holder, resolved);
+
+		expect(prepared).toEqual([dataDir]);
 	});
 
 	it('leaves the pending engine in place when the deferred open fails', async () => {
@@ -225,6 +261,7 @@ describe('completeSandboxBackendOnUnlock', () => {
 		const holder = new SandboxBackendHolder({
 			engine: createStubDocker(),
 			info: { backend: SandboxBackend.Daytona, display: 'https://app.daytona.io/api' },
+			dataDir,
 		});
 		await completeSandboxBackendOnUnlock(db, unlocked, holder, resolved);
 
@@ -250,6 +287,7 @@ describe('completeSandboxBackendOnUnlock', () => {
 		const holder = new SandboxBackendHolder({
 			engine: createStubDocker(),
 			info: { backend: SandboxBackend.Daytona, display: 'https://app.daytona.io/api' },
+			dataDir,
 		});
 		await completeSandboxBackendOnUnlock(db, unlocked, holder, resolved);
 
@@ -281,6 +319,7 @@ describe('recovering from a stored key that no longer works', () => {
 		const holder = new SandboxBackendHolder({
 			engine: createPendingEngine(pendingUnlockMessage('https://app.daytona.io/api')),
 			info: { backend: SandboxBackend.Daytona, display: 'https://app.daytona.io/api' },
+			dataDir,
 		});
 
 		// 2. Unlock connects for real, and the expired key is refused.

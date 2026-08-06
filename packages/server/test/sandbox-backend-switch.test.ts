@@ -56,6 +56,8 @@ describe('the switch is scoped to this instance', () => {
  * silently.
  */
 describe('SandboxBackendHolder', () => {
+	const holderDataDir = mkdtempSync(join(tmpdir(), 'hezo-holder-'));
+
 	function engineNamed(name: string): { engine: ContainerEngine; calls: string[] } {
 		const calls: string[] = [];
 		const engine = createStubDocker({
@@ -65,6 +67,9 @@ describe('SandboxBackendHolder', () => {
 			},
 			removeContainer: async (id: string) => {
 				calls.push(`${name}:remove:${id}`);
+			},
+			prepareHost: async ({ dataDir }: { dataDir: string }) => {
+				calls.push(`${name}:prepareHost:${dataDir}`);
 			},
 			containerHostMemory: () =>
 				name === 'docker' ? { totalRamBytes: 8 * 1024 ** 3, totalSwapBytes: 0 } : null,
@@ -78,6 +83,7 @@ describe('SandboxBackendHolder', () => {
 		const holder = new SandboxBackendHolder({
 			engine: a.engine,
 			info: { backend: SandboxBackend.Docker, display: 'local Docker daemon' },
+			dataDir: holderDataDir,
 		});
 
 		// Captured the way every consumer captures it - once, at wiring time.
@@ -85,7 +91,7 @@ describe('SandboxBackendHolder', () => {
 		await captured.ping();
 		expect(a.calls).toEqual(['docker:ping']);
 
-		holder.swap({
+		await holder.swap({
 			engine: b.engine,
 			info: { backend: SandboxBackend.Daytona, display: 'https://app.daytona.io/api' },
 		});
@@ -96,17 +102,54 @@ describe('SandboxBackendHolder', () => {
 		await captured.ping();
 		await captured.removeContainer('ctr-1', true);
 		expect(a.calls).toEqual(['docker:ping']);
-		expect(b.calls).toEqual(['daytona:ping', 'daytona:remove:ctr-1']);
+		// The swap's own host preparation leads, which is the point of it being
+		// there: the incoming backend sets up before anything drives it.
+		expect(b.calls).toEqual([
+			`daytona:prepareHost:${holderDataDir}`,
+			'daytona:ping',
+			'daytona:remove:ctr-1',
+		]);
 	});
 
-	it('reports the metadata of whichever backend is current', () => {
+	it('prepares the incoming backend, and only it', async () => {
+		// Host preparation used to sit at the call sites that made an engine
+		// current, and each of them had to remember it. A runtime switch never did
+		// - so an instance that booted on a managed provider and moved to the local
+		// daemon reached it with no extracted build context, no bundled-image prune
+		// and no bind-mount probe, and nothing said so. Owning it here is what
+		// makes forgetting impossible.
+		const a = engineNamed('docker');
+		const b = engineNamed('daytona');
+		const holder = new SandboxBackendHolder({
+			engine: a.engine,
+			info: { backend: SandboxBackend.Docker, display: 'local Docker daemon' },
+			dataDir: holderDataDir,
+		});
+		// Construction alone prepares nothing: startup owns that call, because it
+		// is the one path that knows whether a real backend opened at all.
+		expect(a.calls).toEqual([]);
+
+		await holder.prepareHost();
+		expect(a.calls).toEqual([`docker:prepareHost:${holderDataDir}`]);
+
+		await holder.swap({
+			engine: b.engine,
+			info: { backend: SandboxBackend.Daytona, display: 'https://app.daytona.io/api' },
+		});
+		// The outgoing backend is not re-prepared, and the incoming one is.
+		expect(a.calls).toEqual([`docker:prepareHost:${holderDataDir}`]);
+		expect(b.calls).toEqual([`daytona:prepareHost:${holderDataDir}`]);
+	});
+
+	it('reports the metadata of whichever backend is current', async () => {
 		const holder = new SandboxBackendHolder({
 			engine: engineNamed('docker').engine,
 			info: { backend: SandboxBackend.Docker, display: 'local Docker daemon' },
+			dataDir: holderDataDir,
 		});
 		expect(holder.backend).toBe(SandboxBackend.Docker);
 
-		holder.swap({
+		await holder.swap({
 			engine: engineNamed('daytona').engine,
 			info: { backend: SandboxBackend.Daytona, display: 'https://app.daytona.io/api' },
 		});
@@ -114,7 +157,7 @@ describe('SandboxBackendHolder', () => {
 		expect(holder.info.display).toBe('https://app.daytona.io/api');
 	});
 
-	it('carries the memory answer across the swap, which is what re-sizes the budget', () => {
+	it('carries the memory answer across the swap, which is what re-sizes the budget', async () => {
 		// The capacity model asks the engine where its containers' memory comes
 		// from, so switching to a backend that runs elsewhere has to change that
 		// answer through the same captured handle - otherwise the budget stays
@@ -122,11 +165,12 @@ describe('SandboxBackendHolder', () => {
 		const holder = new SandboxBackendHolder({
 			engine: engineNamed('docker').engine,
 			info: { backend: SandboxBackend.Docker, display: 'local Docker daemon' },
+			dataDir: holderDataDir,
 		});
 		const captured = holder.engine;
 		expect(captured.containerHostMemory()).not.toBeNull();
 
-		holder.swap({
+		await holder.swap({
 			engine: engineNamed('daytona').engine,
 			info: { backend: SandboxBackend.Daytona, display: 'https://app.daytona.io/api' },
 		});

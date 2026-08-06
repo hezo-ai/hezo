@@ -38,6 +38,7 @@ interface Current {
 
 export class SandboxBackendHolder {
 	private current: Current;
+	private readonly dataDir: string;
 
 	/**
 	 * The handle every consumer keeps.
@@ -48,8 +49,9 @@ export class SandboxBackendHolder {
 	 */
 	readonly engine: ContainerEngine;
 
-	constructor(initial: Current) {
-		this.current = initial;
+	constructor(initial: Current & { dataDir: string }) {
+		this.current = { engine: initial.engine, info: initial.info };
+		this.dataDir = initial.dataDir;
 		this.engine = this.buildProxy();
 	}
 
@@ -62,7 +64,24 @@ export class SandboxBackendHolder {
 	}
 
 	/**
-	 * Point the holder at a different backend.
+	 * Point the holder at a different backend, and let it set up its host state
+	 * before anything drives it.
+	 *
+	 * Host prep rides with the swap rather than sitting at each call site because
+	 * "an engine became current" is precisely the event it belongs to, and every
+	 * site producing that event had to remember it independently. Two of the
+	 * three got it wrong: a deferred open crashed the boot by asking the pending
+	 * engine to prepare a host it does not have, and the runtime backend switch
+	 * never prepared the incoming one at all - so switching to the local daemon
+	 * left it with no extracted build context, no image prune and no bind-mount
+	 * probe, with nothing saying so.
+	 *
+	 * Asked unconditionally, including when the backend is unchanged and only its
+	 * credential rotated. Re-preparing is cheap and idempotent - the context
+	 * extraction overwrites, and the prune, published-tag refresh and mount probe
+	 * are backgrounded and individually tolerant - while a "did the backend
+	 * actually change" predicate would skip the deferred open, whose whole point
+	 * is swapping a real engine in for the pending one on the *same* backend.
 	 *
 	 * Deliberately does **not** touch containers. Destroying what the outgoing
 	 * backend was running is the caller's job and happens *before* this is
@@ -71,10 +90,23 @@ export class SandboxBackendHolder {
 	 * the orphan sweep only ever asks the *current* engine. On a paid provider
 	 * that is an invisible bill.
 	 */
-	swap(next: Current): void {
+	async swap(next: Current): Promise<void> {
 		const from = this.current.info.backend;
 		this.current = next;
 		log.info(`Sandbox backend switched: ${from} -> ${next.info.backend} (${next.info.display})`);
+		await this.prepareHost();
+	}
+
+	/**
+	 * Host-side setup for whatever backend is current, whose content is that
+	 * backend's own business (see `ContainerEngine.prepareHost`).
+	 *
+	 * Public for the one path that makes an engine current without swapping:
+	 * startup constructs the holder around the engine it just opened. Startup
+	 * skips it while the open is deferred, because nothing is current then.
+	 */
+	prepareHost(): Promise<void> {
+		return this.current.engine.prepareHost({ dataDir: this.dataDir });
 	}
 
 	/**

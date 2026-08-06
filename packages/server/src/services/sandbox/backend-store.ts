@@ -246,5 +246,7 @@ export async function completeSandboxBackendOnUnlock(
 		daytonaApiKey: (await readDaytonaApiKey(db, masterKeyManager)) ?? undefined,
 		daytonaApiUrl: (await getStoredDaytonaApiUrl(db)) || startup.daytonaApiUrl || undefined,
 	});
-	holder.swap(opened);
+	// The swap prepares the incoming engine's host too, which is the half startup
+	// could not do: it held the pending engine, which has no host to prepare.
+	await holder.swap(opened);
 }

@@ -1080,7 +1080,7 @@ paths to tell it so would be noise at best. The failure message names every sock
 plus the start command for each runtime it recognised.
 
 **Host setup runs through the seam, not a branch.** `ContainerEngine.prepareHost({ dataDir })`
-is asked of whichever backend is in use, once per boot, and what it does is that backend's
+is asked of whichever backend is in use, and what it does is that backend's
 business: `DockerClient` extracts the embedded agent-base build context, prunes stale bundled
 images, refreshes the published tag and probes its bind mounts, while `DaytonaEngine`
 implements it as an explicit no-op - a sandbox is built from Dockerfile text on the provider's
@@ -1089,6 +1089,20 @@ machines and has no host image store or binds to touch. `startup()` used to carr
 capability-branch-above-a-seam the design forbids, and it had already failed silently once:
 callers hold the backend holder's **proxy**, against which `instanceof` is always false, so
 introducing the holder turned the image setup into dead code with nothing logged.
+
+**It rides with an engine becoming current, and the holder owns that.** `SandboxBackendHolder`
+carries the data directory and calls `prepareHost` from `swap()`, so the deferred open's
+unlock and a runtime backend switch both prepare the incoming engine without asking. Sitting
+at each call site instead meant every site that made an engine current had to remember, and
+two of the three did not: a switch never prepared its destination at all, so an instance that
+booted on a managed provider and moved to the local daemon reached it with no extracted build
+context, no bundled-image prune and no bind-mount probe; and startup asked the **pending**
+engine, whose every member throws by design, which exited the boot of every locked instance
+on a vault-backed backend with an error reading as an unreachable provider. Startup is the
+one caller that still asks explicitly (`holder.prepareHost()`, the path that constructs the
+holder rather than swapping into it) and the one that skips it while the open is deferred -
+a lifecycle question, "is a backend current yet?", not the capability question the seam
+forbids.
 
 **Container mount preflight.** `services/mount-preflight.ts` runs backgrounded from
 `DockerClient.prepareHost` - it is a question about bind mounts of a *host* path, which a
@@ -1130,7 +1144,9 @@ credential (`--daytona-api-key`, the vault entry, `DaytonaClient`); it is never 
 *whether* one is needed. `startup()` then holds a **pending
 engine** (`sandbox/pending.ts`: a `Proxy` whose every member throws `SandboxBackendError`
 naming the unlock) and `masterKeyManager.onUnlock` runs
-`completeSandboxBackendOnUnlock`, which opens for real and `holder.swap`s it in — ahead of
+`completeSandboxBackendOnUnlock`, which opens for real and `holder.swap`s it in (preparing its
+host as part of that swap, since startup could not: it held the pending engine, which has no
+host) ahead of
 `startUnlockedServices`, so the job manager, the chat manager and the HQ warm-up each start
 against a real engine and never observe the deferral. Nothing is lost by waiting: those
 consumers already start on that same unlock, because a locked instance cannot run an agent

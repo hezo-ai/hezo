@@ -311,7 +311,7 @@ export async function createTestApp(
 			// A holder rather than the bare info: the backend is switchable at
 			// runtime, so the settings route needs something it can re-point.
 			sandboxHolder: opts.sandboxBackendInfo
-				? new SandboxBackendHolder({ engine: docker, info: opts.sandboxBackendInfo })
+				? new SandboxBackendHolder({ engine: docker, info: opts.sandboxBackendInfo, dataDir })
 				: undefined,
 		},
 		docker,

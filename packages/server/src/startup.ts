@@ -316,19 +316,26 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	const sandboxHolder = new SandboxBackendHolder({
 		engine: initialEngine,
 		info: sandboxBackendInfo,
+		dataDir: config.dataDir,
 	});
 	// Everything downstream takes the proxy. Nothing may capture `initialEngine`.
 	const docker: ContainerEngine = sandboxHolder.engine;
 
-	// Image management below is Docker's alone - a managed backend builds from a
-	// Dockerfile at sandbox create and has no image store to seed or prune. Keyed
 	// Host-side setup, asked of whichever backend is in use. What it does is that
 	// backend's business: the local daemon extracts its embedded build context and
 	// refreshes images, a managed service has no host state and does nothing. This
 	// used to be two `initialEngine instanceof DockerClient` branches - a capability
 	// branch above the seam, which had already silently broken once when the holder
 	// proxy made `instanceof` false and image setup stopped happening at all.
-	await docker.prepareHost({ dataDir: config.dataDir });
+	//
+	// Skipped only while the open is deferred: no backend is current then, so
+	// there is no host to prepare, and the unlock that opens the real one prepares
+	// it as part of the swap. That is a lifecycle question - "is a backend current
+	// yet?" - and not the capability question - "which backend is this?" - that the
+	// seam exists to forbid. Asking anyway is what exited the boot: the pending
+	// engine throws from every member by design, and the caught error reads as a
+	// fatal unreachable backend rather than the healthy locked instance it is.
+	if (!deferredBackend?.deferred) await sandboxHolder.prepareHost();
 
 	const wsManager = new WebSocketManager();
 	const logs = new LogStreamBroker();
@@ -817,6 +824,7 @@ export function buildApp(
 				new SandboxBackendHolder({
 					engine: docker,
 					info: { backend: 'docker', display: 'local Docker daemon' },
+					dataDir: config.dataDir,
 				}),
 		),
 	);
