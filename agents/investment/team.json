@@ -62,6 +62,10 @@
 	],
 	"changelog": [
 		{
+			"version": 9,
+			"notes": "Reference project documents by bare filename rather than in backticks, which rendered them as inert code and modelled them as repo file paths - they are database records reached through the document tools. The Report Writer now names write_project_doc/edit_project_doc where it is told to maintain and update the portfolio overview."
+		},
+		{
 			"version": 8,
 			"notes": "Captain: each Progress page activity line must be a complete sentence under 200 characters - the page now renders the line in full instead of clipping it, so an over-long line is trimmed back to its last complete sentence."
 		},

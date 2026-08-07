@@ -62,9 +62,9 @@
 				"design",
 				"analytics"
 			],
-			"version": 8,
+			"version": 9,
 			"roster_count": 7,
-			"latest_notes": "Captain: each Progress page activity line must be a complete sentence under 200 characters - the page now renders the line in full instead of clipping it, so an over-long line is trimmed back to its last complete sentence."
+			"latest_notes": "Reference project documents by bare filename rather than in backticks, which rendered them as inert code and modelled them as repo file paths - they are database records reached through the document tools. The Trend Researcher now names write_project_doc/edit_project_doc where it is told to record findings."
 		},
 		{
 			"slug": "investment",
@@ -127,9 +127,9 @@
 				"report",
 				"review"
 			],
-			"version": 8,
+			"version": 9,
 			"roster_count": 6,
-			"latest_notes": "Captain: each Progress page activity line must be a complete sentence under 200 characters - the page now renders the line in full instead of clipping it, so an over-long line is trimmed back to its last complete sentence."
+			"latest_notes": "Reference project documents by bare filename rather than in backticks, which rendered them as inert code and modelled them as repo file paths - they are database records reached through the document tools. The Report Writer now names write_project_doc/edit_project_doc where it is told to maintain and update the portfolio overview."
 		},
 		{
 			"slug": "software-development",
@@ -211,9 +211,9 @@
 				"testing",
 				"security review"
 			],
-			"version": 13,
+			"version": 14,
 			"roster_count": 10,
-			"latest_notes": "Captain: each Progress page activity line must be a complete sentence under 200 characters - the page now renders the line in full instead of clipping it, so an over-long line is trimmed back to its last complete sentence."
+			"latest_notes": "Reference project documents by bare filename rather than in backticks, which rendered them as inert code and modelled them as repo file paths - they are database records reached through the document tools, and the server already warns an agent that writes one backticked."
 		}
 	]
 }
