@@ -37,6 +37,7 @@ import { appendRunLogChunks, runLogLengthSql } from '../db/run-log-chunks';
 import type { DomainEventBus } from '../events/bus';
 import { signAgentAssetUrl } from '../lib/asset-urls';
 import { broadcastProjectUpdate, broadcastRowChange } from '../lib/broadcast';
+import { describeSignalExit, signalFromExitCode } from '../lib/exit-code';
 import { withProjectGitLock } from '../lib/git-lock';
 import {
 	detectPassiveTeammateAsks,
@@ -106,6 +107,7 @@ import type { PricingService } from './pricing';
 import type { ProgressActivityCandidates } from './project-activity';
 import { loadReactionsForTask, type ReactionGroup } from './reactions';
 import { ensureProjectRepos } from './repo-sync';
+import { projectContainerMemoryGb } from './run-concurrency';
 import {
 	buildSubscriptionMount as buildSubscriptionMountImpl,
 	ensureRuntimeHomeDir,
@@ -1941,6 +1943,19 @@ export async function runAgent(
 				exitedClean && !producedOutput && !reportedNoWork && !backgroundWorkTerminated
 					? 'run produced no output (no code changes, comments, tasks, documents, or other writes)'
 					: undefined;
+			// A process a signal destroyed reports nothing at all: it emits no terminal
+			// event for the parser to capture, and the two errors above are gated on a
+			// clean exit. Without this the run row's error is empty and the only trace
+			// of an out-of-memory kill is a bare `Killed` in the log.
+			//
+			// The memory cap is read only once a signal is in hand, so a run that exits
+			// normally pays no extra query.
+			const signalError =
+				(signalFromExitCode(execOutcome.exitCode)
+					? describeSignalExit(execOutcome.exitCode, {
+							memoryLimitGib: await projectContainerMemoryGb(deps.db, project.id),
+						})
+					: null) ?? undefined;
 			// A failed run's terminal error (e.g. a provider billing/auth rejection)
 			// otherwise lives only in the log; surface it on the run row so the board
 			// shows why the run failed instead of a bare "failed".
@@ -1954,8 +1969,21 @@ export async function runAgent(
 			// whose provider rejected the credential, produced no output precisely
 			// because of that - and reporting "produced no output" first sends the
 			// reader after the model instead of the transport.
+			//
+			// `signalError` outranks `terminalError` by that same rule one rung up:
+			// nothing the runtime reported mid-stream caused the kernel to destroy the
+			// process, and the kill is the later and dispositive fact. Demoting the
+			// terminal error costs the log nothing, because both of its writers already
+			// push their own line into the stream as they detect it.
+			//
+			// Its position relative to `backgroundError` and `noOutputError` is
+			// arbitrary - both are gated on a clean exit and so cannot co-occur with a
+			// signal. It stays below `unpushedError` deliberately, at the accepted cost
+			// that a run that committed and was then killed reports the stranded
+			// commits and leaves the signal to the exit-code column.
 			if (unpushedError) emit('stderr', `\n[runner] ${unpushedError}\n`);
 			else if (backgroundError) emit('stderr', `\n[runner] ${backgroundError}\n`);
+			else if (signalError) emit('stderr', `\n[runner] ${signalError}\n`);
 			else if (terminalError) emit('stderr', `\n[runner] ${terminalError}\n`);
 			else if (noOutputError) emit('stderr', `\n[runner] ${noOutputError}\n`);
 			else if (reportedNoWork && !producedOutput)
@@ -1969,7 +1997,13 @@ export async function runAgent(
 					status: success ? HeartbeatRunStatus.Succeeded : HeartbeatRunStatus.Failed,
 					exitCode: execOutcome.exitCode,
 					durationMs,
-					error: unpushedError ?? backgroundError ?? terminalError ?? noOutputError ?? undefined,
+					error:
+						unpushedError ??
+						backgroundError ??
+						signalError ??
+						terminalError ??
+						noOutputError ??
+						undefined,
 					// Grok's usage comes from the debug log (runUsage); every other
 					// runtime reports it on the stream (parser.getUsage()).
 					usage: runUsage ?? parser.getUsage(),
@@ -3082,8 +3116,13 @@ export function buildTaskPrompt(
 		parts.push('');
 		parts.push(`## Retry Attempt ${wakeupPayload.retry_count}/${wakeupPayload.max_retries}`);
 		parts.push('The previous attempt FAILED. Analyze the error and try a different approach.');
-		if (pf.exit_code !== undefined && pf.exit_code !== null)
-			parts.push(`**Exit code:** ${pf.exit_code}`);
+		if (pf.exit_code !== undefined && pf.exit_code !== null) {
+			// A bare number gives the retrying agent nothing to analyse; naming the
+			// signal tells it the previous attempt was destroyed rather than that it
+			// returned an error, which is a different thing to try differently.
+			const signal = typeof pf.exit_code === 'number' ? signalFromExitCode(pf.exit_code) : null;
+			parts.push(`**Exit code:** ${pf.exit_code}${signal ? ` (killed by ${signal.name})` : ''}`);
+		}
 		if (pf.stderr_tail) parts.push(`**Error output:**\n\`\`\`\n${pf.stderr_tail}\n\`\`\``);
 		if (pf.stdout_tail) parts.push(`**Last output:**\n\`\`\`\n${pf.stdout_tail}\n\`\`\``);
 	}

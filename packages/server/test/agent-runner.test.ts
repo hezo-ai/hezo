@@ -693,6 +693,44 @@ describe('runAgent', () => {
 		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
 	});
 
+	it('explains a signal kill and names the container memory cap', async () => {
+		await db.query('UPDATE projects SET memory_limit_gib = 6 WHERE id = $1', [projectId]);
+		try {
+			const docker = createMockDocker({
+				execCreate: async () => 'exec-oom',
+				// A SIGKILLed CLI writes no terminal event; the shell's `Killed` is all
+				// that reaches the log, which is exactly why the run row was blank.
+				execStart: async () => ({ stdout: '', stderr: 'Killed\n' }),
+				execInspect: async () => ({ ExitCode: 137, Running: false, Pid: 0 }),
+			});
+
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: testDataDir,
+				logs: new LogStreamBroker(),
+			};
+
+			const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+
+			expect(result.success).toBe(false);
+			expect(result.exitCode).toBe(137);
+
+			const run = await db.query<{ status: string; error: string | null; log_text: string }>(
+				`SELECT status, error, ${runLogTextSql('heartbeat_runs.id')} AS log_text FROM heartbeat_runs WHERE id = $1`,
+				[result.heartbeatRunId],
+			);
+			expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
+			expect(run.rows[0].error).toContain('SIGKILL');
+			expect(run.rows[0].error).toContain('6 GiB');
+			expect(run.rows[0].log_text).toContain('SIGKILL');
+		} finally {
+			await db.query('UPDATE projects SET memory_limit_gib = NULL WHERE id = $1', [projectId]);
+		}
+	});
+
 	it('records failure when docker exec throws', async () => {
 		const docker = createMockDocker({
 			execCreate: async () => {

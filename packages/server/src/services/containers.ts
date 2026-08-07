@@ -522,12 +522,7 @@ export async function provisionContainer(
 		// poller is the graceful early-stop at exactly this figure; whether a margin
 		// sits above it, and how big, is the engine's business - see
 		// `ContainerConfig.HostConfig.Memory` and `MEMORY_HARD_CAP_HEADROOM_BYTES`.
-		const limitRow = await db.query<{ memory_limit_gib: number | null }>(
-			'SELECT memory_limit_gib FROM projects WHERE id = $1',
-			[project.id],
-		);
-		const memoryLimitGib =
-			limitRow.rows[0]?.memory_limit_gib ?? (await getDefaultRamCapPerContainerGb(db));
+		const memoryLimitGib = await projectContainerMemoryGb(db, project.id);
 		const memoryCeilingBytes = memoryLimitBytes(memoryLimitGib);
 		// Same precedence as the memory cap: the project's override, else the
 		// instance default. Stated on every backend; what it means is the engine's

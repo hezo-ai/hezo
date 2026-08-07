@@ -179,7 +179,13 @@ export async function sumProjectContainerMemoryGb(
 	return total;
 }
 
-/** What one more container in this project would consume, in GB. */
+/**
+ * This project's per-container memory cap, in GB: the project's override, else
+ * the instance default.
+ *
+ * Two meanings, one figure - what one more container here would consume against
+ * the capacity budget, and the ceiling a container is actually provisioned with.
+ */
 export async function projectContainerMemoryGb(db: Db, projectId: string): Promise<number> {
 	const res = await db.query<{ memory_limit_gib: number | null }>(
 		`SELECT memory_limit_gib FROM projects WHERE id = $1`,

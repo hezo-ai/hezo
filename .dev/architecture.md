@@ -1360,7 +1360,9 @@ marker kill and teardown. Four findings are worth carrying:
   answers `403 Telemetry endpoints are disabled when Analytics API is configured`, which is
   an org configuration rather than a missing scope. The honest-null path handles it: memory
   enforcement degrades to the provider's own OOM, and because one container serves one run
-  that ends only the run that overran.
+  that ends only the run that overran. The graceful stop is what is lost, not the
+  diagnosis - the kill still reaches the run row as a SIGKILL naming the cap, via the
+  exit-code decode in § Agent execution.
 - **A digest-pinned `agent-base` is pullable anonymously**, so Daytona builds it with no
   registry credential - the `buildInfo` Dockerfile is `FROM …@sha256:…` and nothing else.
 
@@ -1462,8 +1464,18 @@ cover the rest of the run:
   the first cut of this check - would have failed every Claude Code run on that CLI, and
   the live agent-CLI conformance suite is what caught it.
 
-The runner also orders the two: a captured terminal error outranks "produced no output" on
-the run row, because the first is the cause and the second is its symptom.
+The runner also orders these: a signal kill outranks a captured terminal error, which in
+turn outranks "produced no output" on the run row - each is the cause of the one below it,
+and reporting the symptom first sends the reader after the wrong thing. A process a signal
+destroyed reports nothing at all, so without the top rung a run killed by the kernel OOM
+killer recorded a *blank* error: the two lower candidates are gated on a clean exit, and a
+killed CLI emits no terminal event. `signalFromExitCode`/`describeSignalExit`
+(`lib/exit-code.ts`) decode the shell's `128 + N` convention, and a SIGKILL additionally
+names the container's memory cap so the sentence carries its own remedy. Demoting the
+terminal error costs the log nothing, because both of its writers already push their own
+line into the stream as they detect it. Stranded commits stay above all three: they are the
+only time-sensitive item, at the accepted cost that a run that committed and was then
+killed leaves the signal to the exit-code column.
 
 **The tunnel is the only way a container reaches Hezo**, on every backend, with no gate and
 no second path. `RunEndpoints` always names container loopback, where the in-container
@@ -2240,7 +2252,10 @@ nobody else's. Folding it into the caller made **both** backends ask their provi
 memory than the project was configured for, and at the boundary refused outright: a project
 set to a managed provider's documented per-sandbox maximum arrived as maximum-plus-slack,
 rounded up past the ceiling, and was rejected with a message telling the operator to lower a
-limit they had set to the advertised value.
+limit they had set to the advertised value. What that kernel kill then looks like is
+`exit 137` on the exec, which the run-completion path decodes into a SIGKILL error naming
+the cap (see § Agent execution) - the kill is the *process*, not the container, so nothing
+in the container lifecycle notices and the run row is the only place it can surface.
 
 **Container run-user & host-file ownership.** The agent base image (`node:24-slim`) sets no
 `USER`, so the container runs as **root**; Hezo deprivileges individual `docker exec`s — the

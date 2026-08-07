@@ -171,7 +171,9 @@ consume:
 - **RAM cap per container** - the memory limit applied to every container (2 GB by
   default). A project that needs more can override it on its own Containers page. A
   container over its cap is stopped, or has its biggest process killed by the kernel,
-  rather than taking down anything else.
+  rather than taking down anything else. When the kernel does the killing, the run it was
+  serving is reported as failed with an error naming the signal and this cap, so a run
+  that ran out of memory says so instead of failing without explanation.
 - **Disk per container** - how much disk each container is given for its checkouts,
   dependencies and build output (5 GB by default). Like the RAM cap, a project that needs
   more can override it on its own Containers page. A container that fills most of its
