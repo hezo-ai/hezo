@@ -18,6 +18,7 @@ interface FakeProjectOpts {
 	container_status: string | null;
 	container_id?: string | null;
 	container_error?: string | null;
+	failed_container_count?: number;
 	docker_base_image?: string | null;
 	dev_ports?: Array<{ host: number; container: number }>;
 	has_stranded_commits?: boolean;
@@ -35,6 +36,7 @@ function fakeProject(teamId: string, o: FakeProjectOpts) {
 		container_id: o.container_id ?? null,
 		container_status: o.container_status,
 		container_error: o.container_error ?? null,
+		failed_container_count: o.failed_container_count ?? 0,
 		container_last_logs: null,
 		has_stranded_commits: o.has_stranded_commits ?? false,
 		dev_ports: o.dev_ports ?? [],
@@ -159,8 +161,12 @@ test('the banner flags a failed container and links to the global containers pag
 		(teamId) =>
 			fakeProject(teamId, {
 				slug: 'failed-banner',
-				container_status: 'error',
-				container_error: 'simulated build failure',
+				// Derived from the pool, not from `container_status`: a project is not
+				// bound to one container, and that column latches - the sync loop
+				// writes `error` while nulling `container_id`, after which no remove
+				// can name the container to clear it.
+				container_status: 'stopped',
+				failed_container_count: 1,
 			}),
 		'/projects/$projectId/inbox',
 	);
@@ -173,6 +179,30 @@ test('the banner flags a failed container and links to the global containers pag
 	// is addressed as itself and can be removed.
 	expect(banner.getAttribute('href') ?? '').toContain('/settings/containers');
 	expect(banner.querySelector('button')).toBeNull();
+});
+
+test('a stored error status alone raises no banner once no container is failed', async () => {
+	// The bug this replaced: `container_status = 'error'` is latched, cleared by
+	// no remove or teardown path, and gates nothing - `acquireRunContainer` never
+	// reads it and the pool skips failed members, so the next run simply creates a
+	// fresh container. An operator who removed the failed container was left with
+	// a permanent banner pointing at a page with nothing on it.
+	const r = await renderWithProject(
+		(teamId) =>
+			fakeProject(teamId, {
+				slug: 'stale-error',
+				container_status: 'error',
+				container_error: 'a failure that has since been cleared up',
+				failed_container_count: 0,
+			}),
+		'/projects/$projectId/inbox',
+	);
+
+	// The project has loaded, so the absent banner is a decision rather than a
+	// slow fetch.
+	await r.findByTestId('project-sidebar-name', undefined, { timeout: 20_000 });
+	await waitFor(() => expect(r.queryByTestId('container-status-banner')).toBeNull());
+	expect(r.queryByTestId('project-sidebar-container-error')).toBeNull();
 });
 
 test('a container being provisioned raises no banner', async () => {
@@ -202,8 +232,8 @@ test('the project menu keeps an error marker but no provisioning spinner', async
 		(teamId) =>
 			fakeProject(teamId, {
 				slug: 'sidebar-error',
-				container_status: 'error',
-				container_error: 'simulated build failure',
+				container_status: 'stopped',
+				failed_container_count: 1,
 			}),
 		// The Containers row lives under Settings, which discloses only once that
 		// subtree is the active route.

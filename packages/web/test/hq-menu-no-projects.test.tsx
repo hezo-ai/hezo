@@ -35,7 +35,15 @@ test('the HQ menu surfaces the container failure indicator on /home', async () =
 		// The reported scenario: HQ's container failed to provision. The default
 		// harness marks it running, so flip it to error before mount.
 		seed: async (ctx) => {
-			await ctx.db.query(`UPDATE projects SET container_status = 'error' WHERE is_internal = true`);
+			// A failed **pool member**, not `container_status = 'error'`: that column
+			// is a leftover of the one-container-per-project model and latches, so
+			// it no longer decides whether anything is wrong. See
+			// `use-container-health.ts`.
+			await ctx.db.query(
+				`INSERT INTO container_pool_members (project_id, container_id, state, last_error)
+				 SELECT id, 'failed-hq', 'error'::container_pool_state, 'pull access denied'
+				   FROM projects WHERE is_internal = true`,
+			);
 		},
 	});
 

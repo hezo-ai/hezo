@@ -26,6 +26,10 @@ export interface Project {
 	container_id: string | null;
 	container_status: 'creating' | 'running' | 'stopping' | 'stopped' | 'error' | null;
 	container_error: string | null;
+	/** Containers this project holds that the pool has given up on. Derived per
+	 * request from the pool, so it needs no clearing path - see the projects
+	 * route. */
+	failed_container_count: number;
 	/**
 	 * A container in this project holds commits that reached no durable remote.
 	 * It is pinned against suspend and destroy until a later run gets them out,

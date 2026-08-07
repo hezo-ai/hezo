@@ -43,7 +43,15 @@ test('the create-project dialog blocks on the container state when HQ is down', 
 			ws = await seedWorkspace();
 			await seedProject(ws, { name: 'Existing Project' });
 			sessionStorage.setItem('hezo:activeTeamSlug', ws.team.slug);
-			await ctx.db.query(`UPDATE projects SET container_status = 'error' WHERE is_internal = true`);
+			// A failed **pool member**, not `container_status = 'error'`: that column
+			// is a leftover of the one-container-per-project model and latches, so
+			// it no longer decides whether anything is wrong. See
+			// `use-container-health.ts`.
+			await ctx.db.query(
+				`INSERT INTO container_pool_members (project_id, container_id, state, last_error)
+				 SELECT id, 'failed-hq', 'error'::container_pool_state, 'pull access denied'
+				   FROM projects WHERE is_internal = true`,
+			);
 		},
 	});
 

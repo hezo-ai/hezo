@@ -5,6 +5,7 @@ import { useContainerHealth } from '../hooks/use-container-health';
 import { useProjectMenuCollapsed } from '../hooks/use-project-menu-collapsed';
 import { useProjectMeta } from '../hooks/use-projects';
 import { bannerInnerClass } from '../lib/banner-classes';
+import { useI18n } from '../lib/i18n';
 
 const BANNER_OUTER = 'sticky top-0 z-40 bg-surface';
 
@@ -30,6 +31,7 @@ const BANNER_OUTER = 'sticky top-0 z-40 bg-surface';
  * instead sit on top of the warning icon.
  */
 export function ContainerStatusBanner({ projectId }: { projectId: string }) {
+	const { t } = useI18n();
 	const project = useProjectMeta(projectId);
 	const health = useContainerHealth(project);
 	const [menuCollapsed] = useProjectMenuCollapsed();
@@ -49,7 +51,15 @@ export function ContainerStatusBanner({ projectId }: { projectId: string }) {
 
 	if (!project || health?.kind !== 'error') return null;
 
-	const message = `${project.name} container hit an error`;
+	// "A container for X", not "X's container": a project no longer owns one. It
+	// is handed whichever container the pool gives a run, so the failure belongs
+	// to a container the project was using, not to a fixture of the project.
+	//
+	// And a warning rather than an error, because nothing is blocked: the pool
+	// skips a failed member and the next run creates a fresh container. The
+	// operator is told so they can clear it, not because work has stopped.
+	const message = t('containers.banner.failed', { name: project.name });
+	const action = t('containers.banner.view');
 
 	return (
 		<div ref={bannerRef} className={BANNER_OUTER}>
@@ -57,14 +67,14 @@ export function ContainerStatusBanner({ projectId }: { projectId: string }) {
 				to="/settings/containers"
 				params={{}}
 				data-testid="container-status-banner"
-				aria-label={`${message}. View containers`}
-				className={`${bannerInnerClass(menuCollapsed)} bg-danger/10 text-danger transition-colors hover:bg-danger/20`}
+				aria-label={`${message}. ${action}`}
+				className={`${bannerInnerClass(menuCollapsed)} bg-warning-soft text-warning-soft-fg transition-colors hover:brightness-95`}
 			>
 				<AlertTriangle className="w-3.5 h-3.5 shrink-0" />
 				<span data-testid="container-status-banner-message" className="min-w-0 truncate">
 					{message}
 				</span>
-				<span className="ml-auto shrink-0 hidden sm:inline opacity-80">View containers</span>
+				<span className="ml-auto shrink-0 hidden sm:inline opacity-80">{action}</span>
 			</Link>
 		</div>
 	);

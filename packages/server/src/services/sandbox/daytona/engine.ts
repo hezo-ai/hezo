@@ -345,8 +345,28 @@ export class DaytonaEngine implements ContainerEngine {
 	}
 
 	async stopContainer(containerId: string): Promise<void> {
-		await this.settle(containerId);
-		await this.client.stop(containerId);
+		const settled = await this.settle(containerId);
+		// Already at rest is the desired end state, not a failure - and it is the
+		// *common* case rather than a rare race, because the provider stops
+		// sandboxes on its own idle interval as well. Asking it to stop one that
+		// has already stopped answers `400 Sandbox is not in a stoppable state`,
+		// which surfaced to the operator as a red banner on a container that was
+		// doing exactly what it should. Mirrors the check `startContainer` makes.
+		if (!settled || !isRunning(settled.state)) {
+			this.sandboxes.delete(containerId);
+			return;
+		}
+		try {
+			await this.client.stop(containerId);
+		} catch (e) {
+			// The provider's own auto-stop can still land between the check above
+			// and this call, so the same answer is tolerated here - but only once
+			// the sandbox is confirmed to be at rest, since "not stoppable" is also
+			// what a sandbox mid-transition says.
+			if (!(e instanceof DaytonaApiError) || e.status !== 400) throw e;
+			const after = await this.fetch(containerId, { refresh: true });
+			if (after && isRunning(after.state)) throw e;
+		}
 		this.sandboxes.delete(containerId);
 		// Settle on the way out too, so the caller's next `inspectContainer` reads
 		// `stopped` rather than the transitional `stopping` - the difference

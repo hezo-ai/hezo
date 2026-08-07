@@ -136,6 +136,18 @@ projectsRoutes.get('/projects', async (c) => {
        COALESCE((SELECT max(i3.updated_at) FROM tasks i3 WHERE i3.project_id = p.id), p.created_at)
           AS last_activity_at,
        (SELECT pi.updated_at FROM project_icons pi WHERE pi.project_id = p.id) AS icon_updated_at,
+       -- Containers this project holds that the pool has given up on. Derived
+       -- rather than read off projects.container_status, which is a leftover of
+       -- the one-container-per-project model and latches: the sync loop writes
+       -- the error while nulling container_id, after which nothing can name the
+       -- container to clear it, so a project stayed errored forever. A pool
+       -- member is deleted when its container is removed, so this needs no
+       -- clearing path at all. The predicate is the error state and not a
+       -- non-null last_error, because only that state is refused by the ladder
+       -- and persists; a usable member carrying a last-run error is not broken.
+       (SELECT count(*) FROM container_pool_members cpm
+          WHERE cpm.project_id = p.id AND cpm.state = 'error')::int
+          AS failed_container_count,
        -- A container holding commits that reached neither origin nor any other
        -- durable remote is pinned against suspend and destroy until a later run
        -- gets them out. Surfaced so such a project reads as at-risk instead of
@@ -496,6 +508,18 @@ projectsRoutes.get('/projects/:projectId', async (c) => {
        (SELECT count(*) FROM member_agents ma JOIN members mm ON mm.id = ma.id
           WHERE mm.team_id = p.team_id AND ma.touches_code)::int AS code_agent_count,
        (SELECT pi.updated_at FROM project_icons pi WHERE pi.project_id = p.id) AS icon_updated_at,
+       -- Containers this project holds that the pool has given up on. Derived
+       -- rather than read off projects.container_status, which is a leftover of
+       -- the one-container-per-project model and latches: the sync loop writes
+       -- the error while nulling container_id, after which nothing can name the
+       -- container to clear it, so a project stayed errored forever. A pool
+       -- member is deleted when its container is removed, so this needs no
+       -- clearing path at all. The predicate is the error state and not a
+       -- non-null last_error, because only that state is refused by the ladder
+       -- and persists; a usable member carrying a last-run error is not broken.
+       (SELECT count(*) FROM container_pool_members cpm
+          WHERE cpm.project_id = p.id AND cpm.state = 'error')::int
+          AS failed_container_count,
        -- A container holding commits that reached neither origin nor any other
        -- durable remote is pinned against suspend and destroy until a later run
        -- gets them out. Surfaced so such a project reads as at-risk instead of

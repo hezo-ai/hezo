@@ -105,6 +105,30 @@ test('the list shows every project’s containers, with the badges that explain 
 	await findByTestId('container-unpushed-beta-one');
 });
 
+test('the list marks a container that reported an error, whatever its state says', async () => {
+	// The list and the detail page used to disagree: only a provision that threw
+	// sets `state = 'error'`, while an OOM kill or a container that vanished
+	// records `last_error` and keeps the state it had - so a container whose
+	// detail page was red read as a plain `Idle` row, and an operator scanning the
+	// list had no way to find the one that had failed.
+	let seeded!: Seeded;
+	const { findByTestId, queryByTestId } = await renderApp({
+		initialPath: '/settings/containers',
+		seed: async () => {
+			seeded = await seedTwoProjects();
+			await addMember(seeded.alpha.id, 'alpha-one', { lastError: 'exited with code 137' });
+			await addMember(seeded.beta.id, 'beta-one');
+		},
+	});
+
+	await findByTestId('containers-list', undefined, { timeout: 20_000 });
+	// Still `Idle` - the mark is what carries the error, not the badge.
+	expect((await findByTestId('container-state-alpha-one')).textContent).toBe('Idle');
+	await findByTestId('container-error-mark-alpha-one');
+	// And a healthy container is not marked, so the mark means something.
+	expect(queryByTestId('container-error-mark-beta-one')).toBeNull();
+});
+
 test('an instance with nothing running says so rather than showing an empty table', async () => {
 	const { findByText } = await renderApp({
 		initialPath: '/settings/containers',

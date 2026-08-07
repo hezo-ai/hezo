@@ -119,10 +119,14 @@ test('blocks the composer and links to the container page when the HQ container 
 	const { findByTestId } = await renderApp({
 		initialPath: '/home',
 		seed: async (ctx) => {
+			// A failed **pool member**, not `container_status = 'error'`: that column
+			// is a leftover of the one-container-per-project model and latches, so
+			// it no longer decides whether anything is wrong. See
+			// `use-container-health.ts`.
 			await ctx.db.query(
-				`UPDATE projects SET container_status = 'error',
-				        container_error = 'pull access denied'
-				 WHERE is_internal = true`,
+				`INSERT INTO container_pool_members (project_id, container_id, state, last_error)
+				 SELECT id, 'failed-hq', 'error'::container_pool_state, 'pull access denied'
+				   FROM projects WHERE is_internal = true`,
 			);
 		},
 	});

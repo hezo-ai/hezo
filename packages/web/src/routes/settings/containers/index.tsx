@@ -1,6 +1,6 @@
 import { isProvisioningPlaceholder } from '@hezo/shared';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
-import { Box, Loader2 } from 'lucide-react';
+import { AlertTriangle, Box, Loader2 } from 'lucide-react';
 import { Badge } from '../../../components/ui/badge';
 import { type Column, DataTable } from '../../../components/ui/data-table';
 import { EmptyState } from '../../../components/ui/empty-state';
@@ -90,13 +90,27 @@ function ContainersList() {
 			key: 'state',
 			header: t('containers.column.state'),
 			width: '110px',
+			// The error rides beside the badge because the badge alone cannot carry
+			// it: `error` state is set only when a provision throws, while an
+			// OOM-killed or vanished container records `last_error` and keeps its
+			// previous state - so the list showed `Idle` for a container whose
+			// detail page was red. Marked here, read in full on the detail page.
 			render: (row) => (
-				<Badge
-					color={CONTAINER_STATE_TONE[row.state]}
-					testId={`container-state-${row.container_id}`}
-				>
-					{t(CONTAINER_STATE_LABEL[row.state])}
-				</Badge>
+				<span className="inline-flex items-center gap-1.5">
+					<Badge
+						color={CONTAINER_STATE_TONE[row.state]}
+						testId={`container-state-${row.container_id}`}
+					>
+						{t(CONTAINER_STATE_LABEL[row.state])}
+					</Badge>
+					{row.last_error ? (
+						<AlertTriangle
+							className="w-3.5 h-3.5 shrink-0 text-danger"
+							aria-label={t('containers.column.hasError')}
+							data-testid={`container-error-mark-${row.container_id}`}
+						/>
+					) : null}
+				</span>
 			),
 		},
 		{

@@ -764,6 +764,60 @@ describe('DaytonaEngine settles a transition before returning', () => {
 		expect((await engine.inspectContainer('sbx-lag'))?.State.Running).toBe(true);
 	});
 
+	it('does not call stop on a sandbox that is already stopped', async () => {
+		// The provider stops sandboxes on its own idle interval, so by the time
+		// Hezo's idle-stop runs the sandbox is routinely already at rest. Asking it
+		// to stop then answers `400 Sandbox is not in a stoppable state`, which
+		// reached the operator as a red banner on a container behaving correctly.
+		const { api, rec } = fakeApi({}, [
+			{ id: 'sbx-down', state: 'stopped', labels: {}, toolboxProxyUrl: 'https://p/toolbox' },
+		]);
+		await new DaytonaEngine(api).stopContainer('sbx-down');
+		expect(rec.stopped).toEqual([]);
+	});
+
+	it('tolerates the provider stopping a sandbox underneath the stop call', async () => {
+		// The same answer, but from the race the check above cannot close: the
+		// provider's auto-stop lands between reading the state and issuing the
+		// stop. Tolerated only because the sandbox is confirmed at rest afterwards.
+		let state = 'started';
+		const { api } = fakeApi(
+			{
+				getSandbox: async () => ({
+					id: 'sbx-race',
+					state,
+					labels: {},
+					toolboxProxyUrl: 'https://p/toolbox',
+				}),
+				stop: async () => {
+					state = 'stopped';
+					throw new DaytonaApiError(
+						'Daytona stop failed (400): Sandbox is not in a stoppable state',
+						400,
+						'',
+					);
+				},
+			},
+			[{ id: 'sbx-race', state: 'started', labels: {}, toolboxProxyUrl: 'https://p/toolbox' }],
+		);
+		await expect(new DaytonaEngine(api).stopContainer('sbx-race')).resolves.toBeUndefined();
+	});
+
+	it('still surfaces a stop rejection when the sandbox is left running', async () => {
+		// The other side of the same catch: a 400 from a sandbox that is still up
+		// is a real failure, and swallowing it would park a running container in
+		// the pool's books as stopped.
+		const { api } = fakeApi(
+			{
+				stop: async () => {
+					throw new DaytonaApiError('Daytona stop failed (400): something else', 400, '');
+				},
+			},
+			[{ id: 'sbx-up2', state: 'started', labels: {}, toolboxProxyUrl: 'https://p/toolbox' }],
+		);
+		await expect(new DaytonaEngine(api).stopContainer('sbx-up2')).rejects.toThrow(/400/);
+	});
+
 	it('does not call start on a sandbox that is already started', async () => {
 		const { api, rec } = fakeApi({}, [
 			{ id: 'sbx-up', state: 'started', labels: {}, toolboxProxyUrl: 'https://p/toolbox' },

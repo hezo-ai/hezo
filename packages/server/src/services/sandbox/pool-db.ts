@@ -387,8 +387,13 @@ const CONTAINER_LISTING_SQL = `
 	       m.last_task_id,
 	       t.identifier AS last_task_identifier,
 	       r.id         AS run_id,
-	       COALESCE(m.last_error, p.container_error) AS last_error,
-	       COALESCE(m.last_logs, p.container_last_logs) AS last_logs,
+	       -- Falls back to the project's own columns only when there is genuinely
+	       -- no member row (a legacy container predating the pool). A COALESCE
+	       -- would instead let a *live* member with no error inherit whatever
+	       -- stale text the project still carried, which is how a healthy Idle
+	       -- container came to show a red error box from a previous failure.
+	       CASE WHEN m.container_id IS NULL THEN p.container_error ELSE m.last_error END AS last_error,
+	       CASE WHEN m.container_id IS NULL THEN p.container_last_logs ELSE m.last_logs END AS last_logs,
 	       m.last_started_at,
 	       m.last_released_at,
 	       m.created_at
@@ -452,7 +457,9 @@ export async function clearProjectContainerIfNamed(
 	containerId: string,
 ): Promise<void> {
 	await db.query(
-		`UPDATE projects SET container_id = NULL, container_status = NULL
+		`UPDATE projects
+		    SET container_id = NULL, container_status = NULL,
+		        container_error = NULL, container_last_logs = NULL
 		  WHERE id = $1 AND container_id = $2`,
 		[projectId, containerId],
 	);
