@@ -355,7 +355,7 @@ export function TaskSidebar({
 							onClick={() => setCloseOpen(true)}
 							data-testid="task-close-button"
 						>
-							Close task
+							Cancel task
 						</Button>
 					)}
 				</div>
@@ -364,9 +364,13 @@ export function TaskSidebar({
 			<ConfirmDialog
 				open={closeOpen}
 				onOpenChange={setCloseOpen}
-				title="Close this task?"
+				title="Cancel this task?"
 				description="The task will be marked as cancelled. Use this for work that's being abandoned rather than completed."
-				confirmLabel="Close task"
+				confirmLabel="Cancel task"
+				// Without this the dismiss button falls back to t('common.cancel') -
+				// "Cancel" sitting next to "Cancel task", where neither button
+				// clearly means "don't do it".
+				cancelLabel="Keep task"
 				variant="danger"
 				loading={updateTask.isPending}
 				onConfirm={async () => {
