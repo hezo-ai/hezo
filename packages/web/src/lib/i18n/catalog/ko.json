@@ -105,6 +105,7 @@
 	"containers.detail.gone": "이 컨테이너는 더 이상 존재하지 않습니다.",
 	"containers.detail.noLogs": "이 컨테이너에서 수집된 출력이 없습니다.",
 	"containers.detail.remove": "제거",
+	"containers.detail.waitingForLogs": "로그를 기다리는 중…",
 	"containers.empty.body": "에이전트 실행이나 어시스턴트에 필요할 때 Hezo가 하나를 시작하고, 유휴 상태가 지속되면 중지합니다.",
 	"containers.empty.title": "실행 중인 컨테이너가 없습니다",
 	"containers.imageBuild.step": "{step}/{total}단계",

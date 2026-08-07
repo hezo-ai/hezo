@@ -105,6 +105,7 @@
 	"containers.detail.gone": "このコンテナはすでに存在しません。",
 	"containers.detail.noLogs": "このコンテナからの出力は記録されていません。",
 	"containers.detail.remove": "削除",
+	"containers.detail.waitingForLogs": "ログを待機しています…",
 	"containers.empty.body": "エージェントの実行やアシスタントが必要としたときに Hezo が起動し、使われないまま時間が経つと停止します。",
 	"containers.empty.title": "実行中のコンテナはありません",
 	"containers.imageBuild.step": "ステップ {step}/{total}",

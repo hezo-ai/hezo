@@ -303,6 +303,44 @@ test('Remove confirms, deletes the container, and drops it from the list', async
 	await waitFor(() => expect(list.queryByText('Alpha')).toBeNull(), { timeout: 15_000 });
 });
 
+test('a container that is still coming up says its log is awaited, not absent', async () => {
+	// The empty log of a container mid-provision and of one that came up silently
+	// are the same zero lines, and the terminal wording described the second - so
+	// a container whose provisioning trace was still being written read as one
+	// that had finished and said nothing.
+	let seeded!: Seeded;
+	const { findByTestId, router } = await renderApp({
+		initialPath: '/settings/containers',
+		seed: async () => {
+			await clearSeededContainers();
+			seeded = await seedTwoProjects();
+			await addMember(seeded.alpha.id, 'alpha-starting', { state: 'creating', lastLogs: null });
+			await addMember(seeded.beta.id, 'beta-stopped', { state: 'suspended', lastLogs: null });
+		},
+	});
+
+	await router.navigate({
+		to: '/settings/containers/$containerId',
+		params: { containerId: 'alpha-starting' },
+	});
+	const starting = await findByTestId('container-detail-logs', undefined, { timeout: 20_000 });
+	expect(starting.textContent).toContain('Waiting for logs');
+
+	// And the terminal wording survives where it is still true, so the condition
+	// says something rather than replacing the message everywhere.
+	await router.navigate({
+		to: '/settings/containers/$containerId',
+		params: { containerId: 'beta-stopped' },
+	});
+	await waitFor(
+		async () => {
+			const stopped = await findByTestId('container-detail-logs');
+			expect(stopped.textContent).toContain('No output was captured');
+		},
+		{ timeout: 20_000 },
+	);
+});
+
 test('removing a container that is serving a run says so before it ends the run', async () => {
 	// The main reason to reach for Remove, and the one case where the generic
 	// copy would understate it: the run dies the same way it would if the

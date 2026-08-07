@@ -105,6 +105,7 @@
 	"containers.detail.gone": "Questo container non esiste più.",
 	"containers.detail.noLogs": "Non è stato acquisito alcun output da questo container.",
 	"containers.detail.remove": "Rimuovi",
+	"containers.detail.waitingForLogs": "In attesa dei log…",
 	"containers.empty.body": "Hezo ne avvia uno appena serve a un’esecuzione di agente o all’assistente, e lo ferma quando resta inattivo.",
 	"containers.empty.title": "Nessun container attivo",
 	"containers.imageBuild.step": "Passaggio {step}/{total}",

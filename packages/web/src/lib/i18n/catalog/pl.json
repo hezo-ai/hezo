@@ -105,6 +105,7 @@
 	"containers.detail.gone": "Ten kontener już nie istnieje.",
 	"containers.detail.noLogs": "Nie zarejestrowano żadnych danych wyjściowych z tego kontenera.",
 	"containers.detail.remove": "Usuń",
+	"containers.detail.waitingForLogs": "Oczekiwanie na dzienniki…",
 	"containers.empty.body": "Hezo uruchamia go, gdy potrzebuje go uruchomienie agenta lub asystent, i zatrzymuje po okresie bezczynności.",
 	"containers.empty.title": "Brak uruchomionych kontenerów",
 	"containers.imageBuild.step": "Krok {step}/{total}",

@@ -105,6 +105,7 @@
 	"containers.detail.gone": "该容器已不存在。",
 	"containers.detail.noLogs": "未捕获到该容器的任何输出。",
 	"containers.detail.remove": "移除",
+	"containers.detail.waitingForLogs": "正在等待日志…",
 	"containers.empty.body": "当智能体运行或助手需要时，Hezo 会启动一个容器，闲置一段时间后再将其停止。",
 	"containers.empty.title": "没有正在运行的容器",
 	"containers.imageBuild.step": "第 {step}/{total} 步",

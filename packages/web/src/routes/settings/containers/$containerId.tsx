@@ -34,9 +34,12 @@ function ContainerDetail() {
 	// operator is sent to during provisioning is not empty, but nothing exists to
 	// stream from or remove.
 	const provisioning = isProvisioningPlaceholder(containerId);
-	// Live only while the container is up; a stopped one has nothing to stream and
-	// falls back to the snapshot captured when it stopped.
-	const streaming = container?.state === 'busy' || container?.state === 'idle';
+	// A container still coming up is the case the log matters most for: the
+	// provisioning trace is written to its stream while it is in that state, and
+	// the server replays what it already holds on subscribe. A stopped one has
+	// nothing to stream and falls back to the snapshot captured when it stopped.
+	const streaming =
+		container?.state === 'creating' || container?.state === 'busy' || container?.state === 'idle';
 	const { lines: liveLines } = useContainerLogs(containerId, streaming ? 'running' : null);
 
 	const snapshot: LogViewerLine[] = (container?.last_logs ?? '')
@@ -153,7 +156,18 @@ function ContainerDetail() {
 
 			<LogViewer
 				lines={lines}
-				emptyState={<span>{t('containers.detail.noLogs')}</span>}
+				emptyState={
+					// A container that is still coming up has not finished producing its
+					// log, so the terminal wording reads as a container that came up
+					// silently - which is the opposite of what is happening.
+					<span>
+						{t(
+							container.state === 'creating'
+								? 'containers.detail.waitingForLogs'
+								: 'containers.detail.noLogs',
+						)}
+					</span>
+				}
 				testId="container-detail-logs"
 			/>
 

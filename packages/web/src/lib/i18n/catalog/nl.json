@@ -105,6 +105,7 @@
 	"containers.detail.gone": "Deze container bestaat niet meer.",
 	"containers.detail.noLogs": "Er is geen uitvoer van deze container vastgelegd.",
 	"containers.detail.remove": "Verwijderen",
+	"containers.detail.waitingForLogs": "Wachten op logs…",
 	"containers.empty.body": "Hezo start er een zodra een agentrun of de assistent er een nodig heeft, en stopt hem weer na inactiviteit.",
 	"containers.empty.title": "Geen containers actief",
 	"containers.imageBuild.step": "Stap {step}/{total}",

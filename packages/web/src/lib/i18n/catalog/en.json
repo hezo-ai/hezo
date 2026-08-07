@@ -105,6 +105,7 @@
 	"containers.detail.gone": "This container no longer exists.",
 	"containers.detail.noLogs": "No output was captured from this container.",
 	"containers.detail.remove": "Remove",
+	"containers.detail.waitingForLogs": "Waiting for logs…",
 	"containers.empty.body": "Hezo starts one whenever an agent run or the assistant needs it, and stops it once it has been idle.",
 	"containers.empty.title": "No containers running",
 	"containers.imageBuild.step": "Step {step}/{total}",

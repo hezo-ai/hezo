@@ -105,6 +105,7 @@
 	"containers.detail.gone": "Den här containern finns inte längre.",
 	"containers.detail.noLogs": "Ingen utdata fångades från den här containern.",
 	"containers.detail.remove": "Ta bort",
+	"containers.detail.waitingForLogs": "Väntar på loggar…",
 	"containers.empty.body": "Hezo startar en så snart en agentkörning eller assistenten behöver den, och stoppar den när den stått oanvänd.",
 	"containers.empty.title": "Inga containrar körs",
 	"containers.imageBuild.step": "Steg {step}/{total}",

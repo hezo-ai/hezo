@@ -105,6 +105,7 @@
 	"containers.detail.gone": "Ce conteneur n’existe plus.",
 	"containers.detail.noLogs": "Aucune sortie n’a été capturée pour ce conteneur.",
 	"containers.detail.remove": "Supprimer",
+	"containers.detail.waitingForLogs": "En attente des journaux…",
 	"containers.empty.body": "Hezo en démarre un dès qu’une exécution d’agent ou l’assistant en a besoin, puis l’arrête après une période d’inactivité.",
 	"containers.empty.title": "Aucun conteneur en cours",
 	"containers.imageBuild.step": "Étape {step}/{total}",
