@@ -69,7 +69,6 @@
 	"progress.tabs.created": "생성",
 	"progress.tabs.closed": "완료",
 	"progress.columns.tabsLabel": "최근 태스크 활동",
-	"progress.columns.allTasks": "모든 태스크",
 	"progress.columns.empty": "아직 아무것도 없습니다.",
 	"progress.columns.awaitingRun": "진행 업데이트 때 Captain이 채웁니다.",
 	"progress.runs.heading": "진행 업데이트 실행",
