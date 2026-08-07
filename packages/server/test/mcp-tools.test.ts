@@ -1703,7 +1703,7 @@ describe('MCP tool: set_agent_team_context and get_agent_team_context', () => {
 });
 
 describe('MCP tool: create_task sub-task depth', () => {
-	it('create_task caps sub-task depth at 2', async () => {
+	it('create_task caps sub-task depth at 3', async () => {
 		const root = (await callToolViaMcp('create_task', {
 			project: projectId,
 			title: 'Depth root',
@@ -1727,13 +1727,21 @@ describe('MCP tool: create_task sub-task depth', () => {
 		})) as { id: string; error?: string };
 		expect(subSub.error).toBeUndefined();
 
+		const subSubSub = (await callToolViaMcp('create_task', {
+			project: projectId,
+			title: 'Depth sub-sub-sub',
+			assignee_id: agentId,
+			parent_task_id: subSub.id,
+		})) as { id: string; error?: string };
+		expect(subSubSub.error).toBeUndefined();
+
 		const tooDeep = (await callToolViaMcp('create_task', {
 			project: projectId,
 			title: 'Depth too deep',
 			assignee_id: agentId,
-			parent_task_id: subSub.id,
+			parent_task_id: subSubSub.id,
 		})) as { error?: string };
-		expect(tooDeep.error).toMatch(/2 levels deep/);
+		expect(tooDeep.error).toMatch(/3 levels deep/);
 	});
 
 	it('create_task resolves a parent passed by identifier (the agent-facing form)', async () => {
@@ -1859,13 +1867,14 @@ describe('MCP tool: update_task re-parenting', () => {
 		await newTask('MCP depth mover child', mover.id);
 		const root = await newTask('MCP depth root');
 		const mid = await newTask('MCP depth mid', root.id);
+		const deep = await newTask('MCP depth deep', mid.id);
 
 		const result = (await callToolViaMcp('update_task', {
 			project: projectId,
 			task_id: mover.identifier,
-			parent_task_id: mid.identifier,
+			parent_task_id: deep.identifier,
 		})) as { error?: string };
-		expect(result.error).toMatch(/2 levels deep/);
+		expect(result.error).toMatch(/3 levels deep/);
 	});
 
 	it('rejects an open task under a completed parent', async () => {

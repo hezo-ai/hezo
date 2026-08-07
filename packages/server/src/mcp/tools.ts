@@ -1391,7 +1391,7 @@ export function registerTools(
 	tool(
 		server,
 		'create_task',
-		"Create a new task. Use parent_task_id for sub-tasks - prefer this over a top-level ticket whenever the new work is part of the ticket you are on. Sub-tasks themselves can have sub-tasks, but no deeper (depth is capped at 2). Use assignee_slug as alternative to assignee_id. As an agent caller, you may only assign to yourself or to your direct subordinates - to request work from anyone else (peers, your manager, or agents elsewhere in the org), use create_comment with @<agent-slug> on a relevant ticket instead. Use blocked_by_task_ids to declare prerequisites - the assignee will not be woken on this ticket until every blocker reaches a terminal status (done, cancelled). When splitting work into sequential phases, prefer create_tasks and chain the items with '#<index>' blockers instead of filing them unordered. In title/description, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.",
+		"Create a new task. Use parent_task_id for sub-tasks - prefer this over a top-level ticket whenever the new work is part of the ticket you are on. Sub-tasks themselves can have sub-tasks, and those one further level, but no deeper (depth is capped at 3). Use assignee_slug as alternative to assignee_id. As an agent caller, you may only assign to yourself or to your direct subordinates - to request work from anyone else (peers, your manager, or agents elsewhere in the org), use create_comment with @<agent-slug> on a relevant ticket instead. Use blocked_by_task_ids to declare prerequisites - the assignee will not be woken on this ticket until every blocker reaches a terminal status (done, cancelled). When splitting work into sequential phases, prefer create_tasks and chain the items with '#<index>' blockers instead of filing them unordered. In title/description, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.",
 		{
 			project: projectArg(),
 			title: z.string().describe('Task title'),
@@ -1406,7 +1406,7 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					'Parent task to nest this under as a sub-task - a task identifier (e.g. "BE-2") or UUID. Sub-tasks can themselves have sub-tasks, but no deeper - depth is capped at 2.',
+					'Parent task to nest this under as a sub-task - a task identifier (e.g. "BE-2") or UUID. Sub-tasks can themselves have sub-tasks, and those one further level, but no deeper - depth is capped at 3.',
 				),
 			runtime_type: z
 				.string()
@@ -1714,7 +1714,7 @@ export function registerTools(
 							.string()
 							.optional()
 							.describe(
-								'Parent task to nest this under as a sub-task - a task identifier (e.g. "BE-2"), UUID, or a zero-based index token referencing an earlier item in this same call (e.g. "#0" = first item). Sub-tasks can themselves have sub-tasks, but no deeper - depth is capped at 2.',
+								'Parent task to nest this under as a sub-task - a task identifier (e.g. "BE-2"), UUID, or a zero-based index token referencing an earlier item in this same call (e.g. "#0" = first item). Sub-tasks can themselves have sub-tasks, and those one further level, but no deeper - depth is capped at 3.',
 							),
 						runtime_type: z
 							.string()
@@ -1810,7 +1810,7 @@ export function registerTools(
 				.nullable()
 				.optional()
 				.describe(
-					'Move this task under a different parent - a task identifier (e.g. "BE-2") or UUID. Pass an empty string or null to promote it to a top-level task. Omit to leave the parent unchanged. The parent must be in the same project, cannot be the task itself or one of its own sub-tasks, and the whole sub-tree being moved must still fit within the depth cap of 2. An open task cannot be nested under a parent that is already done or cancelled.',
+					'Move this task under a different parent - a task identifier (e.g. "BE-2") or UUID. Pass an empty string or null to promote it to a top-level task. Omit to leave the parent unchanged. The parent must be in the same project, cannot be the task itself or one of its own sub-tasks, and the whole sub-tree being moved must still fit within the depth cap of 3. An open task cannot be nested under a parent that is already done or cancelled.',
 				),
 		},
 		async (args, db, auth) => {
