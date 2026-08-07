@@ -34,6 +34,8 @@
 	"common.delete": "삭제",
 	"common.retry": "다시 시도",
 	"common.back": "뒤로",
+	"common.copy": "복사",
+	"common.copied": "복사됨",
 	"nav.home": "홈",
 	"nav.settings": "설정",
 	"nav.projects": "프로젝트",
