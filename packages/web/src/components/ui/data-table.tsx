@@ -36,10 +36,15 @@ interface DataTableProps<T> {
 	focusedRowId?: string;
 }
 
+// One entry per legal sub-task level (MAX_SUB_TASK_DEPTH), so every level reads
+// as distinct from its parent rather than two sharing one indent. Anything
+// deeper than the cap clamps to the last entry instead of losing its indent.
 const depthIndentClass: Record<number, string> = {
 	1: 'pl-5 sm:pl-6',
 	2: 'pl-9 sm:pl-10',
+	3: 'pl-13 sm:pl-14',
 };
+const deepestIndentClass = depthIndentClass[3];
 
 export function DataTable<T>({
 	columns,
@@ -99,7 +104,7 @@ export function DataTable<T>({
 									{columns.map((col) => {
 										const indent =
 											indentColumnKey === col.key && depth > 0
-												? (depthIndentClass[depth] ?? depthIndentClass[2])
+												? (depthIndentClass[depth] ?? deepestIndentClass)
 												: '';
 										return (
 											<td
