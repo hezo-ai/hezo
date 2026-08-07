@@ -69,7 +69,6 @@
 	"progress.tabs.created": "作成",
 	"progress.tabs.closed": "完了",
 	"progress.columns.tabsLabel": "最近のタスクの動き",
-	"progress.columns.allTasks": "すべてのタスク",
 	"progress.columns.empty": "まだ何もありません。",
 	"progress.columns.awaitingRun": "進捗更新の際に Captain が記入します。",
 	"progress.runs.heading": "進捗更新の実行",

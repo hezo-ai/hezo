@@ -69,7 +69,6 @@
 	"progress.tabs.created": "Aangemaakt",
 	"progress.tabs.closed": "Afgerond",
 	"progress.columns.tabsLabel": "Recente taakactiviteit",
-	"progress.columns.allTasks": "Alle taken",
 	"progress.columns.empty": "Nog niets.",
 	"progress.columns.awaitingRun": "De Captain vult dit in tijdens een voortgangsupdate.",
 	"progress.runs.heading": "Voortgangsupdate-runs",

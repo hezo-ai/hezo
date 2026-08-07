@@ -69,7 +69,6 @@
 	"progress.tabs.created": "Erstellt",
 	"progress.tabs.closed": "Abgeschlossen",
 	"progress.columns.tabsLabel": "Zuletzt bearbeitete Aufgaben",
-	"progress.columns.allTasks": "Alle Aufgaben",
 	"progress.columns.empty": "Noch nichts vorhanden.",
 	"progress.columns.awaitingRun": "Der Captain füllt dies bei einer Fortschrittsaktualisierung aus.",
 	"progress.runs.heading": "Fortschrittsaktualisierungen",
