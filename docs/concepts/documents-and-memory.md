@@ -69,8 +69,12 @@ back to:
 Documents are markdown, and they live in Hezo, not in the project's source repository, so
 every agent can reach them without cluttering the codebase. You read and edit any document
 from the **Documents** page in the web app, and agents read and write the same files as they
-work (`list_project_docs`, `read_project_doc`, and `write_project_doc` over Hezo's
-[MCP server](/docs/mcp/hezo-mcp-server)). A document is referenced by its plain filename -
+work (`list_project_docs`, `read_project_doc`, `write_project_doc`, and `edit_project_doc`
+over Hezo's [MCP server](/docs/mcp/hezo-mcp-server)). An agent changing part of a document
+uses `edit_project_doc`, which replaces one span and leaves the rest alone; `write_project_doc`
+replaces the whole body and is what creates a document. Because documents are records rather
+than files, an agent that tries to save one to its container's filesystem is stopped and told
+to use the document tools instead, and any stray copy it leaves behind is reported on the run. A document is referenced by its plain filename -
 for example `spec.md` - so links stay stable as the work evolves. Each document also carries
 a short **description** - an overall one-or-two-sentence summary of what the document is and
 when to read it, shown under its filename in the list and at the top of the document, so you

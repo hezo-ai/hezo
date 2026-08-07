@@ -1,5 +1,10 @@
 import { join } from 'node:path';
 import { AgentRuntime } from '@hezo/shared';
+import {
+	buildDocWriteGuardScript,
+	DOC_WRITE_GUARD_FILENAME,
+	DOC_WRITE_GUARD_MATCHER,
+} from '../doc-write-guard';
 import { buildJudgeScriptForRuntime } from '../stop-hook-prompt';
 import { bearerEnvVarName, escapeTomlBasicString } from './toml';
 import type {
@@ -62,6 +67,11 @@ const JUDGE_SCRIPT_BASENAME = 'stop-hook-judge.mjs';
 // breaks every run on this runtime, not just the hook.
 const STOP_HOOK_TIMEOUT_SEC = 30;
 
+// The doc-write guard is a string comparison plus one `git ls-files`, so it needs
+// far less than the judge's budget; a short timeout keeps a wedged git from
+// stalling every file write.
+const DOC_WRITE_GUARD_TIMEOUT_SEC = 10;
+
 function toolFilter(d: { enabledTools?: readonly string[]; disabledTools?: readonly string[] }): {
 	enabledTools?: string[];
 	disabledTools?: string[];
@@ -111,8 +121,11 @@ function buildStdioEntry(d: McpStdioDescriptor): KimiStdioEntry {
  * other runtime: the container is an ephemeral, egress-constrained sandbox in
  * which the agent already executes arbitrary code.
  */
-function renderConfigToml(judgeScriptContainerPath: string): string {
-	return [
+function renderConfigToml(
+	judgeScriptContainerPath: string,
+	docWriteGuardContainerPath: string | null,
+): string {
+	const lines = [
 		'[permission.rules]',
 		'default = "allow"',
 		'',
@@ -121,7 +134,22 @@ function renderConfigToml(judgeScriptContainerPath: string): string {
 		`command = ${escapeTomlBasicString(`node ${judgeScriptContainerPath}`)}`,
 		`timeout = ${STOP_HOOK_TIMEOUT_SEC}`,
 		'',
-	].join('\n');
+	];
+	// PreToolUse is one of Kimi's three blockable events. Emitted only when the
+	// project has docs to guard, so a run without them keeps a byte-identical
+	// config. Exactly the four permitted keys, in the same order as the Stop
+	// entry — any fifth key makes the CLI reject the whole config.
+	if (docWriteGuardContainerPath) {
+		lines.push(
+			'[[hooks]]',
+			'event = "PreToolUse"',
+			`matcher = ${escapeTomlBasicString(DOC_WRITE_GUARD_MATCHER)}`,
+			`command = ${escapeTomlBasicString(`node ${docWriteGuardContainerPath}`)}`,
+			`timeout = ${DOC_WRITE_GUARD_TIMEOUT_SEC}`,
+			'',
+		);
+	}
+	return lines.join('\n');
 }
 
 export const kimiAdapter: RuntimeMcpAdapter = {
@@ -138,11 +166,15 @@ export const kimiAdapter: RuntimeMcpAdapter = {
 		const judgeScriptHostPath = join(ctx.hostHomeDir, JUDGE_SCRIPT_BASENAME);
 		const judgeScriptContainerPath = join(ctx.containerHomeDir, JUDGE_SCRIPT_BASENAME);
 
+		const docSlugs = ctx.projectDocSlugs ?? [];
+		const guardContainerPath =
+			docSlugs.length > 0 ? join(ctx.containerHomeDir, DOC_WRITE_GUARD_FILENAME) : null;
+
 		const files: McpInjectionFile[] = [
 			{
 				hostPath: join(ctx.hostHomeDir, 'config.toml'),
 				mode: 0o600,
-				contents: renderConfigToml(judgeScriptContainerPath),
+				contents: renderConfigToml(judgeScriptContainerPath, guardContainerPath),
 			},
 			{
 				hostPath: judgeScriptHostPath,
@@ -153,6 +185,13 @@ export const kimiAdapter: RuntimeMcpAdapter = {
 				contents: buildJudgeScriptForRuntime(AgentRuntime.Kimi) ?? '',
 			},
 		];
+		if (guardContainerPath) {
+			files.push({
+				hostPath: join(ctx.hostHomeDir, DOC_WRITE_GUARD_FILENAME),
+				mode: 0o700,
+				contents: buildDocWriteGuardScript(docSlugs),
+			});
+		}
 
 		const envEntries: string[] = [];
 		for (const d of descriptors) {
