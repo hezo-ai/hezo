@@ -27,6 +27,8 @@
 	"common.back": "Back",
 	"common.cancel": "Cancel",
 	"common.close": "Close",
+	"common.copied": "Copied",
+	"common.copy": "Copy",
 	"common.delete": "Delete",
 	"common.edit": "Edit",
 	"common.loading": "Loading...",

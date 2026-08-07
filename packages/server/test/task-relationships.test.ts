@@ -26,7 +26,17 @@ let otherTeamTaskId: string;
 // ever fire, and why it is worth keeping.
 let strayProjectTaskId: string;
 
-/** Tree under test:  A -> B -> C,  plus roots D and E. */
+/**
+ * Trees under test:
+ *
+ *   A            D (root, leaf)      F              <- a chain at full depth
+ *   └─ B         E (root, leaf)      └─ G
+ *      └─ C                             └─ H
+ *                                          └─ I     (depth 3 = the cap)
+ *
+ * A/B/C cover the shallow rows of the legality table; F/G/H/I exist so the
+ * boundary rows have a destination that actually sits at the cap.
+ */
 const ids: Record<string, string> = {};
 
 // Project creation seeds its own planning task, so start well clear of it:
@@ -90,14 +100,15 @@ beforeAll(async () => {
 	});
 	otherProjectId = (await otherProjectRes.json()).data.id;
 
-	//  A            D (root, leaf)
-	//  └─ B         E (root, leaf)
-	//     └─ C
 	await seedTask({ key: 'A' });
 	await seedTask({ key: 'B', parent: 'A' });
 	await seedTask({ key: 'C', parent: 'B' });
 	await seedTask({ key: 'D' });
 	await seedTask({ key: 'E' });
+	await seedTask({ key: 'F' });
+	await seedTask({ key: 'G', parent: 'F' });
+	await seedTask({ key: 'H', parent: 'G' });
+	await seedTask({ key: 'I', parent: 'H' });
 	await seedTask({ key: 'DONE_ROOT', status: TaskStatus.Done });
 	await seedTask({ key: 'CANCELLED_ROOT', status: TaskStatus.Cancelled });
 	await seedTask({ key: 'CLOSED_MOVER', status: TaskStatus.Done });
@@ -117,14 +128,17 @@ afterAll(async () => {
 });
 
 describe('measureParentPlacement', () => {
-	it('measures depth of a root, a child and a grandchild', async () => {
+	it('measures depth of a root, a child, a grandchild and a great-grandchild', async () => {
 		const root = await measureParentPlacement(db, teamId, ids.A, null);
 		const child = await measureParentPlacement(db, teamId, ids.B, null);
 		const grandchild = await measureParentPlacement(db, teamId, ids.C, null);
+		// At the cap, so the walk has to reach it rather than clamp one short.
+		const greatGrandchild = await measureParentPlacement(db, teamId, ids.I, null);
 
 		expect(root.parentDepth).toBe(0);
 		expect(child.parentDepth).toBe(1);
 		expect(grandchild.parentDepth).toBe(2);
+		expect(greatGrandchild.parentDepth).toBe(3);
 	});
 
 	it('measures height of a leaf, a parent and a grandparent', async () => {
@@ -196,8 +210,12 @@ describe('assertChildDepthAllowed (create path, unchanged behaviour)', () => {
 		expect(await assertChildDepthAllowed(db, teamId, ids.B)).toEqual({ ok: true });
 	});
 
-	it('rejects a grandchild as parent', async () => {
-		const check = await assertChildDepthAllowed(db, teamId, ids.C);
+	it('allows a grandchild as parent', async () => {
+		expect(await assertChildDepthAllowed(db, teamId, ids.C)).toEqual({ ok: true });
+	});
+
+	it('rejects a great-grandchild as parent', async () => {
+		const check = await assertChildDepthAllowed(db, teamId, ids.I);
 		expect(check).toEqual({ ok: false, message: SUB_TASK_DEPTH_ERROR });
 	});
 
@@ -319,8 +337,13 @@ describe('resolveParentAssignment: depth with the moving sub-tree', () => {
 		expect(result).toMatchObject({ ok: true, changed: true });
 	});
 
-	it('rejects a leaf onto a grandchild (2 + 1 + 0)', async () => {
+	it('allows a leaf onto a grandchild (2 + 1 + 0)', async () => {
 		const result = await resolveParentAssignment(db, teamId, subject('E'), ids.C);
+		expect(result).toMatchObject({ ok: true, changed: true });
+	});
+
+	it('rejects a leaf onto a great-grandchild (3 + 1 + 0)', async () => {
+		const result = await resolveParentAssignment(db, teamId, subject('E'), ids.I);
 		expect(result).toMatchObject({
 			ok: false,
 			code: 'INVALID_REQUEST',
@@ -338,15 +361,22 @@ describe('resolveParentAssignment: depth with the moving sub-tree', () => {
 		expect(result).toMatchObject({ ok: true, changed: true });
 	});
 
-	it('rejects a task with children onto a child (1 + 1 + 1)', async () => {
-		// D gains a child so it becomes a legal depth-1 destination that still
-		// cannot take a sub-tree.
-		await seedTask({ key: 'D_CHILD', parent: 'D' });
+	it('allows a task with children onto a child (1 + 1 + 1)', async () => {
 		const result = await resolveParentAssignment(
 			db,
 			teamId,
 			{ ...subject('B'), currentParentTaskId: ids.A },
-			ids.D_CHILD,
+			ids.G,
+		);
+		expect(result).toMatchObject({ ok: true, changed: true });
+	});
+
+	it('rejects a task with children onto a grandchild (2 + 1 + 1)', async () => {
+		const result = await resolveParentAssignment(
+			db,
+			teamId,
+			{ ...subject('B'), currentParentTaskId: ids.A },
+			ids.H,
 		);
 		expect(result).toMatchObject({
 			ok: false,
@@ -355,8 +385,13 @@ describe('resolveParentAssignment: depth with the moving sub-tree', () => {
 		});
 	});
 
-	it('rejects a task with grandchildren onto any parent', async () => {
+	it('allows a task with grandchildren onto a root (0 + 1 + 2)', async () => {
 		const result = await resolveParentAssignment(db, teamId, subject('A'), ids.D);
+		expect(result).toMatchObject({ ok: true, changed: true });
+	});
+
+	it('rejects a task with grandchildren onto a child (1 + 1 + 2)', async () => {
+		const result = await resolveParentAssignment(db, teamId, subject('A'), ids.G);
 		expect(result).toMatchObject({
 			ok: false,
 			code: 'INVALID_REQUEST',

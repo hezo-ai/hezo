@@ -25,9 +25,9 @@ async function createSubTask(
 	return ((await res.json()) as { data: SeededSubTask }).data;
 }
 
-test('UI surfaces the depth-cap error when creating a sub-task under a depth-2 ticket', async () => {
+test('UI surfaces the depth-cap error when creating a sub-task under a depth-3 ticket', async () => {
 	let projectSlug = '';
-	let subSubIdentifier = '';
+	let deepestIdentifier = '';
 
 	const { findByRole, findByTestId, findByLabelText, findByText, user, router } = await renderApp({
 		initialPath: '/',
@@ -47,8 +47,12 @@ test('UI surfaces the depth-cap error when creating a sub-task under a depth-2 t
 				title: 'Depth Sub-Sub',
 				assignee_id: engineer.id,
 			});
+			const deepest = await createSubTask(ws, subSub.id, {
+				title: 'Depth Sub-Sub-Sub',
+				assignee_id: engineer.id,
+			});
 			projectSlug = project.slug;
-			subSubIdentifier = subSub.identifier;
+			deepestIdentifier = deepest.identifier;
 		},
 	});
 
@@ -56,11 +60,11 @@ test('UI surfaces the depth-cap error when creating a sub-task under a depth-2 t
 		to: '/projects/$projectId/tasks/$taskId',
 		params: {
 			projectId: projectSlug,
-			taskId: subSubIdentifier.toLowerCase(),
+			taskId: deepestIdentifier.toLowerCase(),
 		},
 	});
 
-	await findByRole('heading', { name: 'Depth Sub-Sub' });
+	await findByRole('heading', { name: 'Depth Sub-Sub-Sub' });
 
 	// The inline quick-add is gone — "+ Add" now opens the tailored create-task
 	// dialog, which requires an assignee, so we must pick one to enable submit.
@@ -91,7 +95,7 @@ test('UI surfaces the depth-cap error when creating a sub-task under a depth-2 t
 
 	// The server checks sub-task depth (services/tasks.ts) before the assignee,
 	// so it rejects with the depth-cap error and the dialog stays open to show it.
-	expect(await findByText(/2 levels deep/)).toBeTruthy();
+	expect(await findByText(/3 levels deep/)).toBeTruthy();
 });
 
 test('canonical task URL is project-scoped; UUID and wrong-project forms redirect', async () => {

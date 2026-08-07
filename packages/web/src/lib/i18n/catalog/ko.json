@@ -27,6 +27,8 @@
 	"common.back": "뒤로",
 	"common.cancel": "취소",
 	"common.close": "닫기",
+	"common.copied": "복사됨",
+	"common.copy": "복사",
 	"common.delete": "삭제",
 	"common.edit": "편집",
 	"common.loading": "불러오는 중...",

@@ -878,6 +878,42 @@ export async function getWorktreeHead(
 }
 
 /**
+ * Repo-relative paths `git status --porcelain` reports as added or modified in
+ * this worktree, for a caller that needs to know *what* changed rather than
+ * merely *whether* anything did.
+ *
+ * Porcelain v1 lines are `XY <path>`, with `XY` the staged/unstaged status pair
+ * and a rename rendered as `orig -> new` (the post-rename path is the one that
+ * exists on disk, so that is the one reported). Deletions are skipped: this
+ * exists to find files a run created, and a deleted path has no content to
+ * inspect. Never throws - an unreadable worktree yields an empty list, because
+ * every caller is advisory.
+ */
+export async function worktreeChangedPaths(
+	executor: GitExecutor,
+	wt: WorktreeLoc,
+): Promise<string[]> {
+	if (!(await wt.files.exists('.git'))) return [];
+	const status = await executor
+		.exec(['status', '--porcelain'], { cwd: wt.containerPath, timeout: 10_000 })
+		.catch(() => null);
+	if (!status || status.exitCode !== 0) return [];
+	const paths: string[] = [];
+	for (const line of status.stdout.split('\n')) {
+		if (line.length < 4) continue;
+		const code = line.slice(0, 2);
+		if (code.includes('D')) continue;
+		const raw = line.slice(3).trim();
+		const arrow = raw.lastIndexOf(' -> ');
+		const path = arrow === -1 ? raw : raw.slice(arrow + 4);
+		// Porcelain quotes paths containing unusual characters; strip the quotes
+		// rather than trying to unescape, since callers match on the basename.
+		paths.push(path.replace(/^"|"$/g, ''));
+	}
+	return paths;
+}
+
+/**
  * Whether a run changed code in this worktree: any uncommitted/untracked change
  * (`git status --porcelain` non-empty), or the branch tip advanced past the
  * commit captured before the run.
@@ -895,6 +931,28 @@ export async function worktreeHasChanges(
 	if (status.exitCode === 0 && status.stdout.trim().length > 0) return true;
 	const headAfter = await getWorktreeHead(executor, wt);
 	return headAfter !== null && headBefore !== null && headAfter !== headBefore;
+}
+
+/**
+ * Whether `path` is tracked by git in this worktree.
+ *
+ * The doc-write guard uses this to tell a genuine repo file from a stray copy
+ * of a project doc: a repo that legitimately contains its own `spec.md` has it
+ * tracked, so writing to it must stay allowed.
+ */
+export async function worktreeTracksPath(
+	executor: GitExecutor,
+	wt: WorktreeLoc,
+	path: string,
+): Promise<boolean> {
+	if (!(await wt.files.exists('.git'))) return false;
+	const r = await executor
+		.exec(['ls-files', '--error-unmatch', '--', path], {
+			cwd: wt.containerPath,
+			timeout: 10_000,
+		})
+		.catch(() => null);
+	return r !== null && r.exitCode === 0;
 }
 
 /**

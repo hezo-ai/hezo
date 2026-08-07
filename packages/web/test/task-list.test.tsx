@@ -665,3 +665,59 @@ test('sub-tasks render indented beneath their parent in in progress and to do se
 	expect(backlogChildIdx).toBeGreaterThan(backlogParentIdx);
 	expect(todoBodyRows[backlogChildIdx]?.getAttribute('data-depth')).toBe('1');
 });
+
+// The nesting cap is 3, so the deepest legal sub-task sits three levels below its
+// root. Each level needs its own indent class: falling back to the parent's makes
+// the two deepest levels read as siblings.
+test('a full-depth sub-task chain indents every level distinctly', async () => {
+	let projectSlug = '';
+
+	const { findByTestId, findByText, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Deep Hierarchy Project' });
+			projectSlug = project.slug;
+			const agentId = ws.agents[0].id;
+
+			const root = await seedTask(ws, project, { title: 'Deep root', assignee_id: agentId });
+			const level1 = await seedSubTask(ws, project, root.id, 'Deep level one', agentId);
+			const level2 = await seedSubTask(ws, project, level1.id, 'Deep level two', agentId);
+			await seedSubTask(ws, project, level2.id, 'Deep level three', agentId);
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks',
+		params: { projectId: projectSlug },
+	});
+
+	await findByText('Deep root', undefined, { timeout: 10_000 });
+	await findByText('Deep level three');
+
+	const section = await findByTestId('task-list-main');
+	const rows = Array.from(section.querySelectorAll('tbody tr'));
+	const rowFor = (title: string) => {
+		const row = rows.find((r) => r.textContent?.includes(title));
+		if (!row) throw new Error(`no row for ${title}`);
+		return row;
+	};
+
+	expect(rowFor('Deep root').getAttribute('data-depth')).toBeNull();
+	expect(rowFor('Deep level one').getAttribute('data-depth')).toBe('1');
+	expect(rowFor('Deep level two').getAttribute('data-depth')).toBe('2');
+	expect(rowFor('Deep level three').getAttribute('data-depth')).toBe('3');
+
+	// Each level's title cell carries a distinct left padding, so the hierarchy is
+	// readable rather than two levels sharing one indent.
+	// The indent lands on the title column's cell, which is not necessarily the
+	// first one, so scan the row for whichever cell carries a pl-* class.
+	const indentOf = (title: string) => {
+		const cells = Array.from(rowFor(title).querySelectorAll('td'));
+		const match = cells.map((c) => c.className.match(/pl-\d+/)?.[0]).find(Boolean);
+		if (!match) throw new Error(`no indent class on the row for ${title}`);
+		return match;
+	};
+	const indents = ['Deep level one', 'Deep level two', 'Deep level three'].map(indentOf);
+	expect(new Set(indents).size).toBe(3);
+});

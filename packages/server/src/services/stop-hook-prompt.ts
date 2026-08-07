@@ -33,6 +33,7 @@ import {
 	claudeCodeProviderUsesCustomEndpoint,
 	KIMI_DEFAULT_MODEL,
 } from '@hezo/shared';
+import { DOC_WRITE_GUARD_MATCHER } from './doc-write-guard';
 
 export const STOP_HOOK_JUDGE_MODEL_ANTHROPIC = 'claude-sonnet-4-6';
 export const STOP_HOOK_JUDGE_MODEL_DEEPSEEK = 'deepseek-v4-pro';
@@ -142,13 +143,36 @@ interface ClaudeStopHookEntry {
 	statusMessage: string;
 }
 
+/**
+ * A hook that shells out rather than asking a sub-LLM. Used for the doc-write
+ * guard, where the decision is a deterministic path match and an LLM would only
+ * add latency, cost and the chance of a wrong answer.
+ */
+interface ClaudeCommandHookEntry {
+	type: 'command';
+	command: string;
+	timeout: number;
+}
+
 interface ClaudeStopHookMatcherGroup {
 	hooks: ClaudeStopHookEntry[];
+}
+
+interface ClaudeCommandHookMatcherGroup {
+	/** Tool-name pattern this group applies to, e.g. `Write|Edit`. */
+	matcher: string;
+	hooks: ClaudeCommandHookEntry[];
 }
 
 export interface ClaudeCodeSettings {
 	hooks: {
 		Stop: ClaudeStopHookMatcherGroup[];
+		/**
+		 * Present only when the run has project docs to guard. Deterministic and
+		 * blocking: it refuses a Write/Edit aimed at a path that shadows a project
+		 * doc, which is the one moment the mistake is still cheap to undo.
+		 */
+		PreToolUse?: ClaudeCommandHookMatcherGroup[];
 	};
 	/**
 	 * Tool-permission rules. Only ever carries `deny` entries for MCP tools a
@@ -172,11 +196,34 @@ export function buildClaudeCodeSettings(
 	 * rather than passing the allowlist through.
 	 */
 	deniedTools?: readonly string[],
+	/**
+	 * Container path of the per-run doc-write guard script. Omitted when the
+	 * project has no docs to guard, in which case no PreToolUse hook is emitted
+	 * and the settings file is byte-identical to what it was before the guard
+	 * existed.
+	 */
+	docWriteGuardCommand?: string | null,
 ): ClaudeCodeSettings {
 	const model = judgeModelForProvider(provider, runModel);
 	return {
 		...(deniedTools && deniedTools.length > 0 ? { permissions: { deny: [...deniedTools] } } : {}),
 		hooks: {
+			...(docWriteGuardCommand
+				? {
+						PreToolUse: [
+							{
+								matcher: DOC_WRITE_GUARD_MATCHER,
+								hooks: [
+									{
+										type: 'command' as const,
+										command: docWriteGuardCommand,
+										timeout: 10,
+									},
+								],
+							},
+						],
+					}
+				: {}),
 			Stop: [
 				{
 					hooks: [

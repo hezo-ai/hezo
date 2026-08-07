@@ -8,7 +8,7 @@ import {
 import type { Db } from '../db/database';
 import { resolveTaskId } from './resolve';
 
-export const MAX_SUB_TASK_DEPTH = 2;
+export const MAX_SUB_TASK_DEPTH = 3;
 
 export const SUB_TASK_DEPTH_ERROR = `Sub-tasks cannot be nested more than ${MAX_SUB_TASK_DEPTH} levels deep`;
 

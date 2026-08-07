@@ -27,6 +27,8 @@
 	"common.back": "戻る",
 	"common.cancel": "キャンセル",
 	"common.close": "閉じる",
+	"common.copied": "コピーしました",
+	"common.copy": "コピー",
 	"common.delete": "削除",
 	"common.edit": "編集",
 	"common.loading": "読み込んでいます...",

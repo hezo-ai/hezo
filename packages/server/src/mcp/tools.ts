@@ -94,6 +94,7 @@ import {
 import { assertRunTaskScope } from '../lib/run-scope';
 import { deriveSkillSummary } from '../lib/skill-summary';
 import { isUniqueViolation } from '../lib/sql';
+import { applyStringEdit } from '../lib/string-edit';
 import {
 	assertChildrenAllClosed,
 	assertNoOutstandingActivity,
@@ -275,11 +276,13 @@ const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'set_agent_team_contexts',
 	'set_agent_reports_to',
 	'write_project_asset',
+	'edit_project_asset',
 	'move_project_asset',
 	'copy_project_asset',
 	'archive_project_asset',
 	'unarchive_project_asset',
 	'write_project_doc',
+	'edit_project_doc',
 	'archive_project_doc',
 	'unarchive_project_doc',
 	'update_chat_memory',
@@ -755,10 +758,34 @@ const DEFAULT_TASK_EXCERPT_CHARS = 500;
  * Default cap for a comment's text in a listing. Higher than the task default:
  * a thread is read to follow a conversation, so an over-tight excerpt costs a
  * round trip per comment, which is the failure this whole convention is here to
- * avoid. The full text is one `get_task`-style read away via `before`/`cursor`
- * on a narrower page.
+ * avoid. The full text is one `get_comment` read away, and every truncated row
+ * carries a `text_paging_hint` naming that call.
+ *
+ * This comment used to claim the full text was reachable "via `before`/`cursor`
+ * on a narrower page". It never was: neither parameter widens the excerpt, so
+ * the only escape was guessing an `excerpt_chars` above `text_length`. Keep any
+ * recovery path named here true - `get_comment` exists precisely because two
+ * surfaces promised a single-item read that did not.
  */
 const DEFAULT_COMMENT_EXCERPT_CHARS = 2_000;
+
+/**
+ * Warn when a caller supplied a `changelog` that had nowhere to land.
+ *
+ * A revision captures the content as it was BEFORE a change, so only a
+ * content-changing write records one: a doc's creation and a description-only
+ * update do not. The changelog used to be discarded in silence, which is worse
+ * than refusing it - the agent goes on believing its note is in the document's
+ * history, and so does the next reader who does not find it there.
+ */
+function changelogNotRecordedWarning(changelog: unknown, recorded: boolean): { warning?: string } {
+	if (recorded) return {};
+	if (typeof changelog !== 'string' || changelog.trim() === '') return {};
+	return {
+		warning:
+			"The `changelog` was not recorded: a revision captures the content as it was before a change, so only a content-changing write gets one - a doc's first write and a description-only update do not. Nothing else about this write was affected.",
+	};
+}
 
 // Inline-image cap for read_project_asset. A raster asset at or under this many
 // bytes is returned as an actual MCP image content block (base64) so a
@@ -785,20 +812,47 @@ export interface Excerpt {
 }
 
 /**
- * Excerpt the leading paragraph of `text`, capped at `maxChars` with a
- * word-boundary cut. Returns `null` excerpt for null/empty input.
+ * How much of the budget a boundary must preserve to be worth cutting at.
+ * Below this the boundary is ignored and the excerpt runs to the full budget,
+ * so a tidy cut never costs more than half the text the caller asked for.
+ */
+const EXCERPT_BOUNDARY_FLOOR = 0.5;
+
+/** Index of the last paragraph break in `s`, or -1 when there is none. */
+function lastParagraphBreak(s: string): number {
+	const re = /\n[ \t]*\n/g;
+	let idx = -1;
+	for (let m = re.exec(s); m !== null; m = re.exec(s)) idx = m.index;
+	return idx;
+}
+
+/**
+ * Excerpt the leading `maxChars` of `text`, cut at a paragraph break where one
+ * is available and at a word boundary otherwise.
+ *
+ * `maxChars` is the budget to fill, NOT a ceiling applied after some other rule.
+ * An earlier version cut at the FIRST paragraph break and only then applied
+ * `maxChars` (it even sliced `firstPara` rather than `text`, so it could never
+ * look past that break), which meant a 9400-character comment whose opening
+ * line was followed by a blank line came back as 73 characters - grammatically
+ * complete prose that read as a finished short comment rather than an excerpt,
+ * and was acted on as one: an agent concluded a review had never been submitted
+ * and asked for it to be redone. A boundary is now preferred only when it keeps
+ * most of the budget; otherwise the excerpt runs to the budget.
+ *
+ * Returns `null` excerpt for null input.
  */
 export function excerpt(text: string | null | undefined, maxChars: number): Excerpt {
 	if (text == null) return { excerpt: null, truncated: false, length: 0 };
 	const length = text.length;
 	if (length === 0) return { excerpt: '', truncated: false, length: 0 };
-	const firstPara = text.split(/\n\s*\n/, 1)[0] ?? text;
-	if (firstPara.length <= maxChars) {
-		return { excerpt: firstPara, truncated: firstPara !== text, length };
-	}
-	const slice = firstPara.slice(0, maxChars);
+	if (length <= maxChars) return { excerpt: text, truncated: false, length };
+	const slice = text.slice(0, maxChars);
+	const floor = maxChars * EXCERPT_BOUNDARY_FLOOR;
+	const para = lastParagraphBreak(slice);
+	if (para > floor) return { excerpt: slice.slice(0, para), truncated: true, length };
 	const lastSpace = slice.lastIndexOf(' ');
-	const cut = lastSpace > maxChars * 0.5 ? slice.slice(0, lastSpace) : slice;
+	const cut = lastSpace > floor ? slice.slice(0, lastSpace) : slice;
 	return { excerpt: cut, truncated: true, length };
 }
 
@@ -1409,7 +1463,7 @@ export function registerTools(
 	tool(
 		server,
 		'create_task',
-		"Create a new task. Use parent_task_id for sub-tasks - prefer this over a top-level ticket whenever the new work is part of the ticket you are on. Sub-tasks themselves can have sub-tasks, but no deeper (depth is capped at 2). Use assignee_slug as alternative to assignee_id. As an agent caller, you may only assign to yourself or to your direct subordinates - to request work from anyone else (peers, your manager, or agents elsewhere in the org), use create_comment with @<agent-slug> on a relevant ticket instead. Use blocked_by_task_ids to declare prerequisites - the assignee will not be woken on this ticket until every blocker reaches a terminal status (done, cancelled). When splitting work into sequential phases, prefer create_tasks and chain the items with '#<index>' blockers instead of filing them unordered. In title/description, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.",
+		"Create a new task. Use parent_task_id for sub-tasks - prefer this over a top-level ticket whenever the new work is part of the ticket you are on. Sub-tasks themselves can have sub-tasks, and those one further level, but no deeper (depth is capped at 3). Use assignee_slug as alternative to assignee_id. As an agent caller, you may only assign to yourself or to your direct subordinates - to request work from anyone else (peers, your manager, or agents elsewhere in the org), use create_comment with @<agent-slug> on a relevant ticket instead. Use blocked_by_task_ids to declare prerequisites - the assignee will not be woken on this ticket until every blocker reaches a terminal status (done, cancelled). When splitting work into sequential phases, prefer create_tasks and chain the items with '#<index>' blockers instead of filing them unordered. In title/description, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.",
 		{
 			project: projectArg(),
 			title: z.string().describe('Task title'),
@@ -1424,7 +1478,7 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					'Parent task to nest this under as a sub-task - a task identifier (e.g. "BE-2") or UUID. Sub-tasks can themselves have sub-tasks, but no deeper - depth is capped at 2.',
+					'Parent task to nest this under as a sub-task - a task identifier (e.g. "BE-2") or UUID. Sub-tasks can themselves have sub-tasks, and those one further level, but no deeper - depth is capped at 3.',
 				),
 			runtime_type: z
 				.string()
@@ -1732,7 +1786,7 @@ export function registerTools(
 							.string()
 							.optional()
 							.describe(
-								'Parent task to nest this under as a sub-task - a task identifier (e.g. "BE-2"), UUID, or a zero-based index token referencing an earlier item in this same call (e.g. "#0" = first item). Sub-tasks can themselves have sub-tasks, but no deeper - depth is capped at 2.',
+								'Parent task to nest this under as a sub-task - a task identifier (e.g. "BE-2"), UUID, or a zero-based index token referencing an earlier item in this same call (e.g. "#0" = first item). Sub-tasks can themselves have sub-tasks, and those one further level, but no deeper - depth is capped at 3.',
 							),
 						runtime_type: z
 							.string()
@@ -1828,7 +1882,7 @@ export function registerTools(
 				.nullable()
 				.optional()
 				.describe(
-					'Move this task under a different parent - a task identifier (e.g. "BE-2") or UUID. Pass an empty string or null to promote it to a top-level task. Omit to leave the parent unchanged. The parent must be in the same project, cannot be the task itself or one of its own sub-tasks, and the whole sub-tree being moved must still fit within the depth cap of 2. An open task cannot be nested under a parent that is already done or cancelled.',
+					'Move this task under a different parent - a task identifier (e.g. "BE-2") or UUID. Pass an empty string or null to promote it to a top-level task. Omit to leave the parent unchanged. The parent must be in the same project, cannot be the task itself or one of its own sub-tasks, and the whole sub-tree being moved must still fit within the depth cap of 3. An open task cannot be nested under a parent that is already done or cancelled.',
 				),
 		},
 		async (args, db, auth) => {
@@ -2915,8 +2969,111 @@ export function registerTools(
 	// Comments
 	tool(
 		server,
+		'get_comment',
+		'Read one comment in full by its id (the UUID from a list_comments row, or its public_id slug). list_comments returns long text comments as excerpts capped at `excerpt_chars`; this is the single-item read that serves the whole body, so reach for it whenever a row comes back with `text_truncated: true`. Very long comments come back one byte-window at a time: when `truncated` is true, call again with `offset` set to the returned `next_offset` and keep going until `next_offset` is null. Structured comments (system/option/task_link) are returned whole.',
+		{
+			project: projectArg(),
+			comment_id: z
+				.string()
+				.describe(
+					'Comment UUID or public_id (e.g. "20261009112345"). Both forms from a list_comments row work.',
+				),
+			offset: z
+				.number()
+				.int()
+				.nonnegative()
+				.optional()
+				.describe(
+					'Byte offset to start reading the comment text from (default 0). To page a comment too large for one read, pass back the `next_offset` from the previous call. Snapped down to a UTF-8 character boundary so a window never begins mid-character.',
+				),
+			max_bytes: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe(
+					'Max bytes of comment text to return in this window (default and ceiling is the read budget, so a normal-size comment comes back whole). Clamped to the budget; the returned slice ends on a UTF-8 character boundary, so it can come back a few bytes short.',
+				),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const raw = args.comment_id as string;
+			// Join through tasks and pin team + project, so a comment is only
+			// readable from a project the caller already has access to - the same
+			// boundary list_comments enforces, without making the caller pass the
+			// task id it would have to look up first.
+			const r = await db.query<Record<string, unknown>>(
+				`SELECT ic.id, ic.public_id, ic.task_id, ic.author_member_id, ic.author_api_key_id,
+				        ic.parent_comment_id,
+				        ic.content_type, ic.content, ic.chosen_option, ic.created_at,
+				        t.identifier AS task_identifier,
+				        CASE WHEN ic.author_api_key_id IS NOT NULL THEN 'api_key' ELSE m.member_type::text END AS author_type,
+				        COALESCE(ca.name, ma.title, m.display_name, 'Admin') AS author_name
+				 FROM task_comments ic
+				 JOIN tasks t ON t.id = ic.task_id
+				 LEFT JOIN members m ON m.id = ic.author_member_id
+				 LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
+				 LEFT JOIN api_keys ca ON ca.id = ic.author_api_key_id
+				 WHERE (ic.id::text = $1 OR ic.public_id = $1)
+				   AND t.team_id = $2 AND t.project_id = $3
+				 LIMIT 1`,
+				[raw, scope.teamId, scope.projectId],
+			);
+			if (r.rows.length === 0) return { error: `Comment not found: ${raw}` };
+			const row = r.rows[0];
+			const commentId = row.id as string;
+			const viewerMemberId = await resolveReactorMemberId(db, auth, scope.teamId);
+			const reactionsByComment = await loadReactionsForTask(
+				db,
+				row.task_id as string,
+				viewerMemberId,
+			);
+			const attachmentsByComment = await loadAgentAttachmentsForComments(
+				db,
+				[commentId],
+				masterKeyManager,
+				agentOrigin(),
+			);
+			const base = {
+				...row,
+				reactions: reactionsByComment.get(commentId) ?? [],
+				attachments: attachmentsByComment.get(commentId) ?? [],
+			};
+			const content = row.content as { text?: string } | null;
+			const text = content?.text;
+			if (row.content_type !== CommentContentType.Text || typeof text !== 'string') {
+				return base;
+			}
+			// Window the body for the same reason read_project_doc does: a comment
+			// has no length ceiling, and returning it whole would trip the generic
+			// result_too_large guard with no way to reach the rest.
+			return windowContent({
+				text,
+				offset: args.offset as number | undefined,
+				maxBytes: args.max_bytes as number | undefined,
+				limit: MCP_RESULT_BYTE_LIMIT,
+				reserve: DOC_READ_ENVELOPE_RESERVE,
+				hint: ({ start, end, total }) =>
+					`Comment is larger than one read. Returned bytes ${start}-${end} of ${total}. Call get_comment again with offset: ${end}; repeat until next_offset is null.`,
+				// `w` is spread BEFORE `content` on purpose: ContentWindow carries its
+				// own `content` string, but a comment's `content` is an object whose
+				// `text` holds the body, so the window's copy has to lose. The window's
+				// offset/next_offset/truncated/paging_hint fields still come through.
+				build: (w: ContentWindow) => ({
+					...base,
+					...w,
+					content: { ...content, text: w.content },
+				}),
+			});
+		},
+		db,
+	);
+
+	tool(
+		server,
 		'list_comments',
-		`List comments for an task, newest first. Paged: returns \`limit\` rows (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false. (\`before\`, taking a comment id or public_id, still works for walking back from a known comment.) Long text comments come back truncated at \`excerpt_chars\` (default ${DEFAULT_COMMENT_EXCERPT_CHARS}); structured comments (system/option/task_link) are always returned whole. Each row includes parent_comment_id (UUID or null) so you can see reply threading - when you reply substantively to a comment, pass that comment's id back as parent_comment_id in create_comment. Each row also has a public_id (a creation-timestamp slug like 20261009112345); that's how you cite a specific comment elsewhere: write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345), which renders as a clickable link straight to that comment.`,
+		`List comments for an task, newest first. Paged: returns \`limit\` rows (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false. (\`before\`, taking a comment id or public_id, still works for walking back from a known comment.) Long text comments come back truncated at \`excerpt_chars\` (default ${DEFAULT_COMMENT_EXCERPT_CHARS}); structured comments (system/option/task_link) are always returned whole. A truncated row sets \`text_truncated: true\` alongside \`text_length\` and a \`text_paging_hint\` naming the exact follow-up call - the excerpt sits in \`content.text\`, the same field a whole comment uses, so check \`text_truncated\` before treating what you got as the entire comment. Read the full body with \`get_comment\`; raising \`excerpt_chars\` is not the intended recovery path. Each row includes parent_comment_id (UUID or null) so you can see reply threading - when you reply substantively to a comment, pass that comment's id back as parent_comment_id in create_comment. Each row also has a public_id (a creation-timestamp slug like 20261009112345); that's how you cite a specific comment elsewhere: write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345), which renders as a clickable link straight to that comment.`,
 		{
 			project: projectArg(),
 			task_id: z.string().describe('Task identifier or UUID'),
@@ -2986,11 +3143,17 @@ export function registerTools(
 				const text = content?.text;
 				if (typeof text !== 'string' || text.length <= max) return row;
 				const ex = excerpt(text, max);
+				// The excerpt is written back into `content.text`, the same key that
+				// carries a full body, so nothing about the string itself says it is
+				// partial. Name the recovery call on the row - a sibling boolean is
+				// easy to miss, and a reader who misses it treats the excerpt as the
+				// whole comment.
 				return {
 					...row,
 					content: { ...content, text: ex.excerpt },
 					text_truncated: ex.truncated,
 					text_length: ex.length,
+					text_paging_hint: `Showing the first ${ex.excerpt?.length ?? 0} of ${ex.length} characters. Call get_comment(comment_id: "${row.id}") for the full body.`,
 				};
 			});
 			return pagedList(rows as ListRow[], limit, 'list_comments');
@@ -5257,7 +5420,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_project_assets',
-		"List the project's assets - files in the assets library (UI mockups, wireframes, diagrams, images, PDFs, scripts, and generated markdown such as blog posts or reports). Filenames may carry a folder prefix up to 2 levels deep (e.g. `launch/images/hero.png`); reference one in a comment or doc as `assets/<path>` exactly as returned here (e.g. assets/launch/images/hero.png), no backticks. Author both text and binary assets with write_project_asset (binary via encoding: 'base64') and reorganize with move_project_asset / copy_project_asset; obsolete assets are archived with archive_project_asset (hard deletion is admin-only). Archived assets are excluded by default - set filter: 'archived' or 'all' to see them (entries then carry an `archived` flag). Raster image entries (PNG/JPEG/GIF/WebP) also carry their pixel `width`/`height`. Results are ordered newest-first by default; pass sort: 'oldest' or 'alphabetical' to change the order.",
+		"List the project's assets - files in the assets library (UI mockups, wireframes, diagrams, images, PDFs, scripts, and generated markdown such as blog posts or reports). Filenames may carry a folder prefix up to 2 levels deep (e.g. `launch/images/hero.png`); reference one in a comment or doc as `assets/<path>` exactly as returned here (e.g. assets/launch/images/hero.png), no backticks. Author both text and binary assets with write_project_asset (binary via encoding: 'base64') and reorganize with move_project_asset / copy_project_asset; obsolete assets are archived with archive_project_asset (hard deletion is admin-only). Archived assets are excluded by default - set filter: 'archived' or 'all' to see them (entries then carry an `archived` flag). Raster image entries (PNG/JPEG/GIF/WebP) also carry their pixel `width`/`height`. Every entry carries `byte_size`, so you can tell before opening one whether read_project_asset will need more than one window. Results are ordered newest-first by default; pass sort: 'oldest' or 'alphabetical' to change the order.",
 		{
 			project: projectArg(),
 			filter: archiveFilterArg(),
@@ -5281,11 +5444,12 @@ export function registerTools(
 				original_filename: string;
 				content_type: string;
 				created_at: string;
+				byte_size: string | number;
 				width: number | null;
 				height: number | null;
 				archived_at: string | null;
 			}>(
-				`SELECT id, original_filename, content_type, created_at, width, height, archived_at
+				`SELECT id, original_filename, content_type, created_at, byte_size, width, height, archived_at
 				 FROM assets WHERE project_id = $1${where}
 				 ORDER BY ${assetSortOrderBy(sort)}`,
 				[scope.projectId],
@@ -5297,6 +5461,10 @@ export function registerTools(
 				filename: a.original_filename,
 				content_type: a.content_type,
 				created_at: a.created_at,
+				// A size hint, for the same reason list_project_docs carries
+				// content_length: without it a caller cannot tell before opening an
+				// asset whether read_project_asset will need more than one window.
+				byte_size: Number(a.byte_size),
 				...(a.width !== null && a.height !== null ? { width: a.width, height: a.height } : {}),
 				...(filter !== ArchiveFilter.Active ? { archived: a.archived_at !== null } : {}),
 			}));
@@ -5306,6 +5474,83 @@ export function registerTools(
 		},
 		db,
 	);
+
+	/**
+	 * Store a blob at an asset path and reconcile everything that hangs off it:
+	 * the row upsert, dropping the blob it superseded, clearing any pending
+	 * review comments, and the two broadcasts the web app listens for.
+	 *
+	 * Shared by write_project_asset and edit_project_asset so the edit path
+	 * cannot drift from the write path. Each of these steps fails quietly if
+	 * forgotten - a leaked blob costs storage with nothing pointing at it, and a
+	 * missed broadcast leaves a stale review pane open in front of a user.
+	 */
+	const storeAssetBlob = async (opts: {
+		db: Db;
+		teamId: string;
+		projectId: string;
+		filename: string;
+		blob: Blob;
+		contentType: string;
+		width: number | null;
+		height: number | null;
+		uploadedByMemberId: string | null;
+	}): Promise<
+		| { error: string }
+		// The archived variant is turned into an `error` below, so callers get the
+		// stored-successfully shape and keep their narrowing.
+		| { result: Exclude<Awaited<ReturnType<typeof upsertProjectAsset>>, { status: 'archived' }> }
+	> => {
+		const { db: adb, teamId, projectId, filename, blob, contentType } = opts;
+		const assetId = crypto.randomUUID();
+		const { byteSize, sha256 } = await assets.write(projectId, assetId, blob);
+		let result: Awaited<ReturnType<typeof upsertProjectAsset>>;
+		try {
+			result = await upsertProjectAsset(adb, {
+				assetId,
+				teamId,
+				projectId,
+				contentType,
+				byteSize,
+				sha256,
+				desiredName: filename,
+				uploadedByMemberId: opts.uploadedByMemberId,
+				width: opts.width,
+				height: opts.height,
+			});
+		} catch (e) {
+			await assets.delete(projectId, assetId).catch(() => {});
+			throw e;
+		}
+		if (result.status === 'archived') {
+			// Archived between the pre-flight and the upsert — the bytes we just
+			// stored have no row pointing at them.
+			await assets.delete(projectId, assetId).catch(() => {});
+			return { error: archivedAssetWriteError(filename) };
+		}
+		if (result.replacedAssetId) {
+			await assets.delete(projectId, result.replacedAssetId).catch(() => {});
+		}
+		if (result.wipedReviewComments) {
+			// The overwrite consumed the pending review (wiped inside the upsert's
+			// transaction) — tell viewers so their comment panes clear live.
+			broadcastCommentFamilyChange(
+				wsManager,
+				teamId,
+				projectId,
+				'asset_review_comments',
+				'DELETE',
+				{ asset_id: result.replacedAssetId, cleared: true },
+			);
+		}
+		broadcastRowChange(wsManager, wsRoom.team(teamId), 'assets', 'INSERT', {
+			id: result.asset.id,
+			team_id: teamId,
+			project_id: projectId,
+			original_filename: result.asset.original_filename,
+		});
+		return { result };
+	};
 
 	tool(
 		server,
@@ -5419,57 +5664,20 @@ export function registerTools(
 			const dims = isRasterImageMime(contentType)
 				? readImageDimensions(Buffer.from(await blob.arrayBuffer()))
 				: null;
-			const assetId = crypto.randomUUID();
-			const { byteSize, sha256 } = await assets.write(projectId, assetId, blob);
 			const uploadedBy = auth.type === AuthType.Agent ? auth.memberId : null;
-			let result: Awaited<ReturnType<typeof upsertProjectAsset>>;
-			try {
-				result = await upsertProjectAsset(db, {
-					assetId,
-					teamId,
-					projectId,
-					contentType,
-					byteSize,
-					sha256,
-					desiredName: filename,
-					uploadedByMemberId: uploadedBy,
-					width: dims?.width ?? null,
-					height: dims?.height ?? null,
-				});
-			} catch (e) {
-				await assets.delete(projectId, assetId).catch(() => {});
-				throw e;
-			}
-			if (result.status === 'archived') {
-				// Archived between the pre-flight and the upsert — the bytes we just
-				// stored have no row pointing at them.
-				await assets.delete(projectId, assetId).catch(() => {});
-				return { error: archivedAssetWriteError(filename) };
-			}
-			if (result.replacedAssetId) {
-				await assets.delete(projectId, result.replacedAssetId).catch(() => {});
-			}
-			if (result.wipedReviewComments) {
-				// The overwrite consumed the pending review (wiped inside the upsert's
-				// transaction) — tell viewers so their comment panes clear live.
-				broadcastCommentFamilyChange(
-					wsManager,
-					teamId,
-					projectId,
-					'asset_review_comments',
-					'DELETE',
-					{
-						asset_id: result.replacedAssetId,
-						cleared: true,
-					},
-				);
-			}
-			broadcastRowChange(wsManager, wsRoom.team(teamId), 'assets', 'INSERT', {
-				id: result.asset.id,
-				team_id: teamId,
-				project_id: projectId,
-				original_filename: result.asset.original_filename,
+			const stored = await storeAssetBlob({
+				db,
+				teamId,
+				projectId,
+				filename,
+				blob,
+				contentType,
+				width: dims?.width ?? null,
+				height: dims?.height ?? null,
+				uploadedByMemberId: uploadedBy,
 			});
+			if ('error' in stored) return stored;
+			const result = stored.result;
 			return {
 				written: true,
 				id: result.asset.id,
@@ -5484,7 +5692,7 @@ export function registerTools(
 	tool(
 		server,
 		'read_project_asset',
-		"Read a project asset's contents by path (e.g. \"ui-mockups.html\" or \"scripts/check.sh\") - the files that list_project_assets returns (UI mockups, wireframes, SVG diagrams, text exports, scripts, markdown deliverables). Use the full path exactly as listed, folder prefix included. Text-based assets (HTML, SVG, plain text, markdown) come back inline as `content`. Raster images (PNG/JPEG/GIF/WebP) come back with their pixel `width`/`height` AND the image itself inline, so a vision-capable model can see it to review it - pass `include_image: false` to skip the pixels and get metadata only, and images above ~4 MB return metadata + `url` only. Other binary assets (PDFs, media, archives) are not inlined; the response gives a signed download `url` - fetch it with a plain `curl -fsSL '<url>' -o /tmp/<filename>` (no auth header needed; the URL is valid for 24h, re-call this tool for a fresh one). An archive (.zip, .tar, .tar.gz/.tgz, .7z) is downloaded that same way and then unpacked in your container - `unzip`, `tar` and `7z` are preinstalled. If an admin has left review comments on the asset they come back as `review_comments`: for text assets (markdown, plain text) each anchors to an exact `quote` (with `occurrence` = 0-based Nth match of that snippet); a comment without a quote applies to the whole file. Capture them all before any write_project_asset to the path - overwriting deletes every review comment. Archived assets are not readable by default - set filter: 'archived' or 'all' to read one. For markdown project docs use read_project_doc instead.",
+		"Read a project asset's contents by path (e.g. \"ui-mockups.html\" or \"scripts/check.sh\") - the files that list_project_assets returns (UI mockups, wireframes, SVG diagrams, text exports, scripts, markdown deliverables). Use the full path exactly as listed, folder prefix included. Text-based assets (HTML, SVG, plain text, markdown) come back inline as `content`. Raster images (PNG/JPEG/GIF/WebP) come back with their pixel `width`/`height` AND the image itself inline, so a vision-capable model can see it to review it - pass `include_image: false` to skip the pixels and get metadata only, and images above ~4 MB return metadata + `url` only. Other binary assets (PDFs, media, archives) are not inlined; the response gives a signed download `url` - fetch it with a plain `curl -fsSL '<url>' -o /tmp/<filename>` (no auth header needed; the URL is valid for 24h, re-call this tool for a fresh one). An archive (.zip, .tar, .tar.gz/.tgz, .7z) is downloaded that same way and then unpacked in your container - `unzip`, `tar` and `7z` are preinstalled. If an admin has left review comments on the asset they come back as `review_comments`: for text assets (markdown, plain text) each anchors to an exact `quote` (with `occurrence` = 0-based Nth match of that snippet); a comment without a quote applies to the whole file. Capture them all before any write_project_asset to the path - overwriting deletes every review comment. Archived assets are not readable by default - set filter: 'archived' or 'all' to read one. Large text assets come back one byte-window at a time: when `truncated` is true, call again with `offset` set to the returned `next_offset` and keep going until `next_offset` is null (`list_project_assets` reports each asset's `byte_size`, so you can tell in advance whether that will be needed). For markdown project docs use read_project_doc instead.",
 		{
 			project: projectArg(),
 			filename: z
@@ -5496,6 +5704,22 @@ export function registerTools(
 				.optional()
 				.describe(
 					'For raster images (PNG/JPEG/GIF/WebP): when true (default) the image is returned inline so a vision-capable model can see it. Pass false to get metadata only (dimensions + download URL) and skip the pixels.',
+				),
+			offset: z
+				.number()
+				.int()
+				.nonnegative()
+				.optional()
+				.describe(
+					'For a text asset: byte offset to start reading from (default 0). To page an asset too large for one read, pass back the `next_offset` from the previous call. Snapped down to a UTF-8 character boundary so a window never begins mid-character. Ignored for binary assets, which return a download URL instead.',
+				),
+			max_bytes: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe(
+					'For a text asset: max bytes of content to return in this window (default and ceiling is the read budget, so a normal-size asset comes back whole). Clamped to the budget; the returned slice ends on a UTF-8 character boundary, so it can come back a few bytes short.',
 				),
 		},
 		async (args, db, auth) => {
@@ -5622,12 +5846,119 @@ export function registerTools(
 			}
 
 			const buf = await assets.read(projectId, asset.id);
+			// Window the body exactly as read_project_doc does. Returned whole, a
+			// text asset over the result cap tripped the generic result_too_large
+			// guard - and because this tool declared no narrowing parameter, the
+			// guard's advice fell through to "read it through a tool that pages",
+			// of which there is none for an asset. That was a dead end, and the
+			// likeliest asset to hit it is the self-contained interactive HTML
+			// mockup the UI Designer is told to produce.
+			return windowContent({
+				text: buf.toString('utf-8'),
+				offset: args.offset as number | undefined,
+				maxBytes: args.max_bytes as number | undefined,
+				limit: MCP_RESULT_BYTE_LIMIT,
+				reserve: DOC_READ_ENVELOPE_RESERVE,
+				hint: ({ start, end, total }) =>
+					`Asset is larger than one read. Returned bytes ${start}-${end} of ${total}. Call read_project_asset again with offset: ${end}; repeat until next_offset is null.`,
+				build: (w: ContentWindow) => ({
+					filename: asset.original_filename,
+					content_type: asset.content_type,
+					...w,
+					...(archived ? { archived: true } : {}),
+					...reviewField,
+				}),
+			});
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'edit_project_asset',
+		"Replace one span of a TEXT project asset (HTML, SVG, markdown, plain text, a script), leaving the rest untouched. Prefer this over write_project_asset for any change to an existing text asset: it sends only the text you are changing, so the argument stays proportional to the edit rather than to the file - which matters most for exactly the assets that get tweaked, like a self-contained interactive HTML mockup, where re-sending the whole file risks a runtime's tool-call argument-size cap cutting it mid-stream. Binary assets (images, PDFs, media, archives) cannot be edited this way; rewrite them with write_project_asset. `old_string` must match the current text EXACTLY, including indentation and line breaks: read the asset first and copy the span verbatim rather than retyping it. It must also be unique - if it matches several places the call is refused, so extend it with surrounding lines until it is unique, or pass replace_all to change every match. The result returns the applied hunk with surrounding context plus the asset's new `byte_size`, so you can confirm what landed without reading it again. Like any overwrite this clears the asset's pending review comments, so capture those first.",
+		{
+			project: projectArg(),
+			filename: z
+				.string()
+				.describe('Asset path to edit (e.g. "ui-mockups.html", "launch/notes.md")'),
+			old_string: z
+				.string()
+				.describe(
+					'The exact text to replace, copied verbatim from the asset (including indentation and line breaks). Must be unique in the asset unless replace_all is set.',
+				),
+			new_string: z
+				.string()
+				.describe('The text to put in its place. May be empty to delete the span.'),
+			replace_all: z
+				.boolean()
+				.optional()
+				.describe(
+					'Replace every occurrence of `old_string` rather than requiring it to be unique. Use for a rename that legitimately recurs; otherwise prefer extending `old_string` so the edit is unambiguous.',
+				),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId, projectId } = scope;
+			const filename = normalizeAssetPath(args.filename as string);
+			if (filename === null) return { error: assetPathError(args.filename as string) };
+
+			const found = await db.query<{
+				id: string;
+				content_type: string;
+				archived_at: string | null;
+			}>(
+				`SELECT id, content_type, archived_at FROM assets
+				 WHERE project_id = $1 AND original_filename = $2`,
+				[projectId, filename],
+			);
+			if (found.rows.length === 0) {
+				return {
+					error: `Asset '${filename}' not found. edit_project_asset changes an existing asset; create a new one with write_project_asset.`,
+				};
+			}
+			const asset = found.rows[0];
+			if (asset.archived_at !== null) return { error: archivedAssetWriteError(filename) };
+			if (!isTextAssetMime(asset.content_type)) {
+				return {
+					error: `Asset '${filename}' is ${asset.content_type}, which is binary - there is no text span to edit. Rewrite it with write_project_asset instead.`,
+				};
+			}
+
+			const current = (await assets.read(projectId, asset.id)).toString('utf-8');
+			const edited = applyStringEdit(
+				current,
+				args.old_string as string,
+				args.new_string as string,
+				{ replaceAll: args.replace_all === true },
+			);
+			if (!edited.ok) return { error: edited.error };
+
+			const blob = new Blob([edited.content], { type: asset.content_type });
+			if (blob.size > ATTACHMENT_MAX_BYTES) {
+				return { error: 'Asset exceeds 10 MB.' };
+			}
+			const stored = await storeAssetBlob({
+				db,
+				teamId,
+				projectId,
+				filename,
+				blob,
+				contentType: asset.content_type,
+				// Text assets carry no pixel dimensions.
+				width: null,
+				height: null,
+				uploadedByMemberId: auth.type === AuthType.Agent ? auth.memberId : null,
+			});
+			if ('error' in stored) return stored;
 			return {
-				filename: asset.original_filename,
-				content_type: asset.content_type,
-				content: buf.toString('utf-8'),
-				...(archived ? { archived: true } : {}),
-				...reviewField,
+				edited: true,
+				id: stored.result.asset.id,
+				reference: `assets/${stored.result.asset.original_filename}`,
+				replacements: edited.replacements,
+				byte_size: stored.result.asset.byte_size,
+				hunk: edited.hunk,
 			};
 		},
 		db,
@@ -5954,7 +6285,7 @@ export function registerTools(
 	tool(
 		server,
 		'write_project_doc',
-		"Write a project documentation file. Project docs are markdown only - the filename must end in .md. For high-level project context: PRD, spec, implementation plan, research. Make ALL desired edits in ONE consolidated write per run, for two reasons: (1) writing a doc deletes ALL of its pending review comments (the admin's highlight feedback returned by read_project_doc) - a single write clears the whole review, so capture every comment in your context before the first write; (2) docs are revisioned - every content-changing write records a revision, so many partial writes bury the history in noise. Pass a `changelog` summarizing what changed in this write and why - it becomes that revision's entry in the document's history; keep update/changelog logs OUT of the document body and put them in `changelog` instead. Also pass a `description`: an overall summary of what the doc is and when to read it, in no more than one or two sentences, shown next to the filename in the Documents list and the doc header so teammates and future runs can tell what the doc is at a glance. Describe the doc's stable purpose, NOT its current contents: do not list its sections, findings, dates, counts, or latest revisions (those live in the body and the `changelog`), so the description stays steady across updates. Keep it short and out of the body. Non-markdown files (mockups, wireframes, images, PDFs) live in the project assets library instead - reference those as `assets/<filename>`. In content, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.",
+		"Write a project documentation file, replacing its whole body. These docs live in the project-doc store in the database, NOT on the filesystem: there is no /workspace/.hezo/project-docs path, so never author or edit one with the Write/Edit file tools or a shell redirect - a markdown file you save to disk persists nothing, is invisible to every teammate, and leaves the real doc stale. To change PART of an existing doc, prefer edit_project_doc: this tool sends the entire body, so a large doc means a large argument, and a runtime that caps tool-call argument size can cut `content` mid-stream. Pass `content_length` (the exact character count of `content`) so a truncated argument is rejected rather than silently overwriting the doc and wiping its review comments. Project docs are markdown only - the filename must end in .md. For high-level project context: PRD, spec, implementation plan, research. Make ALL desired edits in ONE consolidated write per run, for two reasons: (1) writing a doc deletes ALL of its pending review comments (the admin's highlight feedback returned by read_project_doc) - a single write clears the whole review, so capture every comment in your context before the first write; (2) docs are revisioned - every content-changing write records a revision, so many partial writes bury the history in noise. Pass a `changelog` summarizing what changed in this write and why - it becomes that revision's entry in the document's history; keep update/changelog logs OUT of the document body and put them in `changelog` instead. Also pass a `description`: an overall summary of what the doc is and when to read it, in no more than one or two sentences, shown next to the filename in the Documents list and the doc header so teammates and future runs can tell what the doc is at a glance. Describe the doc's stable purpose, NOT its current contents: do not list its sections, findings, dates, counts, or latest revisions (those live in the body and the `changelog`), so the description stays steady across updates. Keep it short and out of the body. Non-markdown files (mockups, wireframes, images, PDFs) live in the project assets library instead - reference those as `assets/<filename>`. In content, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.",
 		{
 			project: projectArg(),
 			filename: z.string().describe('Markdown filename to write (e.g. "spec.md")'),
@@ -5971,26 +6302,62 @@ export function registerTools(
 				.describe(
 					"Markdown summary of what changed in THIS update and why - recorded as the revision's changelog and shown in the document's revision history. Put update/status notes here, never in the document body. Reference tickets/docs/agents by bare identifier as in content.",
 				),
+			content_length: z
+				.number()
+				.int()
+				.nonnegative()
+				.optional()
+				.describe(
+					'The exact character count of `content`. When provided, a mismatch is rejected instead of stored, so an argument the runtime truncated mid-stream cannot silently overwrite the doc with a partial body (which would also delete every pending review comment on it). Strongly recommended for anything large.',
+				),
+			allow_empty: z
+				.boolean()
+				.optional()
+				.describe(
+					'Permit an empty `content` to blank an existing non-empty doc. Off by default, because an empty body is far more often a truncated argument than an intent - and blanking also deletes every pending review comment. To retire a doc, call archive_project_doc instead.',
+				),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
-			if (!isMarkdownDocSlug(args.filename as string)) {
+			const filename = args.filename as string;
+			if (!isMarkdownDocSlug(filename)) {
 				return {
 					error:
 						'Project docs must be markdown (.md). Non-markdown files belong in the assets library, referenced as assets/<filename>.',
 				};
 			}
+			const content = args.content as string;
+			// A runtime can cap tool-call argument size and cut `content` mid-stream.
+			// The asset writer already defends against exactly this; docs did not, so
+			// a truncated body was stored silently - and, because a content-changing
+			// write wipes the doc's pending review comments, it destroyed the admin's
+			// feedback on the way past. Check before anything is written.
+			const declaredLength = args.content_length as number | undefined;
+			if (declaredLength !== undefined && content.length !== declaredLength) {
+				return {
+					error: `\`content\` arrived as ${content.length} characters but content_length=${declaredLength} was declared - the argument was truncated in transit (a runtime can cap the tool-call argument size, cutting \`content\` mid-stream). Nothing was written. Retry, and for a large doc prefer edit_project_doc, which sends only the span you are changing.`,
+				};
+			}
+			const docScope = {
+				type: DocumentType.ProjectDoc,
+				teamId: scope.teamId,
+				projectId: scope.projectId,
+				slug: filename,
+			} as const;
+			if (content.trim() === '' && args.allow_empty !== true) {
+				const prior = await getDocument(db, docScope);
+				if (prior && prior.content.trim() !== '') {
+					return {
+						error: `Refusing to blank '${filename}' (currently ${prior.content.length} characters) with empty content - that would also delete every pending review comment on it. An empty body is usually a truncated argument rather than an intent. If you really mean to empty it, pass allow_empty: true; if you mean to retire it, call archive_project_doc.`,
+					};
+				}
+			}
 			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 			const callerApiKeyId = apiKeyIdFromAuth(auth);
 			const doc = await upsertDocument(db, wsManager, {
-				scope: {
-					type: DocumentType.ProjectDoc,
-					teamId: scope.teamId,
-					projectId: scope.projectId,
-					slug: args.filename as string,
-				},
-				content: args.content as string,
+				scope: docScope,
+				content,
 				description: args.description as string | undefined,
 				changeSummary: args.changelog as string | undefined,
 				authorMemberId: callerMemberId,
@@ -6005,10 +6372,115 @@ export function registerTools(
 			// refusal comes from upsertDocument itself, so no caller can forget it.
 			if (doc.status === 'archived') {
 				return {
-					error: `Doc '${args.filename}' is archived - call unarchive_project_doc first, or write under a different filename.`,
+					error: `Doc '${filename}' is archived - call unarchive_project_doc first, or write under a different filename.`,
 				};
 			}
-			return { written: true, id: doc.row.id, filename: doc.row.slug };
+			// `content_length` back out so the caller can compare against what it
+			// sent without a re-read - the same check `content_length` performs on
+			// the way in, available even when that argument was omitted.
+			return {
+				written: true,
+				id: doc.row.id,
+				filename: doc.row.slug,
+				content_length: doc.row.content.length,
+				...changelogNotRecordedWarning(args.changelog, doc.changelogRecorded),
+			};
+		},
+		db,
+	);
+
+	// `edit_` rather than `update_`: the REST/MCP verb table maps PATCH to
+	// `update_`, but the project-doc family already reads `read_`/`write_`, and
+	// `edit_project_doc` sits with those far more legibly than `update_` would.
+	// The resource noun still matches its REST route exactly, which is the half
+	// of the naming rule that actually has to hold.
+	tool(
+		server,
+		'edit_project_doc',
+		"Replace one span of a project doc, leaving the rest untouched. Prefer this over write_project_doc for any change to an existing doc: it sends only the text you are changing, so the argument stays proportional to the edit rather than to the document, which keeps a large doc out of reach of a runtime's tool-call argument-size cap. These docs live in the database, not the filesystem - the Write/Edit file tools target disk and will not touch them. `old_string` must match the current text EXACTLY, including indentation and line breaks: read the doc first and copy the span verbatim rather than retyping it. It must also be unique - if it matches several places the call is refused, so extend it with surrounding lines until it is unique, or pass replace_all to change every match. The result returns the applied hunk with surrounding context plus the doc's new `content_length`, so you can confirm what landed without reading the doc again. Like any content-changing write this records a revision and clears the doc's pending review comments, so capture those first.",
+		{
+			project: projectArg(),
+			filename: z.string().describe('Markdown filename to edit (e.g. "spec.md")'),
+			old_string: z
+				.string()
+				.describe(
+					'The exact text to replace, copied verbatim from the doc (including indentation and line breaks). Must be unique in the doc unless replace_all is set.',
+				),
+			new_string: z
+				.string()
+				.describe('The text to put in its place. May be empty to delete the span.'),
+			replace_all: z
+				.boolean()
+				.optional()
+				.describe(
+					'Replace every occurrence of `old_string` rather than requiring it to be unique. Use for a rename that legitimately recurs; otherwise prefer extending `old_string` so the edit is unambiguous.',
+				),
+			changelog: z
+				.string()
+				.optional()
+				.describe(
+					"Markdown summary of what changed in THIS edit and why - recorded as the revision's changelog. Put update/status notes here, never in the document body.",
+				),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const filename = args.filename as string;
+			const docScope = {
+				type: DocumentType.ProjectDoc,
+				teamId: scope.teamId,
+				projectId: scope.projectId,
+				slug: filename,
+			} as const;
+			const prior = await getDocument(db, docScope);
+			if (!prior) {
+				return {
+					error: `Doc '${filename}' not found. edit_project_doc changes an existing doc; create a new one with write_project_doc.`,
+				};
+			}
+			if (prior.archived_at !== null) {
+				return {
+					error: `Doc '${filename}' is archived - call unarchive_project_doc first.`,
+				};
+			}
+			const edited = applyStringEdit(
+				prior.content,
+				args.old_string as string,
+				args.new_string as string,
+				{
+					replaceAll: args.replace_all === true,
+				},
+			);
+			if (!edited.ok) return { error: edited.error };
+
+			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+			const callerApiKeyId = apiKeyIdFromAuth(auth);
+			const doc = await upsertDocument(db, wsManager, {
+				scope: docScope,
+				content: edited.content,
+				changeSummary: args.changelog as string | undefined,
+				authorMemberId: callerMemberId,
+				authorApiKeyId: callerApiKeyId,
+				audit: {
+					events,
+					actorType: actorTypeFromAuth(auth),
+					actorApiKeyId: callerApiKeyId,
+				},
+			});
+			if (doc.status === 'archived') {
+				return {
+					error: `Doc '${filename}' is archived - call unarchive_project_doc first.`,
+				};
+			}
+			return {
+				edited: true,
+				id: doc.row.id,
+				filename: doc.row.slug,
+				replacements: edited.replacements,
+				content_length: doc.row.content.length,
+				hunk: edited.hunk,
+				...changelogNotRecordedWarning(args.changelog, doc.changelogRecorded),
+			};
 		},
 		db,
 	);

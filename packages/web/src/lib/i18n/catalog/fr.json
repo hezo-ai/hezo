@@ -27,6 +27,8 @@
 	"common.back": "Retour",
 	"common.cancel": "Annuler",
 	"common.close": "Fermer",
+	"common.copied": "Copié",
+	"common.copy": "Copier",
 	"common.delete": "Supprimer",
 	"common.edit": "Modifier",
 	"common.loading": "Chargement...",

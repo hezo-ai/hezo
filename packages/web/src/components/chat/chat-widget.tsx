@@ -29,6 +29,7 @@ import {
 } from '../../hooks/use-chat';
 import { useCloseOnRouteChange } from '../../hooks/use-close-on-route-change';
 import { useContainerHealth } from '../../hooks/use-container-health';
+import { useCopyFeedback } from '../../hooks/use-copy-feedback';
 import { useDraggableFab } from '../../hooks/use-draggable-fab';
 import { useFileAttachments } from '../../hooks/use-file-attachments';
 import { LONG_PRESS_MS, useLongPress } from '../../hooks/use-long-press';
@@ -995,21 +996,10 @@ function SentAttachments({
  * reachable. `group-hover` is itself auto-scoped to `(hover: hover)` by Tailwind.
  */
 function MessageCopyButton({ text, align }: { text: string; align: 'start' | 'end' }) {
-	const [copied, setCopied] = useState(false);
-	const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-	useEffect(() => {
-		return () => {
-			if (timeoutRef.current) clearTimeout(timeoutRef.current);
-		};
-	}, []);
+	const { copied, copy } = useCopyFeedback();
 
 	const handleCopy = async () => {
-		if (await copyToClipboard(text)) {
-			setCopied(true);
-			if (timeoutRef.current) clearTimeout(timeoutRef.current);
-			timeoutRef.current = setTimeout(() => setCopied(false), 1500);
-		}
+		await copy(text);
 	};
 
 	return (
