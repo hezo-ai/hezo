@@ -69,7 +69,6 @@
 	"progress.tabs.created": "Skapade",
 	"progress.tabs.closed": "Avslutade",
 	"progress.columns.tabsLabel": "Senaste uppgiftsaktivitet",
-	"progress.columns.allTasks": "Alla uppgifter",
 	"progress.columns.empty": "Inget här än.",
 	"progress.columns.awaitingRun": "Captain fyller i detta vid en framstegsuppdatering.",
 	"progress.runs.heading": "Framstegsuppdateringar",

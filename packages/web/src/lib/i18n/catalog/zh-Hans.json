@@ -69,7 +69,6 @@
 	"progress.tabs.created": "创建",
 	"progress.tabs.closed": "完成",
 	"progress.columns.tabsLabel": "最近的任务动态",
-	"progress.columns.allTasks": "全部任务",
 	"progress.columns.empty": "这里还没有内容。",
 	"progress.columns.awaitingRun": "Captain 会在进展更新时填写。",
 	"progress.runs.heading": "进展更新运行",
