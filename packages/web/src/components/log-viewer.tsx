@@ -1,7 +1,7 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import { AlignLeft, Check, Code, Copy, Maximize2, Minimize2, MoveVertical } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
-import { copyToClipboard } from '../lib/clipboard';
+import { useCopyFeedback } from '../hooks/use-copy-feedback';
 import type { CommentRefTask } from '../lib/remark-comment-refs';
 import { FormattedLogView } from './formatted-log-view';
 import { Button } from './ui/button';
@@ -51,13 +51,12 @@ export function LogViewer({
 	commentRefTask,
 }: LogViewerProps) {
 	const [autoScroll, setAutoScroll] = useState(true);
-	const [copied, setCopied] = useState(false);
 	const [isExpanded, setIsExpanded] = useState(false);
 	const [viewMode, setViewMode] = useState<'formatted' | 'raw'>(formattable ? 'formatted' : 'raw');
 	const scrollRef = useRef<HTMLDivElement | null>(null);
 	const lastCountRef = useRef(0);
 	const pendingBottomOffsetRef = useRef<number | null>(null);
-	const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const { copied, copy } = useCopyFeedback();
 
 	const attachScrollRef = useCallback((node: HTMLDivElement | null) => {
 		scrollRef.current = node;
@@ -92,19 +91,8 @@ export function LogViewer({
 		setIsExpanded((v) => !v);
 	};
 
-	useEffect(() => {
-		return () => {
-			if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
-		};
-	}, []);
-
 	const handleCopy = async () => {
-		const text = lines.map((l) => l.text).join('\n');
-		if (await copyToClipboard(text)) {
-			setCopied(true);
-			if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
-			copyTimeoutRef.current = setTimeout(() => setCopied(false), 1500);
-		}
+		await copy(lines.map((l) => l.text).join('\n'));
 	};
 
 	const isFormatted = formattable && viewMode === 'formatted';

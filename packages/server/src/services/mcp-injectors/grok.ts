@@ -1,4 +1,9 @@
 import { join } from 'node:path';
+import {
+	buildDocWriteGuardHookBlock,
+	buildDocWriteGuardScript,
+	DOC_WRITE_GUARD_FILENAME,
+} from '../doc-write-guard';
 import { escapeTomlBasicString, safeName, TOML_KEY_RE, tomlArray } from './toml';
 import type {
 	McpHttpDescriptor,
@@ -119,16 +124,37 @@ export const grokAdapter: RuntimeMcpAdapter = {
 		blocks.push('[cli]\nauto_update = false');
 		const contents = `${blocks.join('\n\n')}\n`;
 
-		return {
-			cliArgs: [],
-			envEntries: [],
-			files: [
-				{
-					hostPath: join(ctx.hostHomeDir, CONFIG_BASENAME),
-					mode: 0o600,
-					contents,
-				},
-			],
-		};
+		const files = [
+			{
+				hostPath: join(ctx.hostHomeDir, CONFIG_BASENAME),
+				mode: 0o600,
+				contents,
+			},
+		];
+
+		// Grok gets no completeness judge (its Stop hooks are passive), but
+		// `PreToolUse` IS blocking for it - the one hook seam that reaches this
+		// runtime at all. Grok Build reads Claude-Code-shaped hook JSON from
+		// `$GROK_HOME/hooks/*.json`, so the doc-write guard installs there.
+		const docSlugs = ctx.projectDocSlugs ?? [];
+		if (docSlugs.length > 0 && ctx.containerHomeDir) {
+			const guardContainerPath = join(ctx.containerHomeDir, DOC_WRITE_GUARD_FILENAME);
+			files.push({
+				hostPath: join(ctx.hostHomeDir, DOC_WRITE_GUARD_FILENAME),
+				mode: 0o700,
+				contents: buildDocWriteGuardScript(docSlugs),
+			});
+			files.push({
+				hostPath: join(ctx.hostHomeDir, 'hooks', 'hezo-doc-write-guard.json'),
+				mode: 0o600,
+				contents: `${JSON.stringify(
+					{ hooks: { PreToolUse: [buildDocWriteGuardHookBlock(`node ${guardContainerPath}`)] } },
+					null,
+					2,
+				)}\n`,
+			});
+		}
+
+		return { cliArgs: [], envEntries: [], files };
 	},
 };

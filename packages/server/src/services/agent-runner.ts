@@ -103,7 +103,9 @@ import {
 	readPushErrors,
 	seedInitialCommitIfEmpty,
 	type WorktreeLoc,
+	worktreeChangedPaths,
 	worktreeHasChanges,
+	worktreeTracksPath,
 } from './git';
 import { ContainerGitExecutor, GIT_SSH_COMMAND_VALUE, type GitExecutor } from './git-executor';
 import { buildGitIdentityEnv } from './git-identity';
@@ -604,11 +606,24 @@ export async function buildRuntimeInvocation(
 		...(await loadConnectorDescriptors(deps.db, projectId)),
 	];
 
+	// Active project-doc filenames, baked into the runtime's doc-write guard so it
+	// can refuse a filesystem write aimed at one without needing any tool access
+	// of its own. Advisory: a failed lookup just means no guard on this run.
+	const projectDocSlugs = await deps.db
+		.query<{ slug: string }>(
+			`SELECT slug FROM documents
+			 WHERE type = 'project_doc' AND project_id = $1 AND archived_at IS NULL`,
+			[projectId],
+		)
+		.then((r) => r.rows.map((row) => row.slug))
+		.catch(() => [] as string[]);
+
 	const mcpInjection = adapter.build(mcpDescriptors, {
 		hostHomeDir: homeMount?.hostDir ?? null,
 		containerHomeDir: homeMount?.containerDir ?? null,
 		provider,
 		runModel: modelOverride,
+		projectDocSlugs,
 	});
 	validateInjection(adapter, mcpInjection);
 
@@ -1742,6 +1757,57 @@ export async function runAgent(
 				}
 			}
 
+			// Stray-project-doc net. Project docs live in the database, and every
+			// prompt says so, but an agent that reaches for the Write tool anyway
+			// gets no error: writing a fresh path SUCCEEDS, so the DB doc silently
+			// stays stale and a shadow copy lands in the repo. This is the
+			// deterministic backstop for that - it reaches every runtime, including
+			// the ones with no blockable tool hook at all.
+			//
+			// Warn, never auto-ingest: the file's relationship to the doc is a guess
+			// (newer? older? a partial draft?), and guessing wrong overwrites real
+			// work. Same posture as the name-only-ask branch above.
+			//
+			// Scope is deliberately narrow: an untracked `.md` whose basename matches
+			// an ACTIVE project-doc slug in this project. A tracked file of the same
+			// name is a genuine repo file (a repo may legitimately carry its own
+			// spec.md) and is left alone. A doc-shaped file with a name no doc uses
+			// is not flagged - that would be guesswork, and this net is worth more
+			// being trusted than being exhaustive.
+			if (exitedClean && project && prep.executor && prep.worktrees.length > 0) {
+				try {
+					const slugs = await deps.db.query<{ slug: string }>(
+						`SELECT slug FROM documents
+						 WHERE type = 'project_doc' AND project_id = $1 AND archived_at IS NULL`,
+						[project.id],
+					);
+					const docSlugs = new Set(slugs.rows.map((r) => r.slug.toLowerCase()));
+					if (docSlugs.size > 0) {
+						const strays: string[] = [];
+						for (const wt of prep.worktrees) {
+							const changed = await worktreeChangedPaths(prep.executor, wt.loc);
+							for (const p of changed) {
+								const base = p.split('/').pop() ?? p;
+								if (!base.toLowerCase().endsWith('.md')) continue;
+								if (!docSlugs.has(base.toLowerCase())) continue;
+								if (await worktreeTracksPath(prep.executor, wt.loc, p)) continue;
+								strays.push(p);
+							}
+						}
+						if (strays.length > 0) {
+							emit(
+								'stderr',
+								`\n[runner] WARNING: this run wrote ${strays.join(', ')} to the repo, but ${
+									strays.length === 1 ? 'that filename is' : 'those filenames are'
+								} a project doc - project docs live in the database, not the filesystem, so the file changed nothing anyone will read and the real doc is now stale. Re-apply the change with write_project_doc (or edit_project_doc for part of one) and drop the file from the worktree.\n`,
+							);
+						}
+					}
+				} catch (e) {
+					log.error(`Run ${heartbeatRunId} stray-project-doc check failed:`, e);
+				}
+			}
+
 			// A clean exit where the runtime force-terminated still-running background
 			// work is NOT a success: the run abandoned unfinished work (e.g. a
 			// deep-research Workflow that never got to synthesize its report) even
@@ -2596,7 +2662,7 @@ export function buildTaskPrompt(
 		parts.push(renderCommentHistory(recentComments, { wakingCommentId: ctx.wakingCommentId }));
 		parts.push('');
 		parts.push(
-			'These are only the most recent comments. Before you start, call `list_comments` to read the full thread — earlier comments may carry instructions that change this task.',
+			'These are only the most recent comments, and they are shown here in full. Before you start, call `list_comments` to read the full thread — earlier comments may carry instructions that change this task. Note `list_comments` excerpts long comments: a row with `text_truncated: true` is showing only the first `excerpt_chars` of its body in `content.text`, so read that comment with `get_comment` before acting on it rather than assuming the excerpt is the whole thing.',
 		);
 	}
 

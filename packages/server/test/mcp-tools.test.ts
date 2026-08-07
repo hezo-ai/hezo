@@ -993,6 +993,204 @@ describe('MCP tool handlers: additional data queries via DB', () => {
 		expect(entry?.description).toBe('How we track and report campaign analytics each week.');
 	});
 
+	it('edit_project_doc changes one span and reports what landed', async () => {
+		const body = [
+			'# Spec',
+			'',
+			'## Storage',
+			'We use localStorage.',
+			'',
+			'## Routing',
+			'Hash.',
+		].join('\n');
+		await callToolViaMcp('write_project_doc', {
+			project: projectId,
+			filename: 'editable.md',
+			content: body,
+			description: 'Editing target.',
+		});
+
+		const edited = (await callToolViaMcp('edit_project_doc', {
+			project: projectId,
+			filename: 'editable.md',
+			old_string: 'We use localStorage.',
+			new_string: 'We use IndexedDB.',
+			changelog: 'Switch the storage engine.',
+		})) as {
+			edited?: boolean;
+			replacements?: number;
+			content_length?: number;
+			hunk?: string;
+			warning?: string;
+			error?: string;
+		};
+		expect(edited.error).toBeUndefined();
+		expect(edited.edited).toBe(true);
+		expect(edited.replacements).toBe(1);
+		// The applied hunk is returned so the caller can verify without re-reading.
+		expect(edited.hunk).toContain('We use IndexedDB.');
+		// Content changed, so the changelog had a revision to land on.
+		expect(edited.warning).toBeUndefined();
+
+		const read = (await callToolViaMcp('read_project_doc', {
+			project: projectId,
+			filename: 'editable.md',
+		})) as { content: string };
+		expect(read.content).toContain('We use IndexedDB.');
+		expect(read.content).toContain('## Routing');
+		expect(read.content).not.toContain('localStorage');
+		expect(edited.content_length).toBe(read.content.length);
+
+		// Description survives an edit that never mentions it.
+		const listed = (await callToolViaMcp('list_project_docs', { project: projectId })) as {
+			items: Array<{ filename: string; description?: string }>;
+		};
+		expect(listed.items.find((f) => f.filename === 'editable.md')?.description).toBe(
+			'Editing target.',
+		);
+	});
+
+	it('edit_project_doc refuses an ambiguous or missing anchor, and a doc that does not exist', async () => {
+		await callToolViaMcp('write_project_doc', {
+			project: projectId,
+			filename: 'ambiguous.md',
+			content: 'alpha\nrepeat\nbeta\nrepeat\ngamma',
+		});
+
+		const ambiguous = (await callToolViaMcp('edit_project_doc', {
+			project: projectId,
+			filename: 'ambiguous.md',
+			old_string: 'repeat',
+			new_string: 'changed',
+		})) as { error?: string; edited?: boolean };
+		expect(ambiguous.edited).toBeUndefined();
+		expect(ambiguous.error).toContain('matches 2 places');
+
+		// Nothing was written by the refused call.
+		const untouched = (await callToolViaMcp('read_project_doc', {
+			project: projectId,
+			filename: 'ambiguous.md',
+		})) as { content: string };
+		expect(untouched.content).toBe('alpha\nrepeat\nbeta\nrepeat\ngamma');
+
+		const allOfThem = (await callToolViaMcp('edit_project_doc', {
+			project: projectId,
+			filename: 'ambiguous.md',
+			old_string: 'repeat',
+			new_string: 'changed',
+			replace_all: true,
+		})) as { replacements?: number };
+		expect(allOfThem.replacements).toBe(2);
+
+		const missingDoc = (await callToolViaMcp('edit_project_doc', {
+			project: projectId,
+			filename: 'no-such-doc.md',
+			old_string: 'a',
+			new_string: 'b',
+		})) as { error?: string };
+		expect(missingDoc.error).toContain('not found');
+	});
+
+	it('write_project_doc rejects a truncated argument instead of storing a partial body', async () => {
+		const full = '# Spec\n\n'.concat('detail '.repeat(500));
+		await callToolViaMcp('write_project_doc', {
+			project: projectId,
+			filename: 'integrity.md',
+			content: full,
+		});
+
+		// A runtime that caps tool-call argument size cuts `content` mid-stream.
+		// Declaring the true length is what turns that from a silent partial
+		// overwrite (which also wipes the doc's review comments) into a refusal.
+		const truncated = (await callToolViaMcp('write_project_doc', {
+			project: projectId,
+			filename: 'integrity.md',
+			content: full.slice(0, 100),
+			content_length: full.length,
+		})) as { error?: string; written?: boolean };
+		expect(truncated.written).toBeUndefined();
+		expect(truncated.error).toContain('truncated in transit');
+
+		const intact = (await callToolViaMcp('read_project_doc', {
+			project: projectId,
+			filename: 'integrity.md',
+		})) as { content: string };
+		expect(intact.content).toBe(full);
+
+		// A matching declaration writes normally and reports the stored size.
+		const ok = (await callToolViaMcp('write_project_doc', {
+			project: projectId,
+			filename: 'integrity.md',
+			content: full.slice(0, 100),
+			content_length: 100,
+		})) as { written?: boolean; content_length?: number };
+		expect(ok.written).toBe(true);
+		expect(ok.content_length).toBe(100);
+	});
+
+	it('write_project_doc refuses to blank an existing doc unless asked explicitly', async () => {
+		await callToolViaMcp('write_project_doc', {
+			project: projectId,
+			filename: 'blankable.md',
+			content: '# Real content that took work',
+		});
+
+		const refused = (await callToolViaMcp('write_project_doc', {
+			project: projectId,
+			filename: 'blankable.md',
+			content: '',
+		})) as { error?: string; written?: boolean };
+		expect(refused.written).toBeUndefined();
+		expect(refused.error).toContain('allow_empty');
+
+		const still = (await callToolViaMcp('read_project_doc', {
+			project: projectId,
+			filename: 'blankable.md',
+		})) as { content: string };
+		expect(still.content).toBe('# Real content that took work');
+
+		const allowed = (await callToolViaMcp('write_project_doc', {
+			project: projectId,
+			filename: 'blankable.md',
+			content: '',
+			allow_empty: true,
+		})) as { written?: boolean };
+		expect(allowed.written).toBe(true);
+	});
+
+	it('warns when a changelog has no revision to land on', async () => {
+		// First write of a doc: a revision holds the content as it was BEFORE a
+		// change, so a creation has nowhere to put a changelog. It used to be
+		// dropped in silence.
+		const created = (await callToolViaMcp('write_project_doc', {
+			project: projectId,
+			filename: 'changelog-warn.md',
+			content: '# One',
+			changelog: 'Initial draft.',
+		})) as { written?: boolean; warning?: string };
+		expect(created.written).toBe(true);
+		expect(created.warning).toContain('changelog');
+
+		// Description-only update: same situation, content is unchanged.
+		const descOnly = (await callToolViaMcp('write_project_doc', {
+			project: projectId,
+			filename: 'changelog-warn.md',
+			content: '# One',
+			description: 'Just the description.',
+			changelog: 'Tweaked the description.',
+		})) as { warning?: string };
+		expect(descOnly.warning).toContain('changelog');
+
+		// A real content change records it, so no warning.
+		const real = (await callToolViaMcp('write_project_doc', {
+			project: projectId,
+			filename: 'changelog-warn.md',
+			content: '# Two',
+			changelog: 'Renamed the heading.',
+		})) as { warning?: string };
+		expect(real.warning).toBeUndefined();
+	});
+
 	it('omits description from read_project_doc when unset', async () => {
 		await callToolViaMcp('write_project_doc', {
 			project: projectId,
@@ -1703,7 +1901,7 @@ describe('MCP tool: set_agent_team_context and get_agent_team_context', () => {
 });
 
 describe('MCP tool: create_task sub-task depth', () => {
-	it('create_task caps sub-task depth at 2', async () => {
+	it('create_task caps sub-task depth at 3', async () => {
 		const root = (await callToolViaMcp('create_task', {
 			project: projectId,
 			title: 'Depth root',
@@ -1727,13 +1925,21 @@ describe('MCP tool: create_task sub-task depth', () => {
 		})) as { id: string; error?: string };
 		expect(subSub.error).toBeUndefined();
 
+		const subSubSub = (await callToolViaMcp('create_task', {
+			project: projectId,
+			title: 'Depth sub-sub-sub',
+			assignee_id: agentId,
+			parent_task_id: subSub.id,
+		})) as { id: string; error?: string };
+		expect(subSubSub.error).toBeUndefined();
+
 		const tooDeep = (await callToolViaMcp('create_task', {
 			project: projectId,
 			title: 'Depth too deep',
 			assignee_id: agentId,
-			parent_task_id: subSub.id,
+			parent_task_id: subSubSub.id,
 		})) as { error?: string };
-		expect(tooDeep.error).toMatch(/2 levels deep/);
+		expect(tooDeep.error).toMatch(/3 levels deep/);
 	});
 
 	it('create_task resolves a parent passed by identifier (the agent-facing form)', async () => {
@@ -1859,13 +2065,14 @@ describe('MCP tool: update_task re-parenting', () => {
 		await newTask('MCP depth mover child', mover.id);
 		const root = await newTask('MCP depth root');
 		const mid = await newTask('MCP depth mid', root.id);
+		const deep = await newTask('MCP depth deep', mid.id);
 
 		const result = (await callToolViaMcp('update_task', {
 			project: projectId,
 			task_id: mover.identifier,
-			parent_task_id: mid.identifier,
+			parent_task_id: deep.identifier,
 		})) as { error?: string };
-		expect(result.error).toMatch(/2 levels deep/);
+		expect(result.error).toMatch(/3 levels deep/);
 	});
 
 	it('rejects an open task under a completed parent', async () => {
@@ -2088,7 +2295,14 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 			expect(row.id).not.toBe(oldest.id);
 		}
 
-		const longText = 'x'.repeat(5000);
+		// The body opens with a short line followed by a blank line - the exact
+		// shape that used to collapse a 9400-character comment down to its 73-char
+		// preamble, because the excerpt cut at the FIRST paragraph break and
+		// applied excerpt_chars only as a secondary cap. The previous fixture here
+		// was 'x'.repeat(5000): a single paragraph with no blank line, so it never
+		// exercised that path and the defect shipped untested.
+		const preamble = 'Here is my review. I have read:';
+		const longText = `${preamble}\n\n${'detail '.repeat(1200)}`;
 		await db.query(
 			`INSERT INTO task_comments (task_id, content_type, content, created_at)
 			 VALUES ($1, 'text'::comment_content_type, $2::jsonb,
@@ -2101,13 +2315,91 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 			excerpt_chars: 100,
 		});
 		const longRow = truncated[0] as {
+			id: string;
 			content: { text: string };
 			text_truncated?: boolean;
 			text_length?: number;
+			text_paging_hint?: string;
 		};
 		expect(longRow.content.text.length).toBeLessThanOrEqual(100);
+		// The budget is a floor to fill, not a ceiling applied after some other
+		// rule: the excerpt must run well past the short preamble.
+		expect(longRow.content.text.length).toBeGreaterThan(preamble.length);
 		expect(longRow.text_truncated).toBe(true);
 		expect(longRow.text_length).toBe(longText.length);
+		// A truncated row names its own recovery call - the excerpt sits in
+		// content.text, the same field a whole comment uses, so a reader who
+		// misses text_truncated would otherwise treat it as the entire comment.
+		expect(longRow.text_paging_hint).toContain('get_comment');
+
+		// get_comment is that recovery call, and it must actually serve the body.
+		const full = (await callToolViaMcp('get_comment', {
+			project: projectId,
+			comment_id: longRow.id,
+		})) as { content: { text: string }; truncated: boolean; total_bytes: number };
+		expect(full.content.text).toBe(longText);
+		expect(full.truncated).toBe(false);
+		expect(full.total_bytes).toBe(Buffer.byteLength(longText, 'utf8'));
+
+		// ...and it accepts the public_id form a thread citation uses.
+		const byPublicId = (await callToolViaMcp('get_comment', {
+			project: projectId,
+			comment_id: (longRow as unknown as { public_id: string }).public_id,
+		})) as { content: { text: string } };
+		expect(byPublicId.content.text).toBe(longText);
+	});
+
+	it('get_comment windows a very large body and refuses one outside the project', async () => {
+		const task = (await callToolViaMcp('create_task', {
+			project: projectId,
+			title: 'Windowed comment read',
+			assignee_id: agentId,
+		})) as { id: string };
+		// Comfortably past the 64KB result budget, so one read cannot serve it.
+		const huge = 'paragraph text '.repeat(8000);
+		const ins = await db.query<{ id: string }>(
+			`INSERT INTO task_comments (task_id, content_type, content)
+			 VALUES ($1, 'text'::comment_content_type, $2::jsonb)
+			 RETURNING id`,
+			[task.id, JSON.stringify({ text: huge })],
+		);
+		const commentId = ins.rows[0].id;
+
+		const first = (await callToolViaMcp('get_comment', {
+			project: projectId,
+			comment_id: commentId,
+		})) as {
+			content: { text: string };
+			truncated: boolean;
+			next_offset: number | null;
+			total_bytes: number;
+			paging_hint?: string;
+		};
+		expect(first.truncated).toBe(true);
+		expect(first.next_offset).toBeGreaterThan(0);
+		expect(first.total_bytes).toBe(Buffer.byteLength(huge, 'utf8'));
+		expect(first.paging_hint).toContain('get_comment');
+
+		// Page to the end and reassemble - the whole body must be reachable.
+		let assembled = first.content.text;
+		let offset = first.next_offset;
+		for (let guard = 0; offset !== null && guard < 50; guard++) {
+			const next = (await callToolViaMcp('get_comment', {
+				project: projectId,
+				comment_id: commentId,
+				offset,
+			})) as { content: { text: string }; next_offset: number | null };
+			assembled += next.content.text;
+			offset = next.next_offset;
+		}
+		expect(offset).toBeNull();
+		expect(assembled).toBe(huge);
+
+		const missing = (await callToolViaMcp('get_comment', {
+			project: projectId,
+			comment_id: '00000000-0000-0000-0000-000000000000',
+		})) as { error?: string };
+		expect(missing.error).toContain('not found');
 	});
 
 	it('returns a structured result_too_large error when serialised output exceeds the byte cap', async () => {

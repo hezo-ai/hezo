@@ -34,6 +34,8 @@
 	"common.delete": "Usuń",
 	"common.retry": "Spróbuj ponownie",
 	"common.back": "Wstecz",
+	"common.copy": "Kopiuj",
+	"common.copied": "Skopiowano",
 	"nav.home": "Start",
 	"nav.settings": "Ustawienia",
 	"nav.projects": "Projekty",

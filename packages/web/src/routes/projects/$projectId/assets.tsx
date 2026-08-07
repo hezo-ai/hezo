@@ -44,6 +44,7 @@ import { EmptyState } from '../../../components/ui/empty-state';
 import { Input } from '../../../components/ui/input';
 import { RelativeTime } from '../../../components/ui/relative-time';
 import { Tooltip } from '../../../components/ui/tooltip';
+import { useCopyFeedback } from '../../../hooks/use-copy-feedback';
 import {
 	type ProjectAsset,
 	useArchiveProjectAsset,
@@ -61,7 +62,6 @@ import {
 	folderLeafName,
 	groupAssets,
 } from '../../../lib/asset-folders';
-import { copyToClipboard } from '../../../lib/clipboard';
 import { useI18n } from '../../../lib/i18n';
 
 interface AssetsSearch {
@@ -1008,21 +1008,10 @@ function MoveAssetDialog({
  * check for 1.5s as confirmation (mirrors the comment/log copy affordances).
  */
 function CopyReferenceButton({ reference }: { reference: string }) {
-	const [copied, setCopied] = useState(false);
-	const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-	useEffect(() => {
-		return () => {
-			if (timeoutRef.current) clearTimeout(timeoutRef.current);
-		};
-	}, []);
+	const { copied, copy } = useCopyFeedback();
 
 	const handleCopy = async () => {
-		if (await copyToClipboard(reference)) {
-			setCopied(true);
-			if (timeoutRef.current) clearTimeout(timeoutRef.current);
-			timeoutRef.current = setTimeout(() => setCopied(false), 1500);
-		}
+		await copy(reference);
 	};
 
 	return (

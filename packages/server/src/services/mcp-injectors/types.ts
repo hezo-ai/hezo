@@ -116,6 +116,18 @@ export interface McpAdapterContext {
 	 * {@link judgeModelForProvider}). Absent/null falls back to the constant.
 	 */
 	runModel?: string | null;
+	/**
+	 * Filenames of the project's active project docs. Runtimes with a blockable
+	 * pre-tool hook bake these into a guard script so a `Write`/`Edit` aimed at a
+	 * path that shadows a project doc is refused before it happens - the docs are
+	 * database records, and writing one to disk silently changes nothing while
+	 * leaving the real doc stale.
+	 *
+	 * Baked in rather than fetched at hook time so the guard needs no network,
+	 * credentials or tool access from inside the container. Empty or absent means
+	 * no guard is emitted at all.
+	 */
+	projectDocSlugs?: readonly string[];
 }
 
 export interface RuntimeMcpAdapter {

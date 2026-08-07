@@ -249,7 +249,19 @@ export interface UpsertDocumentInput {
 }
 
 export type UpsertDocumentResult =
-	| { status: 'written'; row: DocumentRow }
+	| {
+			status: 'written';
+			row: DocumentRow;
+			/**
+			 * Whether a `changeSummary` the caller supplied actually landed on a
+			 * revision. A revision is only recorded when the content changes, so a
+			 * creation or a description-only update has nowhere to put one. It used
+			 * to be dropped in silence; callers now surface it instead, because a
+			 * changelog an agent wrote and believes is in the history, but is not,
+			 * is worse than never having asked for one.
+			 */
+			changelogRecorded: boolean;
+	  }
 	/** The doc is archived — nothing was written; the caller reports "restore it first". */
 	| { status: 'archived'; row: DocumentRow };
 
@@ -278,7 +290,13 @@ export async function upsertDocument(
 			where.params,
 		);
 		if (existing.rows.length === 0) {
-			return { status: 'written', row: await insertDocument(db, input) };
+			// A revision holds the content as it was BEFORE a change, so a creation
+			// has no revision to attach a changelog to.
+			return {
+				status: 'written',
+				row: await insertDocument(db, input),
+				changelogRecorded: false,
+			};
 		}
 		existedBefore = true;
 		const prior = existing.rows[0];
@@ -286,7 +304,8 @@ export async function upsertDocument(
 			const asIs = await db.query<DocumentRow>('SELECT * FROM documents WHERE id = $1', [prior.id]);
 			return { status: 'archived', row: asIs.rows[0] };
 		}
-		if (prior.content !== input.content) {
+		const contentChanged = prior.content !== input.content;
+		if (contentChanged) {
 			await recordRevision(
 				db,
 				prior.id,
@@ -313,7 +332,7 @@ export async function upsertDocument(
 				prior.id,
 			],
 		);
-		return { status: 'written', row: updateResult.rows[0] };
+		return { status: 'written', row: updateResult.rows[0], changelogRecorded: contentChanged };
 	});
 
 	if (result.status === 'archived') return result;
