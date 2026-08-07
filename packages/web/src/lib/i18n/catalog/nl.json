@@ -34,6 +34,8 @@
 	"common.delete": "Verwijderen",
 	"common.retry": "Opnieuw proberen",
 	"common.back": "Terug",
+	"common.copy": "Kopiëren",
+	"common.copied": "Gekopieerd",
 	"nav.home": "Start",
 	"nav.settings": "Instellingen",
 	"nav.projects": "Projecten",

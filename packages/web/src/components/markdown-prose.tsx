@@ -24,6 +24,7 @@ import {
 } from '../lib/remark-mentions';
 import { remarkNormalizeInlineCode } from '../lib/remark-normalize-inline-code';
 import { CommentRefLink, MENTION_CLASSES } from './comment-ref-link';
+import { MarkdownCodeBlock } from './markdown-code-block';
 import { useOpenPreview } from './task-detail/preview-context';
 import { TaskMentionTooltipContent } from './task-mention-tooltip';
 import { Tooltip } from './ui/tooltip';
@@ -467,6 +468,10 @@ export function MarkdownProse({
 					<table>{props.children}</table>
 				</div>
 			),
+			// A fenced code block renders inside a relative wrapper so its copy
+			// button can overlay the bottom-right corner without pushing the
+			// following content down. Inline `<code>` never reaches this override.
+			pre: MarkdownCodeBlock,
 		};
 	}, [projectId, instance, openPreview, activeReviewId, onReviewHighlightClick]);
 

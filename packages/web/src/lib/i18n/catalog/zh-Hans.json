@@ -34,6 +34,8 @@
 	"common.delete": "删除",
 	"common.retry": "重试",
 	"common.back": "返回",
+	"common.copy": "复制",
+	"common.copied": "已复制",
 	"nav.home": "主页",
 	"nav.settings": "设置",
 	"nav.projects": "项目",

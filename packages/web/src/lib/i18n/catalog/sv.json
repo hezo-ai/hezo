@@ -34,6 +34,8 @@
 	"common.delete": "Ta bort",
 	"common.retry": "Försök igen",
 	"common.back": "Tillbaka",
+	"common.copy": "Kopiera",
+	"common.copied": "Kopierad",
 	"nav.home": "Start",
 	"nav.settings": "Inställningar",
 	"nav.projects": "Projekt",
