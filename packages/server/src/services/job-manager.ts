@@ -264,6 +264,14 @@ export interface JobManagerDeps {
 }
 
 const COALESCING_WINDOW_MS = Number(process.env.HEZO_WAKEUP_COALESCING_MS ?? 2_000);
+/**
+ * Deferrals released per wakeups tick by {@link JobManager.releaseSatisfiedDeferrals}.
+ *
+ * Bounded because the scan is unindexed on the payload reason and this runs
+ * every five seconds; a backlog drains over a few ticks rather than in one long
+ * statement. Comfortably above what a single repo setup can strand.
+ */
+const DEFERRAL_RELEASE_LIMIT = 20;
 const WAKEUP_CRON = process.env.HEZO_WAKEUP_CRON ?? '*/5 * * * * *';
 const HEARTBEAT_CRON = process.env.HEZO_HEARTBEAT_CRON ?? '*/5 * * * * *';
 const INBOX_ARCHIVE_CRON = process.env.HEZO_INBOX_ARCHIVE_CRON ?? '0 0 3 * * *';
@@ -1501,8 +1509,59 @@ export class JobManager {
 		return active.rows.length > 0;
 	}
 
+	/**
+	 * Put back wakeups that were parked on a precondition which has since been
+	 * met.
+	 *
+	 * `deferred` is terminal unless something flips it, and the only thing that
+	 * flips `awaiting_repo_setup` is `finalizePendingRepoSetup`, reached solely
+	 * from a repo setup that reaches `finishReady`. It misses three ways: it
+	 * returns early when no approval is pending, it selects on
+	 * `payload->>'project_id'`, and it then skips any row without a `task_id`.
+	 * Any miss parks the wakeup for good - and with the queue empty the only
+	 * remaining driver is the heartbeat sweep, floored at an hour and commonly
+	 * configured far longer, so an instance with assigned, unblocked, in-progress
+	 * work sat idle for half a day with nothing saying why.
+	 *
+	 * The project is resolved through the wakeup's **task**, not through
+	 * `payload->>'project_id'`, precisely because that key is one of the things
+	 * the one-shot path misses. `reason = 'blocked'` is left alone: it has its own
+	 * release in `wakeIfReady`, and two writers for one row is a race.
+	 *
+	 * This is a backstop, not the fast path - `finalizePendingRepoSetup` still
+	 * resumes work the moment setup completes.
+	 */
+	private async releaseSatisfiedDeferrals(): Promise<void> {
+		const { db } = this.deps;
+		const released = await db.query<{ id: string; slug: string }>(
+			`UPDATE agent_wakeup_requests w
+			    SET status = $1::wakeup_status, claimed_at = NULL
+			   FROM tasks t
+			   JOIN projects p ON p.id = t.project_id
+			  WHERE w.id IN (
+			          SELECT w2.id FROM agent_wakeup_requests w2
+			           WHERE w2.status = $2::wakeup_status
+			             AND w2.payload->>'reason' = 'awaiting_repo_setup'
+			           ORDER BY w2.created_at ASC
+			           LIMIT ${DEFERRAL_RELEASE_LIMIT})
+			    AND t.id = (w.payload->>'task_id')::uuid
+			    AND p.designated_repo_id IS NOT NULL
+			  RETURNING w.id, p.slug`,
+			[WakeupStatus.Queued, WakeupStatus.Deferred],
+		);
+		if (released.rows.length === 0) return;
+		// Warned rather than logged at debug: reaching here means work was stranded
+		// until this ran, and a silent release leaves the next occurrence as
+		// unexplained as the first. Zero output on a healthy instance.
+		const projects = [...new Set(released.rows.map((r) => r.slug))].join(', ');
+		log.warn(
+			`Requeued ${released.rows.length} wakeup(s) left deferred on repo setup that has since completed (${projects})`,
+		);
+	}
+
 	private async processWakeups(): Promise<void> {
 		const { db } = this.deps;
+		await this.releaseSatisfiedDeferrals();
 		const coalescingCutoff = new Date(Date.now() - COALESCING_WINDOW_MS).toISOString();
 
 		const wakeups = await db.query<{
