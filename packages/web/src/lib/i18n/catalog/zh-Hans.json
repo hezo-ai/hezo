@@ -109,6 +109,7 @@
 	"containers.empty.title": "没有正在运行的容器",
 	"containers.imageBuild.step": "第 {step}/{total} 步",
 	"containers.imageBuild.title": "正在重新构建基础镜像",
+	"containers.state.assistant": "助手专用",
 	"containers.state.busy": "正在执行任务",
 	"containers.state.creating": "启动中",
 	"containers.state.error": "失败",

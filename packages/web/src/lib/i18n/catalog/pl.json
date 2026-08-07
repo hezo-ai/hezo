@@ -109,6 +109,7 @@
 	"containers.empty.title": "Brak uruchomionych kontenerów",
 	"containers.imageBuild.step": "Krok {step}/{total}",
 	"containers.imageBuild.title": "Przebudowywanie obrazu bazowego",
+	"containers.state.assistant": "Asystenta",
 	"containers.state.busy": "Wykonuje zadanie",
 	"containers.state.creating": "Uruchamianie",
 	"containers.state.error": "Błąd",

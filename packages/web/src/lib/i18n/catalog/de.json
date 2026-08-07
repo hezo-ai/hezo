@@ -109,6 +109,7 @@
 	"containers.empty.title": "Keine Container aktiv",
 	"containers.imageBuild.step": "Schritt {step}/{total}",
 	"containers.imageBuild.title": "Basis-Image wird neu erstellt",
+	"containers.state.assistant": "Assistent",
 	"containers.state.busy": "Führt Aufgabe aus",
 	"containers.state.creating": "Wird gestartet",
 	"containers.state.error": "Fehlgeschlagen",

@@ -109,6 +109,7 @@
 	"containers.empty.title": "No hay contenedores en marcha",
 	"containers.imageBuild.step": "Paso {step}/{total}",
 	"containers.imageBuild.title": "Reconstruyendo la imagen base",
+	"containers.state.assistant": "Del asistente",
 	"containers.state.busy": "Ejecutando una tarea",
 	"containers.state.creating": "Iniciando",
 	"containers.state.error": "Con error",

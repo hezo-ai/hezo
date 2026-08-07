@@ -109,6 +109,7 @@
 	"containers.empty.title": "実行中のコンテナはありません",
 	"containers.imageBuild.step": "ステップ {step}/{total}",
 	"containers.imageBuild.title": "ベースイメージを再ビルドしています",
+	"containers.state.assistant": "アシスタント用",
 	"containers.state.busy": "タスク実行中",
 	"containers.state.creating": "起動中",
 	"containers.state.error": "失敗",

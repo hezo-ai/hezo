@@ -109,6 +109,7 @@
 	"containers.empty.title": "Geen containers actief",
 	"containers.imageBuild.step": "Stap {step}/{total}",
 	"containers.imageBuild.title": "Basisimage wordt opnieuw gebouwd",
+	"containers.state.assistant": "Van de assistent",
 	"containers.state.busy": "Voert taak uit",
 	"containers.state.creating": "Wordt gestart",
 	"containers.state.error": "Mislukt",

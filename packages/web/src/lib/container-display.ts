@@ -10,10 +10,10 @@ import type { MessageKey } from './i18n';
  */
 export type ContainerState = 'creating' | 'idle' | 'busy' | 'suspended' | 'error';
 
-export const CONTAINER_STATE_TONE: Record<
-	ContainerState,
-	'live' | 'neutral' | 'warning' | 'danger'
-> = {
+/** Badge colours these surfaces draw from, named so the pinned case can share them. */
+export type ContainerTone = 'live' | 'neutral' | 'warning' | 'danger' | 'info';
+
+export const CONTAINER_STATE_TONE: Record<ContainerState, ContainerTone> = {
 	creating: 'warning',
 	idle: 'neutral',
 	busy: 'live',
@@ -33,6 +33,30 @@ export const CONTAINER_STATE_LABEL: Record<ContainerState, MessageKey> = {
 	suspended: 'containers.state.suspended',
 	error: 'containers.state.error',
 };
+
+/**
+ * How a container's state should read, given that it may be pinned to the
+ * assistant.
+ *
+ * A chat-pinned container never enters `busy`: the assistant *pins* it and
+ * leaves it `idle` for its whole life, deliberately, so nothing recycles it out
+ * from under a conversation. Rendering the raw state therefore labels a
+ * container "Idle" while the assistant is mid-turn in it. Naming the assistant
+ * instead is honest about why it is held and why it is not being reclaimed.
+ *
+ * A pinned container that is genuinely doing something else - still being built,
+ * or failed - keeps that state, because those say more than the reservation
+ * does.
+ */
+export function containerBadge(
+	state: ContainerState,
+	reservedForChat: boolean,
+): { tone: ContainerTone; label: MessageKey } {
+	if (reservedForChat && (state === 'idle' || state === 'suspended')) {
+		return { tone: 'info', label: 'containers.state.assistant' };
+	}
+	return { tone: CONTAINER_STATE_TONE[state], label: CONTAINER_STATE_LABEL[state] };
+}
 
 const GIB = 1024 ** 3;
 

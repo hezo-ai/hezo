@@ -582,15 +582,6 @@ export async function provisionContainer(
 			 WHERE id = $3`,
 			[Id, ContainerStatus.Running, project.id],
 		);
-		// Join the project's pool. Registered here rather than at create so a member
-		// never exists in a state no run could use, and registered for every
-		// container - `projects.container_id` still names one of them for the UI and
-		// for the columns not yet migrated, but the pool is what the ladder reads.
-		// The disk it was actually provisioned with rides along, so the pool judges
-		// this container against its own allocation rather than against whatever the
-		// setting happens to say later.
-		await upsertPoolMember(db, project.id, Id, 'idle', diskGb);
-
 		if (deps.containerLogStreamer && deps.logs) {
 			deps.containerLogStreamer.subscribe(project.id, Id, deps.logs, docker);
 		}
@@ -709,6 +700,24 @@ export async function provisionContainer(
 		} catch (e) {
 			emit('stderr', `⚠ MCP installer step failed: ${(e as Error).message}`);
 		}
+
+		// Only now does the member leave `creating`. This write used to sit above
+		// the whole setup tail - the CA install, the chown, the repo clone, the MCP
+		// installs - which made the container read "Idle" on the Containers page for
+		// the slowest minutes of its life, while its own log showed it cloning.
+		//
+		// The label was the visible half. `idle` is also what makes a member
+		// *allocatable* (`loadPoolMembers` drops only `creating`/`error`) and
+		// *suspendable* (`planIdleShutdown` matches `idle`), so a container with no
+		// CA trusted, wrong ownership on its workspace and no repos was a valid
+		// reuse candidate, and the idle pass could stop it mid-clone. Provisioning
+		// runs outside the per-project lifecycle lock on two paths (project creation
+		// and startup self-heal), so that was reachable rather than theoretical.
+		//
+		// The disk it was actually provisioned with rides along, so the pool judges
+		// this container against its own allocation rather than against whatever the
+		// setting happens to say later.
+		await upsertPoolMember(db, project.id, Id, 'idle', diskGb);
 
 		emit('stdout', '✓ Container ready');
 		await broadcastProjectUpdate(db, wsManager, teamId, project.id);

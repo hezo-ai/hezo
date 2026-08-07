@@ -15,7 +15,12 @@ import {
 	provisionContainer,
 } from '../src/services/containers';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
-import { type ContainerListing, listAllContainers } from '../src/services/sandbox/pool-db';
+import { planIdleShutdown } from '../src/services/sandbox/pool';
+import {
+	type ContainerListing,
+	listAllContainers,
+	loadPoolMembers,
+} from '../src/services/sandbox/pool-db';
 import { getProjectDir } from '../src/services/workspace';
 import type { WebSocketManager } from '../src/services/ws';
 import { safeClose } from './helpers';
@@ -64,9 +69,20 @@ function recordingDocker(
 		/**
 		 * Runs in place of `startContainer`, which is the first thing to happen
 		 * after the engine hands back an id - the earliest point a test can observe
-		 * the half-provisioned state, and the point everything slow comes after.
+		 * the half-provisioned state.
+		 *
+		 * It is *not* a vantage point on the expensive tail, which is what it used
+		 * to claim: the CA install, the chown, the repo clone and the MCP installs
+		 * all come later still. Use `onExec` for those.
 		 */
 		onStart?: (containerId: string) => Promise<void>;
+		/**
+		 * Runs on every exec the provision issues. The first of those is the CA
+		 * install, so this lands *inside* the setup tail - the window where the
+		 * member used to read `idle` while the container was still being built, and
+		 * the only place a test can observe it.
+		 */
+		onExec?: () => Promise<void>;
 	} = {},
 ) {
 	const created: CreateContainerCall[] = [];
@@ -81,6 +97,7 @@ function recordingDocker(
 		}),
 		execCreate: vi.fn(async () => {
 			if (opts.execCreateError) throw opts.execCreateError;
+			if (opts.onExec) await opts.onExec();
 			return 'exec-y';
 		}),
 		execStart: vi.fn(async () => ({
@@ -109,6 +126,10 @@ async function resetContainerRow(): Promise<void> {
 		 container_error = NULL, container_last_logs = NULL WHERE id = $1`,
 		[projectId],
 	);
+	// The members too: every provision in this file leaves one behind, and a test
+	// that looks the project's container up by project id would otherwise find an
+	// earlier test's - which reads `idle` and hides exactly what is under test.
+	await db.query('DELETE FROM container_pool_members WHERE project_id = $1', [projectId]);
 }
 
 async function projectRow(): Promise<ProjectRow> {
@@ -334,6 +355,50 @@ describe('provisionContainer', () => {
 			[id],
 		);
 		expect(after.rows[0].state).toBe('idle');
+	});
+
+	it('stays `creating` through the setup tail, so it is neither shown nor used as ready', async () => {
+		// The window the screenshot caught: the member was flipped to `idle` right
+		// after `startContainer`, above the CA install, the chown, the repo clone and
+		// the MCP installs. The page showed "Idle" for the slowest minutes of the
+		// container's life while its own log said it was cloning.
+		//
+		// Observed from an exec, because that is what the setup tail is made of -
+		// `onStart` fires above the old write and so could never have caught this.
+		await resetContainerRow();
+		const seen: Array<{ state: string; usable: number; suspendable: number }> = [];
+		const { docker } = recordingDocker({
+			onExec: async () => {
+				const rows = await listAllContainers(db, 2);
+				const listed = rows.find((r) => r.project_id === projectId);
+				const members = await loadPoolMembers(db, projectId);
+				seen.push({
+					state: listed?.state ?? 'missing',
+					// The half the label hides: `idle` is what makes a member
+					// allocatable and suspendable. A container with no CA trusted and
+					// no repos must be neither.
+					usable: members.length,
+					suspendable: planIdleShutdown(members).suspend === null ? 0 : 1,
+				});
+			},
+		});
+
+		const id = await provisionContainer(baseDeps(docker), await projectRow(), teamSlug);
+
+		expect(seen.length).toBeGreaterThan(0);
+		for (const at of seen) {
+			expect(at.state).toBe('creating');
+			expect(at.usable).toBe(0);
+			expect(at.suspendable).toBe(0);
+		}
+
+		// And it does become usable once the container really is ready.
+		const after = await db.query<{ state: string }>(
+			`SELECT state::text AS state FROM container_pool_members WHERE container_id = $1`,
+			[id],
+		);
+		expect(after.rows[0].state).toBe('idle');
+		expect((await loadPoolMembers(db, projectId)).length).toBe(1);
 	});
 
 	it('leaves a container that failed part-way through setup in the pool, marked and explained', async () => {

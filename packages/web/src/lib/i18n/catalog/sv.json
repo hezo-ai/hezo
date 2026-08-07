@@ -109,6 +109,7 @@
 	"containers.empty.title": "Inga containrar körs",
 	"containers.imageBuild.step": "Steg {step}/{total}",
 	"containers.imageBuild.title": "Bygger om basavbilden",
+	"containers.state.assistant": "Assistentens",
 	"containers.state.busy": "Kör en uppgift",
 	"containers.state.creating": "Startar",
 	"containers.state.error": "Misslyckad",

@@ -10,11 +10,7 @@ import { ConfirmDialog } from '../../../components/ui/confirm-dialog';
 import { useContainerLogs } from '../../../hooks/use-container-logs';
 import { useContainer, useRemoveContainer } from '../../../hooks/use-containers';
 import { toast } from '../../../hooks/use-toast';
-import {
-	CONTAINER_STATE_LABEL,
-	CONTAINER_STATE_TONE,
-	formatGib,
-} from '../../../lib/container-display';
+import { containerBadge, formatGib } from '../../../lib/container-display';
 import { useI18n } from '../../../lib/i18n';
 
 /**
@@ -72,8 +68,11 @@ function ContainerDetail() {
 
 			<div className="flex flex-wrap items-center justify-between gap-3 mt-3 mb-4">
 				<div className="flex items-center gap-2 min-w-0">
-					<Badge color={CONTAINER_STATE_TONE[container.state]} testId="container-detail-state">
-						{t(CONTAINER_STATE_LABEL[container.state])}
+					<Badge
+						color={containerBadge(container.state, container.reserved_for_chat).tone}
+						testId="container-detail-state"
+					>
+						{t(containerBadge(container.state, container.reserved_for_chat).label)}
 					</Badge>
 					{!provisioning && (
 						<span className="font-mono text-[12px] text-text-2 truncate">

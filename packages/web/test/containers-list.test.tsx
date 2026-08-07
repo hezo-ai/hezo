@@ -129,6 +129,28 @@ test('the list marks a container that reported an error, whatever its state says
 	expect(queryByTestId('container-error-mark-beta-one')).toBeNull();
 });
 
+test('a container pinned to the assistant reads as the assistant’s, not as idle', async () => {
+	// The assistant *pins* its container and leaves it `idle` for the whole
+	// conversation, deliberately, so nothing recycles it out from under a turn.
+	// Rendering the raw state therefore labelled it "Idle" while the assistant was
+	// mid-turn in it. Naming the reservation says why it is held and why it is not
+	// being reclaimed.
+	let seeded!: Seeded;
+	const { findByTestId } = await renderApp({
+		initialPath: '/settings/containers',
+		seed: async () => {
+			seeded = await seedTwoProjects();
+			await addMember(seeded.alpha.id, 'alpha-chat', { reservedForChat: true });
+			await addMember(seeded.beta.id, 'beta-one');
+		},
+	});
+
+	await findByTestId('containers-list', undefined, { timeout: 20_000 });
+	expect((await findByTestId('container-state-alpha-chat')).textContent).toBe("Assistant's");
+	// An ordinary idle container is untouched, so the label still means something.
+	expect((await findByTestId('container-state-beta-one')).textContent).toBe('Idle');
+});
+
 test('an instance with nothing running says so rather than showing an empty table', async () => {
 	const { findByText } = await renderApp({
 		initialPath: '/settings/containers',

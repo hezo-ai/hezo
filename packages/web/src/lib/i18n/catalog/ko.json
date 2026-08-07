@@ -109,6 +109,7 @@
 	"containers.empty.title": "실행 중인 컨테이너가 없습니다",
 	"containers.imageBuild.step": "{step}/{total}단계",
 	"containers.imageBuild.title": "기본 이미지를 다시 빌드하는 중",
+	"containers.state.assistant": "어시스턴트 전용",
 	"containers.state.busy": "태스크 실행 중",
 	"containers.state.creating": "시작 중",
 	"containers.state.error": "실패",

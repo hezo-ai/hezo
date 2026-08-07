@@ -109,6 +109,7 @@
 	"containers.empty.title": "No containers running",
 	"containers.imageBuild.step": "Step {step}/{total}",
 	"containers.imageBuild.title": "Rebuilding base image",
+	"containers.state.assistant": "Assistant's",
 	"containers.state.busy": "Running a task",
 	"containers.state.creating": "Starting",
 	"containers.state.error": "Failed",

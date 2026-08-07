@@ -8,11 +8,7 @@ import { Progress } from '../../../components/ui/progress';
 import { RelativeTime } from '../../../components/ui/relative-time';
 import { type ContainerSummary, useContainers } from '../../../hooks/use-containers';
 import { useAnyImageBuild } from '../../../hooks/use-image-build';
-import {
-	CONTAINER_STATE_LABEL,
-	CONTAINER_STATE_TONE,
-	formatGib,
-} from '../../../lib/container-display';
+import { containerBadge, formatGib } from '../../../lib/container-display';
 import { useI18n } from '../../../lib/i18n';
 
 /**
@@ -98,10 +94,10 @@ function ContainersList() {
 			render: (row) => (
 				<span className="inline-flex items-center gap-1.5">
 					<Badge
-						color={CONTAINER_STATE_TONE[row.state]}
+						color={containerBadge(row.state, row.reserved_for_chat).tone}
 						testId={`container-state-${row.container_id}`}
 					>
-						{t(CONTAINER_STATE_LABEL[row.state])}
+						{t(containerBadge(row.state, row.reserved_for_chat).label)}
 					</Badge>
 					{row.last_error ? (
 						<AlertTriangle
