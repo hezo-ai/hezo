@@ -203,7 +203,13 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_comments: {
 		category: 'Comments & reactions',
 		returns:
-			'Comment rows newest-first, each with `id`, `public_id`, `task_id`, `author_member_id`, `author_api_key_id`, `parent_comment_id`, `content_type`, `content`, `chosen_option`, `created_at`, `author_type`, `author_name`, `reactions[]`, and `attachments[]`. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. `before` still walks back from a comment you already know. Text comments come back truncated at `excerpt_chars` (default 2000) with `text_truncated`/`text_length` companions.',
+			'Comment rows newest-first, each with `id`, `public_id`, `task_id`, `author_member_id`, `author_api_key_id`, `parent_comment_id`, `content_type`, `content`, `chosen_option`, `created_at`, `author_type`, `author_name`, `reactions[]`, and `attachments[]`. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. `before` still walks back from a comment you already know. Text comments come back truncated at `excerpt_chars` (default 2000), with `text_truncated`/`text_length` companions and a `text_paging_hint` naming the follow-up call. The excerpt is written into `content.text`, the same field a whole comment uses, so check `text_truncated` before treating what you got as the entire comment; read the full body with `get_comment`.',
+	},
+	get_comment: {
+		category: 'Comments & reactions',
+		returns:
+			'One comment row in the same shape `list_comments` returns (plus `task_identifier`), with the body served whole rather than excerpted. For a text comment the result also carries a byte window - `offset`, `returned_bytes`, `total_bytes`, `next_offset`, `truncated` - and the windowed text sits in `content.text`; when `truncated` is true, call again with `offset` set to `next_offset` until `next_offset` is null. Structured comments (system/option/task_link) are returned whole with no window. Accepts either the comment UUID or its `public_id`. Returns `{ error }` if no such comment exists in the project.',
+		auth: "Scoped to the caller's project: a comment is only readable through the project whose team owns its task, the same boundary `list_comments` enforces.",
 	},
 	create_comment: {
 		category: 'Comments & reactions',
@@ -439,6 +445,11 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 		returns:
 			"`{ written: true, id, filename }`, or `{ error }` if the filename is not `.md` or the doc is archived (unarchive first - archived docs are read-only). Make all edits in one consolidated write: a content-changing write deletes ALL pending review comments on the doc (read them first) and records a document revision, so many partial writes lose review context and bury the revision history. The optional `description` sets the doc's overall \"what this is\" summary - one or two sentences describing the doc's stable purpose, not its current contents (shown in the Documents list and doc header; omit to leave it unchanged). The optional `changelog` is stored as that revision's changelog and shown in the document's history - put update/status notes there, not in the document body.",
 	},
+	edit_project_doc: {
+		category: 'Project docs & assets',
+		returns:
+			"`{ edited: true, id, filename, replacements, content_length, hunk }` - `hunk` is the applied change with surrounding context and line numbers, and `content_length` the doc's new size, so you can confirm what landed without reading the doc back. Returns `{ error }` if the doc does not exist (create one with write_project_doc), is archived, or `old_string` is empty, unchanged, absent, or matches more than one place without `replace_all` - the ambiguous case is refused rather than guessing which match you meant. Prefer this over write_project_doc for any change to an existing doc: the argument scales with the edit rather than the document, which keeps a large doc clear of a runtime's tool-call argument-size cap. Like any content-changing write it records a revision and clears the doc's pending review comments. A `warning` is returned when a supplied `changelog` had no revision to land on.",
+	},
 	archive_project_doc: {
 		category: 'Project docs & assets',
 		returns:
@@ -464,6 +475,11 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 		category: 'Project docs & assets',
 		returns:
 			'`{ written: true, id, reference: "assets/<path>", byte_size, width?, height? }` (raster images also report their pixel `width`/`height`), or `{ error }`. Accepts any type a human can upload: text formats (`.html`, `.svg`, `.txt`, `.md`, and `.sh`/`.py`/`.js`/`.ts`/`.json`/`.csv`/`.yaml`/`.yml` stored as plain text) with the default `encoding: "utf8"`, and binary formats (`.png`, `.jpg`, `.gif`, `.webp`, `.pdf`, media, archives such as `.zip`/`.tar`/`.tar.gz`/`.7z`, …) with `encoding: "base64"` - a non-text type written without base64 is rejected, as is invalid or truncated base64 (a runtime argument-size cap can cut a large base64 `content` mid-stream - pass `byte_size` (the file’s exact byte length) so a short decode is rejected, or upload large binaries via a multipart POST to `/mcp/assets` with a `path` field and optional `overwrite=true`, which streams the bytes with no argument limit). Also errors if the type is unsupported, the path is invalid (max 2 folder levels), the content exceeds 10 MB, or an archived asset holds the path (unarchive it first or pick another path). Re-saving the same path overwrites it; matching is path-exact. Overwriting deletes ALL pending review comments on the asset (the admin feedback returned by read_project_asset) - read them first and make all edits in one consolidated write.',
+	},
+	edit_project_asset: {
+		category: 'Project docs & assets',
+		returns:
+			'`{ edited: true, id, reference: "assets/<path>", replacements, byte_size, hunk }` - `hunk` is the applied change with surrounding context and line numbers, so you can confirm what landed without reading the asset back. TEXT assets only (HTML, SVG, markdown, plain text, scripts); a binary asset returns `{ error }` naming its content type, and must be rewritten whole with write_project_asset. Also returns `{ error }` if the asset does not exist, is archived, the result exceeds 10 MB, or `old_string` is empty, unchanged, absent, or matches more than one place without `replace_all`. Prefer this over write_project_asset for any change to an existing text asset: the argument scales with the edit rather than the file, which matters most for the assets that get tweaked (a self-contained interactive HTML mockup re-sent whole is exactly the payload a runtime argument-size cap truncates). Like any overwrite it clears the asset\'s pending review comments.',
 	},
 	move_project_asset: {
 		category: 'Project docs & assets',
@@ -656,8 +672,11 @@ export function generateMcpReference(
 		'  per item, and do not narrow what you cover to whatever fits in one call.',
 		'- **Excerpts (`excerpt_chars`):** list tools return long free-text fields as excerpts',
 		'  with `_truncated`/`_length` companions, so one page cannot be dominated by a few',
-		'  large rows. Raise or lower the cap with `excerpt_chars`; read the full text from the',
-		'  matching single-item `get_*`.',
+		'  large rows. An excerpt is cut to fill `excerpt_chars`, so it usually stops',
+		'  mid-sentence; always check the `_truncated` companion rather than judging from',
+		'  whether the text reads as complete. To get the whole value, call the matching',
+		'  single-item read - `get_task` for a task, `get_comment` for a comment,',
+		'  `read_project_doc` for a doc - not a larger `excerpt_chars`.',
 		'- **Secrets:** agents reference secrets by placeholder (`__HEZO_SECRET_<NAME>__`); the',
 		"  egress proxy substitutes the real value only for the secret's `allowed_hosts`.",
 		'- **Write tools:** tools marked _Write tool_ persist data - a successful call from an',

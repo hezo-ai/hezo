@@ -1752,6 +1752,30 @@ alive), so both run fail-open. File-mount subscription runtimes fail open (no AP
 env); Anthropic subscription still fires via `CLAUDE_CODE_OAUTH_TOKEN`. Full per-runtime
 detail is in `AGENTS.md` › AI runtime hooks.
 
+**Project-doc write guard.** Project docs are database records, and every prompt layer says so
+(`SHARED_INSTRUCTIONS` opens with it; the `{{project_docs_context}}` manifest repeats it naming
+the Write/Edit tools), yet agents still reach for the file tools — and the failure is silent,
+because `Write` to a fresh path *succeeds*: the run believes the doc is saved, the DB doc stays
+stale, and a shadow copy lands in the repo. Two legs, paired the same way the stop-hook judge
+and the handoff-delivery net are:
+
+- **Blocking, per-runtime.** `doc-write-guard.ts` generates a per-run ESM script closed over the
+  project's active doc slugs, shipped through `mcpInjection.files` and wired as a Claude Code
+  `PreToolUse` hook of `type: "command"` matching `Write|Edit|MultiEdit|NotebookEdit`. It refuses
+  a write whose basename matches a doc slug **and** which `git ls-files --error-unmatch` says is
+  untracked — a repo that legitimately carries its own `spec.md` keeps writing to it. The refusal
+  names `write_project_doc`/`edit_project_doc` explicitly, and is emitted on all three channels
+  (exit 2, stderr, stdout JSON). It fails **open** on any malformed payload or error: a guard that
+  blocked real work would be worse than the problem. `buildClaudeCodeSettings` emits the hook only
+  when the project has docs, so an otherwise-unguarded run's settings file is byte-identical to
+  before.
+- **Deterministic, universal.** At run completion `agent-runner.ts` reads the changed paths from
+  `worktreeChangedPaths` (the `git status --porcelain` call that already ran to decide whether the
+  run changed anything; its stdout was previously discarded) and warns in the run log about any
+  untracked `.md` whose basename matches an active doc slug. Warn only, never auto-ingest: the
+  file's relationship to the doc is a guess, and guessing wrong overwrites real work. This leg
+  reaches every runtime, including OpenCode and Grok, which have no blockable turn-end hook.
+
 **Handoff-delivery net.** The stop-hook judge is best-effort — an LLM, model-dependent, and it
 blocks at most once per run (the `stop_hook_active` ceiling) — so a stranded handoff is *also*
 caught **deterministically** at run completion, independent of any judge. In `agent-runner.ts`,
