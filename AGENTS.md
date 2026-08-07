@@ -60,7 +60,7 @@
   - `agents/_partials/<group>/<name>.md` resolves at **build/load time only** (`db/resolve-partials.ts`, baked in by `build:agents`) and reaches only seeded built-in agents. Use for guidance shared by a subset of seeded roles; changing one requires re-running `build:agents`.
   - `agents/<template>/*.md` — one seeded role's own prose.
   - Decision rule: every agent incl. future hires → `SHARED_INSTRUCTIONS`; a subset of seeded roles → a partial; one role → that role's `.md`.
-- `.dev/` — internal engineering docs and the home for the rationale this file omits. `architecture.md` is the consolidated **descriptive** reference; alongside it sit the **prescriptive** guides — `adding-a-container-backend.md`, `adding-a-chat-channel.md`, `writing-migrations.md`. Which of them a given piece of writing belongs in is the routing table at the top of this file.
+- `.dev/` — internal engineering docs and the home for the rationale this file omits. `architecture.md` is the consolidated **descriptive** reference; alongside it sit the **prescriptive** guides — `adding-a-container-backend.md`, `adding-a-chat-channel.md`, `writing-migrations.md` — and `bun-issues.md`, the register of the production runtime's divergences from Node. Which of them a given piece of writing belongs in is the routing table at the top of this file.
 - `docs/` — user-facing documentation rendered at `https://hezo.ai/docs`. `docs/reference/cli.md` is hand-written; `docs/reference/mcp-api.md` is **generated** from the MCP tool registry — never hand-edit it. After touching an MCP tool, author its return shape / authorization note in `TOOL_DOC_META` (`mcp/mcp-reference.ts`) and rebuild with `bun run --cwd packages/server build:docs`.
   - The full `docs/` tree is bundled into the binary and injected into the CEO real-time chat. Each `.md` carries `title`/`order`/`section` frontmatter; `bundle-docs.ts` writes `docs-bundle.json`, `docs-bundle.ts` organises it, `template-resolver.ts` swaps it in at the `<!-- HEZO_DOCS -->` marker in `agents/_instance/ceo.md`. **Keep the marker; never copy doc prose into the role doc.** Adding/removing a page or changing frontmatter must keep `docs-bundle.test.ts` green.
 - **The agent-facing surfaces are generated — update the generator and its test, never a static file.** Which surfaces mirror an MCP tool or REST route is in **Mirrored surfaces** below. Scope: `SKILL.md` (`mcp/skill-file.ts`, served at `GET /SKILL.md`) covers the MCP surface plus a pointer to `HEZO_DOCS_URL` — not the REST API, and not the docs themselves, which reach agents via the CEO chat bundle instead.
@@ -85,6 +85,7 @@
 | Container backend behaviour | `SANDBOX_AGENT_ENVIRONMENTS`, that provider's `docs/containers/remote/` page, the Containers settings UI | compile error, **new backend only** |
 | Architecture (data model, run pipeline, providers, egress, SSH/git, OAuth, auth, build) | `.dev/architecture.md` | the `Docs-Checked:` trailer |
 | A `.dev/` guide added, renamed or removed | the link from its section here, the `.dev/` bullet under **Layout**, this table | **nothing - on you** |
+| A Bun workaround added or removed, or `BUN_VERSION` moved | its entry in `.dev/bun-issues.md` | **nothing - on you** |
 | A rule this file states | its guide in `.dev/`, if one covers that area - they must not disagree | **nothing - on you** |
 | CLI flag / subcommand / env var / port / default (`src/cli.ts`) | `docs/reference/cli.md`, `docs/deployment/configuration.md`, the CLI table in `packages/server/README.md`, any page showing the command | **nothing - on you** |
 | A sharded, renamed or newly-required CI job | its `*-complete` rollup, a shard-unique matrix artifact name, the `main` ruleset's required checks | **nothing - on you** |
@@ -385,6 +386,16 @@ Never commit `.js`/`.d.ts`/`.js.map`/`.d.ts.map` alongside source. Compiled outp
 - `commander` for all CLI argument parsing — never parse `process.argv` manually.
 - Use shared constants/enums from `@hezo/shared` (`packages/shared/src/types/common.ts`) — no raw status/type strings. Add new enum values there first.
 - `bunx`, not `npx`, in this repo's scripts, CI and docs. The rule stops at the repo boundary: inside the agent-run container `npx` is correct and is what `SHARED_INSTRUCTIONS` and the skills tell agents to use.
+
+### Bun runtime constraints
+
+Bun is the production runtime and diverges from Node in ways that fail silently rather than throwing. **What we work around, what we are exposed to, and what was checked and cleared: `.dev/bun-issues.md`.** What binds before you get there:
+
+- **The shipped runtime is the CI pin (`BUN_VERSION`), not your local Bun** — the compiled binary embeds the Bun that built it. A fix on Bun's `main`, or in a release above the pin, is not a fix we have. Moving the pin is a production-runtime change: re-read that file and drop what it resolves.
+- **Never pass `lookup` to `http(s).request`** — the pinned runtime throws before sending on Node's documented scalar callback form. Resolve first, dial the literal, and pass the hostname as `servername` and `Host`; that also keeps the checked address the dialed one.
+- **A Bun workaround carries a comment saying what was measured**, and survives until its upstream fix is in the pinned release. Never delete one as redundant without checking that entry.
+- **Accept both spellings of a DNS error code** — Bun surfaces c-ares codes (`ESERVFAIL`, `ETIMEOUT`) where Node surfaces getaddrinfo ones.
+- **A resolved `fetch` promise is not proof of a complete body** — a mid-transfer stream error resolves with truncated data. Verify what you fetched.
 
 ### Container backends
 
